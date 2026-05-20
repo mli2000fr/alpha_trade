@@ -678,14 +678,21 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_latest_empirical_risk_calibration(self, trade_date, run_id=None, market_regime_mode=None):
+        def load_latest_empirical_risk_calibration(self, trade_date, run_id=None, market_regime_mode=None, horizon_days=None, lookback_months=None):
             captured["requested_market_regime_mode"] = market_regime_mode
+            captured["requested_horizon_days"] = horizon_days
+            captured["requested_lookback_months"] = lookback_months
             return {
                 "run_id": "risk-cal-001",
                 "metric_name": "sharpe",
                 "metric_value": 1.42,
                 "window_start": date(2025, 1, 1),
                 "window_end": date(2026, 3, 31),
+                "status": "selected",
+                "segment_key": "regime=capital_preservation|horizon=5d|window=12m",
+                "horizon_days": horizon_days,
+                "lookback_months": lookback_months,
+                "eligible_for_live": True,
                 "market_regime_mode": "capital_preservation",
                 "requested_market_regime_mode": market_regime_mode,
                 "market_regime_fallback_used": False,
@@ -750,9 +757,95 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
     assert captured["config"].min_effective_probability == pytest.approx(0.55)
     assert captured["config"].assumed_payoff_ratio == pytest.approx(2.0)
     assert captured["requested_market_regime_mode"] == "capital_preservation"
+    assert captured["requested_horizon_days"] == 5
+    assert captured["requested_lookback_months"] == 12
     assert captured["summary"]["empirical_risk_calibration"]["run_id"] == "risk-cal-001"
     assert captured["summary"]["empirical_risk_calibration"]["market_regime_mode"] == "capital_preservation"
     assert captured["summary"]["conviction_weights_calibration"]["runtime_applied"] is True
     assert captured["summary"]["conviction_weights_calibration"]["runtime_market_regime_mode"] == "capital_preservation"
+
+
+def test_cli_main_does_not_apply_empirical_risk_calibration_when_blocked_by_governance(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {}
+
+        def load_latest_empirical_risk_calibration(self, trade_date, run_id=None, market_regime_mode=None, horizon_days=None, lookback_months=None):
+            return {
+                "run_id": "risk-cal-blocked",
+                "status": "blocked_by_governance",
+                "segment_key": "regime=capital_preservation|horizon=5d|window=12m",
+                "horizon_days": horizon_days,
+                "lookback_months": lookback_months,
+                "eligible_for_live": False,
+                "eligibility_reason": "insufficient_snapshot_days",
+                "market_regime_mode": "capital_preservation",
+                "requested_market_regime_mode": market_regime_mode,
+                "fallback_level": "blocked_governance_exact_segment",
+                "source": "weights_calibration_runs",
+                "best_weights": {
+                    "score_weight": 0.1,
+                    "prediction_weight": 0.9,
+                    "kelly_fraction_multiplier": 0.5,
+                    "min_effective_probability": 0.55,
+                    "assumed_payoff_ratio": 2.0,
+                },
+            }
+
+        def load_candidates_asof(self, trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None):
+            captured["config"] = config
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(
+        cli,
+        "_resolve_market_regime_snapshot",
+        lambda trade_date, effective_equity, repo: MarketRegimeSnapshot(
+            trade_date=trade_date,
+            mode="capital_preservation",
+            risk_multiplier=1.0,
+            allow_new_entries=True,
+            reasons=(),
+        ),
+    )
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+
+    cli.main(["--trade-date", "2026-05-01", "--dry-run", "--enable-kelly-sizing"])
+
+    assert captured["config"].score_weight == pytest.approx(0.4)
+    assert captured["config"].prediction_weight == pytest.approx(0.6)
+    assert captured["summary"]["empirical_risk_calibration"]["status"] == "blocked_by_governance"
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_applied"] is False
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_eligibility_reason"] == "insufficient_snapshot_days"
 
 

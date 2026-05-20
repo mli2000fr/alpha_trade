@@ -36,6 +36,7 @@ LOGGER = logging.getLogger(__name__)
 
 ScoreMetric = Callable[[np.ndarray, np.ndarray], float]
 CALIBRATION_SCHEMA_VERSION = 2
+SEGMENT_DRIFT_SCHEMA_VERSION = 1
 MARKET_REGIME_ALL = "all"
 KNOWN_MARKET_REGIME_MODES = {
     MARKET_REGIME_ALL,
@@ -161,9 +162,31 @@ class EmpiricalRiskCalibrationRun:
     sharpe_ratio: float
     max_drawdown_pct: float
     calibration_run_id: str | None = None
+    calibration_batch_id: str | None = None
+    segment_key: str | None = None
+    horizon_days: int = 5
+    lookback_months: int | None = None
+    distinct_snapshot_days: int = 0
+    distinct_symbols: int = 0
+    eligible_for_live: bool = False
+    eligibility_reason: str | None = None
     best_weights: dict[str, float] = field(default_factory=dict)
     artifact_dir: str | None = None
     market_regime_mode: str = MARKET_REGIME_ALL
+
+
+@dataclass(frozen=True, slots=True)
+class CalibrationSegmentDrift:
+    comparison_kind: str
+    source_run_id: str | None
+    target_run_id: str | None
+    source_segment_key: str | None
+    target_segment_key: str | None
+    calibration_batch_id: str | None = None
+    metric_name: str | None = None
+    metric_delta: float | None = None
+    final_value_drift_pct: float | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +233,131 @@ def _kelly_grid(
                     "min_effective_probability": float(min_probability),
                     "assumed_payoff_ratio": float(payoff_ratio),
                 }
+
+
+def _subtract_months(reference: date, months: int) -> date:
+    year = reference.year
+    month = reference.month - int(months)
+    while month <= 0:
+        month += 12
+        year -= 1
+    day = min(reference.day, 28)
+    return date(year, month, day)
+
+
+def _build_segment_key(*, market_regime_mode: str, horizon_days: int, lookback_months: int | None) -> str:
+    resolved_lookback_months = int(lookback_months or 0)
+    return (
+        f"regime={normalize_market_regime_mode(market_regime_mode)}"
+        f"|horizon={int(horizon_days)}d"
+        f"|window={resolved_lookback_months}m"
+    )
+
+
+def _compute_relative_drift(current: float, reference: float) -> float | None:
+    if reference == 0:
+        return None if current == 0 else float("inf")
+    return (current - reference) / abs(reference)
+
+
+def _evaluate_live_governance(
+    dataset: pd.DataFrame,
+    *,
+    min_observations: int,
+    min_snapshot_days: int,
+    min_symbols: int,
+) -> tuple[bool, str | None, int, int]:
+    observations_evaluated = int(len(dataset))
+    distinct_snapshot_days = int(dataset["snapshot_date"].nunique()) if not dataset.empty else 0
+    distinct_symbols = int(dataset["symbol"].nunique()) if not dataset.empty else 0
+    reasons: list[str] = []
+    if observations_evaluated < int(min_observations):
+        reasons.append("insufficient_observations")
+    if distinct_snapshot_days < int(min_snapshot_days):
+        reasons.append("insufficient_snapshot_days")
+    if distinct_symbols < int(min_symbols):
+        reasons.append("insufficient_symbols")
+    return (not reasons), (";".join(reasons) if reasons else None), distinct_snapshot_days, distinct_symbols
+
+
+def compute_segment_drifts(
+    runs: Sequence[EmpiricalRiskCalibrationRun],
+    *,
+    reference_horizon_days: int | None = None,
+    reference_lookback_months: int | None = None,
+) -> list[CalibrationSegmentDrift]:
+    if not runs:
+        return []
+    run_by_segment = {
+        str(run.segment_key or _build_segment_key(
+            market_regime_mode=run.market_regime_mode,
+            horizon_days=run.horizon_days,
+            lookback_months=run.lookback_months,
+        )): run
+        for run in runs
+    }
+    baseline_by_horizon_window = {
+        (int(run.horizon_days), int(run.lookback_months or 0)): run
+        for run in runs
+        if normalize_market_regime_mode(run.market_regime_mode) == MARKET_REGIME_ALL
+    }
+    resolved_reference_horizon = int(reference_horizon_days or min(int(run.horizon_days) for run in runs))
+    lookback_candidates = [int(run.lookback_months or 0) for run in runs]
+    resolved_reference_lookback = int(reference_lookback_months or max(lookback_candidates))
+    reference_segment_key = _build_segment_key(
+        market_regime_mode=MARKET_REGIME_ALL,
+        horizon_days=resolved_reference_horizon,
+        lookback_months=resolved_reference_lookback,
+    )
+    reference_run = run_by_segment.get(reference_segment_key)
+    drifts: list[CalibrationSegmentDrift] = []
+    for run in runs:
+        source_segment_key = str(run.segment_key or "").strip() or _build_segment_key(
+            market_regime_mode=run.market_regime_mode,
+            horizon_days=run.horizon_days,
+            lookback_months=run.lookback_months,
+        )
+        if normalize_market_regime_mode(run.market_regime_mode) != MARKET_REGIME_ALL:
+            baseline_run = baseline_by_horizon_window.get((int(run.horizon_days), int(run.lookback_months or 0)))
+            if baseline_run is not None and baseline_run.calibration_run_id != run.calibration_run_id:
+                drifts.append(
+                    CalibrationSegmentDrift(
+                        comparison_kind="vs_all_same_horizon_window",
+                        source_run_id=run.calibration_run_id,
+                        target_run_id=baseline_run.calibration_run_id,
+                        source_segment_key=source_segment_key,
+                        target_segment_key=baseline_run.segment_key,
+                        calibration_batch_id=run.calibration_batch_id,
+                        metric_name=run.metric_name,
+                        metric_delta=float(run.metric_value - baseline_run.metric_value),
+                        final_value_drift_pct=_compute_relative_drift(run.final_value, baseline_run.final_value),
+                        payload={
+                            "source_market_regime_mode": run.market_regime_mode,
+                            "target_market_regime_mode": baseline_run.market_regime_mode,
+                            "horizon_days": int(run.horizon_days),
+                            "lookback_months": int(run.lookback_months or 0),
+                        },
+                    )
+                )
+        if reference_run is not None and reference_run.calibration_run_id != run.calibration_run_id:
+            drifts.append(
+                CalibrationSegmentDrift(
+                    comparison_kind="vs_reference_live_segment",
+                    source_run_id=run.calibration_run_id,
+                    target_run_id=reference_run.calibration_run_id,
+                    source_segment_key=source_segment_key,
+                    target_segment_key=reference_run.segment_key,
+                    calibration_batch_id=run.calibration_batch_id,
+                    metric_name=run.metric_name,
+                    metric_delta=float(run.metric_value - reference_run.metric_value),
+                    final_value_drift_pct=_compute_relative_drift(run.final_value, reference_run.final_value),
+                    payload={
+                        "reference_horizon_days": resolved_reference_horizon,
+                        "reference_lookback_months": resolved_reference_lookback,
+                    },
+                )
+            )
+    return drifts
 
 
 # ---------------------------------------------------------------------------
@@ -692,7 +840,19 @@ class EmpiricalRiskCalibrator:
         daily_returns: np.ndarray,
         best_weights: dict[str, float],
         output_path: Path,
+        horizon_days: int,
+        lookback_months: int | None,
+        calibration_batch_id: str | None,
+        min_live_observations: int,
+        min_live_snapshot_days: int,
+        min_live_symbols: int,
     ) -> EmpiricalRiskCalibrationRun:
+        eligible_for_live, eligibility_reason, distinct_snapshot_days, distinct_symbols = _evaluate_live_governance(
+            dataset,
+            min_observations=min_live_observations,
+            min_snapshot_days=min_live_snapshot_days,
+            min_symbols=min_live_symbols,
+        )
         equity_curve = 100_000.0 * np.cumprod(1.0 + daily_returns)
         final_value = float(equity_curve[-1]) if equity_curve.size else 100_000.0
         peak = np.maximum.accumulate(equity_curve) if equity_curve.size else np.asarray([100_000.0])
@@ -714,6 +874,18 @@ class EmpiricalRiskCalibrator:
             total_return_pct=((final_value / 100_000.0) - 1.0) * 100.0,
             sharpe_ratio=metric_strategy_sharpe(daily_returns),
             max_drawdown_pct=float(np.min(drawdowns) * 100.0) if drawdowns.size else 0.0,
+            calibration_batch_id=calibration_batch_id,
+            segment_key=_build_segment_key(
+                market_regime_mode=calibration.market_regime_mode,
+                horizon_days=horizon_days,
+                lookback_months=lookback_months,
+            ),
+            horizon_days=int(horizon_days),
+            lookback_months=lookback_months,
+            distinct_snapshot_days=distinct_snapshot_days,
+            distinct_symbols=distinct_symbols,
+            eligible_for_live=eligible_for_live,
+            eligibility_reason=eligibility_reason,
             best_weights={key: float(value) for key, value in best_weights.items()},
             artifact_dir=str(output_path),
             market_regime_mode=normalize_market_regime_mode(calibration.market_regime_mode),
@@ -735,6 +907,11 @@ class EmpiricalRiskCalibrator:
         candidates_only: bool = True,
         market_regime_mode: str = MARKET_REGIME_ALL,
         dataset: pd.DataFrame | None = None,
+        lookback_months: int | None = None,
+        calibration_batch_id: str | None = None,
+        min_live_observations: int = 250,
+        min_live_snapshot_days: int = 20,
+        min_live_symbols: int = 10,
     ) -> tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -806,6 +983,12 @@ class EmpiricalRiskCalibrator:
             daily_returns=daily_returns,
             best_weights=best_weights,
             output_path=output_path,
+            horizon_days=horizon_days,
+            lookback_months=lookback_months,
+            calibration_batch_id=calibration_batch_id,
+            min_live_observations=min_live_observations,
+            min_live_snapshot_days=min_live_snapshot_days,
+            min_live_symbols=min_live_symbols,
         )
         calibration_run_id = persist_calibration_run(calibration, engine=self.engine, run_summary=run_summary)
         daily_returns_df = pd.DataFrame(
@@ -898,6 +1081,97 @@ class EmpiricalRiskCalibrator:
                 LOGGER.info("Segment régime `%s` ignoré : dataset insuffisant.", regime_mode, exc_info=True)
         return results
 
+    def walk_forward_backtests_by_segment(
+        self,
+        *,
+        end_date: date,
+        output_dir: str | Path,
+        horizon_days_values: Sequence[int],
+        lookback_months_values: Sequence[int],
+        top_n: int = 20,
+        metric_name: str = "sharpe",
+        conviction_grid_step: float = 0.1,
+        kelly_fraction_multipliers: Sequence[float] = (0.10, 0.25, 0.50),
+        min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
+        assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
+        candidates_only: bool = True,
+        min_live_observations: int = 250,
+        min_live_snapshot_days: int = 20,
+        min_live_symbols: int = 10,
+        calibration_batch_id: str | None = None,
+    ) -> dict[str, tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]]:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        resolved_batch_id = calibration_batch_id or f"wcb-{uuid.uuid4().hex[:12]}"
+        results: dict[str, tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]] = {}
+        for lookback_months in sorted({int(value) for value in lookback_months_values if int(value) > 0}):
+            segment_start_date = _subtract_months(end_date, lookback_months)
+            for horizon_days in sorted({int(value) for value in horizon_days_values if int(value) > 0}):
+                dataset = self.load_dataset(
+                    start_date=segment_start_date,
+                    end_date=end_date,
+                    horizon_days=horizon_days,
+                    candidates_only=candidates_only,
+                )
+                if dataset.empty:
+                    LOGGER.info(
+                        "Segment horizon=%sd window=%sm ignoré : dataset vide.",
+                        horizon_days,
+                        lookback_months,
+                    )
+                    continue
+                regime_modes = [
+                    mode
+                    for mode in sorted(
+                        {
+                            normalize_market_regime_mode(value)
+                            for value in dataset.get("market_regime_mode", pd.Series(dtype=str)).tolist()
+                        }
+                    )
+                    if mode != MARKET_REGIME_ALL
+                ]
+                for regime_mode in [MARKET_REGIME_ALL, *regime_modes]:
+                    segment_key = _build_segment_key(
+                        market_regime_mode=regime_mode,
+                        horizon_days=horizon_days,
+                        lookback_months=lookback_months,
+                    )
+                    segment_output = output_path / f"window_{lookback_months}m" / f"horizon_{horizon_days}d" / regime_mode
+                    try:
+                        results[segment_key] = self.walk_forward_backtest(
+                            start_date=segment_start_date,
+                            end_date=end_date,
+                            output_dir=segment_output,
+                            top_n=top_n,
+                            horizon_days=horizon_days,
+                            metric_name=metric_name,
+                            conviction_grid_step=conviction_grid_step,
+                            kelly_fraction_multipliers=kelly_fraction_multipliers,
+                            min_effective_probabilities=min_effective_probabilities,
+                            assumed_payoff_ratios=assumed_payoff_ratios,
+                            candidates_only=candidates_only,
+                            market_regime_mode=regime_mode,
+                            dataset=dataset,
+                            lookback_months=lookback_months,
+                            calibration_batch_id=resolved_batch_id,
+                            min_live_observations=min_live_observations,
+                            min_live_snapshot_days=min_live_snapshot_days,
+                            min_live_symbols=min_live_symbols,
+                        )
+                    except ValueError:
+                        if regime_mode == MARKET_REGIME_ALL:
+                            raise
+                        LOGGER.info(
+                            "Segment régime `%s` / horizon=%sd / fenêtre=%sm ignoré : dataset insuffisant.",
+                            regime_mode,
+                            horizon_days,
+                            lookback_months,
+                            exc_info=True,
+                        )
+        if not results:
+            raise ValueError("EmpiricalRiskCalibrator : aucun segment exploitable pour la calibration multi-horizon/fenêtre.")
+        return results
+
 
 # ---------------------------------------------------------------------------
 # Persistance (opt-in, ne dépend pas du moteur de calcul)
@@ -916,8 +1190,10 @@ def persist_calibration_run(
     ``engine`` doit être un SQLAlchemy ``Engine`` ; isolation explicite afin
     de garder le module testable sans DB.
     """
-    from sqlalchemy import text  # import paresseux
-    from sqlalchemy import inspect
+    from sqlalchemy import (
+        inspect,
+        text,  # import paresseux
+    )
 
     rid = run_id or f"wcr-{uuid.uuid4().hex[:12]}"
     payload = result.to_payload()
@@ -937,6 +1213,14 @@ def persist_calibration_run(
             "git_sha",
             "schema_version",
             "market_regime_mode",
+            "calibration_batch_id",
+            "segment_key",
+            "horizon_days",
+            "lookback_months",
+            "distinct_snapshot_days",
+            "distinct_symbols",
+            "eligible_for_live",
+            "eligibility_reason",
             "observations_evaluated",
             "scenarios_evaluated",
             "latest_best_scenario_name",
@@ -963,6 +1247,14 @@ def persist_calibration_run(
     if run_summary is not None:
         values.update(
             {
+                "calibration_batch_id": run_summary.calibration_batch_id,
+                "segment_key": run_summary.segment_key,
+                "horizon_days": int(run_summary.horizon_days),
+                "lookback_months": int(run_summary.lookback_months) if run_summary.lookback_months is not None else None,
+                "distinct_snapshot_days": int(run_summary.distinct_snapshot_days),
+                "distinct_symbols": int(run_summary.distinct_symbols),
+                "eligible_for_live": bool(run_summary.eligible_for_live),
+                "eligibility_reason": run_summary.eligibility_reason,
                 "observations_evaluated": int(run_summary.observations_evaluated),
                 "scenarios_evaluated": int(run_summary.scenarios_evaluated),
                 "latest_best_scenario_name": run_summary.latest_best_scenario_name,
@@ -994,10 +1286,75 @@ def persist_calibration_run(
     return rid
 
 
+def persist_segment_drifts(drifts: Sequence[CalibrationSegmentDrift], *, engine: Any) -> int:
+    if not drifts:
+        return 0
+    from sqlalchemy import inspect, text
+
+    try:
+        available_columns = {
+            str(column["name"]) for column in inspect(engine).get_columns("weights_calibration_segment_drifts")
+        }
+    except Exception:
+        available_columns = {
+            "run_id",
+            "compared_at",
+            "comparison_kind",
+            "calibration_batch_id",
+            "source_run_id",
+            "target_run_id",
+            "source_segment_key",
+            "target_segment_key",
+            "metric_name",
+            "metric_delta",
+            "final_value_drift_pct",
+            "payload",
+            "schema_version",
+        }
+    rows: list[dict[str, Any]] = []
+    for drift in drifts:
+        payload = {
+            "run_id": f"wcsd-{uuid.uuid4().hex[:12]}",
+            "compared_at": datetime.utcnow(),
+            "comparison_kind": drift.comparison_kind,
+            "calibration_batch_id": drift.calibration_batch_id,
+            "source_run_id": drift.source_run_id,
+            "target_run_id": drift.target_run_id,
+            "source_segment_key": drift.source_segment_key,
+            "target_segment_key": drift.target_segment_key,
+            "metric_name": drift.metric_name,
+            "metric_delta": drift.metric_delta,
+            "final_value_drift_pct": drift.final_value_drift_pct,
+            "payload": json.dumps(drift.payload),
+            "schema_version": SEGMENT_DRIFT_SCHEMA_VERSION,
+        }
+        rows.append({column: payload[column] for column in payload if column in available_columns})
+    if not rows:
+        return 0
+    insert_columns = list(rows[0])
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO weights_calibration_segment_drifts
+                    ({columns})
+                VALUES
+                    ({placeholders})
+                """.format(
+                    columns=", ".join(insert_columns),
+                    placeholders=", ".join(f":{column}" for column in insert_columns),
+                )
+            ),
+            rows,
+        )
+    return len(rows)
+
+
 __all__ = [
     "CalibrationResult",
     "CalibrationCandidate",
     "EmpiricalRiskCalibrationRun",
+    "CalibrationSegmentDrift",
     "EmpiricalRiskCalibrator",
     "MARKET_REGIME_ALL",
     "METRICS",
@@ -1005,11 +1362,13 @@ __all__ = [
     "calibrate_conviction",
     "calibrate_conviction_kelly",
     "calibrate_sentiment",
+    "compute_segment_drifts",
     "metric_information_coefficient",
     "metric_hit_rate",
     "metric_strategy_log_growth",
     "metric_strategy_sharpe",
     "normalize_market_regime_mode",
     "persist_calibration_run",
+    "persist_segment_drifts",
 ]
 

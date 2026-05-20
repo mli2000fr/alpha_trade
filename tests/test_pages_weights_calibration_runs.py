@@ -30,12 +30,14 @@ def test_build_overview_metrics_exposes_latest_run_context() -> None:
                 "market_regime_mode": "capital_preservation",
                 "metric_name": "sharpe",
                 "metric_value": 1.2345,
+                "eligible_for_live": 1,
             },
             {
                 "run_id": "wcr-001",
                 "market_regime_mode": "all",
                 "metric_name": "sharpe",
                 "metric_value": 1.1111,
+                "eligible_for_live": 0,
             },
         ]
     )
@@ -46,4 +48,5 @@ def test_build_overview_metrics_exposes_latest_run_context() -> None:
     assert metrics["latest_run_id"] == "wcr-002"
     assert metrics["latest_regime"] == "capital_preservation"
     assert metrics["latest_metric"] == "sharpe=1.2345"
+    assert metrics["eligible_segments"] == 1
 

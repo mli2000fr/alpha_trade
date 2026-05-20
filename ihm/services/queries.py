@@ -639,6 +639,10 @@ def get_weights_calibration_runs(
     run_id: str | None = None,
     scope: str | None = None,
     market_regime_mode: str | None = None,
+    horizon_days: int | None = None,
+    lookback_months: int | None = None,
+    eligible_for_live: bool | None = None,
+    calibration_batch_id: str | None = None,
     limit: int = 200,
 ) -> pd.DataFrame:
     available_columns = _get_table_columns("weights_calibration_runs")
@@ -650,8 +654,16 @@ def get_weights_calibration_runs(
         for column in [
             "run_id",
             "calibrated_at",
+            "calibration_batch_id",
             "scope",
             "market_regime_mode",
+            "segment_key",
+            "horizon_days",
+            "lookback_months",
+            "distinct_snapshot_days",
+            "distinct_symbols",
+            "eligible_for_live",
+            "eligibility_reason",
             "window_start",
             "window_end",
             "metric_name",
@@ -685,6 +697,18 @@ def get_weights_calibration_runs(
     if market_regime_mode and "market_regime_mode" in available_columns:
         params["market_regime_mode"] = str(market_regime_mode).strip().lower() or "all"
         conditions.append("LOWER(COALESCE(market_regime_mode, 'all')) = :market_regime_mode")
+    if horizon_days is not None and "horizon_days" in available_columns:
+        params["horizon_days"] = int(horizon_days)
+        conditions.append("horizon_days = :horizon_days")
+    if lookback_months is not None and "lookback_months" in available_columns:
+        params["lookback_months"] = int(lookback_months)
+        conditions.append("lookback_months = :lookback_months")
+    if eligible_for_live is not None and "eligible_for_live" in available_columns:
+        params["eligible_for_live"] = 1 if bool(eligible_for_live) else 0
+        conditions.append("COALESCE(eligible_for_live, 0) = :eligible_for_live")
+    if calibration_batch_id and "calibration_batch_id" in available_columns:
+        params["calibration_batch_id"] = str(calibration_batch_id).strip()
+        conditions.append("calibration_batch_id = :calibration_batch_id")
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return safe_query(
@@ -706,16 +730,83 @@ def get_weights_calibration_run_ids(
     *,
     scope: str | None = None,
     market_regime_mode: str | None = None,
+    horizon_days: int | None = None,
+    lookback_months: int | None = None,
+    eligible_for_live: bool | None = None,
+    calibration_batch_id: str | None = None,
     limit: int = 100,
 ) -> list[str]:
     df = get_weights_calibration_runs(
         scope=scope,
         market_regime_mode=market_regime_mode,
+        horizon_days=horizon_days,
+        lookback_months=lookback_months,
+        eligible_for_live=eligible_for_live,
+        calibration_batch_id=calibration_batch_id,
         limit=limit,
     )
     if df.empty or "run_id" not in df.columns:
         return []
     return [str(value).strip() for value in df["run_id"].tolist() if str(value).strip()]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_weights_calibration_segment_drifts(
+    *,
+    calibration_batch_id: str | None = None,
+    source_run_id: str | None = None,
+    comparison_kind: str | None = None,
+    limit: int = 200,
+) -> pd.DataFrame:
+    available_columns = _get_table_columns("weights_calibration_segment_drifts")
+    if not available_columns:
+        return pd.DataFrame()
+
+    selected_columns = [
+        column
+        for column in [
+            "run_id",
+            "compared_at",
+            "comparison_kind",
+            "calibration_batch_id",
+            "source_run_id",
+            "target_run_id",
+            "source_segment_key",
+            "target_segment_key",
+            "metric_name",
+            "metric_delta",
+            "final_value_drift_pct",
+            "payload",
+            "schema_version",
+        ]
+        if column in available_columns
+    ]
+    if not selected_columns:
+        selected_columns = ["run_id"]
+
+    params: dict[str, object] = {}
+    conditions: list[str] = []
+    if calibration_batch_id and "calibration_batch_id" in available_columns:
+        params["calibration_batch_id"] = str(calibration_batch_id).strip()
+        conditions.append("calibration_batch_id = :calibration_batch_id")
+    if source_run_id and "source_run_id" in available_columns:
+        params["source_run_id"] = str(source_run_id).strip()
+        conditions.append("source_run_id = :source_run_id")
+    if comparison_kind and "comparison_kind" in available_columns:
+        params["comparison_kind"] = str(comparison_kind).strip()
+        conditions.append("comparison_kind = :comparison_kind")
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return safe_query(
+        f"""
+        SELECT {', '.join(selected_columns)}
+        FROM weights_calibration_segment_drifts
+        {where_clause}
+        ORDER BY COALESCE(compared_at, CURRENT_TIMESTAMP) DESC, run_id DESC
+        LIMIT {limit}
+        """,
+        params or None,
+    )
 
 
 # ---------------------------------------------------------------------------

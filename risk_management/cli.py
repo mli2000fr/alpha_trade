@@ -300,7 +300,8 @@ def _build_conviction_weights_calibration(
                 {
                     "source": str(empirical_risk_calibration.get("source") or "weights_calibration_runs"),
                     "calibration_run_id": empirical_risk_calibration.get("run_id"),
-                    "runtime_applied": True,
+                    "runtime_applied": empirical_risk_calibration.get("status") == "selected",
+                    "runtime_status": empirical_risk_calibration.get("status"),
                     "runtime_metric_name": empirical_risk_calibration.get("metric_name"),
                     "runtime_metric_value": empirical_risk_calibration.get("metric_value"),
                     "runtime_window_start": (
@@ -314,11 +315,17 @@ def _build_conviction_weights_calibration(
                         else None
                     ),
                     "runtime_best_weights": empirical_risk_calibration.get("best_weights") or {},
+                    "runtime_segment_key": empirical_risk_calibration.get("segment_key"),
+                    "runtime_horizon_days": empirical_risk_calibration.get("horizon_days"),
+                    "runtime_lookback_months": empirical_risk_calibration.get("lookback_months"),
                     "runtime_market_regime_mode": empirical_risk_calibration.get("market_regime_mode"),
                     "runtime_requested_market_regime_mode": empirical_risk_calibration.get("requested_market_regime_mode"),
                     "runtime_market_regime_fallback_used": bool(
                         empirical_risk_calibration.get("market_regime_fallback_used")
                     ),
+                    "runtime_fallback_level": empirical_risk_calibration.get("fallback_level"),
+                    "runtime_eligible_for_live": empirical_risk_calibration.get("eligible_for_live"),
+                    "runtime_eligibility_reason": empirical_risk_calibration.get("eligibility_reason"),
                 }
             )
         return payload
@@ -342,7 +349,8 @@ def _build_conviction_weights_calibration(
     if empirical_risk_calibration:
         payload.update(
             {
-                "runtime_applied": True,
+                "runtime_applied": empirical_risk_calibration.get("status") == "selected",
+                "runtime_status": empirical_risk_calibration.get("status"),
                 "runtime_source": empirical_risk_calibration.get("source"),
                 "runtime_calibration_run_id": empirical_risk_calibration.get("run_id"),
                 "runtime_metric_name": empirical_risk_calibration.get("metric_name"),
@@ -358,11 +366,17 @@ def _build_conviction_weights_calibration(
                     else None
                 ),
                 "runtime_best_weights": empirical_risk_calibration.get("best_weights") or {},
+                "runtime_segment_key": empirical_risk_calibration.get("segment_key"),
+                "runtime_horizon_days": empirical_risk_calibration.get("horizon_days"),
+                "runtime_lookback_months": empirical_risk_calibration.get("lookback_months"),
                 "runtime_market_regime_mode": empirical_risk_calibration.get("market_regime_mode"),
                 "runtime_requested_market_regime_mode": empirical_risk_calibration.get("requested_market_regime_mode"),
                 "runtime_market_regime_fallback_used": bool(
                     empirical_risk_calibration.get("market_regime_fallback_used")
                 ),
+                "runtime_fallback_level": empirical_risk_calibration.get("fallback_level"),
+                "runtime_eligible_for_live": empirical_risk_calibration.get("eligible_for_live"),
+                "runtime_eligibility_reason": empirical_risk_calibration.get("eligibility_reason"),
             }
         )
     return payload
@@ -374,6 +388,8 @@ def _load_empirical_risk_calibration(
     trade_date: date,
     run_id: str | None,
     market_regime_mode: str | None,
+    horizon_days: int | None,
+    lookback_months: int | None,
     disabled: bool,
 ) -> dict[str, object] | None:
     if disabled:
@@ -382,7 +398,13 @@ def _load_empirical_risk_calibration(
     if not callable(loader):
         return None
     try:
-        payload = loader(trade_date, run_id=run_id, market_regime_mode=market_regime_mode)
+        payload = loader(
+            trade_date,
+            run_id=run_id,
+            market_regime_mode=market_regime_mode,
+            horizon_days=horizon_days,
+            lookback_months=lookback_months,
+        )
     except Exception:
         LOGGER.warning("Calibration empirique risk indisponible pour trade_date=%s", trade_date, exc_info=True)
         return None
@@ -394,6 +416,21 @@ def _apply_empirical_risk_calibration(
     calibration: dict[str, object] | None,
 ) -> RiskConfig:
     if not calibration:
+        return config
+    if calibration.get("status") not in {None, "selected"}:
+        LOGGER.info(
+            "Calibration empirique risk non appliquée | status=%s fallback=%s reason=%s",
+            calibration.get("status"),
+            calibration.get("fallback_level"),
+            calibration.get("eligibility_reason"),
+        )
+        return config
+    if calibration.get("eligible_for_live") is False:
+        LOGGER.info(
+            "Calibration empirique risk bloquée par gouvernance | reason=%s segment=%s",
+            calibration.get("eligibility_reason"),
+            calibration.get("segment_key"),
+        )
         return config
     best_weights = calibration.get("best_weights")
     if not isinstance(best_weights, dict):
@@ -630,6 +667,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Run de calibration risk explicite à appliquer (sinon dernier window_end <= trade_date).",
     )
+    p.add_argument(
+        "--empirical-calibration-horizon-days",
+        type=int,
+        default=5,
+        help="Horizon de calibration risk attendu pour le runtime live (défaut : 5 jours).",
+    )
+    p.add_argument(
+        "--empirical-calibration-lookback-months",
+        type=int,
+        default=12,
+        help="Fenêtre de calibration risk attendue pour le runtime live (défaut : 12 mois).",
+    )
     return p
 
 
@@ -789,6 +838,8 @@ def main(args: list[str] | None = None) -> None:
         trade_date=trade_date,
         run_id=str(args.empirical_calibration_run_id or "").strip() or None,
         market_regime_mode=requested_calibration_market_regime_mode,
+        horizon_days=int(args.empirical_calibration_horizon_days),
+        lookback_months=int(args.empirical_calibration_lookback_months),
         disabled=bool(args.disable_empirical_calibration),
     )
     config = _apply_empirical_risk_calibration(config, empirical_risk_calibration)

@@ -685,6 +685,8 @@ class RiskRepository:
         *,
         run_id: str | None = None,
         market_regime_mode: str | None = None,
+        horizon_days: int | None = None,
+        lookback_months: int | None = None,
     ) -> dict[str, Any] | None:
         """Charge le dernier run de calibration empirique risk applicable.
 
@@ -695,6 +697,8 @@ class RiskRepository:
         if not table_columns:
             return None
         requested_market_regime_mode = str(market_regime_mode or "").strip().lower() or "all"
+        requested_horizon_days = int(horizon_days) if horizon_days is not None else None
+        requested_lookback_months = int(lookback_months) if lookback_months is not None else None
         params: dict[str, Any] = {"scope": "risk"}
         where_clauses = ["scope = :scope"]
         select_columns = [
@@ -707,89 +711,158 @@ class RiskRepository:
             "best_weights",
             "schema_version",
         ]
-        order_by = "window_end DESC, calibrated_at DESC, run_id DESC"
         has_market_regime_mode = "market_regime_mode" in table_columns
-        if has_market_regime_mode:
-            select_columns.append("market_regime_mode")
+        optional_columns = [
+            "market_regime_mode",
+            "calibration_batch_id",
+            "segment_key",
+            "horizon_days",
+            "lookback_months",
+            "distinct_snapshot_days",
+            "distinct_symbols",
+            "eligible_for_live",
+            "eligibility_reason",
+        ]
+        select_columns.extend(column for column in optional_columns if column in table_columns)
         if run_id is not None:
             where_clauses.append("run_id = :run_id")
             params["run_id"] = run_id
         else:
             where_clauses.append("window_end <= :trade_date")
             params["trade_date"] = trade_date
-            if has_market_regime_mode:
-                params["fallback_market_regime_mode"] = "all"
-                if requested_market_regime_mode == "all":
-                    where_clauses.append(
-                        "LOWER(COALESCE(market_regime_mode, :fallback_market_regime_mode)) = :fallback_market_regime_mode"
-                    )
-                else:
-                    params["requested_market_regime_mode"] = requested_market_regime_mode
-                    where_clauses.append(
-                        "LOWER(COALESCE(market_regime_mode, :fallback_market_regime_mode)) "
-                        "IN (:requested_market_regime_mode, :fallback_market_regime_mode)"
-                    )
-                    order_by = (
-                        "CASE "
-                        "WHEN LOWER(COALESCE(market_regime_mode, :fallback_market_regime_mode)) = :requested_market_regime_mode THEN 0 "
-                        "WHEN LOWER(COALESCE(market_regime_mode, :fallback_market_regime_mode)) = :fallback_market_regime_mode THEN 1 "
-                        "ELSE 2 END, "
-                        + order_by
-                    )
+            if "horizon_days" in table_columns and requested_horizon_days is not None:
+                where_clauses.append("horizon_days = :horizon_days")
+                params["horizon_days"] = requested_horizon_days
+            if "lookback_months" in table_columns and requested_lookback_months is not None:
+                where_clauses.append("lookback_months = :lookback_months")
+                params["lookback_months"] = requested_lookback_months
         query = text(
             f"""
             SELECT {', '.join(select_columns)}
             FROM weights_calibration_runs
             WHERE {' AND '.join(where_clauses)}
-            ORDER BY {order_by}
-            LIMIT 1
+            ORDER BY window_end DESC, calibrated_at DESC, run_id DESC
+            LIMIT 100
             """
         )
         try:
             with self.engine.connect() as conn:
-                row = conn.execute(query, params).mappings().first()
+                rows = conn.execute(query, params).mappings().all()
         except Exception:
             LOGGER.warning("Impossible de charger weights_calibration_runs pour trade_date=%s", trade_date, exc_info=True)
             return None
-        if row is None:
+        if not rows:
             return None
-        raw_best_weights = row.get("best_weights")
-        if isinstance(raw_best_weights, Mapping):
-            best_weights = dict(raw_best_weights)
-        elif isinstance(raw_best_weights, str):
-            try:
-                parsed = json.loads(raw_best_weights)
-            except json.JSONDecodeError:
-                LOGGER.warning("best_weights illisible pour weights_calibration_runs.run_id=%s", row.get("run_id"))
-                return None
-            if not isinstance(parsed, dict):
-                return None
-            best_weights = parsed
-        else:
+        has_eligible_for_live = "eligible_for_live" in table_columns
+
+        def _parse_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
+            raw_best_weights = row.get("best_weights")
+            if isinstance(raw_best_weights, Mapping):
+                best_weights = dict(raw_best_weights)
+            elif isinstance(raw_best_weights, str):
+                try:
+                    parsed = json.loads(raw_best_weights)
+                except json.JSONDecodeError:
+                    LOGGER.warning("best_weights illisible pour weights_calibration_runs.run_id=%s", row.get("run_id"))
+                    return None
+                if not isinstance(parsed, dict):
+                    return None
+                best_weights = parsed
+            else:
+                best_weights = {}
+            resolved_market_regime_mode = (
+                str(row.get("market_regime_mode") or "").strip().lower() or "all"
+                if has_market_regime_mode
+                else "all"
+            )
+            return {
+                "run_id": str(row.get("run_id") or "").strip() or None,
+                "calibrated_at": str(row.get("calibrated_at") or "").strip() or None,
+                "window_start": self._coerce_date(row.get("window_start")),
+                "window_end": self._coerce_date(row.get("window_end")),
+                "metric_name": str(row.get("metric_name") or "").strip() or None,
+                "metric_value": float(row["metric_value"]) if row.get("metric_value") is not None else None,
+                "schema_version": int(row["schema_version"]) if row.get("schema_version") is not None else None,
+                "market_regime_mode": resolved_market_regime_mode,
+                "calibration_batch_id": str(row.get("calibration_batch_id") or "").strip() or None,
+                "segment_key": str(row.get("segment_key") or "").strip() or None,
+                "horizon_days": int(row["horizon_days"]) if row.get("horizon_days") is not None else None,
+                "lookback_months": int(row["lookback_months"]) if row.get("lookback_months") is not None else None,
+                "distinct_snapshot_days": int(row["distinct_snapshot_days"]) if row.get("distinct_snapshot_days") is not None else None,
+                "distinct_symbols": int(row["distinct_symbols"]) if row.get("distinct_symbols") is not None else None,
+                "eligible_for_live": (
+                    bool(row.get("eligible_for_live")) if has_eligible_for_live else True
+                ),
+                "eligibility_reason": str(row.get("eligibility_reason") or "").strip() or None,
+                "best_weights": best_weights,
+                "source": "weights_calibration_runs",
+            }
+
+        parsed_rows = [parsed for row in rows if (parsed := _parse_row(row)) is not None]
+        if not parsed_rows:
             return None
-        resolved_market_regime_mode = (
-            str(row.get("market_regime_mode") or "").strip().lower() or "all"
-            if has_market_regime_mode
-            else "all"
-        )
-        return {
-            "run_id": str(row.get("run_id") or "").strip() or None,
-            "calibrated_at": str(row.get("calibrated_at") or "").strip() or None,
-            "window_start": self._coerce_date(row.get("window_start")),
-            "window_end": self._coerce_date(row.get("window_end")),
-            "metric_name": str(row.get("metric_name") or "").strip() or None,
-            "metric_value": float(row["metric_value"]) if row.get("metric_value") is not None else None,
-            "schema_version": int(row["schema_version"]) if row.get("schema_version") is not None else None,
-            "market_regime_mode": resolved_market_regime_mode,
-            "requested_market_regime_mode": requested_market_regime_mode,
-            "market_regime_fallback_used": (
-                run_id is None
-                and requested_market_regime_mode != "all"
-                and resolved_market_regime_mode != requested_market_regime_mode
-            ),
-            "best_weights": best_weights,
-            "source": "weights_calibration_runs",
-        }
+        if run_id is not None:
+            selected = parsed_rows[0]
+            selected["requested_market_regime_mode"] = requested_market_regime_mode
+            selected["requested_horizon_days"] = requested_horizon_days
+            selected["requested_lookback_months"] = requested_lookback_months
+            selected["market_regime_fallback_used"] = False
+            selected["fallback_level"] = "exact_run_id"
+            selected["status"] = "selected" if selected.get("eligible_for_live", True) else "blocked_by_governance"
+            return selected
+
+        eligible_exact = [
+            row
+            for row in parsed_rows
+            if row.get("eligible_for_live", True)
+            and row.get("market_regime_mode") == requested_market_regime_mode
+        ]
+        eligible_fallback = [
+            row
+            for row in parsed_rows
+            if row.get("eligible_for_live", True)
+            and row.get("market_regime_mode") == "all"
+        ]
+        blocked_exact = [
+            row
+            for row in parsed_rows
+            if not row.get("eligible_for_live", True)
+            and row.get("market_regime_mode") == requested_market_regime_mode
+        ]
+        blocked_fallback = [
+            row
+            for row in parsed_rows
+            if not row.get("eligible_for_live", True)
+            and row.get("market_regime_mode") == "all"
+        ]
+        selected = None
+        fallback_level = "static_weights"
+        status = "missing"
+        if eligible_exact:
+            selected = eligible_exact[0]
+            fallback_level = "exact_segment"
+            status = "selected"
+        elif requested_market_regime_mode != "all" and eligible_fallback:
+            selected = eligible_fallback[0]
+            fallback_level = "regime_all"
+            status = "selected"
+        elif blocked_exact:
+            selected = blocked_exact[0]
+            fallback_level = "blocked_governance_exact_segment"
+            status = "blocked_by_governance"
+        elif requested_market_regime_mode != "all" and blocked_fallback:
+            selected = blocked_fallback[0]
+            fallback_level = "blocked_governance_regime_all"
+            status = "blocked_by_governance"
+        if selected is None:
+            return None
+        selected["requested_market_regime_mode"] = requested_market_regime_mode
+        selected["requested_horizon_days"] = requested_horizon_days
+        selected["requested_lookback_months"] = requested_lookback_months
+        selected["market_regime_fallback_used"] = fallback_level == "regime_all"
+        selected["fallback_level"] = fallback_level
+        selected["status"] = status
+        return selected
 
     # ------------------------------------------------------------------
     # Écriture

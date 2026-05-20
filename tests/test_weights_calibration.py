@@ -13,10 +13,13 @@ import pytest
 from backtesting.weights_calibration import (
     MARKET_REGIME_ALL,
     CalibrationResult,
+    CalibrationSegmentDrift,
+    EmpiricalRiskCalibrationRun,
     EmpiricalRiskCalibrator,
     calibrate_conviction,
     calibrate_conviction_kelly,
     calibrate_sentiment,
+    compute_segment_drifts,
     metric_hit_rate,
     metric_information_coefficient,
 )
@@ -186,6 +189,60 @@ def test_walk_forward_backtests_by_regime_returns_all_and_regime_segments(monkey
     assert MARKET_REGIME_ALL in results
     assert "normal" in results
     assert "capital_preservation" in results
+
+
+def test_compute_segment_drifts_compares_non_all_segment_to_baseline_and_reference() -> None:
+    baseline = EmpiricalRiskCalibrationRun(
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 3, 31),
+        observations_evaluated=300,
+        scenarios_evaluated=10,
+        latest_best_scenario_name="baseline",
+        metric_name="sharpe",
+        metric_value=1.20,
+        final_value=120_000.0,
+        total_return_pct=20.0,
+        sharpe_ratio=1.10,
+        max_drawdown_pct=-4.0,
+        calibration_run_id="wcr-all",
+        calibration_batch_id="batch-001",
+        segment_key="regime=all|horizon=5d|window=12m",
+        horizon_days=5,
+        lookback_months=12,
+        market_regime_mode="all",
+        eligible_for_live=True,
+    )
+    defensive = EmpiricalRiskCalibrationRun(
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 3, 31),
+        observations_evaluated=220,
+        scenarios_evaluated=10,
+        latest_best_scenario_name="defensive",
+        metric_name="sharpe",
+        metric_value=0.90,
+        final_value=114_000.0,
+        total_return_pct=14.0,
+        sharpe_ratio=0.95,
+        max_drawdown_pct=-3.5,
+        calibration_run_id="wcr-cap",
+        calibration_batch_id="batch-001",
+        segment_key="regime=capital_preservation|horizon=5d|window=12m",
+        horizon_days=5,
+        lookback_months=12,
+        market_regime_mode="capital_preservation",
+        eligible_for_live=False,
+    )
+
+    drifts = compute_segment_drifts(
+        [baseline, defensive],
+        reference_horizon_days=5,
+        reference_lookback_months=12,
+    )
+
+    assert drifts
+    assert all(isinstance(item, CalibrationSegmentDrift) for item in drifts)
+    assert any(item.comparison_kind == "vs_all_same_horizon_window" for item in drifts)
+    assert any(item.comparison_kind == "vs_reference_live_segment" for item in drifts)
 
 
 def test_calibrate_conviction_kelly_validates_inputs() -> None:

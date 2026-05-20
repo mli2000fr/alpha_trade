@@ -739,6 +739,37 @@ def test_get_run_summary_detail_lines_exposes_empirical_risk_calibration_for_ris
     assert any("kelly_mult=0.50" in line for line in lines)
 
 
+def test_get_run_summary_detail_lines_exposes_blocked_empirical_risk_calibration_governance() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "empirical_risk_calibration": {
+                    "run_id": "risk-cal-blocked",
+                    "status": "blocked_by_governance",
+                    "metric_name": "sharpe",
+                    "metric_value": 0.88,
+                    "segment_key": "regime=capital_preservation|horizon=5d|window=12m",
+                    "market_regime_mode": "capital_preservation",
+                    "requested_market_regime_mode": "capital_preservation",
+                    "horizon_days": 5,
+                    "lookback_months": 12,
+                    "fallback_level": "blocked_governance_exact_segment",
+                    "eligibility_reason": "insufficient_snapshot_days",
+                    "best_weights": {
+                        "score_weight": 0.25,
+                        "prediction_weight": 0.75,
+                    },
+                }
+            },
+        }
+    )
+
+    assert any("Calibration empirique risk non promue" in line for line in lines)
+    assert any("fallback=blocked_governance_exact_segment" in line for line in lines)
+    assert any("gouvernance=insufficient_snapshot_days" in line for line in lines)
+
+
 def test_get_run_summary_detail_lines_exposes_postmortem_artifacts_for_risk_management() -> None:
     lines = get_run_summary_detail_lines(
         {

@@ -111,6 +111,10 @@ def test_get_weights_calibration_runs_builds_schema_aware_query(monkeypatch):
             "calibrated_at",
             "scope",
             "market_regime_mode",
+            "segment_key",
+            "horizon_days",
+            "lookback_months",
+            "eligible_for_live",
             "window_start",
             "window_end",
             "metric_name",
@@ -139,6 +143,9 @@ def test_get_weights_calibration_runs_builds_schema_aware_query(monkeypatch):
     df = queries.get_weights_calibration_runs(
         scope="risk",
         market_regime_mode="capital_preservation",
+        horizon_days=5,
+        lookback_months=12,
+        eligible_for_live=True,
         limit=25,
     )
 
@@ -148,8 +155,17 @@ def test_get_weights_calibration_runs_builds_schema_aware_query(monkeypatch):
     assert "market_regime_mode" in query
     assert "LOWER(COALESCE(scope, '')) = :scope" in query
     assert "LOWER(COALESCE(market_regime_mode, 'all')) = :market_regime_mode" in query
+    assert "horizon_days = :horizon_days" in query
+    assert "lookback_months = :lookback_months" in query
+    assert "COALESCE(eligible_for_live, 0) = :eligible_for_live" in query
     assert "LIMIT 25" in query
-    assert params == {"scope": "risk", "market_regime_mode": "capital_preservation"}
+    assert params == {
+        "scope": "risk",
+        "market_regime_mode": "capital_preservation",
+        "horizon_days": 5,
+        "lookback_months": 12,
+        "eligible_for_live": 1,
+    }
 
 
 def test_get_weights_calibration_run_ids_returns_run_id_list(monkeypatch):
@@ -165,6 +181,58 @@ def test_get_weights_calibration_run_ids_returns_run_id_list(monkeypatch):
     run_ids = queries.get_weights_calibration_run_ids(scope="risk", market_regime_mode="all", limit=10)
 
     assert run_ids == ["wcr-002", "wcr-001"]
+
+
+def test_get_weights_calibration_segment_drifts_builds_query(monkeypatch):
+    import pandas as pd
+
+    queries.get_weights_calibration_segment_drifts.clear()
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    monkeypatch.setattr(
+        queries,
+        "_get_table_columns",
+        lambda table_name: {
+            "run_id",
+            "compared_at",
+            "comparison_kind",
+            "calibration_batch_id",
+            "source_run_id",
+            "target_run_id",
+            "source_segment_key",
+            "target_segment_key",
+            "metric_name",
+            "metric_delta",
+            "final_value_drift_pct",
+            "payload",
+            "schema_version",
+        },
+    )
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        return pd.DataFrame([{"run_id": "wcsd-001", "comparison_kind": "vs_reference_live_segment"}])
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_weights_calibration_segment_drifts(
+        calibration_batch_id="batch-001",
+        source_run_id="wcr-001",
+        comparison_kind="vs_reference_live_segment",
+        limit=20,
+    )
+
+    assert not df.empty
+    query, params = calls[0]
+    assert "FROM weights_calibration_segment_drifts" in query
+    assert "calibration_batch_id = :calibration_batch_id" in query
+    assert "source_run_id = :source_run_id" in query
+    assert "comparison_kind = :comparison_kind" in query
+    assert params == {
+        "calibration_batch_id": "batch-001",
+        "source_run_id": "wcr-001",
+        "comparison_kind": "vs_reference_live_segment",
+    }
 
 
 def test_get_stock_scores_builds_schema_aware_query_and_attaches_explainability_payload(monkeypatch):

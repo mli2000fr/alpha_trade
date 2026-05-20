@@ -10,7 +10,7 @@ import streamlit as st
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.pages import run_page_if_standalone
 from ihm.services.db import db_available, get_last_query_error
-from ihm.services.queries import get_weights_calibration_runs
+from ihm.services.queries import get_weights_calibration_runs, get_weights_calibration_segment_drifts
 
 
 def _parse_json_payload(value: object) -> dict[str, object] | list[object]:
@@ -56,6 +56,7 @@ def _build_overview_metrics(df: pd.DataFrame) -> dict[str, object]:
             "latest_run_id": "—",
             "latest_regime": "—",
             "latest_metric": "—",
+            "eligible_segments": 0,
         }
     latest = df.iloc[0]
     metric_name = str(latest.get("metric_name") or "unknown").strip()
@@ -66,17 +67,24 @@ def _build_overview_metrics(df: pd.DataFrame) -> dict[str, object]:
             metric_label = f"{metric_name}={float(metric_value):.4f}"
     except (TypeError, ValueError):
         pass
+    eligible_segments = 0
+    if "eligible_for_live" in df.columns:
+        eligible_series = pd.to_numeric(df["eligible_for_live"], errors="coerce").fillna(0)
+        eligible_segments = int((eligible_series > 0).sum())
     return {
         "runs": int(len(df)),
         "latest_run_id": str(latest.get("run_id") or "—").strip() or "—",
         "latest_regime": str(latest.get("market_regime_mode") or "all").strip() or "all",
         "latest_metric": metric_label,
+        "eligible_segments": eligible_segments,
     }
 
 
 def render() -> None:
     st.header("🧮 Weights Calibration Runs")
-    st.caption("Historique des calibrations empiriques conviction / sentiment / risk, incluant la segmentation par régime marché.")
+    st.caption(
+        "Historique des calibrations empiriques conviction / sentiment / risk, incluant la segmentation par régime, horizon et fenêtre."
+    )
 
     if not db_available():
         render_db_unavailable("Weights Calibration Runs", form_key="weights_calibration_runs_db_form")
@@ -110,19 +118,57 @@ def render() -> None:
         regime_options.extend([value for value in regime_values if value not in regime_options])
     selected_regime = st.selectbox("Régime marché", regime_options)
 
+    horizon_options = ["Tous"]
+    if "horizon_days" in history.columns:
+        horizon_values = sorted(
+            {
+                int(value)
+                for value in pd.to_numeric(history["horizon_days"], errors="coerce").dropna().tolist()
+            }
+        )
+        horizon_options.extend([f"{value}j" for value in horizon_values])
+    selected_horizon = st.selectbox("Horizon", horizon_options)
+
+    lookback_options = ["Tous"]
+    if "lookback_months" in history.columns:
+        lookback_values = sorted(
+            {
+                int(value)
+                for value in pd.to_numeric(history["lookback_months"], errors="coerce").dropna().tolist()
+            }
+        )
+        lookback_options.extend([f"{value}m" for value in lookback_values])
+    selected_lookback = st.selectbox("Fenêtre", lookback_options)
+
+    live_promotion_label = st.selectbox("Promotion live", ["Tous", "Promus", "Bloqués"], index=0)
+
     filtered = history.copy()
     if selected_regime != "Tous" and "market_regime_mode" in filtered.columns:
         filtered = filtered.loc[
             filtered["market_regime_mode"].fillna("all").astype(str).str.strip().str.lower()
             == selected_regime.lower()
         ].reset_index(drop=True)
+    if selected_horizon != "Tous" and "horizon_days" in filtered.columns:
+        horizon_value = int(selected_horizon.removesuffix("j"))
+        filtered = filtered.loc[
+            pd.to_numeric(filtered["horizon_days"], errors="coerce").fillna(-1).astype(int) == horizon_value
+        ].reset_index(drop=True)
+    if selected_lookback != "Tous" and "lookback_months" in filtered.columns:
+        lookback_value = int(selected_lookback.removesuffix("m"))
+        filtered = filtered.loc[
+            pd.to_numeric(filtered["lookback_months"], errors="coerce").fillna(-1).astype(int) == lookback_value
+        ].reset_index(drop=True)
+    if live_promotion_label != "Tous" and "eligible_for_live" in filtered.columns:
+        eligible_mask = pd.to_numeric(filtered["eligible_for_live"], errors="coerce").fillna(0) > 0
+        filtered = filtered.loc[eligible_mask if live_promotion_label == "Promus" else ~eligible_mask].reset_index(drop=True)
 
     metrics = _build_overview_metrics(filtered)
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Runs", metrics["runs"])
     col2.metric("Dernier run", metrics["latest_run_id"])
     col3.metric("Dernier régime", metrics["latest_regime"])
     col4.metric("Dernière métrique", metrics["latest_metric"])
+    col5.metric("Segments promus", metrics["eligible_segments"])
 
     run_ids = [str(value).strip() for value in filtered.get("run_id", pd.Series(dtype=str)).tolist() if str(value).strip()]
     selected_run = st.selectbox("Run de calibration", run_ids, index=0 if run_ids else None)
@@ -133,8 +179,13 @@ def render() -> None:
         for column in [
             "run_id",
             "calibrated_at",
+            "calibration_batch_id",
             "scope",
             "market_regime_mode",
+            "segment_key",
+            "horizon_days",
+            "lookback_months",
+            "eligible_for_live",
             "window_start",
             "window_end",
             "metric_name",
@@ -163,8 +214,16 @@ def render() -> None:
         column
         for column in [
             "run_id",
+            "calibration_batch_id",
             "scope",
             "market_regime_mode",
+            "segment_key",
+            "horizon_days",
+            "lookback_months",
+            "distinct_snapshot_days",
+            "distinct_symbols",
+            "eligible_for_live",
+            "eligibility_reason",
             "window_start",
             "window_end",
             "metric_name",
@@ -194,6 +253,17 @@ def render() -> None:
     if not candidates_df.empty:
         with st.expander("🧪 Candidats évalués", expanded=False):
             st.dataframe(candidates_df, use_container_width=True, hide_index=True)
+
+    calibration_batch_id = str(selected_row.get("calibration_batch_id") or "").strip() or None
+    if calibration_batch_id:
+        drifts_df = get_weights_calibration_segment_drifts(
+            calibration_batch_id=calibration_batch_id,
+            source_run_id=str(selected_row.get("run_id") or "").strip() or None,
+            limit=50,
+        )
+        if not drifts_df.empty:
+            with st.expander("📉 Drifts inter-segments", expanded=False):
+                st.dataframe(drifts_df, use_container_width=True, hide_index=True)
 
 
 run_page_if_standalone(__name__, render)
