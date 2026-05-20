@@ -414,6 +414,38 @@ def test_build_fidelity_baseline_check_rows_formats_expected_columns() -> None:
     assert rows.iloc[0]["Statut"] == "passed"
 
 
+def test_build_fidelity_baseline_catalog_rows_formats_expected_columns(tmp_path) -> None:
+    catalog_path = tmp_path / "fidelity_baseline_catalog.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "baselines": [
+                    {
+                        "baseline_id": "pipeline_live_like_2024_full_year",
+                        "label": "Pipeline live-like 2024",
+                        "requested_window": {"start_date": "2024-01-01", "end_date": "2024-12-31"},
+                        "phase_modes": {
+                            "phase2_mode": "risk_execution",
+                            "phase3_mode": "execution_replay",
+                        },
+                        "snapshot_path": "../artifacts/fidelity_baselines/pipeline_live_like_2024_full_year/fidelity_baseline_snapshot.json",
+                        "promotion_manifest_path": "../artifacts/fidelity_baselines/pipeline_live_like_2024_full_year/promotion_manifest.json",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = backtesting._build_fidelity_baseline_catalog_rows(catalog_path)
+
+    assert list(rows.columns) == ["Baseline", "Libellé", "Fenêtre", "Phases", "Snapshot", "Manifest"]
+    assert rows.iloc[0]["Baseline"] == "pipeline_live_like_2024_full_year"
+    assert rows.iloc[0]["Fenêtre"] == "2024-01-01 → 2024-12-31"
+    assert "phase2_mode=risk_execution" in rows.iloc[0]["Phases"]
+
+
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:
     rows = backtesting._build_screener_artifact_objective_rows(
         {

@@ -1,18 +1,23 @@
 {
   "version": 1,
-  "description": "Catalogue versionné des baselines de non-régression fidélité Sprint 6.",
+  "description": "Catalogue versionné des baselines de non-régression fidélité Sprint 6 promues depuis des runs de référence réels.",
+  "storage_convention": {
+    "root_dir": "../artifacts/fidelity_baselines",
+    "baseline_layout": "<baseline_id>/fidelity_baseline_snapshot.json + promotion_manifest.json",
+    "path_style": "relative_posix"
+  },
   "promotion_notes": [
-    "Chaque baseline pointe vers un snapshot canonique fidelity_baseline_snapshot.json promu manuellement.",
-    "Les snapshot_path peuvent être relatifs à ce fichier ou absolus.",
+    "Chaque baseline pointe vers un snapshot canonique fidelity_baseline_snapshot.json promu depuis un report de run réel et tracé par promotion_manifest.json.",
+    "Les snapshot_path et promotion_manifest_path sont relatifs à ce fichier et utilisent des séparateurs POSIX pour rester portables.",
     "Les runs historiques restent compatibles : la comparaison n'est exécutée que si une baseline est demandée."
   ],
   "baselines": [
     {
-      "baseline_id": "research_standard_smoke",
-      "label": "Smoke test research standard",
+      "baseline_id": "research_standard_2024_full_year_cash_2k",
+      "label": "Research standard 2024 full year (cash 2k)",
       "requested_window": {
-        "start_date": "2025-01-01",
-        "end_date": "2025-01-31"
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31"
       },
       "phase_modes": {
         "phase2_mode": "off",
@@ -21,19 +26,22 @@
         "phase5_mode": "off",
         "phase7_mode": "off"
       },
-      "snapshot_path": "..\\artifacts\\fidelity_baselines\\research_standard_smoke\\fidelity_baseline_snapshot.json",
+      "source_run_id": "20260509_083113_05fe9d18",
+      "snapshot_path": "../artifacts/fidelity_baselines/research_standard_2024_full_year_cash_2k/fidelity_baseline_snapshot.json",
+      "promotion_manifest_path": "../artifacts/fidelity_baselines/research_standard_2024_full_year_cash_2k/promotion_manifest.json",
       "metric_thresholds": {
         "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture sentiment finale"},
         "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture ML finale"},
+        "degraded_reason_count": {"comparison": "max", "abs": 0.0, "label": "Nombre de motifs de dégradation"},
         "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances dégradées"}
       }
     },
     {
-      "baseline_id": "pipeline_live_like_smoke",
-      "label": "Smoke test pipeline live-like Phase 2→3→4→5→7",
+      "baseline_id": "pipeline_live_like_2024_full_year_cash_2k",
+      "label": "Pipeline live-like 2024 full year (cash 2k)",
       "requested_window": {
-        "start_date": "2025-01-01",
-        "end_date": "2025-01-31"
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31"
       },
       "phase_modes": {
         "phase2_mode": "risk_execution",
@@ -42,22 +50,26 @@
         "phase5_mode": "watcher_replay",
         "phase7_mode": "exit_lifecycle_replay"
       },
-      "snapshot_path": "..\\artifacts\\fidelity_baselines\\pipeline_live_like_smoke\\fidelity_baseline_snapshot.json",
+      "source_run_id": "20260509_112346_ccffe3cb",
+      "snapshot_path": "../artifacts/fidelity_baselines/pipeline_live_like_2024_full_year_cash_2k/fidelity_baseline_snapshot.json",
+      "promotion_manifest_path": "../artifacts/fidelity_baselines/pipeline_live_like_2024_full_year_cash_2k/promotion_manifest.json",
       "metric_thresholds": {
-        "compare_live_fidelity_score": {"comparison": "min", "abs": 0.02, "label": "Score global compare-to-live"},
-        "compare_live_execution_alignment_score": {"comparison": "min", "abs": 0.02, "label": "Alignement exécution"},
-        "compare_live_fills_alignment_score": {"comparison": "min", "abs": 0.02, "label": "Alignement fills"},
-        "compare_live_exits_alignment_score": {"comparison": "min", "abs": 0.02, "label": "Alignement exits"},
-        "compare_live_pnl_alignment_score": {"comparison": "min", "abs": 0.02, "label": "Alignement PnL"},
+        "degraded_reason_count": {"comparison": "max", "abs": 0.0, "label": "Nombre de motifs de dégradation"},
+        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture sentiment finale"},
+        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture ML finale"},
+        "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances candidate→target divergentes"},
+        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances replay dégradées"},
+        "broker_rejected_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres rejetés"},
+        "broker_timed_out_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres timeout"},
         "broker_stale_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres stale"}
       }
     },
     {
-      "baseline_id": "pipeline_live_like_regression_window_a",
-      "label": "Fenêtre de régression pipeline live-like A",
+      "baseline_id": "pipeline_live_like_debug_fix_2024_11_cash_2k",
+      "label": "Pipeline live-like debug fix Nov-Dec 2024 (cash 2k)",
       "requested_window": {
-        "start_date": "2025-02-01",
-        "end_date": "2025-03-31"
+        "start_date": "2024-11-01",
+        "end_date": "2024-12-05"
       },
       "phase_modes": {
         "phase2_mode": "risk_execution",
@@ -66,12 +78,20 @@
         "phase5_mode": "watcher_replay",
         "phase7_mode": "exit_lifecycle_replay"
       },
-      "snapshot_path": "..\\artifacts\\fidelity_baselines\\pipeline_live_like_regression_window_a\\fidelity_baseline_snapshot.json",
+      "source_run_id": "debug_fix_20241101_20241205",
+      "snapshot_path": "../artifacts/fidelity_baselines/pipeline_live_like_debug_fix_2024_11_cash_2k/fidelity_baseline_snapshot.json",
+      "promotion_manifest_path": "../artifacts/fidelity_baselines/pipeline_live_like_debug_fix_2024_11_cash_2k/promotion_manifest.json",
       "metric_thresholds": {
-        "compare_live_fidelity_score": {"comparison": "min", "abs": 0.03, "label": "Score global compare-to-live"},
+        "degraded_reason_count": {"comparison": "max", "abs": 0.0, "label": "Nombre de motifs de dégradation"},
+        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture sentiment finale"},
+        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture ML finale"},
         "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances candidate→target divergentes"},
-        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances replay dégradées"}
+        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances replay dégradées"},
+        "broker_rejected_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres rejetés"},
+        "broker_timed_out_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres timeout"},
+        "broker_stale_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres stale"}
       }
     }
   ]
 }
+

@@ -937,6 +937,91 @@ class TestFidelityManifestSprint1:
         assert comparison["failed_count"] == 1
         assert comparison["failed_checks"][0]["name"] == "compare_live_fidelity_score"
 
+    def test_promote_fidelity_baseline_from_report_path_creates_stable_snapshot_and_manifest(self, tmp_path):
+        import json
+
+        from backtesting.fidelity import promote_fidelity_baseline_from_report_path
+
+        source_artifacts_dir = tmp_path / "ihm_backtesting_runs" / "run" / "20260521_demo_run" / "artifacts"
+        source_artifacts_dir.mkdir(parents=True, exist_ok=True)
+        replay_summary_path = source_artifacts_dir / "replay_diagnostic_summary.json"
+        replay_summary_path.write_text(
+            json.dumps({"session_count": 2, "degraded_session_count": 1}),
+            encoding="utf-8",
+        )
+        report_path = source_artifacts_dir / "report.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "final_value": 123456.0,
+                        "total_return_pct": 12.34,
+                        "sharpe_ratio": 1.5,
+                        "max_drawdown_pct": -7.0,
+                    },
+                    "params": {
+                        "start": "2024-01-01",
+                        "end": "2024-12-31",
+                        "engine_mode": "pipeline",
+                        "phase2_mode": "risk_execution",
+                        "phase3_mode": "execution_replay",
+                        "phase4_mode": "protection_replay",
+                        "phase5_mode": "watcher_replay",
+                        "phase7_mode": "exit_lifecycle_replay",
+                        "capital_preset_key": "capital_0_2000_eur",
+                    },
+                    "fidelity": {
+                        "taxonomy_version": 1,
+                        "engine_mode": "pipeline",
+                        "requested_window": {"start_date": "2024-01-01", "end_date": "2024-12-31"},
+                        "capital_preset_key": "capital_0_2000_eur",
+                        "strict_pit_requested": True,
+                        "strict_pit_satisfied": True,
+                        "degraded": False,
+                        "degraded_reasons": [],
+                        "coverage": {
+                            "sentiment": {"coverage_ratio_after": 1.0},
+                            "ml": {"coverage_ratio_after": 1.0},
+                        },
+                        "summary": {"degraded_components": []},
+                        "component_status": {
+                            "execution": {
+                                "details": {
+                                    "phase2_mode": "risk_execution",
+                                    "phase3_mode": "execution_replay",
+                                    "phase4_mode": "protection_replay",
+                                    "phase5_mode": "watcher_replay",
+                                    "phase7_mode": "exit_lifecycle_replay",
+                                }
+                            }
+                        },
+                    },
+                    "artifacts": {
+                        "replay_diagnostic_summary_json": str(replay_summary_path),
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        promoted_paths = promote_fidelity_baseline_from_report_path(
+            report_path,
+            baseline_id="pipeline_live_like_reference",
+            destination_root=tmp_path / "fidelity_baselines",
+            label="Référence pipeline live-like",
+            promoted_at="2026-05-21",
+        )
+
+        snapshot = json.loads(promoted_paths["fidelity_baseline_snapshot_json"].read_text(encoding="utf-8"))
+        manifest = json.loads(promoted_paths["fidelity_baseline_promotion_manifest_json"].read_text(encoding="utf-8"))
+
+        assert snapshot["baseline_id"] == "pipeline_live_like_reference"
+        assert snapshot["metrics"]["replay_degraded_session_ratio"] == pytest.approx(0.5)
+        assert manifest["baseline_id"] == "pipeline_live_like_reference"
+        assert manifest["promoted_at"] == "2026-05-21"
+        assert manifest["source_run"]["run_id"] == "20260521_demo_run"
+        assert manifest["storage_convention"]["snapshot_filename"] == "fidelity_baseline_snapshot.json"
+
 
 # ---------------------------------------------------------------------------
 # Phase E.3 (refactor v2) — _RunState invariant

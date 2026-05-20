@@ -347,8 +347,8 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "phase4_mode", "Explication": "off = comportement Phase 3, protection_replay = rejoue les protections TP/stop/trailing issues des child intents d'exécution.", "Défaut": "off"},
             {"Paramètre": "phase5_mode", "Explication": "off = comportement Phase 4, watcher_replay = rejoue les transitions du watcher de protection (trigger -> promotion trailing) dans le moteur.", "Défaut": "off"},
             {"Paramètre": "phase7_mode", "Explication": "off = comportement Phase 5, exit_lifecycle_replay = rejoue l'issue terminale des child orders et l'annulation OCO du sibling.", "Défaut": "off"},
-            {"Paramètre": "fidelity_baseline_id", "Explication": "Identifiant optionnel de baseline fidélité à comparer au run courant (Sprint 6).", "Défaut": "None"},
-            {"Paramètre": "fidelity_baseline_catalog", "Explication": "Chemin optionnel vers le catalogue JSON des baselines fidélité. Si vide, la comparaison n'est pas déclenchée automatiquement.", "Défaut": "None"},
+            {"Paramètre": "fidelity_baseline_id", "Explication": "Identifiant optionnel de baseline fidélité promue à comparer au run courant (Sprint 6).", "Défaut": "None"},
+            {"Paramètre": "fidelity_baseline_catalog", "Explication": "Chemin optionnel vers le catalogue JSON des baselines fidélité. Convention stable recommandée : `config/fidelity_baseline_catalog.json` pointant vers `artifacts/fidelity_baselines/<baseline_id>/...`.", "Défaut": "None"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
             {"Paramètre": "score_column", "Explication": "Colonne de score privilégiée pour le replay : auto / walk-forward / sentiment / final.", "Défaut": "auto"},
             {"Paramètre": "walk_forward_artifacts_dir", "Explication": "Répertoire racine optionnel des artefacts de calibration walk-forward à appliquer au run standard.", "Défaut": "None"},
@@ -411,6 +411,48 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
 def _render_reference_table(kind: str) -> None:
     with st.expander("📘 Référence complète des paramètres", expanded=False):
         st.dataframe(pd.DataFrame(_parameter_reference_rows(kind)), use_container_width=True, hide_index=True)
+
+
+def _default_fidelity_baseline_catalog_path() -> Path:
+    return PROJECT_ROOT / "config" / "fidelity_baseline_catalog.json"
+
+
+def _build_fidelity_baseline_catalog_rows(catalog_path: Path | None = None) -> pd.DataFrame:
+    resolved_catalog_path = catalog_path or _default_fidelity_baseline_catalog_path()
+    if not resolved_catalog_path.exists() or not resolved_catalog_path.is_file():
+        return pd.DataFrame()
+    try:
+        payload = json.loads(resolved_catalog_path.read_text(encoding="utf-8"))
+    except Exception:
+        return pd.DataFrame()
+    baselines = payload.get("baselines", []) if isinstance(payload, dict) else []
+    if not isinstance(baselines, list) or not baselines:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for entry in baselines:
+        if not isinstance(entry, dict):
+            continue
+        requested_window = entry.get("requested_window", {})
+        phase_modes = entry.get("phase_modes", {})
+        promotion_manifest_path = entry.get("promotion_manifest_path")
+        rows.append(
+            {
+                "Baseline": _coerce_metric_text(entry.get("baseline_id")),
+                "Libellé": _coerce_metric_text(entry.get("label")),
+                "Fenêtre": "{} → {}".format(
+                    _coerce_metric_text(requested_window.get("start_date") if isinstance(requested_window, dict) else None),
+                    _coerce_metric_text(requested_window.get("end_date") if isinstance(requested_window, dict) else None),
+                ),
+                "Phases": ", ".join(
+                    f"{key}={value}"
+                    for key, value in sorted(phase_modes.items())
+                    if str(value or "").strip()
+                ) if isinstance(phase_modes, dict) and phase_modes else "—",
+                "Snapshot": _coerce_metric_text(entry.get("snapshot_path")),
+                "Manifest": _coerce_metric_text(promotion_manifest_path),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _build_pipeline_pit_status_message(diagnostic: dict[str, object]) -> tuple[str, str]:
@@ -1125,8 +1167,15 @@ def _build_run_options() -> BacktestRunOptions:
             "Catalogue baseline fidélité (optionnel)",
             value=cast(str, st.session_state.get("bt_run_fidelity_baseline_catalog", "")),
             key="bt_run_fidelity_baseline_catalog",
-            help="Chemin du catalogue JSON des baselines. Renseignez-le seulement si vous souhaitez exécuter la comparaison Sprint 6 sur ce run.",
+            help="Chemin du catalogue JSON des baselines. Convention stable recommandée : `config/fidelity_baseline_catalog.json`, pointant vers des snapshots promus sous `artifacts/fidelity_baselines/`.",
         )
+    default_catalog_rows = _build_fidelity_baseline_catalog_rows()
+    st.caption(
+        "Convention stable Sprint 6 : `config/fidelity_baseline_catalog.json` référence des snapshots promus dans `artifacts/fidelity_baselines/<baseline_id>/` (snapshot + promotion manifest)."
+    )
+    if not default_catalog_rows.empty:
+        with st.expander("🧱 Baselines fidélité promues disponibles", expanded=False):
+            st.dataframe(default_catalog_rows, use_container_width=True, hide_index=True)
 
     _render_pipeline_pit_hint(
         engine_mode=engine_mode,

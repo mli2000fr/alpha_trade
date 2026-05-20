@@ -706,6 +706,27 @@ Le Sprint 6 est maintenant **livré sur un premier slice complet et additif**, c
 - les seuils initiaux sont prudents et devront être recalibrés après observation de fenêtres live plus nombreuses ;
 - la comparaison reste compacte : elle vise la détection de dérive, pas encore l’explication causale exhaustive de chaque point d’écart.
 
+#### Étape suivante réalisée après la clôture initiale Sprint 6
+- promotion effective de **plusieurs baselines réelles** à partir de runs de référence déjà historisés dans `artifacts/ihm_backtesting_runs/run/.../artifacts/report.json` ;
+- adoption d’une **convention de stockage stable** sous `artifacts/fidelity_baselines/<baseline_id>/` avec :
+  - `fidelity_baseline_snapshot.json` ;
+  - `promotion_manifest.json` ;
+- ajout dans `backtesting/fidelity.py` d’un mécanisme de promotion depuis un `report.json` réel pour figer ces deux artefacts sans réécriture manuelle ;
+- stabilisation du catalogue `config/fidelity_baseline_catalog.json` autour de chemins relatifs portables vers ces snapshots promus ;
+- enrichissement passif de l’IHM backtesting avec rappel de la convention stable et aperçu tabulaire des baselines promues disponibles depuis le catalogue par défaut ;
+- cohérence IHM revalidée :
+  - aucun changement de clé racine dans `report.json` ;
+  - aucun impact sur les runs historiques ;
+  - les nouveaux éléments Sprint 6 restent strictement additifs et visibles seulement si présents.
+
+#### Résultat concret de cette étape suivante
+- le dépôt ne contient plus seulement le **moteur de comparaison**, mais aussi un **socle promu de références réelles** ;
+- la procédure de promotion est désormais industrialisable et traçable via `promotion_manifest.json` ;
+- l’utilisateur IHM dispose d’un repère stable entre :
+  - le catalogue (`config/fidelity_baseline_catalog.json`) ;
+  - les snapshots promus (`artifacts/fidelity_baselines/...`) ;
+  - les artefacts de comparaison produits par un nouveau run.
+
 ---
 
 ## 10. Conclusion

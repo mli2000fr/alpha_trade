@@ -2044,6 +2044,14 @@ def save_fidelity_baseline_snapshot(snapshot: Mapping[str, Any], output_dir: Pat
     return filepath
 
 
+def save_fidelity_baseline_promotion_manifest(manifest: Mapping[str, Any], output_dir: Path) -> Path:
+    """Sauvegarde le manifeste de promotion associé à une baseline figée."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filepath = output_dir / "promotion_manifest.json"
+    filepath.write_text(json.dumps(dict(manifest), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return filepath
+
+
 def _load_json_mapping(path: Path) -> dict[str, Any] | None:
     if not path.exists() or not path.is_file():
         return None
@@ -2052,6 +2060,199 @@ def _load_json_mapping(path: Path) -> dict[str, Any] | None:
     except Exception:
         return None
     return dict(payload) if isinstance(payload, Mapping) else None
+
+
+def _resolve_report_artifacts_dir(source_report_path: Path | None) -> Path | None:
+    if source_report_path is None:
+        return None
+    return source_report_path.parent if source_report_path.name.lower() == "report.json" else source_report_path
+
+
+def _load_json_artifact_from_report(
+    artifacts: Mapping[str, Any],
+    artifact_key: str,
+    *,
+    artifacts_dir: Path | None,
+) -> dict[str, Any] | None:
+    artifact_path_raw = str(artifacts.get(artifact_key) or "").strip()
+    if not artifact_path_raw:
+        return None
+    artifact_path = Path(artifact_path_raw)
+    if not artifact_path.is_absolute() and artifacts_dir is not None:
+        artifact_path = (artifacts_dir / artifact_path).resolve()
+    return _load_json_mapping(artifact_path)
+
+
+def _extract_run_id_from_report_path(source_report_path: Path | None) -> str | None:
+    if source_report_path is None:
+        return None
+    artifacts_dir = _resolve_report_artifacts_dir(source_report_path)
+    if artifacts_dir is None:
+        return None
+    run_dir = artifacts_dir.parent if artifacts_dir.name.lower() == "artifacts" else artifacts_dir
+    text = str(run_dir.name or "").strip()
+    return text or None
+
+
+def build_fidelity_baseline_promotion_manifest(
+    *,
+    baseline_id: str,
+    snapshot: Mapping[str, Any],
+    source_report: Mapping[str, Any],
+    baseline_dir: Path,
+    label: str | None = None,
+    source_report_path: Path | None = None,
+    source_run_id: str | None = None,
+    promoted_at: str | None = None,
+) -> dict[str, Any]:
+    """Construit le manifeste stable d'une baseline promue."""
+    source_summary = source_report.get("summary", {}) if isinstance(source_report.get("summary", {}), Mapping) else {}
+    source_params = source_report.get("params", {}) if isinstance(source_report.get("params", {}), Mapping) else {}
+    source_artifacts = source_report.get("artifacts", {}) if isinstance(source_report.get("artifacts", {}), Mapping) else {}
+    resolved_source_run_id = _sanitize_baseline_id(source_run_id) or _extract_run_id_from_report_path(source_report_path)
+    snapshot_path = baseline_dir / "fidelity_baseline_snapshot.json"
+    return {
+        "promotion_version": 1,
+        "baseline_id": baseline_id,
+        "label": str(label or baseline_id),
+        "promoted_at": str(promoted_at or date.today().isoformat()),
+        "storage_convention": {
+            "baseline_dir": str(baseline_dir),
+            "snapshot_filename": "fidelity_baseline_snapshot.json",
+            "manifest_filename": "promotion_manifest.json",
+        },
+        "source_run": {
+            "run_id": resolved_source_run_id,
+            "report_json": str(source_report_path) if source_report_path is not None else None,
+            "artifacts_dir": str(_resolve_report_artifacts_dir(source_report_path)) if source_report_path is not None else None,
+        },
+        "source_summary": {
+            "requested_window": dict(cast(Mapping[str, Any], source_params.get("requested_window", snapshot.get("requested_window", {}))))
+            if isinstance(source_params.get("requested_window", snapshot.get("requested_window", {})), Mapping)
+            else dict(cast(Mapping[str, Any], snapshot.get("requested_window", {}))) if isinstance(snapshot.get("requested_window", {}), Mapping) else {},
+            "start": source_params.get("start"),
+            "end": source_params.get("end"),
+            "engine_mode": source_params.get("engine_mode", snapshot.get("engine_mode")),
+            "phase_modes": {
+                key: source_params.get(key, cast(Mapping[str, Any], snapshot.get("phase_modes", {})).get(key) if isinstance(snapshot.get("phase_modes", {}), Mapping) else None)
+                for key in ("phase2_mode", "phase3_mode", "phase4_mode", "phase5_mode", "phase7_mode")
+            },
+            "capital_preset_key": source_params.get("capital_preset_key", snapshot.get("capital_preset_key")),
+            "final_value": source_summary.get("final_value"),
+            "total_return_pct": source_summary.get("total_return_pct"),
+            "sharpe_ratio": source_summary.get("sharpe_ratio"),
+            "max_drawdown_pct": source_summary.get("max_drawdown_pct"),
+        },
+        "source_artifacts": {
+            "available_keys": sorted(str(key) for key in source_artifacts),
+            "report_artifact_count": len(source_artifacts),
+        },
+        "baseline_snapshot": {
+            "path": str(snapshot_path),
+            "snapshot_version": snapshot.get("snapshot_version", 1),
+            "available_sections": dict(cast(Mapping[str, Any], snapshot.get("available_sections", {}))) if isinstance(snapshot.get("available_sections", {}), Mapping) else {},
+            "metric_names": sorted(str(metric_name) for metric_name in cast(Mapping[str, Any], snapshot.get("metrics", {})).keys()) if isinstance(snapshot.get("metrics", {}), Mapping) else [],
+        },
+    }
+
+
+def promote_fidelity_baseline_from_report(
+    report_payload: Mapping[str, Any],
+    *,
+    baseline_id: str,
+    destination_root: Path,
+    label: str | None = None,
+    source_report_path: Path | None = None,
+    source_run_id: str | None = None,
+    promoted_at: str | None = None,
+) -> dict[str, Path]:
+    """Promeut une baseline stable à partir d'un `report.json` de run réel."""
+    normalized_baseline_id = _sanitize_baseline_id(baseline_id)
+    if normalized_baseline_id is None:
+        raise ValueError("baseline_id doit être renseigné pour promouvoir une baseline fidélité.")
+    fidelity_manifest = report_payload.get("fidelity", {})
+    if not isinstance(fidelity_manifest, Mapping) or not fidelity_manifest:
+        raise ValueError("report_payload doit contenir un bloc `fidelity` exploitable.")
+    report_params = report_payload.get("params", {}) if isinstance(report_payload.get("params", {}), Mapping) else {}
+    artifacts = report_payload.get("artifacts", {})
+    artifacts_mapping = dict(artifacts) if isinstance(artifacts, Mapping) else {}
+    artifacts_dir = _resolve_report_artifacts_dir(source_report_path)
+    replay_diagnostic_summary = _load_json_artifact_from_report(
+        artifacts_mapping,
+        "replay_diagnostic_summary_json",
+        artifacts_dir=artifacts_dir,
+    )
+    candidate_target_parity_summary = _load_json_artifact_from_report(
+        artifacts_mapping,
+        "candidate_target_parity_summary_json",
+        artifacts_dir=artifacts_dir,
+    )
+    compare_to_live_summary = _load_json_artifact_from_report(
+        artifacts_mapping,
+        "compare_to_live_summary_json",
+        artifacts_dir=artifacts_dir,
+    )
+    execution_broker_like_summary = _load_json_artifact_from_report(
+        artifacts_mapping,
+        "execution_broker_like_summary_json",
+        artifacts_dir=artifacts_dir,
+    )
+    snapshot = build_fidelity_baseline_snapshot(
+        fidelity_manifest=fidelity_manifest,
+        replay_diagnostic_summary=replay_diagnostic_summary,
+        candidate_target_parity_summary=candidate_target_parity_summary,
+        compare_to_live_summary=compare_to_live_summary,
+        execution_broker_like_summary=execution_broker_like_summary,
+        baseline_id=normalized_baseline_id,
+    )
+    report_phase_modes = _normalize_phase_modes_from_payload(cast(Mapping[str, Any], report_params))
+    snapshot_phase_modes = snapshot.get("phase_modes", {})
+    if report_phase_modes and isinstance(snapshot_phase_modes, Mapping):
+        snapshot["phase_modes"] = {
+            **dict(report_phase_modes),
+            **dict(snapshot_phase_modes),
+        }
+    baseline_dir = destination_root / normalized_baseline_id
+    snapshot_path = save_fidelity_baseline_snapshot(snapshot, baseline_dir)
+    promotion_manifest = build_fidelity_baseline_promotion_manifest(
+        baseline_id=normalized_baseline_id,
+        snapshot=snapshot,
+        source_report=report_payload,
+        baseline_dir=baseline_dir,
+        label=label,
+        source_report_path=source_report_path,
+        source_run_id=source_run_id,
+        promoted_at=promoted_at,
+    )
+    promotion_manifest_path = save_fidelity_baseline_promotion_manifest(promotion_manifest, baseline_dir)
+    return {
+        "fidelity_baseline_snapshot_json": snapshot_path,
+        "fidelity_baseline_promotion_manifest_json": promotion_manifest_path,
+    }
+
+
+def promote_fidelity_baseline_from_report_path(
+    report_path: Path,
+    *,
+    baseline_id: str,
+    destination_root: Path,
+    label: str | None = None,
+    source_run_id: str | None = None,
+    promoted_at: str | None = None,
+) -> dict[str, Path]:
+    """Charge un `report.json` puis promeut la baseline correspondante."""
+    report_payload = _load_json_mapping(report_path)
+    if report_payload is None:
+        raise ValueError(f"Impossible de charger un report JSON exploitable depuis `{report_path}`.")
+    return promote_fidelity_baseline_from_report(
+        report_payload,
+        baseline_id=baseline_id,
+        destination_root=destination_root,
+        label=label,
+        source_report_path=report_path,
+        source_run_id=source_run_id,
+        promoted_at=promoted_at,
+    )
 
 
 def _resolve_baseline_entry(
