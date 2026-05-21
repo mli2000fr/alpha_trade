@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from sqlalchemy import inspect, text
@@ -144,6 +144,47 @@ def load_universe_latest_bar_date(
     latest_date = _coerce_date_value(row["latest_date"] if row else None)
     LOGGER.info("load_universe_latest_bar_date symbols=%s latest_date=%s", len(symbols) if symbols else "ALL", latest_date)
     return latest_date
+
+
+def load_available_trading_dates(
+    engine: Engine,
+    symbols: list[str] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[date]:
+    """Retourne les dates de trading distinctes disponibles dans ``stock_bars_daily``."""
+    where_clauses: list[str] = []
+    params: dict[str, object] = {}
+    if symbols:
+        in_clause, symbol_params = _build_in_clause(symbols)
+        params.update(symbol_params)
+        where_clauses.append(f"symbol IN ({in_clause})")
+    if start_date is not None:
+        where_clauses.append("`date` >= :start_date")
+        params["start_date"] = start_date
+    if end_date is not None:
+        where_clauses.append("`date` <= :end_date")
+        params["end_date"] = end_date
+    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    query = text(
+        "SELECT DISTINCT `date` AS trading_date "
+        f"FROM stock_bars_daily {where_clause} ORDER BY `date`"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(query, params).mappings().all()
+    trading_dates = [
+        trading_date
+        for row in rows
+        if (trading_date := _coerce_date_value(row.get("trading_date"))) is not None
+    ]
+    LOGGER.info(
+        "load_available_trading_dates symbols=%s start_date=%s end_date=%s count=%d",
+        len(symbols) if symbols else "ALL",
+        start_date,
+        end_date,
+        len(trading_dates),
+    )
+    return trading_dates
 
 
 def load_symbol_bars(

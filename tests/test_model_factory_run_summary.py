@@ -24,6 +24,7 @@ def _make_opts(**overrides) -> argparse.Namespace:
         walkforward=True,
         ml_mode="rebuild-all",
         training_start_date=date(2020, 1, 1),
+        training_end_date=None,
         champion_min_runs=0,
         champion_min_days=0,
     )
@@ -35,6 +36,7 @@ def _make_cfg() -> TrainingConfig:
     return TrainingConfig(
         data=DataConfig(
             training_start_date=date(2020, 1, 1),
+            training_end_date=date(2020, 12, 31),
             selector_universe_signal_modes=("strict",),
             selector_universe_max_candidate_rank=25,
             selector_universe_exclude_earnings_blackout=True,
@@ -70,6 +72,7 @@ def test_build_run_summary_contains_required_fields() -> None:
     assert summary["walkforward_enabled"] is True
     assert summary["ml_mode"] == "rebuild-all"
     assert summary["training_start_date"] == "2020-01-01"
+    assert summary["training_end_date"] == "2020-12-31"
     assert summary["selector_universe_signal_modes"] == ["strict"]
     assert summary["selector_universe_max_candidate_rank"] == 25
     assert summary["selector_universe_exclude_earnings_blackout"] is True
@@ -127,6 +130,7 @@ def test_run_summary_round_trips_through_json() -> None:
     assert decoded["walkforward_enabled"] is False
     assert decoded["ml_mode"] == "rebuild-missing"
     assert decoded["training_start_date"] == "2020-01-01"
+    assert decoded["training_end_date"] == "2020-12-31"
 
 
 def test_build_run_summary_includes_runtime_observability_fields() -> None:

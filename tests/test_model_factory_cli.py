@@ -1,5 +1,7 @@
 from datetime import date
 
+import pandas as pd
+
 from modelFactory import cli
 
 def test_cli_importable():
@@ -154,6 +156,67 @@ def test_cli_parser_accepts_training_start_date() -> None:
     ])
 
     assert opts.training_start_date == date(2019, 7, 1)
+
+
+def test_cli_parser_accepts_training_end_date_for_historical_predict() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "predict",
+        "--training-start-date", "2019-07-01",
+        "--training-end-date", "2019-08-31",
+    ])
+
+    assert opts.training_start_date == date(2019, 7, 1)
+    assert opts.training_end_date == date(2019, 8, 31)
+
+
+def test_cli_main_predict_historical_loops_over_available_trading_dates(monkeypatch) -> None:
+    import modelFactory.db_registry as db_registry
+    import modelFactory.predictor as predictor
+
+    prediction_calls: list[tuple[date | None, date | None]] = []
+    inserted_batches: list[pd.DataFrame] = []
+    emitted_summaries: list[dict[str, object]] = []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "apply_reproducibility", lambda *args, **kwargs: {"seed": 42, "deterministic_applied": True, "deterministic_requested": True})
+    monkeypatch.setattr(cli, "get_sqlalchemy_engine", lambda: object())
+    monkeypatch.setattr(cli, "load_available_trading_dates", lambda engine, symbols=None, start_date=None, end_date=None: [date(2022, 1, 3), date(2022, 1, 4)])
+    monkeypatch.setattr(db_registry, "load_symbols_for_source", lambda engine, source: ["AAPL", "MSFT"])
+    monkeypatch.setattr(db_registry, "filter_symbols_by_selector_context", lambda engine, symbols, **kwargs: (symbols, {"enabled": False, "applied": False}))
+    monkeypatch.setattr(db_registry, "insert_predictions", lambda engine, preds: inserted_batches.append(preds.copy()) or len(preds))
+    monkeypatch.setattr(
+        predictor,
+        "predict_batch",
+        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto": prediction_calls.append((prediction_date, as_of_date)) or pd.DataFrame([
+            {
+                "symbol": symbols[0],
+                "prediction_date": prediction_date,
+                "predicted_proba": 0.7,
+                "predicted_class": 1,
+                "run_id": f"run-{prediction_date}",
+            }
+        ]),
+    )
+    monkeypatch.setattr(cli, "_emit_run_summary", lambda summary: emitted_summaries.append(summary))
+
+    cli.main([
+        "--mode", "predict",
+        "--symbol-source", "candidates",
+        "--training-start-date", "2022-01-01",
+        "--training-end-date", "2022-01-04",
+    ])
+
+    assert prediction_calls == [
+        (date(2022, 1, 3), date(2022, 1, 3)),
+        (date(2022, 1, 4), date(2022, 1, 4)),
+    ]
+    assert len(inserted_batches) == 1
+    inserted = inserted_batches[0]
+    assert list(inserted["prediction_date"]) == [date(2022, 1, 3), date(2022, 1, 4)]
+    assert emitted_summaries[-1]["historical_prediction_range_enabled"] is True
+    assert emitted_summaries[-1]["training_end_date"] == "2022-01-04"
 
 
 def test_cli_parser_accepts_seed_and_no_deterministic() -> None:

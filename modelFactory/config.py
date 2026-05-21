@@ -39,6 +39,7 @@ class DataConfig:
     target_down_threshold: float = 0.0
     decision_threshold: float = 0.5
     training_start_date: date | None = date(2020, 1, 1)
+    training_end_date: date | None = None
     selector_universe_signal_modes: tuple[str, ...] = ()
     selector_universe_max_candidate_rank: int | None = None
     selector_universe_exclude_earnings_blackout: bool = False
@@ -72,6 +73,14 @@ class DataConfig:
             raise ValueError("benchmark_symbol ne doit pas être vide.")
         if self.training_start_date is not None and not isinstance(self.training_start_date, date):
             raise ValueError("training_start_date doit être une instance date ou None.")
+        if self.training_end_date is not None and not isinstance(self.training_end_date, date):
+            raise ValueError("training_end_date doit être une instance date ou None.")
+        if (
+            self.training_start_date is not None
+            and self.training_end_date is not None
+            and self.training_end_date < self.training_start_date
+        ):
+            raise ValueError("training_end_date doit être >= training_start_date.")
         if self.selector_universe_max_candidate_rank is not None and self.selector_universe_max_candidate_rank < 1:
             raise ValueError("selector_universe_max_candidate_rank doit être >= 1.")
 

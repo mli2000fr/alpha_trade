@@ -72,7 +72,7 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
     import database.connection as db_connection
 
     monkeypatch.setattr(db_connection, "get_sqlalchemy_engine", lambda: object())
-    monkeypatch.setattr(orchestrator, "load_symbol_latest_bar_date", lambda engine, symbol: date(2026, 4, 17))
+    monkeypatch.setattr(orchestrator, "load_symbol_latest_bar_date", lambda engine, symbol, end_date=None: date(2026, 4, 17))
     monkeypatch.setattr(orchestrator, "load_symbol_bars", lambda engine, symbol, end_date=None, start_date=None: {"symbol": symbol, "start_date": start_date, "end_date": end_date})
     monkeypatch.setattr(orchestrator, "load_benchmark_bars", lambda engine, benchmark_symbol, end_date=None, start_date=None: "benchmark")
     monkeypatch.setattr(orchestrator, "load_symbol_sentiment", lambda engine, symbol, end_date=None, start_date=None: "sentiment")
@@ -105,7 +105,7 @@ def test_train_worker_loads_selector_context_when_enabled(monkeypatch) -> None:
     import database.connection as db_connection
 
     monkeypatch.setattr(db_connection, "get_sqlalchemy_engine", lambda: object())
-    monkeypatch.setattr(orchestrator, "load_symbol_latest_bar_date", lambda engine, symbol: date(2026, 4, 17))
+    monkeypatch.setattr(orchestrator, "load_symbol_latest_bar_date", lambda engine, symbol, end_date=None: date(2026, 4, 17))
     monkeypatch.setattr(orchestrator, "load_symbol_bars", lambda engine, symbol, end_date=None, start_date=None: {"symbol": symbol})
     monkeypatch.setattr(orchestrator, "load_symbol_selector_context", lambda engine, symbol, end_date=None, start_date=None: {"symbol": symbol, "end_date": end_date, "start_date": start_date})
 
@@ -436,7 +436,7 @@ def test_filter_symbols_by_mode_refresh_stale_keeps_only_outdated_models(monkeyp
     monkeypatch.setattr(
         orchestrator,
         "load_symbol_latest_bar_dates",
-        lambda engine, symbols: {"AAPL": date(2026, 4, 17), "MSFT": date(2026, 4, 17)},
+        lambda engine, symbols, end_date=None: {"AAPL": date(2026, 4, 17), "MSFT": date(2026, 4, 17)},
     )
 
     kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL", "MSFT"], mode="refresh-stale", cfg=cfg)
@@ -479,7 +479,7 @@ def test_filter_symbols_by_mode_refresh_stale_accepts_legacy_history_window_arti
     monkeypatch.setattr(
         orchestrator,
         "load_symbol_latest_bar_dates",
-        lambda engine, symbols: {"AAPL": date(2026, 4, 17)},
+        lambda engine, symbols, end_date=None: {"AAPL": date(2026, 4, 17)},
     )
 
     kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL"], mode="refresh-stale", cfg=cfg)
@@ -515,7 +515,76 @@ def test_filter_symbols_by_mode_refresh_stale_rebuilds_when_feature_contract_mis
     monkeypatch.setattr(
         orchestrator,
         "load_symbol_latest_bar_dates",
-        lambda engine, symbols: {"AAPL": date(2026, 4, 17)},
+        lambda engine, symbols, end_date=None: {"AAPL": date(2026, 4, 17)},
+    )
+
+    kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL"], mode="refresh-stale", cfg=cfg)
+
+    assert kept == ["AAPL"]
+
+
+def test_train_worker_uses_training_end_date_as_history_cutoff(monkeypatch) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(training_start_date=date(2020, 1, 1), training_end_date=date(2024, 12, 31)),
+        model=ModelConfig(max_epochs=1),
+        accelerator="cpu",
+    )
+    captured: dict[str, object] = {}
+
+    import database.connection as db_connection
+
+    monkeypatch.setattr(db_connection, "get_sqlalchemy_engine", lambda: object())
+
+    def _fake_latest_bar_date(engine, symbol, end_date=None):
+        captured["requested_end_date"] = end_date
+        return date(2024, 12, 31)
+
+    monkeypatch.setattr(orchestrator, "load_symbol_latest_bar_date", _fake_latest_bar_date)
+    monkeypatch.setattr(orchestrator, "load_symbol_bars", lambda engine, symbol, end_date=None, start_date=None: {"symbol": symbol, "end_date": end_date, "start_date": start_date})
+    monkeypatch.setattr(orchestrator, "train_symbol", lambda symbol, bars, cfg, engine, **kwargs: orchestrator.TrainResult(symbol, "run-1", "completed"))
+
+    result = orchestrator._train_worker("AAPL", cfg)
+
+    assert result.status == "completed"
+    assert captured["requested_end_date"] == date(2024, 12, 31)
+
+
+def test_filter_symbols_by_mode_refresh_stale_rebuilds_when_training_end_date_changes(monkeypatch, tmp_path) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(training_start_date=date(2020, 1, 1), training_end_date=date(2026, 4, 17)),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    current_fp = orchestrator.compute_feature_fingerprint(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
+    current_contract = build_feature_contract(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
+    symbol_dir = tmp_path / "AAPL"
+    symbol_dir.mkdir(parents=True, exist_ok=True)
+    with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "feature_fingerprint": current_fp,
+                "feature_columns": current_contract["feature_columns"],
+                "feature_contract": current_contract,
+                "trained_through_date": "2026-04-17",
+                "data": {"training_start_date": "2020-01-01", "training_end_date": "2026-04-16"},
+            },
+            fh,
+        )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "load_symbol_latest_bar_dates",
+        lambda engine, symbols, end_date=None: {"AAPL": date(2026, 4, 17)},
     )
 
     kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL"], mode="refresh-stale", cfg=cfg)

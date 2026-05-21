@@ -166,7 +166,11 @@ def train_global_model(
         cfg.data,
         enable_cross_sectional_features=(cfg.data.enable_cross_sectional_features and cfg.global_model.use_cross_sectional_features),
     )
-    history_end_date = load_universe_latest_bar_date(engine, symbols)
+    history_end_date = load_universe_latest_bar_date(
+        engine,
+        symbols,
+        end_date=effective_data_cfg.training_end_date,
+    )
     history_start_date = resolve_training_start_date(history_end_date, effective_data_cfg.training_start_date)
     universe_df = load_universe_bars(engine, symbols, end_date=history_end_date, start_date=history_start_date)
     if universe_df.empty:

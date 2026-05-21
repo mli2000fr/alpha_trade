@@ -370,32 +370,39 @@ def _resolve_ml_train_scope_preview(
     }
 
 
-def _render_ml_train_scope_block(
+def _render_ml_scope_block(
     options: PipelineLaunchOptions,
     *,
     workflow_active: bool,
     active_for_step: list[dict[str, object]],
     db_config: dict[str, str | None],
     all_runs: list[dict[str, object]],
+    step_key: str,
+    selectbox_key: str,
+    button_key: str,
+    button_label: str,
+    label_prefix: str,
+    source_attr: str,
+    historical_range: bool = False,
 ) -> None:
     disabled = workflow_active or bool(active_for_step)
     if workflow_active:
         st.caption("Workflow complet en cours : le lancement ML ciblé est temporairement désactivé.")
     elif active_for_step:
-        st.caption("Un run `ML Train` est déjà actif : le lancement ML ciblé attend la fin de ce run.")
+        st.caption(f"Un run `{label_prefix}` est déjà actif : le lancement ML ciblé attend la fin de ce run.")
 
     current_symbol_source = str(
-        st.session_state.get("pipeline_ml_train_symbol_source", getattr(options, "ml_train_symbol_source", "candidates"))
+        st.session_state.get(selectbox_key, getattr(options, source_attr, "candidates"))
     ).strip().lower()
     if current_symbol_source not in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
         current_symbol_source = "candidates"
 
     selected_symbol_source = str(
         st.selectbox(
-            "Univers de symboles à entraîner",
+            "Univers de symboles à prédire" if step_key == "ml_predict" else "Univers de symboles à entraîner",
             options=ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
             index=ML_TRAIN_SYMBOL_SOURCE_OPTIONS.index(current_symbol_source),
-            key="pipeline_ml_train_symbol_source",
+            key=selectbox_key,
             format_func=lambda value: ML_TRAIN_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
             help=(
                 "Choisissez le même type de périmètre que pour l'import news : snapshot courant, historique PIT, union large, "
@@ -453,21 +460,78 @@ def _render_ml_train_scope_block(
             st.warning("Aucun symbole ne serait entraîné avec les paramètres ML actuels.")
         elif sample_symbols:
             preview_suffix = " …" if symbol_count > len(sample_symbols) else ""
-            st.caption("Extrait des premiers symboles entraînés : `" + ", ".join(sample_symbols) + preview_suffix + "`")
+            verb = "prédits" if step_key == "ml_predict" else "entraînés"
+            st.caption(f"Extrait des premiers symboles {verb} : `" + ", ".join(sample_symbols) + preview_suffix + "`")
+
+    if historical_range:
+        start_date = str(getattr(options, "ml_training_start_date", "") or "").strip()
+        end_date = str(getattr(options, "ml_training_end_date", "") or "").strip()
+        if start_date and end_date:
+            st.caption(f"Fenêtre historique appliquée : `{start_date}` → `{end_date}`.")
 
     if st.button(
-        "Entraîner l'univers sélectionné",
-        key="run_pipeline_step_ml_train_scoped",
+        button_label,
+        key=button_key,
         use_container_width=True,
         disabled=disabled,
     ):
+        overrides: dict[str, object] = {source_attr: cast(Any, selected_symbol_source)}
+        if step_key == "ml_predict":
+            overrides["ml_predict_use_historical_range"] = historical_range
         _launch_pipeline_step(
-            "ml_train",
-            f"9. ML Train (Model Factory) — {ML_TRAIN_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)}",
-            replace(options, ml_train_symbol_source=cast(Any, selected_symbol_source)),
+            step_key,
+            f"{label_prefix} — {ML_TRAIN_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)}",
+            replace(options, **overrides),
             db_config,
             all_runs,
         )
+
+
+def _render_ml_train_scope_block(
+    options: PipelineLaunchOptions,
+    *,
+    workflow_active: bool,
+    active_for_step: list[dict[str, object]],
+    db_config: dict[str, str | None],
+    all_runs: list[dict[str, object]],
+) -> None:
+    _render_ml_scope_block(
+        options,
+        workflow_active=workflow_active,
+        active_for_step=active_for_step,
+        db_config=db_config,
+        all_runs=all_runs,
+        step_key="ml_train",
+        selectbox_key="pipeline_ml_train_symbol_source",
+        button_key="run_pipeline_step_ml_train_scoped",
+        button_label="Entraîner l'univers sélectionné",
+        label_prefix="9. ML Train (Model Factory)",
+        source_attr="ml_train_symbol_source",
+    )
+
+
+def _render_ml_predict_scope_block(
+    options: PipelineLaunchOptions,
+    *,
+    workflow_active: bool,
+    active_for_step: list[dict[str, object]],
+    db_config: dict[str, str | None],
+    all_runs: list[dict[str, object]],
+) -> None:
+    _render_ml_scope_block(
+        options,
+        workflow_active=workflow_active,
+        active_for_step=active_for_step,
+        db_config=db_config,
+        all_runs=all_runs,
+        step_key="ml_predict",
+        selectbox_key="pipeline_ml_predict_symbol_source",
+        button_key="run_pipeline_step_ml_predict_scoped",
+        button_label="Prédire l'univers sélectionné",
+        label_prefix="10. ML Predict",
+        source_attr="ml_predict_symbol_source",
+        historical_range=True,
+    )
 
 
 def _build_pipeline_run_context() -> tuple[
@@ -593,6 +657,15 @@ def _render_launchable_step_panel(
             if step.key == "ml_train":
                 st.divider()
                 _render_ml_train_scope_block(
+                    options,
+                    workflow_active=workflow_active,
+                    active_for_step=active_for_step,
+                    db_config=db_config,
+                    all_runs=all_runs,
+                )
+            if step.key == "ml_predict":
+                st.divider()
+                _render_ml_predict_scope_block(
                     options,
                     workflow_active=workflow_active,
                     active_for_step=active_for_step,

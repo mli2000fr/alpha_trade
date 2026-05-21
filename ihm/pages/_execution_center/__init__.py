@@ -2679,7 +2679,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
 
-        ml_scope_col1, ml_scope_col2 = st.columns(2)
+        ml_scope_col1, ml_scope_col2, ml_scope_col3 = st.columns(3)
         with ml_scope_col1:
             ml_mode = cast(
                 str,
@@ -2712,6 +2712,20 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     help="Date minimale des barres daily transmises au backend Model Factory. Le défaut `2020-01-01` permet de cadrer le training sur l'historique récent utile.",
                 ),
             )
+        with ml_scope_col3:
+            ml_training_end_date = cast(
+                date,
+                st.date_input(
+                    "Date de fin du training ML",
+                    value=_coerce_session_date(
+                        st.session_state.get("pipeline_ml_training_end_date", date.today().isoformat()),
+                        default=date.today(),
+                    ),
+                    key="pipeline_ml_training_end_date",
+                    format="YYYY-MM-DD",
+                    help="Date maximale incluse pour borner le training ML ciblé et les prédictions historiques ML Predict.",
+                ),
+            )
 
         st.caption(
             "Rappel modes ML : `rebuild-all` = tout reconstruire ; `rebuild-missing` = seulement les symboles sans modèle ; "
@@ -2728,6 +2742,17 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "stock_bars_daily",
         }:
             ml_train_symbol_source = "candidates"
+        ml_predict_symbol_source = str(
+            st.session_state.get("pipeline_ml_predict_symbol_source", "candidates") or "candidates"
+        ).strip().lower()
+        if ml_predict_symbol_source not in {
+            "stock_scores",
+            "stock_scores_history",
+            "stock_scores_all",
+            "candidates",
+            "stock_bars_daily",
+        }:
+            ml_predict_symbol_source = "candidates"
 
         with st.expander("ML — Filtrage d'univers optionnel via le contexte selector", expanded=False):
             st.caption(
@@ -3548,7 +3573,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_hidden_size=int(ml_hidden_size),
             ml_mode=cast(Any, ml_mode),
             ml_training_start_date=ml_training_start_date.isoformat(),
+            ml_training_end_date=ml_training_end_date.isoformat(),
             ml_train_symbol_source=cast(Any, ml_train_symbol_source),
+            ml_predict_symbol_source=cast(Any, ml_predict_symbol_source),
             ml_selector_universe_signal_modes=tuple(
                 str(value).strip().lower()
                 for value in ml_selector_universe_signal_modes_selection

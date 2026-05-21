@@ -29,6 +29,7 @@ from modelFactory.features import normalize_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.db_registry import (
     filter_symbols_by_selector_context,
+    load_candidate_symbols,
     load_symbols_for_source,
     replace_model_governance,
 )
@@ -204,7 +205,11 @@ def _filter_symbols_by_mode(
     artifacts_dir = Path(cfg.artifacts_dir)
     kept: list[str] = []
     skipped: list[str] = []
-    latest_dates = load_symbol_latest_bar_dates(engine, symbols) if mode == "refresh-stale" else {}
+    latest_dates = (
+        load_symbol_latest_bar_dates(engine, symbols, end_date=cfg.data.training_end_date)
+        if mode == "refresh-stale"
+        else {}
+    )
     for symbol in symbols:
         config_path = artifacts_dir / symbol / "config.json"
         if not config_path.exists():
@@ -223,6 +228,7 @@ def _filter_symbols_by_mode(
 
         persisted_data = cfg_data.get("data") or {}
         persisted_training_start_date = _parse_iso_date(persisted_data.get("training_start_date"))
+        persisted_training_end_date = _parse_iso_date(persisted_data.get("training_end_date"))
         persisted_contract = cfg_data.get("feature_contract")
         persisted_contract_columns = normalize_feature_columns((persisted_contract or {}).get("feature_columns") if isinstance(persisted_contract, dict) else None)
         persisted_contract_fp = str((persisted_contract or {}).get("feature_fingerprint") or "").strip() if isinstance(persisted_contract, dict) else ""
@@ -258,13 +264,16 @@ def _filter_symbols_by_mode(
         if persisted_training_start_date != cfg.data.training_start_date:
             kept.append(symbol)
             continue
+        if persisted_training_end_date != cfg.data.training_end_date:
+            kept.append(symbol)
+            continue
         if trained_through_date is None or latest_available_date is None or trained_through_date < latest_available_date:
             kept.append(symbol)
             continue
         skipped.append(symbol)
     LOGGER.info(
-        "ml_mode=%s current_fp=%s training_start_date=%s symbols_kept=%d symbols_skipped=%d",
-        mode, current_fp, cfg.data.training_start_date, len(kept), len(skipped),
+        "ml_mode=%s current_fp=%s training_start_date=%s training_end_date=%s symbols_kept=%d symbols_skipped=%d",
+        mode, current_fp, cfg.data.training_start_date, cfg.data.training_end_date, len(kept), len(skipped),
     )
     return kept
 
@@ -281,7 +290,7 @@ def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] 
         context=f"orchestrator_worker:{symbol}",
     )
     engine = get_sqlalchemy_engine()
-    history_end_date = load_symbol_latest_bar_date(engine, symbol)
+    history_end_date = load_symbol_latest_bar_date(engine, symbol, end_date=cfg.data.training_end_date)
     history_start_date = resolve_training_start_date(history_end_date, cfg.data.training_start_date)
     bars = load_symbol_bars(engine, symbol, end_date=history_end_date, start_date=history_start_date)
     benchmark_df = None
@@ -352,7 +361,13 @@ def run_training_batch(
         Liste de TrainResult.
     """
     if symbols is None:
-        symbols = load_symbols_for_source(engine, symbol_source)
+        if symbol_source == "candidates":
+            try:
+                symbols = load_candidate_symbols(engine)
+            except Exception:  # noqa: BLE001 - compatibilité legacy tests / fallback source générique
+                symbols = load_symbols_for_source(engine, symbol_source)
+        else:
+            symbols = load_symbols_for_source(engine, symbol_source)
 
     if symbols:
         symbols, selector_filter_summary = filter_symbols_by_selector_context(

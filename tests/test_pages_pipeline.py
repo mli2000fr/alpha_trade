@@ -1063,6 +1063,62 @@ def test_render_ml_train_scope_block_launches_selected_symbol_source(monkeypatch
     assert options.ml_train_symbol_source == "stock_scores_all"
 
 
+def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_historical_range(monkeypatch) -> None:
+    session_state: dict[str, object] = {}
+    launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+
+    def _fake_selectbox(_label, *args, **kwargs):
+        key = str(kwargs.get("key") or "")
+        session_state[key] = "stock_scores_history"
+        return "stock_scores_history"
+
+    monkeypatch.setattr(pipeline.st, "selectbox", _fake_selectbox)
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_ml_train_scope_preview",
+        lambda *args, **kwargs: {
+            "raw_symbol_count": 8,
+            "symbol_count": 5,
+            "sample_symbols": ["AAPL", "MSFT"],
+            "selector_summary": {"enabled": False, "applied": False, "input_symbol_count": 8, "output_symbol_count": 5},
+        },
+    )
+    monkeypatch.setattr(
+        pipeline.st,
+        "button",
+        lambda _label, *args, **kwargs: str(kwargs.get("key") or "") == "run_pipeline_step_ml_predict_scoped",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_pipeline_step",
+        lambda step_key, step_label, options, db_config, all_runs: launch_calls.append((step_key, step_label, options)),
+    )
+
+    pipeline._render_ml_predict_scope_block(
+        pipeline.PipelineLaunchOptions(
+            ml_training_start_date="2022-01-01",
+            ml_training_end_date="2022-01-31",
+        ),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert len(launch_calls) == 1
+    step_key, step_label, options = launch_calls[0]
+    assert step_key == "ml_predict"
+    assert "Historique PIT stock_scores_history" in step_label
+    assert options.ml_predict_symbol_source == "stock_scores_history"
+    assert options.ml_predict_use_historical_range is True
+
+
 def test_render_watcher_handoff_panel_uses_pipeline_style_expander(monkeypatch) -> None:
     expander_labels: list[str] = []
 

@@ -9,9 +9,12 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import pandas as pd
+
 from common.utils import configure_root_logging
 from core.run_summary import attach_schema_version
 from database.connection import get_sqlalchemy_engine
+from modelFactory.data_loader import load_available_trading_dates
 from modelFactory.features import get_feature_columns
 from modelFactory.config import (
     BaselineConfig,
@@ -156,6 +159,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=date(2020, 1, 1),
         help="Date minimale d'historique utilisée au training (format YYYY-MM-DD)",
     )
+    p.add_argument(
+        "--training-end-date",
+        type=_parse_iso_date_arg,
+        default=None,
+        help="Date maximale incluse du training / backfill de prédictions historiques (format YYYY-MM-DD)",
+    )
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--hidden-size", type=int, default=128)
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
@@ -288,6 +297,7 @@ def main(args: list[str] | None = None) -> None:
             sequence_length=opts.sequence_length,
             forecast_horizon=opts.forecast_horizon,
             training_start_date=opts.training_start_date,
+            training_end_date=opts.training_end_date,
             include_sentiment_features=opts.include_sentiment,
             include_selector_context_features=opts.include_selector_context,
             selector_universe_signal_modes=_parse_selector_signal_modes_arg(opts.selector_universe_signal_modes),
@@ -482,12 +492,48 @@ def main(args: list[str] | None = None) -> None:
                 selector_filter_summary.get("output_symbol_count"),
                 selector_filter_summary.get("reason"),
             )
-        preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, accelerator=opts.accelerator)
+        historical_predict_enabled = cfg.data.training_end_date is not None
+        if historical_predict_enabled:
+            prediction_dates = load_available_trading_dates(
+                engine,
+                symbols=symbols,
+                start_date=cfg.data.training_start_date,
+                end_date=cfg.data.training_end_date,
+            )
+            LOGGER.info(
+                "predict historical_backfill enabled symbols=%d start=%s end=%s dates=%d",
+                len(symbols),
+                cfg.data.training_start_date,
+                cfg.data.training_end_date,
+                len(prediction_dates),
+            )
+            prediction_parts = [
+                predict_batch(
+                    symbols,
+                    Path(opts.artifacts_dir),
+                    engine,
+                    prediction_date=prediction_date,
+                    as_of_date=prediction_date,
+                    persist=False,
+                    accelerator=opts.accelerator,
+                )
+                for prediction_date in prediction_dates
+            ]
+            non_empty_parts = [part for part in prediction_parts if not part.empty]
+            preds = (
+                pd.concat(non_empty_parts, ignore_index=True)
+                if non_empty_parts
+                else pd.DataFrame(
+                    columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
+                )
+            )
+        else:
+            preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, accelerator=opts.accelerator)
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None
         try:
-            if not preds.empty and "predicted_proba" in preds.columns:
+            if (not historical_predict_enabled) and (not preds.empty) and "predicted_proba" in preds.columns:
                 today_vals = preds["predicted_proba"].dropna().to_numpy()
                 baseline_vals = _load_drift_baseline(engine, days=30)
                 if today_vals.size >= 5 and baseline_vals.size >= 30:
@@ -612,7 +658,9 @@ def _build_run_summary(
         "walkforward_enabled": bool(getattr(opts, "walkforward", False)),
         "ml_mode": str(getattr(opts, "ml_mode", "rebuild-all")),
         "training_start_date": cfg.data.training_start_date.isoformat() if cfg.data.training_start_date is not None else None,
+        "training_end_date": cfg.data.training_end_date.isoformat() if cfg.data.training_end_date is not None else None,
         "symbol_source": str(getattr(opts, "symbol_source", "candidates")),
+        "historical_prediction_range_enabled": bool(mode == "predict" and cfg.data.training_end_date is not None),
         "selector_universe_signal_modes": list(cfg.data.selector_universe_signal_modes),
         "selector_universe_max_candidate_rank": cfg.data.selector_universe_max_candidate_rank,
         "selector_universe_exclude_earnings_blackout": bool(cfg.data.selector_universe_exclude_earnings_blackout),

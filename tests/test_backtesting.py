@@ -42,6 +42,171 @@ def _make_swing_backtest_config():  # type: ignore[no-untyped-def]
     )
 
 
+def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() -> None:
+    from backtesting.cli import _impl
+
+    class _Cfg:
+        def __init__(self, *, is_default_value: bool):
+            self._is_default_value = is_default_value
+
+        def is_default(self) -> bool:
+            return self._is_default_value
+
+    args = SimpleNamespace(
+        start="2025-01-01",
+        end="2025-01-31",
+        equity=25_000.0,
+        tp=0.1,
+        ts=0.05,
+        max_positions=7,
+        commission_bps=4.0,
+        slippage_bps=6.0,
+        fees=None,
+        profile="strict_swing_cash",
+        fidelity_baseline_id="smoke",
+        fidelity_baseline_catalog="config/fidelity_baseline_catalog.json",
+        sentiment_lookback=365,
+        ml_mode="auto",
+        sentiment_mode="rebuild-missing",
+        artifacts_dir="artifacts/models",
+        score_column="final_score_sentiment",
+        walk_forward_artifacts_dir="artifacts/wf/run_1",
+        no_save=False,
+        risk_free_rate=0.02,
+        slippage_model="fixed",
+        slippage_base_bps=2.0,
+        slippage_impact_coef=0.0,
+        initial_stop_pct=0.03,
+        max_entry_gap_pct=0.04,
+        intrabar_priority="conservative",
+        sizing_mode="equal_weight",
+        sizing_min_weight_pct=0.0,
+        sizing_max_weight_pct=0.2,
+        regime_filter=True,
+        regime_sma_window=200,
+        regime_bear_threshold=-0.02,
+        max_sector_exposure_pct=0.4,
+        max_portfolio_dd_pct=0.15,
+        dd_recovery_pct=0.95,
+        target_annual_vol=0.2,
+    )
+    phase2_execution_result = SimpleNamespace(diagnostics={"targets": 3}, tca_summary={"fills": 2})
+    params = _impl._build_backtest_common_params(
+        args=args,
+        fees_pct=0.001,
+        effective_preset=SimpleNamespace(key="capital_0_5000"),
+        preset_source="explicit_key",
+        preset_fingerprint="abc123",
+        engine_mode="pipeline",
+        phase2_mode="risk_execution",
+        phase3_mode="execution_replay",
+        phase4_mode="protection_replay",
+        phase5_mode="watcher_replay",
+        phase7_mode="exit_lifecycle_replay",
+        ml_pit_strategy="use-persisted",
+        dividends_received=12.5,
+        trading_constraints=SimpleNamespace(
+            account_type="cash",
+            pdt_rule="off",
+            effective_pdt_rule="off",
+            swing_only=True,
+        ),
+        bt_config=SimpleNamespace(execution_timing="next_session_open"),
+        microstructure_cfg=_Cfg(is_default_value=False),
+        risk_overlay_cfg=_Cfg(is_default_value=True),
+        phase2_risk_result=SimpleNamespace(diagnostics={"signals_generated": 5}),
+        phase2_execution_result=phase2_execution_result,
+        phase3_execution_replay_result=SimpleNamespace(diagnostics={"scheduled_entries": 3}),
+        phase4_protection_replay_result=SimpleNamespace(diagnostics={"protections_replayed": 3}),
+        phase5_watcher_replay_result=SimpleNamespace(diagnostics={"transitioned_items": 2}),
+        phase7_exit_lifecycle_result=SimpleNamespace(diagnostics={"exit_rows": 1}),
+    )
+
+    assert params["capital_preset_key"] == "capital_0_5000"
+    assert params["fidelity_baseline_id"] == "smoke"
+    assert params["ml_pit_strategy"] == "use-persisted"
+    assert params["microstructure"]["is_default"] is False
+    assert params["risk_overlay"]["is_default"] is True
+    assert params["phase2"]["execution_tca"] == {"fills": 2}
+    assert params["phase7"]["exit_lifecycle_replay"] == {"exit_rows": 1}
+
+
+def test_collect_compare_to_live_trade_dates_merges_sources_without_duplicates() -> None:
+    from backtesting.cli import _impl
+
+    scores_df = pd.DataFrame({"trade_date": pd.to_datetime(["2025-01-02", "2025-01-03"])})
+    research_signals_df = pd.DataFrame({"trade_date": pd.to_datetime(["2025-01-03", "2025-01-06"])})
+    phase2_risk_result = SimpleNamespace(
+        entries=[
+            SimpleNamespace(score_snapshot_date=date(2025, 1, 2)),
+            SimpleNamespace(score_snapshot_date=date(2025, 1, 7)),
+        ]
+    )
+    phase2_execution_result = SimpleNamespace(
+        targets=[
+            SimpleNamespace(trade_date=date(2025, 1, 6)),
+            SimpleNamespace(trade_date=date(2025, 1, 8)),
+        ]
+    )
+
+    out = _impl._collect_compare_to_live_trade_dates(
+        scores_df=scores_df,
+        research_signals_df=research_signals_df,
+        phase2_risk_result=phase2_risk_result,
+        phase2_execution_result=phase2_execution_result,
+    )
+
+    assert [ts.date().isoformat() for ts in out] == [
+        "2025-01-02",
+        "2025-01-03",
+        "2025-01-06",
+        "2025-01-07",
+        "2025-01-08",
+    ]
+
+
+def test_build_backtest_component_details_returns_expected_component_payloads() -> None:
+    from backtesting.cli import _impl
+
+    ohlcv_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL", "MSFT", "AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-02", "2025-01-02", "2025-01-03"]),
+        }
+    )
+    sessions = pd.DatetimeIndex(pd.to_datetime(["2025-01-02", "2025-01-03"]))
+    execution_pivoted = {"close": pd.DataFrame({"AAPL": [100.0, 101.0]}, index=sessions)}
+
+    component_details, execution_broker_like_summary = _impl._build_backtest_component_details(
+        ohlcv_df=ohlcv_df,
+        execution_pivoted=execution_pivoted,
+        start_date=date(2025, 1, 2),
+        end_date=date(2025, 1, 3),
+        ohlcv_start=date(2024, 12, 15),
+        signals_df=pd.DataFrame(),
+        phase2_mode="off",
+        phase3_mode="off",
+        phase4_mode="off",
+        phase5_mode="off",
+        phase7_mode="off",
+        phase2_risk_result=None,
+        phase2_execution_result=None,
+        phase3_execution_replay_result=None,
+        phase4_protection_replay_result=None,
+        phase5_watcher_replay_result=None,
+        phase7_exit_lifecycle_result=None,
+    )
+
+    assert execution_broker_like_summary is None
+    assert set(component_details.keys()) == {"bars", "risk", "execution"}
+    assert component_details["bars"]["rows_loaded"] == 3
+    assert component_details["bars"]["symbols_loaded"] == 2
+    assert component_details["bars"]["calendar_sessions_loaded"] == 2
+    assert component_details["risk"]["enabled"] is False
+    assert component_details["execution"]["enabled"] is False
+    assert component_details["execution"]["broker_like"] == {}
+
+
 # ============================================================
 # test data_loader
 # ============================================================

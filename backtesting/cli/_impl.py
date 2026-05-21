@@ -128,6 +128,481 @@ def _emit_backtest_missing_coverage_logs(
         _safe_print(f"   {message}\n")
 
 
+def _build_execution_broker_like_summary(
+    *,
+    signals_df,
+    phase2_mode: str,
+    phase3_mode: str,
+    phase4_mode: str,
+    phase5_mode: str,
+    phase7_mode: str,
+    phase3_execution_replay_result,
+    phase4_protection_replay_result,
+    phase5_watcher_replay_result,
+    phase7_exit_lifecycle_result,
+):
+    latest_execution_lifecycle_result = next(
+        (
+            result
+            for result in (
+                phase7_exit_lifecycle_result,
+                phase5_watcher_replay_result,
+                phase4_protection_replay_result,
+                phase3_execution_replay_result,
+            )
+            if result is not None
+        ),
+        None,
+    )
+    if latest_execution_lifecycle_result is None:
+        return None
+    try:
+        from backtesting.execution_broker_like import build_execution_broker_like_summary
+
+        return build_execution_broker_like_summary(
+            signals_df=getattr(latest_execution_lifecycle_result, "signals_df", signals_df),
+            order_lifecycle_frame=getattr(latest_execution_lifecycle_result, "order_lifecycle_frame", None),
+            broker_event_frame=getattr(
+                latest_execution_lifecycle_result,
+                "broker_event_frame",
+                getattr(latest_execution_lifecycle_result, "event_frame", None),
+            ),
+            phase_modes={
+                "phase2_mode": phase2_mode,
+                "phase3_mode": phase3_mode,
+                "phase4_mode": phase4_mode,
+                "phase5_mode": phase5_mode,
+                "phase7_mode": phase7_mode,
+            },
+            diagnostics={
+                "phase3_execution_replay": dict(phase3_execution_replay_result.diagnostics) if phase3_execution_replay_result is not None else {},
+                "phase4_protection_replay": dict(phase4_protection_replay_result.diagnostics) if phase4_protection_replay_result is not None else {},
+                "phase5_watcher_replay": dict(phase5_watcher_replay_result.diagnostics) if phase5_watcher_replay_result is not None else {},
+                "phase7_exit_lifecycle_replay": dict(phase7_exit_lifecycle_result.diagnostics) if phase7_exit_lifecycle_result is not None else {},
+            },
+        )
+    except Exception:
+        return None
+
+
+def _build_backtest_component_details(
+    *,
+    ohlcv_df,
+    execution_pivoted,
+    start_date: date,
+    end_date: date,
+    ohlcv_start: date,
+    signals_df,
+    phase2_mode: str,
+    phase3_mode: str,
+    phase4_mode: str,
+    phase5_mode: str,
+    phase7_mode: str,
+    phase2_risk_result,
+    phase2_execution_result,
+    phase3_execution_replay_result,
+    phase4_protection_replay_result,
+    phase5_watcher_replay_result,
+    phase7_exit_lifecycle_result,
+) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
+    import pandas as pd
+
+    bars_component_details = {
+        "enabled": True,
+        "rows_loaded": int(len(ohlcv_df)),
+        "symbols_loaded": int(ohlcv_df["symbol"].nunique()) if "symbol" in ohlcv_df.columns else 0,
+        "requested_start_date": start_date.isoformat(),
+        "requested_end_date": end_date.isoformat(),
+        "loaded_start_date": str(pd.Timestamp(ohlcv_df["trade_date"].min()).date()) if "trade_date" in ohlcv_df.columns and not ohlcv_df.empty else None,
+        "loaded_end_date": str(pd.Timestamp(ohlcv_df["trade_date"].max()).date()) if "trade_date" in ohlcv_df.columns and not ohlcv_df.empty else None,
+        "warmup_start_date": ohlcv_start.isoformat(),
+        "calendar_sessions_loaded": int(len(execution_pivoted["close"].index)),
+    }
+    risk_component_details = {
+        "enabled": phase2_risk_result is not None,
+        "mode": phase2_mode,
+        "diagnostics": dict(phase2_risk_result.diagnostics) if phase2_risk_result is not None else {},
+    }
+    execution_broker_like_summary = _build_execution_broker_like_summary(
+        signals_df=signals_df,
+        phase2_mode=phase2_mode,
+        phase3_mode=phase3_mode,
+        phase4_mode=phase4_mode,
+        phase5_mode=phase5_mode,
+        phase7_mode=phase7_mode,
+        phase3_execution_replay_result=phase3_execution_replay_result,
+        phase4_protection_replay_result=phase4_protection_replay_result,
+        phase5_watcher_replay_result=phase5_watcher_replay_result,
+        phase7_exit_lifecycle_result=phase7_exit_lifecycle_result,
+    )
+    execution_component_details = {
+        "enabled": any(
+            result is not None
+            for result in (
+                phase2_execution_result,
+                phase3_execution_replay_result,
+                phase4_protection_replay_result,
+                phase5_watcher_replay_result,
+                phase7_exit_lifecycle_result,
+            )
+        ),
+        "phase2_mode": phase2_mode,
+        "phase3_mode": phase3_mode,
+        "phase4_mode": phase4_mode,
+        "phase5_mode": phase5_mode,
+        "phase7_mode": phase7_mode,
+        "phase2_execution": dict(phase2_execution_result.diagnostics) if phase2_execution_result is not None else {},
+        "phase3_execution_replay": (
+            dict(phase3_execution_replay_result.diagnostics)
+            if phase3_execution_replay_result is not None
+            else {}
+        ),
+        "phase4_protection_replay": (
+            dict(phase4_protection_replay_result.diagnostics)
+            if phase4_protection_replay_result is not None
+            else {}
+        ),
+        "phase5_watcher_replay": (
+            dict(phase5_watcher_replay_result.diagnostics)
+            if phase5_watcher_replay_result is not None
+            else {}
+        ),
+        "phase7_exit_lifecycle_replay": (
+            dict(phase7_exit_lifecycle_result.diagnostics)
+            if phase7_exit_lifecycle_result is not None
+            else {}
+        ),
+        "broker_like": execution_broker_like_summary or {},
+    }
+    return {
+        "bars": bars_component_details,
+        "risk": risk_component_details,
+        "execution": execution_component_details,
+    }, execution_broker_like_summary
+
+
+def _build_backtest_common_params(
+    *,
+    args: argparse.Namespace,
+    fees_pct: float,
+    effective_preset,
+    preset_source: str,
+    preset_fingerprint: str,
+    engine_mode: str,
+    phase2_mode: str,
+    phase3_mode: str,
+    phase4_mode: str,
+    phase5_mode: str,
+    phase7_mode: str,
+    ml_pit_strategy: str,
+    dividends_received: float,
+    trading_constraints,
+    bt_config,
+    microstructure_cfg,
+    risk_overlay_cfg,
+    phase2_risk_result,
+    phase2_execution_result,
+    phase3_execution_replay_result,
+    phase4_protection_replay_result,
+    phase5_watcher_replay_result,
+    phase7_exit_lifecycle_result,
+) -> dict[str, object]:
+    return {
+        "start": args.start,
+        "end": args.end,
+        "equity": args.equity,
+        "tp": args.tp,
+        "ts": args.ts,
+        "max_positions": args.max_positions,
+        "commission_bps": float(args.commission_bps),
+        "slippage_bps": float(args.slippage_bps),
+        "fees_pct": fees_pct,
+        "fees": args.fees,
+        "profile": getattr(args, "profile", "custom"),
+        "capital_preset_key": effective_preset.key,
+        "capital_preset_source": preset_source,
+        "capital_preset_fingerprint": preset_fingerprint,
+        "engine_mode": engine_mode,
+        "phase2_mode": phase2_mode,
+        "phase3_mode": phase3_mode,
+        "phase4_mode": phase4_mode,
+        "phase5_mode": phase5_mode,
+        "phase7_mode": phase7_mode,
+        "fidelity_baseline_id": getattr(args, "fidelity_baseline_id", None),
+        "fidelity_baseline_catalog": getattr(args, "fidelity_baseline_catalog", None),
+        "ml_pit_strategy": ml_pit_strategy,
+        "conviction_weights": {
+            "source": "core.conviction",
+            "score_weight": 0.40,
+            "prediction_weight": 0.60,
+        },
+        "dividends_received": float(dividends_received),
+        "account_type": trading_constraints.account_type,
+        "pdt_rule": trading_constraints.pdt_rule,
+        "effective_pdt_rule": trading_constraints.effective_pdt_rule,
+        "swing_only": trading_constraints.swing_only,
+        "sentiment_lookback": args.sentiment_lookback,
+        "ml_mode": args.ml_mode,
+        "sentiment_mode": args.sentiment_mode,
+        "artifacts_dir": args.artifacts_dir,
+        "score_column": args.score_column,
+        "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
+        "execution_timing": bt_config.execution_timing,
+        "entry_price_source": "next_session_open",
+        "no_save": args.no_save,
+        "risk_free_rate": float(getattr(args, "risk_free_rate", 0.0) or 0.0),
+        "microstructure": {
+            "slippage_model": args.slippage_model,
+            "slippage_base_bps": float(args.slippage_base_bps),
+            "slippage_impact_coef": float(args.slippage_impact_coef),
+            "initial_stop_pct": float(args.initial_stop_pct),
+            "max_entry_gap_pct": float(args.max_entry_gap_pct),
+            "intrabar_priority": args.intrabar_priority,
+            "is_default": microstructure_cfg.is_default(),
+        },
+        "risk_overlay": {
+            "sizing_mode": args.sizing_mode,
+            "sizing_min_weight_pct": float(args.sizing_min_weight_pct),
+            "sizing_max_weight_pct": float(args.sizing_max_weight_pct),
+            "regime_filter_enabled": bool(args.regime_filter),
+            "regime_sma_window": int(args.regime_sma_window),
+            "regime_bear_threshold": float(args.regime_bear_threshold),
+            "max_sector_exposure_pct": float(args.max_sector_exposure_pct),
+            "max_portfolio_dd_pct": float(args.max_portfolio_dd_pct),
+            "dd_recovery_pct": float(args.dd_recovery_pct),
+            "target_annual_vol": (
+                float(args.target_annual_vol) if args.target_annual_vol is not None else None
+            ),
+            "is_default": risk_overlay_cfg.is_default(),
+        },
+        "phase2": {
+            "enabled": phase2_mode != "off",
+            "mode": phase2_mode,
+            "risk_bridge": phase2_risk_result.diagnostics if phase2_risk_result is not None else None,
+            "execution_bridge": phase2_execution_result.diagnostics if phase2_execution_result is not None else None,
+            "execution_tca": phase2_execution_result.tca_summary if phase2_execution_result is not None else None,
+        },
+        "phase3": {
+            "enabled": phase3_mode != "off",
+            "mode": phase3_mode,
+            "execution_replay": (
+                phase3_execution_replay_result.diagnostics
+                if phase3_execution_replay_result is not None
+                else None
+            ),
+        },
+        "phase4": {
+            "enabled": phase4_mode != "off",
+            "mode": phase4_mode,
+            "protection_replay": (
+                phase4_protection_replay_result.diagnostics
+                if phase4_protection_replay_result is not None
+                else None
+            ),
+        },
+        "phase5": {
+            "enabled": phase5_mode != "off",
+            "mode": phase5_mode,
+            "watcher_replay": (
+                phase5_watcher_replay_result.diagnostics
+                if phase5_watcher_replay_result is not None
+                else None
+            ),
+        },
+        "phase7": {
+            "enabled": phase7_mode != "off",
+            "mode": phase7_mode,
+            "exit_lifecycle_replay": (
+                phase7_exit_lifecycle_result.diagnostics
+                if phase7_exit_lifecycle_result is not None
+                else None
+            ),
+        },
+    }
+
+
+def _collect_compare_to_live_trade_dates(
+    *,
+    scores_df,
+    research_signals_df,
+    phase2_risk_result,
+    phase2_execution_result,
+):
+    import pandas as pd
+
+    compare_dates: set[pd.Timestamp] = set()
+    for frame in (scores_df, research_signals_df):
+        if isinstance(frame, pd.DataFrame) and not frame.empty and "trade_date" in frame.columns:
+            compare_dates.update(
+                pd.DatetimeIndex(pd.to_datetime(frame["trade_date"], errors="coerce").dropna().dt.normalize().tolist())
+            )
+    if phase2_risk_result is not None:
+        for entry in phase2_risk_result.entries:
+            snapshot_date = getattr(entry, "score_snapshot_date", None)
+            if snapshot_date is None:
+                continue
+            compare_dates.add(pd.Timestamp(snapshot_date).normalize())
+    if phase2_execution_result is not None:
+        for target in phase2_execution_result.targets:
+            target_date = getattr(target, "trade_date", None)
+            if target_date is None:
+                continue
+            compare_dates.add(pd.Timestamp(target_date).normalize())
+    return sorted(compare_dates)
+
+
+def _build_compare_to_live_artifacts(
+    *,
+    engine,
+    output_dir: Path,
+    fidelity_manifest: dict[str, object],
+    scores_df,
+    research_signals_df,
+    phase2_risk_result,
+    phase2_execution_result,
+    phase7_exit_lifecycle_result,
+    phase2_mode: str,
+) -> tuple[dict[str, str], dict[str, object] | None]:
+    import pandas as pd
+
+    try:
+        from execution_engine.db_io import ExecutionRepository
+        from risk_management.db_io import RiskRepository
+
+        compare_dates = _collect_compare_to_live_trade_dates(
+            scores_df=scores_df,
+            research_signals_df=research_signals_df,
+            phase2_risk_result=phase2_risk_result,
+            phase2_execution_result=phase2_execution_result,
+        )
+        risk_repo = RiskRepository(engine)
+        execution_repo = ExecutionRepository(engine)
+        live_risk_decisions: dict[str, pd.DataFrame] = {}
+        live_portfolio_targets: dict[str, list[object]] = {}
+        live_execution_targets: dict[str, list[object]] = {}
+        live_execution_fills: dict[str, pd.DataFrame] = {}
+        live_position_lots: dict[str, pd.DataFrame] = {}
+        live_compare_context: dict[str, dict[str, object]] = {}
+        for trade_date in compare_dates:
+            trade_day = pd.Timestamp(trade_date).date()
+            trade_key = trade_day.isoformat()
+            live_risk_decisions[trade_key] = risk_repo.load_risk_decisions_for_date(
+                trade_day,
+                account_id="default",
+            )
+            risk_run_id = None
+            if not live_risk_decisions[trade_key].empty and "run_id" in live_risk_decisions[trade_key].columns:
+                risk_run_values = live_risk_decisions[trade_key]["run_id"].dropna().astype(str)
+                if not risk_run_values.empty:
+                    risk_run_id = str(risk_run_values.iloc[0]).strip() or None
+            exec_context = None
+            match_basis = "trade_date_latest"
+            if risk_run_id:
+                exec_context = execution_repo.load_execution_run_context_for_risk_run_id(
+                    risk_run_id=risk_run_id,
+                    account_id="default",
+                    trade_date=trade_day,
+                )
+                if exec_context is not None:
+                    match_basis = "risk_run_id"
+            if exec_context is None:
+                fallback_exec_run_id = execution_repo.load_latest_execution_run_id_for_date(
+                    trade_date=trade_day,
+                    account_id="default",
+                )
+                if fallback_exec_run_id is not None:
+                    exec_context = execution_repo.load_execution_run_context(exec_run_id=fallback_exec_run_id)
+                    if exec_context is not None:
+                        match_basis = "exec_run_id_fallback"
+            risk_decisions_basis = "trade_date_latest"
+            exec_risk_run_id = str(exec_context.get("risk_run_id") or "").strip() if isinstance(exec_context, dict) else ""
+            if exec_risk_run_id:
+                risk_run_id = exec_risk_run_id
+            if risk_run_id:
+                try:
+                    exact_risk_decisions = risk_repo.load_risk_decisions_for_run_id(
+                        risk_run_id,
+                        account_id="default",
+                    )
+                except Exception:
+                    exact_risk_decisions = pd.DataFrame()
+                if isinstance(exact_risk_decisions, pd.DataFrame) and not exact_risk_decisions.empty:
+                    live_risk_decisions[trade_key] = exact_risk_decisions
+                    risk_decisions_basis = "risk_run_id"
+            try:
+                live_portfolio_targets[trade_key] = cast(
+                    list[object],
+                    execution_repo.load_portfolio_targets(
+                        risk_run_id=risk_run_id,
+                        trade_date=trade_day,
+                        account_id="default",
+                    ),
+                )
+            except Exception:
+                live_portfolio_targets[trade_key] = []
+            try:
+                exec_run_id = str(exec_context.get("exec_run_id") or "").strip() if isinstance(exec_context, dict) else ""
+                if exec_run_id:
+                    live_execution_targets[trade_key] = cast(
+                        list[object],
+                        execution_repo.load_execution_targets_snapshot(exec_run_id=exec_run_id),
+                    )
+                    live_execution_fills[trade_key] = execution_repo.load_execution_fills_for_run(
+                        exec_run_id=exec_run_id,
+                        account_id="default",
+                    )
+                    live_position_lots[trade_key] = execution_repo.load_execution_position_lots_for_open_run(
+                        open_exec_run_id=exec_run_id,
+                        account_id="default",
+                    )
+                else:
+                    live_execution_targets[trade_key] = cast(
+                        list[object],
+                        execution_repo.load_latest_execution_targets_snapshot_for_date(
+                            trade_date=trade_day,
+                            account_id="default",
+                        ),
+                    )
+                    live_execution_fills[trade_key] = pd.DataFrame()
+                    live_position_lots[trade_key] = pd.DataFrame()
+            except Exception:
+                live_execution_targets[trade_key] = []
+                live_execution_fills[trade_key] = pd.DataFrame()
+                live_position_lots[trade_key] = pd.DataFrame()
+            live_compare_context[trade_key] = {
+                "trade_date": trade_key,
+                "risk_run_id": risk_run_id,
+                "exec_run_id": exec_context.get("exec_run_id") if isinstance(exec_context, dict) else None,
+                "match_basis": match_basis,
+                "risk_decisions_basis": risk_decisions_basis,
+                "portfolio_targets_basis": "risk_run_id" if risk_run_id else "trade_date_latest",
+            }
+
+        compare_to_live_summary = build_compare_to_live_summary(
+            fidelity_manifest=fidelity_manifest,
+            research_signals_df=research_signals_df,
+            risk_entries=phase2_risk_result.entries if phase2_risk_result is not None else (),
+            execution_targets=phase2_execution_result.targets if phase2_execution_result is not None else (),
+            execution_fills=getattr(phase2_execution_result, "fills", ()) if phase2_execution_result is not None else (),
+            exit_signals_df=getattr(phase7_exit_lifecycle_result, "signals_df", pd.DataFrame()) if phase7_exit_lifecycle_result is not None else pd.DataFrame(),
+            live_risk_decisions=live_risk_decisions,
+            live_portfolio_targets=live_portfolio_targets,
+            live_execution_targets=live_execution_targets,
+            live_execution_fills=live_execution_fills,
+            live_position_lots=live_position_lots,
+            live_compare_context=live_compare_context,
+            account_id="default",
+            phase2_mode=phase2_mode,
+        )
+        return {
+            key: str(path)
+            for key, path in save_compare_to_live_summary(compare_to_live_summary, output_dir).items()
+        }, compare_to_live_summary
+    except Exception:
+        LOGGER.warning("Compare-to-live Sprint 5 ignoré (données live indisponibles ?).", exc_info=True)
+        return {}, None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m backtesting",
@@ -1272,103 +1747,25 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     output_dir = Path(args.output_dir) if args.output_dir else None
     artifact_paths: dict[str, str] = {}
-    bars_component_details = {
-        "enabled": True,
-        "rows_loaded": int(len(ohlcv_df)),
-        "symbols_loaded": int(ohlcv_df["symbol"].nunique()) if "symbol" in ohlcv_df.columns else 0,
-        "requested_start_date": start.isoformat(),
-        "requested_end_date": end.isoformat(),
-        "loaded_start_date": str(pd.Timestamp(ohlcv_df["trade_date"].min()).date()) if "trade_date" in ohlcv_df.columns and not ohlcv_df.empty else None,
-        "loaded_end_date": str(pd.Timestamp(ohlcv_df["trade_date"].max()).date()) if "trade_date" in ohlcv_df.columns and not ohlcv_df.empty else None,
-        "warmup_start_date": ohlcv_start.isoformat(),
-        "calendar_sessions_loaded": int(len(execution_pivoted["close"].index)),
-    }
-    risk_component_details = {
-        "enabled": phase2_risk_result is not None,
-        "mode": phase2_mode,
-        "diagnostics": dict(phase2_risk_result.diagnostics) if phase2_risk_result is not None else {},
-    }
-    execution_broker_like_summary: dict[str, object] | None = None
-    latest_execution_lifecycle_result = next(
-        (
-            result
-            for result in (
-                phase7_exit_lifecycle_result,
-                phase5_watcher_replay_result,
-                phase4_protection_replay_result,
-                phase3_execution_replay_result,
-            )
-            if result is not None
-        ),
-        None,
+    component_details, execution_broker_like_summary = _build_backtest_component_details(
+        ohlcv_df=ohlcv_df,
+        execution_pivoted=execution_pivoted,
+        start_date=start,
+        end_date=end,
+        ohlcv_start=ohlcv_start,
+        signals_df=signals_df,
+        phase2_mode=phase2_mode,
+        phase3_mode=phase3_mode,
+        phase4_mode=phase4_mode,
+        phase5_mode=phase5_mode,
+        phase7_mode=phase7_mode,
+        phase2_risk_result=phase2_risk_result,
+        phase2_execution_result=phase2_execution_result,
+        phase3_execution_replay_result=phase3_execution_replay_result,
+        phase4_protection_replay_result=phase4_protection_replay_result,
+        phase5_watcher_replay_result=phase5_watcher_replay_result,
+        phase7_exit_lifecycle_result=phase7_exit_lifecycle_result,
     )
-    if latest_execution_lifecycle_result is not None:
-        try:
-            from backtesting.execution_broker_like import build_execution_broker_like_summary
-
-            execution_broker_like_summary = build_execution_broker_like_summary(
-                signals_df=getattr(latest_execution_lifecycle_result, "signals_df", pd.DataFrame()),
-                order_lifecycle_frame=getattr(latest_execution_lifecycle_result, "order_lifecycle_frame", pd.DataFrame()),
-                broker_event_frame=getattr(
-                    latest_execution_lifecycle_result,
-                    "broker_event_frame",
-                    getattr(latest_execution_lifecycle_result, "event_frame", pd.DataFrame()),
-                ),
-                phase_modes={
-                    "phase2_mode": phase2_mode,
-                    "phase3_mode": phase3_mode,
-                    "phase4_mode": phase4_mode,
-                    "phase5_mode": phase5_mode,
-                    "phase7_mode": phase7_mode,
-                },
-                diagnostics={
-                    "phase3_execution_replay": dict(phase3_execution_replay_result.diagnostics) if phase3_execution_replay_result is not None else {},
-                    "phase4_protection_replay": dict(phase4_protection_replay_result.diagnostics) if phase4_protection_replay_result is not None else {},
-                    "phase5_watcher_replay": dict(phase5_watcher_replay_result.diagnostics) if phase5_watcher_replay_result is not None else {},
-                    "phase7_exit_lifecycle_replay": dict(phase7_exit_lifecycle_result.diagnostics) if phase7_exit_lifecycle_result is not None else {},
-                },
-            )
-        except Exception:
-            execution_broker_like_summary = None
-    execution_component_details = {
-        "enabled": any(
-            result is not None
-            for result in (
-                phase2_execution_result,
-                phase3_execution_replay_result,
-                phase4_protection_replay_result,
-                phase5_watcher_replay_result,
-                phase7_exit_lifecycle_result,
-            )
-        ),
-        "phase2_mode": phase2_mode,
-        "phase3_mode": phase3_mode,
-        "phase4_mode": phase4_mode,
-        "phase5_mode": phase5_mode,
-        "phase7_mode": phase7_mode,
-        "phase2_execution": dict(phase2_execution_result.diagnostics) if phase2_execution_result is not None else {},
-        "phase3_execution_replay": (
-            dict(phase3_execution_replay_result.diagnostics)
-            if phase3_execution_replay_result is not None
-            else {}
-        ),
-        "phase4_protection_replay": (
-            dict(phase4_protection_replay_result.diagnostics)
-            if phase4_protection_replay_result is not None
-            else {}
-        ),
-        "phase5_watcher_replay": (
-            dict(phase5_watcher_replay_result.diagnostics)
-            if phase5_watcher_replay_result is not None
-            else {}
-        ),
-        "phase7_exit_lifecycle_replay": (
-            dict(phase7_exit_lifecycle_result.diagnostics)
-            if phase7_exit_lifecycle_result is not None
-            else {}
-        ),
-        "broker_like": execution_broker_like_summary or {},
-    }
     fidelity_manifest = build_fidelity_manifest(
         engine_mode=engine_mode,
         start_date=start,
@@ -1380,11 +1777,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         sentiment_mode=args.sentiment_mode,
         ml_mode=args.ml_mode,
         ml_pit_strategy=ml_pit_strategy,
-        component_details={
-            "bars": bars_component_details,
-            "risk": risk_component_details,
-            "execution": execution_component_details,
-        },
+        component_details=component_details,
         requested_score_column=str(args.score_column or "auto"),
         walk_forward_artifacts_dir=str(args.walk_forward_artifacts_dir or ""),
     )
@@ -1404,125 +1797,31 @@ def _run_backtest(args: argparse.Namespace) -> None:
         else None
     )
 
-    common_params: dict[str, object] = {
-        "start": args.start,
-        "end": args.end,
-        "equity": args.equity,
-        "tp": args.tp,
-        "ts": args.ts,
-        "max_positions": args.max_positions,
-        # Phase 6.1.b — costs/slippage explicites + rétro-compat fees.
-        "commission_bps": float(args.commission_bps),
-        "slippage_bps": float(args.slippage_bps),
-        "fees_pct": fees_pct,
-        "fees": args.fees,  # legacy : conserve la valeur fournie (None si absent).
-        # Phase 6.1.e — profil utilisé.
-        "profile": getattr(args, "profile", "custom"),
-        "capital_preset_key": effective_preset.key,
-        "capital_preset_source": preset_source,
-        "capital_preset_fingerprint": preset_fingerprint,
-        "engine_mode": engine_mode,
-        "phase2_mode": phase2_mode,
-        "phase3_mode": phase3_mode,
-        "phase4_mode": phase4_mode,
-        "phase5_mode": phase5_mode,
-        "phase7_mode": phase7_mode,
-        "fidelity_baseline_id": getattr(args, "fidelity_baseline_id", None),
-        "fidelity_baseline_catalog": getattr(args, "fidelity_baseline_catalog", None),
-        "ml_pit_strategy": ml_pit_strategy,
-        # Phase 6.1.a — fusion conviction unifiée via core.conviction.
-        "conviction_weights": {
-            "source": "core.conviction",
-            "score_weight": 0.40,
-            "prediction_weight": 0.60,
-        },
-        # Phase 6.1.c — dividendes encaissés.
-        "dividends_received": float(dividends_received),
-        "account_type": trading_constraints.account_type,
-        "pdt_rule": trading_constraints.pdt_rule,
-        "effective_pdt_rule": trading_constraints.effective_pdt_rule,
-        "swing_only": trading_constraints.swing_only,
-        "sentiment_lookback": args.sentiment_lookback,
-        "ml_mode": args.ml_mode,
-        "sentiment_mode": args.sentiment_mode,
-        "artifacts_dir": args.artifacts_dir,
-        "score_column": args.score_column,
-        "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
-        "execution_timing": bt_config.execution_timing,
-        "entry_price_source": "next_session_open",
-        "no_save": args.no_save,
-        # Phase A.6 — risk-free rate utilisé pour Sharpe/Sortino.
-        "risk_free_rate": float(getattr(args, "risk_free_rate", 0.0) or 0.0),
-        # Phase B (refactor) — micro-structure activable via CLI.
-        "microstructure": {
-            "slippage_model": args.slippage_model,
-            "slippage_base_bps": float(args.slippage_base_bps),
-            "slippage_impact_coef": float(args.slippage_impact_coef),
-            "initial_stop_pct": float(args.initial_stop_pct),
-            "max_entry_gap_pct": float(args.max_entry_gap_pct),
-            "intrabar_priority": args.intrabar_priority,
-            "is_default": microstructure_cfg.is_default(),
-        },
-        # Phase C (refactor) — risk overlays activables via CLI.
-        "risk_overlay": {
-            "sizing_mode": args.sizing_mode,
-            "sizing_min_weight_pct": float(args.sizing_min_weight_pct),
-            "sizing_max_weight_pct": float(args.sizing_max_weight_pct),
-            "regime_filter_enabled": bool(args.regime_filter),
-            "regime_sma_window": int(args.regime_sma_window),
-            "regime_bear_threshold": float(args.regime_bear_threshold),
-            "max_sector_exposure_pct": float(args.max_sector_exposure_pct),
-            "max_portfolio_dd_pct": float(args.max_portfolio_dd_pct),
-            "dd_recovery_pct": float(args.dd_recovery_pct),
-            "target_annual_vol": (
-                float(args.target_annual_vol) if args.target_annual_vol is not None else None
-            ),
-            "is_default": risk_overlay_cfg.is_default(),
-        },
-        "phase2": {
-            "enabled": phase2_mode != "off",
-            "mode": phase2_mode,
-            "risk_bridge": phase2_risk_result.diagnostics if phase2_risk_result is not None else None,
-            "execution_bridge": phase2_execution_result.diagnostics if phase2_execution_result is not None else None,
-            "execution_tca": phase2_execution_result.tca_summary if phase2_execution_result is not None else None,
-        },
-        "phase3": {
-            "enabled": phase3_mode != "off",
-            "mode": phase3_mode,
-            "execution_replay": (
-                phase3_execution_replay_result.diagnostics
-                if phase3_execution_replay_result is not None
-                else None
-            ),
-        },
-        "phase4": {
-            "enabled": phase4_mode != "off",
-            "mode": phase4_mode,
-            "protection_replay": (
-                phase4_protection_replay_result.diagnostics
-                if phase4_protection_replay_result is not None
-                else None
-            ),
-        },
-        "phase5": {
-            "enabled": phase5_mode != "off",
-            "mode": phase5_mode,
-            "watcher_replay": (
-                phase5_watcher_replay_result.diagnostics
-                if phase5_watcher_replay_result is not None
-                else None
-            ),
-        },
-        "phase7": {
-            "enabled": phase7_mode != "off",
-            "mode": phase7_mode,
-            "exit_lifecycle_replay": (
-                phase7_exit_lifecycle_result.diagnostics
-                if phase7_exit_lifecycle_result is not None
-                else None
-            ),
-        },
-    }
+    common_params = _build_backtest_common_params(
+        args=args,
+        fees_pct=fees_pct,
+        effective_preset=effective_preset,
+        preset_source=preset_source,
+        preset_fingerprint=preset_fingerprint,
+        engine_mode=engine_mode,
+        phase2_mode=phase2_mode,
+        phase3_mode=phase3_mode,
+        phase4_mode=phase4_mode,
+        phase5_mode=phase5_mode,
+        phase7_mode=phase7_mode,
+        ml_pit_strategy=ml_pit_strategy,
+        dividends_received=float(dividends_received),
+        trading_constraints=trading_constraints,
+        bt_config=bt_config,
+        microstructure_cfg=microstructure_cfg,
+        risk_overlay_cfg=risk_overlay_cfg,
+        phase2_risk_result=phase2_risk_result,
+        phase2_execution_result=phase2_execution_result,
+        phase3_execution_replay_result=phase3_execution_replay_result,
+        phase4_protection_replay_result=phase4_protection_replay_result,
+        phase5_watcher_replay_result=phase5_watcher_replay_result,
+        phase7_exit_lifecycle_result=phase7_exit_lifecycle_result,
+    )
 
     # Phase A.4 — métadonnées de reproductibilité.
     run_metadata = build_run_metadata(
@@ -1561,157 +1860,18 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 for key, path in save_candidate_target_parity_summary(candidate_target_parity_summary, output_dir).items()
             }
             artifact_paths.update(candidate_target_parity_paths)
-        compare_to_live_paths: dict[str, str] = {}
-        compare_to_live_summary: dict[str, object] | None = None
-        try:
-            from execution_engine.db_io import ExecutionRepository
-            from risk_management.db_io import RiskRepository
-
-            compare_dates: set[pd.Timestamp] = set()
-            for frame in (scores_df, research_signals_df):
-                if isinstance(frame, pd.DataFrame) and not frame.empty and "trade_date" in frame.columns:
-                    compare_dates.update(
-                        pd.DatetimeIndex(pd.to_datetime(frame["trade_date"], errors="coerce").dropna().dt.normalize().tolist())
-                    )
-            if phase2_risk_result is not None:
-                for entry in phase2_risk_result.entries:
-                    snapshot_date = getattr(entry, "score_snapshot_date", None)
-                    if snapshot_date is None:
-                        continue
-                    compare_dates.add(pd.Timestamp(snapshot_date).normalize())
-            if phase2_execution_result is not None:
-                for target in phase2_execution_result.targets:
-                    target_date = getattr(target, "trade_date", None)
-                    if target_date is None:
-                        continue
-                    compare_dates.add(pd.Timestamp(target_date).normalize())
-
-            risk_repo = RiskRepository(engine)
-            execution_repo = ExecutionRepository(engine)
-            live_risk_decisions: dict[str, pd.DataFrame] = {}
-            live_portfolio_targets: dict[str, list[object]] = {}
-            live_execution_targets: dict[str, list[object]] = {}
-            live_execution_fills: dict[str, pd.DataFrame] = {}
-            live_position_lots: dict[str, pd.DataFrame] = {}
-            live_compare_context: dict[str, dict[str, object]] = {}
-            for trade_date in sorted(compare_dates):
-                trade_day = pd.Timestamp(trade_date).date()
-                trade_key = trade_day.isoformat()
-                live_risk_decisions[trade_key] = risk_repo.load_risk_decisions_for_date(
-                    trade_day,
-                    account_id="default",
-                )
-                risk_run_id = None
-                if not live_risk_decisions[trade_key].empty and "run_id" in live_risk_decisions[trade_key].columns:
-                    risk_run_values = live_risk_decisions[trade_key]["run_id"].dropna().astype(str)
-                    if not risk_run_values.empty:
-                        risk_run_id = str(risk_run_values.iloc[0]).strip() or None
-                exec_context = None
-                match_basis = "trade_date_latest"
-                if risk_run_id:
-                    exec_context = execution_repo.load_execution_run_context_for_risk_run_id(
-                        risk_run_id=risk_run_id,
-                        account_id="default",
-                        trade_date=trade_day,
-                    )
-                    if exec_context is not None:
-                        match_basis = "risk_run_id"
-                if exec_context is None:
-                    fallback_exec_run_id = execution_repo.load_latest_execution_run_id_for_date(
-                        trade_date=trade_day,
-                        account_id="default",
-                    )
-                    if fallback_exec_run_id is not None:
-                        exec_context = execution_repo.load_execution_run_context(exec_run_id=fallback_exec_run_id)
-                        if exec_context is not None:
-                            match_basis = "exec_run_id_fallback"
-                risk_decisions_basis = "trade_date_latest"
-                exec_risk_run_id = str(exec_context.get("risk_run_id") or "").strip() if isinstance(exec_context, dict) else ""
-                if exec_risk_run_id:
-                    risk_run_id = exec_risk_run_id
-                if risk_run_id:
-                    try:
-                        exact_risk_decisions = risk_repo.load_risk_decisions_for_run_id(
-                            risk_run_id,
-                            account_id="default",
-                        )
-                    except Exception:
-                        exact_risk_decisions = pd.DataFrame()
-                    if isinstance(exact_risk_decisions, pd.DataFrame) and not exact_risk_decisions.empty:
-                        live_risk_decisions[trade_key] = exact_risk_decisions
-                        risk_decisions_basis = "risk_run_id"
-                try:
-                    live_portfolio_targets[trade_key] = cast(
-                        list[object],
-                        execution_repo.load_portfolio_targets(
-                            risk_run_id=risk_run_id,
-                            trade_date=trade_day,
-                            account_id="default",
-                        ),
-                    )
-                except Exception:
-                    live_portfolio_targets[trade_key] = []
-                try:
-                    exec_run_id = str(exec_context.get("exec_run_id") or "").strip() if isinstance(exec_context, dict) else ""
-                    if exec_run_id:
-                        live_execution_targets[trade_key] = cast(
-                            list[object],
-                            execution_repo.load_execution_targets_snapshot(exec_run_id=exec_run_id),
-                        )
-                        live_execution_fills[trade_key] = execution_repo.load_execution_fills_for_run(
-                            exec_run_id=exec_run_id,
-                            account_id="default",
-                        )
-                        live_position_lots[trade_key] = execution_repo.load_execution_position_lots_for_open_run(
-                            open_exec_run_id=exec_run_id,
-                            account_id="default",
-                        )
-                    else:
-                        live_execution_targets[trade_key] = cast(
-                            list[object],
-                            execution_repo.load_latest_execution_targets_snapshot_for_date(
-                                trade_date=trade_day,
-                                account_id="default",
-                            ),
-                        )
-                        live_execution_fills[trade_key] = pd.DataFrame()
-                        live_position_lots[trade_key] = pd.DataFrame()
-                except Exception:
-                    live_execution_targets[trade_key] = []
-                    live_execution_fills[trade_key] = pd.DataFrame()
-                    live_position_lots[trade_key] = pd.DataFrame()
-                live_compare_context[trade_key] = {
-                    "trade_date": trade_key,
-                    "risk_run_id": risk_run_id,
-                    "exec_run_id": exec_context.get("exec_run_id") if isinstance(exec_context, dict) else None,
-                    "match_basis": match_basis,
-                    "risk_decisions_basis": risk_decisions_basis,
-                    "portfolio_targets_basis": "risk_run_id" if risk_run_id else "trade_date_latest",
-                }
-
-            compare_to_live_summary = build_compare_to_live_summary(
-                fidelity_manifest=fidelity_manifest,
-                research_signals_df=research_signals_df,
-                risk_entries=phase2_risk_result.entries if phase2_risk_result is not None else (),
-                execution_targets=phase2_execution_result.targets if phase2_execution_result is not None else (),
-                execution_fills=getattr(phase2_execution_result, "fills", ()) if phase2_execution_result is not None else (),
-                exit_signals_df=getattr(phase7_exit_lifecycle_result, "signals_df", pd.DataFrame()) if phase7_exit_lifecycle_result is not None else pd.DataFrame(),
-                live_risk_decisions=live_risk_decisions,
-                live_portfolio_targets=live_portfolio_targets,
-                live_execution_targets=live_execution_targets,
-                live_execution_fills=live_execution_fills,
-                live_position_lots=live_position_lots,
-                live_compare_context=live_compare_context,
-                account_id="default",
-                phase2_mode=phase2_mode,
-            )
-            compare_to_live_paths = {
-                key: str(path)
-                for key, path in save_compare_to_live_summary(compare_to_live_summary, output_dir).items()
-            }
-            artifact_paths.update(compare_to_live_paths)
-        except Exception:
-            LOGGER.warning("Compare-to-live Sprint 5 ignoré (données live indisponibles ?).", exc_info=True)
+        compare_to_live_paths, compare_to_live_summary = _build_compare_to_live_artifacts(
+            engine=engine,
+            output_dir=output_dir,
+            fidelity_manifest=fidelity_manifest,
+            scores_df=scores_df,
+            research_signals_df=research_signals_df,
+            phase2_risk_result=phase2_risk_result,
+            phase2_execution_result=phase2_execution_result,
+            phase7_exit_lifecycle_result=phase7_exit_lifecycle_result,
+            phase2_mode=phase2_mode,
+        )
+        artifact_paths.update(compare_to_live_paths)
         if phase2_risk_result is not None:
             from backtesting.risk_bridge import save_phase2_risk_artifacts
 

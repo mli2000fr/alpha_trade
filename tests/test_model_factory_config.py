@@ -42,6 +42,17 @@ def test_data_config_rejects_invalid_training_start_date_type() -> None:
         config.DataConfig(training_start_date="2020-01-01")  # type: ignore[arg-type]
 
 
+def test_data_config_accepts_training_end_date() -> None:
+    cfg = config.DataConfig(training_start_date=date(2020, 1, 1), training_end_date=date(2020, 12, 31))
+
+    assert cfg.training_end_date == date(2020, 12, 31)
+
+
+def test_data_config_rejects_training_end_date_before_start_date() -> None:
+    with pytest.raises(ValueError, match="training_end_date"):
+        config.DataConfig(training_start_date=date(2020, 12, 31), training_end_date=date(2020, 1, 1))
+
+
 def test_data_config_accepts_cross_sectional_fields() -> None:
     cfg = config.DataConfig(enable_cross_sectional_features=True, cross_sectional_min_universe=10)
 

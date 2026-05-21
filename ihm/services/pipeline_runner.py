@@ -307,7 +307,10 @@ class PipelineLaunchOptions:
     ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
     ml_mode: MLMode = DEFAULT_ML_MODE
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
+    ml_training_end_date: str | None = None
     ml_train_symbol_source: MLTrainSymbolSource = "candidates"
+    ml_predict_symbol_source: MLTrainSymbolSource = "candidates"
+    ml_predict_use_historical_range: bool = False
     ml_selector_universe_signal_modes: tuple[str, ...] = DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES
     ml_selector_universe_max_candidate_rank: int | None = DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK
     ml_selector_universe_exclude_earnings_blackout: bool = DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT
@@ -1427,13 +1430,21 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     ca_end_date = _normalize_optional_date(options.corporate_actions_end_date)
     ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
     ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
-    ml_symbol_source = {
+    ml_training_end_date = _normalize_optional_date(options.ml_training_end_date)
+    ml_train_symbol_source = {
         "stock_scores": "stock-scores",
         "stock_scores_history": "stock-scores-history",
         "stock_scores_all": "stock-scores-all",
         "candidates": "candidates",
         "stock_bars_daily": "stock-bars-daily",
     }.get(str(options.ml_train_symbol_source or "candidates"), "candidates")
+    ml_predict_symbol_source = {
+        "stock_scores": "stock-scores",
+        "stock_scores_history": "stock-scores-history",
+        "stock_scores_all": "stock-scores-all",
+        "candidates": "candidates",
+        "stock_bars_daily": "stock-bars-daily",
+    }.get(str(options.ml_predict_symbol_source or "candidates"), "candidates")
     ml_selector_signal_modes = [
         str(value).strip().lower()
         for value in (options.ml_selector_universe_signal_modes or ())
@@ -1925,7 +1936,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--training-start-date",
             options.ml_training_start_date,
             "--symbol-source",
-            ml_symbol_source,
+            ml_train_symbol_source,
             "--artifacts-dir",
             ml_artifacts_dir,
             "--max-workers",
@@ -1955,6 +1966,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if options.ml_watchdog_timeout_seconds and options.ml_watchdog_timeout_seconds > 0:
             command.extend(["--watchdog-timeout-seconds", str(int(options.ml_watchdog_timeout_seconds))])
+        if ml_training_end_date:
+            command.extend(["--training-end-date", ml_training_end_date])
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
         if options.ml_include_selector_context:
@@ -2026,7 +2039,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_predict":
-        return [
+        command = [
             sys.executable,
             "-u",
             "-m",
@@ -2035,11 +2048,34 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "predict",
             "--accelerator",
             options.ml_accelerator,
+            "--symbol-source",
+            ml_predict_symbol_source,
             "--artifacts-dir",
             ml_artifacts_dir,
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ]
+        if options.ml_predict_use_historical_range:
+            command.extend([
+                "--training-start-date",
+                options.ml_training_start_date,
+            ])
+            if ml_training_end_date:
+                command.extend(["--training-end-date", ml_training_end_date])
+        if ml_selector_signal_modes:
+            command.append("--selector-universe-signal-modes")
+            command.extend(ml_selector_signal_modes)
+        if (
+            options.ml_selector_universe_max_candidate_rank is not None
+            and int(options.ml_selector_universe_max_candidate_rank) > 0
+        ):
+            command.extend([
+                "--selector-universe-max-candidate-rank",
+                str(int(options.ml_selector_universe_max_candidate_rank)),
+            ])
+        if options.ml_selector_universe_exclude_earnings_blackout:
+            command.append("--selector-universe-exclude-earnings-blackout")
+        return command
 
     if step_key == "risk_management":
         command = [

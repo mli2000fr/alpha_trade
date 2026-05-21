@@ -797,6 +797,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     # Predict
     assert predict_cmd[:6] == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
     assert predict_cmd[predict_cmd.index("--accelerator") + 1] == "gpu"
+    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == "candidates"
     assert "--artifacts-dir" in predict_cmd
 
 
@@ -855,6 +856,44 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
     assert train_cmd[train_cmd.index("--global-model-name") + 1] == "lightgbm"
     assert train_cmd[train_cmd.index("--heartbeat-interval-seconds") + 1] == "30.0"
     assert train_cmd[train_cmd.index("--watchdog-timeout-seconds") + 1] == "600"
+
+
+def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:
+    command = build_pipeline_command(
+        "ml_train",
+        PipelineLaunchOptions(
+            ml_training_start_date="2021-01-01",
+            ml_training_end_date="2021-12-31",
+        ),
+    )
+
+    assert command[command.index("--training-start-date") + 1] == "2021-01-01"
+    assert command[command.index("--training-end-date") + 1] == "2021-12-31"
+
+
+def test_build_pipeline_command_ml_predict_scoped_historical_uses_period_and_selected_universe() -> None:
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(
+            ml_accelerator="cpu",
+            ml_predict_symbol_source="stock_scores_history",
+            ml_predict_use_historical_range=True,
+            ml_training_start_date="2022-01-01",
+            ml_training_end_date="2022-02-15",
+            ml_selector_universe_signal_modes=("strict",),
+            ml_selector_universe_max_candidate_rank=20,
+            ml_selector_universe_exclude_earnings_blackout=True,
+        ),
+    )
+
+    assert command[:6] == [command[0], "-u", "-m", "modelFactory", "--mode", "predict"]
+    assert command[command.index("--symbol-source") + 1] == "stock-scores-history"
+    assert command[command.index("--training-start-date") + 1] == "2022-01-01"
+    assert command[command.index("--training-end-date") + 1] == "2022-02-15"
+    assert "--selector-universe-signal-modes" in command
+    assert command[command.index("--selector-universe-signal-modes") + 1] == "strict"
+    assert command[command.index("--selector-universe-max-candidate-rank") + 1] == "20"
+    assert "--selector-universe-exclude-earnings-blackout" in command
 
 
 def test_build_pipeline_command_ml_train_can_target_all_stock_bars_daily_symbols() -> None:
