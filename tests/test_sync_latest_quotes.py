@@ -150,3 +150,58 @@ def test_sync_latest_quotes_resolves_requested_symbol_source(monkeypatch) -> Non
     assert captured_sources == [("stock-scores-history", 7)]
 
 
+def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) -> None:
+    import logging
+
+    monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL", "MSFT"])
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "fetch_historical_quotes",
+        lambda symbol, **kwargs: [
+            {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-04-29T20:00:00Z"},
+            {"bp": 101.0, "ap": 101.3, "bs": 8, "as": 9, "t": "2026-04-30T20:00:00Z"},
+        ],
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
+
+    with caplog.at_level(logging.INFO):
+        summary = sync_latest_quotes.sync_latest_quotes(
+            from_date=date(2026, 4, 29),
+            to_date=date(2026, 4, 30),
+            symbol_source="stock_scores_all",
+        )
+
+    assert summary == {"symbols": 2, "rows_upserted": 4}
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Sync latest quotes start | mode=historical symbol_source=stock-scores-all symbols=2" in messages
+    assert "stage=fetch_start" in messages
+    assert "progress=1/2" in messages
+    assert "quotes_fetched=2" in messages
+    assert "Sync latest quotes completed | mode=historical symbol_source=stock-scores-all symbols=2 rows_upserted=4" in messages
+
+
+def test_sync_latest_quotes_emits_latest_batch_progress_logs(monkeypatch, caplog) -> None:
+    import logging
+
+    monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL", "MSFT", "NVDA"])
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "fetch_latest_quotes",
+        lambda symbols, session=None: {
+            symbol: {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-04-29T20:00:00Z"}
+            for symbol in symbols
+        },
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
+
+    with caplog.at_level(logging.INFO):
+        summary = sync_latest_quotes.sync_latest_quotes(batch_size=2, symbol_source="candidates")
+
+    assert summary == {"symbols": 3, "rows_upserted": 3}
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Sync latest quotes start | mode=latest symbol_source=candidates symbols=3" in messages
+    assert "batch=1/2" in messages
+    assert "rows_in_batch=2" in messages
+    assert "Sync latest quotes completed | mode=latest symbol_source=candidates symbols=3 rows_upserted=3" in messages
+
+

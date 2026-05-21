@@ -194,17 +194,34 @@ def sync_latest_quotes(
         raise ValueError("batch_size doit être supérieur ou égal à 1.")
 
     resolved_from_date, resolved_to_date = _normalize_quote_window(from_date, to_date)
+    mode = "historical" if resolved_from_date is not None and resolved_to_date is not None else "latest"
 
     resolved_symbol_source = normalize_symbol_source(symbol_source)
     symbols = list_symbols_for_source(resolved_symbol_source, limit=limit)
     summary = {"symbols": len(symbols), "rows_upserted": 0}
+    LOGGER.info(
+        "Sync latest quotes start | mode=%s symbol_source=%s symbols=%s from=%s to=%s limit=%s batch_size=%s",
+        mode,
+        resolved_symbol_source,
+        len(symbols),
+        resolved_from_date,
+        resolved_to_date,
+        limit,
+        batch_size,
+    )
     if not symbols:
+        LOGGER.warning(
+            "Sync latest quotes skipped | aucun symbole résolu pour symbol_source=%s mode=%s.",
+            resolved_symbol_source,
+            mode,
+        )
         return summary
 
     session = requests.Session()
     try:
         run_utc_now = _utc_now_naive()
         if resolved_from_date is None or resolved_to_date is None:
+            total_batches = (len(symbols) + batch_size - 1) // batch_size
             for start in range(0, len(symbols), batch_size):
                 batch = symbols[start:start + batch_size]
                 payload = fetch_latest_quotes(batch, session=session)
@@ -214,17 +231,31 @@ def sync_latest_quotes(
                     if not quote:
                         continue
                     rows.append(_build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now))
-                summary["rows_upserted"] += upsert_quote_snapshots(rows)
+                batch_upserted = upsert_quote_snapshots(rows)
+                summary["rows_upserted"] += batch_upserted
+                batch_index = (start // batch_size) + 1
                 LOGGER.info(
-                    "Sync latest quotes | mode=latest symbol_source=%s batch=%s-%s symbols=%s rows_upserted=%s",
+                    "Sync latest quotes | mode=latest symbol_source=%s batch=%s/%s range=%s-%s symbols=%s rows_in_batch=%s rows_upserted=%s",
                     resolved_symbol_source,
+                    batch_index,
+                    total_batches,
                     start + 1,
                     start + len(batch),
                     len(batch),
+                    len(rows),
                     summary["rows_upserted"],
                 )
         else:
             for index, symbol in enumerate(symbols, start=1):
+                LOGGER.info(
+                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s symbol=%s stage=fetch_start from=%s to=%s",
+                    resolved_symbol_source,
+                    index,
+                    len(symbols),
+                    symbol,
+                    resolved_from_date,
+                    resolved_to_date,
+                )
                 historical_quotes = fetch_historical_quotes(
                     symbol,
                     start=resolved_from_date.isoformat(),
@@ -238,13 +269,16 @@ def sync_latest_quotes(
                     to_date=resolved_to_date,
                     fallback_utc_now=run_utc_now,
                 )
-                summary["rows_upserted"] += upsert_quote_snapshots(rows)
+                batch_upserted = upsert_quote_snapshots(rows)
+                summary["rows_upserted"] += batch_upserted
                 LOGGER.info(
-                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s symbol=%s days_upserted=%s rows_upserted=%s from=%s to=%s",
+                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s quotes_fetched=%s days_selected=%s rows_upserted=%s from=%s to=%s",
                     resolved_symbol_source,
                     index,
                     len(symbols),
+                    (index / len(symbols)) * 100.0,
                     symbol,
+                    len(historical_quotes),
                     len(rows),
                     summary["rows_upserted"],
                     resolved_from_date,
@@ -253,6 +287,15 @@ def sync_latest_quotes(
     finally:
         session.close()
 
+    LOGGER.info(
+        "Sync latest quotes completed | mode=%s symbol_source=%s symbols=%s rows_upserted=%s from=%s to=%s",
+        mode,
+        resolved_symbol_source,
+        len(symbols),
+        summary["rows_upserted"],
+        resolved_from_date,
+        resolved_to_date,
+    )
     return summary
 
 
