@@ -4,14 +4,14 @@ import argparse
 import json
 import logging
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, cast
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import requests
 
-from common.market_calendar import nyse_session_dates
+from common.market_calendar import get_nyse_session_bounds, nyse_session_dates
 from common.utils import configure_root_logging
 from database.cleaning_audits import record_quotes_audit_run
 from database.selector_reference import (
@@ -20,12 +20,15 @@ from database.selector_reference import (
     normalize_symbol_source,
     upsert_quote_snapshots,
 )
-from service.alpaca.clientAlpaca import fetch_historical_quotes, fetch_latest_quotes
+from service.alpaca.clientAlpaca import fetch_latest_historical_quote_in_window, fetch_latest_quotes
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 200
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 MARKET_TZ = ZoneInfo("America/New_York")
+HISTORICAL_CLOSE_PRIMARY_LOOKBACK_MINUTES = 10
+HISTORICAL_CLOSE_FALLBACK_LOOKBACK_MINUTES = 45
+HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS = 10
 
 # Format Alpaca latest quote : RFC 3339 / ISO 8601 avec suffixe `Z` (UTC) et
 # fraction de seconde jusqu'à 9 chiffres (nanosecondes). MySQL DATETIME(6) ne
@@ -115,6 +118,52 @@ def _emit_run_summary(summary: dict[str, object]) -> None:
         f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
         flush=True,
     )
+
+
+def _to_iso_zulu(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _iter_historical_close_windows(session_date: date) -> list[tuple[datetime, datetime]]:
+    market_open_utc, market_close_utc = get_nyse_session_bounds(session_date)
+    windows = [
+        (
+            max(market_open_utc, market_close_utc - timedelta(minutes=HISTORICAL_CLOSE_PRIMARY_LOOKBACK_MINUTES)),
+            market_close_utc,
+        ),
+        (
+            max(market_open_utc, market_close_utc - timedelta(minutes=HISTORICAL_CLOSE_FALLBACK_LOOKBACK_MINUTES)),
+            market_close_utc,
+        ),
+        (market_open_utc, market_close_utc),
+    ]
+    deduped_windows: list[tuple[datetime, datetime]] = []
+    seen: set[tuple[str, str]] = set()
+    for window_start, window_end in windows:
+        key = (_to_iso_zulu(window_start), _to_iso_zulu(window_end))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_windows.append((window_start, window_end))
+    return deduped_windows
+
+
+def _fetch_near_close_quote_for_session(
+    symbol: str,
+    session_date: date,
+    *,
+    session: requests.Session,
+) -> tuple[dict[str, object] | None, int | None, tuple[datetime, datetime] | None]:
+    for window_index, (window_start, window_end) in enumerate(_iter_historical_close_windows(session_date), start=1):
+        quote = fetch_latest_historical_quote_in_window(
+            symbol,
+            start=_to_iso_zulu(window_start),
+            end=_to_iso_zulu(window_end),
+            session=session,
+        )
+        if isinstance(quote, dict):
+            return cast(dict[str, object], quote), window_index, (window_start, window_end)
+    return None, None, None
 
 
 def _log_historical_symbol_summary(
@@ -370,8 +419,10 @@ def sync_latest_quotes(
                     missing_days,
                     len(missing_ranges),
                 )
-                historical_quotes: list[dict[str, object]] = []
                 effective_missing_ranges = missing_ranges or [(fetch_start_date, resolved_to_date)]
+                symbol_quotes_fetched = 0
+                symbol_rows_upserted = 0
+                symbol_days_attempted = 0
                 for range_index, (range_start, range_end) in enumerate(effective_missing_ranges, start=1):
                     LOGGER.info(
                         "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=fetch_range range=%s/%s range_start=%s range_end=%s",
@@ -385,14 +436,67 @@ def sync_latest_quotes(
                         range_start,
                         range_end,
                     )
-                    historical_quotes.extend(
-                        fetch_historical_quotes(
+                    session_dates = nyse_session_dates(range_start, range_end)
+                    total_sessions_in_range = len(session_dates)
+                    for session_index, session_date in enumerate(session_dates, start=1):
+                        symbol_days_attempted += 1
+                        quote, window_index, selected_window = _fetch_near_close_quote_for_session(
                             symbol,
-                            start=range_start.isoformat(),
-                            end=range_end.isoformat(),
+                            session_date,
                             session=session,
                         )
-                    )
+                        if not isinstance(quote, dict):
+                            if (
+                                session_index == 1
+                                or session_index == total_sessions_in_range
+                                or session_index % HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS == 0
+                            ):
+                                LOGGER.info(
+                                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=day_progress range=%s/%s session=%s/%s trade_date=%s quote_found=%s covered_to=%s total_rows_upserted=%s",
+                                    resolved_symbol_source,
+                                    index,
+                                    len(symbols),
+                                    (index / len(symbols)) * 100.0,
+                                    symbol,
+                                    range_index,
+                                    len(effective_missing_ranges),
+                                    session_index,
+                                    total_sessions_in_range,
+                                    session_date,
+                                    False,
+                                    None,
+                                    summary["rows_upserted"],
+                                )
+                            continue
+
+                        row = _build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now)
+                        upsert_quote_snapshots([row])
+                        symbol_quotes_fetched += 1
+                        symbol_rows_upserted += 1
+                        summary["rows_upserted"] += 1
+                        covered_to = row.get("quote_date") if isinstance(row.get("quote_date"), date) else session_date
+                        if (
+                            session_index == 1
+                            or session_index == total_sessions_in_range
+                            or session_index % HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS == 0
+                        ):
+                            LOGGER.info(
+                                "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=day_persist range=%s/%s session=%s/%s trade_date=%s window=%s covered_to=%s symbol_rows_upserted=%s total_rows_upserted=%s",
+                                resolved_symbol_source,
+                                index,
+                                len(symbols),
+                                (index / len(symbols)) * 100.0,
+                                symbol,
+                                range_index,
+                                len(effective_missing_ranges),
+                                session_index,
+                                total_sessions_in_range,
+                                session_date,
+                                window_index,
+                                covered_to,
+                                symbol_rows_upserted,
+                                summary["rows_upserted"],
+                            )
                 _log_historical_symbol_summary(
                     symbol_source=resolved_symbol_source,
                     index=index,
@@ -405,15 +509,6 @@ def sync_latest_quotes(
                     fetched_ranges=len(effective_missing_ranges),
                     skipped_existing=False,
                 )
-                rows = _select_latest_quotes_by_day(
-                    symbol,
-                    historical_quotes,
-                    from_date=resolved_from_date,
-                    to_date=resolved_to_date,
-                    fallback_utc_now=run_utc_now,
-                )
-                batch_upserted = upsert_quote_snapshots(rows)
-                summary["rows_upserted"] += batch_upserted
                 LOGGER.info(
                     "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s quotes_fetched=%s days_selected=%s rows_upserted=%s from=%s to=%s",
                     resolved_symbol_source,
@@ -421,8 +516,8 @@ def sync_latest_quotes(
                     len(symbols),
                     (index / len(symbols)) * 100.0,
                     symbol,
-                    len(historical_quotes),
-                    len(rows),
+                    symbol_quotes_fetched,
+                    symbol_rows_upserted,
                     summary["rows_upserted"],
                     resolved_from_date,
                     resolved_to_date,

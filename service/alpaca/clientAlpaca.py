@@ -1,5 +1,6 @@
 import logging
 import time
+from collections.abc import Iterator
 from datetime import datetime, time as dt_time, timedelta, timezone
 from typing import Any, Literal, Optional
 
@@ -278,7 +279,105 @@ def fetch_latest_quotes(
             client.close()
 
 
+def fetch_latest_historical_quote_in_window(
+    symbol: str,
+    *,
+    start: str,
+    end: str,
+    session: Optional[requests.Session] = None,
+    account_id: Optional[str] = None,
+    feed: AlpacaFeed = DEFAULT_FEED,
+) -> dict[str, Any] | None:
+    """Retourne la quote historique la plus récente d'une fenêtre donnée.
+
+    Utilise `sort=desc` et `limit=1` pour minimiser les données transférées.
+    """
+    cleaned_symbol = str(symbol or "").strip().upper()
+    if not cleaned_symbol:
+        return None
+    if feed not in _VALID_FEEDS:
+        raise ValueError(
+            f"feed='{feed}' invalide pour Alpaca data v2. "
+            f"Valeurs acceptées : {sorted(_VALID_FEEDS)}."
+        )
+
+    owned_session = session is None
+    client = session or requests.Session()
+    endpoint = ALPACA_QUOTES_ENDPOINT_TEMPLATE.format(symbol=cleaned_symbol)
+    params: dict[str, Any] = {
+        "start": _normalize_quotes_window_boundary(start, end_of_day=False),
+        "end": _normalize_quotes_window_boundary(end, end_of_day=True),
+        "limit": 1,
+        "sort": "desc",
+        "feed": feed,
+    }
+    try:
+        time.sleep(PAUSE_CALL_QUOTE)
+        _telemetry_bump("alpaca", "requests_total")
+        response = request_with_retry(
+            client,
+            "GET",
+            endpoint,
+            headers=_build_headers(account_id),
+            params=params,
+            policy=_alpaca_retry_policy(),
+        )
+        payload = response.json()
+        quotes = payload.get("quotes") or []
+        if not isinstance(quotes, list):
+            raise RuntimeError("Réponse quotes historiques Alpaca invalide.")
+        _telemetry_bump("alpaca", "success_total")
+        for quote in quotes:
+            if isinstance(quote, dict):
+                return quote
+        return None
+    except requests.exceptions.HTTPError as exc:
+        if getattr(exc.response, "status_code", None) == 404:
+            LOGGER.warning("Alpaca retourne 404 pour %s : aucune quote historique disponible.", cleaned_symbol)
+            return None
+        _telemetry_bump("alpaca", "5xx_total")
+        raise RuntimeError(f"HTTP error Alpaca quote historique fenetre pour {cleaned_symbol}: {exc}") from exc
+    except requests.exceptions.Timeout as exc:
+        _telemetry_bump("alpaca", "timeout_total")
+        raise RuntimeError(
+            f"Timeout Alpaca quote historique fenetre epuise pour {cleaned_symbol} apres {MAX_TIMEOUT_RETRIES} tentatives."
+        ) from exc
+    except requests.exceptions.RequestException as exc:
+        _telemetry_bump("alpaca", "timeout_total")
+        raise RuntimeError(f"Erreur reseau Alpaca quote historique fenetre pour {cleaned_symbol}: {exc}") from exc
+    finally:
+        if owned_session:
+            client.close()
+
+
 def fetch_historical_quotes(
+    symbol: str,
+    *,
+    start: str,
+    end: str,
+    limit: int = 10_000,
+    session: Optional[requests.Session] = None,
+    account_id: Optional[str] = None,
+    feed: AlpacaFeed = DEFAULT_FEED,
+) -> list[dict[str, Any]]:
+    """Récupère toutes les pages de quotes historiques Alpaca pour un symbole."""
+    all_quotes: list[dict[str, Any]] = []
+    for page in iter_historical_quotes_pages(
+        symbol,
+        start=start,
+        end=end,
+        limit=limit,
+        session=session,
+        account_id=account_id,
+        feed=feed,
+    ):
+        quotes = page.get("quotes") or []
+        if isinstance(quotes, list):
+            all_quotes.extend(quote for quote in quotes if isinstance(quote, dict))
+    return all_quotes
+
+
+def iter_historical_quotes_pages(
     symbol: str,
     *,
     start: str,
@@ -287,11 +386,11 @@ def fetch_historical_quotes(
     session: Optional[requests.Session] = None,
     account_id: Optional[str] = None,
     feed: AlpacaFeed = DEFAULT_FEED,
-) -> list[dict[str, Any]]:
-    """Récupère les quotes historiques Alpaca d'un symbole sur une période."""
+) -> Iterator[dict[str, Any]]:
+    """Itère les pages de quotes historiques Alpaca d'un symbole sur une période."""
     cleaned_symbol = str(symbol or "").strip().upper()
     if not cleaned_symbol:
-        return []
+        return
     if feed not in _VALID_FEEDS:
         raise ValueError(
             f"feed='{feed}' invalide pour Alpaca data v2. "
@@ -308,9 +407,9 @@ def fetch_historical_quotes(
         "sort": "asc",
         "feed": feed,
     }
-    all_quotes: list[dict[str, Any]] = []
     next_token: Optional[str] = None
     page_index = 0
+    total_quotes = 0
 
     try:
         while True:
@@ -334,25 +433,41 @@ def fetch_historical_quotes(
                 quotes = payload.get("quotes") or []
                 if not isinstance(quotes, list):
                     raise RuntimeError("Réponse quotes historiques Alpaca invalide.")
-                all_quotes.extend(quote for quote in quotes if isinstance(quote, dict))
+                normalized_quotes = [quote for quote in quotes if isinstance(quote, dict)]
                 next_token = payload.get("next_page_token")
                 page_index += 1
+                total_quotes += len(normalized_quotes)
+                last_quote_timestamp = None
+                if normalized_quotes:
+                    last_quote_timestamp = normalized_quotes[-1].get("t")
                 _telemetry_bump("alpaca", "success_total")
                 if _should_log_page_progress(page_index, has_next_page=bool(next_token)):
                     LOGGER.info(
-                        "Alpaca historical quotes | symbol=%s page=%s start=%s end=%s page_count=%s total_count=%s has_next=%s",
+                        "Alpaca historical quotes | symbol=%s page=%s start=%s end=%s page_count=%s total_count=%s has_next=%s last_quote_ts=%s",
                         cleaned_symbol,
                         page_index,
                         params["start"],
                         params["end"],
-                        len(quotes),
-                        len(all_quotes),
+                        len(normalized_quotes),
+                        total_quotes,
                         bool(next_token),
+                        last_quote_timestamp,
                     )
+                yield {
+                    "symbol": cleaned_symbol,
+                    "quotes": normalized_quotes,
+                    "page": page_index,
+                    "page_count": len(normalized_quotes),
+                    "total_count": total_quotes,
+                    "has_next": bool(next_token),
+                    "start": params["start"],
+                    "end": params["end"],
+                    "last_quote_timestamp": last_quote_timestamp,
+                }
             except requests.exceptions.HTTPError as exc:
                 if getattr(exc.response, "status_code", None) == 404:
                     LOGGER.warning("Alpaca retourne 404 pour %s : aucune quote historique disponible.", cleaned_symbol)
-                    return all_quotes
+                    return
                 _telemetry_bump("alpaca", "5xx_total")
                 raise RuntimeError(f"HTTP error Alpaca quotes historiques pour {cleaned_symbol}: {exc}") from exc
             except requests.exceptions.Timeout as exc:
@@ -365,7 +480,7 @@ def fetch_historical_quotes(
                 raise RuntimeError(f"Erreur reseau Alpaca quotes historiques pour {cleaned_symbol}: {exc}") from exc
 
             if not next_token:
-                return all_quotes
+                return
     finally:
         if owned_session:
             client.close()

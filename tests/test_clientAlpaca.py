@@ -1,5 +1,6 @@
 import pytest
 import requests
+from typing import cast
 
 from service.alpaca import clientAlpaca
 
@@ -52,7 +53,7 @@ def test_fetch_bars_requests_split_adjustment(monkeypatch) -> None:
     monkeypatch.setattr(clientAlpaca, "_build_headers", lambda account_id=None: {"X": "Y"})
     monkeypatch.setattr(clientAlpaca.time, "sleep", lambda seconds: None)
 
-    bars = clientAlpaca.fetch_bars("AAPL", "1Day", session=session)
+    bars = clientAlpaca.fetch_bars("AAPL", "1Day", session=cast(requests.Session, cast(object, session)))
 
     assert len(bars) == 1
     assert session.calls[0]["params"]["adjustment"] == "split"
@@ -67,7 +68,7 @@ def test_fetch_bars_uses_rolling_default_start_date(monkeypatch) -> None:
     monkeypatch.setattr(clientAlpaca, "_default_start_date", lambda: "2015-04-24")
     monkeypatch.setattr(clientAlpaca.time, "sleep", lambda seconds: None)
 
-    clientAlpaca.fetch_bars("AAPL", "1Day", session=session)
+    clientAlpaca.fetch_bars("AAPL", "1Day", session=cast(requests.Session, cast(object, session)))
 
     assert session.calls[0]["params"]["start"] == "2015-04-24"
 
@@ -80,6 +81,64 @@ def test_fetch_bars_raises_technical_error_after_timeout_exhaustion(monkeypatch)
     monkeypatch.setattr(clientAlpaca, "MAX_TIMEOUT_RETRIES", 2)
 
     with pytest.raises(clientAlpaca.AlpacaBarsFetchError, match="Timeout Alpaca epuise"):
-        clientAlpaca.fetch_bars("AAPL", "1Day", session=session)
+        clientAlpaca.fetch_bars("AAPL", "1Day", session=cast(requests.Session, cast(object, session)))
+
+
+def test_iter_historical_quotes_pages_yields_page_metadata(monkeypatch) -> None:
+    session = _FakeSession([
+        _FakeResponse({
+            "quotes": [{"t": "2026-04-29T20:00:00Z", "bp": 100.0, "ap": 100.5}],
+            "next_page_token": "NEXT",
+        }),
+        _FakeResponse({
+            "quotes": [{"t": "2026-04-30T20:00:00Z", "bp": 101.0, "ap": 101.5}],
+            "next_page_token": None,
+        }),
+    ])
+
+    monkeypatch.setattr(clientAlpaca, "_build_headers", lambda account_id=None: {"X": "Y"})
+    monkeypatch.setattr(clientAlpaca.time, "sleep", lambda seconds: None)
+
+    pages = list(
+        clientAlpaca.iter_historical_quotes_pages(
+            "AAPL",
+            start="2026-04-29",
+            end="2026-04-30",
+            session=cast(requests.Session, cast(object, session)),
+        )
+    )
+
+    assert len(pages) == 2
+    assert pages[0]["page"] == 1
+    assert pages[0]["page_count"] == 1
+    assert pages[0]["total_count"] == 1
+    assert pages[0]["has_next"] is True
+    assert pages[0]["last_quote_timestamp"] == "2026-04-29T20:00:00Z"
+    assert pages[1]["page"] == 2
+    assert pages[1]["total_count"] == 2
+    assert pages[1]["has_next"] is False
+
+
+def test_fetch_latest_historical_quote_in_window_requests_desc_limit_one(monkeypatch) -> None:
+    session = _FakeSession([
+        _FakeResponse({
+            "quotes": [{"t": "2026-04-29T19:59:00Z", "bp": 100.0, "ap": 100.5}],
+        }),
+    ])
+
+    monkeypatch.setattr(clientAlpaca, "_build_headers", lambda account_id=None: {"X": "Y"})
+    monkeypatch.setattr(clientAlpaca.time, "sleep", lambda seconds: None)
+
+    quote = clientAlpaca.fetch_latest_historical_quote_in_window(
+        "AAPL",
+        start="2026-04-29T19:50:00Z",
+        end="2026-04-29T20:00:00Z",
+        session=cast(requests.Session, cast(object, session)),
+    )
+
+    assert quote is not None
+    assert quote["t"] == "2026-04-29T19:59:00Z"
+    assert session.calls[0]["params"]["sort"] == "desc"
+    assert session.calls[0]["params"]["limit"] == 1
 
 
