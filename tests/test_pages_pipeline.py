@@ -1155,6 +1155,89 @@ def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_hist
     assert options.ml_predict_use_historical_range is True
 
 
+def test_render_period_sync_block_launches_quotes_history_with_selected_window(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        pipeline.QUOTE_HISTORY_START_DATE_KEY: dt_date(2026, 4, 1),
+        pipeline.QUOTE_HISTORY_END_DATE_KEY: dt_date(2026, 4, 30),
+    }
+    launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "divider", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "error", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "code", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "date_input", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
+    monkeypatch.setattr(
+        pipeline.st,
+        "button",
+        lambda _label, *args, **kwargs: str(kwargs.get("key") or "") == "sync_latest_quotes_historical_period_launch",
+    )
+    monkeypatch.setattr(pipeline, "build_pipeline_command", lambda step_key, options: [step_key, str(options.data_integrity_quotes_from_date), str(options.data_integrity_quotes_to_date)])
+    monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_pipeline_step",
+        lambda step_key, step_label, options, db_config, all_runs: launch_calls.append((step_key, step_label, options)),
+    )
+
+    pipeline._render_period_sync_block(
+        "sync_latest_quotes",
+        pipeline.PipelineLaunchOptions(),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert len(launch_calls) == 1
+    step_key, step_label, options = launch_calls[0]
+    assert step_key == "sync_latest_quotes"
+    assert "2026-04-01 → 2026-04-30" in step_label
+    assert options.data_integrity_quotes_from_date == "2026-04-01"
+    assert options.data_integrity_quotes_to_date == "2026-04-30"
+
+
+def test_render_period_sync_block_blocks_invalid_earnings_window(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        pipeline.EARNINGS_HISTORY_START_DATE_KEY: dt_date(2026, 5, 10),
+        pipeline.EARNINGS_HISTORY_END_DATE_KEY: dt_date(2026, 5, 1),
+    }
+    errors: list[str] = []
+    launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "divider", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "error", lambda value, *args, **kwargs: errors.append(str(value)))
+    monkeypatch.setattr(pipeline.st, "code", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "date_input", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
+    monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: True)
+    monkeypatch.setattr(pipeline, "build_pipeline_command", lambda step_key, options: [step_key])
+    monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_pipeline_step",
+        lambda step_key, step_label, options, db_config, all_runs: launch_calls.append((step_key, step_label, options)),
+    )
+
+    pipeline._render_period_sync_block(
+        "sync_earnings_calendar",
+        pipeline.PipelineLaunchOptions(),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert launch_calls == []
+    assert any("Fenêtre invalide" in message for message in errors)
+
+
 def test_render_watcher_handoff_panel_uses_pipeline_style_expander(monkeypatch) -> None:
     expander_labels: list[str] = []
 

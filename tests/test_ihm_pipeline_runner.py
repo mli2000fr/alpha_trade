@@ -653,6 +653,33 @@ def test_build_pipeline_command_selector_reference_sync_steps() -> None:
     ]
 
 
+def test_build_pipeline_command_sync_latest_quotes_accepts_historical_period() -> None:
+    command = build_pipeline_command(
+        "sync_latest_quotes",
+        PipelineLaunchOptions(
+            data_integrity_quotes_from_date="2026-04-01",
+            data_integrity_quotes_to_date="2026-04-30",
+            data_integrity_quotes_batch_size=60,
+            data_integrity_quotes_limit=25,
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "dataIntegrityEngine.sync_latest_quotes",
+        "--batch-size",
+        "60",
+        "--from-date",
+        "2026-04-01",
+        "--to-date",
+        "2026-04-30",
+        "--limit",
+        "25",
+    ]
+
+
 def test_build_pipeline_command_sync_earnings_calendar_defaults_to_resumable_batches() -> None:
     command = build_pipeline_command("sync_earnings_calendar", PipelineLaunchOptions())
 

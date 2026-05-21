@@ -411,6 +411,8 @@ class PipelineLaunchOptions:
     signal_aggregator_min_news_count: int = DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT
     signal_aggregator_time_decay_half_life_days: float = DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS
     signal_aggregator_log_level: str = DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
+    data_integrity_quotes_from_date: str | None = None
+    data_integrity_quotes_to_date: str | None = None
     data_integrity_quotes_limit: int | None = None
     data_integrity_quotes_batch_size: int = DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE
     data_integrity_earnings_from_date: str | None = None
@@ -1417,6 +1419,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     sentiment_start_utc = _normalize_optional_date(options.sentiment_start_utc)
     sentiment_end_utc = _normalize_optional_date(options.sentiment_end_utc)
     sentiment_symbols = _normalize_symbol_list(options.sentiment_symbols)
+    quotes_from_date = _normalize_optional_date(options.data_integrity_quotes_from_date)
+    quotes_to_date = _normalize_optional_date(options.data_integrity_quotes_to_date)
     earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
     earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
     screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None
@@ -1571,6 +1575,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--batch-size",
             str(options.data_integrity_quotes_batch_size),
         ]
+        if quotes_from_date:
+            command.extend(["--from-date", quotes_from_date])
+        if quotes_to_date:
+            command.extend(["--to-date", quotes_to_date])
         if quotes_limit is not None:
             command.extend(["--limit", str(quotes_limit)])
         return command

@@ -36,17 +36,23 @@ def test_sync_latest_quotes_main_emits_structured_summary(monkeypatch, capsys) -
     monkeypatch.setattr(
         sync_latest_quotes,
         "_build_arg_parser",
-        lambda: type("_Parser", (), {"parse_args": lambda self: argparse.Namespace(limit=12, batch_size=34)})(),
+        lambda: type(
+            "_Parser",
+            (),
+            {"parse_args": lambda self: argparse.Namespace(from_date="2026-04-01", to_date="2026-04-15", limit=12, batch_size=34)},
+        )(),
     )
     monkeypatch.setattr(
         sync_latest_quotes,
         "sync_latest_quotes",
-        lambda limit, batch_size: {"symbols": int(limit or 0), "rows_upserted": int(batch_size)},
+        lambda limit, batch_size, from_date=None, to_date=None: {"symbols": int(limit or 0), "rows_upserted": int(batch_size)},
     )
 
     sync_latest_quotes.main()
 
     payload = _payload_from_stdout(capsys.readouterr().out.strip(), sync_latest_quotes.RUN_SUMMARY_PREFIX)
+    assert payload["from_date"] == "2026-04-01"
+    assert payload["to_date"] == "2026-04-15"
     assert payload["requested_limit"] == 12
     assert payload["batch_size"] == 34
     assert payload["symbols"] == 12

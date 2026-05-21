@@ -9,6 +9,7 @@ ré-exports ci-dessous.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date, timedelta
 from typing import Any, cast
 
 import streamlit as st
@@ -123,6 +124,132 @@ ML_TRAIN_SYMBOL_SOURCE_TO_CLI = {
     "candidates": "candidates",
     "stock_bars_daily": "stock-bars-daily",
 }
+
+QUOTE_HISTORY_START_DATE_KEY = "pipeline_sync_latest_quotes_period_start_date"
+QUOTE_HISTORY_END_DATE_KEY = "pipeline_sync_latest_quotes_period_end_date"
+EARNINGS_HISTORY_START_DATE_KEY = "pipeline_sync_earnings_calendar_period_start_date"
+EARNINGS_HISTORY_END_DATE_KEY = "pipeline_sync_earnings_calendar_period_end_date"
+
+
+def _coerce_ui_date(value: object, *, fallback: date) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip())
+        except ValueError:
+            return fallback
+    return fallback
+
+
+def _trade_date_or_today(options: PipelineLaunchOptions) -> date:
+    trade_date_raw = str(options.trade_date or "").strip()
+    if trade_date_raw:
+        try:
+            return date.fromisoformat(trade_date_raw)
+        except ValueError:
+            pass
+    return date.today()
+
+
+def _render_period_sync_block(
+    step_key: str,
+    options: PipelineLaunchOptions,
+    *,
+    workflow_active: bool,
+    active_for_step: list[dict[str, object]],
+    db_config: dict[str, str | None],
+    all_runs: list[dict[str, object]],
+) -> None:
+    if step_key == "sync_latest_quotes":
+        start_key = QUOTE_HISTORY_START_DATE_KEY
+        end_key = QUOTE_HISTORY_END_DATE_KEY
+        end_default = _trade_date_or_today(options)
+        start_default = _coerce_ui_date(
+            getattr(options, "data_integrity_quotes_from_date", None),
+            fallback=end_default - timedelta(days=30),
+        )
+        end_default = _coerce_ui_date(
+            getattr(options, "data_integrity_quotes_to_date", None),
+            fallback=end_default,
+        )
+        caption = (
+            "Alpaca est interrogé sur la période choisie, puis l'IHM conserve **la dernière quote disponible par symbole et par jour de marché** "
+            "avant upsert dans `stock_quote_snapshots`."
+        )
+        button_label = "🗓️ Récupérer l'historique des quotes sur la période"
+        launch_label = "4. Sync Latest Quotes — historique"
+        override_keys = ("data_integrity_quotes_from_date", "data_integrity_quotes_to_date")
+    elif step_key == "sync_earnings_calendar":
+        start_key = EARNINGS_HISTORY_START_DATE_KEY
+        end_key = EARNINGS_HISTORY_END_DATE_KEY
+        end_default = _trade_date_or_today(options) + timedelta(days=30)
+        start_default = _coerce_ui_date(options.data_integrity_earnings_from_date, fallback=end_default - timedelta(days=37))
+        end_default = _coerce_ui_date(options.data_integrity_earnings_to_date, fallback=end_default)
+        caption = (
+            "Ce lancement applique une fenêtre `from/to` locale au run courant du calendrier earnings, sans modifier le bouton standard. "
+            "Le réglage `resume` configuré dans les paramètres Data Integrity reste conservé."
+        )
+        button_label = "🗓️ Récupérer le calendrier earnings sur la période"
+        launch_label = "5. Sync Earnings Calendar — historique"
+        override_keys = ("data_integrity_earnings_from_date", "data_integrity_earnings_to_date")
+    else:
+        return
+
+    disabled = workflow_active or bool(active_for_step)
+    st.divider()
+    st.markdown("##### Récupération historique sur période")
+    st.caption(caption)
+    if workflow_active:
+        st.caption("Workflow complet en cours : le lancement historique manuel est temporairement désactivé.")
+    elif active_for_step:
+        st.caption("Un run de cette étape est déjà actif : le lancement historique attend sa fin.")
+
+    period_col1, period_col2 = st.columns(2)
+    with period_col1:
+        start_picker = st.date_input(
+            "Date de début",
+            value=_coerce_ui_date(st.session_state.get(start_key), fallback=start_default),
+            key=start_key,
+            format="YYYY-MM-DD",
+        )
+    with period_col2:
+        end_picker = st.date_input(
+            "Date de fin",
+            value=_coerce_ui_date(st.session_state.get(end_key), fallback=end_default),
+            key=end_key,
+            format="YYYY-MM-DD",
+        )
+
+    selected_start = _coerce_ui_date(st.session_state.get(start_key, start_picker), fallback=start_default)
+    selected_end = _coerce_ui_date(st.session_state.get(end_key, end_picker), fallback=end_default)
+    if selected_start > selected_end:
+        st.error("Fenêtre invalide : la date de début doit être antérieure ou égale à la date de fin.")
+        period_options = None
+    else:
+        st.caption(f"Fenêtre demandée : `{selected_start.isoformat()}` → `{selected_end.isoformat()}`.")
+        period_options = replace(
+            options,
+            **{
+                override_keys[0]: cast(Any, selected_start.isoformat()),
+                override_keys[1]: cast(Any, selected_end.isoformat()),
+            },
+        )
+        st.code(format_command_for_display(build_pipeline_command(step_key, period_options)), language="powershell")
+
+    if st.button(
+        button_label,
+        key=f"{step_key}_historical_period_launch",
+        use_container_width=True,
+        disabled=disabled or period_options is None,
+    ) and period_options is not None:
+        _launch_pipeline_step(
+            step_key,
+            f"{launch_label} — {selected_start.isoformat()} → {selected_end.isoformat()}",
+            period_options,
+            db_config,
+            all_runs,
+        )
 
 
 def _build_execution_mode_banner_payload(
@@ -677,6 +804,16 @@ def _render_launchable_step_panel(
             if step.key in {"ml_train", "ml_predict"}:
                 st.divider()
                 _render_ml_inspection_link(step.key)
+
+        if step.key in {"sync_latest_quotes", "sync_earnings_calendar"}:
+            _render_period_sync_block(
+                step.key,
+                options,
+                workflow_active=workflow_active,
+                active_for_step=active_for_step,
+                db_config=db_config,
+                all_runs=all_runs,
+            )
 
         _render_step_result(latest_by_step.get(step.key))
 

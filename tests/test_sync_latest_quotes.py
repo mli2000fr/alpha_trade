@@ -7,7 +7,7 @@ microsecondes — compatible MySQL `DATETIME(6)`.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -91,5 +91,41 @@ def test_sync_latest_quotes_derives_quote_date_from_alpaca_timestamp(monkeypatch
     assert len(captured_rows) == 1
     assert captured_rows[0]["quote_timestamp"] == datetime(2026, 4, 29, 20, 0, 0)
     assert captured_rows[0]["quote_date"] == datetime(2026, 4, 29, 16, 0, 0).date()
+
+
+def test_sync_latest_quotes_historical_keeps_latest_quote_per_market_day(monkeypatch):
+    captured_rows: list[dict[str, object]] = []
+
+    monkeypatch.setattr(sync_latest_quotes, "list_active_tradable_symbols", lambda limit=None: ["AAPL"])
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "fetch_historical_quotes",
+        lambda symbol, **kwargs: [
+            {"bp": 99.8, "ap": 100.2, "bs": 11, "as": 12, "t": "2026-04-29T14:00:00Z"},
+            {"bp": 100.0, "ap": 100.5, "bs": 21, "as": 22, "t": "2026-04-29T20:00:00Z"},
+            {"bp": 101.0, "ap": 101.4, "bs": 31, "as": 32, "t": "2026-04-30T19:30:00Z"},
+        ],
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: captured_rows.extend(rows) or len(rows))
+
+    summary = sync_latest_quotes.sync_latest_quotes(
+        limit=1,
+        batch_size=50,
+        from_date=date(2026, 4, 29),
+        to_date=date(2026, 4, 30),
+    )
+
+    assert summary == {"symbols": 1, "rows_upserted": 2}
+    assert [row["quote_date"] for row in captured_rows] == [date(2026, 4, 29), date(2026, 4, 30)]
+    assert captured_rows[0]["quote_timestamp"] == datetime(2026, 4, 29, 20, 0, 0)
+    assert captured_rows[1]["quote_timestamp"] == datetime(2026, 4, 30, 19, 30, 0)
+
+
+def test_sync_latest_quotes_rejects_inverted_historical_period() -> None:
+    with pytest.raises(ValueError, match="from_date"):
+        sync_latest_quotes.sync_latest_quotes(
+            from_date=date(2026, 5, 2),
+            to_date=date(2026, 5, 1),
+        )
 
 

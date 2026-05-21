@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from datetime import date, datetime, timezone
+from typing import Any, cast
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -13,7 +14,7 @@ import requests
 from common.utils import configure_root_logging
 from database.cleaning_audits import record_quotes_audit_run
 from database.selector_reference import list_active_tradable_symbols, upsert_quote_snapshots
-from service.alpaca.clientAlpaca import fetch_latest_quotes
+from service.alpaca.clientAlpaca import fetch_historical_quotes, fetch_latest_quotes
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 200
@@ -121,9 +122,77 @@ def _compute_spread_bps(bid_price: float | None, ask_price: float | None) -> flo
     return ((ask_price - bid_price) / mid) * 10_000.0
 
 
-def sync_latest_quotes(limit: int | None = None, batch_size: int = DEFAULT_BATCH_SIZE) -> dict[str, int]:
+def _to_optional_float(value: object) -> float | None:
+    return float(cast(Any, value)) if value is not None else None
+
+
+def _normalize_quote_window(
+    from_date: date | None,
+    to_date: date | None,
+) -> tuple[date | None, date | None]:
+    if from_date is None and to_date is None:
+        return None, None
+    resolved_end = to_date or from_date or _market_date_from_timestamp(None)
+    resolved_start = from_date or resolved_end
+    if resolved_start > resolved_end:
+        raise ValueError("from_date doit être antérieure ou égale à to_date.")
+    return resolved_start, resolved_end
+
+
+def _build_quote_snapshot_row(
+    symbol: str,
+    quote: dict[str, object],
+    *,
+    fallback_utc_now: datetime,
+) -> dict[str, object]:
+    bid_price = _to_optional_float(quote.get("bp"))
+    ask_price = _to_optional_float(quote.get("ap"))
+    quote_timestamp = _parse_alpaca_timestamp(quote.get("t"))
+    return {
+        "symbol": symbol,
+        "quote_date": _market_date_from_timestamp(quote_timestamp, fallback_utc_now=fallback_utc_now),
+        "quote_timestamp": quote_timestamp,
+        "bid_price": bid_price,
+        "ask_price": ask_price,
+        "bid_size": _to_optional_float(quote.get("bs")),
+        "ask_size": _to_optional_float(quote.get("as")),
+        "spread_bps": _compute_spread_bps(bid_price, ask_price),
+    }
+
+
+def _select_latest_quotes_by_day(
+    symbol: str,
+    quotes: list[dict[str, object]],
+    *,
+    from_date: date,
+    to_date: date,
+    fallback_utc_now: datetime,
+) -> list[dict[str, object]]:
+    selected_by_day: dict[date, tuple[datetime, dict[str, object]]] = {}
+    for quote in quotes:
+        row = _build_quote_snapshot_row(symbol, quote, fallback_utc_now=fallback_utc_now)
+        quote_date = row["quote_date"]
+        if not isinstance(quote_date, date) or quote_date < from_date or quote_date > to_date:
+            continue
+        quote_timestamp = row.get("quote_timestamp")
+        sort_key: datetime = quote_timestamp if isinstance(quote_timestamp, datetime) else fallback_utc_now
+        existing = selected_by_day.get(quote_date)
+        if existing is None or sort_key >= existing[0]:
+            selected_by_day[quote_date] = (sort_key, row)
+    return [selected_by_day[day][1] for day in sorted(selected_by_day)]
+
+
+def sync_latest_quotes(
+    limit: int | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> dict[str, int]:
     if batch_size < 1:
         raise ValueError("batch_size doit être supérieur ou égal à 1.")
+
+    resolved_from_date, resolved_to_date = _normalize_quote_window(from_date, to_date)
 
     symbols = list_active_tradable_symbols(limit=limit)
     summary = {"symbols": len(symbols), "rows_upserted": 0}
@@ -133,37 +202,50 @@ def sync_latest_quotes(limit: int | None = None, batch_size: int = DEFAULT_BATCH
     session = requests.Session()
     try:
         run_utc_now = _utc_now_naive()
-        for start in range(0, len(symbols), batch_size):
-            batch = symbols[start:start + batch_size]
-            payload = fetch_latest_quotes(batch, session=session)
-            rows: list[dict[str, object]] = []
-            for symbol in batch:
-                quote = payload.get(symbol)
-                if not quote:
-                    continue
-                bid_price = float(quote["bp"]) if quote.get("bp") is not None else None
-                ask_price = float(quote["ap"]) if quote.get("ap") is not None else None
-                quote_timestamp = _parse_alpaca_timestamp(quote.get("t"))
-                rows.append(
-                    {
-                        "symbol": symbol,
-                        "quote_date": _market_date_from_timestamp(quote_timestamp, fallback_utc_now=run_utc_now),
-                        "quote_timestamp": quote_timestamp,
-                        "bid_price": bid_price,
-                        "ask_price": ask_price,
-                        "bid_size": float(quote["bs"]) if quote.get("bs") is not None else None,
-                        "ask_size": float(quote["as"]) if quote.get("as") is not None else None,
-                        "spread_bps": _compute_spread_bps(bid_price, ask_price),
-                    }
+        if resolved_from_date is None or resolved_to_date is None:
+            for start in range(0, len(symbols), batch_size):
+                batch = symbols[start:start + batch_size]
+                payload = fetch_latest_quotes(batch, session=session)
+                rows: list[dict[str, object]] = []
+                for symbol in batch:
+                    quote = payload.get(symbol)
+                    if not quote:
+                        continue
+                    rows.append(_build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now))
+                summary["rows_upserted"] += upsert_quote_snapshots(rows)
+                LOGGER.info(
+                    "Sync latest quotes | mode=latest batch=%s-%s symbols=%s rows_upserted=%s",
+                    start + 1,
+                    start + len(batch),
+                    len(batch),
+                    summary["rows_upserted"],
                 )
-            summary["rows_upserted"] += upsert_quote_snapshots(rows)
-            LOGGER.info(
-                "Sync latest quotes | batch=%s-%s symbols=%s rows_upserted=%s",
-                start + 1,
-                start + len(batch),
-                len(batch),
-                summary["rows_upserted"],
-            )
+        else:
+            for index, symbol in enumerate(symbols, start=1):
+                historical_quotes = fetch_historical_quotes(
+                    symbol,
+                    start=resolved_from_date.isoformat(),
+                    end=resolved_to_date.isoformat(),
+                    session=session,
+                )
+                rows = _select_latest_quotes_by_day(
+                    symbol,
+                    historical_quotes,
+                    from_date=resolved_from_date,
+                    to_date=resolved_to_date,
+                    fallback_utc_now=run_utc_now,
+                )
+                summary["rows_upserted"] += upsert_quote_snapshots(rows)
+                LOGGER.info(
+                    "Sync latest quotes | mode=historical progress=%s/%s symbol=%s days_upserted=%s rows_upserted=%s from=%s to=%s",
+                    index,
+                    len(symbols),
+                    symbol,
+                    len(rows),
+                    summary["rows_upserted"],
+                    resolved_from_date,
+                    resolved_to_date,
+                )
     finally:
         session.close()
 
@@ -172,6 +254,8 @@ def sync_latest_quotes(limit: int | None = None, batch_size: int = DEFAULT_BATCH
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Synchronise les latest quotes Alpaca dans stock_quote_snapshots")
+    parser.add_argument("--from-date", type=str, default=None, help="Date de début ISO (YYYY-MM-DD)")
+    parser.add_argument("--to-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD)")
     parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Taille de batch pour l'appel latest quotes")
     return parser
@@ -190,7 +274,12 @@ def main() -> None:
     error_message: str | None = None
     summary: dict[str, int]
     try:
-        summary = sync_latest_quotes(limit=args.limit, batch_size=args.batch_size)
+        summary = sync_latest_quotes(
+            limit=args.limit,
+            batch_size=args.batch_size,
+            from_date=date.fromisoformat(args.from_date) if args.from_date else None,
+            to_date=date.fromisoformat(args.to_date) if args.to_date else None,
+        )
     except Exception as exc:  # noqa: BLE001 — audit + propagation contrôlée.
         status = "failed"
         error_message = repr(exc)
@@ -224,6 +313,8 @@ def main() -> None:
             "started_at": started_at.isoformat(timespec="seconds"),
             "finished_at": finished_at.isoformat(timespec="seconds"),
             "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+            "from_date": args.from_date,
+            "to_date": args.to_date,
             "requested_limit": args.limit,
             "batch_size": args.batch_size,
             "audit_status": status,
