@@ -507,6 +507,7 @@ def _render_ml_train_scope_block(
         button_label="Entraîner l'univers sélectionné",
         label_prefix="9. ML Train (Model Factory)",
         source_attr="ml_train_symbol_source",
+        historical_range=True,
     )
 
 
