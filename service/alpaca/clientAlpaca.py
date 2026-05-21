@@ -283,7 +283,7 @@ def fetch_historical_quotes(
     *,
     start: str,
     end: str,
-    limit: int = 10_000,
+    limit: int = 10000,
     session: Optional[requests.Session] = None,
     account_id: Optional[str] = None,
     feed: AlpacaFeed = DEFAULT_FEED,

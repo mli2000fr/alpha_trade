@@ -146,3 +146,45 @@ def test_upsert_quote_snapshots_ignores_missing_legacy_columns(monkeypatch) -> N
     assert "spread_bps" in sql
 
 
+def test_get_quote_snapshot_resume_state_detects_complete_and_missing_days(monkeypatch) -> None:
+    engine = _create_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_quote_snapshots (
+                    symbol TEXT,
+                    quote_date DATE,
+                    spread_bps FLOAT
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO stock_quote_snapshots (symbol, quote_date, spread_bps)
+                VALUES
+                    ('AAPL', '2026-04-21', 12.0),
+                    ('AAPL', '2026-04-23', 13.0)
+                """
+            )
+        )
+
+    monkeypatch.setattr(selector_reference, "get_sqlalchemy_engine", lambda: engine)
+
+    state = selector_reference.get_quote_snapshot_resume_state(
+        "AAPL",
+        from_date=date(2026, 4, 21),
+        to_date=date(2026, 4, 23),
+        expected_dates=[date(2026, 4, 21), date(2026, 4, 22), date(2026, 4, 23)],
+    )
+
+    assert state["has_expected_days"] is True
+    assert state["is_complete"] is False
+    assert state["expected_days"] == 3
+    assert state["stored_days"] == 2
+    assert state["missing_days"] == 1
+    assert state["first_missing_date"] == date(2026, 4, 22)
+
+

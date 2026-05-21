@@ -99,6 +99,19 @@ def test_sync_latest_quotes_historical_keeps_latest_quote_per_market_day(monkeyp
     monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL"])
     monkeypatch.setattr(
         sync_latest_quotes,
+        "get_quote_snapshot_resume_state",
+        lambda symbol, from_date, to_date, expected_dates=None: {
+            "symbol": symbol,
+            "has_expected_days": True,
+            "is_complete": False,
+            "expected_days": 2,
+            "stored_days": 0,
+            "missing_days": 2,
+            "first_missing_date": from_date,
+        },
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
         "fetch_historical_quotes",
         lambda symbol, **kwargs: [
             {"bp": 99.8, "ap": 100.2, "bs": 11, "as": 12, "t": "2026-04-29T14:00:00Z"},
@@ -156,6 +169,19 @@ def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) 
     monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL", "MSFT"])
     monkeypatch.setattr(
         sync_latest_quotes,
+        "get_quote_snapshot_resume_state",
+        lambda symbol, from_date, to_date, expected_dates=None: {
+            "symbol": symbol,
+            "has_expected_days": True,
+            "is_complete": False,
+            "expected_days": 2,
+            "stored_days": 0,
+            "missing_days": 2,
+            "first_missing_date": from_date,
+        },
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
         "fetch_historical_quotes",
         lambda symbol, **kwargs: [
             {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-04-29T20:00:00Z"},
@@ -178,6 +204,78 @@ def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) 
     assert "progress=1/2" in messages
     assert "quotes_fetched=2" in messages
     assert "Sync latest quotes completed | mode=historical symbol_source=stock-scores-all symbols=2 rows_upserted=4" in messages
+
+
+def test_sync_latest_quotes_historical_skips_symbol_when_period_already_covered(monkeypatch) -> None:
+    fetch_calls: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL"])
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "get_quote_snapshot_resume_state",
+        lambda symbol, from_date, to_date, expected_dates=None: {
+            "symbol": symbol,
+            "has_expected_days": True,
+            "is_complete": True,
+            "expected_days": 22,
+            "stored_days": 22,
+            "missing_days": 0,
+            "first_missing_date": None,
+        },
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "fetch_historical_quotes",
+        lambda symbol, **kwargs: fetch_calls.append((symbol, kwargs)) or [],
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
+
+    summary = sync_latest_quotes.sync_latest_quotes(
+        limit=1,
+        from_date=date(2026, 4, 21),
+        to_date=date(2026, 5, 21),
+    )
+
+    assert summary == {"symbols": 1, "rows_upserted": 0}
+    assert fetch_calls == []
+
+
+def test_sync_latest_quotes_historical_resumes_from_first_missing_date(monkeypatch) -> None:
+    fetch_calls: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL"])
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "get_quote_snapshot_resume_state",
+        lambda symbol, from_date, to_date, expected_dates=None: {
+            "symbol": symbol,
+            "has_expected_days": True,
+            "is_complete": False,
+            "expected_days": 22,
+            "stored_days": 10,
+            "missing_days": 12,
+            "first_missing_date": date(2026, 5, 5),
+        },
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "fetch_historical_quotes",
+        lambda symbol, **kwargs: fetch_calls.append((symbol, kwargs)) or [
+            {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-05-05T20:00:00Z"},
+        ],
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
+
+    summary = sync_latest_quotes.sync_latest_quotes(
+        limit=1,
+        from_date=date(2026, 4, 21),
+        to_date=date(2026, 5, 21),
+    )
+
+    assert summary == {"symbols": 1, "rows_upserted": 1}
+    assert fetch_calls[0][0] == "AAPL"
+    assert fetch_calls[0][1]["start"] == "2026-05-05"
+    assert fetch_calls[0][1]["end"] == "2026-05-21"
 
 
 def test_sync_latest_quotes_emits_latest_batch_progress_logs(monkeypatch, caplog) -> None:

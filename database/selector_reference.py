@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from functools import lru_cache
 from typing import Any, Iterable
 
 from sqlalchemy import Column, Date, DateTime, Float, MetaData, String, Table, func
+from sqlalchemy import text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from database.assets import list_eligible_stock_symbols
@@ -77,7 +79,7 @@ def upsert_quote_snapshots(records: Iterable[dict[str, Any]]) -> int:
         return 0
 
     table = get_stock_quote_snapshots_table()
-    available_columns = {column.name for column in table.columns}
+    available_columns = {column.name for column in table.columns.values()}
     rows = [{key: value for key, value in row.items() if key in available_columns} for row in rows]
     rows = [row for row in rows if {"symbol", "quote_date"}.issubset(row)]
     if not rows:
@@ -86,11 +88,20 @@ def upsert_quote_snapshots(records: Iterable[dict[str, Any]]) -> int:
     session = SessionLocal()
     try:
         stmt = mysql_insert(table).values(rows)
-        update_dict = {
-            column_name: getattr(stmt.inserted, column_name)
-            for column_name in ("quote_timestamp", "bid_price", "ask_price", "bid_size", "ask_size", "spread_bps")
-            if column_name in available_columns
-        }
+        inserted_updates: dict[str, Any] = {}
+        if "quote_timestamp" in available_columns:
+            inserted_updates["quote_timestamp"] = stmt.inserted.quote_timestamp
+        if "bid_price" in available_columns:
+            inserted_updates["bid_price"] = stmt.inserted.bid_price
+        if "ask_price" in available_columns:
+            inserted_updates["ask_price"] = stmt.inserted.ask_price
+        if "bid_size" in available_columns:
+            inserted_updates["bid_size"] = stmt.inserted.bid_size
+        if "ask_size" in available_columns:
+            inserted_updates["ask_size"] = stmt.inserted.ask_size
+        if "spread_bps" in available_columns:
+            inserted_updates["spread_bps"] = stmt.inserted.spread_bps
+        update_dict: dict[str, Any] = dict(inserted_updates)
         if "last_updated" in available_columns:
             update_dict["last_updated"] = func.current_timestamp()
         if not update_dict:
@@ -105,6 +116,80 @@ def upsert_quote_snapshots(records: Iterable[dict[str, Any]]) -> int:
         raise
     finally:
         session.close()
+
+
+def _coerce_sql_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def get_quote_snapshot_resume_state(
+    symbol: str,
+    *,
+    from_date: date,
+    to_date: date,
+    expected_dates: Iterable[date] | None = None,
+) -> dict[str, object]:
+    cleaned_symbol = str(symbol or "").strip().upper()
+    if not cleaned_symbol:
+        return {
+            "symbol": cleaned_symbol,
+            "has_expected_days": False,
+            "is_complete": True,
+            "expected_days": 0,
+            "stored_days": 0,
+            "missing_days": 0,
+            "first_missing_date": None,
+        }
+
+    engine = get_sqlalchemy_engine()
+    params = {
+        "symbol": cleaned_symbol,
+        "from_date": from_date,
+        "to_date": to_date,
+    }
+    with engine.connect() as conn:
+        stored_raw = conn.execute(
+            text(
+                """
+                SELECT DISTINCT quote_date
+                FROM stock_quote_snapshots
+                WHERE symbol = :symbol
+                  AND quote_date BETWEEN :from_date AND :to_date
+                ORDER BY quote_date
+                """
+            ),
+            params,
+        ).scalars().all()
+
+    expected_dates_set = {
+        normalized
+        for raw in (expected_dates or ())
+        if (normalized := _coerce_sql_date(raw)) is not None and from_date <= normalized <= to_date
+    }
+    stored_dates = {
+        normalized
+        for raw in stored_raw
+        if (normalized := _coerce_sql_date(raw)) is not None
+    }
+    missing_dates = sorted(expected_dates_set.difference(stored_dates))
+    return {
+        "symbol": cleaned_symbol,
+        "has_expected_days": bool(expected_dates_set),
+        "is_complete": bool(expected_dates_set) and not missing_dates,
+        "expected_days": len(expected_dates_set),
+        "stored_days": len(expected_dates_set.intersection(stored_dates)),
+        "missing_days": len(missing_dates),
+        "first_missing_date": missing_dates[0] if missing_dates else None,
+    }
 
 
 def upsert_earnings_calendar(records: Iterable[dict[str, Any]]) -> int:

@@ -11,9 +11,15 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from common.market_calendar import nyse_session_dates
 from common.utils import configure_root_logging
 from database.cleaning_audits import record_quotes_audit_run
-from database.selector_reference import list_symbols_for_source, normalize_symbol_source, upsert_quote_snapshots
+from database.selector_reference import (
+    get_quote_snapshot_resume_state,
+    list_symbols_for_source,
+    normalize_symbol_source,
+    upsert_quote_snapshots,
+)
 from service.alpaca.clientAlpaca import fetch_historical_quotes, fetch_latest_quotes
 
 LOGGER = logging.getLogger(__name__)
@@ -246,19 +252,61 @@ def sync_latest_quotes(
                     summary["rows_upserted"],
                 )
         else:
+            expected_quote_dates = tuple(nyse_session_dates(resolved_from_date, resolved_to_date))
             for index, symbol in enumerate(symbols, start=1):
+                resume_state = get_quote_snapshot_resume_state(
+                    symbol,
+                    from_date=resolved_from_date,
+                    to_date=resolved_to_date,
+                    expected_dates=expected_quote_dates,
+                )
+                expected_days = int(resume_state.get("expected_days", 0))
+                stored_days = int(resume_state.get("stored_days", 0))
+                missing_days = int(resume_state.get("missing_days", 0))
+                first_missing_date = resume_state.get("first_missing_date")
+                if not bool(resume_state.get("has_expected_days", False)):
+                    LOGGER.info(
+                        "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_no_bars from=%s to=%s",
+                        resolved_symbol_source,
+                        index,
+                        len(symbols),
+                        (index / len(symbols)) * 100.0,
+                        symbol,
+                        resolved_from_date,
+                        resolved_to_date,
+                    )
+                    continue
+                if bool(resume_state.get("is_complete", False)):
+                    LOGGER.info(
+                        "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_existing expected_days=%s stored_days=%s from=%s to=%s",
+                        resolved_symbol_source,
+                        index,
+                        len(symbols),
+                        (index / len(symbols)) * 100.0,
+                        symbol,
+                        expected_days,
+                        stored_days,
+                        resolved_from_date,
+                        resolved_to_date,
+                    )
+                    continue
+                fetch_start_date = first_missing_date if isinstance(first_missing_date, date) else resolved_from_date
                 LOGGER.info(
-                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s symbol=%s stage=fetch_start from=%s to=%s",
+                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s symbol=%s stage=fetch_start from=%s to=%s fetch_from=%s expected_days=%s stored_days=%s missing_days=%s",
                     resolved_symbol_source,
                     index,
                     len(symbols),
                     symbol,
                     resolved_from_date,
                     resolved_to_date,
+                    fetch_start_date,
+                    expected_days,
+                    stored_days,
+                    missing_days,
                 )
                 historical_quotes = fetch_historical_quotes(
                     symbol,
-                    start=resolved_from_date.isoformat(),
+                    start=fetch_start_date.isoformat(),
                     end=resolved_to_date.isoformat(),
                     session=session,
                 )
