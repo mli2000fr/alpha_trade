@@ -117,6 +117,35 @@ def _emit_run_summary(summary: dict[str, object]) -> None:
     )
 
 
+def _log_historical_symbol_summary(
+    *,
+    symbol_source: str,
+    index: int,
+    total_symbols: int,
+    symbol: str,
+    from_date: date,
+    to_date: date,
+    missing_ranges: int,
+    missing_days: int,
+    fetched_ranges: int,
+    skipped_existing: bool,
+) -> None:
+    LOGGER.info(
+        "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=symbol_summary missing_ranges=%s missing_days=%s fetched_ranges=%s skipped_existing=%s from=%s to=%s",
+        symbol_source,
+        index,
+        total_symbols,
+        (index / total_symbols) * 100.0,
+        symbol,
+        missing_ranges,
+        missing_days,
+        fetched_ranges,
+        skipped_existing,
+        from_date,
+        to_date,
+    )
+
+
 def _compute_spread_bps(bid_price: float | None, ask_price: float | None) -> float | None:
     if bid_price is None or ask_price is None:
         return None
@@ -130,6 +159,13 @@ def _compute_spread_bps(bid_price: float | None, ask_price: float | None) -> flo
 
 def _to_optional_float(value: object) -> float | None:
     return float(cast(Any, value)) if value is not None else None
+
+
+def _to_int(value: object, default: int = 0) -> int:
+    try:
+        return int(cast(Any, value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _normalize_quote_window(
@@ -260,11 +296,28 @@ def sync_latest_quotes(
                     to_date=resolved_to_date,
                     expected_dates=expected_quote_dates,
                 )
-                expected_days = int(resume_state.get("expected_days", 0))
-                stored_days = int(resume_state.get("stored_days", 0))
-                missing_days = int(resume_state.get("missing_days", 0))
+                expected_days = _to_int(resume_state.get("expected_days", 0))
+                stored_days = _to_int(resume_state.get("stored_days", 0))
+                missing_days = _to_int(resume_state.get("missing_days", 0))
                 first_missing_date = resume_state.get("first_missing_date")
+                missing_ranges = [
+                    (range_start, range_end)
+                    for range_start, range_end in cast(list[tuple[object, object]], resume_state.get("missing_ranges", []))
+                    if isinstance(range_start, date) and isinstance(range_end, date)
+                ]
                 if not bool(resume_state.get("has_expected_days", False)):
+                    _log_historical_symbol_summary(
+                        symbol_source=resolved_symbol_source,
+                        index=index,
+                        total_symbols=len(symbols),
+                        symbol=symbol,
+                        from_date=resolved_from_date,
+                        to_date=resolved_to_date,
+                        missing_ranges=0,
+                        missing_days=0,
+                        fetched_ranges=0,
+                        skipped_existing=False,
+                    )
                     LOGGER.info(
                         "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_no_bars from=%s to=%s",
                         resolved_symbol_source,
@@ -277,6 +330,18 @@ def sync_latest_quotes(
                     )
                     continue
                 if bool(resume_state.get("is_complete", False)):
+                    _log_historical_symbol_summary(
+                        symbol_source=resolved_symbol_source,
+                        index=index,
+                        total_symbols=len(symbols),
+                        symbol=symbol,
+                        from_date=resolved_from_date,
+                        to_date=resolved_to_date,
+                        missing_ranges=len(missing_ranges),
+                        missing_days=missing_days,
+                        fetched_ranges=0,
+                        skipped_existing=True,
+                    )
                     LOGGER.info(
                         "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_existing expected_days=%s stored_days=%s from=%s to=%s",
                         resolved_symbol_source,
@@ -292,7 +357,7 @@ def sync_latest_quotes(
                     continue
                 fetch_start_date = first_missing_date if isinstance(first_missing_date, date) else resolved_from_date
                 LOGGER.info(
-                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s symbol=%s stage=fetch_start from=%s to=%s fetch_from=%s expected_days=%s stored_days=%s missing_days=%s",
+                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s symbol=%s stage=fetch_start from=%s to=%s fetch_from=%s expected_days=%s stored_days=%s missing_days=%s missing_ranges=%s",
                     resolved_symbol_source,
                     index,
                     len(symbols),
@@ -303,12 +368,42 @@ def sync_latest_quotes(
                     expected_days,
                     stored_days,
                     missing_days,
+                    len(missing_ranges),
                 )
-                historical_quotes = fetch_historical_quotes(
-                    symbol,
-                    start=fetch_start_date.isoformat(),
-                    end=resolved_to_date.isoformat(),
-                    session=session,
+                historical_quotes: list[dict[str, object]] = []
+                effective_missing_ranges = missing_ranges or [(fetch_start_date, resolved_to_date)]
+                for range_index, (range_start, range_end) in enumerate(effective_missing_ranges, start=1):
+                    LOGGER.info(
+                        "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=fetch_range range=%s/%s range_start=%s range_end=%s",
+                        resolved_symbol_source,
+                        index,
+                        len(symbols),
+                        (index / len(symbols)) * 100.0,
+                        symbol,
+                        range_index,
+                        len(effective_missing_ranges),
+                        range_start,
+                        range_end,
+                    )
+                    historical_quotes.extend(
+                        fetch_historical_quotes(
+                            symbol,
+                            start=range_start.isoformat(),
+                            end=range_end.isoformat(),
+                            session=session,
+                        )
+                    )
+                _log_historical_symbol_summary(
+                    symbol_source=resolved_symbol_source,
+                    index=index,
+                    total_symbols=len(symbols),
+                    symbol=symbol,
+                    from_date=resolved_from_date,
+                    to_date=resolved_to_date,
+                    missing_ranges=len(effective_missing_ranges),
+                    missing_days=missing_days,
+                    fetched_ranges=len(effective_missing_ranges),
+                    skipped_existing=False,
                 )
                 rows = _select_latest_quotes_by_day(
                     symbol,

@@ -131,6 +131,35 @@ def _coerce_sql_date(value: object) -> date | None:
         return None
 
 
+def _collapse_contiguous_dates(
+    dates: Iterable[date],
+    *,
+    expected_order: Iterable[date] | None = None,
+) -> list[tuple[date, date]]:
+    expected_sequence = list(dict.fromkeys(expected_order or ()))
+    if expected_sequence:
+        expected_positions = {value: index for index, value in enumerate(expected_sequence)}
+        ordered_dates = sorted({value for value in dates}, key=lambda value: expected_positions.get(value, 10**9))
+    else:
+        ordered_dates = sorted({value for value in dates})
+        expected_positions = {value: index for index, value in enumerate(ordered_dates)}
+    if not ordered_dates:
+        return []
+
+    ranges: list[tuple[date, date]] = []
+    range_start = ordered_dates[0]
+    range_end = ordered_dates[0]
+    for current in ordered_dates[1:]:
+        if expected_positions.get(current) == expected_positions.get(range_end, -1) + 1:
+            range_end = current
+            continue
+        ranges.append((range_start, range_end))
+        range_start = current
+        range_end = current
+    ranges.append((range_start, range_end))
+    return ranges
+
+
 def get_quote_snapshot_resume_state(
     symbol: str,
     *,
@@ -170,17 +199,19 @@ def get_quote_snapshot_resume_state(
             params,
         ).scalars().all()
 
-    expected_dates_set = {
+    expected_sequence: list[date] = [
         normalized
         for raw in (expected_dates or ())
         if (normalized := _coerce_sql_date(raw)) is not None and from_date <= normalized <= to_date
-    }
-    stored_dates = {
+    ]
+    expected_dates_set = set(expected_sequence)
+    stored_dates: set[date] = {
         normalized
         for raw in stored_raw
         if (normalized := _coerce_sql_date(raw)) is not None
     }
-    missing_dates = sorted(expected_dates_set.difference(stored_dates))
+    missing_dates: list[date] = sorted(expected_dates_set.difference(stored_dates))
+    missing_ranges = _collapse_contiguous_dates(missing_dates, expected_order=expected_sequence)
     return {
         "symbol": cleaned_symbol,
         "has_expected_days": bool(expected_dates_set),
@@ -189,6 +220,7 @@ def get_quote_snapshot_resume_state(
         "stored_days": len(expected_dates_set.intersection(stored_dates)),
         "missing_days": len(missing_dates),
         "first_missing_date": missing_dates[0] if missing_dates else None,
+        "missing_ranges": missing_ranges,
     }
 
 

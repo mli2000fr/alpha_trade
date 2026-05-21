@@ -186,5 +186,50 @@ def test_get_quote_snapshot_resume_state_detects_complete_and_missing_days(monke
     assert state["stored_days"] == 2
     assert state["missing_days"] == 1
     assert state["first_missing_date"] == date(2026, 4, 22)
+    assert state["missing_ranges"] == [(date(2026, 4, 22), date(2026, 4, 22))]
+
+
+def test_get_quote_snapshot_resume_state_groups_missing_trading_days_across_weekend(monkeypatch) -> None:
+    engine = _create_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_quote_snapshots (
+                    symbol TEXT,
+                    quote_date DATE,
+                    spread_bps FLOAT
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO stock_quote_snapshots (symbol, quote_date, spread_bps)
+                VALUES
+                    ('AAPL', '2026-04-21', 12.0),
+                    ('AAPL', '2026-04-24', 13.0)
+                """
+            )
+        )
+
+    monkeypatch.setattr(selector_reference, "get_sqlalchemy_engine", lambda: engine)
+
+    state = selector_reference.get_quote_snapshot_resume_state(
+        "AAPL",
+        from_date=date(2026, 4, 21),
+        to_date=date(2026, 4, 27),
+        expected_dates=[
+            date(2026, 4, 21),
+            date(2026, 4, 22),
+            date(2026, 4, 23),
+            date(2026, 4, 24),
+            date(2026, 4, 27),
+        ],
+    )
+
+    assert state["missing_days"] == 3
+    assert state["missing_ranges"] == [(date(2026, 4, 22), date(2026, 4, 23)), (date(2026, 4, 27), date(2026, 4, 27))]
 
 
