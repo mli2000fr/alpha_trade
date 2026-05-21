@@ -12,7 +12,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from dataIntegrityEngine import sync_latest_quotes
-from dataIntegrityEngine.sync_latest_quotes import _market_date_from_timestamp, _parse_alpaca_timestamp
+from dataIntegrityEngine.sync_latest_quotes import _iter_monthly_blocks, _market_date_from_timestamp, _parse_alpaca_timestamp
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +71,14 @@ class TestMarketDateFromTimestamp:
         assert _market_date_from_timestamp(quote_timestamp) == datetime(2026, 4, 29, 20, 30, 0).date()
 
 
+def test_iter_monthly_blocks_splits_partial_month_boundaries() -> None:
+    assert _iter_monthly_blocks(date(2026, 4, 29), date(2026, 6, 2)) == [
+        (date(2026, 4, 29), date(2026, 4, 30)),
+        (date(2026, 5, 1), date(2026, 5, 31)),
+        (date(2026, 6, 1), date(2026, 6, 2)),
+    ]
+
+
 def test_sync_latest_quotes_derives_quote_date_from_alpaca_timestamp(monkeypatch):
     captured_rows: list[dict[str, object]] = []
 
@@ -118,15 +126,17 @@ def test_sync_latest_quotes_historical_keeps_latest_quote_per_market_day(monkeyp
     )
     monkeypatch.setattr(
         sync_latest_quotes,
-        "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, session=None: (
+        "iter_historical_quotes_pages",
+        lambda symbol, start, end, session=None: iter([
             {
-                date(2026, 4, 29): {"bp": 100.0, "ap": 100.5, "bs": 21, "as": 22, "t": "2026-04-29T20:00:00Z"},
-                date(2026, 4, 30): {"bp": 101.0, "ap": 101.4, "bs": 31, "as": 32, "t": "2026-04-30T19:30:00Z"},
-            }.get(session_date),
-            1,
-            None,
-        ),
+                "quotes": [
+                    {"bp": 99.5, "ap": 100.0, "bs": 20, "as": 21, "t": "2026-04-29T19:55:00Z"},
+                    {"bp": 100.0, "ap": 100.5, "bs": 21, "as": 22, "t": "2026-04-29T20:00:00Z"},
+                    {"bp": 101.0, "ap": 101.4, "bs": 31, "as": 32, "t": "2026-04-30T19:30:00Z"},
+                ],
+                "has_next": False,
+            }
+        ]),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: captured_rows.extend(rows) or len(rows))
 
@@ -192,15 +202,16 @@ def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) 
     )
     monkeypatch.setattr(
         sync_latest_quotes,
-        "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, session=None: (
+        "iter_historical_quotes_pages",
+        lambda symbol, start, end, session=None: iter([
             {
-                date(2026, 4, 29): {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-04-29T20:00:00Z"},
-                date(2026, 4, 30): {"bp": 101.0, "ap": 101.3, "bs": 8, "as": 9, "t": "2026-04-30T20:00:00Z"},
-            }.get(session_date),
-            1,
-            None,
-        ),
+                "quotes": [
+                    {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-04-29T20:00:00Z"},
+                    {"bp": 101.0, "ap": 101.3, "bs": 8, "as": 9, "t": "2026-04-30T20:00:00Z"},
+                ],
+                "has_next": False,
+            }
+        ]),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
 
@@ -216,14 +227,15 @@ def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) 
     assert "Sync latest quotes start | mode=historical symbol_source=stock-scores-all symbols=2" in messages
     assert "stage=fetch_start" in messages
     assert "progress=1/2" in messages
+    assert "stage=fetch_block" in messages
     assert "stage=symbol_summary" in messages
     assert "missing_ranges=1" in messages
     assert "missing_days=2" in messages
     assert "fetched_ranges=1" in messages
     assert "skipped_existing=False" in messages
-    assert "stage=day_persist" in messages
+    assert "stage=block_persist" in messages
     assert "covered_to=2026-04-30" in messages
-    assert "quotes_fetched=2" in messages
+    assert "raw_quotes_scanned=2" in messages
     assert "Sync latest quotes completed | mode=historical symbol_source=stock-scores-all symbols=2 rows_upserted=4" in messages
 
 
@@ -249,8 +261,8 @@ def test_sync_latest_quotes_historical_skips_symbol_when_period_already_covered(
     )
     monkeypatch.setattr(
         sync_latest_quotes,
-        "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, session=None: fetch_calls.append((symbol, {"trade_date": session_date})) or (None, None, None),
+        "iter_historical_quotes_pages",
+        lambda symbol, start, end, session=None: fetch_calls.append((symbol, {"start": start, "end": end})) or iter([]),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
 
@@ -272,7 +284,7 @@ def test_sync_latest_quotes_historical_skips_symbol_when_period_already_covered(
 
 
 def test_sync_latest_quotes_historical_resumes_from_first_missing_date(monkeypatch) -> None:
-    fetch_calls: list[tuple[str, dict[str, object]]] = []
+    fetch_calls: list[tuple[str, str, str]] = []
 
     monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL"])
     monkeypatch.setattr(
@@ -291,12 +303,13 @@ def test_sync_latest_quotes_historical_resumes_from_first_missing_date(monkeypat
     )
     monkeypatch.setattr(
         sync_latest_quotes,
-        "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, session=None: fetch_calls.append((symbol, {"trade_date": session_date})) or (
-            {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-05-05T20:00:00Z"},
-            1,
-            None,
-        ),
+        "iter_historical_quotes_pages",
+        lambda symbol, start, end, session=None: fetch_calls.append((symbol, start, end)) or iter([
+            {
+                "quotes": [{"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-05-05T20:00:00Z"}],
+                "has_next": False,
+            }
+        ]),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
 
@@ -308,11 +321,12 @@ def test_sync_latest_quotes_historical_resumes_from_first_missing_date(monkeypat
 
     assert summary == {"symbols": 1, "rows_upserted": 1}
     assert fetch_calls[0][0] == "AAPL"
-    assert fetch_calls[0][1]["trade_date"] == date(2026, 5, 5)
+    assert "2026-05-05" in fetch_calls[0][1]
+    assert "2026-05-05" in fetch_calls[0][2]
 
 
 def test_sync_latest_quotes_historical_fetches_only_missing_ranges(monkeypatch) -> None:
-    fetch_calls: list[tuple[str, dict[str, object]]] = []
+    fetch_calls: list[tuple[str, str, str]] = []
 
     monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL"])
     monkeypatch.setattr(
@@ -334,12 +348,24 @@ def test_sync_latest_quotes_historical_fetches_only_missing_ranges(monkeypatch) 
     )
     monkeypatch.setattr(
         sync_latest_quotes,
-        "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, session=None: fetch_calls.append((symbol, {"trade_date": session_date})) or (
-            {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": f"{session_date.isoformat()}T20:00:00Z"},
-            1,
-            None,
-        ),
+        "iter_historical_quotes_pages",
+        lambda symbol, start, end, session=None: fetch_calls.append((symbol, start, end)) or iter([
+            {
+                "quotes": [
+                    *(
+                        [
+                            {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-05-05T20:00:00Z"},
+                            {"bp": 100.1, "ap": 100.6, "bs": 11, "as": 13, "t": "2026-05-06T20:00:00Z"},
+                        ]
+                        if start.startswith("2026-05-05")
+                        else [
+                            {"bp": 100.2, "ap": 100.7, "bs": 12, "as": 14, "t": "2026-05-20T20:00:00Z"},
+                        ]
+                    ),
+                ],
+                "has_next": False,
+            }
+        ]),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
 
@@ -350,14 +376,12 @@ def test_sync_latest_quotes_historical_fetches_only_missing_ranges(monkeypatch) 
     )
 
     assert summary == {"symbols": 1, "rows_upserted": 3}
-    assert [call[1]["trade_date"] for call in fetch_calls] == [
-        date(2026, 5, 5),
-        date(2026, 5, 6),
-        date(2026, 5, 20),
-    ]
+    assert len(fetch_calls) == 2
+    assert "2026-05-05" in fetch_calls[0][1]
+    assert "2026-05-20" in fetch_calls[1][1]
 
 
-def test_sync_latest_quotes_historical_persists_incrementally_per_day(monkeypatch, caplog) -> None:
+def test_sync_latest_quotes_historical_persists_per_month_block(monkeypatch, caplog) -> None:
     import logging
 
     upserted_batches: list[list[dict[str, object]]] = []
@@ -370,24 +394,33 @@ def test_sync_latest_quotes_historical_persists_incrementally_per_day(monkeypatc
             "symbol": symbol,
             "has_expected_days": True,
             "is_complete": False,
-            "expected_days": 2,
+            "expected_days": 3,
             "stored_days": 0,
-            "missing_days": 2,
+            "missing_days": 3,
             "first_missing_date": from_date,
             "missing_ranges": [(from_date, to_date)],
         },
     )
     monkeypatch.setattr(
         sync_latest_quotes,
-        "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, session=None: (
+        "iter_historical_quotes_pages",
+        lambda symbol, start, end, session=None: iter([
             {
-                date(2026, 4, 29): {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-04-29T20:00:00Z"},
-                date(2026, 4, 30): {"bp": 101.0, "ap": 101.4, "bs": 8, "as": 9, "t": "2026-04-30T20:00:00Z"},
-            }.get(session_date),
-            1,
-            None,
-        ),
+                "quotes": [
+                    *(
+                        [
+                            {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-04-29T20:00:00Z"},
+                            {"bp": 101.0, "ap": 101.4, "bs": 8, "as": 9, "t": "2026-04-30T20:00:00Z"},
+                        ]
+                        if start.startswith("2026-04-29")
+                        else [
+                            {"bp": 102.0, "ap": 102.6, "bs": 7, "as": 9, "t": "2026-05-01T20:00:00Z"},
+                        ]
+                    )
+                ],
+                "has_next": False,
+            }
+        ]),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: upserted_batches.append(list(rows)) or len(rows))
 
@@ -395,24 +428,28 @@ def test_sync_latest_quotes_historical_persists_incrementally_per_day(monkeypatc
         summary = sync_latest_quotes.sync_latest_quotes(
             limit=1,
             from_date=date(2026, 4, 29),
-            to_date=date(2026, 4, 30),
+            to_date=date(2026, 5, 1),
         )
 
-    assert summary == {"symbols": 1, "rows_upserted": 2}
+    assert summary == {"symbols": 1, "rows_upserted": 3}
     assert len(upserted_batches) == 2
-    assert [batch[0]["quote_date"] for batch in upserted_batches] == [date(2026, 4, 29), date(2026, 4, 30)]
+    assert [[row["quote_date"] for row in batch] for batch in upserted_batches] == [
+        [date(2026, 4, 29), date(2026, 4, 30)],
+        [date(2026, 5, 1)],
+    ]
     messages = "\n".join(record.getMessage() for record in caplog.records)
-    assert "stage=day_persist" in messages
-    assert "trade_date=2026-04-29" in messages
-    assert "trade_date=2026-04-30" in messages
-    assert "covered_to=2026-04-29" in messages
+    assert "stage=fetch_block" in messages
+    assert "block=1/2" in messages
+    assert "block=2/2" in messages
+    assert "stage=block_persist" in messages
     assert "covered_to=2026-04-30" in messages
+    assert "covered_to=2026-05-01" in messages
 
 
 def test_sync_latest_quotes_historical_skips_range_without_any_quote(monkeypatch, caplog) -> None:
     import logging
 
-    day_fetch_calls: list[date] = []
+    fetch_calls: list[tuple[str, str, str]] = []
 
     monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAA"])
     monkeypatch.setattr(
@@ -432,8 +469,8 @@ def test_sync_latest_quotes_historical_skips_range_without_any_quote(monkeypatch
     monkeypatch.setattr(sync_latest_quotes, "_range_has_any_quotes", lambda symbol, session_dates, session=None: False)
     monkeypatch.setattr(
         sync_latest_quotes,
-        "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, session=None: day_fetch_calls.append(session_date) or (None, None, None),
+        "iter_historical_quotes_pages",
+        lambda symbol, start, end, session=None: fetch_calls.append((symbol, start, end)) or iter([]),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
 
@@ -445,7 +482,7 @@ def test_sync_latest_quotes_historical_skips_range_without_any_quote(monkeypatch
         )
 
     assert summary == {"symbols": 1, "rows_upserted": 0}
-    assert day_fetch_calls == []
+    assert fetch_calls == []
     messages = "\n".join(record.getMessage() for record in caplog.records)
     assert "stage=skip_range_no_quotes" in messages
     assert "stage=symbol_summary" in messages
