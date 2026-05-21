@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from pathlib import Path
 
 from dataIntegrityEngine import sync_earnings_calendar
 
 
-def _context(*, from_date: date, to_date: date, limit: int | None = None) -> dict[str, object]:
+def _context(
+    *,
+    from_date: date,
+    to_date: date,
+    limit: int | None = None,
+    symbol_source: str = "active-tradable",
+) -> dict[str, object]:
     return {
         "from_date": from_date.isoformat(),
         "to_date": to_date.isoformat(),
         "limit": limit,
+        "symbol_source": symbol_source,
     }
 
 
@@ -20,7 +26,7 @@ def test_sync_earnings_calendar_processes_committed_batches_and_clears_bookmark(
     bookmark_path = tmp_path / "sync_earnings_calendar_bookmark.json"
     upsert_sizes: list[int] = []
 
-    monkeypatch.setattr(sync_earnings_calendar, "list_active_tradable_symbols", lambda limit=None: symbols)
+    monkeypatch.setattr(sync_earnings_calendar, "list_symbols_for_source", lambda symbol_source=None, limit=None: symbols)
     monkeypatch.setattr(
         sync_earnings_calendar,
         "fetch_earnings_calendar",
@@ -72,7 +78,7 @@ def test_sync_earnings_calendar_resume_skips_completed_symbols(tmp_path, monkeyp
     )
 
     fetched_symbols: list[str] = []
-    monkeypatch.setattr(sync_earnings_calendar, "list_active_tradable_symbols", lambda limit=None: all_symbols)
+    monkeypatch.setattr(sync_earnings_calendar, "list_symbols_for_source", lambda symbol_source=None, limit=None: all_symbols)
     monkeypatch.setattr(sync_earnings_calendar.time, "sleep", lambda seconds: None)
 
     def _fake_fetch(symbol: str, **kwargs) -> list[dict[str, object]]:
@@ -107,7 +113,7 @@ def test_sync_earnings_calendar_retains_bookmark_for_failed_symbols(tmp_path, mo
     from_date = date(2026, 4, 1)
     to_date = date(2026, 4, 30)
 
-    monkeypatch.setattr(sync_earnings_calendar, "list_active_tradable_symbols", lambda limit=None: symbols)
+    monkeypatch.setattr(sync_earnings_calendar, "list_symbols_for_source", lambda symbol_source=None, limit=None: symbols)
     monkeypatch.setattr(sync_earnings_calendar.time, "sleep", lambda seconds: None)
 
     def _fake_fetch(symbol: str, **kwargs) -> list[dict[str, object]]:
@@ -136,4 +142,40 @@ def test_sync_earnings_calendar_retains_bookmark_for_failed_symbols(tmp_path, mo
     bookmark = json.loads(bookmark_path.read_text(encoding="utf-8"))
     assert bookmark["completed_symbols"] == ["AAPL", "NVDA"]
     assert bookmark["context"] == _context(from_date=from_date, to_date=to_date)
+
+
+def test_sync_earnings_calendar_uses_requested_symbol_source_in_fetch_and_bookmark(tmp_path, monkeypatch) -> None:
+    bookmark_path = tmp_path / "sync_earnings_calendar_bookmark.json"
+    fetched_symbols: list[str] = []
+    captured_sources: list[tuple[object, object]] = []
+
+    monkeypatch.setattr(
+        sync_earnings_calendar,
+        "list_symbols_for_source",
+        lambda symbol_source=None, limit=None: captured_sources.append((symbol_source, limit)) or ["AAPL", "MSFT"],
+    )
+    monkeypatch.setattr(sync_earnings_calendar.time, "sleep", lambda seconds: None)
+
+    def _fake_fetch(symbol: str, **kwargs) -> list[dict[str, object]]:
+        fetched_symbols.append(symbol)
+        return [{"symbol": symbol, "date": "2026-05-01", "epsEstimate": 1.0}]
+
+    monkeypatch.setattr(sync_earnings_calendar, "fetch_earnings_calendar", _fake_fetch)
+    monkeypatch.setattr(sync_earnings_calendar, "upsert_earnings_calendar", lambda rows: len(rows))
+
+    summary = sync_earnings_calendar.sync_earnings_calendar(
+        from_date=date(2026, 4, 1),
+        to_date=date(2026, 4, 30),
+        limit=2,
+        symbol_source="stock_scores",
+        sleep_seconds=0.0,
+        batch_size=25,
+        bookmark_path=bookmark_path,
+    )
+
+    assert summary["symbols"] == 2
+    assert fetched_symbols == ["AAPL", "MSFT"]
+    assert captured_sources == [("stock-scores", 2)]
+    assert not bookmark_path.exists()
+
 

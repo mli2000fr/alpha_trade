@@ -14,6 +14,7 @@ from typing import Any, cast
 
 import streamlit as st
 from database.connection import get_sqlalchemy_engine
+from database.selector_reference import list_symbols_for_source
 from modelFactory.db_registry import filter_symbols_by_selector_context, load_symbols_for_source
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
@@ -125,10 +126,27 @@ ML_TRAIN_SYMBOL_SOURCE_TO_CLI = {
     "stock_bars_daily": "stock-bars-daily",
 }
 
+DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS = (
+    "active_tradable",
+    *ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
+)
+
+DATA_INTEGRITY_SYMBOL_SOURCE_LABELS = {
+    "active_tradable": "Tous les symboles éligibles (stock_metadata)",
+    **ML_TRAIN_SYMBOL_SOURCE_LABELS,
+}
+
+DATA_INTEGRITY_SYMBOL_SOURCE_TO_CLI = {
+    "active_tradable": "active-tradable",
+    **ML_TRAIN_SYMBOL_SOURCE_TO_CLI,
+}
+
 QUOTE_HISTORY_START_DATE_KEY = "pipeline_sync_latest_quotes_period_start_date"
 QUOTE_HISTORY_END_DATE_KEY = "pipeline_sync_latest_quotes_period_end_date"
 EARNINGS_HISTORY_START_DATE_KEY = "pipeline_sync_earnings_calendar_period_start_date"
 EARNINGS_HISTORY_END_DATE_KEY = "pipeline_sync_earnings_calendar_period_end_date"
+QUOTE_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_latest_quotes_symbol_source"
+EARNINGS_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_earnings_calendar_symbol_source"
 
 
 def _coerce_ui_date(value: object, *, fallback: date) -> date:
@@ -152,6 +170,16 @@ def _trade_date_or_today(options: PipelineLaunchOptions) -> date:
     return date.today()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _resolve_data_integrity_scope_preview(symbol_source: str) -> dict[str, object]:
+    cli_symbol_source = DATA_INTEGRITY_SYMBOL_SOURCE_TO_CLI.get(symbol_source, "active-tradable")
+    symbols = list_symbols_for_source(cli_symbol_source)
+    return {
+        "symbol_count": len(symbols),
+        "sample_symbols": symbols[:10],
+    }
+
+
 def _render_period_sync_block(
     step_key: str,
     options: PipelineLaunchOptions,
@@ -164,6 +192,7 @@ def _render_period_sync_block(
     if step_key == "sync_latest_quotes":
         start_key = QUOTE_HISTORY_START_DATE_KEY
         end_key = QUOTE_HISTORY_END_DATE_KEY
+        symbol_source_key = QUOTE_HISTORY_SYMBOL_SOURCE_KEY
         end_default = _trade_date_or_today(options)
         start_default = _coerce_ui_date(
             getattr(options, "data_integrity_quotes_from_date", None),
@@ -180,9 +209,11 @@ def _render_period_sync_block(
         button_label = "🗓️ Récupérer l'historique des quotes sur la période"
         launch_label = "4. Sync Latest Quotes — historique"
         override_keys = ("data_integrity_quotes_from_date", "data_integrity_quotes_to_date")
+        source_attr = "data_integrity_quotes_symbol_source"
     elif step_key == "sync_earnings_calendar":
         start_key = EARNINGS_HISTORY_START_DATE_KEY
         end_key = EARNINGS_HISTORY_END_DATE_KEY
+        symbol_source_key = EARNINGS_HISTORY_SYMBOL_SOURCE_KEY
         end_default = _trade_date_or_today(options) + timedelta(days=30)
         start_default = _coerce_ui_date(options.data_integrity_earnings_from_date, fallback=end_default - timedelta(days=37))
         end_default = _coerce_ui_date(options.data_integrity_earnings_to_date, fallback=end_default)
@@ -193,6 +224,7 @@ def _render_period_sync_block(
         button_label = "🗓️ Récupérer le calendrier earnings sur la période"
         launch_label = "5. Sync Earnings Calendar — historique"
         override_keys = ("data_integrity_earnings_from_date", "data_integrity_earnings_to_date")
+        source_attr = "data_integrity_earnings_symbol_source"
     else:
         return
 
@@ -204,6 +236,56 @@ def _render_period_sync_block(
         st.caption("Workflow complet en cours : le lancement historique manuel est temporairement désactivé.")
     elif active_for_step:
         st.caption("Un run de cette étape est déjà actif : le lancement historique attend sa fin.")
+
+    current_symbol_source = str(
+        st.session_state.get(symbol_source_key, getattr(options, source_attr, "candidates") or "candidates")
+    ).strip().lower()
+    if current_symbol_source not in DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS:
+        current_symbol_source = "candidates"
+
+    selected_symbol_source = str(
+        st.selectbox(
+            "Univers de symboles à synchroniser",
+            options=DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS,
+            index=DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS.index(current_symbol_source),
+            key=symbol_source_key,
+            format_func=lambda value: DATA_INTEGRITY_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
+            help=(
+                "Choisissez le périmètre ciblé : l'univers éligible courant (`stock_metadata`), les snapshots scores, "
+                "l'historique PIT, les candidats du jour ou l'univers large `stock_bars_daily`."
+            ),
+        )
+    )
+    st.caption(
+        "`active_tradable` = symboles `stock_metadata` actifs/tradables/éligibles ; `stock_scores_all` = union `stock_scores` + "
+        "`stock_scores_history` ; `candidates` = candidats du jour ; `stock_bars_daily` = univers large."
+    )
+
+    try:
+        scope_preview = _resolve_data_integrity_scope_preview(selected_symbol_source)
+    except Exception as exc:
+        st.warning(f"Impossible de prévisualiser l'univers ciblé : {exc}")
+        scope_preview = None
+
+    if isinstance(scope_preview, dict):
+        symbol_count_raw = scope_preview.get("symbol_count", 0)
+        symbol_count = int(symbol_count_raw) if isinstance(symbol_count_raw, (int, float, str)) else 0
+        sample_symbols_values = scope_preview.get("sample_symbols", [])
+        sample_symbols = [
+            str(value)
+            for value in (sample_symbols_values if isinstance(sample_symbols_values, (list, tuple)) else [])
+            if str(value).strip()
+        ]
+        metric_col1, metric_col2 = st.columns(2)
+        with metric_col1:
+            st.metric("Symboles ciblés", symbol_count)
+        with metric_col2:
+            st.metric("Type d'univers", DATA_INTEGRITY_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source))
+        if symbol_count == 0:
+            st.warning("Aucun symbole ne serait traité avec l'univers sélectionné.")
+        elif sample_symbols:
+            preview_suffix = " …" if symbol_count > len(sample_symbols) else ""
+            st.caption("Extrait des premiers symboles ciblés : `" + ", ".join(sample_symbols) + preview_suffix + "`")
 
     period_col1, period_col2 = st.columns(2)
     with period_col1:
@@ -231,6 +313,7 @@ def _render_period_sync_block(
         period_options = replace(
             options,
             **{
+                source_attr: cast(Any, selected_symbol_source),
                 override_keys[0]: cast(Any, selected_start.isoformat()),
                 override_keys[1]: cast(Any, selected_end.isoformat()),
             },
@@ -245,7 +328,10 @@ def _render_period_sync_block(
     ) and period_options is not None:
         _launch_pipeline_step(
             step_key,
-            f"{launch_label} — {selected_start.isoformat()} → {selected_end.isoformat()}",
+            (
+                f"{launch_label} — {DATA_INTEGRITY_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)} "
+                f"— {selected_start.isoformat()} → {selected_end.isoformat()}"
+            ),
             period_options,
             db_config,
             all_runs,

@@ -657,6 +657,7 @@ def test_build_pipeline_command_sync_latest_quotes_accepts_historical_period() -
     command = build_pipeline_command(
         "sync_latest_quotes",
         PipelineLaunchOptions(
+            data_integrity_quotes_symbol_source="candidates",
             data_integrity_quotes_from_date="2026-04-01",
             data_integrity_quotes_to_date="2026-04-30",
             data_integrity_quotes_batch_size=60,
@@ -671,12 +672,47 @@ def test_build_pipeline_command_sync_latest_quotes_accepts_historical_period() -
         "dataIntegrityEngine.sync_latest_quotes",
         "--batch-size",
         "60",
+        "--symbol-source",
+        "candidates",
         "--from-date",
         "2026-04-01",
         "--to-date",
         "2026-04-30",
         "--limit",
         "25",
+    ]
+
+
+def test_build_pipeline_command_sync_earnings_calendar_accepts_symbol_scope() -> None:
+    command = build_pipeline_command(
+        "sync_earnings_calendar",
+        PipelineLaunchOptions(
+            data_integrity_earnings_symbol_source="stock_scores_history",
+            data_integrity_earnings_from_date="2026-04-01",
+            data_integrity_earnings_to_date="2026-04-30",
+            data_integrity_earnings_batch_size=75,
+            data_integrity_earnings_resume=True,
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "dataIntegrityEngine.sync_earnings_calendar",
+        "--sleep-seconds",
+        str(PipelineLaunchOptions().data_integrity_earnings_sleep_seconds),
+        "--log-every",
+        str(PipelineLaunchOptions().data_integrity_earnings_log_every),
+        "--batch-size",
+        "75",
+        "--symbol-source",
+        "stock-scores-history",
+        "--from-date",
+        "2026-04-01",
+        "--to-date",
+        "2026-04-30",
+        "--resume",
     ]
 
 

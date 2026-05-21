@@ -13,7 +13,7 @@ import requests
 
 from common.utils import configure_root_logging
 from database.cleaning_audits import record_quotes_audit_run
-from database.selector_reference import list_active_tradable_symbols, upsert_quote_snapshots
+from database.selector_reference import list_symbols_for_source, normalize_symbol_source, upsert_quote_snapshots
 from service.alpaca.clientAlpaca import fetch_historical_quotes, fetch_latest_quotes
 
 LOGGER = logging.getLogger(__name__)
@@ -188,13 +188,15 @@ def sync_latest_quotes(
     *,
     from_date: date | None = None,
     to_date: date | None = None,
+    symbol_source: str | None = None,
 ) -> dict[str, int]:
     if batch_size < 1:
         raise ValueError("batch_size doit être supérieur ou égal à 1.")
 
     resolved_from_date, resolved_to_date = _normalize_quote_window(from_date, to_date)
 
-    symbols = list_active_tradable_symbols(limit=limit)
+    resolved_symbol_source = normalize_symbol_source(symbol_source)
+    symbols = list_symbols_for_source(resolved_symbol_source, limit=limit)
     summary = {"symbols": len(symbols), "rows_upserted": 0}
     if not symbols:
         return summary
@@ -214,7 +216,8 @@ def sync_latest_quotes(
                     rows.append(_build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now))
                 summary["rows_upserted"] += upsert_quote_snapshots(rows)
                 LOGGER.info(
-                    "Sync latest quotes | mode=latest batch=%s-%s symbols=%s rows_upserted=%s",
+                    "Sync latest quotes | mode=latest symbol_source=%s batch=%s-%s symbols=%s rows_upserted=%s",
+                    resolved_symbol_source,
                     start + 1,
                     start + len(batch),
                     len(batch),
@@ -237,7 +240,8 @@ def sync_latest_quotes(
                 )
                 summary["rows_upserted"] += upsert_quote_snapshots(rows)
                 LOGGER.info(
-                    "Sync latest quotes | mode=historical progress=%s/%s symbol=%s days_upserted=%s rows_upserted=%s from=%s to=%s",
+                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s symbol=%s days_upserted=%s rows_upserted=%s from=%s to=%s",
+                    resolved_symbol_source,
                     index,
                     len(symbols),
                     symbol,
@@ -256,6 +260,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Synchronise les latest quotes Alpaca dans stock_quote_snapshots")
     parser.add_argument("--from-date", type=str, default=None, help="Date de début ISO (YYYY-MM-DD)")
     parser.add_argument("--to-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD)")
+    parser.add_argument("--symbol-source", type=str, default=None, help="Univers de symboles (`active-tradable`, `stock-scores`, `stock-scores-history`, `stock-scores-all`, `candidates`, `stock-bars-daily`)")
     parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Taille de batch pour l'appel latest quotes")
     return parser
@@ -279,6 +284,7 @@ def main() -> None:
             batch_size=args.batch_size,
             from_date=date.fromisoformat(args.from_date) if args.from_date else None,
             to_date=date.fromisoformat(args.to_date) if args.to_date else None,
+            symbol_source=args.symbol_source,
         )
     except Exception as exc:  # noqa: BLE001 — audit + propagation contrôlée.
         status = "failed"
@@ -315,6 +321,7 @@ def main() -> None:
             "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
             "from_date": args.from_date,
             "to_date": args.to_date,
+            "symbol_source": normalize_symbol_source(args.symbol_source),
             "requested_limit": args.limit,
             "batch_size": args.batch_size,
             "audit_status": status,

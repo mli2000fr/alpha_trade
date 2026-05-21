@@ -39,13 +39,21 @@ def test_sync_latest_quotes_main_emits_structured_summary(monkeypatch, capsys) -
         lambda: type(
             "_Parser",
             (),
-            {"parse_args": lambda self: argparse.Namespace(from_date="2026-04-01", to_date="2026-04-15", limit=12, batch_size=34)},
+            {
+                "parse_args": lambda self: argparse.Namespace(
+                    from_date="2026-04-01",
+                    to_date="2026-04-15",
+                    symbol_source=None,
+                    limit=12,
+                    batch_size=34,
+                )
+            },
         )(),
     )
     monkeypatch.setattr(
         sync_latest_quotes,
         "sync_latest_quotes",
-        lambda limit, batch_size, from_date=None, to_date=None: {"symbols": int(limit or 0), "rows_upserted": int(batch_size)},
+        lambda limit, batch_size, from_date=None, to_date=None, symbol_source=None: {"symbols": int(limit or 0), "rows_upserted": int(batch_size)},
     )
 
     sync_latest_quotes.main()
@@ -53,6 +61,7 @@ def test_sync_latest_quotes_main_emits_structured_summary(monkeypatch, capsys) -
     payload = _payload_from_stdout(capsys.readouterr().out.strip(), sync_latest_quotes.RUN_SUMMARY_PREFIX)
     assert payload["from_date"] == "2026-04-01"
     assert payload["to_date"] == "2026-04-15"
+    assert payload["symbol_source"] == "active-tradable"
     assert payload["requested_limit"] == 12
     assert payload["batch_size"] == 34
     assert payload["symbols"] == 12
@@ -71,6 +80,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
                 "parse_args": lambda self: argparse.Namespace(
                     from_date="2026-04-01",
                     to_date="2026-04-15",
+                    symbol_source="candidates",
                     limit=22,
                     sleep_seconds=1.4,
                     log_every=7,
@@ -91,6 +101,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
     payload = _payload_from_stdout(capsys.readouterr().out.strip(), sync_earnings_calendar.RUN_SUMMARY_PREFIX)
     assert payload["from_date"] == "2026-04-01"
     assert payload["to_date"] == "2026-04-15"
+    assert payload["symbol_source"] == "candidates"
     assert payload["requested_limit"] == 22
     assert payload["sleep_seconds"] == 1.4
     assert payload["log_every"] == 7
@@ -100,7 +111,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
 
 
 def test_sync_earnings_calendar_emits_operator_visible_logs(monkeypatch, caplog) -> None:
-    monkeypatch.setattr(sync_earnings_calendar, "list_active_tradable_symbols", lambda limit=None: ["AAPL", "MSFT"])
+    monkeypatch.setattr(sync_earnings_calendar, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL", "MSFT"])
     monkeypatch.setattr(
         sync_earnings_calendar,
         "fetch_earnings_calendar",

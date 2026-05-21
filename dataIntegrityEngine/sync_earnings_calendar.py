@@ -13,7 +13,7 @@ import requests
 
 from common.utils import configure_root_logging
 from database.cleaning_audits import record_earnings_audit_run
-from database.selector_reference import list_active_tradable_symbols, upsert_earnings_calendar
+from database.selector_reference import list_symbols_for_source, normalize_symbol_source, upsert_earnings_calendar
 from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_earnings_calendar
 
 LOGGER = logging.getLogger(__name__)
@@ -97,11 +97,12 @@ def _normalize_bookmark_symbols(values: object) -> list[str]:
     return sorted({str(symbol).strip().upper() for symbol in values if str(symbol).strip()})
 
 
-def _build_bookmark_context(*, start: date, end: date, limit: int | None) -> dict[str, object]:
+def _build_bookmark_context(*, start: date, end: date, limit: int | None, symbol_source: str | None) -> dict[str, object]:
     return {
         "from_date": start.isoformat(),
         "to_date": end.isoformat(),
         "limit": limit,
+        "symbol_source": normalize_symbol_source(symbol_source),
     }
 
 
@@ -166,6 +167,7 @@ def sync_earnings_calendar(
     from_date: date | None = None,
     to_date: date | None = None,
     limit: int | None = None,
+    symbol_source: str | None = None,
     sleep_seconds: float = MIN_REQUEST_INTERVAL_SECONDS,
     log_every: int = 25,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -178,9 +180,10 @@ def sync_earnings_calendar(
 
     start = from_date or date.today() - timedelta(days=7)
     end = to_date or date.today() + timedelta(days=30)
-    symbols = list_active_tradable_symbols(limit=limit)
+    resolved_symbol_source = normalize_symbol_source(symbol_source)
+    symbols = list_symbols_for_source(resolved_symbol_source, limit=limit)
     resolved_bookmark_path = _coerce_bookmark_path(bookmark_path)
-    bookmark_context = _build_bookmark_context(start=start, end=end, limit=limit)
+    bookmark_context = _build_bookmark_context(start=start, end=end, limit=limit, symbol_source=resolved_symbol_source)
     bookmark_state, completed_symbols = _resolve_bookmark_state(
         resolved_bookmark_path,
         resume=resume,
@@ -201,7 +204,8 @@ def sync_earnings_calendar(
         "bookmark_path": str(resolved_bookmark_path),
     }
     LOGGER.info(
-        "Sync earnings calendar start | symbols=%s pending=%s skipped_resume=%s from=%s to=%s limit=%s sleep_seconds=%s log_every=%s batch_size=%s resume=%s bookmark=%s",
+        "Sync earnings calendar start | symbol_source=%s symbols=%s pending=%s skipped_resume=%s from=%s to=%s limit=%s sleep_seconds=%s log_every=%s batch_size=%s resume=%s bookmark=%s",
+        resolved_symbol_source,
         len(symbols),
         len(pending_symbols),
         len(symbols) - len(pending_symbols),
@@ -215,7 +219,7 @@ def sync_earnings_calendar(
         resolved_bookmark_path,
     )
     if not symbols:
-        LOGGER.warning("Sync earnings calendar skipped | aucun symbole actif/tradable trouvé.")
+        LOGGER.warning("Sync earnings calendar skipped | aucun symbole résolu trouvé pour symbol_source=%s.", resolved_symbol_source)
         return summary
     if not pending_symbols:
         LOGGER.info("Sync earnings calendar skipped | aucun symbole restant après reprise | bookmark=%s", resolved_bookmark_path)
@@ -326,7 +330,8 @@ def sync_earnings_calendar(
         )
 
     LOGGER.info(
-        "Sync earnings calendar | symbols=%s pending=%s completed=%s failed=%s rows_upserted=%s batches_processed=%s from=%s to=%s",
+        "Sync earnings calendar | symbol_source=%s symbols=%s pending=%s completed=%s failed=%s rows_upserted=%s batches_processed=%s from=%s to=%s",
+        resolved_symbol_source,
         len(symbols),
         len(pending_symbols),
         summary["completed_symbols"],
@@ -343,6 +348,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Synchronise le calendrier earnings Finnhub dans stock_earnings_calendar")
     parser.add_argument("--from-date", type=str, default=None, help="Date de début ISO (YYYY-MM-DD)")
     parser.add_argument("--to-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD)")
+    parser.add_argument("--symbol-source", type=str, default=None, help="Univers de symboles (`active-tradable`, `stock-scores`, `stock-scores-history`, `stock-scores-all`, `candidates`, `stock-bars-daily`)")
     parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles")
     parser.add_argument("--sleep-seconds", type=float, default=MIN_REQUEST_INTERVAL_SECONDS, help="Pause entre deux appels Finnhub")
     parser.add_argument("--log-every", type=int, default=25, help="Journalise la progression tous les N symboles (0 pour désactiver)")
@@ -385,6 +391,7 @@ def main() -> None:
             from_date=date.fromisoformat(args.from_date) if args.from_date else None,
             to_date=date.fromisoformat(args.to_date) if args.to_date else None,
             limit=args.limit,
+            symbol_source=args.symbol_source,
             sleep_seconds=args.sleep_seconds,
             log_every=args.log_every,
             batch_size=args.batch_size,
@@ -430,6 +437,7 @@ def main() -> None:
             "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
             "from_date": args.from_date,
             "to_date": args.to_date,
+            "symbol_source": normalize_symbol_source(args.symbol_source),
             "requested_limit": args.limit,
             "sleep_seconds": args.sleep_seconds,
             "log_every": args.log_every,

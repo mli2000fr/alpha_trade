@@ -10,6 +10,19 @@ from database.assets import list_eligible_stock_symbols
 from database.connection import SessionLocal, get_sqlalchemy_engine
 
 
+def normalize_symbol_source(symbol_source: str | None) -> str:
+    normalized = str(symbol_source or "").strip().lower().replace("_", "-")
+    if normalized in {"", "active-tradable", "eligible", "stock-metadata"}:
+        return "active-tradable"
+    return {
+        "stock-scores": "stock-scores",
+        "stock-scores-history": "stock-scores-history",
+        "stock-scores-all": "stock-scores-all",
+        "candidates": "candidates",
+        "stock-bars-daily": "stock-bars-daily",
+    }.get(normalized, normalized)
+
+
 @lru_cache(maxsize=1)
 def get_stock_quote_snapshots_table() -> Table:
     metadata = MetaData()
@@ -36,6 +49,26 @@ def get_stock_earnings_calendar_table() -> Table:
 
 def list_active_tradable_symbols(limit: int | None = None) -> list[str]:
     return list_eligible_stock_symbols(limit=limit, engine=get_sqlalchemy_engine())
+
+
+def list_symbols_for_source(
+    symbol_source: str | None = None,
+    *,
+    limit: int | None = None,
+) -> list[str]:
+    normalized_source = normalize_symbol_source(symbol_source)
+    if normalized_source == "active-tradable":
+        return list_active_tradable_symbols(limit=limit)
+
+    if limit is not None and limit < 1:
+        raise ValueError("limit doit être supérieur ou égal à 1.")
+
+    from modelFactory.db_registry import load_symbols_for_source
+
+    symbols = load_symbols_for_source(get_sqlalchemy_engine(), normalized_source)
+    if limit is not None:
+        return symbols[:limit]
+    return symbols
 
 
 def upsert_quote_snapshots(records: Iterable[dict[str, Any]]) -> int:

@@ -1159,6 +1159,7 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     session_state: dict[str, object] = {
         pipeline.QUOTE_HISTORY_START_DATE_KEY: dt_date(2026, 4, 1),
         pipeline.QUOTE_HISTORY_END_DATE_KEY: dt_date(2026, 4, 30),
+        pipeline.QUOTE_HISTORY_SYMBOL_SOURCE_KEY: "candidates",
     }
     launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
 
@@ -1168,14 +1169,30 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "error", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "code", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "selectbox", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
     monkeypatch.setattr(pipeline.st, "date_input", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
     monkeypatch.setattr(
         pipeline.st,
         "button",
         lambda _label, *args, **kwargs: str(kwargs.get("key") or "") == "sync_latest_quotes_historical_period_launch",
     )
-    monkeypatch.setattr(pipeline, "build_pipeline_command", lambda step_key, options: [step_key, str(options.data_integrity_quotes_from_date), str(options.data_integrity_quotes_to_date)])
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_data_integrity_scope_preview",
+        lambda *args, **kwargs: {"symbol_count": 2, "sample_symbols": ["AAPL", "MSFT"]},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_pipeline_command",
+        lambda step_key, options: [
+            step_key,
+            str(options.data_integrity_quotes_symbol_source),
+            str(options.data_integrity_quotes_from_date),
+            str(options.data_integrity_quotes_to_date),
+        ],
+    )
     monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
     monkeypatch.setattr(
         pipeline,
@@ -1196,6 +1213,8 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     step_key, step_label, options = launch_calls[0]
     assert step_key == "sync_latest_quotes"
     assert "2026-04-01 → 2026-04-30" in step_label
+    assert "Candidats du jour" in step_label
+    assert options.data_integrity_quotes_symbol_source == "candidates"
     assert options.data_integrity_quotes_from_date == "2026-04-01"
     assert options.data_integrity_quotes_to_date == "2026-04-30"
 
@@ -1204,6 +1223,7 @@ def test_render_period_sync_block_blocks_invalid_earnings_window(monkeypatch) ->
     session_state: dict[str, object] = {
         pipeline.EARNINGS_HISTORY_START_DATE_KEY: dt_date(2026, 5, 10),
         pipeline.EARNINGS_HISTORY_END_DATE_KEY: dt_date(2026, 5, 1),
+        pipeline.EARNINGS_HISTORY_SYMBOL_SOURCE_KEY: "stock_scores_history",
     }
     errors: list[str] = []
     launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
@@ -1214,9 +1234,16 @@ def test_render_period_sync_block_blocks_invalid_earnings_window(monkeypatch) ->
     monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "error", lambda value, *args, **kwargs: errors.append(str(value)))
     monkeypatch.setattr(pipeline.st, "code", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "selectbox", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
     monkeypatch.setattr(pipeline.st, "date_input", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
     monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_data_integrity_scope_preview",
+        lambda *args, **kwargs: {"symbol_count": 3, "sample_symbols": ["AAPL", "MSFT", "NVDA"]},
+    )
     monkeypatch.setattr(pipeline, "build_pipeline_command", lambda step_key, options: [step_key])
     monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
     monkeypatch.setattr(

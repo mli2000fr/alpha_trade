@@ -216,6 +216,14 @@ MLTrainSymbolSource = Literal[
     "candidates",
     "stock_bars_daily",
 ]
+DataIntegritySymbolSource = Literal[
+    "active_tradable",
+    "stock_scores",
+    "stock_scores_history",
+    "stock_scores_all",
+    "candidates",
+    "stock_bars_daily",
+]
 NewsImportSymbolSource = Literal[
     "stock_scores",
     "stock_scores_history",
@@ -411,10 +419,12 @@ class PipelineLaunchOptions:
     signal_aggregator_min_news_count: int = DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT
     signal_aggregator_time_decay_half_life_days: float = DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS
     signal_aggregator_log_level: str = DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
+    data_integrity_quotes_symbol_source: DataIntegritySymbolSource | None = None
     data_integrity_quotes_from_date: str | None = None
     data_integrity_quotes_to_date: str | None = None
     data_integrity_quotes_limit: int | None = None
     data_integrity_quotes_batch_size: int = DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE
+    data_integrity_earnings_symbol_source: DataIntegritySymbolSource | None = None
     data_integrity_earnings_from_date: str | None = None
     data_integrity_earnings_to_date: str | None = None
     data_integrity_earnings_limit: int | None = None
@@ -1423,6 +1433,22 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     quotes_to_date = _normalize_optional_date(options.data_integrity_quotes_to_date)
     earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
     earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
+    quotes_symbol_source = {
+        "active_tradable": "active-tradable",
+        "stock_scores": "stock-scores",
+        "stock_scores_history": "stock-scores-history",
+        "stock_scores_all": "stock-scores-all",
+        "candidates": "candidates",
+        "stock_bars_daily": "stock-bars-daily",
+    }.get(str(options.data_integrity_quotes_symbol_source or "").strip().lower(), None)
+    earnings_symbol_source = {
+        "active_tradable": "active-tradable",
+        "stock_scores": "stock-scores",
+        "stock_scores_history": "stock-scores-history",
+        "stock_scores_all": "stock-scores-all",
+        "candidates": "candidates",
+        "stock_bars_daily": "stock-bars-daily",
+    }.get(str(options.data_integrity_earnings_symbol_source or "").strip().lower(), None)
     screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None
     screener_benchmark_symbol = _normalize_symbol(options.screener_benchmark_symbol, DEFAULT_SCREENER_BENCHMARK_SYMBOL)
     selector_max_workers = options.selector_max_workers if options.selector_max_workers and options.selector_max_workers > 0 else None
@@ -1575,6 +1601,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--batch-size",
             str(options.data_integrity_quotes_batch_size),
         ]
+        if quotes_symbol_source:
+            command.extend(["--symbol-source", quotes_symbol_source])
         if quotes_from_date:
             command.extend(["--from-date", quotes_from_date])
         if quotes_to_date:
@@ -1596,6 +1624,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--batch-size",
             str(options.data_integrity_earnings_batch_size),
         ]
+        if earnings_symbol_source:
+            command.extend(["--symbol-source", earnings_symbol_source])
         if earnings_from_date:
             command.extend(["--from-date", earnings_from_date])
         if earnings_to_date:

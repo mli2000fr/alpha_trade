@@ -69,7 +69,7 @@ class TestMarketDateFromTimestamp:
 def test_sync_latest_quotes_derives_quote_date_from_alpaca_timestamp(monkeypatch):
     captured_rows: list[dict[str, object]] = []
 
-    monkeypatch.setattr(sync_latest_quotes, "list_active_tradable_symbols", lambda limit=None: ["AAPL"])
+    monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL"])
     monkeypatch.setattr(
         sync_latest_quotes,
         "fetch_latest_quotes",
@@ -96,7 +96,7 @@ def test_sync_latest_quotes_derives_quote_date_from_alpaca_timestamp(monkeypatch
 def test_sync_latest_quotes_historical_keeps_latest_quote_per_market_day(monkeypatch):
     captured_rows: list[dict[str, object]] = []
 
-    monkeypatch.setattr(sync_latest_quotes, "list_active_tradable_symbols", lambda limit=None: ["AAPL"])
+    monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL"])
     monkeypatch.setattr(
         sync_latest_quotes,
         "fetch_historical_quotes",
@@ -127,5 +127,26 @@ def test_sync_latest_quotes_rejects_inverted_historical_period() -> None:
             from_date=date(2026, 5, 2),
             to_date=date(2026, 5, 1),
         )
+
+
+def test_sync_latest_quotes_resolves_requested_symbol_source(monkeypatch) -> None:
+    captured_sources: list[tuple[object, object]] = []
+
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "list_symbols_for_source",
+        lambda symbol_source=None, limit=None: captured_sources.append((symbol_source, limit)) or ["AAPL"],
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "fetch_latest_quotes",
+        lambda symbols, session=None: {"AAPL": {"bp": 100.0, "ap": 100.4, "bs": 1, "as": 2, "t": "2026-04-29T20:00:00Z"}},
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
+
+    summary = sync_latest_quotes.sync_latest_quotes(limit=7, batch_size=10, symbol_source="stock_scores_history")
+
+    assert summary == {"symbols": 1, "rows_upserted": 1}
+    assert captured_sources == [("stock-scores-history", 7)]
 
 
