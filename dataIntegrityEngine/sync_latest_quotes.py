@@ -166,6 +166,25 @@ def _fetch_near_close_quote_for_session(
     return None, None, None
 
 
+def _range_has_any_quotes(
+    symbol: str,
+    session_dates: list[date],
+    *,
+    session: requests.Session,
+) -> bool:
+    if not session_dates:
+        return False
+    range_open_utc, _ = get_nyse_session_bounds(session_dates[0])
+    _, range_close_utc = get_nyse_session_bounds(session_dates[-1])
+    quote = fetch_latest_historical_quote_in_window(
+        symbol,
+        start=_to_iso_zulu(range_open_utc),
+        end=_to_iso_zulu(range_close_utc),
+        session=session,
+    )
+    return isinstance(quote, dict)
+
+
 def _log_historical_symbol_summary(
     *,
     symbol_source: str,
@@ -423,6 +442,7 @@ def sync_latest_quotes(
                 symbol_quotes_fetched = 0
                 symbol_rows_upserted = 0
                 symbol_days_attempted = 0
+                symbol_fetched_ranges = 0
                 for range_index, (range_start, range_end) in enumerate(effective_missing_ranges, start=1):
                     LOGGER.info(
                         "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=fetch_range range=%s/%s range_start=%s range_end=%s",
@@ -437,6 +457,37 @@ def sync_latest_quotes(
                         range_end,
                     )
                     session_dates = nyse_session_dates(range_start, range_end)
+                    if not session_dates:
+                        LOGGER.info(
+                            "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_range_empty_calendar range=%s/%s range_start=%s range_end=%s",
+                            resolved_symbol_source,
+                            index,
+                            len(symbols),
+                            (index / len(symbols)) * 100.0,
+                            symbol,
+                            range_index,
+                            len(effective_missing_ranges),
+                            range_start,
+                            range_end,
+                        )
+                        continue
+                    if not _range_has_any_quotes(symbol, session_dates, session=session):
+                        LOGGER.info(
+                            "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_range_no_quotes range=%s/%s range_start=%s range_end=%s sessions=%s total_rows_upserted=%s",
+                            resolved_symbol_source,
+                            index,
+                            len(symbols),
+                            (index / len(symbols)) * 100.0,
+                            symbol,
+                            range_index,
+                            len(effective_missing_ranges),
+                            range_start,
+                            range_end,
+                            len(session_dates),
+                            summary["rows_upserted"],
+                        )
+                        continue
+                    symbol_fetched_ranges += 1
                     total_sessions_in_range = len(session_dates)
                     for session_index, session_date in enumerate(session_dates, start=1):
                         symbol_days_attempted += 1
@@ -506,7 +557,7 @@ def sync_latest_quotes(
                     to_date=resolved_to_date,
                     missing_ranges=len(effective_missing_ranges),
                     missing_days=missing_days,
-                    fetched_ranges=len(effective_missing_ranges),
+                    fetched_ranges=symbol_fetched_ranges,
                     skipped_existing=False,
                 )
                 LOGGER.info(

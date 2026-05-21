@@ -15,6 +15,11 @@ from dataIntegrityEngine import sync_latest_quotes
 from dataIntegrityEngine.sync_latest_quotes import _market_date_from_timestamp, _parse_alpaca_timestamp
 
 
+@pytest.fixture(autouse=True)
+def _stub_range_has_any_quotes(monkeypatch):
+    monkeypatch.setattr(sync_latest_quotes, "_range_has_any_quotes", lambda symbol, session_dates, session=None: True)
+
+
 class TestParseAlpacaTimestamp:
     def test_alpaca_rfc3339_nanoseconds_z_suffix(self):
         out = _parse_alpaca_timestamp("2026-04-29T19:59:49.779850529Z")
@@ -402,6 +407,49 @@ def test_sync_latest_quotes_historical_persists_incrementally_per_day(monkeypatc
     assert "trade_date=2026-04-30" in messages
     assert "covered_to=2026-04-29" in messages
     assert "covered_to=2026-04-30" in messages
+
+
+def test_sync_latest_quotes_historical_skips_range_without_any_quote(monkeypatch, caplog) -> None:
+    import logging
+
+    day_fetch_calls: list[date] = []
+
+    monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAA"])
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "get_quote_snapshot_resume_state",
+        lambda symbol, from_date, to_date, expected_dates=None: {
+            "symbol": symbol,
+            "has_expected_days": True,
+            "is_complete": False,
+            "expected_days": 3,
+            "stored_days": 0,
+            "missing_days": 3,
+            "first_missing_date": from_date,
+            "missing_ranges": [(from_date, to_date)],
+        },
+    )
+    monkeypatch.setattr(sync_latest_quotes, "_range_has_any_quotes", lambda symbol, session_dates, session=None: False)
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "_fetch_near_close_quote_for_session",
+        lambda symbol, session_date, session=None: day_fetch_calls.append(session_date) or (None, None, None),
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
+
+    with caplog.at_level(logging.INFO):
+        summary = sync_latest_quotes.sync_latest_quotes(
+            limit=1,
+            from_date=date(2026, 4, 29),
+            to_date=date(2026, 5, 1),
+        )
+
+    assert summary == {"symbols": 1, "rows_upserted": 0}
+    assert day_fetch_calls == []
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "stage=skip_range_no_quotes" in messages
+    assert "stage=symbol_summary" in messages
+    assert "fetched_ranges=0" in messages
 
 
 def test_sync_latest_quotes_emits_latest_batch_progress_logs(monkeypatch, caplog) -> None:
