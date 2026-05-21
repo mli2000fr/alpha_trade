@@ -91,6 +91,24 @@ def test_request_with_retry_429_is_retryable(monkeypatch: pytest.MonkeyPatch) ->
     assert resp.status_code == 200
 
 
+def test_request_with_retry_honors_retry_after_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr("service._http_retry.time.sleep", lambda seconds: slept.append(seconds))
+
+    response = _http_error_response(429)
+    response.headers = {"Retry-After": "7"}
+    session = _mock_session_with_responses([response, _ok_response(200)])
+
+    resp = request_with_retry(
+        session, "GET", "https://api.example.com/x",
+        policy=RetryPolicy(max_attempts=2, base_delay_seconds=0.0, max_delay_seconds=10.0, jitter=False),
+        breaker=None,
+    )
+
+    assert resp.status_code == 200
+    assert slept == [7.0]
+
+
 def test_request_with_retry_exhausts_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("service._http_retry.time.sleep", lambda *_: None)
     session = _mock_session_with_responses([

@@ -14,6 +14,8 @@ DEFAULT_TIMEOUT_SECONDS = 10
 MAX_TIMEOUT_RETRIES = 10
 TIMEOUT_BACKOFF_SECONDS = 5
 PAUSE_CALL_BAR = 0.2
+PAUSE_CALL_QUOTE = 0.35
+HISTORICAL_QUOTES_LOG_EVERY_PAGES = 10
 ALPACA_ASSETS_ENDPOINT = "https://paper-api.alpaca.markets/v2/assets"
 ALPACA_BARS_ENDPOINT_TEMPLATE = "https://data.alpaca.markets/v2/stocks/{symbol}/bars"
 ALPACA_QUOTES_ENDPOINT_TEMPLATE = "https://data.alpaca.markets/v2/stocks/{symbol}/quotes"
@@ -115,6 +117,10 @@ def _normalize_quotes_window_boundary(value: str, *, end_of_day: bool) -> str:
     else:
         parsed = parsed.astimezone(timezone.utc)
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _should_log_page_progress(page_index: int, *, has_next_page: bool) -> bool:
+    return page_index == 1 or not has_next_page or page_index % HISTORICAL_QUOTES_LOG_EVERY_PAGES == 0
 
 
 def fetch_alpaca_assets(session: Optional[requests.Session] = None, account_id: Optional[str] = None) -> list[dict[str, Any]]:
@@ -304,6 +310,7 @@ def fetch_historical_quotes(
     }
     all_quotes: list[dict[str, Any]] = []
     next_token: Optional[str] = None
+    page_index = 0
 
     try:
         while True:
@@ -313,6 +320,7 @@ def fetch_historical_quotes(
                 params.pop("page_token", None)
 
             try:
+                time.sleep(PAUSE_CALL_QUOTE)
                 _telemetry_bump("alpaca", "requests_total")
                 response = request_with_retry(
                     client,
@@ -328,15 +336,19 @@ def fetch_historical_quotes(
                     raise RuntimeError("Réponse quotes historiques Alpaca invalide.")
                 all_quotes.extend(quote for quote in quotes if isinstance(quote, dict))
                 next_token = payload.get("next_page_token")
+                page_index += 1
                 _telemetry_bump("alpaca", "success_total")
-                LOGGER.info(
-                    "Alpaca historical quotes | symbol=%s start=%s end=%s next_token=%s count=%s",
-                    cleaned_symbol,
-                    params["start"],
-                    params["end"],
-                    next_token,
-                    len(quotes),
-                )
+                if _should_log_page_progress(page_index, has_next_page=bool(next_token)):
+                    LOGGER.info(
+                        "Alpaca historical quotes | symbol=%s page=%s start=%s end=%s page_count=%s total_count=%s has_next=%s",
+                        cleaned_symbol,
+                        page_index,
+                        params["start"],
+                        params["end"],
+                        len(quotes),
+                        len(all_quotes),
+                        bool(next_token),
+                    )
             except requests.exceptions.HTTPError as exc:
                 if getattr(exc.response, "status_code", None) == 404:
                     LOGGER.warning("Alpaca retourne 404 pour %s : aucune quote historique disponible.", cleaned_symbol)

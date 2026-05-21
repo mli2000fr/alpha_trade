@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import logging
 from logging.handlers import TimedRotatingFileHandler
-from pathlib import Path
-
-import pytest
+from typing import cast
 
 from common import utils
 from common import logging_setup
@@ -17,6 +14,7 @@ def test_configure_root_logging_creates_relative_log_directory_from_project_root
     logger = utils.configure_root_logging(log_path="./log/test_update_sector.log")
 
     try:
+        logger.info("bootstrap log file")
         expected_log_path = tmp_path / "log" / "test_update_sector.log"
         assert expected_log_path.exists()
     finally:
@@ -80,6 +78,39 @@ def test_default_rotation_uses_rotating_file_handler(tmp_path, monkeypatch) -> N
         rotating_handlers = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
         assert len(rotating_handlers) == 1
         assert not isinstance(rotating_handlers[0], TimedRotatingFileHandler)
+    finally:
+        for h in list(logger.handlers):
+            try:
+                h.close()
+            except Exception:
+                pass
+            logger.removeHandler(h)
+
+
+def test_default_rotation_tolerates_windows_rollover_lock(tmp_path, monkeypatch) -> None:
+    """La rotation ne doit pas remonter de PermissionError WinError 32."""
+    from logging.handlers import RotatingFileHandler
+
+    monkeypatch.setattr(logging_setup, "PROJECT_ROOT", tmp_path)
+    log_path = str(tmp_path / "logs" / "locked.log")
+
+    logger = logging_setup.configure_root_logging(log_path=log_path, max_bytes=1, use_timed_rotation=False)
+    try:
+        rotating_handler = cast(
+            RotatingFileHandler,
+            next(h for h in logger.handlers if isinstance(h, RotatingFileHandler)),
+        )
+        logger.info("trigger")
+
+        def _locked_rotate(source, dest) -> None:
+            raise PermissionError(32, "sharing violation", source)
+
+        monkeypatch.setattr(rotating_handler, "rotate", _locked_rotate)
+
+        rotating_handler.doRollover()
+
+        assert rotating_handler.stream is not None
+        logger.info("still writable")
     finally:
         for h in list(logger.handlers):
             try:

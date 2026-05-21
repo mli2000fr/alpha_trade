@@ -22,9 +22,59 @@ import shutil
 import sys
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
+from typing import Any, cast
 
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s -- %(message)s"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _is_windows_sharing_violation(exc: BaseException) -> bool:
+    return isinstance(exc, PermissionError) or getattr(exc, "winerror", None) == 32
+
+
+class _WindowsSafeRolloverMixin:
+    """Tolère les échecs de rotation quand Windows verrouille encore le fichier.
+
+    Cas typique : plusieurs processus écrivent dans le même log et l'un d'eux
+    tente un rename pendant qu'un autre conserve un handle ouvert. Au lieu de
+    faire remonter un logging error, on rouvre simplement le flux courant en
+    mode append et on continue à écrire dans le fichier principal.
+    """
+
+    def _recover_after_rollover_failure(self) -> None:
+        stream = getattr(self, "stream", None)
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
+        self.stream = None
+        reopen = getattr(self, "_open", None)
+        if callable(reopen):
+            self.stream = reopen()
+
+class SafeRotatingFileHandler(_WindowsSafeRolloverMixin, RotatingFileHandler):
+    """RotatingFileHandler robuste aux verrous de fichiers sous Windows."""
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError as exc:
+            if not _is_windows_sharing_violation(exc):
+                raise
+            self._recover_after_rollover_failure()
+
+
+class SafeTimedRotatingFileHandler(_WindowsSafeRolloverMixin, TimedRotatingFileHandler):
+    """TimedRotatingFileHandler robuste aux verrous de fichiers sous Windows."""
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError as exc:
+            if not _is_windows_sharing_violation(exc):
+                raise
+            self._recover_after_rollover_failure()
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +85,7 @@ def _gzip_rotator(source: str, dest: str) -> None:
     """Compresse ``source`` en gzip puis le supprime."""
     gz_dest = dest + ".gz"
     with open(source, "rb") as f_in, gzip.open(gz_dest, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
+        shutil.copyfileobj(f_in, cast(Any, f_out))
     os.remove(source)
 
 
@@ -114,18 +164,23 @@ def configure_root_logging(
         resolved_log_path = _resolve_log_path(log_path)
         if use_timed_rotation:
             # Sprint S3 / A-025 — rotation quotidienne + compression gzip.
-            file_handler: logging.FileHandler = TimedRotatingFileHandler(
+            file_handler: logging.FileHandler = SafeTimedRotatingFileHandler(
                 resolved_log_path,
                 when=timed_rotation_when,
                 backupCount=timed_rotation_backup_count,
                 encoding="utf-8",
+                delay=True,
             )
             # Branche les helpers gzip : rotation → .gz automatique.
             file_handler.rotator = _gzip_rotator  # type: ignore[attr-defined]
             file_handler.namer = _gzip_namer  # type: ignore[attr-defined]
         else:
-            file_handler = RotatingFileHandler(
-                resolved_log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+            file_handler = SafeRotatingFileHandler(
+                resolved_log_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
+                delay=True,
             )
         file_handler.setFormatter(formatter)
         file_handler.setLevel(level)

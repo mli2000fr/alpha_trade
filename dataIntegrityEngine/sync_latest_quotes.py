@@ -314,6 +314,8 @@ def main() -> None:
         level=logging.INFO,
         log_path="./log/sync_latest_quotes.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
+        use_timed_rotation=True,
+        timed_rotation_backup_count=14,
     )
     args = _build_arg_parser().parse_args()
     started_at = _utc_now_naive()
@@ -329,6 +331,38 @@ def main() -> None:
             to_date=date.fromisoformat(args.to_date) if args.to_date else None,
             symbol_source=args.symbol_source,
         )
+    except KeyboardInterrupt as exc:
+        status = "failed"
+        error_message = "KeyboardInterrupt()"
+        summary = {"symbols": 0, "rows_upserted": 0}
+        finished_at = _utc_now_naive()
+        LOGGER.warning("Sync latest quotes interrompu par l'utilisateur | run_id=%s", run_id)
+        record_quotes_audit_run(
+            run_id=run_id,
+            started_at=started_at,
+            finished_at=finished_at,
+            symbols_requested=int(summary.get("symbols", 0)),
+            rows_upserted=int(summary.get("rows_upserted", 0)),
+            status="failed",
+            error_message=error_message,
+        )
+        _emit_run_summary(
+            {
+                "run_id": run_id,
+                "started_at": started_at.isoformat(timespec="seconds"),
+                "finished_at": finished_at.isoformat(timespec="seconds"),
+                "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+                "from_date": args.from_date,
+                "to_date": args.to_date,
+                "symbol_source": normalize_symbol_source(args.symbol_source),
+                "requested_limit": args.limit,
+                "batch_size": args.batch_size,
+                "audit_status": status,
+                "error_message": error_message,
+                **summary,
+            }
+        )
+        raise exc
     except Exception as exc:  # noqa: BLE001 — audit + propagation contrôlée.
         status = "failed"
         error_message = repr(exc)

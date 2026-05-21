@@ -16,8 +16,10 @@ import logging
 import random
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
@@ -105,6 +107,54 @@ def _backoff_delay(policy: RetryPolicy, attempt: int) -> float:
     return min(delay, policy.max_delay_seconds)
 
 
+def _parse_retry_after_seconds(response: requests.Response | None) -> float | None:
+    if response is None:
+        return None
+    headers = getattr(response, "headers", None) or {}
+    raw_value = headers.get("Retry-After")
+    if raw_value is None:
+        return None
+
+    cleaned = str(raw_value).strip()
+    if not cleaned:
+        return None
+    try:
+        return max(0.0, float(cleaned))
+    except ValueError:
+        pass
+
+    try:
+        retry_at = parsedate_to_datetime(cleaned)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    delta = (retry_at.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
+    return max(0.0, delta)
+
+
+def _retry_delay_for_exception(policy: RetryPolicy, attempt: int, exc: Exception | None) -> float:
+    delay = _backoff_delay(policy, attempt)
+    response = getattr(exc, "response", None)
+    retry_after = _parse_retry_after_seconds(response)
+    if retry_after is None:
+        return delay
+    return min(max(delay, retry_after), policy.max_delay_seconds)
+
+
+def _perform_request(
+    session: requests.Session,
+    method: str,
+    url: str,
+    request_kwargs: dict[str, Any],
+) -> requests.Response:
+    return cast(requests.Response, session.request(method, url, **request_kwargs))
+
+
+def _ensure_response(response: Any) -> requests.Response:
+    return cast(requests.Response, response)
+
+
 def request_with_retry(
     session: requests.Session,
     method: str,
@@ -127,20 +177,11 @@ def request_with_retry(
     host = _extract_host(url)
 
     last_exc: Exception | None = None
-    method_lower = method.lower()
     for attempt in range(1, pol.max_attempts + 1):
         if breaker is not None:
             breaker.check(host)
         try:
-            # API standard requests : préfère ``session.request(method, url, ...)``.
-            # Fallback sur ``session.<method>(url, ...)`` pour les fakes minimalistes
-            # qui n'implémentent que ``.get()`` / ``.post()`` (rétrocompat tests legacy).
-            session_request = getattr(session, "request", None)
-            if callable(session_request):
-                response = session_request(method, url, **request_kwargs)
-            else:
-                http_call = getattr(session, method_lower)
-                response = http_call(url, **request_kwargs)
+            response: requests.Response = _ensure_response(_perform_request(session, method, url, request_kwargs))
             if response.status_code in RETRYABLE_HTTP_STATUS:
                 raise _RetryableHttpError(response)
             response.raise_for_status()
@@ -161,7 +202,7 @@ def request_with_retry(
             breaker.record_failure(host)
         if attempt >= pol.max_attempts:
             break
-        delay = _backoff_delay(pol, attempt)
+        delay = _retry_delay_for_exception(pol, attempt, last_exc)
         LOGGER.warning(
             "HTTP retry | host=%s attempt=%d/%d sleep=%.2fs cause=%s",
             host, attempt, pol.max_attempts, delay, _redact_sensitive_text(str(last_exc)),
