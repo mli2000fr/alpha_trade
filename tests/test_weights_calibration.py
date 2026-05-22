@@ -412,3 +412,32 @@ def test_walk_forward_risk_params_raises_on_too_few_observations() -> None:
         )
 
 
+def test_empirical_calibration_fallback_levels_preserve_configured_order(monkeypatch) -> None:
+    from risk_management import db_io as risk_db_io
+
+    monkeypatch.setattr(
+        risk_db_io,
+        "load_config",
+        lambda: {
+            "risk_management": {
+                "empirical_calibration": {
+                    "fallback_levels": [
+                        "exact_segment",
+                        "regime_all",
+                        "regime_all_nearest_segment",
+                    ]
+                }
+            }
+        },
+    )
+
+    levels, source = risk_db_io._load_empirical_calibration_fallback_levels()
+
+    assert levels == [
+        "exact_segment",
+        "regime_all",
+        "regime_all_nearest_segment",
+    ]
+    assert source == "config_yaml"
+
+

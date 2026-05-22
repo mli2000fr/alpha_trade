@@ -242,7 +242,7 @@ presets:
       risk_correlation_threshold: 0.82
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
-      risk_enable_kelly: false
+      risk_enable_kelly: true
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
@@ -296,7 +296,7 @@ presets:
       risk_correlation_threshold: 0.80
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
-      risk_enable_kelly: false
+      risk_enable_kelly: true
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
@@ -350,7 +350,7 @@ presets:
       risk_correlation_threshold: 0.78
       risk_correlation_lookback_days: 90
       risk_correlation_min_overlap: 50
-      risk_enable_kelly: false
+      risk_enable_kelly: true
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
@@ -383,5 +383,5 @@ presets:
       selector_max_spread_bps: 35.0
       selector_max_spread_bps_iex: 55.0
       selector_earnings_blackout_days: 4
-      selector_max_anomaly_count: 18
+      selector_max_anomaly_count: 23
       selector_require_above_ma200: true

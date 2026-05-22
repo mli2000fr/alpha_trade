@@ -59,7 +59,7 @@ market_regimes:
   # Source des donnees macro (VIX, 10Y) : `stooq` (gratuit, sans cle),
   # `eodhd` (consomme du quota EODHD), `composite` (Stooq dabord, EODHD
   # en secours si EODHD_API_TOKEN est defini), ou `none` pour desactiver.
-  macro_provider: eodhd
+  macro_provider: composite
 
   sentinel:
     enabled: true

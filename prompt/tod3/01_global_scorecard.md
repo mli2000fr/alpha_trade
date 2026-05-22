@@ -1,5 +1,10 @@
 # 01 — Scorecard global
 
+> Ce scorecard capture le **baseline d'audit initial**. Pour l'état
+> post-remédiations vérifiées (S1/S2/S5/S6), voir
+> [`08_sprint_plan.md`](08_sprint_plan.md) et
+> [`09_final_verdict.md`](09_final_verdict.md).
+
 | # | Module / domaine | Note /10 | Verdict synthétique |
 |---|---|---:|---|
 | 1 | Documentation (`doc/`) | 7.5 | Très étoffée mais hétérogène en fraîcheur ; index OK. |

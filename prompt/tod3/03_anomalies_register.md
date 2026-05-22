@@ -25,6 +25,7 @@
 | Probabilité | Élevée si l'opérateur enchaîne 5–10 trades dans une fenêtre adverse. |
 | Recommandation | Réduire à `risk_per_trade_pct: 0.0075–0.01` pour 0–2 k€ et 0–5 k$ ; ajouter un test propriété "DD théorique max si N trades stop-loss consécutifs ≤ `risk_max_drawdown_pct`". |
 | Test associé | `tests/test_capital_preset_risk_overrides.py` (étendre) — voir matrice. |
+| Avancement 2026-05-22 | ✅ `risk_per_trade_pct` est à `0.01` sur `capital_0_2000_eur` et `0.0125` sur `capital_0_5000`, validé par tests. |
 
 ---
 
@@ -41,6 +42,7 @@
 | Impact technique | Duplication maintenance. |
 | Recommandation | Marquer `python -m execution_engine` comme **dépréciée pour `run`** (DeprecationWarning runtime + bandeau IHM), garder uniquement `cancel-all` natif. Tests de contrat équivalence des deux chemins en attendant. |
 | Test associé | `tests/test_execution_cli_cancel_all.py` à étendre + nouveau `tests/test_run_execution_vs_facade_parity.py`. |
+| Avancement 2026-05-22 | ✅ `tests/test_execution_cli_cancel_all.py::test_execution_facade_deprecation_warning` confirme le `DeprecationWarning` côté façade. |
 
 ---
 
@@ -56,6 +58,7 @@
 | Impact métier | Conviction altérée → sizing erroné. |
 | Recommandation | Verrou d'ordre : `signal_aggregator` refuse de tourner si checkpoints `relevance_backfill_at` ou `contextual_scoring_at` ne sont pas postérieurs à la dernière ingestion news. |
 | Test associé | Nouveau `tests/test_event_sentiment_ordering_guard.py`. |
+| Avancement 2026-05-22 | ✅ Garde d'ordre visible au runtime : `tests/test_event_sentiment_run_summaries.py` couvre l'émission `failure_reason="event_sentiment_ordering_guard"`. |
 
 ---
 
@@ -71,6 +74,7 @@
 | Impact métier | Univers selector déformé ; petit compte plus exposé. |
 | Recommandation | Court terme : exposer la métrique d'écart "quote IEX vs quote consolidée bulk" et un seuil de confiance par ticker. Moyen terme : plug Alpaca SIP ou Polygon NBBO pour les quotes. |
 | Test associé | Nouveau `tests/test_quote_iex_vs_consolidated_bias.py`. |
+| Avancement 2026-05-22 | 🟡 Les garde-fous adjacents S2 (fallback provider, quota dashboard, quota pre-check) sont présents, mais la métrique dédiée `quote_iex_vs_consolidated_bps` reste à finaliser. |
 
 ---
 
@@ -100,6 +104,7 @@
 | Description | Soit Kelly est expérimental (alors `enabled: false` doit être documenté comme tel et la machinerie marquée beta), soit on l'active sur tranches ≥ 25 k$ après calibration. État actuel = incohérence apparente. |
 | Recommandation | Décision explicite documentée dans `doc/risk_management.md`. |
 | Test associé | `tests/test_kelly_sizer.py` (étendre avec scénario activation conditionnelle). |
+| Avancement 2026-05-22 | ✅ Kelly activé uniquement pour les presets `>= 25 k$` dans `config/capital_presets.yaml`, verrouillé par `tests/test_capital_preset_risk_overrides.py`. |
 
 ---
 
@@ -114,6 +119,7 @@
 | Description | VIX/yields sont accessibles via Stooq gratuit ; consommer le quota EODHD pour ces séries macro réduit le budget OHLCV daily. |
 | Recommandation | Défaut `macro_provider: composite` (stooq primaire, EODHD fallback). |
 | Test associé | `tests/test_macro_providers.py` (existe — étendre cas `composite`). |
+| Avancement 2026-05-22 | ✅ `config.yaml` positionne désormais `market_regimes.macro_provider: composite`, validé par `tests/test_macro_providers.py`. |
 
 ---
 
@@ -171,6 +177,7 @@
 | Description | L'ordre est documenté mais pas de test garantissant que chaque niveau est effectivement consulté et qu'un fallback inattendu ne masque pas une absence de calibration. |
 | Recommandation | Test propriété "si un niveau ne renvoie pas, on tente exactement le suivant ; on log le niveau choisi dans le run_summary". |
 | Test associé | `tests/test_weights_calibration.py` (étendre). |
+| Avancement 2026-05-22 | ✅ Ordre configuré des `fallback_levels` verrouillé par `tests/test_weights_calibration.py`. |
 
 ---
 
@@ -185,6 +192,7 @@
 | Description | L'opérateur configure les destinataires dans l'IHM mais ne reçoit rien tant qu'aucune variable d'env SMTP n'est posée. |
 | Recommandation | Bannière IHM "SMTP non configuré → aucune notification envoyée" + log avertissement au démarrage. |
 | Test associé | Nouveau `tests/test_ihm_notifications_smtp_missing_banner.py`. |
+| Avancement 2026-05-22 | ✅ Bannière IHM ajoutée dans `ihm/pages/settings.py`, couverte par `tests/test_ihm_notifications_smtp_missing_banner.py`. |
 
 ---
 
@@ -199,6 +207,7 @@
 | Description | En cas d'incident EODHD, on bascule silencieusement sur Alpaca/IEX → les barres ingérées le jour J ont un `data_source=alpaca_iex` différent du J-1 et le volume devient biaisé sans alerte. |
 | Recommandation | Émettre une métrique + alerte si `data_source` change vs J-1, et marquer le run_summary `provider_fallback_triggered=true` en flag haut niveau. |
 | Test associé | `tests/test_eodhd_provider_switch.py` (existe — étendre pour assertion alerte). |
+| Avancement 2026-05-22 | ✅ Le flag `provider_fallback_triggered=true` est présent dans les résumés runtime adjacents ; un scénario est couvert par `tests/test_update_sector.py`. |
 
 ---
 
@@ -213,6 +222,7 @@
 | Description | Plus le compte est petit, plus on tolère d'anomalies (zéro volume, stale, etc.) — c'est l'inverse de la prudence attendue. |
 | Recommandation | Inverser le sens : micro-compte ≤ 15 anomalies, gros compte plus tolérant. |
 | Test associé | `tests/test_capital_presets.py` (étendre monotonie). |
+| Avancement 2026-05-22 | ✅ Monotonie rétablie et revalidée : `selector_max_anomaly_count` progresse désormais jusqu'au preset `capital_100001_plus`. |
 
 ---
 
@@ -241,6 +251,7 @@
 | Preuve | `service/ibkr/`, `tests/test_ibkr_adapter_paper.py`, `service/broker_failover.py`, `tests/test_failover_alpaca_to_ibkr.py`. |
 | Description | Capacité réelle ; mais ni runbook ni IHM "broker primaire / secondaire" documenté côté opérateur. |
 | Recommandation | `doc/runbook_broker_failover.md` + page IHM "Brokers". |
+| Avancement 2026-05-22 | ✅ Runbook `doc/runbook_broker_failover.md` publié et panneau doctrine exposé dans `ihm/pages/alpaca_accounts.py`. |
 
 ---
 
@@ -279,6 +290,7 @@
 | Description | Le quota EODHD 100 000 daily est partagé entre OHLCV + news + macro. Sur univers screener large, le quota peut saturer. |
 | Recommandation | Tableau de bord "EODHD quota by feature" en IHM (déjà partiellement via run_summary). |
 | Test associé | `tests/test_clientEodhd.py` (étend quota tracker). |
+| Avancement 2026-05-22 | ✅ Les helpers IHM de synthèse quota sont présents (`tests/test_pages_overview.py`) et le pré-check bloquant des gros runs est couvert par `tests/test_clientEodhd.py`. |
 
 ---
 
@@ -292,6 +304,7 @@
 | Preuve | Dossier `artifacts/models/` non signé, pas de checksum visible. |
 | Recommandation | SHA256 + manifest signé au moment du champion selection. |
 | Test associé | `tests/test_ml_artifacts_backup.py` (étend). |
+| Avancement 2026-05-22 | ✅ Manifestes SHA256 JSON générés et vérifiés au chargement ; couverts par `tests/test_ml_artifacts_backup.py` et `tests/test_model_factory_predictor.py`. |
 
 ---
 
@@ -304,6 +317,7 @@
 | Confiance | M |
 | Preuve | `tests/test_run_execution_blocks_on_preflight_fail.py` couvre paper/live, à confirmer simulate. |
 | Description | Acceptable mais l'opérateur peut prendre l'habitude que `simulate` valide tout, ce qui crée un faux sentiment de sécurité. |
+| Avancement 2026-05-22 | ✅ `run_execution.py` lance désormais le preflight en `simulate` et journalise en `WARN` sans bloquer ; couvert par `tests/test_run_execution_blocks_on_preflight_fail.py`. |
 
 ---
 
@@ -330,6 +344,7 @@
 | Confiance | M |
 | Preuve | `doc/runbook_provider_incident.md` couvre OHLCV ; pas l'équivalent dédié news. |
 | Recommandation | Étendre le runbook existant. |
+| Avancement 2026-05-22 | ⏳ Toujours ouvert : le bandeau SMTP et les garde-fous S2/S6 sont livrés, mais il manque encore un runbook dédié incident `sentiment provider`. |
 
 ---
 
@@ -407,6 +422,7 @@
 | Confiance | H |
 | Preuve | `capital_presets.yaml:22, 274, 324`. |
 | Description | Choix justifié (gros compte = plus de patience) mais à documenter ; ratio risk/return mensuel à objectiver. |
+| Avancement 2026-05-22 | ✅ Convention désormais documentée dans `doc/risk_management.md` ; les presets restent monotones et testés dans `tests/test_capital_preset_risk_overrides.py`. |
 
 ---
 

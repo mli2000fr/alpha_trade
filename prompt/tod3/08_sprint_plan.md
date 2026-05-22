@@ -14,6 +14,14 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 **Modules impactés** : `config/capital_presets.yaml`, `execution_engine/`,
 `run_execution.py`, `ihm/`, `selector/`, doc.
 
+**État au 2026-05-22** : ✅ **livré et revalidé**.
+
+- ✅ `risk_per_trade_pct` abaissé à `0.01` sur `capital_0_2000_eur` et `0.0125` sur `capital_0_5000`.
+- ✅ `selector_max_anomaly_count` remis en monotonie croissante sur l'ensemble des presets (y compris `capital_100001_plus`).
+- ✅ Alias `selector_min_ibd_rs_rank` introduit avec compatibilité `selector_min_relative_strength_index`.
+- ✅ Bandeau IHM micro-compte présent dans `ihm/pages/settings.py`.
+- ✅ `python -m execution_engine` émet bien un `DeprecationWarning` pour le chemin `run`.
+
 **Tâches détaillées** :
 1. Réduire `risk_per_trade_pct` à `0.01` pour 0–2k€ et `0.0125` pour 2–5k$ (A-001).
 2. Ajuster `selector_max_anomaly_count` : monotonie inversée (15 micro → 22 gros) (A-014).
@@ -50,6 +58,14 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 
 **Priorité** : 🔴 Haute. **Anomalies** : A-003, A-004, A-013, A-019, A-027.
 
+**État au 2026-05-22** : 🟡 **partiellement livré, noyau critique validé**.
+
+- ✅ Garde d'ordre `event_sentiment` visible au runtime (`failure_reason="event_sentiment_ordering_guard"`).
+- ✅ Signal `provider_fallback_triggered=true` émis côté run summaries provider.
+- ✅ Pré-check quota EODHD avant gros run sentiment.
+- ✅ Vue IHM / overview des appels quota EODHD par feature.
+- ⏳ Reste à industrialiser la métrique dédiée `quote_iex_vs_consolidated_bps` avec exposition IHM explicite.
+
 **Tâches** :
 1. `signal_aggregator` refuse si `relevance_backfill_at` < `news_ingestion_at` (A-003).
 2. Verrou IHM "Sentiment Pipeline" : étapes 1→5 lancées en ordre forcé.
@@ -71,11 +87,11 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 **Tests** :
 | Test | Type | Fichier | Anomalie |
 |---|---|---|---|
-| `test_event_sentiment_ordering_guard` | intégration | `tests/test_event_pipeline_defaults.py` (nv) | A-003 |
+| `test_signal_aggregator_main_emits_blocked_summary_when_ordering_guard_fails` | intégration | `tests/test_event_sentiment_run_summaries.py` | A-003 |
 | `test_quote_iex_vs_consolidated_bias` | data quality | `tests/test_quote_iex_vs_consolidated_bias.py` (nv) | A-004 |
-| `test_eodhd_provider_fallback_alert` | intégration | `tests/test_eodhd_provider_switch.py` (étendu) | A-013 |
+| `test_update_missing_sectors_falls_back_to_finnhub_after_eodhd_permission_error` | intégration | `tests/test_update_sector.py` | A-013 |
 | `test_eodhd_quota_precheck_blocks_run` | intégration | `tests/test_clientEodhd.py` (étendu) | A-027 |
-| `test_ihm_quota_dashboard` | E2E IHM | `tests/test_pages_overview.py` (étendu) | A-019 |
+| `test_build_eodhd_quota_feature_rows_sorts_by_calls_desc` | IHM / helper | `tests/test_pages_overview.py` | A-019 |
 
 **Gain** : event_sentiment 6.5→7.5, observabilité 7.0→7.5, dataIntegrityEngine 8.0→8.3.
 
@@ -159,6 +175,16 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 
 **Priorité** : 🟠 Moyenne. **Anomalies** : A-016, A-020, A-021.
 
+**État au 2026-05-22** : 🟡 **majoritairement livré et validé**.
+
+- ✅ Manifestes SHA256 d'artefacts ML générés côté `trainer` / `orchestrator` puis vérifiés côté `predictor`.
+- ✅ Doctrine failover opérateur exposée dans `ihm/pages/alpaca_accounts.py` + runbook `doc/runbook_broker_failover.md`.
+- ✅ Préflight exécuté aussi en `simulate` avec downgrade non bloquant en `WARN` dans `run_execution.py`.
+- ✅ Validation ciblée S5/S6 : `97 passed` sur les suites dédiées le 2026-05-22.
+- ⏳ Reste hors livraison actuelle : profil DB read-only explicite pour l'IHM et doc formelle de rotation de secrets.
+
+> **Note d'implémentation** : aucune migration SQL / `ALTER TABLE` n'a été nécessaire pour A-020 ; la signature des artefacts est implémentée sous forme de manifestes JSON sur le filesystem, adjacents aux artefacts.
+
 **Tâches** :
 1. Signature SHA256 manifest des artefacts `models/` au champion selection (A-020).
 2. Vérification signature au load par `predictor.py`.
@@ -173,9 +199,10 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 **Tests** :
 | Test | Type | Fichier | Anomalie |
 |---|---|---|---|
-| `test_ml_artifacts_signature` | intégration | `tests/test_ml_artifacts_backup.py` (étendu) | A-020 |
-| `test_ihm_brokers_page_failover_doctrine` | E2E IHM | nouveau | A-016 |
-| `test_preflight_warn_in_simulate` | unitaire | `tests/test_execution_engine_executor.py` (étendu) | A-021 |
+| `test_ml_artifacts_signature_verification_detects_mismatch` | intégration | `tests/test_ml_artifacts_backup.py` | A-020 |
+| `test_predict_symbol_returns_none_when_required_artifact_signature_mismatches` | intégration | `tests/test_model_factory_predictor.py` | A-020 |
+| `test_ihm_brokers_page_failover_doctrine` | IHM / helper | `tests/test_pages_alpaca_accounts.py` | A-016 |
+| `test_simulate_mode_warns_on_preflight_fail_but_does_not_abort` | unitaire | `tests/test_run_execution_blocks_on_preflight_fail.py` | A-021 |
 
 **Gain** : sécurité 7.5→8.5, modelFactory 7.0→7.5.
 
@@ -184,6 +211,15 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 ## Sprint S6 — Calibration Kelly conditionnelle, defaults macro, doc
 
 **Priorité** : 🟡 Moyenne-basse. **Anomalies** : A-006, A-007, A-011, A-012, A-023, A-029.
+
+**État au 2026-05-22** : 🟡 **majoritairement livré**.
+
+- ✅ `market_regimes.macro_provider` basculé à `composite`.
+- ✅ `risk_enable_kelly` activé uniquement sur les presets `>= 25 k$`.
+- ✅ Ordre configuré de `fallback_levels` verrouillé par test.
+- ✅ Bandeau IHM explicite quand SMTP n'est pas configuré.
+- ✅ Documentation `doc/risk_management.md` enrichie sur Kelly conditionnel et convention `risk_max_drawdown_pct`.
+- ⏳ Reste à publier un runbook dédié "incident sentiment provider" (A-023) si l'on veut fermer tout le sprint au sens documentaire strict.
 
 **Tâches** :
 1. Décision explicite Kelly : activer sur tranche ≥ 25 k$ après calibration (A-006).
@@ -198,9 +234,8 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 `ihm/services/notifications.py`, `doc/runbook_provider_incident.md`,
 `doc/risk_management.md`.
 
-**Tests** : `test_kelly_sizer.py` (étendu), `test_macro_providers.py` (étendu),
-`test_weights_calibration.py` (étendu), `test_ihm_notifications_smtp_missing_banner.py` (nv),
-`test_capital_presets.py` (doc strings).
+**Tests** : `tests/test_capital_preset_risk_overrides.py`, `tests/test_macro_providers.py`,
+`tests/test_weights_calibration.py`, `tests/test_ihm_notifications_smtp_missing_banner.py`.
 
 **Gain** : configuration 8.0→8.5, risk_management 8.0→8.3, doc 7.5→8.5.
 

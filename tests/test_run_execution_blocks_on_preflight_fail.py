@@ -23,6 +23,7 @@ def run_execution_module(monkeypatch, tmp_path):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     monkeypatch.setenv("LOGIN_DB", "x")
     monkeypatch.setenv("PASSWORD_DB", "y")
+    monkeypatch.setenv("ALPHA_TRADE_LIVE_SECRET_POLICY", "env")
     if "run_execution" in sys.modules:
         del sys.modules["run_execution"]
     import run_execution
@@ -86,6 +87,7 @@ def test_skip_preflight_flag_bypasses_check(run_execution_module, monkeypatch, c
     fake_module = types.ModuleType("execution_engine.preflight")
     fake_module.run_preflight = _spy
     monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_module)
+    monkeypatch.setenv("ALPHA_TRADE_LIVE_APPROVAL_TOKEN", "test-token")
     import execution_engine.db_io as execution_db_io
 
     def _stop_repo(*args, **kwargs):
@@ -102,6 +104,7 @@ def test_skip_preflight_flag_bypasses_check(run_execution_module, monkeypatch, c
             debug=False,
             account_id="default",
             skip_preflight=True,
+            approval_token="test-token",
         )
     assert called["n"] == 0
     err = capsys.readouterr().err
@@ -140,5 +143,29 @@ def test_paper_mode_does_not_invoke_preflight(run_execution_module, monkeypatch)
             account_id="default",
         )
     assert called["n"] == 0, "preflight ne doit pas être invoqué en mode paper"
+
+
+def test_simulate_mode_warns_on_preflight_fail_but_does_not_abort(run_execution_module, monkeypatch, capsys):
+    fake_preflight = _make_fake_preflight(passed=False)
+    monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_preflight)
+    import execution_engine.db_io as execution_db_io
+
+    def _stop_repo(*args, **kwargs):
+        raise RuntimeError("stop after simulate-preflight")
+
+    monkeypatch.setattr(execution_db_io, "ExecutionRepository", _stop_repo)
+
+    with pytest.raises(RuntimeError, match="stop after simulate-preflight"):
+        run_execution_module.run(
+            mode="simulate",
+            run_id=None,
+            trade_date=None,
+            debug=False,
+            account_id="default",
+        )
+
+    err = capsys.readouterr().err
+    assert "Preflight simulate en mode dégradé" in err
+    assert "[WARN]" in err
 
 

@@ -6,6 +6,14 @@ import tarfile
 import time
 from pathlib import Path
 
+import pytest
+
+from modelFactory.champion_selection import (
+    ArtifactSignatureError,
+    build_artifact_signature_manifest,
+    persist_artifact_signature_manifest,
+    verify_route_artifact_signatures,
+)
 from scripts import backup_ml_artifacts as bma
 
 
@@ -251,3 +259,66 @@ def test_atomic_write_json_overwrites_existing_file(tmp_path: Path) -> None:
         loaded = json.load(fh)
     assert loaded == {"new": True, "version": 2}
     assert "old" not in loaded
+
+
+def test_ml_artifacts_signature_manifest_contains_sha256_entries(tmp_path: Path) -> None:
+    ckpt = tmp_path / "best.ckpt"
+    scaler = tmp_path / "scaler.pkl"
+    ckpt.write_text("checkpoint-v1", encoding="utf-8")
+    scaler.write_bytes(b"scaler-v1")
+
+    manifest = build_artifact_signature_manifest(
+        symbol="AAPL",
+        run_id="run-1",
+        selected_model="lstm_attention",
+        artifact_routes_models={
+            "lstm_attention": {
+                "checkpoint_path": str(ckpt),
+                "scaler_path": str(scaler),
+            }
+        },
+    )
+
+    assert manifest["schema_version"] == 1
+    assert manifest["selected_model"] == "lstm_attention"
+    assert len(manifest["entries"]) == 2
+    assert all(entry.get("sha256") for entry in manifest["entries"])
+
+
+def test_ml_artifacts_signature_verification_detects_mismatch(tmp_path: Path) -> None:
+    ckpt = tmp_path / "best.ckpt"
+    scaler = tmp_path / "scaler.pkl"
+    ckpt.write_text("checkpoint-v1", encoding="utf-8")
+    scaler.write_bytes(b"scaler-v1")
+    manifest_path = tmp_path / "artifact_signature_manifest.json"
+
+    persist_artifact_signature_manifest(
+        manifest_path,
+        symbol="AAPL",
+        run_id="run-1",
+        selected_model="lstm_attention",
+        artifact_routes_models={
+            "lstm_attention": {
+                "checkpoint_path": str(ckpt),
+                "scaler_path": str(scaler),
+            }
+        },
+    )
+
+    verify_route_artifact_signatures(
+        manifest_path=manifest_path,
+        model_name="lstm_attention",
+        route={"checkpoint_path": str(ckpt), "scaler_path": str(scaler)},
+        required=True,
+    )
+
+    ckpt.write_text("checkpoint-v2", encoding="utf-8")
+
+    with pytest.raises(ArtifactSignatureError, match="artifact_signature_mismatch"):
+        verify_route_artifact_signatures(
+            manifest_path=manifest_path,
+            model_name="lstm_attention",
+            route={"checkpoint_path": str(ckpt), "scaler_path": str(scaler)},
+            required=True,
+        )
+

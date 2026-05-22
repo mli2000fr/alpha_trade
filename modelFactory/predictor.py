@@ -14,6 +14,7 @@ import pandas as pd
 import torch
 
 from modelFactory.calibration import calibrator_from_state_dict, margin_from_logits
+from modelFactory.champion_selection import ArtifactSignatureError, verify_route_artifact_signatures
 from modelFactory.config import DataConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
 from modelFactory.data_loader import (
@@ -232,7 +233,7 @@ def _numeric_threshold(value: object, default: float) -> float:
     try:
         if value is None:
             raise TypeError
-        return float(value)
+        return float(value if isinstance(value, (int, float, str)) else default)
     except (TypeError, ValueError):
         return float(default)
 
@@ -242,6 +243,42 @@ def _resolve_route_decision_threshold(route: dict[str, object], cfg_data: dict[s
     if threshold_value is None:
         return None
     return _numeric_threshold(threshold_value, cfg_data.get("data", {}).get("decision_threshold", 0.5))
+
+
+def _resolve_artifact_signature_manifest_path(cfg_data: dict[str, Any], *, config_path: Path) -> Path:
+    raw_value = cfg_data.get("artifact_signature_manifest_path")
+    resolved = _path_from_value(raw_value)
+    return resolved or config_path.with_name("artifact_signature_manifest.json")
+
+
+def _verify_route_signature_if_needed(
+    *,
+    cfg_data: dict[str, Any],
+    route: dict[str, object],
+    manifest_path: Path,
+    symbol: str,
+) -> None:
+    required = bool(cfg_data.get("artifact_signature_required", False))
+    if not required and not manifest_path.exists():
+        return
+    model_name = str(route.get("selected_model") or "").strip() or "unknown"
+    try:
+        verify_route_artifact_signatures(
+            manifest_path=manifest_path,
+            model_name=model_name,
+            route=dict(route),
+            required=required,
+        )
+    except ArtifactSignatureError as exc:
+        LOGGER.error(
+            "predict_symbol artifact_signature_failed symbol=%s model=%s manifest=%s reason=%s",
+            symbol,
+            model_name,
+            manifest_path,
+            exc.reason,
+        )
+        _record_artifact_issue(symbol, reason=exc.reason, path=exc.path or manifest_path)
+        raise ArtifactIntegrityError(exc.reason, path=exc.path or manifest_path) from exc
 
 
 def _build_prediction_result(
@@ -519,8 +556,8 @@ def _resolve_selected_model_route(
         LOGGER.warning("predict_symbol %s", fallback_reason)
 
     lstm_route = models.get("lstm_attention") or {}
-    routed_ckpt = Path(lstm_route.get("checkpoint_path")) if lstm_route.get("checkpoint_path") else ckpt_path
-    routed_scaler = Path(lstm_route.get("scaler_path")) if lstm_route.get("scaler_path") else scaler_path
+    routed_ckpt = _path_from_value(lstm_route.get("checkpoint_path")) or ckpt_path
+    routed_scaler = _path_from_value(lstm_route.get("scaler_path")) or scaler_path
     return {
         "requested_model": selected_model,
         "selected_model": "lstm_attention",
@@ -803,7 +840,7 @@ def _predict_with_tabular_model(
         raw_proba=raw_proba,
     )
     threshold_value = decision_threshold if decision_threshold is not None else cfg_data.get("selected_decision_threshold", data_cfg.decision_threshold)
-    effective_threshold = _numeric_threshold(threshold_value, data_cfg.decision_threshold)
+    effective_threshold = _numeric_threshold(threshold_value, float(data_cfg.decision_threshold or 0.5))
     pred_date = prediction_date or date.today()
     pred_class = 1 if proba >= effective_threshold else 0
     signal_label = "long" if pred_class == 1 else "no_trade"
@@ -879,6 +916,7 @@ def predict_symbol(
         return None
 
     route = _resolve_selected_model_route(cfg_data, ckpt_path, scaler_path, config_path)
+    manifest_path = _resolve_artifact_signature_manifest_path(cfg_data, config_path=config_path)
     selected_architecture = str(route["selected_model"])
     if route.get("inference_backend") == "global_tabular":
         global_config_path = _path_from_value(route.get("config_path"))
@@ -895,6 +933,12 @@ def predict_symbol(
             selected_architecture = str(route["selected_model"])
         else:
             try:
+                _verify_route_signature_if_needed(
+                    cfg_data=cfg_data,
+                    route=route,
+                    manifest_path=manifest_path,
+                    symbol=symbol,
+                )
                 global_cfg_data = _load_json_dict(global_config_path, symbol=symbol, artifact_kind="global_config")
                 return _predict_with_global_model(
                     symbol,
@@ -934,6 +978,12 @@ def predict_symbol(
         else:
             local_cfg_data = cfg_data
             try:
+                _verify_route_signature_if_needed(
+                    cfg_data=cfg_data,
+                    route=route,
+                    manifest_path=manifest_path,
+                    symbol=symbol,
+                )
                 if local_config_path.resolve() != config_path.resolve():
                     local_cfg_data = _load_json_dict(local_config_path, symbol=symbol, artifact_kind=f"{selected_architecture}_config")
                 return _predict_with_tabular_model(
@@ -946,7 +996,7 @@ def predict_symbol(
                     prediction_date=prediction_date,
                     as_of_date=as_of_date,
                     persist=persist,
-                    feature_columns=list(route.get("feature_columns") or []),
+                    feature_columns=list(route.get("feature_columns")) if isinstance(route.get("feature_columns"), list) else [],
                     decision_threshold=_resolve_route_decision_threshold(route, cfg_data),
                     config_path=local_config_path,
                     route_feature_fingerprint=route.get("feature_fingerprint"),
@@ -964,9 +1014,22 @@ def predict_symbol(
                 selected_architecture = str(route["selected_model"])
 
     _record_route_fallback_if_any(symbol, route)
+    try:
+        _verify_route_signature_if_needed(
+            cfg_data=cfg_data,
+            route=route,
+            manifest_path=manifest_path,
+            symbol=symbol,
+        )
+    except ArtifactIntegrityError:
+        return None
 
-    ckpt_path = Path(route["checkpoint_path"])
-    scaler_path = Path(route["scaler_path"])
+    ckpt_path = _path_from_value(route.get("checkpoint_path"))
+    scaler_path = _path_from_value(route.get("scaler_path"))
+    if ckpt_path is None or scaler_path is None:
+        LOGGER.warning("predict_symbol routed_artifacts_unresolved symbol=%s selected_model=%s", symbol, selected_architecture)
+        _record_artifact_issue(symbol, reason=f"lstm_route_unresolved:{selected_architecture}", path=manifest_path)
+        return None
     if not ckpt_path.exists() or not scaler_path.exists():
         LOGGER.warning("predict_symbol routed_artifacts_missing symbol=%s selected_model=%s", symbol, selected_architecture)
         missing_path = ckpt_path if not ckpt_path.exists() else scaler_path
@@ -986,7 +1049,7 @@ def predict_symbol(
         return None
 
     calibrator_path_raw = cfg_data.get("calibrator_path")
-    calibrator_path = Path(calibrator_path_raw) if calibrator_path_raw else config_path.with_name("calibrator.pkl")
+    calibrator_path = _path_from_value(calibrator_path_raw) or config_path.with_name("calibrator.pkl")
     calibrator = _load_optional_calibrator(calibrator_path, symbol=symbol, selected_model=selected_architecture)
 
     cutoff_date = as_of_date or prediction_date

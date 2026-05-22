@@ -151,5 +151,36 @@ class FailoverBrokerClient:
         return target.stream_trades(callback)
 
 
-__all__ = ["FailoverBrokerClient", "WriteSuspendedError", "DEFAULT_RESUME_FLAG"]
+def build_failover_doctrine_summary(
+    *,
+    primary_broker: str = "alpaca",
+    secondary_broker: str = "ibkr",
+    circuit_breaker_threshold: int = 3,
+    resume_flag_path: Path = DEFAULT_RESUME_FLAG,
+) -> dict[str, Any]:
+    """Retourne une doctrine opérateur lisible par l'IHM et la doc."""
+    resolved_resume_flag = resume_flag_path.resolve()
+    return {
+        "primary_broker": str(primary_broker),
+        "secondary_broker": str(secondary_broker),
+        "mode_when_tripped": "secondary_read_only",
+        "writes_suspended": True,
+        "circuit_breaker_threshold": int(circuit_breaker_threshold),
+        "resume_flag_path": str(resolved_resume_flag),
+        "resume_flag_present": resolved_resume_flag.exists(),
+        "steps": [
+            f"Les lectures partent d'abord sur `{primary_broker}`.",
+            f"Après {int(circuit_breaker_threshold)} erreur(s) consécutive(s), les lectures basculent sur `{secondary_broker}`.",
+            "Les écritures broker restent suspendues tant que la reprise opérateur n'est pas explicitement autorisée.",
+            f"La reprise exige la création de la sentinelle `{resolved_resume_flag}`.",
+        ],
+    }
+
+
+__all__ = [
+    "FailoverBrokerClient",
+    "WriteSuspendedError",
+    "DEFAULT_RESUME_FLAG",
+    "build_failover_doctrine_summary",
+]
 

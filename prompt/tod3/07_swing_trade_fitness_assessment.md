@@ -30,7 +30,8 @@
 | Slippage sizing micro-compte | TCA présent (`execution_engine/tca.py`) mais pas exposé en KPI agrégé IHM |
 | Wash sale | `tax/` + `tests/test_wash_sale.py` présent ✅ |
 | Ordres partiels | Réconciliation OK ; observation post-fill propre |
-| Réconciliation J+1 statement | ⚠️ A-005 |
+| Réconciliation J+1 statement | 🟡 Job + vue IHM déjà présents ; parsing PDF natif encore optionnel |
+| Doctrine failover broker | ✅ Runbook + panneau IHM opérateur présents |
 
 ## 3. Adéquation par tranche capital
 
@@ -50,7 +51,7 @@
 2. **Backtest** : parité testée mais pas E2E avec sentiment+ML+macro (A-009).
 3. **Quote IEX** : peut faire croire qu'une opportunité passe le filtre spread alors qu'en consolidé elle ne passerait pas — ou inversement.
 4. **Fallback silencieux** OHLCV (A-013) : risque de croire que le pipeline a tourné en mode EODHD alors qu'on est repassé Alpaca IEX.
-5. **Ordre `event_sentiment`** : 5 sous-étapes implicites (A-003).
+5. **Ordre `event_sentiment`** : le garde-fou runtime existe désormais, mais la télémétrie quote-bias et le runbook incident sentiment provider restent à compléter.
 
 ## 5. Verdict swing-trade
 

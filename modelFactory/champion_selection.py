@@ -1,7 +1,10 @@
 """modelFactory/champion_selection.py — Gouvernance et sélection automatique du champion."""
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from modelFactory.config import ChampionSelectionConfig
@@ -12,6 +15,141 @@ from modelFactory.config import ChampionSelectionConfig
 # le couple (symbol, model_name). Découplé du db_registry pour faciliter
 # les tests.
 QuarantineLookup = Callable[[str, str], tuple[int, Optional[datetime]]]
+
+
+_SIGNED_ARTIFACT_ROUTE_KEYS: tuple[str, ...] = (
+    "checkpoint_path",
+    "scaler_path",
+    "model_path",
+    "config_path",
+    "calibrator_path",
+)
+
+
+class ArtifactSignatureError(RuntimeError):
+    """Erreur explicite de manifeste/signature d'artefact."""
+
+    def __init__(self, reason: str, *, path: Path | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.path = path
+
+
+def _artifact_path_from_value(value: object) -> Path | None:
+    if isinstance(value, Path):
+        return value
+    if isinstance(value, str) and value.strip():
+        return Path(value)
+    return None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_artifact_signature_manifest(
+    *,
+    symbol: str,
+    run_id: str | None,
+    selected_model: str | None,
+    artifact_routes_models: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Construit un manifeste SHA256 persistant pour les artefacts servis."""
+    entries: list[dict[str, Any]] = []
+    for model_name, route in sorted((artifact_routes_models or {}).items()):
+        if not isinstance(route, dict):
+            continue
+        for artifact_key in _SIGNED_ARTIFACT_ROUTE_KEYS:
+            artifact_path = _artifact_path_from_value(route.get(artifact_key))
+            if artifact_path is None or not artifact_path.exists() or not artifact_path.is_file():
+                continue
+            resolved = artifact_path.resolve()
+            entries.append(
+                {
+                    "model_name": model_name,
+                    "artifact_key": artifact_key,
+                    "path": str(resolved),
+                    "size_bytes": int(resolved.stat().st_size),
+                    "sha256": _sha256_file(resolved),
+                }
+            )
+    return {
+        "schema_version": 1,
+        "symbol": symbol,
+        "run_id": str(run_id or ""),
+        "selected_model": str(selected_model or ""),
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "entries": entries,
+    }
+
+
+def persist_artifact_signature_manifest(
+    manifest_path: Path,
+    *,
+    symbol: str,
+    run_id: str | None,
+    selected_model: str | None,
+    artifact_routes_models: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Écrit sur disque un manifeste SHA256 adjacent aux artefacts du symbole."""
+    manifest = build_artifact_signature_manifest(
+        symbol=symbol,
+        run_id=run_id,
+        selected_model=selected_model,
+        artifact_routes_models=artifact_routes_models,
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    return manifest
+
+
+def verify_route_artifact_signatures(
+    *,
+    manifest_path: Path,
+    model_name: str,
+    route: dict[str, Any],
+    required: bool,
+) -> None:
+    """Vérifie que les artefacts d'une route correspondent au manifeste SHA256."""
+    if not manifest_path.exists():
+        if required:
+            raise ArtifactSignatureError("artifact_signature_manifest_missing", path=manifest_path)
+        return
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise ArtifactSignatureError("artifact_signature_manifest_invalid", path=manifest_path) from exc
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        raise ArtifactSignatureError("artifact_signature_manifest_invalid", path=manifest_path)
+
+    indexed_entries: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        key = (
+            str(entry.get("model_name") or "").strip(),
+            str(entry.get("artifact_key") or "").strip(),
+            str(entry.get("path") or "").strip(),
+        )
+        if all(key):
+            indexed_entries[key] = entry
+
+    for artifact_key in _SIGNED_ARTIFACT_ROUTE_KEYS:
+        artifact_path = _artifact_path_from_value(route.get(artifact_key))
+        if artifact_path is None or not artifact_path.exists() or not artifact_path.is_file():
+            continue
+        resolved = artifact_path.resolve()
+        entry = indexed_entries.get((model_name, artifact_key, str(resolved)))
+        if entry is None:
+            raise ArtifactSignatureError(f"artifact_signature_missing:{model_name}:{artifact_key}", path=resolved)
+        actual_digest = _sha256_file(resolved)
+        if str(entry.get("sha256") or "") != actual_digest:
+            raise ArtifactSignatureError(f"artifact_signature_mismatch:{model_name}:{artifact_key}", path=resolved)
 
 
 def is_under_quarantine(

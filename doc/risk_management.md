@@ -161,6 +161,16 @@ Le CLI :
 6. vérifie les contraintes ;
 7. produit des `PortfolioEntry` avec statut `ACCEPTED`, `REDUCED` ou `REJECTED`.
 
+### 4.2.bis Politique Kelly conditionnelle par tranche
+
+La décision opératoire S6 est désormais explicite :
+
+- **tranches < 25 k$** : `Kelly` reste désactivé dans les presets capital ;
+- **tranches ≥ 25 k$** : `Kelly` peut être activé par preset (`risk_enable_kelly` → `enable_kelly_sizing`) ;
+- même activé, le sizing Kelly reste encadré par les caps ATR, `max_position_weight` et `effective_min_notional`.
+
+Objectif métier : éviter d'augmenter artificiellement la variance sur les petits comptes, tout en autorisant un sizing plus informatif sur les portefeuilles suffisamment capitalisés et diversifiables.
+
 ### 4.3 Conviction score
 
 Le score de conviction combine :
@@ -217,6 +227,16 @@ Le bloc `empirical_risk_calibration` contient notamment :
 - `fallback_reason` / `fallback_journal` / `fallback_policy_source` ;
 - `window_start` / `window_end` ;
 - `best_weights` avec au minimum `score_weight`, `prediction_weight`, `kelly_fraction_multiplier`, `min_effective_probability`, `assumed_payoff_ratio`.
+
+### 4.3.ter Convention `risk_max_drawdown_pct` par tranche
+
+La monotonie croissante de `risk_max_drawdown_pct` dans `config/capital_presets.yaml` est volontaire :
+
+- **micro / petit compte** : drawdown plus serré pour préserver le capital d'apprentissage ;
+- **compte intermédiaire** : convergence progressive vers le profil swing standard ;
+- **gros compte** : tolérance plus large, compatible avec un portefeuille plus diversifié et un bruit relatif mieux absorbé.
+
+Ce choix n'est donc pas un relâchement accidentel, mais une convention métier assumée et testée dans la suite des presets capital.
 
 Par défaut, le CLI applique en best-effort le dernier run `weights_calibration_runs`
 de `scope = 'risk'` dont `window_end <= trade_date`, en privilégiant le segment

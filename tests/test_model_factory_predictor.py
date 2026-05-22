@@ -327,6 +327,67 @@ def test_predict_batch_skips_missing_predictions(monkeypatch, tmp_path: Path) ->
     assert rows[0]["symbol"] == "AAPL"
 
 
+def test_predict_symbol_returns_none_when_required_artifact_signature_mismatches(tmp_path: Path, monkeypatch) -> None:
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    ckpt_path = symbol_dir / "best.ckpt"
+    scaler_path = symbol_dir / "scaler.pkl"
+    config_path = symbol_dir / "config.json"
+    manifest_path = symbol_dir / "artifact_signature_manifest.json"
+    ckpt_path.write_text("checkpoint-v1", encoding="utf-8")
+    scaler_path.write_bytes(b"scaler-v1")
+
+    from modelFactory.champion_selection import persist_artifact_signature_manifest
+
+    persist_artifact_signature_manifest(
+        manifest_path,
+        symbol=symbol,
+        run_id="run-config",
+        selected_model="lstm_attention",
+        artifact_routes_models={
+            "lstm_attention": {
+                "checkpoint_path": str(ckpt_path),
+                "scaler_path": str(scaler_path),
+                "config_path": str(config_path),
+            }
+        },
+    )
+    ckpt_path.write_text("checkpoint-v2", encoding="utf-8")
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                },
+                "run_id": "run-config",
+                "feature_contract": _contract(["feat1"]),
+                "artifact_signature_required": True,
+                "artifact_signature_manifest_path": str(manifest_path),
+                "artifact_routes": {
+                    "selected_model": "lstm_attention",
+                    "models": {
+                        "lstm_attention": {
+                            "checkpoint_path": str(ckpt_path),
+                            "scaler_path": str(scaler_path),
+                            "config_path": str(config_path),
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+
+    result = predictor.predict_symbol(symbol, tmp_path, cast(Engine, object()), persist=False)
+
+    assert result is None
+
+
 def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_path: Path, monkeypatch) -> None:
     symbol = "AAPL"
     symbol_dir = tmp_path / symbol

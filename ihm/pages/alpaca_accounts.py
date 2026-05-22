@@ -28,6 +28,7 @@ from ihm.services.queries import (
 	get_execution_orders,
 	get_execution_runs,
 )
+from service.broker_failover import build_failover_doctrine_summary
 
 _PAGE_ACCOUNT_SELECT_KEY = "alpaca_accounts_page_account_id"
 
@@ -135,6 +136,38 @@ def _clear_page_caches() -> None:
 	get_execution_runs.clear()
 
 
+def _build_failover_doctrine_dataframe(summary: dict[str, Any]) -> pd.DataFrame:
+	return pd.DataFrame(
+		[
+			{"Champ": "Broker primaire", "Valeur": summary.get("primary_broker") or "—"},
+			{"Champ": "Broker secondaire", "Valeur": summary.get("secondary_broker") or "—"},
+			{"Champ": "Seuil circuit breaker", "Valeur": summary.get("circuit_breaker_threshold") or "—"},
+			{"Champ": "Mode après bascule", "Valeur": summary.get("mode_when_tripped") or "—"},
+			{"Champ": "Écritures suspendues", "Valeur": _format_bool(summary.get("writes_suspended"))},
+			{"Champ": "Sentinelle RESUME", "Valeur": summary.get("resume_flag_path") or "—"},
+			{"Champ": "Sentinelle présente", "Valeur": _format_bool(summary.get("resume_flag_present"))},
+		]
+	)
+
+
+def _render_failover_doctrine_panel() -> None:
+	summary = build_failover_doctrine_summary()
+	st.subheader("🛡️ Doctrine broker primaire / secondaire")
+	st.caption(
+		"Le mode normal reste `Alpaca` en primaire. En cas de panne répétée, la lecture peut basculer en mode dégradé "
+		"vers le secondaire, mais les écritures restent suspendues jusqu'à reprise opérateur explicite."
+	)
+	show_dataframe(_build_failover_doctrine_dataframe(summary), height=240)
+	steps = summary.get("steps") or []
+	if steps:
+		for step in steps:
+			st.markdown(f"- {step}")
+	if bool(summary.get("resume_flag_present")):
+		st.warning("La sentinelle `RESUME` est présente : une reprise opérateur a été demandée ou doit être consommée par le wrapper failover.")
+	else:
+		st.info("Aucune sentinelle `RESUME` détectée : toute reprise après failover nécessite une action opérateur explicite.")
+
+
 def render() -> None:
 	st.header("🏦 Comptes Alpaca")
 	st.caption(
@@ -149,7 +182,8 @@ def render() -> None:
 	account_ids = [account.account_id for account in accounts]
 	account_labels = {account.account_id: build_account_label(account) for account in accounts}
 	default_account_id = resolve_selected_account_id(st.session_state.get("selected_account_id"))
-	default_index = account_ids.index(default_account_id) if default_account_id in account_ids else 0
+	resolved_default_account_id = str(default_account_id) if default_account_id in account_ids else account_ids[0]
+	default_index = account_ids.index(resolved_default_account_id)
 
 	selector_col, action_col = st.columns([4, 1])
 	with selector_col:
@@ -157,7 +191,7 @@ def render() -> None:
 			"Compte à consulter",
 			options=account_ids,
 			index=default_index,
-			format_func=lambda account_id: account_labels.get(account_id, account_id),
+			format_func=lambda account_id: str(account_labels.get(account_id, account_id)),
 			key=_PAGE_ACCOUNT_SELECT_KEY,
 		)
 	with action_col:
@@ -284,6 +318,9 @@ def render() -> None:
 			portfolio_history=portfolio_history_df,
 			snapshot_history=snapshot_history_df,
 		)
+
+	with st.container(border=True):
+		_render_failover_doctrine_panel()
 
 	with st.container(border=True):
 		st.subheader("🗂️ Historique canonique Alpha Trade")

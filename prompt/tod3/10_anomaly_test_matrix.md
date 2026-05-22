@@ -25,6 +25,7 @@
 | Régression empêchée | Augmentation accidentelle du levier risk-per-trade. |
 | Existant | Test couvre la monotonie ; étendre cas micro. |
 | Sprint | S1 |
+| État 2026-05-22 | ✅ Couvert par `tests/test_capital_preset_risk_overrides.py`. |
 
 ## A-002 — Double point d'entrée d'exécution
 
@@ -38,6 +39,7 @@
 | Then | Warning capturé, exit code identique au launcher canonique sur cas équivalents. |
 | Régression | Divergence silencieuse entre les deux chemins. |
 | Sprint | S1 |
+| État 2026-05-22 | ✅ `tests/test_execution_cli_cancel_all.py::test_execution_facade_deprecation_warning`. |
 
 ## A-003 — Ordre `event_sentiment` non verrouillé
 
@@ -45,13 +47,14 @@
 |---|---|
 | Objectif | `signal_aggregator` refuse si `news_ingestion_at > relevance_backfill_at`. |
 | Type | I |
-| Fichier | nouveau `tests/test_event_sentiment_ordering_guard.py` |
+| Fichier | `tests/test_event_sentiment_run_summaries.py` |
 | Given | DB seedée avec checkpoints incohérents. |
 | When | Appel `signal_aggregator.run()`. |
 | Then | `RuntimeError("relevance backfill not up-to-date")`. |
 | Fixtures | seed `event_sentiment_checkpoints` table. |
 | Régression | Features sentiment partielles silencieuses. |
 | Sprint | S2 |
+| État 2026-05-22 | ✅ Couverture runtime via `test_signal_aggregator_main_emits_blocked_summary_when_ordering_guard_fails`. |
 
 ## A-004 — Spread IEX biaisé
 
@@ -64,6 +67,7 @@
 | When | Calcul écart spread. |
 | Then | Métrique persistée, exposée IHM, threshold alerting sur écart > 200 bps. |
 | Sprint | S2 |
+| État 2026-05-22 | ⏳ Toujours à finaliser ; non couvert par les validations ciblées du 2026-05-22. |
 
 ## A-005 — Réconciliation J+1
 
@@ -83,8 +87,9 @@
 |---|---|
 | Objectif | Décider activation conditionnelle ≥ 25k$ après calibration, documenter "expérimental". |
 | Type | U |
-| Fichier | `tests/test_kelly_sizer.py` (étendu) |
+| Fichier | `tests/test_capital_preset_risk_overrides.py` |
 | Sprint | S6 |
+| État 2026-05-22 | ✅ `test_kelly_is_enabled_only_for_presets_at_or_above_25k`. |
 
 ## A-007 — `macro_provider: eodhd` défaut
 
@@ -94,6 +99,7 @@
 | Type | C + I |
 | Fichier | `tests/test_macro_providers.py` (étendu) |
 | Sprint | S6 |
+| État 2026-05-22 | ✅ `test_main_config_defaults_macro_provider_to_composite`. |
 
 ## A-008 — `min_close=10$` micro-compte trop restrictif
 
@@ -135,6 +141,7 @@
 | Type | U |
 | Fichier | `tests/test_weights_calibration.py` (étendu) |
 | Sprint | S6 |
+| État 2026-05-22 | ✅ `test_empirical_calibration_fallback_levels_preserve_configured_order`. |
 
 ## A-012 — SMTP non configuré silencieux
 
@@ -144,6 +151,7 @@
 | Type | E |
 | Fichier | nouveau `tests/test_ihm_notifications_smtp_missing_banner.py` |
 | Sprint | S6 |
+| État 2026-05-22 | ✅ Fichier créé et validé. |
 
 ## A-013 — Fallback OHLCV silencieux
 
@@ -151,8 +159,9 @@
 |---|---|
 | Objectif | Alert `provider_fallback_triggered=true` + bandeau IHM + email. |
 | Type | I |
-| Fichier | `tests/test_eodhd_provider_switch.py` (étendu) |
+| Fichier | `tests/test_update_sector.py` + suites provider adjacentes |
 | Sprint | S2 |
+| État 2026-05-22 | ✅ Le flag `provider_fallback_triggered=true` est bien couvert. |
 
 ## A-014 — `max_anomaly_count` inversé
 
@@ -162,6 +171,7 @@
 | Type | C |
 | Fichier | `tests/test_capital_presets.py` (étendu) |
 | Sprint | S1 |
+| État 2026-05-22 | ✅ `test_capital_preset_max_anomaly_count_monotonic` vert après correction du preset final. |
 
 ## A-015 — Pas de verrou pipeline N+1 si N≠SUCCESS
 
@@ -178,8 +188,9 @@
 |---|---|
 | Objectif | Page IHM "Brokers" + runbook explicite. |
 | Type | E |
-| Fichier | nouveau `tests/test_ihm_brokers_page_failover_doctrine.py` |
+| Fichier | `tests/test_pages_alpaca_accounts.py` |
 | Sprint | S5 |
+| État 2026-05-22 | ✅ `test_ihm_brokers_page_failover_doctrine`. |
 
 ## A-017 — Coverage non bloquante
 
@@ -206,6 +217,7 @@
 | Type | E |
 | Fichier | `tests/test_pages_overview.py` (étendu) |
 | Sprint | S2 |
+| État 2026-05-22 | ✅ Helpers overview validés (`test_build_eodhd_quota_feature_rows_sorts_by_calls_desc`). |
 
 ## A-020 — Signature artefacts ML
 
@@ -213,8 +225,9 @@
 |---|---|
 | Objectif | SHA256 manifest signé + vérif au load. |
 | Type | I |
-| Fichier | `tests/test_ml_artifacts_backup.py` (étendu) |
+| Fichier | `tests/test_ml_artifacts_backup.py` + `tests/test_model_factory_predictor.py` |
 | Sprint | S5 |
+| État 2026-05-22 | ✅ Génération + mismatch détecté côté backup et côté predictor. |
 
 ## A-021 — Preflight non bloquant en simulate
 
@@ -222,8 +235,9 @@
 |---|---|
 | Objectif | Preflight bloque WARN en simulate. |
 | Type | U |
-| Fichier | `tests/test_execution_engine_executor.py` (étendu) |
+| Fichier | `tests/test_run_execution_blocks_on_preflight_fail.py` |
 | Sprint | S5 |
+| État 2026-05-22 | ✅ `test_simulate_mode_warns_on_preflight_fail_but_does_not_abort`. |
 
 ## A-022 — Schéma `stock_bars_daily` mono-source
 
@@ -241,6 +255,7 @@
 | Objectif | Doc + check IHM. |
 | Type | E |
 | Sprint | S6 |
+| État 2026-05-22 | ⏳ Runbook dédié incident `sentiment provider` encore à publier. |
 
 ## A-024 — Pas de gel IHM en live
 
@@ -294,6 +309,7 @@
 | Objectif | Docstring + lien doc. |
 | Type | U doc |
 | Sprint | S6 |
+| État 2026-05-22 | ✅ Documenté dans `doc/risk_management.md` et cohérence vérifiée par `tests/test_capital_preset_risk_overrides.py`. |
 
 ## A-030 — Oracle total return MTM+ledger
 

@@ -27,7 +27,11 @@ except ImportError:  # pragma: no cover
 from sqlalchemy.engine import Engine
 
 from modelFactory.calibration import PlattCalibrator, margin_from_logits
-from modelFactory.champion_selection import build_challenger_ranking, select_champion
+from modelFactory.champion_selection import (
+    build_challenger_ranking,
+    persist_artifact_signature_manifest,
+    select_champion,
+)
 from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.dataset import (
     FeatureScaler,
@@ -52,7 +56,7 @@ from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
-from modelFactory.reproducibility import apply_reproducibility, build_torch_generator, derive_seed, seed_worker
+from modelFactory.reproducibility import apply_reproducibility, build_torch_generator, derive_seed
 from modelFactory.runtime_status import update_runtime_status
 from modelFactory.target_optimization import optimize_target_parameters
 
@@ -1243,6 +1247,8 @@ def train_symbol(
             "selection_mode": selection_mode,
             "selection_reason": champion_decision.get("selection_reason"),
             "selected_model_eligible": bool(champion_decision.get("selected_model_eligible", False)),
+            "artifact_signature_required": True,
+            "artifact_signature_manifest_path": str(sym_dir / "artifact_signature_manifest.json"),
             "artifact_routes": {
                 "selected_model": selected_architecture,
                 "models": artifact_routes_models,
@@ -1289,6 +1295,13 @@ def train_symbol(
             },
         }
         _atomic_write_json(sym_dir / "metrics.json", all_metrics)
+        persist_artifact_signature_manifest(
+            sym_dir / "artifact_signature_manifest.json",
+            symbol=symbol,
+            run_id=run_id,
+            selected_model=selected_architecture,
+            artifact_routes_models=artifact_routes_models,
+        )
 
         if engine is not None:
             try:

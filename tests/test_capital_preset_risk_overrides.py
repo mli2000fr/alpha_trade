@@ -236,3 +236,22 @@ def test_all_presets_selector_min_close_gte_10(presets):
             f"non aligné avec STRICT_SWING_CASH_FILTERS.min_close=10.0"
         )
 
+
+def test_kelly_is_enabled_only_for_presets_at_or_above_25k(presets):
+    below_25k = [preset for preset in presets if (preset.max_equity or 0) and float(preset.max_equity or 0) < 25_000.01]
+    at_or_above_25k = [preset for preset in presets if float(preset.min_equity) >= 25_000.01]
+
+    assert below_25k
+    assert at_or_above_25k
+
+    for preset in below_25k:
+        assert bool(preset.values.get("risk_enable_kelly", False)) is False, (
+            f"{preset.key}: Kelly doit rester désactivé sous 25k$"
+        )
+
+    for preset in at_or_above_25k:
+        assert bool(preset.values.get("risk_enable_kelly", False)) is True, (
+            f"{preset.key}: Kelly doit être activé à partir de 25k$"
+        )
+
+

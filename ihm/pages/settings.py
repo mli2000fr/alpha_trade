@@ -505,6 +505,15 @@ def _get_notifications_failure_log_download_payload():
     return ("smtp_test_email_failure.log", payload)
 
 
+def _build_smtp_not_configured_warning_message(smtp_cfg) -> str | None:
+    if getattr(smtp_cfg, "is_configured", False):
+        return None
+    return (
+        "SMTP non configuré → aucune notification email ne sera envoyée, même si des destinataires sont enregistrés dans l'IHM. "
+        "Renseignez les variables `ALPHA_TRADE_SMTP_*` ou la section `notifications.smtp` de `config.yaml`."
+    )
+
+
 def _build_var_env_upload_signature(file_name: str, file_bytes: bytes) -> str:
     digest = hashlib.sha256(file_bytes).hexdigest()
     return f"{file_name}:{len(file_bytes)}:{digest}"
@@ -643,6 +652,9 @@ def _render_notifications_settings():
         "envoyé aux destinataires configurés. En cas d'échec, l'email contient le nom "
         "de l'étape fautive, un extrait des logs et joint le `combined.log` complet."
     )
+    smtp_warning = _build_smtp_not_configured_warning_message(smtp_cfg)
+    if smtp_warning:
+        st.warning(smtp_warning)
 
     if NOTIFICATIONS_RECIPIENTS_KEY not in st.session_state:
         st.session_state[NOTIFICATIONS_RECIPIENTS_KEY] = format_recipients(prefs.recipients)

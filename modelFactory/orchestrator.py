@@ -11,7 +11,11 @@ from typing import Literal, Optional
 import torch
 from sqlalchemy.engine import Engine
 
-from modelFactory.champion_selection import build_challenger_ranking, select_champion
+from modelFactory.champion_selection import (
+    build_challenger_ranking,
+    persist_artifact_signature_manifest,
+    select_champion,
+)
 from modelFactory.config import TrainingConfig
 from modelFactory.data_loader import (
     load_benchmark_bars,
@@ -109,6 +113,8 @@ def _inject_global_model_into_symbol_artifacts(
     config_data["artifact_routes"] = artifact_routes
     config_data["architecture_selected"] = selected_model
     config_data["selection_mode"] = selection_mode
+    config_data["artifact_signature_required"] = True
+    config_data["artifact_signature_manifest_path"] = str(config_path.with_name("artifact_signature_manifest.json"))
     challengers = {**annotated}
     challengers["ranking"] = build_challenger_ranking(
         annotated,
@@ -134,6 +140,13 @@ def _inject_global_model_into_symbol_artifacts(
         json.dump(config_data, fh, indent=2, default=str)
     with open(metrics_path, "w", encoding="utf-8") as fh:
         json.dump(metrics, fh, indent=2, default=str)
+    persist_artifact_signature_manifest(
+        config_path.with_name("artifact_signature_manifest.json"),
+        symbol=symbol,
+        run_id=config_data.get("run_id") if isinstance(config_data, dict) else None,
+        selected_model=selected_model,
+        artifact_routes_models=models,
+    )
 
     run_id = config_data.get("run_id")
     if engine is not None and isinstance(run_id, str) and run_id:

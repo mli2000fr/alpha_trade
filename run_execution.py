@@ -779,6 +779,36 @@ def run(
             )
             sys.exit(2)
         print(f"{GREEN}[OK] Preflight live: tous les checks critiques sont verts.{RESET}\n")
+    elif mode == "simulate" and not skip_preflight:
+        try:
+            from execution_engine.preflight import run_preflight
+        except ImportError as exc:
+            print(
+                f"{YELLOW}{BOLD}[WARN] Module preflight indisponible en simulate : {exc}{RESET}",
+                file=sys.stderr,
+            )
+        else:
+            try:
+                preflight_report = run_preflight(
+                    account_id=account_id or "default",
+                    broker_mode="paper",
+                )
+            except Exception as exc:  # pragma: no cover - filet
+                print(
+                    f"{YELLOW}{BOLD}[WARN] preflight simulate a levé une exception : {exc}{RESET}",
+                    file=sys.stderr,
+                )
+            else:
+                if not preflight_report.passed:
+                    print(
+                        f"{YELLOW}{BOLD}[WARN] Preflight simulate en mode dégradé — boot maintenu malgré des checks KO.{RESET}",
+                        file=sys.stderr,
+                    )
+                    for check in preflight_report.checks:
+                        if check.status == "fail":
+                            print(f"  {YELLOW}[WARN]{RESET} {check.name}: {check.message}", file=sys.stderr)
+                else:
+                    print(f"{GREEN}[OK] Preflight simulate: aucun check critique en échec.{RESET}\n")
     elif mode == "live" and skip_preflight:
         print(
             f"{YELLOW}{BOLD}[!!] --skip-preflight actif : les checks live sont contournés. "

@@ -12,9 +12,18 @@ scanner de secrets, recette pré-live, audits internes historisés
 (`prompt/refactor/`, `doc/audit/`, `doc/external_audit/`), IHM Streamlit
 de supervision riche, presets de capital paramétrés sur 7 tranches.
 
-**Note globale : 7.4 / 10** — verdict : **quasi-pro / pro-grade partiel**
+**Note d'audit initiale : 7.4 / 10** — verdict : **quasi-pro / pro-grade partiel**
 pour usage swing US d'un opérateur indépendant discipliné, avec quelques
 zones encore fragiles avant un usage **live argent réel intensif**.
+
+## Mise à jour de suivi — 2026-05-22 (post-remédiations vérifiées)
+
+- **S1** : ✅ confirmé et revalidé (micro-risk durci, alias selector, warning IHM micro, dépréciation façade `execution_engine`, monotonie `selector_max_anomaly_count` rétablie).
+- **S2** : 🟡 partiellement confirmé (garde d'ordre sentiment, fallback provider, quota pre-check et vue quota IHM présents ; métrique dédiée `quote_iex_vs_consolidated_bps` encore ouverte).
+- **S5** : 🟡 majoritairement livré (manifestes SHA256 d'artefacts ML, vérification au load, doctrine failover opérateur en IHM, preflight `simulate` en `WARN`).
+- **S6** : 🟡 majoritairement livré (Kelly conditionnel `>= 25 k$`, `macro_provider: composite`, test d'ordre `fallback_levels`, bannière SMTP, doc risk enrichie).
+- **Validation réalisée le 2026-05-22** : `97 passed` sur le scope S5/S6 dédié + `25 passed` sur un sous-ensemble représentatif S1/S2.
+- **SQL / schéma** : aucune migration `CREATE/ALTER TABLE` n'a été requise pour A-020, la signature ML ayant été implémentée par manifestes JSON sur le filesystem.
 
 ## Forces principales
 
@@ -81,6 +90,10 @@ Détail complet → [`03_anomalies_register.md`](03_anomalies_register.md).
 3. **Sprint S2** — Verrouillage d'ordre `event_sentiment` (A-003) + assertion IHM.
 4. **Sprint S2** — Métrique "spread IEX vs spread consolidé" (A-004) ou plug Alpaca SIP/Polygon.
 5. **Sprint S3** — Réconciliation J+1 vs broker statement (A-005) avec page IHM dédiée.
+
+> **Suivi** : les points 1, 2 et 3 sont désormais vérifiés dans le code ; le
+> point 5 est en cours avancé ; le point 4 reste le risque structurel le plus
+> significatif côté qualité de marché / microstructure.
 
 À partir du **Sprint S3**, l'application est **considérée comme robuste pour
 un swing trading réel discipliné sur compte ≥ 10 k$**.

@@ -10,6 +10,11 @@
 
 ## Ordre de lecture recommandé
 
+> **Note de lecture** : `01_global_scorecard.md` et `02_module_scorecards.md`
+> décrivent surtout le **baseline d'audit initial** ; `08_sprint_plan.md` et
+> `09_final_verdict.md` portent la mise à jour de suivi après validations
+> ciblées des remédiations S1/S2/S5/S6.
+
 | # | Fichier | Pour qui ? |
 |---|---|---|
 | 1 | [`00_audit_executive_summary.md`](00_audit_executive_summary.md) | Direction / décideur |

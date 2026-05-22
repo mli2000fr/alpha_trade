@@ -4,6 +4,11 @@ Pour chaque module : note /10, résumé, points forts, faiblesses, risques,
 gap vers 10/10. Sauf mention contraire, les chemins sont relatifs au
 dépôt.
 
+> Ces scorecards reflètent surtout le **baseline d'audit initial**. Les
+> remédiations confirmées depuis (S1/S2/S5/S6) sont suivies dans
+> [`08_sprint_plan.md`](08_sprint_plan.md) et
+> [`09_final_verdict.md`](09_final_verdict.md).
+
 ---
 
 ## 1. Documentation `doc/` — **7.5 / 10**
@@ -51,11 +56,11 @@ purger les POCs, ajouter un changelog `doc/CHANGELOG.md`.
   Sprint S26 sur micro-compte, Sprint S30 sur market-aware).
 
 **Faiblesses** :
-- `risk_per_trade_pct` agressif sur micro-compte (cf. A-001).
-- `risk_enable_kelly: false` partout (cf. A-006).
-- `macro_provider: eodhd` impose le quota EODHD pour VIX/yields (A-007).
+- la métrique `quote_iex_vs_consolidated_bps` manque encore pour objectiver le biais quotes (A-004).
 - Pas de validation cross-preset garantissant la monotonie (concentration
-  décroissante quand equity ↑) ; un test existe partiellement.
+  décroissante quand equity ↑) ; la couverture progresse mais reste incomplète en propriété.
+
+**Mise à jour 2026-05-22** : `risk_per_trade_pct` micro a été durci, `macro_provider` passe par défaut à `composite`, et `risk_enable_kelly` est désormais activé uniquement pour les presets `>= 25 k$`.
 
 **Pour 10/10** : ajouter tests propriété de monotonie sur toutes les clés
 risk/selector ; ajouter `config_schema_version` ; valider la cohérence
@@ -124,10 +129,11 @@ Providers : `alpaca/`, `eodhd/`, `finnhub/`, `ibkr/`, `stooq/`, `yahoo/`,
 - Cache disque EODHD + quota tracker, circuit breaker EODHD.
 - Telemetry HTTP centralisée.
 - IBKR adapter paper réel (`test_ibkr_adapter_paper.py`).
+- Doctrine failover désormais visible côté opérateur via `doc/runbook_broker_failover.md` et `ihm/pages/alpaca_accounts.py`.
 
 **Faiblesses** :
 - IBKR adapter n'est pas (encore) le primaire ; doctrine de fallback
-  Alpaca→IBKR à documenter plus clairement côté IHM.
+  Alpaca→IBKR désormais documentée, mais encore centrée lecture seule / reprise opérateur explicite.
 - Pas d'abstraction unifiée "BrokerInterface contract" exposée à risk_management.
 
 **Pour 10/10** : contrat broker formel testé par tests de contrat
@@ -180,6 +186,8 @@ trading calendar dédié, macro_rules.
 - Pas de "fail closed" si relevance_score absent → fusion donne du poids à
   des news non pertinentes.
 
+**Mise à jour 2026-05-22** : un garde d'ordre runtime est désormais en place côté `signal_aggregator`; le reliquat principal est la métrique quote-bias et le runbook incident `sentiment provider`.
+
 **Pour 10/10** : wrapper d'orchestration unique avec verrou d'ordre +
 validation ex-post sentiment_attribution.
 
@@ -190,6 +198,8 @@ validation ex-post sentiment_attribution.
 **Points forts** : multi-baselines (LightGBM, CatBoost, LSTM, global,
 tabular, cross-sectional), drift_monitor + drift_policy, champion
 selection, auto rollback, reproducibility, calibration, dataset isolé.
+
+**Mise à jour 2026-05-22** : les routes d'artefacts ML peuvent maintenant embarquer un manifeste SHA256 vérifié au chargement (`trainer` / `orchestrator` / `predictor`).
 
 **Faiblesses** :
 - Surcomplexité possible ; trace de "ML uniquement si gate" (`ml_gate.py`
@@ -208,9 +218,10 @@ intra-day en mode paper.
 `shadow_compare`, `audit.py`.
 
 **Faiblesses** :
-- `risk_enable_kelly: false` partout (A-006).
 - Conviction weights fixes par défaut (0.4/0.6) — calibration empirique
   prévue Phase 7 mais pas encore tournée en boucle live.
+
+**Mise à jour 2026-05-22** : Kelly n'est plus désactivé partout ; il est conditionnellement activé à partir de 25 k$ et borné par les caps de sizing existants.
 
 **Pour 10/10** : calibration trimestrielle des poids conviction
 (`test_quarterly_calibration_job.py` existe — formaliser le job en prod).
@@ -229,6 +240,8 @@ intra-day en mode paper.
 - Pas de réconciliation J+1 vs statement broker exposée (A-005).
 - TCA présent (`tca.py`, `test_tca.py`) mais pas de tableau de bord IHM
   consolidé "slippage moyen par compte / par tranche".
+
+**Mise à jour 2026-05-22** : la façade `python -m execution_engine` est désormais explicitement dépréciée pour `run`, et la réconciliation J+1 dispose déjà d'un point d'entrée canonique et d'une section IHM ; le parsing PDF natif reste optionnel.
 
 **Pour 10/10** : page IHM "TCA + réconciliation J+1" + alert sur
 divergence > seuil.
@@ -281,6 +294,8 @@ backtesting), multi-compte sidebar, tooltips help YAML, tests E2E
 - Pas de gel UI quand un job critique tourne ailleurs.
 - Pas de page consolidée "santé broker + DB + provider + queue".
 
+**Mise à jour 2026-05-22** : le verrou pipeline state-machine et le gel des actions destructrices pendant un `live` actif sont présents ; s'ajoutent désormais un panneau doctrine failover et une bannière SMTP manquant côté settings.
+
 **Pour 10/10** : dashboard santé unique + "advance pipeline" intelligent.
 
 ---
@@ -309,8 +324,9 @@ ressaisie label compte live, RuntimeError si equity manquante,
 
 **Faiblesses** :
 - Audit de privilèges DB minimal (recommandé : utilisateur RO pour IHM).
-- Pas de signature des artefacts (`models/`, `eodhd_cache/`).
 - Pas de rotation automatique de secrets documentée.
+
+**Mise à jour 2026-05-22** : la signature des artefacts `modelFactory` est désormais couverte par manifestes SHA256 côté filesystem ; le reliquat principal reste le profil DB RO IHM et la rotation formalisée des secrets.
 
 **Pour 10/10** : profil utilisateur DB RO pour IHM, KMS-backed vault,
 rotation programmée.

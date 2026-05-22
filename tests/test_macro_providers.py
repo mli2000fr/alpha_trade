@@ -140,6 +140,14 @@ def test_factory_default_is_composite_with_stooq(monkeypatch):
     assert isinstance(p._providers[0], StooqMacroProvider)
 
 
+def test_main_config_defaults_macro_provider_to_composite() -> None:
+    from common.config_loader import load_config
+
+    cfg = load_config()
+
+    assert cfg["market_regimes"]["macro_provider"] == "composite"
+
+
 def test_factory_explicit_eodhd_overrides_symbol():
     p = build_default_macro_provider({
         "market_regimes": {
