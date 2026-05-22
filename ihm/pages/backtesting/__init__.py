@@ -76,6 +76,22 @@ RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
             "bt_run_phase7_mode": "exit_lifecycle_replay",
         },
     },
+    "production_parity": {
+        "label": "Production parity — pré-live obligatoire",
+        "description": (
+            "Préremplit la chaîne complète de replay `risk → execution → protection → watcher → exit lifecycle` "
+            "pour produire un run de parité backtest ↔ live/paper avant passage en production."
+        ),
+        "state_updates": {
+            "bt_run_engine_mode": "pipeline",
+            "bt_run_ml_pit_strategy": "use-persisted",
+            "bt_run_phase2_mode": "risk_execution",
+            "bt_run_phase3_mode": "execution_replay",
+            "bt_run_phase4_mode": "protection_replay",
+            "bt_run_phase5_mode": "watcher_replay",
+            "bt_run_phase7_mode": "exit_lifecycle_replay",
+        },
+    },
     "standard_research": {
         "label": "Backtest standard (research)",
         "description": (
@@ -812,9 +828,9 @@ def _build_run_options() -> BacktestRunOptions:
             st.caption(str(selected_preset.get("description", "")))
         if st.button("Préremplir les options du backtest", key="bt_apply_run_configuration_preset", use_container_width=True):
             _apply_run_configuration_preset(selected_run_configuration_preset)
-    if selected_run_configuration_preset == "pipeline_live_like":
+    if selected_run_configuration_preset in {"pipeline_live_like", "production_parity"}:
         st.info(
-            "Ce preset correspond à la commande `python -m backtesting run ...` la plus proche du pipeline live aujourd'hui. "
+            "Ce preset correspond à un replay `pipeline` orienté parité avec le live/paper. "
             "Il ne fait pas partie de `backfill-scores-history`. Pour qu'il fonctionne en mode `pipeline`, "
             "il faut déjà disposer d'un historique PIT valide dans `stock_scores_history` — à reconstruire via l'onglet `Backfill scores history` si nécessaire."
         )

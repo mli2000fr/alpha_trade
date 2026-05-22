@@ -20,7 +20,7 @@ def _ns(**kw) -> argparse.Namespace:
 
 
 def test_profiles_registry_contains_expected_keys() -> None:
-    assert set(PROFILE_NAMES) == {"strict_swing_cash", "swing_cash_aggressive", "custom"}
+    assert set(PROFILE_NAMES) == {"strict_swing_cash", "swing_cash_aggressive", "production-parity", "custom"}
     assert BACKTEST_PROFILES["custom"] == {}
 
 

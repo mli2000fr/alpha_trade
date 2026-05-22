@@ -34,6 +34,15 @@ BACKTEST_PROFILES: dict[str, dict[str, Any]] = {
         "pdt_rule": "auto",
         "swing_only": True,
     },
+    "production-parity": {
+        "engine_mode": "pipeline",
+        "ml_pit_strategy": "use-persisted",
+        "phase2_mode": "risk_execution",
+        "phase3_mode": "execution_replay",
+        "phase4_mode": "protection_replay",
+        "phase5_mode": "watcher_replay",
+        "phase7_mode": "exit_lifecycle_replay",
+    },
     # custom = pas de surcharge ; on garde les défauts CLI.
     "custom": {},
 }

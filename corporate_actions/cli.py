@@ -12,6 +12,7 @@ from corporate_actions.db_io import CorporateActionRepository
 from corporate_actions.engine import CorporateActionEngine
 from corporate_actions.provider import (
     AlpacaCorporateActionProvider,
+    EodhdCorporateActionProvider,
     build_corporate_action_provider,
 )
 from database.run_business_summaries import build_summary_run_id, emit_run_summary, persist_run_business_summary
@@ -149,6 +150,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_p.add_argument("--start", type=str, default=None, help="Date dÃ©but (YYYY-MM-DD). DÃ©faut : -10 ans.")
     sync_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
     sync_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
+    sync_p.add_argument(
+        "--cross-check",
+        choices=("none", "yahoo"),
+        default="none",
+        help="Cross-check optionnel des dividendes ingérés contre Yahoo Finance (best-effort).",
+    )
 
     # --- apply ---
     apply_p = sub.add_parser("apply", help="Appliquer les Ã©vÃ©nements pending sur les positions.")
@@ -187,6 +194,78 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _resolve_provider_name(provider: object) -> str:
+    if isinstance(provider, EodhdCorporateActionProvider):
+        return "eodhd"
+    if isinstance(provider, AlpacaCorporateActionProvider):
+        return "alpaca"
+    return str(provider.__class__.__name__).strip().lower() or "unknown"
+
+
+def _validate_sync_scope_or_raise(provider: object, symbols: list[str] | None) -> None:
+    if isinstance(provider, EodhdCorporateActionProvider) and symbols is None:
+        raise ValueError(
+            "Sync globale EODHD interdite : fournissez `--symbols ...` ou utilisez `--portfolio-only`. "
+            "Le mode `--all-symbols` n'est pas autorisé pour les corporate actions EODHD."
+        )
+
+
+def _build_apply_preflight(
+    repo: CorporateActionRepository,
+    *,
+    account_id: str | None,
+    as_of: date,
+    pending_events: list[object],
+) -> dict[str, object]:
+    load_latest_positions = getattr(repo, "load_latest_positions", None)
+    load_latest_position_symbols = getattr(repo, "load_latest_position_symbols", None)
+    non_zero_positions: list[object] = []
+    if callable(load_latest_positions):
+        raw_positions = load_latest_positions(account_id=account_id)
+        non_zero_positions = [
+            row for row in raw_positions
+            if float(getattr(row, "get", lambda *_args, **_kwargs: 0)("qty", 0) or 0) != 0.0
+        ]
+    elif callable(load_latest_position_symbols):
+        symbols = list(load_latest_position_symbols())
+        non_zero_positions = [symbol for symbol in symbols if str(symbol or "").strip()]
+    if pending_events and not non_zero_positions:
+        return {
+            "status": "blocked_no_positions_snapshot",
+            "requires_positions_snapshot": True,
+            "pending_events": len(pending_events),
+            "positions_snapshot_count": 0,
+            "trade_date": as_of.isoformat(),
+            "warning": (
+                "Aucun snapshot de positions broker disponible : l'apply corporate actions est bloqué pour éviter "
+                "un crédit cash / ajustement split incohérent."
+            ),
+        }
+    return {
+        "status": "ok",
+        "requires_positions_snapshot": bool(pending_events),
+        "pending_events": len(pending_events),
+        "positions_snapshot_count": len(non_zero_positions),
+        "trade_date": as_of.isoformat(),
+        "warning": None,
+    }
+
+
+def _load_pending_events_list(engine: object, *, as_of: date) -> list[object]:
+    pending_loader = getattr(getattr(engine, "repo", None), "load_pending_events", None)
+    if not callable(pending_loader):
+        return []
+    loaded = pending_loader(as_of=as_of)
+    if isinstance(loaded, list):
+        return loaded
+    if loaded is None:
+        return []
+    try:
+        return list(loaded)
+    except TypeError:
+        return []
 
 
 def _resolve_sync_symbols_portfolio(repo: CorporateActionRepository, account_id: str | None = None) -> list[str]:
@@ -323,6 +402,8 @@ def _run_sync(args: argparse.Namespace) -> None:
     else:
         symbols = _resolve_sync_symbols_bar(args, repo, account_id=account_id)
 
+    _validate_sync_scope_or_raise(provider, symbols)
+
     stats = engine.sync(
         symbols=symbols,
         start_date=start_date,
@@ -351,6 +432,7 @@ def _run_sync(args: argparse.Namespace) -> None:
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "batch_size": int(args.batch_size),
+        "provider": _resolve_provider_name(provider),
         "cross_check": getattr(args, "cross_check", "none"),
         "cross_check_stats": cross_check_stats,
     }
@@ -378,10 +460,46 @@ def _run_apply(args: argparse.Namespace) -> None:
     started_at = datetime.now()
 
     as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
-    pending_loader = getattr(getattr(engine, "repo", None), "load_pending_events", None)
-    pending_events = pending_loader(as_of=as_of) if callable(pending_loader) else []
+    pending_events = _load_pending_events_list(engine, as_of=as_of)
+    apply_preflight = _build_apply_preflight(
+        repo,
+        account_id=account_id,
+        as_of=as_of,
+        pending_events=pending_events,
+    )
     dividend_events = sum(1 for event in pending_events if "dividend" in str(getattr(event, "ca_type", "")).lower())
     split_events = sum(1 for event in pending_events if "split" in str(getattr(event, "ca_type", "")).lower())
+
+    if str(apply_preflight.get("status") or "ok") != "ok":
+        finished_at = datetime.now()
+        summary = {
+            "run_id": build_summary_run_id("ca-apply"),
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": finished_at.isoformat(timespec="seconds"),
+            "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+            "pending_events": len(pending_events),
+            "applied_events": 0,
+            "skipped_events": 0,
+            "failed_events": len(pending_events),
+            "dividend_credits": dividend_events,
+            "split_applications": split_events,
+            "trade_date": as_of.isoformat(),
+            "apply_preflight": apply_preflight,
+        }
+        _emit_and_persist_summary(
+            summary=summary,
+            step_key="corporate_actions_apply",
+            status="failed",
+            account_id=account_id,
+            trade_date=as_of,
+            audit_run_kind="apply",
+            audit_repo=repo,
+            audit_started_at=started_at,
+            audit_finished_at=finished_at,
+            audit_stats={"pending": len(pending_events), "failed": len(pending_events)},
+        )
+        print(str(apply_preflight.get("warning") or "Apply bloque : snapshot positions indisponible."))
+        return
 
     stats = engine.apply(as_of=as_of)
     finished_at = datetime.now()
@@ -397,6 +515,7 @@ def _run_apply(args: argparse.Namespace) -> None:
         "dividend_credits": dividend_events,
         "split_applications": split_events,
         "trade_date": as_of.isoformat(),
+        "apply_preflight": apply_preflight,
     }
     _emit_and_persist_summary(
         summary=summary,
@@ -455,6 +574,8 @@ def _run_all(args: argparse.Namespace) -> None:
     else:
         symbols = _resolve_sync_symbols_bar(args, repo, account_id=account_id)
 
+    _validate_sync_scope_or_raise(provider, symbols)
+
     stats_sync = engine.sync(
         symbols=symbols,
         start_date=start_date,
@@ -487,6 +608,7 @@ def _run_all(args: argparse.Namespace) -> None:
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "batch_size": int(args.batch_size),
+            "provider": _resolve_provider_name(provider),
             "cross_check": getattr(args, "cross_check", "none"),
             "cross_check_stats": cross_check_stats,
         },
@@ -505,10 +627,82 @@ def _run_all(args: argparse.Namespace) -> None:
     print(f"Sync termine : {stats_sync}")
     print("[RUN] Application des corporate actions sur les positions...")
     as_of = date.fromisoformat(args.as_of) if getattr(args, "as_of", None) else date.today()
-    pending_loader = getattr(getattr(engine, "repo", None), "load_pending_events", None)
-    pending_events = pending_loader(as_of=as_of) if callable(pending_loader) else []
+    pending_events = _load_pending_events_list(engine, as_of=as_of)
+    apply_preflight = _build_apply_preflight(
+        repo,
+        account_id=account_id,
+        as_of=as_of,
+        pending_events=pending_events,
+    )
     dividend_events = sum(1 for event in pending_events if "dividend" in str(getattr(event, "ca_type", "")).lower())
     split_events = sum(1 for event in pending_events if "split" in str(getattr(event, "ca_type", "")).lower())
+
+    if str(apply_preflight.get("status") or "ok") != "ok":
+        apply_finished_at = datetime.now()
+        apply_summary = {
+            "run_id": f"{parent_summary_run_id}-apply",
+            "pending_events": len(pending_events),
+            "applied_events": 0,
+            "skipped_events": 0,
+            "failed_events": len(pending_events),
+            "dividend_credits": dividend_events,
+            "split_applications": split_events,
+            "trade_date": as_of.isoformat(),
+            "apply_preflight": apply_preflight,
+        }
+        _emit_and_persist_summary(
+            summary={
+                **apply_summary,
+                "started_at": started_at.isoformat(timespec="seconds"),
+                "finished_at": apply_finished_at.isoformat(timespec="seconds"),
+                "duration_seconds": round((apply_finished_at - started_at).total_seconds(), 2),
+            },
+            step_key="corporate_actions_apply",
+            status="failed",
+            account_id=account_id,
+            trade_date=as_of,
+            parent_summary_run_id=parent_summary_run_id,
+            audit_run_kind="apply",
+            audit_repo=repo,
+            audit_started_at=sync_finished_at,
+            audit_finished_at=apply_finished_at,
+            audit_stats={"pending": len(pending_events), "failed": len(pending_events)},
+        )
+        parent_summary = {
+            "run_id": parent_summary_run_id,
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": apply_finished_at.isoformat(timespec="seconds"),
+            "duration_seconds": round((apply_finished_at - started_at).total_seconds(), 2),
+            "workflow_steps_with_summary": 2,
+            "targeted_symbols": int(sync_summary.get("targeted_symbols", 0)),
+            "fetched_events": int(sync_summary.get("fetched_events", 0)),
+            "inserted_events": int(sync_summary.get("inserted_events", 0)),
+            "duplicate_events": int(sync_summary.get("duplicate_events", 0)),
+            "invalid_events": int(sync_summary.get("invalid_events", 0)),
+            "pending_events": int(apply_summary.get("pending_events") or 0),
+            "applied_events": 0,
+            "skipped_events": 0,
+            "failed_events": int(apply_summary.get("failed_events") or 0),
+            "dividend_credits": int(apply_summary.get("dividend_credits") or 0),
+            "split_applications": int(apply_summary.get("split_applications") or 0),
+            "apply_preflight": apply_preflight,
+        }
+        _emit_and_persist_summary(
+            summary=parent_summary,
+            step_key="corporate_actions_run",
+            status="failed",
+            account_id=account_id,
+            trade_date=as_of,
+            audit_run_kind="run",
+            audit_repo=repo,
+            audit_started_at=started_at,
+            audit_finished_at=apply_finished_at,
+            audit_stats={**stats_sync, "pending": len(pending_events), "failed": len(pending_events)},
+            audit_anomalies=cross_check_anomalies,
+        )
+        print(str(apply_preflight.get("warning") or "Apply bloque : snapshot positions indisponible."))
+        return
+
     stats_apply = engine.apply(as_of=as_of)
     apply_finished_at = datetime.now()
     apply_summary = {
@@ -520,6 +714,7 @@ def _run_all(args: argparse.Namespace) -> None:
         "dividend_credits": dividend_events,
         "split_applications": split_events,
         "trade_date": as_of.isoformat(),
+        "apply_preflight": apply_preflight,
     }
     _emit_and_persist_summary(
         summary={
@@ -550,12 +745,12 @@ def _run_all(args: argparse.Namespace) -> None:
         "inserted_events": int(sync_summary.get("inserted_events", 0)),
         "duplicate_events": int(sync_summary.get("duplicate_events", 0)),
         "invalid_events": int(sync_summary.get("invalid_events", 0)),
-        "pending_events": int(apply_summary.get("pending_events", 0)),
-        "applied_events": int(apply_summary.get("applied_events", 0)),
-        "skipped_events": int(apply_summary.get("skipped_events", 0)),
-        "failed_events": int(apply_summary.get("failed_events", 0)),
-        "dividend_credits": int(apply_summary.get("dividend_credits", 0)),
-        "split_applications": int(apply_summary.get("split_applications", 0)),
+            "pending_events": int(apply_summary.get("pending_events") or 0),
+            "applied_events": int(apply_summary.get("applied_events") or 0),
+            "skipped_events": int(apply_summary.get("skipped_events") or 0),
+            "failed_events": int(apply_summary.get("failed_events") or 0),
+            "dividend_credits": int(apply_summary.get("dividend_credits") or 0),
+            "split_applications": int(apply_summary.get("split_applications") or 0),
     }
     _emit_and_persist_summary(
         summary=parent_summary,

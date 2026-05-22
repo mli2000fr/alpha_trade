@@ -708,7 +708,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument(
         "--profile",
-        choices=["strict_swing_cash", "swing_cash_aggressive", "custom"],
+        choices=["strict_swing_cash", "swing_cash_aggressive", "production-parity", "custom"],
         default="custom",
         help="Profil consolidé (Phase 6.1.e). Les flags CLI explicites overridrent toujours.",
     )

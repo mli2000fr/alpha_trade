@@ -44,10 +44,43 @@ def render() -> None:
             "Exécute directement les sous-commandes CLI `python -m corporate_actions`."
             " Chaque run est tracé dans `artifacts/ihm_pipeline_runs/` (préfixe `ops:`)."
         )
-        ops_tabs = st.tabs(["📑 status", "✅ apply"])
+        ops_tabs = st.tabs(["🔄 sync", "📑 status", "✅ apply"])
         with ops_tabs[0]:
-            render_ops_command_panel("corporate_actions_status")
+            sync_symbols = st.text_input(
+                "Symboles explicites (séparés par des virgules, optionnel)",
+                value="",
+                key="ca_sync_symbols",
+            )
+            sync_start = st.text_input("start (YYYY-MM-DD, optionnel)", value="", key="ca_sync_start")
+            sync_end = st.text_input("end (YYYY-MM-DD, optionnel)", value="", key="ca_sync_end")
+            sync_batch_size = st.number_input(
+                "Batch size",
+                min_value=1,
+                max_value=200,
+                value=25,
+                step=5,
+                key="ca_sync_batch_size",
+            )
+            sync_cross_check = st.selectbox(
+                "Cross-check dividendes",
+                options=["none", "yahoo"],
+                index=0,
+                key="ca_sync_cross_check",
+            )
+            render_ops_command_panel(
+                "corporate_actions_sync",
+                command_kwargs={
+                    "portfolio_only": True,
+                    "symbols": sync_symbols,
+                    "start": sync_start,
+                    "end": sync_end,
+                    "batch_size": int(sync_batch_size or 25),
+                    "cross_check": sync_cross_check,
+                },
+            )
         with ops_tabs[1]:
+            render_ops_command_panel("corporate_actions_status")
+        with ops_tabs[2]:
             apply_as_of = st.text_input(
                 "as-of (YYYY-MM-DD, vide = aujourd'hui)",
                 value="",
@@ -67,6 +100,29 @@ def render() -> None:
         ("🧭 Résumé métier persistant — Workflow", latest_run),
     ):
         render_persistent_business_summary(record, title=title)
+
+    latest_apply_summary = latest_apply.get("run_summary") if isinstance(latest_apply, dict) else None
+    if isinstance(latest_apply_summary, dict):
+        apply_preflight = latest_apply_summary.get("apply_preflight")
+        if isinstance(apply_preflight, dict) and str(apply_preflight.get("status") or "") == "blocked_no_positions_snapshot":
+            st.warning(
+                str(
+                    apply_preflight.get("warning")
+                    or "Le dernier apply corporate actions a été bloqué : snapshot positions indisponible."
+                )
+            )
+
+    latest_sync_summary = latest_sync.get("run_summary") if isinstance(latest_sync, dict) else None
+    if isinstance(latest_sync_summary, dict):
+        provider = str(latest_sync_summary.get("provider") or "").strip().lower()
+        cross_check = str(latest_sync_summary.get("cross_check") or "none").strip().lower()
+        if provider == "eodhd":
+            st.caption(
+                "Scope provider corporate actions : `eodhd` — la sync globale sans univers explicite est bloquée ; "
+                "utilisez `portfolio-only` ou une liste `symbols`."
+            )
+        if cross_check == "yahoo":
+            st.caption("Cross-check Yahoo activé sur la dernière synchronisation corporate actions.")
 
     # --- Dividendes cumulés ---
     total_div = get_total_dividends()

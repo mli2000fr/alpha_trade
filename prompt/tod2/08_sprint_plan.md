@@ -127,6 +127,8 @@
 
 ## S4 — Parité backtest ↔ live/paper
 
+**Statut : ✅ Livré (profil `production-parity` + preset IHM + garde-fous de replay)**
+
 - Priorité : P1
 - Modules : backtesting, execution_engine, risk_management
 - Anomalies : A-013
@@ -139,9 +141,24 @@
 - Tests :
   - `tests/test_backtest_live_parity_golden.py`
   - `tests/test_execution_replay_parity.py`
+- Avancement réalisé :
+  - ✅ Ajout du profil CLI `--profile production-parity` dans `backtesting`, aligné sur la chaîne `pipeline` de replay `risk → execution → protection → watcher → exit lifecycle`.
+  - ✅ Ajout du preset IHM `production_parity` dans `ihm/pages/backtesting/__init__.py` pour rendre ce mode visible et préremplissable côté opérateur.
+  - ✅ Durcissement du message IHM autour des presets live-like / production parity pour rappeler la dépendance à un historique PIT valide.
+  - ✅ Jeu de référence parité backtest ↔ live stabilisé dans un test golden dédié.
+- Validation réalisée :
+  - ✅ `tests/test_backtest_live_parity_golden.py`
+  - ✅ `tests/test_execution_replay_parity.py`
+  - ✅ régression ciblée :
+    - `tests/test_backtesting_profiles.py`
+    - `tests/test_pages_backtesting.py`
+    - `tests/test_ihm_backtesting_runner.py`
+    - `tests/test_parity_backtest_live.py`
 - Gain : backtesting +1.0, execution +0.4, readiness +0.5.
 
 ## S5 — Corporate actions production hardening
+
+**Statut : ✅ Livré (préflight apply snapshot + scope EODHD explicite + IHM ops sync/apply)**
 
 - Priorité : P1
 - Modules : corporate_actions, database, execution
@@ -156,6 +173,23 @@
   - `tests/test_corporate_actions_eodhd_scope.py`
   - `tests/test_corporate_actions_apply_requires_positions.py`
   - `tests/test_portfolio_cash_ledger_idempotence.py`
+- Avancement réalisé :
+  - ✅ `corporate_actions/cli.py` bloque désormais explicitement une sync globale `EODHD` sans univers explicite (`--portfolio-only` ou `--symbols ...`) avec un message opérateur clair.
+  - ✅ Préflight `apply` ajouté avant application : si des corporate actions sont en attente mais qu'aucun snapshot positions broker n'est disponible, l'apply est marqué en échec et bloqué avant tout crédit cash / split.
+  - ✅ Résumés métier `corporate_actions_apply` / `corporate_actions_run` enrichis avec `apply_preflight` et provider/scope de sync pour audit IHM.
+  - ✅ IHM `corporate_actions` enrichie avec une commande ops `Corporate Actions — sync` sécurisée par défaut (`portfolio-only`) et warning visible quand le dernier apply a été bloqué faute de snapshot positions.
+  - ✅ Garde-fou d'idempotence cash ledger verrouillé par un test dédié sur réapplication d'un même dividende.
+- Validation réalisée :
+  - ✅ `tests/test_corporate_actions_eodhd_scope.py`
+  - ✅ `tests/test_corporate_actions_apply_requires_positions.py`
+  - ✅ `tests/test_portfolio_cash_ledger_idempotence.py`
+  - ✅ régression ciblée :
+    - `tests/test_corporate_actions_cli.py`
+    - `tests/test_corporate_actions.py`
+    - `tests/test_eodhd_corporate_action_provider.py`
+    - `tests/test_corporate_actions_cross_check_yahoo.py`
+    - `tests/test_ihm_cli_contract.py`
+    - `tests/test_ihm_run_summary.py`
 - Gain : corporate_actions +0.8, DB audit +0.3.
 
 ## S6 — Observabilité et exploitation incident

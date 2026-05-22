@@ -42,6 +42,7 @@ from ihm.services.process_registry import (
 
 OpsCommandKey = Literal[
     "execution_kill_switch",
+    "corporate_actions_sync",
     "corporate_actions_status",
     "corporate_actions_apply",
     "pre_live_checklist",
@@ -89,6 +90,15 @@ OPS_COMMAND_CATALOG: dict[OpsCommandKey, OpsCommandSpec] = {
         icon="🛑",
         danger=True,
         requires_account=True,
+    ),
+    "corporate_actions_sync": OpsCommandSpec(
+        key="corporate_actions_sync",
+        label="Corporate Actions — sync",
+        description=(
+            "Lance `python -m corporate_actions sync` avec scope portefeuille par défaut, "
+            "et cross-check Yahoo optionnel pour les dividendes."
+        ),
+        icon="🔄",
     ),
     "corporate_actions_status": OpsCommandSpec(
         key="corporate_actions_status",
@@ -264,6 +274,35 @@ def build_ops_command(key: OpsCommandKey, **kwargs: Any) -> list[str]:
         )
         if bool(kwargs.get("dry_run", False)):
             cmd.append("--dry-run")
+        return cmd + extra
+
+    if key == "corporate_actions_sync":
+        cmd = _module("corporate_actions", "sync")
+        symbols_raw = str(kwargs.get("symbols") or "").strip()
+        if bool(kwargs.get("all_symbols", False)):
+            cmd.append("--all-symbols")
+        elif bool(kwargs.get("portfolio_only", True)):
+            cmd.append("--portfolio-only")
+        if symbols_raw:
+            symbols = [item.strip().upper() for item in symbols_raw.split(",") if item.strip()]
+            if symbols:
+                cmd.append("--symbols")
+                cmd.extend(symbols)
+        start = str(kwargs.get("start") or "").strip()
+        end = str(kwargs.get("end") or "").strip()
+        if start:
+            cmd.extend(["--start", start])
+        if end:
+            cmd.extend(["--end", end])
+        batch_size = kwargs.get("batch_size")
+        if batch_size not in (None, ""):
+            cmd.extend(["--batch-size", str(batch_size)])
+        cross_check = str(kwargs.get("cross_check") or "none").strip().lower()
+        if cross_check in {"none", "yahoo"}:
+            cmd.extend(["--cross-check", cross_check])
+        account = str(kwargs.get("account") or "").strip()
+        if account:
+            cmd.extend(["--account", account])
         return cmd + extra
 
     if key == "corporate_actions_status":
