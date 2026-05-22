@@ -25,6 +25,23 @@ def normalize_symbol_source(symbol_source: str | None) -> str:
     }.get(normalized, normalized)
 
 
+def normalize_start_symbol(start_symbol: str | None) -> str | None:
+    cleaned = str(start_symbol or "").strip().upper()
+    return cleaned or None
+
+
+def filter_symbols_from_start(
+    symbols: Iterable[str],
+    *,
+    start_symbol: str | None = None,
+) -> list[str]:
+    normalized_start = normalize_start_symbol(start_symbol)
+    normalized_symbols = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
+    if normalized_start is None:
+        return normalized_symbols
+    return [symbol for symbol in normalized_symbols if symbol >= normalized_start]
+
+
 @lru_cache(maxsize=1)
 def get_stock_quote_snapshots_table() -> Table:
     metadata = MetaData()
@@ -49,18 +66,30 @@ def get_stock_earnings_calendar_table() -> Table:
     )
 
 
-def list_active_tradable_symbols(limit: int | None = None) -> list[str]:
-    return list_eligible_stock_symbols(limit=limit, engine=get_sqlalchemy_engine())
+def list_active_tradable_symbols(
+    limit: int | None = None,
+    *,
+    start_symbol: str | None = None,
+) -> list[str]:
+    symbols = list_eligible_stock_symbols(
+        limit=None if normalize_start_symbol(start_symbol) is not None else limit,
+        engine=get_sqlalchemy_engine(),
+    )
+    filtered = filter_symbols_from_start(symbols, start_symbol=start_symbol)
+    if limit is not None:
+        return filtered[:limit]
+    return filtered
 
 
 def list_symbols_for_source(
     symbol_source: str | None = None,
     *,
     limit: int | None = None,
+    start_symbol: str | None = None,
 ) -> list[str]:
     normalized_source = normalize_symbol_source(symbol_source)
     if normalized_source == "active-tradable":
-        return list_active_tradable_symbols(limit=limit)
+        return list_active_tradable_symbols(limit=limit, start_symbol=start_symbol)
 
     if limit is not None and limit < 1:
         raise ValueError("limit doit être supérieur ou égal à 1.")
@@ -68,6 +97,7 @@ def list_symbols_for_source(
     from modelFactory.db_registry import load_symbols_for_source
 
     symbols = load_symbols_for_source(get_sqlalchemy_engine(), normalized_source)
+    symbols = filter_symbols_from_start(symbols, start_symbol=start_symbol)
     if limit is not None:
         return symbols[:limit]
     return symbols

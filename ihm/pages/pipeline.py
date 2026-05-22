@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import streamlit as st
 from database.connection import get_sqlalchemy_engine
-from database.selector_reference import list_symbols_for_source
+from database.selector_reference import list_symbols_for_source, normalize_start_symbol
 from modelFactory.db_registry import filter_symbols_by_selector_context, load_symbols_for_source
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
@@ -146,6 +146,7 @@ QUOTE_HISTORY_END_DATE_KEY = "pipeline_sync_latest_quotes_period_end_date"
 EARNINGS_HISTORY_START_DATE_KEY = "pipeline_sync_earnings_calendar_period_start_date"
 EARNINGS_HISTORY_END_DATE_KEY = "pipeline_sync_earnings_calendar_period_end_date"
 QUOTE_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_latest_quotes_symbol_source"
+QUOTE_HISTORY_START_SYMBOL_KEY = "pipeline_sync_latest_quotes_start_symbol"
 EARNINGS_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_earnings_calendar_symbol_source"
 
 
@@ -171,12 +172,14 @@ def _trade_date_or_today(options: PipelineLaunchOptions) -> date:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def _resolve_data_integrity_scope_preview(symbol_source: str) -> dict[str, object]:
+def _resolve_data_integrity_scope_preview(symbol_source: str, start_symbol: str | None = None) -> dict[str, object]:
     cli_symbol_source = DATA_INTEGRITY_SYMBOL_SOURCE_TO_CLI.get(symbol_source, "active-tradable")
-    symbols = list_symbols_for_source(cli_symbol_source)
+    normalized_start_symbol = normalize_start_symbol(start_symbol)
+    symbols = list_symbols_for_source(cli_symbol_source, start_symbol=normalized_start_symbol)
     return {
         "symbol_count": len(symbols),
         "sample_symbols": symbols[:10],
+        "start_symbol": normalized_start_symbol,
     }
 
 
@@ -193,6 +196,7 @@ def _render_period_sync_block(
         start_key = QUOTE_HISTORY_START_DATE_KEY
         end_key = QUOTE_HISTORY_END_DATE_KEY
         symbol_source_key = QUOTE_HISTORY_SYMBOL_SOURCE_KEY
+        start_symbol_key = QUOTE_HISTORY_START_SYMBOL_KEY
         end_default = _trade_date_or_today(options)
         start_default = _coerce_ui_date(
             getattr(options, "data_integrity_quotes_from_date", None),
@@ -210,10 +214,12 @@ def _render_period_sync_block(
         launch_label = "4. Sync Latest Quotes — historique"
         override_keys = ("data_integrity_quotes_from_date", "data_integrity_quotes_to_date")
         source_attr = "data_integrity_quotes_symbol_source"
+        start_symbol_attr = "data_integrity_quotes_start_symbol"
     elif step_key == "sync_earnings_calendar":
         start_key = EARNINGS_HISTORY_START_DATE_KEY
         end_key = EARNINGS_HISTORY_END_DATE_KEY
         symbol_source_key = EARNINGS_HISTORY_SYMBOL_SOURCE_KEY
+        start_symbol_key = None
         end_default = _trade_date_or_today(options) + timedelta(days=30)
         start_default = _coerce_ui_date(options.data_integrity_earnings_from_date, fallback=end_default - timedelta(days=37))
         end_default = _coerce_ui_date(options.data_integrity_earnings_to_date, fallback=end_default)
@@ -225,6 +231,7 @@ def _render_period_sync_block(
         launch_label = "5. Sync Earnings Calendar — historique"
         override_keys = ("data_integrity_earnings_from_date", "data_integrity_earnings_to_date")
         source_attr = "data_integrity_earnings_symbol_source"
+        start_symbol_attr = None
     else:
         return
 
@@ -261,8 +268,23 @@ def _render_period_sync_block(
         "`stock_scores_history` ; `candidates` = candidats du jour ; `stock_bars_daily` = univers large."
     )
 
+    normalized_start_symbol = None
+    if start_symbol_key is not None and start_symbol_attr is not None:
+        raw_start_symbol = st.text_input(
+            "Commencer à partir du symbole (optionnel)",
+            value=str(st.session_state.get(start_symbol_key, getattr(options, start_symbol_attr, "") or "")),
+            key=start_symbol_key,
+            help=(
+                "Si renseigné, le run commencera au premier symbole alphabétiquement supérieur ou égal à cette valeur. "
+                "Exemple : `AAG` saute `AAC`, `AAF`, etc."
+            ),
+        )
+        normalized_start_symbol = normalize_start_symbol(raw_start_symbol)
+        if normalized_start_symbol is not None:
+            st.caption(f"Filtre de démarrage appliqué : symboles `>= {normalized_start_symbol}`.")
+
     try:
-        scope_preview = _resolve_data_integrity_scope_preview(selected_symbol_source)
+        scope_preview = _resolve_data_integrity_scope_preview(selected_symbol_source, normalized_start_symbol)
     except Exception as exc:
         st.warning(f"Impossible de prévisualiser l'univers ciblé : {exc}")
         scope_preview = None
@@ -316,6 +338,7 @@ def _render_period_sync_block(
                 source_attr: cast(Any, selected_symbol_source),
                 override_keys[0]: cast(Any, selected_start.isoformat()),
                 override_keys[1]: cast(Any, selected_end.isoformat()),
+                **({start_symbol_attr: cast(Any, normalized_start_symbol)} if start_symbol_attr is not None else {}),
             },
         )
         st.code(format_command_for_display(build_pipeline_command(step_key, period_options)), language="powershell")
@@ -331,6 +354,7 @@ def _render_period_sync_block(
             (
                 f"{launch_label} — {DATA_INTEGRITY_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)} "
                 f"— {selected_start.isoformat()} → {selected_end.isoformat()}"
+                f"{f' — depuis {normalized_start_symbol}' if normalized_start_symbol else ''}"
             ),
             period_options,
             db_config,

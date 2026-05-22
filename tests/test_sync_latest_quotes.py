@@ -182,6 +182,32 @@ def test_sync_latest_quotes_resolves_requested_symbol_source(monkeypatch) -> Non
     assert captured_sources == [("stock-scores-history", 7)]
 
 
+def test_sync_latest_quotes_passes_start_symbol_when_requested(monkeypatch) -> None:
+    captured_sources: list[tuple[object, object, object]] = []
+
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "list_symbols_for_source",
+        lambda symbol_source=None, limit=None, start_symbol=None: captured_sources.append((symbol_source, limit, start_symbol)) or ["AAG"],
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "fetch_latest_quotes",
+        lambda symbols, session=None: {"AAG": {"bp": 100.0, "ap": 100.4, "bs": 1, "as": 2, "t": "2026-04-29T20:00:00Z"}},
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
+
+    summary = sync_latest_quotes.sync_latest_quotes(
+        limit=7,
+        batch_size=10,
+        symbol_source="stock_scores_history",
+        start_symbol=" aag ",
+    )
+
+    assert summary == {"symbols": 1, "rows_upserted": 1}
+    assert captured_sources == [("stock-scores-history", 7, "AAG")]
+
+
 def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) -> None:
     import logging
 

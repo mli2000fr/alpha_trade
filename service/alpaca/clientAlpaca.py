@@ -15,7 +15,7 @@ DEFAULT_TIMEOUT_SECONDS = 10
 MAX_TIMEOUT_RETRIES = 10
 TIMEOUT_BACKOFF_SECONDS = 5
 PAUSE_CALL_BAR = 0.2
-PAUSE_CALL_QUOTE = 0.35
+PAUSE_CALL_QUOTE = 0.0
 HISTORICAL_QUOTES_LOG_EVERY_PAGES = 10
 ALPACA_ASSETS_ENDPOINT = "https://paper-api.alpaca.markets/v2/assets"
 ALPACA_BARS_ENDPOINT_TEMPLATE = "https://data.alpaca.markets/v2/stocks/{symbol}/bars"
@@ -382,7 +382,7 @@ def iter_historical_quotes_pages(
     *,
     start: str,
     end: str,
-    limit: int = 10000,
+    limit: int = 1000,
     session: Optional[requests.Session] = None,
     account_id: Optional[str] = None,
     feed: AlpacaFeed = DEFAULT_FEED,

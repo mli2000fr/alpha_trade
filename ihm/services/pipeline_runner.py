@@ -422,6 +422,7 @@ class PipelineLaunchOptions:
     data_integrity_quotes_symbol_source: DataIntegritySymbolSource | None = None
     data_integrity_quotes_from_date: str | None = None
     data_integrity_quotes_to_date: str | None = None
+    data_integrity_quotes_start_symbol: str | None = None
     data_integrity_quotes_limit: int | None = None
     data_integrity_quotes_batch_size: int = DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE
     data_integrity_earnings_symbol_source: DataIntegritySymbolSource | None = None
@@ -759,6 +760,11 @@ def _normalize_optional_date(value: str | None) -> str | None:
 def _normalize_symbol(value: str | None, default: str) -> str:
     cleaned = (value or "").strip().upper()
     return cleaned or default
+
+
+def _normalize_optional_symbol(value: str | None) -> str | None:
+    cleaned = (value or "").strip().upper()
+    return cleaned or None
 
 
 def _normalize_symbol_list(value: str | None) -> str | None:
@@ -1431,6 +1437,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     sentiment_symbols = _normalize_symbol_list(options.sentiment_symbols)
     quotes_from_date = _normalize_optional_date(options.data_integrity_quotes_from_date)
     quotes_to_date = _normalize_optional_date(options.data_integrity_quotes_to_date)
+    quotes_start_symbol = _normalize_optional_symbol(options.data_integrity_quotes_start_symbol)
     earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
     earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
     quotes_symbol_source = {
@@ -1607,6 +1614,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--from-date", quotes_from_date])
         if quotes_to_date:
             command.extend(["--to-date", quotes_to_date])
+        if quotes_start_symbol:
+            command.extend(["--start-symbol", quotes_start_symbol])
         if quotes_limit is not None:
             command.extend(["--limit", str(quotes_limit)])
         return command

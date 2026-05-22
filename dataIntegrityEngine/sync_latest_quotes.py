@@ -18,6 +18,7 @@ from database.selector_reference import (
     get_quote_snapshot_resume_state,
     list_symbols_for_source,
     normalize_symbol_source,
+    normalize_start_symbol,
     upsert_quote_snapshots,
 )
 from service.alpaca.clientAlpaca import (
@@ -344,6 +345,7 @@ def sync_latest_quotes(
     from_date: date | None = None,
     to_date: date | None = None,
     symbol_source: str | None = None,
+    start_symbol: str | None = None,
 ) -> dict[str, int]:
     if batch_size < 1:
         raise ValueError("batch_size doit être supérieur ou égal à 1.")
@@ -352,10 +354,14 @@ def sync_latest_quotes(
     mode = "historical" if resolved_from_date is not None and resolved_to_date is not None else "latest"
 
     resolved_symbol_source = normalize_symbol_source(symbol_source)
-    symbols = list_symbols_for_source(resolved_symbol_source, limit=limit)
+    resolved_start_symbol = normalize_start_symbol(start_symbol)
+    if resolved_start_symbol is not None:
+        symbols = list_symbols_for_source(resolved_symbol_source, limit=limit, start_symbol=resolved_start_symbol)
+    else:
+        symbols = list_symbols_for_source(resolved_symbol_source, limit=limit)
     summary = {"symbols": len(symbols), "rows_upserted": 0}
     LOGGER.info(
-        "Sync latest quotes start | mode=%s symbol_source=%s symbols=%s from=%s to=%s limit=%s batch_size=%s",
+        "Sync latest quotes start | mode=%s symbol_source=%s symbols=%s from=%s to=%s limit=%s batch_size=%s start_symbol=%s",
         mode,
         resolved_symbol_source,
         len(symbols),
@@ -363,12 +369,14 @@ def sync_latest_quotes(
         resolved_to_date,
         limit,
         batch_size,
+        resolved_start_symbol,
     )
     if not symbols:
         LOGGER.warning(
-            "Sync latest quotes skipped | aucun symbole résolu pour symbol_source=%s mode=%s.",
+            "Sync latest quotes skipped | aucun symbole résolu pour symbol_source=%s mode=%s start_symbol=%s.",
             resolved_symbol_source,
             mode,
+            resolved_start_symbol,
         )
         return summary
 
@@ -413,11 +421,15 @@ def sync_latest_quotes(
                 stored_days = _to_int(resume_state.get("stored_days", 0))
                 missing_days = _to_int(resume_state.get("missing_days", 0))
                 first_missing_date = resume_state.get("first_missing_date")
-                missing_ranges = [
-                    (range_start, range_end)
-                    for range_start, range_end in cast(list[tuple[object, object]], resume_state.get("missing_ranges", []))
-                    if isinstance(range_start, date) and isinstance(range_end, date)
-                ]
+                missing_ranges_raw = resume_state.get("missing_ranges", [])
+                missing_ranges: list[tuple[date, date]] = []
+                if isinstance(missing_ranges_raw, list):
+                    for raw_range in missing_ranges_raw:
+                        if not isinstance(raw_range, (list, tuple)) or len(raw_range) != 2:
+                            continue
+                        range_start, range_end = raw_range
+                        if isinstance(range_start, date) and isinstance(range_end, date):
+                            missing_ranges.append((range_start, range_end))
                 if not bool(resume_state.get("has_expected_days", False)):
                     _log_historical_symbol_summary(
                         symbol_source=resolved_symbol_source,
@@ -483,7 +495,7 @@ def sync_latest_quotes(
                     missing_days,
                     len(missing_ranges),
                 )
-                effective_missing_ranges = missing_ranges or [(fetch_start_date, resolved_to_date)]
+                effective_missing_ranges: list[tuple[date, date]] = missing_ranges or [(fetch_start_date, resolved_to_date)]
                 symbol_raw_quotes_scanned = 0
                 symbol_rows_upserted = 0
                 symbol_fetched_ranges = 0
@@ -691,13 +703,14 @@ def sync_latest_quotes(
         session.close()
 
     LOGGER.info(
-        "Sync latest quotes completed | mode=%s symbol_source=%s symbols=%s rows_upserted=%s from=%s to=%s",
+        "Sync latest quotes completed | mode=%s symbol_source=%s symbols=%s rows_upserted=%s from=%s to=%s start_symbol=%s",
         mode,
         resolved_symbol_source,
         len(symbols),
         summary["rows_upserted"],
         resolved_from_date,
         resolved_to_date,
+        resolved_start_symbol,
     )
     return summary
 
@@ -707,6 +720,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--from-date", type=str, default=None, help="Date de début ISO (YYYY-MM-DD)")
     parser.add_argument("--to-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD)")
     parser.add_argument("--symbol-source", type=str, default=None, help="Univers de symboles (`active-tradable`, `stock-scores`, `stock-scores-history`, `stock-scores-all`, `candidates`, `stock-bars-daily`)")
+    parser.add_argument("--start-symbol", type=str, default=None, help="Symbole optionnel à partir duquel commencer (les symboles alphabétiquement avant sont sautés)")
     parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Taille de batch pour l'appel latest quotes")
     return parser
@@ -733,6 +747,7 @@ def main() -> None:
             from_date=date.fromisoformat(args.from_date) if args.from_date else None,
             to_date=date.fromisoformat(args.to_date) if args.to_date else None,
             symbol_source=args.symbol_source,
+            start_symbol=args.start_symbol,
         )
     except KeyboardInterrupt as exc:
         status = "failed"
@@ -758,6 +773,7 @@ def main() -> None:
                 "from_date": args.from_date,
                 "to_date": args.to_date,
                 "symbol_source": normalize_symbol_source(args.symbol_source),
+                "start_symbol": normalize_start_symbol(args.start_symbol),
                 "requested_limit": args.limit,
                 "batch_size": args.batch_size,
                 "audit_status": status,
@@ -802,6 +818,7 @@ def main() -> None:
             "from_date": args.from_date,
             "to_date": args.to_date,
             "symbol_source": normalize_symbol_source(args.symbol_source),
+            "start_symbol": normalize_start_symbol(args.start_symbol),
             "requested_limit": args.limit,
             "batch_size": args.batch_size,
             "audit_status": status,

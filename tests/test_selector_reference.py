@@ -88,6 +88,30 @@ def test_list_active_tradable_symbols_falls_back_when_history_status_column_is_a
     assert selector_reference.list_active_tradable_symbols() == ["AAPL"]
 
 
+def test_filter_symbols_from_start_keeps_only_symbols_greater_or_equal() -> None:
+    assert selector_reference.filter_symbols_from_start(
+        ["AAC", "AAF", "AAG", "AAPL", "MSFT"],
+        start_symbol=" aag ",
+    ) == ["AAG", "AAPL", "MSFT"]
+
+
+def test_list_symbols_for_source_applies_start_symbol_before_limit(monkeypatch) -> None:
+    monkeypatch.setattr(selector_reference, "get_sqlalchemy_engine", lambda: object())
+
+    import sys
+    import types
+
+    fake_module = types.ModuleType("modelFactory.db_registry")
+    fake_module.load_symbols_for_source = lambda engine, source: ["AAC", "AAF", "AAG", "AAPL", "MSFT"]
+    monkeypatch.setitem(sys.modules, "modelFactory.db_registry", fake_module)
+
+    assert selector_reference.list_symbols_for_source(
+        "candidates",
+        start_symbol="AAG",
+        limit=2,
+    ) == ["AAG", "AAPL"]
+
+
 def test_upsert_quote_snapshots_ignores_missing_legacy_columns(monkeypatch) -> None:
     legacy_table = Table(
         "stock_quote_snapshots",

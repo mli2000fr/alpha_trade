@@ -1160,6 +1160,7 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
         pipeline.QUOTE_HISTORY_START_DATE_KEY: dt_date(2026, 4, 1),
         pipeline.QUOTE_HISTORY_END_DATE_KEY: dt_date(2026, 4, 30),
         pipeline.QUOTE_HISTORY_SYMBOL_SOURCE_KEY: "candidates",
+        pipeline.QUOTE_HISTORY_START_SYMBOL_KEY: "AAG",
     }
     launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
 
@@ -1172,6 +1173,7 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
     monkeypatch.setattr(pipeline.st, "selectbox", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
+    monkeypatch.setattr(pipeline.st, "text_input", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
     monkeypatch.setattr(pipeline.st, "date_input", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
     monkeypatch.setattr(
         pipeline.st,
@@ -1191,6 +1193,7 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
             str(options.data_integrity_quotes_symbol_source),
             str(options.data_integrity_quotes_from_date),
             str(options.data_integrity_quotes_to_date),
+            str(options.data_integrity_quotes_start_symbol),
         ],
     )
     monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
@@ -1214,9 +1217,11 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     assert step_key == "sync_latest_quotes"
     assert "2026-04-01 → 2026-04-30" in step_label
     assert "Candidats du jour" in step_label
+    assert "depuis AAG" in step_label
     assert options.data_integrity_quotes_symbol_source == "candidates"
     assert options.data_integrity_quotes_from_date == "2026-04-01"
     assert options.data_integrity_quotes_to_date == "2026-04-30"
+    assert options.data_integrity_quotes_start_symbol == "AAG"
 
 
 def test_render_period_sync_block_blocks_invalid_earnings_window(monkeypatch) -> None:

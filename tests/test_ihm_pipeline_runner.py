@@ -660,6 +660,7 @@ def test_build_pipeline_command_sync_latest_quotes_accepts_historical_period() -
             data_integrity_quotes_symbol_source="candidates",
             data_integrity_quotes_from_date="2026-04-01",
             data_integrity_quotes_to_date="2026-04-30",
+            data_integrity_quotes_start_symbol=" aag ",
             data_integrity_quotes_batch_size=60,
             data_integrity_quotes_limit=25,
         ),
@@ -678,6 +679,8 @@ def test_build_pipeline_command_sync_latest_quotes_accepts_historical_period() -
         "2026-04-01",
         "--to-date",
         "2026-04-30",
+        "--start-symbol",
+        "AAG",
         "--limit",
         "25",
     ]
