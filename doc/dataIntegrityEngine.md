@@ -30,6 +30,14 @@
 > identique pour les deux providers) — voir `doc/database.md` §9 et
 > `doc/corporate_actions.md`.
 
+> 🔎 **Correction audit 2026-05-22** : le runbook nominal daily est désormais
+> `python -m dataIntegrityEngine.import_eodhd_bar --write` lorsque
+> `market_data.bars_provider=eodhd`. Les commandes `import_alpaca_bar` qui
+> subsistent dans ce document ne concernent que le mode rétrocompatibilité
+> `bars_provider=alpaca` ; en mode EODHD, `import_alpaca_bar` doit produire un
+> no-op contrôlé (`skipped_reason=wrong_provider`). Voir
+> `doc/audit_alignment_tod2.md`.
+
 ## 1. Objet de ce document
 
 Ce document décrit **en détail** le module `dataIntegrityEngine/` tel qu’il existe aujourd’hui dans le code.

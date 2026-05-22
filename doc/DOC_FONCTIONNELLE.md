@@ -16,6 +16,11 @@
 > Cf. `doc/dataIntegrityEngine.md`, `doc/data_lineage_matrix.md`,
 > `doc/corporate_actions.md`.
 
+> 🔎 **Addendum audit 2026-05-22** : voir `doc/audit_alignment_tod2.md` et
+> les livrables `prompt/tod2/` pour les écarts doc/code/config détectés. Les
+> runbooks doivent être lus en mode provider-aware : EODHD est nominal,
+> Alpaca daily est rétrocompatibilité/no-op si `bars_provider=eodhd`.
+
 > \➡️ **Provider NEWS par défaut : `Alpaca`** (import et scoring des news, paramètre `--news-provider` par défaut à `alpaca` dans les scripts).
 
 ---

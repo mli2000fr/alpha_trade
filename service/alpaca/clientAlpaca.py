@@ -382,7 +382,7 @@ def iter_historical_quotes_pages(
     *,
     start: str,
     end: str,
-    limit: int = 1000,
+    limit: int = 10000,
     session: Optional[requests.Session] = None,
     account_id: Optional[str] = None,
     feed: AlpacaFeed = DEFAULT_FEED,

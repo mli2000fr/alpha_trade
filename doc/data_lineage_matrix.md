@@ -12,6 +12,13 @@
 > **Provider OHLCV primaire actuel** : `EODHD` (cf. `config.yaml ›
 > market_data.bars_provider`). Le mode `alpaca` est conservé en
 > rétrocompatibilité (colonne « provider actif » ci-dessous).
+>
+> 🔎 **Correction audit 2026-05-22** : le schéma courant de
+> `stock_bars_daily` utilise `PRIMARY KEY(symbol,date)`. Il ne permet donc pas
+> une cohabitation simultanée de plusieurs `data_source` pour le même couple
+> `(symbol,date)` sans migration dédiée. Toute mention de cohabitation
+> multi-source daily doit être interprétée comme une cible future ou corrigée.
+> Voir `doc/audit_alignment_tod2.md`.
 
 > **Maintenance** : régénérer via `python scripts/generate_data_lineage.py`.
 > En CI : `python scripts/generate_data_lineage.py --check`.
