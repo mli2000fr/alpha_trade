@@ -1,12 +1,15 @@
 """Agrégations métier pour l'écran IHM de supervision ops."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import pandas as pd
 
 from ihm.components.status_badges import classify_heartbeat_freshness, heartbeat_badge, run_status_badge
+from ihm.services.pipeline_runner import PROJECT_ROOT
 from ihm.services.process_registry import list_active_pipeline_runs
 from ihm.services.queries import get_ops_latest_critical_summaries, get_ops_service_summaries
 from ihm.services.run_summary import build_run_summary_caption, get_run_summary
@@ -31,6 +34,7 @@ _WATCHER_RUN_TYPE_LABELS = {
     WATCHER_ONCE_STEP_KEY: "once",
     WATCHER_SERVICE_STEP_KEY: "service local IHM",
 }
+COVERAGE_ARTIFACT_PATH = PROJECT_ROOT / "coverage.json"
 
 
 def _status_upper(value: object) -> str:
@@ -151,15 +155,128 @@ def build_active_runs_dataframe(
             {
                 "run_id": str(record.get("run_id", "") or ""),
                 "step_key": str(record.get("step_key", "") or ""),
+                "run_kind": str(record.get("run_kind", "step") or "step"),
                 "status": str(record.get("status", "") or ""),
                 "status_badge": run_status_badge(record.get("status")),
                 "account_id": str(record.get("account_id", "") or ""),
+                "parent_run_id": str(record.get("parent_run_id", "") or "") or "—",
+                "workflow_correlation_id": str(record.get("workflow_correlation_id", "") or "") or "—",
                 "executed_at": str(record.get("executed_at", "") or ""),
                 "duration_seconds": float(record.get("duration_seconds", 0.0) or 0.0),
                 "is_active": bool(record.get("is_active", False)),
             }
         )
     return pd.DataFrame(rows)
+
+
+def build_run_lineage_dataframe(active_runs_df: pd.DataFrame) -> pd.DataFrame:
+    if active_runs_df.empty:
+        return pd.DataFrame()
+
+    rows: list[dict[str, object]] = []
+    for row in active_runs_df.to_dict(orient="records"):
+        run_kind = str(row.get("run_kind", "step") or "step")
+        parent_run_id = str(row.get("parent_run_id", "—") or "—")
+        if run_kind == "workflow":
+            lineage_role = "workflow parent"
+        elif parent_run_id != "—":
+            lineage_role = "child run"
+        else:
+            lineage_role = "standalone step"
+        rows.append(
+            {
+                "workflow_correlation_id": str(row.get("workflow_correlation_id", "—") or "—"),
+                "lineage_role": lineage_role,
+                "run_id": str(row.get("run_id", "") or ""),
+                "parent_run_id": parent_run_id,
+                "step_key": str(row.get("step_key", "") or ""),
+                "status_badge": str(row.get("status_badge", "") or ""),
+                "account_id": str(row.get("account_id", "") or "") or "global",
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    return df.sort_values(
+        by=["workflow_correlation_id", "lineage_role", "run_id"],
+        ascending=[True, True, False],
+    ).reset_index(drop=True)
+
+
+def build_coverage_artifact_health(payload: Mapping[str, object] | None) -> dict[str, object]:
+    if not payload:
+        return {
+            "status": "missing",
+            "message": "Aucun artefact coverage.json détecté.",
+            "files_count": 0,
+            "executed_files": 0,
+            "num_statements": 0,
+            "covered_lines": 0,
+            "percent_covered": None,
+            "branch_coverage": False,
+        }
+
+    meta = payload.get("meta") if isinstance(payload.get("meta"), Mapping) else {}
+    totals = payload.get("totals") if isinstance(payload.get("totals"), Mapping) else {}
+    files = payload.get("files") if isinstance(payload.get("files"), Mapping) else {}
+
+    if not totals or not files:
+        return {
+            "status": "invalid",
+            "message": "Artefact coverage.json incomplet ou invalide.",
+            "files_count": 0,
+            "executed_files": 0,
+            "num_statements": 0,
+            "covered_lines": 0,
+            "percent_covered": None,
+            "branch_coverage": False,
+        }
+
+    files_count = sum(1 for value in files.values() if isinstance(value, Mapping))
+    executed_files = sum(
+        1
+        for value in files.values()
+        if isinstance(value, Mapping) and value.get("executed_lines")
+    )
+    num_statements = int(totals.get("num_statements", 0) or 0)
+    covered_lines = int(totals.get("covered_lines", 0) or 0)
+    percent_covered = totals.get("percent_covered")
+    branch_coverage = bool(meta.get("branch_coverage", False) or "covered_branches" in totals or "num_branches" in totals)
+
+    if files_count <= 0 or executed_files <= 0 or num_statements <= 0:
+        status = "incomplete"
+        message = "Artefact coverage présent mais partiel : la suite complète n'a probablement pas été exécutée."
+    elif not branch_coverage:
+        status = "incomplete"
+        message = "Artefact coverage sans branch coverage : relancez la suite avec --cov-branch."
+    else:
+        status = "complete"
+        message = "Artefact coverage exploitable pour l'exploitation incident."
+
+    return {
+        "status": status,
+        "message": message,
+        "files_count": files_count,
+        "executed_files": executed_files,
+        "num_statements": num_statements,
+        "covered_lines": covered_lines,
+        "percent_covered": percent_covered,
+        "branch_coverage": branch_coverage,
+    }
+
+
+def load_coverage_artifact_health(coverage_path: Path | None = None) -> dict[str, object]:
+    path = coverage_path or COVERAGE_ARTIFACT_PATH
+    if not path.exists():
+        payload: Mapping[str, object] | None = None
+    else:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            payload = loaded if isinstance(loaded, Mapping) else None
+        except Exception:
+            payload = None
+    summary = build_coverage_artifact_health(payload)
+    summary["path"] = str(path)
+    return summary
 
 
 def build_watcher_history_dataframe(records: Iterable[Mapping[str, object]]) -> pd.DataFrame:
@@ -383,6 +500,8 @@ def build_ops_supervision_snapshot(
     watcher_windows_runtime_df = build_windows_runtime_dataframe(windows_status)
     watcher_windows_log_sources_df = build_windows_log_sources_dataframe(windows_status)
     watcher_windows_bridge_df = build_windows_bridge_dataframe(windows_status)
+    run_lineage_df = build_run_lineage_dataframe(active_runs_df)
+    coverage_artifact = load_coverage_artifact_health()
     alerts = build_ops_alerts(service_health_df, latest_runs_df, active_runs_df)
     watcher_control_state = build_watcher_control_state(service_health_df, active_runs_df)
 
@@ -394,6 +513,7 @@ def build_ops_supervision_snapshot(
         "active_runs": int(len(active_runs_df.index)),
         "watcher_history_runs": int(len(watcher_history_df.index)),
         "windows_log_sources": int(len(watcher_windows_log_sources_df.index)),
+        "coverage_complete": int(str(coverage_artifact.get("status") or "") == "complete"),
     }
 
     return {
@@ -402,6 +522,7 @@ def build_ops_supervision_snapshot(
         "service_health": service_health_df,
         "latest_runs": latest_runs_df,
         "active_runs": active_runs_df,
+        "run_lineage": run_lineage_df,
         "watcher_control": watcher_control_state,
         "watcher_history": watcher_history_df,
         "watcher_windows_integration": watcher_windows_integration_df,
@@ -409,5 +530,6 @@ def build_ops_supervision_snapshot(
         "watcher_windows_runtime": watcher_windows_runtime_df,
         "watcher_windows_log_sources": watcher_windows_log_sources_df,
         "watcher_windows_bridge": watcher_windows_bridge_df,
+        "coverage_artifact": coverage_artifact,
     }
 

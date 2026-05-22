@@ -194,6 +194,8 @@
 
 ## S6 — Observabilité et exploitation incident
 
+**Statut : ✅ Livré (corrélation workflow IHM + supervision incident + contrôle coverage)**
+
 - Priorité : P1/P2
 - Modules : IHM, observabilité, execution
 - Anomalies : A-012, A-015, A-018
@@ -207,9 +209,25 @@
   - `tests/test_pipeline_workflow_correlation_id.py`
   - `tests/test_ihm_process_kill_marks_failed.py`
   - `tests/test_coverage_artifact_is_complete.py`
+- Avancement réalisé :
+  - ✅ `ihm/services/process_registry.py` propage désormais `workflow_correlation_id` sur les workflows IHM et tous leurs runs enfants, avec persistance/récupération depuis les artefacts de run.
+  - ✅ `ihm/services/ops_supervision.py` expose un `run_lineage` lisible côté cockpit ops et un contrôle de santé `coverage.json` (présence, complétude, branch coverage).
+  - ✅ Adaptation IHM `ihm/pages/supervision_ops.py` : panneau dédié de corrélation workflow parent/enfants et panneau `Artefact coverage` visible pour l'exploitation incident.
+  - ✅ Les garde-fous stop/recovery du registre IHM restent verts après régression complète ciblée (`running/scheduled orphan` → `stopped`, watchdog/reprise conservés).
+- Validation réalisée :
+  - ✅ `tests/test_ihm_process_registry.py`
+  - ✅ `tests/test_pipeline_workflow_correlation_id.py`
+  - ✅ `tests/test_ops_supervision.py`
+  - ✅ `tests/test_coverage_artifact_is_complete.py`
+  - ✅ `tests/test_pages_supervision_ops.py`
+  - ✅ régression élargie :
+    - `tests/test_ihm_pipeline_e2e.py`
+    - `tests/test_ihm_run_summary.py`
 - Gain : observabilité +1.0, IHM +0.6, readiness +0.6.
 
 ## S7 — ML/sentiment gouvernance alpha
+
+**Statut : ✅ Livré (ablation par régime + seuils gouvernance visibles + fallback quant-only confirmé)**
 
 - Priorité : P2
 - Modules : event_sentiment, modelFactory, risk
@@ -224,6 +242,26 @@
   - `tests/test_model_governance_drift_gate.py`
   - `tests/test_sentiment_ablation_report.py`
   - `tests/test_risk_fallback_quant_only.py`
+- Avancement réalisé :
+  - ✅ `backtesting/attribution.py` enrichi avec des `regime_results` et la persistance `attribution_by_regime.csv` pour comparer quant-only / sentiment / ML globalement puis par régime.
+  - ✅ `ihm/services/ml_artifacts.py` remonte désormais un résumé `governance_thresholds` (min precision, bornes action-rate, seuil retenu, éligibilité champion) et charge les rapports d'ablation quand ils existent dans les artefacts symbole.
+  - ✅ Adaptation IHM `ihm/pages/ml.py` : affichage des seuils de gouvernance persistés, visibilité explicite d'un champion non encore éligible / fallback attendu, et tableaux d'ablation globale + par régime.
+  - ✅ Le fallback quant-only automatique côté risque reste explicitement branché via `risk_management/ml_gate.py` et revalidé dans les régressions S7.
+- Validation réalisée :
+  - ✅ `tests/test_sentiment_attribution.py`
+  - ✅ `tests/test_sentiment_ablation_report.py`
+  - ✅ `tests/test_services_ml_artifacts.py`
+  - ✅ `tests/test_model_governance_drift_gate.py`
+  - ✅ `tests/test_pages_ml.py`
+  - ✅ régressions gouvernance/gate :
+    - `tests/test_ml_drift_policy_gate.py`
+    - `tests/test_ml_disable_modes.py`
+    - `tests/test_risk_ml_weight_gate.py`
+    - `tests/test_model_factory_run_summary.py`
+    - `tests/test_model_factory_cli.py`
+    - `tests/test_model_factory_config.py`
+    - `tests/test_model_factory_evaluation.py`
+    - `tests/test_model_factory_db_registry.py`
 - Gain : modelFactory +0.8, event_sentiment +0.7, risk +0.4.
 
 ## S8 — Sécurité et production readiness

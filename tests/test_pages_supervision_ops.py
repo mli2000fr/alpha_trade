@@ -22,3 +22,7 @@ def test_supervision_ops_exposes_shared_watcher_doc_reference() -> None:
     assert hasattr(supervision_ops, "render_watcher_documentation_panel")
 
 
+def test_supervision_ops_exposes_coverage_panel_helper() -> None:
+    assert hasattr(supervision_ops, "_render_coverage_artifact_panel")
+
+

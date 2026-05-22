@@ -388,6 +388,37 @@ def _summarize_ml_runtime_status(
     }
 
 
+def _summarize_governance_thresholds(artifact_report: dict[str, object] | None) -> dict[str, object]:
+    payload = artifact_report.get("governance_thresholds") if isinstance(artifact_report, dict) else None
+    if not isinstance(payload, dict):
+        return {
+            "enabled": False,
+            "selection_status": "n/a",
+            "selected_threshold": None,
+            "min_action_rate": None,
+            "max_action_rate": None,
+            "min_precision_long": None,
+            "selected_action_rate": None,
+            "selected_precision_long": None,
+            "selected_model_eligible": None,
+            "selection_mode": "n/a",
+            "selection_reason": "",
+        }
+    return {
+        "enabled": bool(payload.get("enabled", False)),
+        "selection_status": str(payload.get("selection_status") or "n/a"),
+        "selected_threshold": payload.get("selected_threshold"),
+        "min_action_rate": payload.get("min_action_rate"),
+        "max_action_rate": payload.get("max_action_rate"),
+        "min_precision_long": payload.get("min_precision_long"),
+        "selected_action_rate": payload.get("selected_action_rate"),
+        "selected_precision_long": payload.get("selected_precision_long"),
+        "selected_model_eligible": payload.get("selected_model_eligible"),
+        "selection_mode": str(payload.get("selection_mode") or "n/a"),
+        "selection_reason": str(payload.get("selection_reason") or ""),
+    }
+
+
 def _prime_selected_symbol_state(symbols: list[str]) -> str | None:
     if not symbols:
         return None
@@ -484,6 +515,45 @@ def render() -> None:
 
         st.markdown("**Ranking challengers**")
         show_dataframe(report["ranking_df"], height=260)
+
+        governance_thresholds = _summarize_governance_thresholds(report)
+        st.markdown("**Gouvernance seuils / fallback quant-only**")
+        gt_col1, gt_col2, gt_col3, gt_col4 = st.columns(4)
+        gt_col1.metric("Threshold sélectionné", f"{float(governance_thresholds['selected_threshold']):.2f}" if governance_thresholds["selected_threshold"] is not None else "—")
+        gt_col2.metric("Statut sélection", str(governance_thresholds["selection_status"]))
+        gt_col3.metric("Min precision", f"{float(governance_thresholds['min_precision_long']):.2f}" if governance_thresholds["min_precision_long"] is not None else "—")
+        if governance_thresholds["selected_action_rate"] is not None:
+            action_rate_label = f"{float(governance_thresholds['selected_action_rate']):.1%}"
+        else:
+            action_rate_label = "—"
+        gt_col4.metric("Action rate retenu", action_rate_label)
+        if governance_thresholds["enabled"]:
+            min_action_rate = governance_thresholds["min_action_rate"]
+            max_action_rate = governance_thresholds["max_action_rate"]
+            min_action_label = f"{float(min_action_rate):.1%}" if min_action_rate is not None else "—"
+            max_action_label = f"{float(max_action_rate):.1%}" if max_action_rate is not None else "—"
+            st.caption(
+                f"Contraintes de gouvernance persistées : action rate [{min_action_label}, {max_action_label}] | "
+                f"selection_mode=`{governance_thresholds['selection_mode']}`"
+            )
+        else:
+            st.info("Aucune optimisation de seuil activée dans l'artefact courant : fallback sur le seuil par défaut du modèle.")
+        if governance_thresholds["selected_model_eligible"] is False:
+            st.warning(
+                "Le modèle effectivement servi n'était pas encore éligible selon la gouvernance champion ; un fallback quant-only / champion par défaut peut être attendu côté exploitation."
+            )
+        if governance_thresholds["selection_reason"]:
+            st.caption(f"Raison de sélection : {governance_thresholds['selection_reason']}")
+
+        attribution_results_df = report.get("attribution_results_df") if isinstance(report.get("attribution_results_df"), pd.DataFrame) else pd.DataFrame()
+        attribution_regimes_df = report.get("attribution_regimes_df") if isinstance(report.get("attribution_regimes_df"), pd.DataFrame) else pd.DataFrame()
+        if not attribution_results_df.empty:
+            st.markdown("**Ablation quant / sentiment / ML**")
+            st.caption("Si présent, ce rapport compare l'apport quant-only vs sentiment vs ML, globalement puis par régime de marché.")
+            show_dataframe(attribution_results_df, height=220)
+            if not attribution_regimes_df.empty:
+                st.markdown("**Ablation par régime**")
+                show_dataframe(attribution_regimes_df, height=220)
 
         with st.expander("📄 Manifestes bruts (config / metrics)", expanded=False):
             if report["config"]:

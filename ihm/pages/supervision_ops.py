@@ -228,6 +228,27 @@ def _render_windows_integration_panel(*, snapshot: dict[str, object]) -> None:
             st.code(str(row.get("command", "") or ""), language="powershell")
 
 
+def _render_coverage_artifact_panel(*, snapshot: dict[str, object]) -> None:
+    st.subheader("🧪 Artefact coverage")
+    coverage_artifact = dict(snapshot.get("coverage_artifact", {}))
+    status = str(coverage_artifact.get("status", "missing") or "missing")
+    message = str(coverage_artifact.get("message", "") or "")
+
+    metric_row([
+        ("Statut", status, None),
+        ("Fichiers", int(coverage_artifact.get("files_count", 0) or 0), None),
+        ("Fichiers exécutés", int(coverage_artifact.get("executed_files", 0) or 0), None),
+        ("Statements", int(coverage_artifact.get("num_statements", 0) or 0), None),
+    ])
+    st.caption(f"Chemin : `{coverage_artifact.get('path') or '—'}`")
+    if status == "complete":
+        st.success(message or "Artefact coverage complet.")
+    elif status == "incomplete":
+        st.warning(message or "Artefact coverage partiel.")
+    else:
+        st.info(message or "Artefact coverage indisponible.")
+
+
 def _restart_button_label(control_state: dict[str, object]) -> str:
     return "♻️ Restart service local IHM" if bool(control_state.get("local_service_active")) else "▶️ Démarrer service local IHM"
 
@@ -506,6 +527,12 @@ def render() -> None:
         st.subheader("🏃 Runs IHM en cours")
         st.caption("Pipelines ou workflows lancés depuis l'IHM encore actifs au moment de la consultation.")
         show_dataframe(snapshot.get("active_runs"), height=220)
+    with st.container(border=True):
+        st.subheader("🧬 Corrélation workflow IHM")
+        st.caption("Lie les workflows parents et leurs runs enfants actifs via un identifiant de corrélation commun.")
+        show_dataframe(snapshot.get("run_lineage"), height=180)
+    with st.container(border=True):
+        _render_coverage_artifact_panel(snapshot=snapshot)
     with st.container(border=True):
         _render_windows_integration_panel(snapshot=snapshot)
 run_page_if_standalone(__name__, render)

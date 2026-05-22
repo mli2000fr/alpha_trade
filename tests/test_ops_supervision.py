@@ -176,6 +176,37 @@ def test_build_watcher_history_dataframe_formats_runtime_runs() -> None:
     assert "Surveillés=2" in str(df.iloc[1]["summary"]) or "watched_items=2" in str(df.iloc[1]["summary"])
 
 
+def test_build_run_lineage_dataframe_maps_workflow_parent_and_children() -> None:
+    active_runs_df = ops_supervision.build_active_runs_dataframe(
+        [
+            {
+                "run_id": "wf-1",
+                "step_key": "pipeline_workflow",
+                "run_kind": "workflow",
+                "status": "running",
+                "account_id": "acct-1",
+                "workflow_correlation_id": "wf-1",
+                "is_active": True,
+            },
+            {
+                "run_id": "step-1",
+                "step_key": "risk_management",
+                "run_kind": "step",
+                "status": "running",
+                "account_id": "acct-1",
+                "parent_run_id": "wf-1",
+                "workflow_correlation_id": "wf-1",
+                "is_active": True,
+            },
+        ]
+    )
+
+    lineage_df = ops_supervision.build_run_lineage_dataframe(active_runs_df)
+
+    assert list(lineage_df["workflow_correlation_id"]) == ["wf-1", "wf-1"]
+    assert list(lineage_df["lineage_role"]) == ["child run", "workflow parent"]
+
+
 def test_build_windows_integration_dataframe_exposes_three_modes() -> None:
     df = ops_supervision.build_windows_integration_dataframe(account_id="acct-1")
 

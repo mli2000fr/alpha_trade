@@ -100,6 +100,7 @@ class PipelineRunRecord:
     stop_requested: bool = False
     run_kind: Literal["step", "workflow"] = "step"
     parent_run_id: str | None = None
+    workflow_correlation_id: str | None = None
     workflow_total_steps: int = 0
     workflow_completed_steps: int = 0
     workflow_current_step_key: str | None = None
@@ -530,6 +531,7 @@ def _recover_workflow_run_from_directory(run_dir: Path) -> tuple[dict[str, objec
                 child_run_ids.append(child_run_id)
             child_hints[child_run_id] = {
                 "parent_run_id": run_id,
+                "workflow_correlation_id": run_id,
                 "step_label": step_done_match.group(3),
                 "status": "completed",
             }
@@ -545,6 +547,7 @@ def _recover_workflow_run_from_directory(run_dir: Path) -> tuple[dict[str, objec
                 child_run_ids.append(interrupted_child_run_id)
             child_hints[interrupted_child_run_id] = {
                     "parent_run_id": run_id,
+                    "workflow_correlation_id": run_id,
                     "step_label": interrupted_match.group(1),
                     "status": interrupted_status,
                 }
@@ -581,6 +584,7 @@ def _recover_workflow_run_from_directory(run_dir: Path) -> tuple[dict[str, objec
         "stop_requested": status == "stopped",
         "run_kind": "workflow",
         "parent_run_id": None,
+        "workflow_correlation_id": run_id,
         "workflow_total_steps": workflow_total_steps,
         "workflow_completed_steps": workflow_completed_steps,
         "workflow_current_step_key": None,
@@ -635,6 +639,7 @@ def _recover_step_run_from_directory(
         "stop_requested": inferred_status == "stopped",
         "run_kind": "step",
         "parent_run_id": str(hint.get("parent_run_id") or "") or None,
+        "workflow_correlation_id": str(hint.get("workflow_correlation_id") or hint.get("parent_run_id") or "") or None,
         "workflow_total_steps": 0,
         "workflow_completed_steps": 0,
         "workflow_current_step_key": None,
@@ -1366,6 +1371,7 @@ def _run_pipeline_workflow(
                 db_config=db_config,
                 timeout_seconds=timeout_seconds,
                 parent_run_id=managed.record.run_id,
+                workflow_correlation_id=managed.record.workflow_correlation_id or managed.record.run_id,
             )
             child_run_ids.append(child_record.run_id)
             with managed.lock:
@@ -1500,6 +1506,7 @@ def start_managed_run(
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
     parent_run_id: str | None = None,
+    workflow_correlation_id: str | None = None,
 ) -> PipelineRunRecord:
     """Démarre un sous-processus arbitraire piloté par le registre IHM."""
     _ensure_storage()
@@ -1551,6 +1558,7 @@ def start_managed_run(
         combined_path=str(combined_path),
         timeout_seconds=timeout_seconds,
         parent_run_id=parent_run_id,
+        workflow_correlation_id=workflow_correlation_id,
     )
     managed = _ManagedRun(
         record=record,
@@ -1575,6 +1583,7 @@ def start_pipeline_run(
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
     parent_run_id: str | None = None,
+    workflow_correlation_id: str | None = None,
 ) -> PipelineRunRecord:
     """Démarre un pipeline en arrière-plan et retourne son enregistrement initial."""
     from dataclasses import replace as _dc_replace
@@ -1621,6 +1630,7 @@ def start_pipeline_run(
         db_config=db_config,
         timeout_seconds=timeout_seconds,
         parent_run_id=parent_run_id,
+        workflow_correlation_id=workflow_correlation_id,
     )
 
 
@@ -1695,6 +1705,7 @@ def start_pipeline_workflow(
         combined_path=str(combined_path),
         timeout_seconds=timeout_seconds,
         run_kind="workflow",
+        workflow_correlation_id=run_id,
         workflow_total_steps=len(steps),
     )
 

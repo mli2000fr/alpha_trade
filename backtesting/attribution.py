@@ -89,12 +89,17 @@ class AttributionReport:
     results: list[AttributionResult]
     deltas: dict[str, dict[str, float]] = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
+    regime_results: dict[str, list[AttributionResult]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "results": [r.to_dict() for r in self.results],
             "deltas": self.deltas,
             "metadata": self.metadata,
+            "regime_results": {
+                regime: [result.to_dict() for result in results]
+                for regime, results in self.regime_results.items()
+            },
         }
 
 
@@ -198,6 +203,7 @@ def run_attribution(
     top_n: int = DEFAULT_TOP_N,
     trading_days: int = DEFAULT_TRADING_DAYS,
     output_dir: Path | str | None = None,
+    regime_column: str | None = "market_regime",
 ) -> AttributionReport:
     """Exécute tous les scénarios et produit un :class:`AttributionReport`.
 
@@ -205,9 +211,10 @@ def run_attribution(
     - écrit ``attribution_summary.json`` (résumé complet) ;
     - écrit ``attribution_per_scenario.csv`` (lignes par scénario).
     """
+    scenario_list = tuple(scenarios)
     results = [
         evaluate_scenario(panel, scenario, top_n=top_n, trading_days=trading_days)
-        for scenario in scenarios
+        for scenario in scenario_list
     ]
 
     by_name = {r.scenario: r for r in results}
@@ -230,9 +237,25 @@ def run_attribution(
         "n_panel_rows": int(len(panel)),
         "n_panel_dates": int(panel["date"].nunique()) if "date" in panel.columns else 0,
         "n_panel_symbols": int(panel["symbol"].nunique()) if "symbol" in panel.columns else 0,
+        "regime_column": regime_column,
     }
 
-    report = AttributionReport(results=results, deltas=deltas, metadata=metadata)
+    regime_results: dict[str, list[AttributionResult]] = {}
+    if regime_column and regime_column in panel.columns:
+        regime_series = panel[regime_column].fillna("unknown").astype(str).str.strip().replace("", "unknown")
+        for regime_name in sorted(regime_series.unique()):
+            regime_slice = panel.loc[regime_series == regime_name].copy()
+            if regime_slice.empty:
+                continue
+            regime_results[regime_name] = [
+                evaluate_scenario(regime_slice, scenario, top_n=top_n, trading_days=trading_days)
+                for scenario in scenario_list
+            ]
+        metadata["n_regimes"] = len(regime_results)
+    else:
+        metadata["n_regimes"] = 0
+
+    report = AttributionReport(results=results, deltas=deltas, metadata=metadata, regime_results=regime_results)
 
     if output_dir is not None:
         out = Path(output_dir)
@@ -242,6 +265,13 @@ def run_attribution(
         )
         df_rows = pd.DataFrame([r.to_dict() for r in results])
         df_rows.to_csv(out / "attribution_per_scenario.csv", index=False)
+        if regime_results:
+            regime_rows = [
+                {"regime": regime, **result.to_dict()}
+                for regime, result_list in regime_results.items()
+                for result in result_list
+            ]
+            pd.DataFrame(regime_rows).to_csv(out / "attribution_by_regime.csv", index=False)
         LOGGER.info("[attribution] artefacts écrits dans %s", out)
 
     return report

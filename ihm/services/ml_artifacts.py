@@ -142,11 +142,41 @@ def _build_ranking_dataframe(metrics_data: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(normalized)
 
 
+def _build_governance_thresholds_summary(config_data: dict[str, Any], metrics_data: dict[str, Any]) -> dict[str, Any]:
+    config_thresholds = config_data.get("threshold_optimization") if isinstance(config_data.get("threshold_optimization"), dict) else {}
+    metrics_thresholds = metrics_data.get("threshold_optimization") if isinstance(metrics_data.get("threshold_optimization"), dict) else {}
+    constraints = metrics_thresholds.get("constraints") if isinstance(metrics_thresholds.get("constraints"), dict) else {}
+    selected_metrics = metrics_thresholds.get("selected_metrics") if isinstance(metrics_thresholds.get("selected_metrics"), dict) else {}
+    selected_decision_threshold = config_data.get("selected_decision_threshold")
+    if selected_decision_threshold is None:
+        selected_decision_threshold = metrics_thresholds.get("selected_threshold")
+    return {
+        "enabled": bool(config_thresholds.get("enabled", False) or metrics_thresholds.get("enabled", False)),
+        "selection_status": metrics_thresholds.get("selection_status"),
+        "selected_threshold": selected_decision_threshold,
+        "selected_business_score": metrics_thresholds.get("selected_business_score"),
+        "min_action_rate": constraints.get("min_action_rate", config_thresholds.get("min_action_rate")),
+        "max_action_rate": constraints.get("max_action_rate", config_thresholds.get("max_action_rate")),
+        "min_precision_long": constraints.get("min_precision_long", config_thresholds.get("min_precision_long")),
+        "selected_action_rate": selected_metrics.get("coverage_at_threshold"),
+        "selected_precision_long": selected_metrics.get("precision_long"),
+        "selected_model_eligible": bool(config_data.get("selected_model_eligible", False)),
+        "selection_mode": config_data.get("selection_mode"),
+        "selection_reason": config_data.get("selection_reason"),
+    }
+
+
+def _load_optional_artifact_json(path: Path) -> dict[str, Any]:
+    data, _error = _read_json_file(path)
+    return data or {}
+
+
 def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> dict[str, Any]:
     root = get_model_artifacts_dir(artifacts_dir)
     symbol_dir = root / symbol
     config_path = symbol_dir / "config.json"
     metrics_path = symbol_dir / "metrics.json"
+    attribution_summary_path = symbol_dir / "attribution_summary.json"
 
     errors: list[str] = []
     if not symbol_dir.exists() or not symbol_dir.is_dir():
@@ -218,6 +248,17 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
         manifest_health = "healthy"
     degraded_reasons = [str(item) for item in [*errors, *selected_route_errors] if str(item).strip()]
     selector_universe_filter = _build_selector_universe_filter_summary(config_data)
+    governance_thresholds = _build_governance_thresholds_summary(config_data, metrics_data)
+    attribution_summary = _load_optional_artifact_json(attribution_summary_path) if attribution_summary_path.exists() else {}
+    attribution_results_df = pd.DataFrame(attribution_summary.get("results") or []) if attribution_summary else pd.DataFrame()
+    regime_rows = [
+        {"regime": regime, **row}
+        for regime, rows in (attribution_summary.get("regime_results") or {}).items()
+        if isinstance(rows, list)
+        for row in rows
+        if isinstance(row, dict)
+    ]
+    attribution_regimes_df = pd.DataFrame(regime_rows)
 
     return {
         "symbol": symbol,
@@ -239,7 +280,12 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
         "selected_route_health": selected_route_health,
         "selected_route_errors": selected_route_errors,
         "degraded_reasons": degraded_reasons,
+        "governance_thresholds": governance_thresholds,
         "selector_universe_filter": selector_universe_filter,
+        "attribution_summary_path": attribution_summary_path,
+        "attribution_summary": attribution_summary,
+        "attribution_results_df": attribution_results_df,
+        "attribution_regimes_df": attribution_regimes_df,
         "routes_df": routes_df,
         "ranking_df": _build_ranking_dataframe(metrics_data),
     }
