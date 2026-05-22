@@ -174,3 +174,23 @@ def test_build_screener_history_dataframe_exposes_shared_artifact_rows() -> None
     assert history_df.iloc[0]["Runs IHM"] == 3
 
 
+def test_build_eodhd_quota_feature_rows_sorts_by_calls_desc() -> None:
+    rows = overview._build_eodhd_quota_feature_rows(
+        {
+            "feature_calls": {
+                "event_sentiment": 7,
+                "corporate_actions": 2,
+                "selector": 11,
+            }
+        }
+    )
+
+    assert list(rows["feature"]) == ["selector", "event_sentiment", "corporate_actions"]
+    assert list(rows["calls_used"]) == [11, 7, 2]
+
+
+def test_build_eodhd_quota_feature_rows_returns_empty_dataframe_without_feature_calls() -> None:
+    rows = overview._build_eodhd_quota_feature_rows({})
+    assert rows.empty
+
+

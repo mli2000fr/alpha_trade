@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import time
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pandas as pd
@@ -53,6 +53,14 @@ class EventSentimentRepository:
             {key: self._normalize_mysql_scalar(value) for key, value in record.items()}
             for record in records
         ]
+
+    @staticmethod
+    def _resolve_rowcount(raw_rowcount: Any) -> int:
+        resolved = raw_rowcount() if callable(raw_rowcount) else raw_rowcount
+        try:
+            return int(resolved or 0)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _upsert_batch_size() -> int:
@@ -285,7 +293,9 @@ class EventSentimentRepository:
     def get_checkpoint(self, source_name: str, symbol: str) -> dict[str, Any] | None:
         stmt = text(
             """
-            SELECT source_name, symbol, watermark_published_at_utc, next_page_token, status, last_error, updated_at
+            SELECT source_name, symbol, watermark_published_at_utc, next_page_token, status, last_error,
+                   news_ingested_at, relevance_backfill_at, contextual_scoring_at, features_aggregated_at,
+                   updated_at
             FROM news_ingestion_checkpoint
             WHERE source_name = :source_name AND symbol = :symbol
             """
@@ -295,7 +305,7 @@ class EventSentimentRepository:
                 stmt,
                 {"source_name": source_name, "symbol": self._normalize_symbol(symbol)},
             ).mappings().first()
-        return dict(row) if row else None
+        return ({str(key): value for key, value in dict(row).items()} if row else None)
 
     def get_checkpoints(self, source_name: str, symbols: list[str]) -> dict[str, dict[str, Any]]:
         normalized_symbols = [self._normalize_symbol(symbol) for symbol in symbols if symbol and str(symbol).strip()]
@@ -303,7 +313,9 @@ class EventSentimentRepository:
             return {}
         stmt = text(
             """
-            SELECT source_name, symbol, watermark_published_at_utc, next_page_token, status, last_error, updated_at
+            SELECT source_name, symbol, watermark_published_at_utc, next_page_token, status, last_error,
+                   news_ingested_at, relevance_backfill_at, contextual_scoring_at, features_aggregated_at,
+                   updated_at
             FROM news_ingestion_checkpoint
             WHERE source_name = :source_name
               AND symbol IN :symbols
@@ -311,7 +323,10 @@ class EventSentimentRepository:
         ).bindparams(bindparam("symbols", expanding=True))
         with self.engine.connect() as conn:
             rows = conn.execute(stmt, {"source_name": source_name, "symbols": normalized_symbols}).mappings().all()
-        return {str(row["symbol"]): dict(row) for row in rows}
+        return {
+            str(row["symbol"]): {str(key): value for key, value in dict(row).items()}
+            for row in rows
+        }
 
     def load_candidate_symbols(self) -> list[str]:
         return list_candidate_symbols(engine=self.engine)
@@ -366,6 +381,135 @@ class EventSentimentRepository:
             }],
             key_columns={"source_name", "symbol"},
         )
+
+    @staticmethod
+    def _checkpoint_stage_column(stage: str) -> str:
+        mapping = {
+            "news_ingested": "news_ingested_at",
+            "relevance_backfilled": "relevance_backfill_at",
+            "contextual_scored": "contextual_scoring_at",
+            "features_aggregated": "features_aggregated_at",
+        }
+        normalized_stage = str(stage or "").strip().lower()
+        if normalized_stage not in mapping:
+            raise ValueError(f"Stage checkpoint inconnu: {stage!r}")
+        return mapping[normalized_stage]
+
+    def touch_checkpoint_stage(
+        self,
+        source_name: str,
+        symbols: list[str],
+        *,
+        stage: str,
+        touched_at: datetime | None = None,
+    ) -> int:
+        normalized_symbols = [self._normalize_symbol(symbol) for symbol in symbols if str(symbol).strip()]
+        if not normalized_symbols:
+            return 0
+        stage_column = self._checkpoint_stage_column(stage)
+        effective_timestamp = touched_at or datetime.now(UTC).replace(tzinfo=None)
+        records = [
+            {
+                "source_name": source_name,
+                "symbol": symbol,
+                stage_column: effective_timestamp,
+            }
+            for symbol in sorted(set(normalized_symbols))
+        ]
+        return self._upsert(
+            "news_ingestion_checkpoint",
+            records,
+            key_columns={"source_name", "symbol"},
+        )
+
+    def list_ticker_map_symbols(
+        self,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        ingestion_source: str | None = None,
+        symbols: list[str] | None = None,
+    ) -> list[str]:
+        normalized_symbols = [self._normalize_symbol(symbol) for symbol in (symbols or []) if str(symbol).strip()]
+        filters: list[str] = []
+        params: dict[str, Any] = {}
+        if start_date is not None:
+            filters.append("nr.effective_trade_date >= :start_date")
+            params["start_date"] = start_date
+        if end_date is not None:
+            filters.append("nr.effective_trade_date <= :end_date")
+            params["end_date"] = end_date
+        if ingestion_source:
+            filters.append("nr.ingestion_source = :ingestion_source")
+            params["ingestion_source"] = str(ingestion_source).strip().lower()
+        if normalized_symbols:
+            filters.append("ntm.symbol IN :symbols")
+            params["symbols"] = normalized_symbols
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        stmt = text(
+            f"""
+            SELECT DISTINCT ntm.symbol
+            FROM news_ticker_map ntm
+            JOIN news_raw nr ON nr.article_id = ntm.article_id
+            {where_clause}
+            ORDER BY ntm.symbol
+            """
+        )
+        if normalized_symbols:
+            stmt = stmt.bindparams(bindparam("symbols", expanding=True))
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, params).scalars().all()
+        return [self._normalize_symbol(str(row)) for row in rows if str(row).strip()]
+
+    def get_signal_aggregator_guard_status(
+        self,
+        *,
+        source_name: str,
+        symbols: list[str],
+    ) -> dict[str, Any]:
+        normalized_symbols = [self._normalize_symbol(symbol) for symbol in symbols if str(symbol).strip()]
+        if not normalized_symbols:
+            return {
+                "source_name": source_name,
+                "scoped_symbols": 0,
+                "checkpoint_rows": 0,
+                "symbols_with_news": 0,
+                "stale_relevance_symbols": [],
+                "stale_contextual_symbols": [],
+                "stale_feature_symbols": [],
+                "ready": True,
+            }
+        checkpoints = self.get_checkpoints(source_name, normalized_symbols)
+        stale_relevance_symbols: list[str] = []
+        stale_contextual_symbols: list[str] = []
+        stale_feature_symbols: list[str] = []
+        symbols_with_news = 0
+        for symbol, checkpoint in checkpoints.items():
+            news_ingested_at = checkpoint.get("news_ingested_at")
+            relevance_backfill_at = checkpoint.get("relevance_backfill_at")
+            contextual_scoring_at = checkpoint.get("contextual_scoring_at")
+            features_aggregated_at = checkpoint.get("features_aggregated_at")
+            if news_ingested_at is None:
+                continue
+            symbols_with_news += 1
+            if relevance_backfill_at is None or relevance_backfill_at < news_ingested_at:
+                stale_relevance_symbols.append(symbol)
+                continue
+            if contextual_scoring_at is None or contextual_scoring_at < relevance_backfill_at:
+                stale_contextual_symbols.append(symbol)
+                continue
+            if features_aggregated_at is None or features_aggregated_at < contextual_scoring_at:
+                stale_feature_symbols.append(symbol)
+        return {
+            "source_name": source_name,
+            "scoped_symbols": len(set(normalized_symbols)),
+            "checkpoint_rows": len(checkpoints),
+            "symbols_with_news": symbols_with_news,
+            "stale_relevance_symbols": stale_relevance_symbols,
+            "stale_contextual_symbols": stale_contextual_symbols,
+            "stale_feature_symbols": stale_feature_symbols,
+            "ready": not (stale_relevance_symbols or stale_contextual_symbols or stale_feature_symbols),
+        }
 
     def get_existing_article_ids(self, article_ids: list[str]) -> set[str]:
         if not article_ids:
@@ -516,7 +660,7 @@ class EventSentimentRepository:
             query = query.bindparams(bindparam("symbols", expanding=True))
         with self.engine.connect() as conn:
             rows = conn.execute(query, params).mappings().all()
-        return [dict(row) for row in rows]
+        return [{str(key): value for key, value in dict(row).items()} for row in rows]
 
     def count_pending_contextual_pairs(
         self,
@@ -714,7 +858,7 @@ class EventSentimentRepository:
             )
         with self.engine.begin() as conn:
             result = conn.execute(stmt, params)
-        return int(result.rowcount or 0)
+        return self._resolve_rowcount(result.rowcount)
 
     def get_active_finbert_fingerprints(self, trade_date: date) -> list[str]:
         """Phase 4.1.c — fingerprints FinBERT actifs pour `trade_date`.
@@ -798,7 +942,10 @@ class EventSentimentRepository:
             symbols=symbols,
         )
         frame = pd.read_sql_query(query, self.engine, params={**params, "limit_rows": limit})
-        return [dict(row) for row in frame.to_dict(orient="records")]
+        return [
+            {str(key): value for key, value in dict(row).items()}
+            for row in frame.to_dict(orient="records")
+        ]
 
     def load_feature_frames(
         self,

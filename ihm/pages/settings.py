@@ -46,6 +46,7 @@ from ihm.services.notifications_preferences import (
     save_persisted_notification_preferences,
 )
 from ihm.services.notifications import load_smtp_config, read_smtp_test_failure_log, send_test_email
+from ihm.services.capital_presets import get_capital_preset_by_key
 
 ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY = "settings_alpha_scanner_dependency_thresholds_flash"
 ALPHA_SCANNER_SELECTED_STYLE_KEY = "settings_alpha_scanner_selected_style"
@@ -64,6 +65,7 @@ VAR_ENV_UPLOAD_SIGNATURE_KEY = "settings_var_env_upload_signature"
 VAR_ENV_UPLOAD_RESULT_KEY = "settings_var_env_upload_result"
 VAR_ENV_EXPORT_DATA_KEY = "settings_var_env_export_data"
 VAR_ENV_EXPORT_FILENAME_KEY = "settings_var_env_export_filename"
+MICRO_CAPITAL_PRESET_KEY = "capital_0_2000_eur"
 
 VAR_ENV_UPLOAD_WIDGET_CSS = """
 <style>
@@ -111,6 +113,8 @@ BARS_PROVIDER_LABELS: dict[str, str] = {
     "eodhd": " EODHD (recommandé — bulk EOD, volume consolidé)",
     "alpaca": " Alpaca / IEX (historique, biais volume IEX)",
 }
+_MARKET_REGIME_LABELS_STR = {str(key): value for key, value in MARKET_REGIME_LABELS.items()}
+_PRESET_STYLE_LABELS_STR = {str(key): value for key, value in PRESET_STYLE_LABELS.items()}
 BARS_PROVIDER_HELP: dict[str, str] = {
     "eodhd": (
         "Source primaire = EODHD `/eod-bulk-last-day/US`. Backfill historique disponible via "
@@ -123,6 +127,42 @@ BARS_PROVIDER_HELP: dict[str, str] = {
         "le module Alpaca daily devient un no-op contrôlé."
     ),
 }
+
+
+def _build_micro_capital_preset_warning_message() -> str | None:
+    preset = get_capital_preset_by_key(MICRO_CAPITAL_PRESET_KEY)
+    if preset is None:
+        return None
+    return (
+        f"⚠️ Le preset `{preset.label}` assume une concentration maximale : "
+        "3 lignes, tickets élevés relativement à l'equity et univers selector volontairement relâché. "
+        "À utiliser avec une discipline stricte sur la taille et les frais."
+    )
+
+
+def _render_capital_preset_warning_banner() -> None:
+    message = _build_micro_capital_preset_warning_message()
+    if message:
+        st.warning(message)
+
+
+def _flash_message(kind: str, message: str) -> None:
+    if kind == "error":
+        st.error(message)
+    elif kind == "success":
+        st.success(message)
+    elif kind == "warning":
+        st.warning(message)
+    else:
+        st.info(message)
+
+
+def _market_regime_label(value: str) -> str:
+    return _MARKET_REGIME_LABELS_STR.get(value, value)
+
+
+def _preset_style_label(value: str) -> str:
+    return _PRESET_STYLE_LABELS_STR.get(value, value)
 
 
 def _prime_bars_provider_widget_state(current: str) -> str:
@@ -145,7 +185,7 @@ def _render_bars_provider_settings():
     flash = st.session_state.pop(BARS_PROVIDER_FLASH_KEY, None)
     if isinstance(flash, tuple) and len(flash) == 2:
         kind, message = flash
-        getattr(st, kind, st.info)(message)
+        _flash_message(str(kind), str(message))
 
     current = get_bars_provider()
     st.subheader(" Source primaire des barres OHLCV")
@@ -285,7 +325,7 @@ def _apply_alpha_scanner_threshold_preset(style: str, market_regime: str):
     get_alpha_scanner_dependency_diagnostic.clear()
     reset_db_caches()
     st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = (
-        f"Preset `{PRESET_STYLE_LABELS.get(style, style)}` appliqué pour `{MARKET_REGIME_LABELS.get(market_regime, market_regime)}`."
+        f"Preset `{_preset_style_label(style)}` appliqué pour `{_market_regime_label(market_regime)}`."
     )
     st.rerun()
 
@@ -310,15 +350,20 @@ def _render_alpha_scanner_dependency_threshold_settings():
         "mode régime market-aware d'exécution (`normal` / `capital_preservation` / `close_only` / `cash_only`)."
     )
 
+    selected_market_regime_value = st.session_state.get(
+        ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY,
+        DEFAULT_MARKET_REGIME,
+    )
+    selected_market_regime_default = (
+        str(selected_market_regime_value)
+        if str(selected_market_regime_value) in MARKET_REGIME_LABELS
+        else DEFAULT_MARKET_REGIME
+    )
     selected_market_regime = st.radio(
         "Contexte marché pour les presets Alpha Scanner",
         options=list(MARKET_REGIME_LABELS.keys()),
-        index=list(MARKET_REGIME_LABELS.keys()).index(
-            str(st.session_state.get(ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY, DEFAULT_MARKET_REGIME))
-            if st.session_state.get(ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY, DEFAULT_MARKET_REGIME) in MARKET_REGIME_LABELS
-            else DEFAULT_MARKET_REGIME
-        ),
-        format_func=lambda value: MARKET_REGIME_LABELS[value],
+        index=list(_MARKET_REGIME_LABELS_STR.keys()).index(selected_market_regime_default),
+        format_func=_market_regime_label,
         key=ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY,
         horizontal=True,
     )
@@ -328,7 +373,7 @@ def _render_alpha_scanner_dependency_threshold_settings():
     with st.container(border=True):
         st.markdown("**Étape 6 — Gouvernance opérateur du diagnostic partagé**")
         st.caption(
-            f"Preset mémorisé : `{PRESET_STYLE_LABELS.get(selected_style, selected_style)}` × `{MARKET_REGIME_LABELS.get(selected_market_regime, selected_market_regime)}` | mode=`{selection_mode}`"
+            f"Preset mémorisé : `{_preset_style_label(selected_style)}` × `{_market_regime_label(selected_market_regime)}` | mode=`{selection_mode}`"
         )
         preset_col1, preset_col2, preset_col3 = st.columns(3)
         preset_buttons = (
@@ -578,7 +623,7 @@ def _render_notifications_settings():
     failure_log_payload = _get_notifications_failure_log_download_payload()
     if isinstance(flash, tuple) and len(flash) == 2:
         kind, message = flash
-        getattr(st, kind, st.info)(message)
+        _flash_message(str(kind), str(message))
         if kind == "error" and failure_log_payload is not None:
             st.download_button(
                 "⬇️ Télécharger les logs IHM de l'échec SMTP",
@@ -714,6 +759,7 @@ def render():
     st.caption(
         "Page recentrée sur les prérequis opérateur puis sur les paramètres réellement utilisés par le flux `quotes → earnings → alpha scanner`."
     )
+    _render_capital_preset_warning_banner()
 
     prereq_col1, prereq_col2 = st.columns(2)
     with prereq_col1:

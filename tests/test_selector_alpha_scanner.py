@@ -759,3 +759,12 @@ def test_get_aggregated_filter_stats_accumulates_across_chunks() -> None:
     assert aggregated["rejected_price"] == 2
     assert aggregated["input"] == 3
 
+
+def test_selector_min_ibd_rs_rank_alias() -> None:
+    parser = _build_arg_parser()
+
+    args_new = parser.parse_args(["--min-ibd-rs-rank", "103"])
+    args_legacy = parser.parse_args(["--min-relative-strength-index", "103"])
+
+    assert args_new.min_relative_strength_index == pytest.approx(103.0)
+    assert args_legacy.min_relative_strength_index == pytest.approx(103.0)

@@ -1,7 +1,7 @@
 """Tests unitaires du client HTTP EODHD (Phase 2 plan §5.2 + §7.1 T-EOD-1)."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from pathlib import Path
 
 import pytest
@@ -80,7 +80,7 @@ def test_fetch_eod_bulk_uses_correct_url_and_token():
     payload = [{"code": "AAPL.US", "close": 192.0, "volume": 12345}]
     session = _FakeSession([_FakeResponse(payload)])
 
-    result = clientEodhd.fetch_eod_bulk(date="2026-04-28", session=session)
+    result = clientEodhd.fetch_eod_bulk(date="2026-04-28", session=cast(Any, session))
 
     assert result == payload
     call = session.calls[0]
@@ -95,7 +95,7 @@ def test_fetch_eod_maps_symbol_class_share():
         {"date": "2026-04-28", "open": 1, "high": 1, "low": 1, "close": 1, "adjusted_close": 1, "volume": 1}
     ])])
 
-    rows = clientEodhd.fetch_eod("BRK.B", start="2026-04-01", end="2026-04-28", session=session)
+    rows = clientEodhd.fetch_eod("BRK.B", start="2026-04-01", end="2026-04-28", session=cast(Any, session))
 
     assert len(rows) == 1
     call = session.calls[0]
@@ -107,7 +107,7 @@ def test_fetch_eod_maps_symbol_class_share():
 def test_fetch_eod_bulk_payload_must_be_list():
     session = _FakeSession([_FakeResponse({"unexpected": "object"})])
     with pytest.raises(clientEodhd.EodhdBarsFetchError):
-        clientEodhd.fetch_eod_bulk(session=session)
+        clientEodhd.fetch_eod_bulk(session=cast(Any, session))
 
 
 def test_fetch_eod_http_error_records_failure(tmp_path: Path):
@@ -115,7 +115,7 @@ def test_fetch_eod_http_error_records_failure(tmp_path: Path):
     session = _FakeSession([_FakeResponse(payload=[], status_code=403)])
 
     with pytest.raises(clientEodhd.EodhdBarsFetchError):
-        clientEodhd.fetch_splits("NVDA", session=session, tracker=tracker)
+        clientEodhd.fetch_splits("NVDA", session=cast(Any, session), tracker=tracker)
 
     snap = tracker.snapshot()
     assert snap["calls_failed"] == 1
@@ -125,7 +125,7 @@ def test_fetch_eod_quota_exceeded(tmp_path: Path):
     tracker = eodhd_quota.EodhdQuotaTracker(cache_dir=tmp_path, daily_quota=0)
     session = _FakeSession([_FakeResponse([])])
     with pytest.raises(eodhd_quota.EodhdQuotaExceeded):
-        clientEodhd.fetch_eod("AAPL", session=session, tracker=tracker)
+        clientEodhd.fetch_eod("AAPL", session=cast(Any, session), tracker=tracker)
 
 
 def test_fetch_eod_circuit_breaker_open(tmp_path: Path):
@@ -137,12 +137,12 @@ def test_fetch_eod_circuit_breaker_open(tmp_path: Path):
     ])
     # Premier appel : 500 (retry consommé puis échec)
     with pytest.raises(clientEodhd.EodhdBarsFetchError):
-        clientEodhd.fetch_eod("AAPL", session=session, tracker=tracker)
+        clientEodhd.fetch_eod("AAPL", session=cast(Any, session), tracker=tracker)
 
     # Circuit ouvert -> reserve() doit lever
     assert tracker.is_circuit_open()
     with pytest.raises(clientEodhd.EodhdCircuitOpen) as exc_info:
-        clientEodhd.fetch_eod("AAPL", session=session, tracker=tracker)
+        clientEodhd.fetch_eod("AAPL", session=cast(Any, session), tracker=tracker)
     message = str(exc_info.value)
     assert "UTC" in message
     assert "reste ~" in message
@@ -153,7 +153,7 @@ def test_fetch_eod_404_does_not_open_circuit_breaker(tmp_path: Path):
     session = _FakeSession([_FakeResponse(payload=[], status_code=404)])
 
     with pytest.raises(clientEodhd.EodhdSymbolNotFound):
-        clientEodhd.fetch_eod("ABR.PRD", session=session, tracker=tracker)
+        clientEodhd.fetch_eod("ABR.PRD", session=cast(Any, session), tracker=tracker)
 
     assert tracker.is_circuit_open() is False
 
@@ -166,7 +166,7 @@ def test_fetch_eod_redacts_api_token_in_error_message(monkeypatch, tmp_path: Pat
             response = _FakeResponse(payload=[], status_code=404)
             err = requests.exceptions.HTTPError(
                 f"404 Client Error: Not Found for url: {url}?api_token=SECRET_TOKEN&fmt=json",
-                response=response,
+                response=cast(Any, response),
             )
             raise err
 
@@ -174,7 +174,7 @@ def test_fetch_eod_redacts_api_token_in_error_message(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(clientEodhd, "_get_base_url", lambda: "https://eodhd.com/api")
 
     with pytest.raises(clientEodhd.EodhdSymbolNotFound) as exc_info:
-        clientEodhd.fetch_eod("ABR.PRD", session=session, tracker=tracker)
+        clientEodhd.fetch_eod("ABR.PRD", session=cast(Any, session), tracker=tracker)
 
     message = str(exc_info.value)
     assert "SECRET_TOKEN" not in message
@@ -183,7 +183,29 @@ def test_fetch_eod_redacts_api_token_in_error_message(monkeypatch, tmp_path: Pat
 
 def test_fetch_dividends_uses_div_endpoint():
     session = _FakeSession([_FakeResponse([{"date": "2026-02-15", "value": 0.24}])])
-    rows = clientEodhd.fetch_dividends("AAPL", session=session)
+    rows = clientEodhd.fetch_dividends("AAPL", session=cast(Any, session))
     assert rows[0]["value"] == 0.24
     assert "/div/AAPL.US" in session.calls[0]["url"]
+
+
+def test_fetch_eod_records_feature_calls(tmp_path: Path) -> None:
+    tracker = eodhd_quota.EodhdQuotaTracker(cache_dir=tmp_path)
+    session = _FakeSession([_FakeResponse([
+        {"date": "2026-04-28", "open": 1, "high": 1, "low": 1, "close": 1, "adjusted_close": 1, "volume": 1}
+    ])])
+
+    clientEodhd.fetch_eod("AAPL", session=cast(Any, session), tracker=tracker, feature="event_sentiment_precheck")
+
+    snap = tracker.snapshot()
+    assert snap["calls_used"] == 1
+    assert snap["feature_calls"] == {"event_sentiment_precheck": 1}
+
+
+def test_eodhd_quota_precheck_blocks_run(tmp_path: Path) -> None:
+    tracker = eodhd_quota.EodhdQuotaTracker(cache_dir=tmp_path, daily_quota=3)
+    tracker.record_success("eod", feature="warmup")
+
+    with pytest.raises(eodhd_quota.EodhdQuotaExceeded):
+        tracker.ensure_capacity(estimated_cost=5, feature="event_sentiment_all_symbols")
+
 

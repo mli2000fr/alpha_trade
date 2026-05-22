@@ -43,6 +43,15 @@ class EventSentimentPipeline:
         # mode legacy).
         self._contextual_scorer: ContextualFinBERTScorer | None = None
 
+    def _touch_checkpoint_stage_if_supported(self, symbols: list[str], *, stage: str) -> int:
+        if not symbols:
+            return 0
+        toucher = getattr(self.repository, "touch_checkpoint_stage", None)
+        if not callable(toucher):
+            LOGGER.debug("Repository sans touch_checkpoint_stage ; checkpoint stage ignoré | stage=%s", stage)
+            return 0
+        return int(toucher(self.config.source_name, symbols, stage=stage) or 0)
+
     @staticmethod
     def _coerce_utc(value: datetime | None) -> datetime | None:
         if value is None:
@@ -557,6 +566,18 @@ class EventSentimentPipeline:
                 resolved_symbols=resolved_symbols,
                 stats=stats,
             )
+        checkpoint_scope_symbols = resolved_symbols or self.repository.list_ticker_map_symbols(
+            start_date=cast(date | None, pending_scope.get("start_date")),
+            end_date=cast(date | None, pending_scope.get("end_date")),
+            ingestion_source=str(pending_scope.get("ingestion_source") or self.config.source_name),
+            symbols=cast(list[str] | None, pending_scope.get("symbols")),
+        )
+        if checkpoint_scope_symbols and not skip_ingestion:
+            self._touch_checkpoint_stage_if_supported(checkpoint_scope_symbols, stage="news_ingested")
+        if checkpoint_scope_symbols and scoring_mode in {"contextual_only", "standard_and_contextual"}:
+            self._touch_checkpoint_stage_if_supported(checkpoint_scope_symbols, stage="contextual_scored")
+        if checkpoint_scope_symbols and not skip_features:
+            self._touch_checkpoint_stage_if_supported(checkpoint_scope_symbols, stage="features_aggregated")
         LOGGER.info(
             "Event sentiment pipeline summary | symbols=%s pending_batches=%s pending_articles=%s sentiment=%s contextual=%s ticker_day_rows=%s sector_day_rows=%s macro_rows=%s impacted_trade_dates=%s",
             len(resolved_symbols),

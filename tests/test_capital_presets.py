@@ -32,3 +32,18 @@ def test_capital_preset_maps_detected_equity_placeholder_to_pipeline_session_key
     assert session_values["pipeline_screener_liquidity_threshold_usd"] == 5_000_000.0
     assert session_values["pipeline_selector_require_above_ma200"] is True
 
+
+def test_capital_preset_max_anomaly_count_monotonic() -> None:
+    presets = capital_presets.load_capital_presets()
+    anomaly_counts = [int(preset.values["selector_max_anomaly_count"]) for preset in presets]
+
+    assert anomaly_counts == sorted(anomaly_counts)
+    assert anomaly_counts[0] == 15
+
+
+def test_capital_preset_selector_rs_alias_is_preserved() -> None:
+    preset = capital_presets.get_capital_preset_by_key("capital_0_2000_eur")
+
+    assert preset is not None
+    assert preset.values["selector_min_ibd_rs_rank"] == 90.0
+    assert preset.values["selector_min_relative_strength_index"] == 90.0

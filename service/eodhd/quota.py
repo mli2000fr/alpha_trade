@@ -51,6 +51,7 @@ class QuotaState:
     calls_failed: int = 0
     consecutive_failures: int = 0
     circuit_open_until_epoch: float = 0.0
+    feature_calls: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -98,6 +99,13 @@ class EodhdQuotaTracker:
             if key in payload:
                 setattr(self.state, key, int(payload[key]))
         self.state.circuit_open_until_epoch = float(payload.get("circuit_open_until_epoch", 0.0))
+        raw_feature_calls = payload.get("feature_calls")
+        if isinstance(raw_feature_calls, dict):
+            self.state.feature_calls = {
+                str(key): int(value)
+                for key, value in raw_feature_calls.items()
+                if str(key).strip() and int(value or 0) > 0
+            }
 
     def _save(self) -> None:
         path = self._path()
@@ -112,6 +120,7 @@ class EodhdQuotaTracker:
                         "calls_failed": self.state.calls_failed,
                         "consecutive_failures": self.state.consecutive_failures,
                         "circuit_open_until_epoch": self.state.circuit_open_until_epoch,
+                        "feature_calls": dict(self.state.feature_calls),
                     },
                     indent=2,
                 ),
@@ -126,6 +135,48 @@ class EodhdQuotaTracker:
 
     def cost_for(self, endpoint: str) -> int:
         return ENDPOINT_COSTS.get(endpoint, 1)
+
+    @staticmethod
+    def _normalize_feature(feature: str | None, *, endpoint: str) -> str:
+        normalized = str(feature or "").strip().lower()
+        return normalized or f"endpoint:{str(endpoint).strip().lower() or 'unknown'}"
+
+    def remaining_calls(self) -> int:
+        with self._lock:
+            self._reset_if_new_day()
+            return max(int(self.daily_quota) - int(self.state.calls_used), 0)
+
+    def build_capacity_precheck(self, *, estimated_cost: int, feature: str | None = None) -> dict[str, int | bool | str | dict[str, int]]:
+        with self._lock:
+            self._reset_if_new_day()
+            remaining_calls = max(int(self.daily_quota) - int(self.state.calls_used), 0)
+            normalized_estimated_cost = max(int(estimated_cost), 0)
+            normalized_feature = self._normalize_feature(feature, endpoint="precheck")
+            return {
+                "feature": normalized_feature,
+                "estimated_cost": normalized_estimated_cost,
+                "remaining_calls": remaining_calls,
+                "calls_used": int(self.state.calls_used),
+                "daily_quota": int(self.daily_quota),
+                "circuit_open": bool(self.is_circuit_open()),
+                "can_run": (not self.is_circuit_open()) and remaining_calls >= normalized_estimated_cost,
+                "feature_calls": dict(self.state.feature_calls),
+            }
+
+    def ensure_capacity(self, *, estimated_cost: int, feature: str | None = None) -> dict[str, int | bool | str | dict[str, int]]:
+        precheck = self.build_capacity_precheck(estimated_cost=estimated_cost, feature=feature)
+        if bool(precheck.get("circuit_open")):
+            raise EodhdCircuitOpen(
+                f"[eodhd] pré-check quota impossible : circuit-breaker ouvert jusqu'à "
+                f"{self._format_circuit_open_until(self.state.circuit_open_until_epoch)}"
+            )
+        if not bool(precheck.get("can_run")):
+            raise EodhdQuotaExceeded(
+                "Pré-check quota EODHD bloquant : "
+                f"feature={precheck.get('feature')} estimated_cost={precheck.get('estimated_cost')} "
+                f"> remaining_calls={precheck.get('remaining_calls')}"
+            )
+        return precheck
 
     @staticmethod
     def _format_remaining_duration(seconds: float) -> str:
@@ -172,10 +223,13 @@ class EodhdQuotaTracker:
                 )
             return cost
 
-    def record_success(self, endpoint: str) -> None:
+    def record_success(self, endpoint: str, *, feature: str | None = None) -> None:
         with self._lock:
             self._reset_if_new_day()
-            self.state.calls_used += self.cost_for(endpoint)
+            cost = self.cost_for(endpoint)
+            self.state.calls_used += cost
+            normalized_feature = self._normalize_feature(feature, endpoint=endpoint)
+            self.state.feature_calls[normalized_feature] = int(self.state.feature_calls.get(normalized_feature, 0)) + cost
             self.state.consecutive_failures = 0
             self.state.circuit_open_until_epoch = 0.0
             if (
@@ -195,6 +249,7 @@ class EodhdQuotaTracker:
         self,
         endpoint: str,
         *,
+        feature: str | None = None,
         count_call: bool = True,
         count_towards_circuit: bool = True,
     ) -> None:
@@ -208,8 +263,11 @@ class EodhdQuotaTracker:
         """
         with self._lock:
             self._reset_if_new_day()
+            normalized_feature = self._normalize_feature(feature, endpoint=endpoint)
             if count_call:
-                self.state.calls_used += self.cost_for(endpoint)
+                cost = self.cost_for(endpoint)
+                self.state.calls_used += cost
+                self.state.feature_calls[normalized_feature] = int(self.state.feature_calls.get(normalized_feature, 0)) + cost
             self.state.calls_failed += 1
             if count_towards_circuit:
                 self.state.consecutive_failures += 1
@@ -231,7 +289,7 @@ class EodhdQuotaTracker:
             and time.time() < self.state.circuit_open_until_epoch
         )
 
-    def snapshot(self) -> dict[str, int | bool]:
+    def snapshot(self) -> dict[str, int | bool | dict[str, int]]:
         """Snapshot pour ``run_summary`` (cf. plan §8.1)."""
         with self._lock:
             self._reset_if_new_day()
@@ -243,6 +301,8 @@ class EodhdQuotaTracker:
                     self.state.calls_used >= self.soft_warn
                 ),
                 "daily_quota": int(self.daily_quota),
+                "remaining_calls": max(int(self.daily_quota) - int(self.state.calls_used), 0),
+                "feature_calls": dict(self.state.feature_calls),
             }
 
 
@@ -256,6 +316,7 @@ def get_default_tracker(cache_dir: Optional[Path] = None) -> EodhdQuotaTracker:
     with _DEFAULT_LOCK:
         if _DEFAULT_TRACKER is None:
             _DEFAULT_TRACKER = EodhdQuotaTracker(cache_dir=cache_dir)
+        assert _DEFAULT_TRACKER is not None
         return _DEFAULT_TRACKER
 
 

@@ -139,6 +139,7 @@ def test_upsert_normalizes_pandas_nat_to_none(monkeypatch) -> None:
 
     assert rowcount == 1
     statement, _ = repository.engine.connection.executed[0]
+    statement = cast(tuple[object, list[dict[str, object]], object], statement)
     inserted_record = statement[1][0]
     assert inserted_record["latest_event_timestamp_ny"] is None
 
@@ -210,6 +211,7 @@ def test_upsert_drops_unknown_columns_not_present_in_table(monkeypatch) -> None:
 
     assert rowcount == 1
     statement, _ = repository.engine.connection.executed[0]
+    statement = cast(tuple[object, list[dict[str, object]], object], statement)
     inserted_record = statement[1][0]
     assert inserted_record == {
         "symbol": "AAPL",
@@ -252,6 +254,8 @@ def test_upsert_splits_large_payload_into_multiple_batches(monkeypatch) -> None:
     assert len(repository.engine.connection.executed) == 2
     first_statement, _ = repository.engine.connection.executed[0]
     second_statement, _ = repository.engine.connection.executed[1]
+    first_statement = cast(tuple[object, list[dict[str, object]], object], first_statement)
+    second_statement = cast(tuple[object, list[dict[str, object]], object], second_statement)
     assert len(first_statement[1]) == 2
     assert len(second_statement[1]) == 1
 
@@ -531,5 +535,73 @@ def test_load_feature_frames_with_trade_dates_and_ticker_symbols_binds_expanding
     }
     assert "ntm.symbol IN" in str(ticker_statement)
     assert "ticker_symbols" in str(ticker_statement)
+
+
+def test_touch_checkpoint_stage_upserts_normalized_symbols(monkeypatch) -> None:
+    repository = _make_repository()
+
+    captured: dict[str, object] = {}
+
+    def _fake_upsert(table_name, records, key_columns):
+        captured["table_name"] = table_name
+        captured["records"] = records
+        captured["key_columns"] = key_columns
+        return len(records)
+
+    monkeypatch.setattr(repository, "_upsert", _fake_upsert)
+
+    rowcount = EventSentimentRepository.touch_checkpoint_stage(
+        repository,
+        "eodhd_news",
+        ["aapl", "MSFT", "aapl"],
+        stage="relevance_backfilled",
+    )
+
+    assert rowcount == 2
+    assert captured["table_name"] == "news_ingestion_checkpoint"
+    assert captured["key_columns"] == {"source_name", "symbol"}
+    records = cast(list[dict[str, object]], captured["records"])
+    assert [record["symbol"] for record in records] == ["AAPL", "MSFT"]
+    assert all("relevance_backfill_at" in record for record in records)
+
+
+def test_get_signal_aggregator_guard_status_detects_stale_stages(monkeypatch) -> None:
+    repository = _make_repository()
+    monkeypatch.setattr(
+        repository,
+        "get_checkpoints",
+        lambda source_name, symbols: {
+            "AAPL": {
+                "news_ingested_at": date(2026, 5, 1),
+                "relevance_backfill_at": None,
+                "contextual_scoring_at": None,
+                "features_aggregated_at": None,
+            },
+            "MSFT": {
+                "news_ingested_at": date(2026, 5, 1),
+                "relevance_backfill_at": date(2026, 5, 2),
+                "contextual_scoring_at": date(2026, 5, 1),
+                "features_aggregated_at": None,
+            },
+            "NVDA": {
+                "news_ingested_at": date(2026, 5, 1),
+                "relevance_backfill_at": date(2026, 5, 2),
+                "contextual_scoring_at": date(2026, 5, 3),
+                "features_aggregated_at": date(2026, 5, 2),
+            },
+        },
+    )
+
+    status = EventSentimentRepository.get_signal_aggregator_guard_status(
+        repository,
+        source_name="eodhd_news",
+        symbols=["AAPL", "MSFT", "NVDA"],
+    )
+
+    assert status["ready"] is False
+    assert status["symbols_with_news"] == 3
+    assert status["stale_relevance_symbols"] == ["AAPL"]
+    assert status["stale_contextual_symbols"] == ["MSFT"]
+    assert status["stale_feature_symbols"] == ["NVDA"]
 
 

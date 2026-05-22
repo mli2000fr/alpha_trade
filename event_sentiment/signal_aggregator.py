@@ -49,6 +49,7 @@ from sqlalchemy.engine import Engine
 from common.utils import configure_root_logging
 from core.conviction import SentimentFusionWeights, fuse_sentiment
 from core.run_summary import attach_live_progress
+from event_sentiment.config import EventSentimentConfig
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -106,6 +107,135 @@ def _emit_run_summary(summary: dict[str, object]) -> None:
     )
 
 
+def _is_missing_scalar(value: object) -> bool:
+    if value is None or value is pd.NA or value is pd.NaT:
+        return True
+    if isinstance(value, (float, np.floating)):
+        return bool(np.isnan(float(value)))
+    if isinstance(value, pd.Timestamp):
+        return bool(pd.isna(value))
+    return False
+
+
+def _scalar_float(value: object, default: float = 0.0) -> float:
+    if _is_missing_scalar(value):
+        return default
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+        as_float = float(value)
+        return default if not np.isfinite(as_float) else as_float
+    try:
+        as_float = float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return default if not np.isfinite(as_float) else as_float
+
+
+def _scalar_int(value: object, default: int = 0) -> int:
+    if _is_missing_scalar(value):
+        return default
+    return int(_scalar_float(value, default=float(default)))
+
+
+def _scalar_bool(value: object, default: bool = False) -> bool:
+    return default if _is_missing_scalar(value) else bool(value)
+
+
+def _parse_timestamp(value: object) -> pd.Timestamp | None:
+    if _is_missing_scalar(value):
+        return None
+    if isinstance(value, pd.Timestamp):
+        return None if bool(pd.isna(value)) else value
+    if isinstance(value, (datetime, date)):
+        return pd.Timestamp(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            parsed = pd.Timestamp(raw)
+        except (TypeError, ValueError):
+            return None
+        return None if bool(pd.isna(parsed)) else parsed
+    return None
+
+
+def _age_days_from_reference(value: object, *, reference_date: date) -> int:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return 0
+    return max((pd.Timestamp(reference_date).normalize() - parsed.normalize()).days, 0)
+
+
+def _read_sql_query_dataframe(statement: object, connection: object, *, params: dict[str, Any]) -> pd.DataFrame:
+    return cast(pd.DataFrame, pd.read_sql_query(statement, connection, params=cast(Any, params)))
+
+
+def _get_checkpoint_order_guard_status(
+    repository: object,
+    *,
+    source_name: str,
+    symbols: list[str],
+) -> dict[str, object]:
+    getter = getattr(repository, "get_signal_aggregator_guard_status", None)
+    if not callable(getter):
+        return {
+            "source_name": source_name,
+            "scoped_symbols": len(symbols),
+            "checkpoint_rows": 0,
+            "symbols_with_news": 0,
+            "ready": True,
+        }
+    try:
+        raw_status = getter(source_name=source_name, symbols=symbols) or {}
+    except Exception as exc:  # noqa: BLE001 - compat schéma/tests partiels
+        LOGGER.warning(
+            "Guard status checkpoint indisponible ; fallback permissif | source_name=%s symbols=%s error=%s",
+            source_name,
+            len(symbols),
+            exc,
+        )
+        return {
+            "source_name": source_name,
+            "scoped_symbols": len(symbols),
+            "checkpoint_rows": 0,
+            "symbols_with_news": 0,
+            "ready": True,
+            "guard_available": False,
+            "guard_error": str(exc),
+        }
+    if isinstance(raw_status, dict):
+        status_items = raw_status.items()
+    elif hasattr(raw_status, "items"):
+        status_items = cast(Any, raw_status).items()
+    else:
+        status_items = []
+    return {str(key): value for key, value in status_items}
+
+
+def _enforce_checkpoint_order_guard(
+    repository: object,
+    *,
+    source_name: str,
+    symbols: list[str],
+) -> dict[str, object]:
+    status = _get_checkpoint_order_guard_status(
+        repository,
+        source_name=source_name,
+        symbols=symbols,
+    )
+    if bool(status.get("ready", True)):
+        return status
+    stale_relevance = status.get("stale_relevance_symbols") or []
+    stale_contextual = status.get("stale_contextual_symbols") or []
+    stale_features = status.get("stale_feature_symbols") or []
+    raise RuntimeError(
+        "Ordre `event_sentiment` invalide avant `signal_aggregator` : "
+        f"relevance_backfill<{source_name}.news_ingested pour {len(stale_relevance)} symbole(s), "
+        f"contextual_scoring obsolète pour {len(stale_contextual)} symbole(s), "
+        f"features_aggregated obsolète pour {len(stale_features)} symbole(s)."
+    )
+
+
 def _build_cli_run_summary(
     *,
     config: "SentimentBoostConfig",
@@ -130,12 +260,13 @@ def _build_cli_run_summary(
             total_news = int(total_news_series.fillna(0).sum())
         if "final_score_sentiment" in enriched.columns:
             score_series = pd.Series(
-                pd.to_numeric(enriched["final_score_sentiment"], errors="coerce"),
+                [_scalar_float(value, default=float("nan")) for value in enriched["final_score_sentiment"].tolist()],
                 index=enriched.index,
+                dtype=float,
             ).dropna()
             if not score_series.empty:
-                avg_final_score_sentiment = round(float(score_series.mean()), 4)
-                max_final_score_sentiment = round(float(score_series.max()), 4)
+                avg_final_score_sentiment = round(_scalar_float(score_series.mean()), 4)
+                max_final_score_sentiment = round(_scalar_float(score_series.max()), 4)
 
     return {
         "run_id": _build_run_id("signal-aggregator"),
@@ -371,9 +502,10 @@ class SentimentSignalAggregator:
                 """
             ).bindparams(bindparam("symbols", expanding=True))
             with self.engine.connect() as conn:
-                return pd.read_sql_query(
-                    stmt, conn,
-                    params={"symbols": symbols, "cutoff": cutoff.date(), "trade_date": trade_date},
+                return _read_sql_query_dataframe(
+                    stmt,
+                    conn,
+                    params={"symbols": list(symbols), "cutoff": cutoff.date(), "trade_date": trade_date},
                 )
         except Exception:
             LOGGER.warning("ticker_daily_sentiment_features indisponible — boost sentiment desactive.")
@@ -414,9 +546,10 @@ class SentimentSignalAggregator:
                 """
             ).bindparams(bindparam("sectors", expanding=True))
             with self.engine.connect() as conn:
-                return pd.read_sql_query(
-                    stmt, conn,
-                    params={"sectors": sectors, "cutoff": cutoff.date(), "trade_date": trade_date},
+                return _read_sql_query_dataframe(
+                    stmt,
+                    conn,
+                    params={"sectors": list(sectors), "cutoff": cutoff.date(), "trade_date": trade_date},
                 )
         except Exception:
             LOGGER.warning("sector_daily_sentiment_features indisponible — boost macro desactive.")
@@ -441,11 +574,11 @@ class SentimentSignalAggregator:
         reference_ts = pd.Timestamp(reference_date).normalize()
         weights: list[float] = []
         for raw_value in trade_dates.tolist():
-            parsed = pd.to_datetime(raw_value, errors="coerce")
-            if pd.isna(parsed):
+            parsed = _parse_timestamp(raw_value)
+            if parsed is None:
                 age_days = 0
             else:
-                normalized = pd.Timestamp(parsed).normalize()
+                normalized = parsed.normalize()
                 age_days = max((reference_ts - normalized).days, 0)
             weights.append(float(np.power(0.5, age_days / half_life_days)))
         return pd.Series(weights, index=trade_dates.index, dtype=float)
@@ -600,11 +733,10 @@ class SentimentSignalAggregator:
         numeric_values: list[float] = []
         valid_values: list[float] = []
         for value in series.tolist():
-            numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
-            if pd.isna(numeric_value):
+            as_float = _scalar_float(value, default=float("nan"))
+            if np.isnan(as_float):
                 numeric_values.append(float("nan"))
             else:
-                as_float = float(numeric_value)
                 numeric_values.append(as_float)
                 valid_values.append(as_float)
 
@@ -628,13 +760,8 @@ class SentimentSignalAggregator:
 
     @staticmethod
     def _normalize_identifier(value: object) -> str | None:
-        if value is None:
+        if _is_missing_scalar(value):
             return None
-        try:
-            if bool(pd.isna(value)):
-                return None
-        except TypeError:
-            pass
         normalized = str(value).strip()
         return normalized or None
 
@@ -647,18 +774,7 @@ class SentimentSignalAggregator:
 
     @staticmethod
     def _numeric_value(value: object, default: float = 0.0) -> float:
-        if value is None:
-            return default
-        try:
-            if bool(pd.isna(value)):
-                return default
-        except TypeError:
-            pass
-        numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
-        if pd.isna(numeric_value):
-            return default
-        as_float = float(numeric_value)
-        return default if not np.isfinite(as_float) else as_float
+        return _scalar_float(value, default=default)
 
     @classmethod
     def _compute_staleness_weight(
@@ -741,12 +857,7 @@ class SentimentSignalAggregator:
                 reference_date=reference_date,
                 half_life_days=self.config.time_decay_half_life_days,
             )
-            parsed_trade_date = pd.to_datetime(trade_date_value, errors="coerce")
-            signal_age_days = (
-                max((pd.Timestamp(reference_date).normalize() - pd.Timestamp(parsed_trade_date).normalize()).days, 0)
-                if not pd.isna(parsed_trade_date)
-                else 0
-            )
+            signal_age_days = _age_days_from_reference(trade_date_value, reference_date=reference_date)
             available_count_columns = {
                 horizon: column_name
                 for horizon, column_name in count_columns.items()
@@ -803,12 +914,7 @@ class SentimentSignalAggregator:
                 reference_date=reference_date,
                 half_life_days=self.config.time_decay_half_life_days,
             )
-            parsed_trade_date = pd.to_datetime(trade_date_value, errors="coerce")
-            signal_age_days = (
-                max((pd.Timestamp(reference_date).normalize() - pd.Timestamp(parsed_trade_date).normalize()).days, 0)
-                if not pd.isna(parsed_trade_date)
-                else 0
-            )
+            signal_age_days = _age_days_from_reference(trade_date_value, reference_date=reference_date)
             rows.append(
                 {
                     "sector": typed_row.get("sector"),
@@ -870,8 +976,13 @@ class SentimentSignalAggregator:
             if "symbol" in disabled.columns:
                 disabled["symbol"] = [self._normalize_identifier(value) for value in disabled["symbol"].tolist()]
                 disabled = disabled[disabled["symbol"].notna()].copy()
+            final_score_series = (
+                disabled["final_score"]
+                if "final_score" in disabled.columns
+                else pd.Series([0.0] * len(disabled), index=disabled.index, dtype=float)
+            )
             quant = pd.Series(
-                pd.to_numeric(disabled.get("final_score"), errors="coerce"),
+                [_scalar_float(value) for value in final_score_series.tolist()],
                 index=disabled.index,
                 dtype=float,
             ).fillna(0.0).clip(0.0, 1.0)
@@ -896,7 +1007,7 @@ class SentimentSignalAggregator:
         if "sector" in result.columns:
             result["sector"] = [self._normalize_identifier(value) for value in result["sector"].tolist()]
 
-        quant_scores = pd.Series(pd.to_numeric(result["final_score"], errors="coerce"), index=result.index, dtype=float)
+        quant_scores = pd.Series([_scalar_float(value) for value in result["final_score"].tolist()], index=result.index, dtype=float)
         quant_scores = quant_scores.where(np.isfinite(quant_scores), np.nan).fillna(0.0).clip(0.0, 1.0)
         result["final_score"] = quant_scores
 
@@ -957,27 +1068,27 @@ class SentimentSignalAggregator:
                 if self._normalize_identifier(row.get("symbol")) is not None
             }
             result["sentiment_net_agg"] = [
-                ticker_map.get(symbol, {}).get("sentiment_net_agg")
+                ticker_map.get(self._normalize_identifier(symbol), {}).get("sentiment_net_agg")
                 for symbol in result["symbol"].tolist()
             ]
             result["major_event_flag_agg"] = [
-                ticker_map.get(symbol, {}).get("major_event_flag_agg")
+                ticker_map.get(self._normalize_identifier(symbol), {}).get("major_event_flag_agg")
                 for symbol in result["symbol"].tolist()
             ]
             result["total_news"] = [
-                ticker_map.get(symbol, {}).get("total_news")
+                ticker_map.get(self._normalize_identifier(symbol), {}).get("total_news")
                 for symbol in result["symbol"].tolist()
             ]
             result["signal_active"] = [
-                ticker_map.get(symbol, {}).get("signal_active")
+                ticker_map.get(self._normalize_identifier(symbol), {}).get("signal_active")
                 for symbol in result["symbol"].tolist()
             ]
             result["signal_age_days"] = [
-                ticker_map.get(symbol, {}).get("signal_age_days")
+                ticker_map.get(self._normalize_identifier(symbol), {}).get("signal_age_days")
                 for symbol in result["symbol"].tolist()
             ]
             result["signal_staleness_weight"] = [
-                ticker_map.get(symbol, {}).get("signal_staleness_weight")
+                ticker_map.get(self._normalize_identifier(symbol), {}).get("signal_staleness_weight")
                 for symbol in result["symbol"].tolist()
             ]
         else:
@@ -996,19 +1107,19 @@ class SentimentSignalAggregator:
                 if self._normalize_identifier(row.get("sector")) is not None
             }
             result["sector_impact_agg"] = [
-                sector_map.get(sector, {}).get("sector_impact_agg")
+                sector_map.get(self._normalize_identifier(sector), {}).get("sector_impact_agg")
                 for sector in result["sector"].tolist()
             ]
             result["macro_event_flag_agg"] = [
-                sector_map.get(sector, {}).get("macro_event_flag_agg")
+                sector_map.get(self._normalize_identifier(sector), {}).get("macro_event_flag_agg")
                 for sector in result["sector"].tolist()
             ]
             result["macro_signal_age_days"] = [
-                sector_map.get(sector, {}).get("macro_signal_age_days")
+                sector_map.get(self._normalize_identifier(sector), {}).get("macro_signal_age_days")
                 for sector in result["sector"].tolist()
             ]
             result["macro_signal_staleness_weight"] = [
-                sector_map.get(sector, {}).get("macro_signal_staleness_weight")
+                sector_map.get(self._normalize_identifier(sector), {}).get("macro_signal_staleness_weight")
                 for sector in result["sector"].tolist()
             ]
         else:
@@ -1018,37 +1129,13 @@ class SentimentSignalAggregator:
             result["macro_signal_staleness_weight"] = 0.0
 
         def _coalesce_float(values: list[object], default: float = 0.0) -> list[float]:
-            normalized: list[float] = []
-            for value in values:
-                if value is None or bool(pd.isna(value)):
-                    normalized.append(default)
-                else:
-                    numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
-                    as_float = default if pd.isna(numeric_value) else float(numeric_value)
-                    normalized.append(default if not np.isfinite(as_float) else as_float)
-            return normalized
+            return [_scalar_float(value, default=default) for value in values]
 
         def _coalesce_bool(values: list[object], default: bool = False) -> list[bool]:
-            normalized: list[bool] = []
-            for value in values:
-                if value is None or bool(pd.isna(value)):
-                    normalized.append(default)
-                else:
-                    normalized.append(bool(value))
-            return normalized
+            return [_scalar_bool(value, default=default) for value in values]
 
         def _coalesce_int(values: list[object], default: int = 0) -> list[int]:
-            normalized: list[int] = []
-            for value in values:
-                if value is None or bool(pd.isna(value)):
-                    normalized.append(default)
-                else:
-                    numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
-                    if pd.isna(numeric_value) or not np.isfinite(float(numeric_value)):
-                        normalized.append(default)
-                    else:
-                        normalized.append(int(numeric_value))
-            return normalized
+            return [_scalar_int(value, default=default) for value in values]
 
         result["sentiment_net_agg"] = _coalesce_float(result["sentiment_net_agg"].tolist())
         result["sector_impact_agg"] = _coalesce_float(result["sector_impact_agg"].tolist())
@@ -1110,7 +1197,7 @@ class SentimentSignalAggregator:
         )
 
         score_deltas = [
-            float(final_score_sentiment) - float(final_score)
+            _scalar_float(final_score_sentiment) - _scalar_float(final_score)
             for final_score_sentiment, final_score in zip(
                 result["final_score_sentiment"].tolist(),
                 result["final_score"].tolist(),
@@ -1195,10 +1282,10 @@ class SentimentSignalAggregator:
             return 0
         working_df = working_df.drop_duplicates(subset=["symbol"], keep="last")
 
-        now = pd.Timestamp.utcnow().replace(tzinfo=None).to_pydatetime()
+        now = _utc_now_naive()
 
         def _is_missing(value: object) -> bool:
-            return value is None or bool(pd.isna(value))
+            return _is_missing_scalar(value)
 
         float_cols = (
             "sentiment_net_agg",
@@ -1268,11 +1355,7 @@ class SentimentSignalAggregator:
                 if _is_missing(value):
                     clean_row[col] = default_value
                     continue
-                numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
-                if pd.isna(numeric_value):
-                    clean_row[col] = default_value
-                    continue
-                bounded_value = float(numeric_value)
+                bounded_value = _scalar_float(value, default=default_value)
                 if not np.isfinite(bounded_value):
                     clean_row[col] = default_value
                     continue
@@ -1288,11 +1371,7 @@ class SentimentSignalAggregator:
             if _is_missing(total_news):
                 clean_row["total_news"] = 0
             else:
-                numeric_total_news = pd.to_numeric(cast(Any, total_news), errors="coerce")
-                if pd.isna(numeric_total_news) or not np.isfinite(float(numeric_total_news)):
-                    clean_row["total_news"] = 0
-                else:
-                    clean_row["total_news"] = max(0, int(numeric_total_news))
+                clean_row["total_news"] = max(0, _scalar_int(total_news, default=0))
             clean_records.append(clean_row)
 
         update_set = ", ".join(
@@ -1375,6 +1454,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Fusion des scores quantitatifs (stock_scores) avec le sentiment FinBERT "
             "(ticker_daily_features, sector_daily_features) → met à jour final_score dans stock_scores."
         ),
+    )
+    parser.add_argument(
+        "--news-provider",
+        type=str,
+        choices=("alpaca", "finnhub", "eodhd"),
+        default="eodhd",
+        help="Provider news attendu pour vérifier le checkpoint d'ordre S2 avant la fusion signal_aggregator.",
     )
     parser.add_argument(
         "--trade-date",
@@ -1504,7 +1590,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     from database.connection import get_sqlalchemy_engine
+    from event_sentiment.db_io import EventSentimentRepository
+
     engine = get_sqlalchemy_engine()
+    repository = EventSentimentRepository()
     started_at = _utc_now_naive()
 
     def _emit_cli_progress(
@@ -1532,11 +1621,40 @@ def main(argv: list[str] | None = None) -> int:
     # 1. Chargement des scores quantitatifs depuis stock_scores
     LOGGER.info("Chargement des scores depuis stock_scores…")
     scores_df = _load_scores_from_db(engine, args.all_symbols)
+    scoped_symbols = sorted({str(symbol).strip().upper() for symbol in scores_df.get("symbol", []).tolist() if str(symbol).strip()}) if not scores_df.empty and "symbol" in scores_df.columns else []
+    ordering_guard: dict[str, object] | None = None
+    try:
+        ordering_guard = _get_checkpoint_order_guard_status(
+            repository,
+            source_name=EventSentimentConfig.for_provider(args.news_provider).source_name,
+            symbols=scoped_symbols,
+        )
+        if not bool(ordering_guard.get("ready", True)):
+            _enforce_checkpoint_order_guard(
+                repository,
+                source_name=EventSentimentConfig.for_provider(args.news_provider).source_name,
+                symbols=scoped_symbols,
+            )
+    except RuntimeError as exc:
+        finished_at = _utc_now_naive()
+        _emit_run_summary(
+            {
+                "module": "signal_aggregator",
+                "trade_date": ref_date.isoformat(),
+                "all_symbols": bool(args.all_symbols),
+                "status": "blocked",
+                "failure_reason": "event_sentiment_ordering_guard",
+                "ordering_guard": ordering_guard,
+                "error": str(exc),
+            }
+        )
+        raise
     _emit_cli_progress(
         {
             "trade_date": ref_date.isoformat(),
             "all_symbols": bool(args.all_symbols),
             "loaded_symbols": int(len(scores_df)),
+            "ordering_guard": ordering_guard,
         },
         current=1,
         total=4,
@@ -1596,7 +1714,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     _emit_run_summary(
-        _build_cli_run_summary(
+        {
+            **_build_cli_run_summary(
             config=config,
             trade_date=ref_date,
             all_symbols=bool(args.all_symbols),
@@ -1606,7 +1725,9 @@ def main(argv: list[str] | None = None) -> int:
             started_at=started_at,
             finished_at=finished_at,
             finbert_fingerprints=finbert_fingerprints,
-        )
+            ),
+            "ordering_guard": ordering_guard,
+        }
     )
     LOGGER.info(
         "=== Termine | %d symboles mis a jour dans stock_scores ===", saved

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import runpy
+import warnings
 from datetime import datetime
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -311,4 +313,34 @@ def test_cancel_all_dry_run_marks_dry_run_true(capsys) -> None:
     captured = capsys.readouterr().out
     assert "dry_run=True" in captured
 
+
+def test_execution_facade_deprecation_warning(monkeypatch) -> None:
+    captured: list[list[str]] = []
+
+    monkeypatch.setattr(exec_cli, "main", lambda argv=None: captured.append(list(argv or [])))
+    monkeypatch.setattr("sys.argv", ["python", "--broker-mode", "paper"])
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        runpy.run_module("execution_engine.__main__", run_name="__main__")
+
+    caught_warnings = list(caught or [])
+    assert captured == [[]]
+    assert any(item.category is DeprecationWarning for item in caught_warnings)
+    assert any("run_execution.py" in str(item.message) for item in caught_warnings)
+
+
+def test_execution_facade_cancel_all_does_not_warn(monkeypatch) -> None:
+    captured: list[list[str]] = []
+
+    monkeypatch.setattr(exec_cli, "main", lambda argv=None: captured.append(list(argv or [])))
+    monkeypatch.setattr("sys.argv", ["python", "cancel-all", "--dry-run"])
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        runpy.run_module("execution_engine.__main__", run_name="__main__")
+
+    caught_warnings = list(caught or [])
+    assert captured == [[]]
+    assert not [item for item in caught_warnings if item.category is DeprecationWarning]
 

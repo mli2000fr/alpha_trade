@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 import streamlit as st
@@ -45,7 +45,21 @@ _PIPELINE_SUMMARY_LABEL_OVERRIDES = {
 
 
 def _pipeline_summary_label(step) -> str:
-    return _PIPELINE_SUMMARY_LABEL_OVERRIDES.get(step.key, step.name)
+    return str(_PIPELINE_SUMMARY_LABEL_OVERRIDES.get(step.key, step.name or step.key or ""))
+
+
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +79,8 @@ def compute_daily_pnl(pnl_data: dict[str, object]) -> tuple[float, float]:
         Tuple ``(unrealized_pnl, pnl_pct)`` où ``pnl_pct`` ∈ [-1, +inf] ou ``0.0``
         si la valeur de marché est nulle.
     """
-    unrealized_pnl = float(pnl_data.get("unrealized_pnl") or 0.0)
-    total_market_value = float(pnl_data.get("total_market_value") or 0.0)
+    unrealized_pnl = _coerce_float(pnl_data.get("unrealized_pnl") or 0.0)
+    total_market_value = _coerce_float(pnl_data.get("total_market_value") or 0.0)
     cost_basis = total_market_value - unrealized_pnl
     pnl_pct = (unrealized_pnl / cost_basis) if cost_basis > 0 else 0.0
     return unrealized_pnl, pnl_pct
@@ -80,7 +94,7 @@ def _render_pnl_widget(pnl_data: dict[str, object]) -> None:
     """
     unrealized_pnl, pnl_pct = compute_daily_pnl(pnl_data)
     available = bool(pnl_data.get("available", False))
-    open_positions = int(pnl_data.get("open_positions") or 0)
+    open_positions = _coerce_int(pnl_data.get("open_positions") or 0)
     snapshot_at = pnl_data.get("snapshot_at")
 
     with st.container(border=True):
@@ -164,6 +178,37 @@ def _build_screener_objective_metrics(report: dict[str, object]) -> list[tuple[s
     return metrics
 
 
+def load_eodhd_quota_snapshot() -> dict[str, object]:
+    try:
+        from service.eodhd.quota import get_default_tracker
+
+        snapshot = get_default_tracker().snapshot()
+    except Exception:
+        return {}
+    return {
+        str(key): value
+        for key, value in dict(snapshot).items()
+    }
+
+
+def _build_eodhd_quota_feature_rows(snapshot: dict[str, object]) -> pd.DataFrame:
+    raw_feature_calls = snapshot.get("feature_calls")
+    if not isinstance(raw_feature_calls, dict) or not raw_feature_calls:
+        return pd.DataFrame()
+    rows = [
+        {
+            "feature": str(feature),
+            "calls_used": _coerce_int(calls_used or 0),
+        }
+        for feature, calls_used in raw_feature_calls.items()
+        if str(feature).strip()
+    ]
+    if not rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame(rows).sort_values(["calls_used", "feature"], ascending=[False, True]).reset_index(drop=True)
+    return frame
+
+
 def render() -> None:
     st.header("🏠 Vue d'ensemble")
     st.caption(
@@ -189,6 +234,31 @@ def render() -> None:
 
     st.success("🟢 Connexion DB OK")
 
+    quota_snapshot = load_eodhd_quota_snapshot()
+    quota_feature_rows = _build_eodhd_quota_feature_rows(quota_snapshot)
+
+    with st.container(border=True):
+        st.subheader("0.bis Quota EODHD")
+        if not quota_snapshot:
+            st.info("Aucun snapshot quota EODHD disponible pour le processus courant.")
+        else:
+            metric_row(
+                [
+                    ("Calls utilisés", _coerce_int(quota_snapshot.get("calls_used") or 0), None),
+                    ("Calls restants", _coerce_int(quota_snapshot.get("remaining_calls") or 0), None),
+                    ("Quota journalier", _coerce_int(quota_snapshot.get("daily_quota") or 0), None),
+                    (
+                        "Circuit ouvert",
+                        "oui" if bool(quota_snapshot.get("circuit_open")) else "non",
+                        None,
+                    ),
+                ]
+            )
+            if bool(quota_snapshot.get("soft_quota_reached")):
+                st.warning("⚠️ Soft quota EODHD atteint sur la journée courante.")
+            if not quota_feature_rows.empty:
+                show_dataframe(quota_feature_rows, "Calls EODHD par feature", height=180)
+
     # --- PnL positions ouvertes (Sprint S4 / A-021) ---
     _render_pnl_widget(get_daily_pnl_data())
 
@@ -204,7 +274,7 @@ def render() -> None:
     latest_exec = exec_df.iloc[0].to_dict() if not exec_df.empty else None
     exec_run_id = str(latest_exec["exec_run_id"]) if latest_exec is not None else "—"
     exec_status = str(latest_exec["status"]) if latest_exec is not None else None
-    total_filled = int(latest_exec["total_filled"]) if latest_exec is not None else 0
+    total_filled = _coerce_int(cast(Any, latest_exec["total_filled"])) if latest_exec is not None else 0
 
     candidates_value = int(candidates)
     risk_run_value = risk_run or "—"

@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Iterator, Sequence, cast
+from typing import Any, Iterator, Literal, Sequence, cast
 from uuid import uuid4
 
 from common.utils import configure_root_logging
@@ -455,6 +455,19 @@ def main(argv: list[str] | None = None) -> int:
         ingestion_source=str(args.ingestion_source or "").strip().lower() or None,
         ticker_symbols=ticker_symbols,
     )
+    checkpoint_provider = cast(Literal["alpaca", "finnhub", "eodhd"], str(args.ingestion_source or "eodhd").strip().lower() or "eodhd")
+    checkpoint_symbols = service.repository.list_ticker_map_symbols(
+        start_date=start_date,
+        end_date=end_date,
+        ingestion_source=str(args.ingestion_source or "").strip().lower() or None,
+        symbols=ticker_symbols,
+    )
+    if checkpoint_symbols:
+        service.repository.touch_checkpoint_stage(
+            EventSentimentConfig.for_provider(checkpoint_provider).source_name,
+            checkpoint_symbols,
+            stage="features_aggregated",
+        )
     finished_at = _utc_now_naive()
     _emit_run_summary(
         {

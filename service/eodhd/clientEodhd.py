@@ -109,6 +109,7 @@ def _do_request(
     params: dict[str, Any],
     session: Optional[requests.Session],
     tracker: EodhdQuotaTracker,
+    feature: str | None = None,
 ) -> Any:
     """Effectue un GET avec gestion quota + telemetry + retry."""
     tracker.reserve(endpoint)
@@ -118,7 +119,7 @@ def _do_request(
         response = request_with_retry(sess, "GET", url, params=params, policy=_retry_policy())
     except requests.exceptions.Timeout as exc:
         _telemetry_bump(TELEMETRY_CLIENT, "timeout_total")
-        tracker.record_failure(endpoint, count_call=False)
+        tracker.record_failure(endpoint, feature=feature, count_call=False)
         raise EodhdBarsFetchError(f"timeout EODHD ({endpoint}): {_redact_sensitive_text(str(exc))}") from exc
     except requests.exceptions.HTTPError as exc:
         status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -132,6 +133,7 @@ def _do_request(
             _telemetry_bump(TELEMETRY_CLIENT, "5xx_total")
         tracker.record_failure(
             endpoint,
+            feature=feature,
             count_call=True,
             count_towards_circuit=(status != 404),
         )
@@ -143,10 +145,10 @@ def _do_request(
             ) from exc
         raise EodhdBarsFetchError(f"HTTP {status} sur {endpoint}: {_redact_sensitive_text(str(exc))}") from exc
     except requests.exceptions.RequestException as exc:
-        tracker.record_failure(endpoint, count_call=False)
+        tracker.record_failure(endpoint, feature=feature, count_call=False)
         raise EodhdBarsFetchError(f"erreur réseau EODHD ({endpoint}): {_redact_sensitive_text(str(exc))}") from exc
 
-    tracker.record_success(endpoint)
+    tracker.record_success(endpoint, feature=feature)
     _telemetry_bump(TELEMETRY_CLIENT, "success_total")
     try:
         return response.json()
@@ -167,6 +169,7 @@ def fetch_eod_bulk(
     fmt: str = "json",
     session: Optional[requests.Session] = None,
     tracker: Optional[EodhdQuotaTracker] = None,
+    feature: str | None = None,
 ) -> list[dict]:
     """Bulk last-day pour un exchange entier (~7 000 symboles US).
 
@@ -189,6 +192,7 @@ def fetch_eod_bulk(
         params=params,
         session=session,
         tracker=tracker or get_default_tracker(),
+        feature=feature,
     )
     if not isinstance(payload, list):
         raise EodhdBarsFetchError(f"bulk payload inattendu (type={type(payload).__name__})")
@@ -204,6 +208,7 @@ def fetch_eod(
     fmt: str = "json",
     session: Optional[requests.Session] = None,
     tracker: Optional[EodhdQuotaTracker] = None,
+    feature: str | None = None,
 ) -> list[dict]:
     """Historique pour un symbole projet (mappé automatiquement vers ``X.US``).
 
@@ -226,6 +231,7 @@ def fetch_eod(
         params=params,
         session=session,
         tracker=tracker or get_default_tracker(),
+        feature=feature,
     )
     if not isinstance(payload, list):
         raise EodhdBarsFetchError(f"eod payload inattendu pour {symbol}")
@@ -240,6 +246,7 @@ def fetch_splits(
     fmt: str = "json",
     session: Optional[requests.Session] = None,
     tracker: Optional[EodhdQuotaTracker] = None,
+    feature: str | None = None,
 ) -> list[dict]:
     """Splits pour un symbole projet — 1 call.
 
@@ -261,6 +268,7 @@ def fetch_splits(
         params=params,
         session=session,
         tracker=tracker or get_default_tracker(),
+        feature=feature,
     )
     if not isinstance(payload, list):
         raise EodhdBarsFetchError(f"splits payload inattendu pour {symbol}")
@@ -275,6 +283,7 @@ def fetch_dividends(
     fmt: str = "json",
     session: Optional[requests.Session] = None,
     tracker: Optional[EodhdQuotaTracker] = None,
+    feature: str | None = None,
 ) -> list[dict]:
     """Dividendes pour un symbole projet — 1 call.
 
@@ -296,6 +305,7 @@ def fetch_dividends(
         params=params,
         session=session,
         tracker=tracker or get_default_tracker(),
+        feature=feature,
     )
     if not isinstance(payload, list):
         raise EodhdBarsFetchError(f"dividends payload inattendu pour {symbol}")
@@ -308,6 +318,7 @@ def fetch_fundamentals(
     fmt: str = "json",
     session: Optional[requests.Session] = None,
     tracker: Optional[EodhdQuotaTracker] = None,
+    feature: str | None = None,
 ) -> dict[str, Any]:
     """Fondamentaux société pour un symbole projet — 1 call.
 
@@ -327,6 +338,7 @@ def fetch_fundamentals(
         params=params,
         session=session,
         tracker=tracker or get_default_tracker(),
+        feature=feature,
     )
     if not isinstance(payload, dict):
         raise EodhdBarsFetchError(f"fundamentals payload inattendu pour {symbol}")

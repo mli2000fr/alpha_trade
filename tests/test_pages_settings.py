@@ -96,6 +96,14 @@ def test_prepare_var_env_export_reads_csv_only_on_explicit_call(monkeypatch, tmp
     assert payload["data"] == sample_csv
 
 
+def test_ihm_settings_micro_preset_banner() -> None:
+    message = settings._build_micro_capital_preset_warning_message()
+
+    assert message is not None
+    assert "concentration maximale" in message
+    assert "0 → 2 000 €" in message
+
+
 @pytest.mark.e2e
 def test_environment_variable_settings_panel_renders(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("LOGIN_DB", "demo")

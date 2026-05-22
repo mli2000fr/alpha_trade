@@ -392,6 +392,19 @@ def main() -> None:
             rescore_all=bool(args.rescore_all),
         )
         summary.update(relevance_stats)
+        if not args.dry_run:
+            checkpoint_symbols = repository.list_ticker_map_symbols(
+                start_date=_parse_date(args.start_date),
+                end_date=_parse_date(args.end_date),
+                ingestion_source=news_provider,
+                symbols=symbols,
+            )
+            if checkpoint_symbols:
+                repository.touch_checkpoint_stage(
+                    config.source_name,
+                    checkpoint_symbols,
+                    stage="relevance_backfilled",
+                )
 
         if args.purge_below is not None:
             purge_stats = service.purge_below(
@@ -422,6 +435,19 @@ def main() -> None:
             dry_run=bool(args.dry_run),
         )
         summary.update(ctx_stats)
+        if not args.dry_run:
+            checkpoint_symbols = repository.list_ticker_map_symbols(
+                start_date=_parse_date(args.start_date),
+                end_date=_parse_date(args.end_date),
+                ingestion_source=news_provider,
+                symbols=symbols,
+            )
+            if checkpoint_symbols:
+                repository.touch_checkpoint_stage(
+                    config.source_name,
+                    checkpoint_symbols,
+                    stage="contextual_scored",
+                )
 
     finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
     summary["finished_at"] = finished_at.isoformat(timespec="seconds")

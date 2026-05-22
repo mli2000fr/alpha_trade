@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import cast
 
 import pandas as pd
+import pytest
 
 from database import connection as db_connection
+from event_sentiment import db_io as event_db_io
 from event_sentiment import cli, signal_aggregator
 from event_sentiment.models import ContextualSentimentRecord
 
@@ -572,4 +575,43 @@ def test_signal_aggregator_main_emits_structured_summary(monkeypatch, capsys) ->
     assert payload["total_news"] == 6
     assert payload["avg_final_score_sentiment"] == 0.73
     assert payload["max_final_score_sentiment"] == 0.82
+
+
+def test_signal_aggregator_main_emits_blocked_summary_when_ordering_guard_fails(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(signal_aggregator, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(db_connection, "get_sqlalchemy_engine", lambda: object())
+    monkeypatch.setattr(
+        signal_aggregator,
+        "_load_scores_from_db",
+        lambda engine, all_symbols: pd.DataFrame([
+            {"symbol": "AAPL", "sector": "Tech", "final_score": 0.75},
+        ]),
+    )
+
+    class _BlockedRepository:
+        def get_signal_aggregator_guard_status(self, *, source_name, symbols):
+            return {
+                "source_name": source_name,
+                "scoped_symbols": len(symbols),
+                "checkpoint_rows": len(symbols),
+                "symbols_with_news": len(symbols),
+                "stale_relevance_symbols": ["AAPL"],
+                "stale_contextual_symbols": [],
+                "stale_feature_symbols": [],
+                "ready": False,
+            }
+
+    monkeypatch.setattr(event_db_io, "EventSentimentRepository", lambda: _BlockedRepository())
+
+    with pytest.raises(RuntimeError):
+        signal_aggregator.main(["--trade-date", "2026-04-19", "--allow-rerun"])
+
+    payloads = _payloads_from_output(capsys.readouterr().out.strip(), signal_aggregator.RUN_SUMMARY_PREFIX)
+    payload = payloads[-1]
+    ordering_guard = cast(dict[str, object], payload["ordering_guard"])
+    assert payload["status"] == "blocked"
+    assert payload["failure_reason"] == "event_sentiment_ordering_guard"
+    assert ordering_guard["ready"] is False
+    assert ordering_guard["stale_relevance_symbols"] == ["AAPL"]
+
 

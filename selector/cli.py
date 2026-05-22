@@ -37,7 +37,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--liquidity-threshold", type=float, default=None, help="Seuil minimal de liquidité en dollar volume moyen 20j")
     parser.add_argument("--min-close", type=float, default=None, help="Prix minimal de clôture")
     parser.add_argument("--max-volatility-ratio", type=float, default=None, help="Seuil maximal optionnel du ratio de volatilité récente vol10/vol60")
-    parser.add_argument("--min-relative-strength-index", type=float, default=None, help="Force relative minimale vs SPY (100 = performance égale au benchmark)")
+    parser.add_argument(
+        "--min-ibd-rs-rank",
+        "--min-relative-strength-index",
+        dest="min_relative_strength_index",
+        type=float,
+        default=None,
+        help="IBD RS Rank minimal vs SPY (alias legacy: --min-relative-strength-index ; 100 = performance égale au benchmark)",
+    )
     parser.add_argument("--min-high-52w-proximity", type=float, default=None, help="Proximité minimale du high 52 semaines en ratio close/high_52w")
     parser.add_argument("--min-weekly-trend-score", type=float, default=None, help="Score trend weekly minimal sur [0,1]")
     parser.add_argument("--min-atr-pct-20", type=float, default=None, help="ATR20 minimale en pourcentage du prix, ex. 0.02 = 2%%")
@@ -196,7 +203,9 @@ def main() -> None:
     getter = getattr(scanner, "get_aggregated_filter_stats", None)
     if callable(getter):
         try:
-            rejected_by_filter = {str(k): int(v) for k, v in dict(getter()).items()}
+            raw_filter_stats = getter()
+            if isinstance(raw_filter_stats, dict):
+                rejected_by_filter = {str(k): int(v) for k, v in raw_filter_stats.items()}
         except Exception:
             rejected_by_filter = {}
 
@@ -236,4 +245,3 @@ def main() -> None:
 
 
 __all__ = ["main", "_build_arg_parser", "_build_config_from_args"]
-

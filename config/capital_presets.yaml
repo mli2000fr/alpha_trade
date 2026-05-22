@@ -12,7 +12,7 @@ presets:
     description: "Micro-compte cash (~2 000 EUR / 2 150 USD). Concentration assumée (3 lignes), ticket minimum bas, filtres selector relâchés pour ne pas vider l'univers, frais de transaction à monter manuellement à 25 bps en backtest pour refléter le coût des petits ordres."
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.015                # 1.5 % = ~30 € risqués / trade
+      risk_per_trade_pct: 0.01                 # Sprint S1 / A-001 — 1.0 % max sur micro-compte
       risk_max_positions: 3                     # 3 lignes ≈ 600-700 € chacune — A-001 fix
       risk_max_position_weight: 0.35           # 35 % par ligne (concentration assumée)
       risk_max_sector_weight: 0.55             # 1 secteur peut héberger 2 lignes /3
@@ -46,7 +46,8 @@ presets:
       selector_liquidity_threshold: 5000000.0
       selector_min_close: 10.0                 # min 10$ : limite l'impact des frais fixes
       selector_max_volatility_ratio: 1.0
-      selector_min_relative_strength_index: 90.0
+      selector_min_ibd_rs_rank: 90.0           # Sprint S1 / A-028 — nouveau nom explicite
+      selector_min_relative_strength_index: 90.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.55
       selector_min_weekly_trend_score: 0.65
       selector_min_atr_pct_20: 0.01
@@ -56,7 +57,7 @@ presets:
       selector_max_spread_bps: 80.0            # spreads plus larges acceptés
       selector_max_spread_bps_iex: 100.0       # relâchement IEX >= max_spread_bps
       selector_earnings_blackout_days: 2
-      selector_max_anomaly_count: 28
+      selector_max_anomaly_count: 15
       selector_require_above_ma200: true
 
   - key: capital_0_5000
@@ -66,7 +67,7 @@ presets:
     description: "Petit compte swing cash : lignes concentrées, ticket minimum réduit et filtres selector légèrement relâchés pour conserver quelques opportunités exécutables."
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.02
+      risk_per_trade_pct: 0.0125               # Sprint S1 / A-001 — 1.25 % max sur 2–5k$
       # Sprint Market-Aware — petit compte : ``allowed_slots = floor(equity / 500)``
       # garantit qu'aucun ordre <150–155 USD ne sera proposé en cash (cf. plan §5.2).
       risk_max_positions: 4
@@ -101,7 +102,8 @@ presets:
       selector_liquidity_threshold: 10000000.0
       selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 5.0)
       selector_max_volatility_ratio: 1.0
-      selector_min_relative_strength_index: 95.0
+      selector_min_ibd_rs_rank: 95.0
+      selector_min_relative_strength_index: 95.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.65
       selector_min_weekly_trend_score: 0.75
       selector_min_atr_pct_20: 0.01
@@ -111,7 +113,7 @@ presets:
       selector_max_spread_bps: 60.0
       selector_max_spread_bps_iex: 80.0
       selector_earnings_blackout_days: 2
-      selector_max_anomaly_count: 25
+      selector_max_anomaly_count: 16
       selector_require_above_ma200: true
 
   - key: capital_5001_10000
@@ -154,7 +156,8 @@ presets:
       selector_liquidity_threshold: 15000000.0
       selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 7.0)
       selector_max_volatility_ratio: 0.95
-      selector_min_relative_strength_index: 98.0
+      selector_min_ibd_rs_rank: 98.0
+      selector_min_relative_strength_index: 98.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.70
       selector_min_weekly_trend_score: 0.80
       selector_min_atr_pct_20: 0.0125
@@ -164,7 +167,7 @@ presets:
       selector_max_spread_bps: 55.0
       selector_max_spread_bps_iex: 75.0
       selector_earnings_blackout_days: 3
-      selector_max_anomaly_count: 24
+      selector_max_anomaly_count: 18
       selector_require_above_ma200: true
 
   - key: capital_10001_25000
@@ -207,7 +210,8 @@ presets:
       selector_liquidity_threshold: 20000000.0
       selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 8.0)
       selector_max_volatility_ratio: 0.90
-      selector_min_relative_strength_index: 100.0
+      selector_min_ibd_rs_rank: 100.0
+      selector_min_relative_strength_index: 100.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.72
       selector_min_weekly_trend_score: 0.85
       selector_min_atr_pct_20: 0.015
@@ -217,7 +221,7 @@ presets:
       selector_max_spread_bps: 50.0
       selector_max_spread_bps_iex: 70.0
       selector_earnings_blackout_days: 3
-      selector_max_anomaly_count: 22
+      selector_max_anomaly_count: 20
       selector_require_above_ma200: true
 
   - key: capital_25001_50000
@@ -260,7 +264,8 @@ presets:
       selector_liquidity_threshold: 25000000.0
       selector_min_close: 10.0
       selector_max_volatility_ratio: 0.90
-      selector_min_relative_strength_index: 100.0
+      selector_min_ibd_rs_rank: 100.0
+      selector_min_relative_strength_index: 100.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.75
       selector_min_weekly_trend_score: 0.90
       selector_min_atr_pct_20: 0.015
@@ -270,7 +275,7 @@ presets:
       selector_max_spread_bps: 45.0
       selector_max_spread_bps_iex: 65.0
       selector_earnings_blackout_days: 3
-      selector_max_anomaly_count: 20
+      selector_max_anomaly_count: 21
       selector_require_above_ma200: true
 
   - key: capital_50001_100000
@@ -313,7 +318,8 @@ presets:
       selector_liquidity_threshold: 30000000.0
       selector_min_close: 10.0
       selector_max_volatility_ratio: 0.90
-      selector_min_relative_strength_index: 100.0
+      selector_min_ibd_rs_rank: 100.0
+      selector_min_relative_strength_index: 100.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.75
       selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015
@@ -323,7 +329,7 @@ presets:
       selector_max_spread_bps: 40.0
       selector_max_spread_bps_iex: 60.0
       selector_earnings_blackout_days: 3
-      selector_max_anomaly_count: 20
+      selector_max_anomaly_count: 22
       selector_require_above_ma200: true
 
   - key: capital_100001_plus
@@ -366,7 +372,8 @@ presets:
       selector_liquidity_threshold: 40000000.0
       selector_min_close: 12.0
       selector_max_volatility_ratio: 0.85
-      selector_min_relative_strength_index: 102.0
+      selector_min_ibd_rs_rank: 102.0
+      selector_min_relative_strength_index: 102.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.78
       selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015

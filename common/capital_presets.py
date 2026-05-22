@@ -16,6 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CAPITAL_PRESETS_CONFIG_PATH = PROJECT_ROOT / "config" / "capital_presets.yaml"
 DETECTED_EQUITY_PLACEHOLDER = "__DETECTED_EQUITY__"
 DEFAULT_CAPITAL_PRESET_KEY = "capital_0_2000_eur"
+SELECTOR_RS_ALIAS_KEY = "selector_min_ibd_rs_rank"
+SELECTOR_RS_LEGACY_KEY = "selector_min_relative_strength_index"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,13 +41,20 @@ class CapitalPreset:
     def to_session_state_values(self, *, detected_equity: float | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {}
         for option_key, raw_value in self.values.items():
-            session_key = option_key if option_key.startswith("pipeline_") else f"pipeline_{option_key}"
+            normalized_option_key = (
+                SELECTOR_RS_LEGACY_KEY if option_key == SELECTOR_RS_ALIAS_KEY else option_key
+            )
+            session_key = (
+                normalized_option_key
+                if normalized_option_key.startswith("pipeline_")
+                else f"pipeline_{normalized_option_key}"
+            )
             if raw_value == DETECTED_EQUITY_PLACEHOLDER:
                 if detected_equity is None or detected_equity <= 0:
                     continue
                 payload[session_key] = float(detected_equity)
                 continue
-            payload[session_key] = _normalize_option_value(option_key, raw_value)
+            payload[session_key] = _normalize_option_value(normalized_option_key, raw_value)
         return payload
 
 
@@ -205,13 +214,20 @@ def build_screener_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str,
 
 def build_selector_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str, Any]:
     values = preset.values
+    rs_threshold = values.get(SELECTOR_RS_ALIAS_KEY)
+    if rs_threshold is None:
+        rs_threshold = values.get(SELECTOR_RS_LEGACY_KEY, 100.0)
+    rs_threshold_value = _coerce_float(
+        rs_threshold if rs_threshold is not None else 100.0,
+        field_name=f"{preset.key}.{SELECTOR_RS_ALIAS_KEY}",
+    )
     return {
         "selection_size": int(values.get("selector_selection_size", 50)),
         "sector_cap_ratio": float(values.get("selector_sector_cap_ratio", 0.28)),
         "liquidity_threshold": float(values.get("selector_liquidity_threshold", 30_000_000.0)),
         "min_close": float(values.get("selector_min_close", 10.0)),
         "max_volatility_ratio": float(values.get("selector_max_volatility_ratio", 0.9)),
-        "min_relative_strength_index": float(values.get("selector_min_relative_strength_index", 100.0)),
+        "min_relative_strength_index": rs_threshold_value,
         "min_high_52w_proximity": float(values.get("selector_min_high_52w_proximity", 0.75)),
         "min_weekly_trend_score": float(values.get("selector_min_weekly_trend_score", 1.0)),
         "min_atr_pct_20": float(values.get("selector_min_atr_pct_20", 0.015)),

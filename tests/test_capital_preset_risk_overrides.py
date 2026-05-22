@@ -132,6 +132,12 @@ def test_positions_notional_solvency(presets):
         )
 
 
+def test_capital_preset_risk_per_trade_micro(presets):
+    micro = next((p for p in presets if p.key == "capital_0_2000_eur"), None)
+    assert micro is not None, "Preset capital_0_2000_eur non trouvé"
+    assert float(micro.values["risk_per_trade_pct"]) == pytest.approx(0.01)
+
+
 def test_micro_account_max_positions_coherent(presets):
     """[A-001] Le preset capital_0_2000_eur doit avoir au plus 5 positions.
 
