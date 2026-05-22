@@ -23,6 +23,22 @@
 
 > \➡️ **Provider NEWS par défaut : `Alpaca`** (import et scoring des news, paramètre `--news-provider` par défaut à `alpaca` dans les scripts).
 
+> 📚 **Références transverses S7** :
+> `doc/CONVENTIONS.md` centralise désormais les conventions canoniques ;
+> `doc/CHANGELOG.md` trace les changements documentaires visibles.
+
+---
+
+## 0. État des sprints au 2026-05-22
+
+- **S1** : livré et revalidé (micro-comptes, alias `selector_min_ibd_rs_rank`, doctrine de dépréciation `execution_engine`).
+- **S2** : noyau livré, y compris le reliquat A-004 désormais exposé via le proxy
+  `quote_iex_vs_consolidated_bps` dans les `run_summary` de `sync_latest_quotes`.
+- **S3** : robustesse réelle swing confirmée (réconciliation J+1, TCA agrégé, gel IHM live).
+- **S4** : convention corrélation et oracle total return documentés / testés.
+- **S5** : signatures d’artefacts ML et doctrine failover broker livrées.
+- **S6** : `macro_provider=composite`, Kelly conditionnel (≥ 25 k$), clarification drawdown et SMTP.
+
 ---
 
 ## 1. Présentation Générale du Projet
@@ -109,6 +125,10 @@ Cette logique n'est plus limitée au backtest : le module `execution_engine` app
 - **Filtre market cap** : exclusion des petites capitalisations sous `2 Md$`
 - **Filtre bêta** : calcul local `beta_126` vs `SPY`, utilisé pour exiger un comportement suffisamment directionnel
 - **Filtre spread** : exclusion des titres au spread bid/ask trop large via les snapshots de quotes Alpaca
+- **Observabilité biais quotes IEX** : `sync_latest_quotes` publie aussi le proxy
+  `quote_iex_vs_consolidated_bps`, soit l’écart moyen absolu (en bps) entre
+  le mid bid/ask IEX et `stock_bars_daily.close` sur la même séance quand le
+  close consolidé est disponible
 - **Blackout earnings** : exclusion des titres publiant dans les `3` prochains jours
 - **Score composite** : `50% × (trend+vcp)/2 + 30% × score_screener + 20% × RSI_relatif`
 - **Neutralisation sectorielle** : z-score intra-secteur pour éliminer les biais sectoriels

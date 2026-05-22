@@ -19,11 +19,15 @@ DOC_DIR = PROJECT_ROOT / "doc"
 INDEX_PATH = DOC_DIR / "INDEX.md"
 
 _H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+_FENCED_CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
 def _category(path: Path) -> str:
     name = path.name.lower()
     parts = path.relative_to(DOC_DIR).parts
+    if name in {"conventions.md", "changelog.md", "doc_fonctionnelle.md", "doc_technique.md"}:
+        return "Documentation centrale"
     if "architecture" in parts:
         return "Architecture"
     if name.startswith("runbook"):
@@ -34,7 +38,7 @@ def _category(path: Path) -> str:
         return "Tests & Vérification"
     if "api" in name or "deprecation" in name:
         return "API & Stabilité"
-    if "onboarding" in name or "guide" in name or "DOC_" in name:
+    if "onboarding" in name or "guide" in name or name.startswith("doc_"):
         return "Documentation utilisateur"
     if "perf" in name or "async" in name:
         return "Performance"
@@ -44,9 +48,20 @@ def _category(path: Path) -> str:
     return "Divers"
 
 
+def _sanitize_markdown_for_meta_extraction(text: str) -> str:
+    sanitized = text.lstrip("\ufeff")
+    sanitized = _FENCED_CODE_BLOCK_RE.sub("", sanitized)
+    sanitized = _HTML_COMMENT_RE.sub("", sanitized)
+    return sanitized
+
+
+def _escape_markdown_table_cell(value: str) -> str:
+    return " ".join(value.replace("|", r"\|").split())
+
+
 def _read_meta(path: Path) -> tuple[str, str]:
     try:
-        text = path.read_text("utf-8")
+        text = _sanitize_markdown_for_meta_extraction(path.read_text("utf-8"))
     except Exception:
         return path.stem, ""
     h1 = _H1_RE.search(text)
@@ -101,8 +116,9 @@ def generate() -> str:
         out.append("|---|---|---|")
         for title, path, desc in sorted(by_cat[cat], key=lambda x: x[1].name):
             rel = path.relative_to(DOC_DIR).as_posix()
-            short_desc = (desc or "—")[:140]
-            out.append(f"| [`{rel}`]({rel}) | {title} | {short_desc} |")
+            escaped_title = _escape_markdown_table_cell(title)
+            short_desc = _escape_markdown_table_cell((desc or "—")[:140])
+            out.append(f"| [`{rel}`]({rel}) | {escaped_title} | {short_desc} |")
         out.append("")
     return "\n".join(out) + "\n"
 

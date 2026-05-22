@@ -55,6 +55,15 @@ def test_sync_latest_quotes_main_emits_structured_summary(monkeypatch, capsys) -
         "sync_latest_quotes",
         lambda limit, batch_size, from_date=None, to_date=None, symbol_source=None: {"symbols": int(limit or 0), "rows_upserted": int(batch_size)},
     )
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "build_quote_iex_vs_consolidated_bias_summary",
+        lambda **kwargs: {
+            "quote_iex_vs_consolidated_status": "ok",
+            "quote_iex_vs_consolidated_bps": 42.5,
+            "quote_iex_vs_consolidated_observations": 11,
+        },
+    )
 
     sync_latest_quotes.main()
 
@@ -65,6 +74,92 @@ def test_sync_latest_quotes_main_emits_structured_summary(monkeypatch, capsys) -
     assert payload["requested_limit"] == 12
     assert payload["batch_size"] == 34
     assert payload["symbols"] == 12
+    assert payload["rows_upserted"] == 34
+    assert payload["quote_iex_vs_consolidated_status"] == "ok"
+    assert payload["quote_iex_vs_consolidated_bps"] == 42.5
+    assert payload["quote_iex_vs_consolidated_observations"] == 11
+
+
+def test_sync_latest_quotes_main_emits_failed_summary_when_sync_raises(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sync_latest_quotes, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(sync_latest_quotes, "record_quotes_audit_run", lambda **kwargs: None)
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "_build_arg_parser",
+        lambda: type(
+            "_Parser",
+            (),
+            {
+                "parse_args": lambda self: argparse.Namespace(
+                    from_date="2026-04-01",
+                    to_date="2026-04-15",
+                    symbol_source="candidates",
+                    limit=5,
+                    batch_size=10,
+                    start_symbol=" msft ",
+                )
+            },
+        )(),
+    )
+    monkeypatch.setattr(sync_latest_quotes, "sync_latest_quotes", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    try:
+        sync_latest_quotes.main()
+    except RuntimeError as exc:
+        assert str(exc) == "boom"
+    else:  # pragma: no cover - garde défensive
+        raise AssertionError("RuntimeError attendue")
+
+    payload = _payload_from_stdout(capsys.readouterr().out.strip(), sync_latest_quotes.RUN_SUMMARY_PREFIX)
+    assert payload["audit_status"] == "failed"
+    assert payload["error_message"] == "RuntimeError('boom')"
+    assert payload["symbol_source"] == "candidates"
+    assert payload["start_symbol"] == "MSFT"
+    assert payload["symbols"] == 0
+    assert payload["rows_upserted"] == 0
+
+
+def test_sync_latest_quotes_main_falls_back_to_unavailable_bias_summary_when_proxy_raises(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sync_latest_quotes, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(sync_latest_quotes, "record_quotes_audit_run", lambda **kwargs: None)
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "_build_arg_parser",
+        lambda: type(
+            "_Parser",
+            (),
+            {
+                "parse_args": lambda self: argparse.Namespace(
+                    from_date="2026-04-01",
+                    to_date="2026-04-15",
+                    symbol_source="stock_scores_history",
+                    limit=12,
+                    batch_size=34,
+                    start_symbol=None,
+                )
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "sync_latest_quotes",
+        lambda **kwargs: {"symbols": 12, "rows_upserted": 34},
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "build_quote_iex_vs_consolidated_bias_summary",
+        lambda **kwargs: (_ for _ in ()).throw(ValueError("bias helper down")),
+    )
+
+    sync_latest_quotes.main()
+
+    payload = _payload_from_stdout(capsys.readouterr().out.strip(), sync_latest_quotes.RUN_SUMMARY_PREFIX)
+    assert payload["audit_status"] == "success"
+    assert payload["quote_iex_vs_consolidated_status"] == "unavailable"
+    assert payload["quote_iex_vs_consolidated_window_mode"] == "historical"
+    assert payload["quote_iex_vs_consolidated_window_start"] == "2026-04-01"
+    assert payload["quote_iex_vs_consolidated_window_end"] == "2026-04-15"
+    assert payload["quote_iex_vs_consolidated_symbol_scope"] == "stock-scores-history"
     assert payload["rows_upserted"] == 34
 
 

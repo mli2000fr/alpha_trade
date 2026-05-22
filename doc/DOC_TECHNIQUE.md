@@ -19,6 +19,22 @@
 >
 > \➡️ **Provider NEWS par défaut : `Alpaca`** (cf. scripts d'import et scoring, paramètre `--news-provider` par défaut à `alpaca`).
 
+> 📚 **Références transverses S7** : `doc/CONVENTIONS.md` (conventions
+> canoniques), `doc/CHANGELOG.md` (journal documentaire).
+
+---
+
+## 0. État de référence sprints S1–S6 (2026-05-22)
+
+- **S1** : durcissement micro-comptes et doctrine de compatibilité `execution_engine` livré.
+- **S2** : observabilité quotes/earnings industrialisée ; le proxy
+  `quote_iex_vs_consolidated_bps` documente désormais explicitement l’écart
+  IEX mid vs `stock_bars_daily.close` même séance.
+- **S3** : point d’entrée canonique de réconciliation broker et gel IHM live livrés.
+- **S4** : convention corrélation / total return verrouillée par tests.
+- **S5** : signatures SHA-256 d’artefacts ML et doctrine failover broker exposées.
+- **S6** : `macro_provider=composite`, Kelly conditionnel ≥ 25 k$, bandeaux SMTP.
+
 ---
 
 ## 1. Architecture Générale
@@ -38,6 +54,8 @@ alpha_trade/
 ├── doc/
 │   ├── DOC_FONCTIONNELLE.md      ← Documentation fonctionnelle complète
 │   └── DOC_TECHNIQUE.md          ← Ce document
+│   ├── CONVENTIONS.md            ← Source unique des conventions canoniques
+│   └── CHANGELOG.md              ← Journal synthétique des changements doc
 ├── core/interfaces.py            ← Contrats (Protocol) : PriceRepository, RiskChecker, etc.
 ├── common/utils.py               ← Calendrier NYSE, RotatingFileHandler, load_config()
 ├── database/                     ← Persistance MySQL (SQLAlchemy + pymysql)
@@ -108,6 +126,10 @@ Points d'implémentation importants :
 - les filtres `market_cap`, `beta_126`, `spread_bps` et `earnings_blackout` sont appliqués dans `apply_filters()` après enrichissement via `stock_metadata`, `stock_quote_snapshots` et `stock_earnings_calendar` ;
 - `beta_126` est calculé localement contre `SPY` à partir des rendements journaliers alignés ;
 - `fetch_quote_snapshots(..., reference_date=...)` et `fetch_next_earnings(..., reference_date=...)` permettent au live et au backfill PIT de réutiliser exactement les mêmes règles métier.
+- `dataIntegrityEngine.sync_latest_quotes` publie un proxy
+  `quote_iex_vs_consolidated_bps` (moyenne absolue en bps) pour mesurer le
+  biais potentiel des quotes Alpaca/IEX par rapport au close consolidé
+  `stock_bars_daily.close` sur la même séance.
 
 **`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction portefeuille : enrichir candidats (conviction score) → trier par conviction DESC → filtre corrélation → sizing ATR/Kelly → check contraintes → ACCEPTED / REDUCED / REJECTED.
 

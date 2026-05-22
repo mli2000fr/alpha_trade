@@ -10,10 +10,12 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import requests
+from sqlalchemy import bindparam, text
 
 from common.market_calendar import get_nyse_session_bounds, nyse_session_dates
 from common.utils import configure_root_logging
 from database.cleaning_audits import record_quotes_audit_run
+from database.connection import get_sqlalchemy_engine
 from database.selector_reference import (
     get_quote_snapshot_resume_state,
     list_symbols_for_source,
@@ -31,6 +33,7 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 200
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 MARKET_TZ = ZoneInfo("America/New_York")
+QUOTE_IEX_BIAS_PROXY_NAME = "same_session_mid_vs_stock_bars_daily_close"
 HISTORICAL_CLOSE_PRIMARY_LOOKBACK_MINUTES = 10
 HISTORICAL_CLOSE_FALLBACK_LOOKBACK_MINUTES = 45
 HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS = 10
@@ -260,6 +263,19 @@ def _to_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _coerce_sql_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
 def _normalize_quote_window(
     from_date: date | None,
     to_date: date | None,
@@ -271,6 +287,231 @@ def _normalize_quote_window(
     if resolved_start > resolved_end:
         raise ValueError("from_date doit être antérieure ou égale à to_date.")
     return resolved_start, resolved_end
+
+
+def _iter_symbol_batches(symbols: list[str], *, batch_size: int = 500) -> list[list[str]]:
+    if batch_size < 1:
+        raise ValueError("batch_size doit être supérieur ou égal à 1.")
+    return [symbols[index:index + batch_size] for index in range(0, len(symbols), batch_size)]
+
+
+def _resolve_quote_bias_window(
+    from_date: date | None,
+    to_date: date | None,
+) -> tuple[date, date, str]:
+    resolved_from_date, resolved_to_date = _normalize_quote_window(from_date, to_date)
+    if resolved_from_date is None or resolved_to_date is None:
+        market_date = _market_date_from_timestamp(None)
+        return market_date, market_date, "latest"
+    return resolved_from_date, resolved_to_date, "historical"
+
+
+def _load_quote_rows_for_bias(
+    *,
+    symbols: list[str],
+    from_date: date,
+    to_date: date,
+) -> list[dict[str, object]]:
+    if not symbols:
+        return []
+    stmt = text(
+        """
+        SELECT symbol, quote_date, bid_price, ask_price
+        FROM stock_quote_snapshots
+        WHERE symbol IN :symbols
+          AND quote_date BETWEEN :from_date AND :to_date
+        """
+    ).bindparams(bindparam("symbols", expanding=True))
+    try:
+        with get_sqlalchemy_engine().connect() as conn:
+            rows = conn.execute(
+                stmt,
+                {"symbols": symbols, "from_date": from_date, "to_date": to_date},
+            ).mappings().all()
+    except Exception:
+        LOGGER.debug("Proxy quote bias IEX : lecture stock_quote_snapshots indisponible.", exc_info=True)
+        return []
+    return [{str(key): value for key, value in row.items()} for row in rows]
+
+
+def _load_consolidated_close_map(
+    *,
+    symbols: list[str],
+    from_date: date,
+    to_date: date,
+) -> dict[tuple[str, date], float]:
+    if not symbols:
+        return {}
+    stmt = text(
+        """
+        SELECT symbol, date, close
+        FROM stock_bars_daily
+        WHERE symbol IN :symbols
+          AND date BETWEEN :from_date AND :to_date
+        """
+    ).bindparams(bindparam("symbols", expanding=True))
+    try:
+        with get_sqlalchemy_engine().connect() as conn:
+            rows = conn.execute(
+                stmt,
+                {"symbols": symbols, "from_date": from_date, "to_date": to_date},
+            ).mappings().all()
+    except Exception:
+        LOGGER.debug("Proxy quote bias IEX : lecture stock_bars_daily indisponible.", exc_info=True)
+        return {}
+    close_map: dict[tuple[str, date], float] = {}
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        close_date = _coerce_sql_date(row.get("date"))
+        close_value = _to_optional_float(row.get("close"))
+        if not symbol or close_date is None or close_value is None or close_value <= 0:
+            continue
+        close_map[(symbol, close_date)] = close_value
+    return close_map
+
+
+def _build_quote_bias_summary_from_rows(
+    quote_rows: list[dict[str, object]],
+    consolidated_close_map: dict[tuple[str, date], float],
+) -> dict[str, object]:
+    proxy_name = QUOTE_IEX_BIAS_PROXY_NAME
+    two_sided_quotes = 0
+    matched = 0
+    missing_close = 0
+    sum_abs_bps = 0.0
+    sum_signed_bps = 0.0
+    max_abs_bps = 0.0
+    max_abs_symbol = ""
+    max_abs_date: date | None = None
+
+    for row in quote_rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        quote_date = _coerce_sql_date(row.get("quote_date"))
+        bid_price = _to_optional_float(row.get("bid_price"))
+        ask_price = _to_optional_float(row.get("ask_price"))
+        if not symbol or quote_date is None:
+            continue
+        mid_price = None
+        if bid_price is not None and ask_price is not None and bid_price > 0 and ask_price > 0:
+            mid_price = (bid_price + ask_price) / 2.0
+        if mid_price is None or mid_price <= 0:
+            continue
+        two_sided_quotes += 1
+        consolidated_close = consolidated_close_map.get((symbol, quote_date))
+        if consolidated_close is None or consolidated_close <= 0:
+            missing_close += 1
+            continue
+        signed_bps = ((mid_price - consolidated_close) / consolidated_close) * 10_000.0
+        abs_bps = abs(signed_bps)
+        matched += 1
+        sum_abs_bps += abs_bps
+        sum_signed_bps += signed_bps
+        if abs_bps >= max_abs_bps:
+            max_abs_bps = abs_bps
+            max_abs_symbol = symbol
+            max_abs_date = quote_date
+
+    if matched <= 0:
+        return {
+            "quote_iex_vs_consolidated_status": "unavailable",
+            "quote_iex_vs_consolidated_proxy": proxy_name,
+            "quote_iex_vs_consolidated_observations": 0,
+            "quote_iex_vs_consolidated_candidates": int(two_sided_quotes),
+            "quote_iex_vs_consolidated_missing_closes": int(missing_close),
+        }
+
+    return {
+        "quote_iex_vs_consolidated_status": "ok",
+        "quote_iex_vs_consolidated_proxy": proxy_name,
+        "quote_iex_vs_consolidated_observations": int(matched),
+        "quote_iex_vs_consolidated_candidates": int(two_sided_quotes),
+        "quote_iex_vs_consolidated_missing_closes": int(missing_close),
+        "quote_iex_vs_consolidated_bps": round(sum_abs_bps / matched, 2),
+        "quote_iex_vs_consolidated_signed_bps": round(sum_signed_bps / matched, 2),
+        "max_quote_iex_vs_consolidated_bps": round(max_abs_bps, 2),
+        "max_quote_iex_vs_consolidated_symbol": max_abs_symbol,
+        "max_quote_iex_vs_consolidated_date": max_abs_date.isoformat() if max_abs_date is not None else None,
+    }
+
+
+def build_quote_iex_vs_consolidated_bias_summary(
+    *,
+    from_date: date | None,
+    to_date: date | None,
+    symbol_source: str | None,
+    limit: int | None,
+    start_symbol: str | None,
+) -> dict[str, object]:
+    normalized_source = normalize_symbol_source(symbol_source)
+    normalized_start_symbol = normalize_start_symbol(start_symbol)
+    window_start, window_end, mode = _resolve_quote_bias_window(from_date, to_date)
+    try:
+        symbols = list_symbols_for_source(
+            normalized_source,
+            limit=limit,
+            start_symbol=normalized_start_symbol,
+        )
+    except Exception:
+        LOGGER.debug("Proxy quote bias IEX : impossible de résoudre l'univers symbole.", exc_info=True)
+        return {
+            "quote_iex_vs_consolidated_status": "unavailable",
+            "quote_iex_vs_consolidated_proxy": "same_session_mid_vs_stock_bars_daily_close",
+            "quote_iex_vs_consolidated_observations": 0,
+            "quote_iex_vs_consolidated_window_mode": mode,
+            "quote_iex_vs_consolidated_window_start": window_start.isoformat(),
+            "quote_iex_vs_consolidated_window_end": window_end.isoformat(),
+        }
+    aggregated_quote_rows: list[dict[str, object]] = []
+    consolidated_close_map: dict[tuple[str, date], float] = {}
+    for batch in _iter_symbol_batches(symbols):
+        aggregated_quote_rows.extend(
+            _load_quote_rows_for_bias(symbols=batch, from_date=window_start, to_date=window_end)
+        )
+        consolidated_close_map.update(
+            _load_consolidated_close_map(symbols=batch, from_date=window_start, to_date=window_end)
+        )
+    payload = _build_quote_bias_summary_from_rows(aggregated_quote_rows, consolidated_close_map)
+    payload["quote_iex_vs_consolidated_window_mode"] = mode
+    payload["quote_iex_vs_consolidated_window_start"] = window_start.isoformat()
+    payload["quote_iex_vs_consolidated_window_end"] = window_end.isoformat()
+    payload["quote_iex_vs_consolidated_symbol_scope"] = normalized_source
+    payload["quote_iex_vs_consolidated_symbols_requested"] = int(len(symbols))
+    return payload
+
+
+def safe_build_quote_iex_vs_consolidated_bias_summary(
+    *,
+    from_date: date | None,
+    to_date: date | None,
+    symbol_source: str | None,
+    limit: int | None,
+    start_symbol: str | None,
+) -> dict[str, object]:
+    normalized_source = normalize_symbol_source(symbol_source)
+    window_start, window_end, mode = _resolve_quote_bias_window(from_date, to_date)
+    try:
+        return build_quote_iex_vs_consolidated_bias_summary(
+            from_date=from_date,
+            to_date=to_date,
+            symbol_source=symbol_source,
+            limit=limit,
+            start_symbol=start_symbol,
+        )
+    except Exception:
+        LOGGER.warning(
+            "Proxy quote bias IEX indisponible pendant l'émission du run summary.",
+            exc_info=True,
+        )
+        return {
+            "quote_iex_vs_consolidated_status": "unavailable",
+            "quote_iex_vs_consolidated_proxy": QUOTE_IEX_BIAS_PROXY_NAME,
+            "quote_iex_vs_consolidated_observations": 0,
+            "quote_iex_vs_consolidated_window_mode": mode,
+            "quote_iex_vs_consolidated_window_start": window_start.isoformat(),
+            "quote_iex_vs_consolidated_window_end": window_end.isoformat(),
+            "quote_iex_vs_consolidated_symbol_scope": normalized_source,
+            "quote_iex_vs_consolidated_symbols_requested": 0,
+        }
 
 
 def estimate_sync_latest_quotes_cost(
@@ -811,12 +1052,14 @@ def main() -> None:
     status: str = "success"
     error_message: str | None = None
     summary: dict[str, int]
+    resolved_from_date = date.fromisoformat(args.from_date) if args.from_date else None
+    resolved_to_date = date.fromisoformat(args.to_date) if args.to_date else None
     try:
         sync_kwargs: dict[str, object] = {
             "limit": args.limit,
             "batch_size": args.batch_size,
-            "from_date": date.fromisoformat(args.from_date) if args.from_date else None,
-            "to_date": date.fromisoformat(args.to_date) if args.to_date else None,
+            "from_date": resolved_from_date,
+            "to_date": resolved_to_date,
             "symbol_source": args.symbol_source,
         }
         if resolved_start_symbol:
@@ -872,6 +1115,23 @@ def main() -> None:
             status="failed",
             error_message=error_message,
         )
+        _emit_run_summary(
+            {
+                "run_id": run_id,
+                "started_at": started_at.isoformat(timespec="seconds"),
+                "finished_at": finished_at.isoformat(timespec="seconds"),
+                "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+                "from_date": args.from_date,
+                "to_date": args.to_date,
+                "symbol_source": normalize_symbol_source(args.symbol_source),
+                "start_symbol": resolved_start_symbol,
+                "requested_limit": args.limit,
+                "batch_size": args.batch_size,
+                "audit_status": status,
+                "error_message": error_message,
+                **summary,
+            }
+        )
         raise
     finished_at = _utc_now_naive()
     # Phase 3.1.c — audit dédié quotes (best-effort).
@@ -897,6 +1157,13 @@ def main() -> None:
             "requested_limit": args.limit,
             "batch_size": args.batch_size,
             "audit_status": status,
+            **safe_build_quote_iex_vs_consolidated_bias_summary(
+                from_date=resolved_from_date,
+                to_date=resolved_to_date,
+                symbol_source=args.symbol_source,
+                limit=args.limit,
+                start_symbol=resolved_start_symbol,
+            ),
             **summary,
         }
     )

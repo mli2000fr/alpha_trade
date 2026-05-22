@@ -1,5 +1,9 @@
 # POC async DB I/O — asyncpg / aiosqlite (Phase F / S23.3)
 
+> ⚠️ **POC non activé en production par défaut**. Ce document décrit une piste
+> de recherche / benchmark opt-in ; le chemin nominal reste le code synchrone
+> tant qu'une décision explicite de promotion n'a pas été prise.
+
 > Cible : 3 loaders read-only chauds portés en async, parité résultat
 > avec versions sync, **opt-in via env var** `ALPHA_TRADE_ASYNC_DB=1`
 > (défaut OFF — fallback sync inchangé).

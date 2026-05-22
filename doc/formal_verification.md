@@ -1,5 +1,9 @@
 # Vérification formelle — Phase C / S15
 
+> ⚠️ **POC / chantier de recherche non activé comme contrôle bloquant en production**.
+> Les preuves décrites ici complètent les tests classiques mais ne constituent
+> pas encore une barrière opératoire obligatoire dans le flux nominal.
+
 ## Objectif
 
 Établir, par modélisation logique exécutable et par spécifications

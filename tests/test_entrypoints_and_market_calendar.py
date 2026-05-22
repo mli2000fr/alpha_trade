@@ -5,7 +5,7 @@ import runpy
 import subprocess
 import sys
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -48,6 +48,18 @@ def test_get_last_date_marche_walks_back_until_previous_open_day(monkeypatch) ->
     monkeypatch.setattr(market_calendar, "is_trading_day", lambda d: d.weekday() < 5)
 
     assert market_calendar.getLastDateMarche(date(2026, 5, 4)) == date(2026, 5, 1)
+
+
+def test_get_nyse_session_bounds_fallback_tracks_november_dst_switch(monkeypatch) -> None:
+    monkeypatch.setattr(market_calendar, "_get_nyse_calendar", lambda: None)
+
+    pre_switch_open, pre_switch_close = market_calendar.get_nyse_session_bounds(date(2026, 10, 30))
+    post_switch_open, post_switch_close = market_calendar.get_nyse_session_bounds(date(2026, 11, 2))
+
+    assert pre_switch_open == datetime(2026, 10, 30, 13, 30, tzinfo=timezone.utc)
+    assert pre_switch_close == datetime(2026, 10, 30, 20, 0, tzinfo=timezone.utc)
+    assert post_switch_open == datetime(2026, 11, 2, 14, 30, tzinfo=timezone.utc)
+    assert post_switch_close == datetime(2026, 11, 2, 21, 0, tzinfo=timezone.utc)
 
 
 def test_backtesting_dunder_main_invokes_cli_main(monkeypatch) -> None:

@@ -126,6 +126,31 @@ def test_build_pipeline_summary_rows_exposes_latest_workflow_and_upstream_runs()
     assert any("Signal" in s or "Aggregator" in s for s in scope_list)
 
 
+def test_build_pipeline_summary_rows_exposes_quote_bias_in_sync_latest_quotes_caption() -> None:
+    runs = [
+        {
+            "run_id": "quotes-1",
+            "run_kind": "step",
+            "step_key": "sync_latest_quotes",
+            "status": "completed",
+            "run_summary": {
+                "symbols": 120,
+                "rows_upserted": 118,
+                "quote_iex_vs_consolidated_bps": 42.5,
+                "quote_iex_vs_consolidated_observations": 90,
+                "batch_size": 50,
+            },
+        },
+    ]
+
+    rows = overview._build_pipeline_summary_rows(runs)
+
+    assert not rows.empty
+    sync_quotes_row = rows.loc[rows["scope"].astype(str).str.contains("Sync Latest Quotes", regex=False)].iloc[0]
+    assert "biais iex=42.5" in str(sync_quotes_row["résumé métier"])
+    assert "obs. biais=90" in str(sync_quotes_row["résumé métier"])
+
+
 def test_build_screener_objective_rows_exposes_operational_leaders() -> None:
     rows = overview._build_screener_objective_rows(
         {

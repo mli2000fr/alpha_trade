@@ -562,6 +562,86 @@ def test_build_run_summary_caption_uses_earnings_resume_metrics_mapping() -> Non
     assert "rows upsert=300" in caption
 
 
+def test_build_run_summary_caption_uses_sync_latest_quotes_bias_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "sync_latest_quotes",
+            "run_summary": {
+                "symbols": 120,
+                "rows_upserted": 118,
+                "quote_iex_vs_consolidated_bps": 42.5,
+                "quote_iex_vs_consolidated_observations": 90,
+                "batch_size": 50,
+            },
+        }
+    )
+
+    assert "symboles=120" in caption
+    assert "rows upsert=118" in caption
+    assert "biais iex=42.5" in caption
+    assert "obs. biais=90" in caption
+
+
+def test_get_run_summary_detail_lines_exposes_sync_latest_quotes_bias_proxy() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "sync_latest_quotes",
+            "run_summary": {
+                "quote_iex_vs_consolidated_status": "ok",
+                "quote_iex_vs_consolidated_proxy": "same_session_mid_vs_stock_bars_daily_close",
+                "quote_iex_vs_consolidated_bps": 42.5,
+                "quote_iex_vs_consolidated_signed_bps": -5.25,
+                "quote_iex_vs_consolidated_observations": 90,
+                "quote_iex_vs_consolidated_candidates": 100,
+                "quote_iex_vs_consolidated_missing_closes": 10,
+                "max_quote_iex_vs_consolidated_bps": 80.0,
+                "max_quote_iex_vs_consolidated_symbol": "AAPL",
+                "max_quote_iex_vs_consolidated_date": "2026-04-29",
+            },
+        }
+    )
+
+    assert any("moyenne absolue=42.50 bps" in line for line in lines)
+    assert any("moyenne signée=-5.25 bps" in line for line in lines)
+    assert any("observations=90/100" in line for line in lines)
+    assert any("proxy=same_session_mid_vs_stock_bars_daily_close" in line for line in lines)
+    assert any("AAPL" in line and "80.00 bps" in line for line in lines)
+
+
+def test_aggregate_workflow_run_summary_weights_quote_bias_by_observations() -> None:
+    aggregated = aggregate_workflow_run_summary(
+        [
+            {
+                "run_id": "quotes-1",
+                "step_key": "sync_latest_quotes",
+                "status": "completed",
+                "run_summary": {
+                    "quote_iex_vs_consolidated_bps": 40.0,
+                    "quote_iex_vs_consolidated_signed_bps": 10.0,
+                    "quote_iex_vs_consolidated_observations": 2,
+                    "max_quote_iex_vs_consolidated_bps": 60.0,
+                },
+            },
+            {
+                "run_id": "quotes-2",
+                "step_key": "sync_latest_quotes",
+                "status": "completed",
+                "run_summary": {
+                    "quote_iex_vs_consolidated_bps": 100.0,
+                    "quote_iex_vs_consolidated_signed_bps": -100.0,
+                    "quote_iex_vs_consolidated_observations": 1,
+                    "max_quote_iex_vs_consolidated_bps": 100.0,
+                },
+            },
+        ]
+    )
+
+    assert aggregated["quote_iex_vs_consolidated_bps"] == 60.0
+    assert aggregated["quote_iex_vs_consolidated_signed_bps"] == -26.6667
+    assert aggregated["quote_iex_vs_consolidated_observations"] == 3
+    assert aggregated["max_quote_iex_vs_consolidated_bps"] == 100.0
+
+
 def test_build_latest_run_summary_rows_preserves_scope_order_and_filters_missing_summaries() -> None:
     rows = build_latest_run_summary_rows(
         [

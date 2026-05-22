@@ -64,6 +64,8 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
     "sync_latest_quotes": [
         ("Symboles", "symbols"),
         ("Rows upsert", "rows_upserted"),
+        ("Biais IEX", "quote_iex_vs_consolidated_bps"),
+        ("Obs. biais", "quote_iex_vs_consolidated_observations"),
         ("Batch", "batch_size"),
     ],
     "sync_earnings_calendar": [
@@ -714,7 +716,7 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                 if kelly_fraction_multiplier is not None:
                     line += f", kelly_mult={kelly_fraction_multiplier:.2f}"
             lines.append(line + ".")
-            lines.extend(_format_empirical_calibration_fallback_lines(empirical_calibration_payload))
+            lines.extend(_format_empirical_calibration_fallback_lines(cast(Mapping[str, object], empirical_calibration_payload)))
         if shadow_compare_payload:
             shadow_status = str(shadow_compare_payload.get("status") or "").strip()
             if shadow_status == "compared":
@@ -898,6 +900,40 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                 if detail_line:
                     lines.append(detail_line)
 
+    if step_key == "sync_latest_quotes":
+        proxy_status = str(summary.get("quote_iex_vs_consolidated_status") or "").strip().lower()
+        mean_abs_bps = _to_float(summary.get("quote_iex_vs_consolidated_bps"))
+        mean_signed_bps = _to_float(summary.get("quote_iex_vs_consolidated_signed_bps"))
+        observations = _to_int(summary.get("quote_iex_vs_consolidated_observations"))
+        candidates = _to_int(summary.get("quote_iex_vs_consolidated_candidates"))
+        missing_closes = _to_int(summary.get("quote_iex_vs_consolidated_missing_closes"))
+        max_abs_bps = _to_float(summary.get("max_quote_iex_vs_consolidated_bps"))
+        max_abs_symbol = str(summary.get("max_quote_iex_vs_consolidated_symbol") or "").strip()
+        max_abs_date = str(summary.get("max_quote_iex_vs_consolidated_date") or "").strip()
+        proxy_name = str(summary.get("quote_iex_vs_consolidated_proxy") or "same_session_mid_vs_stock_bars_daily_close").strip()
+        if proxy_status == "ok" and observations > 0 and mean_abs_bps is not None:
+            line = (
+                "Proxy biais quotes IEX vs close consolidée : "
+                f"moyenne absolue={mean_abs_bps:.2f} bps"
+            )
+            if mean_signed_bps is not None:
+                line += f", moyenne signée={mean_signed_bps:.2f} bps"
+            line += f", observations={observations}/{max(candidates, observations)}"
+            if missing_closes > 0:
+                line += f", closes manquants={missing_closes}"
+            line += f", proxy={proxy_name}"
+            lines.append(line + ".")
+            if max_abs_bps is not None and max_abs_symbol:
+                max_line = f"Écart max observé : {max_abs_symbol} à {max_abs_bps:.2f} bps"
+                if max_abs_date:
+                    max_line += f" ({max_abs_date})"
+                lines.append(max_line + ".")
+        elif proxy_status == "unavailable":
+            lines.append(
+                "Proxy biais quotes IEX vs close consolidée indisponible : aucun appariement exploitable "
+                "entre `stock_quote_snapshots` et `stock_bars_daily` sur la fenêtre du run."
+            )
+
     if step_key == "execution":
         selector_rank_available = _to_int(summary.get("selector_rank_available"))
         selector_rank_coverage_pct = _to_float(summary.get("selector_rank_coverage_pct"))
@@ -1062,6 +1098,8 @@ def _merge_scalar_metric(target: dict[str, object], key: str, value: int | float
 def _metric_rule(key: str, value: object) -> str:
     if isinstance(value, bool):
         return "bool_or"
+    if key in {"quote_iex_vs_consolidated_bps", "quote_iex_vs_consolidated_signed_bps"}:
+        return "weighted_avg"
     if key.endswith("_threshold"):
         return "latest"
     if key.startswith("max_"):
@@ -1082,6 +1120,8 @@ def _infer_weight_key(summary: Mapping[str, object], key: str) -> str | None:
         "fill_rate": ("submitted_orders", "submitted", "targeted_symbols", "targets"),
         "success_rate": ("targeted_symbols", "targets", "pending_events"),
         "failure_rate": ("targeted_symbols", "targets", "pending_events"),
+        "quote_iex_vs_consolidated_bps": ("quote_iex_vs_consolidated_observations",),
+        "quote_iex_vs_consolidated_signed_bps": ("quote_iex_vs_consolidated_observations",),
     }
     generic_candidates = (
         "filled_orders",

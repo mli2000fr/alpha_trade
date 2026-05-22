@@ -33,3 +33,27 @@ def test_get_nyse_session_bounds_prefers_calendar_schedule(monkeypatch) -> None:
     assert market_close == datetime(2026, 7, 3, 17, 0, tzinfo=timezone.utc)
 
 
+def test_get_nyse_session_bounds_fallback_respects_standard_vs_dst_offsets(monkeypatch) -> None:
+    monkeypatch.setattr(market_calendar, "_get_nyse_calendar", lambda: None)
+
+    winter_open, winter_close = market_calendar.get_nyse_session_bounds(date(2026, 1, 5))
+    summer_open, summer_close = market_calendar.get_nyse_session_bounds(date(2026, 7, 6))
+
+    assert winter_open == datetime(2026, 1, 5, 14, 30, tzinfo=timezone.utc)
+    assert winter_close == datetime(2026, 1, 5, 21, 0, tzinfo=timezone.utc)
+    assert summer_open == datetime(2026, 7, 6, 13, 30, tzinfo=timezone.utc)
+    assert summer_close == datetime(2026, 7, 6, 20, 0, tzinfo=timezone.utc)
+
+
+def test_get_nyse_session_bounds_fallback_tracks_march_dst_switch(monkeypatch) -> None:
+    monkeypatch.setattr(market_calendar, "_get_nyse_calendar", lambda: None)
+
+    pre_dst_open, pre_dst_close = market_calendar.get_nyse_session_bounds(date(2026, 3, 6))
+    post_dst_open, post_dst_close = market_calendar.get_nyse_session_bounds(date(2026, 3, 9))
+
+    assert pre_dst_open == datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+    assert pre_dst_close == datetime(2026, 3, 6, 21, 0, tzinfo=timezone.utc)
+    assert post_dst_open == datetime(2026, 3, 9, 13, 30, tzinfo=timezone.utc)
+    assert post_dst_close == datetime(2026, 3, 9, 20, 0, tzinfo=timezone.utc)
+
+

@@ -1,5 +1,9 @@
 # Preuves TLAPS — Phase G / S24.3
 
+> ⚠️ **POC / livrable consultant non activé par défaut**. Les preuves TLAPS
+> documentées ici relèvent d'un chantier de formalisation avancée ; elles ne
+> bloquent pas encore la CI ni l'exploitation nominale.
+
 > Sprint S24.3 — Engagement consultant TLA+ + livrables CI.
 
 ## Objectif
