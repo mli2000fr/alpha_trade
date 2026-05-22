@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from dataclasses import dataclass
 from typing import Any
 
@@ -123,8 +124,20 @@ def resolve_ml_gate_state(engine: Any) -> MlGateState:
     )
 
 
+def apply_ml_gate_to_risk_config(config: Any, gate_state: MlGateState) -> Any:
+    """Force un mode quant-only explicite si le gate ML est fermé."""
+    if gate_state.enabled:
+        return config
+    try:
+        return replace(config, score_weight=1.0, prediction_weight=0.0)
+    except Exception:
+        LOGGER.warning("[ml_gate] impossible d'appliquer le mode quant-only à la config risk.", exc_info=True)
+        return config
+
+
 __all__ = [
     "MlGateState",
+    "apply_ml_gate_to_risk_config",
     "load_latest_ml_gate_decision",
     "resolve_ml_gate_state",
 ]

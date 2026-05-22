@@ -62,6 +62,8 @@
 
 ## S2 — Qualité quotes/spreads et sync historique
 
+**Statut : ✅ Livré (diagnostics quotes enrichis + garde-fous IHM historique)**
+
 - Priorité : P1
 - Modules : dataIntegrityEngine, selector, IHM
 - Anomalies : A-007, A-008, A-009
@@ -75,9 +77,25 @@
   - `tests/test_alpha_scanner_quote_quality.py`
   - `tests/test_sync_latest_quotes_cost_estimator.py`
   - `tests/test_pages_pipeline_quote_history_warning.py`
+- Avancement réalisé :
+  - ✅ `dataIntegrityEngine/sync_latest_quotes.py` enrichi avec `estimate_sync_latest_quotes_cost(...)` pour distinguer run latest vs historique, estimer appels API/durée et lever un warning opérateur sur les gros rattrapages.
+  - ✅ `selector/db_io.py` enrichi avec `quote_source`, `quote_age_days`, `quote_size_quality` dérivés au fetch runtime, sans migration de schéma.
+  - ✅ `selector/filters.py` propage désormais ces overlays quotes enrichis dans les diagnostics selector.
+  - ✅ Adaptation IHM `ihm/pages/pipeline.py` : prévisualisation de charge, métriques coût/durée, et confirmation explicite requise pour un run quotes historique volumineux.
+  - ✅ Compatibilité CLI/runtime conservée sur `sync_latest_quotes.main()` y compris avec doubles de tests qui ne passent pas `start_symbol`.
+- Validation réalisée :
+  - ✅ `tests/test_sync_latest_quotes.py`
+  - ✅ `tests/test_data_integrity_run_summaries.py`
+  - ✅ `tests/test_ihm_pipeline_runner.py`
+  - ✅ `tests/test_pages_pipeline.py`
+  - ✅ garde-fous ajoutés :
+    - `tests/test_sync_latest_quotes.py::test_estimate_sync_latest_quotes_cost_flags_large_historical_runs`
+    - `tests/test_pages_pipeline.py::test_render_period_sync_block_requires_confirmation_for_large_quotes_history_run`
 - Gain : selector +0.5, IHM +0.4, data quality +0.5.
 
 ## S3 — Presets capital et exécutabilité petits comptes
+
+**Statut : ✅ Livré (presets réalistes + exécutabilité visible en IHM + gate ML explicite)**
 
 - Priorité : P1
 - Modules : config, risk_management, execution_engine, backtesting
@@ -92,6 +110,19 @@
   - `tests/test_capital_presets_executability.py`
   - `tests/test_small_account_cash_settlement.py`
   - `tests/test_risk_ml_weight_gate.py`
+- Avancement réalisé :
+  - ✅ `config/capital_presets.yaml` enrichi par tranche avec `execution_cash_settlement_days`, `backtesting_commission_bps_stress` et `backtesting_slippage_bps_stress`.
+  - ✅ `common/capital_presets.py` expose `build_capital_preset_executability_summary(...)` pour résumer ticket mini, part d’equity, settlement cash, stress backtest et politique ML gate.
+  - ✅ Adaptation IHM `ihm/pages/_execution_center/__init__.py` : affichage d’un résumé d’exécutabilité du preset capital actif pour l’opérateur.
+  - ✅ `risk_management/ml_gate.py` ajoute `apply_ml_gate_to_risk_config(...)` afin de forcer explicitement le mode `quant_only` quand le gate ML est fermé.
+  - ✅ `risk_management/cli.py` branche ce gate sur le runtime : pas de chargement des prédictions si ML coupé, et visibilité `effective_policy` dans le résumé risk.
+  - ✅ La simulation petits comptes conserve explicitement `cash settlement` et `min notional` via les defaults de preset déjà propagés au backtesting/risk.
+- Validation réalisée :
+  - ✅ `tests/test_capital_presets_executability.py`
+  - ✅ `tests/test_small_account_cash_settlement.py`
+  - ✅ `tests/test_risk_ml_weight_gate.py`
+  - ✅ `tests/test_execution_center_prefills.py`
+  - ✅ `tests/test_ml_disable_modes.py`
 - Gain : configuration +0.5, risk +0.6, swing fitness +0.5.
 
 ## S4 — Parité backtest ↔ live/paper

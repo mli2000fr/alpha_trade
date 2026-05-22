@@ -1224,6 +1224,68 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     assert options.data_integrity_quotes_start_symbol == "AAG"
 
 
+def test_render_period_sync_block_requires_confirmation_for_large_quotes_history_run(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        pipeline.QUOTE_HISTORY_START_DATE_KEY: dt_date(2026, 1, 1),
+        pipeline.QUOTE_HISTORY_END_DATE_KEY: dt_date(2026, 3, 31),
+        pipeline.QUOTE_HISTORY_SYMBOL_SOURCE_KEY: "stock_bars_daily",
+        pipeline.QUOTE_HISTORY_START_SYMBOL_KEY: "A",
+        pipeline.QUOTE_HISTORY_CONFIRM_LARGE_RUN_KEY: False,
+    }
+    warnings: list[str] = []
+    button_disabled_values: list[bool] = []
+    launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "divider", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "error", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "code", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "warning", lambda value, *args, **kwargs: warnings.append(str(value)))
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "selectbox", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
+    monkeypatch.setattr(pipeline.st, "text_input", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
+    monkeypatch.setattr(pipeline.st, "date_input", lambda _label, *args, **kwargs: session_state[str(kwargs.get("key"))])
+    monkeypatch.setattr(pipeline.st, "checkbox", lambda *args, **kwargs: False)
+
+    def _button(_label, *args, **kwargs):
+        button_disabled_values.append(bool(kwargs.get("disabled")))
+        return False
+
+    monkeypatch.setattr(pipeline.st, "button", _button)
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_data_integrity_scope_preview",
+        lambda *args, **kwargs: {"symbol_count": 250, "sample_symbols": ["AAPL", "MSFT", "NVDA"]},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_pipeline_command",
+        lambda step_key, options: [step_key, str(options.data_integrity_quotes_from_date), str(options.data_integrity_quotes_to_date)],
+    )
+    monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_pipeline_step",
+        lambda step_key, step_label, options, db_config, all_runs: launch_calls.append((step_key, step_label, options)),
+    )
+
+    pipeline._render_period_sync_block(
+        "sync_latest_quotes",
+        pipeline.PipelineLaunchOptions(data_integrity_quotes_batch_size=50),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert launch_calls == []
+    assert button_disabled_values and button_disabled_values[-1] is True
+    assert any("Run quotes historique volumineux détecté" in message for message in warnings)
+
+
 def test_render_period_sync_block_blocks_invalid_earnings_window(monkeypatch) -> None:
     session_state: dict[str, object] = {
         pipeline.EARNINGS_HISTORY_START_DATE_KEY: dt_date(2026, 5, 10),

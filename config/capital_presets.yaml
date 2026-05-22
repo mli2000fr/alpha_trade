@@ -30,9 +30,12 @@ presets:
       execution_account_type: cash             # PDT rule désactivable car cash
       execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true               # interdit toute logique day-trade
+      execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
       execution_trailing_r_multiple: 1.0
+      backtesting_commission_bps_stress: 15.0
+      backtesting_slippage_bps_stress: 25.0
       screener_liquidity_threshold_usd: 2000000.0   # relâché vs 5M$ pour 0_5000
       screener_min_relative_strength_index: 90.0
       screener_historical_range_lookback_days: 252
@@ -82,9 +85,12 @@ presets:
       execution_account_type: cash
       execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
+      execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
       execution_trailing_r_multiple: 1.0
+      backtesting_commission_bps_stress: 12.0
+      backtesting_slippage_bps_stress: 20.0
       screener_liquidity_threshold_usd: 5000000.0
       screener_min_relative_strength_index: 95.0
       screener_historical_range_lookback_days: 252
@@ -132,9 +138,12 @@ presets:
       execution_account_type: cash
       execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
+      execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
       execution_trailing_r_multiple: 1.0
+      backtesting_commission_bps_stress: 10.0
+      backtesting_slippage_bps_stress: 18.0
       screener_liquidity_threshold_usd: 7500000.0
       screener_min_relative_strength_index: 97.0
       screener_historical_range_lookback_days: 252
@@ -182,9 +191,12 @@ presets:
       execution_account_type: cash
       execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
+      execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
       execution_trailing_r_multiple: 1.0
+      backtesting_commission_bps_stress: 8.0
+      backtesting_slippage_bps_stress: 15.0
       screener_liquidity_threshold_usd: 10000000.0
       screener_min_relative_strength_index: 100.0
       screener_historical_range_lookback_days: 378
@@ -232,9 +244,12 @@ presets:
       execution_account_type: margin
       execution_pdt_rule: "auto"              # A-006 fix : PDT auto sur compte margin — bloque le 4e day-trade si equity < 25k$ (cf. execution_engine/config.py:applies_pdt_limit)
       execution_swing_only: true
+      execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
       execution_trailing_r_multiple: 1.0
+      backtesting_commission_bps_stress: 6.0
+      backtesting_slippage_bps_stress: 12.0
       screener_liquidity_threshold_usd: 10000000.0
       screener_min_relative_strength_index: 100.0
       screener_historical_range_lookback_days: 504
@@ -282,9 +297,12 @@ presets:
       execution_account_type: margin
       execution_pdt_rule: "auto"              # A-006 fix : PDT auto sur compte margin — bloque le 4e day-trade si equity < 25k$ (cf. execution_engine/config.py:applies_pdt_limit)
       execution_swing_only: true
+      execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
       execution_trailing_r_multiple: 1.0
+      backtesting_commission_bps_stress: 5.0
+      backtesting_slippage_bps_stress: 10.0
       screener_liquidity_threshold_usd: 10000000.0
       screener_min_relative_strength_index: 100.0
       screener_historical_range_lookback_days: 504
@@ -332,9 +350,12 @@ presets:
       execution_account_type: margin
       execution_pdt_rule: "auto"              # A-006 fix : PDT auto sur compte margin — bloque le 4e day-trade si equity < 25k$ (cf. execution_engine/config.py:applies_pdt_limit)
       execution_swing_only: true
+      execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
       execution_trailing_r_multiple: 1.1
+      backtesting_commission_bps_stress: 4.0
+      backtesting_slippage_bps_stress: 8.0
       screener_liquidity_threshold_usd: 15000000.0
       screener_min_relative_strength_index: 102.0
       screener_historical_range_lookback_days: 504

@@ -273,6 +273,76 @@ def _normalize_quote_window(
     return resolved_start, resolved_end
 
 
+def estimate_sync_latest_quotes_cost(
+    *,
+    symbol_count: int,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> dict[str, object]:
+    """Estime grossièrement la charge d'un run quotes pour l'IHM opérateur.
+
+    L'objectif n'est pas d'être exact à la requête près, mais de donner un
+    ordre de grandeur fiable pour distinguer un petit run latest d'un rattrapage
+    historique potentiellement coûteux.
+    """
+    if symbol_count < 0:
+        raise ValueError("symbol_count doit être >= 0.")
+    if batch_size < 1:
+        raise ValueError("batch_size doit être >= 1.")
+
+    resolved_from_date, resolved_to_date = _normalize_quote_window(from_date, to_date)
+    latest_mode = resolved_from_date is None or resolved_to_date is None
+    if latest_mode:
+        batch_count = (symbol_count + batch_size - 1) // batch_size if symbol_count > 0 else 0
+        estimated_api_calls = batch_count
+        estimated_duration_seconds = round(batch_count * 0.35, 2)
+        severity = "low" if batch_count <= 5 else "medium" if batch_count <= 20 else "high"
+        return {
+            "mode": "latest",
+            "symbol_count": int(symbol_count),
+            "batch_size": int(batch_size),
+            "estimated_batch_count": int(batch_count),
+            "estimated_api_calls": int(estimated_api_calls),
+            "estimated_duration_seconds": float(estimated_duration_seconds),
+            "estimated_duration_minutes": round(estimated_duration_seconds / 60.0, 2),
+            "trading_days": 0,
+            "monthly_blocks": 0,
+            "symbol_days": 0,
+            "warning_required": severity == "high",
+            "severity": severity,
+        }
+
+    if resolved_from_date is None or resolved_to_date is None:
+        raise RuntimeError("Fenêtre quotes historique non résolue.")
+
+    trading_days = len(nyse_session_dates(resolved_from_date, resolved_to_date))
+    monthly_blocks = len(_iter_monthly_blocks(resolved_from_date, resolved_to_date))
+    symbol_days = int(symbol_count * trading_days)
+    estimated_api_calls = int(symbol_count + (symbol_count * monthly_blocks))
+    estimated_duration_seconds = round((estimated_api_calls * 0.75) + (symbol_days * 0.02), 2)
+    severity = "low"
+    if symbol_days >= 15_000 or estimated_api_calls >= 800:
+        severity = "high"
+    elif symbol_days >= 4_000 or estimated_api_calls >= 250:
+        severity = "medium"
+    return {
+        "mode": "historical",
+        "symbol_count": int(symbol_count),
+        "batch_size": int(batch_size),
+        "from_date": resolved_from_date.isoformat(),
+        "to_date": resolved_to_date.isoformat(),
+        "trading_days": int(trading_days),
+        "monthly_blocks": int(monthly_blocks),
+        "symbol_days": int(symbol_days),
+        "estimated_api_calls": int(estimated_api_calls),
+        "estimated_duration_seconds": float(estimated_duration_seconds),
+        "estimated_duration_minutes": round(estimated_duration_seconds / 60.0, 2),
+        "warning_required": severity == "high",
+        "severity": severity,
+    }
+
+
 def _build_quote_snapshot_row(
     symbol: str,
     quote: dict[str, object],
@@ -735,19 +805,24 @@ def main() -> None:
         timed_rotation_backup_count=14,
     )
     args = _build_arg_parser().parse_args()
+    resolved_start_symbol = normalize_start_symbol(getattr(args, "start_symbol", None))
     started_at = _utc_now_naive()
     run_id = _build_run_id("sync-latest-quotes")
     status: str = "success"
     error_message: str | None = None
     summary: dict[str, int]
     try:
+        sync_kwargs: dict[str, object] = {
+            "limit": args.limit,
+            "batch_size": args.batch_size,
+            "from_date": date.fromisoformat(args.from_date) if args.from_date else None,
+            "to_date": date.fromisoformat(args.to_date) if args.to_date else None,
+            "symbol_source": args.symbol_source,
+        }
+        if resolved_start_symbol:
+            sync_kwargs["start_symbol"] = resolved_start_symbol
         summary = sync_latest_quotes(
-            limit=args.limit,
-            batch_size=args.batch_size,
-            from_date=date.fromisoformat(args.from_date) if args.from_date else None,
-            to_date=date.fromisoformat(args.to_date) if args.to_date else None,
-            symbol_source=args.symbol_source,
-            start_symbol=args.start_symbol,
+            **sync_kwargs,
         )
     except KeyboardInterrupt as exc:
         status = "failed"
@@ -773,7 +848,7 @@ def main() -> None:
                 "from_date": args.from_date,
                 "to_date": args.to_date,
                 "symbol_source": normalize_symbol_source(args.symbol_source),
-                "start_symbol": normalize_start_symbol(args.start_symbol),
+                "start_symbol": resolved_start_symbol,
                 "requested_limit": args.limit,
                 "batch_size": args.batch_size,
                 "audit_status": status,
@@ -818,7 +893,7 @@ def main() -> None:
             "from_date": args.from_date,
             "to_date": args.to_date,
             "symbol_source": normalize_symbol_source(args.symbol_source),
-            "start_symbol": normalize_start_symbol(args.start_symbol),
+            "start_symbol": resolved_start_symbol,
             "requested_limit": args.limit,
             "batch_size": args.batch_size,
             "audit_status": status,

@@ -402,6 +402,7 @@ def _build_backtest_common_params(
         "pdt_rule": trading_constraints.pdt_rule,
         "effective_pdt_rule": trading_constraints.effective_pdt_rule,
         "swing_only": trading_constraints.swing_only,
+        "cash_settlement_days": trading_constraints.cash_settlement_days,
         "sentiment_lookback": args.sentiment_lookback,
         "ml_mode": args.ml_mode,
         "sentiment_mode": args.sentiment_mode,
@@ -727,6 +728,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--swing-only",
         action="store_true",
         help="Interdire toute sortie le jour même de l'entrée",
+    )
+    run_p.add_argument(
+        "--cash-settlement-days",
+        type=int,
+        default=1,
+        help="Nombre de jours de règlement-livraison simulés pour un compte cash (défaut: 1).",
     )
     run_p.add_argument("--sentiment-lookback", type=int, default=365, help="Lookback sentiment (jours)")
     run_p.add_argument("--no-save", action="store_true", help="Ne pas sauvegarder les artefacts")
@@ -1139,6 +1146,7 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--account-type": "account_type",
         "--pdt-rule": "pdt_rule",
         "--swing-only": "swing_only",
+        "--cash-settlement-days": "cash_settlement_days",
         "--fees": "fees",
         "--capital-preset-key": "capital_preset_key",
         "--capital": "capital",
@@ -1341,10 +1349,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
             f"⚠️ Preset explicite `{effective_preset.key}` prioritaire sur le bucket détecté depuis equity `{detected_from_equity.key}`."
         )
     args.capital_preset_key = effective_preset.key
-    if preset_source == "explicit_key":
-        preset_applied_values = apply_backtest_defaults_from_preset(vars(args), effective_preset, explicit_flags=explicit_flags)
-        for field_name, value in preset_applied_values.items():
-            setattr(args, field_name, value)
+    preset_applied_values = apply_backtest_defaults_from_preset(vars(args), effective_preset, explicit_flags=explicit_flags)
+    for field_name, value in preset_applied_values.items():
+        setattr(args, field_name, value)
     preset_fingerprint = capital_preset_fingerprint(effective_preset)
 
     # Phase 6.1.b — gestion --fees (déprécié) vs commission/slippage_bps.
@@ -1411,6 +1418,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         account_type=args.account_type,
         pdt_rule=args.pdt_rule,
         swing_only=args.swing_only,
+        cash_settlement_days=int(getattr(args, "cash_settlement_days", 1) or 0),
     )
 
     _safe_print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
@@ -1431,10 +1439,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
         )
     )
     _safe_print(
-        "   account_type={} pdt_rule={} swing_only={}\n".format(
+        "   account_type={} pdt_rule={} swing_only={} cash_settlement_days={}\n".format(
             trading_constraints.account_type,
             trading_constraints.effective_pdt_rule,
             trading_constraints.swing_only,
+            trading_constraints.cash_settlement_days,
         )
     )
     _safe_print("   convention_exécution=signal J → entrée J+1 au vrai open\n")

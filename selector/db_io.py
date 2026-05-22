@@ -592,7 +592,17 @@ def fetch_quote_snapshots(
         select_extra.append("q.bid_size")
     if "ask_size" in available_columns:
         select_extra.append("q.ask_size")
-    empty_columns = ["symbol", "quote_date", "quote_timestamp", "spread_bps", "bid_size", "ask_size"]
+    empty_columns = [
+        "symbol",
+        "quote_date",
+        "quote_timestamp",
+        "spread_bps",
+        "bid_size",
+        "ask_size",
+        "quote_source",
+        "quote_age_days",
+        "quote_size_quality",
+    ]
     if not symbols:
         return pd.DataFrame(columns=empty_columns)
 
@@ -630,6 +640,32 @@ def fetch_quote_snapshots(
             normalized_quotes[column] = pd.NA
     if normalized_quotes.empty:
         return pd.DataFrame(columns=empty_columns)
+    quote_dates = pd.to_datetime(normalized_quotes["quote_date"], errors="coerce", utc=False)
+    bid_size = pd.to_numeric(normalized_quotes["bid_size"], errors="coerce")
+    ask_size = pd.to_numeric(normalized_quotes["ask_size"], errors="coerce")
+    normalized_quotes["quote_age_days"] = (
+        pd.Timestamp(effective_reference_date).normalize() - quote_dates.dt.normalize()
+    ).dt.days.where(quote_dates.notna(), pd.NA)
+    normalized_quotes["quote_source"] = pd.Series("alpaca_quote_snapshots", index=normalized_quotes.index, dtype="object")
+    normalized_quotes.loc[
+        normalized_quotes["quote_age_days"].fillna(9999).astype(float) <= 0,
+        "quote_source",
+    ] = "alpaca_latest_snapshot"
+    normalized_quotes.loc[
+        normalized_quotes["quote_age_days"].fillna(9999).astype(float) > 0,
+        "quote_source",
+    ] = "alpaca_historical_snapshot"
+    normalized_quotes["quote_size_quality"] = pd.Series("missing", index=normalized_quotes.index, dtype="object")
+    two_sided_mask = bid_size.gt(0) & ask_size.gt(0)
+    normalized_quotes.loc[two_sided_mask, "quote_size_quality"] = "thin"
+    normalized_quotes.loc[
+        two_sided_mask & bid_size.ge(100) & ask_size.ge(100),
+        "quote_size_quality",
+    ] = "sufficient"
+    normalized_quotes.loc[
+        (bid_size.gt(0) ^ ask_size.gt(0)),
+        "quote_size_quality",
+    ] = "partial"
     return normalized_quotes.loc[:, empty_columns]
 
 

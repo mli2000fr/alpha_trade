@@ -12,7 +12,12 @@ from datetime import date, datetime, timezone
 import pytest
 
 from dataIntegrityEngine import sync_latest_quotes
-from dataIntegrityEngine.sync_latest_quotes import _iter_monthly_blocks, _market_date_from_timestamp, _parse_alpaca_timestamp
+from dataIntegrityEngine.sync_latest_quotes import (
+    _iter_monthly_blocks,
+    _market_date_from_timestamp,
+    _parse_alpaca_timestamp,
+    estimate_sync_latest_quotes_cost,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +82,22 @@ def test_iter_monthly_blocks_splits_partial_month_boundaries() -> None:
         (date(2026, 5, 1), date(2026, 5, 31)),
         (date(2026, 6, 1), date(2026, 6, 2)),
     ]
+
+
+def test_estimate_sync_latest_quotes_cost_flags_large_historical_runs() -> None:
+    estimate = estimate_sync_latest_quotes_cost(
+        symbol_count=300,
+        batch_size=50,
+        from_date=date(2026, 1, 2),
+        to_date=date(2026, 3, 31),
+    )
+
+    assert estimate["mode"] == "historical"
+    assert int(estimate["trading_days"]) > 0
+    assert int(estimate["monthly_blocks"]) == 3
+    assert int(estimate["estimated_api_calls"]) >= 300
+    assert estimate["warning_required"] is True
+    assert estimate["severity"] == "high"
 
 
 def test_sync_latest_quotes_derives_quote_date_from_alpaca_timestamp(monkeypatch):

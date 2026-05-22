@@ -516,13 +516,23 @@ def merge_optional_symbol_overlays(
         else:
             # Phase 3.3.c — propager bid_size/ask_size pour le filtre spread IEX.
             normalized_quotes = quotes_df.copy()
-            quote_columns = ["symbol", "spread_bps", "quote_date", "quote_timestamp", "bid_size", "ask_size"]
+            quote_columns = [
+                "symbol",
+                "spread_bps",
+                "quote_date",
+                "quote_timestamp",
+                "bid_size",
+                "ask_size",
+                "quote_source",
+                "quote_age_days",
+                "quote_size_quality",
+            ]
             for column in quote_columns:
                 if column not in normalized_quotes.columns:
                     normalized_quotes[column] = pd.NA
             latest_quotes = normalized_quotes.loc[:, quote_columns].drop_duplicates(subset=["symbol"], keep="last")
             enriched = enriched.merge(latest_quotes, on="symbol", how="left", suffixes=("", "_quote"))
-            for metadata_col in ("quote_date", "quote_timestamp"):
+            for metadata_col in ("quote_date", "quote_timestamp", "quote_source", "quote_age_days", "quote_size_quality"):
                 quote_col = f"{metadata_col}_quote"
                 if quote_col in enriched.columns:
                     enriched[metadata_col] = enriched[quote_col].combine_first(enriched.get(metadata_col))

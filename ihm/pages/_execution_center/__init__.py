@@ -62,6 +62,7 @@ from ihm.services.account_defaults import (
 )
 from ihm.services.capital_presets import (
     CapitalPreset,
+    build_capital_preset_executability_summary,
     get_capital_preset_by_key,
     load_capital_presets,
     resolve_capital_preset_for_equity,
@@ -2257,6 +2258,20 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.info(f"🧺 Panier capital appliqué : `{selected_capital_preset.label}`.")
         if selected_capital_preset is not None:
             st.caption(selected_capital_preset.description)
+            executability_summary = build_capital_preset_executability_summary(
+                selected_capital_preset,
+                detected_equity=execution_defaults.equity if execution_defaults is not None else None,
+            )
+            st.caption(
+                "Exécutabilité preset — "
+                f"ticket mini `{executability_summary['min_position_notional']:,.0f} $`, "
+                f"stress backtest `{executability_summary['recommended_commission_bps_stress']:.0f}+{executability_summary['recommended_slippage_bps_stress']:.0f} bps`, "
+                f"settlement cash `T+{executability_summary['cash_settlement_days']}`, "
+                f"ML gate `{executability_summary['ml_gate_policy']}`."
+            )
+            warning_lines = [str(value) for value in executability_summary.get("warnings", []) if str(value).strip()]
+            if warning_lines:
+                st.info(" ; ".join(warning_lines))
         st.markdown("🔁 **Impact des réglages sur les relances**")
         st.table(_build_parameter_rerun_guidance_rows())
 

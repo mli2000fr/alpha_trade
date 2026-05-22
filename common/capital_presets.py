@@ -284,14 +284,86 @@ def apply_backtest_defaults_from_preset(
         "account_type": ("execution_account_type", str),
         "pdt_rule": ("execution_pdt_rule", str),
         "swing_only": ("execution_swing_only", bool),
+        "cash_settlement_days": ("execution_cash_settlement_days", int),
+        "commission_bps": ("backtesting_commission_bps_stress", float),
+        "slippage_bps": ("backtesting_slippage_bps_stress", float),
     }
     for target_key, (preset_key, cast_fn) in mapping.items():
         if target_key in explicit_flags:
             continue
         if preset_key not in preset_values:
             continue
-        updated[target_key] = cast_fn(preset_values[preset_key])
+        raw_value = preset_values[preset_key]
+        if cast_fn is bool:
+            if isinstance(raw_value, bool):
+                updated[target_key] = raw_value
+            else:
+                updated[target_key] = str(raw_value).strip().lower() in {"true", "1", "yes", "on"}
+            continue
+        if cast_fn is str:
+            updated[target_key] = str(raw_value).strip().lower()
+            continue
+        updated[target_key] = cast_fn(raw_value)
     return updated
+
+
+def build_capital_preset_executability_summary(
+    preset: CapitalPreset,
+    *,
+    detected_equity: float | None = None,
+) -> dict[str, Any]:
+    values = dict(preset.values)
+    account_type = str(values.get("execution_account_type", "cash") or "cash").strip().lower() or "cash"
+    pdt_rule = str(values.get("execution_pdt_rule", "off") or "off").strip().lower() or "off"
+    swing_only = bool(values.get("execution_swing_only", True))
+    max_positions = int(values.get("risk_max_positions", 0) or 0)
+    min_notional = float(values.get("risk_min_position_notional", 0.0) or 0.0)
+    equity_value = float(detected_equity) if detected_equity is not None and detected_equity > 0 else None
+    ticket_share_of_equity = (min_notional / equity_value) if equity_value else None
+    recommended_commission_bps = float(
+        values.get(
+            "backtesting_commission_bps_stress",
+            15.0 if account_type == "cash" and min_notional <= 200.0 else 10.0 if account_type == "cash" else 5.0,
+        )
+    )
+    recommended_slippage_bps = float(
+        values.get(
+            "backtesting_slippage_bps_stress",
+            25.0 if min_notional <= 200.0 else 18.0 if min_notional <= 350.0 else 10.0,
+        )
+    )
+    cash_settlement_days = int(
+        values.get("execution_cash_settlement_days", 1 if account_type == "cash" else 0) or 0
+    )
+    ml_gate_policy = str(
+        values.get(
+            "risk_ml_gate_policy",
+            "quant_only_on_ml_gate_disable" if float(values.get("risk_prediction_weight", 0.0) or 0.0) > 0 else "quant_only",
+        )
+    )
+    warnings: list[str] = []
+    if account_type == "cash" and cash_settlement_days > 0:
+        warnings.append(f"compte cash : simulation règlement-livraison T+{cash_settlement_days}")
+    if min_notional > 0:
+        warnings.append(f"ticket minimal effectif {min_notional:,.0f} $")
+    if ticket_share_of_equity is not None and ticket_share_of_equity >= 0.2:
+        warnings.append(f"ticket mini ≈ {ticket_share_of_equity * 100:.1f}% de l'equity détectée")
+    if swing_only:
+        warnings.append("preset orienté swing : sorties intraday à éviter")
+    return {
+        "preset_key": preset.key,
+        "account_type": account_type,
+        "pdt_rule": pdt_rule,
+        "swing_only": swing_only,
+        "cash_settlement_days": cash_settlement_days,
+        "max_positions": max_positions,
+        "min_position_notional": min_notional,
+        "ticket_share_of_equity": float(ticket_share_of_equity) if ticket_share_of_equity is not None else None,
+        "recommended_commission_bps_stress": recommended_commission_bps,
+        "recommended_slippage_bps_stress": recommended_slippage_bps,
+        "ml_gate_policy": ml_gate_policy,
+        "warnings": warnings,
+    }
 
 
 __all__ = [
@@ -301,6 +373,7 @@ __all__ = [
     "CapitalPreset",
     "apply_backtest_defaults_from_preset",
     "build_risk_config_kwargs_from_preset",
+    "build_capital_preset_executability_summary",
     "build_screener_config_kwargs_from_preset",
     "build_selector_config_kwargs_from_preset",
     "capital_preset_fingerprint",

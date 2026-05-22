@@ -885,9 +885,10 @@ def main(args: list[str] | None = None) -> None:
         unit="étapes",
     )
 
-    from risk_management.ml_gate import resolve_ml_gate_state
+    from risk_management.ml_gate import apply_ml_gate_to_risk_config, resolve_ml_gate_state
 
     ml_gate_state = resolve_ml_gate_state(getattr(repo, "engine", None))
+    config = apply_ml_gate_to_risk_config(config, ml_gate_state)
     LOGGER.info(
         "ML gate | enabled=%s reason=%s decision_id=%s drift_status=%s action=%s",
         ml_gate_state.enabled,
@@ -911,7 +912,7 @@ def main(args: list[str] | None = None) -> None:
         )
 
         LOGGER.info("Chargement des predictions ML…")
-        predictions = repo.load_predictions_asof(symbols, trade_date)
+        predictions = repo.load_predictions_asof(symbols, trade_date) if ml_gate_state.enabled else {}
         LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), prediction_symbols=len(predictions)),
@@ -1198,6 +1199,7 @@ def main(args: list[str] | None = None) -> None:
             "score_weight": float(config.score_weight),
             "prediction_weight": float(config.prediction_weight),
             "source": "core.conviction",
+            "effective_policy": "quant_only" if not ml_gate_state.enabled else "score_plus_ml",
         },
         # Phase 5.1.c / P3 — traçabilité calibration upstream effectivement transportée.
         "conviction_weights_calibration": conviction_weights_calibration,

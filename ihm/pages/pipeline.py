@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from typing import Any, cast
 
 import streamlit as st
+from dataIntegrityEngine.sync_latest_quotes import estimate_sync_latest_quotes_cost
 from database.connection import get_sqlalchemy_engine
 from database.selector_reference import list_symbols_for_source, normalize_start_symbol
 from modelFactory.db_registry import filter_symbols_by_selector_context, load_symbols_for_source
@@ -147,6 +148,7 @@ EARNINGS_HISTORY_START_DATE_KEY = "pipeline_sync_earnings_calendar_period_start_
 EARNINGS_HISTORY_END_DATE_KEY = "pipeline_sync_earnings_calendar_period_end_date"
 QUOTE_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_latest_quotes_symbol_source"
 QUOTE_HISTORY_START_SYMBOL_KEY = "pipeline_sync_latest_quotes_start_symbol"
+QUOTE_HISTORY_CONFIRM_LARGE_RUN_KEY = "pipeline_sync_latest_quotes_confirm_large_run"
 EARNINGS_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_earnings_calendar_symbol_source"
 
 
@@ -181,6 +183,26 @@ def _resolve_data_integrity_scope_preview(symbol_source: str, start_symbol: str 
         "sample_symbols": symbols[:10],
         "start_symbol": normalized_start_symbol,
     }
+
+
+def _is_large_quote_history_run(estimate: dict[str, object] | None) -> bool:
+    if not isinstance(estimate, dict):
+        return False
+    return bool(estimate.get("warning_required"))
+
+
+def _coerce_int_metric(value: object, *, default: int = 0) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_float_metric(value: object, *, default: float = 0.0) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
 
 
 def _render_period_sync_block(
@@ -327,11 +349,41 @@ def _render_period_sync_block(
 
     selected_start = _coerce_ui_date(st.session_state.get(start_key, start_picker), fallback=start_default)
     selected_end = _coerce_ui_date(st.session_state.get(end_key, end_picker), fallback=end_default)
+    confirmed_large_run = True
     if selected_start > selected_end:
         st.error("Fenêtre invalide : la date de début doit être antérieure ou égale à la date de fin.")
         period_options = None
     else:
         st.caption(f"Fenêtre demandée : `{selected_start.isoformat()}` → `{selected_end.isoformat()}`.")
+        if step_key == "sync_latest_quotes" and isinstance(scope_preview, dict):
+            symbol_count = _coerce_int_metric(scope_preview.get("symbol_count", 0))
+            quote_history_estimate = estimate_sync_latest_quotes_cost(
+                symbol_count=symbol_count,
+                batch_size=max(int(getattr(options, "data_integrity_quotes_batch_size", 1) or 1), 1),
+                from_date=selected_start,
+                to_date=selected_end,
+            )
+            est_col1, est_col2, est_col3 = st.columns(3)
+            with est_col1:
+                st.metric("Séances NYSE", _coerce_int_metric(quote_history_estimate.get("trading_days", 0)))
+            with est_col2:
+                st.metric("Appels API estimés", _coerce_int_metric(quote_history_estimate.get("estimated_api_calls", 0)))
+            with est_col3:
+                st.metric("Durée estimée", f"{_coerce_float_metric(quote_history_estimate.get('estimated_duration_minutes', 0.0)):.1f} min")
+            if _is_large_quote_history_run(quote_history_estimate):
+                st.warning(
+                    "Run quotes historique volumineux détecté : coût API/durée potentiellement élevés. "
+                    "Réduisez la fenêtre, utilisez `start_symbol` / `limit`, ou confirmez explicitement ci-dessous."
+                )
+                confirmed_large_run = st.checkbox(
+                    "Je confirme le lancement d'un run historique quotes volumineux",
+                    value=bool(st.session_state.get(QUOTE_HISTORY_CONFIRM_LARGE_RUN_KEY, False)),
+                    key=QUOTE_HISTORY_CONFIRM_LARGE_RUN_KEY,
+                )
+            else:
+                confirmed_large_run = True
+        else:
+            confirmed_large_run = True
         period_options = replace(
             options,
             **{
@@ -347,7 +399,7 @@ def _render_period_sync_block(
         button_label,
         key=f"{step_key}_historical_period_launch",
         use_container_width=True,
-        disabled=disabled or period_options is None,
+        disabled=disabled or period_options is None or not confirmed_large_run,
     ) and period_options is not None:
         _launch_pipeline_step(
             step_key,
