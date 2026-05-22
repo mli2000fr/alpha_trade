@@ -183,6 +183,25 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert "--as-of" in ca_apply_command
 
 
+def test_build_pipeline_command_propagates_live_approval_controls() -> None:
+    options = PipelineLaunchOptions(
+        account_id="live1",
+        trade_date="2026-05-22",
+        execution_mode="live",
+        execution_live_approval_token="approved-token",
+        execution_run_plan_file="artifacts/execution_run_plans/live1.json",
+    )
+
+    execution_command = build_pipeline_command("execution", options)
+
+    assert execution_command[:3] == [execution_command[0], "-u", str(PROJECT_ROOT / "run_execution.py")]
+    assert execution_command[3] == "live"
+    assert "--approval-token" in execution_command
+    assert execution_command[execution_command.index("--approval-token") + 1] == "approved-token"
+    assert "--run-plan-file" in execution_command
+    assert execution_command[execution_command.index("--run-plan-file") + 1].endswith("live1.json")
+
+
 def test_build_pipeline_command_propagates_risk_shadow_compare_options() -> None:
     options = PipelineLaunchOptions(
         trade_date="2026-04-19",

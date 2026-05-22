@@ -113,17 +113,13 @@ class AccountRegistry:
 
     def _load_from_yaml(self) -> None:
         """Charge depuis config.yaml → alpaca.accounts (liste de dicts)."""
-        try:
-            import yaml
-        except ImportError:
-            return
-
         if not _CONFIG_PATH.exists():
             return
 
         try:
-            with open(_CONFIG_PATH, encoding="utf-8") as fh:
-                cfg = yaml.safe_load(fh) or {}
+            from common.config_loader import load_config
+
+            cfg = load_config(str(_CONFIG_PATH)) or {}
         except Exception:
             return
 

@@ -22,7 +22,7 @@ Conclusion : **le code réel confirme EODHD comme provider daily primaire**. Alp
 | IHM | `_resolve_bars_provider_for_ihm()` + routage commande | Correct. |
 | EODHD import | no-op si provider ≠ EODHD | Correct. |
 | Alpaca import | no-op si provider = EODHD | Correct. |
-| Fallback | `fallback_on_failure` non consommé | **Incohérent**. |
+| Fallback | faux fallback retiré de la config | Contrat runtime désormais explicite. |
 
 ## Convention `data_adjustment`
 
@@ -85,8 +85,8 @@ Le run doit échouer si la source requise n’est pas majoritairement/totalement
 - **Provider primaire réel** : EODHD.
 - **Convention prix réelle** : split-only.
 - **Dividendes** : ledger cash, pas dans prix.
-- **Point faible majeur** : versioning source daily insuffisant et doc contradictoire.
-- **Note spécifique OHLCV** : 7,0 / 10.
+- **Point faible majeur** : versioning source daily toujours insuffisant pour une vraie cohabitation multi-source en base.
+- **Note spécifique OHLCV** : 7,8 / 10.
 
 ## Tests indispensables
 

@@ -79,6 +79,7 @@ class TestOpsCatalog:
         from ihm.services.ops_runner import OPS_COMMAND_CATALOG
         assert "backup_ml_artifacts" in OPS_COMMAND_CATALOG
         assert "backup_db" in OPS_COMMAND_CATALOG
+        assert "scan_repo_secrets" in OPS_COMMAND_CATALOG
         assert "daily_pipeline" not in OPS_COMMAND_CATALOG
 
     def test_backup_ml_spec(self) -> None:
@@ -97,6 +98,13 @@ class TestOpsCatalog:
         from ihm.services.ops_runner import build_ops_command
         with pytest.raises(KeyError):
             build_ops_command("nonexistent_command_xyz")  # type: ignore[arg-type]
+
+    def test_scan_repo_secrets_command(self) -> None:
+        from ihm.services.ops_runner import build_ops_command
+
+        cmd = build_ops_command("scan_repo_secrets")
+
+        assert "scan_repo_secrets.py" in " ".join(cmd)
 
 
 # ---------------------------------------------------------------------------

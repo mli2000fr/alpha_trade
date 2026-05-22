@@ -26,6 +26,8 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_VAULT_DIR = Path("artifacts") / "config_vault"
 RETENTION_DAYS = 90
+LIVE_SECRET_POLICY_ENV = "ALPHA_TRADE_LIVE_SECRET_POLICY"
+DEFAULT_LIVE_SECRET_POLICY = "vault"
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +217,60 @@ def build_vault_from_env() -> ConfigVault:
     return EnvFallbackVault()
 
 
+def get_live_secret_policy() -> str:
+    """Retourne la policy live effective.
+
+    Valeurs supportées :
+
+    - ``vault`` (défaut) : un backend Vault explicite doit être configuré
+      via ``ALPHA_TRADE_VAULT_ADDR`` + ``ALPHA_TRADE_VAULT_TOKEN``.
+    - ``env`` : autorise temporairement un mode *env-only* pour un live
+      très encadré / CI / sandbox opérateur.
+    """
+    raw = str(os.getenv(LIVE_SECRET_POLICY_ENV, DEFAULT_LIVE_SECRET_POLICY) or "").strip().lower()
+    if raw in {"vault", "env"}:
+        return raw
+    LOGGER.warning(
+        "Policy live secrète invalide %r — fallback sur '%s'.",
+        raw,
+        DEFAULT_LIVE_SECRET_POLICY,
+    )
+    return DEFAULT_LIVE_SECRET_POLICY
+
+
+def is_live_secret_policy_satisfied() -> tuple[bool, dict[str, str]]:
+    """Indique si la policy secrets live est satisfaite dans l'env courant."""
+    policy = get_live_secret_policy()
+    addr = str(os.getenv("ALPHA_TRADE_VAULT_ADDR") or "").strip()
+    token = str(os.getenv("ALPHA_TRADE_VAULT_TOKEN") or "").strip()
+    if policy == "env":
+        return True, {
+            "policy": policy,
+            "status": "ok",
+            "source": "explicit_env_policy",
+            "message": (
+                f"policy {LIVE_SECRET_POLICY_ENV}=env active — mode env-only autorisé pour le live"
+            ),
+        }
+    if addr and token:
+        return True, {
+            "policy": policy,
+            "status": "ok",
+            "source": "vault",
+            "message": "Vault explicite configuré pour le live",
+        }
+    return False, {
+        "policy": policy,
+        "status": "fail",
+        "source": "missing_vault",
+        "message": (
+            "Live interdit sans Vault explicite ; définir ALPHA_TRADE_VAULT_ADDR + "
+            "ALPHA_TRADE_VAULT_TOKEN ou assumer explicitement "
+            f"{LIVE_SECRET_POLICY_ENV}=env"
+        ),
+    }
+
+
 def _safe(key: str) -> str:
     return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in key)
 
@@ -224,7 +280,11 @@ __all__ = [
     "EnvFallbackVault",
     "HashiCorpVault",
     "build_vault_from_env",
+    "get_live_secret_policy",
+    "is_live_secret_policy_satisfied",
     "DEFAULT_VAULT_DIR",
     "RETENTION_DAYS",
+    "LIVE_SECRET_POLICY_ENV",
+    "DEFAULT_LIVE_SECRET_POLICY",
 ]
 

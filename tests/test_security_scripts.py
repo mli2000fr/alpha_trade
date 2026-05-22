@@ -36,3 +36,27 @@ def test_scan_cves_runs(tmp_path):
     data = json.loads(out.read_text(encoding="utf-8"))
     assert "timestamp" in data
 
+
+def test_scan_repo_secrets_runs(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "config.yaml").write_text('alpaca:\n  api_key: "${ALPACA_API_KEY}"\n', encoding="utf-8")
+    out = tmp_path / "secret-report.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "scan_repo_secrets.py"),
+            "--root",
+            str(repo),
+            "--output",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["status"] == "ok"
+    assert data["findings_count"] == 0
+
+

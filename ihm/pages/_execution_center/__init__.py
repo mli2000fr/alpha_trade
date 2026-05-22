@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, cast
+from typing import Any, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import streamlit as st
 
@@ -323,6 +323,34 @@ def _coerce_session_date(value: object, *, default: date) -> date:
         except ValueError:
             return default
     return default
+
+
+def _coerce_int(value: object, *, default: int | None) -> int:
+    fallback = 0 if default is None else int(default)
+    if value is None or value == "":
+        return fallback
+    try:
+        return int(cast(str | bytes | bytearray | SupportsInt | SupportsIndex, value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _coerce_float(value: object, *, default: float | None) -> float:
+    fallback = 0.0 if default is None else float(default)
+    if value is None or value == "":
+        return fallback
+    try:
+        return float(cast(str | SupportsFloat | SupportsIndex, value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _session_state_int(key: str, default: int | None) -> int:
+    return _coerce_int(st.session_state.get(key, default), default=default)
+
+
+def _session_state_float(key: str, default: float | None) -> float:
+    return _coerce_float(st.session_state.get(key, default), default=default)
 
 
 def _ensure_normalized_ml_train_preset_session_state(session_state: dict[str, object]) -> str:
@@ -751,9 +779,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             min_value=0.0,
             max_value=1.0,
             step=0.05,
-            value=float(
-                cast(float, st.session_state.get("pipeline_sentiment_min_relevance_score", 0.0))
-            ),
+            value=_session_state_float("pipeline_sentiment_min_relevance_score", 0.0),
             key="pipeline_sentiment_min_relevance_score",
             help=(
                 "Seuil [0.0, 1.0] sous lequel une paire (article, ticker) est "
@@ -793,11 +819,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     min_value=100,
                     max_value=100_000,
                     step=500,
-                    value=int(
-                        cast(int, st.session_state.get(
-                            "pipeline_sentiment_pending_limit",
-                            RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT,
-                        ))
+                    value=_session_state_int(
+                        "pipeline_sentiment_pending_limit",
+                        RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT,
                     ),
                     key="pipeline_sentiment_pending_limit",
                     help=(
@@ -813,11 +837,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     min_value=0,
                     max_value=100,
                     step=1,
-                    value=int(
-                        cast(int, st.session_state.get(
-                            "pipeline_sentiment_pending_max_batches_per_run",
-                            0,
-                        ))
+                    value=_session_state_int(
+                        "pipeline_sentiment_pending_max_batches_per_run",
+                        0,
                     ),
                     key="pipeline_sentiment_pending_max_batches_per_run",
                     help=(
@@ -834,11 +856,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     min_value=1,
                     max_value=256,
                     step=8,
-                    value=int(
-                        cast(int, st.session_state.get(
-                            "pipeline_sentiment_finbert_batch_size",
-                            RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE,
-                        ))
+                    value=_session_state_int(
+                        "pipeline_sentiment_finbert_batch_size",
+                        RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE,
                     ),
                     key="pipeline_sentiment_finbert_batch_size",
                     help=(
@@ -855,14 +875,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     min_value=0,
                     max_value=100,
                     step=1,
-                    value=int(
-                        cast(
-                            int,
-                            st.session_state.get(
-                                "pipeline_sentiment_feature_flush_every_n_batches",
-                                DEFAULT_EVENT_SENTIMENT_FEATURE_FLUSH_EVERY_N_BATCHES,
-                            ),
-                        )
+                    value=_session_state_int(
+                        "pipeline_sentiment_feature_flush_every_n_batches",
+                        DEFAULT_EVENT_SENTIMENT_FEATURE_FLUSH_EVERY_N_BATCHES,
                     ),
                     key="pipeline_sentiment_feature_flush_every_n_batches",
                     help=(
@@ -896,10 +911,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     min_value=0.0,
                     max_value=1.0,
                     step=0.05,
-                    value=float(
-                        cast(float, st.session_state.get(
-                            "pipeline_sentiment_contextual_min_relevance", 0.3
-                        ))
+                    value=_session_state_float(
+                        "pipeline_sentiment_contextual_min_relevance",
+                        0.3,
                     ),
                     key="pipeline_sentiment_contextual_min_relevance",
                     help=(
@@ -916,10 +930,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     min_value=100,
                     max_value=5000_000,
                     step=500,
-                    value=int(
-                        cast(int, st.session_state.get(
-                            "pipeline_sentiment_contextual_max_pairs", 50000
-                        ))
+                    value=_session_state_int(
+                        "pipeline_sentiment_contextual_max_pairs",
+                        50000,
                     ),
                     key="pipeline_sentiment_contextual_max_pairs",
                     help=(
@@ -940,9 +953,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     min_value=50,
                     max_value=10_000,
                     step=50,
-                    value=int(
-                        cast(int, st.session_state.get("pipeline_backfill_relevance_batch_size", 500))
-                    ),
+                    value=_session_state_int("pipeline_backfill_relevance_batch_size", 500),
                     key="pipeline_backfill_relevance_batch_size",
                     help="Taille des lots de paires (article, symbole) envoyées à FinBERT à la fois.",
                 )
@@ -954,9 +965,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     min_value=0.0,
                     max_value=1.0,
                     step=0.05,
-                    value=float(
-                        cast(float, st.session_state.get("pipeline_backfill_relevance_purge_below", 0.0))
-                    ),
+                    value=_session_state_float("pipeline_backfill_relevance_purge_below", 0.0),
                     key="pipeline_backfill_relevance_purge_below",
                     help=(
                         "Si > 0 : DELETE des lignes `news_ticker_map` avec "
@@ -1081,8 +1090,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 f"{contextual_backlog_preview.get('error')}"
             )
         elif contextual_backlog_preview is not None:
-            pending_contextual_pairs = int(
-                contextual_backlog_preview.get("pending_pairs") or 0
+            pending_contextual_pairs = _coerce_int(
+                contextual_backlog_preview.get("pending_pairs"),
+                default=0,
             )
             estimated_batches_needed = (
                 (pending_contextual_pairs + max(int(sentiment_contextual_max_pairs), 1) - 1)
@@ -1172,7 +1182,10 @@ def _render_signal_aggregator_block() -> dict[str, Any]:
                 "Signal Aggregator — poids sentiment",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_signal_aggregator_sentiment_weight", DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT)),
+                value=_session_state_float(
+                    "pipeline_signal_aggregator_sentiment_weight",
+                    DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT,
+                ),
                 step=0.01,
                 format="%.2f",
                 key="pipeline_signal_aggregator_sentiment_weight",
@@ -1183,7 +1196,10 @@ def _render_signal_aggregator_block() -> dict[str, Any]:
                 "Signal Aggregator — poids macro sectoriel",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_signal_aggregator_macro_weight", DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT)),
+                value=_session_state_float(
+                    "pipeline_signal_aggregator_macro_weight",
+                    DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT,
+                ),
                 step=0.01,
                 format="%.2f",
                 key="pipeline_signal_aggregator_macro_weight",
@@ -1194,7 +1210,10 @@ def _render_signal_aggregator_block() -> dict[str, Any]:
             st.number_input(
                 "Signal Aggregator — lookback (jours)",
                 min_value=1,
-                value=int(st.session_state.get("pipeline_signal_aggregator_lookback_days", DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS)),
+                value=_session_state_int(
+                    "pipeline_signal_aggregator_lookback_days",
+                    DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS,
+                ),
                 step=1,
                 key="pipeline_signal_aggregator_lookback_days",
             )
@@ -1203,7 +1222,10 @@ def _render_signal_aggregator_block() -> dict[str, Any]:
             st.number_input(
                 "Signal Aggregator — news mini",
                 min_value=1,
-                value=int(st.session_state.get("pipeline_signal_aggregator_min_news_count", DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT)),
+                value=_session_state_int(
+                    "pipeline_signal_aggregator_min_news_count",
+                    DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT,
+                ),
                 step=1,
                 key="pipeline_signal_aggregator_min_news_count",
             )
@@ -1215,7 +1237,10 @@ def _render_signal_aggregator_block() -> dict[str, Any]:
             st.number_input(
                 "Signal Aggregator — demi-vie décroissance (jours)",
                 min_value=0.1,
-                value=float(st.session_state.get("pipeline_signal_aggregator_time_decay_half_life_days", DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS)),
+                value=_session_state_float(
+                    "pipeline_signal_aggregator_time_decay_half_life_days",
+                    DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS,
+                ),
                 step=0.1,
                 format="%.2f",
                 key="pipeline_signal_aggregator_time_decay_half_life_days",
@@ -1252,13 +1277,39 @@ def _render_live_confirmation_block(execution_mode: str) -> bool:
     if execution_mode != "live":
         return True
     st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
+    st.caption(
+        "S8 — le mode live exige désormais un token d'approbation opérateur et écrit/valide un "
+        "run plan immuable côté backend."
+    )
+    approval_token = str(
+        st.text_input(
+            "Token d'approbation live",
+            value=str(st.session_state.get("pipeline_execution_live_approval_token", "")),
+            key="pipeline_execution_live_approval_token",
+            type="password",
+            help=(
+                "Comparé côté backend à `ALPHA_TRADE_LIVE_APPROVAL_TOKEN`. Obligatoire pour tout run live."
+            ),
+        )
+    ).strip()
+    st.text_input(
+        "Fichier run plan immuable (optionnel)",
+        value=str(st.session_state.get("pipeline_execution_run_plan_file", "")),
+        key="pipeline_execution_run_plan_file",
+        help=(
+            "Si renseigné, le backend vérifie que le contenu du fichier correspond exactement aux paramètres du run. "
+            "Si laissé vide, un plan horodaté est créé automatiquement dans `artifacts/execution_run_plans/`."
+        ),
+    )
+    if not approval_token:
+        st.error("Le token d'approbation live est requis pour déverrouiller le lancement.")
     return bool(
         st.checkbox(
             "Je confirme explicitement le lancement en LIVE",
             value=bool(st.session_state.get("pipeline_live_confirmed", False)),
             key="pipeline_live_confirmed",
         )
-    )
+    ) and bool(approval_token)
 
 
 def _render_screener_block() -> dict[str, Any]:
@@ -1276,7 +1327,10 @@ def _render_screener_block() -> dict[str, Any]:
             st.number_input(
                 "Screener — taille de chunk",
                 min_value=1,
-                value=int(st.session_state.get("pipeline_screener_chunk_size", DEFAULT_SCREENER_CHUNK_SIZE)),
+                value=_session_state_int(
+                    "pipeline_screener_chunk_size",
+                    DEFAULT_SCREENER_CHUNK_SIZE,
+                ),
                 step=50,
                 key="pipeline_screener_chunk_size",
             )
@@ -1285,7 +1339,7 @@ def _render_screener_block() -> dict[str, Any]:
             st.number_input(
                 "Screener — max workers (0 = auto)",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_screener_max_workers", 0)),
+                value=_session_state_int("pipeline_screener_max_workers", 0),
                 step=1,
                 key="pipeline_screener_max_workers",
             )
@@ -1302,7 +1356,10 @@ def _render_screener_block() -> dict[str, Any]:
             st.number_input(
                 "Screener — liquidité mini (USD)",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_screener_liquidity_threshold_usd", DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD)),
+                value=_session_state_float(
+                    "pipeline_screener_liquidity_threshold_usd",
+                    DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD,
+                ),
                 step=1_000_000.0,
                 format="%.2f",
                 key="pipeline_screener_liquidity_threshold_usd",
@@ -1312,7 +1369,10 @@ def _render_screener_block() -> dict[str, Any]:
             st.number_input(
                 "Screener — RS mini vs benchmark",
                 min_value=0.01,
-                value=float(st.session_state.get("pipeline_screener_min_relative_strength_index", DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX)),
+                value=_session_state_float(
+                    "pipeline_screener_min_relative_strength_index",
+                    DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX,
+                ),
                 step=1.0,
                 format="%.2f",
                 key="pipeline_screener_min_relative_strength_index",
@@ -1328,7 +1388,10 @@ def _render_screener_block() -> dict[str, Any]:
             st.number_input(
                 "Screener — fenêtre range historique (jours)",
                 min_value=2,
-                value=int(st.session_state.get("pipeline_screener_historical_range_lookback_days", DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS)),
+                value=_session_state_int(
+                    "pipeline_screener_historical_range_lookback_days",
+                    DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS,
+                ),
                 step=21,
                 key="pipeline_screener_historical_range_lookback_days",
             )
@@ -1338,7 +1401,10 @@ def _render_screener_block() -> dict[str, Any]:
                 "Screener — score mini range historique",
                 min_value=0.0,
                 max_value=100.0,
-                value=float(st.session_state.get("pipeline_screener_min_historical_range_score", DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE)),
+                value=_session_state_float(
+                    "pipeline_screener_min_historical_range_score",
+                    DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE,
+                ),
                 step=1.0,
                 format="%.2f",
                 key="pipeline_screener_min_historical_range_score",
@@ -1348,7 +1414,10 @@ def _render_screener_block() -> dict[str, Any]:
             st.number_input(
                 "Screener — fenêtre passe 1 (jours)",
                 min_value=252,
-                value=int(st.session_state.get("pipeline_screener_first_pass_window_days", DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS)),
+                value=_session_state_int(
+                    "pipeline_screener_first_pass_window_days",
+                    DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS,
+                ),
                 step=21,
                 key="pipeline_screener_first_pass_window_days",
             )
@@ -1388,7 +1457,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 "Risk — risque par trade (fraction)",
                 min_value=0.001,
                 max_value=0.10,
-                value=float(st.session_state.get("pipeline_risk_per_trade_pct", DEFAULT_RISK_PER_TRADE_PCT)),
+                value=_session_state_float(
+                    "pipeline_risk_per_trade_pct",
+                    DEFAULT_RISK_PER_TRADE_PCT,
+                ),
                 step=0.001,
                 format="%.4f",
                 key="pipeline_risk_per_trade_pct",
@@ -1400,7 +1472,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 "Risk — positions max",
                 min_value=1,
                 max_value=100,
-                value=int(st.session_state.get("pipeline_risk_max_positions", DEFAULT_RISK_MAX_POSITIONS)),
+                value=_session_state_int(
+                    "pipeline_risk_max_positions",
+                    DEFAULT_RISK_MAX_POSITIONS,
+                ),
                 step=1,
                 key="pipeline_risk_max_positions",
             )
@@ -1411,7 +1486,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 "Risk — poids max par position",
                 min_value=0.01,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_risk_max_position_weight", DEFAULT_RISK_MAX_POSITION_WEIGHT)),
+                value=_session_state_float(
+                    "pipeline_risk_max_position_weight",
+                    DEFAULT_RISK_MAX_POSITION_WEIGHT,
+                ),
                 step=0.01,
                 format="%.2f",
                 key="pipeline_risk_max_position_weight",
@@ -1422,7 +1500,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 "Risk — poids max par secteur",
                 min_value=0.05,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_risk_max_sector_weight", DEFAULT_RISK_MAX_SECTOR_WEIGHT)),
+                value=_session_state_float(
+                    "pipeline_risk_max_sector_weight",
+                    DEFAULT_RISK_MAX_SECTOR_WEIGHT,
+                ),
                 step=0.05,
                 format="%.2f",
                 key="pipeline_risk_max_sector_weight",
@@ -1432,7 +1513,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
             st.number_input(
                 "Risk — ticket minimum ($)",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_risk_min_position_notional", DEFAULT_RISK_MIN_POSITION_NOTIONAL)),
+                value=_session_state_float(
+                    "pipeline_risk_min_position_notional",
+                    DEFAULT_RISK_MIN_POSITION_NOTIONAL,
+                ),
                 step=10.0,
                 format="%.2f",
                 key="pipeline_risk_min_position_notional",
@@ -1445,7 +1529,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 "Risk — poids score (conviction)",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_risk_score_weight", DEFAULT_RISK_SCORE_WEIGHT)),
+                value=_session_state_float(
+                    "pipeline_risk_score_weight",
+                    DEFAULT_RISK_SCORE_WEIGHT,
+                ),
                 step=0.05,
                 format="%.2f",
                 key="pipeline_risk_score_weight",
@@ -1456,7 +1543,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 "Risk — poids ML predict (conviction)",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_risk_prediction_weight", DEFAULT_RISK_PREDICTION_WEIGHT)),
+                value=_session_state_float(
+                    "pipeline_risk_prediction_weight",
+                    DEFAULT_RISK_PREDICTION_WEIGHT,
+                ),
                 step=0.05,
                 format="%.2f",
                 key="pipeline_risk_prediction_weight",
@@ -1468,7 +1558,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 "Risk — corrélation max",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_risk_correlation_threshold", DEFAULT_RISK_CORRELATION_THRESHOLD)),
+                value=_session_state_float(
+                    "pipeline_risk_correlation_threshold",
+                    DEFAULT_RISK_CORRELATION_THRESHOLD,
+                ),
                 step=0.05,
                 format="%.2f",
                 key="pipeline_risk_correlation_threshold",
@@ -1479,7 +1572,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 "Risk — lookback corrélation (jours)",
                 min_value=10,
                 max_value=252,
-                value=int(st.session_state.get("pipeline_risk_correlation_lookback_days", DEFAULT_RISK_CORRELATION_LOOKBACK_DAYS)),
+                value=_session_state_int(
+                    "pipeline_risk_correlation_lookback_days",
+                    DEFAULT_RISK_CORRELATION_LOOKBACK_DAYS,
+                ),
                 step=10,
                 key="pipeline_risk_correlation_lookback_days",
             )
@@ -1503,7 +1599,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 st.number_input(
                     "Risk — payoff ratio assumé",
                     min_value=0.5,
-                    value=float(st.session_state.get("pipeline_risk_payoff_ratio", DEFAULT_RISK_PAYOFF_RATIO)),
+                    value=_session_state_float(
+                        "pipeline_risk_payoff_ratio",
+                        DEFAULT_RISK_PAYOFF_RATIO,
+                    ),
                     step=0.1,
                     format="%.2f",
                     key="pipeline_risk_payoff_ratio",
@@ -1514,7 +1613,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                     "Risk — multiplicateur Kelly fraction",
                     min_value=0.05,
                     max_value=1.0,
-                    value=float(st.session_state.get("pipeline_risk_kelly_fraction_multiplier", DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER)),
+                    value=_session_state_float(
+                        "pipeline_risk_kelly_fraction_multiplier",
+                        DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER,
+                    ),
                     step=0.05,
                     format="%.2f",
                     key="pipeline_risk_kelly_fraction_multiplier",
@@ -1526,7 +1628,10 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                     "Risk — min overlap corrélation",
                     min_value=10,
                     max_value=200,
-                    value=int(st.session_state.get("pipeline_risk_correlation_min_overlap", DEFAULT_RISK_CORRELATION_MIN_OVERLAP)),
+                    value=_session_state_int(
+                        "pipeline_risk_correlation_min_overlap",
+                        DEFAULT_RISK_CORRELATION_MIN_OVERLAP,
+                    ),
                     step=5,
                     key="pipeline_risk_correlation_min_overlap",
                 )
@@ -1615,7 +1720,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — taille de chunk",
                 min_value=1,
-                value=int(st.session_state.get("pipeline_selector_chunk_size", DEFAULT_SELECTOR_CHUNK_SIZE)),
+                value=_session_state_int(
+                    "pipeline_selector_chunk_size",
+                    DEFAULT_SELECTOR_CHUNK_SIZE,
+                ),
                 step=50,
                 key="pipeline_selector_chunk_size",
             )
@@ -1624,7 +1732,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — taille de sélection finale",
                 min_value=1,
-                value=int(st.session_state.get("pipeline_selector_selection_size", DEFAULT_SELECTOR_SELECTION_SIZE)),
+                value=_session_state_int(
+                    "pipeline_selector_selection_size",
+                    DEFAULT_SELECTOR_SELECTION_SIZE,
+                ),
                 step=5,
                 key="pipeline_selector_selection_size",
             )
@@ -1633,7 +1744,7 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — max workers (0 = auto)",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_selector_max_workers", 0)),
+                value=_session_state_int("pipeline_selector_max_workers", 0),
                 step=1,
                 key="pipeline_selector_max_workers",
             )
@@ -1656,7 +1767,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — liquidité mini",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_selector_liquidity_threshold", DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD)),
+                value=_session_state_float(
+                    "pipeline_selector_liquidity_threshold",
+                    DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD,
+                ),
                 step=1_000_000.0,
                 format="%.2f",
                 key="pipeline_selector_liquidity_threshold",
@@ -1666,7 +1780,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — prix mini",
                 min_value=0.01,
-                value=float(st.session_state.get("pipeline_selector_min_close", DEFAULT_SELECTOR_MIN_CLOSE)),
+                value=_session_state_float(
+                    "pipeline_selector_min_close",
+                    DEFAULT_SELECTOR_MIN_CLOSE,
+                ),
                 step=1.0,
                 format="%.2f",
                 key="pipeline_selector_min_close",
@@ -1676,7 +1793,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — volatilité relative max",
                 min_value=0.01,
-                value=float(st.session_state.get("pipeline_selector_max_volatility_ratio", DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO)),
+                value=_session_state_float(
+                    "pipeline_selector_max_volatility_ratio",
+                    DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO,
+                ),
                 step=0.05,
                 format="%.2f",
                 key="pipeline_selector_max_volatility_ratio",
@@ -1686,7 +1806,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — RS mini",
                 min_value=0.01,
-                value=float(st.session_state.get("pipeline_selector_min_relative_strength_index", DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX)),
+                value=_session_state_float(
+                    "pipeline_selector_min_relative_strength_index",
+                    DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX,
+                ),
                 step=1.0,
                 format="%.2f",
                 key="pipeline_selector_min_relative_strength_index",
@@ -1698,7 +1821,10 @@ def _render_selector_block() -> dict[str, Any]:
                 "Alpha Scanner — proximité min du high 52w",
                 min_value=0.01,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_selector_min_high_52w_proximity", DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY)),
+                value=_session_state_float(
+                    "pipeline_selector_min_high_52w_proximity",
+                    DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY,
+                ),
                 step=0.01,
                 format="%.2f",
                 key="pipeline_selector_min_high_52w_proximity",
@@ -1709,7 +1835,10 @@ def _render_selector_block() -> dict[str, Any]:
                 "Alpha Scanner — weekly trend mini",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_selector_min_weekly_trend_score", DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE)),
+                value=_session_state_float(
+                    "pipeline_selector_min_weekly_trend_score",
+                    DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE,
+                ),
                 step=0.05,
                 format="%.2f",
                 key="pipeline_selector_min_weekly_trend_score",
@@ -1719,7 +1848,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — ATR%20 min",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_selector_min_atr_pct_20", DEFAULT_SELECTOR_MIN_ATR_PCT_20)),
+                value=_session_state_float(
+                    "pipeline_selector_min_atr_pct_20",
+                    DEFAULT_SELECTOR_MIN_ATR_PCT_20,
+                ),
                 step=0.005,
                 format="%.4f",
                 key="pipeline_selector_min_atr_pct_20",
@@ -1729,7 +1861,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — ATR%20 max",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_selector_max_atr_pct_20", DEFAULT_SELECTOR_MAX_ATR_PCT_20)),
+                value=_session_state_float(
+                    "pipeline_selector_max_atr_pct_20",
+                    DEFAULT_SELECTOR_MAX_ATR_PCT_20,
+                ),
                 step=0.005,
                 format="%.4f",
                 key="pipeline_selector_max_atr_pct_20",
@@ -1740,7 +1875,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — market cap mini",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_selector_min_market_cap", DEFAULT_SELECTOR_MIN_MARKET_CAP)),
+                value=_session_state_float(
+                    "pipeline_selector_min_market_cap",
+                    DEFAULT_SELECTOR_MIN_MARKET_CAP,
+                ),
                 step=100_000_000.0,
                 format="%.2f",
                 key="pipeline_selector_min_market_cap",
@@ -1750,7 +1888,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — beta 126 mini",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_selector_min_beta_126", DEFAULT_SELECTOR_MIN_BETA_126)),
+                value=_session_state_float(
+                    "pipeline_selector_min_beta_126",
+                    DEFAULT_SELECTOR_MIN_BETA_126,
+                ),
                 step=0.1,
                 format="%.2f",
                 key="pipeline_selector_min_beta_126",
@@ -1760,7 +1901,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — spread max (bps)",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_selector_max_spread_bps", DEFAULT_SELECTOR_MAX_SPREAD_BPS)),
+                value=_session_state_float(
+                    "pipeline_selector_max_spread_bps",
+                    DEFAULT_SELECTOR_MAX_SPREAD_BPS,
+                ),
                 step=1.0,
                 format="%.2f",
                 key="pipeline_selector_max_spread_bps",
@@ -1770,7 +1914,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — earnings blackout (jours)",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_selector_earnings_blackout_days", DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS)),
+                value=_session_state_int(
+                    "pipeline_selector_earnings_blackout_days",
+                    DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS,
+                ),
                 step=1,
                 key="pipeline_selector_earnings_blackout_days",
             )
@@ -1782,7 +1929,10 @@ def _render_selector_block() -> dict[str, Any]:
             st.number_input(
                 "Alpha Scanner — anomalies max",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_selector_max_anomaly_count", DEFAULT_SELECTOR_MAX_ANOMALY_COUNT)),
+                value=_session_state_int(
+                    "pipeline_selector_max_anomaly_count",
+                    DEFAULT_SELECTOR_MAX_ANOMALY_COUNT,
+                ),
                 step=1,
                 key="pipeline_selector_max_anomaly_count",
             )
@@ -1799,7 +1949,10 @@ def _render_selector_block() -> dict[str, Any]:
                 "Alpha Scanner — cap sectoriel",
                 min_value=0.01,
                 max_value=1.0,
-                value=float(st.session_state.get("pipeline_selector_sector_cap_ratio", DEFAULT_SELECTOR_SECTOR_CAP_RATIO)),
+                value=_session_state_float(
+                    "pipeline_selector_sector_cap_ratio",
+                    DEFAULT_SELECTOR_SECTOR_CAP_RATIO,
+                ),
                 step=0.01,
                 format="%.2f",
                 key="pipeline_selector_sector_cap_ratio",
@@ -1849,7 +2002,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
                 "Latest Quotes — limite optionnelle",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_data_integrity_quotes_limit", 0)),
+                value=_session_state_int("pipeline_data_integrity_quotes_limit", 0),
                 step=50,
                 key="pipeline_data_integrity_quotes_limit",
             )
@@ -1858,7 +2011,10 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
                 "Latest Quotes — taille de batch",
                 min_value=1,
-                value=int(st.session_state.get("pipeline_data_integrity_quotes_batch_size", DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE)),
+                value=_session_state_int(
+                    "pipeline_data_integrity_quotes_batch_size",
+                    DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE,
+                ),
                 step=25,
                 key="pipeline_data_integrity_quotes_batch_size",
             )
@@ -1867,7 +2023,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
                 "Earnings — limite optionnelle",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_data_integrity_earnings_limit", 0)),
+                value=_session_state_int("pipeline_data_integrity_earnings_limit", 0),
                 step=25,
                 key="pipeline_data_integrity_earnings_limit",
             )
@@ -1877,7 +2033,10 @@ def _render_data_integrity_block() -> dict[str, Any]:
                 "Earnings — taille de batch (symboles)",
                 min_value=25,
                 max_value=100,
-                value=int(st.session_state.get("pipeline_data_integrity_earnings_batch_size", DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE)),
+                value=_session_state_int(
+                    "pipeline_data_integrity_earnings_batch_size",
+                    DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE,
+                ),
                 step=25,
                 key="pipeline_data_integrity_earnings_batch_size",
                 help="Chaque batch est fetch + upsert + commit avant de passer au suivant. Intervalle supporté : 25 à 100 symboles.",
@@ -1888,7 +2047,10 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
                 "Earnings — pause Finnhub (s)",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_data_integrity_earnings_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
+                value=_session_state_float(
+                    "pipeline_data_integrity_earnings_sleep_seconds",
+                    DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS,
+                ),
                 step=0.1,
                 format="%.2f",
                 key="pipeline_data_integrity_earnings_sleep_seconds",
@@ -1898,7 +2060,10 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
                 "Earnings — journaliser tous les N symboles",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_data_integrity_earnings_log_every", DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY)),
+                value=_session_state_int(
+                    "pipeline_data_integrity_earnings_log_every",
+                    DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY,
+                ),
                 step=5,
                 key="pipeline_data_integrity_earnings_log_every",
                 help="0 désactive les logs de progression Finnhub. Défaut : 25, soit environ un log toutes les ~30s avec la pause par défaut.",
@@ -1908,7 +2073,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
                 "Fondamentaux — limite optionnelle",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_data_integrity_fundamentals_limit", 0)),
+                value=_session_state_int("pipeline_data_integrity_fundamentals_limit", 0),
                 step=25,
                 key="pipeline_data_integrity_fundamentals_limit",
             )
@@ -1937,7 +2102,10 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
 	            "Fondamentaux — pause provider (s)",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_data_integrity_fundamentals_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
+                value=_session_state_float(
+                    "pipeline_data_integrity_fundamentals_sleep_seconds",
+                    DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS,
+                ),
                 step=0.1,
                 format="%.2f",
                 key="pipeline_data_integrity_fundamentals_sleep_seconds",
@@ -1948,7 +2116,10 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
                 "Import Bars EODHD — commit intermédiaire tous les N symboles",
                 min_value=0,
-                value=int(st.session_state.get("pipeline_eodhd_write_commit_every_symbols", DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS)),
+                value=_session_state_int(
+                    "pipeline_eodhd_write_commit_every_symbols",
+                    DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS,
+                ),
                 step=25,
                 key="pipeline_eodhd_write_commit_every_symbols",
                 help="0 = commit final unique en fin de run. Toute valeur > 0 active des sauvegardes intermédiaires par batch de symboles quand `bars_provider=eodhd`.",
@@ -1967,7 +2138,10 @@ def _render_data_integrity_block() -> dict[str, Any]:
             st.number_input(
                 "Fondamentaux — journaliser tous les N symboles",
                 min_value=1,
-                value=int(st.session_state.get("pipeline_data_integrity_fundamentals_log_every", DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY)),
+                value=_session_state_int(
+                    "pipeline_data_integrity_fundamentals_log_every",
+                    DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY,
+                ),
                 step=5,
                 key="pipeline_data_integrity_fundamentals_log_every",
             )
@@ -2068,7 +2242,10 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
                 "CA Sync — batch size",
                 min_value=1,
                 max_value=200,
-                value=int(st.session_state.get("pipeline_corporate_actions_batch_size", DEFAULT_CA_BATCH_SIZE)),
+                value=_session_state_int(
+                    "pipeline_corporate_actions_batch_size",
+                    DEFAULT_CA_BATCH_SIZE,
+                ),
                 step=5,
                 key="pipeline_corporate_actions_batch_size",
                 help="Taille des lots de symboles par appel provider (`--batch-size`). Défaut 25.",
@@ -2145,7 +2322,7 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
                 "B3 — profondeur historique (années)",
                 min_value=1,
                 max_value=30,
-                value=int(st.session_state.get("pipeline_eodhd_backfill_years", 30)),
+                value=_session_state_int("pipeline_eodhd_backfill_years", 30),
                 step=1,
                 key="pipeline_eodhd_backfill_years",
                 help="30 ans par défaut (profondeur historique maximale EODHD pour robustesse ML/backtest). Coût quota EODHD identique quelle que soit la profondeur (1 appel par symbole).",
@@ -2308,7 +2485,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             risk_account_equity = st.number_input(
                 "Equity pour le module Risk",
                 min_value=0.0,
-                value=float(st.session_state.get("pipeline_risk_account_equity", 100_000.0)),
+                value=_session_state_float("pipeline_risk_account_equity", 100_000.0),
                 step=1_000.0,
                 format="%.2f",
                 key="pipeline_risk_account_equity",
@@ -2338,6 +2515,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_execution_run_id",
                 help="Laissez vide pour exécuter sur le dernier run disponible.",
             )
+        execution_live_approval_token = str(
+            st.session_state.get("pipeline_execution_live_approval_token", "")
+        ).strip() or None
+        execution_run_plan_file = str(
+            st.session_state.get("pipeline_execution_run_plan_file", "")
+        ).strip() or None
         with col5:
             allow_outside_rth = st.checkbox(
                 "Execution hors RTH (file d'attente pour l'ouverture)",
@@ -2428,11 +2611,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         )
         prot_col1, prot_col2, prot_col_msl, prot_col3, prot_col4, prot_col5 = st.columns(6)
         with prot_col1:
-            execution_take_profit_pct_percent_default = float(
-                st.session_state.get(
-                    "pipeline_execution_take_profit_pct_percent",
-                    float(st.session_state.get("pipeline_execution_take_profit_pct", DEFAULT_EXEC_TAKE_PROFIT_PCT)) * 100.0,
+            execution_take_profit_pct_percent_default = _session_state_float(
+                "pipeline_execution_take_profit_pct_percent",
+                _session_state_float(
+                    "pipeline_execution_take_profit_pct",
+                    DEFAULT_EXEC_TAKE_PROFIT_PCT,
                 )
+                * 100.0,
             )
             execution_take_profit_pct_percent = float(
                 st.number_input(
@@ -2451,11 +2636,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
             st.session_state["pipeline_execution_take_profit_pct"] = execution_take_profit_pct
         with prot_col2:
-            execution_trailing_stop_pct_percent_default = float(
-                st.session_state.get(
-                    "pipeline_execution_trailing_stop_pct_percent",
-                    float(st.session_state.get("pipeline_execution_trailing_stop_pct", DEFAULT_EXEC_TRAILING_STOP_PCT)) * 100.0,
+            execution_trailing_stop_pct_percent_default = _session_state_float(
+                "pipeline_execution_trailing_stop_pct_percent",
+                _session_state_float(
+                    "pipeline_execution_trailing_stop_pct",
+                    DEFAULT_EXEC_TRAILING_STOP_PCT,
                 )
+                * 100.0,
             )
             execution_trailing_stop_pct_percent = float(
                 st.number_input(
@@ -2475,14 +2662,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             # Sprint 2026-05 — SL dédié aux achats manuels orphelins (Q8 du
             # FAQ opérateur). N'affecte PAS les achats Alpha Trade qui
             # conservent leur stop ATR / risk-based.
-            execution_manual_buy_sl_pct_percent_default = float(
-                st.session_state.get(
-                    "pipeline_execution_manual_buy_stop_loss_pct_percent",
-                    float(st.session_state.get(
-                        "pipeline_execution_manual_buy_stop_loss_pct",
-                        DEFAULT_EXEC_MANUAL_BUY_SL_PCT,
-                    )) * 100.0,
+            execution_manual_buy_sl_pct_percent_default = _session_state_float(
+                "pipeline_execution_manual_buy_stop_loss_pct_percent",
+                _session_state_float(
+                    "pipeline_execution_manual_buy_stop_loss_pct",
+                    DEFAULT_EXEC_MANUAL_BUY_SL_PCT,
                 )
+                * 100.0,
             )
             execution_manual_buy_sl_pct_percent = float(
                 st.number_input(
@@ -2544,25 +2730,37 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     st.number_input(
                         "Multiple de R pour activation",
                         min_value=0.1,
-                        value=float(st.session_state.get("pipeline_execution_trailing_r_multiple", DEFAULT_EXEC_TRAILING_R_MULTIPLE)),
+                        value=_session_state_float(
+                            "pipeline_execution_trailing_r_multiple",
+                            DEFAULT_EXEC_TRAILING_R_MULTIPLE,
+                        ),
                         step=0.1,
                         format="%.2f",
                         key="pipeline_execution_trailing_r_multiple",
                     )
                 )
-                execution_trailing_profit_pct = float(st.session_state.get("pipeline_execution_trailing_profit_pct", DEFAULT_EXEC_TRAILING_PROFIT_PCT))
+                execution_trailing_profit_pct = _session_state_float(
+                    "pipeline_execution_trailing_profit_pct",
+                    DEFAULT_EXEC_TRAILING_PROFIT_PCT,
+                )
             else:
                 execution_trailing_profit_pct = float(
                     st.number_input(
                         "Profit % pour activation",
                         min_value=0.001,
-                        value=float(st.session_state.get("pipeline_execution_trailing_profit_pct", DEFAULT_EXEC_TRAILING_PROFIT_PCT)),
+                        value=_session_state_float(
+                            "pipeline_execution_trailing_profit_pct",
+                            DEFAULT_EXEC_TRAILING_PROFIT_PCT,
+                        ),
                         step=0.005,
                         format="%.4f",
                         key="pipeline_execution_trailing_profit_pct",
                     )
                 )
-                execution_trailing_r_multiple = float(st.session_state.get("pipeline_execution_trailing_r_multiple", DEFAULT_EXEC_TRAILING_R_MULTIPLE))
+                execution_trailing_r_multiple = _session_state_float(
+                    "pipeline_execution_trailing_r_multiple",
+                    DEFAULT_EXEC_TRAILING_R_MULTIPLE,
+                )
 
         with st.expander("Execution — transition trigger avancé & debug", expanded=False):
             st.caption(
@@ -2576,10 +2774,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "Transition — timeout (s)",
                         min_value=0,
                         max_value=3600,
-                        value=int(st.session_state.get(
+                        value=_session_state_int(
                             "pipeline_execution_protection_transition_timeout_seconds",
                             DEFAULT_EXEC_PROTECTION_TRANSITION_TIMEOUT_SECONDS,
-                        )),
+                        ),
                         step=10,
                         key="pipeline_execution_protection_transition_timeout_seconds",
                         help="0 = ne pas envoyer le flag (laisse le défaut backend).",
@@ -2591,10 +2789,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "Transition — poll interval (s)",
                         min_value=0.0,
                         max_value=120.0,
-                        value=float(st.session_state.get(
+                        value=_session_state_float(
                             "pipeline_execution_protection_transition_poll_interval_seconds",
                             DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS,
-                        )),
+                        ),
                         step=0.5,
                         format="%.2f",
                         key="pipeline_execution_protection_transition_poll_interval_seconds",
@@ -2797,12 +2995,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "candidate_rank max",
                         min_value=0,
                         max_value=10_000,
-                        value=int(
+                        value=_coerce_int(
                             st.session_state.get(
                                 "pipeline_ml_selector_universe_max_candidate_rank",
                                 DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK or 0,
                             )
-                            or 0
+                            or 0,
+                            default=0,
                         ),
                         step=1,
                         key="pipeline_ml_selector_universe_max_candidate_rank",
@@ -2947,7 +3146,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Horizon de prédiction (jours)",
                     min_value=1,
                     max_value=30,
-                    value=int(st.session_state.get("pipeline_ml_forecast_horizon", DEFAULT_ML_FORECAST_HORIZON)),
+                    value=_session_state_int(
+                        "pipeline_ml_forecast_horizon",
+                        DEFAULT_ML_FORECAST_HORIZON,
+                    ),
                     step=1,
                     key="pipeline_ml_forecast_horizon",
                     help="Défaut swing : 5 jours. Ajustable 3-15 selon style.",
@@ -2959,7 +3161,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Seuil cible UP",
                     min_value=0.0,
                     max_value=0.20,
-                    value=float(st.session_state.get("pipeline_ml_target_up_threshold", DEFAULT_ML_TARGET_UP_THRESHOLD)),
+                    value=_session_state_float(
+                        "pipeline_ml_target_up_threshold",
+                        DEFAULT_ML_TARGET_UP_THRESHOLD,
+                    ),
                     step=0.005,
                     format="%.4f",
                     key="pipeline_ml_target_up_threshold",
@@ -2971,7 +3176,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Seuil cible DOWN",
                     min_value=-0.20,
                     max_value=0.0,
-                    value=float(st.session_state.get("pipeline_ml_target_down_threshold", DEFAULT_ML_TARGET_DOWN_THRESHOLD)),
+                    value=_session_state_float(
+                        "pipeline_ml_target_down_threshold",
+                        DEFAULT_ML_TARGET_DOWN_THRESHOLD,
+                    ),
                     step=0.005,
                     format="%.4f",
                     key="pipeline_ml_target_down_threshold",
@@ -2983,7 +3191,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Seuil de décision",
                     min_value=0.0,
                     max_value=1.0,
-                    value=float(st.session_state.get("pipeline_ml_decision_threshold", DEFAULT_ML_DECISION_THRESHOLD)),
+                    value=_session_state_float(
+                        "pipeline_ml_decision_threshold",
+                        DEFAULT_ML_DECISION_THRESHOLD,
+                    ),
                     step=0.01,
                     format="%.2f",
                     key="pipeline_ml_decision_threshold",
@@ -3020,7 +3231,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         st.number_input(
                             "wf min train",
                             min_value=60,
-                            value=int(st.session_state.get("pipeline_ml_wf_min_train_size", DEFAULT_ML_WF_MIN_TRAIN_SIZE)),
+                            value=_session_state_int(
+                                "pipeline_ml_wf_min_train_size",
+                                DEFAULT_ML_WF_MIN_TRAIN_SIZE,
+                            ),
                             step=21,
                             key="pipeline_ml_wf_min_train_size",
                         )
@@ -3030,7 +3244,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         st.number_input(
                             "wf val",
                             min_value=10,
-                            value=int(st.session_state.get("pipeline_ml_wf_val_size", DEFAULT_ML_WF_VAL_SIZE)),
+                            value=_session_state_int(
+                                "pipeline_ml_wf_val_size",
+                                DEFAULT_ML_WF_VAL_SIZE,
+                            ),
                             step=21,
                             key="pipeline_ml_wf_val_size",
                         )
@@ -3040,7 +3257,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         st.number_input(
                             "wf test",
                             min_value=10,
-                            value=int(st.session_state.get("pipeline_ml_wf_test_size", DEFAULT_ML_WF_TEST_SIZE)),
+                            value=_session_state_int(
+                                "pipeline_ml_wf_test_size",
+                                DEFAULT_ML_WF_TEST_SIZE,
+                            ),
                             step=21,
                             key="pipeline_ml_wf_test_size",
                         )
@@ -3050,7 +3270,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         st.number_input(
                             "wf step",
                             min_value=10,
-                            value=int(st.session_state.get("pipeline_ml_wf_step_size", DEFAULT_ML_WF_STEP_SIZE)),
+                            value=_session_state_int(
+                                "pipeline_ml_wf_step_size",
+                                DEFAULT_ML_WF_STEP_SIZE,
+                            ),
                             step=21,
                             key="pipeline_ml_wf_step_size",
                         )
@@ -3061,7 +3284,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                             "wf max splits",
                             min_value=1,
                             max_value=20,
-                            value=int(st.session_state.get("pipeline_ml_wf_max_splits", DEFAULT_ML_WF_MAX_SPLITS)),
+                            value=_session_state_int(
+                                "pipeline_ml_wf_max_splits",
+                                DEFAULT_ML_WF_MAX_SPLITS,
+                            ),
                             step=1,
                             key="pipeline_ml_wf_max_splits",
                         )
@@ -3081,7 +3307,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "ML — max workers",
                         min_value=1,
                         max_value=32,
-                        value=int(st.session_state.get("pipeline_ml_max_workers", DEFAULT_ML_MAX_WORKERS)),
+                        value=_session_state_int(
+                            "pipeline_ml_max_workers",
+                            DEFAULT_ML_MAX_WORKERS,
+                        ),
                         step=1,
                         key="pipeline_ml_max_workers",
                     )
@@ -3091,7 +3320,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "ML — max epochs (LSTM)",
                         min_value=5,
                         max_value=500,
-                        value=int(st.session_state.get("pipeline_ml_max_epochs", DEFAULT_ML_MAX_EPOCHS)),
+                        value=_session_state_int(
+                            "pipeline_ml_max_epochs",
+                            DEFAULT_ML_MAX_EPOCHS,
+                        ),
                         step=5,
                         key="pipeline_ml_max_epochs",
                     )
@@ -3115,7 +3347,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "ML — taux d'action min",
                         min_value=0.0,
                         max_value=1.0,
-                        value=float(st.session_state.get("pipeline_ml_min_action_rate", DEFAULT_ML_MIN_ACTION_RATE)),
+                        value=_session_state_float(
+                            "pipeline_ml_min_action_rate",
+                            DEFAULT_ML_MIN_ACTION_RATE,
+                        ),
                         step=0.01,
                         format="%.3f",
                         key="pipeline_ml_min_action_rate",
@@ -3126,7 +3361,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "ML — taux d'action max",
                         min_value=0.0,
                         max_value=1.0,
-                        value=float(st.session_state.get("pipeline_ml_max_action_rate", DEFAULT_ML_MAX_ACTION_RATE)),
+                        value=_session_state_float(
+                            "pipeline_ml_max_action_rate",
+                            DEFAULT_ML_MAX_ACTION_RATE,
+                        ),
                         step=0.05,
                         format="%.3f",
                         key="pipeline_ml_max_action_rate",
@@ -3137,7 +3375,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "ML — précision min (long)",
                         min_value=0.0,
                         max_value=1.0,
-                        value=float(st.session_state.get("pipeline_ml_min_precision_long", DEFAULT_ML_MIN_PRECISION_LONG)),
+                        value=_session_state_float(
+                            "pipeline_ml_min_precision_long",
+                            DEFAULT_ML_MIN_PRECISION_LONG,
+                        ),
                         step=0.01,
                         format="%.3f",
                         key="pipeline_ml_min_precision_long",
@@ -3168,7 +3409,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "ML — heartbeat interval (s)",
                         min_value=5.0,
                         max_value=3600.0,
-                        value=float(st.session_state.get("pipeline_ml_heartbeat_interval_seconds", DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS)),
+                        value=_session_state_float(
+                            "pipeline_ml_heartbeat_interval_seconds",
+                            DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
+                        ),
                         step=5.0,
                         format="%.0f",
                         key="pipeline_ml_heartbeat_interval_seconds",
@@ -3180,7 +3424,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "ML — watchdog timeout (s)",
                         min_value=0,
                         max_value=86400,
-                        value=int(st.session_state.get("pipeline_ml_watchdog_timeout_seconds", DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS)),
+                        value=_session_state_int(
+                            "pipeline_ml_watchdog_timeout_seconds",
+                            DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS,
+                        ),
                         step=30,
                         key="pipeline_ml_watchdog_timeout_seconds",
                         help="0 = surveillance seule. >0 = timeout si le dernier heartbeat structuré devient trop ancien. Ex. 300 = 5 min depuis le dernier heartbeat frais.",
@@ -3204,7 +3451,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "LSTM — sequence length",
                         min_value=5,
                         max_value=400,
-                        value=int(st.session_state.get("pipeline_ml_sequence_length", DEFAULT_ML_SEQUENCE_LENGTH)),
+                        value=_session_state_int(
+                            "pipeline_ml_sequence_length",
+                            DEFAULT_ML_SEQUENCE_LENGTH,
+                        ),
                         step=5,
                         key="pipeline_ml_sequence_length",
                         help="Longueur de la fenêtre LSTM en jours. Défaut backend : 60.",
@@ -3215,7 +3465,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "LSTM — batch size",
                         min_value=4,
                         max_value=4096,
-                        value=int(st.session_state.get("pipeline_ml_batch_size", DEFAULT_ML_BATCH_SIZE)),
+                        value=_session_state_int(
+                            "pipeline_ml_batch_size",
+                            DEFAULT_ML_BATCH_SIZE,
+                        ),
                         step=8,
                         key="pipeline_ml_batch_size",
                     )
@@ -3225,7 +3478,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "LSTM — hidden size",
                         min_value=8,
                         max_value=1024,
-                        value=int(st.session_state.get("pipeline_ml_hidden_size", DEFAULT_ML_HIDDEN_SIZE)),
+                        value=_session_state_int(
+                            "pipeline_ml_hidden_size",
+                            DEFAULT_ML_HIDDEN_SIZE,
+                        ),
                         step=8,
                         key="pipeline_ml_hidden_size",
                     )
@@ -3268,7 +3524,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "Cross-sectional — taille mini univers/date",
                         min_value=2,
                         max_value=500,
-                        value=int(st.session_state.get("pipeline_ml_cross_sectional_min_universe", DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE)),
+                        value=_session_state_int(
+                            "pipeline_ml_cross_sectional_min_universe",
+                            DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE,
+                        ),
                         step=1,
                         key="pipeline_ml_cross_sectional_min_universe",
                     )
@@ -3279,7 +3538,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "Calibration — min samples",
                         min_value=8,
                         max_value=10_000,
-                        value=int(st.session_state.get("pipeline_ml_calibration_min_samples", DEFAULT_ML_CALIBRATION_MIN_SAMPLES)),
+                        value=_session_state_int(
+                            "pipeline_ml_calibration_min_samples",
+                            DEFAULT_ML_CALIBRATION_MIN_SAMPLES,
+                        ),
                         step=8,
                         key="pipeline_ml_calibration_min_samples",
                     )
@@ -3289,7 +3551,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "Calibration — max iter",
                         min_value=10,
                         max_value=10_000,
-                        value=int(st.session_state.get("pipeline_ml_calibration_max_iter", DEFAULT_ML_CALIBRATION_MAX_ITER)),
+                        value=_session_state_int(
+                            "pipeline_ml_calibration_max_iter",
+                            DEFAULT_ML_CALIBRATION_MAX_ITER,
+                        ),
                         step=10,
                         key="pipeline_ml_calibration_max_iter",
                     )
@@ -3303,7 +3568,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "LightGBM — max depth",
                         min_value=1,
                         max_value=32,
-                        value=int(st.session_state.get("pipeline_ml_lgbm_max_depth", DEFAULT_ML_LGBM_MAX_DEPTH)),
+                        value=_session_state_int(
+                            "pipeline_ml_lgbm_max_depth",
+                            DEFAULT_ML_LGBM_MAX_DEPTH,
+                        ),
                         step=1,
                         key="pipeline_ml_lgbm_max_depth",
                     )
@@ -3314,7 +3582,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "LightGBM — n estimators",
                         min_value=10,
                         max_value=5000,
-                        value=int(st.session_state.get("pipeline_ml_lgbm_n_estimators", DEFAULT_ML_LGBM_N_ESTIMATORS)),
+                        value=_session_state_int(
+                            "pipeline_ml_lgbm_n_estimators",
+                            DEFAULT_ML_LGBM_N_ESTIMATORS,
+                        ),
                         step=10,
                         key="pipeline_ml_lgbm_n_estimators",
                     )
@@ -3325,7 +3596,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "LightGBM — learning rate",
                         min_value=0.001,
                         max_value=1.0,
-                        value=float(st.session_state.get("pipeline_ml_lgbm_learning_rate", DEFAULT_ML_LGBM_LEARNING_RATE)),
+                        value=_session_state_float(
+                            "pipeline_ml_lgbm_learning_rate",
+                            DEFAULT_ML_LGBM_LEARNING_RATE,
+                        ),
                         step=0.005,
                         format="%.4f",
                         key="pipeline_ml_lgbm_learning_rate",
@@ -3340,7 +3614,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "CatBoost — depth",
                         min_value=1,
                         max_value=16,
-                        value=int(st.session_state.get("pipeline_ml_catboost_depth", DEFAULT_ML_CATBOOST_DEPTH)),
+                        value=_session_state_int(
+                            "pipeline_ml_catboost_depth",
+                            DEFAULT_ML_CATBOOST_DEPTH,
+                        ),
                         step=1,
                         key="pipeline_ml_catboost_depth",
                     )
@@ -3351,7 +3628,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "CatBoost — iterations",
                         min_value=10,
                         max_value=5000,
-                        value=int(st.session_state.get("pipeline_ml_catboost_iterations", DEFAULT_ML_CATBOOST_ITERATIONS)),
+                        value=_session_state_int(
+                            "pipeline_ml_catboost_iterations",
+                            DEFAULT_ML_CATBOOST_ITERATIONS,
+                        ),
                         step=10,
                         key="pipeline_ml_catboost_iterations",
                     )
@@ -3362,7 +3642,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "CatBoost — learning rate",
                         min_value=0.001,
                         max_value=1.0,
-                        value=float(st.session_state.get("pipeline_ml_catboost_learning_rate", DEFAULT_ML_CATBOOST_LEARNING_RATE)),
+                        value=_session_state_float(
+                            "pipeline_ml_catboost_learning_rate",
+                            DEFAULT_ML_CATBOOST_LEARNING_RATE,
+                        ),
                         step=0.005,
                         format="%.4f",
                         key="pipeline_ml_catboost_learning_rate",
@@ -3399,7 +3682,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "min-trades-fraction (optimize-target)",
                         min_value=0.0,
                         max_value=1.0,
-                        value=float(st.session_state.get("pipeline_ml_min_trades_fraction", DEFAULT_ML_MIN_TRADES_FRACTION)),
+                        value=_session_state_float(
+                            "pipeline_ml_min_trades_fraction",
+                            DEFAULT_ML_MIN_TRADES_FRACTION,
+                        ),
                         step=0.01,
                         format="%.3f",
                         key="pipeline_ml_min_trades_fraction",
@@ -3534,6 +3820,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             risk_account_equity=float(cast(float, risk_account_equity)),
             execution_mode=cast(Any, execution_mode),
             execution_run_id=execution_run_id,
+            execution_live_approval_token=execution_live_approval_token,
+            execution_run_plan_file=execution_run_plan_file,
             allow_outside_rth=bool(allow_outside_rth),
             auto_rebalance=bool(auto_rebalance),
             execution_account_type=cast(Any, execution_account_type),

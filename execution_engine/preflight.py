@@ -1,6 +1,6 @@
 """Sprint S5 (A-013 + suivis A-008) — pre-flight checks pour bascule live.
 
-Module agrégeant 6 vérifications bloquantes avant un run live :
+Module agrégeant 7 vérifications bloquantes avant un run live :
 
 1. **Pas de kill switch global actif** — `execution_kill_switch_runs`.
 2. **Dry-run paper récent** — un `execution_runs` paper/dry-run < N heures.
@@ -9,7 +9,8 @@ Module agrégeant 6 vérifications bloquantes avant un run live :
 4. **Drift gate ML pas en kill switch** — dernier `ml_drift_runs.payload`.
 5. **Aucun secret littéral dans `config.yaml`** — délégué à
    :func:`core.secrets.scan_yaml_for_literal_secrets`.
-6. **Aucun verrou pipeline IHM actif** — :func:`ihm.services.pipeline_lock.list_active_locks`.
+6. **Policy secrets live conforme** — Vault explicite ou override env assumé.
+7. **Aucun verrou pipeline IHM actif** — :func:`ihm.services.pipeline_lock.list_active_locks`.
 
 Usage CLI :
 
@@ -310,8 +311,39 @@ def check_no_pipeline_lock_held(ctx: PreflightContext) -> CheckResult:
                        "no pipeline lock held", {})
 
 
+def check_live_secret_policy(ctx: PreflightContext) -> CheckResult:
+    """Échec si le live n'a ni Vault explicite ni policy env assumée."""
+    if ctx.broker_mode != "live":
+        return CheckResult(
+            "live_secret_policy",
+            "skip",
+            f"broker_mode={ctx.broker_mode} — check réservé au live",
+            {},
+        )
+    try:
+        from common.config_vault import is_live_secret_policy_satisfied
+
+        ok, details = is_live_secret_policy_satisfied()
+    except Exception as exc:
+        return CheckResult("live_secret_policy", "warn", f"check skipped: {exc}", {})
+    if ok:
+        return CheckResult(
+            "live_secret_policy",
+            "ok",
+            str(details.get("message") or "live secret policy ok"),
+            details,
+        )
+    return CheckResult(
+        "live_secret_policy",
+        "fail",
+        str(details.get("message") or "live secret policy failed"),
+        details,
+    )
+
+
 CHECKS: tuple[Callable[[PreflightContext], CheckResult], ...] = (
     check_no_literal_secrets,
+    check_live_secret_policy,
     check_alpaca_credentials,
     check_no_global_kill_switch_active,
     check_recent_dry_run,
@@ -437,6 +469,7 @@ __all__ = [
     "check_no_global_kill_switch_active",
     "check_recent_dry_run",
     "check_alpaca_credentials",
+    "check_live_secret_policy",
     "check_ml_drift_gate",
     "check_no_literal_secrets",
     "check_no_pipeline_lock_held",

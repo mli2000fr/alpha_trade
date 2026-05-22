@@ -254,6 +254,8 @@ class PipelineLaunchOptions:
     risk_account_equity: float = 100_000.0
     execution_mode: Literal["simulate", "paper", "live"] = "simulate"
     execution_run_id: str | None = None
+    execution_live_approval_token: str | None = None
+    execution_run_plan_file: str | None = None
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
     # Défauts swing cash : compte cash + PDT off + swing only (cf. audit_ihm_pipeline_options.md P1)
@@ -2212,6 +2214,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
         if account_id:
             command.extend(["--account", account_id])
+        if options.execution_mode == "live" and options.execution_live_approval_token:
+            command.extend(["--approval-token", str(options.execution_live_approval_token)])
+        if options.execution_run_plan_file:
+            command.extend(["--run-plan-file", str(options.execution_run_plan_file)])
         return command
 
     if step_key == "corporate_actions_apply":

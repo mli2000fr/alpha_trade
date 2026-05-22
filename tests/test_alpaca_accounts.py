@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from common.config_vault import EnvFallbackVault
 from service.alpaca import accounts as accounts_module
 from service.alpaca.accounts import AccountRegistry, DEFAULT_ACCOUNT_ID
 
@@ -65,6 +66,38 @@ def test_loads_accounts_from_yaml_with_env_placeholders(
     assert account.label == "Compte live"
     assert account.api_key == "key-live"
     assert account.secret_key == "secret-live"
+    assert account.mode == "live"
+
+
+def test_loads_accounts_from_yaml_with_vault_placeholders(
+    empty_config_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty_config_path.write_text(
+        """
+ alpaca:
+   accounts:
+     - id: live1
+       label: Vault live
+       api_key: ${vault:LIVE1_API_KEY}
+       secret_key: ${vault:LIVE1_SECRET_KEY}
+       mode: live
+ """.strip(),
+        encoding="utf-8",
+    )
+    vault = EnvFallbackVault(root=tmp_path / "vault")
+    vault.put("LIVE1_API_KEY", "vault-key-live")
+    vault.put("LIVE1_SECRET_KEY", "vault-secret-live")
+    monkeypatch.setenv("ALPHA_TRADE_VAULT_ADDR", "http://127.0.0.1:8200")
+    monkeypatch.setattr("common.config_vault.build_vault_from_env", lambda: vault)
+
+    registry = AccountRegistry()
+
+    account = registry.resolve("live1")
+    assert account.label == "Vault live"
+    assert account.api_key == "vault-key-live"
+    assert account.secret_key == "vault-secret-live"
     assert account.mode == "live"
 
 

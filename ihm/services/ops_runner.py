@@ -12,6 +12,7 @@ backtesting (cf. ``backtesting_runner.py``) :
 - ``scripts/run_monthly_broker_report.py``
 - ``scripts/run_quarterly_weights_calibration.py``
 - ``scripts/scan_cves.py``
+- ``scripts/scan_repo_secrets.py``
 - ``scripts/verify_audit_chain.py``
 - ``scripts/verify_vault_rotation.py``
 - ``scripts/prune_artifacts.py``
@@ -51,6 +52,7 @@ OpsCommandKey = Literal[
     "monthly_broker_report",
     "quarterly_weights_calibration",
     "scan_cves",
+    "scan_repo_secrets",
     "verify_audit_chain",
     "verify_vault_rotation",
     "prune_artifacts",
@@ -154,6 +156,14 @@ OPS_COMMAND_CATALOG: dict[OpsCommandKey, OpsCommandSpec] = {
         label="Scan CVE des dépendances",
         description="`scripts/scan_cves.py` — détecte les vulnérabilités connues dans `requirements.txt`.",
         icon="🛡️",
+    ),
+    "scan_repo_secrets": OpsCommandSpec(
+        key="scan_repo_secrets",
+        label="Scan secrets du dépôt",
+        description=(
+            "`scripts/scan_repo_secrets.py` — détecte les secrets littéraux dans les fichiers YAML du dépôt."
+        ),
+        icon="🔎",
     ),
     "verify_audit_chain": OpsCommandSpec(
         key="verify_audit_chain",
@@ -366,6 +376,9 @@ def build_ops_command(key: OpsCommandKey, **kwargs: Any) -> list[str]:
 
     if key == "scan_cves":
         return _script("scripts/scan_cves.py") + extra
+
+    if key == "scan_repo_secrets":
+        return _script("scripts/scan_repo_secrets.py") + extra
 
     if key == "verify_audit_chain":
         return _script("scripts/verify_audit_chain.py") + extra

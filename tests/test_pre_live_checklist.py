@@ -274,7 +274,8 @@ def test_pipeline_lock_held_fails():
 # Runner & report
 # ---------------------------------------------------------------------------
 
-def test_runner_aggregates_passed_true(tmp_path):
+def test_runner_aggregates_passed_true(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPHA_TRADE_LIVE_SECRET_POLICY", "env")
     cfg = tmp_path / "c.yaml"
     cfg.write_text('alpaca:\n  api_key: "${X}"\n', encoding="utf-8")
     eng = _make_engine()
@@ -299,6 +300,8 @@ def test_runner_aggregates_passed_true(tmp_path):
     d = report.to_dict()
     assert d["summary"]["fail"] == 0
     assert d["summary"]["ok"] >= 4
+    names = {c.name: c.status for c in report.checks}
+    assert names["live_secret_policy"] == "ok"
 
 
 def test_runner_aggregates_passed_false_on_secrets(tmp_path):

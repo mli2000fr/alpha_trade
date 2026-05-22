@@ -79,11 +79,15 @@ def render() -> None:
             "Lancement direct des jobs CLI compliance/audit depuis l'IHM. Chaque run "
             "est tracé dans `artifacts/ihm_pipeline_runs/` (préfixe `ops:`)."
         )
+        st.info(
+            "S8 live readiness : pré-live checklist, token d'approbation live, run plan immuable et scans CVE/secrets doivent être verts avant tout passage live."
+        )
         account_id = st.session_state.get("selected_account_id")
         ops_tabs = st.tabs([
             "🚦 Pré-live checklist",
             "🔐 Audit chain",
             "🛡️ Scan CVE",
+            "🔎 Secret scan",
             "🗝️ Vault rotation",
             "📅 Rapport mensuel broker",
             "🧮 Réconciliation broker",
@@ -118,8 +122,10 @@ def render() -> None:
         with ops_tabs[2]:
             render_ops_command_panel("scan_cves")
         with ops_tabs[3]:
-            render_ops_command_panel("verify_vault_rotation")
+            render_ops_command_panel("scan_repo_secrets")
         with ops_tabs[4]:
+            render_ops_command_panel("verify_vault_rotation")
+        with ops_tabs[5]:
             month = st.text_input(
                 "Mois (YYYY-MM, vide = mois en cours)",
                 value="",
@@ -131,7 +137,7 @@ def render() -> None:
                 account_id=str(account_id) if account_id else None,
                 command_kwargs={"month": month or None},
             )
-        with ops_tabs[5]:
+        with ops_tabs[6]:
             render_ops_command_panel(
                 "broker_reconciliation",
                 account_id=str(account_id) if account_id else None,

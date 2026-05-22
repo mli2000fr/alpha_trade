@@ -21,12 +21,14 @@ Variables d'environnement requises :
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import os
 import subprocess
 import sys
 from collections.abc import Iterable
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Literal, cast
 
@@ -46,6 +48,7 @@ BOLD   = "\033[1m"
 RESET  = "\033[0m"
 
 SEP = "-" * 60
+LIVE_APPROVAL_TOKEN_ENV = "ALPHA_TRADE_LIVE_APPROVAL_TOKEN"
 
 BANNER = f"""
 {CYAN}{BOLD}
@@ -166,7 +169,21 @@ def abort_missing_env(account_id: str | None = None, mode: str | None = None) ->
 # Menu interactif
 # ---------------------------------------------------------------------------
 
-def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, str | None, str, str, bool, str]:
+def interactive_menu() -> tuple[
+    str,
+    str | None,
+    str | None,
+    bool,
+    bool,
+    bool,
+    str | None,
+    str,
+    str,
+    bool,
+    str,
+    str | None,
+    str | None,
+]:
     print(BANNER)
     print_env_status()
 
@@ -246,6 +263,11 @@ def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, s
     swing_only = input("Interdire les sorties le jour meme (swing_only) ? [O/n] : ").strip().lower() != "n"
     raw_submission_window = input("Fenetre de soumission [post_close/pre_open/both, defaut both] : ").strip().lower()
     submission_window = raw_submission_window if raw_submission_window in {"post_close", "pre_open", "both"} else "both"
+    approval_token: str | None = None
+    run_plan_file: str | None = None
+    if mode == "live":
+        approval_token = input("Token d'approbation live (obligatoire) : ").strip() or None
+        run_plan_file = input("Chemin du run plan immuable [Entrée = auto] : ").strip() or None
 
     # Sélection du compte multi-comptes
     account_id: str | None = None
@@ -268,7 +290,21 @@ def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, s
     except Exception:
         pass
 
-    return mode, run_id, trade_date, debug, outside_rth, rebalance, account_id, account_type, pdt_rule, swing_only, submission_window
+    return (
+        mode,
+        run_id,
+        trade_date,
+        debug,
+        outside_rth,
+        rebalance,
+        account_id,
+        account_type,
+        pdt_rule,
+        swing_only,
+        submission_window,
+        approval_token,
+        run_plan_file,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +392,104 @@ PRESETS: dict[str, dict] = {
 def resolve_mode_from_broker_mode(*, broker_mode: str, dry_run: bool) -> str:
     """Convertit le contrat historique executor (`broker_mode` + `dry_run`) en mode canonique."""
     return "simulate" if dry_run else str(broker_mode)
+
+
+def _build_execution_run_plan(
+    *,
+    mode: str,
+    run_id: str | None,
+    trade_date: str | None,
+    account_id: str | None,
+    preset: dict,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "mode": mode,
+        "account_id": str(account_id or "default"),
+        "risk_run_id": str(run_id or ""),
+        "trade_date": str(trade_date or ""),
+        "preset": preset,
+    }
+
+
+def _fingerprint_execution_run_plan(plan: dict[str, object]) -> str:
+    payload = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _resolve_run_plan_path(account_id: str | None, run_plan_file: str | None) -> Path:
+    if run_plan_file:
+        return Path(run_plan_file)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return PROJECT_ROOT / "artifacts" / "execution_run_plans" / f"{stamp}_{account_id or 'default'}_live.json"
+
+
+def _validate_live_approval_token(approval_token: str | None) -> str:
+    expected = str(os.getenv(LIVE_APPROVAL_TOKEN_ENV) or "").strip()
+    provided = str(approval_token or "").strip()
+    if not expected:
+        raise RuntimeError(
+            f"aucun token d'approbation configuré dans {LIVE_APPROVAL_TOKEN_ENV}"
+        )
+    if not provided:
+        raise RuntimeError("token d'approbation live manquant (--approval-token)")
+    if provided != expected:
+        raise RuntimeError("token d'approbation live invalide")
+    return provided
+
+
+def _validate_live_secret_policy() -> None:
+    from common.config_vault import is_live_secret_policy_satisfied
+
+    ok, details = is_live_secret_policy_satisfied()
+    if not ok:
+        raise RuntimeError(str(details.get("message") or "policy secrets live invalide"))
+
+
+def _ensure_immutable_run_plan(
+    *,
+    mode: str,
+    run_id: str | None,
+    trade_date: str | None,
+    account_id: str | None,
+    preset: dict,
+    approval_token: str,
+    run_plan_file: str | None,
+) -> tuple[Path, str]:
+    plan = _build_execution_run_plan(
+        mode=mode,
+        run_id=run_id,
+        trade_date=trade_date,
+        account_id=account_id,
+        preset=preset,
+    )
+    fingerprint = _fingerprint_execution_run_plan(plan)
+    plan_path = _resolve_run_plan_path(account_id, run_plan_file)
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "plan_fingerprint": fingerprint,
+        "plan": plan,
+        "approval": {
+            "token_env": LIVE_APPROVAL_TOKEN_ENV,
+            "provided_token_sha256": hashlib.sha256(approval_token.encode("utf-8")).hexdigest(),
+        },
+    }
+    if plan_path.exists():
+        try:
+            existing = json.loads(plan_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"run plan illisible: {plan_path} ({exc})") from exc
+        existing_plan = existing.get("plan")
+        existing_fingerprint = str(existing.get("plan_fingerprint") or "")
+        if existing_plan != plan or existing_fingerprint != fingerprint:
+            raise RuntimeError(
+                f"run plan immutable mismatch pour {plan_path}; régénérer/vider le fichier avant relance"
+            )
+        return plan_path, fingerprint
+    plan_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return plan_path, fingerprint
 
 
 def _build_runtime_preset(
@@ -499,6 +633,8 @@ def run(
     max_slippage_bps: int | None = None,
     execution_batch_size: int | None = None,
     inter_order_delay_ms: int | None = None,
+    approval_token: str | None = None,
+    run_plan_file: str | None = None,
 ) -> None:
     level = logging.DEBUG if debug else logging.INFO
     configure_root_logging(
@@ -534,6 +670,28 @@ def run(
         inter_order_delay_ms=inter_order_delay_ms,
     )
 
+    live_run_plan_path: Path | None = None
+    live_run_plan_fingerprint: str | None = None
+    if mode == "live":
+        try:
+            _validate_live_secret_policy()
+            validated_token = _validate_live_approval_token(approval_token)
+            live_run_plan_path, live_run_plan_fingerprint = _ensure_immutable_run_plan(
+                mode=mode,
+                run_id=run_id,
+                trade_date=trade_date,
+                account_id=account_id,
+                preset=preset,
+                approval_token=validated_token,
+                run_plan_file=run_plan_file,
+            )
+        except Exception as exc:
+            print(
+                f"{RED}{BOLD}[FATAL] garde-fous live refusent le lancement : {exc}{RESET}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
     mode_label = {
         "simulate": f"{CYAN}SIMULATION (dry-run){RESET}",
         "paper":    f"{YELLOW}PAPER TRADING{RESET}",
@@ -552,6 +710,9 @@ def run(
     print(f"  Max slippage: {preset['max_slippage_bps']} bps")
     print(f"  Compte      : {preset['account_type']}  |  PDT={preset['pdt_rule']}  |  swing_only={preset['swing_only']}")
     print(f"  Account ID  : {account_id or 'default'}")
+    if mode == "live" and live_run_plan_path is not None and live_run_plan_fingerprint is not None:
+        print(f"  Run plan    : {live_run_plan_path}")
+        print(f"  Fingerprint : {live_run_plan_fingerprint}")
     if allow_outside_rth and not preset.get("dry_run"):
         print(f"  {YELLOW}[!] Execution hors horaires marche activee{RESET}")
     if auto_rebalance:
@@ -798,6 +959,12 @@ def run(
         dry_run=config.dry_run,
         allow_outside_rth=config.allow_outside_rth,
     )
+    if mode == "live" and live_run_plan_path is not None and live_run_plan_fingerprint is not None:
+        summary["approval"] = {
+            "token_env": LIVE_APPROVAL_TOKEN_ENV,
+            "run_plan_file": str(live_run_plan_path),
+            "run_plan_fingerprint": live_run_plan_fingerprint,
+        }
     try:
         persist_run_business_summary(
             summary=summary,
@@ -948,6 +1115,24 @@ Exemples :
         action="store_true",
         help="Sprint S8 — désactive la consommation des prédictions ML (positionne ALPHA_TRADE_DISABLE_ML=1).",
     )
+    p.add_argument(
+        "--approval-token",
+        dest="approval_token",
+        default=None,
+        help=(
+            "S8 live only — token d'approbation opérateur. Obligatoire en mode live et comparé à "
+            f"{LIVE_APPROVAL_TOKEN_ENV}."
+        ),
+    )
+    p.add_argument(
+        "--run-plan-file",
+        dest="run_plan_file",
+        default=None,
+        help=(
+            "S8 live only — chemin du run plan immuable. S'il existe déjà, son contenu doit "
+            "correspondre exactement aux paramètres du run."
+        ),
+    )
     return p
 
 
@@ -979,7 +1164,21 @@ def main() -> None:
         sys.exit(0 if ok else 1)
 
     if args.mode is None:
-        mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window = interactive_menu()
+        (
+            mode,
+            run_id,
+            trade_date,
+            debug,
+            allow_outside_rth,
+            auto_rebalance,
+            account_id,
+            account_type,
+            pdt_rule,
+            swing_only,
+            submission_window,
+            approval_token,
+            run_plan_file,
+        ) = interactive_menu()
         auto_watcher = False
         skip_preflight = False
         take_profit_pct = None
@@ -1010,6 +1209,8 @@ def main() -> None:
         trailing_activation_profit_pct = args.trailing_activation_profit_pct
         protection_transition_timeout_seconds = args.protection_transition_timeout_seconds
         protection_transition_poll_interval_seconds = args.protection_transition_poll_interval_seconds
+        approval_token = args.approval_token
+        run_plan_file = args.run_plan_file
 
     abort_missing_env(account_id=account_id, mode=mode)
     run(
@@ -1033,6 +1234,8 @@ def main() -> None:
         trailing_activation_profit_pct=trailing_activation_profit_pct,
         protection_transition_timeout_seconds=protection_transition_timeout_seconds,
         protection_transition_poll_interval_seconds=protection_transition_poll_interval_seconds,
+        approval_token=approval_token,
+        run_plan_file=run_plan_file,
     )
 
 

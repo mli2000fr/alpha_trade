@@ -17,7 +17,7 @@
 | A-013 | Profil production parity backtesting | `test_backtest_live_parity_golden` | S4 |
 | A-014 | ML drift gate / fallback quant-only | `test_risk_fallback_quant_only_when_ml_gate_fails` | S7 |
 | A-015 | Coverage artifact complet uniquement | `test_coverage_artifact_is_complete_run` | S6 |
-| A-016 | Message credentials cohérent | `test_database_credentials_sentinel_messages` | S8 |
+| A-016 | Policy secrets live + approval token + run plan immuable | `test_live_requires_vault_or_env_policy`, `test_execution_live_requires_approval_token`, `test_execution_live_plan_immutable` | S8 |
 | A-017 | Commentaire sanitizer provider-agnostique | `test_docs_no_obsolete_provider_comment_in_canonical_paths` | S0 |
 | A-018 | Mode preset verrouillé / diff commande | `test_pipeline_locked_preset_displays_command_diff` | S6 |
 
@@ -32,7 +32,20 @@
 | Data quality | Très haute | source EODHD récente, quote staleness, fills daily, anomalies counts. |
 | SQL/migrations | Haute | PK/unique constraints, account_id CA/execution, ledger idempotence. |
 | Backtest-live parity | Très haute | production parity profile, golden fills, constraints cash/PDT/swing. |
-| Sécurité/config | Haute | secrets env, forbidden literals, live preflight, config keys consumed. |
+| Sécurité/config | Haute | secrets env, forbidden literals, live preflight, policy Vault/env, approval token, run plan immuable, config keys consumed. |
+
+## Preuves de sécurité S8 déjà automatisées
+
+- `tests/test_live_requires_vault_or_env_policy.py`
+- `tests/test_execution_live_requires_approval_token.py`
+- `tests/test_execution_live_plan_immutable.py`
+- `tests/test_pre_live_checklist.py`
+- `tests/test_config_loader_vault.py`
+- `tests/test_security_scripts.py`
+
+## Résiduel explicite
+
+- Les scans et garde-fous sécurité existent dans le repo et sont testés, **mais aucun workflow CI security versionné dans `.github/workflows/` n’a été trouvé** dans l’état audité du dépôt.
 
 ## Oracle général de validation d’un sprint
 
