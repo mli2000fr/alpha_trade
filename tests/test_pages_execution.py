@@ -17,6 +17,7 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
     calls: dict[str, list[object]] = {
         "subheaders": [],
         "infos": [],
+        "errors": [],
         "dataframes": [],
         "metrics": [],
         "captions": [],
@@ -29,7 +30,7 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
     monkeypatch.setattr(execution.st, "subheader", lambda value: calls["subheaders"].append(value))
     monkeypatch.setattr(execution.st, "caption", lambda value: calls["captions"].append(value))
     monkeypatch.setattr(execution.st, "info", lambda value: calls["infos"].append(value))
-    monkeypatch.setattr(execution.st, "error", lambda value: calls["infos"].append(value))
+    monkeypatch.setattr(execution.st, "error", lambda value: calls["errors"].append(value))
     monkeypatch.setattr(execution.st, "metric", lambda *args, **kwargs: None)
     monkeypatch.setattr(execution.st, "selectbox", lambda label, options=None, *args, **kwargs: (options or [])[0] if (options or []) else None)
     monkeypatch.setattr(
@@ -41,11 +42,40 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
     monkeypatch.setattr(execution, "render_persistent_business_summary", lambda *args, **kwargs: None)
     monkeypatch.setattr(execution, "run_status_badge", lambda status: str(status))
     monkeypatch.setattr(execution, "heartbeat_badge", lambda *args, **kwargs: "heartbeat")
+    monkeypatch.setattr(execution, "render_ops_command_panel", lambda *args, **kwargs: calls["infos"].append("ops_panel"))
     monkeypatch.setattr(execution, "show_dataframe", lambda df, title=None, height=400: calls["dataframes"].append((title, df.copy() if hasattr(df, "copy") else df)))
     monkeypatch.setattr(execution, "render_symbol_table", lambda df, key=None, symbol_col=None, title=None, height=300: calls["dataframes"].append((title, df.copy() if hasattr(df, "copy") else df)))
     monkeypatch.setattr(execution, "get_run_summary", lambda record: record.get("run_summary") if record else None)
     monkeypatch.setattr(execution, "get_latest_run_business_summary", lambda **kwargs: None)
     monkeypatch.setattr(execution, "get_latest_execution_protection_watch_service_summary", lambda **kwargs: None)
+    monkeypatch.setattr(execution, "get_execution_live_guard", lambda account_id=None: {"active": False, "count": 0, "run_ids": [], "accounts": [], "runs": []})
+    monkeypatch.setattr(
+        execution,
+        "get_execution_reconciliation_j1_runs",
+        lambda **kwargs: pd.DataFrame(
+            [{
+                "trade_date": "2026-05-05",
+                "source_kind": "csv",
+                "statement_path": "F:/tmp/alpaca.csv",
+                "activity_count": 2,
+                "inserted": 2,
+                "diff_count": 1,
+                "diff_types_label": "price_mismatch=1",
+                "created_at": "2026-05-06T06:00:00",
+                "run_summary": {"diffs": [{"symbol": "AAPL", "diff_type": "price_mismatch"}]},
+            }]
+        ),
+    )
+    monkeypatch.setattr(execution, "get_execution_reconciliation_j1_diff_rows", lambda **kwargs: pd.DataFrame({"symbol": ["AAPL"], "diff_type": ["price_mismatch"]}))
+    monkeypatch.setattr(
+        execution,
+        "get_execution_tca_aggregates",
+        lambda **kwargs: {
+            "monthly": pd.DataFrame({"account_id": ["acct-1"], "month": ["2026-05"], "fill_count": [2], "total_notional": [2000.0], "avg_slippage_bps": [12.5], "total_implementation_shortfall": [3.0]}),
+            "by_bucket": pd.DataFrame({"account_id": ["acct-1"], "slippage_bucket": ["10-25 bps"], "fill_count": [1]}),
+            "by_run": pd.DataFrame({"account_id": ["acct-1"], "exec_run_id": ["exec-1"], "fill_count": [2], "total_notional": [2000.0], "avg_slippage_bps": [12.5], "total_implementation_shortfall": [3.0]}),
+        },
+    )
 
     monkeypatch.setattr(
         execution,
@@ -268,3 +298,34 @@ def test_render_no_age_warning_when_all_resolved(monkeypatch) -> None:
     execution.render()
 
     assert not any("24h" in w for w in warnings), "Pas de warning 24h si diffs récents"
+
+
+def test_render_adds_j1_and_tca_sections(monkeypatch) -> None:
+    calls = _patch_common(monkeypatch, fills=pd.DataFrame({"slippage_bps": [12.3]}), reconciliation=pd.DataFrame())
+
+    execution.render()
+
+    assert "🧾 Réconciliation J+1" in calls["subheaders"]
+    assert "📉 TCA agrégé" in calls["subheaders"]
+    titles = [title for title, _ in calls["dataframes"]]
+    assert "🧮 Détail des divergences J+1" in titles
+    assert "Par mois" in titles
+    assert "Par tranche de slippage" in titles
+
+
+def test_render_freezes_kill_switch_during_live_run(monkeypatch) -> None:
+    calls = _patch_common(monkeypatch, fills=pd.DataFrame(), reconciliation=pd.DataFrame())
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        execution,
+        "get_execution_live_guard",
+        lambda account_id=None: {"active": True, "count": 1, "run_ids": ["exec-live-1"], "accounts": ["acct-1"], "runs": [{"exec_run_id": "exec-live-1"}]},
+    )
+    monkeypatch.setattr(execution.st, "warning", lambda msg: warnings.append(str(msg)))
+
+    execution.render()
+
+    assert any("Gel IHM actif" in str(message) for message in calls["errors"])
+    assert any("Kill switch gelé" in str(message) for message in [*calls["infos"], *warnings])
+
+

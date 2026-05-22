@@ -85,6 +85,15 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 
 **Priorité** : 🔴 Haute. **Anomalies** : A-005, A-015, A-024.
 
+**État au 2026-05-22** : 🟡 **en cours avancé**.
+
+- ✅ Point d'entrée canonique `python -m execution_engine.reconcile_statement` ajouté.
+- ✅ Parsing CSV Alpaca J+1 + persistance du résumé structuré dans `run_business_summaries(step_key='execution_reconciliation_j1')`.
+- ✅ Page `ihm/pages/execution.py` enrichie : section **Réconciliation J+1** + **TCA agrégé**.
+- ✅ Gel IHM pendant `execution_runs.status='RUNNING' AND broker_mode='live'` sur pages `execution` et `pipeline`.
+- ✅ Verrou state-machine IHM : une étape N ne se lance plus si N-1 n'est pas `SUCCESS/COMPLETED`.
+- ⏳ Parsing PDF Alpaca : reste à industrialiser si l'export opérateur PDF doit être supporté nativement sans étape CSV intermédiaire.
+
 **Tâches** :
 1. Job nightly `execution_engine.reconcile_statement` parsant CSV/PDF Alpaca J+1.
 2. Page IHM "Réconciliation J+1" avec divergences chiffrées.
@@ -114,6 +123,16 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 ## Sprint S4 — Parité backtest/live full-stack + oracle total return
 
 **Priorité** : 🟠 Moyenne-haute. **Anomalies** : A-009, A-030, A-025.
+
+**État au 2026-05-22** : 🟡 **en cours avancé**.
+
+- ✅ Convention de corrélation explicitée dans le code via `risk_management.correlation_filter.build_return_matrix(...)` :
+  `price_only_close_split_adjusted` vs `total_return_with_cash_dividends`.
+- ✅ Oracle total return ajouté via `backtesting.analytics.compare_total_return_to_oracle(...)` avec tolérance en bps.
+- ✅ Couverture de tests étendue sur l'oracle et les conventions de corrélation.
+- ✅ La brique full-stack `compare_to_live` existante dans `backtesting/fidelity.py` reste le socle de parité multi-couches (candidats, risk, portfolio, execution, fills, exits, pnl).
+- ✅ Test dédié `tests/test_parity_backtest_live_full_stack.py` ajouté pour verrouiller la parité multi-couches sur le socle `compare_to_live`.
+- ⏳ Reste possible : brancher un oracle externe réellement téléchargé (Yahoo/Bloomberg-like) en nightly automatique plutôt qu'un helper pur comparatif.
 
 **Tâches** :
 1. Nightly job "replay 10 jours live paper → backtest reproduit à ε" (sentiment + ML + macro activés).

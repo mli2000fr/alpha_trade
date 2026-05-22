@@ -1085,3 +1085,88 @@ def test_get_execution_reconciliation_results_can_disable_account_fallback(monke
     assert calls[0][1] == {"eid": "exec-empty"}
 
 
+def test_get_execution_live_guard_detects_running_live(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_live_guard.clear()
+
+    monkeypatch.setattr(
+        queries,
+        "safe_query",
+        lambda query, params=None: pd.DataFrame(
+            [{
+                "exec_run_id": "exec-live-1",
+                "account_id": "acct-1",
+                "trade_date": "2026-05-22",
+                "broker_mode": "live",
+                "status": "RUNNING",
+                "started_at": "2026-05-22T14:30:00",
+            }]
+        ),
+    )
+
+    result = queries.get_execution_live_guard(account_id="acct-1")
+
+    assert result["active"] is True
+    assert result["count"] == 1
+    assert result["run_ids"] == ["exec-live-1"]
+
+
+def test_get_execution_reconciliation_j1_runs_flattens_summary(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_reconciliation_j1_runs.clear()
+    monkeypatch.setattr(
+        queries,
+        "get_run_business_summaries",
+        lambda **kwargs: pd.DataFrame(
+            [{
+                "run_summary": {
+                    "trade_date": "2026-05-21",
+                    "source_kind": "csv",
+                    "statement_path": "F:/tmp/alpaca.csv",
+                    "activity_count": 4,
+                    "inserted": 4,
+                    "diff_count": 2,
+                    "diff_types": {"missing_internal": 1, "price_mismatch": 1},
+                },
+                "created_at": "2026-05-22T06:00:00",
+            }]
+        ),
+    )
+
+    df = queries.get_execution_reconciliation_j1_runs(account_id="acct-1")
+
+    assert df.iloc[0]["trade_date"] == "2026-05-21"
+    assert df.iloc[0]["diff_count"] == 2
+    assert "missing_internal=1" in df.iloc[0]["diff_types_label"]
+
+
+def test_get_execution_tca_aggregates_returns_grouped_frames(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_tca_aggregates.clear()
+    monkeypatch.setattr(
+        queries,
+        "safe_query",
+        lambda query, params=None: pd.DataFrame(
+            {
+                "account_id": ["acct-1", "acct-1"],
+                "exec_run_id": ["exec-1", "exec-1"],
+                "symbol": ["AAPL", "MSFT"],
+                "filled_qty": [10.0, 5.0],
+                "avg_fill_price": [100.0, 200.0],
+                "fill_timestamp": pd.to_datetime(["2026-05-05T10:00:00Z", "2026-05-06T10:00:00Z"]),
+                "slippage_bps": [5.0, 20.0],
+                "implementation_shortfall": [1.0, 2.0],
+            }
+        ),
+    )
+
+    result = queries.get_execution_tca_aggregates(account_id="acct-1")
+
+    assert set(result.keys()) == {"monthly", "by_bucket", "by_run"}
+    assert result["monthly"].iloc[0]["fill_count"] == 2
+    assert set(result["by_bucket"]["slippage_bucket"].tolist()) == {"0-10 bps", "10-25 bps"}
+
+

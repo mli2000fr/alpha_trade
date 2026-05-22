@@ -10,6 +10,40 @@ from risk_management.models import CorrelationRejection, EnrichedCandidate
 
 LOGGER = logging.getLogger(__name__)
 
+CORRELATION_CONVENTION_PRICE_ONLY = "price_only_close_split_adjusted"
+CORRELATION_CONVENTION_TOTAL_RETURN = "total_return_with_cash_dividends"
+
+
+def build_return_matrix(
+    close_prices: pd.DataFrame,
+    *,
+    cash_dividends: pd.DataFrame | None = None,
+    convention: str = CORRELATION_CONVENTION_PRICE_ONLY,
+) -> pd.DataFrame:
+    """Construit une matrice de rendements selon une convention explicite.
+
+    - ``price_only_close_split_adjusted`` : corrélation sur ``close.pct_change()``.
+    - ``total_return_with_cash_dividends`` : ajoute les dividendes cash du jour
+      au close avant calcul de rendement, afin de refléter le rendement total.
+    """
+    prepared_close = close_prices.apply(pd.to_numeric, errors="coerce") if not close_prices.empty else close_prices.copy()
+    if prepared_close.empty:
+        return prepared_close.copy()
+    if convention == CORRELATION_CONVENTION_PRICE_ONLY:
+        returns = prepared_close.pct_change()
+    elif convention == CORRELATION_CONVENTION_TOTAL_RETURN:
+        aligned_dividends = (
+            cash_dividends.reindex(index=prepared_close.index, columns=prepared_close.columns, fill_value=0.0)
+            if isinstance(cash_dividends, pd.DataFrame)
+            else pd.DataFrame(0.0, index=prepared_close.index, columns=prepared_close.columns)
+        )
+        aligned_dividends = aligned_dividends.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        previous_close = prepared_close.shift(1)
+        returns = ((prepared_close + aligned_dividends) / previous_close) - 1.0
+    else:
+        raise ValueError(f"Convention de corrélation inconnue: {convention}")
+    return returns.replace([math.inf, -math.inf], pd.NA).astype(float)
+
 
 def filter_correlated(
     candidates: list[EnrichedCandidate],

@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from database.run_business_summaries import parse_summary_json
+from execution_engine.tca import build_tca_aggregate_frame
 from ihm.services.alpha_scanner_threshold_presets import DEFAULT_ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
 from ihm.services.db import get_last_query_error, safe_query, safe_scalar
 from ihm.services.run_summary import build_run_summary_caption
@@ -812,6 +813,118 @@ def get_weights_calibration_segment_drifts(
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def get_execution_live_guard(account_id: str | None = None) -> dict[str, object]:
+    params: dict[str, object] | None = None
+    where_clause = "WHERE status = 'RUNNING' AND LOWER(COALESCE(broker_mode, '')) = 'live'"
+    if account_id:
+        where_clause += " AND account_id = :account_id"
+        params = {"account_id": account_id}
+    df = safe_query(
+        f"""
+        SELECT exec_run_id, account_id, trade_date, broker_mode, status, started_at
+        FROM execution_runs
+        {where_clause}
+        ORDER BY started_at DESC, exec_run_id DESC
+        """,
+        params,
+    )
+    if df.empty:
+        return {"active": False, "count": 0, "run_ids": [], "accounts": [], "runs": []}
+    run_ids = [str(value).strip() for value in df.get("exec_run_id", pd.Series(dtype="object")).tolist() if str(value).strip()]
+    accounts = [str(value).strip() for value in df.get("account_id", pd.Series(dtype="object")).tolist() if str(value).strip()]
+    return {
+        "active": True,
+        "count": int(len(df)),
+        "run_ids": run_ids,
+        "accounts": sorted(set(accounts)),
+        "runs": df.to_dict(orient="records"),
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_reconciliation_j1_runs(
+    *,
+    account_id: str | None = None,
+    limit: int = 20,
+) -> pd.DataFrame:
+    df = get_run_business_summaries(
+        limit=limit,
+        step_keys=["execution_reconciliation_j1"],
+        account_id=account_id,
+        run_kind="step",
+    )
+    if df.empty:
+        return df
+    expanded = df.copy()
+    expanded["trade_date"] = expanded["run_summary"].apply(lambda value: str((value or {}).get("trade_date") or ""))
+    expanded["source_kind"] = expanded["run_summary"].apply(lambda value: str((value or {}).get("source_kind") or ""))
+    expanded["statement_path"] = expanded["run_summary"].apply(lambda value: str((value or {}).get("statement_path") or ""))
+    expanded["activity_count"] = expanded["run_summary"].apply(lambda value: _coerce_int((value or {}).get("activity_count")))
+    expanded["inserted"] = expanded["run_summary"].apply(lambda value: _coerce_int((value or {}).get("inserted")))
+    expanded["diff_count"] = expanded["run_summary"].apply(lambda value: _coerce_int((value or {}).get("diff_count")))
+    expanded["diff_types"] = expanded["run_summary"].apply(lambda value: (value or {}).get("diff_types") or {})
+    expanded["diff_types_label"] = expanded["diff_types"].apply(
+        lambda value: ", ".join(f"{key}={val}" for key, val in sorted(dict(value).items())) if isinstance(value, dict) and value else "aucun"
+    )
+    return expanded
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_reconciliation_j1_diff_rows(
+    *,
+    account_id: str | None = None,
+    trade_date: str | None = None,
+) -> pd.DataFrame:
+    runs = get_execution_reconciliation_j1_runs(account_id=account_id, limit=50)
+    if runs.empty:
+        return pd.DataFrame()
+    if trade_date:
+        filtered = runs[runs["trade_date"].astype(str) == str(trade_date)]
+        if filtered.empty:
+            return pd.DataFrame()
+        summary = filtered.iloc[0].get("run_summary")
+    else:
+        summary = runs.iloc[0].get("run_summary")
+    diffs = (summary or {}).get("diffs") if isinstance(summary, dict) else []
+    return pd.DataFrame(diffs if isinstance(diffs, list) else [])
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_tca_aggregates(
+    *,
+    account_id: str | None = None,
+    exec_run_id: str | None = None,
+) -> dict[str, pd.DataFrame]:
+    conditions: list[str] = []
+    params: dict[str, object] = {}
+    if account_id:
+        conditions.append("account_id = :account_id")
+        params["account_id"] = account_id
+    if exec_run_id:
+        conditions.append("exec_run_id = :exec_run_id")
+        params["exec_run_id"] = exec_run_id
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    fills = safe_query(
+        f"""
+        SELECT account_id, exec_run_id, symbol, filled_qty, avg_fill_price,
+               fill_timestamp, slippage_bps, implementation_shortfall
+        FROM execution_broker_fills
+        {where_clause}
+        ORDER BY fill_timestamp DESC, fill_id DESC
+        """,
+        params or None,
+    )
+    if fills.empty:
+        empty = pd.DataFrame()
+        return {"monthly": empty, "by_bucket": empty, "by_run": empty}
+    return {
+        "monthly": build_tca_aggregate_frame(fills, group_by=("account_id", "month")),
+        "by_bucket": build_tca_aggregate_frame(fills, group_by=("account_id", "slippage_bucket")),
+        "by_run": build_tca_aggregate_frame(fills, group_by=("account_id", "exec_run_id")),
+    }
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_execution_runs(limit: int = 20, account_id: str | None = None) -> pd.DataFrame:

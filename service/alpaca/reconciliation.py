@@ -10,17 +10,37 @@ Pipeline :
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 LOGGER = logging.getLogger(__name__)
+
+_CSV_ALIASES: dict[str, tuple[str, ...]] = {
+    "activity_id": ("activity_id", "id", "activity id", "activityid"),
+    "activity_type": ("activity_type", "type", "activity type", "activitytype"),
+    "symbol": ("symbol", "ticker"),
+    "side": ("side", "transaction side"),
+    "qty": ("qty", "quantity", "filled_qty", "filled quantity"),
+    "price": ("price", "net_price", "filled_avg_price", "avg_fill_price", "average price"),
+    "transaction_time": (
+        "transaction_time",
+        "transaction time",
+        "filled_at",
+        "fill_time",
+        "timestamp",
+        "date",
+    ),
+}
 
 DIFF_TYPE_MISSING_INTERNAL = "missing_internal"
 DIFF_TYPE_MISSING_BROKER = "missing_broker"
@@ -46,6 +66,97 @@ class StatementDiff:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+def _read_csv_text(csv_source: str | Path | io.TextIOBase) -> str:
+    if isinstance(csv_source, io.TextIOBase):
+        return csv_source.read()
+    if isinstance(csv_source, Path):
+        return csv_source.read_text(encoding="utf-8-sig")
+    candidate = Path(str(csv_source))
+    if candidate.exists() and candidate.is_file():
+        return candidate.read_text(encoding="utf-8-sig")
+    return str(csv_source)
+
+
+def _normalize_csv_key(value: object) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _pick_csv_value(row: Mapping[str, Any], logical_key: str) -> Any:
+    normalized = {_normalize_csv_key(key): value for key, value in row.items()}
+    for alias in _CSV_ALIASES.get(logical_key, (logical_key,)):
+        value = normalized.get(_normalize_csv_key(alias))
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def parse_statement_csv(csv_source: str | Path | io.TextIOBase) -> list[dict[str, Any]]:
+    """Parse un export CSV Alpaca J+1 vers le format ``persist_statements``.
+
+    Le mapping est volontairement tolérant sur les noms de colonnes pour accepter
+    les variantes d'exports opérateur (camelCase, titres lisibles, alias legacy).
+    """
+    raw_text = _read_csv_text(csv_source)
+    if not raw_text.strip():
+        return []
+    reader = csv.DictReader(io.StringIO(raw_text))
+    rows: list[dict[str, Any]] = []
+    for raw_row in reader:
+        activity_id = _pick_csv_value(raw_row, "activity_id")
+        activity_type = _pick_csv_value(raw_row, "activity_type") or "FILL"
+        if activity_id in (None, "") and _pick_csv_value(raw_row, "symbol") in (None, ""):
+            continue
+        rows.append(
+            {
+                "id": str(activity_id or "").strip(),
+                "activity_type": str(activity_type or "FILL").strip().upper(),
+                "symbol": _pick_csv_value(raw_row, "symbol"),
+                "side": _pick_csv_value(raw_row, "side"),
+                "qty": _pick_csv_value(raw_row, "qty"),
+                "price": _pick_csv_value(raw_row, "price"),
+                "transaction_time": _pick_csv_value(raw_row, "transaction_time"),
+            }
+        )
+    return rows
+
+
+def build_reconciliation_summary(
+    *,
+    account_id: str,
+    trade_date: date,
+    diffs: Iterable[StatementDiff],
+    source_kind: str,
+    activity_count: int,
+    inserted: int,
+    fetched_from_api: bool,
+    statement_path: str | None = None,
+) -> dict[str, Any]:
+    diff_rows = [diff.to_dict() for diff in diffs]
+    diff_types: dict[str, int] = {}
+    symbols: set[str] = set()
+    for diff in diff_rows:
+        diff_type = str(diff.get("diff_type") or "unknown")
+        diff_types[diff_type] = diff_types.get(diff_type, 0) + 1
+        symbol = str(diff.get("symbol") or "").strip().upper()
+        if symbol:
+            symbols.add(symbol)
+    return {
+        "run_id": f"j1-reconcile-{account_id}-{trade_date.isoformat()}",
+        "account_id": account_id,
+        "trade_date": trade_date.isoformat(),
+        "source_kind": source_kind,
+        "statement_path": statement_path,
+        "fetched_from_api": bool(fetched_from_api),
+        "activity_count": int(activity_count),
+        "inserted": int(inserted),
+        "diff_count": len(diff_rows),
+        "diff_types": diff_types,
+        "distinct_symbols": sorted(symbols),
+        "status": "SUCCESS" if not diff_rows else "WARNING",
+        "diffs": diff_rows,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +390,9 @@ def _iso(v: Any) -> str | None:
 
 __all__ = [
     "StatementDiff",
+    "build_reconciliation_summary",
     "persist_statements",
+    "parse_statement_csv",
     "reconcile",
     "DIFF_TYPE_MISSING_INTERNAL",
     "DIFF_TYPE_MISSING_BROKER",

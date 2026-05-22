@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from backtesting.analytics import compute_total_return_with_dividends
+from backtesting.analytics import compare_total_return_to_oracle, compute_total_return_with_dividends
 from backtesting.report import BacktestReport, load_dividends_received
 
 
@@ -91,4 +91,29 @@ def test_backtest_report_exposes_total_return_with_dividends():
     assert (rep.total_return_with_dividends_pct - rep.total_return_pct) == pytest.approx(
         expected_yield_pct, abs=1e-6
     )
+
+
+def test_compare_total_return_to_oracle_accepts_small_difference() -> None:
+    result = compare_total_return_to_oracle(
+        initial_equity=10_000.0,
+        final_value_mtm=10_500.0,
+        dividends_received=100.0,
+        oracle_total_return_pct=6.02,
+        tolerance_bps=5.0,
+    )
+    assert result["delta_bps"] == pytest.approx(-2.0, abs=1e-6)
+    assert result["within_tolerance"] is True
+
+
+def test_compare_total_return_to_oracle_flags_large_divergence() -> None:
+    result = compare_total_return_to_oracle(
+        initial_equity=10_000.0,
+        final_value_mtm=10_500.0,
+        dividends_received=100.0,
+        oracle_total_return_pct=5.0,
+        tolerance_bps=25.0,
+    )
+    assert result["delta_bps"] == pytest.approx(100.0, abs=1e-6)
+    assert result["within_tolerance"] is False
+
 

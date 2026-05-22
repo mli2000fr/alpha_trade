@@ -59,6 +59,36 @@ def compute_total_return_with_dividends(
     }
 
 
+def compare_total_return_to_oracle(
+    *,
+    initial_equity: float,
+    final_value_mtm: float,
+    dividends_received: float,
+    oracle_total_return_pct: float,
+    tolerance_bps: float = 25.0,
+) -> dict[str, float | bool]:
+    """Compare le rendement total calculé à un oracle externe.
+
+    ``delta_bps`` est exprimé en points de base de performance totale
+    (1 % = 100 bps). ``within_tolerance`` est vrai si l'écart absolu respecte
+    la tolérance fournie.
+    """
+    computed = compute_total_return_with_dividends(
+        initial_equity=initial_equity,
+        final_value_mtm=final_value_mtm,
+        dividends_received=dividends_received,
+    )
+    oracle_total_return_pct = float(oracle_total_return_pct)
+    delta_bps = (float(computed["total_return_pct"]) - oracle_total_return_pct) * 100.0
+    return {
+        **computed,
+        "oracle_total_return_pct": oracle_total_return_pct,
+        "delta_bps": delta_bps,
+        "tolerance_bps": float(tolerance_bps),
+        "within_tolerance": abs(delta_bps) <= float(tolerance_bps),
+    }
+
+
 # ---------------------------------------------------------------------------
 # D1 — Benchmark comparison
 # ---------------------------------------------------------------------------
@@ -280,6 +310,7 @@ __all__ = [
     "build_extended_report_payload",
     "compute_benchmark_analytics",
     "compute_tail_analytics",
+    "compare_total_return_to_oracle",
     "compute_total_return_with_dividends",
     "monthly_returns_table",
     "save_equity_curve_html",

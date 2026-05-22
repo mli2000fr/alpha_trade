@@ -110,12 +110,12 @@
 
 | Champ | Valeur |
 |---|---|
-| Objectif | Replay 10 jours live paper → backtest reproduit à ε avec sentiment+ML+macro. |
+| Objectif | Verrouiller la parité full-stack sur le socle `compare_to_live` (candidats, risk, portfolio, execution, fills, exits, pnl) ; nightly 10 jours ensuite industrialisable. |
 | Type | P |
-| Fichier | nouveau `tests/test_parity_backtest_live_full_stack.py` |
-| Given | Snapshot 10 jours `execution_runs` + features sentiment + predictions ML. |
-| When | Backtest piloté par mêmes inputs PIT. |
-| Then | Écart PnL ≤ 5 bps, écart positions ≤ 1 ticker. |
+| Fichier | `tests/test_parity_backtest_live_full_stack.py` |
+| Given | Sessions live/replay alignées sur le même contexte `compare_to_live` avec couches candidates→PnL. |
+| When | Le résumé full-stack est calculé. |
+| Then | Tous les sous-scores d'alignement critiques restent à `1.0` sur le scénario nominal. |
 | Sprint | S4 |
 
 ## A-010 — Doc POCs non distincts

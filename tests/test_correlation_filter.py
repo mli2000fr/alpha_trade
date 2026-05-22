@@ -5,7 +5,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from risk_management.correlation_filter import filter_correlated
+from risk_management.correlation_filter import (
+    CORRELATION_CONVENTION_PRICE_ONLY,
+    CORRELATION_CONVENTION_TOTAL_RETURN,
+    build_return_matrix,
+    filter_correlated,
+)
 from risk_management.models import EnrichedCandidate
 
 
@@ -88,5 +93,40 @@ def test_deterministic_order() -> None:
     r2, rej2 = filter_correlated(cands, mat, threshold=0.80, min_overlap=40)
     assert [c.symbol for c in r1] == [c.symbol for c in r2]
     assert [r.rejected_symbol for r in rej1] == [r.rejected_symbol for r in rej2]
+
+
+@pytest.mark.unit
+def test_build_return_matrix_price_only_vs_total_return_conventions() -> None:
+    closes = pd.DataFrame(
+        {
+            "KO": [100.0, 100.0, 100.0],
+            "PG": [100.0, 100.0, 100.0],
+        },
+        index=pd.to_datetime(["2026-01-01", "2026-01-02", "2026-01-03"]),
+    )
+    dividends = pd.DataFrame(
+        {
+            "KO": [0.0, 1.0, 0.0],
+            "PG": [0.0, 0.0, 0.0],
+        },
+        index=closes.index,
+    )
+
+    price_only = build_return_matrix(closes, convention=CORRELATION_CONVENTION_PRICE_ONLY)
+    total_return = build_return_matrix(
+        closes,
+        cash_dividends=dividends,
+        convention=CORRELATION_CONVENTION_TOTAL_RETURN,
+    )
+
+    assert price_only.iloc[1]["KO"] == pytest.approx(0.0)
+    assert total_return.iloc[1]["KO"] == pytest.approx(0.01)
+    assert total_return.iloc[1]["PG"] == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_build_return_matrix_rejects_unknown_convention() -> None:
+    with pytest.raises(ValueError):
+        build_return_matrix(pd.DataFrame({"AAPL": [1.0, 2.0]}), convention="mystery")
 
 

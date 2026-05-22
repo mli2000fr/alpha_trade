@@ -85,6 +85,7 @@
 | Description | Le suivi runtime est OK mais pas de contrôle indépendant J+1. |
 | Recommandation | Page IHM "Réconciliation J+1" + job nightly + alerting sur divergence > 1 bps. |
 | Test associé | `tests/test_broker_statement_reconciliation.py` (étend l'existant). |
+| Avancement 2026-05-22 | ✅ Job canonique `execution_engine.reconcile_statement` + persistance du résumé J+1 dans `run_business_summaries` + section IHM dédiée. Reste : parsing PDF natif si requis. |
 
 ---
 
@@ -141,6 +142,7 @@
 | Description | Risque d'illusion de performance backtest. |
 | Recommandation | CI nightly : replay 10 jours live d'un compte paper et comparer à un backtest piloté par les mêmes inputs PIT, avec ε de tolérance déclaré. |
 | Test associé | Nouveau `tests/test_parity_backtest_live_full_stack.py`. |
+| Avancement 2026-05-22 | 🟡 Test dédié `tests/test_parity_backtest_live_full_stack.py` ajouté sur le socle `backtesting.fidelity.build_compare_to_live_summary(...)`; reste à industrialiser un vrai job nightly 10 jours si voulu. |
 
 ---
 
@@ -225,6 +227,7 @@
 | Description | Aucun garde-fou explicite ; l'opérateur peut lancer `selector` après un `import_eodhd_bar` échoué. |
 | Recommandation | "Pipeline state machine" IHM : étapes verrouillées tant que N-1 n'est pas `SUCCESS`. |
 | Test associé | Nouveau `tests/test_ihm_pipeline_state_machine_lock.py`. |
+| Avancement 2026-05-22 | ✅ Verrou state-machine ajouté dans `ihm/pages/pipeline.py` avec helper testé. |
 
 ---
 
@@ -339,6 +342,7 @@
 | Confiance | M |
 | Preuve | `ihm/services/`, `test_ihm_pipeline_concurrency_lock.py` couvre pipeline mais pas le cas "exécution live en cours". |
 | Recommandation | Bandeau persistant + désactivation des actions destructrices tant que `execution_runs.status='RUNNING' AND mode='live'`. |
+| Avancement 2026-05-22 | ✅ Bandeau persistant + gel des lancements manuels/kill switch IHM pendant un run `live` actif. |
 
 ---
 
@@ -352,6 +356,7 @@
 | Preuve | `risk_management/correlation_filter.py`, `tests/test_correlation_filter.py`. |
 | Description | À confirmer : corrélation calculée sur `stock_bars_daily.close` split-adjusted (correct) ou sur returns log-adjusted dividendes ? Pour des paires à fort dividende, l'écart peut être notable. |
 | Recommandation | Documenter explicitement et tester les deux conventions. |
+| Avancement 2026-05-22 | ✅ Convention explicitée dans le code (`price_only_close_split_adjusted` vs `total_return_with_cash_dividends`) + tests dédiés. |
 
 ---
 
@@ -414,6 +419,7 @@
 | Confiance | M |
 | Preuve | `tests/test_backtest_total_return_with_dividends.py` existe — vérifier qu'il oracle un ground truth externe. |
 | Recommandation | Comparer sur 3–5 tickers à dividende récurrent avec données Bloomberg/Yahoo total return. |
+| Avancement 2026-05-22 | 🟡 Helper `compare_total_return_to_oracle(...)` ajouté avec tolérance en bps ; reste à brancher un téléchargement nightly d'oracle externe réel si voulu. |
 
 ---
 

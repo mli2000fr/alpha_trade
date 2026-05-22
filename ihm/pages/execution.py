@@ -19,11 +19,15 @@ from ihm.services.queries import get_broker_positions
 from ihm.services.queries import get_execution_account_constraints
 from ihm.services.queries import get_execution_events
 from ihm.services.queries import get_execution_fills
+from ihm.services.queries import get_execution_live_guard
 from ihm.services.queries import get_execution_orders
 from ihm.services.queries import get_execution_position_lots
 from ihm.services.queries import get_execution_positions
+from ihm.services.queries import get_execution_reconciliation_j1_diff_rows
+from ihm.services.queries import get_execution_reconciliation_j1_runs
 from ihm.services.queries import get_execution_reconciliation_results
 from ihm.services.queries import get_execution_runs
+from ihm.services.queries import get_execution_tca_aggregates
 from ihm.services.queries import get_execution_targets_snapshot
 from ihm.services.queries import get_latest_execution_protection_watch_service_summary
 from ihm.services.queries import get_latest_run_business_summary
@@ -69,6 +73,19 @@ def _show_position_lots_table(df: pd.DataFrame, *, title: str, height: int = 260
     show_dataframe(df[lot_columns], title=title, height=height)
 
 
+def _safe_iterable(value: object) -> list[object]:
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return []
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Sprint S3 / A-014 — alerte réconciliation avec diffs > 24h
 # ---------------------------------------------------------------------------
@@ -104,6 +121,99 @@ def _render_reconciliation_age_warning(reconciliation: pd.DataFrame) -> None:
         )
 
 
+def _render_live_freeze_banner(live_guard: dict[str, object]) -> None:
+    if not bool(live_guard.get("active", False)):
+        return
+    run_ids = ", ".join(f"`{value}`" for value in _safe_iterable(live_guard.get("run_ids")) if str(value).strip())
+    accounts = ", ".join(f"`{value}`" for value in _safe_iterable(live_guard.get("accounts")) if str(value).strip())
+    st.error(
+        "🧊 **Gel IHM actif** — un run d'exécution `live` est encore `RUNNING`"
+        f" sur {accounts or '`compte inconnu`'} ({run_ids or '`run inconnu`'}). "
+        "Les actions manuelles potentiellement destructrices restent gelées tant que ce run n'est pas terminé."
+    )
+
+
+def _render_reconciliation_j1_panel(
+    *,
+    account_id: str | None,
+    selected_trade_date: object,
+    broker_mode: object,
+) -> None:
+    st.subheader("🧾 Réconciliation J+1")
+    runs = get_execution_reconciliation_j1_runs(account_id=account_id, limit=20)
+    if runs.empty:
+        st.info("Aucun run J+1 persisté pour ce compte. Lancez une réconciliation broker pour alimenter l'historique.")
+    else:
+        latest = runs.iloc[0]
+        metric_row([
+            ("Trade date", str(latest.get("trade_date") or "—"), None),
+            ("Activités", _safe_int(latest.get("activity_count", 0)), None),
+            ("Insérées", _safe_int(latest.get("inserted", 0)), None),
+            ("Diffs", _safe_int(latest.get("diff_count", 0)), None),
+        ])
+        st.caption(
+            "Source=`{}` | Diff types=`{}` | Fichier=`{}`".format(
+                latest.get("source_kind", "—") or "—",
+                latest.get("diff_types_label", "aucun") or "aucun",
+                latest.get("statement_path", "—") or "—",
+            )
+        )
+        diff_rows = get_execution_reconciliation_j1_diff_rows(
+            account_id=account_id,
+            trade_date=str(latest.get("trade_date") or "") or None,
+        )
+        if not diff_rows.empty:
+            render_symbol_table(
+                diff_rows,
+                key="execution_reconciliation_j1_diffs",
+                symbol_col="symbol",
+                title="🧮 Détail des divergences J+1",
+                height=220,
+            )
+        show_dataframe(
+            runs[[column for column in ["trade_date", "source_kind", "activity_count", "inserted", "diff_count", "diff_types_label", "created_at"] if column in runs.columns]],
+            title="Historique des runs J+1",
+            height=220,
+        )
+    with st.expander("🔁 Relancer la réconciliation broker J+1", expanded=False):
+        if not account_id:
+            st.info("Sélectionnez d'abord un compte pour lancer la réconciliation broker.")
+        else:
+            render_ops_command_panel(
+                "broker_reconciliation",
+                account_id=str(account_id),
+                command_kwargs={
+                    "trade_date": str(selected_trade_date or "") or None,
+                    "broker_mode": str(broker_mode or "paper") or "paper",
+                },
+            )
+
+
+def _render_tca_panel(*, account_id: str | None, exec_run_id: str) -> None:
+    st.subheader("📉 TCA agrégé")
+    aggregates = get_execution_tca_aggregates(account_id=account_id, exec_run_id=None)
+    monthly = aggregates.get("monthly", pd.DataFrame())
+    by_bucket = aggregates.get("by_bucket", pd.DataFrame())
+    by_run = aggregates.get("by_run", pd.DataFrame())
+    scoped_run = by_run[by_run["exec_run_id"].astype(str) == str(exec_run_id)] if not by_run.empty and "exec_run_id" in by_run.columns else pd.DataFrame()
+    if monthly.empty and by_bucket.empty and by_run.empty:
+        st.info("Aucun fill persistant disponible pour calculer les agrégats TCA.")
+        return
+    reference = scoped_run.iloc[0] if not scoped_run.empty else (by_run.iloc[0] if not by_run.empty else monthly.iloc[0])
+    metric_row([
+        ("Fills", _safe_int(reference.get("fill_count", 0)), None),
+        ("Notional", f"{float(reference.get('total_notional', 0.0) or 0.0):,.2f}", None),
+        ("Slippage moyen", f"{float(reference.get('avg_slippage_bps', 0.0) or 0.0):.2f} bps", None),
+        ("IS total", f"{float(reference.get('total_implementation_shortfall', 0.0) or 0.0):,.2f}", None),
+    ])
+    if not monthly.empty:
+        show_dataframe(monthly, title="Par mois", height=220)
+    if not by_bucket.empty:
+        show_dataframe(by_bucket, title="Par tranche de slippage", height=220)
+    if not by_run.empty:
+        show_dataframe(by_run, title="Par run d'exécution", height=220)
+
+
 def render() -> None:
     st.header("🚀 Execution Engine")
 
@@ -119,49 +229,57 @@ def render() -> None:
         return
 
     account_id = st.session_state.get("selected_account_id")
+    live_guard = get_execution_live_guard(account_id=account_id)
+    _render_live_freeze_banner(live_guard)
+    kill_switch_locked = bool(live_guard.get("active", False))
 
     # --- Kill switch (Sprint S26 — gap P1) ---
     # Toujours accessible, MEME si aucun run d'exécution n'existe encore.
     with st.expander("🛑 Kill switch — annuler tous les ordres ouverts", expanded=False):
-        st.warning(
-            "Cette action **annule immédiatement tous les ordres OPEN** du compte sélectionné "
-            "via `python -m execution_engine cancel-all`. À utiliser uniquement en cas d'urgence."
-        )
-        kill_col1, kill_col2 = st.columns([1, 1])
-        with kill_col1:
-            kill_broker_mode = st.selectbox(
-                "Broker mode",
-                options=["paper", "live"],
-                index=0,
-                key="execution_kill_switch_broker_mode",
-                help="`paper` = compte simulation Alpaca, `live` = argent réel.",
+        if kill_switch_locked:
+            st.warning(
+                "Kill switch gelé depuis l'IHM pendant un run `live` actif : supervision en lecture seule jusqu'à la fin du run."
             )
-        with kill_col2:
-            kill_dry_run = st.checkbox(
-                "Dry-run (lister sans annuler)",
-                value=True,
-                key="execution_kill_switch_dry_run",
-            )
-        kill_reason = st.text_input(
-            "Raison (consignée dans `execution_kill_switch_runs.reason`)",
-            value="manual kill switch from IHM",
-            key="execution_kill_switch_reason",
-        )
-        if not account_id:
-            st.error("Aucun compte sélectionné dans la sidebar — impossible de lancer le kill switch.")
         else:
-            confirm_phrase = "CONFIRMER" if kill_broker_mode == "live" and not kill_dry_run else None
-            render_ops_command_panel(
-                "execution_kill_switch",
-                account_id=str(account_id),
-                confirm_phrase=confirm_phrase,
-                command_kwargs={
-                    "broker_mode": kill_broker_mode,
-                    "confirm_account": str(account_id),
-                    "reason": kill_reason,
-                    "dry_run": kill_dry_run,
-                },
+            st.warning(
+                "Cette action **annule immédiatement tous les ordres OPEN** du compte sélectionné "
+                "via `python -m execution_engine cancel-all`. À utiliser uniquement en cas d'urgence."
             )
+            kill_col1, kill_col2 = st.columns([1, 1])
+            with kill_col1:
+                kill_broker_mode = st.selectbox(
+                    "Broker mode",
+                    options=["paper", "live"],
+                    index=0,
+                    key="execution_kill_switch_broker_mode",
+                    help="`paper` = compte simulation Alpaca, `live` = argent réel.",
+                )
+            with kill_col2:
+                kill_dry_run = st.checkbox(
+                    "Dry-run (lister sans annuler)",
+                    value=True,
+                    key="execution_kill_switch_dry_run",
+                )
+            kill_reason = st.text_input(
+                "Raison (consignée dans `execution_kill_switch_runs.reason`)",
+                value="manual kill switch from IHM",
+                key="execution_kill_switch_reason",
+            )
+            if not account_id:
+                st.error("Aucun compte sélectionné dans la sidebar — impossible de lancer le kill switch.")
+            else:
+                confirm_phrase = "CONFIRMER" if kill_broker_mode == "live" and not kill_dry_run else None
+                render_ops_command_panel(
+                    "execution_kill_switch",
+                    account_id=str(account_id),
+                    confirm_phrase=confirm_phrase,
+                    command_kwargs={
+                        "broker_mode": kill_broker_mode,
+                        "confirm_account": str(account_id),
+                        "reason": kill_reason,
+                        "dry_run": kill_dry_run,
+                    },
+                )
 
     runs = get_execution_runs(account_id=account_id)
     if runs.empty:
@@ -202,10 +320,10 @@ def render() -> None:
     if summary:
         st.subheader("🛡️ Contraintes, protections initiales et indicateurs de risque")
         metric_row([
-            ("Stops broker", int(summary.get("targets_with_broker_initial_stop", 0) or 0), None),
-            ("Stops soumis", int(summary.get("child_initial_stop_orders_submitted", 0) or 0), None),
-            ("Cibles stale", int(summary.get("stale_price_targets", 0) or 0), None),
-            ("Échecs protections", int(summary.get("child_order_submit_failures", 0) or 0) + int(watcher_summary.get("submit_failed_items", 0) or 0), None),
+            ("Stops broker", _safe_int(summary.get("targets_with_broker_initial_stop", 0)), None),
+            ("Stops soumis", _safe_int(summary.get("child_initial_stop_orders_submitted", 0)), None),
+            ("Cibles stale", _safe_int(summary.get("stale_price_targets", 0)), None),
+            ("Échecs protections", _safe_int(summary.get("child_order_submit_failures", 0)) + _safe_int(watcher_summary.get("submit_failed_items", 0)), None),
         ])
         st.caption(
             "Notional cible = `{}` | Risque initial = `{}` | Budget risque = `{}` | Stops prêts = `{}`".format(
@@ -235,7 +353,7 @@ def render() -> None:
             ("Type de compte", account_type, None),
             ("PDT effectif", effective_pdt_rule, None),
             ("Mode swing uniquement", "Oui" if swing_only else "Non", None),
-            ("Day trades restants", int(remaining_slots or 0), None),
+            ("Day trades restants", _safe_int(remaining_slots), None),
         ])
         st.caption(
             f"Capital = `{equity}` | Pouvoir d'achat = `{buying_power}` | Trésorerie réglée = `{settled_cash}` | Day trades broker = `{daytrade_count}`"
@@ -391,6 +509,13 @@ def render() -> None:
     else:
         st.info("Aucun résultat de réconciliation persisté n’a été trouvé pour ce run.")
 
+    _render_reconciliation_j1_panel(
+        account_id=account_id,
+        selected_trade_date=row.get("trade_date"),
+        broker_mode=row.get("broker_mode"),
+    )
+    _render_tca_panel(account_id=account_id, exec_run_id=selected)
+
     with st.expander("📚 Contexte compte — hors scope strict du run", expanded=False):
         broker_positions = get_broker_positions(account_id=account_id)
         if not broker_positions.empty:
@@ -422,12 +547,12 @@ def render() -> None:
     if watcher_summary or watcher_service_summary:
         with st.expander("🛰️ Watcher protections — supervision secondaire", expanded=False):
             metric_row([
-                ("Éligibles trail dyn.", int(summary.get("targets_eligible_for_dynamic_trailing", 0) or 0), None),
-                ("Trailing activés", int(watcher_summary.get("transitioned_items", 0) or 0), None),
-                ("Fallback trailing", int(summary.get("targets_with_trailing_fallback", 0) or 0), None),
-                ("Checks trigger", int(watcher_summary.get("trigger_check_count", 0) or 0), None),
-                ("Trails soumis", int(watcher_summary.get("transitioned_items", 0) or 0), None),
-                ("Annulations KO", int(watcher_summary.get("cancel_failed_items", 0) or 0), None),
+                ("Éligibles trail dyn.", _safe_int(summary.get("targets_eligible_for_dynamic_trailing", 0)), None),
+                ("Trailing activés", _safe_int(watcher_summary.get("transitioned_items", 0)), None),
+                ("Fallback trailing", _safe_int(summary.get("targets_with_trailing_fallback", 0)), None),
+                ("Checks trigger", _safe_int(watcher_summary.get("trigger_check_count", 0)), None),
+                ("Trails soumis", _safe_int(watcher_summary.get("transitioned_items", 0)), None),
+                ("Annulations KO", _safe_int(watcher_summary.get("cancel_failed_items", 0)), None),
             ])
             if watcher_summary:
                 render_persistent_business_summary(
@@ -453,8 +578,8 @@ def render() -> None:
                     ("Scope", str(watcher_service_summary.get("service_scope", "—") or "—"), None),
                     ("Heartbeat", heartbeat_indicator, None),
                     ("Dernier cycle", str(watcher_service_summary.get("last_cycle_at", "—") or "—"), None),
-                    ("Watch last cycle", int(watcher_service_summary.get("last_cycle_watched_items", 0) or 0), None),
-                    ("Transitions last cycle", int(watcher_service_summary.get("last_cycle_transitioned_items", 0) or 0), None),
+                    ("Watch last cycle", _safe_int(watcher_service_summary.get("last_cycle_watched_items", 0)), None),
+                    ("Transitions last cycle", _safe_int(watcher_service_summary.get("last_cycle_transitioned_items", 0)), None),
                 ])
 
 

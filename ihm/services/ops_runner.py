@@ -30,11 +30,10 @@ Le module est volontairement pur (pas d'import Streamlit) afin de pouvoir
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, Literal
+from dataclasses import dataclass
+from typing import Any, Literal
 
-from ihm.services.pipeline_runner import PROJECT_ROOT, build_subprocess_env
+from ihm.services.pipeline_runner import PROJECT_ROOT
 from ihm.services.process_registry import (
     PipelineRunRecord,
     list_active_pipeline_runs,
@@ -359,6 +358,17 @@ def build_ops_command(key: OpsCommandKey, **kwargs: Any) -> list[str]:
         account = str(kwargs.get("account") or "").strip()
         if account:
             cmd.extend(["--account", account])
+        trade_date = str(kwargs.get("trade_date") or kwargs.get("date") or "").strip()
+        if trade_date:
+            cmd.extend(["--date", trade_date])
+        broker_mode = str(kwargs.get("broker_mode") or "").strip().lower()
+        if broker_mode in {"paper", "live"}:
+            cmd.extend(["--broker-mode", broker_mode])
+        if bool(kwargs.get("no_fetch", False)):
+            cmd.append("--no-fetch")
+        report_out = str(kwargs.get("report_out") or "").strip()
+        if report_out:
+            cmd.extend(["--report-out", report_out])
         return cmd + extra
 
     if key == "monthly_broker_report":

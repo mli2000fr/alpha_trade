@@ -101,6 +101,7 @@ from ihm.services.pipeline_runner import (
 )
 from ihm.services.process_registry import stop_pipeline_run
 from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
+from ihm.services.queries import get_execution_live_guard
 
 
 ML_TRAIN_SYMBOL_SOURCE_OPTIONS = (
@@ -840,6 +841,63 @@ def _build_pipeline_run_context() -> tuple[
     return active_runs, all_runs, latest_by_step, workflow_active, active_by_step
 
 
+_PIPELINE_SUCCESS_STATUSES = {"completed", "success", "succeeded", "done"}
+
+
+def _normalize_pipeline_run_status(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _safe_iterable(value: object) -> list[object]:
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return []
+
+
+def _previous_pipeline_step_key(step_key: str) -> str | None:
+    ordered_steps = [step.key for step in get_pipeline_steps()]
+    try:
+        index = ordered_steps.index(step_key)
+    except ValueError:
+        return None
+    if index <= 0:
+        return None
+    return ordered_steps[index - 1]
+
+
+def _pipeline_state_machine_lock_reason(
+    step_key: str,
+    latest_by_step: dict[str, dict[str, object]],
+) -> str | None:
+    previous_step_key = _previous_pipeline_step_key(step_key)
+    if previous_step_key is None:
+        return None
+    previous_run = latest_by_step.get(previous_step_key)
+    if not previous_run:
+        return (
+            f"Étape verrouillée : l'étape précédente `{previous_step_key}` n'a encore aucun run `SUCCESS` / `COMPLETED`."
+        )
+    previous_status = _normalize_pipeline_run_status(previous_run.get("status"))
+    if previous_status in _PIPELINE_SUCCESS_STATUSES:
+        return None
+    return (
+        f"Étape verrouillée : `{previous_step_key}` est actuellement en statut `{previous_run.get('status', 'UNKNOWN')}`. "
+        "Terminez l'étape précédente avec succès avant de lancer la suivante."
+    )
+
+
+def _render_live_execution_freeze_banner(live_guard: dict[str, object]) -> None:
+    if not bool(live_guard.get("active", False)):
+        return
+    run_ids = ", ".join(f"`{value}`" for value in _safe_iterable(live_guard.get("run_ids")) if str(value).strip())
+    accounts = ", ".join(f"`{value}`" for value in _safe_iterable(live_guard.get("accounts")) if str(value).strip())
+    st.error(
+        "🧊 **Gel pipeline actif** — un run d'exécution `live` reste `RUNNING`"
+        f" sur {accounts or '`compte inconnu`'} ({run_ids or '`run inconnu`'}). "
+        "Les lancements manuels sont temporairement désactivés pour éviter toute collision opérateur."
+    )
+
+
 def _render_launchable_step_panel(
     step: Any,
     options: PipelineLaunchOptions,
@@ -851,6 +909,7 @@ def _render_launchable_step_panel(
     all_runs: list[dict[str, object]],
     latest_by_step: dict[str, dict[str, object]],
     dependency_diagnostic: dict[str, object] | None,
+    live_guard: dict[str, object],
 ) -> None:
     command_preview = format_command_for_display(build_pipeline_command(step.key, options))
     with st.expander(f"**{step.num}. {step.name}**", expanded=False):
@@ -886,6 +945,12 @@ def _render_launchable_step_panel(
 
         with action_col:
             execution_locked = step.key == "execution" and options.execution_mode == "live" and not live_confirmed
+            state_machine_lock_reason = _pipeline_state_machine_lock_reason(step.key, latest_by_step)
+            live_guard_lock_reason = (
+                "Gel IHM actif : un run d'exécution live est encore en cours."
+                if bool(live_guard.get("active", False))
+                else None
+            )
             dependency_locked_reason = (
                 _alpha_scanner_dependency_block_reason(dependency_diagnostic) if step.key == "alpha_scanner" else None
             )
@@ -918,7 +983,14 @@ def _render_launchable_step_panel(
                     key=f"run_pipeline_step_{step.key}",
                     type="primary",
                     use_container_width=True,
-                    disabled=execution_locked or workflow_active or dependency_locked_reason is not None or bool(companion_active_runs),
+                    disabled=(
+                        execution_locked
+                        or workflow_active
+                        or dependency_locked_reason is not None
+                        or state_machine_lock_reason is not None
+                        or live_guard_lock_reason is not None
+                        or bool(companion_active_runs)
+                    ),
                     help=dependency_locked_reason,
                 )
                 if execution_locked:
@@ -927,6 +999,10 @@ def _render_launchable_step_panel(
                     st.warning("Un workflow complet est en cours : le lancement manuel des étapes est temporairement désactivé.")
                 if dependency_locked_reason is not None:
                     st.error(dependency_locked_reason)
+                if state_machine_lock_reason is not None:
+                    st.warning(state_machine_lock_reason)
+                if live_guard_lock_reason is not None:
+                    st.error(live_guard_lock_reason)
                 if companion_active_runs:
                     run_ids = ", ".join(f"`{run.get('run_id', '')}`" for run in companion_active_runs)
                     st.warning(
@@ -981,7 +1057,12 @@ def _render_launchable_step_panel(
 
 
 @st.fragment(run_every="2s")
-def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db_config: dict[str, str | None]) -> None:
+def _render_step_panels(
+    options: PipelineLaunchOptions,
+    live_confirmed: bool,
+    db_config: dict[str, str | None],
+    live_guard: dict[str, object],
+) -> None:
     active_runs, all_runs, latest_by_step, workflow_active, active_by_step = _build_pipeline_run_context()
     dependency_diagnostic = get_alpha_scanner_dependency_diagnostic()
 
@@ -1003,6 +1084,7 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                 all_runs=all_runs,
                 latest_by_step=latest_by_step,
                 dependency_diagnostic=dependency_diagnostic,
+                live_guard=live_guard,
             )
 
     st.subheader("🪜 Étapes pilotables — cœur quotidien 1 → 12 + options 13/14")
@@ -1021,6 +1103,7 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
             all_runs=all_runs,
             latest_by_step=latest_by_step,
             dependency_diagnostic=dependency_diagnostic,
+            live_guard=live_guard,
         )
         if step.key == "execution":
             _render_watcher_handoff_panel(options)
@@ -1032,11 +1115,13 @@ def render() -> None:
 
     options, live_confirmed = _build_launch_options()
     _render_execution_mode_banner(options)
+    live_guard = get_execution_live_guard(account_id=str(options.account_id or "").strip() or None)
+    _render_live_execution_freeze_banner(live_guard)
     db_config = get_runtime_db_config()
 
     _render_workflow_launcher(options, live_confirmed, db_config)
     _render_runtime_center()
-    _render_step_panels(options, live_confirmed, db_config)
+    _render_step_panels(options, live_confirmed, db_config, live_guard)
 
     _, all_runs, latest_by_step, workflow_active, active_by_step = _build_pipeline_run_context()
     _render_import_news_panel(
