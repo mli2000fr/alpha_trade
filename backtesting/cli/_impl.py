@@ -16,6 +16,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
 
+from backtesting.fidelity import build_compare_to_live_summary, save_compare_to_live_summary
 from common.capital_presets import (
     apply_backtest_defaults_from_preset,
     build_risk_config_kwargs_from_preset,
@@ -59,6 +60,51 @@ def _safe_print(*values: object, sep: str = " ", end: str = "\n") -> None:
         encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
         sanitized = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
         sys.stdout.write(sanitized)
+
+
+def _coerce_date_value(value: object) -> date | None:
+    import pandas as pd
+
+    if value is None:
+        return None
+    try:
+        ts = pd.Timestamp(value)
+    except Exception:
+        return None
+    if pd.isna(ts):
+        return None
+    return date(int(ts.year), int(ts.month), int(ts.day))
+
+
+def _run_bars_source_preflight_or_skip(engine: object, start_date: date, end_date: date) -> dict[str, object]:
+    from backtesting.data_loader import BACKTEST_REQUIRED_BARS_DATA_SOURCE, preflight_required_bars_data_source
+
+    try:
+        return dict(preflight_required_bars_data_source(engine, start_date, end_date))
+    except RuntimeError as exc:
+        if hasattr(engine, "connect"):
+            raise
+        LOGGER.warning(
+            "Préflight OHLCV ignoré car le moteur injecté ne fournit pas l'inspection SQLAlchemy attendue.",
+            exc_info=True,
+        )
+        return {
+            "table_name": "stock_bars_daily",
+            "date_column": None,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "required_data_source": BACKTEST_REQUIRED_BARS_DATA_SOURCE,
+            "status": "skipped",
+            "degraded_reasons": [],
+            "rows_total": None,
+            "required_rows": None,
+            "counts": {},
+            "sources_present": [],
+            "dominant_source": None,
+            "dominant_ratio": None,
+            "mixed_sources_detected": False,
+            "error": str(exc),
+        }
 
 
 def _extract_symbols_for_log(symbols: object) -> list[str]:
@@ -141,6 +187,8 @@ def _build_execution_broker_like_summary(
     phase5_watcher_replay_result,
     phase7_exit_lifecycle_result,
 ):
+    import pandas as pd
+
     latest_execution_lifecycle_result = next(
         (
             result
@@ -159,8 +207,12 @@ def _build_execution_broker_like_summary(
     try:
         from backtesting.execution_broker_like import build_execution_broker_like_summary
 
+        latest_signals_df = getattr(latest_execution_lifecycle_result, "signals_df", signals_df)
+        if not isinstance(latest_signals_df, pd.DataFrame):
+            latest_signals_df = signals_df if isinstance(signals_df, pd.DataFrame) else None
+
         return build_execution_broker_like_summary(
-            signals_df=getattr(latest_execution_lifecycle_result, "signals_df", signals_df),
+            signals_df=latest_signals_df,
             order_lifecycle_frame=getattr(latest_execution_lifecycle_result, "order_lifecycle_frame", None),
             broker_event_frame=getattr(
                 latest_execution_lifecycle_result,
@@ -188,6 +240,7 @@ def _build_execution_broker_like_summary(
 def _build_backtest_component_details(
     *,
     ohlcv_df,
+    bars_source_preflight: dict[str, object] | None = None,
     execution_pivoted,
     start_date: date,
     end_date: date,
@@ -207,6 +260,12 @@ def _build_backtest_component_details(
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
     import pandas as pd
 
+    bars_preflight_reasons = []
+    if isinstance(bars_source_preflight, dict):
+        raw_reasons = bars_source_preflight.get("degraded_reasons", [])
+        if isinstance(raw_reasons, list):
+            bars_preflight_reasons = list(raw_reasons)
+
     bars_component_details = {
         "enabled": True,
         "rows_loaded": int(len(ohlcv_df)),
@@ -217,6 +276,8 @@ def _build_backtest_component_details(
         "loaded_end_date": str(pd.Timestamp(ohlcv_df["trade_date"].max()).date()) if "trade_date" in ohlcv_df.columns and not ohlcv_df.empty else None,
         "warmup_start_date": ohlcv_start.isoformat(),
         "calendar_sessions_loaded": int(len(execution_pivoted["close"].index)),
+        "bars_source_preflight": dict(bars_source_preflight or {}),
+        "degraded_reasons": bars_preflight_reasons,
     }
     risk_component_details = {
         "enabled": phase2_risk_result is not None,
@@ -438,13 +499,13 @@ def _collect_compare_to_live_trade_dates(
             )
     if phase2_risk_result is not None:
         for entry in phase2_risk_result.entries:
-            snapshot_date = getattr(entry, "score_snapshot_date", None)
+            snapshot_date = _coerce_date_value(getattr(entry, "score_snapshot_date", None))
             if snapshot_date is None:
                 continue
             compare_dates.add(pd.Timestamp(snapshot_date).normalize())
     if phase2_execution_result is not None:
         for target in phase2_execution_result.targets:
-            target_date = getattr(target, "trade_date", None)
+            target_date = _coerce_date_value(getattr(target, "trade_date", None))
             if target_date is None:
                 continue
             compare_dates.add(pd.Timestamp(target_date).normalize())
@@ -484,7 +545,9 @@ def _build_compare_to_live_artifacts(
         live_position_lots: dict[str, pd.DataFrame] = {}
         live_compare_context: dict[str, dict[str, object]] = {}
         for trade_date in compare_dates:
-            trade_day = pd.Timestamp(trade_date).date()
+            trade_day = _coerce_date_value(trade_date)
+            if trade_day is None:
+                continue
             trade_key = trade_day.isoformat()
             live_risk_decisions[trade_key] = risk_repo.load_risk_decisions_for_date(
                 trade_day,
@@ -1217,7 +1280,6 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     from backtesting.fidelity import (
         build_candidate_target_parity_summary,
-        build_compare_to_live_summary,
         build_fidelity_baseline_comparison,
         build_fidelity_baseline_snapshot,
         PitHistoryRequiredError,
@@ -1226,7 +1288,6 @@ def _run_backtest(args: argparse.Namespace) -> None:
         PitMlStrategyUnsupportedError,
         build_fidelity_manifest,
         save_candidate_target_parity_summary,
-        save_compare_to_live_summary,
         save_fidelity_baseline_comparison,
         save_fidelity_baseline_snapshot,
         save_fidelity_symbol_matrix,
@@ -1235,7 +1296,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
         save_fidelity_manifest,
     )
     from database.connection import get_sqlalchemy_engine
-    from backtesting.data_loader import load_ohlcv, load_scores, load_predictions, pivot_ohlcv
+    from backtesting.data_loader import (
+        load_ohlcv,
+        load_predictions,
+        load_scores,
+        pivot_ohlcv,
+    )
     from backtesting.resilience import prepare_predictions_for_ml_mode, prepare_scores_for_sentiment_mode
     from backtesting.signal_replay import replay_signals
     from backtesting.trading_constraints import TradingConstraintConfig
@@ -1395,6 +1461,27 @@ def _run_backtest(args: argparse.Namespace) -> None:
         if phase2_risk_config is not None
         else start
     )
+
+    try:
+        bars_source_preflight = _run_bars_source_preflight_or_skip(engine, ohlcv_start, end)
+    except RuntimeError as exc:
+        _safe_print(f"❌ {exc}")
+        sys.exit(1)
+    _safe_print(
+        "   preflight_ohlcv_source={} rows_required={} rows_total={} status={}\n".format(
+            bars_source_preflight.get("required_data_source"),
+            bars_source_preflight.get("required_rows"),
+            bars_source_preflight.get("rows_total"),
+            bars_source_preflight.get("status"),
+        )
+    )
+    if bars_source_preflight.get("mixed_sources_detected"):
+        _safe_print(
+            "   ⚠️ Fenêtre OHLCV mixte détectée {} — le backtest filtrera strictement `{}`.\n".format(
+                bars_source_preflight.get("counts"),
+                bars_source_preflight.get("required_data_source"),
+            )
+        )
 
     _safe_print("📊 Chargement OHLCV...")
     _ohlcv_cache_key = f"ohlcv_{ohlcv_start}_{end}"
@@ -1749,6 +1836,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     artifact_paths: dict[str, str] = {}
     component_details, execution_broker_like_summary = _build_backtest_component_details(
         ohlcv_df=ohlcv_df,
+        bars_source_preflight=bars_source_preflight,
         execution_pivoted=execution_pivoted,
         start_date=start,
         end_date=end,
@@ -2001,6 +2089,7 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
     from datetime import datetime
 
     from backtesting.backfill_scores_history import BackfillScoresHistoryService
+    from backtesting.data_loader import preflight_required_bars_data_source
     from event_sentiment.signal_aggregator import SentimentBoostConfig
     from screener.models import ScreenerConfig
     from selector.alpha_scanner import AlphaScannerConfig
@@ -2046,6 +2135,28 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
         capital_preset_key=effective_preset.key,
         config_fingerprint=preset_fingerprint,
     )
+    resolved_preflight_end = service.resolve_end_date(start, explicit_end_date=end)
+    try:
+        preflight = _run_bars_source_preflight_or_skip(service.engine, start, resolved_preflight_end)
+    except RuntimeError as exc:
+        _safe_print(f"❌ {exc}")
+        sys.exit(1)
+    _safe_print(
+        "   preflight_ohlcv_source={} rows_required={} rows_total={} status={} resolved_end={}\n".format(
+            preflight.get("required_data_source"),
+            preflight.get("required_rows"),
+            preflight.get("rows_total"),
+            preflight.get("status"),
+            resolved_preflight_end,
+        )
+    )
+    if preflight.get("mixed_sources_detected"):
+        _safe_print(
+            "   ⚠️ Fenêtre PIT mixte détectée {} — le backfill reconstruit uniquement depuis `{}`.\n".format(
+                preflight.get("counts"),
+                preflight.get("required_data_source"),
+            )
+        )
     result = service.backfill(
         start_date=start,
         end_date=end,

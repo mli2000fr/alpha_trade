@@ -23,8 +23,8 @@ Cet addendum réaligne les conventions documentaires avec le code courant audit�
    - Il ne permet donc pas une cohabitation simultanée de plusieurs `data_source` pour le même symbole/date. Toute documentation indiquant cette cohabitation doit être lue comme obsolète tant qu’une migration multi-source n’a pas été réalisée.
 
 5. **Fallback provider** :
-   - `market_data.fallback_on_failure` est présent dans `config.yaml`, mais l’audit n’a pas trouvé de consommation runtime Python hors tests/schema.
-   - Ne pas le documenter comme un fallback opérationnel avant implémentation explicite.
+   - Le faux flag `market_data.fallback_on_failure` a été **retiré** de `config.yaml` en S0.
+   - Aucun fallback automatique inter-provider n'est supporté : le switch EODHD ↔ Alpaca est opérateur et explicite.
 
 ## Runbook quotidien corrigé — mode EODHD nominal
 
@@ -62,7 +62,7 @@ Si `bars_provider=eodhd`, ce module doit produire un `run_summary` `mode=noop`, 
 - Remplacer les formulations “step 1 = `import_alpaca_bar`” par “step 1 = Import Bars provider-aware”.
 - Corriger les sections qui décrivent SPY comme calendrier runtime obligatoire ; le sanitizer utilise désormais `common.market_calendar.nyse_session_dates` avec fallback historique.
 - Corriger la matrice lineage concernant la cohabitation de sources dans `stock_bars_daily`.
-- Ajouter un warning explicite sur `fallback_on_failure` tant que non implémenté.
+- Conserver l'absence de `fallback_on_failure` tant qu'aucun router runtime explicite n'est implémenté.
 - Préciser que `vwap` EODHD est un proxy typical price, pas un VWAP intraday réel.
 
 ## Tests documentaires recommandés

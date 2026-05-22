@@ -539,7 +539,8 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         desc="Ingestion OHLCV daily incrémentale avec rattrapage automatique des jours manquants "
              "depuis la dernière barre connue par symbole jusqu'à la date de marché courante. "
              "Provider sélectionné automatiquement via `market_data.bars_provider` (alpaca | eodhd). "
-             "En mode EODHD, route vers `dataIntegrityEngine.import_eodhd_bar --write`.",
+             "En mode EODHD, route vers `dataIntegrityEngine.import_eodhd_bar --write` et "
+             "`import_alpaca_bar` devient un no-op contrôlé ; en mode Alpaca, le flux EODHD est no-op.",
         tables="stock_bars, stock_bars_daily",
         deps="—",
     ),

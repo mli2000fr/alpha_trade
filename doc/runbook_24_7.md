@@ -45,14 +45,17 @@ avant de considérer le screener du jour comme exploitable.
    - **benchmark / données manquantes** (`SPY` absent, univers vide) → vérifier l'ingestion amont avant replay ;
    - **erreur de code reproductible** → geler le replay et escalader vers l'équipe dev.
 4. Avant tout replay, vérifier si les étapes amont du jour sont saines :
-   `import_alpaca_bar`, `data_sanitizer_daily`, `update_sector` si concerné.
+   `import_eodhd_bar --write` (nominal si `bars_provider=eodhd`) ou
+   `import_alpaca_bar` (rétrocompatibilité si `bars_provider=alpaca`),
+   `data_sanitizer_daily`, `update_sector` si concerné.
 5. Relancer ensuite le screener seulement après correction du point amont.
 
 **Commandes utiles** :
 
 ```powershell
 python -m screener.stock_screener --trade-date 2026-04-17
-python -m dataIntegrityEngine.import_alpaca_bar
+python -m dataIntegrityEngine.import_eodhd_bar --write   # nominal si bars_provider=eodhd
+# python -m dataIntegrityEngine.import_alpaca_bar        # rétrocompat uniquement si bars_provider=alpaca
 python -m dataIntegrityEngine.data_sanitizer_daily
 ```
 

@@ -30,7 +30,6 @@ ALLOWED_EODHD_KEYS = {
 
 ALLOWED_MARKET_DATA_KEYS = {
     "bars_provider",
-    "fallback_on_failure",
 }
 
 ALLOWED_RISK_MANAGEMENT_EMPIRICAL_CALIBRATION_KEYS = {
@@ -93,6 +92,15 @@ def test_bars_provider_value_is_supported() -> None:
     cfg = _load()
     md = cfg.get("market_data", {}) or {}
     assert md.get("bars_provider") in {"alpaca", "eodhd"}
+
+
+def test_market_data_fallback_on_failure_key_is_absent() -> None:
+    cfg = _load()
+    md = cfg.get("market_data", {}) or {}
+    assert "fallback_on_failure" not in md, (
+        "market_data.fallback_on_failure a été retiré en S0 : aucun fallback automatique inter-provider "
+        "n'est supporté au runtime. Le switch doit être explicite via bars_provider."
+    )
 
 
 def test_execution_modes_section_is_absent() -> None:

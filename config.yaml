@@ -175,12 +175,15 @@ risk_management:
 # Voir prompt/iex/plan_eodhd.md.
 # - alpaca : comportement historique (Alpaca/IEX, biais volume IEX).
 # - eodhd  : EODHD bulk EOD (volume consolidé proxy, recommandé).
+# - Aucun fallback automatique inter-provider n'est implémenté : le switch est
+#   explicite via `market_data.bars_provider` (config/IHM). En cas d'échec du
+#   provider actif, le run doit échouer ou être relancé après changement
+#   opérateur assumé.
 # La metadata (stock_metadata), les quotes live et l'exécution restent
 # toujours sur Alpaca quel que soit ce flag.
 # ---------------------------------------------------------------------------
 market_data:
   bars_provider: eodhd   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
-  fallback_on_failure: true
 
 eodhd:
   # NB : l'activation runtime se pilote via market_data.bars_provider.

@@ -13,12 +13,10 @@
 > market_data.bars_provider`). Le mode `alpaca` est conservé en
 > rétrocompatibilité (colonne « provider actif » ci-dessous).
 >
-> 🔎 **Correction audit 2026-05-22** : le schéma courant de
-> `stock_bars_daily` utilise `PRIMARY KEY(symbol,date)`. Il ne permet donc pas
-> une cohabitation simultanée de plusieurs `data_source` pour le même couple
-> `(symbol,date)` sans migration dédiée. Toute mention de cohabitation
-> multi-source daily doit être interprétée comme une cible future ou corrigée.
-> Voir `doc/audit_alignment_tod2.md`.
+> 🔎 **Contrainte schéma S1** : `stock_bars_daily` reste en
+> `PRIMARY KEY(symbol,date)`. La colonne `data_source` trace la provenance,
+> mais n'autorise pas une cohabitation simultanée multi-provider pour un même
+> couple `(symbol,date)` sans migration dédiée.
 
 > **Maintenance** : régénérer via `python scripts/generate_data_lineage.py`.
 > En CI : `python scripts/generate_data_lineage.py --check`.
@@ -79,7 +77,7 @@
 | execution_kill_switch_runs *(Phase 5.2.c)* | execution_engine cancel-all | watcher, ihm | computed | — | manual | P1 |
 | execution_locks | watcher / executor | mutual exclusion | computed | — | on-event | P1 |
 | watcher_heartbeats *(Phase 1.2)* | watcher.protection_watcher | ihm, alerting | computed | — | continuous | P1 |
-| shadow_drift_runs *(Phase 7.7 / P3)* | risk_management.shadow_compare | ops review, ihm | computed | — | on-demand | P3 |
+| shadow_drift_runs *(Phase 7.7)* | risk_management.shadow_compare | ops review | computed | — | manual | P3 |
 | broker_positions_snapshots *(Sprint S3)* | execution_engine.snapshots | risk_management (PnL J) | broker | Alpaca | daily | P1 |
 
 ## 5. Corporate actions
@@ -95,8 +93,7 @@
 | Table | Producteur (CLI / module) | Consommateurs | Source upstream | Provider actif | Fréquence | Criticité |
 |---|---|---|---|---|---|---|
 | backtest_runs | backtesting.cli | ihm | computed | — | manual | P3 |
-| weights_calibration_runs *(Phase 7.2 / P3)* | backtesting.weights_calibration | risk_management (conviction/Kelly live), ops, ihm (`weights_calibration_runs`) | computed | — | on-demand / quarterly | P3 |
-| weights_calibration_segment_drifts *(P3+)* | backtesting.weights_calibration | ops, ihm (`weights_calibration_runs`) | computed | — | on-demand / quarterly | P3 |
+| weights_calibration_runs *(Phase 7.2)* | backtesting.weights_calibration | risk_management (poids cible) | computed | — | weekly | P3 |
 | cleaning_audit_runs | dataIntegrityEngine.data_sanitizer_daily | ops, ihm | computed (cross-check Stooq best-effort) | Stooq | daily | P2 |
 | cleaning_audit_quotes_runs *(Phase 3.1)* | sync_latest_quotes | ops | computed | — | daily | P2 |
 | cleaning_audit_earnings_runs *(Phase 3.1)* | sync_earnings_calendar | ops | computed | — | daily | P3 |
@@ -118,17 +115,14 @@
 - **EODHD source primaire dividendes** *(Phase 6)* : la factory
   `corporate_actions.provider.build_corporate_action_provider` sélectionne
   `EodhdCorporateActionProvider` quand `bars_provider=eodhd`.
-- **Cohabitation `data_source` mixte** : `stock_bars_daily` peut contenir
-  simultanément `alpaca_iex` ET `eodhd_eod` sur la même `(symbol, date)`.
+- **`stock_bars_daily.data_source`** : sert au lineage et à l'audit, mais la
+  PK `(symbol,date)` impose une **source unique active** par séance. Le
+  backtesting filtre explicitement `eodhd_eod` et ne présume jamais d'une
+  cohabitation simultanée multi-source pour le même symbole/date.
 - **Drift gate ML** *(Sprint S4 / A-021)* : `modelFactory.drift_policy`
   écrit un événement `ml_drift_runs.payload.gate_action='kill_switch_ml'`
   quand le drift atteint le statut `ALERT` ; le flag remonte dans
   `run_summary` ML (`ml_kill_switch_active`).
-- **Fallback calibrations empiriques** *(P3+)* : `risk_management.db_io`
-  résout `weights_calibration_runs` selon une politique configurable dans
-  `config.yaml › risk_management.empirical_calibration.fallback_levels` et
-  journalise chaque niveau tenté dans `run_summary.empirical_risk_calibration`
-  (`fallback_reason`, `fallback_journal`, `fallback_policy_source`).
 
 ---
 

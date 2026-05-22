@@ -114,11 +114,13 @@ BARS_PROVIDER_LABELS: dict[str, str] = {
 BARS_PROVIDER_HELP: dict[str, str] = {
     "eodhd": (
         "Source primaire = EODHD `/eod-bulk-last-day/US`. Backfill historique disponible via "
-        "l'étape auxiliaire B3 de la page Pipeline. Cross-check Stooq actif. Quotes RT et exécution restent sur Alpaca."
+        "l'étape auxiliaire B3 de la page Pipeline. Cross-check Stooq actif. Quotes RT et exécution restent sur Alpaca. "
+        "Aucun fallback automatique vers Alpaca n'est effectué si EODHD échoue."
     ),
     "alpaca": (
         "Source primaire = Alpaca/IEX (comportement historique). EODHD inutilisé. "
-        "Aucun cross-check Stooq. À réserver aux tests de non-régression."
+        "Aucun cross-check Stooq. À réserver aux tests de non-régression. Si `bars_provider=eodhd`, "
+        "le module Alpaca daily devient un no-op contrôlé."
     ),
 }
 
@@ -150,7 +152,8 @@ def _render_bars_provider_settings():
     st.caption(
         "Définit `market_data.bars_provider` dans `config.yaml`. Toutes les étapes pipeline IHM "
         "(`Import Bars`, `corporate_actions_sync`, backfill historique) routent automatiquement "
-        "vers le provider choisi. La metadata, les quotes temps réel et l'exécution restent sur Alpaca."
+        "vers le provider choisi. La metadata, les quotes temps réel et l'exécution restent sur Alpaca. "
+        "Le basculement est explicite : aucun fallback automatique inter-provider n'est supporté."
     )
 
     options = list(BARS_PROVIDER_LABELS.keys())  # eodhd d'abord (défaut recommandé)
@@ -165,6 +168,10 @@ def _render_bars_provider_settings():
             horizontal=False,
         )
         st.caption(BARS_PROVIDER_HELP.get(selected, ""))
+        st.info(
+            "Mode opératoire recommandé : **EODHD primaire** pour les barres daily ; **Alpaca/IEX** seulement en rétrocompatibilité. "
+            "Quand EODHD est actif, `import_alpaca_bar` doit être compris comme un no-op contrôlé."
+        )
         st.caption(
             f"Valeur persistée actuelle : `{current}` — défaut recommandé : `{DEFAULT_BARS_PROVIDER}`"
             f" — fichier : `{MARKET_DATA_CONFIG_PATH.name}`"

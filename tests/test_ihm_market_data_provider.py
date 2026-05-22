@@ -19,7 +19,6 @@ foo:
 # Commentaire avant la section
 market_data:
   bars_provider: alpaca   # alpaca | eodhd
-  fallback_on_failure: true
 
 eodhd:
   enabled: false
@@ -64,7 +63,6 @@ def test_set_bars_provider_preserves_other_lines(tmp_config: Path):
     text = tmp_config.read_text(encoding="utf-8")
     assert "foo:" in text
     assert "bar: 1" in text
-    assert "fallback_on_failure: true" in text
     assert "eodhd:" in text
     assert "enabled: false" in text
     # La ligne bars_provider doit refléter la nouvelle valeur.

@@ -1184,6 +1184,10 @@ def _build_run_options() -> BacktestRunOptions:
         selected_run_preset_key=selected_run_preset_key,
         auto_run_preset_key=auto_run_preset_key,
     )
+    st.caption(
+        "Préflight OHLCV appliqué au lancement : le backtest consomme uniquement `stock_bars_daily.data_source='eodhd_eod'`. "
+        "Si la fenêtre demandée ne contient pas cette source, le run échoue explicitement."
+    )
 
     options = BacktestRunOptions(
         start=start.strip(),
@@ -1225,6 +1229,9 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     st.caption(
         "Cette commande reconstruit les snapshots historiques nécessaires pour un vrai backtest point-in-time. "
         "Elle exécute `python -m backtesting backfill-scores-history ...` en arrière-plan."
+    )
+    st.caption(
+        "Même contrainte source que le backtest : la reconstruction PIT s'appuie sur `stock_bars_daily.data_source='eodhd_eod'`."
     )
     _render_reference_table("backfill")
 

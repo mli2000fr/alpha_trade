@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars_daily (
     -- Permet de distinguer les re-ingestions et de tracer la source d'ajustement
     `ingested_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Horodatage UTC d insertion dans la table (pour versioning)',
     `data_adjustment` VARCHAR(20) NOT NULL DEFAULT 'split' COMMENT 'Paramètre adjustment Alpaca utilisé : raw | split | dividend | all',
-    `data_source` VARCHAR(16) NOT NULL DEFAULT 'alpaca_iex' COMMENT 'Origine des barres journalières : alpaca_iex | alpaca_sip | eodhd_eod | stooq | yahoo',
+    `data_source` VARCHAR(16) NOT NULL DEFAULT 'alpaca_iex' COMMENT 'Origine des barres journalières : alpaca_iex | alpaca_sip | eodhd_eod | stooq | yahoo ; sert au lineage/audit mais la PK actuelle impose une strategie de source unique active par (symbol,date)',
     `last_updated` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     -- 核心索引設計
     PRIMARY KEY (`symbol`, `date`),

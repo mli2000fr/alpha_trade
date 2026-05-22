@@ -14,7 +14,8 @@
 >
 > 🔎 **Addendum audit 2026-05-22** : `doc/audit_alignment_tod2.md` précise les
 > conventions canoniques constatées dans le code et les écarts à corriger
-> (`fallback_on_failure`, lineage multi-source daily, runbooks EODHD/Alpaca).
+> (source unique active `stock_bars_daily`, runbooks EODHD/Alpaca,
+> suppression du faux `fallback_on_failure`).
 >
 > \➡️ **Provider NEWS par défaut : `Alpaca`** (cf. scripts d'import et scoring, paramètre `--news-provider` par défaut à `alpaca`).
 

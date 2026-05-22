@@ -37,6 +37,11 @@
 > `bars_provider=alpaca` ; en mode EODHD, `import_alpaca_bar` doit produire un
 > no-op contrôlé (`skipped_reason=wrong_provider`). Voir
 > `doc/audit_alignment_tod2.md`.
+>
+> ❌ **Pas de fallback automatique inter-provider** : le flag historique
+> `market_data.fallback_on_failure` a été retiré de `config.yaml` en S0.
+> Tout changement EODHD ↔ Alpaca est désormais un choix opérateur explicite
+> via `market_data.bars_provider` / l'IHM Paramètres.
 
 ## 1. Objet de ce document
 
@@ -143,7 +148,8 @@ Finnhub earnings calendar
 
 ```powershell
 python -m dataIntegrityEngine.import_alpaca_assets
-python -m dataIntegrityEngine.import_alpaca_bar
+python -m dataIntegrityEngine.import_eodhd_bar --write   # nominal si bars_provider=eodhd
+# python -m dataIntegrityEngine.import_alpaca_bar        # rétrocompat uniquement si bars_provider=alpaca
 python -m dataIntegrityEngine.data_sanitizer_daily
 python -m dataIntegrityEngine.update_sector
 python -m dataIntegrityEngine.sync_latest_quotes
@@ -153,7 +159,8 @@ python -m dataIntegrityEngine.sync_earnings_calendar
 ### Séquence quotidienne recommandée avant le reste du pipeline
 
 ```powershell
-python -m dataIntegrityEngine.import_alpaca_bar
+python -m dataIntegrityEngine.import_eodhd_bar --write   # nominal si bars_provider=eodhd
+# python -m dataIntegrityEngine.import_alpaca_bar        # rétrocompat uniquement si bars_provider=alpaca
 python -m dataIntegrityEngine.data_sanitizer_daily
 python -m dataIntegrityEngine.update_sector --limit 50 --sleep-seconds 1.1 --log-every 10
 python -m screener.stock_screener --chunk-size 500 --max-workers 8
@@ -353,6 +360,8 @@ Colonnes clés :
 - `daily_return` est **la seule feature explicitement persistée** par le sanitizeur dans cette table ;
 - `is_filled = 1` signale une journée reconstituée par forward-fill ;
 - `data_adjustment` permet de tracer le mode d’ajustement de la série source.
+- `PRIMARY KEY(symbol,date)` impose une stratégie **source unique active** pour un couple `(symbol, date)` :
+  la colonne `data_source` sert au lineage et à l'audit, pas à cohéberger plusieurs providers daily simultanés.
 
 ---
 
@@ -621,6 +630,10 @@ Champs notables :
 ### Commandes utiles
 
 ```powershell
+# Nominal (provider primaire recommandé)
+python -m dataIntegrityEngine.import_eodhd_bar --write
+
+# Rétrocompatibilité uniquement si market_data.bars_provider=alpaca
 python -m dataIntegrityEngine.import_alpaca_bar
 ```
 
@@ -1001,7 +1014,8 @@ Ordre recommandé :
 
 ```powershell
 python -m dataIntegrityEngine.import_alpaca_assets
-python -m dataIntegrityEngine.import_alpaca_bar
+python -m dataIntegrityEngine.import_eodhd_bar --write   # nominal si bars_provider=eodhd
+# python -m dataIntegrityEngine.import_alpaca_bar        # rétrocompat uniquement si bars_provider=alpaca
 python -m dataIntegrityEngine.data_sanitizer_daily
 python -m dataIntegrityEngine.update_sector
 python -m dataIntegrityEngine.sync_latest_quotes

@@ -258,3 +258,49 @@ La convention canonique du projet est `data_adjustment = 'split'`
 (les splits sont neutralisés, les dividendes sont comptabilisés via le ledger
 `portfolio_cash_ledger`). La contrainte SQL `chk_bars_adj` /  `chk_daily_adj`
 matérialise cette règle sur `stock_bars` / `stock_bars_daily`.
+
+### Politique `data_source` daily (S1)
+
+Le schéma courant `stock_bars_daily` expose bien une colonne `data_source`,
+mais sa `PRIMARY KEY(symbol,date)` impose une stratégie **source unique active**
+pour une journée donnée. En clair :
+
+- `data_source` sert au **lineage**, à l'**audit** et au **filtrage backtesting** ;
+- il **ne permet pas** de cohéberger simultanément plusieurs providers daily pour
+  le même couple `(symbol,date)` sans migration dédiée ;
+- le backtesting canonique filtre explicitement `data_source='eodhd_eod'`.
+
+### Audit SQL recommandé — source active dans `stock_bars_daily`
+
+Fenêtre récente par source :
+
+```powershell
+python -c 'from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
+with engine.connect() as conn:
+    rows = conn.execute(text("""
+        SELECT COALESCE(NULLIF(TRIM(data_source), ''), 'unknown') AS data_source,
+               COUNT(*) AS rows_n,
+               MIN(`date`) AS min_date,
+               MAX(`date`) AS max_date
+        FROM stock_bars_daily
+        WHERE `date` >= (CURRENT_DATE - INTERVAL 30 DAY)
+        GROUP BY data_source
+        ORDER BY rows_n DESC
+    """)).mappings().all();
+    print([dict(r) for r in rows])'
+```
+
+Contrôle strict backtesting (présence EODHD sur une plage) :
+
+```powershell
+python -c 'from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
+with engine.connect() as conn:
+    row = conn.execute(text("""
+        SELECT COUNT(*) AS rows_n, MIN(`date`) AS min_date, MAX(`date`) AS max_date
+        FROM stock_bars_daily
+        WHERE `date` BETWEEN :start AND :end
+          AND data_source = :source
+    """), {"start": "2025-01-01", "end": "2025-12-31", "source": "eodhd_eod"}).mappings().one();
+    print(dict(row))'
+```
+

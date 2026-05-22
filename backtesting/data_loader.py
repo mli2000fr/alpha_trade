@@ -75,6 +75,96 @@ def get_required_bars_source_filter(
     return f"AND {qualified} = :required_data_source", {"required_data_source": BACKTEST_REQUIRED_BARS_DATA_SOURCE}
 
 
+def _resolve_bars_date_column(columns: set[str], table_name: str) -> str:
+    date_col = "trade_date" if "trade_date" in columns else "date" if "date" in columns else None
+    if date_col is None:
+        raise RuntimeError(
+            f"Aucune colonne date compatible dans {table_name} (attendu: trade_date ou date)."
+        )
+    return date_col
+
+
+def preflight_required_bars_data_source(
+    engine: Engine,
+    start: date,
+    end: date,
+    *,
+    table_name: str = "stock_bars_daily",
+) -> dict[str, Any]:
+    """Valide la présence de la source OHLCV requise sur la fenêtre demandée.
+
+    Le backtesting canonique consomme uniquement ``data_source='eodhd_eod'``.
+    Cette pré-vérification rend explicites :
+    - l'absence de colonne ``data_source`` ;
+    - l'absence totale de barres sur la fenêtre ;
+    - l'absence de barres ``eodhd_eod`` sur la fenêtre ;
+    - l'existence éventuelle d'un mix de sources (status ``warning``).
+    """
+    columns = _get_table_columns(engine, table_name, required=True)
+    if not columns:
+        raise RuntimeError(f"La table {table_name} est introuvable ou inaccessible.")
+    if "data_source" not in columns:
+        raise RuntimeError(
+            f"La colonne {table_name}.data_source est requise pour pré-valider le backtesting sur "
+            f"{BACKTEST_REQUIRED_BARS_DATA_SOURCE}."
+        )
+    date_col = _resolve_bars_date_column(columns, table_name)
+
+    stmt = text(
+        f"""
+        SELECT COALESCE(NULLIF(TRIM(data_source), ''), 'unknown') AS source,
+               COUNT(*) AS rows_n,
+               MIN(`{date_col}`) AS min_trade_date,
+               MAX(`{date_col}`) AS max_trade_date
+        FROM {table_name}
+        WHERE `{date_col}` BETWEEN :start AND :end
+        GROUP BY source
+        ORDER BY rows_n DESC
+        """
+    )
+    with engine.connect() as conn:
+        rows = pd.read_sql(stmt, conn, params={"start": start, "end": end})
+
+    counts = {
+        str(row["source"]): int(row["rows_n"])
+        for _, row in rows.iterrows()
+    } if not rows.empty else {}
+    rows_total = int(sum(counts.values()))
+    if rows_total <= 0:
+        raise RuntimeError(
+            f"Aucune barre OHLCV disponible dans {table_name} sur [{start} → {end}]."
+        )
+
+    required_rows = int(counts.get(BACKTEST_REQUIRED_BARS_DATA_SOURCE, 0))
+    if required_rows <= 0:
+        available = ", ".join(sorted(counts)) or "aucune"
+        raise RuntimeError(
+            f"Préflight OHLCV échoué : aucune barre `{BACKTEST_REQUIRED_BARS_DATA_SOURCE}` dans {table_name} "
+            f"sur [{start} → {end}] (sources observées: {available})."
+        )
+
+    dominant_source = max(counts, key=lambda source: counts[source])
+    dominant_ratio = counts[dominant_source] / rows_total if rows_total else 0.0
+    status = "ok" if required_rows == rows_total else "warning"
+    degraded_reasons = [] if status == "ok" else ["mixed_data_source_window"]
+    return {
+        "table_name": table_name,
+        "date_column": date_col,
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "required_data_source": BACKTEST_REQUIRED_BARS_DATA_SOURCE,
+        "status": status,
+        "degraded_reasons": degraded_reasons,
+        "rows_total": rows_total,
+        "required_rows": required_rows,
+        "counts": counts,
+        "sources_present": sorted(counts),
+        "dominant_source": dominant_source,
+        "dominant_ratio": round(float(dominant_ratio), 6),
+        "mixed_sources_detected": bool(status != "ok"),
+    }
+
+
 def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
     """Charge les barres OHLCV journalières.
 
@@ -86,9 +176,7 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
     if not columns:
         raise RuntimeError("La table stock_bars_daily est introuvable ou inaccessible.")
 
-    date_col = "trade_date" if "trade_date" in columns else "date" if "date" in columns else None
-    if date_col is None:
-        raise RuntimeError("Aucune colonne date compatible dans stock_bars_daily (attendu: trade_date ou date).")
+    date_col = _resolve_bars_date_column(columns, "stock_bars_daily")
 
     close_expr = "COALESCE(adj_close, `close`)" if "adj_close" in columns else "`close`"
     source_filter_sql, source_filter_params = get_required_bars_source_filter(engine, table_name="stock_bars_daily")

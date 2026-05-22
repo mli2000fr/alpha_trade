@@ -261,6 +261,11 @@ HEADER_NOTES = """\
 > **Provider OHLCV primaire actuel** : `EODHD` (cf. `config.yaml ›
 > market_data.bars_provider`). Le mode `alpaca` est conservé en
 > rétrocompatibilité (colonne « provider actif » ci-dessous).
+>
+> 🔎 **Contrainte schéma S1** : `stock_bars_daily` reste en
+> `PRIMARY KEY(symbol,date)`. La colonne `data_source` trace la provenance,
+> mais n'autorise pas une cohabitation simultanée multi-provider pour un même
+> couple `(symbol,date)` sans migration dédiée.
 
 > **Maintenance** : régénérer via `python scripts/generate_data_lineage.py`.
 > En CI : `python scripts/generate_data_lineage.py --check`.
@@ -284,8 +289,10 @@ FOOTER_NOTES = """\
 - **EODHD source primaire dividendes** *(Phase 6)* : la factory
   `corporate_actions.provider.build_corporate_action_provider` sélectionne
   `EodhdCorporateActionProvider` quand `bars_provider=eodhd`.
-- **Cohabitation `data_source` mixte** : `stock_bars_daily` peut contenir
-  simultanément `alpaca_iex` ET `eodhd_eod` sur la même `(symbol, date)`.
+- **`stock_bars_daily.data_source`** : sert au lineage et à l'audit, mais la
+  PK `(symbol,date)` impose une **source unique active** par séance. Le
+  backtesting filtre explicitement `eodhd_eod` et ne présume jamais d'une
+  cohabitation simultanée multi-source pour le même symbole/date.
 - **Drift gate ML** *(Sprint S4 / A-021)* : `modelFactory.drift_policy`
   écrit un événement `ml_drift_runs.payload.gate_action='kill_switch_ml'`
   quand le drift atteint le statut `ALERT` ; le flag remonte dans

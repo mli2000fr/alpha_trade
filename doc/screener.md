@@ -321,7 +321,7 @@ python -m pytest tests/test_screener_pipeline.py tests/test_screener_stock_scree
 
 Ordre conseillé :
 
-1. importer les bars Alpaca ;
+1. importer les bars daily avec le provider actif (`eodhd` nominal, `alpaca` rétrocompat) ;
 2. exécuter le sanitizer ;
 3. lancer le screener ;
 4. vérifier `stock_scores` avant de lancer `selector`.
@@ -329,7 +329,8 @@ Ordre conseillé :
 ### Séquence recommandée
 
 ```powershell
-python -m dataIntegrityEngine.import_alpaca_bar
+python -m dataIntegrityEngine.import_eodhd_bar --write   # nominal si bars_provider=eodhd
+# python -m dataIntegrityEngine.import_alpaca_bar        # rétrocompat uniquement si bars_provider=alpaca
 python -m dataIntegrityEngine.data_sanitizer_daily
 python -m screener.stock_screener --chunk-size 500 --max-workers 8
 ```

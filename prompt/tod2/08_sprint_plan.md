@@ -2,6 +2,8 @@
 
 ## S0 — Corrections P0 provider/config/doc
 
+**Statut : ✅ Livré (config/doc/IHM/tests alignés)**
+
 - Priorité : P0
 - Modules : `config`, `dataIntegrityEngine`, `doc`, `ihm`
 - Anomalies : A-001, A-003
@@ -13,12 +15,23 @@
   4. Afficher dans IHM “EODHD primaire / Alpaca no-op”.
 - Fichiers : `config.yaml`, `dataIntegrityEngine/eodhd/cli.py`, `ihm/services/pipeline_runner.py`, docs.
 - Critères d’acceptation : aucune doc ne recommande Alpaca daily sans mention rétrocompat ; fallback testé.
+- Avancement réalisé :
+  - ✅ `market_data.fallback_on_failure` retiré de `config.yaml` (pas de faux fallback runtime).
+  - ✅ Runbooks/documents réalignés sur **EODHD nominal** et **Alpaca rétrocompatibilité**.
+  - ✅ IHM paramètres/pipeline/backtesting rendue provider-aware.
+  - ✅ Garde-fous de non-régression ajoutés côté config/doc/IHM.
+- Validation réalisée :
+  - ✅ `tests/test_market_data_provider_switch.py`
+  - ✅ `tests/test_docs_provider_consistency.py`
+  - ✅ `tests/test_doc_provider_alignment.py`
 - Tests nouveaux :
   - `tests/test_market_data_provider_switch.py::test_fallback_on_failure_is_effective_or_rejected`
   - `tests/test_docs_provider_consistency.py::test_no_unqualified_import_alpaca_bar_runbook`
 - Gain attendu : documentation +0.8, configuration +0.6, dataIntegrityEngine +0.3.
 
 ## S1 — Schéma et lineage OHLCV
+
+**Statut : ✅ Livré (stratégie source unique active + préflight backtesting)**
 
 - Priorité : P1
 - Modules : database, dataIntegrityEngine, backtesting
@@ -33,6 +46,18 @@
   - SQL migration test `tests/test_stock_bars_daily_source_versioning.py`
   - Backtest preflight `tests/test_backtesting_data_source_preflight.py`
 - Critères : impossible de croire à une cohabitation non supportée.
+- Décision actée :
+  - ✅ **Source unique active** conservée sur `stock_bars_daily` (pas de migration PK multi-source à ce sprint).
+  - ✅ `data_source` reste un champ de lineage/audit, sans promesse de cohabitation simultanée pour un même `(symbol,date)`.
+- Avancement réalisé :
+  - ✅ Documentation SQL/database/lineage corrigée.
+  - ✅ Matrice de lineage régénérée avec la contrainte réelle de schéma.
+  - ✅ Préflight `data_source='eodhd_eod'` branché dans le backtesting et le backfill PIT.
+  - ✅ Adaptation IHM backtesting pour rendre la contrainte visible.
+- Validation réalisée :
+  - ✅ `tests/test_stock_bars_daily_source_versioning.py`
+  - ✅ `tests/test_backtesting_data_source_preflight.py`
+  - ✅ régression ciblée `tests/test_backtesting.py -k "run_backtest_"`
 - Gain : database +0.8, backtesting +0.5, OHLCV +0.7.
 
 ## S2 — Qualité quotes/spreads et sync historique
