@@ -1894,6 +1894,18 @@ def _load_run_trades_df(run_record: dict[str, object]) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _resolve_phase2_risk_summary(
+    params: dict[str, object],
+    artifacts: dict[str, object],
+) -> dict[str, object]:
+    phase2_payload = params.get("phase2", {})
+    if isinstance(phase2_payload, dict):
+        risk_bridge_payload = phase2_payload.get("risk_bridge")
+        if isinstance(risk_bridge_payload, dict) and risk_bridge_payload:
+            return risk_bridge_payload
+    return _load_json_artifact_from_paths(artifacts, "phase2_risk_summary_json") or {}
+
+
 def _render_report_summary(run_record: dict[str, object]) -> bool:
     report_payload = _load_run_report(run_record)
     if not report_payload:
@@ -1954,6 +1966,46 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         f"{_to_float(summary.get('risk_free_rate')) * 100:.2f}%",
     )
     extra_col8.metric("Capital initial", f"${_to_float(summary.get('initial_equity')):,.0f}")
+
+    phase2_risk_summary = _resolve_phase2_risk_summary(params, artifacts)
+    if phase2_risk_summary:
+        st.markdown("**🛡️ Phase 2 — régime / macro**")
+        risk_col1, risk_col2, risk_col3, risk_col4 = st.columns(4)
+        risk_col1.metric(
+            "Régime activé",
+            "oui" if bool(phase2_risk_summary.get("regime_enabled", False)) else "non",
+        )
+        risk_col2.metric("Snapshots régime", _to_int(phase2_risk_summary.get("snapshot_dates")))
+        risk_col3.metric(
+            "Macro indisponible",
+            _to_int(phase2_risk_summary.get("macro_missing_dates_count")),
+        )
+        risk_col4.metric(
+            "Entrées bloquées régime",
+            _to_int(phase2_risk_summary.get("entries_blocked_by_regime")),
+        )
+
+        risk_col5, risk_col6, risk_col7, risk_col8 = st.columns(4)
+        risk_col5.metric("Entries acceptées", _to_int(phase2_risk_summary.get("entries_accepted")))
+        risk_col6.metric("Signals générés", _to_int(phase2_risk_summary.get("signals_generated")))
+        risk_col7.metric(
+            "Slots évités",
+            _to_int(phase2_risk_summary.get("slots_rejected_avoided")),
+        )
+        macro_quality_distribution = phase2_risk_summary.get("macro_data_quality_distribution", {})
+        macro_quality_summary = "—"
+        if isinstance(macro_quality_distribution, dict) and macro_quality_distribution:
+            macro_quality_summary = ", ".join(
+                f"{key}={_to_int(value)}" for key, value in macro_quality_distribution.items()
+            )
+        risk_col8.metric("Qualité macro", macro_quality_summary)
+
+        macro_missing_dates = phase2_risk_summary.get("macro_missing_dates", [])
+        if isinstance(macro_missing_dates, list) and macro_missing_dates:
+            preview = ", ".join(str(value) for value in macro_missing_dates[:10])
+            if len(macro_missing_dates) > 10:
+                preview += f" … (+{len(macro_missing_dates) - 10})"
+            st.caption(f"Séances marquées `data_quality=missing` : {preview}")
 
     # Phase A.4 — métadonnées de reproductibilité.
     run_metadata = report_payload.get("run_metadata")

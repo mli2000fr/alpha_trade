@@ -202,6 +202,48 @@ def test_load_json_artifact_from_paths_reads_existing_payload(tmp_path) -> None:
     assert payload == {"session_count": 2}
 
 
+def test_resolve_phase2_risk_summary_prefers_report_params() -> None:
+    payload = backtesting._resolve_phase2_risk_summary(
+        {
+            "phase2": {
+                "risk_bridge": {
+                    "regime_enabled": True,
+                    "macro_missing_dates_count": 3,
+                }
+            }
+        },
+        {},
+    )
+
+    assert payload == {
+        "regime_enabled": True,
+        "macro_missing_dates_count": 3,
+    }
+
+
+def test_resolve_phase2_risk_summary_falls_back_to_artifact(tmp_path) -> None:
+    artifact_path = tmp_path / "phase2_risk_summary.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "regime_enabled": True,
+                "macro_missing_dates_count": 2,
+                "macro_missing_dates": ["2025-05-01", "2025-05-02"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = backtesting._resolve_phase2_risk_summary(
+        {},
+        {"phase2_risk_summary_json": str(artifact_path)},
+    )
+
+    assert payload["regime_enabled"] is True
+    assert payload["macro_missing_dates_count"] == 2
+    assert payload["macro_missing_dates"] == ["2025-05-01", "2025-05-02"]
+
+
 def test_build_replay_diagnostic_session_rows_formats_expected_columns() -> None:
     rows = backtesting._build_replay_diagnostic_session_rows(
         {
