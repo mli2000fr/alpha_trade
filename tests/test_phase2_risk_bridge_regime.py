@@ -26,6 +26,7 @@ def _make_inputs(trade_date: date):
         "trade_date": [trade_date, trade_date],
         "symbol": ["AAPL", "MSFT"],
         "sector": ["Technology", "Technology"],
+        "final_score": [1.5, 1.2],
         "score": [1.5, 1.2],
         "score_source": ["test", "test"],
     })
@@ -104,4 +105,35 @@ def test_risk_bridge_tax_day_pattern_reduces_risk_multiplier():
     snap_dump = res.regime_snapshots[trade_date]
     assert "tax_day" in snap_dump["active_patterns"]
     assert snap_dump["risk_multiplier"] == 0.4
+
+
+def test_risk_bridge_collects_macro_missing_dates_when_fallback_allowed() -> None:
+    reset_cache()
+    trade_date = date(2025, 5, 1)
+    scores_df, predictions_df, close_df, high_df, low_df = _make_inputs(trade_date)
+    cfg = RiskConfig(account_equity=100_000, min_position_notional=100, max_positions=5)
+    mr = MarketRegimesConfig(
+        enabled=True,
+        allow_neutral_fallback_on_missing_macro_data=True,
+        vix=VixConfig(enabled=True),
+        yields=YieldsConfig(enabled=False),
+    )
+
+    res = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=predictions_df,
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=cfg,
+        market_regimes_config=mr,
+        macro_provider=None,
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert res.diagnostics["macro_missing_dates_count"] == 1
+    assert res.diagnostics["macro_missing_dates"] == [trade_date.isoformat()]
+    assert res.diagnostics["macro_data_quality_distribution"]["missing"] == 1
+    assert res.regime_snapshots[trade_date]["data_quality"]["macro"] == "missing"
+
 

@@ -20,7 +20,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
-from service._http_retry import RetryPolicy, request_with_retry
+from service._http_retry import CircuitOpenError, RetryPolicy, request_with_retry
 from service._telemetry import bump as _telemetry_bump
 from service.eodhd.accounts import EodhdAccountRegistry, EodhdAuthError
 from service.eodhd.quota import (
@@ -51,6 +51,10 @@ class EodhdPermissionError(EodhdBarsFetchError):
 
 class EodhdSymbolNotFound(EodhdBarsFetchError):
     """Le symbole demandé n'existe pas côté EODHD pour l'endpoint visé."""
+
+
+class EodhdTemporarilyUnavailable(EodhdBarsFetchError):
+    """EODHD est temporairement indisponible (réseau / circuit HTTP ouvert)."""
 
 
 def _redact_sensitive_text(text: str) -> str:
@@ -117,6 +121,17 @@ def _do_request(
     _telemetry_bump(TELEMETRY_CLIENT, "requests_total")
     try:
         response = request_with_retry(sess, "GET", url, params=params, policy=_retry_policy())
+    except CircuitOpenError as exc:
+        _telemetry_bump(TELEMETRY_CLIENT, "circuit_open_total")
+        tracker.record_failure(
+            endpoint,
+            feature=feature,
+            count_call=False,
+            count_towards_circuit=False,
+        )
+        raise EodhdTemporarilyUnavailable(
+            f"circuit HTTP EODHD ouvert ({endpoint}): {_redact_sensitive_text(str(exc))}"
+        ) from exc
     except requests.exceptions.Timeout as exc:
         _telemetry_bump(TELEMETRY_CLIENT, "timeout_total")
         tracker.record_failure(endpoint, feature=feature, count_call=False)
@@ -390,6 +405,7 @@ __all__ = [
     "EodhdPermissionError",
     "EodhdCircuitOpen",
     "EodhdSymbolNotFound",
+    "EodhdTemporarilyUnavailable",
     "PeriodLiteral",
     "TELEMETRY_CLIENT",
     "fetch_dividends",

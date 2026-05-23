@@ -201,6 +201,22 @@ def test_fetch_eod_records_feature_calls(tmp_path: Path) -> None:
     assert snap["feature_calls"] == {"event_sentiment_precheck": 1}
 
 
+def test_fetch_eod_wraps_http_circuit_open(monkeypatch, tmp_path: Path) -> None:
+    tracker = eodhd_quota.EodhdQuotaTracker(cache_dir=tmp_path, failure_threshold=99)
+    session = _FakeSession([])
+
+    monkeypatch.setattr(
+        clientEodhd,
+        "request_with_retry",
+        lambda *args, **kwargs: (_ for _ in ()).throw(clientEodhd.CircuitOpenError("Circuit ouvert pour 'eodhd.com' (reste ~59s)")),
+    )
+
+    with pytest.raises(clientEodhd.EodhdTemporarilyUnavailable) as exc_info:
+        clientEodhd.fetch_eod("AAPL", session=cast(Any, session), tracker=tracker)
+
+    assert "circuit HTTP EODHD ouvert" in str(exc_info.value)
+
+
 def test_eodhd_quota_precheck_blocks_run(tmp_path: Path) -> None:
     tracker = eodhd_quota.EodhdQuotaTracker(cache_dir=tmp_path, daily_quota=3)
     tracker.record_success("eod", feature="warmup")

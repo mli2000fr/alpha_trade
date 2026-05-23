@@ -363,6 +363,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "phase4_mode", "Explication": "off = comportement Phase 3, protection_replay = rejoue les protections TP/stop/trailing issues des child intents d'exécution.", "Défaut": "off"},
             {"Paramètre": "phase5_mode", "Explication": "off = comportement Phase 4, watcher_replay = rejoue les transitions du watcher de protection (trigger -> promotion trailing) dans le moteur.", "Défaut": "off"},
             {"Paramètre": "phase7_mode", "Explication": "off = comportement Phase 5, exit_lifecycle_replay = rejoue l'issue terminale des child orders et l'annulation OCO du sibling.", "Défaut": "off"},
+            {"Paramètre": "allow_neutral_fallback_on_missing_macro_data", "Explication": "Si vrai, le backtest continue quand la macro requise est indisponible et marque la séance en `data_quality=missing`. Sinon, il échoue explicitement.", "Défaut": "False"},
             {"Paramètre": "fidelity_baseline_id", "Explication": "Identifiant optionnel de baseline fidélité promue à comparer au run courant (Sprint 6).", "Défaut": "None"},
             {"Paramètre": "fidelity_baseline_catalog", "Explication": "Chemin optionnel vers le catalogue JSON des baselines fidélité. Convention stable recommandée : `config/fidelity_baseline_catalog.json` pointant vers `artifacts/fidelity_baselines/<baseline_id>/...`.", "Défaut": "None"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
@@ -1140,6 +1141,27 @@ def _build_run_options() -> BacktestRunOptions:
             "`cash` + `swing_only` est supporté : cash settled T+1 et aucune sortie le jour même."
         )
 
+    macro_col1, macro_col2 = st.columns([1.7, 2.3])
+    with macro_col1:
+        allow_neutral_fallback_on_missing_macro_data = st.checkbox(
+            "Tolérer macro indisponible (`data_quality=missing`)",
+            value=bool(st.session_state.get("bt_run_allow_missing_macro_data", False)),
+            key="bt_run_allow_missing_macro_data",
+            help=(
+                "Si coché, une séance sans macro requise (VIX / 10Y selon votre config) continue en mode dégradé "
+                "et est marquée explicitement en `data_quality=missing`. Si décoché, le backtest échoue en fail-fast."
+            ),
+        )
+    with macro_col2:
+        if allow_neutral_fallback_on_missing_macro_data:
+            st.caption(
+                "Mode tolérant actif : le replay continue, mais chaque date touchée sera explicitement marquée en `data_quality=missing`."
+            )
+        else:
+            st.caption(
+                "Mode strict actif (défaut) : le run échoue dès qu'une macro requise est indisponible."
+            )
+
     artifacts_dir = st.text_input(
         "Répertoire des artefacts modèles",
         value=cast(str, st.session_state.get("bt_run_artifacts_dir", "artifacts/models")),
@@ -1228,6 +1250,7 @@ def _build_run_options() -> BacktestRunOptions:
         phase4_mode=cast(Any, phase4_mode),
         phase5_mode=cast(Any, phase5_mode),
         phase7_mode=cast(Any, phase7_mode),
+        allow_neutral_fallback_on_missing_macro_data=bool(allow_neutral_fallback_on_missing_macro_data),
         fidelity_baseline_id=fidelity_baseline_id.strip() or None,
         fidelity_baseline_catalog=fidelity_baseline_catalog.strip() or None,
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",

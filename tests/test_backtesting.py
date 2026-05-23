@@ -1962,8 +1962,28 @@ class TestCLI:
         assert args.profile == "custom"
         assert args.account_type == "margin"
         assert args.pdt_rule == "auto"
+        assert args.macro_missing_policy is None
         assert args.fidelity_baseline_id is None
         assert args.fidelity_baseline_catalog is None
+
+    def test_parse_run_command_accepts_macro_missing_policy_flags(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+
+        args_allow = parser.parse_args([
+            "run",
+            "--start", "2025-01-01",
+            "--allow-neutral-fallback-on-missing-macro-data",
+        ])
+        args_fail = parser.parse_args([
+            "run",
+            "--start", "2025-01-01",
+            "--fail-on-missing-macro-data",
+        ])
+
+        assert args_allow.macro_missing_policy == "allow"
+        assert args_fail.macro_missing_policy == "fail"
 
     def test_parse_run_command_accepts_fidelity_baseline_options(self):
         from backtesting.cli import _build_parser
@@ -2376,6 +2396,126 @@ class TestCLI:
 
         assert calls["score_column"] == "final_score_walk_forward"
         assert calls["walk_forward_artifacts_dir"] == Path(tmp_path)
+
+    def test_run_backtest_overrides_market_regime_macro_missing_policy(self, monkeypatch, tmp_path):
+        import argparse
+        import backtesting.cli as cli
+        from backtesting import data_loader, resilience, report, simulator, risk_bridge
+        from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
+        from database import connection
+        import common.config_loader as config_loader
+        import service.market as market
+
+        captured: dict[str, object] = {}
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        ohlcv_df = pd.DataFrame({
+            "symbol": ["AAPL", "AAPL"],
+            "trade_date": idx,
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1100],
+        })
+        scores_df = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "sector": ["Tech"],
+            "is_candidate": [1],
+        })
+
+        class FakePF:
+            pass
+
+        class FakeReport:
+            def print_summary(self) -> None:
+                return None
+
+        class FakeBacktestEngine:
+            def __init__(self, cfg):
+                self.cfg = cfg
+
+            def run(self, **kwargs):
+                return FakePF()
+
+        def fake_build_phase2_risk_result(**kwargs):
+            mr_cfg = kwargs["market_regimes_config"]
+            captured["allow_neutral_fallback_on_missing_macro_data"] = mr_cfg.allow_neutral_fallback_on_missing_macro_data
+            return SimpleNamespace(
+                entries=[],
+                signals_df=pd.DataFrame(columns=["trade_date", "symbol", "selected", "rank"]),
+                diagnostics={
+                    "snapshot_dates": 1,
+                    "entries_total": 0,
+                    "entries_accepted": 0,
+                    "signals_generated": 0,
+                    "bridge": "risk_management.portfolio_builder",
+                    "regime_enabled": True,
+                },
+            )
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
+        monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end, capital_preset_key=None, **kwargs: ScoreLoadResult(
+            frame=scores_df.copy(),
+            diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores_history",
+                strict_pit_requested=bool(kwargs.get("strict_pit", False)),
+                history_table_exists=True,
+                history_rows_found=len(scores_df),
+                capital_preset_key=capital_preset_key,
+            ),
+        ))
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
+            "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
+            "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
+            "high": df.pivot_table(index="trade_date", columns="symbol", values="high"),
+            "low": df.pivot_table(index="trade_date", columns="symbol", values="low"),
+        })
+        monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", lambda *args, **kwargs: scores_df.copy())
+        monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
+        monkeypatch.setattr(risk_bridge, "build_phase2_risk_result", fake_build_phase2_risk_result)
+        monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {})
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
+        monkeypatch.setattr(report, "save_equity_curve", lambda *args, **kwargs: tmp_path / "eq.png")
+        monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
+        monkeypatch.setattr(report, "save_report_json", lambda *args, **kwargs: tmp_path / "report.json")
+        monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
+        monkeypatch.setattr(config_loader, "load_config", lambda: {"market_regimes": {"enabled": True, "vix": {"enabled": True}}})
+        monkeypatch.setattr(market, "build_default_macro_provider", lambda cfg: None)
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-01-02",
+            equity=100_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=5,
+            fees=0.001,
+            account_type="margin",
+            pdt_rule="auto",
+            swing_only=False,
+            sentiment_lookback=365,
+            no_save=True,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=None,
+            score_column="auto",
+            walk_forward_artifacts_dir=None,
+            engine_mode="research",
+            macro_missing_policy="fail",
+            capital_preset_key="capital_50001_100000",
+            **{**self._CLI_NEUTRAL_DEFAULTS, "phase2_mode": "risk"},
+        )
+
+        cli._run_backtest(args)
+
+        assert captured["allow_neutral_fallback_on_missing_macro_data"] is False
 
     def test_run_backtest_phase3_requires_phase2_risk_execution(self, monkeypatch):
         import argparse

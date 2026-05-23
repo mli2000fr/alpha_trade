@@ -19,6 +19,7 @@ import pytest
 
 from service.market import (
     MarketRegimesConfig,
+    MacroDataUnavailableError,
     build_snapshot,
     neutral_snapshot,
     parse_market_regimes,
@@ -160,6 +161,35 @@ def test_yield_no_provider_fallback():
     rel, spike, dq = evaluate_yield_10y(None, date(2025, 5, 1), lookback_days=5, relative_spike_threshold=0.05)
     assert rel is None and spike is False
     assert dq == {"yield_10y": "no_provider"}
+
+
+def test_snapshot_marks_macro_missing_when_fallback_allowed() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        allow_neutral_fallback_on_missing_macro_data=True,
+        vix=VixConfig(enabled=True),
+        yields=YieldsConfig(enabled=False),
+    )
+    reset_cache()
+
+    snap = build_snapshot(date(2025, 5, 1), config=cfg, equity=2_000.0, macro_provider=None, earnings_lookup=lambda *_: {})
+
+    assert snap.data_quality["vix"] == "no_provider"
+    assert snap.data_quality["macro"] == "missing"
+    assert snap.macro["missing_data_quality"] == {"vix": "no_provider"}
+
+
+def test_snapshot_raises_when_macro_missing_and_fail_fast_enabled() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        allow_neutral_fallback_on_missing_macro_data=False,
+        vix=VixConfig(enabled=True),
+        yields=YieldsConfig(enabled=False),
+    )
+    reset_cache()
+
+    with pytest.raises(MacroDataUnavailableError):
+        build_snapshot(date(2025, 5, 1), config=cfg, equity=2_000.0, macro_provider=None, earnings_lookup=lambda *_: {})
 
 
 # ---------------------------------------------------------------------------

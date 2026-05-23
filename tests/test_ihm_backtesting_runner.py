@@ -55,6 +55,8 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert "--capital-preset-key" not in command
 	assert "--swing-only" not in command
 	assert "--walk-forward-artifacts-dir" not in command
+	assert "--fail-on-missing-macro-data" in command
+	assert "--allow-neutral-fallback-on-missing-macro-data" not in command
 
 
 def test_build_backtesting_run_command_includes_capital_preset_key():
@@ -103,6 +105,21 @@ def test_build_backtesting_run_command_includes_phase1_pipeline_flags():
 	assert command[command.index("--engine-mode") + 1] == "pipeline"
 	assert "--ml-pit-strategy" in command
 	assert command[command.index("--ml-pit-strategy") + 1] == "use-persisted"
+
+
+def test_build_backtesting_run_command_can_allow_missing_macro_fallback():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			allow_neutral_fallback_on_missing_macro_data=True,
+		),
+	)
+
+	assert "--allow-neutral-fallback-on-missing-macro-data" in command
+	assert "--fail-on-missing-macro-data" not in command
 
 
 def test_build_backtesting_run_command_includes_phase2_flags():

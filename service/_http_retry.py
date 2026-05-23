@@ -68,9 +68,11 @@ class CircuitBreaker:
 
     def check(self, host: str) -> None:
         state = self._state(host)
-        if state.open_until and time.monotonic() < state.open_until:
+        now = time.monotonic()
+        if state.open_until and now < state.open_until:
+            remaining = max(0.0, state.open_until - now)
             raise CircuitOpenError(
-                f"Circuit ouvert pour '{host}' jusqu'à {state.open_until:.0f}s"
+                f"Circuit ouvert pour '{host}' (reste ~{_format_remaining_duration(remaining)})"
             )
 
     def record_success(self, host: str) -> None:
@@ -105,6 +107,19 @@ def _backoff_delay(policy: RetryPolicy, attempt: int) -> float:
     if policy.jitter:
         delay *= 0.5 + random.random()  # [0.5x, 1.5x]
     return min(delay, policy.max_delay_seconds)
+
+
+def _format_remaining_duration(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    minutes, secs = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or hours:
+        parts.append(f"{minutes}m")
+    parts.append(f"{secs}s")
+    return " ".join(parts)
 
 
 def _parse_retry_after_seconds(response: requests.Response | None) -> float | None:

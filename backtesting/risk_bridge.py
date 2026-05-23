@@ -269,6 +269,8 @@ def build_phase2_risk_result(
     regime_modes_count: dict[str, int] = {}
     entries_blocked_by_regime = 0
     slots_rejected_avoided = 0
+    macro_data_quality_count: dict[str, int] = {}
+    macro_missing_dates: list[str] = []
 
     use_regime = (
         market_regimes_config is not None
@@ -312,6 +314,10 @@ def build_phase2_risk_result(
                 earnings_lookup=earnings_lookup,
             )
             regime_modes_count[snap.mode] = regime_modes_count.get(snap.mode, 0) + 1
+            macro_quality = str(snap.data_quality.get("macro", "unknown") or "unknown")
+            macro_data_quality_count[macro_quality] = macro_data_quality_count.get(macro_quality, 0) + 1
+            if macro_quality == "missing":
+                macro_missing_dates.append(snapshot_date.isoformat())
             regime_snapshots_dump[snapshot_date] = snap.to_summary_dict()
             cfg_for_day = apply_snapshot(risk_config, snap)
             if not snap.allow_new_entries:
@@ -340,6 +346,9 @@ def build_phase2_risk_result(
         "regime_mode_distribution": regime_modes_count,
         "entries_blocked_by_regime": entries_blocked_by_regime,
         "slots_rejected_avoided": slots_rejected_avoided,
+        "macro_data_quality_distribution": macro_data_quality_count,
+        "macro_missing_dates": macro_missing_dates,
+        "macro_missing_dates_count": len(macro_missing_dates),
     }
     return RiskBridgeResult(
         entries=all_entries,

@@ -44,6 +44,7 @@ class BacktestRunOptions:
     phase4_mode: Literal["off", "protection_replay"] = "off"
     phase5_mode: Literal["off", "watcher_replay"] = "off"
     phase7_mode: Literal["off", "exit_lifecycle_replay"] = "off"
+    allow_neutral_fallback_on_missing_macro_data: bool = False
     fidelity_baseline_id: str | None = None
     fidelity_baseline_catalog: str | None = None
     artifacts_dir: str = "artifacts/models"
@@ -191,6 +192,10 @@ def build_backtesting_command(
             "--artifacts-dir", options.artifacts_dir,
             "--score-column", options.score_column,
         ])
+        if options.allow_neutral_fallback_on_missing_macro_data:
+            command.append("--allow-neutral-fallback-on-missing-macro-data")
+        else:
+            command.append("--fail-on-missing-macro-data")
         if options.capital_preset_key:
             command.extend(["--capital-preset-key", options.capital_preset_key])
         if options.walk_forward_artifacts_dir:

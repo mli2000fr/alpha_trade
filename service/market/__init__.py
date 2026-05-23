@@ -22,7 +22,7 @@ from service.market.models import (
     RegimeMode,
     neutral_snapshot,
 )
-from service.market.regime_manager import build_snapshot, reset_cache
+from service.market.regime_manager import MacroDataUnavailableError, build_snapshot, reset_cache
 from service.market.macro_providers import (
     CompositeMacroProvider,
     EodhdMacroProvider,
@@ -42,6 +42,7 @@ __all__ = [
     "RegimeMode",
     "EarningsShieldMode",
     "build_snapshot",
+    "MacroDataUnavailableError",
     "neutral_snapshot",
     "reset_cache",
     "parse_market_regimes",

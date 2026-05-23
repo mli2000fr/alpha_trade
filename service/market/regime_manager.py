@@ -39,6 +39,10 @@ LOGGER = logging.getLogger(__name__)
 ExecutionContext = Literal["live", "backtest"]
 
 
+class MacroDataUnavailableError(RuntimeError):
+    """Levée quand un snapshot de régime exige des données macro indisponibles."""
+
+
 @dataclass(frozen=True, slots=True)
 class _CacheEntry:
     snapshot: MarketRegimeSnapshot
@@ -122,6 +126,26 @@ def _build_mode_why(mode: RegimeMode, reasons: list[str], trace: list[dict[str, 
     }
 
 
+def _required_macro_data_quality_keys(config: MarketRegimesConfig) -> tuple[str, ...]:
+    keys: list[str] = []
+    if config.vix.enabled:
+        keys.append("vix")
+    if config.yields.enabled:
+        keys.append("yield_10y")
+    return tuple(keys)
+
+
+def _resolve_missing_macro_data_quality(
+    config: MarketRegimesConfig,
+    data_quality: dict[str, str],
+) -> dict[str, str]:
+    return {
+        key: str(data_quality.get(key, "missing"))
+        for key in _required_macro_data_quality_keys(config)
+        if str(data_quality.get(key, "missing")) != "ok"
+    }
+
+
 def build_snapshot(
     trade_date: date,
     *,
@@ -141,6 +165,7 @@ def build_snapshot(
         trade_date.toordinal(),
         execution_context,
         round(equity or 0.0, 2),
+        id(config),
         id(macro_provider),
         id(sentiment_score_provider),
         id(earnings_lookup),
@@ -301,6 +326,31 @@ def build_snapshot(
                 "risk_multiplier": config.yields.risk_mult,
             },
         )
+
+    missing_macro_data_quality = _resolve_missing_macro_data_quality(config, data_quality)
+    if _required_macro_data_quality_keys(config):
+        data_quality["macro"] = "missing" if missing_macro_data_quality else "ok"
+    if missing_macro_data_quality:
+        macro_metrics["missing_data_quality"] = dict(missing_macro_data_quality)
+        missing_macro_message = (
+            f"Données macro indisponibles pour {trade_date.isoformat()} : {missing_macro_data_quality}"
+        )
+        _push_trace(
+            decision_trace,
+            source="macro_availability",
+            label="Disponibilité macro",
+            triggered=True,
+            severity="warning" if config.allow_neutral_fallback_on_missing_macro_data else "critical",
+            resulting_mode=mode,
+            message=(
+                missing_macro_message + " → fallback neutre, séance marquée data_quality=missing"
+                if config.allow_neutral_fallback_on_missing_macro_data
+                else missing_macro_message + " → échec strict du snapshot"
+            ),
+            details={"missing_data_quality": dict(missing_macro_data_quality)},
+        )
+        if not config.allow_neutral_fallback_on_missing_macro_data:
+            raise MacroDataUnavailableError(missing_macro_message)
 
     # 4. Sentiment circuit breaker
     if config.sentiment_circuit_breaker.enabled:

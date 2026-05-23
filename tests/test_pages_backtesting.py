@@ -31,6 +31,7 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
     assert any(row["Paramètre"] == "phase4_mode" for row in run_rows)
     assert any(row["Paramètre"] == "phase5_mode" for row in run_rows)
     assert any(row["Paramètre"] == "phase7_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "allow_neutral_fallback_on_missing_macro_data" for row in run_rows)
     assert any(row["Paramètre"] == "fidelity_baseline_id" for row in run_rows)
     assert any(row["Paramètre"] == "fidelity_baseline_catalog" for row in run_rows)
 

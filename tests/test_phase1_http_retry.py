@@ -147,6 +147,7 @@ def test_circuit_breaker_opens_after_threshold(monkeypatch: pytest.MonkeyPatch) 
             breaker=breaker,
         )
     assert session2.request.call_count == 0
+    assert "reste ~" in str(pytest.raises(CircuitOpenError, breaker.check, "api.example.com").value)
 
 
 def test_circuit_breaker_resets_on_success() -> None:

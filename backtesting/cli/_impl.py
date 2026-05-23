@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
@@ -409,6 +410,7 @@ def _build_backtest_common_params(
         "artifacts_dir": args.artifacts_dir,
         "score_column": args.score_column,
         "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
+        "macro_missing_policy": getattr(args, "macro_missing_policy", None),
         "execution_timing": bt_config.execution_timing,
         "entry_price_source": "next_session_open",
         "no_save": args.no_save,
@@ -812,6 +814,22 @@ def _build_parser() -> argparse.ArgumentParser:
         default="off",
         help="Phase 7 opt-in: `exit_lifecycle_replay` rejoue explicitement l'issue terminale des child orders (exit + annulation OCO du sibling) dans le moteur de backtest. Exige `--phase5-mode watcher_replay`.",
     )
+    macro_missing_group = run_p.add_mutually_exclusive_group()
+    macro_missing_group.add_argument(
+        "--allow-neutral-fallback-on-missing-macro-data",
+        dest="macro_missing_policy",
+        action="store_const",
+        const="allow",
+        help="Continue le backtest si la macro est indisponible et marque explicitement la séance en data_quality=missing.",
+    )
+    macro_missing_group.add_argument(
+        "--fail-on-missing-macro-data",
+        dest="macro_missing_policy",
+        action="store_const",
+        const="fail",
+        help="Échoue explicitement si une donnée macro requise est indisponible.",
+    )
+    run_p.set_defaults(macro_missing_policy=None)
     run_p.add_argument(
         "--fidelity-baseline-id",
         default=None,
@@ -1334,6 +1352,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         save_report_json,
         save_trades_csv,
     )
+    from service.market import MacroDataUnavailableError
 
     # Phase 6.1.e — appliquer le profil avant tout (sans écraser les flags explicites).
     explicit_flags = _explicit_flags(sys.argv[1:])
@@ -1432,6 +1451,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print(f"   phase7_mode={phase7_mode}\n")
     _safe_print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
     _safe_print(f"   ml_pit_strategy={ml_pit_strategy}\n")
+    _safe_print(f"   macro_missing_policy={getattr(args, 'macro_missing_policy', None) or 'yaml_default'}\n")
     _safe_print(
         "   score_column={} walk_forward_artifacts_dir={}\n".format(
             args.score_column,
@@ -1638,23 +1658,42 @@ def _run_backtest(args: argparse.Namespace) -> None:
             )
             _yaml_bt = _load_yaml_bt()
             _mr_cfg_for_bt = _parse_mr_bt(_yaml_bt.get("market_regimes"))
+            macro_missing_policy = str(getattr(args, "macro_missing_policy", "") or "").strip().lower()
+            if macro_missing_policy in {"allow", "fail"}:
+                _mr_cfg_for_bt = replace(
+                    _mr_cfg_for_bt,
+                    allow_neutral_fallback_on_missing_macro_data=(macro_missing_policy == "allow"),
+                )
+            args.macro_missing_policy = (
+                "allow"
+                if getattr(_mr_cfg_for_bt, "allow_neutral_fallback_on_missing_macro_data", False)
+                else "fail"
+            )
             if getattr(_mr_cfg_for_bt, "enabled", False):
                 _macro_provider_for_bt = _build_macro_bt(_yaml_bt)
         except Exception:
             _mr_cfg_for_bt = None
             _macro_provider_for_bt = None
+            args.macro_missing_policy = str(getattr(args, "macro_missing_policy", None) or "disabled")
 
-        phase2_risk_result = build_phase2_risk_result(
-            scores_df=scores_df,
-            predictions_df=preds_df if isinstance(preds_df, pd.DataFrame) else pd.DataFrame(),
-            close_df=pivoted["close"],
-            high_df=pivoted["high"],
-            low_df=pivoted["low"],
-            risk_config=phase2_risk_config,
-            score_column=None if args.score_column == "auto" else args.score_column,
-            market_regimes_config=_mr_cfg_for_bt,
-            macro_provider=_macro_provider_for_bt,
-        )
+        try:
+            phase2_risk_result = build_phase2_risk_result(
+                scores_df=scores_df,
+                predictions_df=preds_df if isinstance(preds_df, pd.DataFrame) else pd.DataFrame(),
+                close_df=pivoted["close"],
+                high_df=pivoted["high"],
+                low_df=pivoted["low"],
+                risk_config=phase2_risk_config,
+                score_column=None if args.score_column == "auto" else args.score_column,
+                market_regimes_config=_mr_cfg_for_bt,
+                macro_provider=_macro_provider_for_bt,
+            )
+        except MacroDataUnavailableError as exc:
+            _safe_print(f"❌ {exc}")
+            _safe_print(
+                "   Astuce : relancer avec `--allow-neutral-fallback-on-missing-macro-data` pour continuer le backtest tout en marquant la séance en `data_quality=missing`."
+            )
+            sys.exit(1)
         signals_df = phase2_risk_result.signals_df
         research_signals_df = phase2_risk_result.signals_df.copy()
         _safe_print(
