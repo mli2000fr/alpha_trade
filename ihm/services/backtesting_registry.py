@@ -261,6 +261,27 @@ def _tail_text(lines: list[str]) -> str:
     return "".join(lines)
 
 
+def _read_text_tail(path: Path, max_lines: int) -> str:
+    if max_lines <= 0 or not path.exists() or not path.is_file():
+        return ""
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        position = fh.tell()
+        chunk_size = 8192
+        chunks: list[bytes] = []
+        newline_count = 0
+        while position > 0 and newline_count <= max_lines:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            fh.seek(position)
+            chunk = fh.read(read_size)
+            chunks.append(chunk)
+            newline_count += chunk.count(b"\n")
+    text = b"".join(reversed(chunks)).decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    return "\n".join(lines[-max_lines:])
+
+
 def _run_dir_for(run_kind: BacktestingCommandKind, run_id: str) -> Path:
     return RUNS_DIR / run_kind / run_id
 
@@ -483,10 +504,17 @@ def backtesting_log_available(run_id: str, stream: Literal["stdout", "stderr", "
     return bool(path is not None and path.exists())
 
 
-def read_backtesting_logs(run_id: str, stream: Literal["stdout", "stderr", "all"] = "all") -> str:
+def read_backtesting_logs(
+    run_id: str,
+    stream: Literal["stdout", "stderr", "all"] = "all",
+    *,
+    tail_lines: int | None = None,
+) -> str:
     path = _resolve_backtesting_log_path(get_backtesting_run_record(run_id), stream)
     if path is None or not path.exists():
         return ""
+    if isinstance(tail_lines, int) and tail_lines > 0:
+        return _read_text_tail(path, tail_lines)
     return path.read_text(encoding="utf-8", errors="replace")
 
 

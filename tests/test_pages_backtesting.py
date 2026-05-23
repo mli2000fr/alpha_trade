@@ -584,3 +584,15 @@ def test_resolve_history_selected_run_id_returns_none_when_selection_is_invalid(
     assert backtesting._resolve_history_selected_run_id(history_df) is None
 
 
+def test_should_preload_runtime_details_only_for_active_runs() -> None:
+    assert backtesting._should_preload_runtime_details("running") is True
+    assert backtesting._should_preload_runtime_details("starting") is True
+    assert backtesting._should_preload_runtime_details("completed") is False
+    assert backtesting._should_preload_runtime_details("failed") is False
+
+
+def test_should_auto_refresh_runtime_center_only_when_some_run_group_is_active() -> None:
+    assert backtesting._should_auto_refresh_runtime_center([], [], []) is False
+    assert backtesting._should_auto_refresh_runtime_center([{"run_id": "r1"}], [], []) is True
+
+

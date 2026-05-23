@@ -29,11 +29,12 @@ class _FakeThread:
 
 
 def test_recommend_screener_run_persists_structured_artifact_summary(tmp_path: Path, monkeypatch):
-    from ihm.services import backtesting_registry
+    from ihm.services import backtesting_registry, pipeline_lock
     from ihm.services.backtesting_runner import RecommendScreenerOptions
 
     runs_dir = tmp_path / "ihm_runs"
     output_dir = tmp_path / "screener_out"
+    locks_dir = tmp_path / "locks"
 
     monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
     monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
@@ -52,23 +53,27 @@ def test_recommend_screener_run_persists_structured_artifact_summary(tmp_path: P
         },
     )
 
-    record = backtesting_registry.start_backtesting_run(
-        "recommend-screener",
-        "Recommandation screener",
-        RecommendScreenerOptions(
-            input_dir=str(tmp_path / "input"),
-            output_dir=str(output_dir),
-            target_horizon=10,
-        ),
-    )
+    pipeline_lock.set_locks_dir_for_tests(locks_dir)
+    try:
+        record = backtesting_registry.start_backtesting_run(
+            "recommend-screener",
+            "Recommandation screener",
+            RecommendScreenerOptions(
+                input_dir=str(tmp_path / "input"),
+                output_dir=str(output_dir),
+                target_horizon=10,
+            ),
+        )
 
-    snapshot = backtesting_registry.poll_backtesting_run(record.run_id)
+        snapshot = backtesting_registry.poll_backtesting_run(record.run_id)
 
-    assert snapshot is not None
-    assert snapshot["status"] == "completed"
-    assert snapshot["screener_artifacts_dir"] == str(output_dir)
-    assert snapshot["screener_artifact_summary"]["available"] is True
-    assert snapshot["screener_artifact_summary"]["artifacts_dir"] == str(output_dir)
+        assert snapshot is not None
+        assert snapshot["status"] == "completed"
+        assert snapshot["screener_artifacts_dir"] == str(output_dir)
+        assert snapshot["screener_artifact_summary"]["available"] is True
+        assert snapshot["screener_artifact_summary"]["artifacts_dir"] == str(output_dir)
+    finally:
+        pipeline_lock.set_locks_dir_for_tests(None)
 
 
 def test_backtesting_log_available_checks_existing_file(tmp_path: Path, monkeypatch) -> None:
@@ -85,6 +90,21 @@ def test_backtesting_log_available_checks_existing_file(tmp_path: Path, monkeypa
 
     assert backtesting_registry.backtesting_log_available("run-1", stream="all") is True
     assert backtesting_registry.read_backtesting_logs("run-1", stream="all") == "hello"
+
+
+def test_read_backtesting_logs_can_return_only_tail_lines(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry
+
+    combined_path = tmp_path / "combined.log"
+    combined_path.write_text("l1\nl2\nl3\nl4\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        backtesting_registry,
+        "get_backtesting_run_record",
+        lambda run_id: {"combined_path": str(combined_path), "stdout_path": "", "stderr_path": ""},
+    )
+
+    assert backtesting_registry.read_backtesting_logs("run-1", stream="all", tail_lines=2) == "l3\nl4"
 
 
 def test_start_backtesting_run_rebinds_pipeline_lock_to_child_pid(tmp_path: Path, monkeypatch) -> None:

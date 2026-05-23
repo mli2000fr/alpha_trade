@@ -19,6 +19,7 @@ from ihm.components.db_controls import render_db_connection_form
 from ihm.components.metrics import format_duration_hhmmss
 from ihm.pages import run_page_if_standalone
 from ihm.services.backtesting_registry import (
+    backtesting_log_available,
     build_backtesting_log_download_name,
     get_backtesting_run_record,
     list_active_backtesting_runs,
@@ -39,7 +40,7 @@ from ihm.services.backtesting_runner import (
     build_backtesting_command,
     format_command_for_display,
 )
-from ihm.services.db import get_db_status, get_runtime_db_config
+from ihm.services.db import get_runtime_db_config
 from ihm.services.queries import get_backtesting_pit_history_diagnostic
 from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
@@ -58,6 +59,7 @@ BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY = "bt_run_capital_preset_signature"
 BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
 BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
 BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
+LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     "pipeline_live_like": {
@@ -249,6 +251,40 @@ def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
     return "\n".join(lines[-max_lines:])
 
 
+def _file_cache_signature(path: Path) -> tuple[str, int, int] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path), int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))), int(stat.st_size))
+
+
+@st.cache_data(show_spinner=False)
+def _read_cached_json_file(path_str: str, mtime_ns: int, size_bytes: int) -> dict[str, object] | None:
+    del mtime_ns, size_bytes
+    try:
+        payload = json.loads(Path(path_str).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return cast(dict[str, object], payload) if isinstance(payload, dict) else None
+
+
+@st.cache_data(show_spinner=False)
+def _read_cached_csv_file(path_str: str, mtime_ns: int, size_bytes: int) -> pd.DataFrame:
+    del mtime_ns, size_bytes
+    return pd.read_csv(path_str)
+
+
+def _should_preload_runtime_details(status: str) -> bool:
+    return status in {"starting", "running"}
+
+
+def _should_auto_refresh_runtime_center(*run_groups: list[dict[str, object]]) -> bool:
+    return any(bool(group) for group in run_groups)
+
+
 def _render_log_block(title: str, content: str, *, key: str, expanded: bool = False) -> None:
     tailed = _tail_text(content)
     suffix = ""
@@ -436,11 +472,11 @@ def _default_fidelity_baseline_catalog_path() -> Path:
 
 def _build_fidelity_baseline_catalog_rows(catalog_path: Path | None = None) -> pd.DataFrame:
     resolved_catalog_path = catalog_path or _default_fidelity_baseline_catalog_path()
-    if not resolved_catalog_path.exists() or not resolved_catalog_path.is_file():
+    signature = _file_cache_signature(resolved_catalog_path)
+    if signature is None:
         return pd.DataFrame()
-    try:
-        payload = json.loads(resolved_catalog_path.read_text(encoding="utf-8"))
-    except Exception:
+    payload = _read_cached_json_file(*signature)
+    if payload is None:
         return pd.DataFrame()
     baselines = payload.get("baselines", []) if isinstance(payload, dict) else []
     if not isinstance(baselines, list) or not baselines:
@@ -1854,13 +1890,13 @@ def _load_run_report(run_record: dict[str, object]) -> dict[str, object] | None:
     if run_dir is None:
         return None
     report_path = run_dir / "artifacts" / "report.json"
-    if not report_path.exists():
+    signature = _file_cache_signature(report_path)
+    if signature is None:
         return None
-    try:
-        return cast(dict[str, object], json.loads(report_path.read_text(encoding="utf-8")))
-    except Exception as exc:
-        st.warning(f"Impossible de lire le rapport JSON du run : {exc}")
-        return None
+    payload = _read_cached_json_file(*signature)
+    if payload is None:
+        st.warning("Impossible de lire le rapport JSON du run.")
+    return payload
 
 
 def _load_equity_curve_df(run_record: dict[str, object]) -> pd.DataFrame:
@@ -1868,10 +1904,11 @@ def _load_equity_curve_df(run_record: dict[str, object]) -> pd.DataFrame:
     if run_dir is None:
         return pd.DataFrame(columns=["trade_date", "portfolio_value"])
     equity_curve_csv = run_dir / "artifacts" / "equity_curve.csv"
-    if not equity_curve_csv.exists():
+    signature = _file_cache_signature(equity_curve_csv)
+    if signature is None:
         return pd.DataFrame(columns=["trade_date", "portfolio_value"])
     try:
-        df = pd.read_csv(equity_curve_csv)
+        df = _read_cached_csv_file(*signature).copy()
         if "trade_date" in df.columns:
             df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
         return df
@@ -1885,10 +1922,11 @@ def _load_run_trades_df(run_record: dict[str, object]) -> pd.DataFrame:
     if run_dir is None:
         return pd.DataFrame()
     trades_csv = run_dir / "artifacts" / "trades.csv"
-    if not trades_csv.exists():
+    signature = _file_cache_signature(trades_csv)
+    if signature is None:
         return pd.DataFrame()
     try:
-        return pd.read_csv(trades_csv)
+        return _read_cached_csv_file(*signature).copy()
     except Exception as exc:
         st.warning(f"Impossible de lire les trades du run : {exc}")
         return pd.DataFrame()
@@ -2468,13 +2506,10 @@ def _load_json_artifact_from_paths(artifacts: dict[str, object], artifact_key: s
         path = Path(str(artifact_path))
     except Exception:
         return None
-    if not path.exists() or not path.is_file():
+    signature = _file_cache_signature(path)
+    if signature is None:
         return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return cast(dict[str, object], payload) if isinstance(payload, dict) else None
+    return _read_cached_json_file(*signature)
 
 
 def _build_replay_diagnostic_session_rows(payload: dict[str, object]) -> pd.DataFrame:
@@ -2841,17 +2876,22 @@ def _render_screener_artifact_summary(run_record: dict[str, object]) -> bool:
     return True
 
 
-@st.fragment(run_every="2s")
-def _render_runtime_center() -> None:
+def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
     active_runs, all_runs = _merge_runs()
 
     st.subheader("🖥️ Runs & logs backtesting")
-    st.caption(
-        "Rafraîchissement automatique toutes les 2 secondes pour les runs actifs. "
-        "Les commandes continuent en arrière-plan même si vous changez de page."
-    )
+    if auto_refresh_enabled:
+        st.caption(
+            "Rafraîchissement automatique toutes les 2 secondes car au moins un run est actif. "
+            "Les commandes continuent en arrière-plan même si vous changez de page."
+        )
+    else:
+        st.caption(
+            "Aucun run actif : auto-refresh désactivé pour garder la page réactive. "
+            "Utilisez `Rafraîchir maintenant` si vous voulez relire l'état manuellement."
+        )
 
-    if st.button("🔄 Rafraîchir maintenant", key="backtesting_manual_refresh"):
+    if st.button("🔄 Rafraîchir maintenant", key=f"backtesting_manual_refresh_{'live' if auto_refresh_enabled else 'static'}"):
         st.rerun()
 
     if active_runs:
@@ -2907,7 +2947,6 @@ def _render_runtime_center() -> None:
         st.warning("Run introuvable.")
         return
 
-    selected_logs = read_backtesting_logs(selected_run_id, stream=cast(Any, stream_map[log_filter]))
     status = str(selected_run.get("status", ""))
     if status == "completed":
         st.success(f"Run sélectionné : {_status_badge(status)}")
@@ -2926,27 +2965,73 @@ def _render_runtime_center() -> None:
         f"Commande : `{selected_run.get('command_display', '')}` | Retour : `{selected_run.get('returncode')}` | "
         f"Début : `{selected_run.get('executed_at', '')}` | Fin : `{selected_run.get('finished_at') or '—'}`"
     )
-    st.download_button(
-        label=f"⬇️ Télécharger le log ({log_filter})",
-        data=selected_logs,
-        file_name=build_backtesting_log_download_name(selected_run_id, stream=cast(Any, stream_map[log_filter])),
-        mime="text/plain",
-        key=f"download_backtesting_{selected_run_id}_{log_filter}",
+    load_logs_key = f"backtesting_load_logs_{selected_run_id}_{log_filter}"
+    load_logs = st.toggle(
+        "Charger les logs du run sélectionné",
+        value=_should_preload_runtime_details(status),
+        key=load_logs_key,
+        help=(
+            "Désactivez ce chargement pour éviter de relire immédiatement des fichiers de logs volumineux. "
+            "Les runs actifs restent chargés par défaut pour conserver le suivi live."
+        ),
     )
-    _render_log_block(
-        "Logs du run sélectionné",
-        selected_logs,
-        key=f"backtesting_selected_logs_{selected_run_id}_{log_filter}",
-        expanded=True,
-    )
-
-    if str(selected_run.get("run_kind", "")) == "run":
-        has_report = _render_report_summary(selected_run)
-        has_live_artifacts = _render_live_artifacts(selected_run)
-        if status == "completed" and not (has_report or has_live_artifacts):
-            _render_latest_artifacts()
+    if load_logs:
+        selected_logs_preview = read_backtesting_logs(
+            selected_run_id,
+            stream=cast(Any, stream_map[log_filter]),
+            tail_lines=TAIL_LINES,
+        )
+        selected_log_available = backtesting_log_available(selected_run_id, stream=cast(Any, stream_map[log_filter]))
+        prepare_selected_log_download = st.toggle(
+            f"Préparer le téléchargement du log ({log_filter})",
+            value=False,
+            key=f"prepare_download_backtesting_{selected_run_id}_{log_filter}",
+            help="La lecture complète du fichier de log n'est faite qu'à la demande.",
+        )
+        if prepare_selected_log_download and selected_log_available:
+            selected_logs_download = read_backtesting_logs(selected_run_id, stream=cast(Any, stream_map[log_filter]))
+            st.download_button(
+                label=f"⬇️ Télécharger le log ({log_filter})",
+                data=selected_logs_download,
+                file_name=build_backtesting_log_download_name(selected_run_id, stream=cast(Any, stream_map[log_filter])),
+                mime="text/plain",
+                key=f"download_backtesting_{selected_run_id}_{log_filter}",
+            )
+        elif not selected_log_available:
+            st.caption("⚠️ Fichier de log indisponible pour ce flux.")
+        _render_log_block(
+            "Logs du run sélectionné",
+            selected_logs_preview,
+            key=f"backtesting_selected_logs_{selected_run_id}_{log_filter}",
+            expanded=True,
+        )
     else:
-        _render_screener_artifact_summary(selected_run)
+        st.caption(
+            "Logs non chargés automatiquement pour éviter de relire des fichiers volumineux à chaque rafraîchissement."
+        )
+
+    load_details_key = f"backtesting_load_details_{selected_run_id}"
+    load_details = st.toggle(
+        "Charger le résumé détaillé et les artefacts du run sélectionné",
+        value=_should_preload_runtime_details(status),
+        key=load_details_key,
+        help=(
+            "Active la lecture de `report.json`, `equity_curve.csv`, `trades.csv` et des artefacts JSON annexes. "
+            "Utile pour analyser un run, mais coûteux sur de gros backtests."
+        ),
+    )
+    if load_details:
+        if str(selected_run.get("run_kind", "")) == "run":
+            has_report = _render_report_summary(selected_run)
+            has_live_artifacts = _render_live_artifacts(selected_run)
+            if status == "completed" and not (has_report or has_live_artifacts):
+                _render_latest_artifacts()
+        else:
+            _render_screener_artifact_summary(selected_run)
+    else:
+        st.caption(
+            "Résumé détaillé différé : cela évite de relire automatiquement les artefacts du dernier run à chaque ouverture de page."
+        )
 
     history_df = pd.DataFrame(
         [
@@ -2983,27 +3068,40 @@ def _render_runtime_center() -> None:
             selected_history_status = _status_badge(str(selected_history_run.get("status") or "")) if isinstance(selected_history_run, dict) else "—"
             st.caption(f"Run historique sélectionné : `{selected_history_run_id}` | {selected_history_status}")
 
-            history_download_specs: list[tuple[str, str, str, bool]] = []
-            for label, stream in (
-                ("⬇️ Log consolidé", "all"),
-                ("⬇️ Stdout", "stdout"),
-                ("⬇️ Stderr", "stderr"),
-            ):
-                data = read_backtesting_logs(selected_history_run_id, stream=cast(Any, stream))
-                available = bool(data)
-                history_download_specs.append((label, stream, data, available))
+            history_download_specs = [
+                ("⬇️ Log consolidé", "all", backtesting_log_available(selected_history_run_id, stream="all")),
+                ("⬇️ Stdout", "stdout", backtesting_log_available(selected_history_run_id, stream="stdout")),
+                ("⬇️ Stderr", "stderr", backtesting_log_available(selected_history_run_id, stream="stderr")),
+            ]
+
+            history_prepare_downloads = st.toggle(
+                "Préparer les téléchargements de logs du run historique",
+                value=False,
+                key=f"history_backtesting_prepare_downloads_{selected_history_run_id}",
+                help="Évite de relire les trois fichiers de log tant que vous n'avez pas réellement besoin de les télécharger.",
+            )
 
             download_cols = st.columns(4)
-            for index, (label, stream, data, available) in enumerate(history_download_specs):
-                download_cols[index].download_button(
-                    label=label,
-                    data=data,
-                    file_name=build_backtesting_log_download_name(selected_history_run_id, stream=cast(Any, stream)),
-                    mime="text/plain",
-                    key=f"history_backtesting_download_{selected_history_run_id}_{stream}",
-                    use_container_width=True,
-                    disabled=not available,
-                )
+            if history_prepare_downloads:
+                for index, (label, stream, available) in enumerate(history_download_specs):
+                    data = read_backtesting_logs(selected_history_run_id, stream=cast(Any, stream)) if available else ""
+                    download_cols[index].download_button(
+                        label=label,
+                        data=data,
+                        file_name=build_backtesting_log_download_name(selected_history_run_id, stream=cast(Any, stream)),
+                        mime="text/plain",
+                        key=f"history_backtesting_download_{selected_history_run_id}_{stream}",
+                        use_container_width=True,
+                        disabled=not available,
+                    )
+            else:
+                for index, (label, _stream, available) in enumerate(history_download_specs):
+                    download_cols[index].button(
+                        f"{label}{' ✅' if available else ' —'}",
+                        key=f"history_backtesting_download_placeholder_{selected_history_run_id}_{index}",
+                        use_container_width=True,
+                        disabled=True,
+                    )
 
             if download_cols[3].button(
                 "🔍 Inspecter ce run",
@@ -3013,16 +3111,36 @@ def _render_runtime_center() -> None:
                 st.session_state[PENDING_SELECTED_RUN_KEY] = selected_history_run_id
                 st.rerun()
 
-            if not any(spec[3] for spec in history_download_specs):
+            if not any(spec[2] for spec in history_download_specs):
                 st.caption("⚠️ Les artefacts de logs de ce run sont indisponibles (rotation, purge ou run incomplet).")
 
-    screener_history_df = _build_global_screener_history_dataframe(build_global_screener_artifact_history())
-    if not screener_history_df.empty:
-        with st.expander("🗂️ Historique global des artefacts screener", expanded=False):
-            st.caption(
-                "Vue transversale des répertoires screener connus par l'IHM, indépendamment du run actuellement sélectionné."
-            )
-            st.dataframe(screener_history_df, use_container_width=True, hide_index=True)
+    if st.toggle(
+        "Charger l'historique global des artefacts screener",
+        value=False,
+        key=LOAD_GLOBAL_SCREENER_HISTORY_KEY,
+        help="Ce tableau rescane les répertoires screener connus et peut ralentir la page si les CSV sont volumineux.",
+    ):
+        screener_history_df = _build_global_screener_history_dataframe(build_global_screener_artifact_history())
+        if not screener_history_df.empty:
+            with st.expander("🗂️ Historique global des artefacts screener", expanded=False):
+                st.caption(
+                    "Vue transversale des répertoires screener connus par l'IHM, indépendamment du run actuellement sélectionné."
+                )
+                st.dataframe(screener_history_df, use_container_width=True, hide_index=True)
+    else:
+        st.caption(
+            "Historique screener global non chargé automatiquement pour éviter de rescanner les gros artefacts à chaque rendu."
+        )
+
+
+@st.fragment(run_every="2s")
+def _render_runtime_center_live() -> None:
+    _render_runtime_center_body(auto_refresh_enabled=True)
+
+
+@st.fragment
+def _render_runtime_center_static() -> None:
+    _render_runtime_center_body(auto_refresh_enabled=False)
 
 
 def render() -> None:
@@ -3032,10 +3150,10 @@ def render() -> None:
         "suivi des runs et consultation des logs."
     )
 
-    status = get_db_status()
-    source = status.get("source")
-    host = status.get("host")
-    name = status.get("name")
+    db_config_preview = get_runtime_db_config()
+    source = db_config_preview.get("source")
+    host = db_config_preview.get("host")
+    name = db_config_preview.get("name")
     st.info(f"La commande lancée héritera de la configuration DB active : `{host}/{name}` via `{source}`.")
 
     with st.expander("🗄️ Connexion DB utilisée par les sous-processus", expanded=False):
@@ -3234,7 +3352,18 @@ def render() -> None:
         )
         render_ops_command_panel("quarterly_weights_calibration")
 
-    _render_runtime_center()
+    has_any_active_runs = _should_auto_refresh_runtime_center(
+        active_backtest_runs,
+        active_backfill_runs,
+        active_diag_runs,
+        active_recommend_runs,
+        active_calibrate_runs,
+        active_walkfwd_runs,
+    )
+    if has_any_active_runs:
+        _render_runtime_center_live()
+    else:
+        _render_runtime_center_static()
 
 
 run_page_if_standalone(__name__, render)
