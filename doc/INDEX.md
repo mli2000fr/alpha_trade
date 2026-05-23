@@ -1,7 +1,7 @@
 # Index de la documentation Alpha Trade
 
-> Généré automatiquement par `scripts/generate_doc_index.py` le 2026-05-22.
-> 89 documents indexés.
+> Généré automatiquement par `scripts/generate_doc_index.py` le 2026-05-23.
+> 90 documents indexés.
 
 ## Sommaire
 
@@ -9,7 +9,7 @@
 * [Architecture](#architecture) (3)
 * [Audit externe](#audit-externe) (1)
 * [Conformité & Audit](#conformité-audit) (6)
-* [Divers](#divers) (53)
+* [Divers](#divers) (54)
 * [Documentation centrale](#documentation-centrale) (4)
 * [Documentation utilisateur](#documentation-utilisateur) (3)
 * [Performance](#performance) (4)
@@ -86,8 +86,9 @@
 | [`execution_engine.md`](execution_engine.md) | Execution Engine — Guide d'usage | Ce document résume le fonctionnement du module `execution_engine/` et les commandes utiles pour : |
 | [`ibkr_setup.md`](ibkr_setup.md) | Configuration TWS / IB Gateway pour Alpha Trade — Sprint S21.3 | Ce document décrit la qualification d'un environnement Interactive Brokers |
 | [`ihm.md`](ihm.md) | IHM — Guide d'usage | Ce document résume le fonctionnement du module `ihm/` et les commandes utiles pour : |
+| [`macro_regime.md`](macro_regime.md) | Macro regime — impact concret sur le backtest et le live | Ce document centralise les explications fonctionnelles et techniques sur la couche **macro / market regime** du projet : |
 | [`audit/matrice_ihm_cli.md`](audit/matrice_ihm_cli.md) | Matrice IHM ↔ CLI — couverture des fonctionnalités | **Sprint S26 — gaps comblés (2026-05-06)** : tous les gaps P1, P2 et P3 |
-| [`mode_regime.md`](mode_regime.md) | FAQ et Explications — Mode régime Market-Aware | Avec la config corrigée, le comportement normal est : |
+| [`mode_regime.md`](mode_regime.md) | FAQ opérateur — Mode régime Market-Aware | Cette note répond aux questions fréquentes côté opérateur. |
 | [`modelFactory.md`](modelFactory.md) | Model Factory — Référence complète | `modelFactory/` est le module ML opérationnel du projet. Il ne se limite plus à un simple entraînement LSTM par symbole. |
 | [`observability.md`](observability.md) | Observabilité — Endpoint `/metrics` Prometheus (Phase 7.5) | **Audience** : opérateurs Alpha Trade. |
 | [`phase_f_implementation.md`](phase_f_implementation.md) | Phase F — Mesures effectives (Sprints S22 + S23) — Récap d'implémentation | Statut : **infrastructure livrée et fonctionnelle** ; les itérations |
