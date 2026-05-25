@@ -759,6 +759,20 @@ def _render_ml_scope_block(
         if start_date and end_date:
             st.caption(f"Fenêtre historique appliquée : `{start_date}` → `{end_date}`.")
 
+    if step_key == "ml_predict":
+        command_preview_options = replace(
+            options,
+            **{
+                source_attr: cast(Any, selected_symbol_source),
+                "ml_predict_use_historical_range": historical_range,
+            },
+        )
+        st.caption("Commande du bouton ci-dessous :")
+        st.code(
+            format_command_for_display(build_pipeline_command(step_key, command_preview_options)),
+            language="powershell",
+        )
+
     if st.button(
         button_label,
         key=button_key,

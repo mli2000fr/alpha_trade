@@ -14,7 +14,10 @@ import pandas as pd
 from common.utils import configure_root_logging
 from core.run_summary import attach_schema_version
 from database.connection import get_sqlalchemy_engine
-from modelFactory.data_loader import load_available_trading_dates
+from modelFactory.data_loader import (
+    load_available_trading_dates,
+    load_historical_prediction_scopes_from_scores_history,
+)
 from modelFactory.features import get_feature_columns
 from modelFactory.config import (
     BaselineConfig,
@@ -476,14 +479,25 @@ def main(args: list[str] | None = None) -> None:
             persist_kill_switch_event,
             summary_fields as _drift_summary_fields,
         )
+        historical_predict_enabled = cfg.data.training_end_date is not None
+        use_historical_pit_scopes = historical_predict_enabled and str(opts.symbol_source or "candidates") == "stock-scores-history"
+
         symbols = opts.symbols or load_symbols_for_source(engine, str(opts.symbol_source or "candidates"))
-        symbols, selector_filter_summary = filter_symbols_by_selector_context(
-            engine,
-            symbols,
-            signal_modes=cfg.data.selector_universe_signal_modes,
-            max_candidate_rank=cfg.data.selector_universe_max_candidate_rank,
-            exclude_earnings_blackout=cfg.data.selector_universe_exclude_earnings_blackout,
-        )
+        selector_filter_summary = {
+            "enabled": False,
+            "applied": False,
+            "input_symbol_count": len(symbols),
+            "output_symbol_count": len(symbols),
+            "reason": None,
+        }
+        if not use_historical_pit_scopes:
+            symbols, selector_filter_summary = filter_symbols_by_selector_context(
+                engine,
+                symbols,
+                signal_modes=cfg.data.selector_universe_signal_modes,
+                max_candidate_rank=cfg.data.selector_universe_max_candidate_rank,
+                exclude_earnings_blackout=cfg.data.selector_universe_exclude_earnings_blackout,
+            )
         if selector_filter_summary.get("enabled"):
             LOGGER.info(
                 "predict selector_universe_filter applied=%s input=%s output=%s reason=%s",
@@ -492,33 +506,63 @@ def main(args: list[str] | None = None) -> None:
                 selector_filter_summary.get("output_symbol_count"),
                 selector_filter_summary.get("reason"),
             )
-        historical_predict_enabled = cfg.data.training_end_date is not None
         if historical_predict_enabled:
-            prediction_dates = load_available_trading_dates(
-                engine,
-                symbols=symbols,
-                start_date=cfg.data.training_start_date,
-                end_date=cfg.data.training_end_date,
-            )
-            LOGGER.info(
-                "predict historical_backfill enabled symbols=%d start=%s end=%s dates=%d",
-                len(symbols),
-                cfg.data.training_start_date,
-                cfg.data.training_end_date,
-                len(prediction_dates),
-            )
-            prediction_parts = [
-                predict_batch(
-                    symbols,
-                    Path(opts.artifacts_dir),
+            if use_historical_pit_scopes:
+                historical_scopes = load_historical_prediction_scopes_from_scores_history(
                     engine,
-                    prediction_date=prediction_date,
-                    as_of_date=prediction_date,
-                    persist=False,
-                    accelerator=opts.accelerator,
+                    start_date=cfg.data.training_start_date,
+                    end_date=cfg.data.training_end_date,
+                    symbols=symbols if opts.symbols else None,
+                    signal_modes=cfg.data.selector_universe_signal_modes,
+                    max_candidate_rank=cfg.data.selector_universe_max_candidate_rank,
+                    exclude_earnings_blackout=cfg.data.selector_universe_exclude_earnings_blackout,
                 )
-                for prediction_date in prediction_dates
-            ]
+                LOGGER.info(
+                    "predict historical_pit_backfill enabled days=%d explicit_symbols=%d start=%s end=%s",
+                    len(historical_scopes),
+                    len(symbols),
+                    cfg.data.training_start_date,
+                    cfg.data.training_end_date,
+                )
+                prediction_parts = [
+                    predict_batch(
+                        symbols_for_date,
+                        Path(opts.artifacts_dir),
+                        engine,
+                        prediction_date=prediction_date,
+                        as_of_date=prediction_date,
+                        persist=False,
+                        accelerator=opts.accelerator,
+                    )
+                    for prediction_date, symbols_for_date in historical_scopes.items()
+                    if symbols_for_date
+                ]
+            else:
+                prediction_dates = load_available_trading_dates(
+                    engine,
+                    symbols=symbols,
+                    start_date=cfg.data.training_start_date,
+                    end_date=cfg.data.training_end_date,
+                )
+                LOGGER.info(
+                    "predict historical_backfill enabled symbols=%d start=%s end=%s dates=%d",
+                    len(symbols),
+                    cfg.data.training_start_date,
+                    cfg.data.training_end_date,
+                    len(prediction_dates),
+                )
+                prediction_parts = [
+                    predict_batch(
+                        symbols,
+                        Path(opts.artifacts_dir),
+                        engine,
+                        prediction_date=prediction_date,
+                        as_of_date=prediction_date,
+                        persist=False,
+                        accelerator=opts.accelerator,
+                    )
+                    for prediction_date in prediction_dates
+                ]
             non_empty_parts = [part for part in prediction_parts if not part.empty]
             preds = (
                 pd.concat(non_empty_parts, ignore_index=True)

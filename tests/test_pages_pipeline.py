@@ -1155,6 +1155,59 @@ def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_hist
     assert options.ml_predict_use_historical_range is True
 
 
+def test_render_ml_predict_scope_block_displays_manual_command_preview(monkeypatch) -> None:
+    session_state: dict[str, object] = {}
+    codes: list[str] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "code", lambda value, *args, **kwargs: codes.append(str(value)))
+    monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        pipeline.st,
+        "selectbox",
+        lambda _label, *args, **kwargs: "stock_scores_history",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_ml_train_scope_preview",
+        lambda *args, **kwargs: {
+            "raw_symbol_count": 8,
+            "symbol_count": 5,
+            "sample_symbols": ["AAPL", "MSFT"],
+            "selector_summary": {"enabled": False, "applied": False, "input_symbol_count": 8, "output_symbol_count": 5},
+        },
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_pipeline_command",
+        lambda step_key, options: [
+            step_key,
+            str(options.ml_predict_symbol_source),
+            str(options.ml_predict_use_historical_range),
+            str(options.ml_training_start_date),
+            str(options.ml_training_end_date),
+        ],
+    )
+    monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
+
+    pipeline._render_ml_predict_scope_block(
+        pipeline.PipelineLaunchOptions(
+            ml_training_start_date="2022-01-01",
+            ml_training_end_date="2022-01-31",
+        ),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert any("ml_predict stock_scores_history True 2022-01-01 2022-01-31" in value for value in codes)
+
+
 def test_render_period_sync_block_launches_quotes_history_with_selected_window(monkeypatch) -> None:
     session_state: dict[str, object] = {
         pipeline.QUOTE_HISTORY_START_DATE_KEY: dt_date(2026, 4, 1),

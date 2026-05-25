@@ -821,7 +821,7 @@ class TestResilience:
         })
         preds = pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
 
-        monkeypatch.setattr(resilience, "predict_symbol", lambda *args, **kwargs: None)
+        monkeypatch.setattr(resilience, "predict_batch", lambda *args, **kwargs: None)
         monkeypatch.setattr(resilience, "reset_runtime_status", lambda initial=None: None)
         monkeypatch.setattr(
             resilience,
@@ -850,7 +850,7 @@ class TestResilience:
         })
         preds = pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
 
-        monkeypatch.setattr(resilience, "predict_symbol", lambda *args, **kwargs: None)
+        monkeypatch.setattr(resilience, "predict_batch", lambda *args, **kwargs: None)
         monkeypatch.setattr(resilience, "reset_runtime_status", lambda initial=None: None)
         monkeypatch.setattr(
             resilience,
@@ -870,12 +870,12 @@ class TestResilience:
         assert prepared.diagnostics.missing_cause_breakdown == {"artifact_invalid": 1}
         assert prepared.diagnostics.missing_causes_by_symbol == {"NVDA": ("artifact_invalid",)}
 
-    def test_prepare_predictions_ml_rebuild_missing_calls_predictor(self, monkeypatch):
+    def test_prepare_predictions_ml_rebuild_missing_calls_predictor_grouped_by_trade_date(self, monkeypatch):
         from backtesting import resilience
 
         scores = pd.DataFrame({
-            "symbol": ["AAPL", "MSFT"],
-            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+            "symbol": ["AAPL", "MSFT", "NVDA", "TSLA"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01", "2025-01-01", "2025-01-02"]),
         })
         preds = pd.DataFrame({
             "symbol": ["AAPL"],
@@ -885,27 +885,25 @@ class TestResilience:
         })
         calls = []
 
-        def fake_predict_symbol(symbol, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=True):
-            calls.append((symbol, prediction_date, as_of_date, persist))
+        def fake_predict_batch(symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=True):
+            calls.append((tuple(symbols), prediction_date, as_of_date, persist))
             return pd.DataFrame({
-                "symbol": [symbol],
-                "prediction_date": [prediction_date],
-                "predicted_proba": [0.55],
-                "predicted_class": [1],
-                "run_id": ["run-x"],
+                "symbol": list(symbols),
+                "prediction_date": [prediction_date] * len(symbols),
+                "predicted_proba": [0.55] * len(symbols),
+                "predicted_class": [1] * len(symbols),
+                "run_id": ["run-x"] * len(symbols),
             })
 
-        monkeypatch.setattr(resilience, "predict_symbol", fake_predict_symbol)
+        monkeypatch.setattr(resilience, "predict_batch", fake_predict_batch)
         result = resilience.prepare_predictions_for_ml_mode(
             None, scores, preds, ml_mode="rebuild-missing", artifacts_dir=Path("artifacts/models")
         )  # type: ignore[arg-type]
-        assert len(result) == 2
-        assert calls == [(
-            "MSFT",
-            date(2025, 1, 1),
-            date(2025, 1, 1),
-            True,
-        )]
+        assert len(result) == 4
+        assert calls == [
+            (("MSFT", "NVDA"), date(2025, 1, 1), date(2025, 1, 1), True),
+            (("TSLA",), date(2025, 1, 2), date(2025, 1, 2), True),
+        ]
 
     def test_prepare_scores_pipeline_rebuild_missing_does_not_write_back(self, monkeypatch):
         from backtesting import resilience
@@ -958,18 +956,18 @@ class TestResilience:
             "trade_date": pd.to_datetime(["2025-01-01"]),
         })
         preds = pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
-        calls: list[tuple[str, date, date, bool]] = []
+        calls: list[tuple[tuple[str, ...], date, date, bool]] = []
 
-        def fake_predict_symbol(symbol, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=True):
-            calls.append((symbol, prediction_date, as_of_date, persist))
+        def fake_predict_batch(symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=True):
+            calls.append((tuple(symbols), prediction_date, as_of_date, persist))
             return pd.DataFrame({
-                "symbol": [symbol],
-                "prediction_date": [prediction_date],
-                "predicted_proba": [0.66],
-                "predicted_class": [1],
+                "symbol": list(symbols),
+                "prediction_date": [prediction_date] * len(symbols),
+                "predicted_proba": [0.66] * len(symbols),
+                "predicted_class": [1] * len(symbols),
             })
 
-        monkeypatch.setattr(resilience, "predict_symbol", fake_predict_symbol)
+        monkeypatch.setattr(resilience, "predict_batch", fake_predict_batch)
 
         prepared = resilience.prepare_predictions_for_ml_mode(
             None,  # type: ignore[arg-type]
@@ -985,7 +983,7 @@ class TestResilience:
         assert len(prepared.frame) == 1
         assert prepared.diagnostics.persist_enabled is False
         assert prepared.diagnostics.persist_performed is False
-        assert calls == [("AAPL", date(2025, 1, 1), date(2025, 1, 1), False)]
+        assert calls == [(("AAPL",), date(2025, 1, 1), date(2025, 1, 1), False)]
 
     def test_prepare_predictions_walk_forward_strategy_not_supported_yet(self):
         from backtesting import resilience

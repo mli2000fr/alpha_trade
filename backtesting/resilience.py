@@ -18,7 +18,7 @@ from backtesting.fidelity import (
     resolve_ml_pit_strategy,
 )
 from backtesting.walk_forward import apply_walk_forward_weights, resolve_latest_walk_forward_weights
-from modelFactory.predictor import predict_symbol
+from modelFactory.predictor import predict_batch, predict_symbol
 from modelFactory.runtime_status import reset_runtime_status, snapshot_runtime_status
 
 LOGGER = logging.getLogger(__name__)
@@ -123,6 +123,28 @@ def _rebuild_prediction_frame(
 ) -> pd.DataFrame:
     prediction = predict_symbol(
         symbol=symbol,
+        artifacts_dir=artifacts_dir,
+        engine=engine,
+        prediction_date=trade_date,
+        as_of_date=trade_date,
+        persist=persist,
+    )
+    pred_df = _ensure_dataframe(prediction) if prediction is not None else pd.DataFrame()
+    if not pred_df.empty and "prediction_date" in pred_df.columns:
+        pred_df = pred_df.rename(columns={"prediction_date": "trade_date"})
+    return pred_df
+
+
+def _rebuild_prediction_batch_frame(
+    *,
+    symbols: list[str],
+    trade_date: date,
+    artifacts_dir: Path,
+    engine: Engine,
+    persist: bool,
+) -> pd.DataFrame:
+    prediction = predict_batch(
+        symbols=symbols,
         artifacts_dir=artifacts_dir,
         engine=engine,
         prediction_date=trade_date,
@@ -465,12 +487,17 @@ def prepare_predictions_for_ml_mode(
     failed = 0
     cause_breakdown: dict[str, int] = defaultdict(int)
     missing_causes_by_symbol: dict[str, set[str]] = defaultdict(set)
+    missing_symbols_by_trade_date: dict[date, list[str]] = defaultdict(list)
     for symbol, trade_key in missing_keys:
         normalized_trade_date = pd.Timestamp(trade_key).date()
+        missing_symbols_by_trade_date[normalized_trade_date].append(symbol)
+
+    for normalized_trade_date, symbols_for_trade_date in sorted(missing_symbols_by_trade_date.items()):
+        batch_symbols = sorted(dict.fromkeys(symbols_for_trade_date))
         try:
             reset_runtime_status({})
-            pred_df = _rebuild_prediction_frame(
-                symbol=symbol,
+            pred_df = _rebuild_prediction_batch_frame(
+                symbols=batch_symbols,
                 trade_date=normalized_trade_date,
                 artifacts_dir=artifacts_dir,
                 engine=engine,
@@ -479,18 +506,20 @@ def prepare_predictions_for_ml_mode(
             if not pred_df.empty:
                 rebuilt_frames.append(pred_df)
             else:
-                failed += 1
+                failed += len(batch_symbols)
                 cause = _classify_ml_missing_cause_from_runtime_status(snapshot_runtime_status())
-                cause_breakdown[cause] += 1
-                missing_causes_by_symbol[symbol].add(cause)
+                cause_breakdown[cause] += len(batch_symbols)
+                for symbol in batch_symbols:
+                    missing_causes_by_symbol[symbol].add(cause)
         except Exception:
-            failed += 1
+            failed += len(batch_symbols)
             cause = _classify_ml_missing_cause_from_runtime_status(snapshot_runtime_status())
-            cause_breakdown[cause] += 1
-            missing_causes_by_symbol[symbol].add(cause)
+            cause_breakdown[cause] += len(batch_symbols)
+            for symbol in batch_symbols:
+                missing_causes_by_symbol[symbol].add(cause)
             LOGGER.warning(
-                "Échec reconstruction prediction symbol=%s date=%s — fallback sans ML.",
-                symbol,
+                "Échec reconstruction prediction symbols=%s date=%s — fallback sans ML.",
+                ", ".join(batch_symbols),
                 normalized_trade_date,
                 exc_info=True,
             )

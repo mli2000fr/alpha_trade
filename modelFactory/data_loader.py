@@ -187,6 +187,96 @@ def load_available_trading_dates(
     return trading_dates
 
 
+def load_historical_prediction_scopes_from_scores_history(
+    engine: Engine,
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: list[str] | None = None,
+    signal_modes: tuple[str, ...] | list[str] | None = None,
+    max_candidate_rank: int | None = None,
+    exclude_earnings_blackout: bool = False,
+) -> dict[date, list[str]]:
+    """Construit un scope PIT ``snapshot_date -> [symbols]`` depuis stock_scores_history.
+
+    Ce loader sert au backfill historique de ``model_predictions`` afin de ne prédire,
+    pour chaque date, que l'univers effectivement candidat à cette date.
+    """
+    history_columns = _get_table_columns(engine, "stock_scores_history")
+    required_columns = {"snapshot_date", "symbol", "is_candidate"}
+    missing_columns = required_columns.difference(history_columns)
+    if missing_columns:
+        LOGGER.warning(
+            "load_historical_prediction_scopes_from_scores_history unavailable missing_columns=%s",
+            sorted(missing_columns),
+        )
+        return {}
+
+    where_clauses = [
+        "snapshot_date BETWEEN :start_date AND :end_date",
+        "COALESCE(is_candidate, 0) = 1",
+        "COALESCE(TRIM(symbol), '') <> ''",
+    ]
+    params: dict[str, object] = {
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+    normalized_symbols = sorted({str(symbol).strip().upper() for symbol in (symbols or []) if str(symbol).strip()})
+    if normalized_symbols:
+        in_clause, symbol_params = _build_in_clause(normalized_symbols)
+        where_clauses.append(f"UPPER(TRIM(symbol)) IN ({in_clause})")
+        params.update(symbol_params)
+
+    normalized_signal_modes = [str(value).strip().lower() for value in (signal_modes or []) if str(value).strip()]
+    if normalized_signal_modes and "selector_signal_mode" in history_columns:
+        mode_params_remapped: dict[str, object] = {}
+        for idx, value in enumerate(normalized_signal_modes):
+            key = f"signal_mode_{idx}"
+            mode_params_remapped[key] = value
+        mode_placeholders = ", ".join(f":signal_mode_{idx}" for idx in range(len(normalized_signal_modes)))
+        where_clauses.append(f"LOWER(TRIM(selector_signal_mode)) IN ({mode_placeholders})")
+        params.update(mode_params_remapped)
+
+    if max_candidate_rank is not None and int(max_candidate_rank) > 0 and "candidate_rank" in history_columns:
+        where_clauses.append("candidate_rank <= :max_candidate_rank")
+        params["max_candidate_rank"] = int(max_candidate_rank)
+
+    if exclude_earnings_blackout and "earnings_blackout" in history_columns:
+        where_clauses.append("COALESCE(earnings_blackout, 0) = 0")
+
+    query = text(
+        "SELECT snapshot_date, UPPER(TRIM(symbol)) AS symbol "
+        "FROM stock_scores_history "
+        f"WHERE {' AND '.join(where_clauses)} "
+        "ORDER BY snapshot_date, symbol"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(query, params).mappings().all()
+
+    scopes: dict[date, list[str]] = {}
+    for row in rows:
+        snapshot_date = _coerce_date_value(row.get("snapshot_date"))
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if snapshot_date is None or not symbol:
+            continue
+        scopes.setdefault(snapshot_date, []).append(symbol)
+
+    normalized_scopes = {
+        snapshot_date: sorted(dict.fromkeys(symbols_for_date))
+        for snapshot_date, symbols_for_date in sorted(scopes.items())
+        if symbols_for_date
+    }
+    LOGGER.info(
+        "load_historical_prediction_scopes_from_scores_history start_date=%s end_date=%s days=%d symbols=%d",
+        start_date,
+        end_date,
+        len(normalized_scopes),
+        sum(len(symbols_for_date) for symbols_for_date in normalized_scopes.values()),
+    )
+    return normalized_scopes
+
+
 def load_symbol_bars(
     engine: Engine,
     symbol: str,

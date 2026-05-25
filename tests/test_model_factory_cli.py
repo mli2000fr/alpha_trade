@@ -219,6 +219,119 @@ def test_cli_main_predict_historical_loops_over_available_trading_dates(monkeypa
     assert emitted_summaries[-1]["training_end_date"] == "2022-01-04"
 
 
+def test_cli_main_predict_historical_stock_scores_history_uses_pit_scopes(monkeypatch) -> None:
+    import modelFactory.db_registry as db_registry
+    import modelFactory.predictor as predictor
+
+    prediction_calls: list[tuple[tuple[str, ...], date | None, date | None]] = []
+    inserted_batches: list[pd.DataFrame] = []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "apply_reproducibility", lambda *args, **kwargs: {"seed": 42, "deterministic_applied": True, "deterministic_requested": True})
+    monkeypatch.setattr(cli, "get_sqlalchemy_engine", lambda: object())
+    monkeypatch.setattr(
+        cli,
+        "load_historical_prediction_scopes_from_scores_history",
+        lambda engine, **kwargs: {
+            date(2022, 1, 3): ["AAPL", "MSFT"],
+            date(2022, 1, 4): ["MSFT"],
+        },
+    )
+    monkeypatch.setattr(db_registry, "load_symbols_for_source", lambda engine, source: ["AAPL", "MSFT", "NVDA"])
+    monkeypatch.setattr(db_registry, "insert_predictions", lambda engine, preds: inserted_batches.append(preds.copy()) or len(preds))
+    monkeypatch.setattr(
+        predictor,
+        "predict_batch",
+        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto": prediction_calls.append((tuple(symbols), prediction_date, as_of_date)) or pd.DataFrame([
+            {
+                "symbol": symbol,
+                "prediction_date": prediction_date,
+                "predicted_proba": 0.7,
+                "predicted_class": 1,
+                "run_id": f"run-{prediction_date}",
+            }
+            for symbol in symbols
+        ]),
+    )
+    monkeypatch.setattr(cli, "_emit_run_summary", lambda summary: None)
+
+    cli.main([
+        "--mode", "predict",
+        "--symbol-source", "stock-scores-history",
+        "--training-start-date", "2022-01-01",
+        "--training-end-date", "2022-01-04",
+    ])
+
+    assert prediction_calls == [
+        (("AAPL", "MSFT"), date(2022, 1, 3), date(2022, 1, 3)),
+        (("MSFT",), date(2022, 1, 4), date(2022, 1, 4)),
+    ]
+    assert len(inserted_batches) == 1
+    inserted = inserted_batches[0]
+    assert list(inserted["symbol"]) == ["AAPL", "MSFT", "MSFT"]
+
+
+def test_load_historical_prediction_scopes_from_scores_history_groups_symbols_by_snapshot_date(monkeypatch) -> None:
+    from modelFactory import data_loader
+
+    captured: dict[str, object] = {}
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, query, params):
+            captured["sql"] = str(query)
+            captured["params"] = dict(params)
+
+            class _Result:
+                def mappings(self_inner):
+                    class _Mappings:
+                        def all(self_mappings):
+                            return [
+                                {"snapshot_date": date(2022, 1, 3), "symbol": "AAPL"},
+                                {"snapshot_date": date(2022, 1, 3), "symbol": "MSFT"},
+                                {"snapshot_date": date(2022, 1, 4), "symbol": "MSFT"},
+                            ]
+
+                    return _Mappings()
+
+            return _Result()
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConn()
+
+    monkeypatch.setattr(
+        data_loader,
+        "_get_table_columns",
+        lambda engine, table_name: {"snapshot_date", "symbol", "is_candidate", "selector_signal_mode", "candidate_rank", "earnings_blackout"},
+    )
+
+    scopes = data_loader.load_historical_prediction_scopes_from_scores_history(
+        FakeEngine(),  # type: ignore[arg-type]
+        start_date=date(2022, 1, 1),
+        end_date=date(2022, 1, 4),
+        signal_modes=("strict",),
+        max_candidate_rank=20,
+        exclude_earnings_blackout=True,
+    )
+
+    assert scopes == {
+        date(2022, 1, 3): ["AAPL", "MSFT"],
+        date(2022, 1, 4): ["MSFT"],
+    }
+    assert "FROM stock_scores_history" in captured["sql"]
+    assert "snapshot_date BETWEEN :start_date AND :end_date" in captured["sql"]
+    assert "candidate_rank <= :max_candidate_rank" in captured["sql"]
+    assert "COALESCE(earnings_blackout, 0) = 0" in captured["sql"]
+    assert captured["params"]["max_candidate_rank"] == 20
+    assert captured["params"]["signal_mode_0"] == "strict"
+
+
 def test_cli_parser_accepts_seed_and_no_deterministic() -> None:
     parser = cli.build_arg_parser()
 
