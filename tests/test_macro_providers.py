@@ -124,19 +124,46 @@ def test_eodhd_provider_logs_positive_success_for_vix9d(monkeypatch, caplog):
     p = EodhdMacroProvider()
     d = date(2025, 4, 15)
 
-    with caplog.at_level(logging.DEBUG, logger="service.market.macro_providers"):
+    with caplog.at_level(logging.INFO, logger="service.market.macro_providers"):
         assert p.get_vix_short_term_close(d) == pytest.approx(14.15)
         assert p.get_vix_short_term_close(d) == pytest.approx(14.15)
 
     success_messages = [
         record.getMessage()
         for record in caplog.records
-        if record.levelno == logging.DEBUG and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
+        if record.levelno == logging.INFO and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
     ]
     assert len(success_messages) == 1
     assert "key=vix_short" in success_messages[0]
     assert "last_close=14.1500" in success_messages[0]
     assert calls == ["VIX9D.INDX"]
+
+
+def test_eodhd_provider_logs_positive_success_for_vix(monkeypatch, caplog):
+    payload_vix = [
+        {"date": "2025-04-14", "close": 18.10},
+        {"date": "2025-04-15", "close": 22.40},
+    ]
+
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        if symbol == "VIX.INDX":
+            return payload_vix
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+
+    with caplog.at_level(logging.INFO, logger="service.market.macro_providers"):
+        assert p.get_vix_close(date(2025, 4, 15)) == pytest.approx(22.4)
+
+    success_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO and "EodhdMacroProvider: fetch VIX.INDX ok" in record.getMessage()
+    ]
+    assert len(success_messages) == 1
+    assert "key=vix" in success_messages[0]
+    assert "last_close=22.4000" in success_messages[0]
 
 
 def test_eodhd_provider_does_not_log_positive_success_on_empty_payload(monkeypatch, caplog):
@@ -146,12 +173,12 @@ def test_eodhd_provider_does_not_log_positive_success_on_empty_payload(monkeypat
     monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
     p = EodhdMacroProvider()
 
-    with caplog.at_level(logging.DEBUG, logger="service.market.macro_providers"):
+    with caplog.at_level(logging.INFO, logger="service.market.macro_providers"):
         assert p.get_vix_short_term_close(date(2025, 4, 15)) is None
 
     assert not [
         record for record in caplog.records
-        if record.levelno == logging.DEBUG and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
+        if record.levelno == logging.INFO and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
     ]
 
 
@@ -203,6 +230,35 @@ def test_fred_provider_normalises_payload_and_exposes_source(monkeypatch):
         "source_effective": "fred",
         "source_by_signal": {"yield_10y": "fred"},
     }
+
+
+def test_fred_provider_logs_positive_success_for_10y(monkeypatch, caplog):
+    payload = [
+        {"date": "2025-04-09", "value": "4.20"},
+        {"date": "2025-04-10", "value": "4.25"},
+        {"date": "2025-04-14", "value": "4.40"},
+        {"date": "2025-04-15", "value": "4.50"},
+    ]
+
+    def fake_fetch(series_id, *, start=None, end=None, api_key_env="KEY_FRED", **kwargs):
+        assert series_id == "DGS10"
+        return payload
+
+    monkeypatch.setattr("service.fred.clientFred.fetch_series_observations", fake_fetch)
+    p = FredMacroProvider()
+
+    with caplog.at_level(logging.INFO, logger="service.market.macro_providers"):
+        history = p.get_us10y_history(date(2025, 4, 15), lookback_days=4)
+
+    assert history == pytest.approx([4.20, 4.25, 4.40, 4.50])
+    success_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO and "FredMacroProvider: fetch DGS10 ok" in record.getMessage()
+    ]
+    assert len(success_messages) == 1
+    assert "key=us10y" in success_messages[0]
+    assert "last_close=4.5000" in success_messages[0]
 
 
 # --- Composite + factory ----------------------------------------------------
@@ -273,6 +329,8 @@ def test_main_config_uses_eodhd_macro_provider() -> None:
 
     assert cfg["market_regimes"]["macro_provider"] == "eodhd"
     assert cfg["market_regimes"]["yields"]["provider"] == "fred"
+    assert cfg["market_regimes"]["sentiment_circuit_breaker"]["enabled"] is True
+    assert cfg["fred"]["api_key_env"] == "KEY_FRED"
 
 
 def test_factory_explicit_eodhd_overrides_symbol():

@@ -294,6 +294,13 @@ def build_snapshot(
             lookback_days=config.yields.lookback_days,
             relative_spike_threshold=config.yields.relative_spike_threshold,
         )
+        yield_history: list[float] | None = None
+        if macro_provider is not None:
+            try:
+                yield_history = macro_provider.get_us10y_history(trade_date, config.yields.lookback_days)
+            except Exception:
+                yield_history = None
+        macro_metrics["yield_10y"] = yield_history[-1] if yield_history else None
         macro_metrics["yield_10y_5d_pct"] = rel
         data_quality.update(dq)
         if spike:

@@ -84,10 +84,6 @@ market_regimes:
     high_beta_threshold: 1.2
     risk_mult: 0.6
 
-fred:
-  api_key_env: KEY_FRED
-  series_10y: DGS10
-
   sentiment_circuit_breaker:
     enabled: true
     lookback_days: 7
@@ -145,6 +141,10 @@ fred:
       enabled: false
       business_days_from_month_end: 2
       sentiment_threshold_addon: 0.10
+
+fred:
+  api_key_env: KEY_FRED
+  series_10y: DGS10
 
 # ---------------------------------------------------------------------------
 # Sprint S30 — Trailing stop ATR dynamique pour les achats manuels orphelins

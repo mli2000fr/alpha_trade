@@ -227,6 +227,27 @@ def test_snapshot_serializes_effective_macro_source_summary() -> None:
     assert snap.macro["source_by_signal"] == {"vix": "stooq", "vix_short": "eodhd"}
 
 
+def test_snapshot_exposes_latest_10y_value() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        vix=VixConfig(enabled=False),
+        yields=YieldsConfig(enabled=True, lookback_days=5, relative_spike_threshold=0.05),
+    )
+    provider = _StubMacroProvider(history=[4.0, 4.05, 4.10, 4.15, 4.20])
+    reset_cache()
+
+    snap = build_snapshot(
+        date(2025, 5, 1),
+        config=cfg,
+        equity=2_000.0,
+        macro_provider=cast(MacroDataProvider, cast(object, provider)),
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert snap.macro["yield_10y"] == pytest.approx(4.20)
+    assert snap.macro["yield_10y_5d_pct"] == pytest.approx((4.20 - 4.0) / 4.0)
+
+
 def test_snapshot_raises_when_macro_missing_and_fail_fast_enabled() -> None:
     cfg = MarketRegimesConfig(
         enabled=True,

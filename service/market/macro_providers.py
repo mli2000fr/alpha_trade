@@ -107,7 +107,7 @@ def _resolve_signal_source(provider: Any, signal_key: str) -> str | None:
 def _log_successful_fetch(*, provider_name: str, key: str, symbol: str, trade_date: date, bars: Sequence[Mapping[str, Any]]) -> None:
     """Journalise une preuve positive compacte quand un fetch réseau aboutit.
 
-    - ``DEBUG`` pour toutes les séries macro afin d'éviter un bruit excessif.
+    - ``INFO`` pour les séries suivies opérationnellement (VIX / VIX9D / 10Y).
     - Aucun log si ``bars`` est vide ou si aucune clôture exploitable n'est trouvée.
     """
     if not bars:
@@ -133,7 +133,9 @@ def _log_successful_fetch(*, provider_name: str, key: str, symbol: str, trade_da
             last_close = parsed_close
     if last_date is None or last_close is None:
         return
-    LOGGER.debug(
+    level = logging.INFO if key in {"vix", "vix_short", "us10y"} else logging.DEBUG
+    LOGGER.log(
+        level,
         "%s: fetch %s ok key=%s trade_date=%s rows=%d last_date=%s last_close=%.4f",
         provider_name,
         symbol,
@@ -228,7 +230,15 @@ class StooqMacroProvider:
         except Exception:
             LOGGER.warning("StooqMacroProvider: fetch %s a échoué.", symbol, exc_info=True)
             bars = []
-        self._cache[cache_key] = list(bars)
+        normalised = list(bars)
+        _log_successful_fetch(
+            provider_name="StooqMacroProvider",
+            key=key,
+            symbol=str(symbol),
+            trade_date=trade_date,
+            bars=normalised,
+        )
+        self._cache[cache_key] = normalised
         return self._cache[cache_key]
 
     def get_vix_close(self, trade_date: date) -> float | None:
