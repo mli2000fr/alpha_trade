@@ -779,6 +779,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Mode du moteur de backtest: research (rapide, tolérant) ou pipeline (strict PIT, diagnostics renforcés).",
     )
     run_p.add_argument(
+        "--scores-pit-mode",
+        choices=["exact", "asof_latest"],
+        default="exact",
+        help="Résolution PIT des scores: `exact` exige les snapshots du jour, `asof_latest` réutilise le dernier snapshot <= trade_date.",
+    )
+    run_p.add_argument(
         "--ml-pit-strategy",
         choices=["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"],
         default="auto",
@@ -1256,7 +1262,13 @@ def _run_statistical_validation(
             _pivoted = pivot_ohlcv(_ohlcv_df)
 
             from backtesting.data_loader import load_scores as _ls
-            _score_result = _ls(_engine, _start, _end, capital_preset_key=getattr(args, "capital_preset_key", None))
+            _score_result = _ls(
+                _engine,
+                _start,
+                _end,
+                capital_preset_key=getattr(args, "capital_preset_key", None),
+                scores_pit_mode=getattr(args, "scores_pit_mode", "exact"),
+            )
             _scores_df = _score_result.frame if hasattr(_score_result, "frame") else _score_result
 
             base_params = {
@@ -1390,6 +1402,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
     engine_mode = str(getattr(args, "engine_mode", "research") or "research").strip().lower()
+    scores_pit_mode = str(getattr(args, "scores_pit_mode", "exact") or "exact").strip().lower()
     ml_pit_strategy = str(getattr(args, "ml_pit_strategy", "auto") or "auto").strip().lower()
     phase2_mode = str(getattr(args, "phase2_mode", "off") or "off").strip().lower()
     phase3_mode = str(getattr(args, "phase3_mode", "off") or "off").strip().lower()
@@ -1444,6 +1457,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print(f"   preset_capital={effective_preset.key} ({preset_source}) | fingerprint={preset_fingerprint}\n")
     _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
     _safe_print(f"   engine_mode={engine_mode} strict_pit={strict_pit}\n")
+    _safe_print(f"   scores_pit_mode={scores_pit_mode}\n")
     _safe_print(f"   phase2_mode={phase2_mode}\n")
     _safe_print(f"   phase3_mode={phase3_mode}\n")
     _safe_print(f"   phase4_mode={phase4_mode}\n")
@@ -1541,6 +1555,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             start,
             end,
             capital_preset_key=effective_preset.key,
+            scores_pit_mode=scores_pit_mode,
             strict_pit=strict_pit,
             return_diagnostics=True,
         )

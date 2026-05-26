@@ -37,13 +37,13 @@ grouper les manques par trade_date
 appeler predict_batch(symbols_du_jour, as_of_date=trade_date)
 
 Adaptation 3 — Ajouter un préflight de couverture ML dans l’IHM backtesting
-Comme il existe déjà un diagnostic PIT pour stock_scores_history dans ihm/services/queries.py::get_backtesting_pit_history_diagnostic(...), je ferais la même chose pour model_predictions :
+Comme il existe déjà un diagnostic PIT pour stock_scores_history dans ihm/services/queries.py::get_backtesting_pit_history_diagnostic(...), tu feras la même chose pour model_predictions :
 avant de lancer le backtest, afficher :
 nb de candidate x date attendus
 nb déjà couverts dans model_predictions
 taux de couverture
 symboles/jours manquants
 estimation “mode rapide” vs “rebuild-missing”
-par contre, ajouter un switch (par défaut off) permet d'afficher ces infos car le calcul de ces infos prends du temps ,ej 'nai pas forcément vouloire chaque fois
+par contre, ajouter un switch (par défaut off) permet d'afficher ces infos car le calcul de ces infos prends du temps ,je n'ai pas forcément vouloir chaque fois
 
 A la fin complèter les doc.

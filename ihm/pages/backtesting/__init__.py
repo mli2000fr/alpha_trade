@@ -41,7 +41,7 @@ from ihm.services.backtesting_runner import (
     format_command_for_display,
 )
 from ihm.services.db import get_runtime_db_config
-from ihm.services.queries import get_backtesting_pit_history_diagnostic
+from ihm.services.queries import get_backtesting_ml_coverage_diagnostic, get_backtesting_pit_history_diagnostic
 from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
     build_screener_artifact_history_rows,
@@ -393,6 +393,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "ml_mode", "Explication": "auto/off/rebuild-missing pour la composante ML.", "Défaut": "auto"},
             {"Paramètre": "sentiment_mode", "Explication": "auto/off/rebuild-missing pour la composante sentiment.", "Défaut": "auto"},
             {"Paramètre": "engine_mode", "Explication": "research = tolérant/rapide, pipeline = strict PIT + diagnostics renforcés.", "Défaut": "research"},
+            {"Paramètre": "scores_pit_mode", "Explication": "Résolution PIT des scores : `exact` = snapshots du jour uniquement, `asof_latest` = dernier snapshot `<= trade_date`.", "Défaut": "exact"},
             {"Paramètre": "ml_pit_strategy", "Explication": "Stratégie PIT ML explicite : auto / use-persisted / rebuild-missing / walk-forward-train-then-predict.", "Défaut": "auto"},
             {"Paramètre": "phase2_mode", "Explication": "off = backtest standard, risk = bridge risk_management, risk_execution = risk + intents/fills d'exécution simulés.", "Défaut": "off"},
             {"Paramètre": "phase3_mode", "Explication": "off = comportement Phase 2, execution_replay = réinjecte chronologiquement les quantités exécutées simulées dans le moteur de backtest.", "Défaut": "off"},
@@ -558,6 +559,83 @@ def _build_pipeline_pit_status_message(diagnostic: dict[str, object]) -> tuple[s
     )
 
 
+def _build_ml_coverage_status_message(diagnostic: dict[str, object]) -> tuple[str, str]:
+    status = str(diagnostic.get("status", "unknown") or "unknown")
+    start = str(diagnostic.get("start", "?") or "?")
+    end = str(diagnostic.get("end", "?") or "?")
+    preset_key = str(diagnostic.get("capital_preset_key", "") or "auto")
+    coverage_pct = _to_float(diagnostic.get("coverage_pct"))
+    expected_pairs = _to_int(diagnostic.get("expected_candidate_symbol_dates"))
+    covered_pairs = _to_int(diagnostic.get("covered_prediction_symbol_dates"))
+    missing_pairs = _to_int(diagnostic.get("missing_prediction_symbol_dates"))
+    effective_strategy = str(diagnostic.get("effective_strategy", "auto") or "auto")
+    filtered_on_preset = bool(diagnostic.get("capital_preset_filtered", False))
+
+    if status == "complete":
+        return (
+            "success",
+            "Couverture ML PIT complète sur [{start} → {end}] avec preset `{preset}`{preset_note} : "
+            "{covered}/{expected} paire(s) symbole×date couvertes ({coverage:.1f}%). "
+            "La stratégie effective `{strategy}` peut partir en mode rapide sans dégradation ML.".format(
+                start=start,
+                end=end,
+                preset=preset_key,
+                preset_note=" (filtrage actif)" if filtered_on_preset else "",
+                covered=covered_pairs,
+                expected=expected_pairs,
+                coverage=coverage_pct,
+                strategy=effective_strategy,
+            ),
+        )
+    if status == "partial":
+        return (
+            "warning",
+            "Couverture ML PIT partielle sur [{start} → {end}] avec preset `{preset}`{preset_note} : "
+            "{covered}/{expected} paire(s) couvertes ({coverage:.1f}%), {missing} manquante(s). "
+            "Le mode rapide laissera ces trous sans ML ; `rebuild-missing` tentera de les reconstruire.".format(
+                start=start,
+                end=end,
+                preset=preset_key,
+                preset_note=" (filtrage actif)" if filtered_on_preset else "",
+                covered=covered_pairs,
+                expected=expected_pairs,
+                coverage=coverage_pct,
+                missing=missing_pairs,
+            ),
+        )
+    if status == "missing":
+        return (
+            "error",
+            "Aucune couverture ML PIT persistée n'a été trouvée sur [{start} → {end}] avec preset `{preset}`{preset_note}. "
+            "Le mode rapide utilisera 0/{expected} paire(s) et laissera tout le run sans ML ; `rebuild-missing` est recommandé si les artefacts existent.".format(
+                start=start,
+                end=end,
+                preset=preset_key,
+                preset_note=" (filtrage actif)" if filtered_on_preset else "",
+                expected=expected_pairs,
+            ),
+        )
+    if status == "missing_expected_history":
+        return (
+            "error",
+            "Préflight ML inexploitable : aucun candidat PIT attendu n'a été trouvé dans `stock_scores_history` sur la plage demandée.",
+        )
+    if status == "disabled":
+        return (
+            "info",
+            str(diagnostic.get("reason", "Mode ML désactivé.")),
+        )
+    if status == "invalid_input":
+        return (
+            "warning",
+            "Préflight ML non exécutable tant que les dates de début/fin ne sont pas valides.",
+        )
+    return (
+        "warning",
+        "Préflight ML indisponible : {}".format(str(diagnostic.get("reason", "erreur inconnue"))),
+    )
+
+
 def _render_pipeline_pit_hint(
     *,
     engine_mode: str,
@@ -581,6 +659,76 @@ def _render_pipeline_pit_hint(
         st.error(message)
     else:
         st.warning(message)
+
+
+def _render_ml_coverage_preflight(
+    *,
+    engine_mode: str,
+    ml_mode: str,
+    ml_pit_strategy: str,
+    start: str,
+    end: str | None,
+    selected_run_preset_key: str,
+    auto_run_preset_key: str,
+) -> None:
+    if engine_mode != "pipeline":
+        st.info("Préflight couverture ML PIT disponible pour `engine-mode pipeline` uniquement.")
+        return
+
+    effective_preset_key = auto_run_preset_key if selected_run_preset_key == CAPITAL_PRESET_CUSTOM else selected_run_preset_key
+    diagnostic = get_backtesting_ml_coverage_diagnostic(
+        start=start,
+        end=end,
+        capital_preset_key=effective_preset_key,
+        engine_mode=engine_mode,
+        ml_mode=ml_mode,
+        ml_pit_strategy=ml_pit_strategy,
+    )
+    level, message = _build_ml_coverage_status_message(diagnostic)
+    if level == "success":
+        st.success(message)
+    elif level == "error":
+        st.error(message)
+    elif level == "info":
+        st.info(message)
+    else:
+        st.warning(message)
+
+    if str(diagnostic.get("status", "")) not in {"complete", "partial", "missing"}:
+        return
+
+    metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+    with metric_col1:
+        st.metric("Attendus", _to_int(diagnostic.get("expected_candidate_symbol_dates")))
+    with metric_col2:
+        st.metric("Déjà couverts", _to_int(diagnostic.get("covered_prediction_symbol_dates")))
+    with metric_col3:
+        st.metric("Taux de couverture", f"{_to_float(diagnostic.get('coverage_pct')):.1f}%")
+    with metric_col4:
+        st.metric("Manquants", _to_int(diagnostic.get("missing_prediction_symbol_dates")))
+    with metric_col5:
+        st.metric("Séances manquantes", _to_int(diagnostic.get("missing_snapshot_days")))
+
+    st.caption(
+        "Mode rapide estimé : {}".format(
+            str(((diagnostic.get("fast_mode_estimate") or {}) if isinstance(diagnostic.get("fast_mode_estimate"), dict) else {}).get("summary") or "—")
+        )
+    )
+    st.caption(
+        "Estimation `rebuild-missing` : {}".format(
+            str(((diagnostic.get("rebuild_missing_estimate") or {}) if isinstance(diagnostic.get("rebuild_missing_estimate"), dict) else {}).get("summary") or "—")
+        )
+    )
+
+    missing_days_sample = diagnostic.get("missing_days_sample")
+    if isinstance(missing_days_sample, list) and missing_days_sample:
+        with st.expander("📆 Jours incomplets (échantillon)", expanded=False):
+            st.dataframe(pd.DataFrame(missing_days_sample), use_container_width=True, hide_index=True)
+
+    missing_rows_sample = diagnostic.get("missing_rows_sample")
+    if isinstance(missing_rows_sample, list) and missing_rows_sample:
+        with st.expander("🧩 Symboles / jours manquants (échantillon)", expanded=False):
+            st.dataframe(pd.DataFrame(missing_rows_sample), use_container_width=True, hide_index=True)
 
 
 def _build_overlay_options() -> dict[str, Any]:
@@ -1060,7 +1208,7 @@ def _build_run_options() -> BacktestRunOptions:
             help="Si coché, le PNG d'equity curve et le CSV des trades ne seront pas écrits dans `artifacts/backtesting/`.",
         )
 
-    mode_col1, mode_col2, mode_col3, mode_col4, mode_col5, mode_col6, mode_col7 = st.columns(7)
+    mode_col1, mode_col2, mode_col3, mode_col4, mode_col5, mode_col6, mode_col7, mode_col8 = st.columns(8)
     with mode_col1:
         engine_mode = cast(
             str,
@@ -1077,6 +1225,21 @@ def _build_run_options() -> BacktestRunOptions:
             ),
         )
     with mode_col2:
+        scores_pit_mode = cast(
+            str,
+            st.selectbox(
+                "Mode PIT scores",
+                options=["exact", "asof_latest"],
+                index=["exact", "asof_latest"].index(
+                    cast(str, st.session_state.get("bt_run_scores_pit_mode", "exact"))
+                    if st.session_state.get("bt_run_scores_pit_mode", "exact") in {"exact", "asof_latest"}
+                    else "exact"
+                ),
+                key="bt_run_scores_pit_mode",
+                help="`exact` lit uniquement les snapshots du jour ; `asof_latest` réutilise le dernier snapshot `<= trade_date` disponible dans `stock_scores_history`.",
+            ),
+        )
+    with mode_col3:
         ml_pit_strategy = cast(
             str,
             st.selectbox(
@@ -1091,7 +1254,7 @@ def _build_run_options() -> BacktestRunOptions:
                 help="Permet d'expliciter comment le backtest doit traiter les prédictions ML en mode PIT. `walk-forward-train-then-predict` fail-fast tant qu'il n'est pas encore supporté.",
             ),
         )
-    with mode_col3:
+    with mode_col4:
         phase2_mode = cast(
             str,
             st.selectbox(
@@ -1106,7 +1269,7 @@ def _build_run_options() -> BacktestRunOptions:
                 help="Active de manière opt-in les bridges de fidélité Phase 2. `off` conserve strictement le replay historique ; `risk` réutilise `risk_management`; `risk_execution` ajoute les intents/fills simulés via `execution_engine`.",
             ),
         )
-    with mode_col4:
+    with mode_col5:
         phase3_mode = cast(
             str,
             st.selectbox(
@@ -1121,7 +1284,7 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`execution_replay` reprend les cibles/fills simulés du bridge d'exécution pour rejouer les quantités dans le moteur de backtest. Exige `phase2_mode = risk_execution`.",
             ),
         )
-    with mode_col5:
+    with mode_col6:
         phase4_mode = cast(
             str,
             st.selectbox(
@@ -1136,7 +1299,7 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`protection_replay` rejoue les child intents de protection (take-profit, initial stop, trailing) dans le moteur de backtest. Exige `phase3_mode = execution_replay`.",
             ),
         )
-    with mode_col6:
+    with mode_col7:
         phase5_mode = cast(
             str,
             st.selectbox(
@@ -1151,7 +1314,7 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`watcher_replay` rejoue la logique de transition du watcher de protection avec une temporalité conservative (promotion effective à partir de la séance suivante). Exige `phase4_mode = protection_replay`.",
             ),
         )
-    with mode_col7:
+    with mode_col8:
         phase7_mode = cast(
             str,
             st.selectbox(
@@ -1258,6 +1421,25 @@ def _build_run_options() -> BacktestRunOptions:
         selected_run_preset_key=selected_run_preset_key,
         auto_run_preset_key=auto_run_preset_key,
     )
+    show_ml_coverage_preflight = st.checkbox(
+        "Afficher le préflight couverture ML PIT (lent)",
+        value=bool(st.session_state.get("bt_run_show_ml_coverage_preflight", False)),
+        key="bt_run_show_ml_coverage_preflight",
+        help=(
+            "Compare les paires candidat×date attendues depuis `stock_scores_history` à `model_predictions` "
+            "avant lancement. Désactivé par défaut car ce calcul peut être coûteux."
+        ),
+    )
+    if show_ml_coverage_preflight:
+        _render_ml_coverage_preflight(
+            engine_mode=engine_mode,
+            ml_mode=ml_mode,
+            ml_pit_strategy=ml_pit_strategy,
+            start=start.strip(),
+            end=end.strip() or None,
+            selected_run_preset_key=selected_run_preset_key,
+            auto_run_preset_key=auto_run_preset_key,
+        )
     st.caption(
         "Préflight OHLCV appliqué au lancement : le backtest consomme uniquement `stock_bars_daily.data_source='eodhd_eod'`. "
         "Si la fenêtre demandée ne contient pas cette source, le run échoue explicitement."
@@ -1280,6 +1462,7 @@ def _build_run_options() -> BacktestRunOptions:
         ml_mode=cast(Any, ml_mode),
         sentiment_mode=cast(Any, sentiment_mode),
         engine_mode=cast(Any, engine_mode),
+        scores_pit_mode=cast(Any, scores_pit_mode),
         ml_pit_strategy=cast(Any, ml_pit_strategy),
         phase2_mode=cast(Any, phase2_mode),
         phase3_mode=cast(Any, phase3_mode),

@@ -409,6 +409,304 @@ def test_get_backtesting_pit_history_diagnostic_reports_missing_history(monkeypa
     assert payload["capital_preset_key"] == "capital_50001_100000"
 
 
+def test_get_backtesting_ml_coverage_diagnostic_reports_partial_coverage(monkeypatch):
+    import pandas as pd
+
+    queries.get_backtesting_ml_coverage_diagnostic.clear()
+    safe_query_calls: list[tuple[str, dict[str, object] | None]] = []
+
+    monkeypatch.setattr(
+        queries,
+        "_safe_scalar_with_error",
+        lambda query, params=None: ("capital_preset_key", None),
+    )
+
+    error_states = iter([None, None, None])
+
+    def fake_get_last_query_error():
+        return next(error_states)
+
+    def fake_safe_query(query, params=None):
+        safe_query_calls.append((query, params))
+        if "expected_candidate_symbol_dates" in query:
+            return pd.DataFrame(
+                [
+                    {
+                        "expected_candidate_symbol_dates": 4,
+                        "expected_snapshot_days": 2,
+                        "expected_symbols": 3,
+                        "covered_prediction_symbol_dates": 2,
+                        "covered_snapshot_days": 1,
+                        "covered_symbols": 2,
+                        "missing_prediction_symbol_dates": 2,
+                        "missing_snapshot_days": 1,
+                        "missing_symbols": 1,
+                        "first_snapshot_date": "2024-01-02",
+                        "last_snapshot_date": "2024-01-03",
+                    }
+                ]
+            )
+        if "ORDER BY expected.snapshot_date ASC, expected.symbol ASC" in query:
+            return pd.DataFrame(
+                [
+                    {"trade_date": "2024-01-03", "symbol": " aapl "},
+                    {"trade_date": "2024-01-03", "symbol": "msft"},
+                ]
+            )
+        if "GROUP BY expected.snapshot_date" in query:
+            return pd.DataFrame([{"trade_date": "2024-01-03", "missing_count": "2"}])
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+    monkeypatch.setattr(queries, "get_last_query_error", fake_get_last_query_error)
+
+    payload = queries.get_backtesting_ml_coverage_diagnostic(
+        start="2024-01-02",
+        end="2024-01-03",
+        capital_preset_key="capital_50001_100000",
+        engine_mode="pipeline",
+        ml_mode="auto",
+        ml_pit_strategy="auto",
+        missing_sample_limit=2,
+        missing_days_limit=1,
+    )
+
+    assert payload["status"] == "partial"
+    assert payload["capital_preset_filtered"] is True
+    assert payload["effective_strategy"] == "use-persisted"
+    assert payload["persist_enabled"] is False
+    assert payload["expected_candidate_symbol_dates"] == 4
+    assert payload["covered_prediction_symbol_dates"] == 2
+    assert payload["missing_prediction_symbol_dates"] == 2
+    assert payload["coverage_pct"] == 50.0
+    assert payload["missing_rows_sample"] == [
+        {"trade_date": "2024-01-03", "symbol": "AAPL"},
+        {"trade_date": "2024-01-03", "symbol": "MSFT"},
+    ]
+    assert payload["missing_days_sample"] == [{"trade_date": "2024-01-03", "missing_count": 2}]
+    assert "2/4" in str(payload["fast_mode_estimate"]["summary"])
+    assert "2 prédiction(s)" in str(payload["rebuild_missing_estimate"]["summary"])
+    assert safe_query_calls[1][1] is not None
+    assert safe_query_calls[1][1]["missing_sample_limit"] == 2
+    assert safe_query_calls[2][1] is not None
+    assert safe_query_calls[2][1]["missing_days_limit"] == 1
+
+
+def test_get_backtesting_ml_coverage_diagnostic_reports_complete_coverage(monkeypatch):
+    import pandas as pd
+
+    queries.get_backtesting_ml_coverage_diagnostic.clear()
+
+    monkeypatch.setattr(
+        queries,
+        "_safe_scalar_with_error",
+        lambda query, params=None: (None, None),
+    )
+    monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
+
+    def fake_safe_query(query, params=None):
+        if "expected_candidate_symbol_dates" in query:
+            return pd.DataFrame(
+                [
+                    {
+                        "expected_candidate_symbol_dates": 3,
+                        "expected_snapshot_days": 2,
+                        "expected_symbols": 2,
+                        "covered_prediction_symbol_dates": 3,
+                        "covered_snapshot_days": 2,
+                        "covered_symbols": 2,
+                        "missing_prediction_symbol_dates": 0,
+                        "missing_snapshot_days": 0,
+                        "missing_symbols": 0,
+                        "first_snapshot_date": "2024-01-02",
+                        "last_snapshot_date": "2024-01-03",
+                    }
+                ]
+            )
+        if "ORDER BY expected.snapshot_date ASC, expected.symbol ASC" in query:
+            return pd.DataFrame(columns=["trade_date", "symbol"])
+        if "GROUP BY expected.snapshot_date" in query:
+            return pd.DataFrame(columns=["trade_date", "missing_count"])
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    payload = queries.get_backtesting_ml_coverage_diagnostic(
+        start="2024-01-02",
+        end="2024-01-03",
+        capital_preset_key="capital_50001_100000",
+        engine_mode="research",
+        ml_mode="auto",
+        ml_pit_strategy="auto",
+    )
+
+    assert payload["status"] == "complete"
+    assert payload["capital_preset_filtered"] is False
+    assert payload["coverage_pct"] == 100.0
+    assert payload["persist_enabled"] is True
+    assert payload["missing_rows_sample"] == []
+    assert payload["missing_days_sample"] == []
+    assert payload["fast_mode_estimate"]["missing_prediction_symbol_dates"] == 0
+    assert payload["rebuild_missing_estimate"]["pairs_to_attempt"] == 0
+
+
+def test_get_backtesting_ml_coverage_diagnostic_reports_missing_expected_history(monkeypatch):
+    import pandas as pd
+
+    queries.get_backtesting_ml_coverage_diagnostic.clear()
+
+    monkeypatch.setattr(
+        queries,
+        "_safe_scalar_with_error",
+        lambda query, params=None: ("capital_preset_key", None),
+    )
+    monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
+
+    def fake_safe_query(query, params=None):
+        if "expected_candidate_symbol_dates" in query:
+            return pd.DataFrame(
+                [
+                    {
+                        "expected_candidate_symbol_dates": 0,
+                        "expected_snapshot_days": 0,
+                        "expected_symbols": 0,
+                        "covered_prediction_symbol_dates": 0,
+                        "covered_snapshot_days": 0,
+                        "covered_symbols": 0,
+                        "missing_prediction_symbol_dates": 0,
+                        "missing_snapshot_days": 0,
+                        "missing_symbols": 0,
+                        "first_snapshot_date": None,
+                        "last_snapshot_date": None,
+                    }
+                ]
+            )
+        if "ORDER BY expected.snapshot_date ASC, expected.symbol ASC" in query:
+            return pd.DataFrame(columns=["trade_date", "symbol"])
+        if "GROUP BY expected.snapshot_date" in query:
+            return pd.DataFrame(columns=["trade_date", "missing_count"])
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    payload = queries.get_backtesting_ml_coverage_diagnostic(
+        start="2024-01-02",
+        end="2024-01-03",
+        capital_preset_key="capital_50001_100000",
+    )
+
+    assert payload["status"] == "missing_expected_history"
+    assert payload["reason"].startswith("Aucun candidat PIT attendu")
+    assert payload["coverage_pct"] == 0.0
+
+
+def test_get_backtesting_ml_coverage_diagnostic_returns_disabled_without_query(monkeypatch):
+    queries.get_backtesting_ml_coverage_diagnostic.clear()
+
+    monkeypatch.setattr(
+        queries,
+        "_safe_scalar_with_error",
+        lambda query, params=None: (_ for _ in ()).throw(AssertionError("unexpected scalar query")),
+    )
+    monkeypatch.setattr(
+        queries,
+        "safe_query",
+        lambda query, params=None: (_ for _ in ()).throw(AssertionError("unexpected SQL query")),
+    )
+
+    payload = queries.get_backtesting_ml_coverage_diagnostic(
+        start="2024-01-02",
+        end="2024-01-03",
+        capital_preset_key="capital_50001_100000",
+        ml_mode="off",
+    )
+
+    assert payload["status"] == "disabled"
+    assert payload["effective_strategy"] == "disabled"
+    assert "ML désactivé" in str(payload["reason"])
+
+
+def test_get_backtesting_ml_coverage_diagnostic_rejects_invalid_dates(monkeypatch):
+    queries.get_backtesting_ml_coverage_diagnostic.clear()
+
+    monkeypatch.setattr(
+        queries,
+        "_safe_scalar_with_error",
+        lambda query, params=None: (_ for _ in ()).throw(AssertionError("unexpected scalar query")),
+    )
+    monkeypatch.setattr(
+        queries,
+        "safe_query",
+        lambda query, params=None: (_ for _ in ()).throw(AssertionError("unexpected SQL query")),
+    )
+
+    payload = queries.get_backtesting_ml_coverage_diagnostic(
+        start="2024-01-10",
+        end="2024-01-03",
+        capital_preset_key="capital_50001_100000",
+    )
+
+    assert payload["status"] == "invalid_input"
+    assert payload["expected_candidate_symbol_dates"] == 0
+    assert payload["missing_rows_sample"] == []
+
+
+def test_get_backtesting_ml_coverage_diagnostic_reports_unavailable_when_missing_rows_query_fails(monkeypatch):
+    import pandas as pd
+
+    queries.get_backtesting_ml_coverage_diagnostic.clear()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        queries,
+        "_safe_scalar_with_error",
+        lambda query, params=None: ("capital_preset_key", None),
+    )
+
+    error_states = iter([None, "synthetic query failure"])
+
+    def fake_get_last_query_error():
+        return next(error_states)
+
+    def fake_safe_query(query, params=None):
+        calls.append(query)
+        if "expected_candidate_symbol_dates" in query:
+            return pd.DataFrame(
+                [
+                    {
+                        "expected_candidate_symbol_dates": 4,
+                        "expected_snapshot_days": 2,
+                        "expected_symbols": 3,
+                        "covered_prediction_symbol_dates": 2,
+                        "covered_snapshot_days": 1,
+                        "covered_symbols": 2,
+                        "missing_prediction_symbol_dates": 2,
+                        "missing_snapshot_days": 1,
+                        "missing_symbols": 1,
+                        "first_snapshot_date": "2024-01-02",
+                        "last_snapshot_date": "2024-01-03",
+                    }
+                ]
+            )
+        if "ORDER BY expected.snapshot_date ASC, expected.symbol ASC" in query:
+            return pd.DataFrame(columns=["trade_date", "symbol"])
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+    monkeypatch.setattr(queries, "get_last_query_error", fake_get_last_query_error)
+
+    payload = queries.get_backtesting_ml_coverage_diagnostic(
+        start="2024-01-02",
+        end="2024-01-03",
+        capital_preset_key="capital_50001_100000",
+    )
+
+    assert payload["status"] == "unavailable"
+    assert payload["reason"] == "synthetic query failure"
+    assert payload["query_error"] == "synthetic query failure"
+    assert len(calls) == 2
+
+
 def test_get_predictions_can_filter_by_symbol(monkeypatch):
     captured = {}
 

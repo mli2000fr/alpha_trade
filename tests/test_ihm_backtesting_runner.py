@@ -42,6 +42,8 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert command[engine_mode_index + 1] == "research"
 	ml_pit_strategy_index = command.index("--ml-pit-strategy")
 	assert command[ml_pit_strategy_index + 1] == "auto"
+	scores_pit_mode_index = command.index("--scores-pit-mode")
+	assert command[scores_pit_mode_index + 1] == "exact"
 	phase2_mode_index = command.index("--phase2-mode")
 	assert command[phase2_mode_index + 1] == "off"
 	phase3_mode_index = command.index("--phase3-mode")
@@ -97,12 +99,15 @@ def test_build_backtesting_run_command_includes_phase1_pipeline_flags():
 		BacktestRunOptions(
 			start="2025-01-01",
 			engine_mode="pipeline",
+			scores_pit_mode="asof_latest",
 			ml_pit_strategy="use-persisted",
 		),
 	)
 
 	assert "--engine-mode" in command
 	assert command[command.index("--engine-mode") + 1] == "pipeline"
+	assert "--scores-pit-mode" in command
+	assert command[command.index("--scores-pit-mode") + 1] == "asof_latest"
 	assert "--ml-pit-strategy" in command
 	assert command[command.index("--ml-pit-strategy") + 1] == "use-persisted"
 

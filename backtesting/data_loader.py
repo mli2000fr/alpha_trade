@@ -211,6 +211,7 @@ def load_scores(
     end: date,
     capital_preset_key: str | None = None,
     *,
+    scores_pit_mode: str = "exact",
     strict_pit: bool = False,
     return_diagnostics: bool = False,
 ) -> Any:
@@ -230,18 +231,25 @@ def load_scores(
             return ScoreLoadResult(frame=df, diagnostics=diagnostics)
         return df
 
+    normalized_scores_pit_mode = str(scores_pit_mode or "exact").strip().lower() or "exact"
+    if normalized_scores_pit_mode not in {"exact", "asof_latest"}:
+        raise ValueError(f"scores_pit_mode invalide: {scores_pit_mode}")
+
     if history_exists:
         history_columns = _get_table_columns(engine, "stock_scores_history")
         has_walk_forward = "final_score_walk_forward" in history_columns
         has_capital_preset_key = "capital_preset_key" in history_columns
         history_preset_filter = ""
+        history_preset_filter_aliased = ""
         history_params: dict[str, object] = {"start": start, "end": end}
         if has_capital_preset_key and capital_preset_key:
             history_preset_filter = " AND capital_preset_key = :capital_preset_key"
+            history_preset_filter_aliased = " AND s.capital_preset_key = :capital_preset_key"
             history_params["capital_preset_key"] = str(capital_preset_key)
         history_query = text(f"""
             SELECT symbol,
                    snapshot_date AS trade_date,
+                   snapshot_date AS source_snapshot_date,
                    {_optional_select(history_columns, 'capital_preset_key')},
                    {_optional_select(history_columns, 'config_fingerprint')},
                    final_score,
@@ -274,13 +282,78 @@ def load_scores(
               AND is_candidate = 1
             ORDER BY snapshot_date, symbol
         """)
+        if normalized_scores_pit_mode == "asof_latest":
+            history_score_expr = (
+                "COALESCE(s.final_score_walk_forward, s.final_score_sentiment, s.final_score)"
+                if has_walk_forward
+                else "COALESCE(s.final_score_sentiment, s.final_score)"
+            )
+            history_score_expr_unaliased = history_score_expr.replace("s.", "")
+            bars_columns = _get_table_columns(engine, "stock_bars_daily", required=True)
+            bars_date_col = _resolve_bars_date_column(bars_columns, "stock_bars_daily")
+            source_filter_sql, source_filter_params = get_required_bars_source_filter(
+                engine,
+                table_name="stock_bars_daily",
+            )
+            history_params.update(source_filter_params)
+            history_query = text(f"""
+                SELECT s.symbol,
+                       td.trade_date AS trade_date,
+                       s.snapshot_date AS source_snapshot_date,
+                       {('s.capital_preset_key' if 'capital_preset_key' in history_columns else 'NULL AS capital_preset_key')},
+                       {('s.config_fingerprint' if 'config_fingerprint' in history_columns else 'NULL AS config_fingerprint')},
+                       s.final_score,
+                       s.final_score_sentiment,
+                       {('s.final_score_walk_forward' if has_walk_forward else 'NULL AS final_score_walk_forward')},
+                       s.sector,
+                       s.is_candidate,
+                       {('s.sentiment_net_agg' if 'sentiment_net_agg' in history_columns else 'NULL AS sentiment_net_agg')},
+                       {('s.sector_impact_agg' if 'sector_impact_agg' in history_columns else 'NULL AS sector_impact_agg')},
+                       {('s.company_idio_score' if 'company_idio_score' in history_columns else 'NULL AS company_idio_score')},
+                       {('s.macro_regime_score' if 'macro_regime_score' in history_columns else 'NULL AS macro_regime_score')},
+                       {('s.company_idio_signal_norm' if 'company_idio_signal_norm' in history_columns else 'NULL AS company_idio_signal_norm')},
+                       {('s.macro_regime_signal_norm' if 'macro_regime_signal_norm' in history_columns else 'NULL AS macro_regime_signal_norm')},
+                       {('s.company_idio_component' if 'company_idio_component' in history_columns else 'NULL AS company_idio_component')},
+                       {('s.macro_regime_component' if 'macro_regime_component' in history_columns else 'NULL AS macro_regime_component')},
+                       {('s.quant_component' if 'quant_component' in history_columns else 'NULL AS quant_component')},
+                       {('s.walk_forward_sentiment_weight' if 'walk_forward_sentiment_weight' in history_columns else 'NULL AS walk_forward_sentiment_weight')},
+                       {('s.walk_forward_macro_weight' if 'walk_forward_macro_weight' in history_columns else 'NULL AS walk_forward_macro_weight')},
+                       {('s.walk_forward_quant_weight' if 'walk_forward_quant_weight' in history_columns else 'NULL AS walk_forward_quant_weight')},
+                       {('s.calibration_run_id' if 'calibration_run_id' in history_columns else 'NULL AS calibration_run_id')},
+                       {('s.calibration_source' if 'calibration_source' in history_columns else 'NULL AS calibration_source')},
+                       CASE
+                           WHEN {('s.final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
+                           WHEN s.final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
+                           ELSE 'final_score'
+                       END AS score_source
+                FROM (
+                    SELECT DISTINCT `{bars_date_col}` AS trade_date
+                    FROM stock_bars_daily
+                    WHERE `{bars_date_col}` BETWEEN :start AND :end
+                      {source_filter_sql}
+                ) td
+                JOIN stock_scores_history s
+                  ON s.snapshot_date = (
+                      SELECT MAX(snapshot_date)
+                      FROM stock_scores_history
+                      WHERE snapshot_date <= td.trade_date
+                        {history_preset_filter}
+                        AND is_candidate = 1
+                        AND {history_score_expr_unaliased} IS NOT NULL
+                  )
+                WHERE s.is_candidate = 1
+                  {history_preset_filter_aliased}
+                  AND {history_score_expr} IS NOT NULL
+                ORDER BY td.trade_date, s.symbol
+            """)
         with engine.connect() as conn:
             df = pd.read_sql(history_query, conn, params=history_params, parse_dates=["trade_date"])
         if not df.empty:
             LOGGER.info(
-                "Scores candidats chargés depuis stock_scores_history : %d lignes%s",
+                "Scores candidats chargés depuis stock_scores_history : %d lignes%s | mode=%s",
                 len(df),
                 f" | preset={capital_preset_key}" if capital_preset_key and has_capital_preset_key else "",
+                normalized_scores_pit_mode,
             )
             return _build_result(
                 df,
@@ -294,9 +367,10 @@ def load_scores(
                 ),
             )
         LOGGER.warning(
-            "stock_scores_history existe mais aucune ligne n'a ete trouvee sur [%s → %s] — fallback sur stock_scores.",
+            "stock_scores_history existe mais aucune ligne n'a ete trouvee sur [%s → %s] (mode=%s) — fallback sur stock_scores.",
             start,
             end,
+            normalized_scores_pit_mode,
         )
         if strict_pit:
             raise PitHistoryRequiredError(
@@ -322,6 +396,7 @@ def load_scores(
     query = text(f"""
         SELECT symbol,
                DATE(COALESCE(last_updated_sentiment, last_updated_scan, last_updated_score)) AS trade_date,
+               NULL AS source_snapshot_date,
                NULL AS capital_preset_key,
                NULL AS config_fingerprint,
                final_score,

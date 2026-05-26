@@ -490,6 +490,73 @@ class TestDataLoader:
                 strict_pit=True,
             )
 
+    def test_load_scores_asof_latest_reuses_latest_snapshot_before_trade_date(self, monkeypatch):
+        from backtesting import data_loader
+
+        captured = {}
+
+        class FakeInspector:
+            def has_table(self, table_name):
+                return table_name == "stock_scores_history"
+
+        def fake_get_table_columns(_engine, table_name, *, required=False):
+            if table_name == "stock_scores_history":
+                return {
+                    "symbol", "snapshot_date", "final_score", "final_score_sentiment", "sector", "is_candidate",
+                    "capital_preset_key", "config_fingerprint",
+                }
+            if table_name == "stock_bars_daily":
+                return {"trade_date", "data_source"}
+            return set()
+
+        def fake_read_sql(query, conn, params=None, parse_dates=None):
+            captured["sql"] = str(query)
+            captured["params"] = params
+            return pd.DataFrame(
+                {
+                    "symbol": ["AAPL"],
+                    "trade_date": pd.to_datetime(["2025-01-03"]),
+                    "source_snapshot_date": [date(2025, 1, 2)],
+                    "capital_preset_key": ["capital_0_5000"],
+                    "config_fingerprint": ["fp-001"],
+                    "final_score": [0.8],
+                    "final_score_sentiment": [0.82],
+                    "sector": ["Tech"],
+                    "is_candidate": [1],
+                    "score_source": ["final_score_sentiment"],
+                }
+            )
+
+        monkeypatch.setattr(data_loader, "inspect", lambda _engine: FakeInspector())
+        monkeypatch.setattr(data_loader, "_get_table_columns", fake_get_table_columns)
+        monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
+
+        df = data_loader.load_scores(
+            cast(Engine, self._FakeEngine()),
+            date(2025, 1, 1),
+            date(2025, 1, 31),
+            capital_preset_key="capital_0_5000",
+            scores_pit_mode="asof_latest",
+        )
+
+        assert not df.empty
+        assert df.iloc[0]["trade_date"] == pd.Timestamp("2025-01-03")
+        assert "MAX(snapshot_date)" in captured["sql"]
+        assert "FROM stock_bars_daily" in captured["sql"]
+        assert "source_snapshot_date" in captured["sql"]
+        assert captured["params"]["capital_preset_key"] == "capital_0_5000"
+
+    def test_load_scores_rejects_unknown_scores_pit_mode(self):
+        from backtesting import data_loader
+
+        with pytest.raises(ValueError, match="scores_pit_mode"):
+            data_loader.load_scores(
+                cast(Engine, self._FakeEngine()),
+                date(2025, 1, 1),
+                date(2025, 1, 31),
+                scores_pit_mode="unexpected",
+            )
+
     def test_load_predictions_supports_prediction_date(self, monkeypatch):
         from backtesting import data_loader
 
@@ -2003,6 +2070,7 @@ class TestCLI:
         assert args.score_column == "auto"
         assert args.walk_forward_artifacts_dir is None
         assert args.engine_mode == "research"
+        assert args.scores_pit_mode == "exact"
         assert args.ml_pit_strategy == "auto"
         assert args.phase2_mode == "off"
         assert args.phase3_mode == "off"
@@ -2019,6 +2087,15 @@ class TestCLI:
 
         assert args.command == "run"
         assert args.engine_mode == "pipeline"
+
+    def test_parse_run_scores_pit_mode_asof_latest(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["run", "--start", "2020-01-01", "--scores-pit-mode", "asof_latest"])
+
+        assert args.command == "run"
+        assert args.scores_pit_mode == "asof_latest"
 
     def test_parse_run_ml_pit_strategy(self):
         from backtesting.cli import _build_parser

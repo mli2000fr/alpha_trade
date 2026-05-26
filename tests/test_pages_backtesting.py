@@ -25,6 +25,7 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
     assert any(row["Paramètre"] == "walk_forward_artifacts_dir" for row in run_rows)
     assert any(row["Paramètre"] == "capital_preset_key" for row in run_rows)
     assert any(row["Paramètre"] == "engine_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "scores_pit_mode" for row in run_rows)
     assert any(row["Paramètre"] == "ml_pit_strategy" for row in run_rows)
     assert any(row["Paramètre"] == "phase2_mode" for row in run_rows)
     assert any(row["Paramètre"] == "phase3_mode" for row in run_rows)
@@ -88,6 +89,132 @@ def test_build_pipeline_pit_status_message_confirms_when_history_is_available() 
     assert level == "success"
     assert "42 ligne(s)" in message
     assert "7 séance(s)" in message
+
+
+def test_build_ml_coverage_status_message_warns_when_coverage_is_partial() -> None:
+    level, message = backtesting._build_ml_coverage_status_message(
+        {
+            "status": "partial",
+            "start": "2024-01-01",
+            "end": "2024-01-31",
+            "capital_preset_key": "capital_50001_100000",
+            "capital_preset_filtered": True,
+            "effective_strategy": "use-persisted",
+            "expected_candidate_symbol_dates": 10,
+            "covered_prediction_symbol_dates": 7,
+            "missing_prediction_symbol_dates": 3,
+            "coverage_pct": 70.0,
+        }
+    )
+
+    assert level == "warning"
+    assert "7/10" in message
+    assert "70.0%" in message
+    assert "rebuild-missing" in message
+    assert "capital_50001_100000" in message
+
+
+def test_build_ml_coverage_status_message_reports_disabled_mode() -> None:
+    level, message = backtesting._build_ml_coverage_status_message(
+        {
+            "status": "disabled",
+            "reason": "Mode ML désactivé (`ml_mode=off`).",
+        }
+    )
+
+    assert level == "info"
+    assert "ml_mode=off" in message
+
+
+def test_render_ml_coverage_preflight_skips_queries_outside_pipeline(monkeypatch) -> None:
+    info_messages: list[str] = []
+
+    monkeypatch.setattr(
+        backtesting,
+        "get_backtesting_ml_coverage_diagnostic",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("unexpected diagnostic call")),
+    )
+    monkeypatch.setattr(backtesting.st, "info", lambda message: info_messages.append(str(message)))
+
+    backtesting._render_ml_coverage_preflight(
+        engine_mode="research",
+        ml_mode="auto",
+        ml_pit_strategy="auto",
+        start="2024-01-01",
+        end="2024-01-31",
+        selected_run_preset_key=backtesting.CAPITAL_PRESET_CUSTOM,
+        auto_run_preset_key="capital_50001_100000",
+    )
+
+    assert info_messages == ["Préflight couverture ML PIT disponible pour `engine-mode pipeline` uniquement."]
+
+
+def test_render_ml_coverage_preflight_renders_metrics_and_samples(monkeypatch) -> None:
+    warning_messages: list[str] = []
+    metric_calls: list[tuple[str, object]] = []
+    caption_messages: list[str] = []
+    dataframe_rows: list[int] = []
+
+    class _Ctx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        backtesting,
+        "get_backtesting_ml_coverage_diagnostic",
+        lambda **kwargs: {
+            "status": "partial",
+            "start": "2024-01-01",
+            "end": "2024-01-31",
+            "capital_preset_key": "capital_50001_100000",
+            "capital_preset_filtered": True,
+            "effective_strategy": "use-persisted",
+            "expected_candidate_symbol_dates": 10,
+            "covered_prediction_symbol_dates": 7,
+            "missing_prediction_symbol_dates": 3,
+            "missing_snapshot_days": 2,
+            "coverage_pct": 70.0,
+            "fast_mode_estimate": {"summary": "Mode rapide : 7/10 couverts."},
+            "rebuild_missing_estimate": {"summary": "rebuild-missing : 3 paires à reconstruire."},
+            "missing_days_sample": [{"trade_date": "2024-01-03", "missing_count": 2}],
+            "missing_rows_sample": [{"trade_date": "2024-01-03", "symbol": "AAPL"}],
+        },
+    )
+    monkeypatch.setattr(backtesting.st, "warning", lambda message: warning_messages.append(str(message)))
+    monkeypatch.setattr(backtesting.st, "success", lambda message: (_ for _ in ()).throw(AssertionError(message)))
+    monkeypatch.setattr(backtesting.st, "error", lambda message: (_ for _ in ()).throw(AssertionError(message)))
+    monkeypatch.setattr(backtesting.st, "info", lambda message: (_ for _ in ()).throw(AssertionError(message)))
+    monkeypatch.setattr(backtesting.st, "metric", lambda label, value: metric_calls.append((str(label), value)))
+    monkeypatch.setattr(backtesting.st, "caption", lambda message: caption_messages.append(str(message)))
+    monkeypatch.setattr(backtesting.st, "dataframe", lambda df, **kwargs: dataframe_rows.append(len(df)))
+    monkeypatch.setattr(backtesting.st, "columns", lambda n: [_Ctx() for _ in range(n)])
+    monkeypatch.setattr(backtesting.st, "expander", lambda *args, **kwargs: _Ctx())
+
+    backtesting._render_ml_coverage_preflight(
+        engine_mode="pipeline",
+        ml_mode="auto",
+        ml_pit_strategy="auto",
+        start="2024-01-01",
+        end="2024-01-31",
+        selected_run_preset_key=backtesting.CAPITAL_PRESET_CUSTOM,
+        auto_run_preset_key="capital_50001_100000",
+    )
+
+    assert len(warning_messages) == 1
+    assert "7/10" in warning_messages[0]
+    assert metric_calls == [
+        ("Attendus", 10),
+        ("Déjà couverts", 7),
+        ("Taux de couverture", "70.0%"),
+        ("Manquants", 3),
+        ("Séances manquantes", 2),
+    ]
+    assert any("Mode rapide estimé" in message for message in caption_messages)
+    assert any("rebuild-missing" in message for message in caption_messages)
+    assert dataframe_rows == [1, 1]
 
 
 def test_parameter_reference_rows_include_backfill_capital_preset_options() -> None:

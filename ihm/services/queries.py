@@ -7,6 +7,7 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
+from backtesting.fidelity import resolve_ml_pit_strategy
 from database.run_business_summaries import parse_summary_json
 from execution_engine.tca import build_tca_aggregate_frame
 from ihm.services.alpha_scanner_threshold_presets import DEFAULT_ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
@@ -521,6 +522,387 @@ def get_backtesting_pit_history_diagnostic(
         "first_snapshot_date": first_snapshot_date.isoformat() if first_snapshot_date else None,
         "last_snapshot_date": last_snapshot_date.isoformat() if last_snapshot_date else None,
         "query_error": query_error,
+    }
+
+
+def _serialize_backtesting_ml_missing_rows(df: pd.DataFrame) -> list[dict[str, object]]:
+    if df.empty:
+        return []
+    rows: list[dict[str, object]] = []
+    for row in df.to_dict(orient="records"):
+        trade_date = _coerce_date(row.get("trade_date"))
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if trade_date is None or not symbol:
+            continue
+        rows.append({"trade_date": trade_date.isoformat(), "symbol": symbol})
+    return rows
+
+
+def _serialize_backtesting_ml_missing_days(df: pd.DataFrame) -> list[dict[str, object]]:
+    if df.empty:
+        return []
+    rows: list[dict[str, object]] = []
+    for row in df.to_dict(orient="records"):
+        trade_date = _coerce_date(row.get("trade_date"))
+        if trade_date is None:
+            continue
+        rows.append(
+            {
+                "trade_date": trade_date.isoformat(),
+                "missing_count": _coerce_int(row.get("missing_count")),
+            }
+        )
+    return rows
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_backtesting_ml_coverage_diagnostic(
+    *,
+    start: str | date | None,
+    end: str | date | None,
+    capital_preset_key: str | None,
+    engine_mode: str = "pipeline",
+    ml_mode: str = "auto",
+    ml_pit_strategy: str = "auto",
+    missing_sample_limit: int = 25,
+    missing_days_limit: int = 15,
+) -> dict[str, object]:
+    """Diagnostique la couverture PIT de `model_predictions` pour un backtest.
+
+    L'univers attendu est dérivé de `stock_scores_history` (candidats PIT) sur la
+    plage demandée, puis comparé aux prédictions persistées dans
+    `model_predictions` au niveau `(symbol, prediction_date)`.
+    """
+    start_date = _coerce_date(start)
+    end_date = _coerce_date(end)
+    effective_strategy = resolve_ml_pit_strategy(
+        engine_mode=engine_mode,
+        ml_mode=ml_mode,
+        requested_strategy=ml_pit_strategy,
+    )
+    normalized_engine_mode = str(engine_mode or "research").strip().lower() or "research"
+    normalized_ml_mode = str(ml_mode or "auto").strip().lower() or "auto"
+    normalized_requested_strategy = str(ml_pit_strategy or "auto").strip().lower() or "auto"
+    persist_enabled = normalized_engine_mode != "pipeline"
+
+    if start_date is None or end_date is None or start_date > end_date:
+        return {
+            "status": "invalid_input",
+            "reason": "dates invalides ou incohérentes pour le diagnostic de couverture ML",
+            "start": start_date.isoformat() if start_date else None,
+            "end": end_date.isoformat() if end_date else None,
+            "capital_preset_key": capital_preset_key,
+            "capital_preset_filtered": False,
+            "engine_mode": normalized_engine_mode,
+            "ml_mode": normalized_ml_mode,
+            "requested_strategy": normalized_requested_strategy,
+            "effective_strategy": effective_strategy,
+            "persist_enabled": persist_enabled,
+            "expected_candidate_symbol_dates": 0,
+            "expected_snapshot_days": 0,
+            "expected_symbols": 0,
+            "covered_prediction_symbol_dates": 0,
+            "covered_snapshot_days": 0,
+            "covered_symbols": 0,
+            "missing_prediction_symbol_dates": 0,
+            "missing_snapshot_days": 0,
+            "missing_symbols": 0,
+            "coverage_pct": 0.0,
+            "first_snapshot_date": None,
+            "last_snapshot_date": None,
+            "missing_rows_sample": [],
+            "missing_days_sample": [],
+            "fast_mode_estimate": {
+                "strategy": "use-persisted",
+                "covered_prediction_symbol_dates": 0,
+                "missing_prediction_symbol_dates": 0,
+                "coverage_pct": 0.0,
+                "summary": "Diagnostic non exécutable tant que les dates restent invalides.",
+            },
+            "rebuild_missing_estimate": {
+                "strategy": "rebuild-missing",
+                "pairs_to_attempt": 0,
+                "snapshot_days_to_attempt": 0,
+                "symbols_to_attempt": 0,
+                "persist_enabled": persist_enabled,
+                "summary": "Diagnostic non exécutable tant que les dates restent invalides.",
+            },
+            "query_error": None,
+        }
+
+    if normalized_ml_mode == "off":
+        return {
+            "status": "disabled",
+            "reason": "Mode ML désactivé (`ml_mode=off`) : aucun préflight couverture n'est nécessaire.",
+            "start": start_date.isoformat(),
+            "end": end_date.isoformat(),
+            "capital_preset_key": capital_preset_key,
+            "capital_preset_filtered": False,
+            "engine_mode": normalized_engine_mode,
+            "ml_mode": normalized_ml_mode,
+            "requested_strategy": normalized_requested_strategy,
+            "effective_strategy": effective_strategy,
+            "persist_enabled": persist_enabled,
+            "expected_candidate_symbol_dates": 0,
+            "expected_snapshot_days": 0,
+            "expected_symbols": 0,
+            "covered_prediction_symbol_dates": 0,
+            "covered_snapshot_days": 0,
+            "covered_symbols": 0,
+            "missing_prediction_symbol_dates": 0,
+            "missing_snapshot_days": 0,
+            "missing_symbols": 0,
+            "coverage_pct": 0.0,
+            "first_snapshot_date": None,
+            "last_snapshot_date": None,
+            "missing_rows_sample": [],
+            "missing_days_sample": [],
+            "fast_mode_estimate": {
+                "strategy": "use-persisted",
+                "covered_prediction_symbol_dates": 0,
+                "missing_prediction_symbol_dates": 0,
+                "coverage_pct": 0.0,
+                "summary": "ML désactivé : le backtest n'utilisera aucune prédiction persistée.",
+            },
+            "rebuild_missing_estimate": {
+                "strategy": "rebuild-missing",
+                "pairs_to_attempt": 0,
+                "snapshot_days_to_attempt": 0,
+                "symbols_to_attempt": 0,
+                "persist_enabled": persist_enabled,
+                "summary": "ML désactivé : aucune reconstruction n'est prévue.",
+            },
+            "query_error": None,
+        }
+
+    preset_column_query = "SHOW COLUMNS FROM stock_scores_history LIKE 'capital_preset_key'"
+    preset_column_present_raw, preset_column_error = _safe_scalar_with_error(preset_column_query)
+    has_capital_preset_key = bool(preset_column_present_raw) and preset_column_error is None
+
+    expected_filters = [
+        "snapshot_date BETWEEN :start AND :end",
+        "COALESCE(is_candidate, 0) = 1",
+        "COALESCE(TRIM(symbol), '') <> ''",
+    ]
+    params: dict[str, object] = {"start": start_date.isoformat(), "end": end_date.isoformat()}
+    if has_capital_preset_key and capital_preset_key:
+        expected_filters.append("capital_preset_key = :capital_preset_key")
+        params["capital_preset_key"] = capital_preset_key
+
+    expected_subquery = (
+        "SELECT DISTINCT snapshot_date, UPPER(TRIM(symbol)) AS symbol "
+        "FROM stock_scores_history "
+        f"WHERE {' AND '.join(expected_filters)}"
+    )
+    predictions_subquery = (
+        "SELECT DISTINCT prediction_date, UPPER(TRIM(symbol)) AS symbol "
+        "FROM model_predictions "
+        "WHERE prediction_date BETWEEN :start AND :end "
+        "  AND COALESCE(TRIM(symbol), '') <> ''"
+    )
+
+    counts_df = safe_query(
+        f"""
+        SELECT COUNT(*) AS expected_candidate_symbol_dates,
+               COUNT(DISTINCT expected.snapshot_date) AS expected_snapshot_days,
+               COUNT(DISTINCT expected.symbol) AS expected_symbols,
+               COUNT(CASE WHEN preds.symbol IS NOT NULL THEN 1 END) AS covered_prediction_symbol_dates,
+               COUNT(DISTINCT CASE WHEN preds.symbol IS NOT NULL THEN expected.snapshot_date END) AS covered_snapshot_days,
+               COUNT(DISTINCT CASE WHEN preds.symbol IS NOT NULL THEN expected.symbol END) AS covered_symbols,
+               COUNT(CASE WHEN preds.symbol IS NULL THEN 1 END) AS missing_prediction_symbol_dates,
+               COUNT(DISTINCT CASE WHEN preds.symbol IS NULL THEN expected.snapshot_date END) AS missing_snapshot_days,
+               COUNT(DISTINCT CASE WHEN preds.symbol IS NULL THEN expected.symbol END) AS missing_symbols,
+               MIN(expected.snapshot_date) AS first_snapshot_date,
+               MAX(expected.snapshot_date) AS last_snapshot_date
+        FROM ({expected_subquery}) expected
+        LEFT JOIN ({predictions_subquery}) preds
+               ON preds.prediction_date = expected.snapshot_date
+              AND preds.symbol = expected.symbol
+        """,
+        params,
+    )
+    counts_error = get_last_query_error()
+
+    missing_rows_sample: list[dict[str, object]] = []
+    missing_days_sample: list[dict[str, object]] = []
+    query_error = preset_column_error or counts_error
+
+    if query_error is None:
+        missing_params: dict[str, object] = dict(params)
+        missing_params["missing_sample_limit"] = int(max(missing_sample_limit, 0))
+        missing_params["missing_days_limit"] = int(max(missing_days_limit, 0))
+        missing_rows_df = safe_query(
+            f"""
+            SELECT expected.snapshot_date AS trade_date,
+                   expected.symbol AS symbol
+            FROM ({expected_subquery}) expected
+            LEFT JOIN ({predictions_subquery}) preds
+                   ON preds.prediction_date = expected.snapshot_date
+                  AND preds.symbol = expected.symbol
+            WHERE preds.symbol IS NULL
+            ORDER BY expected.snapshot_date ASC, expected.symbol ASC
+            LIMIT :missing_sample_limit
+            """,
+            missing_params,
+        )
+        missing_rows_error = get_last_query_error()
+        if missing_rows_error is None:
+            missing_rows_sample = _serialize_backtesting_ml_missing_rows(missing_rows_df)
+        else:
+            query_error = missing_rows_error
+
+    if query_error is None:
+        missing_days_params: dict[str, object] = dict(params)
+        missing_days_params["missing_days_limit"] = int(max(missing_days_limit, 0))
+        missing_days_df = safe_query(
+            f"""
+            SELECT expected.snapshot_date AS trade_date,
+                   COUNT(*) AS missing_count
+            FROM ({expected_subquery}) expected
+            LEFT JOIN ({predictions_subquery}) preds
+                   ON preds.prediction_date = expected.snapshot_date
+                  AND preds.symbol = expected.symbol
+            WHERE preds.symbol IS NULL
+            GROUP BY expected.snapshot_date
+            ORDER BY expected.snapshot_date ASC
+            LIMIT :missing_days_limit
+            """,
+            missing_days_params,
+        )
+        missing_days_error = get_last_query_error()
+        if missing_days_error is None:
+            missing_days_sample = _serialize_backtesting_ml_missing_days(missing_days_df)
+        else:
+            query_error = missing_days_error
+
+    if query_error:
+        return {
+            "status": "unavailable",
+            "reason": query_error,
+            "start": start_date.isoformat(),
+            "end": end_date.isoformat(),
+            "capital_preset_key": capital_preset_key,
+            "capital_preset_filtered": bool(has_capital_preset_key and capital_preset_key),
+            "engine_mode": normalized_engine_mode,
+            "ml_mode": normalized_ml_mode,
+            "requested_strategy": normalized_requested_strategy,
+            "effective_strategy": effective_strategy,
+            "persist_enabled": persist_enabled,
+            "expected_candidate_symbol_dates": 0,
+            "expected_snapshot_days": 0,
+            "expected_symbols": 0,
+            "covered_prediction_symbol_dates": 0,
+            "covered_snapshot_days": 0,
+            "covered_symbols": 0,
+            "missing_prediction_symbol_dates": 0,
+            "missing_snapshot_days": 0,
+            "missing_symbols": 0,
+            "coverage_pct": 0.0,
+            "first_snapshot_date": None,
+            "last_snapshot_date": None,
+            "missing_rows_sample": [],
+            "missing_days_sample": [],
+            "fast_mode_estimate": {
+                "strategy": "use-persisted",
+                "covered_prediction_symbol_dates": 0,
+                "missing_prediction_symbol_dates": 0,
+                "coverage_pct": 0.0,
+                "summary": "Diagnostic indisponible : impossible d'estimer le mode rapide.",
+            },
+            "rebuild_missing_estimate": {
+                "strategy": "rebuild-missing",
+                "pairs_to_attempt": 0,
+                "snapshot_days_to_attempt": 0,
+                "symbols_to_attempt": 0,
+                "persist_enabled": persist_enabled,
+                "summary": "Diagnostic indisponible : impossible d'estimer rebuild-missing.",
+            },
+            "query_error": query_error,
+        }
+
+    row = counts_df.iloc[0].to_dict() if not counts_df.empty else {}
+    expected_candidate_symbol_dates = _coerce_int(row.get("expected_candidate_symbol_dates"))
+    expected_snapshot_days = _coerce_int(row.get("expected_snapshot_days"))
+    expected_symbols = _coerce_int(row.get("expected_symbols"))
+    covered_prediction_symbol_dates = _coerce_int(row.get("covered_prediction_symbol_dates"))
+    covered_snapshot_days = _coerce_int(row.get("covered_snapshot_days"))
+    covered_symbols = _coerce_int(row.get("covered_symbols"))
+    missing_prediction_symbol_dates = _coerce_int(row.get("missing_prediction_symbol_dates"))
+    missing_snapshot_days = _coerce_int(row.get("missing_snapshot_days"))
+    missing_symbols = _coerce_int(row.get("missing_symbols"))
+    first_snapshot_date = _coerce_date(row.get("first_snapshot_date"))
+    last_snapshot_date = _coerce_date(row.get("last_snapshot_date"))
+    coverage_pct = _coverage_pct(covered_prediction_symbol_dates, expected_candidate_symbol_dates)
+
+    if expected_candidate_symbol_dates <= 0:
+        status = "missing_expected_history"
+        reason = "Aucun candidat PIT attendu n'a été détecté dans stock_scores_history sur la plage demandée."
+    elif missing_prediction_symbol_dates <= 0:
+        status = "complete"
+        reason = "Couverture ML PIT complète : toutes les paires symbole×date attendues sont déjà persistées."
+    elif covered_prediction_symbol_dates <= 0:
+        status = "missing"
+        reason = "Aucune paire symbole×date attendue n'est couverte dans model_predictions."
+    else:
+        status = "partial"
+        reason = "Couverture ML PIT partielle : une partie des prédictions attendues manque encore."
+
+    fast_mode_summary = (
+        f"Mode rapide (`use-persisted`) : {covered_prediction_symbol_dates}/{expected_candidate_symbol_dates} "
+        f"paire(s) symbole×date déjà couvertes ({coverage_pct:.1f}%) ; "
+        f"{missing_prediction_symbol_dates} resteraient sans ML."
+    )
+    rebuild_mode_summary = (
+        f"`rebuild-missing` tenterait {missing_prediction_symbol_dates} prédiction(s) sur "
+        f"{missing_snapshot_days} séance(s) pour {missing_symbols} symbole(s) distinct(s)"
+        f"{' avec writeback DB possible' if persist_enabled else ' sans writeback DB (mode pipeline)'}"
+        "."
+    )
+    fast_mode_estimate: dict[str, object] = {
+        "strategy": "use-persisted",
+        "covered_prediction_symbol_dates": covered_prediction_symbol_dates,
+        "missing_prediction_symbol_dates": missing_prediction_symbol_dates,
+        "coverage_pct": coverage_pct,
+        "summary": fast_mode_summary,
+    }
+    rebuild_missing_estimate: dict[str, object] = {
+        "strategy": "rebuild-missing",
+        "pairs_to_attempt": missing_prediction_symbol_dates,
+        "snapshot_days_to_attempt": missing_snapshot_days,
+        "symbols_to_attempt": missing_symbols,
+        "persist_enabled": persist_enabled,
+        "summary": rebuild_mode_summary,
+    }
+
+    return {
+        "status": status,
+        "reason": reason,
+        "start": start_date.isoformat(),
+        "end": end_date.isoformat(),
+        "capital_preset_key": capital_preset_key,
+        "capital_preset_filtered": bool(has_capital_preset_key and capital_preset_key),
+        "engine_mode": normalized_engine_mode,
+        "ml_mode": normalized_ml_mode,
+        "requested_strategy": normalized_requested_strategy,
+        "effective_strategy": effective_strategy,
+        "persist_enabled": persist_enabled,
+        "expected_candidate_symbol_dates": expected_candidate_symbol_dates,
+        "expected_snapshot_days": expected_snapshot_days,
+        "expected_symbols": expected_symbols,
+        "covered_prediction_symbol_dates": covered_prediction_symbol_dates,
+        "covered_snapshot_days": covered_snapshot_days,
+        "covered_symbols": covered_symbols,
+        "missing_prediction_symbol_dates": missing_prediction_symbol_dates,
+        "missing_snapshot_days": missing_snapshot_days,
+        "missing_symbols": missing_symbols,
+        "coverage_pct": coverage_pct,
+        "first_snapshot_date": first_snapshot_date.isoformat() if first_snapshot_date else None,
+        "last_snapshot_date": last_snapshot_date.isoformat() if last_snapshot_date else None,
+        "missing_rows_sample": missing_rows_sample,
+        "missing_days_sample": missing_days_sample,
+        "fast_mode_estimate": fast_mode_estimate,
+        "rebuild_missing_estimate": rebuild_missing_estimate,
+        "query_error": None,
     }
 
 

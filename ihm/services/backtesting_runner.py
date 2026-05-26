@@ -38,6 +38,7 @@ class BacktestRunOptions:
     ml_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     sentiment_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     engine_mode: Literal["research", "pipeline"] = "research"
+    scores_pit_mode: Literal["exact", "asof_latest"] = "exact"
     ml_pit_strategy: Literal["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"] = "auto"
     phase2_mode: Literal["off", "risk", "risk_execution"] = "off"
     phase3_mode: Literal["off", "execution_replay"] = "off"
@@ -183,6 +184,7 @@ def build_backtesting_command(
             "--ml-mode", options.ml_mode,
             "--sentiment-mode", options.sentiment_mode,
             "--engine-mode", options.engine_mode,
+            "--scores-pit-mode", options.scores_pit_mode,
             "--ml-pit-strategy", options.ml_pit_strategy,
             "--phase2-mode", options.phase2_mode,
             "--phase3-mode", options.phase3_mode,

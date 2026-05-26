@@ -462,6 +462,11 @@ Le dashboard **Vue d'ensemble** remonte aussi un résumé compact des dernières
 
 La page **🧪 Backtesting** de l'IHM permet désormais aussi de lancer directement `diagnose-screener` et `recommend-screener`, avec exécution en arrière-plan et logs historisés dans l'interface.
 
+Le launcher `python -m backtesting run` et la page **🧪 Backtesting** exposent aussi un mode PIT scores `scores_pit_mode` :
+
+- `exact` *(défaut)* : ne consomme que les snapshots `stock_scores_history.snapshot_date = trade_date` ;
+- `asof_latest` : applique une sémantique PIT *as-of* et réutilise, pour chaque séance, le dernier snapshot `<= trade_date` quand le snapshot du jour n'existe pas encore.
+
 ---
 
 ## 10. Tests et qualité
