@@ -9,6 +9,7 @@ import pytest
 from service.market.macro_providers import (
     CompositeMacroProvider,
     EodhdMacroProvider,
+    FredMacroProvider,
     StooqMacroProvider,
     build_default_macro_provider,
 )
@@ -123,14 +124,14 @@ def test_eodhd_provider_logs_positive_success_for_vix9d(monkeypatch, caplog):
     p = EodhdMacroProvider()
     d = date(2025, 4, 15)
 
-    with caplog.at_level(logging.INFO, logger="service.market.macro_providers"):
+    with caplog.at_level(logging.DEBUG, logger="service.market.macro_providers"):
         assert p.get_vix_short_term_close(d) == pytest.approx(14.15)
         assert p.get_vix_short_term_close(d) == pytest.approx(14.15)
 
     success_messages = [
         record.getMessage()
         for record in caplog.records
-        if record.levelno == logging.INFO and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
+        if record.levelno == logging.DEBUG and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
     ]
     assert len(success_messages) == 1
     assert "key=vix_short" in success_messages[0]
@@ -145,12 +146,12 @@ def test_eodhd_provider_does_not_log_positive_success_on_empty_payload(monkeypat
     monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
     p = EodhdMacroProvider()
 
-    with caplog.at_level(logging.INFO, logger="service.market.macro_providers"):
+    with caplog.at_level(logging.DEBUG, logger="service.market.macro_providers"):
         assert p.get_vix_short_term_close(date(2025, 4, 15)) is None
 
     assert not [
         record for record in caplog.records
-        if record.levelno == logging.INFO and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
+        if record.levelno == logging.DEBUG and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
     ]
 
 
@@ -174,6 +175,33 @@ def test_eodhd_provider_exposes_macro_source_summary(monkeypatch):
     assert p.get_macro_source_summary() == {
         "source_effective": "eodhd",
         "source_by_signal": {"vix": "eodhd", "vix_short": "eodhd"},
+    }
+
+
+def test_fred_provider_normalises_payload_and_exposes_source(monkeypatch):
+    payload = [
+        {"date": "2025-04-09", "value": "4.20"},
+        {"date": "2025-04-10", "value": "4.25"},
+        {"date": "2025-04-11", "value": "."},
+        {"date": "2025-04-14", "value": "4.40"},
+        {"date": "2025-04-15", "value": "4.50"},
+    ]
+
+    def fake_fetch(series_id, *, start=None, end=None, api_key_env="KEY_FRED", **kwargs):
+        assert series_id == "DGS10"
+        assert api_key_env == "KEY_FRED"
+        return payload
+
+    monkeypatch.setattr("service.fred.clientFred.fetch_series_observations", fake_fetch)
+    p = FredMacroProvider()
+    d = date(2025, 4, 15)
+
+    history = p.get_us10y_history(d, lookback_days=4)
+
+    assert history == pytest.approx([4.20, 4.25, 4.40, 4.50])
+    assert p.get_macro_source_summary() == {
+        "source_effective": "fred",
+        "source_by_signal": {"yield_10y": "fred"},
     }
 
 
@@ -238,12 +266,13 @@ def test_factory_default_is_composite_with_stooq(monkeypatch):
     assert isinstance(p._providers[0], StooqMacroProvider)
 
 
-def test_main_config_defaults_macro_provider_to_composite() -> None:
+def test_main_config_uses_eodhd_macro_provider() -> None:
     from common.config_loader import load_config
 
     cfg = load_config()
 
-    assert cfg["market_regimes"]["macro_provider"] == "composite"
+    assert cfg["market_regimes"]["macro_provider"] == "eodhd"
+    assert cfg["market_regimes"]["yields"]["provider"] == "fred"
 
 
 def test_factory_explicit_eodhd_overrides_symbol():
@@ -262,6 +291,51 @@ def test_factory_explicit_eodhd_overrides_symbol():
 def test_eodhd_default_short_vix_symbol_is_vix9d():
     p = EodhdMacroProvider()
     assert p._symbols["vix_short"] == "VIX9D.INDX"
+
+
+def test_factory_routes_10y_to_fred_when_requested(monkeypatch):
+    monkeypatch.setenv("KEY_FRED", "fred-test-token")
+
+    def fake_eodhd_fetch(symbol, *, start=None, end=None, **kwargs):
+        if symbol == "VIX.INDX":
+            return [{"date": "2025-04-15", "close": 22.4}]
+        if symbol == "VIX9D.INDX":
+            return [{"date": "2025-04-15", "close": 14.15}]
+        if symbol == "US10Y.INDX":
+            return [{"date": "2025-04-15", "close": 9.99}]
+        return []
+
+    def fake_fred_fetch(series_id, *, start=None, end=None, api_key_env="KEY_FRED", **kwargs):
+        assert series_id == "DGS10"
+        assert api_key_env == "KEY_FRED"
+        return [
+            {"date": "2025-04-09", "value": "4.20"},
+            {"date": "2025-04-10", "value": "4.25"},
+            {"date": "2025-04-14", "value": "4.40"},
+            {"date": "2025-04-15", "value": "4.50"},
+        ]
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_eodhd_fetch)
+    monkeypatch.setattr("service.fred.clientFred.fetch_series_observations", fake_fred_fetch)
+
+    p = build_default_macro_provider({
+        "market_regimes": {
+            "macro_provider": "eodhd",
+            "vix": {"symbol": "VIX.INDX", "short_symbol": "VIX9D.INDX"},
+            "yields": {"provider": "fred", "fred_series_10y": "DGS10", "symbol_10y": "US10Y"},
+        },
+        "fred": {"api_key_env": "KEY_FRED", "series_10y": "DGS10"},
+    })
+    d = date(2025, 4, 15)
+
+    assert p is not None
+    assert p.get_vix_close(d) == pytest.approx(22.4)
+    assert p.get_vix_short_term_close(d) == pytest.approx(14.15)
+    assert p.get_us10y_history(d, lookback_days=4) == pytest.approx([4.20, 4.25, 4.40, 4.50])
+    assert p.get_macro_source_summary() == {
+        "source_effective": "mixed",
+        "source_by_signal": {"vix": "eodhd", "vix_short": "eodhd", "yield_10y": "fred"},
+    }
 
 
 # ---------------------------------------------------------------------------

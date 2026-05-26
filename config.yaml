@@ -59,7 +59,7 @@ market_regimes:
   # Source des donnees macro (VIX, 10Y) : `stooq` (gratuit, sans cle),
   # `eodhd` (consomme du quota EODHD), `composite` (Stooq dabord, EODHD
   # en secours si EODHD_API_TOKEN est defini), ou `none` pour desactiver.
-  macro_provider: composite
+  macro_provider: eodhd
 
   sentinel:
     enabled: true
@@ -73,14 +73,20 @@ market_regimes:
     inverted_curve_mode: capital_preservation
 
   yields:
-    enabled: false
+    enabled: true
+    provider: fred                         # default | stooq | eodhd | fred
     symbol_10y: "US10Y"
+    fred_series_10y: "DGS10"             # FRED 10Y constant maturity treasury
     lookback_days: 5
     relative_spike_threshold: 0.05
     block_sectors: ["Technology", "Tech", "Growth"]
     block_high_beta: true
     high_beta_threshold: 1.2
     risk_mult: 0.6
+
+fred:
+  api_key_env: KEY_FRED
+  series_10y: DGS10
 
   sentiment_circuit_breaker:
     enabled: true

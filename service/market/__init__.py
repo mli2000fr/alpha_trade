@@ -26,6 +26,7 @@ from service.market.regime_manager import MacroDataUnavailableError, build_snaps
 from service.market.macro_providers import (
     CompositeMacroProvider,
     EodhdMacroProvider,
+    FredMacroProvider,
     StooqMacroProvider,
     build_default_macro_provider,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "parse_trailing_stop",
     "StooqMacroProvider",
     "EodhdMacroProvider",
+    "FredMacroProvider",
     "CompositeMacroProvider",
     "build_default_macro_provider",
     "DbSentimentScoreProvider",

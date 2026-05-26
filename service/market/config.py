@@ -35,7 +35,9 @@ class VixConfig:
 @dataclass(frozen=True, slots=True)
 class YieldsConfig:
     enabled: bool = False
+    provider: str = "default"
     symbol_10y: str = "US10Y"
+    fred_series_10y: str = "DGS10"
     lookback_days: int = 5
     relative_spike_threshold: float = 0.05
     block_sectors: tuple[str, ...] = ("Technology", "Tech", "Growth")
@@ -164,7 +166,9 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
         ),
         yields=YieldsConfig(
             enabled=bool(yields.get("enabled", False)),
+            provider=str(yields.get("provider", "default")),
             symbol_10y=str(yields.get("symbol_10y", "US10Y")),
+            fred_series_10y=str(yields.get("fred_series_10y", "DGS10")),
             lookback_days=int(yields.get("lookback_days", 5)),
             relative_spike_threshold=float(yields.get("relative_spike_threshold", 0.05)),
             block_sectors=tuple(yields.get("block_sectors", ["Technology", "Tech", "Growth"])),

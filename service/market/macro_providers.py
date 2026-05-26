@@ -6,6 +6,8 @@ Sources branchées :
   Utilise :func:`service.stooq.clientStooq.fetch_daily_bars`.
 - **EODHD** — symboles ``VIX.INDX`` / ``VXN.INDX`` / ``US10Y.INDX``.
   Utilise :func:`service.eodhd.clientEodhd.fetch_eod`.
+- **FRED** — série ``DGS10`` (10Y Treasury yield, clé `KEY_FRED`).
+  Utilise :func:`service.fred.clientFred.fetch_series_observations`.
 
 Aucune méthode ne lève d'exception : tout échec → ``None`` (consommé en
 fallback neutre par ``service.market.regime_manager``). Les réponses sont
@@ -34,6 +36,9 @@ _DEFAULT_EODHD_SYMBOLS = {
     "vix_short": "VIX9D.INDX",
     "us10y": "US10Y.INDX",
 }
+_DEFAULT_FRED_SERIES = {
+    "us10y": "DGS10",
+}
 
 # Combien de jours en arrière chercher pour trouver la dernière clôture
 # disponible (week-ends + jours fériés US).
@@ -57,6 +62,21 @@ def _effective_source_from_mapping(source_by_signal: Mapping[str, str]) -> str |
     return "mixed"
 
 
+def _build_source_summary(source_by_signal: Mapping[str, str]) -> dict[str, Any]:
+    payload = {
+        str(key): str(value).strip().lower()
+        for key, value in source_by_signal.items()
+        if str(key).strip() and str(value).strip()
+    }
+    source_effective = _effective_source_from_mapping(payload)
+    if not payload or source_effective is None:
+        return {}
+    return {
+        "source_effective": source_effective,
+        "source_by_signal": payload,
+    }
+
+
 def _signal_key_for_method(method: str) -> str | None:
     if method == "get_vix_close":
         return "vix"
@@ -67,11 +87,27 @@ def _signal_key_for_method(method: str) -> str | None:
     return None
 
 
+def _resolve_signal_source(provider: Any, signal_key: str) -> str | None:
+    get_source_summary = getattr(provider, "get_macro_source_summary", None)
+    if callable(get_source_summary):
+        try:
+            summary = get_source_summary()
+        except Exception:
+            summary = None
+        if isinstance(summary, dict):
+            by_signal = summary.get("source_by_signal")
+            if isinstance(by_signal, dict):
+                value = str(by_signal.get(signal_key) or "").strip().lower()
+                if value:
+                    return value
+    fallback = str(getattr(provider, "source_name", type(provider).__name__) or "").strip().lower()
+    return fallback or None
+
+
 def _log_successful_fetch(*, provider_name: str, key: str, symbol: str, trade_date: date, bars: Sequence[Mapping[str, Any]]) -> None:
     """Journalise une preuve positive compacte quand un fetch réseau aboutit.
 
-    - ``INFO`` pour ``vix_short`` (preuve opérationnelle la plus utile).
-    - ``DEBUG`` pour les autres séries macro afin d'éviter un bruit excessif.
+    - ``DEBUG`` pour toutes les séries macro afin d'éviter un bruit excessif.
     - Aucun log si ``bars`` est vide ou si aucune clôture exploitable n'est trouvée.
     """
     if not bars:
@@ -97,9 +133,7 @@ def _log_successful_fetch(*, provider_name: str, key: str, symbol: str, trade_da
             last_close = parsed_close
     if last_date is None or last_close is None:
         return
-    level = logging.INFO if key == "vix_short" else logging.DEBUG
-    LOGGER.log(
-        level,
+    LOGGER.debug(
         "%s: fetch %s ok key=%s trade_date=%s rows=%d last_date=%s last_close=%.4f",
         provider_name,
         symbol,
@@ -230,14 +264,7 @@ class StooqMacroProvider:
         return None
 
     def get_macro_source_summary(self) -> dict[str, Any]:
-        source_by_signal = dict(self._last_source_by_signal)
-        source_effective = _effective_source_from_mapping(source_by_signal)
-        if not source_by_signal or source_effective is None:
-            return {}
-        return {
-            "source_effective": source_effective,
-            "source_by_signal": source_by_signal,
-        }
+        return _build_source_summary(self._last_source_by_signal)
 
 
 # ---------------------------------------------------------------------------
@@ -341,14 +368,175 @@ class EodhdMacroProvider:
         return None
 
     def get_macro_source_summary(self) -> dict[str, Any]:
-        source_by_signal = dict(self._last_source_by_signal)
-        source_effective = _effective_source_from_mapping(source_by_signal)
-        if not source_by_signal or source_effective is None:
-            return {}
-        return {
-            "source_effective": source_effective,
-            "source_by_signal": source_by_signal,
-        }
+        return _build_source_summary(self._last_source_by_signal)
+
+
+# ---------------------------------------------------------------------------
+# FRED
+# ---------------------------------------------------------------------------
+
+
+class FredMacroProvider:
+    """Provider 10Y basé sur FRED (clé via `KEY_FRED` par défaut)."""
+
+    source_name = "fred"
+
+    def __init__(self, *, series: Mapping[str, str] | None = None, api_key_env: str = "KEY_FRED") -> None:
+        self._series = dict(_DEFAULT_FRED_SERIES)
+        if series:
+            self._series.update({k: str(v) for k, v in series.items() if v})
+        self._api_key_env = str(api_key_env or "KEY_FRED")
+        self._cache: dict[tuple[str, date, int], list[dict[str, Any]]] = {}
+        self._last_source_by_signal: dict[str, str] = {}
+
+    def _fetch(self, key: str, trade_date: date, days_back: int) -> list[dict[str, Any]]:
+        cache_key = (key, trade_date, days_back)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        try:
+            from service.fred.clientFred import FredFetchError, fetch_series_observations
+        except Exception:
+            LOGGER.warning("FredMacroProvider: import service.fred impossible.", exc_info=True)
+            self._cache[cache_key] = []
+            return []
+        series_id = self._series.get(key)
+        if not series_id:
+            self._cache[cache_key] = []
+            return []
+        start = (trade_date - timedelta(days=days_back)).isoformat()
+        end = trade_date.isoformat()
+        try:
+            payload = fetch_series_observations(
+                series_id,
+                start=start,
+                end=end,
+                api_key_env=self._api_key_env,
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ == "FredFetchError":
+                LOGGER.warning("FredMacroProvider: fetch %s a échoué.", series_id, exc_info=True)
+            else:
+                LOGGER.warning("FredMacroProvider: fetch %s a échoué.", series_id, exc_info=True)
+            payload = []
+        normalised: list[dict[str, Any]] = []
+        for row in payload or []:
+            raw_date = row.get("date")
+            if isinstance(raw_date, str):
+                try:
+                    parsed_date = date.fromisoformat(raw_date[:10])
+                except ValueError:
+                    continue
+            elif isinstance(raw_date, date):
+                parsed_date = raw_date
+            else:
+                continue
+            raw_value = row.get("value")
+            if isinstance(raw_value, str) and raw_value.strip() == ".":
+                continue
+            parsed_value = _coerce_float(raw_value)
+            if parsed_value is None:
+                continue
+            normalised.append({"date": parsed_date, "close": parsed_value})
+        _log_successful_fetch(
+            provider_name="FredMacroProvider",
+            key=key,
+            symbol=str(series_id),
+            trade_date=trade_date,
+            bars=normalised,
+        )
+        self._cache[cache_key] = normalised
+        return normalised
+
+    def get_vix_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("vix", None)
+        return None
+
+    def get_vix_short_term_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("vix_short", None)
+        return None
+
+    def get_us10y_history(self, trade_date: date, lookback_days: int) -> list[float] | None:
+        days = max(lookback_days * 3 + 10, lookback_days + 10)
+        bars = self._fetch("us10y", trade_date, days)
+        if not bars:
+            self._last_source_by_signal.pop("yield_10y", None)
+            return None
+        history = _close_history(bars, trade_date, lookback_days)
+        if len(history) >= 2:
+            self._last_source_by_signal["yield_10y"] = self.source_name
+            return history
+        self._last_source_by_signal.pop("yield_10y", None)
+        return None
+
+    def get_macro_source_summary(self) -> dict[str, Any]:
+        return _build_source_summary(self._last_source_by_signal)
+
+
+class RoutedMacroProvider:
+    """Route chaque signal macro vers un provider dédié, avec synthèse de source."""
+
+    source_name = "routed"
+
+    def __init__(
+        self,
+        *,
+        vix_provider: Any | None = None,
+        vix_short_provider: Any | None = None,
+        yield_provider: Any | None = None,
+    ) -> None:
+        self._vix_provider = vix_provider
+        self._vix_short_provider = vix_short_provider
+        self._yield_provider = yield_provider
+        self._last_source_by_signal: dict[str, str] = {}
+
+    def _record_source(self, signal_key: str, provider: Any | None, value: Any) -> None:
+        if value is None or provider is None:
+            self._last_source_by_signal.pop(signal_key, None)
+            return
+        resolved_source = _resolve_signal_source(provider, signal_key)
+        if resolved_source:
+            self._last_source_by_signal[signal_key] = resolved_source
+        else:
+            self._last_source_by_signal.pop(signal_key, None)
+
+    def get_vix_close(self, trade_date: date) -> float | None:
+        provider = self._vix_provider
+        if provider is None:
+            self._last_source_by_signal.pop("vix", None)
+            return None
+        try:
+            value = provider.get_vix_close(trade_date)
+        except Exception:
+            value = None
+        self._record_source("vix", provider, value)
+        return value
+
+    def get_vix_short_term_close(self, trade_date: date) -> float | None:
+        provider = self._vix_short_provider
+        if provider is None:
+            self._last_source_by_signal.pop("vix_short", None)
+            return None
+        try:
+            value = provider.get_vix_short_term_close(trade_date)
+        except Exception:
+            value = None
+        self._record_source("vix_short", provider, value)
+        return value
+
+    def get_us10y_history(self, trade_date: date, lookback_days: int) -> list[float] | None:
+        provider = self._yield_provider
+        if provider is None:
+            self._last_source_by_signal.pop("yield_10y", None)
+            return None
+        try:
+            value = provider.get_us10y_history(trade_date, lookback_days)
+        except Exception:
+            value = None
+        self._record_source("yield_10y", provider, value)
+        return value
+
+    def get_macro_source_summary(self) -> dict[str, Any]:
+        return _build_source_summary(self._last_source_by_signal)
 
 
 # ---------------------------------------------------------------------------
@@ -389,14 +577,57 @@ class CompositeMacroProvider:
         return self._first_non_none("get_us10y_history", trade_date, lookback_days)
 
     def get_macro_source_summary(self) -> dict[str, Any]:
-        source_by_signal = dict(self._last_source_by_signal)
-        source_effective = _effective_source_from_mapping(source_by_signal)
-        if not source_by_signal or source_effective is None:
-            return {}
-        return {
-            "source_effective": source_effective,
-            "source_by_signal": source_by_signal,
-        }
+        return _build_source_summary(self._last_source_by_signal)
+
+
+def _build_primary_macro_provider(
+    choice: str,
+    *,
+    stooq_overrides: Mapping[str, str] | None,
+    eodhd_overrides: Mapping[str, str] | None,
+) -> Any | None:
+    if choice == "none":
+        return None
+    if choice == "stooq":
+        return StooqMacroProvider(symbols=stooq_overrides or None)
+    if choice == "eodhd":
+        return EodhdMacroProvider(symbols=eodhd_overrides or None)
+    providers: list[Any] = [StooqMacroProvider(symbols=stooq_overrides or None)]
+    import os as _os
+    if _os.getenv("EODHD_API_TOKEN") or _os.getenv("EODHD_TOKEN"):
+        providers.append(EodhdMacroProvider(symbols=eodhd_overrides or None))
+    return CompositeMacroProvider(providers)
+
+
+def _build_yield_macro_provider(
+    *,
+    yields_cfg: Mapping[str, Any],
+    fred_cfg: Mapping[str, Any],
+    stooq_overrides: Mapping[str, str] | None,
+    eodhd_overrides: Mapping[str, str] | None,
+    default_provider: Any | None,
+) -> Any | None:
+    choice = str(yields_cfg.get("provider", "default") or "default").strip().lower()
+    if choice in {"", "default", "primary", "auto"}:
+        return default_provider
+    if choice == "none":
+        return None
+    if choice == "stooq":
+        return StooqMacroProvider(symbols=stooq_overrides or None)
+    if choice == "eodhd":
+        return EodhdMacroProvider(symbols=eodhd_overrides or None)
+    if choice == "fred":
+        series_id = str(
+            yields_cfg.get("fred_series_10y")
+            or fred_cfg.get("series_10y")
+            or _DEFAULT_FRED_SERIES["us10y"]
+        ).strip().upper()
+        api_key_env = str(fred_cfg.get("api_key_env") or "KEY_FRED").strip() or "KEY_FRED"
+        fred_provider = FredMacroProvider(series={"us10y": series_id}, api_key_env=api_key_env)
+        if default_provider is None:
+            return fred_provider
+        return CompositeMacroProvider([fred_provider, default_provider])
+    return default_provider
 
 
 def build_default_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | None:
@@ -411,11 +642,12 @@ def build_default_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | No
     Retourne ``None`` si l'opérateur a explicitement désactivé la couche
     (``market_regimes.enabled = false`` ET ``macro_provider = none``).
     """
-    cfg = (yaml_cfg or {}).get("market_regimes") if isinstance(yaml_cfg, Mapping) else None
+    root_cfg = yaml_cfg if isinstance(yaml_cfg, Mapping) else {}
+    cfg = root_cfg.get("market_regimes") if isinstance(root_cfg, Mapping) else None
     cfg = cfg or {}
+    fred_cfg = root_cfg.get("fred") if isinstance(root_cfg, Mapping) else None
+    fred_cfg = fred_cfg if isinstance(fred_cfg, Mapping) else {}
     choice = str(cfg.get("macro_provider", "composite") or "composite").strip().lower()
-    if choice == "none":
-        return None
 
     # Overrides symbol par symbole (utiles si l'opérateur a un mapping custom).
     vix_sym = (cfg.get("vix") or {}).get("symbol")
@@ -442,23 +674,35 @@ def build_default_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | No
         else:
             eodhd_overrides["us10y"] = str(y10_sym) if "." in str(y10_sym) else f"{y10_sym}.INDX"
 
-    if choice == "stooq":
-        return StooqMacroProvider(symbols=stooq_overrides or None)
-    if choice == "eodhd":
-        return EodhdMacroProvider(symbols=eodhd_overrides or None)
-    # Default = composite : Stooq d'abord (gratuit, pas de quota), EODHD en
-    # secours si la clé est présente dans l'environnement.
-    providers: list[Any] = [StooqMacroProvider(symbols=stooq_overrides or None)]
-    import os as _os
-    if _os.getenv("EODHD_API_TOKEN") or _os.getenv("EODHD_TOKEN"):
-        providers.append(EodhdMacroProvider(symbols=eodhd_overrides or None))
-    return CompositeMacroProvider(providers)
+    primary_provider = _build_primary_macro_provider(
+        choice,
+        stooq_overrides=stooq_overrides or None,
+        eodhd_overrides=eodhd_overrides or None,
+    )
+    yield_provider = _build_yield_macro_provider(
+        yields_cfg=cast(Mapping[str, Any], cfg.get("yields") or {}),
+        fred_cfg=fred_cfg,
+        stooq_overrides=stooq_overrides or None,
+        eodhd_overrides=eodhd_overrides or None,
+        default_provider=primary_provider,
+    )
+    if primary_provider is None and yield_provider is None:
+        return None
+    if yield_provider is None or yield_provider is primary_provider:
+        return primary_provider
+    return RoutedMacroProvider(
+        vix_provider=primary_provider,
+        vix_short_provider=primary_provider,
+        yield_provider=yield_provider,
+    )
 
 
 __all__ = [
     "StooqMacroProvider",
     "EodhdMacroProvider",
+    "FredMacroProvider",
     "CompositeMacroProvider",
+    "RoutedMacroProvider",
     "build_default_macro_provider",
 ]
 
