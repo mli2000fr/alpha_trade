@@ -1,6 +1,7 @@
 """Tests unitaires pour ``service/market/macro_providers.py``."""
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 import pytest
@@ -105,6 +106,77 @@ def test_eodhd_provider_normalises_payload(monkeypatch):
     assert history[-1] == pytest.approx(4.50)
 
 
+def test_eodhd_provider_logs_positive_success_for_vix9d(monkeypatch, caplog):
+    payload_vix_short = [
+        {"date": "2025-04-14", "close": 14.05},
+        {"date": "2025-04-15", "close": 14.15},
+    ]
+    calls: list[str] = []
+
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        calls.append(symbol)
+        if symbol == "VIX9D.INDX":
+            return payload_vix_short
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+    d = date(2025, 4, 15)
+
+    with caplog.at_level(logging.INFO, logger="service.market.macro_providers"):
+        assert p.get_vix_short_term_close(d) == pytest.approx(14.15)
+        assert p.get_vix_short_term_close(d) == pytest.approx(14.15)
+
+    success_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
+    ]
+    assert len(success_messages) == 1
+    assert "key=vix_short" in success_messages[0]
+    assert "last_close=14.1500" in success_messages[0]
+    assert calls == ["VIX9D.INDX"]
+
+
+def test_eodhd_provider_does_not_log_positive_success_on_empty_payload(monkeypatch, caplog):
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+
+    with caplog.at_level(logging.INFO, logger="service.market.macro_providers"):
+        assert p.get_vix_short_term_close(date(2025, 4, 15)) is None
+
+    assert not [
+        record for record in caplog.records
+        if record.levelno == logging.INFO and "EodhdMacroProvider: fetch VIX9D.INDX ok" in record.getMessage()
+    ]
+
+
+def test_eodhd_provider_exposes_macro_source_summary(monkeypatch):
+    payload_vix = [{"date": "2025-04-15", "close": 22.4}]
+    payload_vix_short = [{"date": "2025-04-15", "close": 14.15}]
+
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        if symbol == "VIX.INDX":
+            return payload_vix
+        if symbol == "VIX9D.INDX":
+            return payload_vix_short
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+    d = date(2025, 4, 15)
+
+    assert p.get_vix_close(d) == pytest.approx(22.4)
+    assert p.get_vix_short_term_close(d) == pytest.approx(14.15)
+    assert p.get_macro_source_summary() == {
+        "source_effective": "eodhd",
+        "source_by_signal": {"vix": "eodhd", "vix_short": "eodhd"},
+    }
+
+
 # --- Composite + factory ----------------------------------------------------
 
 
@@ -124,6 +196,32 @@ def test_composite_uses_first_non_none():
     assert cp.get_vix_close(d) == pytest.approx(19.5)
     assert cp.get_vix_short_term_close(d) == pytest.approx(20.0)
     assert cp.get_us10y_history(d, 3) == [4.0, 4.1, 4.2]
+
+
+def test_composite_exposes_mixed_macro_source_summary():
+    class P1:
+        source_name = "stooq"
+
+        def get_vix_close(self, d): return 19.5
+        def get_vix_short_term_close(self, d): return None
+        def get_us10y_history(self, d, n): return None
+
+    class P2:
+        source_name = "eodhd"
+
+        def get_vix_close(self, d): return None
+        def get_vix_short_term_close(self, d): return 20.0
+        def get_us10y_history(self, d, n): return None
+
+    cp = CompositeMacroProvider([P1(), P2()])
+    d = date(2025, 4, 15)
+
+    assert cp.get_vix_close(d) == pytest.approx(19.5)
+    assert cp.get_vix_short_term_close(d) == pytest.approx(20.0)
+    assert cp.get_macro_source_summary() == {
+        "source_effective": "mixed",
+        "source_by_signal": {"vix": "stooq", "vix_short": "eodhd"},
+    }
 
 
 def test_factory_returns_none_when_disabled():

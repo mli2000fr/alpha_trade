@@ -327,6 +327,25 @@ def build_snapshot(
             },
         )
 
+    if macro_provider is not None:
+        get_source_summary = getattr(macro_provider, "get_macro_source_summary", None)
+        if callable(get_source_summary):
+            try:
+                source_summary = get_source_summary()
+            except Exception:
+                source_summary = None
+            if isinstance(source_summary, dict):
+                source_effective = str(source_summary.get("source_effective") or "").strip().lower()
+                if source_effective:
+                    macro_metrics["source_effective"] = source_effective
+                source_by_signal = source_summary.get("source_by_signal")
+                if isinstance(source_by_signal, dict) and source_by_signal:
+                    macro_metrics["source_by_signal"] = {
+                        str(key): str(value)
+                        for key, value in source_by_signal.items()
+                        if str(key).strip() and str(value).strip()
+                    }
+
     missing_macro_data_quality = _resolve_missing_macro_data_quality(config, data_quality)
     if _required_macro_data_quality_keys(config):
         data_quality["macro"] = "missing" if missing_macro_data_quality else "ok"
@@ -434,7 +453,8 @@ def build_snapshot(
         if effective_max_positions is None:
             effective_max_positions = allowed_slots
         else:
-            effective_max_positions = min(int(effective_max_positions), allowed_slots)
+            current_effective_max_positions = int(effective_max_positions)
+            effective_max_positions = min(current_effective_max_positions, allowed_slots)
         if allowed_slots == 0:
             allow_new_entries = False
             reasons.append("equity_too_low_for_min_notional")

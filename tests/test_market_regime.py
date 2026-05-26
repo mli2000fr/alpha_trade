@@ -14,6 +14,7 @@ Couvre :
 from __future__ import annotations
 
 from datetime import date
+from typing import cast
 
 import pytest
 
@@ -42,7 +43,9 @@ from service.market.config import (
 )
 from service.market.earnings_shield import compute_earnings_shield
 from service.market.macro_signals import evaluate_vix, evaluate_yield_10y
+from service.market.macro_signals import MacroDataProvider
 from service.market.sentiment_regime import evaluate_sentiment_regime
+from service.market.macro_providers import CompositeMacroProvider
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +136,11 @@ class _StubMacroProvider:
 
 
 def test_vix_high_triggers_capital_preservation_via_macro():
-    val, high, inverted, dq = evaluate_vix(_StubMacroProvider(vix=30.0), date(2025, 5, 1), high_threshold=25.0)
+    val, high, inverted, dq = evaluate_vix(
+        cast(MacroDataProvider, cast(object, _StubMacroProvider(vix=30.0))),
+        date(2025, 5, 1),
+        high_threshold=25.0,
+    )
     assert val == 30.0
     assert high is True
     assert inverted is False
@@ -148,7 +155,7 @@ def test_vix_no_provider_fallback_neutral():
 
 def test_yield_spike_detected():
     rel, spike, dq = evaluate_yield_10y(
-        _StubMacroProvider(history=[4.0, 4.05, 4.1, 4.15, 4.2, 4.25]),
+        cast(MacroDataProvider, cast(object, _StubMacroProvider(history=[4.0, 4.05, 4.1, 4.15, 4.2, 4.25]))),
         date(2025, 5, 1),
         lookback_days=5,
         relative_spike_threshold=0.05,
@@ -177,6 +184,47 @@ def test_snapshot_marks_macro_missing_when_fallback_allowed() -> None:
     assert snap.data_quality["vix"] == "no_provider"
     assert snap.data_quality["macro"] == "missing"
     assert snap.macro["missing_data_quality"] == {"vix": "no_provider"}
+
+
+def test_snapshot_serializes_effective_macro_source_summary() -> None:
+    class _StooqOnlyVixProvider:
+        source_name = "stooq"
+
+        def get_vix_close(self, _):
+            return 16.99
+
+        def get_vix_short_term_close(self, _):
+            return None
+
+        def get_us10y_history(self, _, lookback):
+            return None
+
+    class _EodhdOnlyShortVixProvider:
+        source_name = "eodhd"
+
+        def get_vix_close(self, _):
+            return None
+
+        def get_vix_short_term_close(self, _):
+            return 14.15
+
+        def get_us10y_history(self, _, lookback):
+            return None
+
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        vix=VixConfig(enabled=True),
+        yields=YieldsConfig(enabled=False),
+    )
+    provider = CompositeMacroProvider([_StooqOnlyVixProvider(), _EodhdOnlyShortVixProvider()])
+    reset_cache()
+
+    snap = build_snapshot(date(2025, 5, 1), config=cfg, equity=2_000.0, macro_provider=provider, earnings_lookup=lambda *_: {})
+
+    assert snap.macro["vix"] == pytest.approx(16.99)
+    assert snap.macro["vix_short"] == pytest.approx(14.15)
+    assert snap.macro["source_effective"] == "mixed"
+    assert snap.macro["source_by_signal"] == {"vix": "stooq", "vix_short": "eodhd"}
 
 
 def test_snapshot_raises_when_macro_missing_and_fail_fast_enabled() -> None:
@@ -324,7 +372,7 @@ def test_snapshot_exposes_structured_why_mode_and_sentiment_payload():
         date(2025, 5, 1),
         config=cfg,
         equity=2000.0,
-        macro_provider=_StubMacroProvider(vix=30.0, vix_short=31.0),
+        macro_provider=cast(MacroDataProvider, cast(object, _StubMacroProvider(vix=30.0, vix_short=31.0))),
         sentiment_score_provider=_Provider(),
         earnings_lookup=lambda *_: {},
     )

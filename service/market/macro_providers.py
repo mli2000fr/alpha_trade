@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 LOGGER = logging.getLogger("service.market.macro_providers")
 
@@ -40,6 +40,77 @@ _DEFAULT_EODHD_SYMBOLS = {
 _CLOSE_LOOKBACK_DAYS = 7
 
 
+def _coerce_float(value: object) -> float | None:
+    try:
+        return float(cast(Any, value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _effective_source_from_mapping(source_by_signal: Mapping[str, str]) -> str | None:
+    values = [str(value).strip().lower() for value in source_by_signal.values() if str(value).strip()]
+    if not values:
+        return None
+    unique_values = sorted(set(values))
+    if len(unique_values) == 1:
+        return unique_values[0]
+    return "mixed"
+
+
+def _signal_key_for_method(method: str) -> str | None:
+    if method == "get_vix_close":
+        return "vix"
+    if method == "get_vix_short_term_close":
+        return "vix_short"
+    if method == "get_us10y_history":
+        return "yield_10y"
+    return None
+
+
+def _log_successful_fetch(*, provider_name: str, key: str, symbol: str, trade_date: date, bars: Sequence[Mapping[str, Any]]) -> None:
+    """Journalise une preuve positive compacte quand un fetch réseau aboutit.
+
+    - ``INFO`` pour ``vix_short`` (preuve opérationnelle la plus utile).
+    - ``DEBUG`` pour les autres séries macro afin d'éviter un bruit excessif.
+    - Aucun log si ``bars`` est vide ou si aucune clôture exploitable n'est trouvée.
+    """
+    if not bars:
+        return
+    last_date: date | None = None
+    last_close: float | None = None
+    for row in bars:
+        raw_date = row.get("date")
+        if isinstance(raw_date, str):
+            try:
+                parsed_date = date.fromisoformat(raw_date[:10])
+            except ValueError:
+                continue
+        elif isinstance(raw_date, date):
+            parsed_date = raw_date
+        else:
+            continue
+        parsed_close = _coerce_float(row.get("close"))
+        if parsed_close is None:
+            continue
+        if last_date is None or parsed_date > last_date:
+            last_date = parsed_date
+            last_close = parsed_close
+    if last_date is None or last_close is None:
+        return
+    level = logging.INFO if key == "vix_short" else logging.DEBUG
+    LOGGER.log(
+        level,
+        "%s: fetch %s ok key=%s trade_date=%s rows=%d last_date=%s last_close=%.4f",
+        provider_name,
+        symbol,
+        key,
+        trade_date,
+        len(bars),
+        last_date,
+        last_close,
+    )
+
+
 def _last_close(bars: Sequence[Mapping[str, Any]], on_or_before: date) -> float | None:
     """Retourne le dernier ``close`` <= ``on_or_before`` parmi ``bars``."""
     if not bars:
@@ -57,9 +128,8 @@ def _last_close(bars: Sequence[Mapping[str, Any]], on_or_before: date) -> float 
         c = row.get("close")
         if c is None:
             continue
-        try:
-            cf = float(c)
-        except (TypeError, ValueError):
+        cf = _coerce_float(c)
+        if cf is None:
             continue
         if best is None or d > best[0]:
             best = (d, cf)
@@ -79,10 +149,7 @@ def _close_history(bars: Sequence[Mapping[str, Any]], on_or_before: date, n: int
         if not isinstance(d, date) or d > on_or_before:
             continue
         c = row.get("close")
-        try:
-            cf = float(c) if c is not None else None
-        except (TypeError, ValueError):
-            cf = None
+        cf = _coerce_float(c)
         if cf is None:
             continue
         rows.append((d, cf))
@@ -98,11 +165,14 @@ def _close_history(bars: Sequence[Mapping[str, Any]], on_or_before: date, n: int
 class StooqMacroProvider:
     """Provider VIX / 10Y basé sur Stooq (CSV public, sans clé)."""
 
+    source_name = "stooq"
+
     def __init__(self, symbols: Mapping[str, str] | None = None) -> None:
         self._symbols = dict(_DEFAULT_STOOQ_SYMBOLS)
         if symbols:
             self._symbols.update({k: str(v) for k, v in symbols.items() if v})
         self._cache: dict[tuple[str, date, int], list[dict[str, Any]]] = {}
+        self._last_source_by_signal: dict[str, str] = {}
 
     def _fetch(self, key: str, trade_date: date, days_back: int) -> list[dict[str, Any]]:
         cache_key = (key, trade_date, days_back)
@@ -129,20 +199,45 @@ class StooqMacroProvider:
 
     def get_vix_close(self, trade_date: date) -> float | None:
         bars = self._fetch("vix", trade_date, _CLOSE_LOOKBACK_DAYS)
-        return _last_close(bars, trade_date)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["vix"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("vix", None)
+        return value
 
     def get_vix_short_term_close(self, trade_date: date) -> float | None:
         bars = self._fetch("vix_short", trade_date, _CLOSE_LOOKBACK_DAYS)
-        return _last_close(bars, trade_date)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["vix_short"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("vix_short", None)
+        return value
 
     def get_us10y_history(self, trade_date: date, lookback_days: int) -> list[float] | None:
         # On élargit la fenêtre : 2 × lookback pour absorber week-ends/feries.
         days = max(lookback_days * 2 + 5, lookback_days + 5)
         bars = self._fetch("us10y", trade_date, days)
         if not bars:
+            self._last_source_by_signal.pop("yield_10y", None)
             return None
         history = _close_history(bars, trade_date, lookback_days)
-        return history if len(history) >= 2 else None
+        if len(history) >= 2:
+            self._last_source_by_signal["yield_10y"] = self.source_name
+            return history
+        self._last_source_by_signal.pop("yield_10y", None)
+        return None
+
+    def get_macro_source_summary(self) -> dict[str, Any]:
+        source_by_signal = dict(self._last_source_by_signal)
+        source_effective = _effective_source_from_mapping(source_by_signal)
+        if not source_by_signal or source_effective is None:
+            return {}
+        return {
+            "source_effective": source_effective,
+            "source_by_signal": source_by_signal,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -156,11 +251,14 @@ class EodhdMacroProvider:
     1 appel = 1 call de quota EODHD. Les réponses sont cachées par instance.
     """
 
+    source_name = "eodhd"
+
     def __init__(self, symbols: Mapping[str, str] | None = None) -> None:
         self._symbols = dict(_DEFAULT_EODHD_SYMBOLS)
         if symbols:
             self._symbols.update({k: str(v) for k, v in symbols.items() if v})
         self._cache: dict[tuple[str, date, int], list[dict[str, Any]]] = {}
+        self._last_source_by_signal: dict[str, str] = {}
 
     def _fetch(self, key: str, trade_date: date, days_back: int) -> list[dict[str, Any]]:
         cache_key = (key, trade_date, days_back)
@@ -197,31 +295,60 @@ class EodhdMacroProvider:
             else:
                 continue
             close = row.get("close") or row.get("adjusted_close") or row.get("Close")
-            try:
-                close_f = float(close) if close is not None else None
-            except (TypeError, ValueError):
-                close_f = None
+            close_f = _coerce_float(close)
             if close_f is None:
                 continue
             normalised.append({"date": d, "close": close_f})
+        _log_successful_fetch(
+            provider_name="EodhdMacroProvider",
+            key=key,
+            symbol=str(symbol),
+            trade_date=trade_date,
+            bars=normalised,
+        )
         self._cache[cache_key] = normalised
         return normalised
 
     def get_vix_close(self, trade_date: date) -> float | None:
         bars = self._fetch("vix", trade_date, _CLOSE_LOOKBACK_DAYS)
-        return _last_close(bars, trade_date)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["vix"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("vix", None)
+        return value
 
     def get_vix_short_term_close(self, trade_date: date) -> float | None:
         bars = self._fetch("vix_short", trade_date, _CLOSE_LOOKBACK_DAYS)
-        return _last_close(bars, trade_date)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["vix_short"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("vix_short", None)
+        return value
 
     def get_us10y_history(self, trade_date: date, lookback_days: int) -> list[float] | None:
         days = max(lookback_days * 2 + 5, lookback_days + 5)
         bars = self._fetch("us10y", trade_date, days)
         if not bars:
+            self._last_source_by_signal.pop("yield_10y", None)
             return None
         history = _close_history(bars, trade_date, lookback_days)
-        return history if len(history) >= 2 else None
+        if len(history) >= 2:
+            self._last_source_by_signal["yield_10y"] = self.source_name
+            return history
+        self._last_source_by_signal.pop("yield_10y", None)
+        return None
+
+    def get_macro_source_summary(self) -> dict[str, Any]:
+        source_by_signal = dict(self._last_source_by_signal)
+        source_effective = _effective_source_from_mapping(source_by_signal)
+        if not source_by_signal or source_effective is None:
+            return {}
+        return {
+            "source_effective": source_effective,
+            "source_by_signal": source_by_signal,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -234,15 +361,22 @@ class CompositeMacroProvider:
 
     def __init__(self, providers: Sequence[Any]) -> None:
         self._providers = list(providers)
+        self._last_source_by_signal: dict[str, str] = {}
 
     def _first_non_none(self, method: str, *args: Any) -> Any:
+        signal_key = _signal_key_for_method(method)
         for p in self._providers:
             try:
                 v = getattr(p, method)(*args)
             except Exception:
                 v = None
             if v is not None:
+                if signal_key is not None:
+                    provider_source = str(getattr(p, "source_name", type(p).__name__)).strip().lower()
+                    self._last_source_by_signal[signal_key] = provider_source
                 return v
+        if signal_key is not None:
+            self._last_source_by_signal.pop(signal_key, None)
         return None
 
     def get_vix_close(self, trade_date: date) -> float | None:
@@ -253,6 +387,16 @@ class CompositeMacroProvider:
 
     def get_us10y_history(self, trade_date: date, lookback_days: int) -> list[float] | None:
         return self._first_non_none("get_us10y_history", trade_date, lookback_days)
+
+    def get_macro_source_summary(self) -> dict[str, Any]:
+        source_by_signal = dict(self._last_source_by_signal)
+        source_effective = _effective_source_from_mapping(source_by_signal)
+        if not source_by_signal or source_effective is None:
+            return {}
+        return {
+            "source_effective": source_effective,
+            "source_by_signal": source_by_signal,
+        }
 
 
 def build_default_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | None:
