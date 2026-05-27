@@ -12,6 +12,7 @@ import pandas as pd
 from common.config_loader import load_config
 from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
+from database.macro_indicators import persist_market_macro_snapshot_daily
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from risk_management.audit import build_run_id, persist_decisions, persist_portfolio_targets
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
@@ -840,6 +841,11 @@ def main(args: list[str] | None = None) -> None:
     regime_snapshot = _resolve_market_regime_snapshot(trade_date, effective_equity, repo)
     regime_snapshot_payload = _serialize_market_regime_snapshot(regime_snapshot)
     if regime_snapshot is not None:
+        persist_market_macro_snapshot_daily(
+            trade_date=trade_date,
+            macro_payload=getattr(regime_snapshot, "macro", None),
+            engine=getattr(repo, "engine", None),
+        )
         from risk_management.regime_apply import apply_snapshot
 
         config = apply_snapshot(config, regime_snapshot)
@@ -1036,7 +1042,7 @@ def main(args: list[str] | None = None) -> None:
     n_dec = 0
     n_tgt = 0
     if config.dry_run:
-        LOGGER.info("Mode dry-run — aucune ecriture en DB.")
+        LOGGER.info("Mode dry-run — aucune ecriture métier en DB (hors caches/télémétrie best-effort).")
     else:
         n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=effective_account_id or resolved_account_scope)
         n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=effective_account_id or resolved_account_scope)

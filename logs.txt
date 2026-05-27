@@ -1,49 +1,5 @@
-1. on peut stocker macro regime de l'historique ?
-2. on peut intégrer maro dans ML ?
-3. faire fonctionner macro regime
-
-Stockage historique macro
-Oui, il y a déjà de quoi stocker l’historique macro dans les snapshots PIT.
-Dans backtesting/backfill_scores_history.py, on voit des colonnes historisées comme :
-macro_regime_score
-macro_regime_signal_norm
-macro_regime_component
-et load_scores(...) les recharge ensuite depuis stock_scores_history.
-Backtest macro
-Dans backtesting/cli/_impl.py, quand phase2_mode != off, le backtest charge :
-market_regimes depuis config.yaml
-un macro_provider
-puis passe ça à build_phase2_risk_result(...)
-Donc le macro regime est déjà branché côté phase 2 risk.
-Macro dans ML
-Par contre, côté modelFactory, je n’ai pas trouvé d’intégration explicite des features macro :
-pas de macro
-pas de market_regime
-pas de macro_regime_score
-Donc :
-macro est déjà dans les scores / backfill / phase2 risk
-macro n’est pas encore branché proprement dans les features ML
-
--------------------
-
-mission 1: adaptes le backtest pour supporter un mode asof_latest
-
-Mission 2, implémenter ces 3 adaptations:
-Adaptation 1 — Ajouter un pré-calcul ML historique dédié au backtest
-ajouter une commande soit dans modelFactory, page pipeline, 10. ML Predict, on a déjà un bouton 'Prédire l'univers sélectionné', on peut ajouter une date début et date fin, afin qu'il prédit tous les jours de cette période donnée, pour un univers de symbols sélectionnés. ça peut êtes un vrai backfill PIT de model_predictions basé sur stock_scores_history
-
-Adaptation 2 — Optimiser rebuild-missing
-grouper les manques par trade_date
-appeler predict_batch(symbols_du_jour, as_of_date=trade_date)
-
-Adaptation 3 — Ajouter un préflight de couverture ML dans l’IHM backtesting
-Comme il existe déjà un diagnostic PIT pour stock_scores_history dans ihm/services/queries.py::get_backtesting_pit_history_diagnostic(...), tu feras la même chose pour model_predictions :
-avant de lancer le backtest, afficher :
-nb de candidate x date attendus
-nb déjà couverts dans model_predictions
-taux de couverture
-symboles/jours manquants
-estimation “mode rapide” vs “rebuild-missing”
-par contre, ajouter un switch (par défaut off) permet d'afficher ces infos car le calcul de ces infos prends du temps ,je n'ai pas forcément vouloir chaque fois
-
-A la fin complèter les doc.
+daily: 26/05/2026
+news import: 26/05/2026
+news traitement: 20/05/2026, étape 3 en cours senteiement
+macro: 20/05/2026
+ML: 20/05/2026

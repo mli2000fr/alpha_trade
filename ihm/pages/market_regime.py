@@ -8,8 +8,8 @@ Affiche, en s'appuyant sur ``service.market`` :
 * l'historique des snapshots persistés dans ``artifacts/market_regime/``
   par ``run_execution.py``.
 
-Aucune action métier n'est déclenchée : la page est strictement en lecture.
-Elle remplit l'objectif C17 du plan ``prompt/parttern/plan.md`` côté IHM.
+La page expose aussi une action opérateur pour réalimenter manuellement
+``stock_macro_indicators_daily`` sur une plage de dates.
 """
 from __future__ import annotations
 
@@ -102,6 +102,22 @@ def _compute_live_snapshot(trade_date: _date, equity: float | None) -> dict[str,
     if hasattr(snap, "to_summary_dict"):
         return snap.to_summary_dict()
     return {"error": f"Snapshot non sérialisable : {type(snap).__name__}"}
+
+
+def _populate_macro_table(start_date: _date, end_date: _date) -> dict[str, Any]:
+    yaml_cfg = _load_yaml()
+    try:
+        from service.market import populate_macro_indicators_table
+    except Exception as exc:  # pragma: no cover - import-time
+        return {"error": f"Import service.market impossible : {exc}"}
+    try:
+        return populate_macro_indicators_table(
+            start_date=start_date,
+            end_date=end_date,
+            yaml_cfg=yaml_cfg,
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 def _compute_demo_snapshot(scenario: str, trade_date: _date, equity: float | None) -> dict[str, Any]:
@@ -207,11 +223,14 @@ def _render_summary(snap: dict[str, Any]) -> None:
     col6.metric("VIX inversion", "oui" if macro.get("vix_curve_inverted") else "non")
     col7.metric(
         "Δ 10Y (5j, %)",
-        f"{macro.get('yield_10y_5d_pct') * 100:.2f}%" if isinstance(macro.get("yield_10y_5d_pct"), (int, float)) else "n/a",
+        f"{float(macro.get('yield_10y_5d_pct')) * 100:.2f}%" if isinstance(macro.get("yield_10y_5d_pct"), (int, float)) else "n/a",
     )
 
     col8, col9, col10 = st.columns(3)
-    col8.metric("Sentiment score", f"{float(sentiment.get('score')):.3f}" if isinstance(sentiment.get("score"), (int, float)) else "n/a")
+    col8.metric(
+        "Sentiment score",
+        f"{float(sentiment.get('score')):.3f}" if isinstance(sentiment.get("score"), (int, float)) else "n/a",
+    )
     col9.metric("Sentiment level", str(sentiment.get("level") or "n/a"))
     col10.metric("Source sentiment", str(sentiment.get("source") or "n/a"))
 
@@ -300,6 +319,45 @@ def render() -> None:
     with st.expander("🔧 Configuration active (config.yaml > market_regimes)", expanded=False):
         st.json(mr_cfg)
 
+    st.markdown("---")
+    st.subheader("🗃️ Alimenter `stock_macro_indicators_daily`")
+    st.caption(
+        "Recharge manuellement la table macro sur une plage de séances NYSE en appelant les providers configurés (EODHD / FRED / Stooq selon `config.yaml`). Les lignes existantes sont écrasées par upsert."
+    )
+    import_col1, import_col2, import_col3 = st.columns([1, 1, 1])
+    import_start = import_col1.date_input(
+        "Date de début import macro",
+        value=_date.today(),
+        key="market_regime_macro_import_start",
+        help="Première séance à recalculer dans `stock_macro_indicators_daily`.",
+    )
+    import_end = import_col2.date_input(
+        "Date de fin import macro",
+        value=_date.today(),
+        key="market_regime_macro_import_end",
+        help="Dernière séance à recalculer dans `stock_macro_indicators_daily`.",
+    )
+    if import_col3.button("📥 Alimenter la table macro", use_container_width=True, key="market_regime_macro_import_button"):
+        if import_end < import_start:
+            st.error("La date de fin doit être postérieure ou égale à la date de début.")
+        else:
+            with st.spinner("Alimentation de `stock_macro_indicators_daily`…"):
+                st.session_state["market_regime_macro_import_summary"] = _populate_macro_table(import_start, import_end)
+
+    import_summary = st.session_state.get("market_regime_macro_import_summary")
+    if isinstance(import_summary, dict):
+        if import_summary.get("error"):
+            st.error(str(import_summary.get("error")))
+        else:
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            metric_col1.metric("Séances traitées", int(import_summary.get("sessions_total") or 0))
+            metric_col2.metric("Lignes persistées", int(import_summary.get("persisted_rows") or 0))
+            metric_col3.metric("Séances sans donnée", int(import_summary.get("missing_rows") or 0))
+            rows = import_summary.get("rows")
+            if isinstance(rows, list) and rows:
+                with st.expander("Voir le détail du dernier import macro", expanded=False):
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
     # --- Snapshot à la volée -------------------------------------------------
     st.markdown("---")
     st.subheader("Calcul d'un snapshot à la volée")
@@ -319,7 +377,7 @@ def render() -> None:
         scenario_key = st.selectbox(
             "Scénario de démonstration",
             options=list(DEMO_SCENARIOS.keys()),
-            format_func=lambda key: DEMO_SCENARIOS.get(key, key),
+            format_func=lambda key: DEMO_SCENARIOS.get(str(key), str(key)),
             key="market_regime_demo_scenario",
             help="Scénario de démonstration prédéfini pour simuler un régime de marché sans connexion aux providers externes.",
         )

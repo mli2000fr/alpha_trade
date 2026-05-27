@@ -678,7 +678,14 @@ class EmpiricalRiskCalibrator:
             market_regimes_cfg = parse_market_regimes(yaml_cfg.get("market_regimes"))
             if not getattr(market_regimes_cfg, "enabled", False):
                 return {}
-            macro_provider = build_default_macro_provider(yaml_cfg)
+            try:
+                macro_provider = build_default_macro_provider(
+                    yaml_cfg,
+                    execution_context="backtest",
+                    engine=self.engine,
+                )
+            except TypeError:
+                macro_provider = build_default_macro_provider(yaml_cfg)
         except Exception:
             LOGGER.info("Segmentation par régime indisponible : fallback `all`.", exc_info=True)
             return {}

@@ -5,13 +5,18 @@ import logging
 from datetime import date
 
 import pytest
+from sqlalchemy import create_engine
 
 from service.market.macro_providers import (
     CompositeMacroProvider,
     EodhdMacroProvider,
     FredMacroProvider,
+    MACRO_PIT_MODE_J_MINUS_1_STRICT,
     StooqMacroProvider,
+    TableFirstMacroProvider,
     build_default_macro_provider,
+    populate_macro_indicators_table,
+    resolve_macro_pit_mode,
 )
 
 
@@ -316,10 +321,28 @@ def test_factory_default_is_composite_with_stooq(monkeypatch):
     monkeypatch.delenv("EODHD_API_TOKEN", raising=False)
     monkeypatch.delenv("EODHD_TOKEN", raising=False)
     p = build_default_macro_provider({})
-    assert isinstance(p, CompositeMacroProvider)
+    assert isinstance(p, TableFirstMacroProvider)
+    assert isinstance(p._provider, CompositeMacroProvider)
     # Sans clé EODHD, un seul provider (Stooq)
-    assert len(p._providers) == 1
-    assert isinstance(p._providers[0], StooqMacroProvider)
+    assert len(p._provider._providers) == 1
+    assert isinstance(p._provider._providers[0], StooqMacroProvider)
+
+
+def test_factory_can_enable_strict_j_minus_1_for_backtests(monkeypatch):
+    monkeypatch.delenv("EODHD_API_TOKEN", raising=False)
+    monkeypatch.delenv("EODHD_TOKEN", raising=False)
+
+    p = build_default_macro_provider(
+        {"market_regimes": {"macro_pit_mode_backtest": "j_minus_1_strict"}},
+        execution_context="backtest",
+    )
+
+    assert isinstance(p, TableFirstMacroProvider)
+    assert p._strict_before is True
+    assert resolve_macro_pit_mode(
+        {"market_regimes": {"macro_pit_mode_backtest": "j_minus_1_strict"}},
+        execution_context="backtest",
+    ) == MACRO_PIT_MODE_J_MINUS_1_STRICT
 
 
 def test_main_config_uses_eodhd_macro_provider() -> None:
@@ -341,9 +364,10 @@ def test_factory_explicit_eodhd_overrides_symbol():
             "yields": {"symbol_10y": "US10Y"},
         }
     })
-    assert isinstance(p, EodhdMacroProvider)
-    assert p._symbols["vix"] == "VIX.INDX"
-    assert p._symbols["us10y"] == "US10Y.INDX"
+    assert isinstance(p, TableFirstMacroProvider)
+    assert isinstance(p._provider, EodhdMacroProvider)
+    assert p._provider._symbols["vix"] == "VIX.INDX"
+    assert p._provider._symbols["us10y"] == "US10Y.INDX"
 
 
 def test_eodhd_default_short_vix_symbol_is_vix9d():
@@ -353,6 +377,8 @@ def test_eodhd_default_short_vix_symbol_is_vix9d():
 
 def test_factory_routes_10y_to_fred_when_requested(monkeypatch):
     monkeypatch.setenv("KEY_FRED", "fred-test-token")
+    monkeypatch.setattr("service.market.macro_providers.load_macro_indicator_daily_asof", lambda **kwargs: None)
+    monkeypatch.setattr("service.market.macro_providers.load_macro_indicator_history_asof", lambda **kwargs: None)
 
     def fake_eodhd_fetch(symbol, *, start=None, end=None, **kwargs):
         if symbol == "VIX.INDX":
@@ -394,6 +420,189 @@ def test_factory_routes_10y_to_fred_when_requested(monkeypatch):
         "source_effective": "mixed",
         "source_by_signal": {"vix": "eodhd", "vix_short": "eodhd", "yield_10y": "fred"},
     }
+
+
+def test_table_first_provider_uses_database_before_network(monkeypatch):
+    from database.macro_indicators import get_macro_indicators_daily_table, persist_macro_indicator_daily
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        table = get_macro_indicators_daily_table()
+        table.metadata.create_all(engine)
+        persist_macro_indicator_daily(
+            trade_date=date(2025, 4, 14),
+            ten_y=4.40,
+            engine=engine,
+        )
+        persist_macro_indicator_daily(
+            trade_date=date(2025, 4, 15),
+            vix=22.4,
+            vix9d=14.15,
+            ten_y=4.50,
+            engine=engine,
+        )
+
+        calls = {"vix": 0, "vix_short": 0, "yield": 0}
+
+        class _FallbackProvider:
+            source_name = "eodhd"
+
+            def get_vix_close(self, trade_date):
+                calls["vix"] += 1
+                return 99.0
+
+            def get_vix_short_term_close(self, trade_date):
+                calls["vix_short"] += 1
+                return 88.0
+
+            def get_us10y_history(self, trade_date, lookback_days):
+                calls["yield"] += 1
+                return [1.0, 2.0]
+
+        provider = TableFirstMacroProvider(_FallbackProvider(), engine=engine)
+
+        assert provider.get_vix_close(date(2025, 4, 15)) == pytest.approx(22.4)
+        assert provider.get_vix_short_term_close(date(2025, 4, 15)) == pytest.approx(14.15)
+        assert provider.get_us10y_history(date(2025, 4, 15), lookback_days=2) == pytest.approx([4.40, 4.50])
+        assert provider.get_macro_source_summary() == {
+            "source_effective": "db_cache",
+            "source_by_signal": {"vix": "db_cache", "vix_short": "db_cache", "yield_10y": "db_cache"},
+        }
+        assert calls == {"vix": 0, "vix_short": 0, "yield": 0}
+    finally:
+        engine.dispose()
+
+
+def test_table_first_provider_persists_fallback_value() -> None:
+    from database.macro_indicators import (
+        get_macro_indicators_daily_table,
+        load_macro_indicator_daily_asof,
+    )
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        table = get_macro_indicators_daily_table()
+        table.metadata.create_all(engine)
+
+        class _FallbackProvider:
+            source_name = "fred"
+
+            def get_vix_close(self, trade_date):
+                return None
+
+            def get_vix_short_term_close(self, trade_date):
+                return None
+
+            def get_us10y_history(self, trade_date, lookback_days):
+                return [4.20, 4.25, 4.40, 4.50]
+
+        provider = TableFirstMacroProvider(_FallbackProvider(), engine=engine)
+
+        assert provider.get_us10y_history(date(2025, 4, 15), lookback_days=4) == pytest.approx([4.20, 4.25, 4.40, 4.50])
+        assert load_macro_indicator_daily_asof(trade_date=date(2025, 4, 15), engine=engine) == {
+            "trade_date": date(2025, 4, 15),
+            "vix": None,
+            "vix9d": None,
+            "ten_y": 4.5,
+        }
+        assert provider.get_macro_source_summary() == {
+            "source_effective": "fred",
+            "source_by_signal": {"yield_10y": "fred"},
+        }
+    finally:
+        engine.dispose()
+
+
+def test_table_first_provider_uses_previous_session_in_strict_j_minus_1(monkeypatch) -> None:
+    from database.macro_indicators import get_macro_indicators_daily_table, load_macro_indicator_daily_asof
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        table = get_macro_indicators_daily_table()
+        table.metadata.create_all(engine)
+        requested_dates: list[date] = []
+
+        class _FallbackProvider:
+            source_name = "eodhd"
+
+            def get_vix_close(self, trade_date):
+                requested_dates.append(trade_date)
+                return 18.25
+
+            def get_vix_short_term_close(self, trade_date):
+                return None
+
+            def get_us10y_history(self, trade_date, lookback_days):
+                return None
+
+        monkeypatch.setattr("service.market.macro_providers.getLastDateMarche", lambda ref_date: date(2025, 4, 14))
+        provider = TableFirstMacroProvider(_FallbackProvider(), engine=engine, strict_before=True)
+
+        assert provider.get_vix_close(date(2025, 4, 15)) == pytest.approx(18.25)
+        assert requested_dates == [date(2025, 4, 14)]
+        assert load_macro_indicator_daily_asof(
+            trade_date=date(2025, 4, 15),
+            engine=engine,
+            strict_before=True,
+        ) == {
+            "trade_date": date(2025, 4, 14),
+            "vix": 18.25,
+            "vix9d": None,
+            "ten_y": None,
+        }
+    finally:
+        engine.dispose()
+
+
+def test_populate_macro_indicators_table_imports_date_range(monkeypatch) -> None:
+    from database.macro_indicators import get_macro_indicators_daily_table, load_macro_indicator_daily_asof
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        table = get_macro_indicators_daily_table()
+        table.metadata.create_all(engine)
+
+        def fake_eodhd_fetch(symbol, *, start=None, end=None, **kwargs):
+            if symbol == "VIX.INDX":
+                return [{"date": "2025-04-15", "close": 22.4}]
+            if symbol == "VIX9D.INDX":
+                return [{"date": "2025-04-15", "close": 14.15}]
+            return []
+
+        def fake_fred_fetch(series_id, *, start=None, end=None, api_key_env="KEY_FRED", **kwargs):
+            return [
+                {"date": "2025-04-14", "value": "4.40"},
+                {"date": "2025-04-15", "value": "4.50"},
+            ]
+
+        monkeypatch.setattr("service.market.macro_providers.nyse_session_dates", lambda start, end: [date(2025, 4, 15)])
+        monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_eodhd_fetch)
+        monkeypatch.setattr("service.fred.clientFred.fetch_series_observations", fake_fred_fetch)
+
+        summary = populate_macro_indicators_table(
+            start_date=date(2025, 4, 15),
+            end_date=date(2025, 4, 15),
+            yaml_cfg={
+                "market_regimes": {
+                    "macro_provider": "eodhd",
+                    "vix": {"symbol": "VIX.INDX", "short_symbol": "VIX9D.INDX"},
+                    "yields": {"provider": "fred", "fred_series_10y": "DGS10", "lookback_days": 5},
+                },
+                "fred": {"api_key_env": "KEY_FRED", "series_10y": "DGS10"},
+            },
+            engine=engine,
+        )
+
+        assert summary["sessions_total"] == 1
+        assert summary["persisted_rows"] == 1
+        assert load_macro_indicator_daily_asof(trade_date=date(2025, 4, 15), engine=engine) == {
+            "trade_date": date(2025, 4, 15),
+            "vix": 22.4,
+            "vix9d": 14.15,
+            "ten_y": 4.5,
+        }
+    finally:
+        engine.dispose()
 
 
 # ---------------------------------------------------------------------------

@@ -56,6 +56,7 @@ market_regimes:
   cache_ttl_seconds: 300
   enforce_min_notional: 155                  # cf. plan §C16, compatible Alpaca
   allow_neutral_fallback_on_missing_macro_data: true
+  macro_pit_mode_backtest: asof_inclusive    # asof_inclusive | j_minus_1_strict
   # Source des donnees macro (VIX, 10Y) : `stooq` (gratuit, sans cle),
   # `eodhd` (consomme du quota EODHD), `composite` (Stooq dabord, EODHD
   # en secours si EODHD_API_TOKEN est defini), ou `none` pour desactiver.

@@ -2071,6 +2071,7 @@ class TestCLI:
         assert args.walk_forward_artifacts_dir is None
         assert args.engine_mode == "research"
         assert args.scores_pit_mode == "exact"
+        assert args.macro_pit_mode == "yaml_default"
         assert args.ml_pit_strategy == "auto"
         assert args.phase2_mode == "off"
         assert args.phase3_mode == "off"
@@ -2096,6 +2097,15 @@ class TestCLI:
 
         assert args.command == "run"
         assert args.scores_pit_mode == "asof_latest"
+
+    def test_parse_run_macro_pit_mode_j_minus_1_strict(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["run", "--start", "2020-01-01", "--macro-pit-mode", "j_minus_1_strict"])
+
+        assert args.command == "run"
+        assert args.macro_pit_mode == "j_minus_1_strict"
 
     def test_parse_run_ml_pit_strategy(self):
         from backtesting.cli import _build_parser

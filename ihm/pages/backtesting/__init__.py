@@ -394,6 +394,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "sentiment_mode", "Explication": "auto/off/rebuild-missing pour la composante sentiment.", "Défaut": "auto"},
             {"Paramètre": "engine_mode", "Explication": "research = tolérant/rapide, pipeline = strict PIT + diagnostics renforcés.", "Défaut": "research"},
             {"Paramètre": "scores_pit_mode", "Explication": "Résolution PIT des scores : `exact` = snapshots du jour uniquement, `asof_latest` = dernier snapshot `<= trade_date`.", "Défaut": "exact"},
+            {"Paramètre": "macro_pit_mode", "Explication": "Politique PIT macro en backtest : `yaml_default` = suit `market_regimes.macro_pit_mode_backtest`, `asof_inclusive` = `<= trade_date`, `j_minus_1_strict` = strictement J-1.", "Défaut": "yaml_default"},
             {"Paramètre": "ml_pit_strategy", "Explication": "Stratégie PIT ML explicite : auto / use-persisted / rebuild-missing / walk-forward-train-then-predict.", "Défaut": "auto"},
             {"Paramètre": "phase2_mode", "Explication": "off = backtest standard, risk = bridge risk_management, risk_execution = risk + intents/fills d'exécution simulés.", "Défaut": "off"},
             {"Paramètre": "phase3_mode", "Explication": "off = comportement Phase 2, execution_replay = réinjecte chronologiquement les quantités exécutées simulées dans le moteur de backtest.", "Défaut": "off"},
@@ -1330,6 +1331,27 @@ def _build_run_options() -> BacktestRunOptions:
             ),
         )
 
+    macro_mode_col1, macro_mode_col2 = st.columns([1.5, 2.5])
+    with macro_mode_col1:
+        macro_pit_mode = cast(
+            str,
+            st.selectbox(
+                "Mode PIT macro",
+                options=["yaml_default", "asof_inclusive", "j_minus_1_strict"],
+                index=["yaml_default", "asof_inclusive", "j_minus_1_strict"].index(
+                    cast(str, st.session_state.get("bt_run_macro_pit_mode", "yaml_default"))
+                    if st.session_state.get("bt_run_macro_pit_mode", "yaml_default") in {"yaml_default", "asof_inclusive", "j_minus_1_strict"}
+                    else "yaml_default"
+                ),
+                key="bt_run_macro_pit_mode",
+                help="`yaml_default` suit `market_regimes.macro_pit_mode_backtest`, `asof_inclusive` autorise la dernière valeur <= J, `j_minus_1_strict` force strictement J-1 pour VIX/VIX9D/10Y.",
+            ),
+        )
+    with macro_mode_col2:
+        st.caption(
+            "Ce réglage agit uniquement sur les données macro du bridge régime en backtest ; il ne change pas la politique PIT des scores ni celle de la ML."
+        )
+
     info_col1, info_col2 = st.columns(2)
     with info_col1:
         st.caption(
@@ -1463,6 +1485,7 @@ def _build_run_options() -> BacktestRunOptions:
         sentiment_mode=cast(Any, sentiment_mode),
         engine_mode=cast(Any, engine_mode),
         scores_pit_mode=cast(Any, scores_pit_mode),
+        macro_pit_mode=cast(Any, macro_pit_mode),
         ml_pit_strategy=cast(Any, ml_pit_strategy),
         phase2_mode=cast(Any, phase2_mode),
         phase3_mode=cast(Any, phase3_mode),

@@ -225,6 +225,35 @@ def test_compute_live_snapshot_serializes_slots_dataclass(monkeypatch):
     assert captured["kwargs"]["sentiment_score_provider"] == {"trade_date": date(2025, 4, 15)}
 
 
+def test_populate_macro_table_forwards_range_to_service(monkeypatch):
+    import ihm.pages.market_regime as mod
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(mod, "_load_yaml", lambda: {"market_regimes": {"macro_provider": "eodhd"}})
+
+    import service.market as market
+
+    def _fake_populate_macro_indicators_table(**kwargs):
+        captured["kwargs"] = kwargs
+        return {"sessions_total": 1, "persisted_rows": 1, "missing_rows": 0, "rows": []}
+
+    monkeypatch.setattr(
+        market,
+        "populate_macro_indicators_table",
+        _fake_populate_macro_indicators_table,
+    )
+
+    result = mod._populate_macro_table(date(2025, 4, 1), date(2025, 4, 30))
+
+    assert result["persisted_rows"] == 1
+    assert captured["kwargs"] == {
+        "start_date": date(2025, 4, 1),
+        "end_date": date(2025, 4, 30),
+        "yaml_cfg": {"market_regimes": {"macro_provider": "eodhd"}},
+    }
+
+
 @pytest.mark.parametrize(
     ("scenario", "expected_mode", "expected_allow_new_entries"),
     [

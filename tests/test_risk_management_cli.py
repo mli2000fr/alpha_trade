@@ -506,6 +506,70 @@ def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> Non
     assert captured["summary"]["risk_controls_effective"]["risk_multiplier"] == pytest.approx(0.5)
 
 
+def test_cli_main_persists_market_macro_snapshot(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {}
+
+        def load_candidates_asof(self, trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None):
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(
+        cli,
+        "persist_market_macro_snapshot_daily",
+        lambda **kwargs: captured.setdefault("persist_macro_call", kwargs) or 1,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_resolve_market_regime_snapshot",
+        lambda trade_date, effective_equity, repo: MarketRegimeSnapshot(
+            trade_date=trade_date,
+            mode="normal",
+            macro={"vix": 22.4, "vix_short": 14.15, "yield_10y": 4.50},
+        ),
+    )
+
+    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+
+    assert captured["persist_macro_call"] == {
+        "trade_date": date(2026, 5, 1),
+        "macro_payload": {"vix": 22.4, "vix_short": 14.15, "yield_10y": 4.50},
+        "engine": None,
+    }
+
+
 def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> None:
     captured: dict[str, object] = {"build_called": False}
 

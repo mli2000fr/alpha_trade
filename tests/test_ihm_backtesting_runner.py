@@ -44,6 +44,8 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert command[ml_pit_strategy_index + 1] == "auto"
 	scores_pit_mode_index = command.index("--scores-pit-mode")
 	assert command[scores_pit_mode_index + 1] == "exact"
+	macro_pit_mode_index = command.index("--macro-pit-mode")
+	assert command[macro_pit_mode_index + 1] == "yaml_default"
 	phase2_mode_index = command.index("--phase2-mode")
 	assert command[phase2_mode_index + 1] == "off"
 	phase3_mode_index = command.index("--phase3-mode")
@@ -110,6 +112,21 @@ def test_build_backtesting_run_command_includes_phase1_pipeline_flags():
 	assert command[command.index("--scores-pit-mode") + 1] == "asof_latest"
 	assert "--ml-pit-strategy" in command
 	assert command[command.index("--ml-pit-strategy") + 1] == "use-persisted"
+
+
+def test_build_backtesting_run_command_includes_macro_pit_mode_override():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			macro_pit_mode="j_minus_1_strict",
+		),
+	)
+
+	assert "--macro-pit-mode" in command
+	assert command[command.index("--macro-pit-mode") + 1] == "j_minus_1_strict"
 
 
 def test_build_backtesting_run_command_can_allow_missing_macro_fallback():

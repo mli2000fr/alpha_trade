@@ -43,6 +43,7 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "stock_scores",
         "stock_scores_history",
         "stock_quote_snapshots",
+        "stock_macro_indicators_daily",
         "stock_earnings_calendar",
         "cleaning_audit_latest",
         "cleaning_audit_runs",

@@ -140,6 +140,7 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
             "watcher_heartbeats",
             "account_risk_snapshots",
             "stock_quote_snapshots",
+            "stock_macro_indicators_daily",
             "corporate_actions_audit_runs",
         ),
         row_estimates={
@@ -152,6 +153,7 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
             "watcher_heartbeats": 1,
             "account_risk_snapshots": 2,
             "stock_quote_snapshots": 5,
+            "stock_macro_indicators_daily": 42,
             "corporate_actions_audit_runs": 1,
         },
         foreign_key_pairs=(),
@@ -171,12 +173,33 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
     assert any(entry.table_name == "account_risk_snapshots" for entry in grouped["Risk / Portefeuille"])
     assert any(entry.table_name == "execution_broker_orders" for entry in grouped["Exécution broker"])
     assert any(entry.table_name == "stock_quote_snapshots" for entry in grouped["Marché / Référentiel titres"])
+    macro_entry = next(entry for entry in grouped["Marché / Référentiel titres"] if entry.table_name == "stock_macro_indicators_daily")
+    assert macro_entry.protected is False
+    assert macro_entry.exists_in_database is True
+    assert macro_entry.row_estimate == 42
     assert any(entry.table_name == "corporate_actions_audit_runs" for entry in grouped["Corporate Actions"])
     assert any(entry.table_name == "watcher_heartbeats" for entry in grouped["Observabilité / Runs"])
     assert any(entry.table_name == "execution_order_requests" for entry in grouped["Exécution broker"])
     assert not any(entry.table_name == "execution_orders" for entry in grouped["Exécution broker"])
     assert not any(entry.table_name == "execution_fills" for entry in grouped["Exécution broker"])
     assert any(entry.table_name == "custom_table" for entry in grouped["Autres / non classées"])
+
+
+def test_build_table_purge_plan_allows_stock_macro_indicators_daily_like_other_non_protected_tables() -> None:
+    snapshot = DatabaseTableSnapshot(
+        existing_tables=("stock_macro_indicators_daily",),
+        row_estimates={"stock_macro_indicators_daily": 42},
+        foreign_key_pairs=(),
+    )
+
+    plan = build_table_purge_plan(["stock_macro_indicators_daily"], snapshot)
+
+    assert plan.protected_tables == ()
+    assert plan.missing_tables == ()
+    assert plan.blocked_by_dependencies == {}
+    assert len(plan.operations) == 1
+    assert plan.operations[0].table_name == "stock_macro_indicators_daily"
+    assert plan.operations[0].statement == "DELETE FROM `stock_macro_indicators_daily`;"
 
 
 def test_apply_pending_widget_resets_clears_table_selection_and_confirmation(monkeypatch) -> None:

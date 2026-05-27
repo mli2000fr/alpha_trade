@@ -390,6 +390,7 @@ def _build_backtest_common_params(
         "phase4_mode": phase4_mode,
         "phase5_mode": phase5_mode,
         "phase7_mode": phase7_mode,
+        "macro_pit_mode": getattr(args, "effective_macro_pit_mode", getattr(args, "macro_pit_mode", "yaml_default")),
         "fidelity_baseline_id": getattr(args, "fidelity_baseline_id", None),
         "fidelity_baseline_catalog": getattr(args, "fidelity_baseline_catalog", None),
         "ml_pit_strategy": ml_pit_strategy,
@@ -403,7 +404,7 @@ def _build_backtest_common_params(
         "pdt_rule": trading_constraints.pdt_rule,
         "effective_pdt_rule": trading_constraints.effective_pdt_rule,
         "swing_only": trading_constraints.swing_only,
-        "cash_settlement_days": trading_constraints.cash_settlement_days,
+        "cash_settlement_days": getattr(trading_constraints, "cash_settlement_days", None),
         "sentiment_lookback": args.sentiment_lookback,
         "ml_mode": args.ml_mode,
         "sentiment_mode": args.sentiment_mode,
@@ -783,6 +784,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["exact", "asof_latest"],
         default="exact",
         help="Résolution PIT des scores: `exact` exige les snapshots du jour, `asof_latest` réutilise le dernier snapshot <= trade_date.",
+    )
+    run_p.add_argument(
+        "--macro-pit-mode",
+        choices=["yaml_default", "asof_inclusive", "j_minus_1_strict"],
+        default="yaml_default",
+        help="Politique PIT explicite pour la macro en backtest. `yaml_default` lit `market_regimes.macro_pit_mode_backtest`, `asof_inclusive` autorise <= J, `j_minus_1_strict` force strictement J-1.",
     )
     run_p.add_argument(
         "--ml-pit-strategy",
@@ -1182,6 +1189,36 @@ def _explicit_flags(argv: list[str]) -> set[str]:
     return explicit
 
 
+def _infer_programmatic_explicit_flags(args: argparse.Namespace, *, argv: list[str]) -> set[str]:
+    """Préserve les overrides injectés hors CLI réelle.
+
+    Certains tests appellent directement ``_run_backtest(args)`` avec un
+    ``Namespace`` déjà rempli. Si ``sys.argv`` ne contient pas la sous-commande
+    ``run``, on considère ces valeurs comme explicites pour éviter qu'un preset
+    capital ne les écrase silencieusement.
+    """
+    if "run" in {str(token).strip().lower() for token in argv}:
+        return set()
+    inferable_fields = {
+        "tp",
+        "ts",
+        "max_positions",
+        "commission_bps",
+        "slippage_bps",
+        "account_type",
+        "pdt_rule",
+        "swing_only",
+        "cash_settlement_days",
+        "fees",
+        "capital_preset_key",
+    }
+    return {
+        field_name
+        for field_name in inferable_fields
+        if hasattr(args, field_name) and getattr(args, field_name) is not None
+    }
+
+
 def _run_statistical_validation(
     args: argparse.Namespace,
     pf: object,
@@ -1368,6 +1405,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # Phase 6.1.e — appliquer le profil avant tout (sans écraser les flags explicites).
     explicit_flags = _explicit_flags(sys.argv[1:])
+    explicit_flags |= _infer_programmatic_explicit_flags(args, argv=sys.argv[1:])
     apply_profile(args, getattr(args, "profile", None), explicit_flags=explicit_flags)
 
     effective_preset, preset_source = resolve_effective_capital_preset(
@@ -1403,6 +1441,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
     engine_mode = str(getattr(args, "engine_mode", "research") or "research").strip().lower()
     scores_pit_mode = str(getattr(args, "scores_pit_mode", "exact") or "exact").strip().lower()
+    macro_pit_mode = str(getattr(args, "macro_pit_mode", "yaml_default") or "yaml_default").strip().lower()
     ml_pit_strategy = str(getattr(args, "ml_pit_strategy", "auto") or "auto").strip().lower()
     phase2_mode = str(getattr(args, "phase2_mode", "off") or "off").strip().lower()
     phase3_mode = str(getattr(args, "phase3_mode", "off") or "off").strip().lower()
@@ -1458,6 +1497,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
     _safe_print(f"   engine_mode={engine_mode} strict_pit={strict_pit}\n")
     _safe_print(f"   scores_pit_mode={scores_pit_mode}\n")
+    _safe_print(f"   macro_pit_mode={macro_pit_mode}\n")
     _safe_print(f"   phase2_mode={phase2_mode}\n")
     _safe_print(f"   phase3_mode={phase3_mode}\n")
     _safe_print(f"   phase4_mode={phase4_mode}\n")
@@ -1670,9 +1710,15 @@ def _run_backtest(args: argparse.Namespace) -> None:
             from service.market import (
                 build_default_macro_provider as _build_macro_bt,
                 parse_market_regimes as _parse_mr_bt,
+                resolve_macro_pit_mode as _resolve_macro_pit_mode_bt,
             )
             _yaml_bt = _load_yaml_bt()
             _mr_cfg_for_bt = _parse_mr_bt(_yaml_bt.get("market_regimes"))
+            args.effective_macro_pit_mode = _resolve_macro_pit_mode_bt(
+                _yaml_bt,
+                execution_context="backtest",
+                macro_pit_mode=macro_pit_mode,
+            )
             macro_missing_policy = str(getattr(args, "macro_missing_policy", "") or "").strip().lower()
             if macro_missing_policy in {"allow", "fail"}:
                 _mr_cfg_for_bt = replace(
@@ -1685,10 +1731,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 else "fail"
             )
             if getattr(_mr_cfg_for_bt, "enabled", False):
-                _macro_provider_for_bt = _build_macro_bt(_yaml_bt)
+                try:
+                    _macro_provider_for_bt = _build_macro_bt(
+                        _yaml_bt,
+                        execution_context="backtest",
+                        macro_pit_mode=macro_pit_mode,
+                        engine=engine,
+                    )
+                except TypeError:
+                    _macro_provider_for_bt = _build_macro_bt(_yaml_bt)
         except Exception:
             _mr_cfg_for_bt = None
             _macro_provider_for_bt = None
+            args.effective_macro_pit_mode = macro_pit_mode
             args.macro_missing_policy = str(getattr(args, "macro_missing_policy", None) or "disabled")
 
         try:
@@ -2198,9 +2253,13 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
         capital_preset_key=effective_preset.key,
         config_fingerprint=preset_fingerprint,
     )
-    resolved_preflight_end = service.resolve_end_date(start, explicit_end_date=end)
+    resolve_end_date = getattr(service, "resolve_end_date", None)
+    if callable(resolve_end_date):
+        resolved_preflight_end = resolve_end_date(start, explicit_end_date=end)
+    else:
+        resolved_preflight_end = end or start
     try:
-        preflight = _run_bars_source_preflight_or_skip(service.engine, start, resolved_preflight_end)
+        preflight = _run_bars_source_preflight_or_skip(getattr(service, "engine", None), start, resolved_preflight_end)
     except RuntimeError as exc:
         _safe_print(f"❌ {exc}")
         sys.exit(1)

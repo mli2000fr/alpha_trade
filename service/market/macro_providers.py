@@ -21,7 +21,14 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Callable, Mapping, Sequence, cast
+
+from common.market_calendar import getLastDateMarche, nyse_session_dates
+from database.macro_indicators import (
+    load_macro_indicator_daily_asof,
+    load_macro_indicator_history_asof,
+    persist_macro_indicator_daily,
+)
 
 LOGGER = logging.getLogger("service.market.macro_providers")
 
@@ -43,6 +50,59 @@ _DEFAULT_FRED_SERIES = {
 # Combien de jours en arrière chercher pour trouver la dernière clôture
 # disponible (week-ends + jours fériés US).
 _CLOSE_LOOKBACK_DAYS = 7
+MACRO_PIT_MODE_ASOF_INCLUSIVE = "asof_inclusive"
+MACRO_PIT_MODE_J_MINUS_1_STRICT = "j_minus_1_strict"
+
+
+def normalize_macro_pit_mode(value: object) -> str:
+    resolved = str(value or "").strip().lower()
+    aliases = {
+        "": MACRO_PIT_MODE_ASOF_INCLUSIVE,
+        "asof": MACRO_PIT_MODE_ASOF_INCLUSIVE,
+        "asof_inclusive": MACRO_PIT_MODE_ASOF_INCLUSIVE,
+        "inclusive": MACRO_PIT_MODE_ASOF_INCLUSIVE,
+        "j-1": MACRO_PIT_MODE_J_MINUS_1_STRICT,
+        "j_1": MACRO_PIT_MODE_J_MINUS_1_STRICT,
+        "j_minus_1": MACRO_PIT_MODE_J_MINUS_1_STRICT,
+        "j_minus_1_strict": MACRO_PIT_MODE_J_MINUS_1_STRICT,
+        "strict_before": MACRO_PIT_MODE_J_MINUS_1_STRICT,
+    }
+    return aliases.get(resolved, MACRO_PIT_MODE_ASOF_INCLUSIVE)
+
+
+def resolve_macro_pit_mode(
+    yaml_cfg: Mapping[str, Any] | None,
+    *,
+    execution_context: str = "live",
+    macro_pit_mode: str | None = None,
+) -> str:
+    requested = str(macro_pit_mode or "").strip().lower()
+    if requested and requested != "yaml_default":
+        return normalize_macro_pit_mode(requested)
+    root_cfg = yaml_cfg if isinstance(yaml_cfg, Mapping) else {}
+    market_cfg = root_cfg.get("market_regimes") if isinstance(root_cfg, Mapping) else {}
+    market_cfg = market_cfg if isinstance(market_cfg, Mapping) else {}
+    if str(execution_context or "live").strip().lower() == "backtest":
+        return normalize_macro_pit_mode(market_cfg.get("macro_pit_mode_backtest"))
+    return MACRO_PIT_MODE_ASOF_INCLUSIVE
+
+
+def _is_strict_before_mode(*, yaml_cfg: Mapping[str, Any] | None, execution_context: str, macro_pit_mode: str | None) -> bool:
+    return resolve_macro_pit_mode(
+        yaml_cfg,
+        execution_context=execution_context,
+        macro_pit_mode=macro_pit_mode,
+    ) == MACRO_PIT_MODE_J_MINUS_1_STRICT
+
+
+def _resolve_provider_trade_date(trade_date: date, *, strict_before: bool) -> date:
+    if not strict_before:
+        return trade_date
+    try:
+        return getLastDateMarche(trade_date)
+    except Exception:
+        LOGGER.debug("Résolution J-1 macro impossible pour %s ; fallback date courante.", trade_date, exc_info=True)
+        return trade_date
 
 
 def _coerce_float(value: object) -> float | None:
@@ -193,6 +253,24 @@ def _close_history(bars: Sequence[Mapping[str, Any]], on_or_before: date, n: int
     return [c for _, c in rows[-n:]]
 
 
+def _extract_latest_10y_close(provider: Any, trade_date: date) -> float | None:
+    if provider is None:
+        return None
+    getter = getattr(provider, "get_us10y_close", None)
+    if callable(getter):
+        try:
+            return _coerce_float(getter(trade_date))
+        except Exception:
+            return None
+    try:
+        history = provider.get_us10y_history(trade_date, 2)
+    except Exception:
+        history = None
+    if not history:
+        return None
+    return _coerce_float(history[-1])
+
+
 # ---------------------------------------------------------------------------
 # Stooq
 # ---------------------------------------------------------------------------
@@ -272,6 +350,15 @@ class StooqMacroProvider:
             return history
         self._last_source_by_signal.pop("yield_10y", None)
         return None
+
+    def get_us10y_close(self, trade_date: date) -> float | None:
+        bars = self._fetch("us10y", trade_date, _CLOSE_LOOKBACK_DAYS)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["yield_10y"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("yield_10y", None)
+        return value
 
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
@@ -377,6 +464,15 @@ class EodhdMacroProvider:
         self._last_source_by_signal.pop("yield_10y", None)
         return None
 
+    def get_us10y_close(self, trade_date: date) -> float | None:
+        bars = self._fetch("us10y", trade_date, _CLOSE_LOOKBACK_DAYS)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["yield_10y"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("yield_10y", None)
+        return value
+
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
 
@@ -478,6 +574,15 @@ class FredMacroProvider:
         self._last_source_by_signal.pop("yield_10y", None)
         return None
 
+    def get_us10y_close(self, trade_date: date) -> float | None:
+        bars = self._fetch("us10y", trade_date, max(_CLOSE_LOOKBACK_DAYS * 2, 14))
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["yield_10y"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("yield_10y", None)
+        return value
+
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
 
@@ -545,6 +650,167 @@ class RoutedMacroProvider:
         self._record_source("yield_10y", provider, value)
         return value
 
+    def get_us10y_close(self, trade_date: date) -> float | None:
+        provider = self._yield_provider
+        if provider is None:
+            self._last_source_by_signal.pop("yield_10y", None)
+            return None
+        value = _extract_latest_10y_close(provider, trade_date)
+        self._record_source("yield_10y", provider, value)
+        return value
+
+    def get_macro_source_summary(self) -> dict[str, Any]:
+        return _build_source_summary(self._last_source_by_signal)
+
+
+class TableFirstMacroProvider:
+    """Consulte d'abord ``stock_macro_indicators_daily``, puis fallback réseau.
+
+    La table sert de cache partagé inter-runs. En cas de fallback réussi vers le
+    provider sous-jacent, la valeur est réinsérée best-effort dans la table afin
+    d'éviter les appels EODHD/FRED/Stooq aux runs suivants.
+    """
+
+    source_name = "db_cache"
+
+    def __init__(
+        self,
+        provider: Any | None,
+        *,
+        engine=None,
+        strict_before: bool = False,
+        persist_fallback_hits: bool = True,
+    ) -> None:
+        self._provider = provider
+        self._engine = engine
+        self._strict_before: bool = True if strict_before else False
+        self._persist_fallback_hits: bool = True if persist_fallback_hits else False
+        self._last_source_by_signal: dict[str, str] = {}
+
+    def _load_cached_row(self, trade_date: date) -> dict[str, Any] | None:
+        try:
+            return load_macro_indicator_daily_asof(
+                trade_date=trade_date,
+                engine=self._engine,
+                strict_before=self._strict_before,
+            )
+        except Exception:
+            LOGGER.debug("TableFirstMacroProvider: lecture cache macro impossible.", exc_info=True)
+            return None
+
+    def _load_cached_history(self, trade_date: date, *, column: str, lookback_days: int) -> list[float] | None:
+        try:
+            return load_macro_indicator_history_asof(
+                trade_date=trade_date,
+                column=column,
+                lookback_days=lookback_days,
+                engine=self._engine,
+                strict_before=self._strict_before,
+            )
+        except Exception:
+            LOGGER.debug("TableFirstMacroProvider: lecture historique macro impossible.", exc_info=True)
+            return None
+
+    def _persist_fallback_value(self, *, trade_date: date, value_key: str, value: Any) -> None:
+        if not self._persist_fallback_hits or value is None:
+            return
+        kwargs = {"trade_date": trade_date, value_key: value, "engine": self._engine}
+        try:
+            persist_macro_indicator_daily(**kwargs)
+        except Exception:
+            LOGGER.debug("TableFirstMacroProvider: write-back macro cache impossible.", exc_info=True)
+
+    def _record_source(self, signal_key: str, source: str | None) -> None:
+        resolved_source = str(source or "").strip().lower()
+        if resolved_source:
+            self._last_source_by_signal[signal_key] = resolved_source
+        else:
+            self._last_source_by_signal.pop(signal_key, None)
+
+    def get_vix_close(self, trade_date: date) -> float | None:
+        row = self._load_cached_row(trade_date)
+        cached_value = _coerce_float(row.get("vix")) if row else None
+        if cached_value is not None:
+            self._record_source("vix", self.source_name)
+            return cached_value
+        provider = self._provider
+        if provider is None:
+            self._record_source("vix", None)
+            return None
+        provider_trade_date = _resolve_provider_trade_date(trade_date, strict_before=self._strict_before)
+        try:
+            value = provider.get_vix_close(provider_trade_date)
+        except Exception:
+            value = None
+        if value is not None:
+            self._persist_fallback_value(trade_date=provider_trade_date, value_key="vix", value=value)
+            self._record_source("vix", _resolve_signal_source(provider, "vix"))
+            return value
+        self._record_source("vix", None)
+        return None
+
+    def get_vix_short_term_close(self, trade_date: date) -> float | None:
+        row = self._load_cached_row(trade_date)
+        cached_value = _coerce_float(row.get("vix9d")) if row else None
+        if cached_value is not None:
+            self._record_source("vix_short", self.source_name)
+            return cached_value
+        provider = self._provider
+        if provider is None:
+            self._record_source("vix_short", None)
+            return None
+        provider_trade_date = _resolve_provider_trade_date(trade_date, strict_before=self._strict_before)
+        try:
+            value = provider.get_vix_short_term_close(provider_trade_date)
+        except Exception:
+            value = None
+        if value is not None:
+            self._persist_fallback_value(trade_date=provider_trade_date, value_key="vix9d", value=value)
+            self._record_source("vix_short", _resolve_signal_source(provider, "vix_short"))
+            return value
+        self._record_source("vix_short", None)
+        return None
+
+    def get_us10y_history(self, trade_date: date, lookback_days: int) -> list[float] | None:
+        cached_history = self._load_cached_history(trade_date, column="ten_y", lookback_days=lookback_days)
+        if cached_history and len(cached_history) >= 2:
+            self._record_source("yield_10y", self.source_name)
+            return cached_history
+        provider = self._provider
+        if provider is None:
+            self._record_source("yield_10y", None)
+            return None
+        provider_trade_date = _resolve_provider_trade_date(trade_date, strict_before=self._strict_before)
+        try:
+            value = provider.get_us10y_history(provider_trade_date, lookback_days)
+        except Exception:
+            value = None
+        if value and len(value) >= 2:
+            self._persist_fallback_value(trade_date=provider_trade_date, value_key="ten_y", value=value[-1])
+            self._record_source("yield_10y", _resolve_signal_source(provider, "yield_10y"))
+            return value
+        self._record_source("yield_10y", None)
+        return None
+
+    def get_us10y_close(self, trade_date: date) -> float | None:
+        row = self._load_cached_row(trade_date)
+        cached_value = _coerce_float(row.get("ten_y")) if row else None
+        if cached_value is not None:
+            self._record_source("yield_10y", self.source_name)
+            return cached_value
+        provider = self._provider
+        if provider is None:
+            self._record_source("yield_10y", None)
+            return None
+        provider_trade_date = _resolve_provider_trade_date(trade_date, strict_before=self._strict_before)
+        value = _extract_latest_10y_close(provider, provider_trade_date)
+        if value is not None:
+            self._persist_fallback_value(trade_date=provider_trade_date, value_key="ten_y", value=value)
+            self._record_source("yield_10y", _resolve_signal_source(provider, "yield_10y"))
+            return value
+        self._record_source("yield_10y", None)
+        return None
+
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
 
@@ -585,6 +851,9 @@ class CompositeMacroProvider:
 
     def get_us10y_history(self, trade_date: date, lookback_days: int) -> list[float] | None:
         return self._first_non_none("get_us10y_history", trade_date, lookback_days)
+
+    def get_us10y_close(self, trade_date: date) -> float | None:
+        return self._first_non_none("get_us10y_close", trade_date)
 
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
@@ -640,18 +909,7 @@ def _build_yield_macro_provider(
     return default_provider
 
 
-def build_default_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | None:
-    """Factory : choisit Stooq, EODHD ou un composite selon ``market_regimes``.
-
-    Configuration acceptée (toutes les clés sont optionnelles) :
-
-    ``market_regimes:``
-      ``macro_provider: stooq | eodhd | composite | none``  (def. ``composite``)
-      ``vix.symbol``, ``vix.short_symbol``, ``yields.symbol_10y``  → overrides
-
-    Retourne ``None`` si l'opérateur a explicitement désactivé la couche
-    (``market_regimes.enabled = false`` ET ``macro_provider = none``).
-    """
+def _build_network_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | None:
     root_cfg = yaml_cfg if isinstance(yaml_cfg, Mapping) else {}
     cfg = root_cfg.get("market_regimes") if isinstance(root_cfg, Mapping) else None
     cfg = cfg or {}
@@ -659,7 +917,6 @@ def build_default_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | No
     fred_cfg = fred_cfg if isinstance(fred_cfg, Mapping) else {}
     choice = str(cfg.get("macro_provider", "composite") or "composite").strip().lower()
 
-    # Overrides symbol par symbole (utiles si l'opérateur a un mapping custom).
     vix_sym = (cfg.get("vix") or {}).get("symbol")
     vix_short_sym = (cfg.get("vix") or {}).get("short_symbol")
     y10_sym = (cfg.get("yields") or {}).get("symbol_10y")
@@ -667,8 +924,6 @@ def build_default_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | No
     stooq_overrides: dict[str, str] = {}
     eodhd_overrides: dict[str, str] = {}
     if vix_sym:
-        # Si l'opérateur précise un symbole "VIX" générique, on l'envoie sur EODHD
-        # (Stooq utilise toujours ^vix). On ne casse pas les valeurs par défaut.
         if str(vix_sym).startswith("^"):
             stooq_overrides["vix"] = str(vix_sym)
         else:
@@ -707,12 +962,128 @@ def build_default_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | No
     )
 
 
+def build_default_macro_provider(
+    yaml_cfg: Mapping[str, Any] | None,
+    *,
+    execution_context: str = "live",
+    macro_pit_mode: str | None = None,
+    engine=None,
+) -> Any | None:
+    """Factory : choisit Stooq, EODHD ou un composite selon ``market_regimes``.
+
+    Configuration acceptée (toutes les clés sont optionnelles) :
+
+    ``market_regimes:``
+      ``macro_provider: stooq | eodhd | composite | none``  (def. ``composite``)
+      ``vix.symbol``, ``vix.short_symbol``, ``yields.symbol_10y``  → overrides
+
+    Retourne ``None`` si l'opérateur a explicitement désactivé la couche
+    (``market_regimes.enabled = false`` ET ``macro_provider = none``).
+    """
+    provider = _build_network_macro_provider(yaml_cfg)
+    if provider is None:
+        return None
+    return TableFirstMacroProvider(
+        provider,
+        engine=engine,
+        strict_before=_is_strict_before_mode(
+            yaml_cfg=yaml_cfg,
+            execution_context=execution_context,
+            macro_pit_mode=macro_pit_mode,
+        ),
+    )
+
+
+def populate_macro_indicators_table(
+    *,
+    start_date: date,
+    end_date: date,
+    yaml_cfg: Mapping[str, Any] | None = None,
+    engine=None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    if end_date < start_date:
+        raise ValueError("La date de fin doit être >= à la date de début.")
+    provider = _build_network_macro_provider(yaml_cfg)
+    if provider is None:
+        raise ValueError("Aucun provider macro réseau n'est configuré.")
+    root_cfg = yaml_cfg if isinstance(yaml_cfg, Mapping) else {}
+    market_cfg = root_cfg.get("market_regimes") if isinstance(root_cfg, Mapping) else {}
+    market_cfg = market_cfg if isinstance(market_cfg, Mapping) else {}
+    yields_cfg = market_cfg.get("yields") if isinstance(market_cfg, Mapping) else {}
+    yields_cfg = yields_cfg if isinstance(yields_cfg, Mapping) else {}
+    yield_lookback_days = max(int(yields_cfg.get("lookback_days", 5) or 5), 2)
+    session_dates = nyse_session_dates(start_date, end_date)
+    rows: list[dict[str, Any]] = []
+    persisted_rows = 0
+    missing_rows = 0
+    for index, session_date in enumerate(session_dates, start=1):
+        vix = provider.get_vix_close(session_date)
+        vix_short = provider.get_vix_short_term_close(session_date)
+        ten_y = _extract_latest_10y_close(provider, session_date)
+        if ten_y is None:
+            try:
+                history = provider.get_us10y_history(session_date, yield_lookback_days)
+            except Exception:
+                history = None
+            ten_y = _coerce_float(history[-1]) if history else None
+        persisted = persist_macro_indicator_daily(
+            trade_date=session_date,
+            vix=vix,
+            vix9d=vix_short,
+            ten_y=ten_y,
+            engine=engine,
+        )
+        source_summary = {}
+        get_source_summary = getattr(provider, "get_macro_source_summary", None)
+        if callable(get_source_summary):
+            try:
+                source_summary = dict(get_source_summary() or {})
+            except Exception:
+                source_summary = {}
+        if persisted:
+            persisted_rows += 1
+        else:
+            missing_rows += 1
+        row_payload = {
+            "trade_date": session_date.isoformat(),
+            "vix": vix,
+            "vix9d": vix_short,
+            "ten_y": ten_y,
+            "persisted": bool(persisted),
+            **source_summary,
+        }
+        rows.append(row_payload)
+        if callable(progress_callback):
+            progress_callback(
+                {
+                    "current": index,
+                    "total": len(session_dates),
+                    **row_payload,
+                }
+            )
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "sessions_total": len(session_dates),
+        "persisted_rows": persisted_rows,
+        "missing_rows": missing_rows,
+        "rows": rows,
+    }
+
+
 __all__ = [
+    "MACRO_PIT_MODE_ASOF_INCLUSIVE",
+    "MACRO_PIT_MODE_J_MINUS_1_STRICT",
     "StooqMacroProvider",
     "EodhdMacroProvider",
     "FredMacroProvider",
+    "TableFirstMacroProvider",
     "CompositeMacroProvider",
     "RoutedMacroProvider",
+    "normalize_macro_pit_mode",
+    "resolve_macro_pit_mode",
     "build_default_macro_provider",
+    "populate_macro_indicators_table",
 ]
 

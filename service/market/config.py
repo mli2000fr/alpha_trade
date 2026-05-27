@@ -91,6 +91,7 @@ class MarketRegimesConfig:
     cache_ttl_seconds: int = 300
     enforce_min_notional: float = 155.0
     allow_neutral_fallback_on_missing_macro_data: bool = True
+    macro_pit_mode_backtest: str = "asof_inclusive"
 
     sentinel: SentinelConfig = field(default_factory=SentinelConfig)
     vix: VixConfig = field(default_factory=VixConfig)
@@ -154,6 +155,7 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
         allow_neutral_fallback_on_missing_macro_data=bool(
             raw.get("allow_neutral_fallback_on_missing_macro_data", True)
         ),
+        macro_pit_mode_backtest=str(raw.get("macro_pit_mode_backtest", "asof_inclusive") or "asof_inclusive"),
         sentinel=SentinelConfig(
             enabled=bool(sentinel.get("enabled", True)),
             preflight_summary=bool(sentinel.get("preflight_summary", True)),

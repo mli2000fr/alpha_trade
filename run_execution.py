@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from common.utils import configure_root_logging
-from database.macro_indicators import persist_macro_indicator_daily
+from database.macro_indicators import persist_market_macro_snapshot_daily
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -605,29 +605,10 @@ def _launch_post_watcher(
 
 
 def _persist_market_macro_snapshot(*, trade_date: date, macro_payload: object) -> int:
-    payload = macro_payload if isinstance(macro_payload, dict) else {}
-    try:
-        persisted = persist_macro_indicator_daily(
-            trade_date=trade_date,
-            vix=payload.get("vix"),
-            vix9d=payload.get("vix_short"),
-            ten_y=payload.get("yield_10y"),
-        )
-    except Exception:
-        logging.getLogger(__name__).debug(
-            "Persistance stock_macro_indicators_daily indisponible.",
-            exc_info=True,
-        )
-        return 0
-    if persisted:
-        logging.getLogger(__name__).info(
-            "macro_daily persisted trade_date=%s vix=%s vix9d=%s ten_y=%s",
-            trade_date,
-            payload.get("vix"),
-            payload.get("vix_short"),
-            payload.get("yield_10y"),
-        )
-    return persisted
+    return persist_market_macro_snapshot_daily(
+        trade_date=trade_date,
+        macro_payload=macro_payload,
+    )
 
 
 def run(
