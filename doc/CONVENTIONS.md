@@ -67,4 +67,3 @@
 - `doc/risk_management.md`
 - `doc/runbook_broker_failover.md`
 - `doc/CHANGELOG.md`
-
