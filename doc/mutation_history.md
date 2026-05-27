@@ -50,3 +50,4 @@ Sont exclus du périmètre mutation testing :
 - code défensif `# pragma: no cover` justifié.
 
 | 2026-05-17 | 2026-05-17 | None | None | None |
+| 2026-05-24 | 2026-05-24 | None | None | None |
