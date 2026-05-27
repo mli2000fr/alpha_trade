@@ -2,6 +2,13 @@
 
 Date : mai 2026
 
+> **Mise à jour de contre-revue — 2026-05-27**
+>
+> Les fiches ci-dessous ont été relues contre le code, la config, les tests et
+> la documentation source. Quand un constat initial était incomplet ou obsolète,
+> la fiche est **requalifiée** explicitement (`confirmée`, `partielle`,
+> `infirmée / obsolète`).
+
 ---
 
 ## Légende
@@ -10,6 +17,12 @@ Date : mai 2026
 - **P1** : Majeur — impact significatif sur la qualité, la sécurité ou l'exploitabilité
 - **P2** : Modéré — dette technique, incohérence non critique, amélioration nécessaire
 - **P3** : Mineur — cosmétique, optimisation, suggestion
+
+### Statut de validation
+
+- **Confirmée** : constat toujours valide après lecture du code
+- **Partielle** : le fond reste valable, mais la portée / sévérité initiale était trop forte
+- **Infirmée / obsolète** : le code réel ne confirme plus le constat initial
 
 ---
 
@@ -28,6 +41,7 @@ Date : mai 2026
 - **Sévérité** : P1
 - **Domaine** : Documentation, Event Sentiment
 - **Description** : `README.md` §6 indique `eodhd` comme provider news par défaut, tandis que `doc/DOC_FONCTIONNELLE.md`, `doc/DOC_TECHNIQUE.md` et `doc/CONVENTIONS.md` indiquent `alpaca`. L'opérateur ne sait pas quel provider sera utilisé.
+- **Statut actuel** : **Confirmée**
 - **Preuve** :
   - `README.md` : « `event_sentiment` utilise désormais `eodhd` comme provider news par défaut »
   - `doc/CONVENTIONS.md` §2 : « News provider par défaut : `alpaca`. »
@@ -36,7 +50,7 @@ Date : mai 2026
 - **Impact technique** : Incohérence de configuration, comportement imprévisible
 - **Probabilité** : Élevée (chaque run)
 - **Niveau de confiance** : Élevé (95%)
-- **Recommandation** : Vérifier le code réel de `event_sentiment/__main__.py` pour déterminer le défaut canonique, puis aligner TOUTE la documentation sur cette valeur unique.
+- **Recommandation** : Le code réel est désormais vérifié (`event_sentiment/cli.py`, `event_sentiment/config.py`) : le défaut canonique est `eodhd`. Aligner toute la documentation sur cette valeur unique.
 - **Test à ajouter** :
   - **Objectif** : Vérifier que le provider news par défaut est documenté de manière cohérente
   - **Type** : Non-régression / config
@@ -50,16 +64,17 @@ Date : mai 2026
 ### A-002 — Défaut `bars_provider` : code vs documentation
 
 - **ID** : A-002
-- **Titre** : La documentation affirme `eodhd` comme défaut, le code utilise `alpaca`
-- **Sévérité** : P1
+- **Titre** : Fallback interne `bars_provider` encore à `alpaca` quand `config.yaml` est absent
+- **Sévérité** : P2
 - **Domaine** : DataIntegrityEngine, Configuration
-- **Description** : `import_alpaca_bar.py:441` et `import_eodhd_bar.py:90` utilisent `.get("bars_provider", "alpaca")` comme défaut. La documentation affirme qu'EODHD est le défaut.
-- **Preuve** : `import_alpaca_bar.py:441` — `str(((cfg.get("market_data") or {}).get("bars_provider", "alpaca"))).lower()`
-- **Impact métier** : Un opérateur qui suit la doc mais ne configure pas explicitement `bars_provider` utilisera Alpaca au lieu d'EODHD
-- **Impact technique** : Données de qualité inférieure (IEX vs EODHD consolidé)
-- **Probabilité** : Moyenne (nécessite absence de config explicite)
-- **Niveau de confiance** : Élevé (90%)
-- **Recommandation** : Changer le défaut code à `eodhd` pour correspondre à la documentation et à la recommandation du projet.
+- **Description** : Le fichier `config.yaml` versionné force bien `market_data.bars_provider: eodhd`, et les docs structurantes sont alignées sur ce choix. En revanche, les helpers internes `import_alpaca_bar._resolve_bars_provider()` et `import_eodhd_bar.resolve_bars_provider()` retombent encore sur `alpaca` si `config.yaml` est absent ou illisible.
+- **Statut actuel** : **Partielle**
+- **Preuve** : `config.yaml` : `market_data.bars_provider: eodhd` ; `import_alpaca_bar.py:571-584` et `import_eodhd_bar.py:113-117` gardent un fallback technique à `alpaca`
+- **Impact métier** : Faible à modéré — le comportement nominal du dépôt reste `eodhd`, mais le fallback interne n'est pas parfaitement aligné avec la convention documentaire
+- **Impact technique** : Ambiguïté résiduelle en cas d'absence/illisibilité de config
+- **Probabilité** : Faible sur le dépôt standard, moyenne en environnement dégradé
+- **Niveau de confiance** : Élevé (95%)
+- **Recommandation** : Décider explicitement si ce fallback doit rester une rétrocompatibilité assumée ou être aligné sur `eodhd`, puis documenter ce choix dans le code et les tests.
 - **Test à ajouter** :
   - **Objectif** : Vérifier que le défaut `bars_provider` est `eodhd` dans le code
   - **Type** : Unitaire
@@ -77,6 +92,7 @@ Date : mai 2026
 - **Sévérité** : P1
 - **Domaine** : Observabilité, DataIntegrityEngine, Screener, Selector
 - **Description** : Certains modules émettent un `run_summary` sur stdout avec le préfixe `::alpha_trade_run_summary::` mais ne le persistent pas en SQL. L'IHM capture ces résumés depuis stdout, mais si le run est lancé hors IHM, le résumé est perdu.
+- **Statut actuel** : **Confirmée**
 - **Preuve** : `dataIntegrityEngine/data_sanitizer_daily.py` émet un résumé structuré mais ne l'insère pas dans une table SQL dédiée. `dataIntegrityEngine/import_alpaca_bar.py` fait de même.
 - **Impact métier** : Perte de traçabilité, difficulté à auditer un run passé
 - **Impact technique** : Pas d'historique requêtable des runs
@@ -99,13 +115,14 @@ Date : mai 2026
 - **Titre** : `doc/data_lineage_matrix.md` référence des tables ML qui pourraient ne pas exister
 - **Sévérité** : P1
 - **Domaine** : Database, ModelFactory
-- **Description** : La lineage matrix liste `model_governance`, `model_metrics_full`, `ml_drift_runs`, `shadow_drift_runs` comme des tables existantes. Le code réel de `modelFactory/` ne montre pas de création explicite de ces tables.
-- **Preuve** : `doc/data_lineage_matrix.md` §3 — table `model_governance` listée avec producteur `modelFactory.champion_selection`, mais le code de `champion_selection.py` écrit dans le filesystem, pas dans une table SQL.
-- **Impact métier** : Documentation trompeuse, attentes fausses sur la traçabilité
-- **Impact technique** : Si ces tables n'existent pas, la doc est fausse ; si elles existent, elles ne sont pas documentées dans le code
-- **Probabilité** : Élevée
-- **Niveau de confiance** : Moyen (70% — nécessite vérification DB)
-- **Recommandation** : Vérifier l'existence réelle de ces tables dans le schéma SQL. Si absentes, les retirer de la lineage matrix ou les créer.
+- **Description** : Le constat initial est infirmé : les tables `model_governance`, `model_metrics_full`, `ml_drift_runs` et `shadow_drift_runs` existent bien dans `database/sql/` et sont couvertes par des tests/doc générés.
+- **Statut actuel** : **Infirmée / obsolète**
+- **Preuve** : `database/sql/ml/model_governance.sql`, `database/sql/ml/model_metrics_full.sql`, `database/sql/ml/ml_drift_runs.sql`, `database/sql/risk/shadow_drift_runs.sql`, `tests/test_data_lineage_autogen.py`
+- **Impact métier** : Le risque actuel est documentaire (fiche d'audit obsolète), pas un manque de schéma
+- **Impact technique** : Faux positif d'audit si non corrigé
+- **Probabilité** : Certaine tant que la fiche n'est pas mise à jour
+- **Niveau de confiance** : Élevé (99%)
+- **Recommandation** : Clore cette anomalie comme obsolète et remplacer l'action par un garde-fou doc ↔ génération de lineage.
 - **Test à ajouter** :
   - **Objectif** : Vérifier que toutes les tables listées dans la lineage matrix existent dans le schéma
   - **Type** : SQL / data quality
@@ -122,13 +139,14 @@ Date : mai 2026
 - **Titre** : Les presets de `capital_presets.yaml` peuvent diverger du profil `STRICT_SWING_CASH_FILTERS`
 - **Sévérité** : P1
 - **Domaine** : Configuration, Selector, Risk Management
-- **Description** : Le profil strict (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) définit des seuils canoniques. Les presets de capital définissent des overrides par tranche. Rien ne garantit qu'un preset ne contredit pas le profil strict (ex: `selector_min_close` inférieur à 10.0 dans un preset).
+- **Description** : Le profil strict (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) définit des seuils canoniques. Les presets de capital définissent des overrides par tranche. Des tests existent déjà sur plusieurs invariants critiques, mais il n'existe pas encore de garde-fou unique documentant systématiquement chaque écart métier assumé par rapport au profil strict.
+- **Statut actuel** : **Partielle**
 - **Preuve** : Dans `capital_presets.yaml`, le preset `capital_0_2000_eur` a `selector_min_close: 10.0` et `selector_min_beta_126: 0.65` alors que `STRICT_SWING_CASH_FILTERS.min_beta_126 = 0.8`.
 - **Impact métier** : Un preset peut être trop permissif et laisser passer des candidats de mauvaise qualité
 - **Impact technique** : Incohérence non détectée entre les deux sources de vérité
 - **Probabilité** : Moyenne (les presets sont écrits manuellement)
 - **Niveau de confiance** : Élevé (85%)
-- **Recommandation** : Ajouter un test qui valide que chaque preset est cohérent avec le profil strict (les overrides doivent être documentés et justifiés).
+- **Recommandation** : Conserver les tests existants (`tests/test_capital_preset_risk_overrides.py`) et ajouter, si souhaité, un garde-fou complémentaire centré sur la justification documentaire des écarts assumés.
 - **Test à ajouter** :
   - **Objectif** : Valider que les presets de capital ne contredisent pas le profil strict sans justification
   - **Type** : Config / non-régression
@@ -168,13 +186,14 @@ Date : mai 2026
 - **Titre** : Pas de notifications email/SMS/Slack pour les événements critiques
 - **Sévérité** : P1
 - **Domaine** : Observabilité, Sécurité
-- **Description** : Le circuit breaker, les erreurs critiques, les fins de run anormales ne génèrent que des logs fichiers. Aucune alerte externe n'est envoyée.
-- **Preuve** : `doc/DOC_FONCTIONNELLE.md` §6 : « Pas de notification externe — Pas d'email/SMS/Slack » (listé comme limitation).
-- **Impact métier** : Un incident peut passer inaperçu pendant des heures
-- **Impact technique** : Pas de réactivité opérationnelle
-- **Probabilité** : Élevée (tout incident)
+- **Description** : Le constat initial est trop fort. Des notifications email de fin de workflow existent désormais côté IHM (`ihm/services/notifications.py`, `doc/ihm.md` §11). En revanche, il n'existe pas encore d'alerting généralisé et structuré pour les événements critiques métier/ops (circuit breaker, Slack/SMS/webhooks, dashboards).
+- **Statut actuel** : **Partielle**
+- **Preuve** : `ihm/services/notifications.py`, `doc/ihm.md` §11, `tests/test_ihm_notifications.py`
+- **Impact métier** : Réactivité opérateur meilleure qu'initialement estimée, mais encore incomplète hors workflows IHM
+- **Impact technique** : Couverture alerting partielle, surtout orientée workflows terminés
+- **Probabilité** : Moyenne
 - **Niveau de confiance** : Élevé (95%)
-- **Recommandation** : Intégrer un système de notification (Slack webhook, email SMTP, SMS).
+- **Recommandation** : Étendre l'alerting existant vers des événements critiques temps réel et des canaux supplémentaires (Slack/webhook/SMS).
 - **Test à ajouter** :
   - **Objectif** : Vérifier que les alertes sont envoyées pour les événements critiques
   - **Type** : Intégration
@@ -216,13 +235,14 @@ Date : mai 2026
 - **Titre** : La table `model_predictions` ne persiste pas `selected_model`, `decision_threshold`, `calibration_method`
 - **Sévérité** : P2
 - **Domaine** : ModelFactory, Database
-- **Description** : Documenté dans `doc/DOC_TECHNIQUE.md` §8 comme dette technique P1. Le code de `modelFactory/predictor.py` ne persiste que `symbol`, `prediction_date`, `predicted_proba`, `predicted_class`, `run_id`.
-- **Preuve** : `doc/DOC_TECHNIQUE.md` §8 : « `model_predictions` n'inclut pas `selected_model` / `decision_threshold` / `calibration_method` — gouvernance ML incomplète en DB | P1 → Sprint S2 »
-- **Impact métier** : Impossibilité de tracer quel modèle a produit quelle prédiction
-- **Impact technique** : Gouvernance ML incomplète
-- **Probabilité** : Élevée (à chaque prédiction)
-- **Niveau de confiance** : Élevé (90%)
-- **Recommandation** : Ajouter les colonnes manquantes et les peupler lors de l'inférence.
+- **Description** : Le constat initial est obsolète. Le schéma `database/sql/ml/model_predictions.sql` inclut déjà `selected_model`, `decision_threshold` et `calibration_method`, et le code `modelFactory/db_registry.py` les persiste.
+- **Statut actuel** : **Infirmée / obsolète**
+- **Preuve** : `database/sql/ml/model_predictions.sql`, `modelFactory/db_registry.py`
+- **Impact métier** : Aucun manque de schéma confirmé ; le vrai risque est la dérive documentaire si cette fiche n'est pas corrigée
+- **Impact technique** : Faux positif d'audit
+- **Probabilité** : Certaine tant que la fiche reste inchangée
+- **Niveau de confiance** : Élevé (99%)
+- **Recommandation** : Clore la fiche et remplacer l'action par un test/garde-fou de synchronisation doc ↔ schéma.
 - **Test à ajouter** :
   - **Objectif** : Vérifier que `model_predictions` contient les colonnes de gouvernance
   - **Type** : SQL / intégration
@@ -356,12 +376,13 @@ Date : mai 2026
 - **Titre** : Absence de métriques exposées pour monitoring
 - **Sévérité** : P2
 - **Domaine** : Observabilité
-- **Description** : Documenté comme recommandation dans `doc/DOC_TECHNIQUE.md` §9. Aucune métrique Prometheus n'est exposée.
-- **Preuve** : `doc/DOC_TECHNIQUE.md` §9 : « Monitoring (Prometheus/Grafana) » (recommandation long terme).
-- **Impact métier** : Pas de visibilité sur la santé du système en temps réel
-- **Probabilité** : Faible (impact opérationnel indirect)
+- **Description** : Le constat initial est partiellement obsolète. Une instrumentation Prometheus minimale existe déjà (`core/metrics.py`) avec des tests dédiés, mais elle n'est pas encore industrialisée en stack complète de monitoring/alerting (dashboards Grafana, diffusion systématique, SLO).
+- **Statut actuel** : **Partielle**
+- **Preuve** : `core/metrics.py`, `tests/test_core_metrics.py`
+- **Impact métier** : La visibilité temps réel existe à un niveau de base, mais reste incomplète pour une exploitation pro-grade
+- **Probabilité** : Moyenne
 - **Niveau de confiance** : Élevé (95%)
-- **Recommandation** : Exposer des métriques Prometheus (durée des runs, taux de succès, latence API).
+- **Recommandation** : Capitaliser sur `core.metrics` au lieu de repartir de zéro, puis brancher un vrai monitoring opérateur (endpoint exposé, dashboard, alertes).
 
 ### A-022 — Pas de gestion des fills partiels dans l'executor
 
@@ -421,12 +442,13 @@ Date : mai 2026
 - **Titre** : Nom de table inexact dans la matrice de lineage
 - **Sévérité** : P2
 - **Domaine** : Documentation
-- **Description** : La lineage matrix référence `stock_assets` comme table, mais le code utilise `stock_metadata`.
-- **Preuve** : `doc/data_lineage_matrix.md` §1 : « `stock_assets` », alors que le code référence `stock_metadata`.
-- **Impact métier** : Confusion pour le mainteneur
-- **Probabilité** : Faible
-- **Niveau de confiance** : Élevé (90%)
-- **Recommandation** : Corriger le nom dans la lineage matrix.
+- **Description** : Le constat initial est infirmé. `stock_assets` et `stock_metadata` sont deux tables distinctes dans la lineage matrix : la première pour l'univers actifs, la seconde pour les métadonnées/secteurs/market cap.
+- **Statut actuel** : **Infirmée / obsolète**
+- **Preuve** : `doc/data_lineage_matrix.md` lignes `stock_assets` et `stock_metadata`
+- **Impact métier** : Aucun bug confirmé ; il s'agissait d'une mauvaise lecture de la matrice
+- **Probabilité** : N/A
+- **Niveau de confiance** : Élevé (99%)
+- **Recommandation** : Clore la fiche comme faux positif.
 
 ### A-027 — Certains documents dans `doc/` sont des POC non marqués
 

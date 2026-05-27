@@ -8,6 +8,11 @@ Date : mai 2026
 
 Ce plan vise à amener Alpha Trade de **7.3/10** à **9.0+/10** (niveau professionnel buy-side) en 8 sprints.
 
+> **Contre-revue 2026-05-27** : plusieurs éléments initialement prévus en correctif
+> pur ont été requalifiés en **mise à jour documentaire / garde-fou de
+> régression** (`A-004`, `A-011`, `A-026`) ou en **extension d'existant**
+> (`A-007`, `A-021`).
+
 | Sprint | Focus | Impact | Anomalies |
 |---|---|---|---|
 | **S1** | Corrections critiques doc/config | P1 | A-001, A-002 |
@@ -35,10 +40,9 @@ Documentation, Configuration, DataIntegrityEngine, Event Sentiment
 - A-013 : Redondance DOC_FONCTIONNELLE / DOC_TECHNIQUE (partiel)
 
 ### Tâches
-1. **T1.1** : Vérifier le défaut réel du provider news dans `event_sentiment/__main__.py` et `event_sentiment/cli.py`
-   - Fichier : `event_sentiment/__main__.py`, `event_sentiment/importer.py`
-2. **T1.2** : Aligner toute la documentation (README.md, CONVENTIONS.md, DOC_FONCTIONNELLE.md, DOC_TECHNIQUE.md) sur la valeur canonique du défaut news
-3. **T1.3** : Changer le défaut `bars_provider` dans le code de `"alpaca"` à `"eodhd"`
+1. **T1.1** : Acter le défaut réel du provider news déjà vérifié dans le code (`event_sentiment/cli.py`, `event_sentiment/config.py`) : `eodhd`
+2. **T1.2** : Aligner toute la documentation (README.md, CONVENTIONS.md, DOC_FONCTIONNELLE.md, DOC_TECHNIQUE.md) sur cette valeur canonique
+3. **T1.3** : Décider si le fallback interne `bars_provider` sans config doit rester `alpaca` (rétrocompat) ou être aligné sur `eodhd`
    - Fichiers : `dataIntegrityEngine/import_alpaca_bar.py:441`, `dataIntegrityEngine/import_eodhd_bar.py:90`
 4. **T1.4** : Mettre à jour la documentation pour refléter explicitement le défaut code
 5. **T1.5** : Supprimer les alias rétrocompatibles redondants dans `capital_presets.yaml` (A-025)
@@ -49,13 +53,13 @@ Ces incohérences peuvent amener un opérateur à utiliser le mauvais provider s
 
 ### Critères d'acceptation
 - [ ] La valeur du provider news par défaut est identique dans tous les fichiers de documentation
-- [ ] Le défaut `bars_provider` retourne `"eodhd"` quand la clé est absente
-- [ ] Un test unitaire valide le défaut de chaque provider
+- [ ] La doctrine sur le fallback interne `bars_provider` est explicitée (code + doc + tests)
+- [ ] Les tests provider existants reflètent la doctrine retenue
 - [ ] Les documents POC portent un bandeau explicite
 
 ### Tests
-- `tests/test_doc_news_provider_consistency.py` (nouveau) — non-régression documentation
-- `tests/test_bars_provider_default.py` (nouveau) — unitaire défaut EODHD
+- `tests/test_doc_news_provider_consistency.py` (nouveau ou équivalent) — non-régression documentation
+- `tests/test_eodhd_provider_switch.py` (existant) — symétrie / fallback provider
 - `tests/test_config_no_literal_secrets.py` (existant) — passe toujours
 
 ### Gain attendu
@@ -82,14 +86,14 @@ DataIntegrityEngine, Screener, Selector, Event Sentiment, Database, IHM
 2. **T2.2** : Créer la table `run_summaries` dans `database/sql/`
 3. **T2.3** : Implémenter un helper `core/run_summary.py` pour la persistance SQL
 4. **T2.4** : Mettre à jour chaque module CLI pour persister son résumé
-5. **T2.5** : Vérifier l'existence réelle des tables ML dans le schéma SQL
-6. **T2.6** : Ajouter un test de cohérence entre presets et profil strict
+5. **T2.5** : Remplacer le faux doute sur les tables ML par un garde-fou de synchronisation doc/génération (`data_lineage_matrix`)
+6. **T2.6** : Renforcer, si besoin, les tests de cohérence entre presets et profil strict déjà existants
 
 ### Critères d'acceptation
 - [ ] Tous les modules émettent un `run_summary` conforme au schéma commun
 - [ ] Tous les résumés sont persistés dans `run_summaries`
-- [ ] Les tables ML sont vérifiées et documentées
-- [ ] Le test de cohérence presets/profil passe
+- [ ] La documentation lineage reste synchronisée avec le schéma réel
+- [ ] Les tests de cohérence presets/profil couvrent explicitement les écarts métier assumés
 
 ### Tests
 - `tests/test_run_summary_persistence.py` (nouveau) — intégration
@@ -177,7 +181,7 @@ Architecture, Tous les modules
 ## Sprint 5 — Alerting & monitoring (priorité P1-P2)
 
 ### Objectif
-Ajouter des notifications pour les événements critiques et exposer des métriques de monitoring.
+Industrialiser les notifications et le monitoring déjà amorcés (email workflow IHM + métriques Prometheus minimales).
 
 ### Modules impactés
 Observabilité, Execution, Risk, Tous
@@ -187,9 +191,9 @@ Observabilité, Execution, Risk, Tous
 - A-021 : Pas de monitoring Prometheus/Grafana
 
 ### Tâches
-1. **T5.1** : Intégrer un webhook Slack pour les événements critiques
-2. **T5.2** : Ajouter un client SMTP pour les alertes email
-3. **T5.3** : Exposer des métriques Prometheus (durée des runs, taux de succès, latence API)
+1. **T5.1** : Étendre les notifications email existantes aux événements critiques hors workflow terminal
+2. **T5.2** : Ajouter un webhook Slack / webhook générique
+3. **T5.3** : Brancher plus largement les métriques Prometheus existantes
 4. **T5.4** : Créer un dashboard Grafana de base
 5. **T5.5** : Configurer des alertes Grafana sur les métriques clés
 
@@ -255,15 +259,15 @@ ModelFactory, Database, DataIntegrityEngine
 - A-010 : Duplication importeurs barres
 
 ### Tâches
-1. **T7.1** : Ajouter les colonnes `selected_model`, `decision_threshold`, `calibration_method` à `model_predictions`
-2. **T7.2** : Créer la migration Alembic correspondante
-3. **T7.3** : Peupler ces colonnes lors de l'inférence
+1. **T7.1** : Ajouter un garde-fou de régression sur les colonnes `selected_model`, `decision_threshold`, `calibration_method` déjà présentes dans `model_predictions`
+2. **T7.2** : Synchroniser la documentation/audit avec ce schéma réel
+3. **T7.3** : Vérifier le peuplement effectif lors de l'inférence sur les chemins critiques
 4. **T7.4** : Factoriser le code commun entre `import_alpaca_bar.py` et `import_eodhd_bar.py`
 5. **T7.5** : Ajouter un test de walk-forward pour le ML
 
 ### Critères d'acceptation
-- [ ] `model_predictions` contient les colonnes de gouvernance
-- [ ] La migration Alembic est réversible
+- [ ] `model_predictions` reste conforme au schéma de gouvernance ML attendu
+- [ ] La documentation et les tests reflètent ce schéma réel
 - [ ] Le test de walk-forward passe
 
 ### Tests

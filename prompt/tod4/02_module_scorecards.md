@@ -7,7 +7,7 @@
 **Note : 7.0 / 10**
 
 ### Résumé
-La documentation est abondante (~30 fichiers dans `doc/`), structurée, et couvre l'essentiel des modules. Les conventions sont centralisées dans `doc/CONVENTIONS.md`. Quelques incohérences résiduelles (provider news, défaut `bars_provider`) et une certaine redondance entre DOC_FONCTIONNELLE.md et DOC_TECHNIQUE.md.
+La documentation est abondante (~30 fichiers dans `doc/`), structurée, et couvre l'essentiel des modules. Les conventions sont centralisées dans `doc/CONVENTIONS.md`. Quelques incohérences résiduelles subsistent (provider news par défaut encore divergent entre documents, nuances autour du fallback `bars_provider` quand `config.yaml` est absent) ainsi qu'une certaine redondance entre `DOC_FONCTIONNELLE.md` et `DOC_TECHNIQUE.md`.
 
 ### Points forts
 - Documentation riche et organisée
@@ -16,7 +16,7 @@ La documentation est abondante (~30 fichiers dans `doc/`), structurée, et couvr
 - Runbooks opérateur détaillés
 
 ### Faiblesses
-- Incohérence provider news par défaut (README vs docs techniques)
+- Incohérence provider news par défaut (code/README = `eodhd`, certains docs techniques = `alpaca`)
 - Redondance entre fichiers
 - Certains docs POC non marqués comme tels
 - Pas de glossaire centralisé
@@ -101,7 +101,7 @@ Module mature et bien conçu. Le provider switch EODHD/Alpaca est propre, le san
 **Note : 7.5 / 10**
 
 ### Résumé
-Schéma SQL bien structuré, migrations Alembic en place, support multi-comptes via `account_id`. Quelques tables listées dans la doc qui n'existent peut-être pas dans le code.
+Schéma SQL bien structuré, migrations Alembic en place, support multi-comptes via `account_id`. La contre-revue montre que plusieurs tables ML initialement jugées « non confirmées » existent bien dans `database/sql/ml/`; le vrai sujet est désormais la synchronisation doc/audit ↔ schéma réel.
 
 ### Points forts
 - Schéma organisé par domaine (stock/, news/, ml/, risk/, execution/, corporate_actions/)
@@ -110,7 +110,7 @@ Schéma SQL bien structuré, migrations Alembic en place, support multi-comptes 
 - Contraintes CHECK pour les conventions
 
 ### Faiblesses
-- Tables ML listées dans lineage matrix non confirmées
+- Synchronisation doc/audit ↔ schéma ML encore imparfaite
 - Pas de test d'intégrité des migrations
 - Pool de connexion modeste (2+3)
 
@@ -247,7 +247,7 @@ Le pipeline NLP (FinBERT) est fonctionnel avec un scope mixte bien pensé. Point
 **Note : 6.5 / 10**
 
 ### Résumé
-La gouvernance multi-modèles (LSTM + LightGBM + CatBoost + global) est ambitieuse et bien architecturée. Points faibles : complexité, risque d'overfitting, persistance DB incomplète.
+La gouvernance multi-modèles (LSTM + LightGBM + CatBoost + global) est ambitieuse et bien architecturée. Points faibles : complexité, risque d'overfitting, et lisibilité opérateur/documentaire encore perfectible.
 
 ### Points forts
 - Gouvernance multi-modèles
@@ -256,7 +256,7 @@ La gouvernance multi-modèles (LSTM + LightGBM + CatBoost + global) est ambitieu
 - Support GPU/CPU
 
 ### Faiblesses
-- `model_predictions` ne persiste pas le modèle utilisé
+- Certaines documentations/audits sont en retard sur le schéma réellement persisté
 - Risque d'overfitting sur petits symboles
 - Complexité élevée pour l'opérateur
 - Entraînement séquentiel obligatoire sur GPU unique
@@ -267,7 +267,7 @@ La gouvernance multi-modèles (LSTM + LightGBM + CatBoost + global) est ambitieu
 - Traçabilité ML incomplète en DB
 
 ### Pour atteindre 10/10
-- Ajouter `selected_model` et `decision_threshold` dans `model_predictions`
+- Ajouter un garde-fou documentaire/test pour garder `model_predictions` et la doc strictement synchronisés
 - Implémenter un test de walk-forward
 - Ajouter un détecteur de drift en production
 - Simplifier l'UX opérateur
@@ -428,7 +428,7 @@ L'IHM Streamlit est fonctionnelle, bien organisée en pages, avec un workflow qu
 **Note : 7.0 / 10**
 
 ### Résumé
-Les logs fichiers avec rotation sont en place. Les `run_summary` structurés sont émis par plusieurs modules mais de façon hétérogène. Pas de centralisation, pas d'alerting.
+Les logs fichiers avec rotation sont en place. Les `run_summary` structurés sont émis par plusieurs modules mais de façon hétérogène. Une persistance partielle existe via `run_business_summaries`, des notifications email IHM existent pour les fins de workflow, et une instrumentation Prometheus minimale est présente, mais l'ensemble reste incomplet et non uniforme.
 
 ### Points forts
 - RotatingFileHandler (5 Mo, 3 backups)
@@ -439,8 +439,8 @@ Les logs fichiers avec rotation sont en place. Les `run_summary` structurés son
 ### Faiblesses
 - Hétérogénéité des schémas de run_summary
 - Pas de persistance SQL systématique
-- Pas d'alerting (email/SMS/Slack)
-- Pas de dashboard de monitoring
+- Alerting externe partiel (email IHM oui ; Slack/SMS/webhooks critiques non généralisés)
+- Pas de dashboard Grafana / monitoring industrialisé
 
 ### Risques principaux
 - Incident non détecté à temps
@@ -459,7 +459,7 @@ Les logs fichiers avec rotation sont en place. Les `run_summary` structurés son
 **Note : 7.0 / 10**
 
 ### Résumé
-Les secrets sont gérés proprement (variables d'environnement, scanner de littéraux). Le préflight execution et le kill switch sont de bons garde-fous. Points faibles : pas de chiffrement DB, pas de Vault, pas d'audit de sécurité externe.
+Les secrets sont gérés proprement (variables d'environnement, scanner de littéraux). Le préflight execution et le kill switch sont de bons garde-fous. Des notifications email opérateur existent côté IHM, mais il manque encore un dispositif de sécurité/ops plus industrialisé (Vault, chiffrement DB, séparation de privilèges, alerting critique).
 
 ### Points forts
 - Secrets en environnement (pas en clair dans config.yaml)

@@ -37,7 +37,7 @@ L'application se situe **au-dessus d'une application indépendante avancée** et
 | Gestion du risque | **Bonne** — sizing ATR/Kelly, circuit breaker, contraintes portefeuille, régimes |
 | Exécution | **Excellente** — chaîne canonique, idempotence, TCA, multi-comptes |
 | Backtesting | **Bon** — PIT, contraintes réalistes, phases de fidélité, diagnostics |
-| Supervision | **Correcte** — IHM fonctionnelle mais pas de monitoring/alerting |
+| Supervision | **Correcte à bonne** — IHM fonctionnelle, notifications email de workflow et métriques Prometheus minimales présentes, mais pas encore de stack Grafana / alerting critique généralisé |
 | Sécurité | **Correcte** — secrets protégés, préflight, kill switch, mais pas de Vault ou chiffrement DB |
 | Documentation | **Bonne** — riche et structurée, quelques incohérences résiduelles |
 | Qualité logicielle | **Bonne** — lint, typage, tests, CI/CD, mais couverture inégale |
@@ -46,22 +46,22 @@ L'application se situe **au-dessus d'une application indépendante avancée** et
 
 ## Niveau de confiance
 
-**Élevé (80%)** — L'audit a couvert l'ensemble de la documentation et un échantillon significatif du code source. Les conclusions sont basées sur des preuves concrètes (fichiers, symboles, paramètres).
+**Élevé (85%)** — L'audit a couvert l'ensemble de la documentation et un échantillon significatif du code source. La contre-revue complémentaire a levé plusieurs zones d'incertitude initiales (provider news réel, présence des tables ML, schéma `model_predictions`).
 
 Les zones de moindre confiance sont :
-- L'existence réelle de certaines tables ML listées dans la lineage matrix (non vérifiées dans le code)
-- Le comportement exact du provider news par défaut (code non vérifié dans `event_sentiment/__main__.py`)
+- Le niveau exact d'homogénéité de persistance des `run_summary` sur tous les modules CLI
 - La performance sous charge réelle
+- L'exhaustivité du marquage documentaire des documents POC dans `doc/`
 
 ---
 
 ## Ce qu'il manque pour être « pro-grade » (9/10+)
 
 1. **Orchestration industrielle** : Airflow/Prefect avec DAG, reprise sur erreur, scheduling
-2. **Monitoring production** : Prometheus/Grafana, alerting email/SMS/Slack
+2. **Monitoring production** : industrialiser les briques déjà présentes (Prometheus minimal, email IHM) vers Grafana + alerting critique
 3. **Tests E2E et intégration** : MySQL Docker, pipeline complet automatisé
 4. **Sécurité avancée** : Vault/AWS SSM, chiffrement DB, séparation de privilèges
-5. **Gouvernance ML complète** : colonnes manquantes dans `model_predictions`, drift monitoring automatisé
+5. **Gouvernance ML complète** : garder la doc/tests alignés avec le schéma ML réel et industrialiser le drift monitoring
 6. **Parité backtest/live** : tests automatisés de comparaison
 7. **Conteneurisation** : Docker, docker-compose
 8. **Support short selling** et stratégies baissières

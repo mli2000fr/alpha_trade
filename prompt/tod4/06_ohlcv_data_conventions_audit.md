@@ -6,7 +6,7 @@ Date : mai 2026
 
 ## 1. Synthèse
 
-La convention de prix et le choix de provider OHLCV sont **globalement cohérents et bien documentés**, avec un effort significatif de mise en cohérence depuis l'audit précédent (tod2). Quelques écarts résiduels persistent entre doc et code, principalement sur le provider news.
+La convention de prix et le choix de provider OHLCV sont **globalement cohérents et bien documentés**, avec un effort significatif de mise en cohérence depuis l'audit précédent (tod2). La contre-revue du 2026-05-27 montre que plusieurs doutes initiaux étaient trop forts : l'écart principal confirmé reste le provider news par défaut dans la documentation.
 
 **Note OHLCV/Data : 7.5 / 10**
 
@@ -37,8 +37,8 @@ La convention de prix et le choix de provider OHLCV sont **globalement cohérent
 
 ### 3.1 Constat code réel
 
-- `import_alpaca_bar.py:439-442` : `_resolve_bars_provider()` lit `config.yaml > market_data.bars_provider` (défaut `alpaca` en rétrocompat)
-- `import_eodhd_bar.py:88-90` : `resolve_bars_provider()` lit la même clé (défaut `alpaca` aussi)
+- `import_alpaca_bar.py:571-584` : `_resolve_bars_provider()` lit `config.yaml > market_data.bars_provider` ; en cas d'échec de lecture de config, fallback technique `alpaca`
+- `import_eodhd_bar.py:113-117` : `resolve_bars_provider()` lit la même clé ; fallback technique `alpaca` si config absente/illisible
 - Quand `bars_provider == "eodhd"` : `import_alpaca_bar` devient no-op avec `skipped_reason=wrong_provider`
 - Quand `bars_provider == "alpaca"` : `import_eodhd_bar` devrait symétriquement être no-op (à vérifier)
 
@@ -51,14 +51,14 @@ La convention de prix et le choix de provider OHLCV sont **globalement cohérent
 
 ### 3.3 Divergence détectée
 
-⚠️ **ÉCART** : La documentation affirme qu'EODHD est le défaut (`bars_provider=eodhd`), mais le code de fallback dans `import_alpaca_bar.py:441` et `import_eodhd_bar.py:90` retourne `"alpaca"` comme défaut (`.get("bars_provider", "alpaca")`).
+⚠️ **ÉCART REQUALIFIÉ** : le dépôt versionné est aligné sur `eodhd` via `config.yaml`, et c'est bien le comportement nominal/documenté. En revanche, les helpers de résolution gardent un fallback technique `alpaca` si la config est absente ou illisible.
 
-- **Code réel** : défaut = `alpaca` si la clé `market_data.bars_provider` est absente de `config.yaml`
-- **Documentation** : défaut = `eodhd`
+- **Comportement nominal dépôt** : `eodhd`
+- **Fallback technique sans config** : `alpaca`
 
-**Impact** : Si l'opérateur ne configure pas explicitement `bars_provider`, le pipeline utilise Alpaca au lieu d'EODHD, contrairement à ce que la doc affirme.
+**Impact** : ambiguïté résiduelle surtout en environnement dégradé ou test mal configuré, plus qu'un vrai défaut opérationnel du dépôt standard.
 
-**Recommandation** : Soit modifier le défaut code à `eodhd`, soit aligner la documentation sur le défaut réel `alpaca`. La première option est préférable car EODHD est le provider recommandé.
+**Recommandation** : documenter explicitement cette rétrocompatibilité technique ou la supprimer pour alignement strict.
 
 ---
 
@@ -66,9 +66,11 @@ La convention de prix et le choix de provider OHLCV sont **globalement cohérent
 
 ### 4.1 Constat code réel
 
-À vérifier dans `event_sentiment/` :
-- Le paramètre `--news-provider` est documenté dans le README comme ayant `eodhd` par défaut
-- Mais `doc/DOC_FONCTIONNELLE.md` et `doc/DOC_TECHNIQUE.md` indiquent `alpaca` comme défaut
+Vérifié dans `event_sentiment/` :
+- `event_sentiment/cli.py` : `--news-provider` a `default="eodhd"`
+- `event_sentiment/config.py` : `EventSentimentConfig.news_provider = "eodhd"`
+- `README.md` est aligné sur `eodhd`
+- `doc/DOC_FONCTIONNELLE.md`, `doc/DOC_TECHNIQUE.md` et `doc/CONVENTIONS.md` indiquent encore `alpaca`
 
 ### 4.2 Divergence détectée
 
@@ -79,7 +81,7 @@ La convention de prix et le choix de provider OHLCV sont **globalement cohérent
 - `doc/DOC_FONCTIONNELLE.md` entête : « Provider NEWS par défaut : `Alpaca` »
 - `README.md` §6 : « `event_sentiment` utilise désormais `eodhd` comme provider news par défaut »
 
-**Recommandation** : Vérifier le code réel de `event_sentiment/__main__.py` ou `event_sentiment/cli.py` pour déterminer le défaut canonique, puis aligner TOUTE la documentation sur cette valeur.
+**Recommandation** : Le défaut canonique est désormais vérifié : `eodhd`. Aligner toute la documentation sur cette valeur.
 
 ---
 
@@ -146,16 +148,15 @@ La convention de prix et le choix de provider OHLCV sont **globalement cohérent
 
 | # | Écart | Sévérité | Correctif |
 |---|---|---|---|
-| 1 | Défaut `bars_provider` : doc dit `eodhd`, code dit `alpaca` | P2 | Aligner le défaut code sur `eodhd` |
-| 2 | Provider news par défaut : README dit `eodhd`, docs techniques disent `alpaca` | P1 | Vérifier code, aligner toute la doc |
-| 3 | `doc/data_lineage_matrix.md` mentionne `model_governance`, `model_metrics_full`, `ml_drift_runs` — tables non confirmées dans le code | P2 | Vérifier l'existence réelle de ces tables |
+| 1 | Fallback interne `bars_provider` différent du comportement nominal documenté | P2 | Documenter ou supprimer la rétrocompatibilité `alpaca` sans config |
+| 2 | Provider news par défaut : code/README = `eodhd`, docs techniques = `alpaca` | P1 | Aligner toute la doc sur `eodhd` |
+| 3 | Doute initial sur les tables ML de lineage | Clos | Contre-revue : tables bien présentes dans `database/sql/` |
 
 ---
 
 ## 10. Recommandations
 
-1. **Uniformiser le défaut `bars_provider` à `eodhd` dans le code** (P2)
-2. **Vérifier et documenter le provider news par défaut canonique** (P1)
-3. **Vérifier les tables ML listées dans la lineage matrix** (P2)
-4. **Ajouter un test de non-régression sur le défaut du provider OHLCV** (P2)
-5. **Ajouter un test de non-régression sur la cohérence doc ↔ code pour les providers** (P2)
+1. **Aligner toute la documentation sur `news_provider=eodhd`** (P1)
+2. **Décider/documenter le fallback interne `bars_provider`** (P2)
+3. **Conserver les garde-fous de génération/validation de la lineage matrix** (Clos côté schéma, utile côté doc)
+4. **Ajouter/maintenir un test de non-régression sur la cohérence doc ↔ code pour les providers** (P2)
