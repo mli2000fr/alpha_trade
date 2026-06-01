@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import numpy as np
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -498,18 +499,30 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
     )
     with engine.begin() as conn:
         for _, row in predictions.iterrows():
+            # Extraction et conversion sécurisée pour predicted_proba
+            proba_raw = row["predicted_proba"]
+            # On vérifie si la valeur est nulle (NaN ou None)
+            proba_val = float(proba_raw) if pd.notnull(proba_raw) and not (
+                        isinstance(proba_raw, float) and math.isnan(proba_raw)) else None
+
+            # Sécurité identique pour decision_threshold
+            thresh_raw = row.get("decision_threshold")
+            thresh_val = float(thresh_raw) if pd.notnull(thresh_raw) and not (
+                        isinstance(thresh_raw, float) and math.isnan(thresh_raw)) else None
+
             params = {
                 "sym": row["symbol"],
                 "pd": row["prediction_date"],
-                "pp": float(row["predicted_proba"]),
+                "pp": proba_val,  # Utilisera NULL en base de données si c'était NaN
                 "pc": int(row["predicted_class"]),
                 "rid": row["run_id"],
                 "selected_model": row.get("selected_model"),
-                "decision_threshold": float(row["decision_threshold"]) if row.get("decision_threshold") is not None else None,
+                "decision_threshold": thresh_val,
                 "signal_label": row.get("signal_label"),
                 "calibration_method": row.get("calibration_method"),
             }
             conn.execute(stmt_v2, params)
+
     LOGGER.info("insert_predictions rows=%d", len(predictions))
     return len(predictions)
 

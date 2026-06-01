@@ -18,7 +18,108 @@ sync_latest_quotes: 31/12/2025
 
 
 
+---------logs prediction---------------
+python -u -m modelFactory --mode predict --accelerator auto --symbol-source stock-bars-daily --artifacts-dir artifacts/models --log-level INFO --training-start-date 2020-01-01 --training-end-date 2020-01-10
 
+2026-05-31 12:00:03,025 modelFactory.data_loader INFO load_universe_bars symbols=1 start_date=None end_date=2020-01-10 rows=1959
+2026-05-31 12:00:03,066 modelFactory.predictor INFO predict_symbol initialized symbol=ZWS requested_accelerator=auto resolved_device=cuda:0 device_name=NVIDIA GeForce RTX 5060 Ti
+2026-05-31 12:00:03,067 modelFactory.predictor INFO predict_symbol served symbol=ZWS selected_model=lstm_attention requested_model=lstm_attention date=2020-01-10 proba=0.6497 raw_proba=0.5264 class=1 signal=long threshold=0.6000 calibration=platt
+2026-05-31 12:00:03,069 modelFactory.predictor WARNING predict_symbol no_artifacts symbol=ZYBT path=artifacts\models\ZYBT\config.json
+2026-05-31 12:00:03,088 modelFactory.data_loader INFO load_symbol_bars symbol=ZYME start_date=None end_date=2020-01-10 rows=681
+2026-05-31 12:00:03,089 modelFactory.data_loader INFO load_symbol_sentiment symbol=ZYME start_date=None end_date=2020-01-10 rows=0
+2026-05-31 12:00:03,180 modelFactory.data_loader INFO load_symbol_bars symbol=SPY start_date=None end_date=2020-01-10 rows=5967
+2026-05-31 12:00:03,181 modelFactory.data_loader INFO load_benchmark_bars benchmark_symbol=SPY start_date=None end_date=2020-01-10 rows=5967
+2026-05-31 12:00:03,198 modelFactory.db_registry INFO load_candidate_symbols count=0
+2026-05-31 12:00:03,211 modelFactory.data_loader INFO load_universe_bars symbols=1 start_date=None end_date=2020-01-10 rows=681
+2026-05-31 12:00:03,260 modelFactory.predictor INFO predict_symbol initialized symbol=ZYME requested_accelerator=auto resolved_device=cuda:0 device_name=NVIDIA GeForce RTX 5060 Ti
+2026-05-31 12:00:03,261 modelFactory.predictor INFO predict_symbol served symbol=ZYME selected_model=lstm_attention requested_model=lstm_attention date=2020-01-10 proba=0.2049 raw_proba=0.5062 class=0 signal=no_trade threshold=0.5500 calibration=platt
+2026-05-31 12:00:04,063 modelFactory.cli WARNING predict batch persistence degraded rows=41348 error=(pymysql.err.ProgrammingError) nan can not be used with MySQL
+[SQL: INSERT INTO model_predictions (symbol, prediction_date, predicted_proba, predicted_class, run_id, selected_model, decision_threshold, signal_label, calibration_method) VALUES (%(sym)s, %(pd)s, %(pp)s, %(pc)s, %(rid)s, %(selected_model)s, %(decision_threshold)s, %(signal_label)s, %(calibration_method)s) ON DUPLICATE KEY UPDATE predicted_proba = VALUES(predicted_proba), predicted_class = VALUES(predicted_class), selected_model = VALUES(selected_model), decision_threshold = VALUES(decision_threshold), signal_label = VALUES(signal_label), calibration_method = VALUES(calibration_method)]
+[parameters: {'sym': 'MINE', 'pd': datetime.date(2020, 1, 1), 'pp': nan, 'pc': 0, 'rid': 'MINE_20260529_225912_3754c1d1', 'selected_model': 'lstm_attention', 'decision_threshold': 0.55, 'signal_label': 'no_trade', 'calibration_method': 'none'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+
+============================================================
+  Model Factory — Predictions: 41348 rows
+============================================================
+symbol prediction_date  predicted_proba  predicted_class                          run_id  raw_proba  decision_threshold signal_label calibration_method selected_model
+     A      2020-01-01         0.002741                0      A_20260527_220748_7e6919f8   0.548777                0.55     no_trade              platt lstm_attention
+    AA      2020-01-01         0.502653                0     AA_20260527_221333_07293d82   0.082964                0.55     no_trade              platt       lightgbm
+  AAAU      2020-01-01         0.994356                1   AAAU_20260527_222846_867ce34b   0.427899                0.55         long              platt lstm_attention
+  AACG      2020-01-01         0.349114                0   AACG_20260527_224043_3d3b5173   0.401960                0.55     no_trade              platt lstm_attention
+  AADR      2020-01-01         0.453848                0   AADR_20260527_225557_9e9a30dd   0.010148                0.65     no_trade              platt       lightgbm
+ AAGIY      2020-01-01         0.471887                0  AAGIY_20260530_213138_f295d8b8   0.558562                0.55     no_trade              platt       lightgbm
+   AAL      2020-01-01         0.866487                1    AAL_20260527_230658_090b07d5   0.854142                0.55         long              platt lstm_attention
+  AAME      2020-01-01         0.239253                0   AAME_20260527_231453_75246e94   0.229510                0.55     no_trade              platt       lightgbm
+  AAMI      2020-01-01         0.844454                1   AAMI_20260527_232002_0920ad33   0.614203                0.60         long              platt lstm_attention
+  AAOI      2020-01-01         0.566026                1   AAOI_20260527_232812_8f1de162   0.437110                0.55         long              platt lstm_attention
+  AAON      2020-01-01         0.584308                0   AAON_20260527_233327_d2f5e335   0.595673                0.60     no_trade              platt       lightgbm
+   AAP      2020-01-01         0.299241                0    AAP_20260527_234134_b458b49f   0.649270                0.55     no_trade              platt lstm_attention
+  AAPL      2020-01-01         0.349338                0   AAPL_20260530_213159_0f1d3ead   0.349338                0.55     no_trade               none lstm_attention
+   AAT      2020-01-01         0.355214                0    AAT_20260528_002403_6145c60a   0.438922                0.55     no_trade              platt lstm_attention
+  AAVM      2020-01-01         0.740189                1   AAVM_20260528_004015_bd9fc7ba   0.689544                0.55         long              platt lstm_attention
+  AAXJ      2020-01-01         0.275897                0   AAXJ_20260528_004530_193b449b   0.033405                0.60     no_trade              platt       lightgbm
+    AB      2020-01-01         0.438272                0     AB_20260528_005039_40fcfe26   0.553545                0.55     no_trade              platt       lightgbm
+  ABAT      2020-01-01         0.181603                0   ABAT_20260528_005549_7168dbb4   0.454194                0.55     no_trade              platt lstm_attention
+  ABBV      2020-01-01         0.504100                0   ABBV_20260528_010100_7dfe4d46   0.438236                0.55     no_trade              platt       lightgbm
+  ABCB      2020-01-01         0.365969                0   ABCB_20260528_125118_e439c0f9   0.013106                0.65     no_trade              platt       lightgbm
+  ABEO      2020-01-01         0.529032                0   ABEO_20260528_011905_913cdcdd   0.868749                0.55     no_trade              platt       lightgbm
+  ABEV      2020-01-01         0.165856                0   ABEV_20260528_012913_7c701992   0.134778                0.60     no_trade              platt lstm_attention
+  ABFL      2020-01-01         0.243392                0   ABFL_20260528_013420_bfc6b92f   0.063050                0.55     no_trade              platt       lightgbm
+   ABG      2020-01-01         0.412164                0    ABG_20260528_013926_8903c247   0.362940                0.55     no_trade              platt lstm_attention
+  ABLG      2020-01-01         0.332766                0   ABLG_20260528_015445_73fae88c   0.019713                0.60     no_trade              platt       lightgbm
+   ABM      2020-01-01         0.659844                1    ABM_20260528_141721_352195fd   0.602691                0.55         long              platt       lightgbm
+   ABR      2020-01-01         0.422786                0    ABR_20260528_143730_3e676705   0.679343                0.55     no_trade              platt lstm_attention
+   ABT      2020-01-01         0.703145                1    ABT_20260528_144542_7b4d65b2   0.562406                0.60         long              platt lstm_attention
+  ABTC      2020-01-01         0.047153                0   ABTC_20260528_144946_f0e1a2d2   0.258858                0.55     no_trade              platt lstm_attention
+  ABTS      2020-01-01         0.371879                0   ABTS_20260528_145357_f4f3be3e   0.729002                0.55     no_trade              platt lstm_attention
+  ABUS      2020-01-01         0.391290                0   ABUS_20260528_150043_2156ea80   0.404547                0.55     no_trade              platt lstm_attention
+  ABVC      2020-01-01         0.346140                0   ABVC_20260528_150451_6a8b7d2d   0.541686                0.55     no_trade              platt       lightgbm
+ ABXXF      2020-01-01         0.601444                1  ABXXF_20260530_213228_af3ef835   0.085958                0.55         long              platt       lightgbm
+   ACA      2020-01-01         0.902275                1    ACA_20260528_153512_d1d21f69   0.498930                0.55         long              platt lstm_attention
+  ACAD      2020-01-01         0.547703                0   ACAD_20260528_154806_10a7ce27   0.622414                0.55     no_trade              platt lstm_attention
+   ACB      2020-01-01         0.406734                0    ACB_20260528_155253_d1557871   0.247907                0.55     no_trade              platt lstm_attention
+  ACCO      2020-01-01         0.171251                0   ACCO_20260528_160013_fa9612ed   0.117370                0.65     no_trade              platt lstm_attention
+  ACCS      2020-01-01         0.274576                0   ACCS_20260528_160458_9b999b26   0.207691                0.60     no_trade              platt       lightgbm
+  ACEL      2020-01-01         0.785333                1   ACEL_20260528_161544_6ed6ed12   0.671899                0.55         long              platt lstm_attention
+  ACES      2020-01-01         0.411310                0   ACES_20260528_162212_06eb2d27   0.375084                0.55     no_trade              platt       lightgbm
+  ACET      2020-01-01         0.398759                0   ACET_20260528_162654_b8538205   0.323366                0.55     no_trade              platt       lightgbm
+  ACFN      2020-01-01         0.566465                0   ACFN_20260528_163114_01e3521a   0.390856                0.65     no_trade              platt lstm_attention
+ ACGBY      2020-01-01         0.528540                0  ACGBY_20260530_213253_4cbd83fc   0.528540                0.55     no_trade               none lstm_attention
+  ACGL      2020-01-01         0.432795                0   ACGL_20260528_164048_747df1de   0.502620                0.55     no_trade              platt lstm_attention
+ ACGLO      2020-01-01         0.245189                0  ACGLO_20260528_165010_f956c180   0.245189                0.55     no_trade               none lstm_attention
+   ACH      2020-01-01         0.437908                0    ACH_20260528_170004_b6d44cf2   0.718261                0.65     no_trade              platt       lightgbm
+  ACHC      2020-01-01         0.530472                0   ACHC_20260528_170442_49e377c7   0.792815                0.55     no_trade              platt lstm_attention
+  ACHV      2020-01-01         0.422771                0   ACHV_20260528_171631_df1bee36   0.943909                0.55     no_trade              platt       lightgbm
+  ACIC      2020-01-01         0.324881                0   ACIC_20260528_172542_cdebf1c0   0.271936                0.55     no_trade              platt lstm_attention
+  ACIO      2020-01-01         0.390483                0   ACIO_20260528_173402_6534e2af   0.390483                0.55     no_trade               none lstm_attention
+  ACIU      2020-01-01         0.328300                0   ACIU_20260528_173945_4e044854   0.414041                0.55     no_trade              platt lstm_attention
+  ACIW      2020-01-01         0.999026                1   ACIW_20260528_174509_0eed2f21   0.395911                0.55         long              platt lstm_attention
+ ACKAY      2020-01-01         0.503682                0  ACKAY_20260530_213318_91a97486   0.503682                0.55     no_trade               none lstm_attention
+  ACLS      2020-01-01         0.166396                0   ACLS_20260528_180525_85311945   0.676882                0.55     no_trade              platt lstm_attention
+   ACM      2020-01-01         0.429138                0    ACM_20260528_181647_e9dce331   0.229023                0.60     no_trade              platt       lightgbm
+  ACMR      2020-01-01         0.546913                0   ACMR_20260528_182240_bfd7760e   0.504094                0.55     no_trade              platt lstm_attention
+   ACN      2020-01-01         0.417867                0    ACN_20260528_182806_9fd1e7e7   0.657723                0.55     no_trade              platt lstm_attention
+  ACNB      2020-01-01         0.540974                0   ACNB_20260528_183250_c85fa0ac   0.448428                0.65     no_trade              platt lstm_attention
+  ACNT      2020-01-01         0.395542                0   ACNT_20260528_183717_1993a3f9   0.522480                0.60     no_trade              platt       lightgbm
+   ACP      2020-01-01         0.330691                0    ACP_20260528_185515_71dc5d2f   0.330691                0.55     no_trade               none lstm_attention
+   ACR      2020-01-01         0.587523                1    ACR_20260528_190010_73a15833   0.046368                0.55         long              platt       lightgbm
+  ACRE      2020-01-01         0.348598                0   ACRE_20260528_190544_17f3e9ff   0.247606                0.55     no_trade              platt       lightgbm
+  ACRS      2020-01-01         0.908939                1   ACRS_20260528_191132_aafca358   0.445795                0.60         long              platt lstm_attention
+  ACSI      2020-01-01         0.485035                0   ACSI_20260528_192502_778fdafd   0.485035                0.55     no_trade               none lstm_attention
+  ACTG      2020-01-01         0.426236                0   ACTG_20260528_193836_4c047a52   0.340187                0.55     no_trade              platt       lightgbm
+   ACU      2020-01-01         0.230071                0    ACU_20260528_195022_553aea1c   0.006644                0.60     no_trade              platt       lightgbm
+   ACV      2020-01-01         0.902561                1    ACV_20260528_195612_faed1ae1   0.787058                0.55         long              platt lstm_attention
+  ACWI      2020-01-01         0.293682                0   ACWI_20260528_202118_daa6d9cc   0.293682                0.55     no_trade               none lstm_attention
+  ACWV      2020-01-01         0.399279                0   ACWV_20260528_202834_a95b284f   0.399279                0.55     no_trade               none lstm_attention
+  ACWX      2020-01-01         0.235318                0   ACWX_20260528_203515_785a00cf   0.025207                0.55     no_trade              platt       lightgbm
+    AD      2020-01-01         0.380085                0     AD_20260528_205503_0d16f1d9   0.424873                0.60     no_trade              platt lstm_attention
+  ADAM      2020-01-01         0.062953                0   ADAM_20260528_211147_439dbedd   0.163797                0.65     no_trade              platt lstm_attention
+ ADAMN      2020-01-01
+::alpha_trade_run_summary::{"calibration_method": "platt", "champion_min_days": 0, "champion_min_runs": 0, "current_epoch": null, "current_phase": "predict_batch_completed", "current_split_index": null, "current_symbol": "ZYME", "current_symbol_index": 12412, "current_symbol_total": 12412, "debug_train_enabled": false, "decision_threshold": 0.55, "drift_status": "n/a", "duration_seconds": 11757.17, "fallback_reason": "config_missing", "feature_columns": ["daily_return", "log_return", "intraday_range", "overnight_gap", "close_to_vwap", "volume_ratio_20", "rolling_volatility_20", "rolling_volatility_60", "rolling_mean_return_5", "rolling_mean_return_20", "rsi_14", "atr_14_norm", "is_filled"], "feature_fingerprint": "78538fe6dbc2b028", "finished_at": "2026-05-31T10:00:05", "gate_status": "enabled", "heartbeat_count": 0, "heartbeat_interval_seconds": 60.0, "historical_prediction_range_enabled": true, "last_artifact_issue_path": "artifacts\\models\\ZYBT\\config.json", "last_artifact_issue_reason": "config_missing", "last_calibration_method": "platt", "last_db_issue_operation": "insert_predictions_batch", "last_db_issue_reason": "prediction_persist_failed:ProgrammingError", "last_decision_threshold": 0.55, "last_fallback_reason": null, "last_heartbeat_at": null, "last_prediction_date": "2020-01-10", "last_prediction_symbol": "ZYME", "last_requested_model": "lstm_attention", "last_served_model": "lstm_attention", "ml_drift_ks_pvalue": null, "ml_drift_psi": null, "ml_drift_status": "n/a", "ml_kill_switch_active": false, "ml_kill_switch_reason": null, "ml_mode": "rebuild-all", "mode": "predict", "phase_detail": "accelerator=auto max_workers=4 log_level=INFO seed=42 deterministic=True", "prediction_artifact_issue_count": 41192, "prediction_calibration_fallback_count": 0, "prediction_db_issue_count": 1, "prediction_fallback_count": 0, "progress_current": 12412, "progress_item": null, "progress_label": "🔮 Progression ML Predict", "progress_live": false, "progress_total": 12412, "reproducibility_deterministic": true, "reproducibility_deterministic_applied": true, "reproducibility_seed": 42, "resolved_accelerator": "cuda:0", "resolved_device_name": "NVIDIA GeForce RTX 5060 Ti", "run_id": "model-factory-20260531064408-577ea6", "schema_version": 1, "selected_model": "lstm_attention", "selector_universe_exclude_earnings_blackout": false, "selector_universe_max_candidate_rank": null, "selector_universe_signal_modes": [], "started_at": "2026-05-31T06:44:08", "symbol_source": "stock-bars-daily", "symbols_completed": 41348, "symbols_failed": 0, "symbols_quarantined": 0, "symbols_skipped": 0, "symbols_total": 12412, "total_epochs": null, "training_end_date": "2020-01-10", "training_start_date": "2020-01-01", "walkforward_enabled": true, "watchdog_timeout_seconds": 0}
+
+
+
+--------------log entrainement -----------
 
 
 

@@ -1099,6 +1099,67 @@ def test_render_ml_train_scope_block_displays_historical_window_caption(monkeypa
     assert any("Fenêtre historique appliquée : `2022-01-01` → `2022-01-31`." in value for value in captions)
 
 
+def test_render_ml_train_scope_block_uses_latest_widget_session_state_for_preview_and_launch(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        "pipeline_ml_train_symbol_source": "stock_scores_all",
+    }
+    launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
+    codes: list[str] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "code", lambda value, *args, **kwargs: codes.append(str(value)))
+    monkeypatch.setattr(
+        pipeline.st,
+        "selectbox",
+        lambda _label, *args, **kwargs: "candidates",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_ml_train_scope_preview",
+        lambda *args, **kwargs: {
+            "raw_symbol_count": 12,
+            "symbol_count": 7,
+            "sample_symbols": ["AAPL", "MSFT"],
+            "selector_summary": {"enabled": False, "applied": False, "input_symbol_count": 12, "output_symbol_count": 7},
+        },
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_pipeline_command",
+        lambda step_key, options: [step_key, str(options.ml_train_symbol_source)],
+    )
+    monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
+    monkeypatch.setattr(
+        pipeline.st,
+        "button",
+        lambda _label, *args, **kwargs: str(kwargs.get("key") or "") == "run_pipeline_step_ml_train_scoped",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_pipeline_step",
+        lambda step_key, step_label, options, db_config, all_runs: launch_calls.append((step_key, step_label, options)),
+    )
+
+    pipeline._render_ml_train_scope_block(
+        pipeline.PipelineLaunchOptions(),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert any("ml_train stock_scores_all" in value for value in codes)
+    assert len(launch_calls) == 1
+    step_key, step_label, options = launch_calls[0]
+    assert step_key == "ml_train"
+    assert "Union stock_scores + stock_scores_history" in step_label
+    assert options.ml_train_symbol_source == "stock_scores_all"
+
+
 def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_historical_range(monkeypatch) -> None:
     session_state: dict[str, object] = {}
     launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
@@ -1147,6 +1208,71 @@ def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_hist
         all_runs=[],
     )
 
+    assert len(launch_calls) == 1
+    step_key, step_label, options = launch_calls[0]
+    assert step_key == "ml_predict"
+    assert "Historique PIT stock_scores_history" in step_label
+    assert options.ml_predict_symbol_source == "stock_scores_history"
+    assert options.ml_predict_use_historical_range is True
+
+
+def test_render_ml_predict_scope_block_uses_latest_widget_session_state_for_preview_and_launch(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        "pipeline_ml_predict_symbol_source": "stock_scores_history",
+    }
+    launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
+    codes: list[str] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "code", lambda value, *args, **kwargs: codes.append(str(value)))
+    monkeypatch.setattr(
+        pipeline.st,
+        "selectbox",
+        lambda _label, *args, **kwargs: "candidates",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_ml_train_scope_preview",
+        lambda *args, **kwargs: {
+            "raw_symbol_count": 8,
+            "symbol_count": 5,
+            "sample_symbols": ["AAPL", "MSFT"],
+            "selector_summary": {"enabled": False, "applied": False, "input_symbol_count": 8, "output_symbol_count": 5},
+        },
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_pipeline_command",
+        lambda step_key, options: [step_key, str(options.ml_predict_symbol_source), str(options.ml_predict_use_historical_range)],
+    )
+    monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
+    monkeypatch.setattr(
+        pipeline.st,
+        "button",
+        lambda _label, *args, **kwargs: str(kwargs.get("key") or "") == "run_pipeline_step_ml_predict_scoped",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_pipeline_step",
+        lambda step_key, step_label, options, db_config, all_runs: launch_calls.append((step_key, step_label, options)),
+    )
+
+    pipeline._render_ml_predict_scope_block(
+        pipeline.PipelineLaunchOptions(
+            ml_training_start_date="2022-01-01",
+            ml_training_end_date="2022-01-31",
+        ),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert any("ml_predict stock_scores_history True" in value for value in codes)
     assert len(launch_calls) == 1
     step_key, step_label, options = launch_calls[0]
     assert step_key == "ml_predict"

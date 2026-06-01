@@ -206,6 +206,22 @@ def _coerce_float_metric(value: object, *, default: float = 0.0) -> float:
         return default
 
 
+def _resolve_latest_selectbox_value(
+    widget_key: str,
+    widget_value: object,
+    *,
+    default: str,
+    allowed_values: tuple[str, ...],
+) -> str:
+    session_value = str(st.session_state.get(widget_key, widget_value or default)).strip().lower()
+    if session_value in allowed_values:
+        return session_value
+    candidate = str(widget_value or default).strip().lower()
+    if candidate in allowed_values:
+        return candidate
+    return default
+
+
 def _render_period_sync_block(
     step_key: str,
     options: PipelineLaunchOptions,
@@ -687,7 +703,7 @@ def _render_ml_scope_block(
     if current_symbol_source not in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
         current_symbol_source = "candidates"
 
-    selected_symbol_source = str(
+    selected_symbol_source_widget_value = str(
         st.selectbox(
             "Univers de symboles à prédire" if step_key == "ml_predict" else "Univers de symboles à entraîner",
             options=ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
@@ -699,6 +715,12 @@ def _render_ml_scope_block(
                 "candidats du jour ou univers complet `stock_bars_daily`."
             ),
         )
+    )
+    selected_symbol_source = _resolve_latest_selectbox_value(
+        selectbox_key,
+        selected_symbol_source_widget_value,
+        default="candidates",
+        allowed_values=ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
     )
     st.caption(
         "`stock_scores_all` = union `stock_scores` + `stock_scores_history` ; `stock_scores` = snapshot courant ; "
@@ -759,19 +781,15 @@ def _render_ml_scope_block(
         if start_date and end_date:
             st.caption(f"Fenêtre historique appliquée : `{start_date}` → `{end_date}`.")
 
+    command_preview_overrides: dict[str, object] = {source_attr: cast(Any, selected_symbol_source)}
     if step_key == "ml_predict":
-        command_preview_options = replace(
-            options,
-            **{
-                source_attr: cast(Any, selected_symbol_source),
-                "ml_predict_use_historical_range": historical_range,
-            },
-        )
-        st.caption("Commande du bouton ci-dessous :")
-        st.code(
-            format_command_for_display(build_pipeline_command(step_key, command_preview_options)),
-            language="powershell",
-        )
+        command_preview_overrides["ml_predict_use_historical_range"] = historical_range
+    command_preview_options = replace(options, **command_preview_overrides)
+    st.caption("Commande du bouton ci-dessous :")
+    st.code(
+        format_command_for_display(build_pipeline_command(step_key, command_preview_options)),
+        language="powershell",
+    )
 
     if st.button(
         button_label,
