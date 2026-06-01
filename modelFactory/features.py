@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 
 import numpy as np
 import pandas as pd
+
+
+LOGGER = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
 # Liste ordonnée des features V1 (dérivées de OHLCV uniquement)
@@ -496,7 +500,8 @@ def compute_features(
             if col not in df.columns:
                 df[col] = default
             else:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default).astype(float)
+                numeric_series = pd.Series(pd.to_numeric(df[col], errors="coerce"), index=df.index, dtype=float)
+                df[col] = numeric_series.fillna(default).astype(float)
 
     # Determine active feature columns
     active_features = get_feature_columns(
@@ -504,6 +509,20 @@ def compute_features(
         feature_set=feature_set,
         include_selector_context=include_selector_context,
     )
+
+    feature_matrix = df.loc[:, active_features].astype(np.float64)
+    non_finite_mask = ~np.isfinite(feature_matrix.to_numpy(dtype=np.float64, copy=False))
+    if non_finite_mask.any():
+        affected_column_indexes = np.where(non_finite_mask)[1].tolist()
+        affected_columns = sorted({str(active_features[int(column_index)]) for column_index in affected_column_indexes})
+        affected_rows = int(non_finite_mask.any(axis=1).sum())
+        LOGGER.warning(
+            "compute_features dropping non-finite rows=%d columns=%s",
+            affected_rows,
+            ",".join(affected_columns),
+        )
+        feature_matrix = feature_matrix.replace([np.inf, -np.inf], np.nan)
+        df.loc[:, active_features] = feature_matrix
 
     # Drop warm-up NaN rows (rolling windows need ~60 rows)
     df = df.dropna(subset=active_features).reset_index(drop=True)
@@ -561,7 +580,9 @@ def _build_adjusted_price_frame(df: pd.DataFrame) -> pd.DataFrame:
     close = pd.to_numeric(df["close"], errors="coerce").astype(float)
     adj_close_raw = pd.to_numeric(df["adj_close"], errors="coerce").astype(float) if "adj_close" in df.columns else close.copy()
 
-    ratio = (adj_close_raw / close.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    close_non_zero = pd.Series(close.replace(0.0, np.nan), index=df.index, dtype=float)
+    ratio = pd.Series(adj_close_raw / close_non_zero, index=df.index, dtype=float)
+    ratio = ratio.replace([np.inf, -np.inf], np.nan)
     ratio = ratio.where(ratio > 0.0, np.nan).fillna(1.0)
 
     def _scaled_col(name: str) -> pd.Series:

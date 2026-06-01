@@ -481,6 +481,32 @@ def main(args: list[str] | None = None) -> None:
         )
         historical_predict_enabled = cfg.data.training_end_date is not None
         use_historical_pit_scopes = historical_predict_enabled and str(opts.symbol_source or "candidates") == "stock-scores-history"
+        persisted_incrementally = False
+
+        def _persist_predictions_chunk(
+            chunk: pd.DataFrame,
+            *,
+            operation: str,
+            prediction_date: date | None = None,
+        ) -> None:
+            if chunk.empty:
+                return
+            try:
+                insert_predictions(engine, chunk)
+                if prediction_date is not None:
+                    LOGGER.info(
+                        "predict persistence persisted date=%s rows=%d operation=%s",
+                        prediction_date.isoformat(),
+                        len(chunk),
+                        operation,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("predict batch persistence degraded rows=%d operation=%s error=%s", len(chunk), operation, exc)
+                increment_runtime_counter("prediction_db_issue_count", 1)
+                update_runtime_status(
+                    last_db_issue_operation=operation,
+                    last_db_issue_reason=f"prediction_persist_failed:{type(exc).__name__}",
+                )
 
         symbols = opts.symbols or load_symbols_for_source(engine, str(opts.symbol_source or "candidates"))
         selector_filter_summary = {
@@ -524,8 +550,11 @@ def main(args: list[str] | None = None) -> None:
                     cfg.data.training_start_date,
                     cfg.data.training_end_date,
                 )
-                prediction_parts = [
-                    predict_batch(
+                prediction_parts: list[pd.DataFrame] = []
+                for prediction_date, symbols_for_date in historical_scopes.items():
+                    if not symbols_for_date:
+                        continue
+                    part = predict_batch(
                         symbols_for_date,
                         Path(opts.artifacts_dir),
                         engine,
@@ -534,9 +563,19 @@ def main(args: list[str] | None = None) -> None:
                         persist=False,
                         accelerator=opts.accelerator,
                     )
-                    for prediction_date, symbols_for_date in historical_scopes.items()
-                    if symbols_for_date
-                ]
+                    if not part.empty:
+                        prediction_parts.append(part)
+                        _persist_predictions_chunk(
+                            part,
+                            operation="insert_predictions_historical_date",
+                            prediction_date=prediction_date,
+                        )
+                    else:
+                        LOGGER.info(
+                            "predict date=%s skipped rows=0 reason=no_valid_predictions",
+                            prediction_date.isoformat(),
+                        )
+                persisted_incrementally = True
             else:
                 prediction_dates = load_available_trading_dates(
                     engine,
@@ -551,8 +590,9 @@ def main(args: list[str] | None = None) -> None:
                     cfg.data.training_end_date,
                     len(prediction_dates),
                 )
-                prediction_parts = [
-                    predict_batch(
+                prediction_parts = []
+                for prediction_date in prediction_dates:
+                    part = predict_batch(
                         symbols,
                         Path(opts.artifacts_dir),
                         engine,
@@ -561,8 +601,19 @@ def main(args: list[str] | None = None) -> None:
                         persist=False,
                         accelerator=opts.accelerator,
                     )
-                    for prediction_date in prediction_dates
-                ]
+                    if not part.empty:
+                        prediction_parts.append(part)
+                        _persist_predictions_chunk(
+                            part,
+                            operation="insert_predictions_historical_date",
+                            prediction_date=prediction_date,
+                        )
+                    else:
+                        LOGGER.info(
+                            "predict date=%s skipped rows=0 reason=no_valid_predictions",
+                            prediction_date.isoformat(),
+                        )
+                persisted_incrementally = True
             non_empty_parts = [part for part in prediction_parts if not part.empty]
             preds = (
                 pd.concat(non_empty_parts, ignore_index=True)
@@ -595,16 +646,12 @@ def main(args: list[str] | None = None) -> None:
         except Exception as exc:  # pragma: no cover - guarded
             LOGGER.warning("ML drift gate evaluation failed: %s", exc)
 
-        if not preds.empty and (drift_decision is None or drift_decision.action != "kill_switch_ml"):
-            try:
-                insert_predictions(engine, preds)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("predict batch persistence degraded rows=%d error=%s", len(preds), exc)
-                increment_runtime_counter("prediction_db_issue_count", 1)
-                update_runtime_status(
-                    last_db_issue_operation="insert_predictions_batch",
-                    last_db_issue_reason=f"prediction_persist_failed:{type(exc).__name__}",
-                )
+        if (
+            not preds.empty
+            and (drift_decision is None or drift_decision.action != "kill_switch_ml")
+            and not persisted_incrementally
+        ):
+            _persist_predictions_chunk(preds, operation="insert_predictions_batch")
         elif drift_decision is not None and drift_decision.action == "kill_switch_ml":
             LOGGER.warning(
                 "predict batch persistence skipped reason=ml_kill_switch_active rows=%d decision=%s",

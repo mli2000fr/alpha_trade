@@ -212,9 +212,9 @@ def test_cli_main_predict_historical_loops_over_available_trading_dates(monkeypa
         (date(2022, 1, 3), date(2022, 1, 3)),
         (date(2022, 1, 4), date(2022, 1, 4)),
     ]
-    assert len(inserted_batches) == 1
-    inserted = inserted_batches[0]
-    assert list(inserted["prediction_date"]) == [date(2022, 1, 3), date(2022, 1, 4)]
+    assert len(inserted_batches) == 2
+    assert list(inserted_batches[0]["prediction_date"]) == [date(2022, 1, 3)]
+    assert list(inserted_batches[1]["prediction_date"]) == [date(2022, 1, 4)]
     assert emitted_summaries[-1]["historical_prediction_range_enabled"] is True
     assert emitted_summaries[-1]["training_end_date"] == "2022-01-04"
 
@@ -266,9 +266,9 @@ def test_cli_main_predict_historical_stock_scores_history_uses_pit_scopes(monkey
         (("AAPL", "MSFT"), date(2022, 1, 3), date(2022, 1, 3)),
         (("MSFT",), date(2022, 1, 4), date(2022, 1, 4)),
     ]
-    assert len(inserted_batches) == 1
-    inserted = inserted_batches[0]
-    assert list(inserted["symbol"]) == ["AAPL", "MSFT", "MSFT"]
+    assert len(inserted_batches) == 2
+    assert list(inserted_batches[0]["symbol"]) == ["AAPL", "MSFT"]
+    assert list(inserted_batches[1]["symbol"]) == ["MSFT"]
 
 
 def test_load_historical_prediction_scopes_from_scores_history_groups_symbols_by_snapshot_date(monkeypatch) -> None:

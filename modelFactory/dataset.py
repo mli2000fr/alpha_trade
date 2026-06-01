@@ -211,6 +211,8 @@ class FeatureScaler:
         s.std_ = np.asarray(std, dtype=np.float64)
         if s.mean_.ndim != 1 or s.std_.ndim != 1 or len(s.mean_) != len(s.std_) or len(s.mean_) != len(s.feature_names):
             raise ValueError("Scaler state invalide: dimensions mean/std/features incohérentes.")
+        if not np.isfinite(s.mean_).all() or not np.isfinite(s.std_).all():
+            raise ValueError("Scaler state invalide: mean/std non finis.")
         return s
 
 

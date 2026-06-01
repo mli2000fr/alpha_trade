@@ -167,6 +167,22 @@ class TestFeatures:
         extended = get_feature_columns(True)
         assert len(extended) == len(base) + len(SENTIMENT_FEATURE_COLUMNS)
 
+    def test_compute_features_drops_rows_with_non_finite_active_features(self):
+        bars = _make_bars(260)
+        zero_idx = 220
+        next_idx = zero_idx + 1
+        for column in ["open", "high", "low", "close", "adj_close", "vwap"]:
+            bars.loc[zero_idx, column] = 0.0
+        bars.loc[next_idx, ["open", "high", "low", "close", "adj_close", "vwap"]] = [101.0, 102.0, 100.0, 101.0, 101.0, 101.0]
+
+        df = compute_features(bars)
+
+        active_features = get_feature_columns(False)
+        assert np.isfinite(df[active_features].to_numpy(dtype=float)).all()
+        retained_dates = set(pd.to_datetime(df["date"]).dt.date)
+        assert bars.loc[zero_idx, "date"].date() not in retained_dates
+        assert bars.loc[next_idx, "date"].date() not in retained_dates
+
 
 # ===========================================================================
 # Dataset / split tests
@@ -205,6 +221,16 @@ class TestFeatureScaler:
         scaler2 = FeatureScaler.from_state_dict(sd)
         np.testing.assert_array_almost_equal(scaler.mean_, scaler2.mean_)
         np.testing.assert_array_almost_equal(scaler.std_, scaler2.std_)
+
+    def test_state_dict_rejects_non_finite_statistics(self):
+        with pytest.raises(ValueError, match="non finis"):
+            FeatureScaler.from_state_dict(
+                {
+                    "mean": [float("nan")] * len(FEATURE_COLUMNS),
+                    "std": [1.0] * len(FEATURE_COLUMNS),
+                    "features": list(FEATURE_COLUMNS),
+                }
+            )
 
 
 class TestBuildSequences:
@@ -426,5 +452,13 @@ class TestPredictorDeviceResolution:
 
         monkeypatch.setattr("modelFactory.predictor.torch.cuda.is_available", lambda: False)
         assert _resolve_inference_device("gpu").type == "cpu"
+
+    def test_predictor_latest_feature_date_must_match_cutoff(self):
+        from modelFactory.predictor import _has_matching_latest_feature_date
+
+        df = pd.DataFrame({"date": pd.to_datetime(["2020-01-07", "2020-01-08"])})
+
+        assert _has_matching_latest_feature_date(df, date(2020, 1, 8)) is True
+        assert _has_matching_latest_feature_date(df, date(2020, 1, 9)) is False
 
 

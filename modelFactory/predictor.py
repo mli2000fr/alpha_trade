@@ -310,6 +310,16 @@ def _build_prediction_result(
     ])
 
 
+def _has_matching_latest_feature_date(df: pd.DataFrame, cutoff_date: date | None) -> bool:
+    if cutoff_date is None or df.empty or "date" not in df.columns:
+        return True
+    try:
+        last_feature_date = pd.Timestamp(df["date"].iloc[-1]).date()
+    except Exception:  # noqa: BLE001
+        return False
+    return last_feature_date == cutoff_date
+
+
 def _record_route_fallback_if_any(symbol: str, route: dict[str, object]) -> None:
     fallback_reason = route.get("fallback_reason")
     if not fallback_reason:
@@ -759,6 +769,15 @@ def _predict_with_tabular_model(
     ))
     if df.empty or len(df) == 0:
         return None
+    if not _has_matching_latest_feature_date(df, cutoff_date):
+        LOGGER.warning(
+            "predict_symbol stale_feature_row symbol=%s selected_model=%s cutoff_date=%s last_feature_date=%s",
+            symbol,
+            selected_model,
+            cutoff_date,
+            pd.Timestamp(df["date"].iloc[-1]).date() if "date" in df.columns and not df.empty else None,
+        )
+        return None
     last_row = df.tail(1)
     contract_reason = validate_feature_contract(
         route_feature_contract if isinstance(route_feature_contract, dict) else cfg_data.get("feature_contract"),
@@ -790,6 +809,15 @@ def _predict_with_tabular_model(
             selected_model,
             missing_columns,
             resolved_feature_columns,
+        )
+        return None
+    last_row_values = last_row[resolved_feature_columns].to_numpy(dtype=np.float64, copy=False)
+    if not np.isfinite(last_row_values).all():
+        LOGGER.warning(
+            "predict_symbol non_finite_runtime_features symbol=%s selected_model=%s cutoff_date=%s",
+            symbol,
+            selected_model,
+            cutoff_date,
         )
         return None
     try:
@@ -826,6 +854,14 @@ def _predict_with_tabular_model(
         )
         _record_artifact_issue(symbol, reason=reason, path=model_path)
         raise ArtifactIntegrityError(reason, path=model_path) from exc
+    if not np.isfinite(raw_proba):
+        LOGGER.warning(
+            "predict_symbol non_finite_raw_proba symbol=%s selected_model=%s cutoff_date=%s",
+            symbol,
+            selected_model,
+            cutoff_date,
+        )
+        return None
     calibrator = _load_optional_calibrator(calibrator_path, symbol=symbol, selected_model=selected_model)
     eps = 1e-6
     margin = np.array([
@@ -839,6 +875,14 @@ def _predict_with_tabular_model(
         calibrator_path=calibrator_path,
         raw_proba=raw_proba,
     )
+    if not np.isfinite(proba):
+        LOGGER.warning(
+            "predict_symbol non_finite_calibrated_proba symbol=%s selected_model=%s cutoff_date=%s",
+            symbol,
+            selected_model,
+            cutoff_date,
+        )
+        return None
     threshold_value = decision_threshold if decision_threshold is not None else cfg_data.get("selected_decision_threshold", data_cfg.decision_threshold)
     effective_threshold = _numeric_threshold(threshold_value, float(data_cfg.decision_threshold or 0.5))
     pred_date = prediction_date or date.today()
@@ -1057,6 +1101,15 @@ def predict_symbol(
     if len(df) < data_cfg.sequence_length:
         LOGGER.warning("predict_symbol insufficient_sequences symbol=%s rows=%d required=%d", symbol, len(df), data_cfg.sequence_length)
         return None
+    if not _has_matching_latest_feature_date(df, cutoff_date):
+        LOGGER.warning(
+            "predict_symbol stale_feature_row symbol=%s selected_model=%s cutoff_date=%s last_feature_date=%s",
+            symbol,
+            selected_architecture,
+            cutoff_date,
+            pd.Timestamp(df["date"].iloc[-1]).date() if "date" in df.columns and not df.empty else None,
+        )
+        return None
 
     contract_reason = validate_feature_contract(
         cfg_data.get("feature_contract"),
@@ -1088,6 +1141,14 @@ def predict_symbol(
         features = scaler.transform(last_rows)
     except KeyError as exc:
         LOGGER.error("predict_symbol feature_contract_violation symbol=%s selected_model=%s error=%s", symbol, selected_architecture, exc)
+        return None
+    if not np.isfinite(features).all():
+        LOGGER.warning(
+            "predict_symbol non_finite_runtime_features symbol=%s selected_model=%s cutoff_date=%s",
+            symbol,
+            selected_architecture,
+            cutoff_date,
+        )
         return None
     x = torch.from_numpy(features.astype(np.float32)).unsqueeze(0).to(device=device, non_blocking=device.type == "cuda")  # [1, seq, feat]
 
@@ -1129,6 +1190,14 @@ def predict_symbol(
             LOGGER.error("predict_symbol %s symbol=%s path=%s error=%s", reason, symbol, ckpt_path, exc)
             _record_artifact_issue(symbol, reason=reason, path=ckpt_path)
             return None
+    if not np.isfinite(raw_proba):
+        LOGGER.warning(
+            "predict_symbol non_finite_raw_proba symbol=%s selected_model=%s cutoff_date=%s",
+            symbol,
+            selected_architecture,
+            cutoff_date,
+        )
+        return None
 
     proba, calibration_method = _apply_optional_calibration(
         symbol=symbol,
@@ -1138,6 +1207,14 @@ def predict_symbol(
         calibrator_path=calibrator_path,
         raw_proba=raw_proba,
     )
+    if not np.isfinite(proba):
+        LOGGER.warning(
+            "predict_symbol non_finite_calibrated_proba symbol=%s selected_model=%s cutoff_date=%s",
+            symbol,
+            selected_architecture,
+            cutoff_date,
+        )
+        return None
 
     pred_date = prediction_date or date.today()
     pred_class = 1 if proba >= data_cfg.decision_threshold else 0
