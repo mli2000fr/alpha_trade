@@ -408,6 +408,62 @@ def test_snapshot_exposes_structured_why_mode_and_sentiment_payload():
     assert any(item["source"] == "sentiment_warning" and item["triggered"] for item in snap.decision_trace)
 
 
+def test_snapshot_rates_shock_stack_escalates_to_cash_only_in_backtest():
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        vix=VixConfig(enabled=True, high_threshold=25.0),
+        yields=YieldsConfig(
+            enabled=True,
+            lookback_days=5,
+            relative_spike_threshold=0.05,
+            block_sectors=("Technology", "Real Estate", "Consumer Cyclical", "Financial Services"),
+            risk_mult=0.45,
+            soft_max_positions=2,
+            soft_max_position_weight=0.20,
+            soft_max_sector_weight=0.25,
+            soft_max_gross_exposure=0.50,
+            hard_relative_spike_threshold=0.08,
+            hard_mode_backtest="cash_only",
+            hard_requires_vix_high=True,
+            hard_requires_sentiment_warning=True,
+            hard_max_positions=1,
+            hard_max_position_weight=0.15,
+            hard_max_sector_weight=0.20,
+            hard_max_gross_exposure=0.35,
+        ),
+        sentiment_circuit_breaker=SentimentBreakerConfig(
+            enabled=True,
+            warning_threshold=-0.15,
+            critical_threshold=-0.30,
+            warning_max_positions=2,
+        ),
+    )
+    reset_cache()
+
+    snap = build_snapshot(
+        date(2025, 5, 1),
+        config=cfg,
+        equity=2_000.0,
+        execution_context="backtest",
+        macro_provider=cast(
+            MacroDataProvider,
+            cast(object, _StubMacroProvider(vix=30.0, vix_short=31.0, history=[4.0, 4.05, 4.1, 4.15, 4.2, 4.4])),
+        ),
+        sentiment_score_provider=lambda _lookback: -0.20,
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert snap.mode == "cash_only"
+    assert snap.allow_new_entries is False
+    assert snap.max_gross_exposure == pytest.approx(0.35)
+    assert snap.max_position_weight == pytest.approx(0.15)
+    assert snap.max_sector_weight == pytest.approx(0.20)
+    assert snap.effective_max_positions == 1
+    assert "Real Estate" in snap.blocked_sectors
+    assert "yield_spike_10y_hard" in snap.reasons
+    assert any(item["source"] == "yield_spike_10y_hard" and item["triggered"] for item in snap.decision_trace)
+
+
 # ---------------------------------------------------------------------------
 # YAML parser (C30)
 # ---------------------------------------------------------------------------

@@ -146,6 +146,14 @@ def _resolve_missing_macro_data_quality(
     }
 
 
+def _tighten_numeric_limit(current: int | float | None, candidate: int | float | None) -> int | float | None:
+    if candidate is None:
+        return current
+    if current is None:
+        return candidate
+    return min(current, candidate)
+
+
 def build_snapshot(
     trade_date: date,
     *,
@@ -187,10 +195,17 @@ def build_snapshot(
     allow_new_entries = True
     mode: RegimeMode = "normal"
     effective_max_positions: int | None = None
+    max_position_weight: float | None = None
+    max_sector_weight: float | None = None
+    max_gross_exposure: float | None = None
     macro_metrics: dict[str, Any] = {}
     sentiment_payload: dict[str, Any] = {}
     data_quality: dict[str, str] = {}
     decision_trace: list[dict[str, Any]] = []
+    vix_high = False
+    yield_rel: float | None = None
+    yield_spike = False
+    sentiment_level = "normal"
 
     # 1. Calendrier
     hits: list[CalendarPatternHit] = evaluate_calendar_patterns(config, trade_date)
@@ -294,6 +309,8 @@ def build_snapshot(
             lookback_days=config.yields.lookback_days,
             relative_spike_threshold=config.yields.relative_spike_threshold,
         )
+        yield_rel = rel
+        yield_spike = spike
         yield_history: list[float] | None = None
         if macro_provider is not None:
             try:
@@ -309,6 +326,23 @@ def build_snapshot(
             high_beta_threshold = config.yields.high_beta_threshold
             risk_multiplier *= config.yields.risk_mult
             reasons.append(f"yield_spike_10y:{rel:.3%}")
+            if config.yields.soft_max_positions is not None:
+                effective_max_positions = cast(
+                    int | None,
+                    _tighten_numeric_limit(effective_max_positions, int(config.yields.soft_max_positions)),
+                )
+            max_position_weight = cast(
+                float | None,
+                _tighten_numeric_limit(max_position_weight, config.yields.soft_max_position_weight),
+            )
+            max_sector_weight = cast(
+                float | None,
+                _tighten_numeric_limit(max_sector_weight, config.yields.soft_max_sector_weight),
+            )
+            max_gross_exposure = cast(
+                float | None,
+                _tighten_numeric_limit(max_gross_exposure, config.yields.soft_max_gross_exposure),
+            )
         _push_trace(
             decision_trace,
             source="yield_spike_10y",
@@ -331,6 +365,10 @@ def build_snapshot(
                 "blocked_sectors": list(config.yields.block_sectors),
                 "block_high_beta": config.yields.block_high_beta,
                 "risk_multiplier": config.yields.risk_mult,
+                "soft_max_positions": config.yields.soft_max_positions,
+                "soft_max_position_weight": config.yields.soft_max_position_weight,
+                "soft_max_sector_weight": config.yields.soft_max_sector_weight,
+                "soft_max_gross_exposure": config.yields.soft_max_gross_exposure,
             },
         )
 
@@ -388,6 +426,7 @@ def build_snapshot(
         reading = getattr(sentiment_score_provider, "last_reading", None)
         macro_metrics["sentiment_score"] = sent.score
         data_quality["sentiment"] = sent.data_quality
+        sentiment_level = sent.level
         sentiment_payload = {
             "score": sent.score,
             "level": sent.level,
@@ -444,6 +483,82 @@ def build_snapshot(
             },
         )
 
+    # 4.b Choc de taux dur : escalade si le spike est très violent ou si les
+    # signaux rates + VIX + sentiment warning s'empilent.
+    if config.yields.enabled and yield_spike:
+        hard_threshold = config.yields.hard_relative_spike_threshold
+        hard_by_magnitude = (
+            hard_threshold is not None
+            and yield_rel is not None
+            and yield_rel >= float(hard_threshold)
+        )
+        hard_by_stack = (
+            (not config.yields.hard_requires_vix_high or vix_high)
+            and (
+                not config.yields.hard_requires_sentiment_warning
+                or sentiment_level in {"warning", "critical"}
+            )
+        )
+        hard_triggered = bool(hard_by_magnitude or hard_by_stack)
+        hard_mode = (
+            config.yields.hard_mode_backtest
+            if execution_context == "backtest"
+            else config.yields.hard_mode_live
+        )
+        if hard_triggered:
+            mode = _escalate(mode, hard_mode)
+            blocked_sectors.extend(config.yields.hard_block_sectors or config.yields.block_sectors)
+            if config.yields.hard_risk_mult is not None:
+                risk_multiplier = min(risk_multiplier, float(config.yields.hard_risk_mult))
+            if config.yields.hard_max_positions is not None:
+                effective_max_positions = cast(
+                    int | None,
+                    _tighten_numeric_limit(effective_max_positions, int(config.yields.hard_max_positions)),
+                )
+            max_position_weight = cast(
+                float | None,
+                _tighten_numeric_limit(max_position_weight, config.yields.hard_max_position_weight),
+            )
+            max_sector_weight = cast(
+                float | None,
+                _tighten_numeric_limit(max_sector_weight, config.yields.hard_max_sector_weight),
+            )
+            max_gross_exposure = cast(
+                float | None,
+                _tighten_numeric_limit(max_gross_exposure, config.yields.hard_max_gross_exposure),
+            )
+            reasons.append("yield_spike_10y_hard")
+        _push_trace(
+            decision_trace,
+            source="yield_spike_10y_hard",
+            label="Choc taux dur",
+            triggered=hard_triggered,
+            severity="critical" if hard_triggered else "info",
+            resulting_mode=hard_mode if hard_triggered else mode,
+            value=yield_rel,
+            threshold=hard_threshold,
+            message=(
+                f"Choc taux dur ⇒ {hard_mode} (yield={yield_rel:.2%}, vix_high={vix_high}, sentiment={sentiment_level})"
+                if hard_triggered and yield_rel is not None
+                else "Conditions de choc taux dur non réunies"
+            ),
+            details={
+                "hard_by_magnitude": hard_by_magnitude,
+                "hard_by_stack": hard_by_stack,
+                "hard_requires_vix_high": config.yields.hard_requires_vix_high,
+                "hard_requires_sentiment_warning": config.yields.hard_requires_sentiment_warning,
+                "hard_mode": hard_mode,
+                "hard_block_sectors": list(config.yields.hard_block_sectors or config.yields.block_sectors),
+                "hard_risk_mult": config.yields.hard_risk_mult,
+                "hard_max_positions": config.yields.hard_max_positions,
+                "hard_max_position_weight": config.yields.hard_max_position_weight,
+                "hard_max_sector_weight": config.yields.hard_max_sector_weight,
+                "hard_max_gross_exposure": config.yields.hard_max_gross_exposure,
+                "vix_high": vix_high,
+                "sentiment_level": sentiment_level,
+            },
+        )
+
     # 5. Earnings shield + buyback blackout
     earnings = compute_earnings_shield(
         trade_date,
@@ -457,27 +572,28 @@ def build_snapshot(
     allowed_slots: int | None = None
     if equity is not None and equity > 0 and enforce_min_notional > 0:
         allowed_slots = max(0, int(math.floor(equity / enforce_min_notional)))
+        allowed_slots_value = int(allowed_slots)
         if effective_max_positions is None:
-            effective_max_positions = allowed_slots
+            effective_max_positions = allowed_slots_value
         else:
             current_effective_max_positions = int(effective_max_positions)
-            effective_max_positions = min(current_effective_max_positions, allowed_slots)
-        if allowed_slots == 0:
+            effective_max_positions = min(current_effective_max_positions, allowed_slots_value)
+        if allowed_slots_value == 0:
             allow_new_entries = False
             reasons.append("equity_too_low_for_min_notional")
         _push_trace(
             decision_trace,
             source="min_notional_guard",
             label="Garde-fou min notional",
-            triggered=allowed_slots == 0,
-            severity="warning" if allowed_slots == 0 else "info",
+            triggered=allowed_slots_value == 0,
+            severity="warning" if allowed_slots_value == 0 else "info",
             resulting_mode="normal",
-            value=allowed_slots,
+            value=allowed_slots_value,
             threshold=enforce_min_notional,
             message=(
                 f"Equity insuffisante pour le min notional ({equity:.2f}$ / min {enforce_min_notional:.2f}$)"
-                if allowed_slots == 0
-                else f"Capital compatible : {allowed_slots} slot(s) autorisé(s)"
+                if allowed_slots_value == 0
+                else f"Capital compatible : {allowed_slots_value} slot(s) autorisé(s)"
             ),
             details={"equity": equity, "enforce_min_notional": enforce_min_notional},
         )
@@ -506,6 +622,9 @@ def build_snapshot(
             config.sector_limits.max_tickers_per_sector
             if config.sector_limits.enabled else None
         ),
+        max_position_weight=max_position_weight,
+        max_sector_weight=max_sector_weight,
+        max_gross_exposure=max_gross_exposure,
         blocked_sectors=tuple(dict.fromkeys(blocked_sectors)),
         block_high_beta=block_high_beta,
         high_beta_threshold=high_beta_threshold,

@@ -44,6 +44,21 @@ class YieldsConfig:
     block_high_beta: bool = True
     high_beta_threshold: float = 1.2
     risk_mult: float = 0.6
+    soft_max_positions: int | None = None
+    soft_max_position_weight: float | None = None
+    soft_max_sector_weight: float | None = None
+    soft_max_gross_exposure: float | None = None
+    hard_relative_spike_threshold: float | None = None
+    hard_block_sectors: tuple[str, ...] = ()
+    hard_risk_mult: float | None = None
+    hard_mode_live: str = "close_only"
+    hard_mode_backtest: str = "cash_only"
+    hard_requires_vix_high: bool = True
+    hard_requires_sentiment_warning: bool = True
+    hard_max_positions: int | None = None
+    hard_max_position_weight: float | None = None
+    hard_max_sector_weight: float | None = None
+    hard_max_gross_exposure: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +192,61 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
             block_high_beta=bool(yields.get("block_high_beta", True)),
             high_beta_threshold=float(yields.get("high_beta_threshold", 1.2)),
             risk_mult=float(yields.get("risk_mult", 0.6)),
+            soft_max_positions=(
+                int(yields["soft_max_positions"])
+                if yields.get("soft_max_positions") not in {None, ""}
+                else None
+            ),
+            soft_max_position_weight=(
+                float(yields["soft_max_position_weight"])
+                if yields.get("soft_max_position_weight") not in {None, ""}
+                else None
+            ),
+            soft_max_sector_weight=(
+                float(yields["soft_max_sector_weight"])
+                if yields.get("soft_max_sector_weight") not in {None, ""}
+                else None
+            ),
+            soft_max_gross_exposure=(
+                float(yields["soft_max_gross_exposure"])
+                if yields.get("soft_max_gross_exposure") not in {None, ""}
+                else None
+            ),
+            hard_relative_spike_threshold=(
+                float(yields["hard_relative_spike_threshold"])
+                if yields.get("hard_relative_spike_threshold") not in {None, ""}
+                else None
+            ),
+            hard_block_sectors=tuple(yields.get("hard_block_sectors", [])),
+            hard_risk_mult=(
+                float(yields["hard_risk_mult"])
+                if yields.get("hard_risk_mult") not in {None, ""}
+                else None
+            ),
+            hard_mode_live=str(yields.get("hard_mode_live", "close_only")),
+            hard_mode_backtest=str(yields.get("hard_mode_backtest", "cash_only")),
+            hard_requires_vix_high=bool(yields.get("hard_requires_vix_high", True)),
+            hard_requires_sentiment_warning=bool(yields.get("hard_requires_sentiment_warning", True)),
+            hard_max_positions=(
+                int(yields["hard_max_positions"])
+                if yields.get("hard_max_positions") not in {None, ""}
+                else None
+            ),
+            hard_max_position_weight=(
+                float(yields["hard_max_position_weight"])
+                if yields.get("hard_max_position_weight") not in {None, ""}
+                else None
+            ),
+            hard_max_sector_weight=(
+                float(yields["hard_max_sector_weight"])
+                if yields.get("hard_max_sector_weight") not in {None, ""}
+                else None
+            ),
+            hard_max_gross_exposure=(
+                float(yields["hard_max_gross_exposure"])
+                if yields.get("hard_max_gross_exposure") not in {None, ""}
+                else None
+            ),
         ),
         sentiment_circuit_breaker=SentimentBreakerConfig(
             enabled=bool(breaker.get("enabled", False)),

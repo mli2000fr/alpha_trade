@@ -112,6 +112,13 @@ RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     },
 }
 
+PIPELINE_DEFENSIVE_OVERLAY_SESSION_KEYS = (
+    "bt_run_max_portfolio_dd_pct",
+    "bt_run_dd_recovery_pct",
+    "bt_run_target_annual_vol_raw",
+    "bt_run_min_ml_coverage_ratio_raw",
+)
+
 
 def _to_float(value: object, default: float = 0.0) -> float:
     try:
@@ -133,6 +140,17 @@ def _parse_optional_int(raw_value: str, *, label: str) -> int | None:
         return None
     try:
         return int(cleaned)
+    except ValueError:
+        st.warning(f"Valeur invalide pour `{label}` : `{raw_value}`. Le champ est ignoré.")
+        return None
+
+
+def _parse_optional_float(raw_value: str, *, label: str) -> float | None:
+    cleaned = raw_value.strip()
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
     except ValueError:
         st.warning(f"Valeur invalide pour `{label}` : `{raw_value}`. Le champ est ignoré.")
         return None
@@ -181,6 +199,14 @@ def _apply_run_configuration_preset(selected_preset_key: str) -> dict[str, objec
     updates = cast(dict[str, object], preset.get("state_updates", {}))
     for session_key, session_value in updates.items():
         st.session_state[session_key] = session_value
+    if selected_preset_key in {"pipeline_live_like", "production_parity"}:
+        for session_key in PIPELINE_DEFENSIVE_OVERLAY_SESSION_KEYS:
+            st.session_state.pop(session_key, None)
+    elif selected_preset_key == "standard_research":
+        st.session_state["bt_run_max_portfolio_dd_pct"] = 0.0
+        st.session_state["bt_run_dd_recovery_pct"] = 0.95
+        st.session_state["bt_run_target_annual_vol_raw"] = ""
+        st.session_state["bt_run_min_ml_coverage_ratio_raw"] = ""
     return preset
 
 
@@ -222,9 +248,45 @@ def _apply_run_capital_preset(selected_preset_key: str, equity: float) -> Capita
     st.session_state["bt_run_account_type"] = str(values.get("execution_account_type", st.session_state.get("bt_run_account_type", "margin")))
     st.session_state["bt_run_pdt_rule"] = str(values.get("execution_pdt_rule", st.session_state.get("bt_run_pdt_rule", "auto")))
     st.session_state["bt_run_swing_only"] = bool(values.get("execution_swing_only", st.session_state.get("bt_run_swing_only", False)))
-    st.session_state["bt_run_max_positions"] = int(values.get("risk_max_positions", st.session_state.get("bt_run_max_positions", 20)))
+    st.session_state["bt_run_max_positions"] = _to_int(
+        values.get("risk_max_positions", st.session_state.get("bt_run_max_positions", 20)),
+        20,
+    )
     st.session_state[BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY] = signature
     return preset
+
+
+def _resolve_pipeline_backtest_defaults(
+    *,
+    engine_mode: str,
+    selected_run_preset_key: str,
+    auto_run_preset_key: str,
+) -> dict[str, float | None]:
+    defaults: dict[str, float | None] = {
+        "max_portfolio_dd_pct": 0.0,
+        "dd_recovery_pct": 0.95,
+        "target_annual_vol": None,
+        "min_ml_coverage_ratio": None,
+    }
+    if str(engine_mode or "research").strip().lower() != "pipeline":
+        return defaults
+
+    effective_preset_key = (
+        auto_run_preset_key
+        if selected_run_preset_key == CAPITAL_PRESET_CUSTOM
+        else selected_run_preset_key
+    )
+    preset = get_capital_preset_by_key(effective_preset_key)
+    values = preset.values if preset is not None else {}
+    return {
+        "max_portfolio_dd_pct": _to_float(
+            values.get("backtesting_max_portfolio_dd_pct", values.get("risk_max_drawdown_pct", 0.12)),
+            0.12,
+        ),
+        "dd_recovery_pct": _to_float(values.get("backtesting_dd_recovery_pct", 0.98), 0.98),
+        "target_annual_vol": _to_float(values.get("backtesting_target_annual_vol", 0.15), 0.15),
+        "min_ml_coverage_ratio": _to_float(values.get("backtesting_min_ml_coverage_ratio", 0.80), 0.80),
+    }
 
 
 def _apply_backfill_capital_preset(selected_preset_key: str, capital: float) -> CapitalPreset | None:
@@ -239,7 +301,10 @@ def _apply_backfill_capital_preset(selected_preset_key: str, capital: float) -> 
         st.session_state[BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY] = signature
         return None
     values = preset.values
-    st.session_state["bt_backfill_selection_size"] = int(values.get("selector_selection_size", st.session_state.get("bt_backfill_selection_size", 100)))
+    st.session_state["bt_backfill_selection_size"] = _to_int(
+        values.get("selector_selection_size", st.session_state.get("bt_backfill_selection_size", 100)),
+        100,
+    )
     st.session_state[BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY] = signature
     return preset
 
@@ -732,13 +797,54 @@ def _render_ml_coverage_preflight(
             st.dataframe(pd.DataFrame(missing_rows_sample), use_container_width=True, hide_index=True)
 
 
-def _build_overlay_options() -> dict[str, Any]:
+def _build_overlay_options(
+    *,
+    engine_mode: str,
+    selected_run_preset_key: str,
+    auto_run_preset_key: str,
+) -> dict[str, Any]:
     """Construit le sous-dict d'options pour les surcouches micro-structure / risk overlay.
 
     Affiche un expander unique avec deux blocs (Phase B et Phase C). Toutes les
     valeurs par défaut sont **neutres** : le backtest produit alors exactement
     les mêmes résultats que sans la surcouche.
     """
+    pipeline_defaults = _resolve_pipeline_backtest_defaults(
+        engine_mode=engine_mode,
+        selected_run_preset_key=selected_run_preset_key,
+        auto_run_preset_key=auto_run_preset_key,
+    )
+    max_portfolio_dd_default = (
+        float(st.session_state["bt_run_max_portfolio_dd_pct"])
+        if "bt_run_max_portfolio_dd_pct" in st.session_state
+        else float(pipeline_defaults.get("max_portfolio_dd_pct") or 0.0)
+    )
+    dd_recovery_default = (
+        float(st.session_state["bt_run_dd_recovery_pct"])
+        if "bt_run_dd_recovery_pct" in st.session_state
+        else float(pipeline_defaults.get("dd_recovery_pct") or 0.95)
+    )
+    target_annual_vol_default = pipeline_defaults.get("target_annual_vol")
+    min_ml_coverage_ratio_default = pipeline_defaults.get("min_ml_coverage_ratio")
+    target_annual_vol_default_raw = (
+        cast(str, st.session_state.get("bt_run_target_annual_vol_raw", ""))
+        if "bt_run_target_annual_vol_raw" in st.session_state
+        else (
+            f"{target_annual_vol_default:g}"
+            if target_annual_vol_default is not None
+            else ""
+        )
+    )
+    min_ml_coverage_ratio_default_raw = (
+        cast(str, st.session_state.get("bt_run_min_ml_coverage_ratio_raw", ""))
+        if "bt_run_min_ml_coverage_ratio_raw" in st.session_state
+        else (
+            f"{min_ml_coverage_ratio_default:g}"
+            if min_ml_coverage_ratio_default is not None
+            else ""
+        )
+    )
+
     with st.expander("🧪 Reproductibilité & surcouches research-grade (Phase B/C)", expanded=False):
         st.caption(
             "Toutes ces options sont **opt-in** : laissées à zéro/désactivées, le backtest "
@@ -925,7 +1031,7 @@ def _build_overlay_options() -> dict[str, Any]:
                 "Max DD portefeuille",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("bt_run_max_portfolio_dd_pct", 0.0)),
+                value=max_portfolio_dd_default,
                 step=0.01,
                 format="%.4f",
                 key="bt_run_max_portfolio_dd_pct",
@@ -936,7 +1042,7 @@ def _build_overlay_options() -> dict[str, Any]:
                 "DD recovery",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("bt_run_dd_recovery_pct", 0.95)),
+                value=dd_recovery_default,
                 step=0.01,
                 format="%.4f",
                 key="bt_run_dd_recovery_pct",
@@ -944,10 +1050,29 @@ def _build_overlay_options() -> dict[str, Any]:
         with risk_col10:
             target_annual_vol_raw = st.text_input(
                 "Target annual vol (optionnel)",
-                value=cast(str, st.session_state.get("bt_run_target_annual_vol_raw", "")),
+                value=target_annual_vol_default_raw,
                 key="bt_run_target_annual_vol_raw",
                 help="Ex 0.15 = cible 15% vol portefeuille. Vide = désactivé.",
             )
+
+        risk_col11, risk_col12 = st.columns([1.5, 2.5])
+        with risk_col11:
+            min_ml_coverage_ratio_raw = st.text_input(
+                "Min ML coverage ratio (pipeline)",
+                value=min_ml_coverage_ratio_default_raw,
+                key="bt_run_min_ml_coverage_ratio_raw",
+                help="Ex 0.80 = bloque le run pipeline si la couverture ML passe sous 80%. Vide = désactivé.",
+            )
+        with risk_col12:
+            if engine_mode == "pipeline":
+                st.caption(
+                    "Le preset capital préremplit ici le drawdown breaker, le `vol targeting` et le gating ML. "
+                    "Vous pouvez modifier directement `Max DD portefeuille`, `DD recovery`, `Target annual vol` et `Min ML coverage ratio` avant le lancement."
+                )
+            else:
+                st.caption(
+                    "Ces garde-fous sont surtout utiles pour les runs `pipeline`. En `research`, laissez-les à zéro / vides pour rester neutre."
+                )
 
     seed_value: int | None = None
     if seed_raw.strip():
@@ -956,13 +1081,11 @@ def _build_overlay_options() -> dict[str, Any]:
         except ValueError:
             st.warning(f"Seed invalide ignoré : `{seed_raw}`.")
 
-    target_annual_vol_value: float | None = None
-    cleaned_vol = target_annual_vol_raw.strip()
-    if cleaned_vol:
-        try:
-            target_annual_vol_value = float(cleaned_vol)
-        except ValueError:
-            st.warning(f"Target annual vol invalide ignorée : `{cleaned_vol}`.")
+    target_annual_vol_value = _parse_optional_float(str(target_annual_vol_raw or ""), label="Target annual vol")
+    min_ml_coverage_ratio_value = _parse_optional_float(
+        str(min_ml_coverage_ratio_raw or ""),
+        label="Min ML coverage ratio (pipeline)",
+    )
 
     return {
         "risk_free_rate": float(risk_free_rate),
@@ -983,6 +1106,7 @@ def _build_overlay_options() -> dict[str, Any]:
         "max_portfolio_dd_pct": float(max_portfolio_dd_pct),
         "dd_recovery_pct": float(dd_recovery_pct),
         "target_annual_vol": target_annual_vol_value,
+        "min_ml_coverage_ratio": min_ml_coverage_ratio_value,
     }
 
 
@@ -1498,7 +1622,11 @@ def _build_run_options() -> BacktestRunOptions:
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
-        **_build_overlay_options(),
+        **_build_overlay_options(
+            engine_mode=engine_mode,
+            selected_run_preset_key=selected_run_preset_key,
+            auto_run_preset_key=auto_run_preset_key,
+        ),
     )
 
     st.code(format_command_for_display(build_backtesting_command("run", options)), language="powershell")

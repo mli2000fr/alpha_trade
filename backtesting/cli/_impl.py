@@ -368,6 +368,7 @@ def _build_backtest_common_params(
     phase4_protection_replay_result,
     phase5_watcher_replay_result,
     phase7_exit_lifecycle_result,
+    ml_coverage_gate: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "start": args.start,
@@ -439,6 +440,15 @@ def _build_backtest_common_params(
                 float(args.target_annual_vol) if args.target_annual_vol is not None else None
             ),
             "is_default": risk_overlay_cfg.is_default(),
+        },
+        "ml_coverage_gate": dict(ml_coverage_gate or {}) if ml_coverage_gate else {
+            "enabled": False,
+            "allowed": True,
+            "required_ratio": (
+                float(getattr(args, "min_ml_coverage_ratio", 0.0))
+                if getattr(args, "min_ml_coverage_ratio", None) is not None
+                else None
+            ),
         },
         "phase2": {
             "enabled": phase2_mode != "off",
@@ -1001,6 +1011,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Cible de volatilité annualisée portefeuille (Phase C.2). Désactivé si non fourni.",
     )
+    run_p.add_argument(
+        "--min-ml-coverage-ratio",
+        type=float,
+        default=None,
+        help="Seuil minimal de couverture ML autorisé en mode pipeline (0.80 = 80%%). 0 ou None = désactivé.",
+    )
 
     # --- backfill-scores-history ---
     backfill_p = sub.add_parser(
@@ -1181,6 +1197,9 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--fees": "fees",
         "--capital-preset-key": "capital_preset_key",
         "--capital": "capital",
+        "--max-portfolio-dd-pct": "max_portfolio_dd_pct",
+        "--target-annual-vol": "target_annual_vol",
+        "--min-ml-coverage-ratio": "min_ml_coverage_ratio",
     }
     for token in argv:
         key = token.split("=", 1)[0]
@@ -1211,12 +1230,21 @@ def _infer_programmatic_explicit_flags(args: argparse.Namespace, *, argv: list[s
         "cash_settlement_days",
         "fees",
         "capital_preset_key",
+        "max_portfolio_dd_pct",
+        "target_annual_vol",
+        "min_ml_coverage_ratio",
     }
-    return {
-        field_name
-        for field_name in inferable_fields
-        if hasattr(args, field_name) and getattr(args, field_name) is not None
-    }
+    explicit: set[str] = set()
+    for field_name in inferable_fields:
+        if not hasattr(args, field_name):
+            continue
+        value = getattr(args, field_name)
+        if value is None:
+            continue
+        if field_name == "max_portfolio_dd_pct" and float(value or 0.0) <= 0.0:
+            continue
+        explicit.add(field_name)
+    return explicit
 
 
 def _run_statistical_validation(
@@ -1347,6 +1375,94 @@ def _run_statistical_validation(
             _safe_print(f"   ⚠️ Analyse de sensibilité échouée : {exc}")
 
 
+def _resolve_pipeline_preset_float(preset, *keys: str, default: float | None = None) -> float | None:
+    values = getattr(preset, "values", {}) or {}
+    for key in keys:
+        raw = values.get(key)
+        if raw in {None, ""}:
+            continue
+        return float(raw)
+    return default
+
+
+def _apply_pipeline_defensive_defaults_from_preset(
+    args: argparse.Namespace,
+    *,
+    effective_preset,
+    engine_mode: str,
+    explicit_flags: set[str],
+) -> None:
+    if str(engine_mode or "research").strip().lower() != "pipeline":
+        return
+
+    if (
+        "max_portfolio_dd_pct" not in explicit_flags
+        and float(getattr(args, "max_portfolio_dd_pct", 0.0) or 0.0) <= 0.0
+    ):
+        args.max_portfolio_dd_pct = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_max_portfolio_dd_pct",
+            "risk_max_drawdown_pct",
+            default=0.12,
+        )
+
+    if (
+        "target_annual_vol" not in explicit_flags
+        and getattr(args, "target_annual_vol", None) is None
+    ):
+        args.target_annual_vol = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_target_annual_vol",
+            default=0.15,
+        )
+
+    if (
+        "min_ml_coverage_ratio" not in explicit_flags
+        and getattr(args, "min_ml_coverage_ratio", None) is None
+    ):
+        args.min_ml_coverage_ratio = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_min_ml_coverage_ratio",
+            default=0.80,
+        )
+
+
+def _enforce_ml_coverage_gate(
+    *,
+    engine_mode: str,
+    ml_mode: str,
+    ml_diagnostics,
+    min_ml_coverage_ratio: float | None,
+) -> dict[str, object]:
+    from backtesting.fidelity import evaluate_ml_coverage_gate
+
+    def _as_float(value: object) -> float:
+        return float(value) if value not in {None, ""} else 0.0
+
+    gate = evaluate_ml_coverage_gate(
+        engine_mode=engine_mode,
+        ml_mode=ml_mode,
+        ml_diagnostics=ml_diagnostics,
+        min_coverage_ratio=min_ml_coverage_ratio,
+    )
+    if gate.get("enabled"):
+        _safe_print(
+            "   ml_coverage_gate=enabled coverage={:.2%} threshold={:.2%}\n".format(
+                _as_float(gate.get("coverage_ratio")),
+                _as_float(gate.get("required_ratio")),
+            )
+        )
+    if gate.get("enabled") and not gate.get("allowed"):
+        _safe_print(
+            "❌ Couverture ML insuffisante pour un run pipeline : {:.2%} < {:.2%}. Relancez avec une meilleure couverture, `--ml-mode off`, ou un seuil explicite plus bas.\n".format(
+                _as_float(gate.get("coverage_ratio")),
+                _as_float(gate.get("required_ratio")),
+            )
+        )
+        sys.exit(1)
+    return gate
+
+
 def _run_backtest(args: argparse.Namespace) -> None:
     """Exécute le backtest complet."""
     from datetime import datetime
@@ -1449,6 +1565,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
     phase5_mode = str(getattr(args, "phase5_mode", "off") or "off").strip().lower()
     phase7_mode = str(getattr(args, "phase7_mode", "off") or "off").strip().lower()
     strict_pit = engine_mode == "pipeline"
+    _apply_pipeline_defensive_defaults_from_preset(
+        args,
+        effective_preset=effective_preset,
+        engine_mode=engine_mode,
+        explicit_flags=explicit_flags,
+    )
     phase2_risk_config = None
     if phase2_mode != "off":
         from risk_management.config import RiskConfig
@@ -1655,6 +1777,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
         sentiment_diagnostics=sentiment_diagnostics,
         ml_mode=str(args.ml_mode or "auto"),
         ml_diagnostics=ml_diagnostics,
+    )
+    ml_coverage_gate = _enforce_ml_coverage_gate(
+        engine_mode=engine_mode,
+        ml_mode=str(args.ml_mode or "auto"),
+        ml_diagnostics=ml_diagnostics,
+        min_ml_coverage_ratio=getattr(args, "min_ml_coverage_ratio", None),
     )
 
     # 2. Pivoter OHLCV
@@ -1971,6 +2099,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         phase4_protection_replay_result=phase4_protection_replay_result,
         phase5_watcher_replay_result=phase5_watcher_replay_result,
         phase7_exit_lifecycle_result=phase7_exit_lifecycle_result,
+        ml_coverage_gate=ml_coverage_gate,
     )
     fidelity_manifest = build_fidelity_manifest(
         engine_mode=engine_mode,

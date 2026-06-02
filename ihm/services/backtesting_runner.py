@@ -74,6 +74,7 @@ class BacktestRunOptions:
     max_portfolio_dd_pct: float = 0.0
     dd_recovery_pct: float = 0.95
     target_annual_vol: float | None = None
+    min_ml_coverage_ratio: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +250,8 @@ def build_backtesting_command(
             command.extend(["--dd-recovery-pct", str(options.dd_recovery_pct)])
         if options.target_annual_vol is not None:
             command.extend(["--target-annual-vol", str(options.target_annual_vol)])
+        if options.min_ml_coverage_ratio is not None:
+            command.extend(["--min-ml-coverage-ratio", str(options.min_ml_coverage_ratio)])
         return command
 
     if kind == "backfill-scores-history":

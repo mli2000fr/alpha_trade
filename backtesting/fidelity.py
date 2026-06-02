@@ -2790,6 +2790,79 @@ class PreparedPredictionsResult:
     diagnostics: MlPreparationDiagnostics
 
 
+def evaluate_ml_coverage_gate(
+    *,
+    engine_mode: str,
+    ml_mode: str,
+    ml_diagnostics: MlPreparationDiagnostics | None,
+    min_coverage_ratio: float | None,
+) -> dict[str, object]:
+    """Évalue un gating dur sur la couverture ML pour les runs pipeline.
+
+    Le gating est considéré actif uniquement si :
+    - ``engine_mode == 'pipeline'`` ;
+    - ``ml_mode != 'off'`` ;
+    - ``min_coverage_ratio`` est renseigné et > 0.
+
+    Retourne un payload sérialisable explicitant si le run est autorisé.
+    """
+    normalized_engine_mode = str(engine_mode or "research").strip().lower() or "research"
+    normalized_ml_mode = str(ml_mode or "auto").strip().lower() or "auto"
+    threshold = None if min_coverage_ratio is None else float(min_coverage_ratio)
+    if threshold is not None and not 0.0 <= threshold <= 1.0:
+        raise ValueError("min_coverage_ratio doit être compris entre 0.0 et 1.0.")
+
+    enabled = (
+        normalized_engine_mode == "pipeline"
+        and normalized_ml_mode != "off"
+        and threshold is not None
+        and threshold > 0.0
+    )
+    if not enabled:
+        return {
+            "enabled": False,
+            "allowed": True,
+            "required_ratio": threshold,
+            "coverage_ratio": None,
+            "expected_symbol_dates": 0,
+            "missing_prediction_keys_after": 0,
+            "reason": "disabled",
+        }
+
+    expected_symbol_dates = max(int(getattr(ml_diagnostics, "expected_symbol_dates", 0) or 0), 0)
+    missing_prediction_keys_after = max(
+        int(
+            (
+                getattr(ml_diagnostics, "missing_prediction_keys_after", 0)
+                if ml_diagnostics is not None
+                else 0
+            )
+            or (
+                getattr(ml_diagnostics, "missing_prediction_keys", 0)
+                if ml_diagnostics is not None
+                else 0
+            )
+        ),
+        0,
+    )
+    coverage_ratio = (
+        1.0
+        if expected_symbol_dates <= 0
+        else max(0.0, float(expected_symbol_dates - missing_prediction_keys_after) / float(expected_symbol_dates))
+    )
+    allowed = expected_symbol_dates <= 0 or coverage_ratio + 1e-12 >= float(threshold)
+    reason = "ok" if allowed else "coverage_below_threshold"
+    return {
+        "enabled": True,
+        "allowed": bool(allowed),
+        "required_ratio": float(threshold),
+        "coverage_ratio": float(coverage_ratio),
+        "expected_symbol_dates": int(expected_symbol_dates),
+        "missing_prediction_keys_after": int(missing_prediction_keys_after),
+        "reason": reason,
+    }
+
+
 def build_fidelity_manifest(
     *,
     engine_mode: str,
@@ -3170,6 +3243,7 @@ __all__ = [
     "build_coverage_summary",
     "build_fidelity_manifest",
     "build_fidelity_symbol_matrix",
+    "evaluate_ml_coverage_gate",
     "build_replay_diagnostic_summary",
     "save_fidelity_baseline_comparison",
     "save_fidelity_baseline_snapshot",

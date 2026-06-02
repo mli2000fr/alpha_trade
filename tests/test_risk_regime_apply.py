@@ -64,3 +64,21 @@ def test_apply_snapshot_combined():
     assert new.effective_max_positions_override == 3
     assert new.max_tickers_per_sector == 2
 
+
+def test_apply_snapshot_exposure_caps():
+    cfg = RiskConfig(
+        max_position_weight=0.30,
+        max_sector_weight=0.55,
+        max_gross_exposure=1.0,
+    )
+    snap = _make_snap(
+        max_position_weight=0.15,
+        max_sector_weight=0.20,
+        max_gross_exposure=0.35,
+    )
+    new = apply_snapshot(cfg, snap)
+    assert new.max_position_weight == 0.15
+    assert new.max_sector_weight == 0.20
+    assert new.max_gross_exposure == 0.35
+
+

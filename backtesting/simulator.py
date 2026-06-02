@@ -23,7 +23,7 @@ from backtesting.microstructure import (
     resolve_intrabar_exit,
     should_skip_entry_for_gap,
 )
-from backtesting.risk_overlay import RiskOverlayConfig
+from backtesting.risk_overlay import RiskOverlayConfig, compute_portfolio_vol_scaler
 from risk_management.config import RiskConfig
 from execution_engine.config import ExecutionConfig
 
@@ -715,6 +715,13 @@ class BacktestEngine:
 
         cand_df = pd.DataFrame(candidate_rows)
         sizing_weights = risk.sizing.compute_weights(cand_df, cfg.max_positions)
+        vol_target_scaler = 1.0
+        if risk.target_annual_vol is not None and float(risk.target_annual_vol) > 0.0:
+            equity_history = pd.Series(state.equity_points, dtype=float)
+            vol_target_scaler = compute_portfolio_vol_scaler(
+                equity_history.pct_change().dropna(),
+                target_annual_vol=float(risk.target_annual_vol),
+            )
 
         # Phase E.3.b — snapshot des expositions sectorielles courantes via
         # la primitive testable `snapshot_sector_exposure` (Phase C.4).
@@ -789,6 +796,8 @@ class BacktestEngine:
                     if not sizing_weights.empty and candidate_pos < len(sizing_weights)
                     else 1.0 / max(cfg.max_positions, 1)
                 )
+            if quantity_override is None and vol_target_scaler != 1.0:
+                target_weight_pct = float(np.clip(target_weight_pct * vol_target_scaler, 0.0, 1.0))
 
             sector = (
                 str(row["sector"])
@@ -808,6 +817,7 @@ class BacktestEngine:
                     sector=sector,
                     sector_exposure_pct=sector_exposure_pct.get(sector, 0.0),
                     target_weight_pct=target_weight_pct,
+                    vol_target_scaler=vol_target_scaler,
                     max_sector_exposure_pct=risk.sectoral_cap.max_sector_exposure_pct,
                     **signal_context,
                 )
@@ -843,6 +853,7 @@ class BacktestEngine:
                     settled_cash_before=settled_cash_before_entry,
                     candidate_budget=candidate_budget,
                     target_weight_pct=target_weight_pct,
+                    vol_target_scaler=vol_target_scaler,
                     quantity_override=quantity_override,
                     effective_unit_cost=effective_unit_cost,
                     **signal_context,
@@ -965,6 +976,7 @@ class BacktestEngine:
                 entry_cost=entry_cost,
                 effective_unit_cost=effective_unit_cost,
                 target_weight_pct=target_weight_pct,
+                vol_target_scaler=vol_target_scaler,
                 candidate_budget=candidate_budget,
                 settled_cash_before=settled_cash_before_entry,
                 settled_cash_after=state.settled_cash,

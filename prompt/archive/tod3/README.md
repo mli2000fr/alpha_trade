@@ -54,6 +54,6 @@ professionnel / institutionnel mature.
 
 ## Mise à jour documentaire
 
-Voir [`../../doc/AUDIT_2026_05_22_doc_updates.md`](../../doc/AUDIT_2026_05_22_doc_updates.md)
+Voir [`../../doc/AUDIT_2026_05_22_doc_updates.md`](../../../doc/AUDIT_2026_05_22_doc_updates.md)
 pour la note de réalignement `doc/` ↔ code consolidée.
 

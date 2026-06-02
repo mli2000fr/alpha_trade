@@ -259,6 +259,31 @@ def test_build_backtesting_run_command_matches_pipeline_live_like_replay_preset(
 	assert "--phase7-mode" in command and command[command.index("--phase7-mode") + 1] == "exit_lifecycle_replay"
 
 
+def test_build_backtesting_run_command_includes_pipeline_defensive_overlays():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			engine_mode="pipeline",
+			max_portfolio_dd_pct=0.12,
+			dd_recovery_pct=0.98,
+			target_annual_vol=0.12,
+			min_ml_coverage_ratio=0.80,
+		),
+	)
+
+	assert "--max-portfolio-dd-pct" in command
+	assert command[command.index("--max-portfolio-dd-pct") + 1] == "0.12"
+	assert "--dd-recovery-pct" in command
+	assert command[command.index("--dd-recovery-pct") + 1] == "0.98"
+	assert "--target-annual-vol" in command
+	assert command[command.index("--target-annual-vol") + 1] == "0.12"
+	assert "--min-ml-coverage-ratio" in command
+	assert command[command.index("--min-ml-coverage-ratio") + 1] == "0.8"
+
+
 def test_build_backtesting_run_command_includes_fidelity_baseline_flags():
 	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
 

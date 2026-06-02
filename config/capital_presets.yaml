@@ -36,6 +36,9 @@ presets:
       execution_trailing_r_multiple: 1.0
       backtesting_commission_bps_stress: 15.0
       backtesting_slippage_bps_stress: 25.0
+      backtesting_max_portfolio_dd_pct: 0.12
+      backtesting_target_annual_vol: 0.12
+      backtesting_min_ml_coverage_ratio: 0.80
       screener_liquidity_threshold_usd: 2000000.0   # relâché vs 5M$ pour 0_5000
       screener_min_relative_strength_index: 90.0
       screener_historical_range_lookback_days: 252
@@ -92,6 +95,9 @@ presets:
       execution_trailing_r_multiple: 1.0
       backtesting_commission_bps_stress: 12.0
       backtesting_slippage_bps_stress: 20.0
+      backtesting_max_portfolio_dd_pct: 0.12
+      backtesting_target_annual_vol: 0.13
+      backtesting_min_ml_coverage_ratio: 0.80
       screener_liquidity_threshold_usd: 5000000.0
       screener_min_relative_strength_index: 95.0
       screener_historical_range_lookback_days: 252
@@ -146,6 +152,9 @@ presets:
       execution_trailing_r_multiple: 1.0
       backtesting_commission_bps_stress: 10.0
       backtesting_slippage_bps_stress: 18.0
+      backtesting_max_portfolio_dd_pct: 0.12
+      backtesting_target_annual_vol: 0.14
+      backtesting_min_ml_coverage_ratio: 0.80
       screener_liquidity_threshold_usd: 7500000.0
       screener_min_relative_strength_index: 97.0
       screener_historical_range_lookback_days: 252
@@ -200,6 +209,9 @@ presets:
       execution_trailing_r_multiple: 1.0
       backtesting_commission_bps_stress: 8.0
       backtesting_slippage_bps_stress: 15.0
+      backtesting_max_portfolio_dd_pct: 0.15
+      backtesting_target_annual_vol: 0.15
+      backtesting_min_ml_coverage_ratio: 0.80
       screener_liquidity_threshold_usd: 10000000.0
       screener_min_relative_strength_index: 100.0
       screener_historical_range_lookback_days: 378
@@ -254,6 +266,9 @@ presets:
       execution_trailing_r_multiple: 1.0
       backtesting_commission_bps_stress: 6.0
       backtesting_slippage_bps_stress: 12.0
+      backtesting_max_portfolio_dd_pct: 0.15
+      backtesting_target_annual_vol: 0.15
+      backtesting_min_ml_coverage_ratio: 0.80
       screener_liquidity_threshold_usd: 10000000.0
       screener_min_relative_strength_index: 100.0
       screener_historical_range_lookback_days: 504
@@ -308,6 +323,9 @@ presets:
       execution_trailing_r_multiple: 1.0
       backtesting_commission_bps_stress: 5.0
       backtesting_slippage_bps_stress: 10.0
+      backtesting_max_portfolio_dd_pct: 0.15
+      backtesting_target_annual_vol: 0.15
+      backtesting_min_ml_coverage_ratio: 0.80
       screener_liquidity_threshold_usd: 10000000.0
       screener_min_relative_strength_index: 100.0
       screener_historical_range_lookback_days: 504
@@ -362,6 +380,9 @@ presets:
       execution_trailing_r_multiple: 1.1
       backtesting_commission_bps_stress: 4.0
       backtesting_slippage_bps_stress: 8.0
+      backtesting_max_portfolio_dd_pct: 0.18
+      backtesting_target_annual_vol: 0.16
+      backtesting_min_ml_coverage_ratio: 0.80
       screener_liquidity_threshold_usd: 15000000.0
       screener_min_relative_strength_index: 102.0
       screener_historical_range_lookback_days: 504

@@ -43,6 +43,9 @@ class MarketRegimeSnapshot:
     enforced_min_notional: float | None = None
     allowed_slots: int | None = None
     max_tickers_per_sector: int | None = None
+    max_position_weight: float | None = None
+    max_sector_weight: float | None = None
+    max_gross_exposure: float | None = None
 
     blocked_sectors: tuple[str, ...] = ()
     blocked_symbols: tuple[str, ...] = ()
@@ -98,6 +101,9 @@ class MarketRegimeSnapshot:
             "enforced_min_notional": self.enforced_min_notional,
             "allowed_slots": self.allowed_slots,
             "max_tickers_per_sector": self.max_tickers_per_sector,
+            "max_position_weight": self.max_position_weight,
+            "max_sector_weight": self.max_sector_weight,
+            "max_gross_exposure": self.max_gross_exposure,
             "blocked_sectors": list(self.blocked_sectors),
             "blocked_symbols": list(self.blocked_symbols),
             "block_high_beta": self.block_high_beta,

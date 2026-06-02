@@ -80,10 +80,25 @@ market_regimes:
     fred_series_10y: "DGS10"             # FRED 10Y constant maturity treasury
     lookback_days: 5
     relative_spike_threshold: 0.05
-    block_sectors: ["Technology", "Tech", "Growth"]
+    block_sectors: ["Technology", "Tech", "Growth", "Real Estate", "Consumer Cyclical", "Financial Services"]
     block_high_beta: true
     high_beta_threshold: 1.2
-    risk_mult: 0.6
+    risk_mult: 0.45
+    soft_max_positions: 2
+    soft_max_position_weight: 0.20
+    soft_max_sector_weight: 0.25
+    soft_max_gross_exposure: 0.50
+    hard_relative_spike_threshold: 0.08
+    hard_block_sectors: ["Technology", "Tech", "Growth", "Real Estate", "Consumer Cyclical", "Financial Services"]
+    hard_risk_mult: 0.30
+    hard_mode_live: close_only
+    hard_mode_backtest: cash_only
+    hard_requires_vix_high: true
+    hard_requires_sentiment_warning: true
+    hard_max_positions: 1
+    hard_max_position_weight: 0.15
+    hard_max_sector_weight: 0.20
+    hard_max_gross_exposure: 0.35
 
   sentiment_circuit_breaker:
     enabled: true

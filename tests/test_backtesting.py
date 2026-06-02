@@ -1709,6 +1709,52 @@ class TestBacktestConfig:
         assert result.closed_trades_df.empty
         assert result.final_value() == 10_000
 
+    def test_backtest_engine_applies_vol_target_scaler_to_position_size(self, monkeypatch):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+        from backtesting.risk_overlay import RiskOverlayConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            }
+        )
+
+        monkeypatch.setattr("backtesting.simulator.compute_portfolio_vol_scaler", lambda *args, **kwargs: 0.5)
+
+        standard = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+                risk_overlay=RiskOverlayConfig(target_annual_vol=None),
+                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="off", swing_only=True),
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        targeted = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+                risk_overlay=RiskOverlayConfig(target_annual_vol=0.12),
+                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="off", swing_only=True),
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert float(standard.closed_trades_df.iloc[0]["quantity"]) == 100.0
+        assert float(targeted.closed_trades_df.iloc[0]["quantity"]) == 50.0
+
     def test_backtest_engine_conservative_trailing_stop_does_not_rachet_on_same_bar(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
 
@@ -1993,6 +2039,7 @@ class TestCLI:
         "max_portfolio_dd_pct": 0.0,
         "dd_recovery_pct": 0.95,
         "target_annual_vol": None,
+        "min_ml_coverage_ratio": None,
         # Phase 2 — bridges opt-in.
         "phase2_mode": "off",
         "phase3_mode": "off",
@@ -2030,6 +2077,59 @@ class TestCLI:
         assert args.macro_missing_policy is None
         assert args.fidelity_baseline_id is None
         assert args.fidelity_baseline_catalog is None
+        assert args.min_ml_coverage_ratio is None
+
+    def test_apply_pipeline_defensive_defaults_from_preset_uses_overlay_and_ml_gate_defaults(self):
+        import argparse
+        import backtesting.cli._impl as cli_impl
+
+        args = argparse.Namespace(
+            max_portfolio_dd_pct=0.0,
+            target_annual_vol=None,
+            min_ml_coverage_ratio=None,
+        )
+
+        cli_impl._apply_pipeline_defensive_defaults_from_preset(
+            args,
+            effective_preset=SimpleNamespace(
+                values={
+                    "backtesting_max_portfolio_dd_pct": 0.12,
+                    "backtesting_target_annual_vol": 0.13,
+                    "backtesting_min_ml_coverage_ratio": 0.80,
+                }
+            ),
+            engine_mode="pipeline",
+            explicit_flags=set(),
+        )
+
+        assert args.max_portfolio_dd_pct == pytest.approx(0.12)
+        assert args.target_annual_vol == pytest.approx(0.13)
+        assert args.min_ml_coverage_ratio == pytest.approx(0.80)
+
+    def test_enforce_ml_coverage_gate_fails_fast_for_pipeline(self):
+        import backtesting.cli._impl as cli_impl
+        from backtesting.fidelity import MlPreparationDiagnostics
+
+        diagnostics = MlPreparationDiagnostics(
+            requested_mode="auto",
+            requested_strategy="auto",
+            effective_strategy="auto",
+            engine_mode="pipeline",
+            predictions_input_rows=1,
+            expected_symbol_dates=100,
+            missing_prediction_keys=99,
+            missing_prediction_keys_after=99,
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            cli_impl._enforce_ml_coverage_gate(
+                engine_mode="pipeline",
+                ml_mode="auto",
+                ml_diagnostics=diagnostics,
+                min_ml_coverage_ratio=0.80,
+            )
+
+        assert exc.value.code == 1
 
     def test_parse_run_command_accepts_macro_missing_policy_flags(self):
         from backtesting.cli import _build_parser

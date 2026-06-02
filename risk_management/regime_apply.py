@@ -50,6 +50,15 @@ def apply_snapshot(
     if snapshot.max_tickers_per_sector is not None:
         updates["max_tickers_per_sector"] = int(snapshot.max_tickers_per_sector)
 
+    if snapshot.max_position_weight is not None:
+        updates["max_position_weight"] = float(snapshot.max_position_weight)
+
+    if snapshot.max_sector_weight is not None:
+        updates["max_sector_weight"] = float(snapshot.max_sector_weight)
+
+    if snapshot.max_gross_exposure is not None:
+        updates["max_gross_exposure"] = float(snapshot.max_gross_exposure)
+
     if not updates:
         return cfg
 
