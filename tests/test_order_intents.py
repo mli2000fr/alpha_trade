@@ -11,6 +11,7 @@ from execution_engine.order_intents import (
     build_initial_stop_intent,
     build_take_profit_intent,
     build_trailing_stop_intent,
+    filter_targets_by_live_regime_guards,
     intent_to_alpaca_payload,
     resolve_initial_stop_price,
     resolve_trailing_activation_price,
@@ -65,6 +66,62 @@ class TestBuildEntryIntents:
         i2 = build_entry_intents([_target()], cfg, "run2")[0]
         assert i1.idempotency_key == i2.idempotency_key
         assert i1.submission_key != i2.submission_key
+
+    def test_filter_targets_by_live_regime_guards_blocks_oversized_position_weight(self) -> None:
+        cfg = ExecutionConfig(regime_max_position_weight=0.20)
+        oversized_target = ExecutionTarget(
+            risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="AAPL",
+            target_shares=100, entry_price=150.0, target_weight=0.25,
+            sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+        )
+
+        kept, blocked = filter_targets_by_live_regime_guards(
+            targets=[oversized_target],
+            config=cfg,
+        )
+
+        assert kept == []
+        assert len(blocked) == 1
+        assert blocked[0]["reason"] == "regime_max_position_weight"
+
+    def test_filter_targets_by_live_regime_guards_enforces_sector_cap_and_max_positions_by_rank(self) -> None:
+        cfg = ExecutionConfig(
+            regime_max_sector_weight=0.30,
+            regime_max_positions=2,
+        )
+        targets = [
+            ExecutionTarget(
+                risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="AAPL",
+                target_shares=100, entry_price=150.0, target_weight=0.20,
+                sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+                candidate_rank=1,
+            ),
+            ExecutionTarget(
+                risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="MSFT",
+                target_shares=90, entry_price=140.0, target_weight=0.15,
+                sector="Tech", conviction_score=0.7, sizing_method="atr", kelly_fraction=0.1,
+                candidate_rank=2,
+            ),
+            ExecutionTarget(
+                risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="JPM",
+                target_shares=80, entry_price=120.0, target_weight=0.12,
+                sector="Financials", conviction_score=0.75, sizing_method="atr", kelly_fraction=0.1,
+                candidate_rank=3,
+            ),
+            ExecutionTarget(
+                risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="XOM",
+                target_shares=70, entry_price=100.0, target_weight=0.10,
+                sector="Energy", conviction_score=0.65, sizing_method="atr", kelly_fraction=0.1,
+                candidate_rank=4,
+            ),
+        ]
+
+        kept, blocked = filter_targets_by_live_regime_guards(targets=targets, config=cfg)
+
+        assert [target.symbol for target in kept] == ["AAPL", "JPM"]
+        assert {entry["symbol"] for entry in blocked} == {"MSFT", "XOM"}
+        assert any(entry["reason"] == "regime_max_sector_weight" and entry["symbol"] == "MSFT" for entry in blocked)
+        assert any(entry["reason"] == "regime_max_positions" and entry["symbol"] == "XOM" for entry in blocked)
 
 
 class TestBuildChildren:

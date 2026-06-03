@@ -55,6 +55,7 @@ from execution_engine.models import (
 from execution_engine.oco_manager import OcoManager
 from execution_engine.order_intents import (
     build_entry_intents,
+    filter_targets_by_live_regime_guards,
     intent_to_alpaca_payload,
     resolve_initial_stop_price,
     split_entry_intents_by_gap_filter,
@@ -210,6 +211,25 @@ class ProductionExecutor:
                             continue
                         enriched_targets.append(replace(target, previous_close=float(previous_close)))
                     targets = enriched_targets
+            loaded_targets_count = len(targets)
+            filtered_targets, blocked_by_regime_guards = filter_targets_by_live_regime_guards(
+                targets=targets,
+                config=self._cfg,
+            )
+            if blocked_by_regime_guards:
+                metrics["targets_loaded"] = loaded_targets_count
+                metrics["targets_blocked_by_regime_guards"] = len(blocked_by_regime_guards)
+                for blocked in blocked_by_regime_guards:
+                    reason = str(blocked.get("reason") or "regime_guard")
+                    metrics[f"skipped_by_{reason}"] = int(metrics.get(f"skipped_by_{reason}", 0)) + 1
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT,
+                        f"SkippedByRegimeGuard[{reason}]: {blocked.get('symbol')}",
+                        symbol=str(blocked.get("symbol") or "") or None,
+                        payload=dict(blocked),
+                    ))
+                targets = filtered_targets
             metrics["targets"] = len(targets)
             metrics["total_target_notional"] = round(sum(float(t.target_notional or (t.target_shares * t.entry_price)) for t in targets), 2)
             metrics["total_initial_risk_dollars"] = round(sum(float(t.initial_risk_dollars or 0.0) for t in targets), 2)

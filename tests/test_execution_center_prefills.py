@@ -159,6 +159,7 @@ def test_apply_selected_capital_preset_for_small_account_sets_expected_values(mo
     assert session_state["pipeline_risk_per_trade_pct"] == 0.0125
     assert session_state["pipeline_risk_max_positions"] == 4
     assert session_state["pipeline_risk_max_position_weight"] == 0.20
+    assert session_state["pipeline_risk_max_sector_weight"] == 0.40
     assert session_state["pipeline_risk_min_position_notional"] == 150.0
     assert session_state["pipeline_screener_liquidity_threshold_usd"] == 5_000_000.0
     assert session_state["pipeline_screener_min_historical_range_score"] == 60.0

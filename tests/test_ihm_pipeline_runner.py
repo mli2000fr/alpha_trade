@@ -141,6 +141,7 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
         trade_date="2026-04-19",
         risk_account_equity=125000.0,
         risk_min_position_notional=150.0,
+        risk_max_sector_weight=0.27,
         execution_mode="paper",
         execution_run_id="risk-123",
         allow_outside_rth=True,
@@ -163,6 +164,8 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert "125000.0" in risk_command
     assert "--min-position-notional" in risk_command
     assert risk_command[risk_command.index("--min-position-notional") + 1] == "150.0"
+    assert "--max-sector-weight" in risk_command
+    assert risk_command[risk_command.index("--max-sector-weight") + 1] == "0.27"
 
     assert execution_command[:3] == [execution_command[0], "-u", str(PROJECT_ROOT / "run_execution.py")]
     assert execution_command[3] == "paper"

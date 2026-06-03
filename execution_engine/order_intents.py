@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import hashlib
+from typing import cast
 import uuid
 
 from backtesting.microstructure import should_skip_entry_for_gap
@@ -112,8 +113,8 @@ def _target_priority_key(target: ExecutionTarget) -> tuple[int, int, str]:
     decision_rank = getattr(target, "decision_rank", None)
     candidate_rank = getattr(target, "candidate_rank", None)
     return (
-        int(decision_rank) if decision_rank is not None else 10**9,
-        int(candidate_rank) if candidate_rank is not None else 10**9,
+        int(cast(int, decision_rank)) if decision_rank is not None else 10**9,
+        int(cast(int, candidate_rank)) if candidate_rank is not None else 10**9,
         str(target.symbol).strip().upper(),
     )
 
@@ -134,10 +135,11 @@ def filter_targets_by_live_regime_guards(
 
     max_position_weight = getattr(config, "regime_max_position_weight", None)
     if max_position_weight is not None:
+        max_position_weight_limit = float(cast(float, max_position_weight))
         next_targets: list[ExecutionTarget] = []
         for target in kept_targets:
             target_weight = float(getattr(target, "target_weight", 0.0) or 0.0)
-            if target_weight <= float(max_position_weight) + 1e-12:
+            if target_weight <= max_position_weight_limit + 1e-12:
                 next_targets.append(target)
                 continue
             blocked.append(
@@ -145,7 +147,7 @@ def filter_targets_by_live_regime_guards(
                     "symbol": target.symbol,
                     "sector": target.sector,
                     "target_weight": target_weight,
-                    "limit": float(max_position_weight),
+                    "limit": max_position_weight_limit,
                     "reason": "regime_max_position_weight",
                 }
             )
@@ -153,13 +155,14 @@ def filter_targets_by_live_regime_guards(
 
     max_sector_weight = getattr(config, "regime_max_sector_weight", None)
     if max_sector_weight is not None and kept_targets:
+        max_sector_weight_limit = float(cast(float, max_sector_weight))
         allowed_ids: set[int] = set()
         sector_weights: dict[str, float] = defaultdict(float)
         for target in sorted(kept_targets, key=_target_priority_key):
             sector = str(target.sector or "UNKNOWN").strip() or "UNKNOWN"
             target_weight = max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0)
             projected_sector_weight = sector_weights[sector] + target_weight
-            if projected_sector_weight <= float(max_sector_weight) + 1e-12:
+            if projected_sector_weight <= max_sector_weight_limit + 1e-12:
                 allowed_ids.add(id(target))
                 sector_weights[sector] = projected_sector_weight
                 continue
@@ -170,24 +173,28 @@ def filter_targets_by_live_regime_guards(
                     "target_weight": target_weight,
                     "sector_weight_before": sector_weights[sector],
                     "sector_weight_after": projected_sector_weight,
-                    "limit": float(max_sector_weight),
+                    "limit": max_sector_weight_limit,
                     "reason": "regime_max_sector_weight",
                 }
             )
         kept_targets = [target for target in kept_targets if id(target) in allowed_ids]
 
     max_positions = getattr(config, "regime_max_positions", None)
-    if max_positions is not None and len(kept_targets) > int(max_positions):
+    if max_positions is not None:
+        max_positions_limit = int(cast(int, max_positions))
+    else:
+        max_positions_limit = None
+    if max_positions_limit is not None and len(kept_targets) > max_positions_limit:
         ranked_targets = sorted(kept_targets, key=_target_priority_key)
-        allowed_ids = {id(target) for target in ranked_targets[: int(max_positions)]}
-        for target in ranked_targets[int(max_positions) :]:
+        allowed_ids = {id(target) for target in ranked_targets[:max_positions_limit]}
+        for target in ranked_targets[max_positions_limit:]:
             blocked.append(
                 {
                     "symbol": target.symbol,
                     "sector": target.sector,
                     "target_weight": float(getattr(target, "target_weight", 0.0) or 0.0),
                     "rank": int(getattr(target, "decision_rank", None) or getattr(target, "candidate_rank", None) or 0),
-                    "limit": int(max_positions),
+                    "limit": max_positions_limit,
                     "reason": "regime_max_positions",
                 }
             )

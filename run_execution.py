@@ -929,6 +929,8 @@ def run(
             "effective_max_positions": getattr(_snapshot, "effective_max_positions", None),
             "enforced_min_notional": getattr(_snapshot, "enforced_min_notional", None),
             "allowed_slots": getattr(_snapshot, "allowed_slots", None),
+            "max_position_weight": getattr(_snapshot, "max_position_weight", None),
+            "max_sector_weight": getattr(_snapshot, "max_sector_weight", None),
             "allow_new_entries": getattr(_snapshot, "allow_new_entries", True),
             "active_patterns": getattr(_snapshot, "active_patterns", []),
             "blocked_sectors": getattr(_snapshot, "blocked_sectors", []),
@@ -945,7 +947,15 @@ def run(
             Literal["normal", "close_only", "cash_only", "capital_preservation"],
             _derive_entry_mode(_snap_dict),
         )
-        if _new_mode != config.entry_mode:
+        _guarded_max_positions = getattr(_snapshot, "effective_max_positions", None)
+        _guarded_max_position_weight = getattr(_snapshot, "max_position_weight", None)
+        _guarded_max_sector_weight = getattr(_snapshot, "max_sector_weight", None)
+        if (
+            _new_mode != config.entry_mode
+            or _guarded_max_positions != config.regime_max_positions
+            or _guarded_max_position_weight != config.regime_max_position_weight
+            or _guarded_max_sector_weight != config.regime_max_sector_weight
+        ):
             from dataclasses import replace as _dc_replace
             _raw_reasons = _snap_dict.get("reasons")
             _reasons_list = list(_raw_reasons) if isinstance(_raw_reasons, Iterable) and not isinstance(_raw_reasons, (str, bytes)) else []
@@ -954,7 +964,19 @@ def run(
                 f"{YELLOW}[market_regime] entry_mode={config.entry_mode!r} → {_new_mode!r} "
                 f"(motif: {_reasons_str}){RESET}"
             )
-            config = _dc_replace(config, entry_mode=_new_mode)
+            print(
+                f"{YELLOW}[market_regime] garde-fous live : "
+                f"max_positions={_guarded_max_positions} · "
+                f"max_position_weight={_guarded_max_position_weight} · "
+                f"max_sector_weight={_guarded_max_sector_weight}{RESET}"
+            )
+            config = _dc_replace(
+                config,
+                entry_mode=_new_mode,
+                regime_max_positions=int(_guarded_max_positions) if _guarded_max_positions is not None else None,
+                regime_max_position_weight=float(_guarded_max_position_weight) if _guarded_max_position_weight is not None else None,
+                regime_max_sector_weight=float(_guarded_max_sector_weight) if _guarded_max_sector_weight is not None else None,
+            )
             # Reconstruire executor avec la nouvelle config (frozen).
             broker = BrokerAdapter(client, config)
             oco = OcoManager(broker, repo)

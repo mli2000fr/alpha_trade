@@ -39,6 +39,11 @@ from execution_engine.config import (
         ({"cash_settlement_days": 0}, "cash_settlement_days"),
         ({"simulated_account_equity": 0}, "simulated_account_equity"),
         ({"simulated_margin_buying_power_multiplier": 0.5}, "simulated_margin_buying_power_multiplier"),
+        ({"regime_max_positions": 0}, "regime_max_positions"),
+        ({"regime_max_position_weight": 0}, "regime_max_position_weight"),
+        ({"regime_max_position_weight": 1.1}, "regime_max_position_weight"),
+        ({"regime_max_sector_weight": 0}, "regime_max_sector_weight"),
+        ({"regime_max_sector_weight": 1.1}, "regime_max_sector_weight"),
     ],
 )
 def test_execution_config_validates_invalid_values(kwargs, message):
@@ -81,6 +86,18 @@ def test_execution_config_resolves_explicit_account_id() -> None:
 
     assert cfg.resolved_account_id == "live1"
     assert cfg.submission_window == "pre_open"
+
+
+def test_execution_config_accepts_optional_regime_guards() -> None:
+    cfg = ExecutionConfig(
+        regime_max_positions=3,
+        regime_max_position_weight=0.20,
+        regime_max_sector_weight=0.35,
+    )
+
+    assert cfg.regime_max_positions == 3
+    assert cfg.regime_max_position_weight == pytest.approx(0.20)
+    assert cfg.regime_max_sector_weight == pytest.approx(0.35)
 
 
 def test_load_trailing_stop_config_from_yaml_uses_risk_management_section() -> None:
