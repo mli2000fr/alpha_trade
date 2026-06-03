@@ -193,6 +193,12 @@ def build_execution_run_summary(
         # Phase 5.2.d — symboles précis pour faciliter le pointage opérateur (runbook).
         "reconciliation_manual_review_symbols": list(metrics.get("reconciliation_manual_review_symbols") or []),
         "reconciliation_blocked_symbols": list(metrics.get("reconciliation_blocked_symbols") or []),
+        "tca_total_filled": int(metrics.get("tca_total_filled", 0) or 0),
+        "tca_total_notional": round(float(metrics.get("tca_total_notional", 0.0) or 0.0), 2),
+        "tca_avg_slippage_bps": round(float(metrics.get("tca_avg_slippage_bps", 0.0) or 0.0), 4),
+        "tca_max_slippage_bps": round(float(metrics.get("tca_max_slippage_bps", 0.0) or 0.0), 4),
+        "tca_total_implementation_shortfall": round(float(metrics.get("tca_total_implementation_shortfall", 0.0) or 0.0), 4),
+        "tca_slippage_alerts": int(metrics.get("tca_slippage_alerts", 0) or 0),
         # Phase 5.2.b — dernière phase du run (informatif si tracker actif).
         "last_phase": str(metrics.get("last_phase", "") or "") or None,
         "account_type": account_type,

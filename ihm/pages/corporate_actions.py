@@ -21,6 +21,10 @@ from ihm.services.queries import (
 
 def render() -> None:
     st.header("📑 Corporate Actions")
+    st.caption(
+        "Convention projet unifiée : les prix de `stock_bars_daily` sont consommés ajustés des splits, "
+        "tandis que les dividendes et cash-in-lieu restent comptabilisés séparément dans `portfolio_cash_ledger`."
+    )
 
     if not db_available():
         render_db_unavailable("Corporate Actions", form_key="ca_db_form")

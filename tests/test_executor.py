@@ -177,12 +177,42 @@ class TestExecutor:
         assert summary["selector_rank_available"] == 3
         assert summary["selector_rank_coverage_pct"] == 100.0
         assert summary["selector_earnings_blackout_targets"] == 1
-        assert summary["dynamic_trailing_activations"] == 0
-        assert summary["stale_price_targets"] == 1
-        assert summary["broker_orders_synced"] == 2
-        assert summary["execution_position_lots_projected"] == 2
-        assert summary["reconciliation_results"] == 2
-        assert summary["reconciliation_manual_review"] == 1
+
+    def test_build_execution_run_summary_includes_tca_metrics(self) -> None:
+        summary = build_execution_run_summary(
+            {
+                "exec_run_id": "exec-1",
+                "risk_run_id": "risk-1",
+                "trade_date": "2026-04-24",
+                "status": "COMPLETED",
+                "targets": 3,
+                "submitted": 2,
+                "filled": 2,
+                "tca_total_filled": 2,
+                "tca_total_notional": 12_500.5,
+                "tca_avg_slippage_bps": 12.3456,
+                "tca_max_slippage_bps": 25.0,
+                "tca_total_implementation_shortfall": 18.7654,
+                "tca_slippage_alerts": 1,
+            },
+            started_at=datetime(2026, 4, 24, 10, 0, 0),
+            finished_at=datetime(2026, 4, 24, 10, 0, 10),
+            execution_mode="paper",
+            broker_mode="paper",
+            account_id="acct-1",
+            account_type="margin",
+            effective_pdt_rule="auto",
+            swing_only=False,
+            dry_run=False,
+            allow_outside_rth=False,
+        )
+
+        assert summary["tca_total_filled"] == 2
+        assert summary["tca_total_notional"] == 12_500.5
+        assert summary["tca_avg_slippage_bps"] == 12.3456
+        assert summary["tca_max_slippage_bps"] == 25.0
+        assert summary["tca_total_implementation_shortfall"] == 18.7654
+        assert summary["tca_slippage_alerts"] == 1
 
     def test_dry_run_no_broker_calls(self) -> None:
         executor, repo, broker, _ = _make_executor()

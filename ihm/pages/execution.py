@@ -60,6 +60,61 @@ def _prepare_reconciliation_display(df: pd.DataFrame) -> pd.DataFrame:
     return prepared
 
 
+def _prepare_fills_display(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    prepared = df.copy()
+    if {"filled_qty", "avg_fill_price"}.issubset(prepared.columns):
+        prepared["fill_notional"] = pd.to_numeric(prepared["filled_qty"], errors="coerce").fillna(0.0) * pd.to_numeric(
+            prepared["avg_fill_price"],
+            errors="coerce",
+        ).fillna(0.0)
+    if "slippage_bps" in prepared.columns:
+        prepared["abs_slippage_bps"] = pd.to_numeric(prepared["slippage_bps"], errors="coerce").abs()
+    return prepared
+
+
+def _normalized_symbol_set(df: pd.DataFrame) -> set[str]:
+    if df.empty or "symbol" not in df.columns:
+        return set()
+    return {
+        str(value).strip().upper()
+        for value in df["symbol"].tolist()
+        if str(value).strip()
+    }
+
+
+def _render_trade_pipeline_consistency(
+    *,
+    fills: pd.DataFrame,
+    lots: pd.DataFrame,
+    reconciliation: pd.DataFrame,
+) -> None:
+    if fills.empty and lots.empty and reconciliation.empty:
+        return
+    fill_symbols = _normalized_symbol_set(fills)
+    lot_symbols = _normalized_symbol_set(lots)
+    reconciliation_symbols = _normalized_symbol_set(reconciliation)
+    st.subheader("🪢 Cohérence pipeline trades")
+    metric_row([
+        ("Symboles fills", len(fill_symbols), None),
+        ("Symboles lots", len(lot_symbols), None),
+        ("Symboles réconciliation", len(reconciliation_symbols), None),
+        ("Diffs actionnables", int((reconciliation.get("action", pd.Series(dtype="object")) != "none").sum()) if not reconciliation.empty and "action" in reconciliation.columns else 0, None),
+    ])
+    messages: list[str] = []
+    fills_without_lots = sorted(fill_symbols - lot_symbols)
+    lots_without_fills = sorted(lot_symbols - fill_symbols)
+    if fills_without_lots:
+        messages.append(f"fills sans lot reconstruit: {', '.join(fills_without_lots[:10])}")
+    if lots_without_fills:
+        messages.append(f"lots sans fill du run: {', '.join(lots_without_fills[:10])}")
+    if messages:
+        st.info(" ; ".join(messages))
+    else:
+        st.caption("Les symboles observés dans les fills et dans les lots reconstruits sont cohérents pour ce run.")
+
+
 def _show_position_lots_table(df: pd.DataFrame, *, title: str, height: int = 260) -> None:
     if df.empty:
         return
@@ -420,12 +475,17 @@ def render() -> None:
     # --- Fills ---
     st.subheader("💰 Exécutions")
     fills = get_execution_fills(selected)
-    if not fills.empty and "slippage_bps" in fills.columns:
-        avg_slip = fills["slippage_bps"].mean()
-        st.metric("Slippage moyen (bps)", f"{avg_slip:.1f}")
+    fills_display = _prepare_fills_display(fills)
+    if not fills_display.empty and "slippage_bps" in fills_display.columns:
+        metric_row([
+            ("Fills", len(fills_display), None),
+            ("Notional", f"{float(fills_display.get('fill_notional', pd.Series(dtype='float64')).sum()):,.2f}", None),
+            ("Slippage moyen", f"{float(pd.to_numeric(fills_display['slippage_bps'], errors='coerce').mean() or 0.0):.1f} bps", None),
+            ("IS total", f"{float(pd.to_numeric(fills_display.get('implementation_shortfall', pd.Series(dtype='float64')), errors='coerce').sum()):,.2f}", None),
+        ])
     elif int(row.get("total_submitted", 0) or 0) > 0 and int(row.get("total_filled", 0) or 0) == 0:
         st.info("Aucun fill observé pour ce run pour l’instant : les ordres peuvent être encore en file broker ou en attente d’ouverture de marché.")
-    show_dataframe(fills, height=300)
+    show_dataframe(fills_display, height=300)
 
     # --- Positions / lots / réconciliation canoniques ---
     st.subheader("📦 Positions et détentions du run")
@@ -508,6 +568,12 @@ def render() -> None:
         )
     else:
         st.info("Aucun résultat de réconciliation persisté n’a été trouvé pour ce run.")
+
+    _render_trade_pipeline_consistency(
+        fills=fills_display,
+        lots=lots,
+        reconciliation=reconciliation,
+    )
 
     _render_reconciliation_j1_panel(
         account_id=account_id,

@@ -880,6 +880,12 @@ class ProductionExecutor:
             # Phase 9 — TCA
             if self._cfg.enable_tca and fills:
                 tca = build_tca_summary(fills, self._cfg.max_slippage_bps)
+                metrics["tca_total_filled"] = int(tca.total_filled)
+                metrics["tca_total_notional"] = float(tca.total_notional)
+                metrics["tca_avg_slippage_bps"] = float(tca.avg_slippage_bps)
+                metrics["tca_max_slippage_bps"] = float(tca.max_slippage_bps)
+                metrics["tca_total_implementation_shortfall"] = float(tca.total_implementation_shortfall)
+                metrics["tca_slippage_alerts"] = int(tca.slippage_alerts)
                 events.append(make_event(
                     exec_run_id, EventType.TCA_SUMMARY,
                     f"TCA: avg_slip={tca.avg_slippage_bps:.1f}bps alerts={tca.slippage_alerts}",

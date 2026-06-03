@@ -75,6 +75,299 @@ def extract_diagnostics(pf) -> dict[str, object]:
     return {}
 
 
+def _normalize_symbol_column(df: pd.DataFrame, column_name: str = "symbol") -> pd.DataFrame:
+    normalized = df.copy()
+    if column_name in normalized.columns:
+        normalized[column_name] = normalized[column_name].astype(str).str.strip().str.upper()
+    return normalized
+
+
+def _normalize_datetime_columns(df: pd.DataFrame, *column_names: str) -> pd.DataFrame:
+    normalized = df.copy()
+    for column_name in column_names:
+        if column_name in normalized.columns:
+            normalized[column_name] = pd.to_datetime(normalized[column_name], errors="coerce")
+    return normalized
+
+
+def _coalesce_columns(frame: pd.DataFrame, columns: tuple[str, ...], *, default: object = None) -> pd.Series:
+    result = pd.Series([default] * len(frame), index=frame.index, dtype="object")
+    for column_name in columns:
+        if column_name not in frame.columns:
+            continue
+        candidate = frame[column_name]
+        result = result.where(result.notna(), candidate)
+    return result
+
+
+def _with_trade_merge_seq(frame: pd.DataFrame, *, execution_date_col: str) -> pd.DataFrame:
+    enriched = frame.copy()
+    symbol_series = enriched.get("symbol", pd.Series(index=enriched.index, dtype="object")).fillna("").astype(str)
+    execution_series = pd.to_datetime(
+        enriched.get(execution_date_col, pd.Series(index=enriched.index, dtype="datetime64[ns]")),
+        errors="coerce",
+    )
+    enriched["_trade_merge_symbol"] = symbol_series.str.strip().str.upper()
+    enriched["_trade_merge_execution_date"] = execution_series
+    enriched["_trade_merge_seq"] = enriched.groupby(
+        ["_trade_merge_symbol", "_trade_merge_execution_date"],
+        dropna=False,
+    ).cumcount()
+    return enriched
+
+
+def _build_legacy_trade_export_frame(pf) -> tuple[pd.DataFrame, str]:
+    closed_trades_df = _extract_closed_trades_df(pf)
+    if closed_trades_df is not None:
+        legacy = _normalize_symbol_column(closed_trades_df.copy())
+        legacy = _normalize_datetime_columns(legacy, "signal_date", "entry_date", "exit_date")
+        if "entry_date" in legacy.columns and "execution_date" not in legacy.columns:
+            legacy["execution_date"] = legacy["entry_date"]
+        if "exit_date" in legacy.columns and "trade_status" not in legacy.columns:
+            legacy["trade_status"] = np.where(legacy["exit_date"].notna(), "closed", "open")
+        legacy["trade_export_source"] = "closed_trades_df"
+        legacy["pipeline_reconciled"] = False
+        return legacy, "closed_trades_df"
+
+    readable = getattr(getattr(pf, "trades", None), "records_readable", None)
+    if readable is None:
+        return pd.DataFrame(), "none"
+    readable_df = readable.copy() if isinstance(readable, pd.DataFrame) else pd.DataFrame(readable)
+    if readable_df.empty:
+        return readable_df, "vectorbt_records_readable"
+    readable_df["trade_export_source"] = "vectorbt_records_readable"
+    readable_df["pipeline_reconciled"] = False
+    return readable_df, "vectorbt_records_readable"
+
+
+def _build_pipeline_trade_export_frame(
+    pipeline_signals_df: pd.DataFrame | None,
+    *,
+    legacy_trades_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    if pipeline_signals_df is None or pipeline_signals_df.empty:
+        return pd.DataFrame(), {
+            "pipeline_signal_rows": 0,
+            "pipeline_closed_rows": 0,
+            "pipeline_open_rows": 0,
+            "legacy_matches": 0,
+            "legacy_unmatched_rows": int(len(legacy_trades_df)),
+        }
+
+    pipeline = _normalize_symbol_column(pipeline_signals_df.copy())
+    pipeline = _normalize_datetime_columns(
+        pipeline,
+        "trade_date",
+        "signal_date",
+        "execution_date",
+        "replay_exit_date",
+        "watcher_trigger_date",
+        "watcher_transition_effective_date",
+    )
+    pipeline_export = pd.DataFrame(index=pipeline.index)
+    pipeline_export["symbol"] = pipeline.get("symbol", pd.Series(index=pipeline.index, dtype="object"))
+    pipeline_export["trade_date"] = _coalesce_columns(pipeline, ("trade_date", "signal_date"))
+    pipeline_export["signal_date"] = _coalesce_columns(pipeline, ("signal_date", "trade_date"))
+    pipeline_export["execution_date"] = _coalesce_columns(pipeline, ("execution_date",))
+    pipeline_export["quantity"] = pd.to_numeric(
+        _coalesce_columns(pipeline, ("filled_qty", "approved_shares", "target_shares")),
+        errors="coerce",
+    )
+    pipeline_export["entry_price"] = pd.to_numeric(
+        _coalesce_columns(pipeline, ("fill_price", "signal_fill_price", "entry_price", "decision_price")),
+        errors="coerce",
+    )
+    pipeline_export["exit_date"] = _coalesce_columns(pipeline, ("replay_exit_date", "exit_date"))
+    pipeline_export["exit_price"] = pd.to_numeric(
+        _coalesce_columns(pipeline, ("replay_exit_price", "exit_price")),
+        errors="coerce",
+    )
+    pipeline_export["exit_reason"] = _coalesce_columns(pipeline, ("replay_exit_reason", "exit_reason"))
+    pipeline_export["exit_intent_role"] = _coalesce_columns(
+        pipeline,
+        ("replay_exit_intent_role", "exit_intent_role"),
+    )
+    pipeline_export["oco_sibling_canceled"] = _coalesce_columns(
+        pipeline,
+        ("replay_oco_sibling_canceled", "oco_sibling_canceled"),
+        default=False,
+    ).fillna(False)
+    pipeline_export["sector"] = _coalesce_columns(pipeline, ("sector", "signal_sector"))
+    pipeline_export["selector_signal_mode"] = _coalesce_columns(pipeline, ("selector_signal_mode",))
+    pipeline_export["selection_explanation"] = _coalesce_columns(pipeline, ("selection_explanation",))
+    pipeline_export["entry_reason"] = _coalesce_columns(pipeline, ("entry_reason",))
+    pipeline_export["watcher_transition_state"] = _coalesce_columns(pipeline, ("watcher_transition_state",))
+    pipeline_export["watcher_trigger_date"] = _coalesce_columns(pipeline, ("watcher_trigger_date",))
+    pipeline_export["watcher_transition_effective_date"] = _coalesce_columns(
+        pipeline,
+        ("watcher_transition_effective_date",),
+    )
+    pipeline_export["trade_export_source"] = "phase3_to_phase7_pipeline"
+    pipeline_export["pipeline_reconciled"] = True
+    pipeline_export["trade_status"] = np.where(
+        pd.to_datetime(pipeline_export["exit_date"], errors="coerce").notna(),
+        "closed",
+        "open",
+    )
+    pipeline_export["holding_days"] = (
+        pd.to_datetime(pipeline_export["exit_date"], errors="coerce")
+        - pd.to_datetime(pipeline_export["execution_date"], errors="coerce")
+    ).dt.days
+    pipeline_export["estimated_pnl_price_only"] = (
+        pd.to_numeric(pipeline_export["exit_price"], errors="coerce")
+        - pd.to_numeric(pipeline_export["entry_price"], errors="coerce")
+    ) * pd.to_numeric(pipeline_export["quantity"], errors="coerce")
+    pipeline_export["estimated_return_pct_price_only"] = np.where(
+        pd.to_numeric(pipeline_export["entry_price"], errors="coerce") > 0,
+        (
+            (pd.to_numeric(pipeline_export["exit_price"], errors="coerce")
+             / pd.to_numeric(pipeline_export["entry_price"], errors="coerce"))
+            - 1.0
+        ) * 100.0,
+        np.nan,
+    )
+
+    pipeline_merge = _with_trade_merge_seq(pipeline_export, execution_date_col="execution_date")
+    legacy_merge = _with_trade_merge_seq(legacy_trades_df, execution_date_col="execution_date") if not legacy_trades_df.empty else pd.DataFrame()
+    merge_columns = ["_trade_merge_symbol", "_trade_merge_execution_date", "_trade_merge_seq"]
+    if not legacy_merge.empty:
+        legacy_subset_columns = [
+            column
+            for column in [
+                *merge_columns,
+                "quantity",
+                "entry_price",
+                "exit_price",
+                "entry_cost",
+                "proceeds",
+                "pnl",
+                "return_pct",
+                "holding_days",
+                "exit_reason",
+                "sector",
+                "signal_date",
+            ]
+            if column in legacy_merge.columns
+        ]
+        pipeline_merge = pipeline_merge.merge(
+            legacy_merge[legacy_subset_columns],
+            on=merge_columns,
+            how="left",
+            indicator="_legacy_merge",
+            suffixes=("", "__legacy"),
+        )
+        for column_name in ("quantity", "entry_price", "exit_price", "entry_cost", "proceeds", "pnl", "return_pct", "holding_days", "exit_reason", "sector", "signal_date"):
+            legacy_column = f"{column_name}__legacy"
+            if legacy_column in pipeline_merge.columns:
+                if column_name in pipeline_merge.columns:
+                    pipeline_merge[column_name] = pipeline_merge[column_name].where(pipeline_merge[column_name].notna(), pipeline_merge[legacy_column])
+                else:
+                    pipeline_merge[column_name] = pipeline_merge[legacy_column]
+                pipeline_merge.drop(columns=[legacy_column], inplace=True)
+        matched_legacy = int((pipeline_merge["_legacy_merge"] == "both").sum())
+        pipeline_merge["legacy_trade_match"] = pipeline_merge["_legacy_merge"] == "both"
+        pipeline_merge.drop(columns=["_legacy_merge"], inplace=True)
+    else:
+        matched_legacy = 0
+        pipeline_merge["legacy_trade_match"] = False
+
+    pipeline_merge.drop(columns=[column for column in merge_columns if column in pipeline_merge.columns], inplace=True)
+    return pipeline_merge, {
+        "pipeline_signal_rows": int(len(pipeline_export)),
+        "pipeline_closed_rows": int((pipeline_export["trade_status"] == "closed").sum()),
+        "pipeline_open_rows": int((pipeline_export["trade_status"] == "open").sum()),
+        "legacy_matches": matched_legacy,
+        "legacy_unmatched_rows": max(int(len(legacy_trades_df)) - matched_legacy, 0),
+    }
+
+
+def build_trade_export_bundle(
+    pf,
+    *,
+    pipeline_signals_df: pd.DataFrame | None = None,
+    corporate_actions_summary: dict[str, object] | None = None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    legacy_trades_df, legacy_source = _build_legacy_trade_export_frame(pf)
+    pipeline_export_df, reconciliation_counts = _build_pipeline_trade_export_frame(
+        pipeline_signals_df,
+        legacy_trades_df=legacy_trades_df,
+    )
+    if not pipeline_export_df.empty:
+        export_df = pipeline_export_df
+        export_source = "phase3_to_phase7_pipeline"
+    else:
+        export_df = legacy_trades_df
+        export_source = legacy_source
+
+    summary: dict[str, object] = {
+        "source": export_source,
+        "row_count": int(len(export_df)),
+        "legacy_source": legacy_source,
+        "legacy_closed_rows": int(len(legacy_trades_df)),
+        **reconciliation_counts,
+        "export_closed_rows": int((export_df.get("trade_status", pd.Series(dtype="object")) == "closed").sum()) if not export_df.empty else 0,
+        "export_open_rows": int((export_df.get("trade_status", pd.Series(dtype="object")) == "open").sum()) if not export_df.empty else 0,
+        "price_adjustment_convention": (
+            str(corporate_actions_summary.get("price_adjustment_convention") or "split_adjusted_prices_plus_cash_ledger")
+            if isinstance(corporate_actions_summary, dict)
+            else "split_adjusted_prices_plus_cash_ledger"
+        ),
+    }
+    return export_df, summary
+
+
+def load_corporate_actions_summary(
+    start_date,
+    end_date,
+    *,
+    account_id: str | None = None,
+    engine=None,
+) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "price_adjustment_convention": "split_adjusted_prices_plus_cash_ledger",
+        "split_adjusted_prices": True,
+        "dividends_reflected_in_prices": False,
+        "cash_ledger_entry_types": {},
+        "dividend_cash_total": 0.0,
+        "cash_in_lieu_total": 0.0,
+        "total_cash_impact": 0.0,
+        "source_table": "portfolio_cash_ledger",
+    }
+    try:
+        from sqlalchemy import text  # type: ignore
+
+        if engine is None:
+            from database.connection import get_sqlalchemy_engine  # type: ignore
+
+            engine = get_sqlalchemy_engine()
+        clauses = ["DATE(occurred_at) BETWEEN :start_date AND :end_date"]
+        params: dict[str, object] = {"start_date": start_date, "end_date": end_date}
+        if account_id:
+            clauses.append("account_id = :account_id")
+            params["account_id"] = account_id
+        where_clause = " AND ".join(clauses)
+        stmt = text(
+            f"SELECT entry_type, COUNT(*) AS row_count, COALESCE(SUM(amount), 0) AS total_amount "
+            f"FROM portfolio_cash_ledger WHERE {where_clause} GROUP BY entry_type"
+        )
+        with engine.connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(stmt, params).fetchall()
+        cash_types: dict[str, dict[str, float | int]] = {}
+        for row in rows:
+            entry_type = str(row[0] or "unknown")
+            row_count = int(row[1] or 0)
+            total_amount = float(row[2] or 0.0)
+            cash_types[entry_type] = {"row_count": row_count, "total_amount": total_amount}
+        summary["cash_ledger_entry_types"] = cash_types
+        summary["dividend_cash_total"] = float(cash_types.get("dividend_credit", {}).get("total_amount", 0.0))
+        summary["cash_in_lieu_total"] = float(cash_types.get("cash_in_lieu", {}).get("total_amount", 0.0))
+        summary["total_cash_impact"] = float(sum(float(payload.get("total_amount", 0.0)) for payload in cash_types.values()))
+        return summary
+    except Exception as exc:
+        LOGGER.debug("load_corporate_actions_summary fallback par défaut : %s", exc)
+        return summary
+
+
 @dataclass
 class BacktestReport:
     """Résumé des métriques de backtest."""
@@ -98,7 +391,7 @@ class BacktestReport:
     # Phase A.6 — risk-free rate annualisé utilisé pour Sharpe/Sortino.
     risk_free_rate: float = 0.0
 
-    def to_serializable_dict(self) -> dict[str, float | int]:
+    def to_serializable_dict(self) -> dict[str, float | int | str]:
         # Phase A.7 — conserver +inf comme sentinel JSON-friendly ("inf").
         def _serialize_float(value: float) -> float | str:
             if math.isinf(value):
@@ -171,31 +464,14 @@ def load_dividends_received(
     disponible. Tolérant : retourne ``0.0`` si la table ou la connexion
     n'est pas accessible (ex: tests sans DB).
     """
-    try:
-        from sqlalchemy import text  # type: ignore
-
-        if engine is None:
-            from database.connection import get_sqlalchemy_engine  # type: ignore
-
-            engine = get_sqlalchemy_engine()
-        clauses = [
-            "entry_type = 'dividend_credit'",
-            "DATE(occurred_at) BETWEEN :start_date AND :end_date",
-        ]
-        params: dict[str, object] = {"start_date": start_date, "end_date": end_date}
-        if account_id:
-            clauses.append("account_id = :account_id")
-            params["account_id"] = account_id
-        where_clause = " AND ".join(clauses)
-        stmt = text(
-            f"SELECT COALESCE(SUM(amount), 0) FROM portfolio_cash_ledger WHERE {where_clause}"
-        )
-        with engine.connect() as conn:  # type: ignore[attr-defined]
-            result = conn.execute(stmt, params).scalar()
-        return float(result or 0.0)
-    except Exception as exc:
-        LOGGER.debug("load_dividends_received fallback 0.0 : %s", exc)
-        return 0.0
+    summary = load_corporate_actions_summary(
+        start_date,
+        end_date,
+        account_id=account_id,
+        engine=engine,
+    )
+    dividend_cash_total = summary.get("dividend_cash_total", 0.0)
+    return float(dividend_cash_total or 0.0)
 
 
 def _compute_ulcer_index(equity: pd.Series) -> float:
@@ -397,20 +673,30 @@ def save_equity_curve(pf, output_dir: Path | None = None) -> Path:
     return filepath
 
 
-def save_trades_csv(pf, output_dir: Path | None = None) -> Path:
+def save_trades_csv(
+    pf,
+    output_dir: Path | None = None,
+    *,
+    pipeline_signals_df: pd.DataFrame | None = None,
+    corporate_actions_summary: dict[str, object] | None = None,
+) -> Path:
     """Exporte la liste des trades en CSV."""
     out = output_dir or ARTIFACTS_DIR
     out.mkdir(parents=True, exist_ok=True)
     filepath = out / "trades.csv"
     try:
-        closed_trades_df = _extract_closed_trades_df(pf)
-        trades_df = (
-            closed_trades_df.copy()
-            if closed_trades_df is not None
-            else pf.trades.records_readable
+        trades_df, export_summary = build_trade_export_bundle(
+            pf,
+            pipeline_signals_df=pipeline_signals_df,
+            corporate_actions_summary=corporate_actions_summary,
         )
         trades_df.to_csv(str(filepath), index=False)
-        LOGGER.info("Trades exportés : %s (%d trades)", filepath, len(trades_df))
+        LOGGER.info(
+            "Trades exportés : %s (%d lignes, source=%s)",
+            filepath,
+            len(trades_df),
+            export_summary.get("source", "unknown"),
+        )
     except Exception as exc:
         LOGGER.warning("Impossible d'exporter les trades : %s", exc)
     return filepath
@@ -460,6 +746,8 @@ def save_report_json(
     diagnostics: dict[str, object] | None = None,
     run_metadata: dict[str, object] | None = None,
     fidelity: dict[str, object] | None = None,
+    corporate_actions: dict[str, object] | None = None,
+    trade_export: dict[str, object] | None = None,
 ) -> Path:
     """Sauvegarde un manifeste JSON des métriques et artefacts du backtest.
 
@@ -476,6 +764,8 @@ def save_report_json(
         "diagnostics": diagnostics or {},
         "run_metadata": run_metadata or {},
         "fidelity": fidelity or {},
+        "corporate_actions": corporate_actions or {},
+        "trade_export": trade_export or {},
     }
     filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     LOGGER.info("Rapport JSON sauvegardé : %s", filepath)

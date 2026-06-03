@@ -379,6 +379,13 @@ def _build_backtest_common_params(
         "max_positions": args.max_positions,
         "commission_bps": float(args.commission_bps),
         "slippage_bps": float(args.slippage_bps),
+        "execution_costs": {
+            "commission_bps": float(args.commission_bps),
+            "slippage_bps": float(args.slippage_bps),
+            "total_cost_bps": float(args.commission_bps) + float(args.slippage_bps),
+            "cost_model": "explicit_commission_plus_slippage",
+            "microstructure_model": args.slippage_model,
+        },
         "fees_pct": fees_pct,
         "fees": args.fees,
         "profile": getattr(args, "profile", "custom"),
@@ -1396,6 +1403,26 @@ def _apply_pipeline_defensive_defaults_from_preset(
         return
 
     if (
+        "commission_bps" not in explicit_flags
+        and float(getattr(args, "commission_bps", 0.0) or 0.0) <= 5.0
+    ):
+        args.commission_bps = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_commission_bps_stress",
+            default=15.0,
+        )
+
+    if (
+        "slippage_bps" not in explicit_flags
+        and float(getattr(args, "slippage_bps", 0.0) or 0.0) <= 5.0
+    ):
+        args.slippage_bps = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_slippage_bps_stress",
+            default=15.0,
+        )
+
+    if (
         "max_portfolio_dd_pct" not in explicit_flags
         and float(getattr(args, "max_portfolio_dd_pct", 0.0) or 0.0) <= 0.0
     ):
@@ -1529,8 +1556,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.profiles import apply_profile
     from backtesting.run_metadata import build_run_metadata
     from backtesting.report import (
+        build_trade_export_bundle,
         extract_diagnostics,
         generate_report,
+        load_corporate_actions_summary,
         load_dividends_received,
         save_trade_audit_csv,
         save_equity_curve,
@@ -2086,6 +2115,25 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # Phase 6.1.c — dividendes encaissés (best-effort, fallback 0.0 si DB indispo).
     dividends_received = load_dividends_received(start, end, engine=engine)
+    corporate_actions_summary = load_corporate_actions_summary(start, end, engine=engine)
+    pipeline_trade_truth_df = next(
+        (
+            getattr(result, "signals_df", None)
+            for result in (
+                phase7_exit_lifecycle_result,
+                phase5_watcher_replay_result,
+                phase4_protection_replay_result,
+                phase3_execution_replay_result,
+            )
+            if result is not None and getattr(result, "signals_df", None) is not None
+        ),
+        None,
+    )
+    _, trade_export_summary = build_trade_export_bundle(
+        pf,
+        pipeline_signals_df=pipeline_trade_truth_df,
+        corporate_actions_summary=corporate_actions_summary,
+    )
 
     # 5. Rapport
     report = generate_report(
@@ -2120,7 +2168,6 @@ def _run_backtest(args: argparse.Namespace) -> None:
         phase4_protection_replay_result=phase4_protection_replay_result,
         phase5_watcher_replay_result=phase5_watcher_replay_result,
         phase7_exit_lifecycle_result=phase7_exit_lifecycle_result,
-        ml_coverage_gate=ml_coverage_gate,
     )
     fidelity_manifest = build_fidelity_manifest(
         engine_mode=engine_mode,
@@ -2312,6 +2359,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
             diagnostics=diagnostics,
             run_metadata=run_metadata,
             fidelity=fidelity_manifest,
+            corporate_actions=corporate_actions_summary,
+            trade_export=trade_export_summary,
         )
         artifact_paths["report_json"] = str(report_json_path)
         _safe_print(f"   → {report_json_path}")
@@ -2332,7 +2381,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
     if not args.no_save:
         _safe_print("💾 Sauvegarde des artefacts...")
         equity_curve_path = save_equity_curve(pf, output_dir=output_dir)
-        trades_csv_path = save_trades_csv(pf, output_dir=output_dir)
+        trades_csv_path = save_trades_csv(
+            pf,
+            output_dir=output_dir,
+            pipeline_signals_df=pipeline_trade_truth_df,
+            corporate_actions_summary=corporate_actions_summary,
+        )
         artifact_paths["equity_curve_png"] = str(equity_curve_path)
         artifact_paths["trades_csv"] = str(trades_csv_path)
         _safe_print(f"   → {equity_curve_path}")
@@ -2347,6 +2401,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 diagnostics=diagnostics,
                 run_metadata=run_metadata,
                 fidelity=fidelity_manifest,
+                corporate_actions=corporate_actions_summary,
+                trade_export=trade_export_summary,
             )
 
     _safe_print("✅ Backtest terminé.\n")

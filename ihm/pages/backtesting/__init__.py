@@ -444,7 +444,9 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "tp", "Explication": "Take-profit en fraction (0.08 = 8%).", "Défaut": "0.08"},
             {"Paramètre": "ts", "Explication": "Trailing stop en fraction (0.05 = 5%).", "Défaut": "0.05"},
             {"Paramètre": "max_positions", "Explication": "Nombre maximal de positions simultanées.", "Défaut": "20"},
-            {"Paramètre": "fees", "Explication": "Frais/slippage simulés par trade.", "Défaut": "0.001"},
+            {"Paramètre": "commission_bps", "Explication": "Commission explicite simulée par trade (bps).", "Défaut": "5.0 research / 15.0 pipeline"},
+            {"Paramètre": "slippage_bps", "Explication": "Slippage fixe explicite simulé par trade (bps).", "Défaut": "5.0 research / 15.0 pipeline"},
+            {"Paramètre": "fees", "Explication": "Champ legacy de compatibilité, remplacé par `commission_bps + slippage_bps`.", "Défaut": "None"},
             {
                 "Paramètre": "account_type",
                 "Explication": "Type de compte simulé : margin / cash.",
@@ -1217,6 +1219,8 @@ def _build_run_options() -> BacktestRunOptions:
                 f"Preset explicite transmis au backtest : `{_format_capital_preset_label(selected_run_preset_key)}`."
             )
 
+    current_engine_mode = str(st.session_state.get("bt_run_engine_mode", "research") or "research").strip().lower()
+
     col4, col5, col6, col7 = st.columns(4)
     with col4:
         tp = st.number_input(
@@ -1251,19 +1255,40 @@ def _build_run_options() -> BacktestRunOptions:
             help="Nombre maximal de lignes simultanées du portefeuille.",
         )
     with col7:
-        fees = st.number_input(
-            "Frais (fraction)",
+        commission_bps = st.number_input(
+            "Commission (bps)",
             min_value=0.0,
-            max_value=1.0,
-            value=float(st.session_state.get("bt_run_fees", 0.001)),
-            step=0.0005,
-            format="%.4f",
-            key="bt_run_fees",
-            help="Exemple : 0.001 = 10 bps par trade.",
+            max_value=500.0,
+            value=float(
+                st.session_state.get(
+                    "bt_run_commission_bps",
+                    15.0 if current_engine_mode == "pipeline" else 5.0,
+                )
+            ),
+            step=1.0,
+            format="%.1f",
+            key="bt_run_commission_bps",
+            help="Coût fixe explicite par trade. En mode pipeline, 15 bps est un défaut réaliste recommandé.",
         )
 
-    col8, col9, col10, col11 = st.columns(4)
+    col8, col9, col10, col11, col12 = st.columns(5)
     with col8:
+        slippage_bps = st.number_input(
+            "Slippage explicite (bps)",
+            min_value=0.0,
+            max_value=500.0,
+            value=float(
+                st.session_state.get(
+                    "bt_run_slippage_bps",
+                    15.0 if current_engine_mode == "pipeline" else 5.0,
+                )
+            ),
+            step=1.0,
+            format="%.1f",
+            key="bt_run_slippage_bps",
+            help="Slippage fixe explicite, appliqué en plus du modèle microstructure si activé.",
+        )
+    with col9:
         account_type = cast(
             str,
             st.selectbox(
@@ -1278,7 +1303,7 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`margin` = compte standard/margin ; `cash` = cash settled uniquement, sans PDT.",
             ),
         )
-    with col9:
+    with col10:
         pdt_rule = cast(
             str,
             st.selectbox(
@@ -1293,14 +1318,14 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`auto` applique la règle PDT sur compte margin < 25k ; `off` la désactive dans le backtest.",
             ),
         )
-    with col10:
+    with col11:
         swing_only = st.checkbox(
             "Swing only",
             value=bool(st.session_state.get("bt_run_swing_only", False)),
             key="bt_run_swing_only",
             help="Si coché, une position ne peut pas être revendue le jour même.",
         )
-    with col11:
+    with col12:
         sentiment_lookback = st.number_input(
             "Sentiment lookback (jours)",
             min_value=1,
@@ -1616,7 +1641,9 @@ def _build_run_options() -> BacktestRunOptions:
         tp=float(tp),
         ts=float(ts),
         max_positions=int(max_positions),
-        fees=float(fees),
+        fees=None,
+        commission_bps=float(commission_bps),
+        slippage_bps=float(slippage_bps),
         account_type=cast(Any, account_type),
         pdt_rule=cast(Any, pdt_rule),
         swing_only=bool(swing_only),
@@ -2305,6 +2332,8 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     artifacts = cast(dict[str, object], report_payload.get("artifacts", {}))
     diagnostics = cast(dict[str, object], report_payload.get("diagnostics", {}))
     fidelity = cast(dict[str, object], report_payload.get("fidelity", {}))
+    corporate_actions = cast(dict[str, object], report_payload.get("corporate_actions", {}))
+    trade_export = cast(dict[str, object], report_payload.get("trade_export", {}))
 
     st.markdown("**📌 KPIs du rapport**")
     col1, col2, col3, col4 = st.columns(4)
@@ -2395,6 +2424,43 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
             if len(macro_missing_dates) > 10:
                 preview += f" … (+{len(macro_missing_dates) - 10})"
             st.caption(f"Séances marquées `data_quality=missing` : {preview}")
+
+    if corporate_actions:
+        st.markdown("**🏦 Corporate actions / convention prix**")
+        ca_col1, ca_col2, ca_col3, ca_col4 = st.columns(4)
+        ca_col1.metric(
+            "Prix split-adjusted",
+            "oui" if bool(corporate_actions.get("split_adjusted_prices", False)) else "non",
+        )
+        ca_col2.metric(
+            "Dividendes dans les prix",
+            "oui" if bool(corporate_actions.get("dividends_reflected_in_prices", False)) else "non",
+        )
+        ca_col3.metric(
+            "Cash dividendes",
+            f"${_to_float(corporate_actions.get('dividend_cash_total')):,.2f}",
+        )
+        ca_col4.metric(
+            "Cash in lieu",
+            f"${_to_float(corporate_actions.get('cash_in_lieu_total')):,.2f}",
+        )
+        st.caption(
+            "Convention unifiée : `stock_bars_daily` est consommée en prix ajustés des splits, "
+            "et les flux cash corporate actions restent séparés dans `portfolio_cash_ledger`."
+        )
+
+    if trade_export:
+        st.markdown("**🧾 Export trades réconcilié**")
+        trade_col1, trade_col2, trade_col3, trade_col4 = st.columns(4)
+        trade_col1.metric("Source export", _coerce_metric_text(trade_export.get("source")))
+        trade_col2.metric("Lignes exportées", _to_int(trade_export.get("row_count")))
+        trade_col3.metric("Trades clôturés", _to_int(trade_export.get("export_closed_rows")))
+        trade_col4.metric("Écarts legacy", _to_int(trade_export.get("legacy_unmatched_rows")))
+        if _to_int(trade_export.get("legacy_unmatched_rows")) > 0:
+            st.caption(
+                "`trades.csv` est désormais reconstruit depuis la vérité pipeline Phase 3→7 ; "
+                "`legacy_unmatched_rows` mesure l'écart avec l'ancien export basé sur `closed_trades_df`."
+            )
 
     # Phase A.4 — métadonnées de reproductibilité.
     run_metadata = report_payload.get("run_metadata")

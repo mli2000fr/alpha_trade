@@ -445,6 +445,24 @@ class TestReportSchema:
         # Default tolerant mode passes.
         validate_report_payload(payload, strict=False)
 
+    def test_validate_accepts_corporate_actions_and_trade_export_blocks(self):
+        from backtesting.report_schema import validate_report_payload
+
+        payload = self._minimal_payload()
+        payload["corporate_actions"] = {
+            "price_adjustment_convention": "split_adjusted_prices_plus_cash_ledger",
+            "dividend_cash_total": 42.0,
+        }
+        payload["trade_export"] = {
+            "source": "phase3_to_phase7_pipeline",
+            "legacy_unmatched_rows": 0,
+        }
+
+        schema = validate_report_payload(payload, strict=True)
+
+        assert schema.corporate_actions["dividend_cash_total"] == 42.0
+        assert schema.trade_export["source"] == "phase3_to_phase7_pipeline"
+
 
 class TestFidelityManifestSprint1:
     def test_build_coverage_summary_exposes_component_status_and_reasons(self):

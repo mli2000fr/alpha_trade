@@ -246,6 +246,20 @@ class CorporateActionEngine:
         stats: dict[str, int],
     ) -> None:
         """Applique un seul événement corporate action."""
+        validation_errors = event.validate()
+        if validation_errors:
+            message = "; ".join(validation_errors)
+            LOGGER.warning(
+                "Evenement corporate action invalide au moment de l'apply | id=%s symbol=%s errors=%s",
+                event.id,
+                event.symbol,
+                validation_errors,
+            )
+            if event.id is not None:
+                self.repo.mark_failed(event.id, message[:500])
+            stats["failed"] += 1
+            return
+
         # Phase 5.3.a — Vérification idempotence scopée par account_id.
         # ``is_event_applied`` essaie d'abord la clé scopée (account_id) puis
         # tombe sur la clé legacy pour les events ingérés avant la migration.

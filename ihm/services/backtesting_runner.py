@@ -29,7 +29,9 @@ class BacktestRunOptions:
     tp: float = 0.08
     ts: float = 0.05
     max_positions: int = 20
-    fees: float = 0.001
+    fees: float | None = None
+    commission_bps: float | None = None
+    slippage_bps: float | None = None
     account_type: Literal["margin", "cash"] = "margin"
     pdt_rule: Literal["auto", "off"] = "auto"
     swing_only: bool = False
@@ -179,7 +181,6 @@ def build_backtesting_command(
             "--tp", str(options.tp),
             "--ts", str(options.ts),
             "--max-positions", str(options.max_positions),
-            "--fees", str(options.fees),
             "--account-type", options.account_type,
             "--pdt-rule", options.pdt_rule,
             "--sentiment-lookback", str(options.sentiment_lookback),
@@ -197,6 +198,12 @@ def build_backtesting_command(
             "--artifacts-dir", options.artifacts_dir,
             "--score-column", options.score_column,
         ])
+        if options.commission_bps is not None:
+            command.extend(["--commission-bps", str(options.commission_bps)])
+        if options.slippage_bps is not None:
+            command.extend(["--slippage-bps", str(options.slippage_bps)])
+        if options.commission_bps is None and options.slippage_bps is None and options.fees is not None:
+            command.extend(["--fees", str(options.fees)])
         if options.allow_neutral_fallback_on_missing_macro_data:
             command.append("--allow-neutral-fallback-on-missing-macro-data")
         else:

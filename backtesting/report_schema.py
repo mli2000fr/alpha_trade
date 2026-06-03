@@ -125,6 +125,8 @@ class BacktestReportSchema:
     diagnostics: DiagnosticsSchema = field(default_factory=DiagnosticsSchema)
     run_metadata: RunMetadataSchema = field(default_factory=RunMetadataSchema)
     fidelity: dict[str, Any] = field(default_factory=dict)
+    corporate_actions: dict[str, Any] = field(default_factory=dict)
+    trade_export: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +226,22 @@ def validate_report_payload(payload: dict[str, Any], *, strict: bool = False) ->
     fidelity_payload = payload.get("fidelity", {}) or {}
     _check_type(fidelity_payload, (dict,), "fidelity")
 
-    known_root = {"summary", "params", "artifacts", "diagnostics", "run_metadata", "fidelity"}
+    corporate_actions_payload = payload.get("corporate_actions", {}) or {}
+    _check_type(corporate_actions_payload, (dict,), "corporate_actions")
+
+    trade_export_payload = payload.get("trade_export", {}) or {}
+    _check_type(trade_export_payload, (dict,), "trade_export")
+
+    known_root = {
+        "summary",
+        "params",
+        "artifacts",
+        "diagnostics",
+        "run_metadata",
+        "fidelity",
+        "corporate_actions",
+        "trade_export",
+    }
     extra = set(payload.keys()) - known_root
     if extra:
         message = f"Clés racine inconnues: {sorted(extra)}"
@@ -239,6 +256,8 @@ def validate_report_payload(payload: dict[str, Any], *, strict: bool = False) ->
         diagnostics=diagnostics_obj,
         run_metadata=run_metadata_obj,
         fidelity=dict(fidelity_payload),
+        corporate_actions=dict(corporate_actions_payload),
+        trade_export=dict(trade_export_payload),
     )
 
 
