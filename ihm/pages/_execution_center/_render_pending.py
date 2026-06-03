@@ -90,6 +90,18 @@ def render_execution_block(
         key="pipeline_execution_trailing_trigger",
         help="`multiple_r` : armer après N×R atteint.",
     )
+    execution_max_entry_gap_pct = float(
+        st.number_input(
+            "Gap d'entrée max (fraction)",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(st.session_state.get("pipeline_execution_max_entry_gap_pct", 0.0)),
+            step=0.005,
+            format="%.4f",
+            key="pipeline_execution_max_entry_gap_pct",
+            help="Ex. 0.03 = bloque une entrée si le prix courant s'éloigne trop du close précédent.",
+        )
+    )
     execution_debug = st.checkbox(
         "Execution — `--debug` (logs DEBUG)",
         value=False,
@@ -107,6 +119,7 @@ def render_execution_block(
         "execution_pdt_rule": execution_pdt_rule,
         "execution_swing_only": execution_swing_only,
         "execution_submission_window": execution_submission_window,
+        "execution_max_entry_gap_pct": execution_max_entry_gap_pct,
         "execution_trailing_trigger": execution_trailing_trigger,
         "execution_debug": execution_debug,
         "selected_capital_preset": selected_capital_preset,

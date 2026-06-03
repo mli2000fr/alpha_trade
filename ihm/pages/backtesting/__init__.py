@@ -264,6 +264,8 @@ def _resolve_pipeline_backtest_defaults(
 ) -> dict[str, float | None]:
     defaults: dict[str, float | None] = {
         "max_portfolio_dd_pct": 0.0,
+        "max_sector_exposure_pct": 0.0,
+        "max_entry_gap_pct": 0.0,
         "dd_recovery_pct": 0.95,
         "target_annual_vol": None,
         "min_ml_coverage_ratio": None,
@@ -283,6 +285,11 @@ def _resolve_pipeline_backtest_defaults(
             values.get("backtesting_max_portfolio_dd_pct", values.get("risk_max_drawdown_pct", 0.12)),
             0.12,
         ),
+        "max_sector_exposure_pct": _to_float(
+            values.get("backtesting_max_sector_exposure_pct", values.get("risk_max_sector_weight", 0.25)),
+            0.25,
+        ),
+        "max_entry_gap_pct": _to_float(values.get("backtesting_max_entry_gap_pct", 0.03), 0.03),
         "dd_recovery_pct": _to_float(values.get("backtesting_dd_recovery_pct", 0.98), 0.98),
         "target_annual_vol": _to_float(values.get("backtesting_target_annual_vol", 0.15), 0.15),
         "min_ml_coverage_ratio": _to_float(values.get("backtesting_min_ml_coverage_ratio", 0.80), 0.80),
@@ -819,6 +826,16 @@ def _build_overlay_options(
         if "bt_run_max_portfolio_dd_pct" in st.session_state
         else float(pipeline_defaults.get("max_portfolio_dd_pct") or 0.0)
     )
+    max_sector_exposure_default = (
+        float(st.session_state["bt_run_max_sector_exposure_pct"])
+        if "bt_run_max_sector_exposure_pct" in st.session_state
+        else float(pipeline_defaults.get("max_sector_exposure_pct") or 0.0)
+    )
+    max_entry_gap_default = (
+        float(st.session_state["bt_run_max_entry_gap_pct"])
+        if "bt_run_max_entry_gap_pct" in st.session_state
+        else float(pipeline_defaults.get("max_entry_gap_pct") or 0.0)
+    )
     dd_recovery_default = (
         float(st.session_state["bt_run_dd_recovery_pct"])
         if "bt_run_dd_recovery_pct" in st.session_state
@@ -925,7 +942,7 @@ def _build_overlay_options(
                 "Max gap d'ouverture (fraction)",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("bt_run_max_entry_gap_pct", 0.0)),
+                value=max_entry_gap_default,
                 step=0.005,
                 format="%.4f",
                 key="bt_run_max_entry_gap_pct",
@@ -1020,7 +1037,7 @@ def _build_overlay_options(
                 "Max exposure secteur",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(st.session_state.get("bt_run_max_sector_exposure_pct", 0.0)),
+                value=max_sector_exposure_default,
                 step=0.05,
                 format="%.4f",
                 key="bt_run_max_sector_exposure_pct",
@@ -1066,8 +1083,8 @@ def _build_overlay_options(
         with risk_col12:
             if engine_mode == "pipeline":
                 st.caption(
-                    "Le preset capital préremplit ici le drawdown breaker, le `vol targeting` et le gating ML. "
-                    "Vous pouvez modifier directement `Max DD portefeuille`, `DD recovery`, `Target annual vol` et `Min ML coverage ratio` avant le lancement."
+                    "Le preset capital préremplit ici les garde-fous pipeline : cap sectoriel, gap filter d'entrée, drawdown breaker, `vol targeting` et gating ML. "
+                    "Vous pouvez modifier directement ces valeurs avant le lancement."
                 )
             else:
                 st.caption(

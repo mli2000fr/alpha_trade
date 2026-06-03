@@ -504,6 +504,7 @@ def _build_runtime_preset(
     submission_window: str | None = None,
     take_profit_pct: float | None = None,
     trailing_stop_pct: float | None = None,
+    max_entry_gap_pct: float | None = None,
     trailing_activation_trigger: str | None = None,
     trailing_activation_r_multiple: float | None = None,
     trailing_activation_profit_pct: float | None = None,
@@ -528,6 +529,8 @@ def _build_runtime_preset(
         preset["profit_taker_pct"] = take_profit_pct
     if trailing_stop_pct is not None:
         preset["trailing_stop_pct"] = trailing_stop_pct
+    if max_entry_gap_pct is not None:
+        preset["max_entry_gap_pct"] = max_entry_gap_pct
     preset["account_type"] = account_type
     preset["pdt_rule"] = pdt_rule
     preset["swing_only"] = swing_only
@@ -627,6 +630,7 @@ def run(
     skip_preflight: bool = False,
     take_profit_pct: float | None = None,
     trailing_stop_pct: float | None = None,
+    max_entry_gap_pct: float | None = None,
     trailing_activation_trigger: str | None = None,
     trailing_activation_r_multiple: float | None = None,
     trailing_activation_profit_pct: float | None = None,
@@ -662,6 +666,7 @@ def run(
         submission_window=submission_window,
         take_profit_pct=take_profit_pct,
         trailing_stop_pct=trailing_stop_pct,
+        max_entry_gap_pct=max_entry_gap_pct,
         trailing_activation_trigger=trailing_activation_trigger,
         trailing_activation_r_multiple=trailing_activation_r_multiple,
         trailing_activation_profit_pct=trailing_activation_profit_pct,
@@ -1128,6 +1133,7 @@ Exemples :
     p.add_argument("--submission-window",       dest="submission_window",  choices=["post_close", "pre_open", "both"], default=None, help="Fenetre nominale de soumission hors seance")
     p.add_argument("--profit-taker-pct",        dest="profit_taker_pct", type=float, default=None, help="Take-profit cible (fraction: 0.08 = +8%%)")
     p.add_argument("--trailing-stop-pct",       dest="trailing_stop_pct", type=float, default=None, help="Trailing stop broker-side (fraction: 0.05 = 5%%)")
+    p.add_argument("--max-entry-gap-pct",       dest="max_entry_gap_pct", type=float, default=None, help="Bloque une entrée si le dernier prix diffère trop du close précédent (fraction: 0.03 = 3%%)")
     p.add_argument("--trailing-activation-trigger", dest="trailing_activation_trigger", choices=["multiple_r", "profit_pct"], default=None, help="Trigger métier pour passer du stop initial au trailing dynamique")
     p.add_argument("--trailing-activation-r-multiple", dest="trailing_activation_r_multiple", type=float, default=None, help="Multiple de R pour activer le trailing dynamique")
     p.add_argument("--trailing-activation-profit-pct", dest="trailing_activation_profit_pct", type=float, default=None, help="Profit pct pour activer le trailing dynamique")
@@ -1225,6 +1231,7 @@ def main() -> None:
         skip_preflight = False
         take_profit_pct = None
         trailing_stop_pct = None
+        max_entry_gap_pct = None
         trailing_activation_trigger = None
         trailing_activation_r_multiple = None
         trailing_activation_profit_pct = None
@@ -1246,6 +1253,7 @@ def main() -> None:
         skip_preflight    = bool(getattr(args, "skip_preflight", False))
         take_profit_pct   = args.profit_taker_pct
         trailing_stop_pct = args.trailing_stop_pct
+        max_entry_gap_pct = args.max_entry_gap_pct
         trailing_activation_trigger = args.trailing_activation_trigger
         trailing_activation_r_multiple = args.trailing_activation_r_multiple
         trailing_activation_profit_pct = args.trailing_activation_profit_pct
@@ -1271,6 +1279,7 @@ def main() -> None:
         skip_preflight=skip_preflight,
         take_profit_pct=take_profit_pct,
         trailing_stop_pct=trailing_stop_pct,
+        max_entry_gap_pct=max_entry_gap_pct,
         trailing_activation_trigger=trailing_activation_trigger,
         trailing_activation_r_multiple=trailing_activation_r_multiple,
         trailing_activation_profit_pct=trailing_activation_profit_pct,

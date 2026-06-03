@@ -1407,6 +1407,27 @@ def _apply_pipeline_defensive_defaults_from_preset(
         )
 
     if (
+        "max_sector_exposure_pct" not in explicit_flags
+        and float(getattr(args, "max_sector_exposure_pct", 0.0) or 0.0) <= 0.0
+    ):
+        args.max_sector_exposure_pct = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_max_sector_exposure_pct",
+            "risk_max_sector_weight",
+            default=0.25,
+        )
+
+    if (
+        "max_entry_gap_pct" not in explicit_flags
+        and float(getattr(args, "max_entry_gap_pct", 0.0) or 0.0) <= 0.0
+    ):
+        args.max_entry_gap_pct = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_max_entry_gap_pct",
+            default=0.03,
+        )
+
+    if (
         "target_annual_vol" not in explicit_flags
         and getattr(args, "target_annual_vol", None) is None
     ):

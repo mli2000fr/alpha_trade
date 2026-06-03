@@ -16,6 +16,8 @@ from execution_engine.config import (
         ({"account_type": "leveraged"}, "account_type"),
         ({"pdt_rule": "strict"}, "pdt_rule"),
         ({"entry_order_type": "stop"}, "entry_order_type"),
+        ({"max_entry_gap_pct": -0.01}, "max_entry_gap_pct"),
+        ({"max_entry_gap_pct": 1.0}, "max_entry_gap_pct"),
         ({"profit_taker_pct": 0}, "profit_taker_pct"),
         ({"trailing_stop_pct": 1}, "trailing_stop_pct"),
         ({"trailing_activation_trigger": "unknown"}, "trailing_activation_trigger"),

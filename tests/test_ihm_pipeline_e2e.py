@@ -234,6 +234,7 @@ def test_render_execution_block_returns_expected_keys() -> None:
         "execution_pdt_rule",
         "execution_swing_only",
         "execution_submission_window",
+        "execution_max_entry_gap_pct",
         "execution_trailing_trigger",
         "execution_debug",
         "selected_capital_preset",

@@ -106,6 +106,7 @@ def test_build_runtime_preset_accepts_executor_compat_overrides() -> None:
     preset = run_execution._build_runtime_preset(
         "paper",
         submission_window="pre_open",
+        max_entry_gap_pct=0.03,
         trailing_activation_trigger="profit_pct",
         trailing_activation_profit_pct=0.04,
         protection_transition_timeout_seconds=12,
@@ -114,6 +115,7 @@ def test_build_runtime_preset_accepts_executor_compat_overrides() -> None:
     )
 
     assert preset["submission_window"] == "pre_open"
+    assert preset["max_entry_gap_pct"] == 0.03
     assert preset["trailing_activation_trigger"] == "profit_pct"
     assert preset["trailing_activation_profit_pct"] == 0.04
     assert preset["protection_transition_timeout_seconds"] == 12
@@ -148,5 +150,13 @@ def test_build_parser_accepts_custom_trailing_stop_pct() -> None:
     args = parser.parse_args(["paper", "--trailing-stop-pct", "0.04"])
 
     assert args.trailing_stop_pct == 0.04
+
+
+def test_build_parser_accepts_custom_max_entry_gap_pct() -> None:
+    parser = run_execution.build_parser()
+
+    args = parser.parse_args(["paper", "--max-entry-gap-pct", "0.03"])
+
+    assert args.max_entry_gap_pct == 0.03
 
 

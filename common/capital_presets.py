@@ -303,6 +303,8 @@ def apply_backtest_defaults_from_preset(
         "cash_settlement_days": ("execution_cash_settlement_days", int),
         "commission_bps": ("backtesting_commission_bps_stress", float),
         "slippage_bps": ("backtesting_slippage_bps_stress", float),
+        "max_sector_exposure_pct": ("backtesting_max_sector_exposure_pct", float),
+        "max_entry_gap_pct": ("backtesting_max_entry_gap_pct", float),
     }
     for target_key, (preset_key, cast_fn) in mapping.items():
         if target_key in explicit_flags:

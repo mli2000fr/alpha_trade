@@ -141,6 +141,7 @@ class ExecutionRepository:
             "selector_signal_mode",
             "selection_explanation",
             "selector_earnings_blackout",
+            "previous_close",
         ]
         select_parts = [*required_columns]
         select_parts.extend(
@@ -332,9 +333,46 @@ class ExecutionRepository:
                 risk_budget_dollars=float(r["risk_budget_dollars"]) if r.get("risk_budget_dollars") is not None else None,
                 initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
                 target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
+                previous_close=float(r["previous_close"]) if r.get("previous_close") is not None else None,
             )
             for r in rows
         ]
+
+    def load_previous_closes_asof(
+        self,
+        *,
+        symbols: list[str],
+        trade_date: date,
+    ) -> dict[str, float]:
+        """Charge le close J-1 (ou dernière clôture disponible avant `trade_date`)."""
+        if not symbols:
+            return {}
+
+        placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))
+        params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
+        params["trade_date"] = trade_date
+        query = text(f"""
+            WITH ranked AS (
+                SELECT
+                    symbol,
+                    `date` AS trade_day,
+                    `close` AS close_price,
+                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY `date` DESC) AS rn
+                FROM stock_bars_daily
+                WHERE symbol IN ({placeholders})
+                  AND `date` < :trade_date
+            )
+            SELECT symbol, trade_day, close_price
+            FROM ranked
+            WHERE rn = 1
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, params).mappings().all()
+        return {
+            str(row["symbol"]).strip().upper(): float(row["close_price"])
+            for row in rows
+            if row.get("symbol") is not None and row.get("close_price") is not None
+        }
 
     def load_submitted_idempotency_keys(self, exec_run_id: str) -> set[str]:
         query = text("""

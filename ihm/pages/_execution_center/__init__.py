@@ -85,6 +85,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_CA_USE_CUSTOM_WINDOW,
     DEFAULT_CA_WINDOW_LOOKBACK_DAYS,
     DEFAULT_EXEC_DEBUG,
+    DEFAULT_EXEC_MAX_ENTRY_GAP_PCT,
     DEFAULT_EXEC_TAKE_PROFIT_PCT,
     DEFAULT_EXEC_MANUAL_BUY_SL_PCT,
     DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS,
@@ -2862,11 +2863,28 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
 
         with st.expander("Execution — transition trigger avancé & debug", expanded=False):
             st.caption(
-                "Pilote `--protection-transition-timeout-seconds` / `--protection-transition-poll-interval-seconds` "
-                "et `--debug` côté `run_execution.py`. Défauts swing : 120 s / 5 s, debug désactivé."
+                "Pilote `--max-entry-gap-pct`, `--protection-transition-timeout-seconds` / "
+                "`--protection-transition-poll-interval-seconds` et `--debug` côté `run_execution.py`. "
+                "Défauts swing : gap filter désactivé (0), 120 s / 5 s, debug désactivé."
             )
-            adv_exec_col1, adv_exec_col2, adv_exec_col3 = st.columns(3)
+            adv_exec_col1, adv_exec_col2, adv_exec_col3, adv_exec_col4 = st.columns(4)
             with adv_exec_col1:
+                execution_max_entry_gap_pct = float(
+                    st.number_input(
+                        "Gap d'entrée max (fraction)",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=_session_state_float(
+                            "pipeline_execution_max_entry_gap_pct",
+                            DEFAULT_EXEC_MAX_ENTRY_GAP_PCT,
+                        ),
+                        step=0.005,
+                        format="%.4f",
+                        key="pipeline_execution_max_entry_gap_pct",
+                        help="Ex. 0.03 = bloque une entrée si le dernier prix marché est à plus de 3% du close précédent. 0 = désactivé.",
+                    )
+                )
+            with adv_exec_col2:
                 execution_protection_transition_timeout_seconds = int(
                     st.number_input(
                         "Transition — timeout (s)",
@@ -2881,7 +2899,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         help="0 = ne pas envoyer le flag (laisse le défaut backend).",
                     )
                 )
-            with adv_exec_col2:
+            with adv_exec_col3:
                 execution_protection_transition_poll_interval_seconds = float(
                     st.number_input(
                         "Transition — poll interval (s)",
@@ -2897,7 +2915,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         help="0 = ne pas envoyer le flag (laisse le défaut backend).",
                     )
                 )
-            with adv_exec_col3:
+            with adv_exec_col4:
                 execution_debug = st.checkbox(
                     "Execution — `--debug` (logs DEBUG)",
                     value=bool(st.session_state.get("pipeline_execution_debug", DEFAULT_EXEC_DEBUG)),
@@ -3933,6 +3951,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_submission_window=cast(Any, execution_submission_window),
             execution_take_profit_pct=float(execution_take_profit_pct),
             execution_trailing_stop_pct=float(execution_trailing_stop_pct),
+            execution_max_entry_gap_pct=float(execution_max_entry_gap_pct),
             execution_manual_buy_stop_loss_pct=float(execution_manual_buy_stop_loss_pct),
             execution_trailing_trigger=cast(Any, execution_trailing_trigger),
             execution_trailing_r_multiple=float(execution_trailing_r_multiple),

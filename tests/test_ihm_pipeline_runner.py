@@ -150,6 +150,7 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
         execution_swing_only=True,
         execution_take_profit_pct=0.065,
         execution_trailing_stop_pct=0.04,
+        execution_max_entry_gap_pct=0.03,
     )
 
     risk_command = build_pipeline_command("risk_management", options)
@@ -177,6 +178,8 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert execution_command[execution_command.index("--profit-taker-pct") + 1] == "0.065"
     assert "--trailing-stop-pct" in execution_command
     assert execution_command[execution_command.index("--trailing-stop-pct") + 1] == "0.04"
+    assert "--max-entry-gap-pct" in execution_command
+    assert execution_command[execution_command.index("--max-entry-gap-pct") + 1] == "0.03"
     assert "risk-123" in execution_command
 
     assert ca_apply_command[-2:] == ["--account", "test1"]

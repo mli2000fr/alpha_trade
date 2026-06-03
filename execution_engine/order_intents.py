@@ -1,9 +1,11 @@
 """Construction d'OrderIntent — fonctions pures, testables."""
 from __future__ import annotations
 
+from collections import defaultdict
 import hashlib
 import uuid
 
+from backtesting.microstructure import should_skip_entry_for_gap
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import ExecutionTarget, IntentRole, OrderIntent
 
@@ -104,6 +106,138 @@ def build_entry_intents(
             submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, "buy", qty, intent_id),
         ))
     return intents
+
+
+def _target_priority_key(target: ExecutionTarget) -> tuple[int, int, str]:
+    decision_rank = getattr(target, "decision_rank", None)
+    candidate_rank = getattr(target, "candidate_rank", None)
+    return (
+        int(decision_rank) if decision_rank is not None else 10**9,
+        int(candidate_rank) if candidate_rank is not None else 10**9,
+        str(target.symbol).strip().upper(),
+    )
+
+
+def filter_targets_by_live_regime_guards(
+    *,
+    targets: list[ExecutionTarget],
+    config: ExecutionConfig,
+) -> tuple[list[ExecutionTarget], list[dict[str, float | int | str | None]]]:
+    """Applique des garde-fous live dérivés du snapshot régime marché.
+
+    Ces garde-fous ne remplacent pas le sizing Risk (étape 11) ; ils servent de
+    filet de sécurité en exécution live/paper si un run consomme des targets
+    trop anciennes ou incompatibles avec le régime courant.
+    """
+    blocked: list[dict[str, float | int | str | None]] = []
+    kept_targets = list(targets)
+
+    max_position_weight = getattr(config, "regime_max_position_weight", None)
+    if max_position_weight is not None:
+        next_targets: list[ExecutionTarget] = []
+        for target in kept_targets:
+            target_weight = float(getattr(target, "target_weight", 0.0) or 0.0)
+            if target_weight <= float(max_position_weight) + 1e-12:
+                next_targets.append(target)
+                continue
+            blocked.append(
+                {
+                    "symbol": target.symbol,
+                    "sector": target.sector,
+                    "target_weight": target_weight,
+                    "limit": float(max_position_weight),
+                    "reason": "regime_max_position_weight",
+                }
+            )
+        kept_targets = next_targets
+
+    max_sector_weight = getattr(config, "regime_max_sector_weight", None)
+    if max_sector_weight is not None and kept_targets:
+        allowed_ids: set[int] = set()
+        sector_weights: dict[str, float] = defaultdict(float)
+        for target in sorted(kept_targets, key=_target_priority_key):
+            sector = str(target.sector or "UNKNOWN").strip() or "UNKNOWN"
+            target_weight = max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0)
+            projected_sector_weight = sector_weights[sector] + target_weight
+            if projected_sector_weight <= float(max_sector_weight) + 1e-12:
+                allowed_ids.add(id(target))
+                sector_weights[sector] = projected_sector_weight
+                continue
+            blocked.append(
+                {
+                    "symbol": target.symbol,
+                    "sector": target.sector,
+                    "target_weight": target_weight,
+                    "sector_weight_before": sector_weights[sector],
+                    "sector_weight_after": projected_sector_weight,
+                    "limit": float(max_sector_weight),
+                    "reason": "regime_max_sector_weight",
+                }
+            )
+        kept_targets = [target for target in kept_targets if id(target) in allowed_ids]
+
+    max_positions = getattr(config, "regime_max_positions", None)
+    if max_positions is not None and len(kept_targets) > int(max_positions):
+        ranked_targets = sorted(kept_targets, key=_target_priority_key)
+        allowed_ids = {id(target) for target in ranked_targets[: int(max_positions)]}
+        for target in ranked_targets[int(max_positions) :]:
+            blocked.append(
+                {
+                    "symbol": target.symbol,
+                    "sector": target.sector,
+                    "target_weight": float(getattr(target, "target_weight", 0.0) or 0.0),
+                    "rank": int(getattr(target, "decision_rank", None) or getattr(target, "candidate_rank", None) or 0),
+                    "limit": int(max_positions),
+                    "reason": "regime_max_positions",
+                }
+            )
+        kept_targets = [target for target in kept_targets if id(target) in allowed_ids]
+
+    return kept_targets, blocked
+
+
+def split_entry_intents_by_gap_filter(
+    *,
+    targets: list[ExecutionTarget],
+    intents: list[OrderIntent],
+    config: ExecutionConfig,
+    latest_market_prices: dict[str, float] | None = None,
+) -> tuple[list[OrderIntent], list[dict[str, float | str | None]]]:
+    """Sépare les intents conservées des intents rejetées par le gap filter live."""
+    if float(config.max_entry_gap_pct or 0.0) <= 0.0:
+        return intents, []
+
+    latest_market_prices = latest_market_prices or {}
+    target_by_symbol = {str(target.symbol).strip().upper(): target for target in targets}
+    kept: list[OrderIntent] = []
+    blocked: list[dict[str, float | str | None]] = []
+
+    for intent in intents:
+        symbol = str(intent.symbol).strip().upper()
+        target = target_by_symbol.get(symbol)
+        previous_close = float(target.previous_close) if target is not None and target.previous_close is not None else None
+        latest_price = latest_market_prices.get(symbol)
+        if latest_price is None:
+            latest_price = latest_market_prices.get(str(intent.symbol))
+        decision_price = float(latest_price) if latest_price is not None else float(intent.decision_price)
+        gap_pct = (
+            abs(decision_price - previous_close) / previous_close
+            if previous_close is not None and previous_close > 0
+            else None
+        )
+        if should_skip_entry_for_gap(previous_close, decision_price, max_gap_pct=float(config.max_entry_gap_pct)):
+            blocked.append(
+                {
+                    "symbol": intent.symbol,
+                    "previous_close": previous_close,
+                    "decision_price": decision_price,
+                    "entry_gap_pct": gap_pct,
+                    "max_entry_gap_pct": float(config.max_entry_gap_pct),
+                }
+            )
+            continue
+        kept.append(intent)
+    return kept, blocked
 
 
 def build_take_profit_intent(

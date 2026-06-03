@@ -116,6 +116,7 @@ class ExecutionTarget:
     risk_budget_dollars: float | None = None
     initial_risk_dollars: float | None = None
     target_notional: float | None = None
+    previous_close: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

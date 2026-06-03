@@ -10,6 +10,7 @@ Architecture Synthetic Bracket :
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 import time
 import uuid
@@ -56,6 +57,7 @@ from execution_engine.order_intents import (
     build_entry_intents,
     intent_to_alpaca_payload,
     resolve_initial_stop_price,
+    split_entry_intents_by_gap_filter,
 )
 from execution_engine.protection_transition import (
     maybe_activate_dynamic_trailing as _maybe_activate_dynamic_trailing_impl,
@@ -187,6 +189,27 @@ class ProductionExecutor:
 
             actual_risk_run_id = targets[0].risk_run_id
             actual_trade_date = trade_date or targets[0].trade_date
+            if actual_trade_date is not None:
+                try:
+                    previous_closes = self._repo.load_previous_closes_asof(
+                        symbols=[str(target.symbol).strip().upper() for target in targets],
+                        trade_date=actual_trade_date,
+                    )
+                except Exception:
+                    previous_closes = {}
+                    LOGGER.debug("Impossible de charger les previous_close pour le gap filter live.", exc_info=True)
+                if not isinstance(previous_closes, dict):
+                    previous_closes = {}
+                if previous_closes:
+                    enriched_targets = []
+                    for target in targets:
+                        symbol_upper = str(target.symbol).strip().upper()
+                        previous_close = previous_closes.get(symbol_upper)
+                        if previous_close is None:
+                            enriched_targets.append(target)
+                            continue
+                        enriched_targets.append(replace(target, previous_close=float(previous_close)))
+                    targets = enriched_targets
             metrics["targets"] = len(targets)
             metrics["total_target_notional"] = round(sum(float(t.target_notional or (t.target_shares * t.entry_price)) for t in targets), 2)
             metrics["total_initial_risk_dollars"] = round(sum(float(t.initial_risk_dollars or 0.0) for t in targets), 2)
@@ -374,6 +397,31 @@ class ProductionExecutor:
 
             # Phase 3 — Build intents, filter duplicates
             entry_intents = build_entry_intents(targets, self._cfg, exec_run_id)
+            if entry_intents and float(getattr(self._cfg, "max_entry_gap_pct", 0.0) or 0.0) > 0.0:
+                latest_prices: dict[str, float] = {}
+                for target in targets:
+                    try:
+                        latest_price = self._broker.get_latest_market_price(target.symbol)
+                    except Exception:
+                        latest_price = None
+                    if latest_price is not None:
+                        latest_prices[str(target.symbol).strip().upper()] = float(latest_price)
+                entry_intents, blocked_by_gap = split_entry_intents_by_gap_filter(
+                    targets=targets,
+                    intents=entry_intents,
+                    config=self._cfg,
+                    latest_market_prices=latest_prices,
+                )
+                if blocked_by_gap:
+                    metrics["skipped_by_gap_filter"] = len(blocked_by_gap)
+                    for blocked in blocked_by_gap:
+                        events.append(make_event(
+                            exec_run_id,
+                            EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT,
+                            f"SkippedByGapFilter: {blocked.get('symbol')}",
+                            symbol=str(blocked.get("symbol") or "") or None,
+                            payload=dict(blocked),
+                        ))
             # Axe C — court-circuit des nouvelles entrées si entry_mode bloque
             if self._cfg.blocks_new_entries and entry_intents:
                 LOGGER.warning(

@@ -113,6 +113,7 @@ DEFAULT_RISK_LOG_LEVEL = "INFO"
 DEFAULT_EXEC_SUBMISSION_WINDOW = "both"      # post_close + pre_open (batch quotidien)
 DEFAULT_EXEC_TAKE_PROFIT_PCT = 0.08
 DEFAULT_EXEC_TRAILING_STOP_PCT = 0.05
+DEFAULT_EXEC_MAX_ENTRY_GAP_PCT = 0.0
 # Sprint 2026-05 — SL dédié aux achats manuels orphelins adoptés par le watcher.
 DEFAULT_EXEC_MANUAL_BUY_SL_PCT = 0.05
 DEFAULT_EXEC_TRAILING_TRIGGER = "multiple_r"
@@ -271,6 +272,7 @@ class PipelineLaunchOptions:
     execution_submission_window: ExecutionSubmissionWindow = "both"
     execution_take_profit_pct: float = DEFAULT_EXEC_TAKE_PROFIT_PCT
     execution_trailing_stop_pct: float = DEFAULT_EXEC_TRAILING_STOP_PCT
+    execution_max_entry_gap_pct: float = DEFAULT_EXEC_MAX_ENTRY_GAP_PCT
     # SL dédié aux achats manuels orphelins (cf. watcher) — propagé uniquement
     # à ``run_execution_protection_watch.py`` via ``build_watcher_command``.
     execution_manual_buy_stop_loss_pct: float = DEFAULT_EXEC_MANUAL_BUY_SL_PCT
@@ -2219,6 +2221,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         command.extend(["--submission-window", options.execution_submission_window])
         command.extend(["--profit-taker-pct", str(options.execution_take_profit_pct)])
         command.extend(["--trailing-stop-pct", str(options.execution_trailing_stop_pct)])
+        command.extend(["--max-entry-gap-pct", str(options.execution_max_entry_gap_pct)])
         command.extend(["--trailing-activation-trigger", options.execution_trailing_trigger])
         if options.execution_trailing_trigger == "multiple_r":
             command.extend(["--trailing-activation-r-multiple", str(options.execution_trailing_r_multiple)])

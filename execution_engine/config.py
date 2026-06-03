@@ -84,6 +84,7 @@ class ExecutionConfig:
     # --- Entry order ---
     entry_order_type: str = "market"
     limit_price_buffer_bps: int = 10
+    max_entry_gap_pct: float = 0.0
 
     # --- Bracket legs ---
     profit_taker_pct: float = 0.08
@@ -132,6 +133,9 @@ class ExecutionConfig:
     # --- Market-aware regime (Axe C du plan ``prompt/parttern/plan.md``) ---
     # Mode d'entrée global pour le cycle (ajusté par le snapshot régime).
     entry_mode: Literal["normal", "close_only", "cash_only", "capital_preservation"] = "normal"
+    regime_max_positions: int | None = None
+    regime_max_position_weight: float | None = None
+    regime_max_sector_weight: float | None = None
 
     # --- Trailing stop ATR dynamique (Axe F) ---
     trailing_stop: TrailingStopConfig = field(default_factory=TrailingStopConfig)
@@ -149,6 +153,8 @@ class ExecutionConfig:
             raise ValueError("pdt_rule doit être 'auto' ou 'off'.")
         if self.entry_order_type not in ("market", "limit"):
             raise ValueError("entry_order_type doit être 'market' ou 'limit'.")
+        if not (0 <= self.max_entry_gap_pct < 1):
+            raise ValueError("max_entry_gap_pct doit être dans [0, 1[.")
         if not (0 < self.profit_taker_pct < 1):
             raise ValueError("profit_taker_pct doit être dans ]0, 1[.")
         if not (0 < self.trailing_stop_pct < 1):
@@ -195,6 +201,12 @@ class ExecutionConfig:
             raise ValueError("simulated_margin_buying_power_multiplier doit être >= 1.")
         if self.entry_mode not in ("normal", "close_only", "cash_only", "capital_preservation"):
             raise ValueError("entry_mode invalide.")
+        if self.regime_max_positions is not None and self.regime_max_positions < 1:
+            raise ValueError("regime_max_positions doit être >= 1 quand renseigné.")
+        if self.regime_max_position_weight is not None and not (0 < self.regime_max_position_weight <= 1):
+            raise ValueError("regime_max_position_weight doit être dans ]0, 1].")
+        if self.regime_max_sector_weight is not None and not (0 < self.regime_max_sector_weight <= 1):
+            raise ValueError("regime_max_sector_weight doit être dans ]0, 1].")
 
     @property
     def effective_pdt_rule(self) -> Literal["auto", "off"]:
