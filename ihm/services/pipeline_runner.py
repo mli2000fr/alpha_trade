@@ -103,6 +103,11 @@ DEFAULT_RISK_CORRELATION_MIN_OVERLAP = 40
 DEFAULT_RISK_ENABLE_KELLY = False
 DEFAULT_RISK_PAYOFF_RATIO = 1.5
 DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER = 0.25
+DEFAULT_RISK_MAX_PORTFOLIO_DRAWDOWN_PCT = 0.15
+DEFAULT_RISK_MAX_DAILY_LOSS_PCT = 0.05
+DEFAULT_RISK_TARGET_ANNUAL_VOL = 0.0
+DEFAULT_RISK_VOL_TARGET_LOOKBACK_DAYS = 60
+DEFAULT_RISK_MIN_ML_COVERAGE_RATIO = 0.0
 DEFAULT_RISK_LOG_LEVEL = "INFO"
 # Execution — swing cash batch
 DEFAULT_EXEC_SUBMISSION_WINDOW = "both"      # post_close + pre_open (batch quotidien)
@@ -355,6 +360,11 @@ class PipelineLaunchOptions:
     risk_enable_kelly: bool = DEFAULT_RISK_ENABLE_KELLY
     risk_payoff_ratio: float = DEFAULT_RISK_PAYOFF_RATIO
     risk_kelly_fraction_multiplier: float = DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER
+    risk_max_portfolio_drawdown_pct: float = DEFAULT_RISK_MAX_PORTFOLIO_DRAWDOWN_PCT
+    risk_max_daily_loss_pct: float = DEFAULT_RISK_MAX_DAILY_LOSS_PCT
+    risk_target_annual_vol: float = DEFAULT_RISK_TARGET_ANNUAL_VOL
+    risk_vol_target_lookback_days: int = DEFAULT_RISK_VOL_TARGET_LOOKBACK_DAYS
+    risk_min_ml_coverage_ratio: float = DEFAULT_RISK_MIN_ML_COVERAGE_RATIO
     risk_enable_shadow_compare: bool = False
     risk_shadow_compare_run_id: str | None = None
     risk_dry_run: bool = False
@@ -2164,6 +2174,19 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if options.risk_enable_kelly:
             command.append("--enable-kelly-sizing")
+        if options.risk_max_portfolio_drawdown_pct > 0:
+            command.extend(["--max-portfolio-drawdown-pct", str(options.risk_max_portfolio_drawdown_pct)])
+        if options.risk_max_daily_loss_pct > 0:
+            command.extend(["--max-daily-loss-pct", str(options.risk_max_daily_loss_pct)])
+        if options.risk_target_annual_vol > 0:
+            command.extend([
+                "--target-annual-vol",
+                str(options.risk_target_annual_vol),
+                "--vol-target-lookback-days",
+                str(options.risk_vol_target_lookback_days),
+            ])
+        if options.risk_min_ml_coverage_ratio > 0:
+            command.extend(["--min-ml-coverage-ratio", str(options.risk_min_ml_coverage_ratio)])
         if options.risk_enable_shadow_compare:
             command.append("--enable-shadow-compare")
         if options.risk_shadow_compare_run_id:

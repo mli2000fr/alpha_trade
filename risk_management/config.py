@@ -25,6 +25,8 @@ class RiskConfig:
 
     max_portfolio_drawdown_pct: float = 0.15
     max_daily_loss_pct: float = 0.05
+    target_annual_vol: float | None = None
+    vol_target_lookback_days: int = 60
 
     dry_run: bool = False
 
@@ -67,6 +69,10 @@ class RiskConfig:
             raise ValueError("atr_window doit être >= 1.")
         if self.atr_stop_multiple <= 0:
             raise ValueError("atr_stop_multiple doit être > 0.")
+        if self.target_annual_vol is not None and self.target_annual_vol <= 0:
+            raise ValueError("target_annual_vol doit être > 0 quand renseigné.")
+        if self.vol_target_lookback_days < 2:
+            raise ValueError("vol_target_lookback_days doit être >= 2.")
         if self.max_positions < 1:
             raise ValueError("max_positions doit être >= 1.")
         # --- V2 validations ---

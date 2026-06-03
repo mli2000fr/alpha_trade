@@ -1766,6 +1766,39 @@ def test_build_execution_protection_banner_payload_exposes_tp_and_auto_initial_s
     assert "calculé automatiquement" in message.lower()
 
 
+def test_build_live_risk_guard_banner_payload_exposes_enabled_live_guards() -> None:
+    severity, message = pipeline._build_live_risk_guard_banner_payload(
+        pipeline.PipelineLaunchOptions(
+            risk_max_portfolio_drawdown_pct=0.12,
+            risk_max_daily_loss_pct=0.025,
+            risk_target_annual_vol=0.13,
+            risk_vol_target_lookback_days=45,
+            risk_min_ml_coverage_ratio=0.80,
+        )
+    )
+
+    assert severity == "success"
+    assert "12.0 %" in message
+    assert "2.5 %" in message
+    assert "13.0 %" in message
+    assert "45j" in message
+    assert "80 %" in message
+    assert "paramètres risk management" in message.lower()
+    assert "kelly sizing & options avancées" in message.lower()
+
+
+def test_build_live_risk_guard_banner_payload_marks_disabled_optional_guards() -> None:
+    severity, message = pipeline._build_live_risk_guard_banner_payload(
+        pipeline.PipelineLaunchOptions(
+            risk_target_annual_vol=0.0,
+            risk_min_ml_coverage_ratio=0.0,
+        )
+    )
+
+    assert severity == "warning"
+    assert "désactivé" in message.lower()
+
+
 def test_build_pipeline_scope_alert_lines_distinguishes_global_and_account_specific_steps() -> None:
     global_line, account_line = pipeline._build_pipeline_scope_alert_lines()
 

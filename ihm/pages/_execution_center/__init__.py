@@ -149,13 +149,18 @@ from ihm.services.pipeline_runner import (
     DEFAULT_RISK_MIN_POSITION_NOTIONAL,
     DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER,
     DEFAULT_RISK_LOG_LEVEL,
+    DEFAULT_RISK_MAX_DAILY_LOSS_PCT,
     DEFAULT_RISK_MAX_POSITION_WEIGHT,
+    DEFAULT_RISK_MAX_PORTFOLIO_DRAWDOWN_PCT,
     DEFAULT_RISK_MAX_POSITIONS,
     DEFAULT_RISK_MAX_SECTOR_WEIGHT,
+    DEFAULT_RISK_MIN_ML_COVERAGE_RATIO,
     DEFAULT_RISK_PAYOFF_RATIO,
     DEFAULT_RISK_PER_TRADE_PCT,
     DEFAULT_RISK_PREDICTION_WEIGHT,
     DEFAULT_RISK_SCORE_WEIGHT,
+    DEFAULT_RISK_TARGET_ANNUAL_VOL,
+    DEFAULT_RISK_VOL_TARGET_LOOKBACK_DAYS,
     DEFAULT_SCREENER_BENCHMARK_SYMBOL,
     DEFAULT_SCREENER_CHUNK_SIZE,
     DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING,
@@ -1445,7 +1450,8 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
     st.markdown("#### Paramètres Risk Management (`python -m risk_management`)")
     st.caption(
         "Pilote le sizing et les contraintes du portefeuille cible. "
-        "Défauts swing : 1 % risque/trade, 15 positions max, 8 % max/ligne, conviction = 40 % score + 60 % ML."
+        "Défauts swing : 1 % risque/trade, 15 positions max, 8 % max/ligne, conviction = 40 % score + 60 % ML. "
+        "Les garde-fous live P1 (drawdown breaker, vol targeting, gate ML) se règlent aussi ici."
     )
     if selected_capital_preset is not None:
         st.caption(f"Panier capital actif pour Risk / Execution / Selector : `{selected_capital_preset.label}`.")
@@ -1665,6 +1671,90 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 ),
             ).strip() or None
 
+        st.markdown("##### Garde-fous live P1")
+        st.caption(
+            "Ces réglages se modifient directement depuis la page Pipeline > Paramètres Risk Management > "
+            "Kelly sizing & options avancées. Un preset capital peut les préremplir automatiquement."
+        )
+        guard_col1, guard_col2, guard_col3 = st.columns(3)
+        with guard_col1:
+            risk_max_portfolio_drawdown_pct = float(
+                st.number_input(
+                    "Risk — DD max portefeuille",
+                    min_value=0.01,
+                    max_value=0.50,
+                    value=_session_state_float(
+                        "pipeline_risk_max_portfolio_drawdown_pct",
+                        DEFAULT_RISK_MAX_PORTFOLIO_DRAWDOWN_PCT,
+                    ),
+                    step=0.01,
+                    format="%.2f",
+                    key="pipeline_risk_max_portfolio_drawdown_pct",
+                    help="Seuil live du circuit breaker portefeuille. Ex. 0.12 = blocage des nouvelles cibles dès 12 % de drawdown.",
+                )
+            )
+            risk_max_daily_loss_pct = float(
+                st.number_input(
+                    "Risk — perte journalière max",
+                    min_value=0.005,
+                    max_value=0.20,
+                    value=_session_state_float(
+                        "pipeline_risk_max_daily_loss_pct",
+                        DEFAULT_RISK_MAX_DAILY_LOSS_PCT,
+                    ),
+                    step=0.005,
+                    format="%.3f",
+                    key="pipeline_risk_max_daily_loss_pct",
+                    help="Complément intraday du circuit breaker live. Ex. 0.025 = arrêt au-delà de 2.5 % de perte journalière.",
+                )
+            )
+        with guard_col2:
+            risk_target_annual_vol = float(
+                st.number_input(
+                    "Risk — target annual vol (0 = off)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=_session_state_float(
+                        "pipeline_risk_target_annual_vol",
+                        DEFAULT_RISK_TARGET_ANNUAL_VOL,
+                    ),
+                    step=0.01,
+                    format="%.2f",
+                    key="pipeline_risk_target_annual_vol",
+                    help="Vol targeting live via proxy SPY. 0 désactive la réduction automatique d'exposition.",
+                )
+            )
+            risk_vol_target_lookback_days = int(
+                st.number_input(
+                    "Risk — lookback vol target (jours)",
+                    min_value=20,
+                    max_value=252,
+                    value=_session_state_int(
+                        "pipeline_risk_vol_target_lookback_days",
+                        DEFAULT_RISK_VOL_TARGET_LOOKBACK_DAYS,
+                    ),
+                    step=5,
+                    key="pipeline_risk_vol_target_lookback_days",
+                    help="Fenêtre de vol réalisée utilisée par le vol targeting live.",
+                )
+            )
+        with guard_col3:
+            risk_min_ml_coverage_ratio = float(
+                st.number_input(
+                    "Risk — min ML coverage ratio (0 = off)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=_session_state_float(
+                        "pipeline_risk_min_ml_coverage_ratio",
+                        DEFAULT_RISK_MIN_ML_COVERAGE_RATIO,
+                    ),
+                    step=0.05,
+                    format="%.2f",
+                    key="pipeline_risk_min_ml_coverage_ratio",
+                    help="Gate dur live : si la couverture ML du jour est sous ce seuil, l'étape risk échoue avant publication des cibles.",
+                )
+            )
+
     conviction_total = round(risk_score_weight + risk_prediction_weight, 4)
     if abs(conviction_total - 1.0) > 0.001:
         st.warning(f"⚠️ Risk : poids score + poids ML = {conviction_total} (≠ 1.0). Le backend pourrait normaliser.")
@@ -1682,6 +1772,11 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
         "risk_enable_kelly": risk_enable_kelly,
         "risk_enable_shadow_compare": risk_enable_shadow_compare,
         "risk_shadow_compare_run_id": risk_shadow_compare_run_id,
+        "risk_max_portfolio_drawdown_pct": risk_max_portfolio_drawdown_pct,
+        "risk_max_daily_loss_pct": risk_max_daily_loss_pct,
+        "risk_target_annual_vol": risk_target_annual_vol,
+        "risk_vol_target_lookback_days": risk_vol_target_lookback_days,
+        "risk_min_ml_coverage_ratio": risk_min_ml_coverage_ratio,
         "risk_dry_run": risk_dry_run,
         "risk_payoff_ratio": risk_payoff_ratio,
         "risk_kelly_fraction_multiplier": risk_kelly_fraction_multiplier,
@@ -2442,6 +2537,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.caption(
                 "Exécutabilité preset — "
                 f"ticket mini `{executability_summary['min_position_notional']:,.0f} $`, "
+                f"live DD `{executability_summary['recommended_live_max_portfolio_dd_pct']:.0%}`, "
+                f"live vol target `{executability_summary['recommended_live_target_annual_vol']:.0%}` / `{executability_summary['recommended_live_vol_target_lookback_days']}`j, "
+                f"live ML coverage `{executability_summary['recommended_live_min_ml_coverage_ratio']:.0%}`, "
                 f"stress backtest `{executability_summary['recommended_commission_bps_stress']:.0f}+{executability_summary['recommended_slippage_bps_stress']:.0f} bps`, "
                 f"settlement cash `T+{executability_summary['cash_settlement_days']}`, "
                 f"ML gate `{executability_summary['ml_gate_policy']}`."
@@ -2821,6 +2919,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         risk_correlation_threshold = _risk_vars["risk_correlation_threshold"]
         risk_correlation_lookback_days = _risk_vars["risk_correlation_lookback_days"]
         risk_enable_kelly = _risk_vars["risk_enable_kelly"]
+        risk_max_portfolio_drawdown_pct = _risk_vars["risk_max_portfolio_drawdown_pct"]
+        risk_max_daily_loss_pct = _risk_vars["risk_max_daily_loss_pct"]
+        risk_target_annual_vol = _risk_vars["risk_target_annual_vol"]
+        risk_vol_target_lookback_days = _risk_vars["risk_vol_target_lookback_days"]
+        risk_min_ml_coverage_ratio = _risk_vars["risk_min_ml_coverage_ratio"]
         risk_dry_run = _risk_vars["risk_dry_run"]
         risk_payoff_ratio = _risk_vars["risk_payoff_ratio"]
         risk_kelly_fraction_multiplier = _risk_vars["risk_kelly_fraction_multiplier"]
@@ -3914,6 +4017,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             risk_correlation_lookback_days=int(risk_correlation_lookback_days),
             risk_correlation_min_overlap=int(risk_correlation_min_overlap),
             risk_enable_kelly=bool(risk_enable_kelly),
+            risk_max_portfolio_drawdown_pct=float(risk_max_portfolio_drawdown_pct),
+            risk_max_daily_loss_pct=float(risk_max_daily_loss_pct),
+            risk_target_annual_vol=float(risk_target_annual_vol),
+            risk_vol_target_lookback_days=int(risk_vol_target_lookback_days),
+            risk_min_ml_coverage_ratio=float(risk_min_ml_coverage_ratio),
             risk_payoff_ratio=float(risk_payoff_ratio),
             risk_kelly_fraction_multiplier=float(risk_kelly_fraction_multiplier),
             risk_dry_run=bool(risk_dry_run),

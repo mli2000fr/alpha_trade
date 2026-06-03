@@ -216,6 +216,30 @@ def test_build_pipeline_command_propagates_risk_shadow_compare_options() -> None
     assert risk_command[risk_command.index("--shadow-compare-run-id") + 1] == "risk-ref-001"
 
 
+def test_build_pipeline_command_propagates_live_risk_guard_options() -> None:
+    options = PipelineLaunchOptions(
+        trade_date="2026-04-19",
+        risk_max_portfolio_drawdown_pct=0.12,
+        risk_max_daily_loss_pct=0.025,
+        risk_target_annual_vol=0.13,
+        risk_vol_target_lookback_days=45,
+        risk_min_ml_coverage_ratio=0.80,
+    )
+
+    risk_command = build_pipeline_command("risk_management", options)
+
+    assert "--max-portfolio-drawdown-pct" in risk_command
+    assert risk_command[risk_command.index("--max-portfolio-drawdown-pct") + 1] == "0.12"
+    assert "--max-daily-loss-pct" in risk_command
+    assert risk_command[risk_command.index("--max-daily-loss-pct") + 1] == "0.025"
+    assert "--target-annual-vol" in risk_command
+    assert risk_command[risk_command.index("--target-annual-vol") + 1] == "0.13"
+    assert "--vol-target-lookback-days" in risk_command
+    assert risk_command[risk_command.index("--vol-target-lookback-days") + 1] == "45"
+    assert "--min-ml-coverage-ratio" in risk_command
+    assert risk_command[risk_command.index("--min-ml-coverage-ratio") + 1] == "0.8"
+
+
 
 def test_build_pipeline_command_omits_account_for_global_steps() -> None:
     options = PipelineLaunchOptions(account_id="test2", trade_date="2026-04-19")

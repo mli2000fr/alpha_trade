@@ -578,6 +578,30 @@ def _build_execution_protection_banner_payload(options: PipelineLaunchOptions) -
     )
 
 
+def _build_live_risk_guard_banner_payload(options: PipelineLaunchOptions) -> tuple[str, str]:
+    drawdown_pct = float(getattr(options, "risk_max_portfolio_drawdown_pct", 0.15) or 0.15)
+    daily_loss_pct = float(getattr(options, "risk_max_daily_loss_pct", 0.05) or 0.05)
+    target_annual_vol = float(getattr(options, "risk_target_annual_vol", 0.0) or 0.0)
+    min_ml_coverage_ratio = float(getattr(options, "risk_min_ml_coverage_ratio", 0.0) or 0.0)
+    vol_lookback_days = int(getattr(options, "risk_vol_target_lookback_days", 60) or 60)
+    vol_label = (
+        f"cible `{target_annual_vol * 100:.1f} %` / lookback `{vol_lookback_days}j`"
+        if target_annual_vol > 0
+        else "désactivé"
+    )
+    ml_label = f"`{min_ml_coverage_ratio * 100:.0f} %` mini" if min_ml_coverage_ratio > 0 else "désactivé"
+    severity = "warning" if target_annual_vol <= 0 or min_ml_coverage_ratio <= 0 else "success"
+    return (
+        severity,
+        "🛡️ **GARDE-FOUS RISK LIVE** — "
+        f"DD portefeuille `-{drawdown_pct * 100:.1f} %` ; "
+        f"perte journalière `-{daily_loss_pct * 100:.1f} %` ; "
+        f"vol targeting {vol_label} ; "
+        f"gate couverture ML {ml_label}. "
+        "Modification : **Pipeline > Paramètres Risk Management > Kelly sizing & options avancées**.",
+    )
+
+
 def _build_pipeline_scope_alert_lines() -> tuple[str, str]:
     return (
         "⚠️ Les étapes **3→10** recalculent des données globales partagées entre comptes.",
@@ -613,6 +637,8 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
         getattr(st, preset_severity)(preset_message)
     protection_severity, protection_message = _build_execution_protection_banner_payload(options)
     getattr(st, protection_severity)(protection_message)
+    risk_severity, risk_message = _build_live_risk_guard_banner_payload(options)
+    getattr(st, risk_severity)(risk_message)
     account_severity, account_message = _build_execution_account_banner_payload(
         options,
         detected_account_type=detected_account_type,

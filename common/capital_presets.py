@@ -348,6 +348,26 @@ def build_capital_preset_executability_summary(
             25.0 if min_notional <= 200.0 else 18.0 if min_notional <= 350.0 else 10.0,
         )
     )
+    recommended_live_max_portfolio_dd_pct = float(
+        values.get(
+            "risk_max_drawdown_pct",
+            values.get("backtesting_max_portfolio_dd_pct", 0.15),
+        )
+    )
+    recommended_live_max_daily_loss_pct = float(values.get("risk_max_daily_loss_pct", 0.05))
+    recommended_live_target_annual_vol = float(
+        values.get(
+            "risk_target_annual_vol",
+            values.get("backtesting_target_annual_vol", 0.0),
+        )
+    )
+    recommended_live_min_ml_coverage_ratio = float(
+        values.get(
+            "risk_min_ml_coverage_ratio",
+            values.get("backtesting_min_ml_coverage_ratio", 0.0),
+        )
+    )
+    recommended_live_vol_target_lookback_days = int(values.get("risk_vol_target_lookback_days", 60) or 60)
     cash_settlement_days = int(
         values.get("execution_cash_settlement_days", 1 if account_type == "cash" else 0) or 0
     )
@@ -377,6 +397,11 @@ def build_capital_preset_executability_summary(
         "ticket_share_of_equity": float(ticket_share_of_equity) if ticket_share_of_equity is not None else None,
         "recommended_commission_bps_stress": recommended_commission_bps,
         "recommended_slippage_bps_stress": recommended_slippage_bps,
+        "recommended_live_max_portfolio_dd_pct": recommended_live_max_portfolio_dd_pct,
+        "recommended_live_max_daily_loss_pct": recommended_live_max_daily_loss_pct,
+        "recommended_live_target_annual_vol": recommended_live_target_annual_vol,
+        "recommended_live_min_ml_coverage_ratio": recommended_live_min_ml_coverage_ratio,
+        "recommended_live_vol_target_lookback_days": recommended_live_vol_target_lookback_days,
         "ml_gate_policy": ml_gate_policy,
         "warnings": warnings,
     }

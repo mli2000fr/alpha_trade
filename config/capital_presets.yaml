@@ -21,6 +21,9 @@ presets:
       # (ordre attendu par tests/test_capital_preset_risk_overrides.py).
       risk_max_drawdown_pct: 0.07
       risk_max_daily_loss_pct: 0.025
+      risk_target_annual_vol: 0.12
+      risk_vol_target_lookback_days: 60
+      risk_min_ml_coverage_ratio: 0.80
       risk_correlation_threshold: 0.92
       risk_correlation_lookback_days: 40
       risk_correlation_min_overlap: 25
@@ -80,6 +83,9 @@ presets:
       # Sprint S3 / A-011 — petit compte : seuils circuit breaker plus stricts.
       risk_max_drawdown_pct: 0.08
       risk_max_daily_loss_pct: 0.03
+      risk_target_annual_vol: 0.13
+      risk_vol_target_lookback_days: 60
+      risk_min_ml_coverage_ratio: 0.80
       risk_correlation_threshold: 0.90
       risk_correlation_lookback_days: 40
       risk_correlation_min_overlap: 25
@@ -137,6 +143,9 @@ presets:
       # Sprint S3 / A-011 — tranche 5–10k : seuils encore stricts.
       risk_max_drawdown_pct: 0.10
       risk_max_daily_loss_pct: 0.035
+      risk_target_annual_vol: 0.14
+      risk_vol_target_lookback_days: 60
+      risk_min_ml_coverage_ratio: 0.80
       risk_correlation_threshold: 0.88
       risk_correlation_lookback_days: 45
       risk_correlation_min_overlap: 30
@@ -194,6 +203,9 @@ presets:
       # Sprint S3 / A-011 — tranche 10–25k : convergence vers le standard.
       risk_max_drawdown_pct: 0.12
       risk_max_daily_loss_pct: 0.04
+      risk_target_annual_vol: 0.15
+      risk_vol_target_lookback_days: 60
+      risk_min_ml_coverage_ratio: 0.80
       risk_correlation_threshold: 0.85
       risk_correlation_lookback_days: 50
       risk_correlation_min_overlap: 35
@@ -251,6 +263,9 @@ presets:
       # Sprint S3 / A-011 — tranche 25–50k : seuils swing standard.
       risk_max_drawdown_pct: 0.14
       risk_max_daily_loss_pct: 0.045
+      risk_target_annual_vol: 0.15
+      risk_vol_target_lookback_days: 60
+      risk_min_ml_coverage_ratio: 0.80
       risk_correlation_threshold: 0.82
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
@@ -308,6 +323,9 @@ presets:
       # Sprint S3 / A-011 — tranche 50–100k : seuils standards config.yaml.
       risk_max_drawdown_pct: 0.15
       risk_max_daily_loss_pct: 0.05
+      risk_target_annual_vol: 0.15
+      risk_vol_target_lookback_days: 60
+      risk_min_ml_coverage_ratio: 0.80
       risk_correlation_threshold: 0.80
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
@@ -365,6 +383,9 @@ presets:
       # Sprint S3 / A-011 — gros compte : tolérance maximale (drawdown plus large).
       risk_max_drawdown_pct: 0.18
       risk_max_daily_loss_pct: 0.05
+      risk_target_annual_vol: 0.16
+      risk_vol_target_lookback_days: 60
+      risk_min_ml_coverage_ratio: 0.80
       risk_correlation_threshold: 0.78
       risk_correlation_lookback_days: 90
       risk_correlation_min_overlap: 50

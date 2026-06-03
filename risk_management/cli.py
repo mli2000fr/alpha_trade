@@ -18,10 +18,19 @@ from risk_management.audit import build_run_id, persist_decisions, persist_portf
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.db_io import RiskRepository
+from risk_management.live_pipeline_guards import (
+    MlCoverageGateDecision,
+    VolTargetDecision,
+    apply_vol_target_to_risk_config,
+    evaluate_ml_coverage_gate,
+    evaluate_vol_target,
+)
 from risk_management.models import PortfolioEntry
 from risk_management.portfolio_builder import PortfolioBuilder
 
 LOGGER = logging.getLogger(__name__)
+
+_VOL_TARGET_BENCHMARK_SYMBOL = "SPY"
 
 
 def _emit_live_progress(
@@ -657,6 +666,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Override du seuil perte journalière circuit breaker (ex: 0.03 = 3%%). Défaut config.yaml.",
     )
     p.add_argument(
+        "--target-annual-vol",
+        type=float,
+        default=None,
+        help="Cible de volatilité annualisée live (proxy benchmark). Désactivé si absent.",
+    )
+    p.add_argument(
+        "--vol-target-lookback-days",
+        type=int,
+        default=60,
+        help="Fenêtre de vol réalisée utilisée par le vol targeting live (défaut : 60 séances).",
+    )
+    p.add_argument(
+        "--min-ml-coverage-ratio",
+        type=float,
+        default=None,
+        help="Seuil minimal de couverture ML requis avant de publier de nouvelles cibles risk (ex: 0.80).",
+    )
+    p.add_argument(
         "--enable-shadow-compare",
         action="store_true",
         default=False,
@@ -837,6 +864,12 @@ def main(args: list[str] | None = None) -> None:
             if args.max_daily_loss_pct is not None
             else RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default
         ),
+        target_annual_vol=(
+            float(args.target_annual_vol)
+            if args.target_annual_vol is not None and float(args.target_annual_vol) > 0
+            else None
+        ),
+        vol_target_lookback_days=int(args.vol_target_lookback_days),
     )
     regime_snapshot = _resolve_market_regime_snapshot(trade_date, effective_equity, repo)
     regime_snapshot_payload = _serialize_market_regime_snapshot(regime_snapshot)
@@ -862,6 +895,39 @@ def main(args: list[str] | None = None) -> None:
         disabled=bool(args.disable_empirical_calibration),
     )
     config = _apply_empirical_risk_calibration(config, empirical_risk_calibration)
+    vol_target_state = VolTargetDecision(enabled=False, applied=False, reason="disabled")
+    if config.target_annual_vol is not None and config.target_annual_vol > 0:
+        benchmark_returns = repo.load_return_matrix_asof(
+            [_VOL_TARGET_BENCHMARK_SYMBOL],
+            trade_date,
+            config.vol_target_lookback_days,
+        )
+        benchmark_series = (
+            benchmark_returns[_VOL_TARGET_BENCHMARK_SYMBOL]
+            if not benchmark_returns.empty and _VOL_TARGET_BENCHMARK_SYMBOL in benchmark_returns.columns
+            else pd.Series(dtype=float)
+        )
+        vol_target_state = evaluate_vol_target(
+            benchmark_series,
+            target_annual_vol=config.target_annual_vol,
+            lookback_days=config.vol_target_lookback_days,
+            benchmark_symbol=_VOL_TARGET_BENCHMARK_SYMBOL,
+        )
+        config = apply_vol_target_to_risk_config(config, vol_target_state)
+        LOGGER.info(
+            "Vol targeting live | enabled=%s applied=%s reason=%s target=%.4f realized=%s scaler=%.4f benchmark=%s",
+            vol_target_state.enabled,
+            vol_target_state.applied,
+            vol_target_state.reason,
+            float(vol_target_state.target_annual_vol or 0.0),
+            (
+                f"{float(vol_target_state.realized_annual_vol):.4f}"
+                if vol_target_state.realized_annual_vol is not None
+                else "n/a"
+            ),
+            float(vol_target_state.scaler),
+            vol_target_state.benchmark_symbol,
+        )
     regime_allow_new_entries = bool(
         getattr(regime_snapshot, "allow_new_entries", True) if regime_snapshot is not None else True
     )
@@ -905,7 +971,32 @@ def main(args: list[str] | None = None) -> None:
     )
 
     symbols = [c.symbol for c in candidates]
+    ml_coverage_gate = MlCoverageGateDecision(enabled=False, allowed=True, reason="disabled")
     if regime_allow_new_entries:
+        LOGGER.info("Chargement des predictions ML…")
+        predictions = repo.load_predictions_asof(symbols, trade_date) if ml_gate_state.enabled else {}
+        LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
+        ml_coverage_gate = evaluate_ml_coverage_gate(
+            candidate_count=len(candidates),
+            prediction_count=len(predictions),
+            min_coverage_ratio=args.min_ml_coverage_ratio,
+            regime_allows_new_entries=regime_allow_new_entries,
+            ml_gate_enabled=ml_gate_state.enabled,
+        )
+        if ml_coverage_gate.enabled and not ml_coverage_gate.allowed:
+            LOGGER.error(
+                "ML coverage gate bloquant | coverage=%.4f threshold=%.4f candidates=%d predictions=%d reason=%s",
+                float(ml_coverage_gate.coverage_ratio or 0.0),
+                float(ml_coverage_gate.required_ratio or 0.0),
+                int(ml_coverage_gate.candidate_count),
+                int(ml_coverage_gate.prediction_count),
+                ml_coverage_gate.reason,
+            )
+            raise SystemExit(
+                "Couverture ML insuffisante pour publier de nouvelles cibles live : "
+                f"{float(ml_coverage_gate.coverage_ratio or 0.0):.2%} < {float(ml_coverage_gate.required_ratio or 0.0):.2%}."
+            )
+
         LOGGER.info("Chargement des prix et ATR…")
         prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
         LOGGER.info("Prix charges pour %d symboles.", len(prices))
@@ -917,9 +1008,6 @@ def main(args: list[str] | None = None) -> None:
             phase="load_prices",
         )
 
-        LOGGER.info("Chargement des predictions ML…")
-        predictions = repo.load_predictions_asof(symbols, trade_date) if ml_gate_state.enabled else {}
-        LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), prediction_symbols=len(predictions)),
             current=4,
@@ -972,6 +1060,13 @@ def main(args: list[str] | None = None) -> None:
         win_rates = {}
         return_matrix = pd.DataFrame()
         entries = []
+        ml_coverage_gate = evaluate_ml_coverage_gate(
+            candidate_count=len(candidates),
+            prediction_count=0,
+            min_coverage_ratio=args.min_ml_coverage_ratio,
+            regime_allows_new_entries=regime_allow_new_entries,
+            ml_gate_enabled=ml_gate_state.enabled,
+        )
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), price_symbols=0),
             current=3,
@@ -1178,10 +1273,13 @@ def main(args: list[str] | None = None) -> None:
             "max_portfolio_drawdown_pct": float(config.max_portfolio_drawdown_pct),
             "max_daily_loss_pct": float(config.max_daily_loss_pct),
         },
+        "vol_targeting": vol_target_state.to_summary(),
+        "ml_coverage_gate": ml_coverage_gate.to_summary(),
         "risk_controls_effective": {
             "risk_multiplier": float(config.risk_multiplier),
             "effective_max_positions": int(config.effective_max_positions),
             "effective_min_notional": float(config.effective_min_notional),
+            "max_gross_exposure": float(config.max_gross_exposure),
             "max_tickers_per_sector": int(config.max_tickers_per_sector) if config.max_tickers_per_sector is not None else None,
         },
         "dry_run": bool(config.dry_run),

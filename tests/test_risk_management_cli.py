@@ -635,6 +635,129 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
     assert captured["summary"]["preflight_data_quality"]["checks"]["correlation_matrix"]["status"] == "skipped_by_regime"
 
 
+def test_cli_main_blocks_run_when_ml_coverage_is_below_threshold(monkeypatch) -> None:
+    from risk_management.ml_gate import MlGateState
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {}
+
+        def load_candidates_asof(self, trade_date):
+            from risk_management.models import CandidateScore
+
+            return [CandidateScore("AAPL", "Tech", 0.9), CandidateScore("MSFT", "Tech", 0.8)]
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {"AAPL": object()}
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            raise AssertionError("Les prix ne doivent pas être chargés si le gate ML bloque le run")
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            raise AssertionError("Les win rates ne doivent pas être chargés si le gate ML bloque le run")
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None):
+            raise AssertionError("Le builder ne doit pas être instancié si le gate ML bloque le run")
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(cli, "_resolve_market_regime_snapshot", lambda trade_date, effective_equity, repo: None)
+
+    import risk_management.ml_gate as ml_gate_module
+
+    monkeypatch.setattr(
+        ml_gate_module,
+        "resolve_ml_gate_state",
+        lambda engine: MlGateState(enabled=True, reason="enabled", action="allow"),
+    )
+    monkeypatch.setattr(ml_gate_module, "apply_ml_gate_to_risk_config", lambda config, gate_state: config)
+
+    with pytest.raises(SystemExit, match="Couverture ML insuffisante"):
+        cli.main([
+            "--trade-date",
+            "2026-05-01",
+            "--dry-run",
+            "--min-ml-coverage-ratio",
+            "0.80",
+        ])
+
+
+def test_cli_main_applies_vol_targeting_and_exposes_summary(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {}
+
+        def load_candidates_asof(self, trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            if symbols == ["SPY"]:
+                return pd.DataFrame({"SPY": ([0.02, -0.02] * 30)})
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None):
+            captured["config"] = config
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(cli, "_resolve_market_regime_snapshot", lambda trade_date, effective_equity, repo: None)
+
+    cli.main([
+        "--trade-date",
+        "2026-05-01",
+        "--dry-run",
+        "--target-annual-vol",
+        "0.12",
+        "--vol-target-lookback-days",
+        "60",
+    ])
+
+    assert captured["config"].risk_multiplier < 1.0
+    assert captured["config"].max_gross_exposure < 1.0
+    assert captured["summary"]["vol_targeting"]["enabled"] is True
+    assert captured["summary"]["vol_targeting"]["applied"] is True
+    assert captured["summary"]["vol_targeting"]["target_annual_vol"] == pytest.approx(0.12)
+    assert captured["summary"]["vol_targeting"]["lookback_days"] == 60
+
+
 def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
