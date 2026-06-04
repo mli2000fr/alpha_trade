@@ -930,7 +930,8 @@ def _research_selected_symbols_for_date(research_signals_df: pd.DataFrame, trade
     if normalized.empty:
         return []
     if "selected" in normalized.columns:
-        normalized = normalized.loc[normalized["selected"].fillna(False).astype(bool)].copy()
+        selected = normalized["selected"]
+        normalized = normalized.loc[selected.notna() & selected.astype(bool)].copy()
     return _sorted_unique_symbols(normalized)
 
 

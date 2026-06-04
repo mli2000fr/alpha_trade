@@ -28,7 +28,11 @@ from database.macro_indicators import (
     load_macro_indicator_daily_asof,
     load_macro_indicator_history_asof,
     persist_macro_indicator_daily,
+    persist_market_macro_snapshot_daily,
 )
+from service.market.regime_manager import build_snapshot
+from service.market.config import parse_market_regimes
+from service.market.sentiment_provider import DbSentimentScoreProvider
 
 LOGGER = logging.getLogger("service.market.macro_providers")
 
@@ -780,15 +784,26 @@ class TableFirstMacroProvider:
         if provider is None:
             self._record_source("yield_10y", None)
             return None
-        provider_trade_date = _resolve_provider_trade_date(trade_date, strict_before=self._strict_before)
+        provider_trade_date: date = trade_date
+        if self._strict_before:
+            try:
+                resolved_trade_date = getLastDateMarche(cast(Any, trade_date))
+                if isinstance(resolved_trade_date, date):
+                    provider_trade_date = resolved_trade_date
+            except Exception:
+                LOGGER.debug(
+                    "Résolution J-1 yield impossible pour %s ; fallback date courante.",
+                    trade_date,
+                    exc_info=True,
+                )
         try:
-            value = provider.get_us10y_history(provider_trade_date, lookback_days)
+            history = cast(list[float] | None, provider.get_us10y_history(provider_trade_date, lookback_days))
         except Exception:
-            value = None
-        if value and len(value) >= 2:
-            self._persist_fallback_value(trade_date=provider_trade_date, value_key="ten_y", value=value[-1])
+            history = None
+        if history is not None and len(history) >= 2:
+            self._persist_fallback_value(trade_date=provider_trade_date, value_key="ten_y", value=history[-1])
             self._record_source("yield_10y", _resolve_signal_source(provider, "yield_10y"))
-            return value
+            return history
         self._record_source("yield_10y", None)
         return None
 
@@ -999,6 +1014,7 @@ def populate_macro_indicators_table(
     start_date: date,
     end_date: date,
     yaml_cfg: Mapping[str, Any] | None = None,
+    equity: float | None = None,
     engine=None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -1012,44 +1028,62 @@ def populate_macro_indicators_table(
     market_cfg = market_cfg if isinstance(market_cfg, Mapping) else {}
     yields_cfg = market_cfg.get("yields") if isinstance(market_cfg, Mapping) else {}
     yields_cfg = yields_cfg if isinstance(yields_cfg, Mapping) else {}
-    yield_lookback_days = max(int(yields_cfg.get("lookback_days", 5) or 5), 2)
+    market_regimes_cfg = parse_market_regimes(market_cfg)
     session_dates = nyse_session_dates(start_date, end_date)
     rows: list[dict[str, Any]] = []
     persisted_rows = 0
     missing_rows = 0
     for index, session_date in enumerate(session_dates, start=1):
-        vix = provider.get_vix_close(session_date)
-        vix_short = provider.get_vix_short_term_close(session_date)
-        ten_y = _extract_latest_10y_close(provider, session_date)
-        if ten_y is None:
-            try:
-                history = provider.get_us10y_history(session_date, yield_lookback_days)
-            except Exception:
-                history = None
-            ten_y = _coerce_float(history[-1]) if history else None
-        persisted = persist_macro_indicator_daily(
+        snapshot = build_snapshot(
+            session_date,
+            config=market_regimes_cfg,
+            equity=equity,
+            execution_context="backtest",
+            macro_provider=provider,
+            sentiment_score_provider=DbSentimentScoreProvider(session_date),
+            use_cache=False,
+        )
+        snap_payload: dict[str, Any]
+        if hasattr(snapshot, "to_dict"):
+            snap_payload = dict(snapshot.to_dict())
+        elif hasattr(snapshot, "to_summary_dict"):
+            snap_payload = dict(snapshot.to_summary_dict())
+        else:
+            snap_payload = {}
+        persisted = persist_market_macro_snapshot_daily(
             trade_date=session_date,
-            vix=vix,
-            vix9d=vix_short,
-            ten_y=ten_y,
+            macro_payload=snap_payload,
             engine=engine,
         )
         source_summary = {}
         get_source_summary = getattr(provider, "get_macro_source_summary", None)
         if callable(get_source_summary):
             try:
-                source_summary = dict(get_source_summary() or {})
+                raw_summary = get_source_summary() or {}
+                source_summary = dict(raw_summary) if isinstance(raw_summary, Mapping) else {}
             except Exception:
                 source_summary = {}
+        macro_data = snap_payload.get("macro") if isinstance(snap_payload.get("macro"), Mapping) else {}
+        sentiment_data = snap_payload.get("sentiment") if isinstance(snap_payload.get("sentiment"), Mapping) else {}
         if persisted:
             persisted_rows += 1
         else:
             missing_rows += 1
         row_payload = {
             "trade_date": session_date.isoformat(),
-            "vix": vix,
-            "vix9d": vix_short,
-            "ten_y": ten_y,
+            "vix": macro_data.get("vix"),
+            "vix9d": macro_data.get("vix_short"),
+            "ten_y": macro_data.get("yield_10y"),
+            "mode": snap_payload.get("mode"),
+            "equity_simulated": snap_payload.get("equity_simulated", equity),
+            "risk_multiplier": snap_payload.get("risk_multiplier"),
+            "effective_max_positions": snap_payload.get("effective_max_positions"),
+            "allow_new_entries": snap_payload.get("allow_new_entries"),
+            "vix_curve_inverted": macro_data.get("vix_curve_inverted"),
+            "yield_10y_5d_pct": macro_data.get("yield_10y_5d_pct"),
+            "sentiment_score": sentiment_data.get("score"),
+            "sentiment_level": sentiment_data.get("level"),
+            "sentiment_source": sentiment_data.get("source"),
             "persisted": bool(persisted),
             **source_summary,
         }
@@ -1065,6 +1099,7 @@ def populate_macro_indicators_table(
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        "equity_simulated": equity,
         "sessions_total": len(session_dates),
         "persisted_rows": persisted_rows,
         "missing_rows": missing_rows,

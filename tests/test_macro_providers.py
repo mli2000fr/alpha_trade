@@ -499,12 +499,22 @@ def test_table_first_provider_persists_fallback_value() -> None:
         provider = TableFirstMacroProvider(_FallbackProvider(), engine=engine)
 
         assert provider.get_us10y_history(date(2025, 4, 15), lookback_days=4) == pytest.approx([4.20, 4.25, 4.40, 4.50])
-        assert load_macro_indicator_daily_asof(trade_date=date(2025, 4, 15), engine=engine) == {
-            "trade_date": date(2025, 4, 15),
-            "vix": None,
-            "vix9d": None,
-            "ten_y": 4.5,
-        }
+        row = load_macro_indicator_daily_asof(trade_date=date(2025, 4, 15), engine=engine)
+        assert row is not None
+        assert row["trade_date"] == date(2025, 4, 15)
+        assert row["vix"] is None
+        assert row["vix9d"] is None
+        assert row["ten_y"] == 4.5
+        assert row["mode"] is None
+        assert row["equity_simulated"] is None
+        assert row["risk_multiplier"] is None
+        assert row["effective_max_positions"] is None
+        assert row["allow_new_entries"] is None
+        assert row["vix_curve_inverted"] is None
+        assert row["yield_10y_5d_pct"] is None
+        assert row["sentiment_score"] is None
+        assert row["sentiment_level"] is None
+        assert row["sentiment_source"] is None
         assert provider.get_macro_source_summary() == {
             "source_effective": "fred",
             "source_by_signal": {"yield_10y": "fred"},
@@ -540,27 +550,39 @@ def test_table_first_provider_uses_previous_session_in_strict_j_minus_1(monkeypa
 
         assert provider.get_vix_close(date(2025, 4, 15)) == pytest.approx(18.25)
         assert requested_dates == [date(2025, 4, 14)]
-        assert load_macro_indicator_daily_asof(
+        row = load_macro_indicator_daily_asof(
             trade_date=date(2025, 4, 15),
             engine=engine,
             strict_before=True,
-        ) == {
-            "trade_date": date(2025, 4, 14),
-            "vix": 18.25,
-            "vix9d": None,
-            "ten_y": None,
-        }
+        )
+        assert row is not None
+        assert row["trade_date"] == date(2025, 4, 14)
+        assert row["vix"] == 18.25
+        assert row["vix9d"] is None
+        assert row["ten_y"] is None
+        assert row["mode"] is None
+        assert row["equity_simulated"] is None
+        assert row["risk_multiplier"] is None
+        assert row["effective_max_positions"] is None
+        assert row["allow_new_entries"] is None
+        assert row["vix_curve_inverted"] is None
+        assert row["yield_10y_5d_pct"] is None
+        assert row["sentiment_score"] is None
+        assert row["sentiment_level"] is None
+        assert row["sentiment_source"] is None
     finally:
         engine.dispose()
 
 
 def test_populate_macro_indicators_table_imports_date_range(monkeypatch) -> None:
     from database.macro_indicators import get_macro_indicators_daily_table, load_macro_indicator_daily_asof
+    from service.market.sentiment_provider import MarketSentimentReading
 
     engine = create_engine("sqlite:///:memory:")
     try:
         table = get_macro_indicators_daily_table()
         table.metadata.create_all(engine)
+        sentiment_trade_date = date(2025, 4, 15)
 
         def fake_eodhd_fetch(symbol, *, start=None, end=None, **kwargs):
             if symbol == "VIX.INDX":
@@ -575,9 +597,49 @@ def test_populate_macro_indicators_table_imports_date_range(monkeypatch) -> None
                 {"date": "2025-04-15", "value": "4.50"},
             ]
 
+        def fake_sentiment_provider(lookback_days):
+            return MarketSentimentReading(
+                score=-0.2,
+                source="ticker_daily_sentiment_features",
+                lookback_days=lookback_days,
+                total_news_count=12,
+                row_count=3,
+                covered_days=3,
+                latest_trade_date=sentiment_trade_date,
+                data_quality="ok",
+            )
+
+        def fake_build_snapshot(trade_date, *, config, equity=None, execution_context="live", macro_provider=None, sentiment_score_provider=None, earnings_lookup=None, use_cache=True):
+            class _Snap:
+                def to_dict(self):
+                    return {
+                        "trade_date": trade_date.isoformat(),
+                        "mode": "capital_preservation",
+                        "equity_simulated": equity,
+                        "risk_multiplier": 0.7,
+                        "effective_max_positions": 2,
+                        "allow_new_entries": True,
+                        "macro": {
+                            "vix": 22.4,
+                            "vix_short": 14.15,
+                            "yield_10y": 4.50,
+                            "vix_curve_inverted": True,
+                            "yield_10y_5d_pct": 0.03,
+                        },
+                        "sentiment": {
+                            "score": -0.2,
+                            "level": "warning",
+                            "source": "ticker_daily_sentiment_features",
+                        },
+                        "reasons": ["demo"],
+                    }
+
+            return _Snap()
+
         monkeypatch.setattr("service.market.macro_providers.nyse_session_dates", lambda start, end: [date(2025, 4, 15)])
         monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_eodhd_fetch)
         monkeypatch.setattr("service.fred.clientFred.fetch_series_observations", fake_fred_fetch)
+        monkeypatch.setattr("service.market.macro_providers.build_snapshot", fake_build_snapshot)
 
         summary = populate_macro_indicators_table(
             start_date=date(2025, 4, 15),
@@ -590,17 +652,28 @@ def test_populate_macro_indicators_table_imports_date_range(monkeypatch) -> None
                 },
                 "fred": {"api_key_env": "KEY_FRED", "series_10y": "DGS10"},
             },
+            equity=2000.0,
             engine=engine,
         )
 
         assert summary["sessions_total"] == 1
         assert summary["persisted_rows"] == 1
-        assert load_macro_indicator_daily_asof(trade_date=date(2025, 4, 15), engine=engine) == {
-            "trade_date": date(2025, 4, 15),
-            "vix": 22.4,
-            "vix9d": 14.15,
-            "ten_y": 4.5,
-        }
+        row = load_macro_indicator_daily_asof(trade_date=date(2025, 4, 15), engine=engine)
+        assert row is not None
+        assert row["trade_date"] == date(2025, 4, 15)
+        assert row["vix"] == 22.4
+        assert row["vix9d"] == 14.15
+        assert row["ten_y"] == 4.5
+        assert row["mode"] == "capital_preservation"
+        assert row["equity_simulated"] == 2000.0
+        assert row["risk_multiplier"] == 0.7
+        assert row["effective_max_positions"] == 2
+        assert row["allow_new_entries"] is True
+        assert row["vix_curve_inverted"] is True
+        assert row["yield_10y_5d_pct"] == 0.03
+        assert row["sentiment_score"] == -0.2
+        assert row["sentiment_level"] == "warning"
+        assert row["sentiment_source"] == "ticker_daily_sentiment_features"
     finally:
         engine.dispose()
 

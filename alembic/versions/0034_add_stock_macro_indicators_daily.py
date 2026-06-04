@@ -7,7 +7,7 @@ Revises: 0033_news_checkpoint_stage_timestamps
 # noinspection PyUnresolvedReferences
 import sqlalchemy as sa
 
-from alembic import op
+import alembic.op as op
 
 revision = "0034_add_stock_macro_indicators_daily"
 down_revision = "0033_news_checkpoint_stage_timestamps"
@@ -24,6 +24,16 @@ def upgrade() -> None:
         sa.Column("vix", sa.Float(), nullable=True),
         sa.Column("vix9d", sa.Float(), nullable=True),
         sa.Column("ten_y", sa.Float(), nullable=True),
+        sa.Column("mode", sa.String(length=32), nullable=True),
+        sa.Column("equity_simulated", sa.Float(), nullable=True),
+        sa.Column("risk_multiplier", sa.Float(), nullable=True),
+        sa.Column("effective_max_positions", sa.Integer(), nullable=True),
+        sa.Column("allow_new_entries", sa.Boolean(), nullable=True),
+        sa.Column("vix_curve_inverted", sa.Boolean(), nullable=True),
+        sa.Column("yield_10y_5d_pct", sa.Float(), nullable=True),
+        sa.Column("sentiment_score", sa.Float(), nullable=True),
+        sa.Column("sentiment_level", sa.String(length=16), nullable=True),
+        sa.Column("sentiment_source", sa.String(length=64), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.PrimaryKeyConstraint("trade_date"),

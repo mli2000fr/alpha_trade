@@ -4,9 +4,9 @@ import logging
 from collections.abc import Mapping
 from datetime import date, datetime, timezone
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import Column, Date, DateTime, Float, MetaData, Table, inspect, select
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, MetaData, String, Table, inspect, select
 
 from database.connection import get_sqlalchemy_engine
 
@@ -24,6 +24,16 @@ def get_macro_indicators_daily_table() -> Table:
         Column("vix", Float, nullable=True),
         Column("vix9d", Float, nullable=True),
         Column("ten_y", Float, nullable=True),
+        Column("mode", String(32), nullable=True),
+        Column("equity_simulated", Float, nullable=True),
+        Column("risk_multiplier", Float, nullable=True),
+        Column("effective_max_positions", Integer, nullable=True),
+        Column("allow_new_entries", Boolean, nullable=True),
+        Column("vix_curve_inverted", Boolean, nullable=True),
+        Column("yield_10y_5d_pct", Float, nullable=True),
+        Column("sentiment_score", Float, nullable=True),
+        Column("sentiment_level", String(16), nullable=True),
+        Column("sentiment_source", String(64), nullable=True),
         Column("created_at", DateTime, nullable=True),
         Column("updated_at", DateTime, nullable=True),
     )
@@ -56,6 +66,37 @@ def _coerce_float(value: Any) -> float | None:
         return None
 
 
+def _coerce_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        if cleaned in {"1", "true", "yes", "y", "on"}:
+            return True
+        if cleaned in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
+def _coerce_str(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
 def _table_exists(engine) -> bool:
     if engine is None:
         return False
@@ -81,6 +122,16 @@ def persist_macro_indicator_daily(
     vix: Any = None,
     vix9d: Any = None,
     ten_y: Any = None,
+    mode: Any = None,
+    equity_simulated: Any = None,
+    risk_multiplier: Any = None,
+    effective_max_positions: Any = None,
+    allow_new_entries: Any = None,
+    vix_curve_inverted: Any = None,
+    yield_10y_5d_pct: Any = None,
+    sentiment_score: Any = None,
+    sentiment_level: Any = None,
+    sentiment_source: Any = None,
     engine=None,
 ) -> int:
     resolved_trade_date = _coerce_date(trade_date)
@@ -92,8 +143,18 @@ def persist_macro_indicator_daily(
         "vix": _coerce_float(vix),
         "vix9d": _coerce_float(vix9d),
         "ten_y": _coerce_float(ten_y),
+        "mode": _coerce_str(mode),
+        "equity_simulated": _coerce_float(equity_simulated),
+        "risk_multiplier": _coerce_float(risk_multiplier),
+        "effective_max_positions": _coerce_int(effective_max_positions),
+        "allow_new_entries": _coerce_bool(allow_new_entries),
+        "vix_curve_inverted": _coerce_bool(vix_curve_inverted),
+        "yield_10y_5d_pct": _coerce_float(yield_10y_5d_pct),
+        "sentiment_score": _coerce_float(sentiment_score),
+        "sentiment_level": _coerce_str(sentiment_level),
+        "sentiment_source": _coerce_str(sentiment_source),
     }
-    if payload["vix"] is None and payload["vix9d"] is None and payload["ten_y"] is None:
+    if all(value is None for key, value in payload.items() if key != "trade_date"):
         return 0
 
     resolved_engine = _resolve_engine(engine)
@@ -140,14 +201,29 @@ def load_macro_indicator_daily_asof(
         else table.c.trade_date <= resolved_trade_date
     )
     query = (
-        select(table.c.trade_date, table.c.vix, table.c.vix9d, table.c.ten_y)
+        select(
+            table.c.trade_date,
+            table.c.vix,
+            table.c.vix9d,
+            table.c.ten_y,
+            table.c.mode,
+            table.c.equity_simulated,
+            table.c.risk_multiplier,
+            table.c.effective_max_positions,
+            table.c.allow_new_entries,
+            table.c.vix_curve_inverted,
+            table.c.yield_10y_5d_pct,
+            table.c.sentiment_score,
+            table.c.sentiment_level,
+            table.c.sentiment_source,
+        )
         .where(predicate)
         .order_by(table.c.trade_date.desc())
         .limit(1)
     )
     with resolved_engine.begin() as conn:
         row = conn.execute(query).mappings().first()
-    return dict(row) if row is not None else None
+    return cast(dict[str, Any], dict(row)) if row is not None else None
 
 
 def load_macro_indicator_history_asof(
@@ -203,12 +279,35 @@ def persist_market_macro_snapshot_daily(
     engine=None,
 ) -> int:
     payload = macro_payload if isinstance(macro_payload, Mapping) else {}
+
+    def _value(*paths: tuple[Any, ...]) -> Any:
+        for path in paths:
+            current: Any = payload
+            for key in path:
+                if not isinstance(current, Mapping):
+                    current = None
+                    break
+                current = current.get(key)
+            if current not in (None, ""):
+                return current
+        return None
+
     try:
         persisted = persist_macro_indicator_daily(
             trade_date=trade_date,
-            vix=payload.get("vix"),
-            vix9d=payload.get("vix_short"),
-            ten_y=payload.get("yield_10y"),
+            vix=_value(("vix",), ("macro", "vix")),
+            vix9d=_value(("vix9d",), ("vix_short",), ("macro", "vix_short")),
+            ten_y=_value(("ten_y",), ("yield_10y",), ("macro", "yield_10y")),
+            mode=_value(("mode",)),
+            equity_simulated=_value(("equity_simulated",)),
+            risk_multiplier=_value(("risk_multiplier",)),
+            effective_max_positions=_value(("effective_max_positions",)),
+            allow_new_entries=_value(("allow_new_entries",)),
+            vix_curve_inverted=_value(("vix_curve_inverted",), ("macro", "vix_curve_inverted")),
+            yield_10y_5d_pct=_value(("yield_10y_5d_pct",), ("macro", "yield_10y_5d_pct")),
+            sentiment_score=_value(("sentiment_score",), ("sentiment", "score")),
+            sentiment_level=_value(("sentiment_level",), ("sentiment", "level")),
+            sentiment_source=_value(("sentiment_source",), ("sentiment", "source")),
             engine=engine,
         )
     except Exception:
@@ -216,11 +315,13 @@ def persist_market_macro_snapshot_daily(
         return 0
     if persisted:
         LOGGER.info(
-            "macro_daily persisted trade_date=%s vix=%s vix9d=%s ten_y=%s",
+            "macro_daily persisted trade_date=%s vix=%s vix9d=%s ten_y=%s mode=%s sentiment_level=%s",
             _coerce_date(trade_date),
-            payload.get("vix"),
-            payload.get("vix_short"),
-            payload.get("yield_10y"),
+            _value(("vix",), ("macro", "vix")),
+            _value(("vix9d",), ("vix_short",), ("macro", "vix_short")),
+            _value(("ten_y",), ("yield_10y",), ("macro", "yield_10y")),
+            _value(("mode",)),
+            _value(("sentiment_level",), ("sentiment", "level")),
         )
     return persisted
 
