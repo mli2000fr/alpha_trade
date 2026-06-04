@@ -136,6 +136,7 @@ class ExecutionConfig:
     regime_max_positions: int | None = None
     regime_max_position_weight: float | None = None
     regime_max_sector_weight: float | None = None
+    regime_max_gross_exposure: float | None = None
 
     # --- Trailing stop ATR dynamique (Axe F) ---
     trailing_stop: TrailingStopConfig = field(default_factory=TrailingStopConfig)
@@ -207,6 +208,8 @@ class ExecutionConfig:
             raise ValueError("regime_max_position_weight doit être dans ]0, 1].")
         if self.regime_max_sector_weight is not None and not (0 < self.regime_max_sector_weight <= 1):
             raise ValueError("regime_max_sector_weight doit être dans ]0, 1].")
+        if self.regime_max_gross_exposure is not None and not (0 < self.regime_max_gross_exposure <= 1):
+            raise ValueError("regime_max_gross_exposure doit être dans ]0, 1].")
 
     @property
     def effective_pdt_rule(self) -> Literal["auto", "off"]:

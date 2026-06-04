@@ -123,6 +123,30 @@ class TestBuildEntryIntents:
         assert any(entry["reason"] == "regime_max_sector_weight" and entry["symbol"] == "MSFT" for entry in blocked)
         assert any(entry["reason"] == "regime_max_positions" and entry["symbol"] == "XOM" for entry in blocked)
 
+    def test_filter_targets_by_live_regime_guards_enforces_gross_exposure_by_rank(self) -> None:
+        cfg = ExecutionConfig(regime_max_gross_exposure=0.30)
+        targets = [
+            ExecutionTarget(
+                risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="AAPL",
+                target_shares=100, entry_price=150.0, target_weight=0.20,
+                sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+                candidate_rank=1,
+            ),
+            ExecutionTarget(
+                risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="MSFT",
+                target_shares=90, entry_price=140.0, target_weight=0.15,
+                sector="Tech", conviction_score=0.7, sizing_method="atr", kelly_fraction=0.1,
+                candidate_rank=2,
+            ),
+        ]
+
+        kept, blocked = filter_targets_by_live_regime_guards(targets=targets, config=cfg)
+
+        assert [target.symbol for target in kept] == ["AAPL"]
+        assert len(blocked) == 1
+        assert blocked[0]["symbol"] == "MSFT"
+        assert blocked[0]["reason"] == "regime_max_gross_exposure"
+
 
 class TestBuildChildren:
     def test_take_profit(self) -> None:

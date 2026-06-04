@@ -1,6 +1,6 @@
 # Revue d’implémentation P2 — backtest et live pipeline
 
-Date : 2026-06-03
+Date : 2026-06-04
 
 ## Objet
 
@@ -25,13 +25,13 @@ L’objectif ici est de distinguer :
 | Priorité P2 | Backtest | Live pipeline | Verdict |
 |---|---|---|---|
 | 5. Cap sectoriel réel | **Oui** | **Oui** | implémenté |
-| 6. Réduction exposition brute en `capital_preservation` | **Partiel** | **Partiel** | incomplet au sens strict |
+| 6. Réduction exposition brute en `capital_preservation` | **Oui** | **Oui** | implémenté |
 | 7. Gap filter à l’entrée | **Oui** | **Oui** | implémenté |
 
 ### Conclusion courte
 
 - **P2.5** est **bien implémenté** côté backtest et côté live pipeline.
-- **P2.6** est **partiellement implémenté** : le dépôt sait réduire l’exposition brute via certains snapshots de régime, mais **pas comme règle générale et explicite du mode `capital_preservation`**.
+- **P2.6** est désormais **implémenté** : le dépôt applique maintenant une règle **générique et explicite** `capital_preservation => réduction de max_gross_exposure`, côté backtest comme côté live pipeline.
 - **P2.7** est **bien implémenté** côté backtest et côté live pipeline.
 
 ---
@@ -149,46 +149,50 @@ Le cap sectoriel est **réel** côté live pipeline :
 
 ## 6) Réduire l’exposition brute en mode `capital_preservation`
 
-## Verdict global — **Partiellement implémenté**
+## Verdict global — **Implémenté**
 
-Le dépôt sait **réduire `max_gross_exposure`** dans certains scénarios de régime, mais il n’existe **pas de règle générale explicite** du type :
+Le dépôt applique désormais une règle métier explicite de la forme :
 
-> si `mode == capital_preservation` alors réduire automatiquement l’exposition brute
+> si `mode == capital_preservation` alors resserrer `max_gross_exposure`
 
-Autrement dit :
+Cette règle est maintenant :
 
-- la réduction d’exposition brute **existe**,
-- mais elle est **conditionnelle à certains signaux/règles de régime**,
-- et **pas attachée de manière générique au mode `capital_preservation` en tant que tel**.
+- **configurable** dans la config marché,
+- **produite** par le snapshot de régime,
+- **appliquée** au pipeline risk,
+- **propagée** jusqu’au garde-fou d’exécution live,
+- et **respectée** dans le simulateur backtest quand une limite de gross exposure est fournie via `RiskConfig` / `ExecutionConfig`.
 
 ---
 
 ## Ce qui existe réellement
 
-### Config prête
+### Config explicite du mode `capital_preservation`
 
-Le YAML contient bien des plafonds de gross exposure resserrés :
+Le YAML porte maintenant un plafond dédié au mode `capital_preservation` :
 
-- `config.yaml:86-101`
-  - `soft_max_gross_exposure: 0.50`
-  - `hard_max_gross_exposure: 0.35`
+- `config.yaml`
+  - `capital_preservation_max_gross_exposure: 0.50`
+  - en complément des plafonds `soft` / `hard` déjà présents pour les shocks de taux
 
-Le parser les charge :
+Le parser le charge explicitement :
 
-- `service/market/config.py:184-249`
-  - `soft_max_gross_exposure`
-  - `hard_max_gross_exposure`
+- `service/market/config.py`
+  - `MarketRegimesConfig.capital_preservation_max_gross_exposure`
 
 ### Snapshot régime
 
-Le gestionnaire de régime sait produire ces limites :
+Le gestionnaire de régime sait désormais produire `max_gross_exposure` selon **trois** mécanismes :
 
-- `service/market/regime_manager.py:342-345`
-  - tightening soft
-- `service/market/regime_manager.py:526-529`
-  - tightening hard
-- `service/market/regime_manager.py:611-642`
-  - `MarketRegimeSnapshot(... max_gross_exposure=...)`
+- `service/market/regime_manager.py`
+  - tightening `soft_max_gross_exposure` sur `yield_spike`
+  - tightening `hard_max_gross_exposure` sur choc de taux dur
+  - tightening **générique** `capital_preservation_max_gross_exposure` quand `mode == capital_preservation`
+
+Le snapshot sérialise alors bien :
+
+- `MarketRegimeSnapshot(... max_gross_exposure=...)`
+- une trace de décision `capital_preservation_gross_exposure`
 
 ### Application au `RiskConfig`
 
@@ -204,7 +208,7 @@ Le gestionnaire de régime sait produire ces limites :
 
 ---
 
-## Côté live pipeline — **Partiel**
+## Côté live pipeline — **Oui, réellement appliqué**
 
 ### Oui, dans l’étape risk management
 
@@ -213,36 +217,33 @@ Le pipeline risk applique bien le snapshot de régime :
 - `risk_management/cli.py:874-884`
   - `config = apply_snapshot(config, regime_snapshot)`
 
-Donc si le snapshot contient un `max_gross_exposure` réduit, cette valeur est bien utilisée ensuite par les contraintes du portefeuille.
+Donc si le snapshot contient un `max_gross_exposure` réduit — y compris via la règle générique `capital_preservation` — cette valeur est bien utilisée ensuite par les contraintes du portefeuille.
 
-### Mais non, pas comme garde-fou d’exécution live autonome
+### Oui aussi comme garde-fou d’exécution live autonome
 
-L’exécution live ne transporte pas ce garde-fou de gross exposure dans `ExecutionConfig` :
+L’exécution live transporte désormais aussi ce garde-fou dans `ExecutionConfig` :
 
-- `execution_engine/config.py:133-139`
-  - présence de :
-    - `regime_max_positions`
-    - `regime_max_position_weight`
-    - `regime_max_sector_weight`
-  - absence de :
-    - `regime_max_gross_exposure`
+- `execution_engine/config.py`
+  - présence de `regime_max_gross_exposure`
 
-La propagation live depuis le snapshot ne transporte donc pas l’exposition brute :
+La propagation live depuis le snapshot transporte maintenant l’exposition brute :
 
-- `run_execution.py:950-979`
-  - ne propage que positions / poids ligne / poids secteur
-- `execution_engine/order_intents.py:122-203`
-  - filtre seulement ces trois garde-fous
+- `run_execution.py`
+  - propagation de `snapshot.max_gross_exposure` vers `ExecutionConfig.regime_max_gross_exposure`
+- `execution_engine/order_intents.py`
+  - filtrage cumulatif `regime_max_gross_exposure`
+- `execution_engine/executor.py`
+  - audit / métriques `SkippedByRegimeGuard[regime_max_gross_exposure]`
 
 ### Lecture correcte côté live
 
 - **Oui** : réduction d’exposition brute dans le **pipeline risk**
-- **Non** : pas de **filet d’exécution live** spécifique sur la gross exposure
-- **Non** : pas de règle générique “`capital_preservation` => baisse systématique de gross exposure”
+- **Oui** : garde-fou spécifique côté **exécution live**
+- **Oui** : règle générique “`capital_preservation` => baisse de gross exposure”
 
 ---
 
-## Côté backtest — **Partiel**
+## Côté backtest — **Oui, réellement appliqué**
 
 Ici il faut distinguer deux chemins.
 
@@ -261,50 +262,50 @@ Ensuite la contrainte `max_gross_exposure` est effectivement enforce via :
 - `risk_management/constraints.py:72-80`
 - `risk_management/portfolio_builder.py:254-282`
 
-### 2) Simulateur backtest pur — **Pas de règle dédiée `capital_preservation -> gross exposure`**
+Le snapshot backtest contient maintenant aussi le plafonnement générique `capital_preservation_max_gross_exposure`, donc le chemin `risk_bridge` applique bien la règle métier complète.
 
-Le simulateur pur implémente surtout :
+### 2) Simulateur backtest pur — **Oui, limitation effective quand un cap de gross exposure est fourni**
 
-- cap sectoriel,
-- gap filter,
-- vol targeting,
-- drawdown breaker,
+Le simulateur pur applique désormais également un cap de gross exposure quand il reçoit une limite via `RiskConfig.max_gross_exposure` ou `ExecutionConfig.regime_max_gross_exposure` :
 
-mais pas de règle autonome de réduction de `max_gross_exposure` liée au mode `capital_preservation`.
+- `backtesting/simulator.py`
+  - calcul de l’exposition brute courante
+  - réduction / rejet des entrées si le plafond de gross exposure est atteint
+  - audit `diagnostics.blocked_by_gross_exposure`
+
+Cela homogénéise la couverture métier côté backtest :
+
+- **pipeline risk bridge** : cap appliqué via snapshot régime,
+- **simulateur pur** : cap respecté dès qu’une config de gross exposure est injectée.
 
 ---
 
-## Le point précis qui manque
+## Le point qui a été comblé
 
-La gestion des modes restrictifs montre bien l’écart :
+L’écart initial a été fermé par trois ajouts cohérents :
 
-- `service/market/regime_manager.py:601-609`
-
-On voit que :
-
-- `close_only` / `cash_only` bloquent les nouvelles entrées,
-- `capital_preservation` ne déclenche pas, à lui seul, une réduction générique de `max_gross_exposure`.
-
-La réduction actuelle vient surtout des règles `yield_spike` soft/hard, pas du mode en lui-même.
+1. **Règle explicite de snapshot**
+   - `capital_preservation => max_gross_exposure resserrée`
+2. **Propagation live complète**
+   - `ExecutionConfig.regime_max_gross_exposure`
+   - filtre live dans `execution_engine/order_intents.py`
+3. **Couverture backtest homogène**
+   - chemin `risk_bridge` via `apply_snapshot(...)`
+   - simulateur pur via contrôle direct de gross exposure
 
 ---
 
 ## Verdict P2.6
 
-**Partiellement implémenté.**
+**Implémenté.**
 
-### Ce qui est vrai
+### Ce qui est vrai maintenant
 
 - Le projet sait réduire `max_gross_exposure`.
-- Cette réduction est réellement utilisée dans le pipeline risk.
-- Elle peut fonctionner en live et en backtest via les snapshots de régime.
-
-### Ce qui manque encore
-
-- une règle **générique et explicite** :
-  - `capital_preservation => gross exposure réduite`
-- une propagation **jusqu’à l’exécution live** comme garde-fou indépendant
-- une couverture homogène dans tous les chemins backtest
+- Cette réduction est **attachée explicitement** au mode `capital_preservation`.
+- Elle est appliquée dans le **pipeline risk**.
+- Elle est propagée jusqu’au **garde-fou d’exécution live**.
+- Elle est couverte côté **backtest pipeline** et côté **simulateur backtest**.
 
 ---
 
@@ -393,8 +394,8 @@ Le gap filter est **bien branché de bout en bout** côté live pipeline.
    - **Live pipeline : OK**
 
 2. **Réduire l’exposition brute en mode `capital_preservation`**
-   - **Backtest : PARTIEL**
-   - **Live pipeline : PARTIEL**
+   - **Backtest : OK**
+   - **Live pipeline : OK**
 
 3. **Activer un gap filter à l’entrée**
    - **Backtest : OK**
@@ -402,7 +403,7 @@ Le gap filter est **bien branché de bout en bout** côté live pipeline.
 
 ### Formulation de synthèse recommandée
 
-> Les priorités P2 sont en grande partie couvertes : le cap sectoriel réel et le gap filter d’entrée sont bien implémentés en backtest et en live pipeline. En revanche, la réduction d’exposition brute en mode `capital_preservation` reste partielle : le code sait resserrer `max_gross_exposure` dans certains régimes, mais pas encore comme règle générale explicite attachée au mode `capital_preservation`, ni comme garde-fou complet jusqu’au niveau exécution live.
+> Les priorités P2 sont désormais couvertes sur les trois points visés : le cap sectoriel réel, la réduction d’exposition brute en mode `capital_preservation` et le gap filter d’entrée sont implémentés en backtest comme en live pipeline. En particulier, `capital_preservation` déclenche maintenant explicitement un resserrement de `max_gross_exposure`, propagé jusqu’au garde-fou d’exécution live et respecté dans les chemins backtest concernés.
 
 ---
 
@@ -412,7 +413,8 @@ Tests ciblés lancés avec succès sur les briques concernées :
 
 ```powershell
 Set-Location "F:\projets"
-pytest -q --no-cov tests/test_backtesting_refactor.py tests/test_order_intents.py tests/test_execution_engine_executor.py tests/test_market_regime.py tests/test_risk_regime_apply.py
+pytest -q --no-cov tests/test_market_regime.py tests/test_phase2_risk_bridge_regime.py tests/test_execution_engine_config.py tests/test_order_intents.py tests/test_execution_engine_executor.py tests/test_run_execution.py
+pytest -q --no-cov tests/test_backtesting.py -k "enforces_max_gross_exposure_from_risk_config or config_from_risk_and_exec or backtest_engine_execution_replay_mode_uses_signal_share_override"
 ```
 
 Résultat : **tests ciblés passants**.

@@ -608,6 +608,33 @@ def build_snapshot(
     elif mode == "capital_preservation" and effective_max_positions is None:
         effective_max_positions = max(1, (effective_max_positions or 1))
 
+    capital_preservation_max_gross_exposure = config.capital_preservation_max_gross_exposure
+    capital_preservation_gross_exposure_triggered = False
+    if mode == "capital_preservation" and capital_preservation_max_gross_exposure is not None:
+        previous_max_gross_exposure = max_gross_exposure
+        max_gross_exposure = cast(
+            float | None,
+            _tighten_numeric_limit(max_gross_exposure, capital_preservation_max_gross_exposure),
+        )
+        capital_preservation_gross_exposure_triggered = max_gross_exposure != previous_max_gross_exposure
+        if capital_preservation_gross_exposure_triggered:
+            reasons.append("capital_preservation_max_gross_exposure")
+    _push_trace(
+        decision_trace,
+        source="capital_preservation_gross_exposure",
+        label="Cap gross exposure capital_preservation",
+        triggered=capital_preservation_gross_exposure_triggered,
+        severity="warning" if capital_preservation_gross_exposure_triggered else "info",
+        resulting_mode=mode,
+        value=max_gross_exposure,
+        threshold=capital_preservation_max_gross_exposure,
+        message=(
+            f"Mode capital_preservation actif ⇒ max_gross_exposure resserrée à {max_gross_exposure:.2f}"
+            if capital_preservation_gross_exposure_triggered and max_gross_exposure is not None
+            else "Pas de resserrement générique de gross exposure lié à capital_preservation"
+        ),
+    )
+
     snap = MarketRegimeSnapshot(
         trade_date=trade_date,
         as_of=datetime.now(timezone.utc),

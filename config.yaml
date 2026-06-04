@@ -73,6 +73,8 @@ market_regimes:
     high_threshold: 25.0
     inverted_curve_mode: capital_preservation
 
+  capital_preservation_max_gross_exposure: 0.50
+
   yields:
     enabled: true
     provider: fred                         # default | stooq | eodhd | fred

@@ -1220,6 +1220,45 @@ class TestBacktestConfig:
         assert not trades_df.empty
         assert float(trades_df["Size"].iloc[0]) == 7.0
 
+    def test_backtest_engine_enforces_max_gross_exposure_from_risk_config(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from risk_management.config import RiskConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0], "MSFT": [100.0, 100.0, 100.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0], "MSFT": [100.0, 100.0, 100.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0], "MSFT": [100.0, 100.0, 100.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0], "MSFT": [100.0, 100.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+                "symbol": ["AAPL", "MSFT"],
+                "selected": [True, True],
+                "rank": [1.0, 2.0],
+            }
+        )
+
+        result = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=2,
+                risk_config=RiskConfig(max_positions=2, max_gross_exposure=0.40),
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        entry_events = result.trade_events_df.loc[result.trade_events_df["event_type"] == "entry_opened"]
+        rejected_events = result.trade_events_df.loc[result.trade_events_df["event_type"] == "entry_rejected"]
+
+        assert len(entry_events) == 1
+        assert entry_events.iloc[0]["symbol"] == "AAPL"
+        assert entry_events.iloc[0]["gross_exposure_after_pct"] == pytest.approx(0.40)
+        assert len(rejected_events) == 1
+        assert rejected_events.iloc[0]["symbol"] == "MSFT"
+        assert rejected_events.iloc[0]["rejection_reason"] == "gross_exposure_cap"
+        assert result.diagnostics.blocked_by_gross_exposure == 1
+
     def test_backtest_engine_returns_flat_result_when_signals_are_empty(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
 

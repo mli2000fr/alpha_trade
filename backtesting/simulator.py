@@ -113,6 +113,7 @@ class BacktestDiagnostics:
     # Phase C (refactor) — diagnostics risk overlay.
     blocked_by_regime: int = 0
     blocked_by_sectoral_cap: int = 0
+    blocked_by_gross_exposure: int = 0
     blocked_by_drawdown_breaker: int = 0
     protection_replay_activations: int = 0
     watcher_replay_transitions: int = 0
@@ -130,6 +131,7 @@ class BacktestDiagnostics:
             "trailing_stop_exits": self.trailing_stop_exits,
             "blocked_by_regime": self.blocked_by_regime,
             "blocked_by_sectoral_cap": self.blocked_by_sectoral_cap,
+            "blocked_by_gross_exposure": self.blocked_by_gross_exposure,
             "blocked_by_drawdown_breaker": self.blocked_by_drawdown_breaker,
             "protection_replay_activations": self.protection_replay_activations,
             "watcher_replay_transitions": self.watcher_replay_transitions,
@@ -733,6 +735,8 @@ class BacktestEngine:
                     state.positions, close, trade_day, sector_map, current_equity
                 )
             )
+        gross_exposure_limit = self._resolve_max_gross_exposure_limit()
+        current_gross_notional = max(self._mark_to_market(state.positions, close, trade_day), 0.0)
 
         for candidate_pos, row in enumerate(candidate_rows):
             symbol = str(row["symbol"])
@@ -827,6 +831,11 @@ class BacktestEngine:
             per_position_cap = current_equity * target_weight_pct
             candidate_budget = min(per_position_cap, state.settled_cash / remaining_candidates)
             settled_cash_before_entry = state.settled_cash
+            gross_exposure_before_pct = (
+                (current_gross_notional / current_equity)
+                if current_equity > 0
+                else 0.0
+            )
 
             preliminary_size_usd = max(
                 float(quantity_override) * entry_price if quantity_override is not None else candidate_budget,
@@ -840,8 +849,42 @@ class BacktestEngine:
                 quantity = min(int(quantity_override), affordable_quantity)
             else:
                 quantity = int(candidate_budget // effective_unit_cost)
+            quantity_before_gross_exposure_cap = quantity
+            gross_exposure_cap_binds = False
+
+            if gross_exposure_limit is not None and current_equity > 0 and entry_price > 0:
+                remaining_gross_notional = max(
+                    (gross_exposure_limit * current_equity) - current_gross_notional,
+                    0.0,
+                )
+                max_quantity_for_gross_exposure = int(remaining_gross_notional // entry_price)
+                quantity = min(quantity, max_quantity_for_gross_exposure)
+                gross_exposure_cap_binds = quantity < quantity_before_gross_exposure_cap
 
             if quantity <= 0:
+                if gross_exposure_cap_binds:
+                    diagnostics.blocked_by_gross_exposure += 1
+                    self._record_trade_event(
+                        state,
+                        "entry_rejected",
+                        event_date=trade_day,
+                        symbol=symbol,
+                        rejection_reason="gross_exposure_cap",
+                        settled_cash_before=settled_cash_before_entry,
+                        candidate_budget=candidate_budget,
+                        target_weight_pct=target_weight_pct,
+                        vol_target_scaler=vol_target_scaler,
+                        quantity_override=quantity_override,
+                        effective_unit_cost=effective_unit_cost,
+                        gross_exposure_limit_pct=gross_exposure_limit,
+                        gross_exposure_before_pct=gross_exposure_before_pct,
+                        gross_exposure_remaining_notional=max(
+                            (gross_exposure_limit * current_equity) - current_gross_notional,
+                            0.0,
+                        ),
+                        **signal_context,
+                    )
+                    continue
                 if constraints.use_settled_cash_only:
                     diagnostics.blocked_cash_entries += 1
                 self._record_trade_event(
@@ -965,6 +1008,7 @@ class BacktestEngine:
             )
             if risk.sectoral_cap.enabled:
                 sector_exposure_pct[sector] += target_weight_pct
+            current_gross_notional += quantity * entry_price
             self._record_trade_event(
                 state,
                 "entry_opened",
@@ -981,6 +1025,10 @@ class BacktestEngine:
                 settled_cash_before=settled_cash_before_entry,
                 settled_cash_after=state.settled_cash,
                 quantity_override=quantity_override,
+                gross_exposure_limit_pct=gross_exposure_limit,
+                gross_exposure_before_pct=gross_exposure_before_pct,
+                gross_exposure_after_pct=(current_gross_notional / current_equity) if current_equity > 0 else 0.0,
+                gross_exposure_capped=gross_exposure_cap_binds,
                 previous_close=previous_close,
                 entry_gap_pct=entry_gap_pct,
                 **signal_context,
@@ -1313,6 +1361,20 @@ class BacktestEngine:
                 position.replay_trailing_activation_price,
             )
         )
+
+    def _resolve_max_gross_exposure_limit(self) -> float | None:
+        limit: float | None = None
+        if self.config.risk_config is not None:
+            risk_limit = float(self.config.risk_config.max_gross_exposure)
+            if 0 < risk_limit < 1.0:
+                limit = risk_limit
+        if self.config.exec_config is not None:
+            exec_limit = getattr(self.config.exec_config, "regime_max_gross_exposure", None)
+            if exec_limit is not None:
+                exec_limit = float(exec_limit)
+                if 0 < exec_limit <= 1.0:
+                    limit = min(limit, exec_limit) if limit is not None else exec_limit
+        return limit
 
     @staticmethod
     def _mark_to_market(

@@ -408,6 +408,33 @@ def test_snapshot_exposes_structured_why_mode_and_sentiment_payload():
     assert any(item["source"] == "sentiment_warning" and item["triggered"] for item in snap.decision_trace)
 
 
+def test_snapshot_capital_preservation_applies_generic_max_gross_exposure() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        capital_preservation_max_gross_exposure=0.45,
+        vix=VixConfig(enabled=True, high_threshold=25.0),
+        yields=YieldsConfig(enabled=False),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+    reset_cache()
+
+    snap = build_snapshot(
+        date(2025, 5, 1),
+        config=cfg,
+        equity=2_000.0,
+        macro_provider=cast(MacroDataProvider, cast(object, _StubMacroProvider(vix=30.0, vix_short=24.0))),
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert snap.mode == "capital_preservation"
+    assert snap.max_gross_exposure == pytest.approx(0.45)
+    assert "capital_preservation_max_gross_exposure" in snap.reasons
+    assert any(
+        item["source"] == "capital_preservation_gross_exposure" and item["triggered"]
+        for item in snap.decision_trace
+    )
+
+
 def test_snapshot_rates_shock_stack_escalates_to_cash_only_in_backtest():
     cfg = MarketRegimesConfig(
         enabled=True,

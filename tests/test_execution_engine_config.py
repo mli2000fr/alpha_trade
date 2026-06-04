@@ -44,6 +44,8 @@ from execution_engine.config import (
         ({"regime_max_position_weight": 1.1}, "regime_max_position_weight"),
         ({"regime_max_sector_weight": 0}, "regime_max_sector_weight"),
         ({"regime_max_sector_weight": 1.1}, "regime_max_sector_weight"),
+        ({"regime_max_gross_exposure": 0}, "regime_max_gross_exposure"),
+        ({"regime_max_gross_exposure": 1.1}, "regime_max_gross_exposure"),
     ],
 )
 def test_execution_config_validates_invalid_values(kwargs, message):
@@ -93,11 +95,13 @@ def test_execution_config_accepts_optional_regime_guards() -> None:
         regime_max_positions=3,
         regime_max_position_weight=0.20,
         regime_max_sector_weight=0.35,
+        regime_max_gross_exposure=0.45,
     )
 
     assert cfg.regime_max_positions == 3
     assert cfg.regime_max_position_weight == pytest.approx(0.20)
     assert cfg.regime_max_sector_weight == pytest.approx(0.35)
+    assert cfg.regime_max_gross_exposure == pytest.approx(0.45)
 
 
 def test_load_trailing_stop_config_from_yaml_uses_risk_management_section() -> None:

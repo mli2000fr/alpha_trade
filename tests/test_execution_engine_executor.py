@@ -331,3 +331,76 @@ def test_execute_run_applies_live_regime_guards_before_building_intents(monkeypa
     assert built_targets == [["AAPL"]]
 
 
+def test_execute_run_applies_live_gross_exposure_guard_before_building_intents(monkeypatch) -> None:
+    config = ExecutionConfig(
+        dry_run=True,
+        allow_outside_rth=True,
+        inter_order_delay_ms=0,
+        poll_interval_seconds=0.01,
+        regime_max_gross_exposure=0.30,
+    )
+    repo = MagicMock()
+    repo.acquire_execution_lock.return_value = True
+    repo.load_portfolio_targets.return_value = [
+        SimpleNamespace(
+            symbol="AAPL",
+            sector="Tech",
+            risk_run_id="risk-1",
+            trade_date=date(2026, 5, 1),
+            target_notional=1_500.0,
+            target_shares=10,
+            entry_price=150.0,
+            initial_risk_dollars=50.0,
+            risk_budget_dollars=100.0,
+            target_weight=0.20,
+            candidate_rank=1,
+            stop_price_initial=145.0,
+            risk_per_share=5.0,
+            price_asof_date=date(2026, 5, 1),
+        ),
+        SimpleNamespace(
+            symbol="MSFT",
+            sector="Tech",
+            risk_run_id="risk-1",
+            trade_date=date(2026, 5, 1),
+            target_notional=1_200.0,
+            target_shares=8,
+            entry_price=150.0,
+            initial_risk_dollars=40.0,
+            risk_budget_dollars=80.0,
+            target_weight=0.15,
+            candidate_rank=2,
+            stop_price_initial=145.0,
+            risk_per_share=5.0,
+            price_asof_date=date(2026, 5, 1),
+        ),
+    ]
+    broker = MagicMock()
+    broker.get_account_snapshot.return_value = {
+        "equity": 100_000.0,
+        "cash": 100_000.0,
+        "buying_power": 200_000.0,
+        "non_marginable_buying_power": 100_000.0,
+        "daytrade_count": 0,
+    }
+    oco = MagicMock()
+
+    built_targets: list[list[str]] = []
+
+    def _capture_build_entry_intents(targets, cfg, exec_run_id):
+        built_targets.append([target.symbol for target in targets])
+        return []
+
+    monkeypatch.setattr(executor_module, "build_entry_intents", _capture_build_entry_intents)
+
+    executor = ProductionExecutor(config, repo, broker, oco)
+
+    metrics = executor.execute_run(risk_run_id="risk-1", trade_date=date(2026, 5, 1))
+
+    assert metrics["status"] == "COMPLETED"
+    assert metrics["targets_loaded"] == 2
+    assert metrics["targets_blocked_by_regime_guards"] == 1
+    assert metrics["skipped_by_regime_max_gross_exposure"] == 1
+    assert built_targets == [["AAPL"]]
+
+

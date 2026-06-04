@@ -179,6 +179,31 @@ def filter_targets_by_live_regime_guards(
             )
         kept_targets = [target for target in kept_targets if id(target) in allowed_ids]
 
+    max_gross_exposure = getattr(config, "regime_max_gross_exposure", None)
+    if max_gross_exposure is not None and kept_targets:
+        max_gross_exposure_limit = float(cast(float, max_gross_exposure))
+        allowed_ids = set()
+        gross_exposure = 0.0
+        for target in sorted(kept_targets, key=_target_priority_key):
+            target_weight = max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0)
+            projected_gross_exposure = gross_exposure + target_weight
+            if projected_gross_exposure <= max_gross_exposure_limit + 1e-12:
+                allowed_ids.add(id(target))
+                gross_exposure = projected_gross_exposure
+                continue
+            blocked.append(
+                {
+                    "symbol": target.symbol,
+                    "sector": target.sector,
+                    "target_weight": target_weight,
+                    "gross_exposure_before": gross_exposure,
+                    "gross_exposure_after": projected_gross_exposure,
+                    "limit": max_gross_exposure_limit,
+                    "reason": "regime_max_gross_exposure",
+                }
+            )
+        kept_targets = [target for target in kept_targets if id(target) in allowed_ids]
+
     max_positions = getattr(config, "regime_max_positions", None)
     if max_positions is not None:
         max_positions_limit = int(cast(int, max_positions))

@@ -107,6 +107,45 @@ def test_risk_bridge_tax_day_pattern_reduces_risk_multiplier():
     assert snap_dump["risk_multiplier"] == 0.4
 
 
+def test_risk_bridge_capital_preservation_snapshot_exposes_generic_gross_exposure_cap():
+    reset_cache()
+    trade_date = date(2025, 5, 1)
+    scores_df, predictions_df, close_df, high_df, low_df = _make_inputs(trade_date)
+    cfg = RiskConfig(account_equity=100_000, min_position_notional=100, max_positions=5)
+    mr = MarketRegimesConfig(
+        enabled=True,
+        capital_preservation_max_gross_exposure=0.45,
+        vix=VixConfig(enabled=True, high_threshold=25.0),
+        yields=YieldsConfig(enabled=False),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+
+    class _MacroProvider:
+        def get_vix_close(self, _):
+            return 30.0
+
+        def get_vix_short_term_close(self, _):
+            return 24.0
+
+        def get_us10y_history(self, _, lookback):
+            return None
+
+    res = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=predictions_df,
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=cfg,
+        market_regimes_config=mr,
+        macro_provider=_MacroProvider(),
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert res.regime_snapshots[trade_date]["mode"] == "capital_preservation"
+    assert res.regime_snapshots[trade_date]["max_gross_exposure"] == 0.45
+
+
 def test_risk_bridge_collects_macro_missing_dates_when_fallback_allowed() -> None:
     reset_cache()
     trade_date = date(2025, 5, 1)

@@ -931,6 +931,7 @@ def run(
             "allowed_slots": getattr(_snapshot, "allowed_slots", None),
             "max_position_weight": getattr(_snapshot, "max_position_weight", None),
             "max_sector_weight": getattr(_snapshot, "max_sector_weight", None),
+            "max_gross_exposure": getattr(_snapshot, "max_gross_exposure", None),
             "allow_new_entries": getattr(_snapshot, "allow_new_entries", True),
             "active_patterns": getattr(_snapshot, "active_patterns", []),
             "blocked_sectors": getattr(_snapshot, "blocked_sectors", []),
@@ -950,11 +951,13 @@ def run(
         _guarded_max_positions = getattr(_snapshot, "effective_max_positions", None)
         _guarded_max_position_weight = getattr(_snapshot, "max_position_weight", None)
         _guarded_max_sector_weight = getattr(_snapshot, "max_sector_weight", None)
+        _guarded_max_gross_exposure = getattr(_snapshot, "max_gross_exposure", None)
         if (
             _new_mode != config.entry_mode
             or _guarded_max_positions != config.regime_max_positions
             or _guarded_max_position_weight != config.regime_max_position_weight
             or _guarded_max_sector_weight != config.regime_max_sector_weight
+            or _guarded_max_gross_exposure != config.regime_max_gross_exposure
         ):
             from dataclasses import replace as _dc_replace
             _raw_reasons = _snap_dict.get("reasons")
@@ -968,14 +971,16 @@ def run(
                 f"{YELLOW}[market_regime] garde-fous live : "
                 f"max_positions={_guarded_max_positions} · "
                 f"max_position_weight={_guarded_max_position_weight} · "
-                f"max_sector_weight={_guarded_max_sector_weight}{RESET}"
+                f"max_sector_weight={_guarded_max_sector_weight} · "
+                f"max_gross_exposure={_guarded_max_gross_exposure}{RESET}"
             )
             config = _dc_replace(
                 config,
                 entry_mode=_new_mode,
-                regime_max_positions=int(_guarded_max_positions) if _guarded_max_positions is not None else None,
-                regime_max_position_weight=float(_guarded_max_position_weight) if _guarded_max_position_weight is not None else None,
-                regime_max_sector_weight=float(_guarded_max_sector_weight) if _guarded_max_sector_weight is not None else None,
+                regime_max_positions=int(cast(object, _guarded_max_positions)) if _guarded_max_positions is not None else None,
+                regime_max_position_weight=float(cast(object, _guarded_max_position_weight)) if _guarded_max_position_weight is not None else None,
+                regime_max_sector_weight=float(cast(object, _guarded_max_sector_weight)) if _guarded_max_sector_weight is not None else None,
+                regime_max_gross_exposure=float(cast(object, _guarded_max_gross_exposure)) if _guarded_max_gross_exposure is not None else None,
             )
             # Reconstruire executor avec la nouvelle config (frozen).
             broker = BrokerAdapter(client, config)
