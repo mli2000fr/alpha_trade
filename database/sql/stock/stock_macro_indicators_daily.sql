@@ -4,7 +4,6 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_macro_indicators_daily (
     vix9d       DOUBLE    DEFAULT NULL,
     ten_y       DOUBLE    DEFAULT NULL,
     mode        VARCHAR(32) DEFAULT NULL,
-    equity_simulated DOUBLE DEFAULT NULL,
     risk_multiplier DOUBLE DEFAULT NULL,
     effective_max_positions INT DEFAULT NULL,
     allow_new_entries TINYINT(1) DEFAULT NULL,

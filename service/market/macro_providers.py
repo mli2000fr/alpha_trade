@@ -1075,7 +1075,6 @@ def populate_macro_indicators_table(
             "vix9d": macro_data.get("vix_short"),
             "ten_y": macro_data.get("yield_10y"),
             "mode": snap_payload.get("mode"),
-            "equity_simulated": snap_payload.get("equity_simulated", equity),
             "risk_multiplier": snap_payload.get("risk_multiplier"),
             "effective_max_positions": snap_payload.get("effective_max_positions"),
             "allow_new_entries": snap_payload.get("allow_new_entries"),
@@ -1099,7 +1098,6 @@ def populate_macro_indicators_table(
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
-        "equity_simulated": equity,
         "sessions_total": len(session_dates),
         "persisted_rows": persisted_rows,
         "missing_rows": missing_rows,

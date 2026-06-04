@@ -25,7 +25,6 @@ def test_persist_macro_indicator_daily_inserts_and_updates_row() -> None:
             vix9d=14.15,
             ten_y=4.50,
             mode="normal",
-            equity_simulated=2000.0,
             risk_multiplier=1.0,
             effective_max_positions=4,
             allow_new_entries=True,
@@ -46,7 +45,6 @@ def test_persist_macro_indicator_daily_inserts_and_updates_row() -> None:
                     table.c.vix9d,
                     table.c.ten_y,
                     table.c.mode,
-                    table.c.equity_simulated,
                     table.c.risk_multiplier,
                     table.c.effective_max_positions,
                     table.c.allow_new_entries,
@@ -62,7 +60,6 @@ def test_persist_macro_indicator_daily_inserts_and_updates_row() -> None:
         assert row.vix9d == 14.15
         assert row.ten_y == 4.50
         assert row.mode == "normal"
-        assert row.equity_simulated == 2000.0
         assert row.risk_multiplier == 1.0
         assert row.effective_max_positions == 4
         assert row.allow_new_entries is True
@@ -78,7 +75,6 @@ def test_persist_macro_indicator_daily_inserts_and_updates_row() -> None:
             vix9d=15.0,
             ten_y=4.65,
             mode="capital_preservation",
-            equity_simulated=1500.0,
             risk_multiplier=0.75,
             effective_max_positions=2,
             allow_new_entries=False,
@@ -99,7 +95,6 @@ def test_persist_macro_indicator_daily_inserts_and_updates_row() -> None:
                     table.c.vix9d,
                     table.c.ten_y,
                     table.c.mode,
-                    table.c.equity_simulated,
                     table.c.risk_multiplier,
                     table.c.effective_max_positions,
                     table.c.allow_new_entries,
@@ -115,7 +110,6 @@ def test_persist_macro_indicator_daily_inserts_and_updates_row() -> None:
         assert row.vix9d == 15.0
         assert row.ten_y == 4.65
         assert row.mode == "capital_preservation"
-        assert row.equity_simulated == 1500.0
         assert row.risk_multiplier == 0.75
         assert row.effective_max_positions == 2
         assert row.allow_new_entries is False
@@ -213,7 +207,6 @@ def test_persist_market_macro_snapshot_daily_maps_snapshot_payload() -> None:
             trade_date=date(2025, 4, 15),
             macro_payload={
                 "mode": "capital_preservation",
-                "equity_simulated": 2000.0,
                 "risk_multiplier": 0.7,
                 "effective_max_positions": 2,
                 "allow_new_entries": True,
@@ -232,7 +225,6 @@ def test_persist_market_macro_snapshot_daily_maps_snapshot_payload() -> None:
                     table.c.vix9d,
                     table.c.ten_y,
                     table.c.mode,
-                    table.c.equity_simulated,
                     table.c.risk_multiplier,
                     table.c.effective_max_positions,
                     table.c.allow_new_entries,
@@ -248,7 +240,6 @@ def test_persist_market_macro_snapshot_daily_maps_snapshot_payload() -> None:
         assert row.vix9d == 14.15
         assert row.ten_y == 4.50
         assert row.mode == "capital_preservation"
-        assert row.equity_simulated == 2000.0
         assert row.risk_multiplier == 0.7
         assert row.effective_max_positions == 2
         assert row.allow_new_entries is True

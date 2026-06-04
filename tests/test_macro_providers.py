@@ -506,7 +506,6 @@ def test_table_first_provider_persists_fallback_value() -> None:
         assert row["vix9d"] is None
         assert row["ten_y"] == 4.5
         assert row["mode"] is None
-        assert row["equity_simulated"] is None
         assert row["risk_multiplier"] is None
         assert row["effective_max_positions"] is None
         assert row["allow_new_entries"] is None
@@ -561,7 +560,6 @@ def test_table_first_provider_uses_previous_session_in_strict_j_minus_1(monkeypa
         assert row["vix9d"] is None
         assert row["ten_y"] is None
         assert row["mode"] is None
-        assert row["equity_simulated"] is None
         assert row["risk_multiplier"] is None
         assert row["effective_max_positions"] is None
         assert row["allow_new_entries"] is None
@@ -615,7 +613,6 @@ def test_populate_macro_indicators_table_imports_date_range(monkeypatch) -> None
                     return {
                         "trade_date": trade_date.isoformat(),
                         "mode": "capital_preservation",
-                        "equity_simulated": equity,
                         "risk_multiplier": 0.7,
                         "effective_max_positions": 2,
                         "allow_new_entries": True,
@@ -665,7 +662,6 @@ def test_populate_macro_indicators_table_imports_date_range(monkeypatch) -> None
         assert row["vix9d"] == 14.15
         assert row["ten_y"] == 4.5
         assert row["mode"] == "capital_preservation"
-        assert row["equity_simulated"] == 2000.0
         assert row["risk_multiplier"] == 0.7
         assert row["effective_max_positions"] == 2
         assert row["allow_new_entries"] is True
