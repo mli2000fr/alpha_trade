@@ -288,6 +288,45 @@ def test_upsert_scores_snapshot_can_skip_purge_and_archive(monkeypatch) -> None:
     assert archive_calls == []
 
 
+def test_upsert_scores_snapshot_converts_nan_values_before_mysql_insert(monkeypatch) -> None:
+    engine = _FakeEngine()
+
+    monkeypatch.setattr(db_io, "_get_scores_table", lambda current_engine: object())
+    monkeypatch.setattr(db_io, "mysql_insert", lambda table: _FakeInsert())
+    monkeypatch.setattr(db_io, "_enrich_scores_with_metadata_sector", lambda current_engine, df: df)
+    monkeypatch.setattr(db_io, "_enrich_scores_with_audit", lambda current_engine, df: df)
+    monkeypatch.setattr(db_io, "_purge_missing_scores", lambda current_engine, symbols: None)
+    monkeypatch.setattr(db_io, "archive_scores_snapshot", lambda current_engine, snapshot_date=None, **kwargs: 0)
+
+    scores_df = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "liquidity_val": float("nan"),
+                "relative_strength_index": 0.5,
+                "historical_range_score": 0.3,
+                "total_score": float("nan"),
+                "last_updated_score": "2025-01-01",
+                "is_candidate": 1,
+                "sector": None,
+                "anomaly_count": float("nan"),
+                "missing_days_count": float("nan"),
+                "sanitizer_status": "success",
+                "last_updated_scan": "2025-01-01",
+            }
+        ]
+    )
+
+    db_io.upsert_scores_snapshot(engine, scores_df, chunksize=1000)
+
+    statement, _ = engine.connection.executed[0]
+    record = statement[1][0]
+    assert record["liquidity_val"] is None
+    assert record["total_score"] is None
+    assert record["anomaly_count"] is None
+    assert record["missing_days_count"] is None
+
+
 def test_iter_symbol_chunks_reads_from_stock_bars_daily() -> None:
     engine = _FakeEngine()
     engine.connection.rows_queue = [[("AAA",), ("BBB",)], [("CCC",)], []]

@@ -415,6 +415,25 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	return normalized.loc[:, REQUIRED_SCORE_COLUMNS].copy()
 
 
+def _coerce_mysql_scalar(value: object) -> object:
+	if value is None:
+		return None
+	try:
+		if pd.isna(value):
+			return None
+	except (TypeError, ValueError):
+		# Certains objets scalaires ne sont pas compatibles avec pd.isna.
+		return value
+	return value
+
+
+def _records_with_mysql_nulls(records: list[dict[str, object]]) -> list[dict[str, object]]:
+	return [
+		{key: _coerce_mysql_scalar(value) for key, value in record.items()}
+		for record in records
+	]
+
+
 def archive_scores_snapshot(
 	engine: Engine,
 	snapshot_date: Optional[date] = None,
@@ -495,6 +514,7 @@ def upsert_scores_snapshot(
 	with engine.begin() as conn:
 		for start in range(0, len(scores_df), chunksize):
 			chunk_records = scores_df.iloc[start:start + chunksize].to_dict(orient="records")
+			chunk_records = _records_with_mysql_nulls(chunk_records)
 			stmt = mysql_insert(scores_table).values(chunk_records)
 			update_dict = {
 				"liquidity_val": stmt.inserted.liquidity_val,

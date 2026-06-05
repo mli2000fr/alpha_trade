@@ -191,7 +191,7 @@ def _build_pipeline_trade_export_frame(
         pipeline,
         ("replay_oco_sibling_canceled", "oco_sibling_canceled"),
         default=False,
-    ).fillna(False)
+    ).fillna(False).infer_objects(copy=False)
     pipeline_export["sector"] = _coalesce_columns(pipeline, ("sector", "signal_sector"))
     pipeline_export["selector_signal_mode"] = _coalesce_columns(pipeline, ("selector_signal_mode",))
     pipeline_export["selection_explanation"] = _coalesce_columns(pipeline, ("selection_explanation",))
