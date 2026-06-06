@@ -41,7 +41,7 @@ def engine():
                     risk_budget_dollars DOUBLE, initial_risk_dollars DOUBLE,
                     target_notional DOUBLE, target_weight DOUBLE,
                 sector VARCHAR(60), score_used DOUBLE, score_source VARCHAR(40),
-                conviction_score DOUBLE, sizing_method VARCHAR(20), kelly_fraction DOUBLE,
+                conviction_score DOUBLE, sizing_method VARCHAR(100), kelly_fraction DOUBLE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
@@ -65,7 +65,7 @@ def engine():
                 selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
                 side VARCHAR(10),
                 target_shares INT, entry_price DOUBLE, target_weight DOUBLE, sector VARCHAR(60),
-                conviction_score DOUBLE, sizing_method VARCHAR(20), kelly_fraction DOUBLE,
+                conviction_score DOUBLE, sizing_method VARCHAR(100), kelly_fraction DOUBLE,
                 atr_20 DOUBLE, price_asof_date DATE, atr_asof_date DATE,
                 stop_price_initial DOUBLE, risk_per_share DOUBLE, risk_budget_dollars DOUBLE,
                 initial_risk_dollars DOUBLE, target_notional DOUBLE,

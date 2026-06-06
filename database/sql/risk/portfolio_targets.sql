@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS portfolio_targets (
     score_used      DOUBLE        NULL,
     score_source    VARCHAR(40)   NULL,
     conviction_score    DOUBLE       NULL,
-    sizing_method       VARCHAR(20)  NULL,
+    sizing_method       VARCHAR(100)  NULL,
     kelly_fraction      DOUBLE       NULL,
     atr_asof_date       DATE         NULL,
     company_idio_score      DOUBLE       NULL,

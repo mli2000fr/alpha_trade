@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
     ml_metrics_asof_date DATE        NULL,
     effective_probability DOUBLE     NULL,
     kelly_fraction      DOUBLE       NULL,
-    sizing_method       VARCHAR(20)  NULL,
+    sizing_method       VARCHAR(100)  NULL,
     correlation_blocker VARCHAR(20)  NULL,
     correlation_value   DOUBLE       NULL,
     stop_price_initial  DOUBLE       NULL,
