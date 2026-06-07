@@ -22,10 +22,15 @@
 
 ## 2. Providers annexes
 
-- **News provider par défaut** : `alpaca`.
+- **News provider par défaut** : `eodhd`.
 - **Métadonnées société / secteur / market cap** : `Finnhub`.
 - **Earnings calendar** : `Finnhub`.
 - **Corporate actions portefeuille** : `Alpaca Corporate Actions`.
+
+> Note doctrine `bars_provider` : la convention opérateur reste
+> `config.yaml > market_data.bars_provider=eodhd`. Si `config.yaml` est absent
+> ou illisible, le fallback technique interne des importeurs de barres reste
+> `alpaca` (rétrocompatibilité explicite, testée).
 
 ## 3. Trading / portefeuille / risque
 

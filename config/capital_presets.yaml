@@ -69,7 +69,6 @@ presets:
       selector_min_close: 10.0                 # min 10$ : limite l'impact des frais fixes
       selector_max_volatility_ratio: 1.0
       selector_min_ibd_rs_rank: 90.0           # Sprint S1 / A-028 — nouveau nom explicite
-      selector_min_relative_strength_index: 90.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.55
       selector_min_weekly_trend_score: 0.65
       selector_min_atr_pct_20: 0.01
@@ -147,7 +146,6 @@ presets:
       selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 5.0)
       selector_max_volatility_ratio: 1.0
       selector_min_ibd_rs_rank: 95.0
-      selector_min_relative_strength_index: 95.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.65
       selector_min_weekly_trend_score: 0.75
       selector_min_atr_pct_20: 0.01
@@ -222,7 +220,6 @@ presets:
       selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 7.0)
       selector_max_volatility_ratio: 0.95
       selector_min_ibd_rs_rank: 98.0
-      selector_min_relative_strength_index: 98.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.70
       selector_min_weekly_trend_score: 0.80
       selector_min_atr_pct_20: 0.0125
@@ -292,7 +289,6 @@ presets:
       selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 8.0)
       selector_max_volatility_ratio: 0.90
       selector_min_ibd_rs_rank: 100.0
-      selector_min_relative_strength_index: 100.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.72
       selector_min_weekly_trend_score: 0.85
       selector_min_atr_pct_20: 0.015
@@ -359,7 +355,6 @@ presets:
       selector_min_close: 10.0
       selector_max_volatility_ratio: 0.90
       selector_min_ibd_rs_rank: 100.0
-      selector_min_relative_strength_index: 100.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.75
       selector_min_weekly_trend_score: 0.90
       selector_min_atr_pct_20: 0.015
@@ -501,7 +496,6 @@ presets:
       selector_min_close: 12.0
       selector_max_volatility_ratio: 0.85
       selector_min_ibd_rs_rank: 102.0
-      selector_min_relative_strength_index: 102.0  # alias rétrocompatible 1 release
       selector_min_high_52w_proximity: 0.78
       selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015

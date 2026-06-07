@@ -21,7 +21,7 @@
 > runbooks doivent être lus en mode provider-aware : EODHD est nominal,
 > Alpaca daily est rétrocompatibilité/no-op si `bars_provider=eodhd`.
 
-> \➡️ **Provider NEWS par défaut : `Alpaca`** (import et scoring des news, paramètre `--news-provider` par défaut à `alpaca` dans les scripts).
+> \➡️ **Provider NEWS par défaut : `eodhd`** (import et scoring des news, paramètre `--news-provider` par défaut à `eodhd` dans les scripts).
 
 > 📚 **Références transverses S7** :
 > `doc/CONVENTIONS.md` centralise désormais les conventions canoniques ;
@@ -163,7 +163,7 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 - Exécuté par chunks de 500 symboles en parallèle (ProcessPoolExecutor)
 
 #### Analyse de sentiment (FinBERT)
-- Ingestion des news Alpaca, scoring via le modèle pré-entraîné `ProsusAI/finbert`
+- Ingestion des news EODHD par défaut (providers `alpaca` et `finnhub` disponibles via `--news-provider`), scoring via le modèle pré-entraîné `ProsusAI/finbert`
 - Dans l'IHM, le step `7. Sentiment Pipeline` applique désormais un **scope mixte canonique** : import brut sur `stock_scores_all`, scoring standard / `relevance_score` / contextual sur les **candidats** (ou override CSV), `ticker_daily_sentiment_features` sur les **candidats** et `sector_daily_sentiment_features` sur l'**univers élargi importé**
 - Mapping article → ticker en 3 modes : `provider_default` (hérité), `strict` (ticker principal seul) et `scored` (score de pertinence `relevance_score` par couple `(article, symbole)`)
 - La migration Alembic `0027_news_ticker_map_relevance` ajoute `news_ticker_map.relevance_score` et `relevance_components` pour filtrer/pondérer les articles trop bruités sans casser l'historique (`NULL` reste accepté)

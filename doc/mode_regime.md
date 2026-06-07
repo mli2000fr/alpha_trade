@@ -1,5 +1,8 @@
 # FAQ opérateur — Mode régime Market-Aware
 
+> ⚠️ **POC non activé** : note d'accompagnement opérateur. La référence
+> canonique reste `doc/macro_regime.md` et la configuration versionnée.
+
 Cette note répond aux questions fréquentes côté opérateur.
 
 Pour l'explication détaillée de la couche macro/régime (sources Stooq/EODHD, impact sur le backtest et le live, `data_quality=missing`, mode strict vs tolérant), voir :

@@ -111,7 +111,11 @@ _is_known_unsupported_fallback_symbol = _transforms.is_known_unsupported_fallbac
 
 
 def resolve_bars_provider(config: dict | None = None) -> str:
-    """Lit ``market_data.bars_provider`` (défaut ``alpaca``)."""
+    """Lit ``market_data.bars_provider`` (fallback technique ``alpaca``).
+
+    Convention opérateur: ``config.yaml`` versionné fixe ``bars_provider=eodhd``.
+    Le fallback à ``alpaca`` ne s'applique qu'en absence/illisibilité de config.
+    """
     cfg = config if config is not None else _load_config_safe()
     return str(((cfg or {}).get("market_data") or {}).get("bars_provider", "alpaca")).lower()
 

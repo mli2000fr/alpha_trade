@@ -40,27 +40,34 @@ Documentation, Configuration, DataIntegrityEngine, Event Sentiment
 - A-013 : Redondance DOC_FONCTIONNELLE / DOC_TECHNIQUE (partiel)
 
 ### Tâches
-1. **T1.1** : Acter le défaut réel du provider news déjà vérifié dans le code (`event_sentiment/cli.py`, `event_sentiment/config.py`) : `eodhd`
-2. **T1.2** : Aligner toute la documentation (README.md, CONVENTIONS.md, DOC_FONCTIONNELLE.md, DOC_TECHNIQUE.md) sur cette valeur canonique
-3. **T1.3** : Décider si le fallback interne `bars_provider` sans config doit rester `alpaca` (rétrocompat) ou être aligné sur `eodhd`
+1. [x] **T1.1** : Acter le défaut réel du provider news déjà vérifié dans le code (`event_sentiment/cli.py`, `event_sentiment/config.py`) : `eodhd`
+2. [x] **T1.2** : Aligner toute la documentation (README.md, CONVENTIONS.md, DOC_FONCTIONNELLE.md, DOC_TECHNIQUE.md) sur cette valeur canonique
+3. [x] **T1.3** : Décider si le fallback interne `bars_provider` sans config doit rester `alpaca` (rétrocompat) ou être aligné sur `eodhd`
    - Fichiers : `dataIntegrityEngine/import_alpaca_bar.py:441`, `dataIntegrityEngine/import_eodhd_bar.py:90`
-4. **T1.4** : Mettre à jour la documentation pour refléter explicitement le défaut code
-5. **T1.5** : Supprimer les alias rétrocompatibles redondants dans `capital_presets.yaml` (A-025)
-6. **T1.6** : Mettre à jour `doc/` selon les écarts détectés (A-026, A-027)
+   - Décision retenue : fallback technique interne maintenu à `alpaca` en cas de `config.yaml` absent/illisible ; convention opérateur inchangée `bars_provider=eodhd` dans le dépôt versionné.
+4. [x] **T1.4** : Mettre à jour la documentation pour refléter explicitement le défaut code
+5. [x] **T1.5** : Supprimer les alias rétrocompatibles redondants dans `capital_presets.yaml` (A-025)
+6. [x] **T1.6** : Mettre à jour `doc/` selon les écarts détectés (A-026, A-027)
 
 ### Justification
 Ces incohérences peuvent amener un opérateur à utiliser le mauvais provider sans le savoir, avec un impact direct sur la qualité des données et des décisions.
 
 ### Critères d'acceptation
-- [ ] La valeur du provider news par défaut est identique dans tous les fichiers de documentation
-- [ ] La doctrine sur le fallback interne `bars_provider` est explicitée (code + doc + tests)
-- [ ] Les tests provider existants reflètent la doctrine retenue
-- [ ] Les documents POC portent un bandeau explicite
+- [x] La valeur du provider news par défaut est identique dans tous les fichiers de documentation
+- [x] La doctrine sur le fallback interne `bars_provider` est explicitée (code + doc + tests)
+- [x] Les tests provider existants reflètent la doctrine retenue
+- [x] Les documents POC portent un bandeau explicite
 
 ### Tests
-- `tests/test_doc_news_provider_consistency.py` (nouveau ou équivalent) — non-régression documentation
+- `tests/test_doc_news_provider_consistency.py` (nouveau) — non-régression documentation
 - `tests/test_eodhd_provider_switch.py` (existant) — symétrie / fallback provider
 - `tests/test_config_no_literal_secrets.py` (existant) — passe toujours
+
+### Bilan Sprint 1 (clos)
+- Défaut `news_provider` du code acté et documentation alignée sur `eodhd`.
+- Doctrine fallback `bars_provider` explicitée : fallback technique `alpaca` uniquement en absence/illisibilité de config ; valeur canonique opérateur `eodhd`.
+- Aliases legacy `selector_min_relative_strength_index` retirés de `config/capital_presets.yaml`.
+- Garde-fous de tests ajoutés/renforcés (`test_doc_news_provider_consistency.py`, `test_eodhd_provider_switch.py`).
 
 ### Gain attendu
 - Documentation : 7.0 → 8.0

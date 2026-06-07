@@ -569,12 +569,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_bars_provider() -> str:
-    """Lit ``market_data.bars_provider`` (défaut ``alpaca`` — rétrocompat).
+    """Lit ``market_data.bars_provider`` (fallback technique ``alpaca``).
 
     Phase 4 plan_eodhd.md §5.6 : symétrique de
     ``import_eodhd_bar.resolve_bars_provider``. Si l'opérateur bascule
     ``bars_provider=eodhd``, le pipeline Alpaca devient no-op pour éviter
     les double-écritures et les conflits de ``data_source``.
+
+    Convention opérateur: ``config.yaml`` versionné fixe ``bars_provider=eodhd``.
+    Le fallback à ``alpaca`` ne s'applique qu'en absence/illisibilité de config.
     """
     try:
         from common.config_loader import load_config

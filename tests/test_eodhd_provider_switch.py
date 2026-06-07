@@ -77,6 +77,16 @@ def test_import_alpaca_bar_resolve_provider_default_to_alpaca(monkeypatch):
     assert import_alpaca_bar._resolve_bars_provider() == "alpaca"
 
 
+def test_import_eodhd_bar_resolve_provider_default_to_alpaca_when_config_missing(monkeypatch):
+    monkeypatch.setattr(import_eodhd_bar, "_load_config_safe", lambda: {})
+    assert import_eodhd_bar.resolve_bars_provider() == "alpaca"
+
+
+def test_import_eodhd_bar_resolve_provider_prefers_explicit_config(monkeypatch):
+    monkeypatch.setattr(import_eodhd_bar, "_load_config_safe", lambda: {"market_data": {"bars_provider": "eodhd"}})
+    assert import_eodhd_bar.resolve_bars_provider() == "eodhd"
+
+
 # ---------------------------------------------------------------------------
 # Sens 2 : alpaca -> EODHD no-op (rappel)
 # ---------------------------------------------------------------------------

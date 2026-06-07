@@ -17,7 +17,7 @@
 > (source unique active `stock_bars_daily`, runbooks EODHD/Alpaca,
 > suppression du faux `fallback_on_failure`).
 >
-> \➡️ **Provider NEWS par défaut : `Alpaca`** (cf. scripts d'import et scoring, paramètre `--news-provider` par défaut à `alpaca`).
+> \➡️ **Provider NEWS par défaut : `eodhd`** (cf. scripts d'import et scoring, paramètre `--news-provider` par défaut à `eodhd`).
 
 > 📚 **Références transverses S7** : `doc/CONVENTIONS.md` (conventions
 > canoniques), `doc/CHANGELOG.md` (journal documentaire).

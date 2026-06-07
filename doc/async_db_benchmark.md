@@ -1,5 +1,8 @@
 # Async DB benchmark — Sprint S28.4 / A10
 
+> ⚠️ **POC non active en production par defaut**. Resultats de benchmark de
+> recherche uniquement, sans activation automatique du runtime async.
+
 - rows seeded : **500**
 - runs per loader : **3**
 - sync DSN : `sqlite:///:memory:`
