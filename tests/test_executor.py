@@ -370,6 +370,28 @@ class TestExecutor:
 
     def test_pdt_limit_defers_children_when_daytrade_slots_exhausted(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="auto")
+        targets = [_target("AAPL"), _target("MSFT")]
+        executor, repo, broker, _ = _make_executor(cfg, targets=targets)
+        broker.submit_intent.side_effect = lambda intent: _filled_order(intent_id=intent.intent_id, symbol=intent.symbol)
+        broker.poll_order_status.side_effect = (
+            lambda broker_order_id, intent_id: _filled_order(intent_id=intent_id)
+        )
+        broker.get_account_snapshot.return_value = {
+            "equity": 2_000.0,
+            "cash": 2_000.0,
+            "buying_power": 20_000.0,
+            "non_marginable_buying_power": 2_000.0,
+            "daytrade_count": 2,
+        }
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["children_deferred"] == 1
+        event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
+        assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
+
+    def test_pdt_limit_blocks_entry_when_daytrade_slots_exhausted(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="auto")
         executor, repo, broker, _ = _make_executor(cfg)
         broker.get_account_snapshot.return_value = {
             "equity": 2_000.0,
@@ -381,9 +403,15 @@ class TestExecutor:
 
         metrics = executor.execute_run(risk_run_id="r1")
 
-        assert metrics["children_deferred"] == 1
-        event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
-        assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
+        broker.submit_intent.assert_not_called()
+        assert metrics["constraint_blocked"] == 1
+        blocked_events = [
+            c[0][0]
+            for c in repo.insert_execution_event.call_args_list
+            if c[0][0].get("event_type") == EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT
+        ]
+        assert blocked_events
+        assert any("PDT" in str(evt.get("message", "")) for evt in blocked_events)
 
     def test_swing_only_defers_children_even_without_pdt_limit(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="off", swing_only=True)

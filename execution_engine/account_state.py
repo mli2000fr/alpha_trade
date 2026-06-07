@@ -133,6 +133,30 @@ def reserve_account_capacity_for_intent(
     if intent.side != "buy":
         return True
 
+    if account_state.pdt_active and account_state.remaining_day_trade_slots <= 0:
+        metrics["skipped"] += 1
+        metrics["constraint_blocked"] += 1
+        events.append(
+            make_event(
+                exec_run_id,
+                EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT,
+                (
+                    f"Blocked by PDT constraint: {intent.symbol} (remaining_day_trade_slots="
+                    f"{account_state.remaining_day_trade_slots})"
+                ),
+                symbol=intent.symbol,
+                intent_id=intent.intent_id,
+                payload={
+                    "reason": "pdt_limit",
+                    "account_type": account_state.account_type,
+                    "effective_pdt_rule": account_state.effective_pdt_rule,
+                    "swing_only": account_state.swing_only,
+                    "remaining_day_trade_slots": account_state.remaining_day_trade_slots,
+                },
+            )
+        )
+        return False
+
     estimated_notional = estimate_intent_notional(intent)
     available_budget = (
         account_state.settled_cash_available
