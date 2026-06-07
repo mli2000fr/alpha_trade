@@ -148,19 +148,18 @@ def _split_recipients(value: str) -> tuple[str, ...]:
     return tuple(addr.strip() for addr in value.split(",") if addr.strip())
 
 
-def build_notifier_from_env(env: Optional[dict] = None) -> Notifier:
-    """Construit le notifier le plus adapté à l'environnement courant.
+def build_notifiers_from_env(env: Optional[dict] = None) -> tuple[Notifier, ...]:
+    """Construit tous les canaux disponibles depuis l'environnement.
 
-    Ordre de priorité :
-    1. ``ALPHA_TRADE_SLACK_WEBHOOK`` set non vide → :class:`SlackNotifier`.
-    2. ``ALPHA_TRADE_SMTP_HOST`` + ``ALPHA_TRADE_SMTP_TO`` set → :class:`EmailNotifier`.
-    3. Sinon → :class:`LogNotifier`.
+    Contrairement à ``build_notifier_from_env`` (historique), cette fonction
+    retourne potentiellement plusieurs notifiers (ex. Slack + SMTP).
     """
     source = env if env is not None else os.environ
+    channels: list[Notifier] = []
 
     webhook = (source.get(ENV_SLACK_WEBHOOK) or "").strip()
     if webhook:
-        return SlackNotifier(webhook_url=webhook)
+        channels.append(SlackNotifier(webhook_url=webhook))
 
     smtp_host = (source.get(ENV_SMTP_HOST) or "").strip()
     smtp_to_raw = (source.get(ENV_SMTP_TO) or "").strip()
@@ -171,16 +170,51 @@ def build_notifier_from_env(env: Optional[dict] = None) -> Notifier:
             port = int(port_raw)
         except ValueError:
             port = 587
-        return EmailNotifier(
-            host=smtp_host,
-            port=port,
-            from_addr=smtp_from,
-            to_addrs=_split_recipients(smtp_to_raw),
-            username=(source.get(ENV_SMTP_USER) or None),
-            password=(source.get(ENV_SMTP_PASSWORD) or None),
+        channels.append(
+            EmailNotifier(
+                host=smtp_host,
+                port=port,
+                from_addr=smtp_from,
+                to_addrs=_split_recipients(smtp_to_raw),
+                username=(source.get(ENV_SMTP_USER) or None),
+                password=(source.get(ENV_SMTP_PASSWORD) or None),
+            )
         )
 
-    return LogNotifier()
+    if not channels:
+        channels.append(LogNotifier())
+    return tuple(channels)
+
+
+def build_notifier_from_env(env: Optional[dict] = None) -> Notifier:
+    """Construit le notifier le plus adapté à l'environnement courant.
+
+    Ordre de priorité :
+    1. ``ALPHA_TRADE_SLACK_WEBHOOK`` set non vide → :class:`SlackNotifier`.
+    2. ``ALPHA_TRADE_SMTP_HOST`` + ``ALPHA_TRADE_SMTP_TO`` set → :class:`EmailNotifier`.
+    3. Sinon → :class:`LogNotifier`.
+    """
+    return build_notifiers_from_env(env=env)[0]
+
+
+def send_system_alert(
+    event: str,
+    payload: Optional[dict] = None,
+    *,
+    severity: Severity = "warning",
+    env: Optional[dict] = None,
+) -> None:
+    """Diffuse une alerte système sur tous les canaux configurés.
+
+    Jamais bloquant : chaque canal est best-effort.
+    """
+    subject = f"Alpha Trade | {event}"
+    body = str(payload or {})
+    for notifier in build_notifiers_from_env(env=env):
+        try:
+            notifier.send(subject=subject, body=body, severity=severity)
+        except Exception:  # pragma: no cover - les notifiers gèrent déjà leurs erreurs
+            LOGGER.debug("[alerting] notifier failure for event=%s", event, exc_info=True)
 
 
 __all__ = [
@@ -193,6 +227,8 @@ __all__ = [
     "LogNotifier",
     "SlackNotifier",
     "EmailNotifier",
+    "build_notifiers_from_env",
     "build_notifier_from_env",
+    "send_system_alert",
 ]
 

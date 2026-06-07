@@ -211,9 +211,10 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 
 - **Alerte slippage** : déclenchée si l'écart prix fill vs prix de décision > seuil (défaut 30 bps)
 - **Kill switch** : arrêt automatique après N échecs consécutifs (défaut : 3)
-- **Circuit breaker actif** : événement loggé, run avorté
+- **Circuit breaker actif** : événement loggé, run avorté + notification externe best-effort (email IHM + canal `service.alerting` Slack/SMTP selon env)
 - **Logs critiques** : si le scanner produit 0 candidats (LOGGER.critical)
 - Tous les événements sont persistés dans la table `execution_events`
+- **Monitoring Prometheus** : endpoint `/metrics` disponible en mode opt-in (`ALPHA_TRADE_METRICS_PORT`) et utilisable avec Prometheus/Grafana
 
 ### 2.7 Historique / reporting
 
@@ -526,7 +527,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 | **Pas de gestion multi-devises** | Uniquement USD / actions US | Limitation de design |
 | **Pas de short selling** | Uniquement des positions long | Limitation de design |
 | **Pas de streaming temps réel** | Polling périodique (2s) pour les fills | Limitation de design |
-| **Pas de notification externe** | Pas d'email/SMS/Slack, logs fichier uniquement | Limitation |
+| **Alerting externe partiel** | Email IHM + Slack/SMTP disponibles surtout sur incidents critiques (ex: circuit breaker), couverture encore incomplète sur tous les événements métier | Moyenne |
 
 Concernant les contraintes petit capital simulées en backtest :
 
@@ -546,7 +547,7 @@ Concernant l'exécution réelle/paper :
 
 ## 7. Suggestions d'Amélioration Métier
 
-1. **Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run
+1. ~~**Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run~~ → ✅ **Partiellement implémenté** : email workflow IHM + alerting externe via `service.alerting` (Slack/SMTP/log), circuit breaker branché ; extension SMS et couverture de tous les événements critiques encore à compléter
 2. ~~**Dashboard temps réel**~~ → ✅ **Implémenté** : IHM Streamlit opérateur (`ihm/app.py`)
 3. ~~**Backtesting intégré**~~ → ✅ **Implémenté** : module `backtesting/` research/pipeline avec replay PIT, contraintes compte (`cash` / `margin` / `PDT` / `swing_only`), phases de fidélité 2/3/4/5/7, diagnostics screener et reporting structuré (`report.json`, `fidelity_manifest.json`)
 4. **Support short selling** : étendre la stratégie aux positions short

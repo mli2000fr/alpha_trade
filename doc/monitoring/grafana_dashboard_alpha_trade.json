@@ -1,0 +1,71 @@
+{
+  "title": "Alpha Trade - Pipeline Monitoring",
+  "tags": ["alpha-trade", "observability", "sprint5"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Dernier heartbeat watcher (s)",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "max(alpha_trade_watcher_heartbeat_age_seconds)",
+          "legendFormat": "heartbeat_age_s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Fraicheur stock_bars_daily (h)",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0},
+      "targets": [
+        {
+          "expr": "alpha_trade_data_freshness_hours{table=\"stock_bars_daily\"}",
+          "legendFormat": "bars_freshness_h",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Erreurs pipeline (15 min)",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(increase(alpha_pipeline_steps_total{status=\"ERROR\"}[15m]))",
+          "legendFormat": "pipeline_errors_15m",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Runs OK / ERROR par module (24 h)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {
+          "expr": "sum by (module, status) (increase(alpha_trade_run_summary_total[24h]))",
+          "legendFormat": "{{module}}/{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Duree etapes pipeline (quantile 95%)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, step) (rate(alpha_pipeline_duration_seconds_bucket[15m])))",
+          "legendFormat": "{{step}} p95",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
+

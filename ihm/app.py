@@ -10,6 +10,8 @@ import logging
 
 import streamlit as st
 
+from core.metrics import start_metrics_server
+
 from ihm.services.navigation import (
     get_navigation_page_imports,
     get_navigation_page_labels,
@@ -23,6 +25,9 @@ from ihm.services.theme_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Sprint S5 — endpoint Prometheus opt-in (aucun effet si env port absent/invalide).
+start_metrics_server(addr="127.0.0.1")
 
 st.set_page_config(
     page_title="Alpha Trade — Cockpit Opérateur",

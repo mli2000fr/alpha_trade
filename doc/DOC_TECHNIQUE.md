@@ -262,6 +262,11 @@ Points d'implémentation importants côté `modelFactory` :
 | `ALPACA_<ID>_SECRET_KEY` | ⚠️ | Secret pour un compte supplémentaire |
 | `ALPACA_<ID>_MODE` | ⚠️ | Mode du compte (paper/live, défaut: paper) |
 | `FINNHUB_API_KEY` | ⚠️ | Token Finnhub (ou `CLE_FINNHUB`) — requis pour `update_sector` |
+| `ALPHA_TRADE_METRICS_PORT` | ⚠️ | Active l'endpoint Prometheus `/metrics` (opt-in) |
+| `ALPHA_TRADE_SLACK_WEBHOOK` | ⚠️ | Webhook Slack pour alerting externe |
+| `ALPHA_TRADE_SMTP_HOST` / `ALPHA_TRADE_SMTP_PORT` | ⚠️ | SMTP alerting externe |
+| `ALPHA_TRADE_SMTP_FROM` / `ALPHA_TRADE_SMTP_TO` | ⚠️ | Expéditeur/destinataires alerting SMTP |
+| `ALPHA_TRADE_SMTP_USER` / `ALPHA_TRADE_SMTP_PASSWORD` | ⚠️ | Auth SMTP (optionnel selon serveur) |
 
 Pour le watcher Windows, ces variables peuvent être injectées via :
 
@@ -523,7 +528,7 @@ Référence dédiée : voir aussi `doc/watcher.md`.
 
 **Long terme (P3)** :
 11. Orchestrateur pipeline (Airflow/Prefect)
-12. Monitoring (Prometheus/Grafana)
+12. ~~Monitoring (Prometheus/Grafana)~~ → ✅ Socle Sprint 5 livré (`core.metrics`, `common.metrics`, dashboard/règles versionnés)
 13. Containerisation Docker
 14. ~~Framework de backtest intégré~~ → ✅ Implémenté : module `backtesting/` (simulateur custom PIT — aucune dépendance vectorbt ; moteur `BacktestEngine` dans `backtesting/simulator.py`)
 
@@ -663,6 +668,9 @@ Notes ML GPU :
 ```powershell
 python -m streamlit run ihm/app.py
 ```
+
+Si `ALPHA_TRADE_METRICS_PORT` est défini, `ihm/app.py` démarre aussi
+l'endpoint `/metrics` (bind local `127.0.0.1` par défaut).
 
 La page `ihm/pages/pipeline.py` expose désormais :
 

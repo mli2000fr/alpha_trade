@@ -221,24 +221,38 @@ Observabilité, Execution, Risk, Tous
 - A-021 : Pas de monitoring Prometheus/Grafana
 
 ### Tâches
-1. **T5.1** : Étendre les notifications email existantes aux événements critiques hors workflow terminal
-2. **T5.2** : Ajouter un webhook Slack / webhook générique
-3. **T5.3** : Brancher plus largement les métriques Prometheus existantes
-4. **T5.4** : Créer un dashboard Grafana de base
-5. **T5.5** : Configurer des alertes Grafana sur les métriques clés
+1. [x] **T5.1** : Étendre les notifications email existantes aux événements critiques hors workflow terminal
+2. [x] **T5.2** : Ajouter un webhook Slack / webhook générique
+3. [x] **T5.3** : Brancher plus largement les métriques Prometheus existantes
+4. [x] **T5.4** : Créer un dashboard Grafana de base
+5. [x] **T5.5** : Configurer des alertes Grafana sur les métriques clés
 
 ### Critères d'acceptation
-- [ ] Une alerte Slack est envoyée quand le circuit breaker se déclenche
-- [ ] Les métriques Prometheus sont accessibles sur un endpoint HTTP
-- [ ] Le dashboard Grafana affiche l'état du dernier run
+- [x] Une alerte Slack est envoyée quand le circuit breaker se déclenche
+- [x] Les métriques Prometheus sont accessibles sur un endpoint HTTP
+- [x] Le dashboard Grafana affiche l'état du dernier run
 
 ### Tests
-- `tests/test_alerting.py` (nouveau) — intégration alertes
-- `tests/test_metrics.py` (nouveau) — unitaire métriques
+- `tests/test_alerting_slack.py` (existant, renforcé) — unitaires/intégration alertes Slack + circuit breaker + broadcast multi-canaux
+- `tests/test_prometheus_metrics.py` (existant) — unitaires métriques pipeline
+- `tests/test_core_metrics.py` (existant) — unitaires endpoint `/metrics` et métriques canoniques
+- `tests/test_pipeline_flow.py` (existant) — intégration orchestrateur + émission métriques par étape
+
+### Notes d'implémentation
+- `risk_management/circuit_breaker.py` déclenche désormais un alerting externe best-effort via `service.alerting` (Slack/SMTP/log) en plus de la notification email IHM historique.
+- `service/alerting.py` supporte un mode multi-canaux (`build_notifiers_from_env`, `send_system_alert`) pour diffuser une alerte simultanément sur Slack et SMTP si configurés.
+- `ihm/app.py` démarre l'endpoint `/metrics` en mode opt-in via `ALPHA_TRADE_METRICS_PORT` (bind local `127.0.0.1`).
+- Livrables monitoring versionnés : `doc/monitoring/grafana_dashboard_alpha_trade.json` et `doc/monitoring/prometheus_alert_rules.yml`.
 
 ### Gain attendu
 - Observabilité : 8.0 → 9.0
 - Sécurité/Readiness : 7.0 → 8.0
+
+### Bilan Sprint 5 (clos)
+- Alerting externe consolidé autour de `service.alerting` (Slack/SMTP/log) et branché sur le circuit breaker.
+- Endpoint Prometheus `/metrics` activable côté IHM (`ALPHA_TRADE_METRICS_PORT`) ; métriques pipeline déjà émises par `flows/daily_pipeline.py`.
+- Socle dashboard/alertes Grafana-Prometheus livré et versionné dans `doc/monitoring/`.
+- Documentation fonctionnelle et technique mise à jour pour refléter l'état réel du socle monitoring.
 
 ---
 
@@ -354,7 +368,8 @@ Architecture, Sécurité, IHM
 | **S1** | ✅ **CLÔS** | Corrections critiques doc/config (A-001, A-002, A-025) |
 | **S2** | ✅ **CLÔS** | Uniformisation observabilité (A-003, A-004, A-005) |
 | **S3** | ✅ **CLÔS** | Renforcement tests (A-006, A-012, A-024, A-039) |
-| **S4-S8** | ⏳ *À démarrer* | Orchestration, alerting, backtesting, ML, sécurité |
+| **S5** | ✅ **CLÔS** | Alerting & monitoring (A-007, A-021) |
+| **S4, S6-S8** | ⏳ *À démarrer* | Orchestration, backtesting, ML, sécurité |
 
 ### Score qualité progression
 

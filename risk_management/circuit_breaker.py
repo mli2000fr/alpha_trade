@@ -51,24 +51,14 @@ def _try_send_alert(event: str, payload: dict) -> None:
     except Exception:  # noqa: BLE001 — alerting best-effort, ne bloque jamais le trading
         LOGGER.debug("Notification email circuit_breaker indisponible.", exc_info=True)
 
-    # Slack webhook (nouveau S5.2) — utilise le notifier existant de service.alerting
+    # Alerting multi-canaux (Slack / SMTP / log) via service.alerting
     if event == "circuit_breaker_fired":
         try:
-            from service.alerting import build_notifier_from_env, SlackNotifier
+            from service.alerting import send_system_alert
 
-            trigger = payload.get("trigger", "unknown")
-            reason = f"{trigger.upper()}: {payload}"  # Formattage simplifié
-
-            # Créer le notifier depuis l'env si Slack est configuré
-            notifier = build_notifier_from_env()  # Retourne SlackNotifier ou LogNotifier
-
-            notifier.send(
-                subject=f"Circuit Breaker: {trigger}",
-                body=reason,
-                severity="critical"
-            )
+            send_system_alert(event="CIRCUIT_BREAKER_FIRED", payload=payload, severity="critical")
         except Exception:  # noqa: BLE001 — alerting best-effort
-            LOGGER.debug("Notification Slack circuit_breaker indisponible.", exc_info=True)
+            LOGGER.debug("Notification externe circuit_breaker indisponible.", exc_info=True)
 
 
 class CircuitBreaker:

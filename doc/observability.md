@@ -83,7 +83,7 @@ alpha_trade_ml_drift_status >= 2
 
 ---
 
-## 5. Alertes recommandées (à câbler côté Alertmanager — backlog)
+## 5. Alertes recommandées
 
 | Nom | Condition | Sévérité |
 |---|---|---|
@@ -92,9 +92,14 @@ alpha_trade_ml_drift_status >= 2
 | `MLDriftAlert` | `ml_drift_status == 2` pendant 1h | P2 |
 | `RunSummaryFailureSpike` | `increase(run_summary_total{status="ERROR"}[15m]) > 0` | P2 |
 
-> Le déploiement Grafana / Alertmanager complet est **backlog Long terme**
-> (cf. `prompt/refactor/backlog_long_terme.md`). Phase 7 livre uniquement
-> l'endpoint et les métriques canoniques.
+Un jeu de base prêt à l'emploi est désormais versionné :
+
+- dashboard Grafana : `doc/monitoring/grafana_dashboard_alpha_trade.json`
+- règles Prometheus : `doc/monitoring/prometheus_alert_rules.yml`
+
+Ces livrables couvrent un socle Sprint 5 (monitoring opérateur + alertes
+standards). L'industrialisation complète (SLO formels, Alertmanager multi-route,
+on-call, dashboard avancé par module) reste une extension long terme.
 
 ---
 

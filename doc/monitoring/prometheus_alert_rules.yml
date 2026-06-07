@@ -1,0 +1,39 @@
+groups:
+  - name: alpha_trade_sprint5
+    rules:
+      - alert: AlphaTradePipelineStepFailure
+        expr: increase(alpha_pipeline_steps_total{status="ERROR"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Echec d'une etape du pipeline Alpha Trade"
+          description: "Au moins une etape pipeline a echoue dans les 5 dernieres minutes."
+
+      - alert: AlphaTradeWatcherHeartbeatStale
+        expr: max(alpha_trade_watcher_heartbeat_age_seconds) > 600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Heartbeat watcher stale"
+          description: "Le heartbeat watcher depasse 600 secondes depuis plus de 10 minutes."
+
+      - alert: AlphaTradeDataFreshnessStale
+        expr: alpha_trade_data_freshness_hours{table="stock_bars_daily"} > 36
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Donnees stock_bars_daily trop anciennes"
+          description: "La fraicheur des barres quotidiennes depasse 36 heures."
+
+      - alert: AlphaTradeMLDriftAlert
+        expr: max(alpha_trade_ml_drift_status) >= 2
+        for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alerte drift ML"
+          description: "Au moins un modele est en etat ALERT (>=2) depuis plus d'une heure."
+

@@ -17,7 +17,7 @@ class TestSlackNotifier:
 
     def test_slack_notifier_send_success(self):
         """Envoie un message Slack avec succès."""
-        with patch("service.alerting.requests.post") as mock_post:
+        with patch("requests.post") as mock_post:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_post.return_value = mock_response
@@ -35,7 +35,7 @@ class TestSlackNotifier:
 
     def test_slack_notifier_fallback_on_error(self):
         """Fallback sur LogNotifier en cas d'erreur."""
-        with patch("service.alerting.requests.post") as mock_post:
+        with patch("requests.post") as mock_post:
             mock_post.side_effect = Exception("Network error")
 
             fallback = LogNotifier()
@@ -51,7 +51,7 @@ class TestSlackNotifier:
 
     def test_slack_notifier_severity_emoji(self):
         """Vérifie que les emojis de sévérité sont correctes."""
-        with patch("service.alerting.requests.post") as mock_post:
+        with patch("requests.post") as mock_post:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_post.return_value = mock_response
@@ -72,7 +72,7 @@ class TestSlackNotifier:
 class TestCircuitBreakerSlackIntegration:
     """Tests d'intégration circuit breaker + Slack."""
 
-    @patch("service.alerting.requests.post")
+    @patch("requests.post")
     @patch("ihm.services.email_notifier.send_notification")
     def test_circuit_breaker_sends_to_slack(self, mock_email, mock_slack_post):
         """Vérifie que le circuit breaker envoie une alerte Slack."""
@@ -94,6 +94,37 @@ class TestCircuitBreakerSlackIntegration:
 
         # Email notification devrait être appelé
         mock_email.assert_called_once()
+        mock_slack_post.assert_called_once()
+
+
+class TestAlertingBroadcast:
+    """Tests du broadcast multi-canaux (Slack + SMTP)."""
+
+    def test_build_notifiers_from_env_can_stack_channels(self) -> None:
+        from service.alerting import build_notifiers_from_env
+
+        env = {
+            "ALPHA_TRADE_SLACK_WEBHOOK": "https://hooks.slack.com/services/TEST",
+            "ALPHA_TRADE_SMTP_HOST": "smtp.example.com",
+            "ALPHA_TRADE_SMTP_PORT": "587",
+            "ALPHA_TRADE_SMTP_FROM": "alpha@example.com",
+            "ALPHA_TRADE_SMTP_TO": "ops@example.com",
+        }
+        channels = build_notifiers_from_env(env=env)
+        assert len(channels) == 2
+
+    @patch("service.alerting.build_notifiers_from_env")
+    def test_send_system_alert_dispatches_all_channels(self, mock_build) -> None:
+        from service.alerting import send_system_alert
+
+        a = MagicMock()
+        b = MagicMock()
+        mock_build.return_value = (a, b)
+
+        send_system_alert("TEST_EVENT", {"k": 1}, severity="critical")
+
+        a.send.assert_called_once()
+        b.send.assert_called_once()
 
 
 class TestSlackNotificationFromEnvironment:
