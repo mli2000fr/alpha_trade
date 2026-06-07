@@ -29,7 +29,7 @@
 
 ---
 
-## 0. État des sprints au 2026-05-22
+## 0. État des sprints au 2026-06-08
 
 - **S1** : livré et revalidé (micro-comptes, alias `selector_min_ibd_rs_rank`, doctrine de dépréciation `execution_engine`).
 - **S2** : noyau livré, y compris le reliquat A-004 désormais exposé via le proxy
@@ -38,6 +38,7 @@
 - **S4** : convention corrélation et oracle total return documentés / testés.
 - **S5** : signatures d’artefacts ML et doctrine failover broker livrées.
 - **S6** : `macro_provider=composite`, Kelly conditionnel (≥ 25 k$), clarification drawdown et SMTP.
+- **S7** : garde-fous gouvernance ML (`model_predictions`) + factorisation importeurs de barres (helper commun) + tests walk-forward ML.
 
 ---
 
@@ -180,6 +181,8 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 - Optimisation possible du seuil de décision et de la target swing
 - Sélection automatique du **champion réellement inférable** parmi les modèles éligibles
 - Inférence quotidienne sur le backend sélectionné, avec sortie `predicted_proba` / `predicted_class`
+- Traçabilité de gouvernance persistée dans `model_predictions` : `selected_model`, `decision_threshold`, `signal_label`, `calibration_method`
+- Garde-fou de non-régression côté persistance : une prédiction sans ces champs de gouvernance est rejetée explicitement
 
 ### 2.4 Gestion du portefeuille
 
@@ -511,6 +514,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 13. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
 14. **En exécution, un compte cash ne peut pas soumettre d'achats au-delà du cash settled disponible**
 15. **En exécution, `swing_only` et la contrainte PDT peuvent différer l'armement des ordres de sortie le jour même**
+16. **Toute prédiction ML persistée doit inclure le contexte de serving** (`selected_model`, `decision_threshold`, `calibration_method`) pour garantir l'auditabilité des décisions de risque
 
 ---
 

@@ -24,7 +24,7 @@
 
 ---
 
-## 0. État de référence sprints S1–S6 (2026-05-22)
+## 0. État de référence sprints S1–S7 (2026-06-08)
 
 - **S1** : durcissement micro-comptes et doctrine de compatibilité `execution_engine` livré.
 - **S2** : observabilité quotes/earnings industrialisée ; le proxy
@@ -34,6 +34,7 @@
 - **S4** : convention corrélation / total return verrouillée par tests.
 - **S5** : signatures SHA-256 d’artefacts ML et doctrine failover broker exposées.
 - **S6** : `macro_provider=composite`, Kelly conditionnel ≥ 25 k$, bandeaux SMTP.
+- **S7** : garde-fou de persistance `model_predictions`, test walk-forward ML dédié, factorisation helper commun entre importeurs Alpaca/EODHD.
 
 ---
 
@@ -423,17 +424,21 @@ Le launcher canonique construit ensuite, dans cet ordre :
 6. calcul de `predicted_proba` et `predicted_class` ;
 7. insertion dans `model_predictions` si `persist=True`.
 
-#### Limite DB actuelle
+#### Gouvernance DB actuelle (`model_predictions`)
 
-`model_predictions` ne persiste aujourd'hui que :
+Le schéma SQL `database/sql/ml/model_predictions.sql` persiste bien les champs
+de gouvernance de serving en plus des sorties de prédiction :
 
-- `symbol`
-- `prediction_date`
-- `predicted_proba`
-- `predicted_class`
-- `run_id`
+- `selected_model`
+- `decision_threshold`
+- `signal_label`
+- `calibration_method`
 
-Le détail de serving (`selected_model`, `decision_threshold`, `signal_label`, `calibration_method`) est présent dans les résultats en mémoire et les artefacts, mais pas encore dans le schéma SQL.
+Sprint 7 ajoute un garde-fou applicatif dans `modelFactory/db_registry.py` :
+
+- validation explicite des colonnes obligatoires avant insertion ;
+- rejet des valeurs vides/non-finies pour les champs de gouvernance ;
+- couverture dédiée via `tests/test_model_predictions_schema.py`.
 
 ### 5.6 Flux technique du watcher post-exécution
 
@@ -506,7 +511,7 @@ Référence dédiée : voir aussi `doc/watcher.md`.
 | `prompt/execution/` : historique audit → plan → sprints → cutover désormais structuré ; homogénéisation du reste de `prompt/` encore perfectible | P3 |
 | ~~`configure_optimizers()` sans type hint dans `model.py`~~ → ✅ Type hint `-> torch.optim.Optimizer` ajouté | ~~P3~~ |
 | ~~`corporate_actions*` absent de `pyproject.toml` packages.find.include~~ → ✅ Ajouté (`corporate_actions*`, `ihm*`) | ~~P1~~ |
-| `model_predictions` n'inclut pas `selected_model` / `decision_threshold` / `calibration_method` — gouvernance ML incomplète en DB | P1 → Sprint S2 |
+| ~~`model_predictions` n'inclut pas `selected_model` / `decision_threshold` / `calibration_method`~~ → ✅ Schéma confirmé + garde-fou Sprint 7 (`db_registry.insert_predictions`) | ~~P1~~ |
 
 ---
 

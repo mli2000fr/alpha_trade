@@ -303,21 +303,28 @@ ModelFactory, Database, DataIntegrityEngine
 - A-010 : Duplication importeurs barres
 
 ### Tâches
-1. **T7.1** : Ajouter un garde-fou de régression sur les colonnes `selected_model`, `decision_threshold`, `calibration_method` déjà présentes dans `model_predictions`
-2. **T7.2** : Synchroniser la documentation/audit avec ce schéma réel
-3. **T7.3** : Vérifier le peuplement effectif lors de l'inférence sur les chemins critiques
-4. **T7.4** : Factoriser le code commun entre `import_alpaca_bar.py` et `import_eodhd_bar.py`
-5. **T7.5** : Ajouter un test de walk-forward pour le ML
+1. [x] **T7.1** : Ajouter un garde-fou de régression sur les colonnes `selected_model`, `decision_threshold`, `calibration_method` déjà présentes dans `model_predictions`
+2. [x] **T7.2** : Synchroniser la documentation/audit avec ce schéma réel
+3. [x] **T7.3** : Vérifier le peuplement effectif lors de l'inférence sur les chemins critiques
+4. [x] **T7.4** : Factoriser le code commun entre `import_alpaca_bar.py` et `import_eodhd_bar.py`
+5. [x] **T7.5** : Ajouter un test de walk-forward pour le ML
 
 ### Critères d'acceptation
-- [ ] `model_predictions` reste conforme au schéma de gouvernance ML attendu
-- [ ] La documentation et les tests reflètent ce schéma réel
-- [ ] Le test de walk-forward passe
+- [x] `model_predictions` reste conforme au schéma de gouvernance ML attendu
+- [x] La documentation et les tests reflètent ce schéma réel
+- [x] Le test de walk-forward passe
 
 ### Tests
 - `tests/test_model_predictions_schema.py` (nouveau) — SQL
 - `tests/test_model_walk_forward.py` (nouveau) — intégration ML
 - `tests/test_bar_importers_consistency.py` (nouveau) — unitaire
+
+### Bilan Sprint 7 (clos)
+- Garde-fou de gouvernance ajouté dans `modelFactory/db_registry.py` : validation des colonnes obligatoires et rejet explicite des champs de serving vides/non-finies (`selected_model`, `decision_threshold`, `signal_label`, `calibration_method`).
+- Chemin d'inférence revalidé : `modelFactory/predictor.py` construit bien ces champs via `_build_prediction_result`, puis persistance contrôlée par `insert_predictions`.
+- Factorisation DataIntegrityEngine : création de `dataIntegrityEngine/bar_importer_common.py` (résolution `bars_provider` + normalisation symboles), réutilisée par `import_alpaca_bar.py`, `import_eodhd_bar.py` et l'orchestrateur EODHD.
+- Documentation fonctionnelle/technique alignée sur l'état réel du schéma et de la gouvernance ML.
+- Tests livrés : `test_model_predictions_schema.py`, `test_model_walk_forward.py`, `test_bar_importers_consistency.py`.
 
 ### Gain attendu
 - ModelFactory : 6.5 → 8.0
@@ -368,8 +375,9 @@ Architecture, Sécurité, IHM
 | **S1** | ✅ **CLÔS** | Corrections critiques doc/config (A-001, A-002, A-025) |
 | **S2** | ✅ **CLÔS** | Uniformisation observabilité (A-003, A-004, A-005) |
 | **S3** | ✅ **CLÔS** | Renforcement tests (A-006, A-012, A-024, A-039) |
+| **S7** | ✅ **CLÔS** | ML & gouvernance données (A-011, A-004, A-010) |
 | **S5** | ✅ **CLÔS** | Alerting & monitoring (A-007, A-021) |
-| **S4, S6-S8** | ⏳ *À démarrer* | Orchestration, backtesting, ML, sécurité |
+| **S4, S6, S8** | ⏳ *À démarrer* | Orchestration, backtesting, sécurité |
 
 ### Score qualité progression
 

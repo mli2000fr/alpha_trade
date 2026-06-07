@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import numpy as np
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -19,6 +18,41 @@ from database.stock_scores import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+_PREDICTION_REQUIRED_COLUMNS = {
+    "symbol",
+    "prediction_date",
+    "predicted_proba",
+    "predicted_class",
+    "run_id",
+    "selected_model",
+    "decision_threshold",
+    "signal_label",
+    "calibration_method",
+}
+
+
+def _required_text(value: Any, *, field_name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"model_predictions requires non-empty field '{field_name}'.")
+    return normalized
+
+
+def _required_finite_float(value: Any, *, field_name: str) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"model_predictions requires numeric field '{field_name}'.") from exc
+    if not math.isfinite(numeric):
+        raise ValueError(f"model_predictions requires finite field '{field_name}'.")
+    return numeric
+
+
+def _validate_predictions_frame(predictions: pd.DataFrame) -> None:
+    missing = sorted(_PREDICTION_REQUIRED_COLUMNS.difference(predictions.columns))
+    if missing:
+        raise ValueError(f"model_predictions missing required columns: {', '.join(missing)}")
 
 
 def _normalize_symbols(symbols: list[str]) -> list[str]:
@@ -483,6 +517,7 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
     """
     if predictions.empty:
         return 0
+    _validate_predictions_frame(predictions)
     stmt_v2 = text(
         "INSERT INTO model_predictions ("
         "symbol, prediction_date, predicted_proba, predicted_class, run_id, "
@@ -500,15 +535,15 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
     with engine.begin() as conn:
         for _, row in predictions.iterrows():
             params = {
-                "sym": row["symbol"],
+                "sym": _required_text(row["symbol"], field_name="symbol"),
                 "pd": row["prediction_date"],
                 "pp": float(row["predicted_proba"]),
                 "pc": int(row["predicted_class"]),
-                "rid": row["run_id"],
-                "selected_model": row.get("selected_model"),
-                "decision_threshold": float(row["decision_threshold"]) if row.get("decision_threshold") is not None else None,
-                "signal_label": row.get("signal_label"),
-                "calibration_method": row.get("calibration_method"),
+                "rid": _required_text(row["run_id"], field_name="run_id"),
+                "selected_model": _required_text(row.get("selected_model"), field_name="selected_model"),
+                "decision_threshold": _required_finite_float(row.get("decision_threshold"), field_name="decision_threshold"),
+                "signal_label": _required_text(row.get("signal_label"), field_name="signal_label"),
+                "calibration_method": _required_text(row.get("calibration_method"), field_name="calibration_method"),
             }
             conn.execute(stmt_v2, params)
     LOGGER.info("insert_predictions rows=%d", len(predictions))

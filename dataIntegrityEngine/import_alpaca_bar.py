@@ -16,6 +16,10 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from common.utils import configure_root_logging, getLastDateMarche, is_trading_day
 from core.run_summary import attach_schema_version
+from dataIntegrityEngine.bar_importer_common import (
+    normalize_symbols,
+    resolve_bars_provider,
+)
 from database.assets import (
     build_eligible_stock_metadata_filters,
     HISTORY_STATUS_NO_HISTORY,
@@ -336,18 +340,7 @@ def _increment_start_timestamp(raw_timestamp: Optional[str]) -> Optional[str]:
 
 
 def _normalize_target_symbols(symbols: Optional[list[str]]) -> Optional[list[str]]:
-    if symbols is None:
-        return None
-
-    normalized: list[str] = []
-    for symbol in symbols:
-        cleaned = (symbol or "").strip().upper()
-        if cleaned and cleaned not in normalized:
-            normalized.append(cleaned)
-
-    if not normalized:
-        raise ValueError("symbols doit contenir au moins un symbole non vide.")
-    return normalized
+    return normalize_symbols(symbols)
 
 
 def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = None) -> dict[str, Any]:
@@ -584,7 +577,7 @@ def _resolve_bars_provider() -> str:
         cfg = load_config() or {}
     except Exception:
         return "alpaca"
-    return str(((cfg.get("market_data") or {}).get("bars_provider", "alpaca"))).lower()
+    return resolve_bars_provider(cfg, fallback="alpaca")
 
 
 def main(argv: Optional[list[str]] = None) -> int:

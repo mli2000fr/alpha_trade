@@ -31,6 +31,7 @@ from service.eodhd.quota import (
     get_default_tracker,
 )
 
+from dataIntegrityEngine.bar_importer_common import normalize_symbols
 from dataIntegrityEngine.eodhd import transforms as _transforms
 from dataIntegrityEngine.eodhd.progress import (
     build_run_id,
@@ -185,7 +186,7 @@ def run_eodhd_ingestion(
     try:
         # 1) Univers cible
         if symbols:
-            universe = [s.strip().upper() for s in symbols if s and s.strip()]
+            universe = normalize_symbols(symbols) or []
         else:
             universe = shim._get_active_tradable_symbols(session)
         summary["targeted_symbols"] = len(universe)

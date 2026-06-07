@@ -35,6 +35,7 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from common.config_loader import load_config
 from common.utils import configure_root_logging  # noqa: F401 (re-export patchable)
+from dataIntegrityEngine.bar_importer_common import resolve_bars_provider as resolve_bars_provider_from_config
 from database.assets import (
     build_eligible_stock_metadata_filters,
     update_bars_available_false,  # noqa: F401 (re-export patchable)
@@ -117,7 +118,7 @@ def resolve_bars_provider(config: dict | None = None) -> str:
     Le fallback à ``alpaca`` ne s'applique qu'en absence/illisibilité de config.
     """
     cfg = config if config is not None else _load_config_safe()
-    return str(((cfg or {}).get("market_data") or {}).get("bars_provider", "alpaca")).lower()
+    return resolve_bars_provider_from_config(cfg, fallback="alpaca")
 
 
 def _load_config_safe() -> dict:
