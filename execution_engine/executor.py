@@ -268,6 +268,7 @@ class ProductionExecutor:
                 if t.price_asof_date is not None and actual_trade_date is not None and t.price_asof_date < actual_trade_date
             )
             target_by_symbol = {t.symbol: t for t in targets}
+            target_by_intent_id: dict[str, Any] = {}
             self._emit_progress(
                 metrics,
                 current=len(targets),
@@ -417,6 +418,8 @@ class ProductionExecutor:
 
             # Phase 3 — Build intents, filter duplicates
             entry_intents = build_entry_intents(targets, self._cfg, exec_run_id)
+            for target, intent in zip(targets, entry_intents):
+                target_by_intent_id[str(intent.intent_id)] = target
             if entry_intents and float(getattr(self._cfg, "max_entry_gap_pct", 0.0) or 0.0) > 0.0:
                 latest_prices: dict[str, float] = {}
                 for target in targets:
@@ -649,7 +652,7 @@ class ProductionExecutor:
                             exec_run_id,
                             account_state=account_state,
                             metrics=metrics,
-                            target=target_by_symbol.get(intent.symbol),
+                            target=target_by_intent_id.get(str(intent.intent_id)) or target_by_symbol.get(intent.symbol),
                         )
                         events.extend(child_events)
 
@@ -774,7 +777,7 @@ class ProductionExecutor:
                             exec_run_id,
                             account_state=account_state,
                             metrics=metrics,
-                            target=target_by_symbol.get(parent_intent.symbol),
+                            target=target_by_intent_id.get(str(parent_intent.intent_id)) or target_by_symbol.get(parent_intent.symbol),
                         )
                         events.extend(child_events)
                         metrics["children_armed_post_sync"] += 1

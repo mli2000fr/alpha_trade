@@ -794,6 +794,28 @@ class ProtectionTransitionWatcher:
         config = self._config_for(broker_mode, account_id)
         broker = self._broker_for(broker_mode, account_id)
 
+        if config.swing_only:
+            trade_date_value = row.get("trade_date")
+            trade_date = None
+            if isinstance(trade_date_value, datetime):
+                trade_date = trade_date_value.date()
+            elif isinstance(trade_date_value, str) and trade_date_value:
+                try:
+                    trade_date = datetime.fromisoformat(trade_date_value[:10]).date()
+                except ValueError:
+                    trade_date = None
+            if trade_date is not None and trade_date == datetime.now().date():
+                metrics["children_deferred_swing_only"] = int(metrics.get("children_deferred_swing_only", 0) or 0) + 1
+                self._persist_event(make_event(
+                    str(row.get("exec_run_id") or ""),
+                    EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT,
+                    f"Watcher : armement TP/SL différé (swing_only) pour {symbol}",
+                    symbol=symbol,
+                    intent_id=str(row.get("parent_intent_id") or "") or None,
+                    payload={"reason": "swing_only", "trade_date": trade_date.isoformat()},
+                ))
+                return
+
         decision_price = float(row.get("decision_price") or fill_price)
         target_qty = float(row.get("target_qty") or fill_qty)
         order_type = str(row.get("order_type") or "market")
@@ -1092,6 +1114,10 @@ class ProtectionTransitionWatcher:
 
         if stop_order.status in OrderStatus.TERMINAL:
             metrics["terminal_items"] += 1
+            return
+
+        if config.swing_only and item.trade_date == datetime.now().date():
+            metrics["pending_items"] += 1
             return
 
         trigger_price, trigger_mode = resolve_trailing_activation_price(item.fill_price, config, item)

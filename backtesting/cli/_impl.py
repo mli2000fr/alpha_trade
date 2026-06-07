@@ -2000,6 +2000,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                                 high_df=execution_pivoted["high"],
                                 low_df=execution_pivoted["low"],
                                 intrabar_priority=args.intrabar_priority,
+                                swing_only=args.swing_only,
                             )
                             signals_df = phase7_exit_lifecycle_result.signals_df
                             _safe_print(

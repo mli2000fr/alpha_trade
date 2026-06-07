@@ -67,7 +67,15 @@ def build_phase4_protection_replay(
     execution_result = execution_replay_result.execution_result
     child_by_parent = _child_intents_by_parent(execution_result.child_intents)
     fills_by_intent = _aggregate_entry_fills_by_intent(execution_replay_result)
-    targets_by_symbol = {target.symbol: target for target in execution_result.targets}
+    targets_by_key = {
+        (
+            str(target.symbol),
+            str(target.risk_run_id),
+            pd.Timestamp(target.trade_date).date() if target.trade_date is not None else None,
+        ): target
+        for target in execution_result.targets
+    }
+    entry_intents_by_id = {str(intent.intent_id): intent for intent in execution_result.entry_intents}
 
     protection_rows: list[dict[str, object]] = []
     # order_lifecycle_frame est initialisé depuis Phase 3 et sera enrichi
@@ -80,20 +88,36 @@ def build_phase4_protection_replay(
         symbol = str(signal_row.get("symbol") or "")
         if not symbol:
             continue
-        target = targets_by_symbol.get(symbol)
-        if target is None:
-            continue
 
-        entry_intent = next(
-            (
-                intent
-                for intent in execution_result.entry_intents
-                if intent.symbol == symbol
-                and str(intent.risk_run_id) == str(target.risk_run_id)
-            ),
-            None,
-        )
+        execution_date_raw = signal_row.get("execution_date")
+        execution_date = pd.Timestamp(execution_date_raw) if execution_date_raw is not None and pd.notna(execution_date_raw) else None
+        risk_run_id = str(signal_row.get("risk_run_id") or "")
+        target = targets_by_key.get((symbol, risk_run_id, execution_date.date() if execution_date is not None else None))
+
+        entry_intent_id = str(signal_row.get("entry_intent_id") or "").strip()
+        entry_intent = entry_intents_by_id.get(entry_intent_id) if entry_intent_id else None
         if entry_intent is None:
+            entry_intent = next(
+                (
+                    intent
+                    for intent in execution_result.entry_intents
+                    if intent.symbol == symbol and str(intent.risk_run_id) == risk_run_id
+                ),
+                None,
+            )
+        if entry_intent is None:
+            continue
+        if target is None:
+            target = next(
+                (
+                    candidate
+                    for candidate in execution_result.targets
+                    if candidate.symbol == entry_intent.symbol
+                    and str(candidate.risk_run_id) == str(entry_intent.risk_run_id)
+                ),
+                None,
+            )
+        if target is None:
             continue
         fill_summary = fills_by_intent.get(entry_intent.intent_id)
         if fill_summary is None:

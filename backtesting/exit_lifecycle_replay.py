@@ -47,6 +47,7 @@ def build_phase7_exit_lifecycle_replay(
     high_df: pd.DataFrame,
     low_df: pd.DataFrame,
     intrabar_priority: str = "conservative",
+    swing_only: bool = False,
 ) -> ExitLifecycleReplayResult:
     exit_rows: list[dict[str, object]] = []
     event_rows: list[dict[str, object]] = []
@@ -72,6 +73,8 @@ def build_phase7_exit_lifecycle_replay(
             continue
         execution_date = pd.Timestamp(execution_date_raw)
         fill_price = float(fill_price_raw)
+        if fill_price <= 0:
+            continue
         take_profit_price = row.get("replay_take_profit_price")
         initial_stop_price = row.get("replay_initial_stop_price")
         trailing_stop_pct = row.get("replay_trailing_stop_pct")
@@ -91,8 +94,13 @@ def build_phase7_exit_lifecycle_replay(
         take_profit_price = float(take_profit_price)
         initial_stop_price = None if initial_stop_price is None or pd.isna(initial_stop_price) else float(initial_stop_price)
         trailing_stop_pct = None if trailing_stop_pct is None or pd.isna(trailing_stop_pct) else float(trailing_stop_pct)
+        # Garde-fou long-only : un stop initial doit être sous le prix d'entrée.
+        if initial_stop_price is not None and initial_stop_price >= fill_price:
+            initial_stop_price = None
 
         entry_idx = trading_days.searchsorted(execution_date.to_datetime64(), side="left")
+        if swing_only:
+            entry_idx += 1
         if entry_idx >= len(trading_days):
             continue
 
@@ -324,6 +332,7 @@ def build_phase7_exit_lifecycle_replay(
         "oco_cancels": int((event_frame["event_type"] == EventType.OCO_CANCEL_TRIGGERED).sum()) if not event_frame.empty and "event_type" in event_frame.columns else 0,
         "stale_orders": int((order_lifecycle_frame["broker_state"] == "stale").sum()) if not order_lifecycle_frame.empty else 0,
         "canceled_orders": int((order_lifecycle_frame["order_status"] == OrderStatus.CANCELED).sum()) if not order_lifecycle_frame.empty else 0,
+        "swing_only_applied": bool(swing_only),
         "bridge": "execution_engine.oco_manager+exit_lifecycle_replay",
     }
     broker_like_summary = build_execution_broker_like_summary(

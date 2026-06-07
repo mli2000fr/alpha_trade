@@ -557,6 +557,94 @@ def test_build_phase4_protection_replay_enriches_signals_with_child_protections(
     assert pd.notna(enriched_signal["replay_oco_group_id"])
 
 
+def test_build_phase4_protection_replay_keeps_trade_specific_stop_levels_for_same_symbol() -> None:
+    from backtesting.execution_lifecycle_replay import build_phase4_protection_replay
+    from backtesting.execution_replay import simulate_phase3_execution_replay
+    from execution_engine.config import ExecutionConfig
+    from risk_management.models import PortfolioEntry
+
+    execution_config = ExecutionConfig(
+        broker_mode="paper",
+        dry_run=True,
+        account_type="margin",
+        pdt_rule="auto",
+        swing_only=False,
+        simulated_account_equity=100_000.0,
+        profit_taker_pct=0.08,
+        trailing_stop_pct=0.05,
+    )
+    open_df = pd.DataFrame(
+        {"AAPL": [100.0, 110.0, 120.0, 121.0]},
+        index=pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"]),
+    )
+    entry_1 = PortfolioEntry(
+        symbol="AAPL",
+        sector="Tech",
+        entry_price=123.45,
+        score_used=0.82,
+        score_source="final_score_sentiment",
+        atr_20=2.5,
+        proposed_shares=40,
+        approved_shares=40,
+        target_notional=4_938.0,
+        target_weight=0.04938,
+        decision="ACCEPTED",
+        decision_reason="OK",
+        conviction_score=0.83,
+        sizing_method="atr",
+        decision_rank=1,
+        stop_price_initial=95.0,
+        risk_per_share=5.0,
+        risk_budget_dollars=1_000.0,
+        initial_risk_dollars=200.0,
+        score_snapshot_date=date(2025, 1, 1),
+        price_asof_date=date(2025, 1, 1),
+        atr_asof_date=date(2025, 1, 1),
+    )
+    entry_2 = PortfolioEntry(
+        symbol="AAPL",
+        sector="Tech",
+        entry_price=130.0,
+        score_used=0.81,
+        score_source="final_score_sentiment",
+        atr_20=3.0,
+        proposed_shares=30,
+        approved_shares=30,
+        target_notional=3_900.0,
+        target_weight=0.039,
+        decision="ACCEPTED",
+        decision_reason="OK",
+        conviction_score=0.8,
+        sizing_method="atr",
+        decision_rank=1,
+        stop_price_initial=105.0,
+        risk_per_share=6.0,
+        risk_budget_dollars=1_000.0,
+        initial_risk_dollars=180.0,
+        score_snapshot_date=date(2025, 1, 2),
+        price_asof_date=date(2025, 1, 2),
+        atr_asof_date=date(2025, 1, 2),
+    )
+
+    replay_result = simulate_phase3_execution_replay(
+        [entry_1, entry_2],
+        execution_config=execution_config,
+        open_df=open_df,
+        risk_run_id_prefix="bt_phase4_multientry",
+        exec_run_id="exec_replay_002b",
+    )
+    protection_result = build_phase4_protection_replay(
+        replay_result,
+        execution_config=execution_config,
+    )
+
+    stop_values = (
+        protection_result.signals_df.sort_values("execution_date")["replay_initial_stop_price"].dropna().tolist()
+    )
+    assert len(stop_values) == 2
+    assert stop_values[0] != stop_values[1]
+
+
 def test_build_phase5_watcher_replay_generates_lifecycle_and_events() -> None:
     from backtesting.execution_lifecycle_replay import build_phase4_protection_replay
     from backtesting.execution_replay import simulate_phase3_execution_replay
@@ -774,6 +862,61 @@ def test_build_phase7_exit_lifecycle_replay_marks_open_children_as_stale_when_no
     assert result.diagnostics["stale_orders"] == 3
     assert set(result.order_lifecycle_frame["order_status"]) == {OrderStatus.EXPIRED}
     assert set(result.order_lifecycle_frame["broker_state"]) == {"stale"}
+
+
+def test_build_phase7_exit_lifecycle_replay_respects_swing_only_no_same_day_exit() -> None:
+    from backtesting.exit_lifecycle_replay import build_phase7_exit_lifecycle_replay
+    from backtesting.protection_watcher_replay import ProtectionWatcherReplayResult
+
+    trading_index = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"])
+    signals_df = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "execution_date": pd.to_datetime(["2025-01-02"]),
+            "symbol": ["AAPL"],
+            "selected": [True],
+            "fill_price": [100.0],
+            "replay_take_profit_price": [130.0],
+            "replay_initial_stop_price": [99.0],
+            "replay_trailing_stop_pct": [0.05],
+            "replay_take_profit_intent_id": ["tp_003"],
+            "replay_initial_stop_intent_id": ["stop_003"],
+            "replay_trailing_stop_intent_id": ["trail_003"],
+        }
+    )
+    watcher_result = ProtectionWatcherReplayResult(
+        signals_df=signals_df,
+        lifecycle_frame=pd.DataFrame(),
+        event_frame=pd.DataFrame(),
+        diagnostics={"bridge": "execution_engine.protection_watcher+watcher_replay"},
+        order_lifecycle_frame=pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01", "2025-01-01"]),
+                "execution_date": pd.to_datetime(["2025-01-02", "2025-01-02", "2025-01-02"]),
+                "symbol": ["AAPL", "AAPL", "AAPL"],
+                "order_group_id": ["entry_003", "entry_003", "entry_003"],
+                "oco_group_id": ["oco_entry_003", "oco_entry_003", "oco_entry_003"],
+                "intent_id": ["tp_003", "stop_003", "trail_003"],
+                "parent_intent_id": ["entry_003", "entry_003", "entry_003"],
+                "intent_role": ["take_profit", "initial_stop", "trailing_stop"],
+                "order_status": ["SUBMITTED", "SUBMITTED", "HELD"],
+                "broker_state": ["working", "working", "held"],
+            }
+        ),
+        broker_event_frame=pd.DataFrame(),
+    )
+    high_df = pd.DataFrame({"AAPL": [101.0, 102.0, 103.0]}, index=trading_index)
+    low_df = pd.DataFrame({"AAPL": [98.0, 100.0, 101.0]}, index=trading_index)
+
+    result = build_phase7_exit_lifecycle_replay(
+        watcher_result,
+        high_df=high_df,
+        low_df=low_df,
+        swing_only=True,
+    )
+
+    assert result.exit_frame.empty
+    assert result.diagnostics["swing_only_applied"] is True
 
 
 def test_save_phase7_exit_lifecycle_replay_artifacts_writes_expected_files(tmp_path) -> None:

@@ -853,6 +853,8 @@ class ExecutionRepository:
                 parent_req.risk_run_id         AS risk_run_id,
                 parent_req.account_id          AS account_id,
                 COALESCE(er.broker_mode, 'paper') AS broker_mode,
+                er.trade_date                  AS trade_date,
+                parent_req.created_at          AS parent_created_at,
                 parent_req.symbol              AS symbol,
                 parent_req.side                AS side,
                 parent_req.intent_role         AS parent_intent_role,

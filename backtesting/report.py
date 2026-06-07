@@ -226,6 +226,18 @@ def _build_pipeline_trade_export_frame(
         ) * 100.0,
         np.nan,
     )
+    quantity_numeric = pd.to_numeric(pipeline_export["quantity"], errors="coerce")
+    entry_price_numeric = pd.to_numeric(pipeline_export["entry_price"], errors="coerce")
+    exit_price_numeric = pd.to_numeric(pipeline_export["exit_price"], errors="coerce")
+    closed_mask = pd.to_datetime(pipeline_export["exit_date"], errors="coerce").notna()
+    pipeline_export["entry_cost"] = np.where(closed_mask, quantity_numeric * entry_price_numeric, np.nan)
+    pipeline_export["proceeds"] = np.where(closed_mask, quantity_numeric * exit_price_numeric, np.nan)
+    pipeline_export["pnl"] = pipeline_export["proceeds"] - pipeline_export["entry_cost"]
+    pipeline_export["return_pct"] = np.where(
+        pipeline_export["entry_cost"] > 0,
+        (pipeline_export["pnl"] / pipeline_export["entry_cost"]) * 100.0,
+        np.nan,
+    )
 
     pipeline_merge = _with_trade_merge_seq(pipeline_export, execution_date_col="execution_date")
     legacy_merge = _with_trade_merge_seq(legacy_trades_df, execution_date_col="execution_date") if not legacy_trades_df.empty else pd.DataFrame()
