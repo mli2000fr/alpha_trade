@@ -28,7 +28,7 @@ def test_capital_preset_maps_detected_equity_placeholder_to_pipeline_session_key
     session_values = preset.to_session_state_values(detected_equity=2_345.67)
 
     assert session_values["pipeline_risk_account_equity"] == 2_345.67
-    assert session_values["pipeline_risk_per_trade_pct"] == 0.02
+    assert session_values["pipeline_risk_per_trade_pct"] == 0.0125
     assert session_values["pipeline_screener_liquidity_threshold_usd"] == 5_000_000.0
     assert session_values["pipeline_selector_require_above_ma200"] is True
 

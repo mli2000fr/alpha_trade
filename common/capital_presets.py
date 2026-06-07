@@ -1,9 +1,13 @@
-"""Presets de capital partagés entre IHM pipeline et backtesting."""
+"""Presets de capital partagés entre IHM pipeline et backtesting.
+
+Inclut un garde-fou A-005 : tout écart explicite entre un preset capital et le
+profil canonique ``STRICT_SWING_CASH_FILTERS`` doit être documenté dans le YAML.
+"""
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -19,6 +23,23 @@ DEFAULT_CAPITAL_PRESET_KEY = "capital_0_2000_eur"
 SELECTOR_RS_ALIAS_KEY = "selector_min_ibd_rs_rank"
 SELECTOR_RS_LEGACY_KEY = "selector_min_relative_strength_index"
 
+STRICT_PROFILE_SELECTOR_BASELINES: dict[str, Any] = {
+    "selector_liquidity_threshold": float(STRICT_SWING_CASH_FILTERS.min_avg_dollar_volume_20d),
+    "selector_min_close": float(STRICT_SWING_CASH_FILTERS.min_close),
+    "selector_max_volatility_ratio": float(STRICT_SWING_CASH_FILTERS.max_volatility_ratio),
+    SELECTOR_RS_ALIAS_KEY: float(STRICT_SWING_CASH_FILTERS.min_relative_strength_index or 100.0),
+    "selector_min_high_52w_proximity": float(STRICT_SWING_CASH_FILTERS.min_high_52w_proximity),
+    "selector_min_weekly_trend_score": float(STRICT_SWING_CASH_FILTERS.min_weekly_trend_score),
+    "selector_min_atr_pct_20": float(STRICT_SWING_CASH_FILTERS.min_atr_pct_20),
+    "selector_max_atr_pct_20": float(STRICT_SWING_CASH_FILTERS.max_atr_pct_20),
+    "selector_min_market_cap": float(STRICT_SWING_CASH_FILTERS.min_market_cap),
+    "selector_min_beta_126": float(STRICT_SWING_CASH_FILTERS.min_beta_126),
+    "selector_max_spread_bps": float(STRICT_SWING_CASH_FILTERS.max_spread_bps),
+    "selector_max_spread_bps_iex": float(STRICT_SWING_CASH_FILTERS.max_spread_bps_iex),
+    "selector_earnings_blackout_days": int(STRICT_SWING_CASH_FILTERS.earnings_blackout_days or 0),
+    "selector_require_above_ma200": bool(STRICT_SWING_CASH_FILTERS.require_above_ma200),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class CapitalPreset:
@@ -28,6 +49,7 @@ class CapitalPreset:
     min_equity: float
     max_equity: float | None
     values: dict[str, Any]
+    strict_profile_justifications: dict[str, str] = field(default_factory=dict)
 
     def matches_equity(self, equity: float | None) -> bool:
         if equity is None:
@@ -77,6 +99,103 @@ def _coerce_float(value: object, *, field_name: str) -> float:
         raise ValueError(f"Valeur numérique invalide pour {field_name}: {value!r}") from exc
 
 
+def _canonicalize_strict_profile_key(selector_key: str) -> str:
+    cleaned_key = str(selector_key or "").strip()
+    if cleaned_key == SELECTOR_RS_LEGACY_KEY:
+        return SELECTOR_RS_ALIAS_KEY
+    return cleaned_key
+
+
+def _normalize_scalar_for_comparison(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return float(value)
+    return value
+
+
+def _extract_selector_rs_value(values: dict[str, Any]) -> Any:
+    rs_alias = values.get(SELECTOR_RS_ALIAS_KEY)
+    rs_legacy = values.get(SELECTOR_RS_LEGACY_KEY)
+    if rs_alias is not None and rs_legacy is not None:
+        if _normalize_scalar_for_comparison(rs_alias) != _normalize_scalar_for_comparison(rs_legacy):
+            raise ValueError(
+                "Les alias selector_min_ibd_rs_rank et selector_min_relative_strength_index "
+                "doivent rester identiques dans un preset de capital."
+            )
+    return rs_alias if rs_alias is not None else rs_legacy
+
+
+def collect_strict_profile_deviations(preset: CapitalPreset) -> dict[str, dict[str, Any]]:
+    deviations: dict[str, dict[str, Any]] = {}
+    for selector_key, strict_value in STRICT_PROFILE_SELECTOR_BASELINES.items():
+        if selector_key == SELECTOR_RS_ALIAS_KEY:
+            preset_value = _extract_selector_rs_value(preset.values)
+            if preset_value is None:
+                continue
+        else:
+            if selector_key not in preset.values:
+                continue
+            preset_value = preset.values[selector_key]
+        if _normalize_scalar_for_comparison(preset_value) == _normalize_scalar_for_comparison(strict_value):
+            continue
+        deviations[selector_key] = {
+            "preset_value": preset_value,
+            "strict_value": strict_value,
+        }
+    return deviations
+
+
+def _normalize_strict_profile_justifications(raw_value: Any, *, preset_key: str) -> dict[str, str]:
+    if raw_value is None or raw_value == "":
+        return {}
+    if not isinstance(raw_value, dict):
+        raise ValueError(
+            f"Le preset {preset_key} doit définir `strict_profile_justifications` comme mapping YAML."
+        )
+
+    justifications: dict[str, str] = {}
+    for raw_selector_key, raw_reason in raw_value.items():
+        selector_key = _canonicalize_strict_profile_key(str(raw_selector_key))
+        if selector_key not in STRICT_PROFILE_SELECTOR_BASELINES:
+            raise ValueError(
+                f"Le preset {preset_key} documente un champ strict inconnu: {raw_selector_key}"
+            )
+        reason = str(raw_reason or "").strip()
+        if not reason:
+            raise ValueError(
+                f"Le preset {preset_key} doit fournir une justification non vide pour {selector_key}."
+            )
+        if selector_key in justifications:
+            raise ValueError(
+                f"Le preset {preset_key} documente plusieurs fois l'écart {selector_key}."
+            )
+        justifications[selector_key] = reason
+    return justifications
+
+
+def _validate_capital_preset_strict_profile_alignment(preset: CapitalPreset) -> None:
+    deviations = collect_strict_profile_deviations(preset)
+    documented = set(preset.strict_profile_justifications.keys())
+    actual = set(deviations.keys())
+
+    undocumented = sorted(actual - documented)
+    if undocumented:
+        details = ", ".join(
+            f"{selector_key}={deviations[selector_key]['preset_value']!r} (strict={deviations[selector_key]['strict_value']!r})"
+            for selector_key in undocumented
+        )
+        raise ValueError(
+            f"Le preset {preset.key} diverge de STRICT_SWING_CASH_FILTERS sans justification: {details}"
+        )
+
+    stale = sorted(documented - actual)
+    if stale:
+        raise ValueError(
+            f"Le preset {preset.key} contient des justifications devenues inutiles: {', '.join(stale)}"
+        )
+
+
 def _load_capital_presets_uncached(config_path: Path) -> tuple[CapitalPreset, ...]:
     with config_path.open("r", encoding="utf-8") as handle:
         payload = yaml.safe_load(handle) or {}
@@ -98,6 +217,10 @@ def _load_capital_presets_uncached(config_path: Path) -> tuple[CapitalPreset, ..
         max_equity_raw = raw_preset.get("max_equity")
         max_equity = None if max_equity_raw in {None, ""} else _coerce_float(max_equity_raw, field_name=f"{key}.max_equity")
         values = dict(raw_preset.get("values") or {})
+        strict_profile_justifications = _normalize_strict_profile_justifications(
+            raw_preset.get("strict_profile_justifications"),
+            preset_key=key or "<unknown>",
+        )
 
         if not key:
             raise ValueError("Chaque preset de capital doit définir une clé `key` non vide.")
@@ -110,16 +233,17 @@ def _load_capital_presets_uncached(config_path: Path) -> tuple[CapitalPreset, ..
         if not values:
             raise ValueError(f"Le preset {key} doit définir au moins une valeur dans `values`.")
 
-        presets.append(
-            CapitalPreset(
-                key=key,
-                label=label,
-                description=description,
-                min_equity=min_equity,
-                max_equity=max_equity,
-                values=values,
-            )
+        preset = CapitalPreset(
+            key=key,
+            label=label,
+            description=description,
+            min_equity=min_equity,
+            max_equity=max_equity,
+            values=values,
+            strict_profile_justifications=strict_profile_justifications,
         )
+        _validate_capital_preset_strict_profile_alignment(preset)
+        presets.append(preset)
         seen_keys.add(key)
         previous_max = max_equity if max_equity is not None else float("inf")
 

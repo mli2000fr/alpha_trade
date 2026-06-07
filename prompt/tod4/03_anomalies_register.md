@@ -139,23 +139,23 @@ Date : mai 2026
 - **Titre** : Les presets de `capital_presets.yaml` peuvent diverger du profil `STRICT_SWING_CASH_FILTERS`
 - **Sévérité** : P1
 - **Domaine** : Configuration, Selector, Risk Management
-- **Description** : Le profil strict (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) définit des seuils canoniques. Les presets de capital définissent des overrides par tranche. Des tests existent déjà sur plusieurs invariants critiques, mais il n'existe pas encore de garde-fou unique documentant systématiquement chaque écart métier assumé par rapport au profil strict.
-- **Statut actuel** : **Partielle**
-- **Preuve** : Dans `capital_presets.yaml`, le preset `capital_0_2000_eur` a `selector_min_close: 10.0` et `selector_min_beta_126: 0.65` alors que `STRICT_SWING_CASH_FILTERS.min_beta_126 = 0.8`.
-- **Impact métier** : Un preset peut être trop permissif et laisser passer des candidats de mauvaise qualité
-- **Impact technique** : Incohérence non détectée entre les deux sources de vérité
-- **Probabilité** : Moyenne (les presets sont écrits manuellement)
-- **Niveau de confiance** : Élevé (85%)
-- **Recommandation** : Conserver les tests existants (`tests/test_capital_preset_risk_overrides.py`) et ajouter, si souhaité, un garde-fou complémentaire centré sur la justification documentaire des écarts assumés.
-- **Test à ajouter** :
-  - **Objectif** : Valider que les presets de capital ne contredisent pas le profil strict sans justification
+- **Description** : Le constat initial est désormais corrigé. Les presets capital peuvent toujours s'écarter du profil strict, mais chaque divergence `selector_*` par rapport à `core/filter_profiles.py:STRICT_SWING_CASH_FILTERS` doit maintenant être documentée explicitement dans `config/capital_presets.yaml` via `strict_profile_justifications`, puis validée au chargement.
+- **Statut actuel** : **Infirmée / obsolète**
+- **Preuve** : `common/capital_presets.py` refuse désormais tout écart non documenté, toute justification obsolète et tout désalignement entre `selector_min_ibd_rs_rank` et son alias legacy ; `config/capital_presets.yaml` documente les écarts assumés ; `tests/test_capital_presets_consistency.py` couvre les cas nominal et invalides.
+- **Impact métier** : Le risque de preset trop permissif non documenté est désormais fortement réduit et détecté avant exécution.
+- **Impact technique** : Le chargeur de presets devient une barrière de non-régression entre les deux sources de vérité.
+- **Probabilité** : Faible après correction (nouvelle dérive seulement en cas de contournement du garde-fou)
+- **Niveau de confiance** : Élevé (95%)
+- **Recommandation** : Maintenir `strict_profile_justifications` à jour à chaque évolution de `STRICT_SWING_CASH_FILTERS` ou d'un preset capital.
+- **Test ajouté** :
+  - **Objectif** : Valider que les presets de capital ne divergent du profil strict qu'avec justification explicite
   - **Type** : Config / non-régression
   - **Priorité** : P1
-  - **Fichier probable** : `tests/test_capital_presets_consistency.py`
-  - **Scénario** : GIVEN `STRICT_SWING_CASH_FILTERS` et `capital_presets.yaml` WHEN on compare les seuils de chaque preset THEN tout écart doit être justifié par un commentaire dans le YAML
-  - **Fixtures** : Fichiers de config
-  - **Oracle** : Aucun écart non documenté
-  - **Empêche** : Dérive des presets
+  - **Fichier** : `tests/test_capital_presets_consistency.py`
+  - **Scénario** : GIVEN `STRICT_SWING_CASH_FILTERS` et `capital_presets.yaml` WHEN on charge les presets THEN chaque écart `selector_*` est documenté ; AND un YAML invalide sans justification, avec justification obsolète ou avec alias RS incohérents échoue explicitement
+  - **Fixtures** : Fichiers YAML temporaires + config versionnée
+  - **Oracle** : Chargement OK pour le YAML versionné, échec explicite pour les variantes invalides
+  - **Empêche** : Dérive silencieuse des presets
 
 ### A-006 — Pas de test E2E du pipeline complet
 
