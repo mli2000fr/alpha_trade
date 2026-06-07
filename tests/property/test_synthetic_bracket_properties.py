@@ -22,7 +22,7 @@ from enum import Enum
 from typing import Optional
 
 import pytest
-from hypothesis import HealthCheck, settings
+from hypothesis import HealthCheck, settings, strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
     invariant,
@@ -121,13 +121,13 @@ class SyntheticBracketStateMachine(RuleBasedStateMachine):
 
     # --- règles -------------------------------------------------------
 
-    @rule(qty=...)
+    @rule(qty=st.floats(min_value=0.1, max_value=100))
     def fill_tp(self, qty: float = 10.0) -> None:  # type: ignore[override]
         if self.bracket.run_completed:
             return
         self.bracket.on_fill("TP", max(0.1, min(qty, self.bracket.parent_qty)))
 
-    @rule(qty=...)
+    @rule(qty=st.floats(min_value=0.1, max_value=100))
     def fill_sl(self, qty: float = 10.0) -> None:  # type: ignore[override]
         if self.bracket.run_completed:
             return

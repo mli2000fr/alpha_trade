@@ -50,7 +50,7 @@
 |---|---|---|---|---|---|---|
 | stock_scores | screener | selector, risk_management, backtesting | computed | — | daily | P1 |
 | selector_alpha_candidates | selector.alpha_scanner | risk_management, ihm | computed | — | daily | P1 |
-| screener_run_summaries | screener | ihm (audit) | computed | — | daily | P3 |
+| run_summaries | core.run_summary + database.run_business_summaries | ihm (audit), execution_engine.db_io, services | computed | — | daily | P3 |
 
 ## 3. Sentiment & ML
 

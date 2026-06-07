@@ -38,12 +38,37 @@ class CircuitBreakerStatus:
 
 
 def _try_send_alert(event: str, payload: dict) -> None:
-    """Tente d'envoyer une notification email — silencieux si désactivé."""
+    """Tente d'envoyer des notifications — silencieux si désactivé.
+
+    Envoie les alertes par tous les canaux disponibles:
+    - Email (IHM) — historique
+    - Slack webhook (nouveau S5.2) — pour alerting opérateur temps réel
+    """
+    # Email (historique)
     try:
         from ihm.services.email_notifier import send_notification
         send_notification(event=event, payload=payload)
     except Exception:  # noqa: BLE001 — alerting best-effort, ne bloque jamais le trading
         LOGGER.debug("Notification email circuit_breaker indisponible.", exc_info=True)
+
+    # Slack webhook (nouveau S5.2) — utilise le notifier existant de service.alerting
+    if event == "circuit_breaker_fired":
+        try:
+            from service.alerting import build_notifier_from_env, SlackNotifier
+
+            trigger = payload.get("trigger", "unknown")
+            reason = f"{trigger.upper()}: {payload}"  # Formattage simplifié
+
+            # Créer le notifier depuis l'env si Slack est configuré
+            notifier = build_notifier_from_env()  # Retourne SlackNotifier ou LogNotifier
+
+            notifier.send(
+                subject=f"Circuit Breaker: {trigger}",
+                body=reason,
+                severity="critical"
+            )
+        except Exception:  # noqa: BLE001 — alerting best-effort
+            LOGGER.debug("Notification Slack circuit_breaker indisponible.", exc_info=True)
 
 
 class CircuitBreaker:

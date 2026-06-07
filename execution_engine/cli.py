@@ -22,10 +22,12 @@ from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.config import ExecutionConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import EventType
+from database.run_business_summaries import persist_run_business_summary
 from service.alpaca.trading_client import AlpacaTradingClient
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+STEP_KEY = "execution_kill_switch"
 
 
 def _add_run_arguments(p: argparse.ArgumentParser) -> None:
@@ -324,6 +326,20 @@ def _run_cancel_all(args: argparse.Namespace) -> None:
         "results": results_payload,
     }
     summary = attach_schema_version(summary, version=1)
+    try:
+        persist_run_business_summary(
+            summary=summary,
+            step_key=STEP_KEY,
+            run_kind="step",
+            status="completed" if failed_count == 0 else "warning",
+            summary_run_id=run_id,
+            entity_run_id=run_id,
+            account_id=account_id,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+    except Exception:
+        LOGGER.debug("Persistance run_summaries indisponible pour cancel-all.", exc_info=True)
 
     print(f"\n{'=' * 70}")
     print(f"  Execution Engine — KILL SWITCH ({broker_mode})")

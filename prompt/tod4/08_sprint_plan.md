@@ -89,18 +89,19 @@ DataIntegrityEngine, Screener, Selector, Event Sentiment, Database, IHM
 - A-005 : Validation cohérence presets/profil strict
 
 ### Tâches
-1. **T2.1** : Concevoir un schéma commun de `run_summary` (tous les modules)
-2. **T2.2** : Créer la table `run_summaries` dans `database/sql/`
-3. **T2.3** : Implémenter un helper `core/run_summary.py` pour la persistance SQL
-4. **T2.4** : Mettre à jour chaque module CLI pour persister son résumé
-5. **T2.5** : Remplacer le faux doute sur les tables ML par un garde-fou de synchronisation doc/génération (`data_lineage_matrix`)
-6. **T2.6** : Renforcer, si besoin, les tests de cohérence entre presets et profil strict déjà existants
+1. [x] **T2.1** : Concevoir un schéma commun de `run_summary` (tous les modules)
+2. [x] **T2.2** : Créer la table `run_summaries` dans `database/sql/`
+3. [x] **T2.3** : Implémenter un helper `core/run_summary.py` pour la persistance SQL
+4. [x] **T2.4** : Mettre à jour chaque module CLI pour persister son résumé
+5. [x] **T2.5** : Remplacer le faux doute sur les tables ML par un garde-fou de synchronisation doc/génération (`data_lineage_matrix`)
+6. [x] **T2.6** : Renforcer, si besoin, les tests de cohérence entre presets et profil strict déjà existants
+   - Statut : déjà validé côté code avant ce lot (`A-005`), aucune vérification complémentaire nécessaire ici.
 
 ### Critères d'acceptation
-- [ ] Tous les modules émettent un `run_summary` conforme au schéma commun
-- [ ] Tous les résumés sont persistés dans `run_summaries`
-- [ ] La documentation lineage reste synchronisée avec le schéma réel
-- [ ] Les tests de cohérence presets/profil couvrent explicitement les écarts métier assumés
+- [x] Tous les modules émettent un `run_summary` conforme au schéma commun
+- [x] Tous les résumés sont persistés dans `run_summaries`
+- [x] La documentation lineage reste synchronisée avec le schéma réel
+- [x] Les tests de cohérence presets/profil couvrent explicitement les écarts métier assumés
 
 ### Tests
 - `tests/test_run_summary_persistence.py` (nouveau) — intégration
@@ -111,6 +112,12 @@ DataIntegrityEngine, Screener, Selector, Event Sentiment, Database, IHM
 ### Gain attendu
 - Observabilité : 7.0 → 8.0
 - Database : 7.5 → 8.0
+
+### Bilan Sprint 2 (clos)
+- Table canonique `run_summaries` ajoutée dans `database/sql/` et alimentée en parallèle de la table legacy pour la compatibilité.
+- Schéma transverse validé par des tests dédiés (`test_run_summary_schema.py`, `test_run_summary_persistence.py`).
+- Matrice de lineage régénérée pour référencer `run_summaries` comme point d’audit central.
+- Cohérence presets / profil strict laissée inchangée ici : `A-005` était déjà traité avant ce lot.
 
 ---
 

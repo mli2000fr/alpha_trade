@@ -12,6 +12,7 @@ import pandas as pd
 
 from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
+from database.run_business_summaries import persist_run_business_summary
 from screener.db_io import (
     get_engine,
     iter_symbol_chunks,
@@ -31,6 +32,7 @@ APPROX_TRADING_DAYS_PER_YEAR = 252
 CHUNK_FAILURE_RATIO_WARNING_THRESHOLD = 0.05
 CHUNK_ERROR_SAMPLE_LIMIT = 5
 CHUNK_SYMBOL_SAMPLE_LIMIT = 3
+STEP_KEY = "screener"
 
 
 def _utc_now_naive() -> datetime:
@@ -42,6 +44,21 @@ def _build_run_id(prefix: str) -> str:
 
 
 def _emit_run_summary(summary: dict[str, object]) -> None:
+    if not bool(summary.get("progress_live")):
+        try:
+            persist_run_business_summary(
+                summary=summary,
+                step_key=STEP_KEY,
+                run_kind="step",
+                status=str(summary.get("status", "") or "") or None,
+                summary_run_id=str(summary.get("run_id", "") or "") or None,
+                entity_run_id=str(summary.get("run_id", "") or "") or None,
+                trade_date=summary.get("trade_date"),
+                started_at=summary.get("started_at"),
+                finished_at=summary.get("finished_at"),
+            )
+        except Exception:
+            LOGGER.debug("Persistance run_summaries indisponible pour screener.", exc_info=True)
     print(
         f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
         flush=True,

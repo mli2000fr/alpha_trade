@@ -17,13 +17,15 @@ from core.run_summary import attach_schema_version
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+PRIMARY_SUMMARY_TABLE_NAME = "run_summaries"
+LEGACY_SUMMARY_TABLE_NAME = "run_business_summaries"
 
 
-@lru_cache(maxsize=1)
-def get_run_business_summaries_table() -> Table:
+@lru_cache(maxsize=2)
+def _build_summary_table(table_name: str) -> Table:
     metadata = MetaData()
     return Table(
-        "run_business_summaries",
+        table_name,
         metadata,
         Column("summary_run_id", String(96), primary_key=True),
         Column("source_run_id", String(96), nullable=True),
@@ -40,6 +42,14 @@ def get_run_business_summaries_table() -> Table:
         Column("created_at", DateTime, nullable=True),
         Column("updated_at", DateTime, nullable=True),
     )
+
+
+def get_run_summaries_table() -> Table:
+    return _build_summary_table(PRIMARY_SUMMARY_TABLE_NAME)
+
+
+def get_run_business_summaries_table() -> Table:
+    return _build_summary_table(LEGACY_SUMMARY_TABLE_NAME)
 
 
 def build_summary_run_id(prefix: str) -> str:
@@ -91,11 +101,22 @@ def _coerce_date(value: Any) -> date | None:
     return None
 
 
-def _table_exists(engine) -> bool:
+def _table_exists(engine, table_name: str) -> bool:
     try:
-        return inspect(engine).has_table(get_run_business_summaries_table().name)
+        return inspect(engine).has_table(table_name)
     except Exception:
         return False
+
+
+def _resolve_summary_tables(engine) -> tuple[Table, ...]:
+    tables: list[Table] = []
+    if _table_exists(engine, PRIMARY_SUMMARY_TABLE_NAME):
+        tables.append(get_run_summaries_table())
+    if _table_exists(engine, LEGACY_SUMMARY_TABLE_NAME):
+        legacy_table = get_run_business_summaries_table()
+        if not tables or legacy_table.name != tables[0].name:
+            tables.append(legacy_table)
+    return tuple(tables)
 
 
 def _serialize_summary(summary: Mapping[str, Any]) -> str:
@@ -122,11 +143,11 @@ def persist_run_business_summary(
         return 0
 
     resolved_engine = engine or get_sqlalchemy_engine()
-    if not _table_exists(resolved_engine):
+    target_tables = _resolve_summary_tables(resolved_engine)
+    if not target_tables:
         LOGGER.debug("Table run_business_summaries absente ; persistance du résumé ignorée.")
         return 0
 
-    table = get_run_business_summaries_table()
     resolved_summary_run_id = summary_run_id or source_run_id or entity_run_id or build_summary_run_id(step_key)
     payload = {
         "summary_run_id": resolved_summary_run_id,
@@ -144,15 +165,16 @@ def persist_run_business_summary(
     }
 
     with resolved_engine.begin() as conn:
-        exists = conn.execute(
-            select(table.c.summary_run_id).where(table.c.summary_run_id == resolved_summary_run_id).limit(1)
-        ).scalar_one_or_none()
-        if exists is None:
-            conn.execute(table.insert().values(**payload))
-        else:
-            conn.execute(
-                table.update().where(table.c.summary_run_id == resolved_summary_run_id).values(**payload)
-            )
+        for table in target_tables:
+            exists = conn.execute(
+                select(table.c.summary_run_id).where(table.c.summary_run_id == resolved_summary_run_id).limit(1)
+            ).scalar_one_or_none()
+            if exists is None:
+                conn.execute(table.insert().values(**payload))
+            else:
+                conn.execute(
+                    table.update().where(table.c.summary_run_id == resolved_summary_run_id).values(**payload)
+                )
     return 1
 
 

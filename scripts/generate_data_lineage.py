@@ -28,7 +28,7 @@ import argparse
 import logging
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 LOGGER = logging.getLogger("generate_data_lineage")
@@ -130,8 +130,9 @@ LINEAGE_SPEC: tuple[LineageEntry, ...] = (
                  "selector.alpha_scanner", "risk_management, ihm",
                  "computed", "—", "daily", "P1",
                  SECTIONS_ORDER[1]),
-    LineageEntry("screener_run_summaries",
-                 "screener", "ihm (audit)",
+    LineageEntry("run_summaries",
+                 "core.run_summary + database.run_business_summaries",
+                 "ihm (audit), execution_engine.db_io, services",
                  "computed", "—", "daily", "P3",
                  SECTIONS_ORDER[1]),
     # 3. Sentiment & ML

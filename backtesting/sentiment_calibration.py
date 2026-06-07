@@ -26,10 +26,12 @@ from backtesting.report import (
 from backtesting.simulator import BacktestConfig, BacktestEngine
 from common.utils import configure_root_logging
 from database.connection import get_sqlalchemy_engine
+from database.run_business_summaries import persist_run_business_summary
 from event_sentiment.signal_aggregator import SentimentSignalAggregator
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+STEP_KEY = "backtesting_sentiment_calibration"
 
 
 def _utc_now_naive() -> datetime:
@@ -685,6 +687,21 @@ class SentimentWeightCalibrator:
 
 
 def _emit_run_summary(summary: dict[str, object]) -> None:
+    if not bool(summary.get("progress_live")):
+        try:
+            persist_run_business_summary(
+                summary=summary,
+                step_key=STEP_KEY,
+                run_kind="step",
+                status=str(summary.get("status", "") or "") or None,
+                summary_run_id=str(summary.get("run_id", "") or "") or None,
+                entity_run_id=str(summary.get("run_id", "") or "") or None,
+                trade_date=summary.get("trade_date"),
+                started_at=summary.get("started_at"),
+                finished_at=summary.get("finished_at"),
+            )
+        except Exception:
+            LOGGER.debug("Persistance run_summaries indisponible pour backtesting sentiment.", exc_info=True)
     print(f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}", flush=True)
 
 
