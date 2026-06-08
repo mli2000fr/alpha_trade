@@ -313,6 +313,20 @@ class ProductionExecutor:
                             unit="étapes",
                         )
                         return metrics
+                    # Mode dégradé (allocation réduite) : on continue mais on le logue
+                    if hasattr(self._circuit_breaker, "allocation_scale"):
+                        _scale = self._circuit_breaker.allocation_scale()
+                        if _scale < 1.0:
+                            LOGGER.warning(
+                                "Circuit breaker mode dégradé actif — allocation_scale=%.2f%%",
+                                _scale * 100.0,
+                            )
+                            events.append(make_event(
+                                exec_run_id,
+                                EventType.CIRCUIT_BREAKER_ACTIVE,
+                                f"CB degraded mode — allocation_scale={_scale:.2%}",
+                            ))
+                            metrics["cb_allocation_scale"] = _scale
                 except Exception as exc:
                     LOGGER.warning("Circuit breaker check failed: %s", exc)
 

@@ -62,12 +62,48 @@ def _try_send_alert(event: str, payload: dict) -> None:
 
 
 class CircuitBreaker:
-    """Évalue si le trading doit être suspendu."""
+    """Évalue si le trading doit être suspendu.
+
+    Phase C.5 (parité backtest) : supporte un mode dégradé avec allocation
+    réduite (``degraded_entry_allocation_pct`` dans ``RiskConfig``) et un
+    pic roulant optionnel (``rolling_peak_window_days``).
+    Si ``degraded_entry_allocation_pct > 0``, ``is_active()`` retourne toujours
+    ``False`` (le circuit breaker ne bloque plus totalement) mais ``allocation_scale()``
+    retourne la fraction d'allocation autorisée.
+    """
 
     def __init__(self, config: RiskConfig, pnl: PnLSnapshot | None = None) -> None:
         self._cfg = config
         self._pnl = pnl or PnLSnapshot()
         self._last_notified_signature: str | None = None
+        self._peak_window: list[float] = []
+        self._tripped: bool = False
+
+    # ------------------------------------------------------------------
+    # Pic de référence roulant (optionnel)
+    # ------------------------------------------------------------------
+    def _reference_hwm(self) -> float | None:
+        """Retourne le high-watermark de référence (roulant ou absolu)."""
+        hwm = self._pnl.portfolio_high_watermark
+        window = int(self._cfg.rolling_peak_window_days)
+        if window <= 0:
+            # Comportement original : pic absolu fourni par l'appelant
+            return hwm
+        cur = self._pnl.portfolio_current_value
+        if cur is not None and cur > 0:
+            self._peak_window.append(float(cur))
+            if len(self._peak_window) > window:
+                self._peak_window = self._peak_window[-window:]
+        if not self._peak_window:
+            return hwm
+        return float(max(self._peak_window))
+
+    def allocation_scale(self) -> float:
+        """Fraction d'allocation autorisée : 1.0 si normal, dégradé si trippé."""
+        if not self._tripped:
+            return 1.0
+        alloc = float(self._cfg.degraded_entry_allocation_pct)
+        return float(max(0.0, min(1.0, alloc)))
 
     def status(self) -> CircuitBreakerStatus:
         """Évalue le statut courant sans journalisation ni notification."""
@@ -80,8 +116,14 @@ class CircuitBreaker:
         return CircuitBreakerStatus(active=False)
 
     def is_active(self) -> bool:
-        """Retourne True si un circuit breaker est déclenché."""
-        return self.status().active
+        """Retourne True si un circuit breaker est déclenché ET qu'il n'y a pas de mode dégradé."""
+        status = self.status()
+        if status.active and float(self._cfg.degraded_entry_allocation_pct) > 0.0:
+            # Mode dégradé : on signale mais on ne bloque pas l'executor
+            self._tripped = True
+            return False
+        self._tripped = status.active
+        return status.active
 
     def notify_if_active(self) -> bool:
         """Envoie au plus une alerte par statut déclenché."""
@@ -109,7 +151,7 @@ class CircuitBreaker:
 
     # ------------------------------------------------------------------
     def _evaluate_drawdown(self) -> CircuitBreakerStatus:
-        hwm = self._pnl.portfolio_high_watermark
+        hwm = self._reference_hwm()
         cur = self._pnl.portfolio_current_value
         if hwm is None or cur is None or hwm <= 0:
             return CircuitBreakerStatus(active=False)

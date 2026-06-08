@@ -52,7 +52,9 @@ presets:
       execution_trailing_r_multiple: 1.0
       backtesting_commission_bps_stress: 15.0
       backtesting_slippage_bps_stress: 25.0
-      backtesting_max_portfolio_dd_pct: 0.12
+      backtesting_max_portfolio_dd_pct: 0.10
+      backtesting_dd_rolling_peak_window_days: 252
+      backtesting_dd_degraded_allocation_pct: 0.02
       backtesting_max_sector_exposure_pct: 0.25
       backtesting_max_entry_gap_pct: 0.03
       backtesting_target_annual_vol: 0.12
@@ -130,6 +132,8 @@ presets:
       backtesting_commission_bps_stress: 12.0
       backtesting_slippage_bps_stress: 20.0
       backtesting_max_portfolio_dd_pct: 0.12
+      backtesting_dd_rolling_peak_window_days: 252
+      backtesting_dd_degraded_allocation_pct: 0.02
       backtesting_max_sector_exposure_pct: 0.30
       backtesting_max_entry_gap_pct: 0.03
       backtesting_target_annual_vol: 0.13
@@ -204,6 +208,8 @@ presets:
       backtesting_commission_bps_stress: 10.0
       backtesting_slippage_bps_stress: 18.0
       backtesting_max_portfolio_dd_pct: 0.12
+      backtesting_dd_rolling_peak_window_days: 252
+      backtesting_dd_degraded_allocation_pct: 0.02
       backtesting_max_sector_exposure_pct: 0.30
       backtesting_max_entry_gap_pct: 0.03
       backtesting_target_annual_vol: 0.14
@@ -273,6 +279,8 @@ presets:
       backtesting_commission_bps_stress: 8.0
       backtesting_slippage_bps_stress: 15.0
       backtesting_max_portfolio_dd_pct: 0.15
+      backtesting_dd_rolling_peak_window_days: 252
+      backtesting_dd_degraded_allocation_pct: 0.02
       backtesting_max_sector_exposure_pct: 0.30
       backtesting_max_entry_gap_pct: 0.025
       backtesting_target_annual_vol: 0.15
@@ -339,6 +347,8 @@ presets:
       backtesting_commission_bps_stress: 6.0
       backtesting_slippage_bps_stress: 12.0
       backtesting_max_portfolio_dd_pct: 0.15
+      backtesting_dd_rolling_peak_window_days: 252
+      backtesting_dd_degraded_allocation_pct: 0.02
       backtesting_max_sector_exposure_pct: 0.30
       backtesting_max_entry_gap_pct: 0.025
       backtesting_target_annual_vol: 0.15
@@ -404,6 +414,8 @@ presets:
       backtesting_commission_bps_stress: 5.0
       backtesting_slippage_bps_stress: 10.0
       backtesting_max_portfolio_dd_pct: 0.15
+      backtesting_dd_rolling_peak_window_days: 252
+      backtesting_dd_degraded_allocation_pct: 0.02
       backtesting_max_sector_exposure_pct: 0.28
       backtesting_max_entry_gap_pct: 0.02
       backtesting_target_annual_vol: 0.15
@@ -480,6 +492,8 @@ presets:
       backtesting_commission_bps_stress: 4.0
       backtesting_slippage_bps_stress: 8.0
       backtesting_max_portfolio_dd_pct: 0.18
+      backtesting_dd_rolling_peak_window_days: 252
+      backtesting_dd_degraded_allocation_pct: 0.02
       backtesting_max_sector_exposure_pct: 0.25
       backtesting_max_entry_gap_pct: 0.02
       backtesting_target_annual_vol: 0.16

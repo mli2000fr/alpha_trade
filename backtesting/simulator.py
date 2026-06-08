@@ -189,6 +189,7 @@ class _RunState:
     trade_events: list[dict[str, object]] = field(default_factory=list)
     equity_points: list[float] = field(default_factory=list)
     day_trade_counts: dict[pd.Timestamp, int] = field(default_factory=lambda: defaultdict(int))
+    breaker_points: list[dict[str, object]] = field(default_factory=list)
 
 
 class _ReadableTradesAccessor:
@@ -240,6 +241,7 @@ class BacktestResult:
     closed_trades_df: pd.DataFrame
     trade_events_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     diagnostics: BacktestDiagnostics = field(default_factory=BacktestDiagnostics)
+    drawdown_breaker_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     wrapper: SimpleNamespace = field(init=False)
     trades: _ReadableTradesAccessor = field(init=False)
 
@@ -541,6 +543,19 @@ class BacktestEngine:
             entries_allowed_by_breaker = cfg.risk_overlay.drawdown_breaker.update(
                 current_equity, state.peak_equity
             )
+            drawdown_allocation_scale = cfg.risk_overlay.drawdown_breaker.allocation_scale()
+
+            # Diagnostic quotidien breaker (C.5)
+            if cfg.risk_overlay.drawdown_breaker.enabled:
+                _ref_peak = cfg.risk_overlay.drawdown_breaker._reference_peak(state.peak_equity)
+                state.breaker_points.append({
+                    "trade_date": trade_day,
+                    "equity": current_equity,
+                    "reference_peak": _ref_peak,
+                    "dd_pct": round(((current_equity / _ref_peak) - 1.0) * 100.0, 4) if _ref_peak > 0 else None,
+                    "tripped": not entries_allowed_by_breaker,
+                    "allocation_scale": drawdown_allocation_scale,
+                })
 
             # Phase C.3 — filtre régime (benchmark).
             entries_allowed_by_regime = cfg.risk_overlay.regime_filter.is_entry_allowed(
@@ -554,6 +569,7 @@ class BacktestEngine:
                 day_signals=day_signals,
                 close_columns=close.columns,
                 entries_allowed_by_breaker=entries_allowed_by_breaker,
+                drawdown_allocation_scale=drawdown_allocation_scale,
                 entries_allowed_by_regime=entries_allowed_by_regime,
                 diagnostics=diagnostics,
             )
@@ -569,6 +585,7 @@ class BacktestEngine:
                 adv_usd_df=adv_usd_df,
                 sector_map=sector_map,
                 current_equity=current_equity,
+                drawdown_allocation_scale=drawdown_allocation_scale,
                 diagnostics=diagnostics,
             )
 
@@ -593,11 +610,13 @@ class BacktestEngine:
         )
         trades_df = pd.DataFrame(state.closed_trades)
         trade_events_df = pd.DataFrame(state.trade_events)
+        breaker_df = pd.DataFrame(state.breaker_points) if state.breaker_points else pd.DataFrame()
         result = BacktestResult(
             equity_curve=equity_curve,
             closed_trades_df=trades_df,
             trade_events_df=trade_events_df,
             diagnostics=diagnostics,
+            drawdown_breaker_df=breaker_df,
         )
         LOGGER.info(
             "Backtest contraint terminé — valeur finale : %.2f — diagnostics=%s — événements=%d",
@@ -651,6 +670,7 @@ class BacktestEngine:
         day_signals: pd.DataFrame | None,
         close_columns: pd.Index,
         entries_allowed_by_breaker: bool,
+        drawdown_allocation_scale: float,
         entries_allowed_by_regime: bool,
         diagnostics: BacktestDiagnostics,
     ) -> list[pd.Series]:
@@ -664,9 +684,10 @@ class BacktestEngine:
             for _, row in day_signals.iterrows()
             if str(row["symbol"]) not in state.positions and str(row["symbol"]) in close_columns
         ]
-        if not entries_allowed_by_breaker or not entries_allowed_by_regime:
+        breaker_hard_blocked = (not entries_allowed_by_breaker) and drawdown_allocation_scale <= 0.0
+        if breaker_hard_blocked or not entries_allowed_by_regime:
             blocked_count = int(max(cfg.max_positions - len(state.positions), 0))
-            if not entries_allowed_by_breaker:
+            if breaker_hard_blocked:
                 diagnostics.blocked_by_drawdown_breaker += blocked_count
             if not entries_allowed_by_regime:
                 diagnostics.blocked_by_regime += blocked_count
@@ -678,9 +699,9 @@ class BacktestEngine:
                     symbol=str(row["symbol"]),
                     rejection_reason=(
                         "drawdown_breaker_and_regime_filter"
-                        if (not entries_allowed_by_breaker and not entries_allowed_by_regime)
+                        if (breaker_hard_blocked and not entries_allowed_by_regime)
                         else "drawdown_breaker"
-                        if not entries_allowed_by_breaker
+                        if breaker_hard_blocked
                         else "regime_filter"
                     ),
                     **self._build_signal_context(row),
@@ -704,6 +725,7 @@ class BacktestEngine:
         adv_usd_df: pd.DataFrame | None,
         sector_map: dict[str, str],
         current_equity: float,
+        drawdown_allocation_scale: float,
         diagnostics: BacktestDiagnostics,
     ) -> None:
         """Phase E.3 — ouvre les nouvelles positions (gap, sectoral, sizing, slippage)."""
@@ -802,6 +824,8 @@ class BacktestEngine:
                 )
             if quantity_override is None and vol_target_scaler != 1.0:
                 target_weight_pct = float(np.clip(target_weight_pct * vol_target_scaler, 0.0, 1.0))
+            if drawdown_allocation_scale < 1.0:
+                target_weight_pct = float(np.clip(target_weight_pct * drawdown_allocation_scale, 0.0, 1.0))
 
             sector = (
                 str(row["sector"])
@@ -847,6 +871,9 @@ class BacktestEngine:
             if quantity_override is not None:
                 affordable_quantity = int(state.settled_cash // effective_unit_cost) if effective_unit_cost > 0 else 0
                 quantity = min(int(quantity_override), affordable_quantity)
+                if drawdown_allocation_scale < 1.0 and effective_unit_cost > 0:
+                    degraded_budget_quantity = int(candidate_budget // effective_unit_cost)
+                    quantity = min(quantity, degraded_budget_quantity)
             else:
                 quantity = int(candidate_budget // effective_unit_cost)
             quantity_before_gross_exposure_cap = quantity

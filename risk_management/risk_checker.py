@@ -50,6 +50,8 @@ class RiskCheckerImpl:
         self._last_decision_reason_code = self._constraints.reason_to_code(reason)
         if approved < proposed_shares and reason != "OK":
             LOGGER.info("Position reduite pour %s: %s -> %s (%s)", symbol, int(proposed_shares), approved, reason)
+        else:
+            LOGGER.info("Position approved pour %s: %s -> %s ---------------", symbol, int(proposed_shares), approved)
         return float(approved)
 
     def is_circuit_breaker_active(self) -> bool:

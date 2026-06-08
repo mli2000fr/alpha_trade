@@ -443,6 +443,8 @@ def _build_backtest_common_params(
             "max_sector_exposure_pct": float(args.max_sector_exposure_pct),
             "max_portfolio_dd_pct": float(args.max_portfolio_dd_pct),
             "dd_recovery_pct": float(args.dd_recovery_pct),
+            "dd_rolling_peak_window_days": int(args.dd_rolling_peak_window_days),
+            "dd_degraded_allocation_pct": float(args.dd_degraded_allocation_pct),
             "target_annual_vol": (
                 float(args.target_annual_vol) if args.target_annual_vol is not None else None
             ),
@@ -1013,6 +1015,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (Phase C.5).",
     )
     run_p.add_argument(
+        "--dd-rolling-peak-window-days",
+        type=int,
+        default=252,
+        help="Fenêtre (jours de bourse) du pic roulant utilisé par le coupe-circuit DD (Phase C.5).",
+    )
+    run_p.add_argument(
+        "--dd-degraded-allocation-pct",
+        type=float,
+        default=0.02,
+        help="Allocation max par entrée quand le coupe-circuit DD est trippé (0.0 = blocage total).",
+    )
+    run_p.add_argument(
         "--target-annual-vol",
         type=float,
         default=None,
@@ -1205,6 +1219,9 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--capital-preset-key": "capital_preset_key",
         "--capital": "capital",
         "--max-portfolio-dd-pct": "max_portfolio_dd_pct",
+        "--dd-recovery-pct": "dd_recovery_pct",
+        "--dd-rolling-peak-window-days": "dd_rolling_peak_window_days",
+        "--dd-degraded-allocation-pct": "dd_degraded_allocation_pct",
         "--target-annual-vol": "target_annual_vol",
         "--min-ml-coverage-ratio": "min_ml_coverage_ratio",
     }
@@ -1473,6 +1490,24 @@ def _apply_pipeline_defensive_defaults_from_preset(
             "backtesting_min_ml_coverage_ratio",
             default=0.80,
         )
+
+    if "dd_rolling_peak_window_days" not in explicit_flags:
+        resolved_window = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_dd_rolling_peak_window_days",
+            default=252.0,
+        )
+        if resolved_window is not None:
+            args.dd_rolling_peak_window_days = int(resolved_window)
+
+    if "dd_degraded_allocation_pct" not in explicit_flags:
+        resolved_alloc = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_dd_degraded_allocation_pct",
+            default=0.02,
+        )
+        if resolved_alloc is not None:
+            args.dd_degraded_allocation_pct = float(resolved_alloc)
 
 
 def _enforce_ml_coverage_gate(
@@ -2083,6 +2118,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
             enabled=float(args.max_portfolio_dd_pct) > 0.0,
             max_dd_pct=float(args.max_portfolio_dd_pct) or 0.20,
             recovery_pct=float(args.dd_recovery_pct),
+            rolling_peak_window_days=int(args.dd_rolling_peak_window_days),
+            degraded_entry_allocation_pct=float(args.dd_degraded_allocation_pct),
         ),
         target_annual_vol=(
             float(args.target_annual_vol) if args.target_annual_vol is not None else None
@@ -2243,6 +2280,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
         trade_audit_csv_path = save_trade_audit_csv(pf, output_dir=output_dir)
         artifact_paths["equity_curve_csv"] = str(equity_curve_csv_path)
         artifact_paths["trade_audit_csv"] = str(trade_audit_csv_path)
+        # Diagnostic quotidien circuit breaker drawdown (C.5)
+        if hasattr(pf, "drawdown_breaker_df") and not pf.drawdown_breaker_df.empty:
+            _dd_breaker_path = Path(output_dir) / "drawdown_breaker_daily.csv"
+            pf.drawdown_breaker_df.to_csv(_dd_breaker_path, index=False)
+            artifact_paths["drawdown_breaker_daily_csv"] = str(_dd_breaker_path)
+            _safe_print(f"   → {_dd_breaker_path}")
         fidelity_manifest_path = save_fidelity_manifest(fidelity_manifest, output_dir)
         artifact_paths["fidelity_manifest_json"] = str(fidelity_manifest_path)
         coverage_summary_path = save_coverage_summary(fidelity_manifest, output_dir)

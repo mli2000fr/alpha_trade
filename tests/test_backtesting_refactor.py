@@ -249,6 +249,43 @@ class TestPhaseC:
         assert cb.update(equity=85.0, peak_equity=100.0) is False
         assert cb.update(equity=96.0, peak_equity=100.0) is True
 
+    def test_drawdown_breaker_uses_rolling_peak_for_recovery(self):
+        """Vérifie que le pic roulant expire les anciens sommets et facilite la recovery."""
+        from backtesting.risk_overlay import DrawdownCircuitBreaker
+
+        cb = DrawdownCircuitBreaker(
+            enabled=True,
+            max_dd_pct=0.10,
+            recovery_pct=0.95,
+            rolling_peak_window_days=3,
+        )
+        # Jour 1: equity=100 → normal
+        assert cb.update(equity=100.0, peak_equity=100.0) is True
+        # Jour 2: nouveau pic à 110
+        assert cb.update(equity=110.0, peak_equity=110.0) is True
+        # Jour 3: DD -10.9% vs fenêtre=[100,110] → trip
+        assert cb.update(equity=98.0, peak_equity=110.0) is False   # window=[100,110,98]
+        # Jour 4: encore bas, pas de recovery (pic 110 encore dans fenêtre)
+        assert cb.update(equity=96.0, peak_equity=110.0) is False   # window=[110,98,96]
+        # Jour 5: encore bas, 110 toujours dans fenêtre=[98,96,97]? non: [110,98,96]→append97→[98,96,97]
+        assert cb.update(equity=97.0, peak_equity=110.0) is False   # window=[98,96,97]
+        # Jour 6: 110 expulsé, fenêtre=[96,97,99], ref_peak=99, recovery=99>=99*0.95 ✓
+        assert cb.update(equity=99.0, peak_equity=110.0) is True    # window=[96,97,99] → ref_peak=99 → untripped
+
+    def test_drawdown_breaker_degraded_allocation_scale_when_tripped(self):
+        from backtesting.risk_overlay import DrawdownCircuitBreaker
+
+        cb = DrawdownCircuitBreaker(
+            enabled=True,
+            max_dd_pct=0.10,
+            recovery_pct=0.95,
+            degraded_entry_allocation_pct=0.02,
+        )
+        assert cb.update(equity=100.0, peak_equity=100.0) is True
+        assert cb.allocation_scale() == pytest.approx(1.0)
+        assert cb.update(equity=85.0, peak_equity=100.0) is False
+        assert cb.allocation_scale() == pytest.approx(0.02)
+
     def test_regime_filter_blocks_when_below_sma(self):
         from backtesting.risk_overlay import RegimeFilterConfig
 

@@ -95,15 +95,39 @@ class DrawdownCircuitBreaker:
     enabled: bool = False
     max_dd_pct: float = 0.20
     recovery_pct: float = 0.95
+    rolling_peak_window_days: int = 252
+    degraded_entry_allocation_pct: float = 0.0
     _tripped: bool = field(default=False, init=False)
+    _equity_window: list[float] = field(default_factory=list, init=False)
+
+    def _reference_peak(self, peak_equity: float) -> float:
+        if self.rolling_peak_window_days <= 0:
+            return float(peak_equity)
+        if not self._equity_window:
+            return float(peak_equity)
+        return float(max(self._equity_window))
+
+    def allocation_scale(self) -> float:
+        if not self._tripped:
+            return 1.0
+        return float(np.clip(self.degraded_entry_allocation_pct, 0.0, 1.0))
 
     def update(self, equity: float, peak_equity: float) -> bool:
         if not self.enabled or peak_equity <= 0:
             return True
-        dd = (equity / peak_equity) - 1.0
+        # Calculer le pic de référence sur l'historique EXISTANT (avant aujourd'hui)
+        reference_peak = self._reference_peak(peak_equity)
+        # Enregistrer l'equity du jour pour les prochains appels
+        if np.isfinite(equity) and equity > 0:
+            self._equity_window.append(float(equity))
+            if self.rolling_peak_window_days > 0 and len(self._equity_window) > self.rolling_peak_window_days:
+                self._equity_window = self._equity_window[-self.rolling_peak_window_days :]
+        if reference_peak <= 0:
+            return True
+        dd = (equity / reference_peak) - 1.0
         if not self._tripped and dd <= -abs(self.max_dd_pct):
             self._tripped = True
-        elif self._tripped and equity >= peak_equity * self.recovery_pct:
+        elif self._tripped and equity >= reference_peak * self.recovery_pct:
             self._tripped = False
         return not self._tripped
 
@@ -207,4 +231,3 @@ __all__ = [
     "compute_portfolio_vol_scaler",
     "snapshot_sector_exposure",
 ]
-

@@ -25,6 +25,10 @@ class RiskConfig:
 
     max_portfolio_drawdown_pct: float = 0.15
     max_daily_loss_pct: float = 0.05
+    # Circuit breaker drawdown — mode dégradé et pic roulant (parité backtest Phase C.5)
+    # 0.0 = blocage total (comportement original) ; > 0 = mode dégradé (sizing réduit)
+    degraded_entry_allocation_pct: float = 0.0
+    rolling_peak_window_days: int = 0   # 0 = pic historique absolu (comportement original)
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60
 
