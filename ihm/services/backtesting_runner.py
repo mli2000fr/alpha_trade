@@ -33,7 +33,6 @@ class BacktestRunOptions:
     commission_bps: float | None = None
     slippage_bps: float | None = None
     account_type: Literal["margin", "cash"] = "margin"
-    pdt_rule: Literal["auto", "off"] = "auto"
     swing_only: bool = False
     sentiment_lookback: int = 365
     no_save: bool = False
@@ -182,7 +181,6 @@ def build_backtesting_command(
             "--ts", str(options.ts),
             "--max-positions", str(options.max_positions),
             "--account-type", options.account_type,
-            "--pdt-rule", options.pdt_rule,
             "--sentiment-lookback", str(options.sentiment_lookback),
             "--ml-mode", options.ml_mode,
             "--sentiment-mode", options.sentiment_mode,

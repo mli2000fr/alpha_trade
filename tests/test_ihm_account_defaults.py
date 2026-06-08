@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import ihm.services.account_defaults as account_defaults
 
 
-def test_get_pipeline_execution_defaults_infers_cash_account_and_pdt_off(monkeypatch) -> None:
+def test_get_pipeline_execution_defaults_infers_cash_account(monkeypatch) -> None:
 	class DummyRegistry:
 		def resolve(self, account_id: str) -> SimpleNamespace:
 			assert account_id == "cash1"
@@ -34,12 +34,11 @@ def test_get_pipeline_execution_defaults_infers_cash_account_and_pdt_off(monkeyp
 
 	assert defaults is not None
 	assert defaults.account_type == "cash"
-	assert defaults.pdt_rule == "off"
 	assert defaults.swing_only is None
 	assert defaults.equity == 12_500.0
 
 
-def test_get_pipeline_execution_defaults_infers_margin_account_below_pdt_threshold(monkeypatch) -> None:
+def test_get_pipeline_execution_defaults_infers_margin_account(monkeypatch) -> None:
 	class DummyRegistry:
 		def resolve(self, account_id: str) -> SimpleNamespace:
 			assert account_id == "margin1"
@@ -68,12 +67,11 @@ def test_get_pipeline_execution_defaults_infers_margin_account_below_pdt_thresho
 
 	assert defaults is not None
 	assert defaults.account_type == "margin"
-	assert defaults.pdt_rule == "auto"
 	assert defaults.swing_only is None
 	assert defaults.equity == 24_000.0
 
 
-def test_get_pipeline_execution_defaults_keeps_manual_pdt_when_equity_is_above_threshold(monkeypatch) -> None:
+def test_get_pipeline_execution_defaults_returns_account_type_for_large_margin(monkeypatch) -> None:
 	class DummyRegistry:
 		def resolve(self, account_id: str) -> SimpleNamespace:
 			assert account_id == "margin2"
@@ -102,7 +100,6 @@ def test_get_pipeline_execution_defaults_keeps_manual_pdt_when_equity_is_above_t
 
 	assert defaults is not None
 	assert defaults.account_type == "margin"
-	assert defaults.pdt_rule is None
 	assert defaults.swing_only is None
 	assert defaults.equity == 50_000.0
 

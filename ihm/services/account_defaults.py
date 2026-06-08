@@ -7,8 +7,6 @@ from typing import Literal
 from service.alpaca.accounts import AccountRegistry
 from service.alpaca.trading_client import AlpacaTradingClient
 
-PDT_EQUITY_THRESHOLD = 25_000.0
-
 
 @dataclass(frozen=True, slots=True)
 class PipelineExecutionDefaults:
@@ -18,7 +16,6 @@ class PipelineExecutionDefaults:
     broker_mode: str
     equity: float | None
     account_type: Literal["margin", "cash"] | None = None
-    pdt_rule: Literal["auto", "off"] | None = None
     swing_only: bool | None = None
 
 
@@ -46,23 +43,11 @@ def _infer_account_type(snapshot: dict[str, object]) -> Literal["margin", "cash"
     return "margin"
 
 
-def _infer_pdt_rule(
-    account_type: Literal["margin", "cash"] | None,
-    equity: float | None,
-) -> Literal["auto", "off"] | None:
-    if account_type == "cash":
-        return "off"
-    if account_type == "margin" and equity is not None and equity < PDT_EQUITY_THRESHOLD:
-        return "auto"
-    return None
-
-
 def get_pipeline_execution_defaults(account_id: str | None) -> PipelineExecutionDefaults | None:
     """Retourne des valeurs par défaut si elles sont déductibles de manière fiable.
 
     Règles produit :
     - `account_type` est prérempli seulement si le broker le rend explicite ou déductible.
-    - `pdt_rule` est préremplie seulement quand la combinaison type/equity la rend déterministe.
     - `swing_only` reste manuel : ce choix relève d'une préférence d'exécution, pas d'un simple montant.
     """
 
@@ -78,13 +63,11 @@ def get_pipeline_execution_defaults(account_id: str | None) -> PipelineExecution
 
     account_type = _infer_account_type(snapshot)
     equity = _extract_equity(snapshot)
-    pdt_rule = _infer_pdt_rule(account_type, equity)
 
     return PipelineExecutionDefaults(
         account_id=cleaned_account_id,
         broker_mode=broker_account.mode,
         equity=equity,
         account_type=account_type,
-        pdt_rule=pdt_rule,
         swing_only=None,
     )

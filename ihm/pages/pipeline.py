@@ -37,7 +37,6 @@ from ihm.pages._execution_center import (
     DETECTED_CAPITAL_PRESET_ACCOUNT_KEY,
     DETECTED_CAPITAL_PRESET_KEY,
     DETECTED_ACCOUNT_TYPE_KEY,
-    DETECTED_PDT_RULE_KEY,
     _apply_execution_prefills,
     _build_execution_prefill_caption,
     _format_capital_preset_label,
@@ -475,42 +474,35 @@ def _build_execution_account_banner_payload(
     options: PipelineLaunchOptions,
     *,
     detected_account_type: str | None = None,
-    detected_pdt_rule: str | None = None,
 ) -> tuple[str, str]:
     account_type = str(options.execution_account_type or "cash").strip().lower() or "cash"
-    pdt_rule = str(options.execution_pdt_rule or "off").strip().lower() or "off"
 
-    if account_type == "cash" and pdt_rule == "off":
+    if account_type == "cash":
         severity = "success"
         message = (
             "🟢 **PARAMÈTRES COMPTE EXÉCUTION — PROFIL SWING CASH** — "
-            f"l'étape 12 utilisera `type de compte={account_type}` et `règle PDT={pdt_rule}`."
+            f"l'étape 12 utilisera `type de compte={account_type}`."
         )
-    elif account_type == "margin" and pdt_rule == "auto":
+    elif account_type == "margin":
         severity = "warning"
         message = (
-            "🟡 **PARAMÈTRES COMPTE EXÉCUTION — PROFIL MARGIN / PDT** — "
-            f"l'étape 12 utilisera `type de compte={account_type}` et `règle PDT={pdt_rule}`."
+            "🟡 **PARAMÈTRES COMPTE EXÉCUTION — PROFIL MARGIN** — "
+            f"l'étape 12 utilisera `type de compte={account_type}`."
         )
     else:
         severity = "info"
         message = (
             "ℹ️ **PARAMÈTRES COMPTE EXÉCUTION — CONFIGURATION SPÉCIFIQUE** — "
-            f"l'étape 12 utilisera `type de compte={account_type}` et `règle PDT={pdt_rule}`."
+            f"l'étape 12 utilisera `type de compte={account_type}`."
         )
 
     detected_parts: list[str] = []
     mismatches: list[str] = []
     normalized_detected_account_type = (detected_account_type or "").strip().lower() or None
-    normalized_detected_pdt_rule = (detected_pdt_rule or "").strip().lower() or None
     if normalized_detected_account_type in {"margin", "cash"}:
         detected_parts.append(f"type broker détecté : `{normalized_detected_account_type}`")
         if account_type != normalized_detected_account_type:
             mismatches.append("type de compte")
-    if normalized_detected_pdt_rule in {"auto", "off"}:
-        detected_parts.append(f"PDT détecté : `{normalized_detected_pdt_rule}`")
-        if pdt_rule != normalized_detected_pdt_rule:
-            mismatches.append("règle PDT")
 
     if detected_parts:
         message += " Préremplissage broker pour ce compte : " + " ; ".join(detected_parts) + "."
@@ -615,13 +607,11 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
     if detected_account == str(options.account_id or "").strip():
         detected_mode = str(st.session_state.get("pipeline_detected_broker_mode") or "").strip() or None
         detected_account_type = str(st.session_state.get(DETECTED_ACCOUNT_TYPE_KEY) or "").strip() or None
-        detected_pdt_rule = str(st.session_state.get(DETECTED_PDT_RULE_KEY) or "").strip() or None
         detected_capital_preset = str(st.session_state.get(DETECTED_CAPITAL_PRESET_KEY) or "").strip() or None
         selected_capital_preset = str(st.session_state.get(CAPITAL_PRESET_KEY) or "").strip() or None
         detected_equity = float(options.risk_account_equity) if options.risk_account_equity > 0 else None
     else:
         detected_account_type = None
-        detected_pdt_rule = None
         detected_capital_preset = None
         selected_capital_preset = None
         detected_equity = None
@@ -642,7 +632,6 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
     account_severity, account_message = _build_execution_account_banner_payload(
         options,
         detected_account_type=detected_account_type,
-        detected_pdt_rule=detected_pdt_rule,
     )
     getattr(st, account_severity)(account_message)
 
@@ -984,10 +973,9 @@ def _render_launchable_step_panel(
             if step.key in {"sync_latest_quotes", "sync_earnings_calendar"}:
                 _render_dependency_health_inline(step.key, dependency_diagnostic)
             if step.key == "execution":
-                effective_pdt = "off" if options.execution_account_type == "cash" else options.execution_pdt_rule
                 st.caption(
                     "⚖️ Contraintes d'exécution : "
-                    f"compte=`{options.execution_account_type}` | pdt=`{effective_pdt}` | swing_only=`{options.execution_swing_only}`"
+                    f"compte=`{options.execution_account_type}` | swing_only=`{options.execution_swing_only}`"
                 )
             if step.key == "alpha_scanner":
                 _render_alpha_scanner_dependency_diagnostic(

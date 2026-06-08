@@ -264,9 +264,8 @@ class PipelineLaunchOptions:
     execution_run_plan_file: str | None = None
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
-    # Défauts swing cash : compte cash + PDT off + swing only (cf. audit_ihm_pipeline_options.md P1)
+    # Défauts swing cash : compte cash + swing only (cf. audit_ihm_pipeline_options.md P1)
     execution_account_type: Literal["margin", "cash"] = "cash"
-    execution_pdt_rule: Literal["auto", "off"] = "off"
     execution_swing_only: bool = True
     # Stratégie de protection (sortie) — P1
     execution_submission_window: ExecutionSubmissionWindow = "both"
@@ -2214,7 +2213,6 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.auto_rebalance:
             command.append("--auto-rebalance")
         command.extend(["--account-type", options.execution_account_type])
-        command.extend(["--pdt-rule", options.execution_pdt_rule])
         # --swing-only utilise BooleanOptionalAction côté backend (cf. run_execution.py)
         command.append("--swing-only" if options.execution_swing_only else "--no-swing-only")
         # Stratégie de protection (P1) — toujours transmise pour reproductibilité

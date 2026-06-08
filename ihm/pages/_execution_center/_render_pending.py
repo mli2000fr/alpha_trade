@@ -5,7 +5,7 @@ Le découpage S6.1 historique a extrait 7/9 blocs de
 ``_render_<block>_block``. Restent inline dans la façade actuelle :
 
 * **BLOCK 1** — paramètres d'exécution (capital preset, dates, equity,
-  mode, RTH, account/PDT/swing, fenêtre + trailing + debug)
+  mode, RTH, account/swing, fenêtre + trailing + debug)
   → contrat : :func:`render_execution_block(execution_defaults, selected_account_id) -> dict`
 * **BLOCK 3** — Model Factory (preset, cible, walk-forward, hyperparams,
   grilles candidate)
@@ -63,13 +63,6 @@ def render_execution_block(
         key="pipeline_execution_account_type",
         help="Défaut swing : `cash`.",
     )
-    execution_pdt_rule = st.selectbox(
-        "Execution — règle PDT",
-        options=["auto", "off"],
-        index=1,
-        key="pipeline_execution_pdt_rule",
-        help="Défaut swing cash : `off`.",
-    )
     execution_swing_only = st.checkbox(
         "Execution — swing only",
         value=True,
@@ -116,7 +109,6 @@ def render_execution_block(
         "trade_date": trade_date,
         "execution_mode": execution_mode,
         "execution_account_type": execution_account_type,
-        "execution_pdt_rule": execution_pdt_rule,
         "execution_swing_only": execution_swing_only,
         "execution_submission_window": execution_submission_window,
         "execution_max_entry_gap_pct": execution_max_entry_gap_pct,

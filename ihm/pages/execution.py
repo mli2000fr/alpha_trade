@@ -396,7 +396,6 @@ def render() -> None:
     if constraints:
         st.subheader("⚖️ Contraintes de compte appliquées")
         account_type = str(constraints.get("account_type", "—") or "—")
-        effective_pdt_rule = str(constraints.get("effective_pdt_rule", "—") or "—")
         swing_only = bool(constraints.get("swing_only", False))
         equity = constraints.get("equity")
         buying_power = constraints.get("buying_power_available")
@@ -406,7 +405,6 @@ def render() -> None:
 
         metric_row([
             ("Type de compte", account_type, None),
-            ("PDT effectif", effective_pdt_rule, None),
             ("Mode swing uniquement", "Oui" if swing_only else "Non", None),
             ("Day trades restants", _safe_int(remaining_slots), None),
         ])

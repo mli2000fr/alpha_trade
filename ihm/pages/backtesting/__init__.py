@@ -246,7 +246,6 @@ def _apply_run_capital_preset(selected_preset_key: str, equity: float) -> Capita
         return None
     values = preset.values
     st.session_state["bt_run_account_type"] = str(values.get("execution_account_type", st.session_state.get("bt_run_account_type", "margin")))
-    st.session_state["bt_run_pdt_rule"] = str(values.get("execution_pdt_rule", st.session_state.get("bt_run_pdt_rule", "auto")))
     st.session_state["bt_run_swing_only"] = bool(values.get("execution_swing_only", st.session_state.get("bt_run_swing_only", False)))
     st.session_state["bt_run_max_positions"] = _to_int(
         values.get("risk_max_positions", st.session_state.get("bt_run_max_positions", 20)),
@@ -451,11 +450,6 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
                 "Paramètre": "account_type",
                 "Explication": "Type de compte simulé : margin / cash.",
                 "Défaut": "margin",
-            },
-            {
-                "Paramètre": "pdt_rule",
-                "Explication": "Application de la règle PDT sur un compte margin : auto / off.",
-                "Défaut": "auto",
             },
             {
                 "Paramètre": "swing_only",
@@ -1271,7 +1265,7 @@ def _build_run_options() -> BacktestRunOptions:
             help="Coût fixe explicite par trade. En mode pipeline, 15 bps est un défaut réaliste recommandé.",
         )
 
-    col8, col9, col10, col11, col12 = st.columns(5)
+    col8, col9, col10, col11 = st.columns(4)
     with col8:
         slippage_bps = st.number_input(
             "Slippage explicite (bps)",
@@ -1300,32 +1294,17 @@ def _build_run_options() -> BacktestRunOptions:
                     else "margin"
                 ),
                 key="bt_run_account_type",
-                help="`margin` = compte standard/margin ; `cash` = cash settled uniquement, sans PDT.",
+                help="`margin` = compte standard/margin ; `cash` = cash settled uniquement.",
             ),
         )
     with col10:
-        pdt_rule = cast(
-            str,
-            st.selectbox(
-                "Règle PDT",
-                options=["auto", "off"],
-                index=["auto", "off"].index(
-                    cast(str, st.session_state.get("bt_run_pdt_rule", "auto"))
-                    if st.session_state.get("bt_run_pdt_rule", "auto") in {"auto", "off"}
-                    else "auto"
-                ),
-                key="bt_run_pdt_rule",
-                help="`auto` applique la règle PDT sur compte margin < 25k ; `off` la désactive dans le backtest.",
-            ),
-        )
-    with col11:
         swing_only = st.checkbox(
             "Swing only",
             value=bool(st.session_state.get("bt_run_swing_only", False)),
             key="bt_run_swing_only",
             help="Si coché, une position ne peut pas être revendue le jour même.",
         )
-    with col12:
+    with col11:
         sentiment_lookback = st.number_input(
             "Sentiment lookback (jours)",
             min_value=1,
@@ -1521,10 +1500,6 @@ def _build_run_options() -> BacktestRunOptions:
     info_col1, info_col2 = st.columns(2)
     with info_col1:
         st.caption(
-            "Règle `PDT` : en mode `auto`, la 4e tentative de day trade sur 5 séances est bloquée pour un compte margin < 25k."
-        )
-    with info_col2:
-        st.caption(
             "`cash` + `swing_only` est supporté : cash settled T+1 et aucune sortie le jour même."
         )
 
@@ -1645,7 +1620,6 @@ def _build_run_options() -> BacktestRunOptions:
         commission_bps=float(commission_bps),
         slippage_bps=float(slippage_bps),
         account_type=cast(Any, account_type),
-        pdt_rule=cast(Any, pdt_rule),
         swing_only=bool(swing_only),
         sentiment_lookback=int(sentiment_lookback),
         no_save=bool(no_save),

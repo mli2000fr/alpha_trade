@@ -15,7 +15,6 @@ def test_apply_execution_prefills_auto_selects_execution_mode_from_broker_mode(m
             broker_mode="live",
             equity=50_000.0,
             account_type="margin",
-            pdt_rule=None,
             swing_only=None,
         ),
     )
@@ -46,7 +45,6 @@ def test_apply_execution_prefills_preserves_manual_mode_on_same_account(monkeypa
             broker_mode="paper",
             equity=12_500.0,
             account_type="cash",
-            pdt_rule="off",
             swing_only=None,
         ),
     )
@@ -73,7 +71,6 @@ def test_apply_execution_prefills_overrides_mode_when_switching_account(monkeypa
             broker_mode="paper",
             equity=25_000.0,
             account_type="margin",
-            pdt_rule=None,
             swing_only=None,
         ),
     )
@@ -99,7 +96,6 @@ def test_apply_execution_prefills_sets_risk_equity_from_broker_equity_on_account
             broker_mode="paper",
             equity=2_000.0,
             account_type="cash",
-            pdt_rule="off",
             swing_only=None,
         ),
     )
@@ -108,7 +104,7 @@ def test_apply_execution_prefills_sets_risk_equity_from_broker_equity_on_account
 
     assert session_state["pipeline_risk_account_equity"] == 2_000.0
     assert session_state[execution_center.DETECTED_ACCOUNT_TYPE_KEY] == "cash"
-    assert session_state[execution_center.DETECTED_PDT_RULE_KEY] == "off"
+    assert "pipeline_detected_pdt_rule" not in session_state
     assert session_state[execution_center.CAPITAL_PRESET_KEY] == "capital_0_2000_eur"
     assert session_state[execution_center.DETECTED_CAPITAL_PRESET_KEY] == "capital_0_2000_eur"
 
@@ -127,7 +123,6 @@ def test_apply_execution_prefills_preserves_manual_risk_equity_for_same_account(
             broker_mode="paper",
             equity=2_000.0,
             account_type="cash",
-            pdt_rule="off",
             swing_only=None,
         ),
     )
@@ -149,7 +144,6 @@ def test_apply_selected_capital_preset_for_small_account_sets_expected_values(mo
             broker_mode="paper",
             equity=2_000.0,
             account_type="cash",
-            pdt_rule="off",
             swing_only=None,
         ),
         selected_account_id="paper-small",
@@ -183,7 +177,6 @@ def test_apply_selected_capital_preset_custom_does_not_override_existing_values(
             broker_mode="paper",
             equity=2_000.0,
             account_type="cash",
-            pdt_rule="off",
             swing_only=None,
         ),
         selected_account_id="paper-custom",
@@ -206,7 +199,6 @@ def test_apply_selected_capital_preset_can_override_execution_settings_from_buck
             broker_mode="paper",
             equity=60_000.0,
             account_type="cash",
-            pdt_rule="off",
             swing_only=None,
         ),
         selected_account_id="acct-broker-cash",
@@ -214,8 +206,7 @@ def test_apply_selected_capital_preset_can_override_execution_settings_from_buck
 
     assert session_state["pipeline_risk_account_equity"] == 60_000.0
     assert session_state["pipeline_execution_account_type"] == "margin"
-    # Sprint S2 / A-006 : execution_pdt_rule="auto" sur capital_50001_100000 (margin preset).
-    assert session_state["pipeline_execution_pdt_rule"] == "auto"
+    assert "pipeline_execution_pdt_rule" not in session_state
     assert session_state["pipeline_execution_submission_window"] == "both"
 
 
@@ -228,5 +219,4 @@ def test_build_parameter_rerun_guidance_rows_covers_risk_execution_selector_and_
     assert any(row["Paramètres"] == "selector_*" and row["Relancer"] == "6 → 12" for row in rows)
     assert any(row["Paramètres"] == "screener_*" and row["Relancer"] == "3 → 12" for row in rows)
     assert any("Alpha Scanner" in row["Pourquoi"] for row in rows)
-
 

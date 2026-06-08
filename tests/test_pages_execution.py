@@ -97,7 +97,6 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
     )
     monkeypatch.setattr(execution, "get_execution_account_constraints", lambda exec_run_id: {
         "account_type": "cash",
-        "effective_pdt_rule": "off",
         "swing_only": True,
         "equity": 100000.0,
         "buying_power_available": 75000.0,

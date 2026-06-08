@@ -147,7 +147,6 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
         allow_outside_rth=True,
         auto_rebalance=True,
         execution_account_type="cash",
-        execution_pdt_rule="auto",
         execution_swing_only=True,
         execution_take_profit_pct=0.065,
         execution_trailing_stop_pct=0.04,
@@ -174,8 +173,7 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert "--auto-rebalance" in execution_command
     assert "--account-type" in execution_command
     assert execution_command[execution_command.index("--account-type") + 1] == "cash"
-    assert "--pdt-rule" in execution_command
-    assert execution_command[execution_command.index("--pdt-rule") + 1] == "auto"
+    assert "--pdt-rule" not in execution_command
     assert "--swing-only" in execution_command
     assert "--profit-taker-pct" in execution_command
     assert execution_command[execution_command.index("--profit-taker-pct") + 1] == "0.065"

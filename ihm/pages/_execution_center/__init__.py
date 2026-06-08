@@ -56,7 +56,6 @@ from ihm.pages._shared import (
     _to_optional_positive_int,
 )
 from ihm.services.account_defaults import (
-    PDT_EQUITY_THRESHOLD,
     PipelineExecutionDefaults,
     get_pipeline_execution_defaults,
 )
@@ -253,7 +252,6 @@ EXECUTION_MODE_ACCOUNT_KEY = "pipeline_execution_mode_account_id"
 DETECTED_BROKER_MODE_KEY = "pipeline_detected_broker_mode"
 DETECTED_BROKER_MODE_ACCOUNT_KEY = "pipeline_detected_broker_mode_account_id"
 DETECTED_ACCOUNT_TYPE_KEY = "pipeline_detected_account_type"
-DETECTED_PDT_RULE_KEY = "pipeline_detected_pdt_rule"
 CAPITAL_PRESET_KEY = "pipeline_capital_preset"
 CAPITAL_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_capital_preset_applied_signature"
 CAPITAL_PRESET_CUSTOM = "custom"
@@ -495,7 +493,6 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
-        st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
         st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
         st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
         return None
@@ -506,7 +503,6 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
-        st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
         st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
         st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
         st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
@@ -516,7 +512,6 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
-        st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
         st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
         st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
         st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
@@ -529,10 +524,6 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         st.session_state[DETECTED_ACCOUNT_TYPE_KEY] = defaults.account_type
     else:
         st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
-    if defaults.pdt_rule in {"auto", "off"}:
-        st.session_state[DETECTED_PDT_RULE_KEY] = defaults.pdt_rule
-    else:
-        st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
     detected_capital_preset = resolve_capital_preset_for_equity(defaults.equity)
     if detected_capital_preset is not None:
         st.session_state[DETECTED_CAPITAL_PRESET_KEY] = detected_capital_preset.key
@@ -555,10 +546,6 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         account_changed or "pipeline_execution_account_type" not in st.session_state
     ):
         st.session_state["pipeline_execution_account_type"] = defaults.account_type
-    if defaults.pdt_rule in {"auto", "off"} and (
-        account_changed or "pipeline_execution_pdt_rule" not in st.session_state
-    ):
-        st.session_state["pipeline_execution_pdt_rule"] = defaults.pdt_rule
     if defaults.swing_only is not None and (
         account_changed or "pipeline_execution_swing_only" not in st.session_state
     ):
@@ -582,10 +569,8 @@ def _build_execution_prefill_caption(defaults: PipelineExecutionDefaults | None)
         notes.append(f"mode broker détecté : `{defaults.broker_mode}`")
     if defaults.account_type:
         notes.append(f"type de compte prérempli via broker : `{defaults.account_type}`")
-    if defaults.pdt_rule:
-        notes.append(f"règle PDT préremplie : `{defaults.pdt_rule}`")
     if defaults.equity is not None:
-        notes.append(f"equity broker ≈ `{defaults.equity:,.2f}` (seuil PDT `{PDT_EQUITY_THRESHOLD:,.0f}`)")
+        notes.append(f"equity broker ≈ `{defaults.equity:,.2f}`")
     notes.append("`swing only` reste manuel car ce choix ne se déduit pas fiablement du seul montant du compte")
     return " | ".join(notes)
 
@@ -2634,12 +2619,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_auto_rebalance",
             )
 
-        exec_col1, exec_col2, exec_col3 = st.columns(3)
+        exec_col1, exec_col2 = st.columns(2)
         st.warning(
             "⚠️ différence potentiellement forte entre margin et cash\n\n"
             "- `margin` utilise le buying power broker ; `cash` se limite au cash settled / non-marginable buying power.\n"
             "- À equity identique, cela peut changer fortement le nombre d'ordres soumis et la capacité de rebalancing.\n"
-            "- Sur un compte `margin` < 25k, la logique PDT peut différer les sorties le jour même ; `swing only` force aussi ce comportement.\n"
             "- Résultat : les fills, les exits armés (TP/TS) et donc les performances observées peuvent diverger fortement entre `margin` et `cash`."
         )
         prefill_caption = _build_execution_prefill_caption(execution_defaults)
@@ -2661,21 +2645,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ),
             )
         with exec_col2:
-            execution_pdt_rule = cast(
-                str,
-                st.selectbox(
-                    "Execution — règle PDT",
-                    options=["auto", "off"],
-                    index=["auto", "off"].index(
-                        cast(str, st.session_state.get("pipeline_execution_pdt_rule", "off"))
-                        if st.session_state.get("pipeline_execution_pdt_rule", "off") in {"auto", "off"}
-                        else "off"
-                    ),
-                    key="pipeline_execution_pdt_rule",
-                    help="Défaut swing cash : `off` (cohérent avec compte cash). `auto` applique la règle PDT sur un compte margin < 25k.",
-                ),
-            )
-        with exec_col3:
             execution_swing_only = st.checkbox(
                 "Execution — swing only",
                 value=bool(st.session_state.get("pipeline_execution_swing_only", True)),
@@ -2683,18 +2652,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Défaut swing : True. Si coché, le moteur diffère l'armement des sorties le jour même du fill.",
             )
 
-        effective_execution_pdt_rule = "off" if execution_account_type == "cash" else execution_pdt_rule
         constraint_notes = [
             f"Type de compte : `{execution_account_type}`",
-            f"Règle PDT effective : `{effective_execution_pdt_rule}`",
             f"Swing only : `{bool(execution_swing_only)}`",
         ]
         if execution_account_type == "cash":
             constraint_notes.append("En `cash`, le moteur se base sur le cash settled / non-marginable buying power.")
         else:
             constraint_notes.append("En `margin`, le moteur se base sur le buying power broker.")
-        if effective_execution_pdt_rule == "auto":
-            constraint_notes.append("Si l'equity broker est < 25k, le quota de day trades peut différer les exits le jour même.")
         if execution_swing_only:
             constraint_notes.append("Les children TP/TS sont différés le jour même du fill.")
         st.info(" | ".join(constraint_notes))
@@ -3946,7 +3911,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             allow_outside_rth=bool(allow_outside_rth),
             auto_rebalance=bool(auto_rebalance),
             execution_account_type=cast(Any, execution_account_type),
-            execution_pdt_rule=cast(Any, execution_pdt_rule),
             execution_swing_only=bool(execution_swing_only),
             execution_submission_window=cast(Any, execution_submission_window),
             execution_take_profit_pct=float(execution_take_profit_pct),

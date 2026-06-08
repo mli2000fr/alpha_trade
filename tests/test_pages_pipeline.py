@@ -1683,38 +1683,34 @@ def test_build_execution_mode_banner_payload_escalates_mode_mismatch() -> None:
     assert "acct-live" in message
 
 
-def test_build_execution_account_banner_payload_marks_cash_off_as_green_swing_cash() -> None:
+def test_build_execution_account_banner_payload_marks_cash_as_green_swing_cash() -> None:
     severity, message = pipeline._build_execution_account_banner_payload(
-        pipeline.PipelineLaunchOptions(execution_account_type="cash", execution_pdt_rule="off")
+        pipeline.PipelineLaunchOptions(execution_account_type="cash")
     )
 
     assert severity == "success"
     assert "type de compte=cash" in message.lower()
-    assert "règle pdt=off" in message.lower()
     assert "swing cash" in message.lower()
 
 
-def test_build_execution_account_banner_payload_marks_margin_auto_as_yellow() -> None:
+def test_build_execution_account_banner_payload_marks_margin_as_yellow() -> None:
     severity, message = pipeline._build_execution_account_banner_payload(
-        pipeline.PipelineLaunchOptions(execution_account_type="margin", execution_pdt_rule="auto")
+        pipeline.PipelineLaunchOptions(execution_account_type="margin")
     )
 
     assert severity == "warning"
-    assert "margin / pdt" in message.lower()
+    assert "margin" in message.lower()
     assert "type de compte=margin" in message.lower()
-    assert "règle pdt=auto" in message.lower()
 
 
-def test_build_execution_account_banner_payload_marks_detected_mismatch_as_red() -> None:
+def test_build_execution_account_banner_payload_marks_detected_account_mismatch_as_red() -> None:
     severity, message = pipeline._build_execution_account_banner_payload(
-        pipeline.PipelineLaunchOptions(execution_account_type="cash", execution_pdt_rule="off"),
+        pipeline.PipelineLaunchOptions(execution_account_type="cash"),
         detected_account_type="margin",
-        detected_pdt_rule="auto",
     )
 
     assert severity == "error"
     assert "type broker détecté : `margin`" in message.lower()
-    assert "pdt détecté : `auto`" in message.lower()
     assert "incohérence critique" in message.lower()
 
 

@@ -231,7 +231,6 @@ def test_render_execution_block_returns_expected_keys() -> None:
         "trade_date",
         "execution_mode",
         "execution_account_type",
-        "execution_pdt_rule",
         "execution_swing_only",
         "execution_submission_window",
         "execution_max_entry_gap_pct",
@@ -282,7 +281,6 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
         # Stockage dans st.session_state pour récupération hors AppTest.
         st.session_state["__test_options_execution_mode"] = options.execution_mode
         st.session_state["__test_options_account_type"] = options.execution_account_type
-        st.session_state["__test_options_pdt_rule"] = options.execution_pdt_rule
         st.session_state["__test_options_swing_only"] = bool(options.execution_swing_only)
         st.session_state["__test_options_sentiment_news_provider"] = options.sentiment_news_provider
         st.session_state["__test_options_sentiment_pending_max_batches"] = options.sentiment_pending_max_batches_per_run
@@ -296,7 +294,6 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
     # Défauts swing cash conformes à l'audit IHM (cf. doc IHM + S2).
     assert at.session_state["__test_options_execution_mode"] == "simulate"
     assert at.session_state["__test_options_account_type"] == "cash"
-    assert at.session_state["__test_options_pdt_rule"] == "off"
     assert at.session_state["__test_options_swing_only"] is True
     assert at.session_state["__test_options_sentiment_news_provider"] == "eodhd"
     assert at.session_state["__test_options_sentiment_pending_max_batches"] == 0
