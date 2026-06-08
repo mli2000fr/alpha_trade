@@ -51,7 +51,6 @@ presets:
       risk_score_weight: 0.45
       risk_prediction_weight: 0.55
       execution_account_type: cash             # PDT rule désactivable car cash
-      execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true               # interdit toute logique day-trade
       execution_cash_settlement_days: 1
       execution_submission_window: both
@@ -135,7 +134,6 @@ presets:
       risk_score_weight: 0.45
       risk_prediction_weight: 0.55
       execution_account_type: cash
-      execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
       execution_cash_settlement_days: 1
       execution_submission_window: both
@@ -184,7 +182,7 @@ presets:
       selector_max_volatility_ratio: "Léger assouplissement à 0.95 pour conserver quelques leaders plus dynamiques."
       selector_min_ibd_rs_rank: "RS fixé à 98 : proche du strict mais encore un peu plus ouvert pour cette tranche."
       selector_min_high_52w_proximity: "Proximité 52w légèrement relâchée pour ne pas dépendre uniquement des breakouts déjà parfaits."
-      selector_min_weekly_trend_score: "Score weekly abaissé à 0.80 pour rester investissable sur un univers réaliste."
+      selector_min_weekly_trend_score: "Seuil à 0.80 pour rester investissable sur un univers réaliste."
       selector_min_atr_pct_20: "ATR minimum abaissé à 0.0125 pour laisser entrer des titres encore actifs mais moins explosifs."
       selector_max_atr_pct_20: "ATR max porté à 0.075 afin d'accepter un peu plus de volatilité que le strict."
       selector_min_market_cap: "Plancher réduit à 1.5 Md$ pour inclure davantage de mid/large caps accessibles."
@@ -213,7 +211,6 @@ presets:
       risk_score_weight: 0.45
       risk_prediction_weight: 0.55
       execution_account_type: cash
-      execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
       execution_cash_settlement_days: 1
       execution_submission_window: both
@@ -286,7 +283,6 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: cash
-      execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
       execution_cash_settlement_days: 1
       execution_submission_window: both
@@ -356,7 +352,6 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
-      execution_pdt_rule: "auto"              # A-006 fix : PDT auto sur compte margin — bloque le 4e day-trade si equity < 25k$ (cf. execution_engine/config.py:applies_pdt_limit)
       execution_swing_only: true
       execution_cash_settlement_days: 0
       execution_submission_window: both
@@ -425,7 +420,6 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
-      execution_pdt_rule: "auto"              # A-006 fix : PDT auto sur compte margin — bloque le 4e day-trade si equity < 25k$ (cf. execution_engine/config.py:applies_pdt_limit)
       execution_swing_only: true
       execution_cash_settlement_days: 0
       execution_submission_window: both
@@ -505,7 +499,6 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
-      execution_pdt_rule: "auto"              # A-006 fix : PDT auto sur compte margin — bloque le 4e day-trade si equity < 25k$ (cf. execution_engine/config.py:applies_pdt_limit)
       execution_swing_only: true
       execution_cash_settlement_days: 0
       execution_submission_window: both

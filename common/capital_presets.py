@@ -81,14 +81,13 @@ class CapitalPreset:
 
 
 def _normalize_option_value(option_key: str, raw_value: Any) -> Any:
-    if option_key.endswith("execution_pdt_rule"):
-        if isinstance(raw_value, bool):
-            return "auto" if raw_value else "off"
-        normalized = str(raw_value).strip().lower()
-        if normalized in {"false", "off"}:
-            return "off"
-        if normalized in {"true", "auto"}:
-            return "auto"
+    if isinstance(raw_value, bool):
+        return "auto" if raw_value else "off"
+    normalized = str(raw_value).strip().lower()
+    if normalized in {"false", "off"}:
+        return "off"
+    if normalized in {"true", "auto"}:
+        return "auto"
     return raw_value
 
 
@@ -424,7 +423,6 @@ def apply_backtest_defaults_from_preset(
     mapping = {
         "max_positions": ("risk_max_positions", int),
         "account_type": ("execution_account_type", str),
-        "pdt_rule": ("execution_pdt_rule", str),
         "swing_only": ("execution_swing_only", bool),
         "cash_settlement_days": ("execution_cash_settlement_days", int),
         "commission_bps": ("backtesting_commission_bps_stress", float),
@@ -460,7 +458,6 @@ def build_capital_preset_executability_summary(
 ) -> dict[str, Any]:
     values = dict(preset.values)
     account_type = str(values.get("execution_account_type", "cash") or "cash").strip().lower() or "cash"
-    pdt_rule = str(values.get("execution_pdt_rule", "off") or "off").strip().lower() or "off"
     swing_only = bool(values.get("execution_swing_only", True))
     max_positions = int(values.get("risk_max_positions", 0) or 0)
     min_notional = float(values.get("risk_min_position_notional", 0.0) or 0.0)
@@ -519,7 +516,6 @@ def build_capital_preset_executability_summary(
     return {
         "preset_key": preset.key,
         "account_type": account_type,
-        "pdt_rule": pdt_rule,
         "swing_only": swing_only,
         "cash_settlement_days": cash_settlement_days,
         "max_positions": max_positions,
