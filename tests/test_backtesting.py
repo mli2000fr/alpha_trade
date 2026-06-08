@@ -88,6 +88,8 @@ def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() ->
         max_sector_exposure_pct=0.4,
         max_portfolio_dd_pct=0.15,
         dd_recovery_pct=0.95,
+        dd_rolling_peak_window_days=252,
+        dd_degraded_allocation_pct=0.5,
         target_annual_vol=0.2,
     )
     phase2_execution_result = SimpleNamespace(diagnostics={"targets": 3}, tca_summary={"fills": 2})
@@ -107,9 +109,8 @@ def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() ->
         dividends_received=12.5,
         trading_constraints=SimpleNamespace(
             account_type="cash",
-            pdt_rule="off",
-            effective_pdt_rule="off",
             swing_only=True,
+            cash_settlement_days=1,
         ),
         bt_config=SimpleNamespace(execution_timing="next_session_open"),
         microstructure_cfg=_Cfg(is_default_value=False),
@@ -125,6 +126,8 @@ def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() ->
     assert params["capital_preset_key"] == "capital_0_5000"
     assert params["fidelity_baseline_id"] == "smoke"
     assert params["ml_pit_strategy"] == "use-persisted"
+    assert "pdt_rule" not in params
+    assert "effective_pdt_rule" not in params
     assert params["microstructure"]["is_default"] is False
     assert params["risk_overlay"]["is_default"] is True
     assert params["phase2"]["execution_tca"] == {"fills": 2}
@@ -2112,7 +2115,7 @@ class TestCLI:
         # Phase 6.1.e — profil custom par défaut.
         assert args.profile == "custom"
         assert args.account_type == "margin"
-        assert args.pdt_rule == "auto"
+        assert not hasattr(args, "pdt_rule")
         assert args.macro_missing_policy is None
         assert args.fidelity_baseline_id is None
         assert args.fidelity_baseline_catalog is None
@@ -2320,14 +2323,13 @@ class TestCLI:
         args = parser.parse_args([
             "run", "--start", "2020-01-01",
             "--account-type", "cash",
-            "--pdt-rule", "off",
             "--swing-only",
             "--ml-mode", "rebuild-missing",
             "--sentiment-mode", "off",
             "--artifacts-dir", "artifacts/models",
         ])
         assert args.account_type == "cash"
-        assert args.pdt_rule == "off"
+        assert not hasattr(args, "pdt_rule")
         assert args.swing_only is True
         assert args.ml_mode == "rebuild-missing"
         assert args.sentiment_mode == "off"

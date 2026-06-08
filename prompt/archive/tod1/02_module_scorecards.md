@@ -59,8 +59,8 @@ La configuration est centralisée dans `config.yaml` (224 lignes) et `config/cap
 ### Anomalies résolues dans cette section
 - ✅ `capital_0_2000_eur.risk_max_positions: 3`, `risk_min_position_notional: 500.0` (A-001 ✅ Sprint S1)
 - ✅ `selector_min_close: 10.0` sur tous les presets (A-007 ✅ Sprint S2)
-- ✅ `execution_pdt_rule: "auto"` sur les 3 presets margin ≥ 25k$ (A-006 ✅ Sprint S2)
-- ✅ Commentaires PDT rule ajoutés sur 4 presets cash (A-016 ✅ Sprint S1)
+- ✅ Contraintes margin clarifiées sur les 3 presets ≥ 25k$ (A-006 ✅ Sprint S2)
+- ✅ Reliquats cash clarifiés sur 4 presets (A-016 ✅ Sprint S1)
 
 ### Risques
 - `yields.enabled: false` → quota EODHD consommé sans valeur ajoutée (P3 mineur)
@@ -332,7 +332,7 @@ Chaîne canonique complète et bien auditée : targets_snapshot → order_reques
 - Kill switch (3 échecs consécutifs)
 - Séparation ordre d'entrée / enfants (protections) / OCO
 - TCA : slippage + implementation shortfall persistés
-- Contraintes PDT/cash/swing appliquées côté execution (cohérent avec backtesting)
+- Contraintes cash/margin/swing appliquées côté execution (cohérent avec backtesting)
 
 ### Faiblesses
 - **P2** : `auto_rebalance_on_reconcile: false` par défaut — si une position est hors cible, l'opérateur doit manuellement déclencher le rééquilibrage depuis l'IHM. Risque de dérive silencieuse

@@ -19,7 +19,6 @@
 | Provider CA | `alpaca` primaire, EODHD optionnel | `corporate_actions/provider.py` |
 | Launcher exécution canonique | `run_execution.py` | README §6 |
 | Façade exécution | `python -m execution_engine` (legacy `run`, natif `cancel-all`) | `execution_engine/__main__.py` |
-| PDT auto | margin uniquement, equity < 25k$ | `execution_engine/config.py:applies_pdt_limit` |
 | Swing-only | `true` partout | `capital_presets.yaml` toutes tranches |
 | Conviction fusion | quant 0.75 / sentiment 0.15 / macro 0.10 | `config.yaml:200-205`, `core/conviction.py` |
 | Kelly | désactivé (statut à clarifier — A-006) | `risk_management/kelly.py` |

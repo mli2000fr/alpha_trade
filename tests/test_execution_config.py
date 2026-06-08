@@ -54,39 +54,22 @@ class TestExecutionConfig:
 
 
 # ---------------------------------------------------------------------------
-# Sprint S2 / A-006 — PDT rule auto sur compte margin avec drawdown
+# Contraintes de compte runtime encore actives
 # ---------------------------------------------------------------------------
 
-class TestPDTRuleMarginDrawdown:
-    """[A-006] Vérifie que applies_pdt_limit() bloque le 4e day-trade quand
-    l'equity chute sous 25 000 $ sur un compte margin avec pdt_rule='auto'."""
+class TestAccountConstraints:
+    def test_cash_account_can_be_configured_for_swing_only(self) -> None:
+        cfg = ExecutionConfig(account_type="cash", swing_only=True, cash_settlement_days=1)
 
-    def test_pdt_auto_margin_equity_above_threshold_no_block(self) -> None:
-        """Equity > 25k$ → PDT non appliqué (compte en sécurité)."""
-        cfg = ExecutionConfig(account_type="margin", pdt_rule="auto")
-        assert cfg.applies_pdt_limit(30_000.0) is False
+        assert cfg.account_type == "cash"
+        assert cfg.swing_only is True
+        assert cfg.cash_settlement_days == 1
 
-    def test_pdt_auto_margin_equity_below_threshold_blocks(self) -> None:
-        """Equity < 25k$ → PDT appliqué automatiquement."""
-        cfg = ExecutionConfig(account_type="margin", pdt_rule="auto")
-        assert cfg.applies_pdt_limit(24_999.99) is True
+    def test_margin_account_no_longer_requires_legacy_pdt_flags(self) -> None:
+        cfg = ExecutionConfig(account_type="margin", swing_only=False)
 
-    def test_pdt_auto_margin_equity_at_threshold_no_block(self) -> None:
-        """Equity = 25k$ exactement → PDT non bloquant (limite exclusive)."""
-        cfg = ExecutionConfig(account_type="margin", pdt_rule="auto")
-        # applies_pdt_limit: equity < threshold (strict)
-        assert cfg.applies_pdt_limit(25_000.0) is False
-
-    def test_pdt_off_margin_never_blocks(self) -> None:
-        """pdt_rule='off' sur margin → jamais de blocage PDT, même sous 25k$."""
-        cfg = ExecutionConfig(account_type="margin", pdt_rule="off")
-        assert cfg.applies_pdt_limit(10_000.0) is False
-
-    def test_pdt_cash_account_never_blocks(self) -> None:
-        """Sur compte cash, effective_pdt_rule='off' quelle que soit la config."""
-        cfg = ExecutionConfig(account_type="cash", pdt_rule="auto")
-        assert cfg.effective_pdt_rule == "off"
-        assert cfg.applies_pdt_limit(5_000.0) is False
+        assert cfg.account_type == "margin"
+        assert cfg.swing_only is False
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ Preset le plus proche : `capital_0_2000_eur` (`min_equity=0`, `max_equity=2000`)
 
 - Risk : `risk_per_trade_pct=1.5%`, 3 lignes, `max_position_weight=35%`, DD 7%.
 - Selector : market cap min 500M, spread 80/100 bps, min close 10.
-- Execution : cash, PDT off, swing_only true.
+- Execution : cash, swing_only true.
 - Verdict : **fragile**.
 - Justification : concentration assumée, ticket 500 USD très lourd pour 2k, spreads permissifs. Cohérent pour apprendre en très petit cash, pas pour rendement institutionnel.
 - Tests à ajouter : `tests/test_capital_presets_micro_account_executability.py` : equity 1500/2000/2500, vérifier que tailles proposées respectent min notional, concentration, cash constraints et frais/slippage simulés.
@@ -54,18 +54,18 @@ Preset : `capital_10001_25000`.
 - Risk : 1.5%, 8 positions, 15% max/ligne, DD 12%.
 - Selector : ADV 20M, market cap 2B, spread 50/70.
 - Verdict : **cohérent**.
-- Justification : bon compromis swing cash avant PDT threshold ; cash account évite PDT mais impose settlement.
-- Tests : equity 24k cash, aucune règle PDT appliquée, settlement contraint les réinvestissements.
+- Justification : bon compromis swing cash ; le compte cash impose un settlement discipliné.
+- Tests : equity 24k cash, settlement contraint les réinvestissements.
 
 ### 25 001 → 50 000 $
 
 Preset : `capital_25001_50000`.
 
-- Risk : 1.25%, 12 positions, 12% max/ligne, margin, PDT auto.
+- Risk : 1.25%, 12 positions, 12% max/ligne, margin.
 - Selector : ADV 25M, spread 45/65.
 - Verdict : **cohérent**.
-- Justification : passage margin/PDT auto logique au-dessus 25k ; diversification acceptable.
-- Tests : equity 25,001 margin, PDT non bloquant si equity > 25k ; si equity broker redescend sous 25k, PDT auto actif.
+- Justification : passage margin logique au-dessus 25k ; diversification acceptable.
+- Tests : equity 25,001 margin, buying power et contraintes de compte cohérents.
 
 ### 50 001 → 100 000 $
 

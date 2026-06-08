@@ -128,7 +128,6 @@ def build_execution_run_summary(
     broker_mode: str,
     account_id: str | None,
     account_type: str,
-    effective_pdt_rule: str,
     swing_only: bool,
     dry_run: bool,
     allow_outside_rth: bool,
@@ -202,7 +201,6 @@ def build_execution_run_summary(
         # Phase 5.2.b — dernière phase du run (informatif si tracker actif).
         "last_phase": str(metrics.get("last_phase", "") or "") or None,
         "account_type": account_type,
-        "effective_pdt_rule": effective_pdt_rule,
         "swing_only": bool(swing_only),
         "dry_run": bool(dry_run),
         "allow_outside_rth": bool(allow_outside_rth),

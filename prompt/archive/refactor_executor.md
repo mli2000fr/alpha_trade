@@ -54,7 +54,7 @@ compte implicite**, des **defaults CLI** et du **branchage YAML partagé**.
   `default`, y compris sur l’historique déjà persisté avec `account_id = NULL`
   dans `run_business_summaries`.
 - **Defaults du CLI direct `execution_engine` réalignés** sur le profil
-  opérationnel `cash / PDT off / swing_only on`, cohérent avec `run_execution.py`
+  opérationnel `cash / swing_only on`, cohérent avec `run_execution.py`
   et l’IHM.
 - **`run_execution.run()` réaligné** avec son propre parseur et les presets.
 - **`risk_management.trailing_stop` est désormais réellement consommé** par les
@@ -160,7 +160,6 @@ avec `account_id = NULL` pour le compte implicite, tandis que
 ### Problème
 Le CLI direct `execution_engine` utilisait par défaut :
 - `account_type = margin`
-- `pdt_rule = auto`
 - `swing_only = False`
 
 alors que :
@@ -170,7 +169,6 @@ alors que :
 
 sont centrés sur :
 - `cash`
-- `off`
 - `True`
 
 ### Impact
@@ -180,13 +178,11 @@ très différent du chemin canonique IHM / `run_execution.py`.
 ### Correction appliquée
 #### `execution_engine/cli.py`
 - `--account-type` → défaut `cash`
-- `--pdt-rule` → défaut `off`
 - `--swing-only` → `BooleanOptionalAction`, défaut `True`
 
 #### `run_execution.py`
 - defaults de l’API `run(...)` réalignés sur :
   - `account_type='cash'`
-  - `pdt_rule='off'`
   - `swing_only=True`
 
 ### Validation

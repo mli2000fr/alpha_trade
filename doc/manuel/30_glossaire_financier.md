@@ -49,8 +49,7 @@ composé. Si vous passez de 1 000 € à 1 600 € en 4 ans : CAGR = +12.5 %/an.
 pour les prochains jours ».
 
 **Cash account** — Compte broker sans levier. Pas de marge.
-Obligatoirement requis si capital < 25 000 USD pour échapper à la PDT
-rule.
+Le capital y est réutilisable selon les règles de settlement du broker.
 
 **Champion / challenger** — En ML, le modèle actuel en production
 (champion) vs les modèles concurrents (challengers).
@@ -69,7 +68,7 @@ mouvements. 2 actions à 0.95 montent et descendent presque ensemble.
 
 ## D
 
-**Day trade** — Acheter et revendre **le même jour**. Soumis à la PDT rule.
+**Day trade** — Acheter et revendre **le même jour**.
 
 **Dividende** — Versement de l'entreprise à l'actionnaire (ex. 0.50 $/an
 par action AAPL).
@@ -160,8 +159,6 @@ backtest, médiocre en live.
 
 **Payoff ratio** — Gain moyen / perte moyenne. Cible > 1.5.
 
-**PDT rule** — Pattern Day Trader rule (FINRA) : interdit > 3 day-trades
-en 5 jours sur compte margin < 25 000 USD.
 
 **P&L (Profit & Loss)** — Gain ou perte.
 

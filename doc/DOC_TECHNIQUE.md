@@ -108,10 +108,10 @@ alpha_trade/
 **`ProductionExecutor`** (`execution_engine/executor.py`) — Orchestrateur en 10 phases :
 1. Init (build_run_id)
 2. Pre-flight (chargement cibles, circuit breaker, market hours, snapshot contraintes de compte)
-3. Build intents + déduplication par idempotency_key + filtrage capital/PDT/cash/swing
+3. Build intents + déduplication par idempotency_key + filtrage capital/cash/swing
 4. Submit entries (avec retry réseau, kill switch, throttle batch)
 5. Poll fills (polling broker jusqu'à terminal state)
-6. Submit children / protections broker-side (stop initial + take-profit ; promotion trailing éventuelle via watcher secondaire), avec report possible en cas de `swing_only` / `PDT`
+6. Submit children / protections broker-side (stop initial + take-profit ; promotion trailing éventuelle via watcher secondaire), avec report possible en cas de `swing_only` / contraintes de compte
 7. *(phase réservée)*
 8. Réconciliation (positions broker vs cibles, rebalance optionnel)
 9. TCA (slippage, implementation shortfall)
@@ -152,7 +152,7 @@ Points d'implémentation importants côté `modelFactory` :
 - `predictor.py` sait router vers `lstm_attention`, `lightgbm_tabular`, `catboost_tabular` et `global_tabular` ;
 - la base MySQL reste volontairement **résumée** : la gouvernance détaillée des challengers vit surtout dans les artefacts disque.
 
-**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes `margin/cash/PDT` côté exécution. Seul fichier à modifier pour changer de broker.
+**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes de compte côté exécution. Seul fichier à modifier pour changer de broker.
 
 **`ProtectionTransitionWatcher`** / **`ProtectionWatcherService`** (`execution_engine/protection_watcher.py`) — Watcher post-exécution secondaire chargé de surveiller les protections créées par `Execution` et, si ce mode est activé, de promouvoir les stops initiaux vers un trailing stop dynamique selon les conditions métier. `ProtectionWatcherService` encapsule la boucle persistante, les heartbeats, la persistance de santé dans `run_business_summaries` et les garde-fous de résilience.
 
@@ -177,7 +177,7 @@ Le breaker supporte aussi un **pic roulant** (`rolling_peak_window_days`) en plu
 
 **`AccountRegistry`** (`service/alpaca/accounts.py`) — Singleton de résolution multi-comptes. Charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique. Fournit `resolve(account_id)` → `BrokerAccount(api_key, secret_key, mode)`. Tous les clients (trading, market data, news, corporate actions) passent par cette résolution.
 
-**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest stateful utilisé par la CLI `run`. Il applique la convention `signal J -> entrée J+1 open`, simule les contraintes de compte (`margin`, `cash`, `PDT`, `swing_only`), supporte les phases opt-in `execution_replay`, `protection_replay`, `watcher_replay`, `exit_lifecycle_replay`, et sait consommer les bundles `MicrostructureConfig` et `RiskOverlayConfig`. Le moteur conserve un `BacktestDiagnostics` structuré exporté dans `report.json`.
+**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest stateful utilisé par la CLI `run`. Il applique la convention `signal J -> entrée J+1 open`, simule les contraintes de compte (`margin`, `cash`, `swing_only`), supporte les phases opt-in `execution_replay`, `protection_replay`, `watcher_replay`, `exit_lifecycle_replay`, et sait consommer les bundles `MicrostructureConfig` et `RiskOverlayConfig`. Le moteur conserve un `BacktestDiagnostics` structuré exporté dans `report.json`.
 
 ### 2.1.b Paramétrage `capital_presets.yaml` — circuit breaker live/backtest
 
@@ -206,7 +206,7 @@ Points d'intégration techniques :
 - `backtesting/simulator.py`
   - export `drawdown_breaker_daily.csv` (si breaker actif)
 
-**`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting via trois axes indépendants : `account_type` (`margin|cash`), `pdt_rule` (`auto|off`) et `swing_only` (`bool`). Encapsule le seuil `25 000 $`, la limite `3 day trades / 5 séances` et le settlement simplifié `T+1` pour les cash accounts.
+**`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting. Les surfaces opérateur actives se concentrent désormais sur `account_type` (`margin|cash`) et `swing_only` (`bool`), avec settlement simplifié `T+1` pour les cash accounts.
 
 **`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores PIT, avec cascade de fallback factorisée `final_score_walk_forward -> final_score_sentiment -> final_score`, fusion vectorisée des probabilités ML et ranking top-N quotidien.
 
@@ -758,9 +758,6 @@ python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 100000
 # Mode pipeline strict PIT
 python -m backtesting run --start 2025-01-01 --end 2025-03-31 --engine-mode pipeline --equity 100000
 
-# Compte < 25k avec règle PDT
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule auto
-
 # Cash account + swing strict
 python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only
 
@@ -792,17 +789,15 @@ Notes :
 
 ### Execution Engine — contraintes de compte
 
-Le moteur d'exécution applique désormais la même sémantique métier que le backtesting autour de trois axes :
+Le moteur d'exécution applique désormais la même sémantique métier que le backtesting autour de deux axes opérateur :
 
 - `account_type = margin|cash`
-- `pdt_rule = auto|off`
 - `swing_only = True|False`
 
 Effets principaux :
 
 - en `margin`, l'executor se base sur `buying_power` broker pour autoriser les achats ;
 - en `cash`, il se base sur `non_marginable_buying_power` / `cash` settled ;
-- si `pdt_rule=auto` et `equity < 25 000 $`, les armements de children susceptibles de produire du day trading peuvent être différés quand le quota de day trades est épuisé ;
 - si `swing_only=True`, le take-profit et le trailing stop ne sont pas armés le jour même du fill.
 
 ### Backfill historique des snapshots de scores

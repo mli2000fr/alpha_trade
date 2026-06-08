@@ -54,9 +54,8 @@ et non de la borne `min_equity` (cf. `common/capital_presets.py::capital_preset_
 | `selector_max_spread_bps` | **80** | Vs 60 ⇒ accepte spreads micro-cap typiques. |
 | `selector_max_anomaly_count` | **28** | Vs 25 (plus permissif). |
 | `selector_selection_size` | **15** | Pas besoin de >15 candidats pour 3 positions actives. |
-| `execution_account_type` | **cash** | Compte cash obligatoire < 25 000 USD pour échapper au PDT (Pattern Day Trader rule). |
+| `execution_account_type` | **cash** | Compte cash recommandé pour réutiliser uniquement du capital settled sur petit portefeuille. |
 | `execution_swing_only` | **true** | Aucun day-trade autorisé. |
-| `execution_pdt_rule` | **off** | Activable côté broker, ici neutralisé car cash + swing only. |
 | `risk_enable_kelly` | **false** | Kelly inadapté à micro-échantillon (variance élevée). |
 
 ### 2.2 Frais de backtesting recommandés
@@ -88,9 +87,9 @@ python -m backtesting run `
 1. **Le runtime ne connaît pas l'EUR.** Le champ `equity` est en USD partout.
    L'utilisateur doit convertir manuellement (ex. : 2 000 € → 2 150 USD au cours
    du jour). Aucune conversion automatique n'est faite.
-2. **PDT rule** (FINRA) : tant que `execution_account_type=cash` et
-   `execution_swing_only=true`, le risque PDT est nul. Ne **jamais** passer en
-   `margin` tant que l'equity n'atteint pas 25 000 USD.
+2. **Rotation** : avec `execution_account_type=cash` et
+   `execution_swing_only=true`, la stratégie reste volontairement peu fréquente ;
+   ne basculer en `margin` qu'avec une justification opérationnelle explicite.
 3. **Univers réduit** : malgré le relâchement, attendez-vous à ~50-150
    candidats/jour seulement, contre ~300 sur le preset standard.
 4. **Frais du broker** : le moteur ne modélise pas les frais **fixes** (ex.

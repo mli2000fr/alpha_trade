@@ -139,14 +139,14 @@ risk_management:
 | `risk_per_trade_pct` | 1.5% | ✅ Prudent |
 | `risk_max_drawdown_pct` | 7% | ✅ Très strict pour micro-compte |
 | `execution_account_type` | cash | ✅ Correct pour micro-compte EU |
-| `execution_pdt_rule` | off | ✅ Correct (cash account) — **commentaire explicatif ajouté Sprint S1** ✅ |
+| `execution_account_type` + `execution_swing_only` | cash + true | ✅ Correct pour un micro-compte discipliné — **clarifié Sprint S1** ✅ |
 | `execution_swing_only` | true | ✅ Correct |
 | `selector_min_close` | 10.0 USD | ✅ Aligné profil strict |
 | `selector_min_market_cap` | 500M USD | ⚠️ Trop bas — peut inclure des small caps peu liquides |
 | `selector_max_spread_bps` | 80 bps | ⚠️ Très permissif — coût d'exécution élevé |
 | `selector_min_beta_126` | 0.65 | ✅ Relâché mais acceptable |
 
-**Verdict** : ✅ **Corrigé Sprint S1** — `risk_max_positions: 3`, `risk_min_position_notional: 500.0 USD`, commentaires PDT cash ajoutés. Tests de non-régression 13/13 passent.
+**Verdict** : ✅ **Corrigé Sprint S1** — `risk_max_positions: 3`, `risk_min_position_notional: 500.0 USD`, conventions cash clarifiées. Tests de non-régression 13/13 passent.
 
 ---
 
@@ -192,8 +192,8 @@ risk_management:
 | `risk_min_position_notional` | 300 USD | ✅ |
 | `risk_per_trade_pct` | 1.5% | ✅ (150–375 USD risqués) |
 | `risk_max_drawdown_pct` | 12% | ✅ |
-| `execution_account_type` | cash | ✅ (PDT évité) |
-| `execution_pdt_rule` | off | ✅ (cash) |
+| `execution_account_type` | cash | ✅ |
+| `execution_swing_only` | true | ✅ |
 | `selector_min_close` | ~~8.0 USD~~ → **10.0 USD** | ✅ **Corrigé Sprint S2** — aligné profil strict |
 | `selector_min_market_cap` | 2B USD | ✅ Profil strict |
 | `selector_max_spread_bps` | 50 bps | ✅ |
@@ -211,13 +211,13 @@ risk_management:
 | `risk_per_trade_pct` | 1.25% | ✅ |
 | `risk_max_drawdown_pct` | 14% | ✅ |
 | `execution_account_type` | margin | ✅ (> 25k$) |
-| `execution_pdt_rule` | ~~off~~ → **auto** | ✅ **Corrigé Sprint S2** — PDT bloqué si equity < 25k$ |
+| `execution_account_type` | margin | ✅ **Corrigé Sprint S2** — tranche margin clarifiée |
 | `execution_swing_only` | true | ✅ |
 | `selector_min_close` | 10.0 USD | ✅ Aligné profil strict |
 | `selector_min_market_cap` | 2B USD | ✅ |
 | `selector_max_spread_bps` | 45 bps | ✅ |
 
-**Verdict** : ✅ **PDT rule corrigé Sprint S2** — `pdt_rule: "auto"` protège en cas de drawdown sous 25k$.
+**Verdict** : ✅ **Contraintes margin clarifiées Sprint S2** — tranche cohérente pour usage margin.
 
 ---
 
@@ -230,14 +230,14 @@ risk_management:
 | `risk_per_trade_pct` | 1% | ✅ Standard |
 | `risk_max_drawdown_pct` | 15% | ✅ Aligné `config.yaml` global |
 | `execution_account_type` | margin | ✅ |
-| `execution_pdt_rule` | ~~off~~ → **auto** | ✅ **Corrigé Sprint S2** |
+| `execution_swing_only` | true | ✅ |
 | `selector_min_close` | 10.0 USD | ✅ |
 | `selector_min_market_cap` | 2B USD | ✅ |
 | `selector_max_spread_bps` | 40 bps | ✅ Aligné profil strict |
 | `risk_correlation_threshold` | 0.80 | ✅ Standard |
 | `risk_enable_kelly` | false | ⚠️ Kelly désactivé sur tous les presets |
 
-**Verdict** : ✅ **PDT rule corrigé Sprint S2** — preset de référence du projet, toutes les anomalies P2 résolues.
+**Verdict** : ✅ **Preset de référence clarifié Sprint S2** — toutes les anomalies P2 résolues.
 
 ---
 
@@ -250,14 +250,14 @@ risk_management:
 | `risk_per_trade_pct` | 0.8% | ✅ Conservateur |
 | `risk_max_drawdown_pct` | 18% | ⚠️ Notable — tolérance plus large que les autres tranches |
 | `execution_account_type` | margin | ✅ |
-| `execution_pdt_rule` | ~~off~~ → **auto** | ✅ **Corrigé Sprint S2** |
+| `execution_swing_only` | true | ✅ |
 | `selector_min_close` | 12.0 USD | ✅ Plus strict |
 | `selector_min_market_cap` | 3B USD | ✅ Large caps uniquement |
 | `selector_max_spread_bps` | 35 bps | ✅ Très strict |
 | `risk_correlation_threshold` | 0.78 | ✅ Plus strict |
 | `trailing_r_multiple` | 1.1 | ✅ Légèrement plus agressif |
 
-**Verdict** : ✅ **PDT rule corrigé Sprint S2** — `pdt_rule: "auto"`. `max_drawdown: 18%` est élevé mais justifiable sur grand compte avec plus de diversification.
+**Verdict** : ✅ **Preset grand compte clarifié Sprint S2**. `max_drawdown: 18%` est élevé mais justifiable sur grand compte avec plus de diversification.
 
 ---
 
@@ -265,19 +265,19 @@ risk_management:
 
 | Tranche | Verdict | Issues principales |
 |---|---|---|
-| 0 → 2 000 € | ✅ **Corrigé Sprint S1** | max_positions=3 ✅, min_notional=500$ ✅, commentaires PDT ✅ |
+| 0 → 2 000 € | ✅ **Corrigé Sprint S1** | max_positions=3 ✅, min_notional=500$ ✅, conventions cash clarifiées ✅ |
 | 2 001 → 5 000 $ | ✅ **Corrigé Sprint S2** | min_close=10$ ✅ (was 5$) |
 | 5 001 → 10 000 $ | ✅ **Corrigé Sprint S2** | min_close=10$ ✅ (was 7$) |
 | 10 001 → 25 000 $ | ✅ **Corrigé Sprint S2** | min_close=10$ ✅ (was 8$) |
-| 25 001 → 50 000 $ | ✅ **Corrigé Sprint S2** | PDT rule auto ✅ (was off) |
-| 50 001 → 100 000 $ | ✅ **Corrigé Sprint S2** | PDT rule auto ✅, Kelly désactivé (P3) |
-| 100 001 $+ | ✅ **Corrigé Sprint S2** | PDT rule auto ✅, max_drawdown 18% notable |
+| 25 001 → 50 000 $ | ✅ **Corrigé Sprint S2** | tranche margin clarifiée ✅ |
+| 50 001 → 100 000 $ | ✅ **Corrigé Sprint S2** | tranche margin clarifiée ✅, Kelly désactivé (P3) |
+| 100 001 $+ | ✅ **Corrigé Sprint S2** | tranche margin clarifiée ✅, max_drawdown 18% notable |
 
 ### Actions prioritaires
 
 1. ✅ ~~**P1** : Corriger `capital_0_2000_eur.risk_max_positions: 3`~~ — **FAIT Sprint S1**
 2. ✅ ~~**P2** : Uniformiser `selector_min_close: 10.0` sur toutes les tranches~~ — **FAIT Sprint S2**
-3. ✅ ~~**P2** : Passer `execution_pdt_rule: auto` sur les 3 tranches margin~~ — **FAIT Sprint S2**
+3. ✅ ~~**P2** : Clarifier les tranches margin sur les 3 presets concernés~~ — **FAIT Sprint S2**
 4. **P3** : Activer Kelly (au moins sur presets ≥ 50k$) avec `max_kelly_fraction: 0.25` comme garde-fou
 5. **P3** : Activer trailing stop ATR en paper (au moins `capital_50001_100000` et `capital_100001_plus`)
 

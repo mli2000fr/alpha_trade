@@ -17,7 +17,7 @@ Date: 2026-05-02
 - Donc il reconstruit `stock_scores_history` avec un profil quasi canonique strict, indépendant du capital saisi dans l’IHM backtesting.
 
 ### Backtest `run`
-- Le backtest utilise bien `equity`, `account_type`, `pdt_rule`, `swing_only`, `max_positions`, etc.
+- Le backtest utilise bien `equity`, `account_type`, `swing_only`, `max_positions`, etc.
 - Mais il lit les candidats depuis `stock_scores_history` sans notion de preset capital.
 - Donc le moteur portefeuille peut être configuré pour 2k$ tandis que l’univers PIT provient d’un historique reconstruit avec des filtres plus proches d’un profil 50k–100k / strict.
 

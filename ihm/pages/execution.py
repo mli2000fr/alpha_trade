@@ -401,12 +401,10 @@ def render() -> None:
         buying_power = constraints.get("buying_power_available")
         settled_cash = constraints.get("settled_cash_available")
         daytrade_count = constraints.get("daytrade_count")
-        remaining_slots = constraints.get("remaining_day_trade_slots")
 
         metric_row([
             ("Type de compte", account_type, None),
             ("Mode swing uniquement", "Oui" if swing_only else "Non", None),
-            ("Day trades restants", _safe_int(remaining_slots), None),
         ])
         st.caption(
             f"Capital = `{equity}` | Pouvoir d'achat = `{buying_power}` | Trésorerie réglée = `{settled_cash}` | Day trades broker = `{daytrade_count}`"

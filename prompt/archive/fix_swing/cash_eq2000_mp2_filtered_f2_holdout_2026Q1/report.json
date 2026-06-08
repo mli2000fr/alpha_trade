@@ -26,7 +26,6 @@
     "ts": 0.05,
     "max_positions": 2,
     "account_type": "cash",
-    "pdt_rule": "off",
     "swing_only": true,
     "execution_timing": "signal J (calculé après clôture) -> ordre pour J+1 open",
     "filters": {
@@ -37,7 +36,6 @@
   },
   "diagnostics": {
     "blocked_same_day_exits": 7,
-    "blocked_pdt_day_trades": 0,
     "blocked_cash_entries": 0,
     "executed_day_trades": 0
   }

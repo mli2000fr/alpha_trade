@@ -137,7 +137,7 @@ code applicatif, avec mise à jour documentaire prévue séparément.
 |---|---|---|
 | 0 → 5 000 $ | **Fragile mais cohérent** | Faible investissabilité (ATR strict + min_notional) |
 | 5 001 → 10 000 $ | **Cohérent mais perfectible** | Marge de manœuvre limitée, RS 97 très exigeant |
-| 10 001 → 25 000 $ | **Cohérent** | Compte cash sans PDT → liquidité settled à surveiller |
+| 10 001 → 25 000 $ | **Cohérent** | Compte cash → liquidité settled à surveiller |
 | 25 001 → 50 000 $ | **Cohérent** | Bascule margin pertinente, réaliste |
 | 50 001 → 100 000 $ | **Cohérent** | Preset standard, équilibré |
 | 100 001 $+ | **Cohérent mais perfectible** | `selector_min_weekly_trend_score=1.0` peut vider l'univers |

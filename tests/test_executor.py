@@ -108,7 +108,6 @@ class TestExecutor:
             broker_mode="paper",
             account_id="acct-1",
             account_type="margin",
-            effective_pdt_rule="auto",
             swing_only=False,
             dry_run=False,
             allow_outside_rth=False,
@@ -118,6 +117,7 @@ class TestExecutor:
         assert summary["submitted_orders"] == 2
         assert summary["filled_orders"] == 1
         assert summary["fill_rate"] == 0.5
+        assert "effective_pdt_rule" not in summary
 
     def test_build_execution_run_summary_includes_risk_metrics(self) -> None:
         summary = build_execution_run_summary(
@@ -161,7 +161,6 @@ class TestExecutor:
             broker_mode="paper",
             account_id="acct-1",
             account_type="margin",
-            effective_pdt_rule="auto",
             swing_only=False,
             dry_run=False,
             allow_outside_rth=False,
@@ -201,7 +200,6 @@ class TestExecutor:
             broker_mode="paper",
             account_id="acct-1",
             account_type="margin",
-            effective_pdt_rule="auto",
             swing_only=False,
             dry_run=False,
             allow_outside_rth=False,
@@ -335,7 +333,7 @@ class TestExecutor:
         assert metrics["failed"] >= 1
 
     def test_cash_account_blocks_entry_when_settled_cash_is_insufficient(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="cash", pdt_rule="off")
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="cash")
         executor, repo, broker, _ = _make_executor(cfg)
         broker.get_account_snapshot.return_value = {
             "equity": 2_000.0,
@@ -353,7 +351,7 @@ class TestExecutor:
         assert EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT in event_types
 
     def test_margin_account_allows_buying_power_above_cash(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="off")
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin")
         executor, repo, broker, _ = _make_executor(cfg)
         broker.get_account_snapshot.return_value = {
             "equity": 2_000.0,
@@ -368,9 +366,9 @@ class TestExecutor:
         assert metrics["submitted"] == 1
         broker.submit_intent.assert_called()
 
-    def test_pdt_limit_defers_children_when_daytrade_slots_exhausted(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="auto")
-        targets = [_target("AAPL"), _target("MSFT")]
+    def test_margin_account_does_not_defer_children_when_daytrade_count_is_high(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", swing_only=False)
+        targets = [_target("AAPL")]
         executor, repo, broker, _ = _make_executor(cfg, targets=targets)
         broker.submit_intent.side_effect = lambda intent: _filled_order(intent_id=intent.intent_id, symbol=intent.symbol)
         broker.poll_order_status.side_effect = (
@@ -381,17 +379,17 @@ class TestExecutor:
             "cash": 2_000.0,
             "buying_power": 20_000.0,
             "non_marginable_buying_power": 2_000.0,
-            "daytrade_count": 2,
+            "daytrade_count": 3,
         }
 
         metrics = executor.execute_run(risk_run_id="r1")
 
-        assert metrics["children_deferred"] == 1
+        assert metrics["children_deferred"] == 0
         event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
-        assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
+        assert EventType.CHILDREN_SUBMITTED in event_types
 
-    def test_pdt_limit_blocks_entry_when_daytrade_slots_exhausted(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="auto")
+    def test_margin_account_does_not_block_entry_when_daytrade_count_is_high(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin")
         executor, repo, broker, _ = _make_executor(cfg)
         broker.get_account_snapshot.return_value = {
             "equity": 2_000.0,
@@ -403,18 +401,11 @@ class TestExecutor:
 
         metrics = executor.execute_run(risk_run_id="r1")
 
-        broker.submit_intent.assert_not_called()
-        assert metrics["constraint_blocked"] == 1
-        blocked_events = [
-            c[0][0]
-            for c in repo.insert_execution_event.call_args_list
-            if c[0][0].get("event_type") == EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT
-        ]
-        assert blocked_events
-        assert any("PDT" in str(evt.get("message", "")) for evt in blocked_events)
+        broker.submit_intent.assert_called()
+        assert metrics["constraint_blocked"] == 0
 
-    def test_swing_only_defers_children_even_without_pdt_limit(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="off", swing_only=True)
+    def test_swing_only_defers_children(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", swing_only=True)
         executor, repo, broker, _ = _make_executor(cfg)
 
         metrics = executor.execute_run(risk_run_id="r1")

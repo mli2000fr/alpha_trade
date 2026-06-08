@@ -1130,7 +1130,7 @@ def test_get_execution_account_constraints_falls_back_to_broker_snapshot(monkeyp
                     "settled_cash": 75000.0,
                     "buying_power": 75000.0,
                     "daytrade_count": 0,
-                    "raw_payload_json": '{"account_type":"cash","effective_pdt_rule":"off","swing_only":true}',
+                    "raw_payload_json": '{"account_type":"cash","swing_only":true}',
                     "created_at": "2026-04-26T20:00:00",
                 }
             ])
@@ -1141,7 +1141,6 @@ def test_get_execution_account_constraints_falls_back_to_broker_snapshot(monkeyp
     payload = queries.get_execution_account_constraints("exec-1")
 
     assert payload["account_type"] == "cash"
-    assert payload["effective_pdt_rule"] == "off"
     assert payload["swing_only"] is True
     assert payload["buying_power_available"] == 75000.0
     assert payload["settled_cash_available"] == 75000.0

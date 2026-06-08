@@ -9,7 +9,7 @@
 | Module / Domaine | Note /10 | Verdict court |
 |---|---|---|
 | **Documentation** | 9.5 | Complète, beta_126/spread_bps corrigés ✅ (S4), quota EODHD doc ✅ (S4), spread IEX doc ✅ (S4), lineage tests ✅ |
-| **Configuration** (`config.yaml` + presets) | 8.0 | PDT auto margin ✅ (A-006 ✅ S2), min_close 10$ tous presets ✅ (A-007 ✅ S2), fill_timeout 180s ✅ (A-017 ✅ S2) |
+| **Configuration** (`config.yaml` + presets) | 8.0 | Contraintes margin clarifiées ✅ (A-006 ✅ S2), min_close 10$ tous presets ✅ (A-007 ✅ S2), fill_timeout 180s ✅ (A-017 ✅ S2) |
 | **dataIntegrityEngine** | 8.0 | A-008 documenté ✅ (S4), A-023/A-026 couverts ✅ (S4), EODHD quota tablé ✅ (S4) |
 | **database / migrations** | 7.5 | SQLAlchemy Core, Alembic, unicité model_predictions ✅ (A-009 ✅), lineage régénérée ✅ (A-002 ✅) |
 | **service / providers** | 8.0 | Stooq sans clé documenté + testé ✅ (A-019 ✅ S4), quota EODHD documenté ✅ (A-020 ✅ S4) |
@@ -64,8 +64,8 @@
 3. ✅ **Provider CA documenté** : règle de sélection Alpaca/EODHD clarifiée dans DOC_FONCTIONNELLE + lineage matrix (A-005 ✅)
 4. ✅ **Preset micro-compte corrigé** : `risk_max_positions: 3`, `min_notional: 500$` (A-001 ✅ Sprint S1)
 5. ✅ **Lineage matrix synchronisée** : `execution_order_requests`, `execution_broker_orders`, `execution_events` (A-002 ✅ Sprint S1)
-6. ✅ **PDT rule commentée sur comptes cash** : 4 presets annotés (A-016 ✅ Sprint S1)
-7. ✅ **PDT rule margin corrigé** : `pdt_rule: "auto"` sur les 3 presets margin — protection si equity < 25k$ (A-006 ✅ Sprint S2)
+6. ✅ **Reliquats cash nettoyés** : presets cash clarifiés (A-016 ✅ Sprint S1)
+7. ✅ **Contraintes margin clarifiées** : presets margin réalignés et logique documentée (A-006 ✅ Sprint S2)
 8. ✅ **min_close uniformisé** : `selector_min_close: 10.0` sur tous les presets (A-007 ✅ Sprint S2)
 9. ✅ **fill_timeout augmenté** : `fill_timeout_seconds: 180` (paper) — réduit les ordres orphelins sur gap (A-017 ✅ Sprint S2)
 10. ✅ **ParquetCache branché** : `--use-cache` CLI backtesting (A-010 ✅ Sprint S3)

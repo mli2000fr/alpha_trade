@@ -246,7 +246,7 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 **Priorité** : 🟡 Basse. **Anomalies** : A-010, A-026.
 
 **Tâches** :
-1. Page `doc/CONVENTIONS.md` unique listant les conventions en vigueur (split-only, provider primaire, PDT, swing_only, etc.).
+1. Page `doc/CONVENTIONS.md` unique listant les conventions en vigueur (split-only, provider primaire, cash settled, swing_only, etc.).
 2. Déplacement POCs vers `doc/_poc/` ou bandeau "POC non activé" (A-010).
 3. Test propriété DST sur `market_calendar.py` (A-026).
 4. CHANGELOG `doc/CHANGELOG.md`.

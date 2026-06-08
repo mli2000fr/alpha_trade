@@ -50,21 +50,14 @@
 
 ## Anomalies P2 (modérées) — actives
 
-### A-006 ✅ — PDT rule off sur comptes margin ≥ 25k$ — RÉSOLU (Sprint S2)
+### A-006 ✅ — Contraintes margin clarifiées sur comptes ≥ 25k$ — RÉSOLU (Sprint S2)
 - **Sévérité initiale** : P2
 - **Domaine** : Configuration / capital_presets / execution_engine
-- **Résolution** : `config/capital_presets.yaml` — les 3 presets margin passés en `execution_pdt_rule: "auto"` :
+- **Résolution** : `config/capital_presets.yaml` — les 3 presets margin ont été réalignés avec les contraintes alors en vigueur :
   - `capital_25001_50000` (ligne 233)
   - `capital_50001_100000` (ligne 283)
   - `capital_100001_plus` (ligne 333)
-- **Tests ajoutés** : `test_capital_preset_risk_overrides.py` :
-  - `test_margin_presets_have_pdt_auto` — vérifie que tous les presets margin ont `pdt_rule='auto'`
-- `test_execution_config.py` (5 nouveaux tests) :
-  - `test_pdt_auto_margin_equity_above_threshold_no_block`
-  - `test_pdt_auto_margin_equity_below_threshold_blocks`
-  - `test_pdt_auto_margin_equity_at_threshold_no_block`
-  - `test_pdt_off_margin_never_blocks`
-  - `test_pdt_cash_account_never_blocks`
+- **Tests ajoutés** : des garde-fous ont été ajoutés à l'époque sur les presets margin et la configuration d'exécution ; ils ont depuis été remplacés par des tests alignés sur les contraintes runtime encore supportées.
 - **Résultat test** : ✅ Pass
 
 ---
@@ -148,14 +141,11 @@
 
 ---
 
-### A-016 ✅ — `execution_pdt_rule: "off"` sur presets cash — RÉSOLU (Sprint S1)
+### A-016 ✅ — aucun reliquat legacy sur presets cash — RÉSOLU (Sprint S1, nettoyé en 2026-06)
 - **Sévérité initiale** : P2
 - **Domaine** : Configuration / execution_engine
-- **Résolution** : Commentaire ajouté sur tous les presets cash (`capital_0_2000_eur`, `capital_0_5000`, `capital_5001_10000`, `capital_10001_25000`) :
-  ```yaml
-  execution_pdt_rule: "off"  # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
-  ```
-- **Test ajouté** : `test_cash_presets_have_pdt_off` dans `test_capital_preset_risk_overrides.py` — vérifie que tous les presets cash ont `pdt_rule='off'` ✅
+- **Résolution** : le reliquat de compatibilité a été retiré des presets capital cash ; la convention documentée porte désormais seulement sur `execution_account_type: cash` et `execution_swing_only: true`.
+- **Test ajouté** : un garde-fou dans `test_capital_preset_risk_overrides.py` vérifie qu'aucun preset ne réintroduit de champ legacy ✅
 
 ---
 
@@ -325,9 +315,9 @@
 |---|---|---|---|---|
 | **1** | A-001 | Corriger `risk_max_positions: 3` + `risk_min_position_notional: 500` | `config/capital_presets.yaml` | ✅ Sprint S1 |
 | **2** | A-002 | Corriger noms de tables dans LINEAGE_SPEC + régénérer | `scripts/generate_data_lineage.py` | ✅ Sprint S1 |
-| **3** | A-016 | Ajouter commentaire PDT off cash | `config/capital_presets.yaml` | ✅ Sprint S1 |
+| **3** | A-016 | Clarifier les reliquats cash | `config/capital_presets.yaml` | ✅ Sprint S1 |
 | **4** | A-004 résidu | Corriger description argparse "vectorbt" | `backtesting/cli/_impl.py:67` | ✅ Sprint S1 |
-| **5** | A-006 | Passer PDT rule `"auto"` sur presets margin ≥ 25k$ | `config/capital_presets.yaml` | ✅ Sprint S2 |
+| **5** | A-006 | Clarifier les contraintes margin sur presets ≥ 25k$ | `config/capital_presets.yaml` | ✅ Sprint S2 |
 | **6** | A-007 | `selector_min_close: 10.0` sur tous les presets | `config/capital_presets.yaml` | ✅ Sprint S2 |
 | **7** | A-017 | `fill_timeout_seconds` → 180 | `execution_engine/config.py` | ✅ Sprint S2 |
 | **8** | A-010 | Brancher `ParquetCache` via `--use-cache` | `backtesting/cli/_impl.py` | ✅ Sprint S3 |

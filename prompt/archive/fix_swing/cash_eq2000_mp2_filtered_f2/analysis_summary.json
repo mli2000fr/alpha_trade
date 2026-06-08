@@ -14,7 +14,6 @@
   },
   "diagnostics": {
     "blocked_same_day_exits": 46,
-    "blocked_pdt_day_trades": 0,
     "blocked_cash_entries": 0,
     "executed_day_trades": 0
   },

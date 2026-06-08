@@ -63,3 +63,24 @@ class TradingConstraintConfig:
             "use_settled_cash_only": self.use_settled_cash_only,
         }
 
+
+def build_current_trading_constraints(
+    *,
+    account_type: AccountType,
+    swing_only: bool = False,
+    cash_settlement_days: int = 1,
+) -> TradingConstraintConfig:
+    """Construit les contraintes backtest en vigueur après retrait du PDT.
+
+    Le support bas niveau du PDT reste présent pour compatibilité historique,
+    mais le flux CLI courant ne doit plus le réactiver.
+    """
+
+    return TradingConstraintConfig(
+        account_type=account_type,
+        pdt_rule="off",
+        swing_only=bool(swing_only),
+        cash_settlement_days=int(cash_settlement_days),
+    )
+
+

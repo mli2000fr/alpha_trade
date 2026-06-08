@@ -42,7 +42,7 @@ pour le détail des valeurs.
 | **200 USD ticket min** | | frais < 1 % de l'ordre |
 | **35 % max par ligne** | | cohérent avec 3 lignes |
 | **55 % max par secteur** | | permet 2 lignes même secteur |
-| **Cash account** | | pas de PDT rule |
+| **Cash account** | | capital réutilisable uniquement après settlement |
 | **Swing only** | | aucun day-trade |
 | **DD max 7 %** | | ~140 € de perte max temporaire (circuit breaker portfolio). |
 | **Min market cap 500 M$** | | exclut micro-cap manipulables |
@@ -84,13 +84,13 @@ Métriques cibles à valider **avant** tout passage en paper :
 > 🛑 **Ne sautez aucune étape.** 95 % des débutants qui passent direct en
 > live perdent leur capital en < 6 mois.
 
-## 6. Limites à respecter (PDT rule, fiscalité)
+## 6. Limites à respecter (rotation, fiscalité)
 
-### PDT rule (Pattern Day Trader)
+### Rotation du capital
 
-La FINRA US interdit aux comptes < 25 000 USD de faire **plus de 3
-day-trades en 5 jours** sur un compte **margin**. **Solution** : compte
-**cash** (déjà imposé par le preset).
+Avec un compte **cash**, le capital réellement réutilisable dépend du
+settlement. Le preset impose donc un style **swing only** et un rythme de
+rotation volontairement modéré.
 
 ### Fiscalité française
 
@@ -108,7 +108,7 @@ day-trades en 5 jours** sur un compte **margin**. **Solution** : compte
 |---|---|
 | Désactiver les stop-loss | Ruine garantie |
 | Augmenter `risk_per_trade_pct` à 5 % | 10 trades suffisent à perdre 50 % |
-| Passer en margin avant 25k$ | PDT rule + risque de levier |
+| Passer en margin trop tôt | risque de levier + discipline opératoire plus fragile |
 | Trader des options / leveraged ETF | Risque non modélisé par l'app |
 | Ignorer les corporate actions | Désynchronisation cash |
 | Couper le watcher 24/7 en live | Plus de protection des positions |

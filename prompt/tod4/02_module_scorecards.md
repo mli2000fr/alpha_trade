@@ -314,7 +314,7 @@ Le module le plus mature du projet. La chaîne canonique (targets → requests �
 - Chaîne canonique complète et tracée
 - Idempotence (SHA-256)
 - TCA (slippage, implementation shortfall)
-- Contraintes compte (margin/cash/PDT/swing_only)
+- Contraintes compte (margin/cash/swing_only)
 - Préflight + kill switch
 - Réconciliation
 
@@ -370,7 +370,7 @@ Module très complet avec PIT, contraintes de compte réalistes, phases de fidé
 
 ### Points forts
 - Point-in-time strict
-- Contraintes compte (margin/cash/PDT/swing_only)
+- Contraintes compte (margin/cash/swing_only)
 - Phases de fidélité (2/3/4/5/7)
 - Diagnostic screener avec recommandations
 - Reporting structuré (report.json)

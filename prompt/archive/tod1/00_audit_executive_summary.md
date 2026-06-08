@@ -39,7 +39,7 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 2. **Couverture de tests exceptionnelle** : 2316 tests verts (260+ fichiers), couvrant unitaire, intégration, E2E IHM, parité backtest/live, contract tests.
 3. **Idempotence partout** : SHA-256 sur les ordres, les CA, le signal aggregator. Très solide.
 4. **Provider OHLCV switch propre** : le basculement EODHD / Alpaca piloté par `config.yaml › market_data.bars_provider` est cohérent dans tout le code, la doc et les migrations.
-5. **Backtesting rigoureux** : pipeline/research modes, point-in-time, contraintes PDT/cash/swing, phases de fidélité 2/3/4/5/7, `--use-cache` ParquetCache, `--bootstrap-samples` Bootstrap Monte Carlo.
+5. **Backtesting rigoureux** : pipeline/research modes, point-in-time, contraintes cash/margin/swing, phases de fidélité 2/3/4/5/7, `--use-cache` ParquetCache, `--bootstrap-samples` Bootstrap Monte Carlo.
 6. **Sécurité secrets** : aucune credential en dur, scan `core.secrets.scan_yaml_for_literal_secrets`, vault support.
 7. **Couche Market-Aware complète** : market regime, circuit breaker sentiment, patterns calendaires, trailing stop ATR.
 8. **Alerting automatique opérationnel** : email sur circuit_breaker, avertissements IHM sur réconciliation > 24h et market_cap TTL expiré (A-013 ✅, A-014 ✅, A-015 ✅ Sprint S3).
@@ -51,12 +51,12 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 
 > ✅ = Confirmées RÉSOLUES après vérification code ou livraison Sprint S1/S2/S3
 
-1. ✅ ~~**`capital_0_2000_eur` : `risk_max_positions: 10`**~~ — **RÉSOLU Sprint S1** : `risk_max_positions: 3`, `risk_min_position_notional: 500.0`, commentaires PDT cash ajoutés sur 4 presets. Tests ajoutés. **(A-001 ✅, A-016 ✅)**
+1. ✅ ~~**`capital_0_2000_eur` : `risk_max_positions: 10`**~~ — **RÉSOLU Sprint S1** : `risk_max_positions: 3`, `risk_min_position_notional: 500.0`, conventions cash clarifiées sur 4 presets. Tests ajoutés. **(A-001 ✅, A-016 ✅)**
 2. ✅ ~~**`data_lineage_matrix.md` : provider CA ambigu**~~ — **RÉSOLU** avant Sprint S1 : règle conditionnelle documentée dans `DOC_FONCTIONNELLE.md:246` et `data_lineage_matrix.md §7`. **(A-005 ✅)**
 3. ✅ ~~**`data_lineage_matrix.md` nomme `execution_orders`**~~ — **RÉSOLU Sprint S1** : LINEAGE_SPEC corrigé → `execution_order_requests` + `execution_broker_orders` + `execution_events`, MD régénéré, CI check vert. **(A-002 ✅)**
 4. ✅ ~~**`DOC_TECHNIQUE.md §9` mentionne "vectorbt"**~~ — **RÉSOLU** (résidu argparse `backtesting/cli/_impl.py:67` corrigé Sprint S1). **(A-004 ✅)**
 5. ✅ ~~**`model_predictions` ne persiste pas `selected_model`**~~ — **RÉSOLU** avant Sprint S1 : colonnes présentes en DB et persistées par `db_registry.py`. **(A-003 ✅)**
-6. ✅ ~~**Presets ≥ 25 001 $ ont `execution_pdt_rule: "off"` sur compte margin**~~ — **RÉSOLU Sprint S2** : `pdt_rule: "auto"` sur 3 presets margin. **(A-006 ✅)**
+6. ✅ ~~**Presets ≥ 25 001 $ avaient une configuration margin incohérente**~~ — **RÉSOLU Sprint S2** : 3 presets margin clarifiés. **(A-006 ✅)**
 7. ✅ ~~**`ParquetCache` non branché, analytics CLI absents**~~ — **RÉSOLU Sprint S3** : `--use-cache`, `--bootstrap-samples`, `--sensitivity-analysis` implémentés. **(A-010 ✅, A-011 ✅)**
 8. ✅ ~~**Pas d'alerting externe automatique**~~ — **RÉSOLU Sprint S3** : email sur circuit_breaker + kill_switch. **(A-013 ✅)**
 9. **`market_regimes.yields.enabled: false`** malgré `macro_provider: eodhd`. **(P3 — A-020)**

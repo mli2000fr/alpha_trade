@@ -33,7 +33,6 @@ def test_cli_run_defaults_align_with_cash_swing_profile() -> None:
 
     assert args.command == "run"
     assert args.account_type == "cash"
-    assert args.pdt_rule == "off"
     assert args.swing_only is True
 
 

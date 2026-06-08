@@ -27,8 +27,6 @@
     "max_positions": 5,
     "fees": 0.001,
     "account_type": "margin",
-    "pdt_rule": "auto",
-    "effective_pdt_rule": "auto",
     "swing_only": false,
     "sentiment_lookback": 365,
     "ml_mode": "auto",
@@ -40,7 +38,6 @@
   },
   "diagnostics": {
     "blocked_same_day_exits": 0,
-    "blocked_pdt_day_trades": 0,
     "blocked_cash_entries": 0,
     "executed_day_trades": 384
   }

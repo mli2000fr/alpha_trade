@@ -119,14 +119,14 @@ python run_execution.py live --account live1
 ### Exécution avec contraintes de compte
 
 ```powershell
-# Compte margin soumis à PDT
-python run_execution.py paper --account default --account-type margin --pdt-rule auto
+# Compte margin : buying power broker utilisé
+python run_execution.py paper --account default --account-type margin
 
 # Compte cash : capital disponible limité au cash settled
 python run_execution.py paper --account default --account-type cash
 
 # Swing strict : ne pas armer les exits le jour même
-python run_execution.py paper --account default --account-type margin --pdt-rule off --swing-only
+python run_execution.py paper --account default --account-type margin --swing-only
 ```
 
 ### Watcher post-exécution
@@ -172,7 +172,7 @@ python -m execution_engine --trade-date 2026-04-21 --risk-run-id abc123 --broker
 3. crée la ligne `execution_runs` ;
 4. vérifie éventuellement le circuit breaker ;
 5. vérifie les horaires de marché ;
-6. construit un snapshot de contraintes de compte (`margin|cash`, `PDT`, `swing_only`) ;
+6. construit un snapshot de contraintes de compte (`margin|cash`, `swing_only`) ;
 7. alerte s'il existe des corporate actions pending sur les symboles cibles.
 
 ### 4.2 Construction et soumission des intents
@@ -225,7 +225,7 @@ Le pattern canonique (« synthetic bracket ») est :
 
 **Observabilité opérateur** : un `armed_missing_protections > 0` récurrent indique que l'executor termine systématiquement avant l'ouverture (cas `overnight_cash_swing` nominal) — c'est attendu, le watcher fait le travail. Un `children_armed_post_sync_failed` ou `armed_missing_protections_failed` > 0 doit être investigué (cf. runbook §positions sans protection).
 
-Quand `--swing-only` est activé, ou quand une contrainte PDT ne laisse plus de slot de day trade, le moteur diffère l'armement des children le jour même. Le run journalise alors un événement `CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT`.
+Quand `--swing-only` est activé, le moteur diffère l'armement des children le jour même. Le run journalise alors un événement `CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT`.
 
 Le trailing dynamique, s'il reste activé, doit être considéré comme une capacité secondaire de supervision plutôt qu'un prérequis du run nominal.
 

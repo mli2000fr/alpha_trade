@@ -107,14 +107,12 @@ L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 Le système est conçu principalement pour du **swing trading**. Le backtesting permet désormais de simuler explicitement des contraintes réalistes de petit capital Alpaca / compte US :
 
 - **`account_type = margin`** : compte margin simulé ;
-- **`pdt_rule = auto`** : maximum **3 day trades sur 5 jours ouvrés** quand le capital simulé est inférieur à **25 000 $** ;
-- **`account_type = cash`** : pas de règle PDT, mais uniquement du **cash settled** réutilisable après settlement simplifié **T+1** ;
+- **`account_type = cash`** : uniquement du **cash settled** réutilisable après settlement simplifié **T+1** ;
 - **`swing_only = True`** : achat aujourd'hui, revente demain ou plus tard.
 
 Cette API composable permet d'évaluer une stratégie avec **2 000 $** ou un autre petit capital sans surévaluer artificiellement la fréquence de rotation intraday, tout en distinguant proprement :
 
 - le **type de compte**,
-- la **règle réglementaire PDT**,
 - le **style de trading swing**.
 
 Cette logique n'est plus limitée au backtest : le module `execution_engine` applique aussi ces contraintes au moment de la soumission des ordres et de l'armement des sorties.
@@ -253,7 +251,7 @@ Le module `backtesting/` n'est plus un simple replay de signaux. Fonctionnelleme
 - un mode **`research`** pour itérer rapidement sur des hypothèses ;
 - un mode **`pipeline`** plus strict, centré sur la fidélité point-in-time ;
 - une convention d'exécution réaliste **signal J → entrée open J+1** ;
-- la simulation explicite des contraintes **`margin / cash / PDT / swing_only`** ;
+- la simulation explicite des contraintes **`margin / cash settled / swing_only`** ;
 - des **phases opt-in** de rapprochement avec le live :
   - **Phase 2** : bridge `risk_management` puis `execution_engine`,
   - **Phase 3** : replay explicite des entrées exécutées,
@@ -521,12 +519,11 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 8. **Les ordres 4xx du broker ne sont PAS retentés** (erreurs permanentes) ; seuls les 5xx/timeout/réseau sont retentés
 9. **Les positions broker hors cible** (action "investigate") ne sont pas soldées automatiquement pour éviter les erreurs
 10. **Le score de conviction combine** score quantitatif (40%) et probabilité prédite par le backend `modelFactory` effectivement servi (60%)
-11. **En backtest, un compte margin peut être soumis à la règle PDT** si `pdt_rule=auto` et `equity < 25k`, avec blocage du 4e day trade sur 5 séances glissantes
-12. **En backtest, l'option `swing_only` peut interdire toute revente le jour même**
-13. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
-14. **En exécution, un compte cash ne peut pas soumettre d'achats au-delà du cash settled disponible**
-15. **En exécution, `swing_only` et la contrainte PDT peuvent différer l'armement des ordres de sortie le jour même**
-16. **Toute prédiction ML persistée doit inclure le contexte de serving** (`selected_model`, `decision_threshold`, `calibration_method`) pour garantir l'auditabilité des décisions de risque
+11. **En backtest, l'option `swing_only` peut interdire toute revente le jour même**
+12. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
+13. **En exécution, un compte cash ne peut pas soumettre d'achats au-delà du cash settled disponible**
+14. **En exécution, `swing_only` peut différer l'armement des ordres de sortie le jour même**
+15. **Toute prédiction ML persistée doit inclure le contexte de serving** (`selected_model`, `decision_threshold`, `calibration_method`) pour garantir l'auditabilité des décisions de risque
 
 ---
 
@@ -547,8 +544,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 
 Concernant les contraintes petit capital simulées en backtest :
 
-- la règle `PDT` est modélisée sur la base d'une fenêtre glissante de **5 séances de backtest** ;
-- le paramètre `pdt_rule=auto` n'a d'effet que sur un **compte margin** ; sur un **compte cash**, la règle est neutralisée ;
+- les différences `cash` / `margin` portent surtout sur le capital disponible et la mécanique de `settled cash` ;
 - l'option `swing_only` peut être combinée aussi bien avec un compte `margin` qu'avec un compte `cash` ;
 - le mode `cash` repose sur un settlement simplifié **T+1** pour rester testable et lisible ;
 - ces modes s'appliquent au moteur de backtest et n'altèrent pas l'exécution live/paper réelle du broker.
@@ -565,7 +561,7 @@ Concernant l'exécution réelle/paper :
 
 1. ~~**Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run~~ → ✅ **Partiellement implémenté** : email workflow IHM + alerting externe via `service.alerting` (Slack/SMTP/log), circuit breaker branché ; extension SMS et couverture de tous les événements critiques encore à compléter
 2. ~~**Dashboard temps réel**~~ → ✅ **Implémenté** : IHM Streamlit opérateur (`ihm/app.py`)
-3. ~~**Backtesting intégré**~~ → ✅ **Implémenté** : module `backtesting/` research/pipeline avec replay PIT, contraintes compte (`cash` / `margin` / `PDT` / `swing_only`), phases de fidélité 2/3/4/5/7, diagnostics screener et reporting structuré (`report.json`, `fidelity_manifest.json`)
+3. ~~**Backtesting intégré**~~ → ✅ **Implémenté** : module `backtesting/` research/pipeline avec replay PIT, contraintes compte (`cash settled` / `margin` / `swing_only`), phases de fidélité 2/3/4/5/7, diagnostics screener et reporting structuré (`report.json`, `fidelity_manifest.json`)
 4. **Support short selling** : étendre la stratégie aux positions short
 5. **Streaming WebSocket** : remplacer le polling des fills par un stream Alpaca pour réduire la latence
 6. **Scheduler automatisé** : cron/Airflow/Prefect pour automatiser l'exécution quotidienne du pipeline

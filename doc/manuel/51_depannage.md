@@ -44,10 +44,11 @@ Vérifiez `ALPACA_BASE_URL` :
 - Paper : `https://paper-api.alpaca.markets`
 - Live  : `https://api.alpaca.markets`
 
-### « PDT rule triggered »
+### « Order rejected: insufficient settled cash »
 
-Vous avez dépassé 3 day-trades / 5 jours en compte margin < 25k$.
-Solution : passez en compte **cash**.
+Le compte cash n'a plus assez de cash settled pour couvrir l'achat.
+Attendez le settlement `T+1` après une vente, réduisez la taille de l'ordre,
+ou vérifiez le budget disponible dans la page Execution.
 
 ### « Order rejected: insufficient buying power »
 

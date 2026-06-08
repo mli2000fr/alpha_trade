@@ -1,6 +1,5 @@
 """Sprint S3 / A-011 — overrides risk_max_drawdown_pct / risk_max_daily_loss_pct par préset.
 Sprint S1 / A-001 — cohérence risk_max_positions / risk_min_position_notional.
-Sprint S2 / A-006 — PDT rule 'auto' sur presets margin ≥ 25k$.
 Sprint S2 / A-007 — selector_min_close ≥ 10.0 sur tous les presets.
 
 Vérifie que :
@@ -15,9 +14,8 @@ Vérifie que :
 - [A-001] ``risk_max_positions × risk_min_position_notional ≤ 0.95 × max_equity``
   (solvabilité notionnelle).
 - [A-001] Le preset micro-compte ``capital_0_2000_eur`` a au plus 5 positions.
-- [A-006] Les presets margin ont ``execution_pdt_rule='auto'``.
 - [A-007] Tous les presets ont ``selector_min_close ≥ 10.0``.
-- [A-016] Les presets cash ont ``execution_pdt_rule='off'`` (PDT N/A).
+- Aucun preset capital n'expose encore de reliquat compat legacy d'exécution.
 """
 from __future__ import annotations
 
@@ -180,19 +178,15 @@ def test_micro_account_min_notional_viable(presets):
 
 
 # ---------------------------------------------------------------------------
-# Sprint S1 / A-016 — PDT rule cohérente avec account_type
+# Nettoyage legacy — aucun preset capital ne doit encore exposer l'ancien champ d'exécution
 # ---------------------------------------------------------------------------
 
-def test_cash_presets_have_pdt_off(presets):
-    """[A-016] Tout preset cash doit avoir pdt_rule='off' (PDT N/A sur cash)."""
+def test_capital_presets_do_not_expose_legacy_execution_field(presets):
+    """Les presets capital ne doivent plus propager d'ancien champ compat d'exécution."""
     for preset in presets:
-        account_type = preset.values.get("execution_account_type", "cash")
-        pdt_rule = preset.values.get("execution_pdt_rule", "off")
-        if account_type == "cash":
-            assert pdt_rule == "off", (
-                f"{preset.key}: account_type=cash mais pdt_rule='{pdt_rule}' "
-                f"(devrait être 'off' — PDT ne s'applique qu'aux comptes margin)"
-            )
+        assert "execution_pdt_rule" not in preset.values, (
+            f"{preset.key}: reliquat compat legacy détecté dans capital_presets.yaml"
+        )
 
 
 def test_positions_increase_with_account_size(presets):
@@ -202,30 +196,6 @@ def test_positions_increase_with_account_size(presets):
         f"risk_max_positions doit être croissant entre presets: {max_positions}"
     )
 
-
-# ---------------------------------------------------------------------------
-# Sprint S2 / A-006 — PDT rule 'auto' sur presets margin
-# ---------------------------------------------------------------------------
-
-def test_margin_presets_have_pdt_auto(presets):
-    """[A-006] Tout preset margin doit avoir pdt_rule='auto'.
-
-    Sur un compte margin, si l'equity chute temporairement sous 25 000 $,
-    la règle PDT doit être appliquée automatiquement (4e day-trade bloqué)
-    pour éviter les restrictions broker (min-equity call, 90 jours de restriction).
-    cf. execution_engine/config.py:applies_pdt_limit()
-    """
-    margin_presets = [
-        p for p in presets
-        if p.values.get("execution_account_type") == "margin"
-    ]
-    assert margin_presets, "Aucun preset margin trouvé dans capital_presets.yaml"
-    for preset in margin_presets:
-        pdt_rule = preset.values.get("execution_pdt_rule", "off")
-        assert pdt_rule == "auto", (
-            f"{preset.key}: account_type=margin mais pdt_rule='{pdt_rule}' "
-            f"(devrait être 'auto' — protection en cas de drawdown sous 25k$)"
-        )
 
 
 # ---------------------------------------------------------------------------

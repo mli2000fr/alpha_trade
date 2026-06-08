@@ -213,7 +213,7 @@ TCA), `protection_watcher` post-run secondaire,
 `broker_state_sync`, multi-comptes propagé.
 
 - **Points forts** : architecture solide, tests `tests/test_executor*.py`,
-  `tests/test_oco_manager*.py`, gestion PDT/swing-only, kill switch,
+  `tests/test_oco_manager*.py`, gestion cash/margin/swing-only, kill switch,
   exécution locks.
 - **Faiblesses** : un seul broker concret (Alpaca) — l'abstraction
   `BrokerAdapter` existe mais l'extensibilité n'est pas testée ; le watcher

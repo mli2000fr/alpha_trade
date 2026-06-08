@@ -31,7 +31,7 @@
 |---|---|
 | risk_per_trade 1.5 % × 3 lignes = 4.5 % equity exposé | **Fragile** : un crash sectoriel sur deux lignes corrélées peut détruire 6–8 %. |
 | min_position_notional 500 $ + 3 lignes = ~1500 $ déployés sur 2150 $ | OK mais cash buffer faible. |
-| execution_pdt_rule "off" car cash | Correct (PDT ne s'applique pas en cash). |
+| execution_account_type cash | Correct pour un fonctionnement discipliné en cash settled. |
 | screener_min_relative_strength_index 90 + selector_min_close 10 + min_market_cap 500M$ | **Univers très restreint** : risque universe vide en regime baissier. |
 | selector_max_anomaly_count 28 | **Incohérent** (A-014). |
 | trailing_stop fixé via execution_trailing_r_multiple 1.0 | OK mais pas de protection BE automatique côté config. |
@@ -68,7 +68,7 @@ mode "discovery" explicite ou warning IHM "ce preset assume une perte de
 |---|---|
 | 1.5 % × 8 = 12 % exposé | Standard swing. |
 | Univers selector large ouvert (selection_size=35) | OK. |
-| execution_account_type cash + PDT off | OK car < 25 k$ (PDT margin only). |
+| execution_account_type cash + swing_only | OK pour une exploitation prudente sous 25 k$. |
 
 **Verdict : ✅ Cohérent**. Tranche pivot où l'application devient pleinement
 investissable.
@@ -78,7 +78,7 @@ investissable.
 | Aspect | Constat |
 |---|---|
 | 1.25 % × 12 = 15 % exposé | Diversification correcte. |
-| margin + PDT "auto" | ✅ A-006 fix. |
+| margin + swing_only désactivé | ✅ Cohérent pour un usage plus flexible du buying power. |
 | selector_max_spread_bps 45 | OK. |
 
 **Verdict : ✅ Cohérent — preset cible production opérateur autonome.**

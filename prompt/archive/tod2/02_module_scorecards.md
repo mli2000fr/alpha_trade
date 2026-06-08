@@ -92,7 +92,7 @@ Résumé : `PortfolioBuilder` fusionne score quant et ML (`portfolio_builder.py:
 
 ## execution_engine — 8,4 / 10
 
-Résumé : l’exécution est le module le plus proche du niveau pro. `run_execution.py` impose un preflight live, interdit le fallback equity silencieux, exige un token d’approbation live (`ALPHA_TRADE_LIVE_APPROVAL_TOKEN`) et écrit/vérifie un run plan immuable pour les runs live. `ExecutionConfig` modélise cash/margin/PDT/swing/protections. Il reste surtout une orchestration locale et une dépendance forte à l’opérateur.
+Résumé : l’exécution est le module le plus proche du niveau pro. `run_execution.py` impose un preflight live, interdit le fallback equity silencieux, exige un token d’approbation live (`ALPHA_TRADE_LIVE_APPROVAL_TOKEN`) et écrit/vérifie un run plan immuable pour les runs live. `ExecutionConfig` modélise cash/margin/swing/protections. Il reste surtout une orchestration locale et une dépendance forte à l’opérateur.
 
 - Points forts : preflight, dry-run, paper/live, snapshot compte, protections, reconciliation/TCA, approval token live, run plan immuable.
 - Faiblesses : pas de moteur de scheduling robuste, incident response encore manuel, dépendance à des variables d’env opérateur.
@@ -112,7 +112,7 @@ Résumé : la séparation prix split-only / dividendes en ledger est correcte. `
 
 Résumé : le backtesting contient des briques avancées : PIT, microstructure, replay execution/protection/watcher. L’ajout du profil `production-parity` et des garde-fous de replay renforce nettement la crédibilité de la chaîne ; la parité live n’est toutefois pas encore totalement automatique partout.
 
-- Points forts : phases de fidélité, reports, constraints cash/PDT/swing.
+- Points forts : phases de fidélité, reports, constraints cash/swing.
 - Faiblesses : mode pipeline strict pas systématiquement imposé, cache non branché par défaut.
 - Risques : illusion de performance si données ou ML non PIT.
 - Pour atteindre 10/10 : gate CI backtest-live parity, jeux golden, reporting risk-adjusted obligatoire.

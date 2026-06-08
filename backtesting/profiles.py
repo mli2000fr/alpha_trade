@@ -3,7 +3,7 @@
 Source de vérité unique pour les jeux de paramètres backtest récurrents
 (``strict_swing_cash``, ``swing_cash_aggressive``, ``custom``). Les valeurs
 sont alignées sur :mod:`core.filter_profiles` (filtres) et sur les
-conventions live (TP/TS/max_positions/account_type/pdt_rule/swing_only).
+conventions live (TP/TS/max_positions/account_type/swing_only).
 
 Les flags CLI explicites overridrent toujours les valeurs du profil
 (défaut argparse < profil < CLI explicite).
@@ -21,7 +21,6 @@ BACKTEST_PROFILES: dict[str, dict[str, Any]] = {
         "commission_bps": 5.0,
         "slippage_bps": 5.0,
         "account_type": "cash",
-        "pdt_rule": "auto",
         "swing_only": True,
     },
     "swing_cash_aggressive": {
@@ -31,7 +30,6 @@ BACKTEST_PROFILES: dict[str, dict[str, Any]] = {
         "commission_bps": 5.0,
         "slippage_bps": 8.0,
         "account_type": "cash",
-        "pdt_rule": "auto",
         "swing_only": True,
     },
     "production-parity": {

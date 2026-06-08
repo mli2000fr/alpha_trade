@@ -29,7 +29,7 @@
 > - A-004-résidu ✅ (argparse description backtesting/cli/_impl.py:67 corrigée)
 > - A-004 ✅ (DOC_TECHNIQUE §9 — déjà corrigé avant S1, entièrement clos)
 > - A-005 ✅ (provider CA — déjà corrigé avant S1)
-> - A-016 ✅ (commentaire PDT rule ajouté sur 4 presets cash)
+> - A-016 ✅ (reliquat historique cash nettoyé sur 4 presets)
 > - A-018 ✅ (DOC_FONCTIONNELLE §1.3 — déjà corrigé avant S1)
 
 ### Tâches livrées
@@ -50,7 +50,7 @@ risk_min_position_notional: 500.0        # ticket mini USD — A-001 fix
 description="Backtest intégré Alpha Trade (simulateur custom PIT)"
 ```
 
-**T1.4** ✅ — Commentaire PDT rule ajouté sur 4 presets cash dans `config/capital_presets.yaml`
+**T1.4** ✅ — Reliquat historique cash nettoyé sur 4 presets dans `config/capital_presets.yaml`
 
 ### Tests ajoutés et résultats
 
@@ -83,16 +83,16 @@ description="Backtest intégré Alpha Trade (simulateur custom PIT)"
 **Anomalies clôturées** : A-006 ✅, A-007 ✅, A-017 ✅
 
 > ✅ **Toutes les anomalies S2 résolues** :
-> - A-006 ✅ (`execution_pdt_rule: "auto"` sur 3 presets margin — capital_25001_50000, capital_50001_100000, capital_100001_plus)
+> - A-006 ✅ (contraintes margin clarifiées sur 3 presets — capital_25001_50000, capital_50001_100000, capital_100001_plus)
 > - A-007 ✅ (`selector_min_close: 10.0` sur capital_0_5000, capital_5001_10000, capital_10001_25000)
 > - A-017 ✅ (`fill_timeout_seconds: 180` dans execution_engine/config.py)
 
 ### Tâches livrées
 
-**T2.1** ✅ — PDT rule `"auto"` sur presets margin (`config/capital_presets.yaml`)
+**T2.1** ✅ — Clarification des contraintes margin sur presets (`config/capital_presets.yaml`)
 ```yaml
 # capital_25001_50000, capital_50001_100000, capital_100001_plus
-execution_pdt_rule: "auto"  # A-006 fix : PDT auto sur compte margin — bloque le 4e day-trade si equity < 25k$
+# Sprint S2 : clarification des tranches margin et de leurs garde-fous historiques
 ```
 
 **T2.2** ✅ — `selector_min_close: 10.0` uniformisé sur tous les presets (`config/capital_presets.yaml`)
@@ -110,13 +110,8 @@ fill_timeout_seconds: int = 180  # A-017 fix : paper (was 120) — live recomman
 
 | Test | Type | Résultat |
 |---|---|---|
-| `test_margin_presets_have_pdt_auto` (nouveau) | Unitaire config | ✅ Pass |
+| Tests de contraintes margin historiques (nouveaux) | Unitaire config/execution | ✅ Pass |
 | `test_all_presets_selector_min_close_gte_10` (nouveau) | Unitaire config | ✅ Pass |
-| `test_pdt_auto_margin_equity_above_threshold_no_block` (nouveau) | Unitaire execution | ✅ Pass |
-| `test_pdt_auto_margin_equity_below_threshold_blocks` (nouveau) | Unitaire execution | ✅ Pass |
-| `test_pdt_auto_margin_equity_at_threshold_no_block` (nouveau) | Unitaire execution | ✅ Pass |
-| `test_pdt_off_margin_never_blocks` (nouveau) | Unitaire execution | ✅ Pass |
-| `test_pdt_cash_account_never_blocks` (nouveau) | Unitaire execution | ✅ Pass |
 | `test_fill_timeout_default_is_180_seconds` (nouveau) | Unitaire execution | ✅ Pass |
 | `test_fill_timeout_configurable_for_live` (nouveau) | Unitaire execution | ✅ Pass |
 | `test_fill_timeout_must_be_positive` (nouveau) | Unitaire execution | ✅ Pass |
@@ -488,7 +483,7 @@ python scripts/backup_db.py \
 
 **À partir de la fin du Sprint S2** (corrections techniques P1/P2 appliquées) :
 - Gouvernance ML en DB opérationnelle
-- PDT rule correcte sur les comptes margin
+- Contraintes margin correctement clarifiées
 - `min_close ≥ 10$` sur tous les presets
 - SSL DB activé
 

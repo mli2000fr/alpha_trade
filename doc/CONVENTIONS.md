@@ -35,7 +35,6 @@
 ## 3. Trading / portefeuille / risque
 
 - **Style opératoire canonique** : `swing_only=True`.
-- **Règle PDT** : `pdt_rule=auto` pour les comptes margin < 25 k$.
 - **Micro-comptes < 5 k$** : usage éducatif / fortement contraint ; bandeaux IHM obligatoires.
 - **Kelly** : activé uniquement sur les presets `>= 25 k$`.
 - **Préflight exécution** : bloquant en `paper/live`, dégradé `WARN` en `simulate`.

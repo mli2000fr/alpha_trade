@@ -50,7 +50,7 @@ presets:
       risk_enable_kelly: false
       risk_score_weight: 0.45
       risk_prediction_weight: 0.55
-      execution_account_type: cash             # PDT rule désactivable car cash
+      execution_account_type: cash             # compte cash : capital limité au settled cash
       execution_swing_only: true               # interdit toute logique day-trade
       execution_cash_settlement_days: 1
       execution_submission_window: both

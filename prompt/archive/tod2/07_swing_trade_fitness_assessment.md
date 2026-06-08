@@ -11,7 +11,7 @@ Alpha Trade est bien orienté **swing trading actions US** : timeframe daily, in
 - Daily OHLCV EODHD consolidé : meilleur que Alpaca/IEX pour volumes et liquidité.
 - Filtres selector adaptés : `min_close`, ADV, ATR%, high 52w proximity, weekly trend, MA200, earnings blackout, spread.
 - `execution_swing_only=true` dans les presets capital.
-- Gestion cash/margin/PDT dans exécution et backtest.
+- Gestion cash/margin/swing dans exécution et backtest.
 - Corporate actions séparées proprement : split-only prices + cash ledger.
 - Backtesting PIT avancé possible.
 

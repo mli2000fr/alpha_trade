@@ -64,7 +64,7 @@ purger les POCs, ajouter un changelog `doc/CHANGELOG.md`.
 
 **Pour 10/10** : ajouter tests propriété de monotonie sur toutes les clés
 risk/selector ; ajouter `config_schema_version` ; valider la cohérence
-`execution_account_type` ↔ `execution_pdt_rule`.
+`execution_account_type` ↔ `execution_swing_only`.
 
 ---
 

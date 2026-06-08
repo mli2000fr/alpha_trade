@@ -55,7 +55,6 @@ def _add_run_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--execution-batch-size", type=int, default=20)
     p.add_argument("--inter-order-delay-ms", type=int, default=350)
     p.add_argument("--account-type", type=str, default="cash", choices=["margin", "cash"])
-    p.add_argument("--pdt-rule", type=str, default="off", choices=["auto", "off"])
     p.add_argument("--swing-only", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--submission-window", type=str, default=None, choices=["post_close", "pre_open", "both"])
     p.add_argument("--account", type=str, default=None, help="Account ID multi-comptes (défaut: premier compte)")
@@ -224,7 +223,6 @@ def _run_execution(args: argparse.Namespace) -> None:
         auto_rebalance=bool(args.auto_rebalance),
         account_id=account_id,
         account_type=str(args.account_type),
-        pdt_rule=str(args.pdt_rule),
         swing_only=bool(args.swing_only),
         submission_window=str(args.submission_window or "both"),
         auto_watcher=bool(args.auto_watcher),

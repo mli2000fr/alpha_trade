@@ -263,8 +263,6 @@ def interactive_menu() -> tuple[
 
     raw_account_type = input("Type de compte [margin/cash, defaut cash] : ").strip().lower()
     account_type = raw_account_type if raw_account_type in {"margin", "cash"} else "cash"
-    raw_pdt_rule = input("Regle PDT [auto/off, defaut off] : ").strip().lower()
-    pdt_rule = raw_pdt_rule if raw_pdt_rule in {"auto", "off"} else "off"
     swing_only = input("Interdire les sorties le jour meme (swing_only) ? [O/n] : ").strip().lower() != "n"
     raw_submission_window = input("Fenetre de soumission [post_close/pre_open/both, defaut both] : ").strip().lower()
     submission_window = raw_submission_window if raw_submission_window in {"post_close", "pre_open", "both"} else "both"
@@ -304,7 +302,6 @@ def interactive_menu() -> tuple[
         rebalance,
         account_id,
         account_type,
-        pdt_rule,
         swing_only,
         submission_window,
         approval_token,
@@ -335,7 +332,6 @@ PRESETS: dict[str, dict] = {
         "allow_outside_rth": True,   # overnight-only : soumission nominale hors seance
         "inter_order_delay_ms": 0,   # dry-run : pas de throttle
         "account_type": "cash",
-        "pdt_rule": "off",
         "swing_only": True,
         "execution_profile": "overnight_cash_swing",
         "submission_window": "both",
@@ -358,7 +354,6 @@ PRESETS: dict[str, dict] = {
         "allow_outside_rth": True,
         "inter_order_delay_ms": 350,
         "account_type": "cash",
-        "pdt_rule": "off",
         "swing_only": True,
         "execution_profile": "overnight_cash_swing",
         "submission_window": "both",
@@ -381,7 +376,6 @@ PRESETS: dict[str, dict] = {
         "allow_outside_rth": True,
         "inter_order_delay_ms": 350,
         "account_type": "cash",
-        "pdt_rule": "off",
         "swing_only": True,
         "execution_profile": "overnight_cash_swing",
         "submission_window": "both",
@@ -503,7 +497,6 @@ def _build_runtime_preset(
     allow_outside_rth: bool = False,
     auto_rebalance: bool = False,
     account_type: str = "cash",
-    pdt_rule: str = "off",
     swing_only: bool = True,
     submission_window: str | None = None,
     take_profit_pct: float | None = None,
@@ -536,7 +529,6 @@ def _build_runtime_preset(
     if max_entry_gap_pct is not None:
         preset["max_entry_gap_pct"] = max_entry_gap_pct
     preset["account_type"] = account_type
-    preset["pdt_rule"] = pdt_rule
     preset["swing_only"] = swing_only
     preset["submission_window"] = submission_window or preset.get("submission_window", "both")
     if trailing_activation_trigger is not None:
@@ -627,7 +619,6 @@ def run(
     auto_rebalance: bool = False,
     account_id: str | None = None,
     account_type: str = "cash",
-    pdt_rule: str = "off",
     swing_only: bool = True,
     submission_window: str = "both",
     auto_watcher: bool = False,
@@ -665,7 +656,6 @@ def run(
         allow_outside_rth=allow_outside_rth,
         auto_rebalance=auto_rebalance,
         account_type=account_type,
-        pdt_rule=pdt_rule,
         swing_only=swing_only,
         submission_window=submission_window,
         take_profit_pct=take_profit_pct,
@@ -725,7 +715,7 @@ def run(
     print(f"  Profil      : {preset.get('execution_profile', 'custom')}  |  Fenetre={preset.get('submission_window', 'both')}")
     print(f"  Activation trailing : {preset['trailing_activation_trigger']}  |  timeout={preset['protection_transition_timeout_seconds']}s")
     print(f"  Max slippage: {preset['max_slippage_bps']} bps")
-    print(f"  Compte      : {preset['account_type']}  |  PDT={preset['pdt_rule']}  |  swing_only={preset['swing_only']}")
+    print(f"  Compte      : {preset['account_type']}  |  swing_only={preset['swing_only']}")
     print(f"  Account ID  : {account_id or 'default'}")
     if mode == "live" and live_run_plan_path is not None and live_run_plan_fingerprint is not None:
         print(f"  Run plan    : {live_run_plan_path}")
@@ -1067,7 +1057,6 @@ def run(
         broker_mode=config.broker_mode,
         account_id=config.resolved_account_id,
         account_type=config.account_type,
-        effective_pdt_rule=config.effective_pdt_rule,
         swing_only=config.swing_only,
         dry_run=config.dry_run,
         allow_outside_rth=config.allow_outside_rth,
@@ -1194,7 +1183,6 @@ Exemples :
     p.add_argument("--auto-rebalance",          dest="auto_rebalance",     action="store_true", help="Vend/achete automatiquement les ecarts detectes en reconciliation")
     p.add_argument("--account",                 dest="account_id",         metavar="ACCOUNT_ID", help="ID du compte Alpaca multi-comptes (defaut: premier compte)")
     p.add_argument("--account-type",            dest="account_type",       choices=["margin", "cash"], default="cash", help="Type de compte simule ou utilise pour appliquer les contraintes de capital")
-    p.add_argument("--pdt-rule",                dest="pdt_rule",           choices=["auto", "off"], default="off", help="Application de la regle PDT sur compte margin")
     p.add_argument("--swing-only",              dest="swing_only",         action=argparse.BooleanOptionalAction, default=True, help="Interdit les sorties le jour meme en execution")
     p.add_argument("--submission-window",       dest="submission_window",  choices=["post_close", "pre_open", "both"], default=None, help="Fenetre nominale de soumission hors seance")
     p.add_argument("--profit-taker-pct",        dest="profit_taker_pct", type=float, default=None, help="Take-profit cible (fraction: 0.08 = +8%%)")
@@ -1287,7 +1275,6 @@ def main() -> None:
             auto_rebalance,
             account_id,
             account_type,
-            pdt_rule,
             swing_only,
             submission_window,
             approval_token,
@@ -1312,7 +1299,6 @@ def main() -> None:
         auto_rebalance    = args.auto_rebalance
         account_id        = args.account_id
         account_type      = args.account_type
-        pdt_rule          = args.pdt_rule
         swing_only        = args.swing_only
         submission_window = args.submission_window or PRESETS[mode].get("submission_window", "both")
         auto_watcher      = bool(getattr(args, "auto_watcher", False))
@@ -1338,7 +1324,6 @@ def main() -> None:
         auto_rebalance,
         account_id,
         account_type,
-        pdt_rule,
         swing_only,
         submission_window,
         auto_watcher=auto_watcher,

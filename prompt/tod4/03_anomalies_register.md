@@ -473,7 +473,7 @@ Date : mai 2026
 - **Titre** : Pas de glossaire des termes métier et techniques
 - **Sévérité** : P3
 - **Domaine** : Documentation
-- **Description** : Les termes comme PIT, PDT, OCO, VCP, TCA, etc. sont utilisés dans la documentation sans définition centralisée.
+- **Description** : Les termes comme PIT, OCO, VCP, TCA, etc. sont utilisés dans la documentation sans définition centralisée.
 - **Recommandation** : Ajouter un fichier `doc/GLOSSAIRE.md`.
 
 ### A-031 — `dataIntegrityEngine/update_sector.py` — nom trompeur

@@ -361,7 +361,6 @@ Le compte réel/paper porte :
 Le moteur simule :
 
 - cash / settled cash ;
-- PDT ;
 - swing_only ;
 - margin/cash ;
 - allocations et sorties.

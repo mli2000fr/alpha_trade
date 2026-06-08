@@ -34,7 +34,7 @@ Alpha Trade est une application de trading indépendante avancée, avec une arch
 
 - Provider switch OHLCV explicite dans le code IHM et imports.
 - Convention `split-only` matérialisée par CHECK SQL.
-- Exécution avec preflight live, interdiction de fallback equity silencieux, modes `simulate/paper/live`, contraintes cash/PDT/swing.
+- Exécution avec preflight live, interdiction de fallback equity silencieux, modes `simulate/paper/live`, contraintes cash/swing.
 - Token d’approbation live obligatoire + run plan immuable côté `run_execution.py`.
 - Policy secrets live explicite : Vault requis par défaut, ou override assumé `ALPHA_TRADE_LIVE_SECRET_POLICY=env`.
 - Scripts sécurité disponibles et testés (`generate_sbom.py`, `scan_cves.py`, `scan_repo_secrets.py`, `verify_vault_rotation.py`).

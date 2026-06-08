@@ -17,7 +17,7 @@ Le backtest est aujourd’hui **crédible pour la recherche avancée et l’audi
 | Risk | Peut réutiliser le vrai `PortfolioBuilder` via `--phase2-mode risk|risk_execution` | Runtime risk complet avec repository, snapshots compte/positions, persistance réelle | Très rapproché sur le cœur de décision, pas sur toute l’opérabilité live |
 | Exécution | Intents/fills/TCA simulés, replay des quantités d’entrée (Phase 3) | `ProductionExecutor`, broker réel, fills observés, sync broker, réconciliation | Le backtest est execution-aware, pas broker-native |
 | Protections / watcher | Replay protections (P4), watcher (P5), exit terminal + OCO logique (P7) | Watcher runtime persistant, transitions réelles broker/DB | Bonne fidélité métier, pas le service runtime complet |
-| État du compte | Simule cash, settled cash, PDT, swing-only, margin/cash | Utilise l’état réel du compte broker/paper | Les contraintes sont bonnes, mais la vérité compte reste simulée |
+| État du compte | Simule cash, settled cash, swing-only, margin/cash | Utilise l’état réel du compte broker/paper | Les contraintes sont bonnes, mais la vérité compte reste simulée |
 | Corporate actions / cashflows | Sait consommer les dividendes déjà persistés dans le reporting | Exécute `sync` + `apply` sur la chaîne live | Les cashflows peuvent être intégrés, mais la mécanique CA n’est pas rejouée de bout en bout |
 
 ---

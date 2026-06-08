@@ -122,14 +122,11 @@ def test_submit_children_submits_take_profit_and_fallback_trailing_without_targe
 
     account_state = _AccountConstraintState(
         account_type="margin",
-        effective_pdt_rule="off",
-        pdt_limited=False,
         swing_only=False,
         equity=100_000.0,
         buying_power_available=200_000.0,
         settled_cash_available=100_000.0,
         daytrade_count=0,
-        remaining_day_trade_slots=0,
     )
 
     events = executor._submit_children(parent, filled_order, exec_run_id="exec-1", account_state=account_state, metrics={"children_deferred": 0})
@@ -151,14 +148,11 @@ def test_submit_children_skips_when_fill_quantity_is_zero() -> None:
     unfilled_order = _make_order(status=OrderStatus.SUBMITTED, filled_qty=0.0)
     account_state = _AccountConstraintState(
         account_type="margin",
-        effective_pdt_rule="off",
-        pdt_limited=False,
         swing_only=False,
         equity=100_000.0,
         buying_power_available=200_000.0,
         settled_cash_available=100_000.0,
         daytrade_count=0,
-        remaining_day_trade_slots=0,
     )
 
     events = executor._submit_children(parent, unfilled_order, exec_run_id="exec-1", account_state=account_state, metrics={"children_deferred": 0})
@@ -189,14 +183,11 @@ def test_should_defer_children_for_swing_only() -> None:
     executor, _, _, _ = _make_executor()
     state = _AccountConstraintState(
         account_type="margin",
-        effective_pdt_rule="off",
-        pdt_limited=False,
         swing_only=True,
         equity=2_000.0,
         buying_power_available=4_000.0,
         settled_cash_available=2_000.0,
         daytrade_count=0,
-        remaining_day_trade_slots=0,
     )
 
     defer, reason = executor._should_defer_children(state)

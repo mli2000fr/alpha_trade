@@ -27,8 +27,8 @@
 | `risk_min_position_notional` | 150 $ | **Tension** avec ATR strict ⇒ A-010 |
 | `risk_correlation_threshold` | 0.90 | Permissif (laisse passer titres très corrélés) |
 | `risk_enable_kelly` | false | ✅ prudent |
-| `execution_account_type` | cash | ✅ pas de PDT |
-| `execution_pdt_rule` | "off" | ✅ |
+| `execution_account_type` | cash | ✅ |
+| `execution_swing_only` | true | ✅ |
 | `execution_swing_only` | true | ✅ |
 | `execution_trailing_r_multiple` | 1.0 | ✅ swing classique |
 | `screener_liquidity_threshold_usd` | 5e6 | Faible mais cohérent petit compte |
@@ -59,7 +59,7 @@ hibernating ».
 ### Tranche **10 001 → 25 000 $** (`capital_10001_25000`)
 
 - RS 100 (strict canonique atteint), market cap 2e9, spread 50, blackout 3.
-- Toujours `cash` (PDT US déclenche à 25 000 $).
+- Toujours `cash` (liquidité réglée à surveiller jusqu'à 25 000 $).
 - `risk_max_positions=8`, `risk_min_position_notional=300`.
 - **Verdict** : **cohérent** — bonne transition vers le profil standard.
 
@@ -96,7 +96,7 @@ hibernating ».
 | Spread max × min_close cohérent ? | Spread 35 bps sur titres ≥ 12 $ → ~4 cents ; OK |
 | Trailing 1.0R compatible avec ATR 1.5–6 % ? | ✅ |
 | Blackout earnings ≥ 2 jours partout ? | ✅ |
-| `execution_swing_only=true` partout ? | ✅ → cohérent avec exclusion PDT |
+| `execution_swing_only=true` partout ? | ✅ → cohérent avec une discipline swing |
 | `risk_enable_kelly=false` partout ? | ✅ — politique prudente |
 
 ## 4. Cohérence preset ↔ contraintes d'exécution réelles

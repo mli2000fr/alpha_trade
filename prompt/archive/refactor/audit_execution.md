@@ -23,7 +23,7 @@ broker-side (TP / stop / trailing), persiste l'audit canonique
 
 État global : **module mature, post-cutover canonique**. Architecture canonique
 target_snapshot → request → broker_order → fill → position/lot, multi-comptes,
-modes simulate/paper/live, gestion `cash` vs `margin`, contraintes PDT,
+modes simulate/paper/live, gestion `cash` vs `margin`, contraintes de compte,
 `swing_only`, `swing_only` overnight, watcher post-exécution séparé. Tests
 nombreux. Documentation très détaillée.
 

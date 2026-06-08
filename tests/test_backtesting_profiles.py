@@ -12,7 +12,7 @@ def _ns(**kw) -> argparse.Namespace:
     base = dict(
         tp=0.08, ts=0.05, max_positions=20,
         commission_bps=5.0, slippage_bps=5.0,
-        account_type="margin", pdt_rule="auto", swing_only=False,
+        account_type="margin", swing_only=False,
         fees=None, profile="custom",
     )
     base.update(kw)
@@ -36,7 +36,6 @@ def test_apply_profile_strict_swing_cash_overrides_defaults() -> None:
     args = _ns()
     apply_profile(args, "strict_swing_cash", explicit_flags=set())
     assert args.account_type == "cash"
-    assert args.pdt_rule == "auto"
     assert args.swing_only is True
     assert args.commission_bps == 5.0
     assert args.slippage_bps == 5.0

@@ -29,7 +29,7 @@ Date : mai 2026
 | 10 | Entrée canonique exécution = `run_execution.py` | CONVENTIONS.md §4, README.md §8, DOC_TECHNIQUE.md §5 | `run_execution.py` + `execution_engine/__main__.py` (déprécié) | N/A | ✅ | Cohérent |
 | 11 | Cash ledger pour dividendes | DOC_FONCTIONNELLE.md §2.9, corporate_actions.md | `corporate_actions/engine.py`, `corporate_actions/processors.py` | `portfolio_cash_ledger` | ✅ | Cohérent |
 | 12 | Pipeline quotidien 1→14 | README.md §6, DOC_FONCTIONNELLE.md §3.1, DOC_TECHNIQUE.md §10 | `ihm/pages/pipeline.py` (workflow IHM) | N/A | ⚠️ | README liste `import_alpaca_bar` comme étape 1, puis `import_eodhd_bar` ; ordre clarifié mais peut prêter à confusion |
-| 13 | `execution_pdt_rule: "off"` sur comptes cash | capital_presets.yaml (commentaires) | `execution_engine/config.py:effective_pdt_rule` → PDT désactivée si cash | N/A | ✅ | Cohérent |
+| 13 | Aucun reliquat legacy d'exécution sur comptes cash | `capital_presets.yaml` | garde-fou `tests/test_capital_preset_risk_overrides.py` | N/A | ✅ | Cohérent après nettoyage des reliquats legacy |
 | 14 | `scores_pit_mode` en backtesting | DOC_FONCTIONNELLE.md §9 | `backtesting/simulator.py` | CLI `--scores-pit-mode exact/asof_latest` | ✅ | Cohérent |
 | 15 | Market-Aware preflight | DOC_FONCTIONNELLE.md §8, DOC_TECHNIQUE.md §11 | `execution_engine/market_regime_preflight.py`, `run_execution.py` | `config.yaml > market_regimes` | ✅ | Cohérent |
 | 16 | Fallback inter-provider OHLCV inexistant | dataIntegrityEngine.md (« Pas de fallback automatique ») | `import_alpaca_bar.py` et `import_eodhd_bar.py` : no-op explicite, pas de fallback | Pas de clé `fallback_on_failure` | ✅ | Cohérent |

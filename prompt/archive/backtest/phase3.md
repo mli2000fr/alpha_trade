@@ -123,7 +123,7 @@ Le moteur de backtest ne change pas de nature :
 
 - il reste stateful ;
 - il garde la convention `signal J → exécution J+1 open` ;
-- il conserve la logique existante de sorties / micro-structure / cash / PDT / swing.
+- il conserve la logique existante de sorties / micro-structure / cash / swing.
 
 La nouveauté est qu’en mode Phase 3, les **quantités d’entrée** ne sont plus simplement dérivées du budget backtest classique : elles peuvent être imposées par le replay d’exécution simulé.
 

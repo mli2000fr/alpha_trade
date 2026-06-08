@@ -346,7 +346,6 @@ Management"** sous "Equity pour le module Risk", avec 3 colonnes :
 1. **Corriger les défauts P1** dans `_apply_execution_prefills` /
    `PipelineLaunchOptions` :
    - `execution_account_type` → `cash` par défaut
-   - `execution_pdt_rule` → `off` par défaut
    - `execution_swing_only` → `True` par défaut
 2. Créer une section **"Stratégie de protection (sortie)"** sous le bloc
    exécution avec :
@@ -474,7 +473,6 @@ Hors page `pipeline` (exposé en page **Supervision Ops** + handoff panel).
 3. **Corriger défauts existants** :
    ```python
    execution_account_type: Literal["margin","cash"] = "cash"   # était margin
-   execution_pdt_rule: Literal["auto","off"] = "off"           # était auto
    execution_swing_only: bool = True                            # était False
    ```
 
@@ -489,7 +487,7 @@ Hors page `pipeline` (exposé en page **Supervision Ops** + handoff panel).
 #### `ihm/pages/pipeline.py`
 
 1. Mettre à jour les `st.selectbox` / `st.checkbox` pour refléter les nouveaux
-   défauts (`account_type=cash`, `pdt_rule=off`, `swing_only=True`).
+   défauts (`account_type=cash`, `swing_only=True`).
 2. Ajouter une section **"Paramètres Risk Management"** (4 colonnes).
 3. Ajouter une section **"Stratégie de protection (Execution)"** (3 colonnes).
 4. Étendre la section **"Paramètres Model Factory"** avec un sous-bloc

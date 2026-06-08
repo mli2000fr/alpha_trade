@@ -72,9 +72,8 @@ def submit_children(
                 payload={
                     "reason": reason,
                     "account_type": account_state.account_type,
-                    "effective_pdt_rule": account_state.effective_pdt_rule,
                     "swing_only": account_state.swing_only,
-                    "remaining_day_trade_slots": account_state.remaining_day_trade_slots,
+                    "daytrade_count": account_state.daytrade_count,
                 },
             )
         )

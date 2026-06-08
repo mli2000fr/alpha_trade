@@ -8,7 +8,7 @@
 
 **Score fitness swing trade : 8.0/10** *(+0.5 post-Sprint S4 : widget PnL quotidien IHM opérationnel, walk-forward risk params disponible)*
 
-L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), horizon de quelques jours à quelques semaines, positions long uniquement. Elle couvre les contraintes critiques du style : PDT rule, cash/margin, swing_only, exécution end-of-day. L'alerting email automatique sur circuit_breaker est opérationnel depuis Sprint S3, ce qui améliore la surveillance en production réelle. Depuis Sprint S4, le PnL latent des positions ouvertes est visible directement dans la page Overview de l'IHM (A-021 ✅).
+L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), horizon de quelques jours à quelques semaines, positions long uniquement. Elle couvre les contraintes critiques du style : cash/margin, swing_only, exécution end-of-day. L'alerting email automatique sur circuit_breaker est opérationnel depuis Sprint S3, ce qui améliore la surveillance en production réelle. Depuis Sprint S4, le PnL latent des positions ouvertes est visible directement dans la page Overview de l'IHM (A-021 ✅).
 
 ---
 
@@ -17,7 +17,7 @@ L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), 
 ### 2.1 Convention d'exécution correcte
 - **Signal J → entrée open J+1** : évite le look-ahead biais
 - **Swing only** option : interdit la revente le jour même
-- **PDT rule** implémentée côté backtesting ET exécution réelle (presets margin : `pdt_rule: "auto"` ✅ Sprint S2)
+- **Contraintes de compte** implémentées côté backtesting et exécution réelle (cash/margin/swing) ✅ Sprint S2
 - **Cash settlement T+1** simulé en backtest et appliqué en exécution via `non_marginable_buying_power`
 
 ### 2.2 Filtres techniques pertinents pour swing trade
@@ -95,7 +95,7 @@ Le modèle finbert a un léger biais positif sur les articles de presse d'entrep
 | Profil | Adéquation | Limitations |
 |---|---|---|
 | Compte paper, 10k–50k$, margin | ✅ Très bien | Pipeline complet exploitable, alerting email actif ✅ S3 |
-| Compte cash, 5k–25k$ | ✅ Bien | PDT évité, swing_only, min_close=10$ uniformisé ✅ S2, univers parfois restreint |
+| Compte cash, 5k–25k$ | ✅ Bien | swing_only, min_close=10$ uniformisé ✅ S2, univers parfois restreint |
 | Micro-compte ≤ 2k $ | 🟡 Fragile | Frais relatifs élevés, univers souvent vide, max_positions=3 ✅ S1 |
 | Grand compte live ≥ 50k$ | ✅ Bien | Alerting push email activé ✅ S3 ; alertes IHM réconciliation + market_cap TTL ; SSL activable ✅ S1 |
 | Multi-comptes paper + live | ✅ Supporté | Isolation par account_id, CLI `--account` |

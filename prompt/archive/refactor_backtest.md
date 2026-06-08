@@ -91,7 +91,7 @@ Par rapport aux audits historiques, plusieurs points précédemment “à faire�
 - filtre de gap ;
 - arbitrage intrabar paramétrable ;
 - overlays régime / sector cap / drawdown breaker / sizing ;
-- cash settlement / PDT / swing-only ;
+- cash settlement / contraintes compte / swing-only ;
 - reporting enrichi et artefacts structurés.
 
 ## 4.3 Instrumentation utile

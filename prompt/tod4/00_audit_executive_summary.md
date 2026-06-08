@@ -26,7 +26,7 @@ L'application est **exploitable en paper trading discipliné dès aujourd'hui**.
 3. **Provider OHLCV switch maîtrisé** : EODHD primaire, Alpaca rétrocompat, no-op contrôlé, pas de fallback silencieux.
 4. **Exécution canonique robuste** : chaîne `targets → requests → orders → fills → positions/lots → reconciliation` bien conçue, multi-comptes, idempotence, TCA.
 5. **Presets de capital détaillés** : 7 tranches avec paramètres risk/selector/screener/execution différenciés, couvrant de 0 à 100 k$+.
-6. **Backtesting PIT intégré** : fidélité point-in-time, contraintes compte réalistes (margin/cash/PDT/swing_only), phases de replay.
+6. **Backtesting PIT intégré** : fidélité point-in-time, contraintes compte réalistes (margin/cash/swing_only et diagnostics de contraintes), phases de replay.
 7. **Profil strict partagé** (`STRICT_SWING_CASH_FILTERS`) : source unique de vérité pour screener + backfill + backtest.
 8. **Documentation riche** : ~30 fichiers dans `doc/`, conventions centralisées, matrices de lineage, runbooks.
 9. **Tests significatifs** : couverture des modules critiques avec 40+ fichiers de test.

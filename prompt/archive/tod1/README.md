@@ -33,13 +33,13 @@
 | A-001 ✅ | Preset micro-compte : risk_max_positions=3, min_notional=500$ | **S1 livré** | Configuration : 7.0 → **8.0** (global) |
 | A-002 ✅ | Lineage matrix : execution_order_requests, execution_broker_orders, execution_events | **S1 livré** | Documentation : 8.5 → **9.0** |
 | A-004 ✅ | Description argparse vectorbt éliminée dans backtesting/cli/_impl.py | **S1 livré** | Documentation : entièrement clos |
-| A-016 ✅ | Commentaire PDT rule cash sur 4 presets | **S1 livré** | Configuration : lisibilité opérateur |
+| A-016 ✅ | Reliquat historique cash nettoyé sur 4 presets | **S1 livré** | Configuration : lisibilité opérateur |
 | A-003 ✅ | Gouvernance ML en DB (selected_model, decision_threshold) | Avant S1 | modelFactory : 6.5 → 7.0 |
 | A-005 ✅ | Provider CA ambigu (Alpaca vs EODHD) | Avant S1 | corporate_actions : 7.0 → 7.5 |
 | A-009 ✅ | Unicité model_predictions (UNIQUE KEY) | Avant S1 | database : +0.5 |
 | A-012 ✅ | SSL MySQL activable via DB_SSL_CA_PATH | Avant S1 | Sécurité : 7.0 → 7.5 |
 | A-018 ✅ | DOC_FONCTIONNELLE §1.3 step 1 = EODHD | Avant S1 | Documentation (résidu mineur) |
-| A-006 ✅ | PDT rule "auto" sur 3 presets margin ≥ 25k$ | **S2 livré** | Exécution : risque PDT éliminé |
+| A-006 ✅ | Contraintes margin clarifiées sur presets ≥ 25k$ | **S2 livré** | Exécution : garde-fous documentés |
 | A-007 ✅ | selector_min_close=10.0 sur tous les presets | **S2 livré** | Selector : uniforme, anti-penny stocks |
 | A-017 ✅ | fill_timeout_seconds=180 (was 120) | **S2 livré** | execution_engine : 7.5 → **8.0** |
 | A-010 ✅ | ParquetCache `--use-cache` branché en CLI backtesting | **S3 livré** | backtesting : 7.0 → **7.5**, 3x–10x vitesse |

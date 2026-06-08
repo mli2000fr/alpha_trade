@@ -393,17 +393,15 @@ class ProductionExecutor:
                 EventType.ACCOUNT_CONSTRAINT_APPLIED,
                 (
                     f"Account constraints: type={account_state.account_type} "
-                    f"pdt={account_state.effective_pdt_rule} swing_only={account_state.swing_only}"
+                    f"swing_only={account_state.swing_only}"
                 ),
                 payload={
                     "account_type": account_state.account_type,
-                    "effective_pdt_rule": account_state.effective_pdt_rule,
                     "swing_only": account_state.swing_only,
                     "equity": account_state.equity,
                     "buying_power_available": account_state.buying_power_available,
                     "settled_cash_available": account_state.settled_cash_available,
                     "daytrade_count": account_state.daytrade_count,
-                    "remaining_day_trade_slots": account_state.remaining_day_trade_slots,
                 },
             ))
             self._snapshot_account_constraints(exec_run_id, account_state)
@@ -1046,7 +1044,7 @@ class ProductionExecutor:
                     "buying_power": account_state.buying_power_available,
                     "daytrade_count": account_state.daytrade_count,
                     "account_type": account_state.account_type,
-                    "effective_pdt_rule": account_state.effective_pdt_rule,
+                    "swing_only": account_state.swing_only,
                 },
                 snapshot_kind="preflight",
             )

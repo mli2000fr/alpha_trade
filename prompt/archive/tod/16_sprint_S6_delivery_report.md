@@ -55,7 +55,7 @@ Chaque sous-bloc, extrait ou non, est désormais préfixé par une bannière
 explicite et grep-able :
 
 ```text
-# === BLOCK 1/9 : Execution (capital preset, dates, equity, mode, RTH, account/PDT/swing, fenêtre + trailing + debug) — inline (extraction prévue S6.1) ===
+# === BLOCK 1/9 : Execution (capital preset, dates, equity, mode, RTH, account/swing, fenêtre + trailing + debug) — inline (extraction prévue S6.1) ===
 # === BLOCK 2/9 : Risk Management + Kelly sizing — inline (extraction prévue S6.1) ===
 # === BLOCK 3/9 : Model Factory (preset + cible swing + walk-forward + hyperparams + grilles candidate) — inline (extraction prévue S6.1) ===
 # === BLOCK 4/9 : Selector / Alpha Scanner (paramètres + dependency threshold editor) — inline (extraction prévue S6.1) ===
@@ -222,7 +222,7 @@ prévue S6.1) ===` et donc localisables en O(1) :
 
 | Bloc | Taille estimée | Difficulté refactor | Justification du report |
 |---|---|---|---|
-| BLOCK 1 — Execution | ~310 lignes | 🔴 élevée | dépendances cross-blocs (`selected_capital_preset`, `execution_account_type`, `execution_mode`, `effective_execution_pdt_rule`) |
+| BLOCK 1 — Execution | ~310 lignes | 🔴 élevée | dépendances cross-blocs (`selected_capital_preset`, `execution_account_type`, `execution_mode`, `execution_swing_only`) |
 | BLOCK 2 — Risk + Kelly | ~175 lignes | 🟠 moyenne | dépend de `selected_capital_preset` |
 | BLOCK 3 — Model Factory | ~700 lignes | 🔴 très élevée | sous-blocs imbriqués (cible swing, walk-forward, 2 expanders hyperparams, 4 grilles candidate) |
 | BLOCK 4 — Selector / Alpha Scanner | ~210 lignes | 🟠 moyenne | dépend de `selected_capital_preset` |

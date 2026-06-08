@@ -36,18 +36,11 @@ class InvalidBrokerSnapshotError(RuntimeError):
 @dataclass(slots=True)
 class _AccountConstraintState:
     account_type: str
-    effective_pdt_rule: str
-    pdt_limited: bool
     swing_only: bool
     equity: float
     buying_power_available: float
     settled_cash_available: float
     daytrade_count: int
-    remaining_day_trade_slots: int
-
-    @property
-    def pdt_active(self) -> bool:
-        return self.pdt_limited
 
 
 def safe_float(value: object, *, default: float = 0.0) -> float:
@@ -108,18 +101,13 @@ def build_account_constraint_state(
             buying_power = settled_cash
         daytrade_count = int(safe_float(snapshot.get("daytrade_count"), default=0.0))
 
-    pdt_limited = cfg.applies_pdt_limit(equity)
-    remaining_slots = max(cfg.max_day_trades - daytrade_count, 0) if pdt_limited else 0
     return _AccountConstraintState(
         account_type=cfg.account_type,
-        effective_pdt_rule=cfg.effective_pdt_rule,
-        pdt_limited=pdt_limited,
         swing_only=cfg.swing_only,
         equity=equity,
         buying_power_available=max(buying_power, 0.0),
         settled_cash_available=max(settled_cash, 0.0),
         daytrade_count=max(daytrade_count, 0),
-        remaining_day_trade_slots=remaining_slots,
     )
 
 
@@ -132,30 +120,6 @@ def reserve_account_capacity_for_intent(
 ) -> bool:
     if intent.side != "buy":
         return True
-
-    if account_state.pdt_active and account_state.remaining_day_trade_slots <= 0:
-        metrics["skipped"] += 1
-        metrics["constraint_blocked"] += 1
-        events.append(
-            make_event(
-                exec_run_id,
-                EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT,
-                (
-                    f"Blocked by PDT constraint: {intent.symbol} (remaining_day_trade_slots="
-                    f"{account_state.remaining_day_trade_slots})"
-                ),
-                symbol=intent.symbol,
-                intent_id=intent.intent_id,
-                payload={
-                    "reason": "pdt_limit",
-                    "account_type": account_state.account_type,
-                    "effective_pdt_rule": account_state.effective_pdt_rule,
-                    "swing_only": account_state.swing_only,
-                    "remaining_day_trade_slots": account_state.remaining_day_trade_slots,
-                },
-            )
-        )
-        return False
 
     estimated_notional = estimate_intent_notional(intent)
     available_budget = (
@@ -189,8 +153,8 @@ def reserve_account_capacity_for_intent(
                 "account_type": account_state.account_type,
                 "estimated_notional": estimated_notional,
                 "available_budget": available_budget,
-                "effective_pdt_rule": account_state.effective_pdt_rule,
                 "swing_only": account_state.swing_only,
+                "daytrade_count": account_state.daytrade_count,
             },
         )
     )
@@ -202,10 +166,6 @@ def should_defer_children(
 ) -> tuple[bool, str | None]:
     if account_state.swing_only:
         return True, "swing_only"
-    if account_state.pdt_active:
-        if account_state.remaining_day_trade_slots <= 0:
-            return True, "pdt_limit"
-        account_state.remaining_day_trade_slots -= 1
     return False, None
 
 

@@ -144,7 +144,7 @@ Le bloc `⚙️ Paramètres d'exécution` regroupe les options communes à plusi
 - equity du module Risk ;
 - mode d'exécution `simulate|paper|live` ;
 - `risk_run_id` optionnel pour Execution ;
-- options broker/exécution (`allow_outside_rth`, `auto_rebalance`, type de compte, règle PDT, `swing_only`) ;
+- options broker/exécution (`allow_outside_rth`, `auto_rebalance`, type de compte, `swing_only`) ;
 - options `modelFactory` (accélérateur, date de début du training ML, challengers, modèle global, sélection du champion, optimisation seuil/target) ;
 - options `Screener` pour `stock_screener` ;
 - options `Data Integrity` pour quotes / earnings / fondamentaux.
@@ -152,7 +152,6 @@ Le bloc `⚙️ Paramètres d'exécution` regroupe les options communes à plusi
 Pour `Execution`, l'IHM expose explicitement :
 
 - type de compte `margin|cash` ;
-- règle `PDT auto|off` ;
 - option `swing_only` ;
 - rappel métier de l'impact de ces choix sur le buying power et le comportement des exits.
 
@@ -467,7 +466,7 @@ La page `Execution` affiche pour chaque `exec_run_id` :
 - le statut global du run ;
 - les événements et fills ;
 - les positions broker ;
-- et, quand disponible, le snapshot de contraintes appliquées (`account_type`, `PDT effectif`, `swing_only`, budget broker observé).
+- et, quand disponible, le snapshot de contraintes appliquées (`account_type`, `swing_only`, budget broker observé).
 
 ---
 

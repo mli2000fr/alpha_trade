@@ -12,7 +12,7 @@
   "summary":        { ... },   // métriques principales (BacktestReport)
   "artifacts":      { ... },   // chemins relatifs vers les CSV/PNG/HTML
   "params":         { ... },   // paramètres CLI / config effective
-  "diagnostics":    { ... },   // compteurs métier (PDT, gap, sectoral...)
+  "diagnostics":    { ... },   // compteurs métier (swing/cash, gap, sectoral...)
   "run_metadata":   { ... },   // Phase A.4 — reproductibilité
   "benchmark":      { ... },   // Phase D.1 (optionnel)
   "tail":           { ... },   // Phase D.4 (optionnel)
@@ -48,7 +48,6 @@
 | Clé | Phase | Description |
 |---|---|---|
 | `blocked_same_day_exits` | base | Sorties bloquées par swing-only. |
-| `blocked_pdt_day_trades` | base | Day-trades bloqués par PDT (>3/5j). |
 | `blocked_cash_entries` | base | Entrées rejetées (cash settled insuffisant). |
 | `executed_day_trades` | base | Day-trades exécutés. |
 | `blocked_entry_gap` | B.3 | Entrées sautées (gap > seuil). |

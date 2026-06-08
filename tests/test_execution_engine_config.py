@@ -14,7 +14,6 @@ from execution_engine.config import (
         ({"execution_profile": "overnight"}, "execution_profile"),
         ({"submission_window": "intraday"}, "submission_window"),
         ({"account_type": "leveraged"}, "account_type"),
-        ({"pdt_rule": "strict"}, "pdt_rule"),
         ({"entry_order_type": "stop"}, "entry_order_type"),
         ({"max_entry_gap_pct": -0.01}, "max_entry_gap_pct"),
         ({"max_entry_gap_pct": 1.0}, "max_entry_gap_pct"),
@@ -34,8 +33,6 @@ from execution_engine.config import (
         ({"protection_transition_poll_interval_seconds": 0}, "protection_transition_poll_interval_seconds"),
         ({"execution_batch_size": 0}, "execution_batch_size"),
         ({"max_consecutive_failures": 0}, "max_consecutive_failures"),
-        ({"pdt_equity_threshold": 0}, "pdt_equity_threshold"),
-        ({"max_day_trades": 0}, "max_day_trades"),
         ({"cash_settlement_days": 0}, "cash_settlement_days"),
         ({"simulated_account_equity": 0}, "simulated_account_equity"),
         ({"simulated_margin_buying_power_multiplier": 0.5}, "simulated_margin_buying_power_multiplier"),
@@ -67,11 +64,12 @@ def test_execution_config_is_live_when_requested() -> None:
     assert cfg.is_paper() is False
 
 
-def test_execution_config_disables_effective_pdt_for_cash_account() -> None:
-    cfg = ExecutionConfig(account_type="cash", pdt_rule="auto")
+def test_execution_config_keeps_cash_account_constraints() -> None:
+    cfg = ExecutionConfig(account_type="cash", swing_only=True, cash_settlement_days=1)
 
-    assert cfg.effective_pdt_rule == "off"
-    assert cfg.applies_pdt_limit(2_000.0) is False
+    assert cfg.account_type == "cash"
+    assert cfg.swing_only is True
+    assert cfg.cash_settlement_days == 1
 
 
 def test_execution_config_defaults_to_overnight_profile() -> None:

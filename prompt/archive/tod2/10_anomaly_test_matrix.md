@@ -31,7 +31,7 @@
 | E2E/IHM | Haute | workflow 1→14 en dry-run/subprocess mocké, options capital, confirmations live. |
 | Data quality | Très haute | source EODHD récente, quote staleness, fills daily, anomalies counts. |
 | SQL/migrations | Haute | PK/unique constraints, account_id CA/execution, ledger idempotence. |
-| Backtest-live parity | Très haute | production parity profile, golden fills, constraints cash/PDT/swing. |
+| Backtest-live parity | Très haute | production parity profile, golden fills, constraints cash/swing. |
 | Sécurité/config | Haute | secrets env, forbidden literals, live preflight, policy Vault/env, approval token, run plan immuable, config keys consumed. |
 
 ## Preuves de sécurité S8 déjà automatisées

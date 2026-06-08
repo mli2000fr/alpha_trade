@@ -11,7 +11,7 @@ Le code est source de vérité.
 | G-05 | Provider news par défaut | `README.md §8 Sentiment` : eodhd ; `doc/event_sentiment.md` à confirmer | `event_sentiment/ingestion.py` provider switch | — | ✅ aligné si doc à jour | Vérifier `doc/event_sentiment.md`. |
 | G-06 | `macro_provider` valeurs | Commentaire `config.yaml:59-61` mentionne `composite` | `service/market/` charge `eodhd` par défaut | `config.yaml:62` `eodhd` | ⚠️ Cohérent mais sous-optimal (A-007) | Changer défaut. |
 | G-07 | `risk_enable_kelly: false` partout | `doc/risk_management.md` à vérifier | `risk_management/kelly.py` + tests existants | `capital_presets.yaml` tous false | ⚠️ Statut Kelly ambigu (A-006) | Doc explicite "expérimental". |
-| G-08 | PDT auto sur margin | Commentaires `capital_presets.yaml:233,283,333` | `execution_engine/config.py:applies_pdt_limit` | OK | ✅ Aligné | RAS. |
+| G-08 | Contraintes cash/swing sur presets petits comptes | Commentaires `capital_presets.yaml` | `execution_engine` + presets capital | OK | ✅ Aligné | RAS. |
 | G-09 | Notifications SMTP | `config.yaml:218-227` bloc commenté | `service/alerting.py` ? IHM `ihm/services/` | — | ⚠️ Risque silence (A-012) | Bannière IHM. |
 | G-10 | `notifications` destinataires | `config.yaml:209-211` mentionne JSON `artifacts/ihm_preferences/notifications.json` | À confirmer côté `ihm/services/` | — | À vérifier | Couvrir en test E2E. |
 | G-11 | Trailing stop "dynamic_atr" enabled:false | `config.yaml:163` | `execution_engine/config.py:TrailingStopConfig` + `service.market.parse_trailing_stop` | OK | ✅ Aligné — trailing off par défaut | Documenter activation. |

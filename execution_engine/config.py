@@ -73,10 +73,7 @@ class ExecutionConfig:
     execution_profile: Literal["overnight_cash_swing", "custom", "legacy_intraday"] = "overnight_cash_swing"
     submission_window: Literal["post_close", "pre_open", "both"] = "both"
     account_type: Literal["margin", "cash"] = "cash"
-    pdt_rule: Literal["auto", "off"] = "off"
     swing_only: bool = True
-    pdt_equity_threshold: float = 25_000.0
-    max_day_trades: int = 3
     cash_settlement_days: int = 1
     simulated_account_equity: float = 100_000.0
     simulated_margin_buying_power_multiplier: float = 2.0
@@ -150,8 +147,6 @@ class ExecutionConfig:
             raise ValueError("submission_window doit être 'post_close', 'pre_open' ou 'both'.")
         if self.account_type not in ("margin", "cash"):
             raise ValueError("account_type doit être 'margin' ou 'cash'.")
-        if self.pdt_rule not in ("auto", "off"):
-            raise ValueError("pdt_rule doit être 'auto' ou 'off'.")
         if self.entry_order_type not in ("market", "limit"):
             raise ValueError("entry_order_type doit être 'market' ou 'limit'.")
         if not (0 <= self.max_entry_gap_pct < 1):
@@ -190,10 +185,6 @@ class ExecutionConfig:
             raise ValueError("execution_batch_size doit être >= 1.")
         if self.max_consecutive_failures < 1:
             raise ValueError("max_consecutive_failures doit être >= 1.")
-        if self.pdt_equity_threshold <= 0:
-            raise ValueError("pdt_equity_threshold doit être > 0.")
-        if self.max_day_trades < 1:
-            raise ValueError("max_day_trades doit être >= 1.")
         if self.cash_settlement_days < 1:
             raise ValueError("cash_settlement_days doit être >= 1.")
         if self.simulated_account_equity <= 0:
@@ -212,12 +203,6 @@ class ExecutionConfig:
             raise ValueError("regime_max_gross_exposure doit être dans ]0, 1].")
 
     @property
-    def effective_pdt_rule(self) -> Literal["auto", "off"]:
-        if self.account_type == "cash":
-            return "off"
-        return self.pdt_rule
-
-    @property
     def resolved_account_id(self) -> str:
         return self.account_id or "default"
 
@@ -225,8 +210,6 @@ class ExecutionConfig:
     def is_overnight_profile(self) -> bool:
         return self.execution_profile == "overnight_cash_swing"
 
-    def applies_pdt_limit(self, equity: float) -> bool:
-        return self.effective_pdt_rule == "auto" and equity < self.pdt_equity_threshold
 
     def is_paper(self) -> bool:
         return self.broker_mode == "paper"

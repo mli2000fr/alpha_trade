@@ -249,7 +249,6 @@ def test_build_parser_defaults_to_overnight_cash_swing_inputs() -> None:
     args = parser.parse_args(["paper"])
 
     assert args.account_type == "cash"
-    assert args.pdt_rule == "off"
     assert args.swing_only is True
     assert args.submission_window is None
     assert args.profit_taker_pct is None

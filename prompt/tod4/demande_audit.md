@@ -209,7 +209,6 @@ Réalise un audit structuré selon les axes ci-dessous.
 - sécurité opérateur ;
 - gestion paper/live ;
 - compte cash/margin ;
-- PDT ;
 - swing-only ;
 - idempotence ;
 - protections ;
@@ -606,7 +605,7 @@ Enrichis l’audit avec les vérifications suivantes, même si elles ne sont pas
 - risque de complexité excessive vs bénéfice réel ;
 - possibilité de faux positifs due à des données upstream imparfaites ;
 - cohérence entre backtest et exécution réelle ;
-- compatibilité petits comptes cash/margin/PDT/swing_only ;
+- compatibilité petits comptes cash/margin/swing_only ;
 - réalisme des trailing stops et protections ;
 - risques de sous-liquidité / spreads / quotes biaisées ;
 - niveau d’idempotence réel ;

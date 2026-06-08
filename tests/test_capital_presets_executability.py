@@ -17,7 +17,7 @@ def test_build_capital_preset_executability_summary_for_small_cash_account() -> 
 
     assert summary["preset_key"] == "capital_0_5000"
     assert summary["account_type"] == "cash"
-    assert summary["pdt_rule"] == "off"
+    assert summary["swing_only"] is True
     assert summary["cash_settlement_days"] == 1
     assert summary["min_position_notional"] == pytest.approx(150.0)
     assert summary["ticket_share_of_equity"] == pytest.approx(150.0 / 3_500.0, rel=1e-6)
@@ -36,7 +36,6 @@ def test_apply_backtest_defaults_from_preset_prefills_costs_and_settlement() -> 
         {
             "max_positions": 20,
             "account_type": "margin",
-            "pdt_rule": "auto",
             "swing_only": False,
             "cash_settlement_days": 3,
             "commission_bps": 5.0,
@@ -48,7 +47,6 @@ def test_apply_backtest_defaults_from_preset_prefills_costs_and_settlement() -> 
 
     assert updated["max_positions"] == 4
     assert updated["account_type"] == "cash"
-    assert updated["pdt_rule"] == "off"
     assert updated["swing_only"] is True
     assert updated["cash_settlement_days"] == 1
     assert updated["commission_bps"] == pytest.approx(12.0)

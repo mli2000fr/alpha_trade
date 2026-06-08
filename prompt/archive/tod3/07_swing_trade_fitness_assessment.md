@@ -17,7 +17,7 @@
 | Corrélation portefeuille | `correlation_filter.py` | ✅ |
 | Circuit breaker DD/daily loss | `risk_management/circuit_breaker.py` | ✅ |
 | Regime overlay (VIX, sentiment) | `risk_management/regime_apply.py`, `market_regimes.*` | ✅ |
-| Swing-only (interdiction day-trade) | `execution_swing_only: true` partout, PDT auto | ✅ |
+| Swing-only (interdiction day-trade) | `execution_swing_only: true` partout, compte cash/swing cohérent | ✅ |
 | News sentiment | `event_sentiment/` FinBERT std + contextuel | ✅ (poids modeste 15 %) |
 | ML conviction | `modelFactory/` multi-baselines + `ml_gate` | ✅ |
 

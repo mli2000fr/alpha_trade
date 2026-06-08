@@ -102,7 +102,6 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
         "buying_power_available": 75000.0,
         "settled_cash_available": 75000.0,
         "daytrade_count": 0,
-        "remaining_day_trade_slots": 0,
         "message": "snapshot broker preflight",
     })
     monkeypatch.setattr(

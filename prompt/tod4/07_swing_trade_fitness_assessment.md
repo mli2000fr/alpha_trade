@@ -39,7 +39,7 @@ Date : mai 2026
 
 ### 1.5 Backtesting réaliste
 - Convention `signal J → entrée open J+1` : exécution réaliste, pas de look-ahead
-- Contraintes PDT/cash/margin : reflète les vraies limites de compte
+- Contraintes cash/margin/swing : reflète les vraies limites de compte
 - Swing_only interdit les ventes intraday dans le backtest
 
 ---
@@ -97,7 +97,7 @@ Date : mai 2026
 | Trailing stop pour suivre la tendance | ✅ Oui (mode dynamique) |
 | Gestion des événements binaires (earnings) | ✅ Oui (blackout) |
 | Tenue de compte des dividendes | ✅ Oui (cash ledger) |
-| Backtesting réaliste (frais, spread, PDT) | ✅ Oui |
+| Backtesting réaliste (frais, spread, contraintes compte) | ✅ Oui |
 | Journal de trading structuré | ✅ Oui (tables d'exécution) |
 | Analyse post-trade (TCA) | ✅ Oui |
 | Multi-stratégies selon le régime | ⚠️ Partiel (couche Market-Aware) |

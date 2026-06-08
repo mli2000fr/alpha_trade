@@ -21,7 +21,7 @@ gestion ATR-based, trailing stop dynamique, blackout earnings, swing-only
 | Sentiment | 6.0 | FinBERT branché ; bénéfice empirique à mesurer. |
 | ML | 6.0 | LSTM + governance ; gouvernance à muscler. |
 | Realisme microstructure | 6.5 | Spread bps + IEX bias counters propagés ; quotes Alpaca toujours valides. |
-| Petit compte cash (PDT-safe) | 6.5 | `swing_only=true` + `account_type=cash` cohérent ; investissabilité réelle limite. |
+| Petit compte cash discipliné | 6.5 | `swing_only=true` + `account_type=cash` cohérent ; investissabilité réelle limite. |
 | Compte intermédiaire | 7.5 | Bonne progression jusqu'à 25k/50k. |
 | Grand compte | 7.5 | Préset standard équilibré ; vigilance A-009. |
 | Sécurité opérateur | 6.5 | Améliorations récentes ; check env multi-comptes manquant (A-008). |
@@ -44,7 +44,7 @@ gestion ATR-based, trailing stop dynamique, blackout earnings, swing-only
 
 | Item | Statut |
 |---|---|
-| PDT (Pattern Day Trader) US | ✅ `execution_pdt_rule="off"` + `swing_only=true` partout |
+| Discipline day-trade US | ✅ `account_type=cash` + `swing_only=true` sur les petits comptes |
 | Cash account T+2 | ✅ presets ≤ 25k$ en cash |
 | Margin account ≥ 25k$ | ✅ |
 | Short selling | ❌ pas exposé (cohérent biais long) |

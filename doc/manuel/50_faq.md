@@ -80,10 +80,10 @@ Le compte n'a plus assez de cash. Causes :
 - ordres limit en attente immobilisent le cash en `pending`,
 - erreur de calcul `target_quantity` (rare).
 
-### ❓ « Order rejected: PDT »
+### ❓ « Order rejected: insufficient settled cash »
 
-Vous avez fait > 3 day-trades / 5 jours sur compte margin < 25k$.
-Solution : passez en cash.
+Le compte n'a pas assez de cash settled pour ouvrir une nouvelle ligne.
+Après une vente, les fonds sont réutilisables au settlement simplifié `T+1`.
 
 ### ❓ Watcher rouge
 

@@ -38,7 +38,7 @@ Source : `core/filter_profiles.py`
 | `risk_max_positions` | 3 | ✅ Concentration réaliste |
 | `risk_min_position_notional` | 500 $ | ✅ Ticket minimum |
 | `risk_max_drawdown_pct` | 7 % | ✅ Strict, adapté |
-| `execution_account_type` | cash | ✅ Évite PDT |
+| `execution_account_type` | cash | ✅ Discipline de capital adaptée |
 | `execution_swing_only` | true | ✅ |
 | `selector_min_close` | 10 $ | ✅ Cohérent profil strict |
 | `selector_min_beta_126` | 0.65 | ⚠️ Relâché vs strict (0.80) |
@@ -92,7 +92,7 @@ Source : `core/filter_profiles.py`
 | `risk_per_trade_pct` | 1.5 % | ✅ |
 | `risk_max_positions` | 8 | ✅ |
 | `risk_min_position_notional` | 300 $ | Acceptable |
-| `execution_account_type` | cash | ✅ (évite PDT) |
+| `execution_account_type` | cash | ✅ |
 | `selector_liquidity_threshold` | 20 M$ | Proche du strict |
 | `selector_min_beta_126` | 0.80 | ✅ Égal au strict |
 | `selector_max_spread_bps` | 50 | Proche du strict (40) |
@@ -109,12 +109,12 @@ Source : `core/filter_profiles.py`
 | `risk_per_trade_pct` | 1.25 % | ✅ |
 | `risk_max_positions` | 12 | ✅ |
 | `risk_min_position_notional` | 400 $ | ✅ |
-| `execution_account_type` | margin | ✅ (PDT auto) |
+| `execution_account_type` | margin | ✅ |
 | `risk_enable_kelly` | true | ✅ |
 | `selector_liquidity_threshold` | 25 M$ | Proche du strict |
 | `selector_max_spread_bps` | 45 | Proche du strict (40) |
 
-**Verdict** : **Cohérent** — Bon équilibre entre diversification et contraintes. L'activation de Kelly est pertinente à ce niveau de capital. La transition vers margin avec PDT auto est correctement gérée.
+**Verdict** : **Cohérent** — Bon équilibre entre diversification et contraintes. L'activation de Kelly est pertinente à ce niveau de capital. La transition vers margin est correctement gérée.
 
 ---
 
@@ -164,9 +164,9 @@ Les seuils sont globalement monotones (plus stricts quand le capital augmente), 
 
 Le micro-compte a un drawdown max de 7%, plus strict que les tranches supérieures. C'est **intentionnel et justifié** (protection du petit capital), mais cela signifie qu'un petit compte sera stoppé plus souvent, potentiellement au pire moment. Le commentaire dans le YAML le documente.
 
-### 3.3 Problème : `execution_pdt_rule: "off"` sur les tranches < 25k$ en cash
+### 3.3 Point de cohérence : tranches < 25k$ en cash
 
-C'est correct : PDT ne s'applique pas aux comptes cash. Mais le commentaire `PDT N/A sur compte cash` est présent sur chaque preset, ce qui est redondant mais pas faux.
+C'est cohérent : les comptes cash reposent sur le settled cash et `swing_only`. L'ancien commentaire de compatibilité était redondant.
 
 ### 3.4 Cohérence avec le swing trade
 
@@ -181,11 +181,11 @@ Tous les presets ont `execution_swing_only: true`, ce qui est cohérent avec l'o
 - Les presets petits comptes acceptent des spreads jusqu'à 80 bps. Sur un ordre de 500 $, 80 bps = 4 $ de spread, soit 0.8% du montant. C'est élevé mais acceptable en swing (l'horizon est de plusieurs jours).
 - Le preset micro-compte (`capital_0_2000_eur`) recommande 25 bps de frais en backtest. Avec un spread de 80 bps, le coût total aller-retour est de (80 + 25) × 2 = 210 bps = 2.1%. C'est significatif et réduit l'espérance de gain.
 
-### 4.2 Contrainte PDT
+### 4.2 Contraintes de compte
 
-- Presets < 25k$ : `execution_account_type: cash` → PDT non applicable. ✅
-- Presets ≥ 25k$ : `execution_account_type: margin` avec `pdt_rule: auto`. ✅
-- Mais : le preset `capital_25001_50000` a `min_equity: 25000.01`. À 25 001 $, la règle PDT s'applique encore (le seuil est 25 000 $). L'`applies_pdt_limit` dans `execution_engine/config.py` vérifie `equity < 25000`, donc à 25 001 $ la PDT n'est pas bloquante. ✅
+- Presets < 25k$ : `execution_account_type: cash` → settled cash et discipline swing. ✅
+- Presets ≥ 25k$ : `execution_account_type: margin`. ✅
+- Le preset `capital_25001_50000` démarre à `min_equity: 25000.01`, ce qui reste cohérent avec la bascule margin documentée à l'époque. ✅
 
 ---
 
@@ -197,7 +197,7 @@ Tous les presets ont `execution_swing_only: true`, ce qui est cohérent avec l'o
 | 2 001 → 5 000 $ | `min_position_notional=150$` → frais disproportionnés | Moyen |
 | 5 001 → 10 000 $ | Transition progressive acceptable | Faible |
 | 10 001 → 25 000 $ | Pas d'accès au Kelly (pertinent vu le capital) | Faible |
-| 25 001 → 50 000 $ | PDT auto correctement géré | Faible |
+| 25 001 → 50 000 $ | Transition margin correctement gérée | Faible |
 | 50 001 → 100 000 $ | Standard, peu de risques | Très faible |
 | 100 001 $+ | Conservateur, bien calibré | Très faible |
 

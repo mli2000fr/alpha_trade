@@ -44,8 +44,6 @@ max_positions = {int} 3
 }
 "dividends_received":0
 "account_type":"cash"
-"pdt_rule":"off"
-"effective_pdt_rule":"off"
 "swing_only":true
 "sentiment_lookback":365
 "ml_mode":"auto"
