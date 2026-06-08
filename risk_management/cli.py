@@ -9,6 +9,10 @@ from datetime import date, datetime
 
 import pandas as pd
 
+from common.capital_presets import (
+    build_risk_config_kwargs_from_preset,
+    resolve_capital_preset_for_equity,
+)
 from common.config_loader import load_config
 from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
@@ -837,6 +841,13 @@ def main(args: list[str] | None = None) -> None:
         phase="resolve_account",
     )
 
+    resolved_capital_preset = resolve_capital_preset_for_equity(float(effective_equity))
+    preset_risk_kwargs = (
+        build_risk_config_kwargs_from_preset(resolved_capital_preset)
+        if resolved_capital_preset is not None
+        else {}
+    )
+
     config = RiskConfig(
         account_equity=effective_equity,
         risk_per_trade_pct=args.risk_per_trade_pct,
@@ -857,12 +868,34 @@ def main(args: list[str] | None = None) -> None:
         max_portfolio_drawdown_pct=(
             float(args.max_portfolio_drawdown_pct)
             if args.max_portfolio_drawdown_pct is not None
-            else RiskConfig.__dataclass_fields__["max_portfolio_drawdown_pct"].default
+            else float(
+                preset_risk_kwargs.get(
+                    "max_portfolio_drawdown_pct",
+                    RiskConfig.__dataclass_fields__["max_portfolio_drawdown_pct"].default,
+                )
+            )
         ),
         max_daily_loss_pct=(
             float(args.max_daily_loss_pct)
             if args.max_daily_loss_pct is not None
-            else RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default
+            else float(
+                preset_risk_kwargs.get(
+                    "max_daily_loss_pct",
+                    RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default,
+                )
+            )
+        ),
+        rolling_peak_window_days=int(
+            preset_risk_kwargs.get(
+                "rolling_peak_window_days",
+                RiskConfig.__dataclass_fields__["rolling_peak_window_days"].default,
+            )
+        ),
+        degraded_entry_allocation_pct=float(
+            preset_risk_kwargs.get(
+                "degraded_entry_allocation_pct",
+                RiskConfig.__dataclass_fields__["degraded_entry_allocation_pct"].default,
+            )
         ),
         target_annual_vol=(
             float(args.target_annual_vol)
@@ -1272,6 +1305,8 @@ def main(args: list[str] | None = None) -> None:
         "circuit_breaker_thresholds": {
             "max_portfolio_drawdown_pct": float(config.max_portfolio_drawdown_pct),
             "max_daily_loss_pct": float(config.max_daily_loss_pct),
+            "rolling_peak_window_days": int(config.rolling_peak_window_days),
+            "degraded_entry_allocation_pct": float(config.degraded_entry_allocation_pct),
         },
         "vol_targeting": vol_target_state.to_summary(),
         "ml_coverage_gate": ml_coverage_gate.to_summary(),

@@ -160,7 +160,12 @@ Points d'implémentation importants côté `modelFactory` :
 
 **`windows_watcher_bridge`** (`ihm/services/windows_watcher_bridge.py`) — Bridge IHM → PowerShell strictement allowlisté. Il n'expose que des opérations read-only sur Windows : lecture du statut watcher, inventaire des sources de logs détectables et import borné de ces logs.
 
-**`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Suspend le trading si drawdown ≥ 15% ou perte daily ≥ 5%.
+**`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Évalue les garde-fous live (drawdown, perte daily) avec deux modes :
+
+- blocage total (`degraded_entry_allocation_pct = 0.0`) ;
+- mode dégradé (`degraded_entry_allocation_pct > 0`) avec sizing réduit.
+
+Le breaker supporte aussi un **pic roulant** (`rolling_peak_window_days`) en plus du mode historique absolu (`0`).
 
 **`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO logique : quand une protection enfant est `FILLED`, annule le sibling.
 
@@ -173,6 +178,33 @@ Points d'implémentation importants côté `modelFactory` :
 **`AccountRegistry`** (`service/alpaca/accounts.py`) — Singleton de résolution multi-comptes. Charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique. Fournit `resolve(account_id)` → `BrokerAccount(api_key, secret_key, mode)`. Tous les clients (trading, market data, news, corporate actions) passent par cette résolution.
 
 **`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest stateful utilisé par la CLI `run`. Il applique la convention `signal J -> entrée J+1 open`, simule les contraintes de compte (`margin`, `cash`, `PDT`, `swing_only`), supporte les phases opt-in `execution_replay`, `protection_replay`, `watcher_replay`, `exit_lifecycle_replay`, et sait consommer les bundles `MicrostructureConfig` et `RiskOverlayConfig`. Le moteur conserve un `BacktestDiagnostics` structuré exporté dans `report.json`.
+
+### 2.1.b Paramétrage `capital_presets.yaml` — circuit breaker live/backtest
+
+Les paramètres C.5 sont désormais pilotés via `config/capital_presets.yaml` et propagés dans les deux moteurs :
+
+- **Live (`risk_management`)**
+  - `risk_drawdown_rolling_peak_window_days`
+  - `risk_degraded_entry_allocation_pct`
+  - (seuils historiques conservés) `risk_max_drawdown_pct`, `risk_max_daily_loss_pct`
+- **Backtesting (`backtesting`)**
+  - `backtesting_dd_rolling_peak_window_days`
+  - `backtesting_dd_degraded_allocation_pct`
+  - (seuils) `backtesting_max_portfolio_dd_pct`
+
+Points d'intégration techniques :
+
+- `common/capital_presets.py`
+  - mapping preset -> `RiskConfig` via `build_risk_config_kwargs_from_preset()`
+  - mapping preset -> defaults CLI backtest via `apply_backtest_defaults_from_preset()`
+- `risk_management/cli.py`
+  - résolution preset depuis `effective_equity` puis injection dans `RiskConfig`
+- `run_execution.py`
+  - résolution preset depuis equity broker et initialisation du `CircuitBreaker` avec ces valeurs
+- `backtesting/cli/_impl.py`
+  - résolution des defaults `dd_rolling_peak_window_days` / `dd_degraded_allocation_pct` depuis preset
+- `backtesting/simulator.py`
+  - export `drawdown_breaker_daily.csv` (si breaker actif)
 
 **`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting via trois axes indépendants : `account_type` (`margin|cash`), `pdt_rule` (`auto|off`) et `swing_only` (`bool`). Encapsule le seuil `25 000 $`, la limite `3 day trades / 5 séances` et le settlement simplifié `T+1` pour les cash accounts.
 

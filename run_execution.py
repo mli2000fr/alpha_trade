@@ -32,6 +32,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Literal, cast
 
+from common.capital_presets import (
+    build_risk_config_kwargs_from_preset,
+    resolve_capital_preset_for_equity,
+)
 from common.utils import configure_root_logging
 from database.macro_indicators import persist_market_macro_snapshot_daily
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
@@ -862,7 +866,42 @@ def run(
                 "Abandon du run."
             )
     pnl = PnLSnapshot(portfolio_current_value=equity, portfolio_high_watermark=equity)
-    cb = CircuitBreaker(RiskConfig(account_equity=max(equity, 1.0)), pnl)
+    resolved_capital_preset = resolve_capital_preset_for_equity(float(equity))
+    preset_risk_kwargs = (
+        build_risk_config_kwargs_from_preset(resolved_capital_preset)
+        if resolved_capital_preset is not None
+        else {}
+    )
+    cb = CircuitBreaker(
+        RiskConfig(
+            account_equity=max(equity, 1.0),
+            max_portfolio_drawdown_pct=float(
+                preset_risk_kwargs.get(
+                    "max_portfolio_drawdown_pct",
+                    RiskConfig.__dataclass_fields__["max_portfolio_drawdown_pct"].default,
+                )
+            ),
+            max_daily_loss_pct=float(
+                preset_risk_kwargs.get(
+                    "max_daily_loss_pct",
+                    RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default,
+                )
+            ),
+            rolling_peak_window_days=int(
+                preset_risk_kwargs.get(
+                    "rolling_peak_window_days",
+                    RiskConfig.__dataclass_fields__["rolling_peak_window_days"].default,
+                )
+            ),
+            degraded_entry_allocation_pct=float(
+                preset_risk_kwargs.get(
+                    "degraded_entry_allocation_pct",
+                    RiskConfig.__dataclass_fields__["degraded_entry_allocation_pct"].default,
+                )
+            ),
+        ),
+        pnl,
+    )
     executor = ProductionExecutor(
         config,
         repo,

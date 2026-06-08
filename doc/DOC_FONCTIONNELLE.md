@@ -203,10 +203,19 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 | `min_position_notional` | 500 $ | Montant minimum par position |
 | `max_portfolio_drawdown_pct` | 15% | Seuil circuit breaker drawdown |
 | `max_daily_loss_pct` | 5% | Seuil circuit breaker perte journalière |
+| `rolling_peak_window_days` | 0 (live) / 252 (backtest) | Fenêtre du pic de référence (0 = historique absolu) |
+| `degraded_entry_allocation_pct` | 0.0 (blocage) / 0.02 (dégradé) | Allocation max autorisée quand le breaker est trippé |
 | `correlation_threshold` | 0.80 | Corrélation max entre deux positions retenues |
 | `risk_per_trade_pct` | 1% | Budget de risque par trade |
 
-**Circuit breaker** : coupe automatiquement toute allocation si le drawdown dépasse 15% ou si la perte journalière dépasse 5%.
+**Circuit breaker** :
+
+- déclenchement si drawdown portefeuille ou perte journalière dépassent les seuils ;
+- mode **blocage total** (`degraded_entry_allocation_pct=0.0`) ;
+- mode **dégradé** (`degraded_entry_allocation_pct>0.0`) avec entrées réduites ;
+- calcul possible sur **pic roulant** (`rolling_peak_window_days`) au lieu du plus haut historique.
+
+Les valeurs effectives sont pilotées par `config/capital_presets.yaml` (live + backtest), selon le bucket de capital actif.
 
 **Filtre de corrélation** : rejette les candidats trop corrélés (> 0.80 sur 60 jours) pour diversifier.
 
@@ -253,8 +262,11 @@ Le module `backtesting/` n'est plus un simple replay de signaux. Fonctionnelleme
   - **Phase 7** : replay de l'exit terminal et de l'annulation OCO logique ;
 - des **presets capital** PIT et des **profils** de backtest pour garder la cohérence entre backfill, reruns et IHM ;
 - des surcouches **microstructure** et **risk overlay** activables pour la recherche (slippage volume-aware, stop initial, filtre de gap, sizing conviction-weighted, cap sectoriel, drawdown breaker, etc.) ;
+- un breaker drawdown C.5 paramétrable par preset (`dd_rolling_peak_window_days`, `dd_degraded_allocation_pct`) ;
 - un outillage complet de **diagnostic screener** avec recommandations globales, par régime et par objectif ;
 - des commandes de **calibration des poids sentiment** et de **walk-forward** pour rejouer des poids hors échantillon.
+
+Quand C.5 est actif en backtest, un artefact de diagnostic peut être exporté : `drawdown_breaker_daily.csv`.
 
 Dans l'IHM Streamlit, la page `Backtesting` permet aujourd'hui de lancer et superviser :
 

@@ -34,6 +34,13 @@ presets:
       # (ordre attendu par tests/test_capital_preset_risk_overrides.py).
       risk_max_drawdown_pct: 0.07
       risk_max_daily_loss_pct: 0.025
+      # Live / risk_management.circuit_breaker :
+      # - rolling_peak_window_days = 0 => pic historique absolu (legacy)
+      # - >0 => pic roulant sur N séances (réarmement possible après stress)
+      risk_drawdown_rolling_peak_window_days: 252
+      # Allocation max autorisée quand le circuit breaker est trippé :
+      # 0.0 = blocage total (legacy), 0.02 = mode dégradé à 2%/position.
+      risk_degraded_entry_allocation_pct: 0.02
       risk_target_annual_vol: 0.12
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.80
@@ -53,7 +60,10 @@ presets:
       backtesting_commission_bps_stress: 15.0
       backtesting_slippage_bps_stress: 25.0
       backtesting_max_portfolio_dd_pct: 0.10
+      # Backtest / backtesting.risk_overlay.DrawdownCircuitBreaker :
+      # pic roulant de référence pour le déclenchement/réarmement C.5.
       backtesting_dd_rolling_peak_window_days: 252
+      # Allocation max en mode dégradé (0.0 = blocage total comme legacy).
       backtesting_dd_degraded_allocation_pct: 0.02
       backtesting_max_sector_exposure_pct: 0.25
       backtesting_max_entry_gap_pct: 0.03
@@ -113,6 +123,8 @@ presets:
       # Sprint S3 / A-011 — petit compte : seuils circuit breaker plus stricts.
       risk_max_drawdown_pct: 0.08
       risk_max_daily_loss_pct: 0.03
+      risk_drawdown_rolling_peak_window_days: 252
+      risk_degraded_entry_allocation_pct: 0.02
       risk_target_annual_vol: 0.13
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.80
@@ -189,6 +201,8 @@ presets:
       # Sprint S3 / A-011 — tranche 5–10k : seuils encore stricts.
       risk_max_drawdown_pct: 0.10
       risk_max_daily_loss_pct: 0.035
+      risk_drawdown_rolling_peak_window_days: 252
+      risk_degraded_entry_allocation_pct: 0.02
       risk_target_annual_vol: 0.14
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.80
@@ -260,6 +274,8 @@ presets:
       # Sprint S3 / A-011 — tranche 10–25k : convergence vers le standard.
       risk_max_drawdown_pct: 0.12
       risk_max_daily_loss_pct: 0.04
+      risk_drawdown_rolling_peak_window_days: 252
+      risk_degraded_entry_allocation_pct: 0.02
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.80
@@ -328,6 +344,8 @@ presets:
       # Sprint S3 / A-011 — tranche 25–50k : seuils swing standard.
       risk_max_drawdown_pct: 0.14
       risk_max_daily_loss_pct: 0.045
+      risk_drawdown_rolling_peak_window_days: 252
+      risk_degraded_entry_allocation_pct: 0.02
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.80
@@ -395,6 +413,8 @@ presets:
       # Sprint S3 / A-011 — tranche 50–100k : seuils standards config.yaml.
       risk_max_drawdown_pct: 0.15
       risk_max_daily_loss_pct: 0.05
+      risk_drawdown_rolling_peak_window_days: 252
+      risk_degraded_entry_allocation_pct: 0.02
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.80
@@ -473,6 +493,8 @@ presets:
       # Sprint S3 / A-011 — gros compte : tolérance maximale (drawdown plus large).
       risk_max_drawdown_pct: 0.18
       risk_max_daily_loss_pct: 0.05
+      risk_drawdown_rolling_peak_window_days: 252
+      risk_degraded_entry_allocation_pct: 0.02
       risk_target_annual_vol: 0.16
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.80

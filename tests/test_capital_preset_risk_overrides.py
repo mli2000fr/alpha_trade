@@ -27,7 +27,12 @@ from common.capital_presets import load_capital_presets
 from risk_management.cli import build_arg_parser
 from risk_management.config import RiskConfig
 
-REQUIRED_KEYS = ("risk_max_drawdown_pct", "risk_max_daily_loss_pct")
+REQUIRED_KEYS = (
+    "risk_max_drawdown_pct",
+    "risk_max_daily_loss_pct",
+    "risk_drawdown_rolling_peak_window_days",
+    "risk_degraded_entry_allocation_pct",
+)
 
 
 @pytest.fixture(scope="module")
@@ -101,9 +106,13 @@ def test_preset_values_match_risk_config_defaults_can_construct(presets):
             account_equity=max(preset.min_equity + 1.0, 1000.0),
             max_portfolio_drawdown_pct=float(preset.values["risk_max_drawdown_pct"]),
             max_daily_loss_pct=float(preset.values["risk_max_daily_loss_pct"]),
+            rolling_peak_window_days=int(preset.values["risk_drawdown_rolling_peak_window_days"]),
+            degraded_entry_allocation_pct=float(preset.values["risk_degraded_entry_allocation_pct"]),
         )
         assert cfg.max_portfolio_drawdown_pct > 0
         assert cfg.max_daily_loss_pct > 0
+        assert cfg.rolling_peak_window_days >= 0
+        assert 0.0 <= cfg.degraded_entry_allocation_pct <= 1.0
 
 
 # ---------------------------------------------------------------------------

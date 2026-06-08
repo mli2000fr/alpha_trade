@@ -375,6 +375,8 @@ _RISK_CONFIG_PRESET_MAPPING: tuple[tuple[str, str, type], ...] = (
     ("risk_min_position_notional", "min_position_notional", float),
     ("risk_max_drawdown_pct", "max_portfolio_drawdown_pct", float),
     ("risk_max_daily_loss_pct", "max_daily_loss_pct", float),
+    ("risk_drawdown_rolling_peak_window_days", "rolling_peak_window_days", int),
+    ("risk_degraded_entry_allocation_pct", "degraded_entry_allocation_pct", float),
     ("risk_correlation_threshold", "correlation_threshold", float),
     ("risk_correlation_lookback_days", "correlation_lookback_days", int),
     ("risk_correlation_min_overlap", "correlation_min_overlap", int),
@@ -429,6 +431,8 @@ def apply_backtest_defaults_from_preset(
         "slippage_bps": ("backtesting_slippage_bps_stress", float),
         "max_sector_exposure_pct": ("backtesting_max_sector_exposure_pct", float),
         "max_entry_gap_pct": ("backtesting_max_entry_gap_pct", float),
+        "dd_rolling_peak_window_days": ("backtesting_dd_rolling_peak_window_days", int),
+        "dd_degraded_allocation_pct": ("backtesting_dd_degraded_allocation_pct", float),
     }
     for target_key, (preset_key, cast_fn) in mapping.items():
         if target_key in explicit_flags:
