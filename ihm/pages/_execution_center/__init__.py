@@ -349,12 +349,37 @@ def _coerce_float(value: object, *, default: float | None) -> float:
         return fallback
 
 
+def _coerce_bool(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return bool(default)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+        return bool(default)
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return bool(default)
+
+
 def _session_state_int(key: str, default: int | None) -> int:
     return _coerce_int(st.session_state.get(key, default), default=default)
 
 
 def _session_state_float(key: str, default: float | None) -> float:
     return _coerce_float(st.session_state.get(key, default), default=default)
+
+
+def _session_state_bool(key: str, default: bool) -> bool:
+    coerced = _coerce_bool(st.session_state.get(key, default), default=default)
+    # Les widgets Streamlit avec `key=` exigent un type cohérent en session.
+    if key in st.session_state and not isinstance(st.session_state.get(key), bool):
+        st.session_state[key] = coerced
+    return coerced
 
 
 def _ensure_normalized_ml_train_preset_session_state(session_state: dict[str, object]) -> str:
@@ -1151,7 +1176,7 @@ def _render_signal_aggregator_block() -> dict[str, Any]:
     with signal_agg_col1:
         signal_aggregator_all_symbols = st.checkbox(
             "Signal Aggregator — traiter tous les symboles",
-            value=bool(st.session_state.get("pipeline_signal_aggregator_all_symbols", False)),
+            value=_session_state_bool("pipeline_signal_aggregator_all_symbols", False),
             key="pipeline_signal_aggregator_all_symbols",
         )
         signal_aggregator_log_level = cast(
@@ -1297,7 +1322,7 @@ def _render_live_confirmation_block(execution_mode: str) -> bool:
     return bool(
         st.checkbox(
             "Je confirme explicitement le lancement en LIVE",
-            value=bool(st.session_state.get("pipeline_live_confirmed", False)),
+            value=_session_state_bool("pipeline_live_confirmed", False),
             key="pipeline_live_confirmed",
         )
     ) and bool(approval_token)
@@ -1371,7 +1396,7 @@ def _render_screener_block() -> dict[str, Any]:
         )
         screener_enable_two_pass_loading = st.checkbox(
             "Screener — activer le chargement en 2 passes",
-            value=bool(st.session_state.get("pipeline_screener_enable_two_pass_loading", DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING)),
+            value=_session_state_bool("pipeline_screener_enable_two_pass_loading", DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING),
             key="pipeline_screener_enable_two_pass_loading",
         )
     with screener_col3:
@@ -1578,12 +1603,12 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
         with risk_adv_col1:
             risk_enable_kelly = st.checkbox(
                 "Activer Kelly sizing",
-                value=bool(st.session_state.get("pipeline_risk_enable_kelly", DEFAULT_RISK_ENABLE_KELLY)),
+                value=_session_state_bool("pipeline_risk_enable_kelly", DEFAULT_RISK_ENABLE_KELLY),
                 key="pipeline_risk_enable_kelly",
             )
             risk_dry_run = st.checkbox(
                 "Dry run (n'écrit pas en DB)",
-                value=bool(st.session_state.get("pipeline_risk_dry_run", False)),
+                value=_session_state_bool("pipeline_risk_dry_run", False),
                 key="pipeline_risk_dry_run",
             )
         with risk_adv_col2:
@@ -1643,7 +1668,7 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
             )
             risk_enable_shadow_compare = st.checkbox(
                 "Activer shadow compare",
-                value=bool(st.session_state.get("pipeline_risk_enable_shadow_compare", False)),
+                value=_session_state_bool("pipeline_risk_enable_shadow_compare", False),
                 key="pipeline_risk_enable_shadow_compare",
                 help="Compare le portefeuille courant avec le dernier run risk du même trade_date, ou avec un run explicite ci-dessous.",
             )
@@ -2020,7 +2045,7 @@ def _render_selector_block() -> dict[str, Any]:
         )
         selector_require_above_ma200 = st.checkbox(
             "Alpha Scanner — exiger close > MA200 (Minervini stage 2)",
-            value=bool(st.session_state.get("pipeline_selector_require_above_ma200", DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200)),
+            value=_session_state_bool("pipeline_selector_require_above_ma200", DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200),
             key="pipeline_selector_require_above_ma200",
             help="Défaut swing : True. Filtre anti-baissière standard trend-following.",
         )
@@ -2208,7 +2233,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
         )
         eodhd_enable_stooq_cross_check = st.checkbox(
             "Import Bars EODHD — activer le cross-check Stooq après import",
-            value=bool(st.session_state.get("pipeline_eodhd_enable_stooq_cross_check", DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK)),
+            value=_session_state_bool("pipeline_eodhd_enable_stooq_cross_check", DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK),
             key="pipeline_eodhd_enable_stooq_cross_check",
             help=(
                 "Décoché par défaut pour éviter qu'un workflow quotidien reste bloqué longtemps après le `final_flush`. "
@@ -2229,7 +2254,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
         )
         data_integrity_fundamentals_overwrite_existing = st.checkbox(
             "Fondamentaux — écraser les valeurs existantes sector / market cap",
-            value=bool(st.session_state.get("pipeline_data_integrity_fundamentals_overwrite_existing", False)),
+            value=_session_state_bool("pipeline_data_integrity_fundamentals_overwrite_existing", False),
             key="pipeline_data_integrity_fundamentals_overwrite_existing",
             help=(
                 "Décoché par défaut : B2 complète seulement les champs manquants (et rafraîchit les market caps périmées côté backend). "
@@ -2238,13 +2263,13 @@ def _render_data_integrity_block() -> dict[str, Any]:
         )
         data_integrity_earnings_resume = st.checkbox(
             "Earnings — reprendre depuis le bookmark local",
-            value=bool(st.session_state.get("pipeline_data_integrity_earnings_resume", DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME)),
+            value=_session_state_bool("pipeline_data_integrity_earnings_resume", DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME),
             key="pipeline_data_integrity_earnings_resume",
             help="Si activé, les symboles déjà commités sont sautés au redémarrage ; sinon le run repart du début et ignore le bookmark existant.",
         )
         data_integrity_earnings_custom_window = st.checkbox(
             "Earnings — utiliser une fenêtre de dates personnalisée",
-            value=bool(st.session_state.get(EARNINGS_CUSTOM_WINDOW_KEY, False)),
+            value=_session_state_bool(EARNINGS_CUSTOM_WINDOW_KEY, False),
             key=EARNINGS_CUSTOM_WINDOW_KEY,
         )
 
@@ -2313,7 +2338,7 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
     with ca_col1:
         corporate_actions_skip_existing = st.checkbox(
             "CA Sync — skip existing",
-            value=bool(st.session_state.get("pipeline_corporate_actions_skip_existing", DEFAULT_CA_SKIP_EXISTING)),
+            value=_session_state_bool("pipeline_corporate_actions_skip_existing", DEFAULT_CA_SKIP_EXISTING),
             key="pipeline_corporate_actions_skip_existing",
             help="Si coché, ignore les symboles déjà présents dans corporate_actions_events (perf, mais peut rater de nouveaux events).",
         )
@@ -2341,7 +2366,7 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
     # Fenêtre custom CA — défaut : J-7 → trade_date (vs défaut backend −10 ans)
     ca_use_custom_window = st.checkbox(
         "CA Sync — restreindre la fenêtre temporelle",
-        value=bool(st.session_state.get("pipeline_corporate_actions_use_custom_window", DEFAULT_CA_USE_CUSTOM_WINDOW)),
+        value=_session_state_bool("pipeline_corporate_actions_use_custom_window", DEFAULT_CA_USE_CUSTOM_WINDOW),
         key="pipeline_corporate_actions_use_custom_window",
         help="Si coché, envoie `--start` / `--end` au lieu du défaut backend (−10 ans). Recommandé en swing quotidien : J-7 → J.",
     )
@@ -2411,7 +2436,7 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
         )
         eodhd_backfill_resume = st.checkbox(
             "B3 — reprendre via bookmark",
-            value=bool(st.session_state.get("pipeline_eodhd_backfill_resume", True)),
+            value=_session_state_bool("pipeline_eodhd_backfill_resume", True),
             key="pipeline_eodhd_backfill_resume",
             help="Si coché, relit `artifacts/eodhd_cache/backfill_state.json` et saute les symboles déjà terminés.",
         )
@@ -2427,7 +2452,7 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
     with bf_col3:
         eodhd_backfill_write = st.checkbox(
             "B3 — mode écriture (insère en base)",
-            value=bool(st.session_state.get("pipeline_eodhd_backfill_write", True)),
+            value=_session_state_bool("pipeline_eodhd_backfill_write", True),
             key="pipeline_eodhd_backfill_write",
             help="Coché par défaut = ajoute `--write` et persiste dans `stock_bars` / `stock_bars_daily`. Décoché = dry-run sans insert DB.",
         )
@@ -2555,7 +2580,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
             force_trade_date_to_latest_snapshot = st.checkbox(
                 "Forcer trade_date sur le snapshot le plus récent",
-                value=bool(st.session_state.get("pipeline_force_trade_date_to_latest_snapshot", True)),
+                value=_session_state_bool("pipeline_force_trade_date_to_latest_snapshot", True),
                 key="pipeline_force_trade_date_to_latest_snapshot",
                 help=(
                     "Si coché (défaut), au lancement, trade_date est remplacé par MAX(snapshot_date) "
@@ -2608,14 +2633,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with col5:
             allow_outside_rth = st.checkbox(
                 "Execution hors RTH (file d'attente pour l'ouverture)",
-                value=bool(st.session_state.get("pipeline_allow_outside_rth", False)),
+                value=_session_state_bool("pipeline_allow_outside_rth", False),
                 key="pipeline_allow_outside_rth",
                 help="Soumet les ordres meme si le marche est ferme. En paper/live, ils restent en attente et seront traites a l'ouverture suivante.",
             )
         with col6:
             auto_rebalance = st.checkbox(
                 "Auto rebalance",
-                value=bool(st.session_state.get("pipeline_auto_rebalance", False)),
+                value=_session_state_bool("pipeline_auto_rebalance", False),
                 key="pipeline_auto_rebalance",
             )
 
@@ -2645,9 +2670,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ),
             )
         with exec_col2:
+            execution_swing_only_default = _session_state_bool(
+                "pipeline_execution_swing_only",
+                True,
+            )
             execution_swing_only = st.checkbox(
                 "Execution — swing only",
-                value=bool(st.session_state.get("pipeline_execution_swing_only", True)),
+                value=execution_swing_only_default,
                 key="pipeline_execution_swing_only",
                 help="Défaut swing : True. Si coché, le moteur diffère l'armement des sorties le jour même du fill.",
             )
@@ -2883,7 +2912,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             with adv_exec_col4:
                 execution_debug = st.checkbox(
                     "Execution — `--debug` (logs DEBUG)",
-                    value=bool(st.session_state.get("pipeline_execution_debug", DEFAULT_EXEC_DEBUG)),
+                    value=_session_state_bool("pipeline_execution_debug", DEFAULT_EXEC_DEBUG),
                     key="pipeline_execution_debug",
                 )
 
@@ -3102,11 +3131,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             with ml_selector_filter_col3:
                 ml_selector_universe_exclude_earnings_blackout = st.checkbox(
                     "Exclure earnings_blackout",
-                    value=bool(
-                        st.session_state.get(
-                            "pipeline_ml_selector_universe_exclude_earnings_blackout",
-                            DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT,
-                        )
+                    value=_session_state_bool(
+                        "pipeline_ml_selector_universe_exclude_earnings_blackout",
+                        DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT,
                     ),
                     key="pipeline_ml_selector_universe_exclude_earnings_blackout",
                     help="Filtre dur sur `stock_scores.earnings_blackout = 0`.",
@@ -3116,32 +3143,32 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_opt_col1:
             ml_include_sentiment = st.checkbox(
                 "Inclure les features sentiment",
-                value=bool(st.session_state.get("pipeline_ml_include_sentiment", True)),
+                value=_session_state_bool("pipeline_ml_include_sentiment", True),
                 key="pipeline_ml_include_sentiment",
                 help="Ajoute `--include-sentiment` à `ml_train`.",
             )
             ml_include_selector_context = st.checkbox(
                 "Inclure les features contexte selector",
-                value=bool(st.session_state.get("pipeline_ml_include_selector_context", DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT)),
+                value=_session_state_bool("pipeline_ml_include_selector_context", DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT),
                 key="pipeline_ml_include_selector_context",
                 help="Ajoute `--include-selector-context` pour enrichir le dataset ML avec un contexte PIT-safe issu de `stock_scores_history`.",
             )
             ml_enable_lightgbm = st.checkbox(
                 "Comparer LightGBM local",
-                value=bool(st.session_state.get("pipeline_ml_enable_lightgbm", True)),
+                value=_session_state_bool("pipeline_ml_enable_lightgbm", True),
                 key="pipeline_ml_enable_lightgbm",
                 help="Ajoute `--compare-lightgbm`.",
             )
             ml_enable_catboost = st.checkbox(
                 "Comparer CatBoost local",
-                value=bool(st.session_state.get("pipeline_ml_enable_catboost", True)),
+                value=_session_state_bool("pipeline_ml_enable_catboost", True),
                 key="pipeline_ml_enable_catboost",
                 help="Ajoute `--enable-catboost`.",
             )
         with ml_opt_col2:
             ml_select_champion = st.checkbox(
                 "Activer la sélection automatique du champion",
-                value=bool(st.session_state.get("pipeline_ml_select_champion", True)),
+                value=_session_state_bool("pipeline_ml_select_champion", True),
                 key="pipeline_ml_select_champion",
                 help="Ajoute `--select-champion` et permet de servir automatiquement le meilleur modèle éligible.",
             )
@@ -3161,14 +3188,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
             ml_optimize_thresholds = st.checkbox(
                 "Optimiser le seuil de décision",
-                value=bool(st.session_state.get("pipeline_ml_optimize_thresholds", True)),
+                value=_session_state_bool("pipeline_ml_optimize_thresholds", True),
                 key="pipeline_ml_optimize_thresholds",
                 help="Ajoute `--optimize-thresholds` pour sélectionner le meilleur `decision_threshold` sur validation.",
             )
         with ml_opt_col3:
             ml_enable_global_model = st.checkbox(
                 "Entraîner aussi un modèle global multi-symboles",
-                value=bool(st.session_state.get("pipeline_ml_enable_global_model", False)),
+                value=_session_state_bool("pipeline_ml_enable_global_model", False),
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`.",
             )
@@ -3188,7 +3215,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
             ml_enable_cross_sectional = st.checkbox(
                 "Activer les features cross-sectionnelles",
-                value=bool(st.session_state.get("pipeline_ml_enable_cross_sectional", False)),
+                value=_session_state_bool("pipeline_ml_enable_cross_sectional", False),
                 key="pipeline_ml_enable_cross_sectional",
                 help="Ajoute `--enable-cross-sectional` pour enrichir les features séquentielles et le modèle global.",
             )
@@ -3197,7 +3224,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_adv_col1:
             ml_optimize_target = st.checkbox(
                 "Optimiser l'horizon / la target swing",
-                value=bool(st.session_state.get("pipeline_ml_optimize_target", False)),
+                value=_session_state_bool("pipeline_ml_optimize_target", False),
                 key="pipeline_ml_optimize_target",
                 help="Ajoute `--optimize-target`.",
             )
@@ -3305,7 +3332,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_wf_col1:
             ml_walkforward = st.checkbox(
                 "Activer walk-forward",
-                value=bool(st.session_state.get("pipeline_ml_walkforward", DEFAULT_ML_WALKFORWARD)),
+                value=_session_state_bool("pipeline_ml_walkforward", DEFAULT_ML_WALKFORWARD),
                 key="pipeline_ml_walkforward",
                 help="Activé par défaut en swing prod (cf. audit_global). Désactiver uniquement pour debug rapide.",
             )
@@ -3486,7 +3513,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 )
                 ml_debug_train = st.checkbox(
                     "ML — mode debug train",
-                    value=bool(st.session_state.get("pipeline_ml_debug_train", DEFAULT_ML_DEBUG_TRAIN)),
+                    value=_session_state_bool("pipeline_ml_debug_train", DEFAULT_ML_DEBUG_TRAIN),
                     key="pipeline_ml_debug_train",
                     help="Active des logs ML plus détaillés et force un ordonnancement plus déterministe côté orchestrateur.",
                 )
