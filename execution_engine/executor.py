@@ -212,9 +212,18 @@ class ProductionExecutor:
                         enriched_targets.append(replace(target, previous_close=float(previous_close)))
                     targets = enriched_targets
             loaded_targets_count = len(targets)
+            fractionable_by_symbol: dict[str, bool] = {}
+            if self._cfg.allow_fractional_shares and targets:
+                try:
+                    fractionable_by_symbol = self._repo.load_fractionable_asset_map(
+                        [str(target.symbol).strip().upper() for target in targets]
+                    )
+                except Exception:
+                    LOGGER.debug("Impossible de charger les métadonnées fractionable pour les garde-fous live.", exc_info=True)
             filtered_targets, blocked_by_regime_guards = filter_targets_by_live_regime_guards(
                 targets=targets,
                 config=self._cfg,
+                fractionable_by_symbol=fractionable_by_symbol,
             )
             if blocked_by_regime_guards:
                 metrics["targets_loaded"] = loaded_targets_count

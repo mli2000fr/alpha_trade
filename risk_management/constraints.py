@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from risk_management.config import RiskConfig
 from risk_management.enums import DecisionReasonCode
 
@@ -41,6 +42,13 @@ class ConstraintChecker:
     def __init__(self, config: RiskConfig) -> None:
         self._cfg = config
 
+    def _normalize_approved_shares(self, shares: float) -> float:
+        if shares <= 0:
+            return 0.0
+        if self._cfg.allow_fractional_shares:
+            return normalize_share_quantity(shares)
+        return float(int(shares))
+
     @staticmethod
     def reason_to_code(reason: str) -> DecisionReasonCode:
         return _REASON_TO_CODE.get(str(reason or "").strip() or "OK", DecisionReasonCode.CONSTRAINT_UNKNOWN)
@@ -49,23 +57,26 @@ class ConstraintChecker:
         self,
         symbol: str,
         sector: str,
-        proposed_shares: int,
+        proposed_shares: float,
         price: float,
         state: PortfolioState,
-    ) -> tuple[int, str]:
+    ) -> tuple[float, str]:
         """Retourne (approved_shares, reason).  reason == 'OK' si aucune réduction."""
         equity = self._cfg.account_equity
+        proposed_shares = self._normalize_approved_shares(proposed_shares)
+        minimum_viable_shares = QUANTITY_EPSILON if self._cfg.allow_fractional_shares else 1.0
+        reduction_reason: str | None = None
 
         # max positions (effectif — peut être réduit par le régime)
         if state.position_count >= self._cfg.effective_max_positions:
-            return 0, "max_positions atteint"
+            return 0.0, "max_positions atteint"
 
         # max tickers / secteur (en complément de max_sector_weight)
         if self._cfg.max_tickers_per_sector is not None:
             assert state.sector_ticker_count is not None
             current_n = state.sector_ticker_count.get(sector, 0)
             if current_n >= self._cfg.max_tickers_per_sector:
-                return 0, "max_tickers_per_sector atteint"
+                return 0.0, "max_tickers_per_sector atteint"
 
         notional = proposed_shares * price
 
@@ -73,19 +84,21 @@ class ConstraintChecker:
         if (state.total_notional + notional) / equity > self._cfg.max_gross_exposure:
             max_notional = equity * self._cfg.max_gross_exposure - state.total_notional
             if max_notional <= 0:
-                return 0, "max_gross_exposure atteint"
-            proposed_shares = int(max_notional // price)
+                return 0.0, "max_gross_exposure atteint"
+            proposed_shares = self._normalize_approved_shares(max_notional / price)
             notional = proposed_shares * price
-            if proposed_shares < 1:
-                return 0, "max_gross_exposure atteint"
+            if proposed_shares < minimum_viable_shares:
+                return 0.0, "max_gross_exposure atteint"
+            reduction_reason = "max_gross_exposure atteint"
 
         # max position weight
         max_pos_notional = equity * self._cfg.max_position_weight
         if notional > max_pos_notional:
-            proposed_shares = int(max_pos_notional // price)
+            proposed_shares = self._normalize_approved_shares(max_pos_notional / price)
             notional = proposed_shares * price
-            if proposed_shares < 1:
-                return 0, "max_position_weight atteint"
+            if proposed_shares < minimum_viable_shares:
+                return 0.0, "max_position_weight atteint"
+            reduction_reason = "max_position_weight atteint"
 
         # max sector weight
         assert state.sector_notional is not None
@@ -94,14 +107,15 @@ class ConstraintChecker:
         if (current_sector + notional) > max_sector_notional:
             remaining = max_sector_notional - current_sector
             if remaining <= 0:
-                return 0, "max_sector_weight atteint"
-            proposed_shares = int(remaining // price)
+                return 0.0, "max_sector_weight atteint"
+            proposed_shares = self._normalize_approved_shares(remaining / price)
             notional = proposed_shares * price
-            if proposed_shares < 1:
-                return 0, "max_sector_weight atteint"
+            if proposed_shares < minimum_viable_shares:
+                return 0.0, "max_sector_weight atteint"
+            reduction_reason = "max_sector_weight atteint"
 
         # min position notional (effectif — `enforce_min_notional` du régime prioritaire)
         if notional < self._cfg.effective_min_notional:
-            return 0, "min_position_notional non atteint"
+            return 0.0, reduction_reason or "min_position_notional non atteint"
 
-        return proposed_shares, "OK"
+        return proposed_shares, reduction_reason or "OK"

@@ -150,6 +150,37 @@ class ExecutionRepository:
         )
         return ",\n                       ".join(select_parts)
 
+    def load_fractionable_asset_map(self, symbols: list[str]) -> dict[str, bool]:
+        """Charge le flag ``fractionable`` pour une liste de symbols.
+
+        Best-effort : retourne un mapping vide si la table/colonne n'est pas disponible.
+        """
+        normalized_symbols = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
+        if not normalized_symbols:
+            return {}
+        if not self._has_table("stock_metadata"):
+            return {}
+        available_columns = self._get_table_columns("stock_metadata")
+        if "symbol" not in available_columns or "fractionable" not in available_columns:
+            return {}
+
+        placeholders = ", ".join(f":symbol_{index}" for index in range(len(normalized_symbols)))
+        params: dict[str, Any] = {f"symbol_{index}": symbol for index, symbol in enumerate(normalized_symbols)}
+        query = text(
+            f"""
+            SELECT UPPER(TRIM(symbol)) AS symbol, fractionable
+            FROM stock_metadata
+            WHERE UPPER(TRIM(symbol)) IN ({placeholders})
+            """
+        )
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, params).mappings().all()
+        return {
+            str(row["symbol"]).strip().upper(): bool(row.get("fractionable"))
+            for row in rows
+            if row.get("symbol") is not None
+        }
+
     def _execution_targets_snapshot_select_clause(self) -> str:
         available_columns = self._get_table_columns("execution_targets_snapshot")
         required_columns = [

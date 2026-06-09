@@ -185,3 +185,28 @@ def test_builder_preserves_selector_rank_and_metadata() -> None:
     assert entry.selector_earnings_blackout == 0
 
 
+def test_builder_supports_fractional_entries_when_enabled() -> None:
+    cfg = _cfg(
+        account_equity=1_000,
+        risk_per_trade_pct=0.01,
+        atr_stop_multiple=2.0,
+        max_positions=3,
+        max_position_weight=0.50,
+        max_sector_weight=0.80,
+        min_position_notional=100.0,
+        allow_fractional_shares=True,
+    )
+    builder = PortfolioBuilder(cfg)
+
+    entries = builder.build(
+        [CandidateScore("AAPL", "Tech", 0.95)],
+        {"AAPL": PriceInfo("AAPL", 500.0, 10.0)},
+    )
+
+    assert len(entries) == 1
+    assert entries[0].decision == "ACCEPTED"
+    assert entries[0].proposed_shares == 0.5
+    assert entries[0].approved_shares == 0.5
+    assert entries[0].target_notional == 250.0
+
+

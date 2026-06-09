@@ -147,6 +147,34 @@ class TestBuildEntryIntents:
         assert blocked[0]["symbol"] == "MSFT"
         assert blocked[0]["reason"] == "regime_max_gross_exposure"
 
+    def test_filter_targets_by_live_regime_guards_blocks_fractional_target_when_asset_not_fractionable(self) -> None:
+        cfg = ExecutionConfig(allow_fractional_shares=True)
+        targets = [_target(shares=0.5)]
+
+        kept, blocked = filter_targets_by_live_regime_guards(
+            targets=targets,
+            config=cfg,
+            fractionable_by_symbol={"AAPL": False},
+        )
+
+        assert kept == []
+        assert len(blocked) == 1
+        assert blocked[0]["reason"] == "asset_not_fractionable"
+        assert blocked[0]["symbol"] == "AAPL"
+
+    def test_filter_targets_by_live_regime_guards_keeps_fractional_target_when_asset_fractionable(self) -> None:
+        cfg = ExecutionConfig(allow_fractional_shares=True)
+        targets = [_target(shares=0.5)]
+
+        kept, blocked = filter_targets_by_live_regime_guards(
+            targets=targets,
+            config=cfg,
+            fractionable_by_symbol={"AAPL": True},
+        )
+
+        assert [target.symbol for target in kept] == ["AAPL"]
+        assert blocked == []
+
 
 class TestBuildChildren:
     def test_take_profit(self) -> None:

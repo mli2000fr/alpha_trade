@@ -44,8 +44,26 @@ def test_constraint_rejection_exposes_structured_reason_code(config: RiskConfig)
 def test_accept_updates_state(config: RiskConfig) -> None:
     state = PortfolioState()
     rc = RiskCheckerImpl(config, state=state, sector_map={"A": "Tech"})
-    rc.accept("A", "Tech", 10, 100.0)
+    rc.accept("A", "Tech", 10.0, 100.0)
     assert state.position_count == 1
     assert state.total_notional == 1_000.0
     assert state.sector_notional is not None
     assert state.sector_notional["Tech"] == 1_000.0
+
+
+def test_check_position_size_supports_fractional_reduction() -> None:
+    cfg = RiskConfig(
+        account_equity=1_000,
+        max_positions=5,
+        max_position_weight=0.05,
+        min_position_notional=10.0,
+        allow_fractional_shares=True,
+    )
+    rc = RiskCheckerImpl(cfg, sector_map={"AAPL": "Tech"})
+
+    approved = rc.check_position_size("AAPL", 0.83, 100.0)
+
+    assert approved == pytest.approx(0.5)
+    assert rc.get_last_decision_reason() == "max_position_weight atteint"
+    assert rc.get_last_decision_reason_code() == "constraint_max_position_weight"
+

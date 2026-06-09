@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import math
 
+from common.quantity_utils import QUANTITY_EPSILON, format_share_quantity, normalize_share_quantity
 from risk_management.config import RiskConfig
 from risk_management.enums import SizingMethod
 from risk_management.models import PriceInfo, SizingResult
@@ -43,10 +44,14 @@ class PositionSizer:
         risk_per_share = price_info.atr_20 * self._cfg.atr_stop_multiple
         if risk_per_share <= 0:
             return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ATR_MISSING)
-        shares = math.floor(risk_budget / risk_per_share)
+        raw_shares = risk_budget / risk_per_share
+        if self._cfg.allow_fractional_shares:
+            shares = normalize_share_quantity(max(raw_shares, 0.0))
+        else:
+            shares = float(math.floor(raw_shares))
         method = SizingMethod.ATR
 
-        shares = max(shares, 0)
+        shares = max(shares, 0.0)
 
         # notional minimum (utilise le seuil `enforce_min_notional` du régime si défini)
         min_notional = self._cfg.effective_min_notional
@@ -57,14 +62,14 @@ class PositionSizer:
                 else SizingMethod.REJECTED_NOTIONAL
             )
             LOGGER.info(
-                "Notional insuffisant pour %s — rejet (shares=%d price=%.2f notional=%.2f min=%.2f).",
-                symbol, shares, price, shares * price, min_notional,
+                "Notional insuffisant pour %s — rejet (shares=%s price=%.2f notional=%.2f min=%.2f).",
+                symbol, format_share_quantity(shares), price, shares * price, min_notional,
             )
             return SizingResult(symbol=symbol, proposed_shares=0, method=method_rej)
 
-        # au moins 1 share
-        if shares < 1:
-            LOGGER.info("Moins de 1 share pour %s — rejet.", symbol)
+        minimum_viable_shares = QUANTITY_EPSILON if self._cfg.allow_fractional_shares else 1.0
+        if shares < minimum_viable_shares:
+            LOGGER.info("Quantité insuffisante pour %s — rejet (shares=%s).", symbol, format_share_quantity(shares))
             return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ZERO_SHARES)
 
         return SizingResult(symbol=symbol, proposed_shares=shares, method=method)

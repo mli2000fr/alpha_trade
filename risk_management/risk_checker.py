@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from common.quantity_utils import format_share_quantity
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.constraints import ConstraintChecker, PortfolioState
@@ -42,16 +43,27 @@ class RiskCheckerImpl:
         approved, reason = self._constraints.check(
             symbol=symbol,
             sector=sector,
-            proposed_shares=int(proposed_shares),
+            proposed_shares=proposed_shares,
             price=price,
             state=self._state,
         )
         self._last_decision_reason = reason
         self._last_decision_reason_code = self._constraints.reason_to_code(reason)
         if approved < proposed_shares and reason != "OK":
-            LOGGER.info("Position reduite pour %s: %s -> %s (%s)", symbol, int(proposed_shares), approved, reason)
+            LOGGER.info(
+                "Position reduite pour %s: %s -> %s (%s)",
+                symbol,
+                format_share_quantity(proposed_shares),
+                format_share_quantity(approved),
+                reason,
+            )
         else:
-            LOGGER.info("Position approved pour %s: %s -> %s ---------------", symbol, int(proposed_shares), approved)
+            LOGGER.info(
+                "Position approved pour %s: %s -> %s ---------------",
+                symbol,
+                format_share_quantity(proposed_shares),
+                format_share_quantity(approved),
+            )
         return float(approved)
 
     def is_circuit_breaker_active(self) -> bool:
@@ -64,7 +76,7 @@ class RiskCheckerImpl:
         return self._last_decision_reason_code
 
     # --- helpers pour portfolio_builder ----------------------------------
-    def accept(self, symbol: str, sector: str, shares: int, price: float) -> None:
+    def accept(self, symbol: str, sector: str, shares: float, price: float) -> None:
         """Enregistre une position acceptée dans l'état courant."""
         notional = shares * price
         self._state.position_count += 1

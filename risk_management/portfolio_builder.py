@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from pandas import DataFrame
 
+from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from core.conviction import ConvictionWeights
 from core.conviction import fuse as _fuse_conviction
 from core.run_summary import attach_live_progress
@@ -192,6 +193,7 @@ class PortfolioBuilder:
         )
         equity = self._cfg.account_equity
         accepted_rank = 0
+        minimum_viable_shares = QUANTITY_EPSILON if self._cfg.allow_fractional_shares else 1.0
 
         for ec in retained:
             pi = prices.get(ec.symbol)
@@ -229,7 +231,7 @@ class PortfolioBuilder:
             else:
                 sizing = self._sizer.compute(pi)
 
-            if sizing.proposed_shares < 1:
+            if sizing.proposed_shares < minimum_viable_shares:
                 entries.append(self._make_entry_v2(
                     ec, pi, 0, 0, Decision.REJECTED, "sizing insuffisant",
                     decision_reason_code=DecisionReasonCode(str(sizing.method or SizingMethod.UNKNOWN)),
@@ -251,8 +253,8 @@ class PortfolioBuilder:
                 )
                 continue
 
-            approved = int(checker.check_position_size(ec.symbol, sizing.proposed_shares, pi.last_close))
-            if approved < 1:
+            approved = normalize_share_quantity(checker.check_position_size(ec.symbol, sizing.proposed_shares, pi.last_close))
+            if approved < minimum_viable_shares:
                 reason = checker.get_last_decision_reason()
                 reason_code = checker.get_last_decision_reason_code()
                 entries.append(self._make_entry_v2(
@@ -276,7 +278,7 @@ class PortfolioBuilder:
                 )
                 continue
 
-            decision = Decision.ACCEPTED if approved == sizing.proposed_shares else Decision.REDUCED
+            decision = Decision.ACCEPTED if abs(approved - sizing.proposed_shares) <= QUANTITY_EPSILON else Decision.REDUCED
             reason = "OK" if decision == Decision.ACCEPTED else checker.get_last_decision_reason()
             reason_code = DecisionReasonCode.OK if decision == Decision.ACCEPTED else checker.get_last_decision_reason_code()
             checker.accept(ec.symbol, ec.sector, approved, pi.last_close)
@@ -361,8 +363,8 @@ class PortfolioBuilder:
     def _make_entry_v2(
         ec: EnrichedCandidate,
         pi: PriceInfo | None,
-        proposed: int,
-        approved: int,
+        proposed: float,
+        approved: float,
         decision: Decision,
         reason: str,
         decision_reason_code: DecisionReasonCode | None = None,

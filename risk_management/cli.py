@@ -9,6 +9,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
+from common.quantity_utils import format_share_quantity, normalize_share_quantity
 from common.capital_presets import (
     build_risk_config_kwargs_from_preset,
     resolve_capital_preset_for_equity,
@@ -254,12 +255,12 @@ def _entries_to_shadow_compare_frame(entries: list[PortfolioEntry]) -> pd.DataFr
     rows = [
         {
             "symbol": entry.symbol,
-            "qty": int(entry.approved_shares),
+            "qty": float(entry.approved_shares),
             "price": float(entry.entry_price),
             "conviction": float(entry.conviction_score or 0.0),
         }
         for entry in entries
-        if int(entry.approved_shares or 0) > 0
+        if float(entry.approved_shares or 0.0) > 0.0
     ]
     return pd.DataFrame(rows, columns=["symbol", "qty", "price", "conviction"])
 
@@ -275,7 +276,7 @@ def _risk_decisions_to_shadow_compare_frame(decisions: pd.DataFrame) -> pd.DataF
     return pd.DataFrame(
         {
             "symbol": work["symbol"].astype(str).str.strip().str.upper(),
-            "qty": pd.to_numeric(work.get("approved_shares"), errors="coerce").fillna(0).astype(int),
+            "qty": pd.to_numeric(work.get("approved_shares"), errors="coerce").fillna(0.0).astype(float),
             "price": pd.to_numeric(work.get("entry_price"), errors="coerce").fillna(0.0).astype(float),
             "conviction": pd.to_numeric(work.get("conviction_score"), errors="coerce").fillna(0.0).astype(float),
         }
@@ -520,7 +521,7 @@ def _build_postmortem_artifacts(
             sector,
             {"sector": sector, "candidates": 0, "retained": 0, "rejected": 0, "target_notional": 0.0, "target_weight": 0.0},
         )
-        if int(entry.approved_shares or 0) > 0:
+        if float(entry.approved_shares or 0.0) > 0.0:
             bucket["retained"] = int(bucket["retained"]) + 1
             bucket["target_notional"] = round(float(bucket["target_notional"]) + float(entry.target_notional or 0.0), 2)
             bucket["target_weight"] = round(float(bucket["target_weight"]) + float(entry.target_weight or 0.0), 4)
@@ -651,6 +652,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--correlation-lookback-days", type=int, default=60)
     p.add_argument("--correlation-min-overlap", type=int, default=40)
     p.add_argument("--enable-kelly-sizing", action="store_true", default=False)
+    p.add_argument("--allow-fractional-shares", action="store_true", default=False)
     p.add_argument("--assumed-payoff-ratio", type=float, default=1.5)
     p.add_argument("--kelly-fraction-multiplier", type=float, default=0.25)
     p.add_argument("--score-weight", type=float, default=0.40)
@@ -737,7 +739,7 @@ def _print_summary(entries: list[PortfolioEntry], run_id: str, trade_date: date)
     print(f"  Notional total    : ${total_notional:,.2f}")
     print(f"{'=' * 70}")
     for e in accepted:
-        print(f"  {e.symbol:<8} {e.decision:<10} shares={e.approved_shares:>6}  "
+        print(f"  {e.symbol:<8} {e.decision:<10} shares={format_share_quantity(e.approved_shares):>6}  "
               f"price={e.entry_price:>8.2f}  weight={e.target_weight:>6.2%}  "
               f"score={e.score_used:.4f} ({e.score_source})  "
               f"conviction={e.conviction_score:.4f}  sizing={e.sizing_method}")
@@ -860,6 +862,7 @@ def main(args: list[str] | None = None) -> None:
         correlation_lookback_days=args.correlation_lookback_days,
         correlation_min_overlap=args.correlation_min_overlap,
         enable_kelly_sizing=args.enable_kelly_sizing,
+        allow_fractional_shares=args.allow_fractional_shares,
         assumed_payoff_ratio=args.assumed_payoff_ratio,
         kelly_fraction_multiplier=args.kelly_fraction_multiplier,
         score_weight=args.score_weight,
@@ -1275,7 +1278,7 @@ def main(args: list[str] | None = None) -> None:
         "rejected_symbols": len(rejected_entries),
         "entries_blocked_by_regime": regime_entries_blocked,
         "target_positions": len(retained_entries),
-        "total_target_shares": int(sum(entry.approved_shares for entry in retained_entries)),
+        "total_target_shares": normalize_share_quantity(sum(entry.approved_shares for entry in retained_entries)),
         "total_target_notional": round(total_target_notional, 2),
         "gross_exposure_pct": round(gross_exposure_pct, 4),
         "max_target_weight": round(max_target_weight, 4),

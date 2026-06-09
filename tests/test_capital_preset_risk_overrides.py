@@ -82,9 +82,11 @@ def test_cli_exposes_threshold_flags():
     args = parser.parse_args([
         "--max-portfolio-drawdown-pct", "0.08",
         "--max-daily-loss-pct", "0.03",
+        "--allow-fractional-shares",
     ])
     assert args.max_portfolio_drawdown_pct == pytest.approx(0.08)
     assert args.max_daily_loss_pct == pytest.approx(0.03)
+    assert args.allow_fractional_shares is True
 
 
 def test_risk_config_accepts_overrides():

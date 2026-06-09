@@ -219,6 +219,28 @@ class TestExecutor:
         assert repo.upsert_execution_order_request_from_intent.called
         assert repo.snapshot_broker_account.called
 
+    def test_fractional_target_is_blocked_before_submission_when_asset_not_fractionable(self) -> None:
+        cfg = ExecutionConfig(dry_run=True, allow_outside_rth=True, allow_fractional_shares=True)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        repo.load_portfolio_targets.return_value = [
+            ExecutionTarget(
+                risk_run_id="r1", trade_date=date(2026, 4, 18), symbol="AAPL",
+                target_shares=0.5, entry_price=150.0, target_weight=0.05,
+                sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+                decision_rank=1, stop_price_initial=140.0, risk_per_share=10.0,
+                risk_budget_dollars=1_000.0, initial_risk_dollars=1_000.0, target_notional=75.0,
+                price_asof_date=date(2026, 4, 18), atr_asof_date=date(2026, 4, 18), atr_20=5.0,
+            )
+        ]
+        repo.load_fractionable_asset_map.return_value = {"AAPL": False}
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        broker.submit_intent.assert_not_called()
+        assert metrics["targets_blocked_by_regime_guards"] == 1
+        assert metrics["skipped_by_asset_not_fractionable"] == 1
+        assert metrics["targets"] == 0
+
     def test_execute_run_scopes_targets_and_lock_to_resolved_account_id(self) -> None:
         cfg = ExecutionConfig(dry_run=True, allow_outside_rth=True, account_id="live1")
         executor, repo, broker, _ = _make_executor(cfg)

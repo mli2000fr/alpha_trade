@@ -53,3 +53,52 @@ def test_constraint_uses_effective_max_positions():
     assert approved == 0
     assert reason == "max_positions atteint"
 
+
+def test_sizer_can_return_fractional_shares_when_enabled():
+    cfg = RiskConfig(
+        account_equity=1_000,
+        risk_per_trade_pct=0.01,
+        atr_stop_multiple=2.0,
+        min_position_notional=100.0,
+        allow_fractional_shares=True,
+    )
+    res = PositionSizer(cfg).compute(_pi(price=500.0, atr=10.0))
+
+    assert res.proposed_shares == 0.5
+    assert res.method == "atr"
+
+
+def test_constraint_reduces_fractional_shares_by_position_cap_when_enabled():
+    cfg = RiskConfig(
+        account_equity=1_000,
+        max_position_weight=0.05,
+        max_positions=10,
+        min_position_notional=10.0,
+        allow_fractional_shares=True,
+    )
+    state = PortfolioState()
+    checker = ConstraintChecker(cfg)
+
+    approved, reason = checker.check("AAPL", "Tech", 0.83, 100.0, state)
+
+    assert approved == 0.5
+    assert reason == "max_position_weight atteint"
+
+
+def test_constraint_rejects_fractional_position_when_sector_capacity_is_too_small():
+    cfg = RiskConfig(
+        account_equity=1_000,
+        max_sector_weight=0.30,
+        max_positions=10,
+        min_position_notional=10.0,
+        allow_fractional_shares=True,
+    )
+    state = PortfolioState(sector_notional={"Tech": 299.99})
+    checker = ConstraintChecker(cfg)
+
+    approved, reason = checker.check("AAPL", "Tech", 0.5, 100.0, state)
+
+    assert approved == 0.0
+    assert reason == "max_sector_weight atteint"
+
+

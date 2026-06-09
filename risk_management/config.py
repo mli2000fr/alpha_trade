@@ -63,6 +63,7 @@ class RiskConfig:
     effective_max_positions_override: int | None = None
     # Maximum 2 tickers par secteur (en complément de ``max_sector_weight``).
     max_tickers_per_sector: int | None = None
+    allow_fractional_shares: bool = False
 
     def __post_init__(self) -> None:
         if self.account_equity <= 0:

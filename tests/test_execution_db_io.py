@@ -46,6 +46,12 @@ def engine():
             )
         """))
         conn.execute(text("""
+            CREATE TABLE stock_metadata (
+                symbol VARCHAR(20) PRIMARY KEY,
+                fractionable BOOLEAN
+            )
+        """))
+        conn.execute(text("""
             CREATE TABLE execution_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 exec_run_id VARCHAR(32) UNIQUE, risk_run_id VARCHAR(32),
@@ -354,6 +360,17 @@ class TestExecutionDbIo:
         assert targets[0].stop_price_initial == 140.0
         assert targets[0].risk_per_share == 10.0
         assert targets[0].target_notional == 15000.0
+
+    def test_load_fractionable_asset_map(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO stock_metadata (symbol, fractionable)
+                VALUES ('AAPL', 1), ('MSFT', 0)
+            """))
+
+        result = repo.load_fractionable_asset_map(["AAPL", "MSFT", "NVDA"])
+
+        assert result == {"AAPL": True, "MSFT": False}
 
     def test_insert_execution_run(self, repo) -> None:
         repo.insert_execution_run("e1", "r1", date(2026, 4, 18), "paper", False, 5, execution_profile="overnight_cash_swing", submission_window="both")

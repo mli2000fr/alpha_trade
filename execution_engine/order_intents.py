@@ -7,7 +7,7 @@ from typing import cast
 import uuid
 
 from backtesting.microstructure import should_skip_entry_for_gap
-from common.quantity_utils import format_share_quantity, normalize_share_quantity
+from common.quantity_utils import format_share_quantity, is_effectively_integer_quantity, normalize_share_quantity
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import ExecutionTarget, IntentRole, OrderIntent
 
@@ -81,7 +81,9 @@ def build_entry_intents(
     for t in targets:
         if t.target_shares <= 0:
             continue
-        qty = float(t.target_shares)
+        qty = normalize_share_quantity(float(t.target_shares))
+        if qty <= 0:
+            continue
         limit_price: float | None = None
         if config.entry_order_type == "limit":
             limit_price = round(t.entry_price * (1 + config.limit_price_buffer_bps / 10_000), 2)
@@ -124,6 +126,7 @@ def filter_targets_by_live_regime_guards(
     *,
     targets: list[ExecutionTarget],
     config: ExecutionConfig,
+    fractionable_by_symbol: dict[str, bool] | None = None,
 ) -> tuple[list[ExecutionTarget], list[dict[str, float | int | str | None]]]:
     """Applique des garde-fous live dérivés du snapshot régime marché.
 
@@ -133,6 +136,32 @@ def filter_targets_by_live_regime_guards(
     """
     blocked: list[dict[str, float | int | str | None]] = []
     kept_targets = list(targets)
+
+    if config.allow_fractional_shares and kept_targets:
+        next_targets: list[ExecutionTarget] = []
+        fractionable_lookup = {
+            str(symbol).strip().upper(): bool(value)
+            for symbol, value in (fractionable_by_symbol or {}).items()
+        }
+        for target in kept_targets:
+            qty = normalize_share_quantity(getattr(target, "target_shares", 0.0))
+            if is_effectively_integer_quantity(qty):
+                next_targets.append(target)
+                continue
+            symbol = str(target.symbol).strip().upper()
+            if fractionable_lookup.get(symbol) is True:
+                next_targets.append(target)
+                continue
+            blocked.append(
+                {
+                    "symbol": target.symbol,
+                    "sector": target.sector,
+                    "target_weight": float(getattr(target, "target_weight", 0.0) or 0.0),
+                    "target_shares": qty,
+                    "reason": "asset_not_fractionable",
+                }
+            )
+        kept_targets = next_targets
 
     max_position_weight = getattr(config, "regime_max_position_weight", None)
     if max_position_weight is not None:

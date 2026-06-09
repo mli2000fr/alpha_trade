@@ -380,6 +380,7 @@ _RISK_CONFIG_PRESET_MAPPING: tuple[tuple[str, str, type], ...] = (
     ("risk_correlation_lookback_days", "correlation_lookback_days", int),
     ("risk_correlation_min_overlap", "correlation_min_overlap", int),
     ("risk_enable_kelly", "enable_kelly_sizing", bool),
+0    ("risk_allow_fractional_shares", "allow_fractional_shares", bool),
     ("risk_score_weight", "score_weight", float),
     ("risk_prediction_weight", "prediction_weight", float),
 )

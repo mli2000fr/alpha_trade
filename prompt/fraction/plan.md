@@ -10,24 +10,38 @@ _Date : 2026-06-09_
 - [x] Structurer un plan d’évolution par sprint
 - [x] Sauvegarder le plan dans `prompt/fraction/plan.md`
 
-## Mise à jour — état réel Sprint 1 (revue du code au 2026-06-09)
+## Mise à jour — état réel au 2026-06-09 après implémentation
 
-Après relecture directe du code, le **Sprint 1 n’est plus théorique** : une large partie des fondations est **déjà implémentée**.
+### Sprint 1
+Le **Sprint 1 est désormais clôturé**.
 
-### Déjà en place
-- `risk_management/models.py` utilise déjà des `float` pour `proposed_shares`, `approved_shares` et `shares`.
-- `execution_engine/models.py` utilise déjà des `float` pour `ExecutionTarget.target_shares` et `ReconcileDiff.target_qty`.
-- `execution_engine/db_io.py` relit les quantités via `float(...)` sans re-troncature en `int`.
-- la migration `alembic/versions/0037_add_fractionable_and_fractional_target_shares.py` existe déjà :
-  - `execution_targets_snapshot.target_shares` passe en `Float`,
-  - `stock_metadata.fractionable` est ajouté.
-- `tests/test_execution_db_io.py` utilise déjà des colonnes `DOUBLE` pour les quantités et couvre un cas `100.5`.
-- `database/assets.py` sait déjà persister `fractionable` si la colonne existe.
+Complété depuis la première revue :
+- helper transverse créé dans `common/quantity_utils.py` ;
+- normalisation / formatage broker branchés dans `execution_engine/order_intents.py` ;
+- garde-fou runtime `fractionable` branché avant soumission live via :
+  - `execution_engine/executor.py`,
+  - `execution_engine/order_intents.py`,
+  - `execution_engine/db_io.py` (`load_fractionable_asset_map`) ;
+- tests ajoutés sur :
+  - normalisation 9 décimales,
+  - quasi-entier / epsilon,
+  - formatage broker,
+  - blocage d’un target fractionnaire sur asset non fractionable.
 
-### Reste à clôturer pour terminer réellement Sprint 1
-- créer un **helper transverse de quantités** (arrondi 9 décimales, epsilon, formatage broker) ;
-- vérifier et documenter le **branchement runtime** des métadonnées `fractionable` côté sélection / validation live ;
-- compléter les **tests ciblés** sur la normalisation de quantité et la compatibilité broker.
+### Sprint 2
+Le **Sprint 2 est également implémenté** sur le périmètre risk.
+
+Complété :
+- `risk_management/config.py` expose maintenant `allow_fractional_shares` ;
+- `risk_management/position_sizer.py` sait produire des quantités fractionnaires sous feature flag ;
+- `risk_management/constraints.py` réduit/rejette en float sans retroncature entière ;
+- `risk_management/risk_checker.py` ne recaste plus en `int` ;
+- `risk_management/portfolio_builder.py` propage les quantités fractionnaires avec comparaison epsilon ;
+- `risk_management/cli.py` n’écrase plus les quantités décimales dans les exports/synthèses.
+
+### Couverture validée
+- `126 passed` sur le bundle ciblé Sprint 1 + Sprint 2 ;
+- `64 passed` sur la revalidation Sprint 1 (`assets`, `execution_db_io`, `order_intents`).
 
 ---
 
@@ -352,7 +366,7 @@ Sécuriser la cible fonctionnelle avant de toucher au code métier profond.
 Supprimer l’hypothèse “quantité entière” dans les modèles centraux.
 
 ## État au 2026-06-09
-Sprint 1 est **largement déjà implémenté** dans la base de code. Le sprint doit maintenant être piloté comme un **lot de clôture / hardening** plutôt que comme une fondation à démarrer de zéro.
+Sprint 1 est **terminé**.
 
 ## Travaux
 
@@ -395,47 +409,45 @@ Constat :
 - la recommandation `Numeric(20,9)` reste valable si un durcissement DB est souhaité plus tard, mais elle n’est plus un prérequis bloquant pour Sprint 1.
 
 ### 4. Métadonnées assets
-Statut : **🟡 partiellement fait**
+Statut : **✅ fait pour le périmètre Sprint 1**
 
 Fichiers vérifiés :
 - `database/assets.py`
 - schéma `stock_metadata`
 - sync Alpaca assets
 
-Déjà présent / prévu :
-- `fractionable`
-
-Reste à faire :
-- valider le chemin complet de sync en conditions réelles ;
-- consommer `fractionable` dans les garde-fous métier live.
+Réalisé :
+- `fractionable` est persisté ;
+- `execution_engine/db_io.py` charge la capacité asset ;
+- `execution_engine/executor.py` et `execution_engine/order_intents.py` bloquent désormais un target fractionnaire si l’asset n’est pas explicitement `fractionable=true`.
 
 ### 5. Helper transverse
-Statut : **❌ à faire**
+Statut : **✅ fait**
 
-Créer un helper partagé, par exemple :
-- `common/utils.py` ou module dédié `execution_engine/quantity_utils.py`
+Implémenté dans :
+- `common/quantity_utils.py`
 
-Responsabilités :
-- arrondir à 9 décimales max,
-- tester “quasi entier” / epsilon,
-- formatter proprement pour logs et payloads,
-- clamp à `>= 0`.
+Responsabilités couvertes :
+- normalisation à 9 décimales,
+- epsilon de quantité,
+- détection quasi-entier,
+- formatage broker/log,
+- clamp du bruit numérique autour de zéro.
 
 ## Livrables
 - ✅ Modèles compatibles fractionnel.
 - ✅ Migration DB de type / colonne (`0037`).
-- 🟡 Métadonnée `fractionable` disponible au niveau schéma/persistance locale.
-- ❌ Helper commun de quantité.
+- ✅ Métadonnée `fractionable` disponible et consommée dans les garde-fous live d’entrée.
+- ✅ Helper commun de quantité.
 
 ## Critères d’acceptation
 - Le code compile toujours.
 - Les snapshots et lectures DB restituent `0.5`, `0.125`, `3.654` sans troncature.
 - Le mode entier historique reste inchangé si `allow_fractional_shares=false`.
 
-## Reste à faire pour clôturer Sprint 1
-- ajouter le helper transverse de quantité ;
-- couvrir explicitement l’arrondi 9 décimales et les comparaisons epsilon par tests ;
-- confirmer le branchement runtime de `fractionable` avant soumission broker.
+## Verdict Sprint 1
+- Sprint 1 est **clôturé**.
+- Le reste du chantier se déplace maintenant vers le **backtest fractionnaire (Sprint 3)** et la suite live.
 
 ## Risques traités
 - Propagation d’un type int caché dans plusieurs couches.
@@ -447,62 +459,73 @@ Responsabilités :
 ## Objectif
 Permettre au moteur de sizing et contraintes de produire/propager des quantités fractionnaires.
 
+## État au 2026-06-09
+Sprint 2 est **implémenté** sur le périmètre risk applicatif, derrière un feature flag `allow_fractional_shares` conservant le comportement entier historique par défaut.
+
 ## Travaux
 
 ### 1. Sizer
-Modifier :
+Statut : **✅ fait**
+
+Fichier modifié :
 - `risk_management/position_sizer.py`
 
-Actions :
-- remplacer `math.floor(...)` par un calcul float.
-- introduire une règle :
-  - si `allow_fractional_shares=false` => comportement historique entier,
-  - sinon => quantité décimale, normalisée à 9 décimales.
-- remplacer le rejet `shares < 1` par :
-  - rejet si `shares <= 0`,
-  - ou seuil produit configurable si besoin (`min_fractional_qty`, optionnel).
+Réalisé :
+- comportement entier historique conservé si `allow_fractional_shares=false` ;
+- calcul float + normalisation 9 décimales si `allow_fractional_shares=true` ;
+- rejet basé sur epsilon / quantité nulle au lieu d’un `shares < 1` forcé.
 
 ### 2. Contraintes
-Modifier :
+Statut : **✅ fait**
+
+Fichiers modifiés :
 - `risk_management/constraints.py`
 - `risk_management/risk_checker.py`
 
-Actions :
-- supprimer les `int(... // price)`.
-- faire des divisions flottantes.
-- plafonner avec `min(proposed, cap_notional / price)`.
-- conserver les contraintes notional sans re-troncature.
-- journaliser les réductions avec format décimal.
+Réalisé :
+- suppression des troncatures `int(... // price)` dans les caps ;
+- divisions flottantes et normalisation des quantités ;
+- conservation du motif de réduction pour l’audit ;
+- logs risk en format décimal.
 
 ### 3. Builder portefeuille
-Modifier :
+Statut : **✅ fait**
+
+Fichier modifié :
 - `risk_management/portfolio_builder.py`
 
-Actions :
-- supprimer les `int(...)` sur approved.
-- faire les comparaisons avec epsilon.
-- ajuster la notion de `Decision.ACCEPTED` / `REDUCED` pour du float.
+Réalisé :
+- suppression des casts entiers sur `approved` ;
+- comparaison avec epsilon ;
+- `Decision.ACCEPTED` / `REDUCED` maintenant cohérents pour des floats.
 
 ### 4. CLI / exports risk
-Modifier :
+Statut : **✅ fait sur `cli.py` ; `audit.py` était déjà float-safe**
+
+Fichiers impactés :
 - `risk_management/cli.py`
 - `risk_management/audit.py`
 
-Actions :
-- ne plus caster les quantités en entier dans les exports.
-- conserver les rangs en entier, mais pas les shares.
+Réalisé :
+- les exports/shadow compare ne recastent plus les shares en entier ;
+- les rangs restent entiers ;
+- les synthèses conservent les quantités décimales.
 
 ## Livrables
-- Risk pipeline complètement fractionnaire.
-- Exports audit cohérents.
+- ✅ Risk pipeline fractionnaire derrière feature flag.
+- ✅ Exports / shadow compare cohérents.
 
 ## Critères d’acceptation
-- Un cas avec petit compte et ATR élevé peut produire `0.37` share au lieu d’un rejet automatique.
-- Les contraintes de portefeuille réduisent proprement `0.83` à `0.51` si nécessaire.
-- Les décisions audit ne perdent pas la précision.
+- ✅ Un petit compte peut maintenant produire `0.5` share au lieu d’un rejet automatique.
+- ✅ Les contraintes réduisent proprement `0.83` à `0.5` sur cap positionnel.
+- ✅ Les décisions / exports risk ne perdent plus la précision décimale.
 
 ## Risques traités
 - “Support fractionnaire” apparent, mais détruit avant l’exécution.
+
+## Suite logique
+- prochain vrai blocage : **Sprint 3 — backtest fractionnaire natif** ;
+- puis **Sprint 4 — live fractional entry** sur un périmètre broker explicitement borné.
 
 ---
 
