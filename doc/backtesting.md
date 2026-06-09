@@ -173,7 +173,6 @@ Le `fees_pct` effectif vaut `(commission_bps + slippage_bps) / 10_000`.
 #### Contraintes de compte
 
 - `--account-type margin|cash`
-- `--pdt-rule auto|off`
 - `--swing-only`
 
 Effets principaux :

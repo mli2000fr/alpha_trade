@@ -1,6 +1,6 @@
 """ihm/pages/_execution_center.py — Phase 6.2 (Backlog L10) + Sprint S6 / S6.1 (A-016).
 
-Préfill exécution (compte/PDT/swing) + ``_build_launch_options`` (tous les
+Préfill exécution (compte/swing) + ``_build_launch_options`` (tous les
 panneaux de paramètres pipeline : execution, risk, ML, screener, selector,
 signal aggregator, corporate actions, data integrity).
 
@@ -2479,7 +2479,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     execution_defaults = _apply_execution_prefills(selected_account_id)
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=False):
-        # === BLOCK 1/9 : Execution (capital preset, dates, equity, mode, RTH, account/PDT/swing, fenêtre + trailing + debug) — inline (extraction prévue S6.1) ===
+        # === BLOCK 1/9 : Execution (capital preset, dates, equity, mode, RTH, account/swing, fenêtre + trailing + debug) — inline (extraction prévue S6.1) ===
         st.caption(
             "Les pipelines sont lancés en arrière-plan depuis l'IHM. Ils héritent de la configuration DB active et, "
             "pour les étapes concernées, du compte Alpaca sélectionné dans la sidebar."
