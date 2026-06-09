@@ -2263,6 +2263,7 @@ def _load_equity_curve_df(run_record: dict[str, object]) -> pd.DataFrame:
         df = _read_cached_csv_file(*signature).copy()
         if "trade_date" in df.columns:
             df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
+            df = df.sort_values("trade_date", kind="stable")
         return df
     except Exception as exc:
         st.warning(f"Impossible de lire l'equity curve du run : {exc}")
@@ -2278,10 +2279,132 @@ def _load_run_trades_df(run_record: dict[str, object]) -> pd.DataFrame:
     if signature is None:
         return pd.DataFrame()
     try:
-        return _read_cached_csv_file(*signature).copy()
+        df = _read_cached_csv_file(*signature).copy()
+        for column_name in (
+            "trade_date",
+            "signal_date",
+            "execution_date",
+            "entry_date",
+            "exit_date",
+            "replay_exit_date",
+        ):
+            if column_name in df.columns:
+                df[column_name] = pd.to_datetime(df[column_name], errors="coerce")
+        return df
     except Exception as exc:
         st.warning(f"Impossible de lire les trades du run : {exc}")
         return pd.DataFrame()
+
+
+def _format_position_quantity(quantity: float) -> str:
+    rounded_quantity = round(float(quantity), 8)
+    if abs(rounded_quantity - round(rounded_quantity)) < 1e-8:
+        return str(int(round(rounded_quantity)))
+    return f"{rounded_quantity:.4f}".rstrip("0").rstrip(".")
+
+
+def _register_position_delta(
+    position_deltas: dict[pd.Timestamp, dict[str, float]],
+    trade_date: pd.Timestamp,
+    symbol: str,
+    quantity_delta: float,
+) -> None:
+    per_day = position_deltas.setdefault(trade_date, {})
+    per_day[symbol] = per_day.get(symbol, 0.0) + float(quantity_delta)
+
+
+def _build_daily_portfolio_snapshot_df(
+    equity_curve_df: pd.DataFrame,
+    trades_df: pd.DataFrame,
+) -> pd.DataFrame:
+    columns = [
+        "trade_date",
+        "portfolio_value",
+        "open_positions",
+        "position_units_total",
+        "held_symbols",
+        "positions_detail",
+    ]
+    if equity_curve_df.empty or not {"trade_date", "portfolio_value"}.issubset(equity_curve_df.columns):
+        return pd.DataFrame(columns=columns)
+
+    equity_df = equity_curve_df[["trade_date", "portfolio_value"]].copy()
+    equity_df["trade_date"] = pd.to_datetime(equity_df["trade_date"], errors="coerce").dt.normalize()
+    equity_df["portfolio_value"] = pd.to_numeric(equity_df["portfolio_value"], errors="coerce")
+    equity_df = equity_df.dropna(subset=["trade_date"]).sort_values("trade_date", kind="stable")
+    equity_df = equity_df.drop_duplicates(subset=["trade_date"], keep="last")
+    if equity_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    position_deltas: dict[pd.Timestamp, dict[str, float]] = {}
+    if not trades_df.empty and "symbol" in trades_df.columns:
+        normalized_trades_df = trades_df.copy()
+        for column_name in ("execution_date", "entry_date", "trade_date", "exit_date", "replay_exit_date"):
+            if column_name in normalized_trades_df.columns:
+                normalized_trades_df[column_name] = pd.to_datetime(
+                    normalized_trades_df[column_name], errors="coerce"
+                ).dt.normalize()
+        if "execution_date" not in normalized_trades_df.columns:
+            if "entry_date" in normalized_trades_df.columns:
+                normalized_trades_df["execution_date"] = normalized_trades_df["entry_date"]
+            elif "trade_date" in normalized_trades_df.columns:
+                normalized_trades_df["execution_date"] = normalized_trades_df["trade_date"]
+        if "exit_date" not in normalized_trades_df.columns and "replay_exit_date" in normalized_trades_df.columns:
+            normalized_trades_df["exit_date"] = normalized_trades_df["replay_exit_date"]
+        normalized_trades_df["quantity"] = pd.to_numeric(
+            normalized_trades_df.get("quantity", pd.Series(index=normalized_trades_df.index, dtype="float64")),
+            errors="coerce",
+        )
+
+        for trade in normalized_trades_df.itertuples(index=False):
+            symbol = str(getattr(trade, "symbol", "") or "").strip()
+            execution_date = getattr(trade, "execution_date", pd.NaT)
+            quantity = getattr(trade, "quantity", float("nan"))
+            if not symbol or pd.isna(execution_date) or pd.isna(quantity):
+                continue
+            quantity_value = float(quantity)
+            if abs(quantity_value) < 1e-8:
+                continue
+            execution_ts = pd.Timestamp(execution_date).normalize()
+            _register_position_delta(position_deltas, execution_ts, symbol, quantity_value)
+
+            exit_date = getattr(trade, "exit_date", pd.NaT)
+            if not pd.isna(exit_date):
+                exit_ts = pd.Timestamp(exit_date).normalize()
+                _register_position_delta(position_deltas, exit_ts, symbol, -quantity_value)
+
+    active_positions: dict[str, float] = {}
+    snapshot_rows: list[dict[str, object]] = []
+    for equity_row in equity_df.itertuples(index=False):
+        trade_date = pd.Timestamp(equity_row.trade_date).normalize()
+        for symbol, delta in sorted(position_deltas.get(trade_date, {}).items()):
+            updated_quantity = active_positions.get(symbol, 0.0) + float(delta)
+            if abs(updated_quantity) < 1e-8:
+                active_positions.pop(symbol, None)
+            else:
+                active_positions[symbol] = updated_quantity
+
+        held_symbols = sorted(active_positions)
+        positions_detail = (
+            ", ".join(
+                f"{symbol} ({_format_position_quantity(active_positions[symbol])})"
+                for symbol in held_symbols
+            )
+            if held_symbols
+            else "—"
+        )
+        snapshot_rows.append(
+            {
+                "trade_date": trade_date,
+                "portfolio_value": float(equity_row.portfolio_value) if pd.notna(equity_row.portfolio_value) else float("nan"),
+                "open_positions": len(held_symbols),
+                "position_units_total": sum(abs(float(quantity)) for quantity in active_positions.values()),
+                "held_symbols": ", ".join(held_symbols) if held_symbols else "—",
+                "positions_detail": positions_detail,
+            }
+        )
+
+    return pd.DataFrame(snapshot_rows, columns=columns)
 
 
 def _resolve_phase2_risk_summary(
@@ -2748,6 +2871,7 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
 def _render_live_artifacts(run_record: dict[str, object]) -> bool:
     equity_curve_df = _load_equity_curve_df(run_record)
     trades_df = _load_run_trades_df(run_record)
+    daily_snapshot_df = _build_daily_portfolio_snapshot_df(equity_curve_df, trades_df)
     rendered = False
 
     if not equity_curve_df.empty and {"trade_date", "portfolio_value"}.issubset(equity_curve_df.columns):
@@ -2770,6 +2894,34 @@ def _render_live_artifacts(run_record: dict[str, object]) -> bool:
         st.markdown("**🧾 Aperçu des trades du run**")
         st.caption(f"{len(trades_df)} ligne(s) dans `trades.csv`.")
         st.dataframe(trades_df.head(200), use_container_width=True, hide_index=True)
+
+    if not daily_snapshot_df.empty:
+        rendered = True
+        st.markdown("**📅 Journal quotidien portefeuille / positions**")
+        st.caption(
+            "Reconstruction en fin de séance à partir de `equity_curve.csv` et `trades.csv` : "
+            "positions encore détenues, détail des titres et valeur de portefeuille."
+        )
+        display_df = daily_snapshot_df.rename(
+            columns={
+                "trade_date": "Date",
+                "portfolio_value": "Valeur portefeuille",
+                "open_positions": "Positions ouvertes",
+                "position_units_total": "Quantité totale",
+                "held_symbols": "Titres détenus",
+                "positions_detail": "Détail positions",
+            }
+        ).copy()
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        snapshot_csv = daily_snapshot_df.copy()
+        snapshot_csv["trade_date"] = snapshot_csv["trade_date"].dt.strftime("%Y-%m-%d")
+        st.download_button(
+            label="⬇️ Télécharger le journal quotidien portefeuille / positions",
+            data=snapshot_csv.to_csv(index=False).encode("utf-8"),
+            file_name=f"{_coerce_metric_text(run_record.get('run_id')).replace('—', 'backtest')}_daily_portfolio_snapshot.csv",
+            mime="text/csv",
+            key=f"download_daily_portfolio_snapshot_{_coerce_metric_text(run_record.get('run_id'))}",
+        )
 
     return rendered
 

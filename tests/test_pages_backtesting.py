@@ -8,6 +8,69 @@ def test_pages_backtesting_importable() -> None:
     assert hasattr(backtesting, "__doc__")
 
 
+def test_build_daily_portfolio_snapshot_df_reconstructs_positions_from_trades_and_equity_curve() -> None:
+    equity_curve_df = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"]),
+            "portfolio_value": [10_000.0, 10_150.0, 10_080.0, 10_220.0],
+        }
+    )
+    trades_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL", "MSFT"],
+            "execution_date": pd.to_datetime(["2025-01-02", "2025-01-03"]),
+            "exit_date": pd.to_datetime(["2025-01-07", None]),
+            "quantity": [10.0, 5.0],
+        }
+    )
+
+    snapshot_df = backtesting._build_daily_portfolio_snapshot_df(equity_curve_df, trades_df)
+
+    assert snapshot_df["trade_date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2025-01-02",
+        "2025-01-03",
+        "2025-01-06",
+        "2025-01-07",
+    ]
+    assert snapshot_df["portfolio_value"].tolist() == [10_000.0, 10_150.0, 10_080.0, 10_220.0]
+    assert snapshot_df["open_positions"].tolist() == [1, 2, 2, 1]
+    assert snapshot_df["held_symbols"].tolist() == [
+        "AAPL",
+        "AAPL, MSFT",
+        "AAPL, MSFT",
+        "MSFT",
+    ]
+    assert snapshot_df["positions_detail"].tolist() == [
+        "AAPL (10)",
+        "AAPL (10), MSFT (5)",
+        "AAPL (10), MSFT (5)",
+        "MSFT (5)",
+    ]
+
+
+def test_build_daily_portfolio_snapshot_df_excludes_same_day_round_trip_from_end_of_day_holdings() -> None:
+    equity_curve_df = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2025-01-02", "2025-01-03"]),
+            "portfolio_value": [10_000.0, 10_010.0],
+        }
+    )
+    trades_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL"],
+            "entry_date": pd.to_datetime(["2025-01-02"]),
+            "exit_date": pd.to_datetime(["2025-01-02"]),
+            "quantity": [10.0],
+        }
+    )
+
+    snapshot_df = backtesting._build_daily_portfolio_snapshot_df(equity_curve_df, trades_df)
+
+    assert snapshot_df["open_positions"].tolist() == [0, 0]
+    assert snapshot_df["held_symbols"].tolist() == ["—", "—"]
+    assert snapshot_df["positions_detail"].tolist() == ["—", "—"]
+
+
 def test_parameter_reference_rows_include_screener_commands() -> None:
     diagnose_rows = backtesting._parameter_reference_rows("diagnose-screener")
     recommend_rows = backtesting._parameter_reference_rows("recommend-screener")
