@@ -462,6 +462,11 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
                 "Explication": "Interdit les sorties le jour même de l'entrée.",
                 "Défaut": "False",
             },
+            {
+                "Paramètre": "allow_fractional_shares",
+                "Explication": "Autorise les quantités fractionnaires côté sizing/replay backtest. Dans l'IHM, ce réglage est exposé via un switch persistant activé par défaut.",
+                "Défaut": "False CLI / activé par défaut dans l'IHM",
+            },
             {"Paramètre": "sentiment_lookback", "Explication": "Fenêtre historique sentiment passée à la CLI backtesting.", "Défaut": "365"},
             {"Paramètre": "no_save", "Explication": "Désactive l'écriture des artefacts PNG/CSV.", "Défaut": "False"},
             {"Paramètre": "ml_mode", "Explication": "auto/off/rebuild-missing pour la composante ML.", "Défaut": "auto"},
@@ -2338,6 +2343,25 @@ def _format_position_quantity(quantity: float) -> str:
     return f"{rounded_quantity:.4f}".rstrip("0").rstrip(".")
 
 
+def _format_position_notional(amount: float) -> str:
+    return f"${float(amount):,.2f}"
+
+
+def _resolve_trade_entry_notional(trade: object) -> float | None:
+    entry_cost = getattr(trade, "entry_cost", float("nan"))
+    if pd.notna(entry_cost):
+        resolved_entry_cost = abs(float(entry_cost))
+        if resolved_entry_cost >= 1e-8:
+            return resolved_entry_cost
+    entry_price = getattr(trade, "entry_price", float("nan"))
+    quantity = getattr(trade, "quantity", float("nan"))
+    if pd.notna(entry_price) and pd.notna(quantity):
+        resolved_notional = abs(float(quantity)) * float(entry_price)
+        if resolved_notional >= 1e-8:
+            return resolved_notional
+    return None
+
+
 def _register_position_delta(
     position_deltas: dict[pd.Timestamp, dict[str, float]],
     trade_date: pd.Timestamp,
@@ -2346,6 +2370,13 @@ def _register_position_delta(
 ) -> None:
     per_day = position_deltas.setdefault(trade_date, {})
     per_day[symbol] = per_day.get(symbol, 0.0) + float(quantity_delta)
+
+
+def _build_position_detail_text(symbol: str, quantity: float, entry_notional: float | None) -> str:
+    quantity_text = _format_position_quantity(quantity)
+    if entry_notional is None or not pd.notna(entry_notional) or abs(float(entry_notional)) < 1e-8:
+        return f"{symbol} ({quantity_text})"
+    return f"{symbol} ({quantity_text} | {_format_position_notional(float(entry_notional))})"
 
 
 def _build_daily_portfolio_snapshot_df(
@@ -2372,6 +2403,7 @@ def _build_daily_portfolio_snapshot_df(
         return pd.DataFrame(columns=columns)
 
     position_deltas: dict[pd.Timestamp, dict[str, float]] = {}
+    position_notional_deltas: dict[pd.Timestamp, dict[str, float]] = {}
     if not trades_df.empty and "symbol" in trades_df.columns:
         normalized_trades_df = trades_df.copy()
         for column_name in ("execution_date", "entry_date", "trade_date", "exit_date", "replay_exit_date"):
@@ -2402,13 +2434,19 @@ def _build_daily_portfolio_snapshot_df(
                 continue
             execution_ts = pd.Timestamp(execution_date).normalize()
             _register_position_delta(position_deltas, execution_ts, symbol, quantity_value)
+            entry_notional = _resolve_trade_entry_notional(trade)
+            if entry_notional is not None:
+                _register_position_delta(position_notional_deltas, execution_ts, symbol, entry_notional)
 
             exit_date = getattr(trade, "exit_date", pd.NaT)
             if not pd.isna(exit_date):
                 exit_ts = pd.Timestamp(exit_date).normalize()
                 _register_position_delta(position_deltas, exit_ts, symbol, -quantity_value)
+                if entry_notional is not None:
+                    _register_position_delta(position_notional_deltas, exit_ts, symbol, -entry_notional)
 
     active_positions: dict[str, float] = {}
+    active_position_notionals: dict[str, float] = {}
     snapshot_rows: list[dict[str, object]] = []
     for equity_row in equity_df.itertuples(index=False):
         trade_date = pd.Timestamp(equity_row.trade_date).normalize()
@@ -2418,11 +2456,17 @@ def _build_daily_portfolio_snapshot_df(
                 active_positions.pop(symbol, None)
             else:
                 active_positions[symbol] = updated_quantity
+        for symbol, delta in sorted(position_notional_deltas.get(trade_date, {}).items()):
+            updated_notional = active_position_notionals.get(symbol, 0.0) + float(delta)
+            if abs(updated_notional) < 1e-8:
+                active_position_notionals.pop(symbol, None)
+            else:
+                active_position_notionals[symbol] = updated_notional
 
         held_symbols = sorted(active_positions)
         positions_detail = (
             ", ".join(
-                f"{symbol} ({_format_position_quantity(active_positions[symbol])})"
+                _build_position_detail_text(symbol, active_positions[symbol], active_position_notionals.get(symbol))
                 for symbol in held_symbols
             )
             if held_symbols
@@ -2935,7 +2979,8 @@ def _render_live_artifacts(run_record: dict[str, object]) -> bool:
         st.markdown("**📅 Journal quotidien portefeuille / positions**")
         st.caption(
             "Reconstruction en fin de séance à partir de `equity_curve.csv` et `trades.csv` : "
-            "positions encore détenues, détail des titres et valeur de portefeuille."
+            "positions encore détenues, détail des titres (quantité + montant d'entrée cumulé quand disponible) "
+            "et valeur de portefeuille."
         )
         display_df = daily_snapshot_df.rename(
             columns={

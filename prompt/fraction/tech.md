@@ -7,7 +7,7 @@ Est-ce qu'il existe un paramètre centralisé à activer, ou faut-il modifier du
 ## Réponse courte
 Non, il ne faut **pas modifier partout dans le code**.
 
-En l'état actuel du dépôt, l'activation est **centralisée par sous-système**, mais **pas via un unique switch global partagé** entre backtest et live :
+L'activation est désormais **centralisée par sous-système** et **pilotable opérateur** via CLI et IHM, même s'il n'existe toujours pas un unique flag global partagé entre backtest et live :
 
 - **Backtest** : flag central = `RiskConfig.allow_fractional_shares`
 - **Live / paper execution** : flag central = `ExecutionConfig.allow_fractional_shares`
@@ -18,7 +18,8 @@ En l'état actuel du dépôt, l'activation est **centralisée par sous-système*
 Donc :
 - **pas besoin de modifier les algos partout** ;
 - **oui**, il faut activer le bon paramètre **dans la config qui alimente le backtest** et **dans celle qui alimente le live** ;
-- **non**, il n'existe pas aujourd'hui un unique flag global dans `config.yaml` qui active tout d'un coup.
+- **oui**, cette activation est désormais exposée en **CLI** et dans l'**IHM** ;
+- **non**, il n'existe toujours pas un unique flag global dans `config.yaml` qui active tout d'un coup.
 
 ---
 
@@ -55,7 +56,9 @@ Dans `backtesting/simulator.py` :
   - tronque à l'entier sinon
 
 ### Conclusion backtest
-Pour activer le fractionnaire en backtest, il suffit normalement d'ajouter dans le preset capital utilisé :
+Pour activer le fractionnaire en backtest, trois voies existent désormais :
+
+1. **preset capital** :
 
 ```yaml
 risk_allow_fractional_shares: true
@@ -63,8 +66,20 @@ risk_allow_fractional_shares: true
 
 Exemple dans `config/capital_presets.yaml`, dans `values:` du preset visé.
 
+2. **CLI backtest** :
+
+```powershell
+python -m backtesting run --start 2025-01-01 --allow-fractional-shares
+```
+
+3. **IHM backtest** : switch persistant `Autoriser les quantités fractionnaires en backtest`, restauré depuis :
+
+```text
+artifacts/ihm_preferences/fractional_trading.json
+```
+
 ### Important
-Aujourd'hui, les presets visibles dans `config/capital_presets.yaml` n'activent pas ce flag par défaut.
+Les presets visibles dans `config/capital_presets.yaml` ne l'activent pas nécessairement par défaut ; l'IHM, elle, propose un **switch activé par défaut** pour les runs lancés depuis l'interface.
 
 Donc si tu veux du fractionnaire en backtest, tu dois **l'ajouter dans le ou les presets concernés**.
 
@@ -120,7 +135,17 @@ config = ExecutionConfig(**preset, ...)
 ```
 
 ### Conclusion live
-Pour activer les entrées fractionnaires en live/paper, il faut renseigner dans le preset runtime concerné :
+Pour activer les entrées fractionnaires en live/paper, trois voies existent désormais :
+
+1. **CLI exécution** :
+
+```powershell
+python run_execution.py paper --allow-fractional-shares
+```
+
+2. **IHM pipeline** : switch persistant `Execution/Risk — autoriser les quantités fractionnaires`.
+
+3. **preset runtime** : si l'on veut l'activer structurellement dans les presets Python :
 
 ```python
 "allow_fractional_shares": True,
@@ -139,24 +164,16 @@ ou plus explicitement :
 ```
 
 ### Important
-Actuellement, dans `run_execution.py`, les presets `simulate`, `paper` et `live` ne contiennent pas ces flags.
-
-Donc en l'état :
-- le support existe ;
-- mais il n'est pas activé par défaut ;
-- et il n'y a pas de CLI ou de `config.yaml` global déjà branché pour le piloter directement.
+Le support existe côté `ExecutionConfig`, et il est maintenant pilotable sans toucher au code via `run_execution.py --allow-fractional-shares` ou depuis l'IHM. En revanche, il n'existe toujours pas de **flag global YAML unique** branché simultanément sur backtest + risk + execution.
 
 ### Est-ce qu'il faut modifier plusieurs modules live ?
 **Non**, pas partout.
 
-En pratique, il suffit de modifier **la source centrale du preset runtime** dans `run_execution.py`.
+En pratique, il suffit soit :
 
-Si tu veux rendre ça pilotable sans toucher au code à l'avenir, il faudrait faire **une petite évolution de plomberie config** :
-- soit ajouter un flag CLI,
-- soit lire ces valeurs depuis un YAML central,
-- soit injecter un preset d'exécution externe.
-
-Mais ce n'est **pas nécessaire** pour que ça fonctionne maintenant.
+- d'utiliser le flag CLI `--allow-fractional-shares` ;
+- soit d'utiliser le switch IHM persistant ;
+- soit, pour un comportement structurel, de modifier la source centrale du preset runtime dans `run_execution.py`.
 
 ---
 
@@ -188,7 +205,15 @@ values:
 ```
 
 ### Si ton objectif est d'activer le fractionnaire en paper/live
-Modifier le preset concerné dans `run_execution.py` :
+Le plus simple est désormais :
+
+```powershell
+python run_execution.py paper --allow-fractional-shares
+```
+
+Ou via l'IHM Pipeline, avec persistance serveur du switch.
+
+Pour un comportement imposé par preset, modifier le preset concerné dans `run_execution.py` :
 
 ```python
 "allow_fractional_shares": True,
@@ -215,12 +240,13 @@ La bonne approche serait de définir une config partagée (YAML ou preset centra
 ## 5. Conclusion nette
 
 ### Aujourd'hui
-- **Backtest** : activation via `risk_allow_fractional_shares: true` dans le preset capital
-- **Live** : activation via `allow_fractional_shares=True` dans le preset runtime de `run_execution.py`
+- **Backtest** : activation via `risk_allow_fractional_shares: true`, via `python -m backtesting run --allow-fractional-shares`, ou via le switch IHM persistant
+- **Live** : activation via `python run_execution.py ... --allow-fractional-shares`, via le switch IHM Pipeline, ou via `allow_fractional_shares=True` dans le preset runtime
 - **Protections live fractionnaires** : via `fractional_live_mode` / `allow_fractional_live_protections`
 
 ### Donc
 - **non**, pas besoin de modifier partout ;
 - **non**, il n'y a pas un unique paramètre global déjà branché pour tout ;
-- **oui**, l'activation est déjà largement centralisée, mais **séparément** pour backtest et live.
+- **oui**, l'activation est déjà largement centralisée, mais **séparément** pour backtest et live ;
+- **oui**, elle est désormais documentée et pilotable côté opérateur via IHM + CLI.
 

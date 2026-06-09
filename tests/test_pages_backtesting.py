@@ -21,6 +21,7 @@ def test_build_daily_portfolio_snapshot_df_reconstructs_positions_from_trades_an
             "execution_date": pd.to_datetime(["2025-01-02", "2025-01-03"]),
             "exit_date": pd.to_datetime(["2025-01-07", None]),
             "quantity": [10.0, 5.0],
+            "entry_price": [150.0, 400.0],
         }
     )
 
@@ -41,10 +42,10 @@ def test_build_daily_portfolio_snapshot_df_reconstructs_positions_from_trades_an
         "MSFT",
     ]
     assert snapshot_df["positions_detail"].tolist() == [
-        "AAPL (10)",
-        "AAPL (10), MSFT (5)",
-        "AAPL (10), MSFT (5)",
-        "MSFT (5)",
+        "AAPL (10 | $1,500.00)",
+        "AAPL (10 | $1,500.00), MSFT (5 | $2,000.00)",
+        "AAPL (10 | $1,500.00), MSFT (5 | $2,000.00)",
+        "MSFT (5 | $2,000.00)",
     ]
 
 
@@ -96,9 +97,30 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
     assert any(row["Paramètre"] == "phase4_mode" for row in run_rows)
     assert any(row["Paramètre"] == "phase5_mode" for row in run_rows)
     assert any(row["Paramètre"] == "phase7_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "allow_fractional_shares" for row in run_rows)
     assert any(row["Paramètre"] == "allow_neutral_fallback_on_missing_macro_data" for row in run_rows)
     assert any(row["Paramètre"] == "fidelity_baseline_id" for row in run_rows)
     assert any(row["Paramètre"] == "fidelity_baseline_catalog" for row in run_rows)
+
+
+def test_build_daily_portfolio_snapshot_df_falls_back_to_quantity_only_when_entry_notional_is_missing() -> None:
+    equity_curve_df = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2025-01-02"]),
+            "portfolio_value": [10_000.0],
+        }
+    )
+    trades_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL"],
+            "execution_date": pd.to_datetime(["2025-01-02"]),
+            "quantity": [10.0],
+        }
+    )
+
+    snapshot_df = backtesting._build_daily_portfolio_snapshot_df(equity_curve_df, trades_df)
+
+    assert snapshot_df["positions_detail"].tolist() == ["AAPL (10)"]
 
 
 def test_run_configuration_preset_pipeline_live_like_exposes_expected_phase_chain() -> None:

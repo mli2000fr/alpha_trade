@@ -258,6 +258,33 @@ Après cutover, la chaîne nominale d'exécution à superviser est :
 
 La page `Exécution` de l'IHM privilégie cette lecture **scopée par run**. Le watcher de protections reste un composant **secondaire** de supervision post-run : utile si l'on souhaite promouvoir un stop initial vers un trailing stop dynamique, mais distinct du pipeline quotidien `1 → 14`.
 
+### Mode fractionnaire : backtest + pipeline live
+
+Le dépôt supporte désormais explicitement l'activation des **quantités fractionnaires** sur les deux surfaces opérateur principales :
+
+- **Backtesting IHM** : switch persistant activé par défaut sur la page `🧪 Backtesting` ;
+- **Pipeline IHM** : switch persistant activé par défaut sur la page `🔄 Pipeline` pour propager le mode fractionnaire aux étapes `risk_management` et `execution` ;
+- **CLI backtest** : `python -m backtesting run ... --allow-fractional-shares` ;
+- **CLI exécution** : `python run_execution.py paper --allow-fractional-shares` (ou `simulate` / `live`) ;
+- **CLI risk** : `python -m risk_management.run_risk ... --allow-fractional-shares`.
+
+La préférence IHM est persistée côté serveur dans :
+
+- `artifacts/ihm_preferences/fractional_trading.json`
+
+En backtest, le journal quotidien portefeuille / positions affiché dans l'IHM enrichit aussi la colonne **`Détail positions`** avec :
+
+- la **quantité** détenue ;
+- le **montant d'entrée cumulé** par position quand `trades.csv` expose `entry_cost` ou `entry_price`.
+
+Exemples CLI :
+
+```powershell
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only --allow-fractional-shares
+python -m risk_management.run_risk --account-equity 100000 --allow-fractional-shares
+python run_execution.py paper --allow-fractional-shares
+```
+
 ---
 
 ## 7. Corporate Actions

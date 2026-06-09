@@ -46,14 +46,14 @@ Les pages **hors workflow quotidien** sont volontairement regroupées en fin de 
 | Page | Description |
 |---|---|
 | 🏠 Vue d'ensemble | KPI, alertes, top candidats, santé DB |
-| 🔄 Pipeline | Workflow quotidien 1→14 + steps auxiliaires Data Integrity (`import_alpaca_assets`, `update_sector`), lancement en arrière-plan, arrêt, historique, comparaison, téléchargement des logs et résumés métier |
+| 🔄 Pipeline | Workflow quotidien 1→14 + steps auxiliaires Data Integrity (`import_alpaca_assets`, `update_sector`), lancement en arrière-plan, arrêt, historique, comparaison, téléchargement des logs et résumés métier, avec switch persistant `quantités fractionnaires` appliqué aux étapes Risk + Execution |
 | 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) + lecture directe des recommandations screener par objectif (robuste, offensif, bear, exécutable) |
 | 🤖 ML / Prédictions | Runs training, métriques, prédictions LSTM |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
 | 🚀 Execution | Vue canonique run-scopée : targets snapshot, requests, ordres broker, fills, positions/lots, TCA, réconciliation ; contexte compte en lecture secondaire |
 | 🏦 Comptes Alpaca | Consultation live des comptes broker : état du compte, évolution du capital, positions, ordres, plus fallback sur les snapshots / runs persistés en base |
 | 📑 Corporate Actions | Événements CA, applications, dividendes cumulés |
-| 🧪 Backtesting | Formulaire complet des commandes `backtesting run`, `backfill-scores-history`, `diagnose-screener` et `recommend-screener`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
+| 🧪 Backtesting | Formulaire complet des commandes `backtesting run`, `backfill-scores-history`, `diagnose-screener` et `recommend-screener`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis, graphique live des artefacts, switch persistant `quantités fractionnaires` et journal quotidien des positions enrichi |
 | 🗃️ Administration DB | Outils d'inspection / maintenance SQL et plan de vidage contrôlé |
 | ⚙️ Paramètres / Santé | Variables d'env, connexion DB, dépendances, version Python |
 
@@ -78,6 +78,13 @@ Le bloc de paramètres expose aussi les options réellement supportées côté b
 - `sync_latest_quotes` (`limit`, `batch-size`) ;
 - `sync_earnings_calendar` (`from-date`, `to-date`, `limit`, `sleep-seconds`) ;
 - `update_sector` (`limit`, `sleep-seconds`, `log-every`).
+
+La page **🔄 Pipeline** expose désormais aussi un switch persistant **`Execution/Risk — autoriser les quantités fractionnaires`** :
+
+- activé par défaut côté IHM ;
+- propagé à `python -m risk_management ... --allow-fractional-shares` ;
+- propagé à `python run_execution.py ... --allow-fractional-shares` ;
+- persisté côté serveur dans `artifacts/ihm_preferences/fractional_trading.json`.
 
 Le panneau `ML Train` expose désormais aussi deux familles complémentaires de réglages selector-driven :
 
@@ -153,6 +160,23 @@ Cela couvre aussi `event_sentiment` et `signal_aggregator`, avec des métriques 
 Les logs IHM sont persistés sous `artifacts/ihm_pipeline_runs/`.
 
 Les runs de backtesting lancés depuis l'IHM sont persistés sous `artifacts/ihm_backtesting_runs/`.
+
+## Focus page Backtesting
+
+La page **🧪 Backtesting** expose désormais un switch persistant **`Autoriser les quantités fractionnaires en backtest`** :
+
+- activé par défaut côté IHM ;
+- propagé à `python -m backtesting run ... --allow-fractional-shares` ;
+- restauré automatiquement au redémarrage du serveur via `artifacts/ihm_preferences/fractional_trading.json`.
+
+Le bloc **`📘 Référence complète des paramètres`** documente explicitement `allow_fractional_shares`.
+
+Le panneau **`📅 Journal quotidien portefeuille / positions`** enrichit désormais la colonne **`Détail positions`** avec :
+
+- la quantité détenue ;
+- le montant d'entrée cumulé par position quand l'information est disponible dans `trades.csv`.
+
+Exemple d'affichage : `AAPL (10 | $1,500.00)`.
 
 ## Focus page Exécution
 

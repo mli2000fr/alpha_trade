@@ -93,11 +93,11 @@ alpha_trade/
 | `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) + profils de filtres stricts partagés |
 | `event_sentiment/` | NLP FinBERT + fusion scores quant/sentiment |
 | `modelFactory/` | Gouvernance ML multi-modèles : LSTM per-symbol, challengers tabulaires locaux, modèle global optionnel, sélection du champion et serving d'inférence |
-| `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
-| `execution_engine/` | Chaîne canonique d'exécution (requests, ordres broker, fills, positions/lots, réconciliation) + watcher post-exécution secondaire |
+| `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille, dont `RiskConfig.allow_fractional_shares` pour le sizing fractionnaire |
+| `execution_engine/` | Chaîne canonique d'exécution (requests, ordres broker, fills, positions/lots, réconciliation) + watcher post-exécution secondaire, avec support des entrées/protections fractionnaires piloté par `ExecutionConfig` |
 | `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
-| `backtesting/` | Backtest intégré research/pipeline : replay PIT, contraintes compte, phases de fidélité 2/3/4/5/7, backfill, diagnostics screener, calibration sentiment, reporting structuré |
-| `ihm/` | IHM Streamlit : supervision pipeline, scores, risque, exécution, CA |
+| `backtesting/` | Backtest intégré research/pipeline : replay PIT, contraintes compte, phases de fidélité 2/3/4/5/7, backfill, diagnostics screener, calibration sentiment, reporting structuré, support fractionnaire via `--allow-fractional-shares` |
+| `ihm/` | IHM Streamlit : supervision pipeline, scores, risque, exécution, CA, préférences persistantes côté serveur et propagation des switches fractionnaires |
 
 ---
 
@@ -197,12 +197,16 @@ Points d'intégration techniques :
 - `common/capital_presets.py`
   - mapping preset -> `RiskConfig` via `build_risk_config_kwargs_from_preset()`
   - mapping preset -> defaults CLI backtest via `apply_backtest_defaults_from_preset()`
+  - projection `risk_allow_fractional_shares` -> `allow_fractional_shares`
 - `risk_management/cli.py`
   - résolution preset depuis `effective_equity` puis injection dans `RiskConfig`
+  - flag explicite `--allow-fractional-shares`
 - `run_execution.py`
   - résolution preset depuis equity broker et initialisation du `CircuitBreaker` avec ces valeurs
+  - flag explicite `--allow-fractional-shares` propageant `ExecutionConfig.allow_fractional_shares`
 - `backtesting/cli/_impl.py`
   - résolution des defaults `dd_rolling_peak_window_days` / `dd_degraded_allocation_pct` depuis preset
+  - flag explicite `--allow-fractional-shares` réinjecté dans `RiskConfig` et dans le replay d'exécution
 - `backtesting/simulator.py`
   - export `drawdown_breaker_daily.csv` (si breaker actif)
 
@@ -405,6 +409,8 @@ Le launcher canonique construit ensuite, dans cet ordre :
 - un `BrokerAdapter` ;
 - un `OcoManager` ;
 - puis un `ProductionExecutor` qui exécute `execute_run(risk_run_id, trade_date)`.
+
+Depuis l'évolution fractionnaire, `run_execution.py` accepte aussi `--allow-fractional-shares` et l'injecte dans le preset runtime final avant instanciation de `ExecutionConfig`. La même sémantique est utilisée par la page `Pipeline` de l'IHM pour garder l'alignement entre UI et CLI.
 
 ### 5.2 Appels API
 
@@ -718,6 +724,11 @@ La page `ihm/pages/pipeline.py` expose désormais :
 - un **centre d'exécution & d'investigation** pour suivre les runs actifs, consulter/télécharger les logs et comparer deux runs ;
 - des **résumés métier structurés** extraits automatiquement quand un script écrit un payload préfixé par `::alpha_trade_run_summary::`.
 
+Elle expose aussi un switch persistant **fractionnaire** côté opérateur, implémenté dans `ihm/pages/_execution_center/__init__.py` et persisté via `ihm/services/fractional_trading_preferences.py` dans `artifacts/ihm_preferences/fractional_trading.json`. Ce switch pilote en même temps :
+
+- `python -m risk_management ... --allow-fractional-shares` ;
+- `python run_execution.py ... --allow-fractional-shares`.
+
 Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent aussi un sous-ensemble cohérent des options `modelFactory` :
 
 - **Accélérateur ML** (`auto | cpu | gpu`) ;
@@ -761,6 +772,9 @@ python -m backtesting run --start 2025-01-01 --end 2025-03-31 --engine-mode pipe
 # Cash account + swing strict
 python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only
 
+# Cash account + swing strict + quantités fractionnaires
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only --allow-fractional-shares
+
 # Replay le plus proche du pipeline live aujourd'hui
 python -m backtesting run --start 2025-01-01 --end 2025-03-31 --engine-mode pipeline --ml-pit-strategy use-persisted --phase2-mode risk_execution --phase3-mode execution_replay --phase4-mode protection_replay --phase5-mode watcher_replay --phase7-mode exit_lifecycle_replay
 
@@ -782,10 +796,15 @@ python -m backtesting walk-forward-sentiment --start 2024-01-01 --end 2025-12-31
 Notes :
 
 - `--engine-mode pipeline` exige un historique PIT valide dans `stock_scores_history` ;
+- `--allow-fractional-shares` alimente `RiskConfig.allow_fractional_shares` et, si les phases de fidélité d'exécution sont activées, le replay `ExecutionConfig.allow_fractional_shares` ;
 - `--phase3-mode` dépend de `phase2_mode=risk_execution`, `--phase4-mode` dépend de `phase3-mode`, `--phase5-mode` dépend de `phase4-mode`, `--phase7-mode` dépend de `phase5-mode` ;
 - `report.json` inclut `summary`, `params`, `diagnostics`, `run_metadata` et `fidelity` ;
 - `fidelity_manifest.json` documente les dégradations PIT éventuelles ;
 - les modules `analytics.py`, `cache.py` et `statistical_validation.py` fournissent des briques complémentaires non branchées automatiquement à la commande `run` standard.
+
+La page `ihm/pages/backtesting/__init__.py` expose le même réglage sous forme de switch persistant, stocké dans `artifacts/ihm_preferences/fractional_trading.json`, puis propagé à `BacktestRunOptions.allow_fractional_shares` et au launcher `python -m backtesting run`.
+
+Cette page reconstruit aussi un tableau **`Journal quotidien portefeuille / positions`** à partir de `equity_curve.csv` et `trades.csv`. Depuis l'évolution courante, la colonne **`Détail positions`** affiche non seulement la quantité par symbole, mais aussi le **montant d'entrée cumulé** quand `entry_cost` ou `entry_price` sont disponibles dans `trades.csv`.
 
 ### Execution Engine — contraintes de compte
 

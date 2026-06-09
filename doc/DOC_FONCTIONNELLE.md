@@ -100,6 +100,7 @@ L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 | **Protections broker-side** | Stop initial + take-profit soumis via des requests distinctes après fill ; si activé, le watcher peut ensuite promouvoir le stop initial vers un trailing stop dynamique |
 | **OCO logique** | Si le TP ou le TS est exécuté, l'autre est automatiquement annulé |
 | **Ordres de rééquilibrage** | Vente d'excédent ou achat complémentaire lors de la réconciliation |
+| **Quantités fractionnaires** | Support optionnel des tailles décimales en backtest, paper et live via un switch IHM persistant et des flags CLI dédiés |
 | **Idempotence** | Clé SHA-256 basée sur risk_run_id + symbole + rôle pour éviter les doublons |
 
 ### 2.3 Stratégies de trading utilisées
@@ -116,6 +117,20 @@ Cette API composable permet d'évaluer une stratégie avec **2 000 $** ou un aut
 - le **style de trading swing**.
 
 Cette logique n'est plus limitée au backtest : le module `execution_engine` applique aussi ces contraintes au moment de la soumission des ordres et de l'armement des sorties.
+
+Le comportement opérateur associé est désormais le suivant :
+
+- **Backtest IHM** : un switch `Autoriser les quantités fractionnaires en backtest` est visible et activé par défaut ;
+- **Pipeline IHM** : un switch `Execution/Risk — autoriser les quantités fractionnaires` est visible et activé par défaut ;
+- la préférence est **persistée côté serveur** et restaurée au redémarrage de l'IHM ;
+- la désactivation force un comportement entier pour les runs lancés depuis l'interface.
+
+Pour l'opérateur, cela permet de distinguer plus clairement :
+
+- les runs de **petit capital** nécessitant des tailles décimales ;
+- les runs de validation/exploitation où l'on souhaite conserver un comportement **strictement entier**.
+
+Sur la page backtest, cette évolution s'accompagne d'un enrichissement du tableau **`Journal quotidien portefeuille / positions`** : la colonne **`Détail positions`** affiche désormais la **quantité** et, quand disponible, le **montant d'entrée cumulé** par ligne afin de rendre la composition du portefeuille plus lisible séance par séance.
 
 #### Scanner multi-facteurs (AlphaScanner)
 - **Trend Score** (critères Minervini) : 7 critères techniques (close > MA150, MA150 > MA200, MA200 en hausse, close > MA50, close ≥ 1.25 × low 52w, close ≥ 0.75 × high 52w)

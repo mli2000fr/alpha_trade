@@ -174,21 +174,7 @@ def abort_missing_env(account_id: str | None = None, mode: str | None = None) ->
 # Menu interactif
 # ---------------------------------------------------------------------------
 
-def interactive_menu() -> tuple[
-    str,
-    str | None,
-    str | None,
-    bool,
-    bool,
-    bool,
-    str | None,
-    str,
-    str,
-    bool,
-    str,
-    str | None,
-    str | None,
-]:
+def interactive_menu() -> tuple[object, ...]:
     print(BANNER)
     print_env_status()
 
@@ -1273,20 +1259,19 @@ def main() -> None:
         sys.exit(0 if ok else 1)
 
     if args.mode is None:
-        (
-            mode,
-            run_id,
-            trade_date,
-            debug,
-            allow_outside_rth,
-            auto_rebalance,
-            account_id,
-            account_type,
-            swing_only,
-            submission_window,
-            approval_token,
-            run_plan_file,
-        ) = interactive_menu()
+        interactive_values = interactive_menu()
+        mode = cast(str, interactive_values[0])
+        run_id = cast(str | None, interactive_values[1])
+        trade_date = cast(str | None, interactive_values[2])
+        debug = bool(interactive_values[3])
+        allow_outside_rth = bool(interactive_values[4])
+        auto_rebalance = bool(interactive_values[5])
+        account_id = cast(str | None, interactive_values[6])
+        account_type = cast(str, interactive_values[7])
+        swing_only = bool(interactive_values[8])
+        submission_window = cast(str, interactive_values[9])
+        approval_token = cast(str | None, interactive_values[10])
+        run_plan_file = cast(str | None, interactive_values[11])
         auto_watcher = False
         skip_preflight = False
         allow_fractional_shares = False
