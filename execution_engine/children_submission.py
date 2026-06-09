@@ -33,6 +33,7 @@ from execution_engine.order_intents import (
     build_trailing_stop_intent,
     resolve_trailing_activation_price,
 )
+from common.quantity_utils import format_share_quantity, is_effectively_integer_quantity
 from service.alpaca.trading_client import BrokerApiError
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -57,6 +58,30 @@ def submit_children(
     fill_qty = filled_order.filled_qty
     fill_price = filled_order.avg_fill_price or parent.decision_price
     if fill_qty <= 0:
+        return events
+
+    if not is_effectively_integer_quantity(fill_qty) and not cfg.fractional_live_protections_enabled:
+        metrics["children_skipped_fractional_entry_only_mode"] = (
+            metrics.get("children_skipped_fractional_entry_only_mode", 0) + 1
+        )
+        events.append(
+            make_event(
+                exec_run_id,
+                EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT,
+                (
+                    f"Fractional protections skipped for {parent.symbol}: "
+                    f"entry-only mode qty={format_share_quantity(fill_qty)}"
+                ),
+                symbol=parent.symbol,
+                intent_id=parent.intent_id,
+                payload={
+                    "reason": "fractional_live_entry_only_mode",
+                    "fill_qty": fill_qty,
+                    "fractional_live_entries_enabled": cfg.fractional_live_entries_enabled,
+                    "fractional_live_protections_enabled": cfg.fractional_live_protections_enabled,
+                },
+            )
+        )
         return events
 
     defer_children, reason = should_defer_children(account_state)
@@ -220,7 +245,7 @@ def submit_rebalance_orders(
             continue
 
         qty = abs(diff.delta)
-        if qty < 1:
+        if qty <= 1e-9:
             continue
 
         if diff.action == "sell_excess":
@@ -232,8 +257,8 @@ def submit_rebalance_orders(
                 broker_mode=cfg.broker_mode,
             )
             action_label = (
-                f"SELL EXCESS {diff.symbol}: -{qty:.0f} shares "
-                f"(broker={diff.broker_qty:.0f} > cible={diff.target_qty})"
+                f"SELL EXCESS {diff.symbol}: -{format_share_quantity(qty)} shares "
+                f"(broker={format_share_quantity(diff.broker_qty)} > cible={format_share_quantity(diff.target_qty)})"
             )
         else:  # buy_more
             intent = build_rebalance_buy_intent(
@@ -244,8 +269,8 @@ def submit_rebalance_orders(
                 broker_mode=cfg.broker_mode,
             )
             action_label = (
-                f"BUY MORE {diff.symbol}: +{qty:.0f} shares "
-                f"(broker={diff.broker_qty:.0f} < cible={diff.target_qty})"
+                f"BUY MORE {diff.symbol}: +{format_share_quantity(qty)} shares "
+                f"(broker={format_share_quantity(diff.broker_qty)} < cible={format_share_quantity(diff.target_qty)})"
             )
 
             if not reserve_account_capacity_for_intent(

@@ -869,7 +869,7 @@ class ProductionExecutor:
                             safe_auto_diffs = [
                                 ReconcileDiff(
                                     symbol=result.symbol,
-                                    target_qty=int(result.target_qty),
+                                    target_qty=float(result.target_qty),
                                     broker_qty=result.broker_position_qty,
                                     delta=result.position_delta,
                                     action=result.action,

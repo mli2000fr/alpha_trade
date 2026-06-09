@@ -122,6 +122,10 @@ def _target_priority_key(target: ExecutionTarget) -> tuple[int, int, str]:
     )
 
 
+def _normalized_target_side(target: ExecutionTarget) -> str:
+    return str(getattr(target, "side", "") or "buy").strip().lower() or "buy"
+
+
 def filter_targets_by_live_regime_guards(
     *,
     targets: list[ExecutionTarget],
@@ -137,7 +141,7 @@ def filter_targets_by_live_regime_guards(
     blocked: list[dict[str, float | int | str | None]] = []
     kept_targets = list(targets)
 
-    if config.allow_fractional_shares and kept_targets:
+    if kept_targets:
         next_targets: list[ExecutionTarget] = []
         fractionable_lookup = {
             str(symbol).strip().upper(): bool(value)
@@ -147,6 +151,28 @@ def filter_targets_by_live_regime_guards(
             qty = normalize_share_quantity(getattr(target, "target_shares", 0.0))
             if is_effectively_integer_quantity(qty):
                 next_targets.append(target)
+                continue
+            if not config.fractional_live_entries_enabled:
+                blocked.append(
+                    {
+                        "symbol": target.symbol,
+                        "sector": target.sector,
+                        "target_weight": float(getattr(target, "target_weight", 0.0) or 0.0),
+                        "target_shares": qty,
+                        "reason": "fractional_shares_disabled",
+                    }
+                )
+                continue
+            if _normalized_target_side(target) in {"sell", "short"}:
+                blocked.append(
+                    {
+                        "symbol": target.symbol,
+                        "sector": target.sector,
+                        "target_weight": float(getattr(target, "target_weight", 0.0) or 0.0),
+                        "target_shares": qty,
+                        "reason": "fractional_short_not_supported",
+                    }
+                )
                 continue
             symbol = str(target.symbol).strip().upper()
             if fractionable_lookup.get(symbol) is True:

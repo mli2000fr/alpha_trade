@@ -668,6 +668,36 @@ Actions :
 - Un ordre non fractionable est bloqué avant broker avec message clair.
 - Les fills et positions restituent bien des quantités décimales.
 
+## Implémentation réalisée — 2026-06-09
+
+Réalisé :
+- `execution_engine/config.py`
+  - ajout d’un sous-flag explicite `allow_fractional_live_protections` ;
+  - ajout des propriétés runtime `fractional_live_entries_enabled` et `fractional_live_protections_enabled` pour clarifier le périmètre MVP.
+- `execution_engine/order_intents.py`
+  - blocage explicite des quantités fractionnaires si `allow_fractional_shares=False` (`reason=fractional_shares_disabled`) ;
+  - rejet explicite d’un target short/sell fractionnaire (`reason=fractional_short_not_supported`) ;
+  - conservation du garde-fou asset `fractionable=true` avant broker (`reason=asset_not_fractionable`).
+- `execution_engine/children_submission.py`
+  - borne MVP claire : une entrée fractionnaire live/paper est autorisée, mais les **protections fractionnaires broker-side** restent désactivées par défaut ;
+  - en mode entry-only, les enfants fractionnaires sont journalisés puis différés proprement sans appel broker ;
+  - rebalance/reconcile préparés à des quantités décimales côté logs et seuils de traitement.
+- `execution_engine/executor.py`
+  - suppression d’une troncature `int(...)` sur `ReconcileDiff.target_qty` afin de préserver les quantités fractionnaires jusque dans l’auto-rebalance.
+- validation sans changement fonctionnel complémentaire de :
+  - `execution_engine/db_io.py` (lecture snapshot / mapping `fractionable` déjà en `float` / `bool`) ;
+  - `database/assets.py` (colonne `fractionable` déjà consommable côté application) ;
+  - `execution_engine/order_intents.py` (payload Alpaca déjà centralisé via `format_share_quantity()`, validé par tests).
+
+## Tests exécutés
+
+```powershell
+python -m pytest -q -o addopts="" tests/test_order_intents.py tests/test_executor.py tests/test_execution_engine_executor.py
+```
+
+Résultat :
+- **67 tests passés** sur le périmètre Sprint 4.
+
 ## Risques traités
 - Rejets Alpaca évitables.
 - Déploiement trop ambitieux incluant les protections dès le premier lot live.

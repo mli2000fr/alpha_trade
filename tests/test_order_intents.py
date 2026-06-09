@@ -162,6 +162,21 @@ class TestBuildEntryIntents:
         assert blocked[0]["reason"] == "asset_not_fractionable"
         assert blocked[0]["symbol"] == "AAPL"
 
+    def test_filter_targets_by_live_regime_guards_blocks_fractional_target_when_flag_disabled(self) -> None:
+        cfg = ExecutionConfig(allow_fractional_shares=False)
+        targets = [_target(shares=0.5)]
+
+        kept, blocked = filter_targets_by_live_regime_guards(
+            targets=targets,
+            config=cfg,
+            fractionable_by_symbol={"AAPL": True},
+        )
+
+        assert kept == []
+        assert len(blocked) == 1
+        assert blocked[0]["reason"] == "fractional_shares_disabled"
+        assert blocked[0]["symbol"] == "AAPL"
+
     def test_filter_targets_by_live_regime_guards_keeps_fractional_target_when_asset_fractionable(self) -> None:
         cfg = ExecutionConfig(allow_fractional_shares=True)
         targets = [_target(shares=0.5)]
@@ -174,6 +189,26 @@ class TestBuildEntryIntents:
 
         assert [target.symbol for target in kept] == ["AAPL"]
         assert blocked == []
+
+    def test_filter_targets_by_live_regime_guards_blocks_fractional_short_target(self) -> None:
+        cfg = ExecutionConfig(allow_fractional_shares=True)
+        targets = [ExecutionTarget(
+            risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="AAPL",
+            target_shares=0.5, entry_price=150.0, target_weight=0.05,
+            sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+            side="sell",
+        )]
+
+        kept, blocked = filter_targets_by_live_regime_guards(
+            targets=targets,
+            config=cfg,
+            fractionable_by_symbol={"AAPL": True},
+        )
+
+        assert kept == []
+        assert len(blocked) == 1
+        assert blocked[0]["reason"] == "fractional_short_not_supported"
+        assert blocked[0]["symbol"] == "AAPL"
 
 
 class TestBuildChildren:
@@ -280,6 +315,13 @@ class TestIntentToPayload:
         intent = build_entry_intents([_target(shares=3.6540000001)], cfg, "run1")[0]
         p = intent_to_alpaca_payload(intent)
         assert p["qty"] == "3.654"
+
+    def test_fractional_limit_qty_uses_compact_decimal_format(self) -> None:
+        cfg = ExecutionConfig(entry_order_type="limit", allow_fractional_shares=True)
+        intent = build_entry_intents([_target(shares=0.125, price=100.0)], cfg, "run1")[0]
+        p = intent_to_alpaca_payload(intent)
+        assert p["qty"] == "0.125"
+        assert p["type"] == "limit"
 
     def test_trailing_stop_payload(self) -> None:
         cfg = ExecutionConfig(trailing_stop_pct=0.05)

@@ -101,6 +101,7 @@ class ExecutionConfig:
 
     # --- Execution ---
     allow_fractional_shares: bool = False
+    allow_fractional_live_protections: bool = False
     max_slippage_bps: int = 30
     max_order_retries: int = 3
     retry_base_delay_seconds: float = 1.0
@@ -216,6 +217,16 @@ class ExecutionConfig:
 
     def is_live(self) -> bool:
         return self.broker_mode == "live"
+
+    @property
+    def fractional_live_entries_enabled(self) -> bool:
+        """Active les entrées fractionnaires live/paper du MVP Sprint 4."""
+        return bool(self.allow_fractional_shares)
+
+    @property
+    def fractional_live_protections_enabled(self) -> bool:
+        """Les protections fractionnaires restent opt-in et hors MVP d'entrée."""
+        return bool(self.allow_fractional_shares and self.allow_fractional_live_protections)
 
     @property
     def blocks_new_entries(self) -> bool:
