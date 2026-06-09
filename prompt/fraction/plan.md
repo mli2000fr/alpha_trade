@@ -10,6 +10,25 @@ _Date : 2026-06-09_
 - [x] Structurer un plan d’évolution par sprint
 - [x] Sauvegarder le plan dans `prompt/fraction/plan.md`
 
+## Mise à jour — état réel Sprint 1 (revue du code au 2026-06-09)
+
+Après relecture directe du code, le **Sprint 1 n’est plus théorique** : une large partie des fondations est **déjà implémentée**.
+
+### Déjà en place
+- `risk_management/models.py` utilise déjà des `float` pour `proposed_shares`, `approved_shares` et `shares`.
+- `execution_engine/models.py` utilise déjà des `float` pour `ExecutionTarget.target_shares` et `ReconcileDiff.target_qty`.
+- `execution_engine/db_io.py` relit les quantités via `float(...)` sans re-troncature en `int`.
+- la migration `alembic/versions/0037_add_fractionable_and_fractional_target_shares.py` existe déjà :
+  - `execution_targets_snapshot.target_shares` passe en `Float`,
+  - `stock_metadata.fractionable` est ajouté.
+- `tests/test_execution_db_io.py` utilise déjà des colonnes `DOUBLE` pour les quantités et couvre un cas `100.5`.
+- `database/assets.py` sait déjà persister `fractionable` si la colonne existe.
+
+### Reste à clôturer pour terminer réellement Sprint 1
+- créer un **helper transverse de quantités** (arrondi 9 décimales, epsilon, formatage broker) ;
+- vérifier et documenter le **branchement runtime** des métadonnées `fractionable` côté sélection / validation live ;
+- compléter les **tests ciblés** sur la normalisation de quantité et la compatibilité broker.
+
 ---
 
 ## 1. Objectif
@@ -39,7 +58,7 @@ Le plan ci-dessous est basé sur la **source de vérité du code** et sur la **d
 - `service/alpaca/trading_client.py`
 - `service/alpaca/clientAlpaca.py`
 - `database/assets.py`
-- `alembic/versions/0008_add_execution_sprint1_foundations.py`
+- `alembic/versions/0037_add_fractionable_and_fractional_target_shares.py`
 - `tests/test_execution_db_io.py`
 
 #### Risk / sizing / portefeuille cible
@@ -117,16 +136,16 @@ Dans `corporate_actions`, les traitements gèrent déjà `fractional_shares`.
 
 ## 3.2 Blocages structurels côté risk / sizing / portefeuille
 
-### Types entiers dans les modèles risk
+### Modèles risk : blocage de types déjà levé
 Dans `risk_management/models.py` :
-- `SizingResult.proposed_shares: int`
-- `PortfolioEntry.proposed_shares: int`
-- `PortfolioEntry.approved_shares: int`
-- `RiskDecisionRow.proposed_shares: int`
-- `RiskDecisionRow.approved_shares: int`
-- `PortfolioTargetRow.shares: int`
+- `SizingResult.proposed_shares: float`
+- `PortfolioEntry.proposed_shares: float`
+- `PortfolioEntry.approved_shares: float`
+- `RiskDecisionRow.proposed_shares: float`
+- `RiskDecisionRow.approved_shares: float`
+- `PortfolioTargetRow.shares: float`
 
-=> **Le modèle métier risk suppose encore que la part est entière.**
+=> **Le blocage “types entiers dans les modèles risk” est déjà levé.**
 
 ### Sizing force l’entier
 Dans `risk_management/position_sizer.py` :
@@ -203,31 +222,33 @@ Dans `execution_engine/config.py` :
 
 => **Le paramètre existe mais n’oriente pas réellement la logique.**
 
-### Snapshot d’exécution encore entier
+### Snapshot d’exécution : blocage de type déjà levé
 Dans `execution_engine/models.py` :
-- `ExecutionTarget.target_shares: int`
-- `ReconcileDiff.target_qty: int`
+- `ExecutionTarget.target_shares: float`
+- `ReconcileDiff.target_qty: float`
 
 Dans `execution_engine/db_io.py` :
-- `target_shares=int(r["shares"])`
-- `target_shares=int(r["target_shares"])`
+- `target_shares=float(r["shares"])`
+- `target_shares=float(r["target_shares"])`
 
-Dans `alembic/versions/0008_add_execution_sprint1_foundations.py` :
-- `execution_targets_snapshot.target_shares` est en `Integer`
+Dans `alembic/versions/0037_add_fractionable_and_fractional_target_shares.py` :
+- `execution_targets_snapshot.target_shares` passe de `Integer` à `Float`
 
 Dans `tests/test_execution_db_io.py` :
-- `portfolio_targets.shares INT`
-- `execution_targets_snapshot.target_shares INT`
+- `portfolio_targets.shares DOUBLE`
+- `execution_targets_snapshot.target_shares DOUBLE`
+- un test vérifie déjà une lecture à `100.5`
 
-=> **L’amont de l’exécution live garde encore une représentation entière.**
+=> **L’amont de l’exécution live n’est plus bloqué par un type entier sur ce point.**
 
-### Métadonnées asset insuffisantes pour filtrer les symbols fractionables
-La doc Alpaca impose `fractionable = true`, mais :
-- `service/alpaca/clientAlpaca.py` récupère les assets bruts,
-- `database/assets.py` persiste `tradable`, `asset_class`, `status`, etc.,
-- mais **ne persiste pas `fractionable`** dans `stock_metadata`.
+### Métadonnées asset : fondation posée, branchement runtime à terminer
+La doc Alpaca impose `fractionable = true`. À date :
+- `service/alpaca/clientAlpaca.py` récupère les assets bruts ;
+- `database/assets.py` expose `_has_fractionable_column()` ;
+- `insert_assets_to_db()` persiste déjà `fractionable` si la colonne existe ;
+- la migration `0037_add_fractionable_and_fractional_target_shares.py` ajoute la colonne.
 
-=> **Le moteur n’a pas aujourd’hui de garde-fou local fiable pour éviter d’envoyer un ordre fractional sur un asset non fractionable.**
+=> **Le blocage de schéma/persistance est levé, mais il reste à brancher clairement cette métadonnée dans la validation métier avant soumission live.**
 
 ### Problème critique sur les protections live
 Le code actuel construit/soumet des protections live via :
@@ -330,13 +351,18 @@ Sécuriser la cible fonctionnelle avant de toucher au code métier profond.
 ## Objectif
 Supprimer l’hypothèse “quantité entière” dans les modèles centraux.
 
+## État au 2026-06-09
+Sprint 1 est **largement déjà implémenté** dans la base de code. Le sprint doit maintenant être piloté comme un **lot de clôture / hardening** plutôt que comme une fondation à démarrer de zéro.
+
 ## Travaux
 
 ### 1. Modèles risk
-Modifier :
+Statut : **✅ déjà fait**
+
+Fichier vérifié :
 - `risk_management/models.py`
 
-Passer en `float` :
+Déjà en `float` :
 - `SizingResult.proposed_shares`
 - `PortfolioEntry.proposed_shares`
 - `PortfolioEntry.approved_shares`
@@ -345,35 +371,47 @@ Passer en `float` :
 - `PortfolioTargetRow.shares`
 
 ### 2. Modèles exécution
-Modifier :
+Statut : **✅ déjà fait**
+
+Fichier vérifié :
 - `execution_engine/models.py`
 
-Passer en `float` :
+Déjà en `float` :
 - `ExecutionTarget.target_shares`
 - `ReconcileDiff.target_qty`
 
 ### 3. Persistance / schéma
-Adapter :
-- `execution_engine/db_io.py`
-- migrations Alembic concernées
-- schémas de test dans `tests/test_execution_db_io.py`
+Statut : **✅ déjà fait côté type DB / lecture Python**
 
-Actions :
-- remplacer `Integer/INT` par `Float` ou `Numeric(20,9)` selon table.
-- recommandation :
-  - **DB analytique / snapshot** : `Numeric(20,9)` préférable pour éviter les surprises de restitution,
-  - **couche Python** : conserver `float` pour limiter les impacts.
+Fichiers vérifiés :
+- `execution_engine/db_io.py`
+- `alembic/versions/0037_add_fractionable_and_fractional_target_shares.py`
+- `tests/test_execution_db_io.py`
+
+Constat :
+- `db_io` lit déjà les quantités via `float(...)` ;
+- la migration `0037` fait évoluer `execution_targets_snapshot.target_shares` en `Float` ;
+- les schémas de test utilisent déjà `DOUBLE` ;
+- la recommandation `Numeric(20,9)` reste valable si un durcissement DB est souhaité plus tard, mais elle n’est plus un prérequis bloquant pour Sprint 1.
 
 ### 4. Métadonnées assets
-Étendre :
+Statut : **🟡 partiellement fait**
+
+Fichiers vérifiés :
 - `database/assets.py`
 - schéma `stock_metadata`
 - sync Alpaca assets
 
-Ajouter le champ :
+Déjà présent / prévu :
 - `fractionable`
 
+Reste à faire :
+- valider le chemin complet de sync en conditions réelles ;
+- consommer `fractionable` dans les garde-fous métier live.
+
 ### 5. Helper transverse
+Statut : **❌ à faire**
+
 Créer un helper partagé, par exemple :
 - `common/utils.py` ou module dédié `execution_engine/quantity_utils.py`
 
@@ -384,15 +422,20 @@ Responsabilités :
 - clamp à `>= 0`.
 
 ## Livrables
-- Modèles compatibles fractionnel.
-- Migrations DB.
-- Métadonnée `fractionable` disponible localement.
-- Helper commun de quantité.
+- ✅ Modèles compatibles fractionnel.
+- ✅ Migration DB de type / colonne (`0037`).
+- 🟡 Métadonnée `fractionable` disponible au niveau schéma/persistance locale.
+- ❌ Helper commun de quantité.
 
 ## Critères d’acceptation
 - Le code compile toujours.
 - Les snapshots et lectures DB restituent `0.5`, `0.125`, `3.654` sans troncature.
 - Le mode entier historique reste inchangé si `allow_fractional_shares=false`.
+
+## Reste à faire pour clôturer Sprint 1
+- ajouter le helper transverse de quantité ;
+- couvrir explicitement l’arrondi 9 décimales et les comparaisons epsilon par tests ;
+- confirmer le branchement runtime de `fractionable` avant soumission broker.
 
 ## Risques traités
 - Propagation d’un type int caché dans plusieurs couches.
@@ -721,12 +764,12 @@ Créer/adapter :
 | Domaine | État actuel | Impact pour fractionnel | Priorité |
 |---|---|---:|---:|
 | Payload Alpaca entrée | plutôt prêt | faible | haute |
-| Modèles risk | bloquant | fort | critique |
+| Modèles risk | déjà migré en `float` | faible/résiduel | moyenne |
 | Sizing ATR | bloquant | fort | critique |
 | Contraintes portefeuille | bloquant | fort | critique |
 | Backtest simulateur | bloquant | fort | critique |
-| DB snapshots exécution | bloquant | moyen/fort | critique |
-| Assets metadata `fractionable` | manquant | fort | haute |
+| DB snapshots exécution | déjà migré en `float` | faible/résiduel | moyenne |
+| Assets metadata `fractionable` | schéma + persistance en place, branchement runtime à finir | moyen | haute |
 | Protections live swing | incertain / risqué | très fort | critique |
 | Reporting / fidelity | troncature | moyen | haute |
 | Réconciliation / rebalance | partiellement entier | moyen | haute |

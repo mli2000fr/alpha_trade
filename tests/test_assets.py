@@ -70,6 +70,7 @@ class _FakeInsert:
                 "asset_class": "asset_class_inserted",
                 "status": "status_inserted",
                 "tradable": "tradable_inserted",
+                "fractionable": "fractionable_inserted",
                 "bars_available": "bars_available_inserted",
                 "history_status": "history_status_inserted",
             },
@@ -221,6 +222,7 @@ def test_insert_assets_to_db_uses_current_timestamp_for_last_updated(monkeypatch
         Column("asset_class", String(20)),
         Column("status", String(20)),
         Column("tradable", Boolean),
+        Column("fractionable", Boolean),
         Column("bars_available", Boolean),
         Column("history_status", String(32)),
         Column("last_updated", TIMESTAMP),
@@ -241,6 +243,7 @@ def test_insert_assets_to_db_uses_current_timestamp_for_last_updated(monkeypatch
                 "class": "us_equity",
                 "status": "active",
                 "tradable": True,
+                "fractionable": True,
             }
         ]
     )
@@ -250,7 +253,9 @@ def test_insert_assets_to_db_uses_current_timestamp_for_last_updated(monkeypatch
     assert fake_session.closed is True
     assert fake_session.statement[0] == "upsert"
     assert fake_session.statement[1][0]["symbol"] == "AAPL"
+    assert fake_session.statement[1][0]["fractionable"] is True
     assert fake_session.statement[1][0]["history_status"] == assets.HISTORY_STATUS_PENDING
+    assert fake_session.statement[2]["fractionable"] == "fractionable_inserted"
     assert fake_session.statement[2]["history_status"] == "history_status_inserted"
     assert "last_updated" in fake_session.statement[2]
     assert "current_timestamp" in str(fake_session.statement[2]["last_updated"]).lower()

@@ -35,7 +35,7 @@ def engine():
                     candidate_rank INT, decision_rank INT,
                     selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
                     side VARCHAR(10),
-                    shares INT, entry_price DOUBLE, atr_20 DOUBLE,
+                    shares DOUBLE, entry_price DOUBLE, atr_20 DOUBLE,
                     price_asof_date DATE, atr_asof_date DATE,
                     stop_price_initial DOUBLE, risk_per_share DOUBLE,
                     risk_budget_dollars DOUBLE, initial_risk_dollars DOUBLE,
@@ -64,7 +64,7 @@ def engine():
                 trade_date DATE, symbol VARCHAR(20), candidate_rank INT, decision_rank INT,
                 selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
                 side VARCHAR(10),
-                target_shares INT, entry_price DOUBLE, target_weight DOUBLE, sector VARCHAR(60),
+                target_shares DOUBLE, entry_price DOUBLE, target_weight DOUBLE, sector VARCHAR(60),
                 conviction_score DOUBLE, sizing_method VARCHAR(100), kelly_fraction DOUBLE,
                 atr_20 DOUBLE, price_asof_date DATE, atr_asof_date DATE,
                 stop_price_initial DOUBLE, risk_per_share DOUBLE, risk_budget_dollars DOUBLE,
@@ -336,7 +336,7 @@ class TestExecutionDbIo:
                     risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
                     sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction)
                 VALUES ('r1', '2026-04-18', 'AAPL', 7, 1, 'sector_neutralized',
-                    'mode=sector_neutralized; rank=7', 1, 'long', 100, 150.0,
+                    'mode=sector_neutralized; rank=7', 1, 'long', 100.5, 150.0,
                     'default',
                     5.0, '2026-04-18', '2026-04-18', 140.0, 10.0,
                     1000.0, 1000.0, 15000.0, 0.05,
@@ -345,7 +345,7 @@ class TestExecutionDbIo:
         targets = repo.load_portfolio_targets(risk_run_id="r1")
         assert len(targets) == 1
         assert targets[0].symbol == "AAPL"
-        assert targets[0].target_shares == 100
+        assert targets[0].target_shares == pytest.approx(100.5)
         assert targets[0].candidate_rank == 7
         assert targets[0].decision_rank == 1
         assert targets[0].selector_signal_mode == "sector_neutralized"
@@ -944,7 +944,7 @@ class TestExecutionDbIo:
                 ) VALUES (
                     'exec-snap-1', 'acct-1', 'risk-1', '2026-04-26', 'AAPL', 4, 1,
                     'strict', 'mode=strict; rank=4', 1, 'long',
-                    100, 150.0, 0.05, 'Tech', 0.8, 'atr',
+                    100.25, 150.0, 0.05, 'Tech', 0.8, 'atr',
                     0.1, 5.0, '2026-04-26', '2026-04-26', 140.0,
                     10.0, 1000.0, 1000.0, 15000.0, CURRENT_TIMESTAMP
                 )
@@ -958,7 +958,7 @@ class TestExecutionDbIo:
         assert targets[0].selector_signal_mode == "strict"
         assert targets[0].selection_explanation == "mode=strict; rank=4"
         assert targets[0].selector_earnings_blackout == 1
-        assert targets[0].target_shares == 100
+        assert targets[0].target_shares == pytest.approx(100.25)
         assert targets[0].stop_price_initial == 140.0
 
     def test_load_latest_execution_targets_snapshot_for_date_uses_latest_run(self, engine, repo) -> None:

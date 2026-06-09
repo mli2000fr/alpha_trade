@@ -18,7 +18,7 @@ from execution_engine.order_intents import (
 )
 
 
-def _target(symbol: str = "AAPL", shares: int = 100, price: float = 150.0) -> ExecutionTarget:
+def _target(symbol: str = "AAPL", shares: float = 100.0, price: float = 150.0) -> ExecutionTarget:
     return ExecutionTarget(
         risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol=symbol,
         target_shares=shares, entry_price=price, target_weight=0.05,
@@ -246,6 +246,12 @@ class TestIntentToPayload:
         p = intent_to_alpaca_payload(intent)
         assert p["type"] == "limit"
         assert "limit_price" in p
+
+    def test_fractional_qty_is_formatted_without_trailing_noise(self) -> None:
+        cfg = ExecutionConfig()
+        intent = build_entry_intents([_target(shares=3.6540000001)], cfg, "run1")[0]
+        p = intent_to_alpaca_payload(intent)
+        assert p["qty"] == "3.654"
 
     def test_trailing_stop_payload(self) -> None:
         cfg = ExecutionConfig(trailing_stop_pct=0.05)

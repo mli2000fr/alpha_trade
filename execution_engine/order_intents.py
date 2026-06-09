@@ -7,6 +7,7 @@ from typing import cast
 import uuid
 
 from backtesting.microstructure import should_skip_entry_for_gap
+from common.quantity_utils import format_share_quantity, normalize_share_quantity
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import ExecutionTarget, IntentRole, OrderIntent
 
@@ -459,7 +460,7 @@ def build_rebalance_sell_intent(
     current_price: float = 0.0,
 ) -> OrderIntent:
     """Ordre de vente marche pour liquider un excedent detecte en reconciliation."""
-    qty = float(int(qty)) if qty == int(qty) else qty
+    qty = normalize_share_quantity(qty)
     intent_id = _make_id()
     return OrderIntent(
         intent_id=intent_id,
@@ -490,7 +491,7 @@ def build_rebalance_buy_intent(
     current_price: float = 0.0,
 ) -> OrderIntent:
     """Ordre d'achat marche pour completer une position insuffisante detectee en reconciliation."""
-    qty = float(int(qty)) if qty == int(qty) else qty
+    qty = normalize_share_quantity(qty)
     intent_id = _make_id()
     return OrderIntent(
         intent_id=intent_id,
@@ -523,7 +524,7 @@ def intent_to_alpaca_payload(intent: OrderIntent) -> dict[str, str]:
     )
     payload: dict[str, str] = {
         "symbol": intent.symbol,
-        "qty": str(int(intent.qty)) if intent.qty == int(intent.qty) else str(intent.qty),
+        "qty": format_share_quantity(intent.qty),
         "side": intent.side,
         "type": intent.order_type,
         "time_in_force": tif,
@@ -557,7 +558,8 @@ def build_oco_protection_payload(
         raise ValueError("OCO stop_loss requires stop_price on stop_intent")
 
     qty = tp_intent.qty if tp_intent.qty == stop_intent.qty else min(tp_intent.qty, stop_intent.qty)
-    qty_str = str(int(qty)) if qty == int(qty) else str(qty)
+    qty = normalize_share_quantity(qty)
+    qty_str = format_share_quantity(qty)
 
     # Génération ou utilisation d'un identifiant unique pour l'OCO
     if oco_id is None:

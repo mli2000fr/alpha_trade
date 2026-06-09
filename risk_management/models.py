@@ -47,7 +47,7 @@ class PriceInfo:
 class SizingResult:
     """Résultat du calcul de taille de position."""
     symbol: str
-    proposed_shares: int
+    proposed_shares: float
     method: SizingMethod
 
 
@@ -60,8 +60,8 @@ class PortfolioEntry:
     score_used: float
     score_source: str
     atr_20: float | None
-    proposed_shares: int
-    approved_shares: int
+    proposed_shares: float
+    approved_shares: float
     target_notional: float
     target_weight: float
     decision: Decision
@@ -191,8 +191,8 @@ class RiskDecisionRow:
     score_used: float
     score_source: str
     entry_price: float
-    proposed_shares: int
-    approved_shares: int
+    proposed_shares: float
+    approved_shares: float
     target_weight: float
     sector: str
 
@@ -203,7 +203,7 @@ class PortfolioTargetRow:
     run_id: str
     trade_date: date
     symbol: str
-    shares: int
+    shares: float
     entry_price: float
     target_weight: float
     sector: str

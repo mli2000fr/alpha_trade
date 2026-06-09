@@ -67,6 +67,10 @@ def _has_history_status_column(stock_metadata: Table) -> bool:
     return "history_status" in stock_metadata.c
 
 
+def _has_fractionable_column(stock_metadata: Table) -> bool:
+    return "fractionable" in stock_metadata.c
+
+
 def build_eligible_stock_metadata_filters(stock_metadata: Table) -> list[Any]:
     filters: list[Any] = []
     if "status" in stock_metadata.c:
@@ -328,7 +332,8 @@ def update_stock_metadata_fundamentals(
             text(f"UPDATE stock_metadata SET {', '.join(assignments)} WHERE symbol = :symbol"),
             params,
         )
-        return int(result.rowcount or 0)
+        rowcount = result.rowcount
+        return int(rowcount() if callable(rowcount) else (rowcount or 0))
 
 
 def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
@@ -346,6 +351,7 @@ def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
                 "bars_available": True,
                 "market_cap": None,
             },
+            **({"fractionable": asset.get("fractionable", False)} if _has_fractionable_column(stock_metadata) else {}),
             **({"history_status": HISTORY_STATUS_PENDING} if _has_history_status_column(stock_metadata) else {}),
         }
         for asset in assets
@@ -366,6 +372,8 @@ def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
             "bars_available": stmt.inserted.bars_available,
             "last_updated": func.current_timestamp(),
         }
+        if _has_fractionable_column(stock_metadata):
+            update_dict["fractionable"] = stmt.inserted.fractionable
         if _has_history_status_column(stock_metadata):
             update_dict["history_status"] = stmt.inserted.history_status
         session.execute(stmt.on_duplicate_key_update(**update_dict))

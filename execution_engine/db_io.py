@@ -221,7 +221,7 @@ class ExecutionRepository:
         summary = parse_summary_json(row.get("summary_json"))
         raw_target_positions = summary.get("target_positions")
         try:
-            target_positions = int(raw_target_positions) if raw_target_positions is not None else None
+            target_positions = int(str(raw_target_positions)) if raw_target_positions is not None else None
         except (TypeError, ValueError):
             target_positions = None
 
@@ -312,7 +312,7 @@ class ExecutionRepository:
                 risk_run_id=str(r["run_id"]),
                 trade_date=r["trade_date"] if isinstance(r["trade_date"], date) else date.fromisoformat(str(r["trade_date"])),
                 symbol=str(r["symbol"]).strip().upper(),
-                target_shares=int(r["shares"]),
+                target_shares=float(r["shares"]),
                 entry_price=float(r["entry_price"]),
                 target_weight=float(r["target_weight"]),
                 sector=str(r["sector"]) if r["sector"] else None,
@@ -463,7 +463,7 @@ class ExecutionRepository:
                 risk_run_id=str(r["risk_run_id"]),
                 trade_date=r["trade_date"] if isinstance(r["trade_date"], date) else date.fromisoformat(str(r["trade_date"])),
                 symbol=str(r["symbol"]).strip().upper(),
-                target_shares=int(r["target_shares"]),
+                target_shares=float(r["target_shares"]),
                 entry_price=float(r["entry_price"]),
                 target_weight=float(r["target_weight"]),
                 sector=str(r["sector"]) if r.get("sector") else None,

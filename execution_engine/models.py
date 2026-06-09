@@ -95,7 +95,7 @@ class ExecutionTarget:
     risk_run_id: str
     trade_date: date
     symbol: str
-    target_shares: int
+    target_shares: float
     entry_price: float
     target_weight: float
     sector: str | None
@@ -319,7 +319,7 @@ class ExecutionEvent:
 class ReconcileDiff:
     """Différence positions broker vs cibles."""
     symbol: str
-    target_qty: int
+    target_qty: float
     broker_qty: float
     delta: float
     action: str
