@@ -219,6 +219,34 @@ def test_build_pipeline_command_propagates_risk_shadow_compare_options() -> None
     assert risk_command[risk_command.index("--shadow-compare-run-id") + 1] == "risk-ref-001"
 
 
+def test_build_pipeline_command_propagates_allow_fractional_shares_to_risk_and_execution() -> None:
+    options = PipelineLaunchOptions(
+        trade_date="2026-06-09",
+        execution_mode="paper",
+        allow_fractional_shares=True,
+    )
+
+    risk_command = build_pipeline_command("risk_management", options)
+    execution_command = build_pipeline_command("execution", options)
+
+    assert "--allow-fractional-shares" in risk_command
+    assert "--allow-fractional-shares" in execution_command
+
+
+def test_build_pipeline_command_omits_allow_fractional_shares_when_disabled() -> None:
+    options = PipelineLaunchOptions(
+        trade_date="2026-06-09",
+        execution_mode="paper",
+        allow_fractional_shares=False,
+    )
+
+    risk_command = build_pipeline_command("risk_management", options)
+    execution_command = build_pipeline_command("execution", options)
+
+    assert "--allow-fractional-shares" not in risk_command
+    assert "--allow-fractional-shares" not in execution_command
+
+
 def test_build_pipeline_command_propagates_live_risk_guard_options() -> None:
     options = PipelineLaunchOptions(
         trade_date="2026-04-19",

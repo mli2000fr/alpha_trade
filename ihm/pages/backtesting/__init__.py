@@ -41,6 +41,11 @@ from ihm.services.backtesting_runner import (
     format_command_for_display,
 )
 from ihm.services.db import get_runtime_db_config
+from ihm.services.fractional_trading_preferences import (
+    FractionalTradingPreferences,
+    load_persisted_fractional_trading_preferences,
+    save_persisted_fractional_trading_preferences,
+)
 from ihm.services.queries import get_backtesting_ml_coverage_diagnostic, get_backtesting_pit_history_diagnostic
 from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
@@ -59,6 +64,7 @@ BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY = "bt_run_capital_preset_signature"
 BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
 BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
 BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
+BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
@@ -1129,6 +1135,9 @@ def _build_run_options() -> BacktestRunOptions:
         "Le backtest exécute `python -m backtesting run ...` en arrière-plan. "
         "Tous les paramètres CLI sont exposés ci-dessous et les logs sont visibles plus bas dans la page."
     )
+    fractional_prefs = load_persisted_fractional_trading_preferences()
+    if BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY not in st.session_state:
+        st.session_state[BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY] = bool(fractional_prefs.backtest_enabled)
     _ensure_run_configuration_preset_session_key()
     preset_col1, preset_col2 = st.columns([1.5, 3.5])
     with preset_col1:
@@ -1212,6 +1221,31 @@ def _build_run_options() -> BacktestRunOptions:
             st.caption(
                 f"Preset explicite transmis au backtest : `{_format_capital_preset_label(selected_run_preset_key)}`."
             )
+
+    allow_fractional_shares = st.toggle(
+        "Autoriser les quantités fractionnaires en backtest",
+        value=bool(st.session_state.get(BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY, fractional_prefs.backtest_enabled)),
+        key=BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY,
+        help=(
+            "Active `--allow-fractional-shares` pour le replay backtest. "
+            "Valeur persistée côté serveur dans `artifacts/ihm_preferences/fractional_trading.json`."
+        ),
+    )
+    if bool(allow_fractional_shares) != bool(fractional_prefs.backtest_enabled):
+        save_persisted_fractional_trading_preferences(
+            FractionalTradingPreferences(
+                backtest_enabled=bool(allow_fractional_shares),
+                pipeline_live_enabled=bool(fractional_prefs.pipeline_live_enabled),
+            )
+        )
+    if allow_fractional_shares:
+        st.success(
+            "🧮 Mode fractionnaire backtest activé — l'IHM transmettra `--allow-fractional-shares` et le simulateur pourra conserver des tailles non entières."
+        )
+    else:
+        st.warning(
+            "🧮 Mode fractionnaire backtest désactivé — les tailles seront traitées comme entières pour les runs lancés depuis l'IHM."
+        )
 
     current_engine_mode = str(st.session_state.get("bt_run_engine_mode", "research") or "research").strip().lower()
 
@@ -1621,6 +1655,7 @@ def _build_run_options() -> BacktestRunOptions:
         slippage_bps=float(slippage_bps),
         account_type=cast(Any, account_type),
         swing_only=bool(swing_only),
+        allow_fractional_shares=bool(allow_fractional_shares),
         sentiment_lookback=int(sentiment_lookback),
         no_save=bool(no_save),
         ml_mode=cast(Any, ml_mode),

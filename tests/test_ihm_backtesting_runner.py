@@ -223,6 +223,34 @@ def test_build_backtesting_run_command_includes_phase7_flags():
 	assert command[command.index("--phase7-mode") + 1] == "exit_lifecycle_replay"
 
 
+def test_build_backtesting_run_command_includes_allow_fractional_shares_flag():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			allow_fractional_shares=True,
+		),
+	)
+
+	assert "--allow-fractional-shares" in command
+
+
+def test_build_backtesting_run_command_omits_allow_fractional_shares_flag_when_disabled():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			allow_fractional_shares=False,
+		),
+	)
+
+	assert "--allow-fractional-shares" not in command
+
+
 def test_build_backtesting_run_command_matches_pipeline_live_like_replay_preset():
 	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
 

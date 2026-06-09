@@ -425,6 +425,7 @@ def apply_backtest_defaults_from_preset(
         "max_positions": ("risk_max_positions", int),
         "account_type": ("execution_account_type", str),
         "swing_only": ("execution_swing_only", bool),
+        "allow_fractional_shares": ("risk_allow_fractional_shares", bool),
         "cash_settlement_days": ("execution_cash_settlement_days", int),
         "commission_bps": ("backtesting_commission_bps_stress", float),
         "slippage_bps": ("backtesting_slippage_bps_stress", float),

@@ -494,6 +494,7 @@ def _ensure_immutable_run_plan(
 def _build_runtime_preset(
     mode: str,
     *,
+    allow_fractional_shares: bool = False,
     allow_outside_rth: bool = False,
     auto_rebalance: bool = False,
     account_type: str = "cash",
@@ -518,6 +519,8 @@ def _build_runtime_preset(
     inter_order_delay_ms: int | None = None,
 ) -> dict:
     preset = dict(PRESETS[mode])
+    if allow_fractional_shares:
+        preset["allow_fractional_shares"] = True
     if allow_outside_rth:
         preset["allow_outside_rth"] = True
     if auto_rebalance:
@@ -615,6 +618,7 @@ def run(
     run_id: str | None,
     trade_date: str | None,
     debug: bool,
+    allow_fractional_shares: bool = False,
     allow_outside_rth: bool = False,
     auto_rebalance: bool = False,
     account_id: str | None = None,
@@ -653,6 +657,7 @@ def run(
 
     preset = _build_runtime_preset(
         mode,
+        allow_fractional_shares=allow_fractional_shares,
         allow_outside_rth=allow_outside_rth,
         auto_rebalance=auto_rebalance,
         account_type=account_type,
@@ -716,6 +721,7 @@ def run(
     print(f"  Activation trailing : {preset['trailing_activation_trigger']}  |  timeout={preset['protection_transition_timeout_seconds']}s")
     print(f"  Max slippage: {preset['max_slippage_bps']} bps")
     print(f"  Compte      : {preset['account_type']}  |  swing_only={preset['swing_only']}")
+    print(f"  Fractionnel : {'actif' if bool(preset.get('allow_fractional_shares', False)) else 'désactivé'}")
     print(f"  Account ID  : {account_id or 'default'}")
     if mode == "live" and live_run_plan_path is not None and live_run_plan_fingerprint is not None:
         print(f"  Run plan    : {live_run_plan_path}")
@@ -1179,6 +1185,7 @@ Exemples :
     p.add_argument("--date",              dest="trade_date",      metavar="YYYY-MM-DD", help="Date du run (ex: 2026-04-18)")
     p.add_argument("--run-id",            dest="run_id",          metavar="RUN_ID",     help="risk_run_id precis")
     p.add_argument("--debug",             action="store_true",                          help="Active les logs DEBUG")
+    p.add_argument("--allow-fractional-shares", dest="allow_fractional_shares", action="store_true", help="Active les quantités fractionnaires côté exécution quand le broker/le moteur le supporte")
     p.add_argument("--allow-outside-rth",      dest="allow_outside_rth",  action="store_true", help="Execute meme si marche ferme (week-end / hors RTH)")
     p.add_argument("--auto-rebalance",          dest="auto_rebalance",     action="store_true", help="Vend/achete automatiquement les ecarts detectes en reconciliation")
     p.add_argument("--account",                 dest="account_id",         metavar="ACCOUNT_ID", help="ID du compte Alpaca multi-comptes (defaut: premier compte)")
@@ -1282,6 +1289,7 @@ def main() -> None:
         ) = interactive_menu()
         auto_watcher = False
         skip_preflight = False
+        allow_fractional_shares = False
         take_profit_pct = None
         trailing_stop_pct = None
         max_entry_gap_pct = None
@@ -1295,6 +1303,7 @@ def main() -> None:
         run_id            = args.run_id
         trade_date        = args.trade_date
         debug             = args.debug
+        allow_fractional_shares = bool(getattr(args, "allow_fractional_shares", False))
         allow_outside_rth = args.allow_outside_rth
         auto_rebalance    = args.auto_rebalance
         account_id        = args.account_id
@@ -1320,6 +1329,7 @@ def main() -> None:
         run_id,
         trade_date,
         debug,
+        allow_fractional_shares,
         allow_outside_rth,
         auto_rebalance,
         account_id,

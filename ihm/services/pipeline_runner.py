@@ -262,6 +262,7 @@ class PipelineLaunchOptions:
     execution_run_id: str | None = None
     execution_live_approval_token: str | None = None
     execution_run_plan_file: str | None = None
+    allow_fractional_shares: bool = True
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
     # Défauts swing cash : compte cash + swing only (cf. audit_ihm_pipeline_options.md P1)
@@ -2173,6 +2174,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--log-level",
             str(options.risk_log_level or DEFAULT_RISK_LOG_LEVEL).upper(),
         ]
+        if options.allow_fractional_shares:
+            command.append("--allow-fractional-shares")
         if options.risk_enable_kelly:
             command.append("--enable-kelly-sizing")
         if options.risk_max_portfolio_drawdown_pct > 0:
@@ -2212,6 +2215,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--allow-outside-rth")
         if options.auto_rebalance:
             command.append("--auto-rebalance")
+        if options.allow_fractional_shares:
+            command.append("--allow-fractional-shares")
         command.extend(["--account-type", options.execution_account_type])
         # --swing-only utilise BooleanOptionalAction côté backend (cf. run_execution.py)
         command.append("--swing-only" if options.execution_swing_only else "--no-swing-only")

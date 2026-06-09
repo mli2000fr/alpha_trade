@@ -34,6 +34,7 @@ class BacktestRunOptions:
     slippage_bps: float | None = None
     account_type: Literal["margin", "cash"] = "margin"
     swing_only: bool = False
+    allow_fractional_shares: bool = True
     sentiment_lookback: int = 365
     no_save: bool = False
     ml_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
@@ -196,6 +197,8 @@ def build_backtesting_command(
             "--artifacts-dir", options.artifacts_dir,
             "--score-column", options.score_column,
         ])
+        if options.allow_fractional_shares:
+            command.append("--allow-fractional-shares")
         if options.commission_bps is not None:
             command.extend(["--commission-bps", str(options.commission_bps)])
         if options.slippage_bps is not None:

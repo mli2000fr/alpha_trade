@@ -411,6 +411,7 @@ def _build_backtest_common_params(
         "account_type": trading_constraints.account_type,
         "swing_only": trading_constraints.swing_only,
         "cash_settlement_days": getattr(trading_constraints, "cash_settlement_days", None),
+        "allow_fractional_shares": bool(getattr(args, "allow_fractional_shares", False)),
         "sentiment_lookback": args.sentiment_lookback,
         "ml_mode": args.ml_mode,
         "sentiment_mode": args.sentiment_mode,
@@ -742,6 +743,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--swing-only",
         action="store_true",
         help="Interdire toute sortie le jour même de l'entrée",
+    )
+    run_p.add_argument(
+        "--allow-fractional-shares",
+        action="store_true",
+        default=False,
+        help="Active les quantités fractionnaires côté replay/simulateur quand le moteur le supporte.",
     )
     run_p.add_argument(
         "--cash-settlement-days",
@@ -1205,6 +1212,7 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--slippage-bps": "slippage_bps",
         "--account-type": "account_type",
         "--swing-only": "swing_only",
+        "--allow-fractional-shares": "allow_fractional_shares",
         "--cash-settlement-days": "cash_settlement_days",
         "--fees": "fees",
         "--capital-preset-key": "capital_preset_key",
@@ -1241,6 +1249,7 @@ def _infer_programmatic_explicit_flags(args: argparse.Namespace, *, argv: list[s
         "slippage_bps",
         "account_type",
         "swing_only",
+        "allow_fractional_shares",
         "cash_settlement_days",
         "fees",
         "capital_preset_key",
@@ -1592,6 +1601,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         save_report_json,
         save_trades_csv,
     )
+    from risk_management.config import RiskConfig
     from service.market import MacroDataUnavailableError
 
     # Phase 6.1.e — appliquer le profil avant tout (sans écraser les flags explicites).
@@ -1613,6 +1623,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
     for field_name, value in preset_applied_values.items():
         setattr(args, field_name, value)
     preset_fingerprint = capital_preset_fingerprint(effective_preset)
+    preset_fractional_flag = bool(build_risk_config_kwargs_from_preset(effective_preset).get("allow_fractional_shares", False))
+    args.allow_fractional_shares = bool(getattr(args, "allow_fractional_shares", False) or preset_fractional_flag)
 
     # Phase 6.1.b — gestion --fees (déprécié) vs commission/slippage_bps.
     if args.fees is not None:
@@ -1648,8 +1660,6 @@ def _run_backtest(args: argparse.Namespace) -> None:
     )
     phase2_risk_config = None
     if phase2_mode != "off":
-        from risk_management.config import RiskConfig
-
         # Sprint S4 — propager les overrides du preset capital à la phase 2 risk
         # (sinon ``min_position_notional``, drawdown, corrélation… retombent sur
         # les défauts ``RiskConfig`` et ignorent silencieusement le preset).
@@ -1700,6 +1710,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print(f"   phase5_mode={phase5_mode}\n")
     _safe_print(f"   phase7_mode={phase7_mode}\n")
     _safe_print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
+    _safe_print(f"   allow_fractional_shares={bool(args.allow_fractional_shares)}\n")
     _safe_print(f"   ml_pit_strategy={ml_pit_strategy}\n")
     _safe_print(f"   macro_missing_policy={getattr(args, 'macro_missing_policy', None) or 'yaml_default'}\n")
     _safe_print(
@@ -1983,6 +1994,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 dry_run=True,
                 account_type=args.account_type,
                 swing_only=args.swing_only,
+                allow_fractional_shares=bool(args.allow_fractional_shares),
                 simulated_account_equity=float(args.equity),
                 profit_taker_pct=float(args.tp),
                 trailing_stop_pct=float(args.ts),
@@ -2116,6 +2128,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
     bt_config = BacktestConfig(
         start_date=start, end_date=end,
         initial_equity=args.equity,
+        risk_config=RiskConfig(
+            account_equity=float(args.equity),
+            max_positions=int(args.max_positions),
+            allow_fractional_shares=bool(args.allow_fractional_shares),
+        ),
         profit_taker_pct=args.tp,
         trailing_stop_pct=args.ts,
         max_positions=args.max_positions,

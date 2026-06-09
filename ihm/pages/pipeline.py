@@ -516,6 +516,22 @@ def _build_execution_account_banner_payload(
     return severity, message
 
 
+def _build_fractional_trading_banner_payload(options: PipelineLaunchOptions) -> tuple[str, str]:
+    enabled = bool(getattr(options, "allow_fractional_shares", True))
+    mode = str(getattr(options, "execution_mode", "simulate") or "simulate").strip().lower() or "simulate"
+    if enabled:
+        severity = "success" if mode in {"paper", "live"} else "info"
+        return (
+            severity,
+            "🧮 **MODE FRACTIONNAIRE** — activé. Les lancements IHM propageront `--allow-fractional-shares` "
+            "vers `risk_management` et `run_execution.py` pour ce workflow.",
+        )
+    return (
+        "warning",
+        "🧮 **MODE FRACTIONNAIRE** — désactivé. Les étapes risk/execution lancées depuis cette page resteront en quantités entières.",
+    )
+
+
 def _build_capital_preset_banner_payload(
     selected_preset_key: str | None,
     *,
@@ -625,6 +641,8 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
     if capital_preset_banner is not None:
         preset_severity, preset_message = capital_preset_banner
         getattr(st, preset_severity)(preset_message)
+    fractional_severity, fractional_message = _build_fractional_trading_banner_payload(options)
+    getattr(st, fractional_severity)(fractional_message)
     protection_severity, protection_message = _build_execution_protection_banner_payload(options)
     getattr(st, protection_severity)(protection_message)
     risk_severity, risk_message = _build_live_risk_guard_banner_payload(options)

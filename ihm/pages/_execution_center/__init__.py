@@ -66,6 +66,11 @@ from ihm.services.capital_presets import (
     load_capital_presets,
     resolve_capital_preset_for_equity,
 )
+from ihm.services.fractional_trading_preferences import (
+    FractionalTradingPreferences,
+    load_persisted_fractional_trading_preferences,
+    save_persisted_fractional_trading_preferences,
+)
 from ihm.services.pipeline_runner import (
     DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE,
     DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY,
@@ -252,6 +257,7 @@ EXECUTION_MODE_ACCOUNT_KEY = "pipeline_execution_mode_account_id"
 DETECTED_BROKER_MODE_KEY = "pipeline_detected_broker_mode"
 DETECTED_BROKER_MODE_ACCOUNT_KEY = "pipeline_detected_broker_mode_account_id"
 DETECTED_ACCOUNT_TYPE_KEY = "pipeline_detected_account_type"
+PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY = "pipeline_allow_fractional_shares"
 CAPITAL_PRESET_KEY = "pipeline_capital_preset"
 CAPITAL_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_capital_preset_applied_signature"
 CAPITAL_PRESET_CUSTOM = "custom"
@@ -2477,6 +2483,9 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     selected_account_id = cast(str | None, st.session_state.get("selected_account_id"))
     execution_defaults = _apply_execution_prefills(selected_account_id)
+    fractional_prefs = load_persisted_fractional_trading_preferences()
+    if PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY not in st.session_state:
+        st.session_state[PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY] = bool(fractional_prefs.pipeline_live_enabled)
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=False):
         # === BLOCK 1/9 : Execution (capital preset, dates, equity, mode, RTH, account/swing, fenêtre + trailing + debug) — inline (extraction prévue S6.1) ===
@@ -2642,6 +2651,34 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "Auto rebalance",
                 value=_session_state_bool("pipeline_auto_rebalance", False),
                 key="pipeline_auto_rebalance",
+            )
+
+        allow_fractional_shares = st.toggle(
+            "Execution/Risk — autoriser les quantités fractionnaires",
+            value=_session_state_bool(
+                PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY,
+                bool(fractional_prefs.pipeline_live_enabled),
+            ),
+            key=PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY,
+            help=(
+                "Active la propagation du mode fractionnaire vers les étapes `risk_management` et `execution`. "
+                "Valeur persistée côté serveur dans `artifacts/ihm_preferences/fractional_trading.json`."
+            ),
+        )
+        if bool(allow_fractional_shares) != bool(fractional_prefs.pipeline_live_enabled):
+            save_persisted_fractional_trading_preferences(
+                FractionalTradingPreferences(
+                    backtest_enabled=bool(fractional_prefs.backtest_enabled),
+                    pipeline_live_enabled=bool(allow_fractional_shares),
+                )
+            )
+        if allow_fractional_shares:
+            st.success(
+                "🧮 Mode fractionnaire pipeline activé — les commandes IHM transmettront `--allow-fractional-shares` à `risk_management` et `run_execution.py`."
+            )
+        else:
+            st.warning(
+                "🧮 Mode fractionnaire pipeline désactivé — les runs IHM resteront en quantités entières tant que ce switch est coupé."
             )
 
         exec_col1, exec_col2 = st.columns(2)
@@ -3935,6 +3972,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_run_id=execution_run_id,
             execution_live_approval_token=execution_live_approval_token,
             execution_run_plan_file=execution_run_plan_file,
+            allow_fractional_shares=bool(allow_fractional_shares),
             allow_outside_rth=bool(allow_outside_rth),
             auto_rebalance=bool(auto_rebalance),
             execution_account_type=cast(Any, execution_account_type),

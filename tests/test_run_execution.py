@@ -218,6 +218,21 @@ def test_run_propagates_regime_max_gross_exposure_to_execution_config(monkeypatc
 
 def test_resolve_mode_from_broker_mode_prefers_simulate_when_dry_run() -> None:
     assert run_execution.resolve_mode_from_broker_mode(broker_mode="paper", dry_run=True) == "simulate"
+
+
+def test_build_parser_accepts_allow_fractional_shares_flag() -> None:
+    parser = run_execution.build_parser()
+
+    args = parser.parse_args(["paper", "--allow-fractional-shares"])
+
+    assert args.mode == "paper"
+    assert args.allow_fractional_shares is True
+
+
+def test_build_runtime_preset_enables_fractional_shares_when_requested() -> None:
+    preset = run_execution._build_runtime_preset("paper", allow_fractional_shares=True)
+
+    assert preset["allow_fractional_shares"] is True
     assert run_execution.resolve_mode_from_broker_mode(broker_mode="paper", dry_run=False) == "paper"
     assert run_execution.resolve_mode_from_broker_mode(broker_mode="live", dry_run=False) == "live"
 
