@@ -661,6 +661,92 @@ class TestExecutor:
         assert metrics["child_initial_stop_orders_submitted"] == 1
         assert EventType.CHILDREN_SUBMITTED in [event.event_type for event in events]
 
+    def test_fractional_children_are_skipped_in_intraday_only_mode_for_overnight_profile(self) -> None:
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            allow_fractional_shares=True,
+            fractional_live_mode="intraday_only",
+            swing_only=False,
+        )
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        parent = _target()
+        parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
+        filled_order = BrokerOrder(
+            broker_order_id="bo-frac", client_order_id="c-frac", intent_id=parent_intent.intent_id,
+            symbol="AAPL", side="buy", qty=0.5, filled_qty=0.5,
+            avg_fill_price=150.2, status=OrderStatus.FILLED, order_type="market",
+            limit_price=None, stop_price=None, trail_percent=None,
+            created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+        )
+
+        metrics = {
+            "children_deferred": 0,
+            "child_take_profit_orders_submitted": 0,
+            "child_initial_stop_orders_submitted": 0,
+            "child_trailing_stop_orders_submitted": 0,
+            "child_order_submit_failures": 0,
+        }
+        events = executor._submit_children(
+            parent_intent,
+            filled_order,
+            "exec-1",
+            account_state=executor._build_account_constraint_state(),
+            metrics=metrics,
+            target=parent,
+        )
+
+        broker.submit_intent.assert_not_called()
+        assert metrics["children_skipped_fractional_entry_only_mode"] == 1
+        assert events[0].payload_json is not None
+
+    def test_fractional_children_are_allowed_in_intraday_only_custom_profile(self) -> None:
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            allow_fractional_shares=True,
+            fractional_live_mode="intraday_only",
+            execution_profile="custom",
+            swing_only=False,
+            profit_taker_pct=0.02,
+            trailing_stop_pct=0.05,
+        )
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        parent = _target()
+        parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
+        filled_order = BrokerOrder(
+            broker_order_id="bo-frac", client_order_id="c-frac", intent_id=parent_intent.intent_id,
+            symbol="AAPL", side="buy", qty=0.5, filled_qty=0.5,
+            avg_fill_price=150.2, status=OrderStatus.FILLED, order_type="market",
+            limit_price=None, stop_price=None, trail_percent=None,
+            created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+        )
+        broker.submit_intent.side_effect = [
+            BrokerOrder("tp-frac", "ctp-frac", "tp", "AAPL", "sell", 0.5, 0.0, None, OrderStatus.SUBMITTED, "limit", 153.2, None, None, datetime.now(UTC), datetime.now(UTC)),
+            BrokerOrder("stop-frac", "cstop-frac", "stop", "AAPL", "sell", 0.5, 0.0, None, OrderStatus.SUBMITTED, "stop", None, 140.2, None, datetime.now(UTC), datetime.now(UTC)),
+        ]
+
+        metrics = {
+            "children_deferred": 0,
+            "child_take_profit_orders_submitted": 0,
+            "child_initial_stop_orders_submitted": 0,
+            "child_trailing_stop_orders_submitted": 0,
+            "child_order_submit_failures": 0,
+        }
+        events = executor._submit_children(
+            parent_intent,
+            filled_order,
+            "exec-1",
+            account_state=executor._build_account_constraint_state(),
+            metrics=metrics,
+            target=parent,
+        )
+
+        assert broker.submit_intent.call_count == 2
+        assert metrics["child_take_profit_orders_submitted"] == 1
+        assert metrics["child_initial_stop_orders_submitted"] == 1
+        assert EventType.CHILDREN_SUBMITTED in [event.event_type for event in events]
+
     def test_reconcile_auto_rebalance_only_submits_safe_auto_diffs(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, auto_rebalance_on_reconcile=True)
         executor, repo, broker, _ = _make_executor(cfg)

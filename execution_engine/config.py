@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Literal, cast
 
+from common.quantity_utils import is_effectively_integer_quantity
 from common.config_loader import load_config
 from service.market import parse_trailing_stop
 
@@ -102,6 +104,7 @@ class ExecutionConfig:
     # --- Execution ---
     allow_fractional_shares: bool = False
     allow_fractional_live_protections: bool = False
+    fractional_live_mode: Literal["entry_only", "intraday_only", "full_if_supported"] = "entry_only"
     max_slippage_bps: int = 30
     max_order_retries: int = 3
     retry_base_delay_seconds: float = 1.0
@@ -194,6 +197,8 @@ class ExecutionConfig:
             raise ValueError("simulated_margin_buying_power_multiplier doit être >= 1.")
         if self.entry_mode not in ("normal", "close_only", "cash_only", "capital_preservation"):
             raise ValueError("entry_mode invalide.")
+        if self.fractional_live_mode not in ("entry_only", "intraday_only", "full_if_supported"):
+            raise ValueError("fractional_live_mode doit être 'entry_only', 'intraday_only' ou 'full_if_supported'.")
         if self.regime_max_positions is not None and self.regime_max_positions < 1:
             raise ValueError("regime_max_positions doit être >= 1 quand renseigné.")
         if self.regime_max_position_weight is not None and not (0 < self.regime_max_position_weight <= 1):
@@ -224,9 +229,55 @@ class ExecutionConfig:
         return bool(self.allow_fractional_shares)
 
     @property
+    def resolved_fractional_live_mode(self) -> Literal["entry_only", "intraday_only", "full_if_supported"]:
+        """Résout le mode effectif en conservant la compatibilité du flag Sprint 4."""
+        if self.fractional_live_mode != "entry_only":
+            return self.fractional_live_mode
+        if self.allow_fractional_live_protections:
+            return "full_if_supported"
+        return "entry_only"
+
+    @property
     def fractional_live_protections_enabled(self) -> bool:
         """Les protections fractionnaires restent opt-in et hors MVP d'entrée."""
-        return bool(self.allow_fractional_shares and self.allow_fractional_live_protections)
+        return bool(self.allow_fractional_shares and self.resolved_fractional_live_mode != "entry_only")
+
+    def can_submit_fractional_protection_orders(
+        self,
+        qty: float,
+        *,
+        trade_date: date | None = None,
+        context: Literal["children", "watcher"] = "children",
+    ) -> tuple[bool, str | None]:
+        """Retourne si une protection server-side est autorisée pour une qty donnée."""
+        if is_effectively_integer_quantity(qty):
+            return True, None
+        if not self.allow_fractional_shares:
+            return False, "fractional_shares_disabled"
+
+        mode = self.resolved_fractional_live_mode
+        if mode == "entry_only":
+            return False, "fractional_live_entry_only_mode"
+        if mode == "intraday_only":
+            if self.swing_only or self.is_overnight_profile:
+                return False, "fractional_live_intraday_only_mode"
+            if context == "watcher" and trade_date is not None and trade_date != date.today():
+                return False, "fractional_live_intraday_only_mode"
+        return True, None
+
+    def resolve_fractional_protection_time_in_force(self, qty: float) -> str:
+        """Retourne le TIF broker approprié pour une protection fractionnaire."""
+        if is_effectively_integer_quantity(qty):
+            return "gtc"
+
+        mode = self.resolved_fractional_live_mode
+        if mode == "intraday_only":
+            return "day"
+        if mode == "full_if_supported":
+            return "gtc"
+        raise ValueError(
+            "Fractional protection payload requested while fractional_live_mode blocks server-side protections."
+        )
 
     @property
     def blocks_new_entries(self) -> bool:

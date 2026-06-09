@@ -6,8 +6,8 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import replace
-from datetime import datetime
-from typing import Any, Callable
+from datetime import date, datetime
+from typing import Any, Callable, cast
 
 from common.utils import configure_root_logging
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
@@ -22,6 +22,7 @@ from execution_engine.models import (
     IntentRole,
     OrderIntent,
     OrderStatus,
+    ExecutionTarget,
     ProtectionWatchItem,
 )
 from execution_engine.order_intents import (
@@ -64,6 +65,7 @@ def _build_summary(
         "submit_failed_items": int(metrics.get("submit_failed_items", 0) or 0),
         "armed_missing_protections": int(metrics.get("armed_missing_protections", 0) or 0),
         "armed_missing_protections_failed": int(metrics.get("armed_missing_protections_failed", 0) or 0),
+        "fractional_policy_blocked_items": int(metrics.get("fractional_policy_blocked_items", 0) or 0),
         "adopted_orphan_buys": int(metrics.get("adopted_orphan_buys", 0) or 0),
         "adopted_orphan_buys_failed": int(metrics.get("adopted_orphan_buys_failed", 0) or 0),
         "broker_mode": metrics.get("broker_mode"),
@@ -114,6 +116,7 @@ def _build_service_summary(
         "submit_failed_items": int(metrics.get("submit_failed_items", 0) or 0),
         "armed_missing_protections": int(metrics.get("armed_missing_protections", 0) or 0),
         "armed_missing_protections_failed": int(metrics.get("armed_missing_protections_failed", 0) or 0),
+        "fractional_policy_blocked_items": int(metrics.get("fractional_policy_blocked_items", 0) or 0),
         "adopted_orphan_buys": int(metrics.get("adopted_orphan_buys", 0) or 0),
         "adopted_orphan_buys_failed": int(metrics.get("adopted_orphan_buys_failed", 0) or 0),
         "last_heartbeat_at": metrics.get("last_heartbeat_at"),
@@ -251,8 +254,9 @@ class ProtectionTransitionWatcher:
                 continue
             if adoption is None:
                 continue
-            run_metrics = metrics_by_run[adoption.intent.exec_run_id]
-            run_metrics.setdefault("source_exec_run_id", adoption.intent.exec_run_id)
+            adoption_exec_run_id = str(adoption.intent.exec_run_id or "")
+            run_metrics = metrics_by_run[adoption_exec_run_id]
+            run_metrics.setdefault("source_exec_run_id", adoption_exec_run_id)
             run_metrics.setdefault("trade_date", None)
             run_metrics["broker_mode"] = broker_mode
             run_metrics["account_id"] = position_account_id
@@ -471,6 +475,19 @@ class ProtectionTransitionWatcher:
             LOGGER.debug("Persistance rejet request watcher impossible pour %s", intent.intent_id, exc_info=True)
 
     @staticmethod
+    def _coerce_trade_date(value: Any) -> date | None:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str) and value:
+            try:
+                return datetime.fromisoformat(value[:10]).date()
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
     def _is_protection_rejection_likely_due_to_open_exit(exc: Exception) -> bool:
         message = str(exc).lower()
         return any(token in message for token in ("403", "forbidden", "insufficient", "available", "oversell", "wash"))
@@ -630,7 +647,7 @@ class ProtectionTransitionWatcher:
         )
 
     # Mapping order_type → IntentRole pour la persistance des annulations.
-    _PROTECTION_CANCEL_ROLE_BY_TYPE: dict[str, IntentRole] = {
+    _PROTECTION_CANCEL_ROLE_BY_TYPE: dict[str, str] = {
         "limit": IntentRole.TAKE_PROFIT,
         "stop": IntentRole.INITIAL_STOP,
         "stop_limit": IntentRole.INITIAL_STOP,
@@ -677,7 +694,7 @@ class ProtectionTransitionWatcher:
                 child_order.order_type or "",
                 IntentRole.TAKE_PROFIT if leg == "take_profit" else IntentRole.INITIAL_STOP,
             )
-            child_intent = self._build_existing_child_intent(parent_intent, child_order, role)
+            child_intent = self._build_existing_child_intent(parent_intent, child_order, str(role))
             try:
                 if not broker.cancel_broker_order(child_order.broker_order_id):
                     continue
@@ -793,17 +810,9 @@ class ProtectionTransitionWatcher:
         account_id = str(row.get("account_id") or "default")
         config = self._config_for(broker_mode, account_id)
         broker = self._broker_for(broker_mode, account_id)
+        trade_date = self._coerce_trade_date(row.get("trade_date"))
 
         if config.swing_only:
-            trade_date_value = row.get("trade_date")
-            trade_date = None
-            if isinstance(trade_date_value, datetime):
-                trade_date = trade_date_value.date()
-            elif isinstance(trade_date_value, str) and trade_date_value:
-                try:
-                    trade_date = datetime.fromisoformat(trade_date_value[:10]).date()
-                except ValueError:
-                    trade_date = None
             if trade_date is not None and trade_date == datetime.now().date():
                 metrics["children_deferred_swing_only"] = int(metrics.get("children_deferred_swing_only", 0) or 0) + 1
                 self._persist_event(make_event(
@@ -816,10 +825,34 @@ class ProtectionTransitionWatcher:
                 ))
                 return
 
+        protections_allowed, blocked_reason = config.can_submit_fractional_protection_orders(
+            fill_qty,
+            trade_date=trade_date,
+            context="watcher",
+        )
+        if not protections_allowed:
+            metrics["fractional_policy_blocked_items"] = int(metrics.get("fractional_policy_blocked_items", 0) or 0) + 1
+            self._persist_event(make_event(
+                str(row.get("exec_run_id") or ""),
+                EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT,
+                f"Watcher : protections fractionnaires différées ({blocked_reason}) pour {symbol}",
+                symbol=symbol,
+                intent_id=str(row.get("parent_intent_id") or "") or None,
+                payload={
+                    "reason": blocked_reason,
+                    "fill_qty": fill_qty,
+                    "fractional_live_mode": config.resolved_fractional_live_mode,
+                    "trade_date": trade_date.isoformat() if trade_date is not None else None,
+                    "trigger": "watcher_orphan_buy_safety_net" if use_manual_buy_stop else "watcher_safety_net",
+                },
+            ))
+            return
+
         decision_price = float(row.get("decision_price") or fill_price)
         target_qty = float(row.get("target_qty") or fill_qty)
         order_type = str(row.get("order_type") or "market")
         limit_price = row.get("limit_price")
+        limit_price_value = float(limit_price) if limit_price not in (None, "") else None
         parent_intent = OrderIntent(
             intent_id=str(row["parent_intent_id"]),
             risk_run_id=str(row.get("risk_run_id") or ""),
@@ -828,7 +861,7 @@ class ProtectionTransitionWatcher:
             side=str(row.get("side") or "buy"),
             qty=target_qty,
             order_type=order_type,
-            limit_price=float(limit_price) if limit_price is not None else None,
+            limit_price=limit_price_value,
             trail_percent=None,
             broker_mode=broker_mode,
             parent_intent_id=None,
@@ -1024,10 +1057,12 @@ class ProtectionTransitionWatcher:
                     return
 
         if not has_open_protection and not protection_available:
-            if not _submit_child(protection_intent):
+            assert protection_intent is not None
+            current_protection_intent = protection_intent
+            if not _submit_child(current_protection_intent):
                 if last_submit_error is not None and _maybe_reconcile_position_closed(last_submit_error):
                     return
-                if protection_intent.intent_role == IntentRole.INITIAL_STOP:
+                if current_protection_intent.intent_role == IntentRole.INITIAL_STOP:
                     fallback = build_trailing_stop_intent(
                         parent_intent, fill_qty, fill_price, config, target=None
                     )
@@ -1069,7 +1104,9 @@ class ProtectionTransitionWatcher:
             return
 
         if not has_open_take_profit and not take_profit_available:
-            if not _submit_child(tp_intent):
+            assert tp_intent is not None
+            current_tp_intent = tp_intent
+            if not _submit_child(current_tp_intent):
                 # Issue 3 — la position peut avoir été soldée pendant l'arming
                 if last_submit_error is not None:
                     _maybe_reconcile_position_closed(last_submit_error)
@@ -1088,7 +1125,7 @@ class ProtectionTransitionWatcher:
                     "fill_qty": fill_qty,
                     "fill_price": fill_price,
                     "trigger": "watcher_orphan_buy_safety_net" if use_manual_buy_stop else "watcher_safety_net",
-                    "take_profit_limit_price": tp_intent.limit_price,
+                    "take_profit_limit_price": tp_intent.limit_price if tp_intent is not None else None,
                     "initial_stop_price": stop_intent.stop_price if stop_intent is not None else None,
                     "manual_buy_stop_loss_pct": config.manual_buy_stop_loss_pct if use_manual_buy_stop else None,
                     "submit_failures": submit_failures,
@@ -1120,7 +1157,30 @@ class ProtectionTransitionWatcher:
             metrics["pending_items"] += 1
             return
 
-        trigger_price, trigger_mode = resolve_trailing_activation_price(item.fill_price, config, item)
+        protections_allowed, blocked_reason = config.can_submit_fractional_protection_orders(
+            item.fill_qty,
+            trade_date=item.trade_date,
+            context="watcher",
+        )
+        if not protections_allowed:
+            metrics["fractional_policy_blocked_items"] = int(metrics.get("fractional_policy_blocked_items", 0) or 0) + 1
+            self._persist_event(make_event(
+                item.source_exec_run_id,
+                EventType.PROTECTION_TRANSITION_FAILED,
+                f"Transition trailing fractionnaire bloquée ({blocked_reason}) pour {item.symbol}",
+                symbol=item.symbol,
+                broker_order_id=stop_order.broker_order_id,
+                intent_id=item.initial_stop_intent_id,
+                payload={
+                    "reason": blocked_reason,
+                    "fill_qty": item.fill_qty,
+                    "fractional_live_mode": config.resolved_fractional_live_mode,
+                    "trade_date": item.trade_date.isoformat(),
+                },
+            ))
+            return
+
+        trigger_price, trigger_mode = resolve_trailing_activation_price(item.fill_price, config, cast(ExecutionTarget, item))
         if trigger_price is None:
             metrics["pending_items"] += 1
             return
@@ -1171,7 +1231,7 @@ class ProtectionTransitionWatcher:
             ))
             return
 
-        trailing_intent = build_trailing_stop_intent(parent_intent, item.fill_qty, item.fill_price, config, target=item)
+        trailing_intent = build_trailing_stop_intent(parent_intent, item.fill_qty, item.fill_price, config, target=cast(ExecutionTarget, item))
         try:
             trailing_order = broker.submit_intent(trailing_intent)
             self._persist_order_state(trailing_intent, trailing_order, account_id=item.account_id)

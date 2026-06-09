@@ -756,6 +756,55 @@ Recommandation : **c’est la meilleure option produit** si les tests broker ne 
 - Les cas non supportés sont refusés explicitement.
 - L’équipe sait précisément ce qui est garanti et ce qui ne l’est pas.
 
+## Implémentation réalisée — 2026-06-09
+
+Choix retenu : **Option C**.
+
+Politique produit désormais codée :
+- `fractional_live_mode = entry_only | intraday_only | full_if_supported`
+- défaut sûr : `entry_only`
+- compatibilité conservée avec le flag Sprint 4 `allow_fractional_live_protections=True` via une résolution implicite vers `full_if_supported`
+
+Réalisé :
+- `execution_engine/config.py`
+  - ajout de `fractional_live_mode` ;
+  - centralisation de la politique runtime :
+    - `resolved_fractional_live_mode`
+    - `can_submit_fractional_protection_orders(...)`
+    - `resolve_fractional_protection_time_in_force(...)`
+- `execution_engine/order_intents.py`
+  - séparation du `time_in_force` selon le mode produit ;
+  - protections fractionnaires en `intraday_only` => payloads `DAY` ;
+  - protections fractionnaires en `entry_only` => erreur explicite si un payload broker est demandé malgré le garde-fou.
+- `execution_engine/broker_adapter.py`
+  - les soumissions réelles broker consomment maintenant la config Sprint 5 lors de la construction des payloads standards et OCO.
+- `execution_engine/children_submission.py`
+  - les enfants fractionnaires respectent désormais la politique produit :
+    - `entry_only` => différés explicitement ;
+    - `intraday_only` => autorisés seulement dans un contexte intraday compatible ;
+    - `full_if_supported` => comportement broker-side complet conservé.
+- `execution_engine/protection_watcher.py`
+  - armement de protections manquantes et promotion stop->trailing alignés sur le mode produit ;
+  - aucun armement/transition fractionnaire n’est tenté “par accident” hors politique autorisée ;
+  - ajout d’une métrique explicite `fractional_policy_blocked_items`.
+
+Conséquence produit :
+- `entry_only` est maintenant un vrai mode explicite, pas seulement un effet de bord d’un flag ;
+- `intraday_only` permet des protections fractionnaires **DAY** pour des profils non overnight ;
+- `full_if_supported` reste un opt-in explicite pour les cas où le support broker est jugé suffisant.
+
+## Tests exécutés
+
+```powershell
+python -m pytest -q -o addopts="" tests/test_order_intents.py tests/test_executor.py tests/test_protection_watcher.py
+python -m pytest -q -o addopts="" tests/test_execution_engine_executor.py tests/test_broker_snapshot_hardening.py
+```
+
+Résultats :
+- **79 tests passés** sur le périmètre Sprint 5 ciblé
+- **23 tests passés** en régression complémentaire executor/broker
+- **102 tests passés** au total sur le scope validé
+
 ## Risques traités
 - Faux sentiment de protection sur les positions fractionnaires overnight.
 

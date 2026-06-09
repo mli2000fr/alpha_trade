@@ -34,7 +34,7 @@ class BrokerAdapter:
         self._config = config
 
     def submit_intent(self, intent: OrderIntent) -> BrokerOrder:
-        payload = intent_to_alpaca_payload(intent)
+        payload = intent_to_alpaca_payload(intent, config=self._config)
         resp = self._client.submit_order(payload)
         return self._resp_to_broker_order(resp, intent.intent_id)
 
@@ -52,7 +52,7 @@ class BrokerAdapter:
         l'ordre TP est porté par la réponse principale et le SL par la
         première leg.
         """
-        payload = build_oco_protection_payload(parent_intent, tp_intent, stop_intent)
+        payload = build_oco_protection_payload(parent_intent, tp_intent, stop_intent, config=self._config)
         resp = self._client.submit_order(payload)  # type: ignore[arg-type]
         tp_order = self._resp_to_broker_order(resp, tp_intent.intent_id)
         legs = resp.get("legs") if isinstance(resp, dict) else None

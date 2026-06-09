@@ -568,12 +568,20 @@ def build_rebalance_buy_intent(
     )
 
 
-def intent_to_alpaca_payload(intent: OrderIntent) -> dict[str, str]:
+def _resolve_alpaca_time_in_force(intent: OrderIntent, config: ExecutionConfig | None = None) -> str:
+    if intent.intent_role in (IntentRole.ENTRY, IntentRole.EXIT, IntentRole.REBALANCE_BUY):
+        return "day"
+    if config is None:
+        return "gtc"
+    return config.resolve_fractional_protection_time_in_force(intent.qty)
+
+
+def intent_to_alpaca_payload(intent: OrderIntent, config: ExecutionConfig | None = None) -> dict[str, str]:
     """Convertit un OrderIntent en payload dict pour l'API Alpaca Trading v2.
     Utilise _alpaca_client_order_id (base exec_run_id) et non idempotency_key
     pour garantir l'unicite cote Alpaca meme en cas de relance.
     """
-    tif = "day" if intent.intent_role in (IntentRole.ENTRY, IntentRole.EXIT, IntentRole.REBALANCE_BUY) else "gtc"
+    tif = _resolve_alpaca_time_in_force(intent, config)
     alpaca_client_id = intent.submission_key or _alpaca_client_order_id(
         intent.exec_run_id, intent.symbol, intent.intent_role, intent.side, intent.qty
     )
@@ -599,6 +607,7 @@ def build_oco_protection_payload(
     tp_intent: OrderIntent,
     stop_intent: OrderIntent,
     oco_id: str | None = None,
+    config: ExecutionConfig | None = None,
 ) -> dict[str, str | dict[str, str]]:
     """Construit un payload Alpaca OCO (TP limit + SL stop) lié à une position.
 
@@ -632,7 +641,7 @@ def build_oco_protection_payload(
         "qty": qty_str,
         "side": "sell",
         "type": "limit",
-        "time_in_force": "gtc",
+        "time_in_force": config.resolve_fractional_protection_time_in_force(qty) if config is not None else "gtc",
         "order_class": "oco",
         "client_order_id": client_order_id,
         "limit_price": str(tp_intent.limit_price),

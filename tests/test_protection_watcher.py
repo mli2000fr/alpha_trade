@@ -1,7 +1,7 @@
 """Tests for execution_engine.protection_watcher."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
@@ -51,6 +51,26 @@ def _order(intent_id: str, broker_order_id: str, *, status: str, order_type: str
     )
 
 
+def _fractional_item(*, trade_date_value: date | None = None) -> ProtectionWatchItem:
+    return ProtectionWatchItem(
+        source_exec_run_id="exec-frac-1",
+        risk_run_id="risk-frac-1",
+        trade_date=trade_date_value or date.today(),
+        account_id="acct-1",
+        broker_mode="paper",
+        symbol="AAPL",
+        parent_intent_id="parent-frac-1",
+        initial_stop_intent_id="stop-frac-1",
+        initial_stop_broker_order_id="broker-stop-frac-1",
+        fill_qty=0.5,
+        fill_price=150.0,
+        stop_price_initial=140.0,
+        risk_per_share=10.0,
+        initial_risk_dollars=5.0,
+        target_notional=75.0,
+    )
+
+
 def test_watcher_promotes_initial_stop_to_trailing_when_trigger_hit() -> None:
     repo = MagicMock()
     repo.load_pending_protection_watch_items.return_value = [_item()]
@@ -93,6 +113,46 @@ def test_watcher_promotes_initial_stop_to_trailing_when_trigger_hit() -> None:
     assert all(call.kwargs["account_id"] == "acct-1" for call in repo.upsert_execution_order_request_from_intent.call_args_list)
     assert repo.upsert_execution_broker_order.called
     assert all(call[0] != "upsert_execution_order" for call in repo.method_calls)
+
+
+def test_watcher_blocks_fractional_transition_in_intraday_only_mode_after_trade_date() -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = [_fractional_item(trade_date_value=date.today() - timedelta(days=1))]
+    repo.load_open_child_orders.return_value = []
+
+    broker = MagicMock()
+    broker.poll_order_status.return_value = _order(
+        "stop-frac-1",
+        "broker-stop-frac-1",
+        status=OrderStatus.SUBMITTED,
+        order_type="stop",
+        stop_price=140.0,
+    )
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            allow_fractional_shares=True,
+            fractional_live_mode="intraday_only",
+            execution_profile="custom",
+            swing_only=False,
+            trailing_activation_trigger="multiple_r",
+            trailing_activation_r_multiple=1.0,
+            trailing_stop_pct=0.05,
+        ),
+    )
+
+    summaries = watcher.run(exec_run_id="exec-frac-1")
+
+    assert len(summaries) == 1
+    assert summaries[0]["fractional_policy_blocked_items"] == 1
+    broker.cancel_broker_order.assert_not_called()
+    broker.submit_intent.assert_not_called()
+    event_types = [call.args[0]["event_type"] for call in repo.insert_execution_event.call_args_list]
+    assert "PROTECTION_TRANSITION_FAILED" in event_types
 
 
 def test_watcher_keeps_item_pending_when_trigger_not_reached() -> None:
@@ -463,6 +523,62 @@ def test_watcher_does_not_count_tp_only_as_protected_when_stop_rejected() -> Non
     assert all(role != "take_profit" for role in submitted_roles)
     failure_statuses = [call.kwargs["status"] for call in repo.upsert_execution_order_request_from_intent.call_args_list]
     assert failure_statuses == [OrderStatus.REJECTED, OrderStatus.REJECTED]
+
+
+def test_watcher_skips_fractional_missing_protections_in_entry_only_mode() -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "adopt-parent-frac-1",
+            "exec_run_id": "adopt-run-frac-1",
+            "risk_run_id": "adopt-run-frac-1",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "AAPL",
+            "side": "buy",
+            "parent_intent_role": "adopted_entry",
+            "has_open_take_profit": 0,
+            "has_open_protection": 0,
+            "target_qty": 0.5,
+            "order_type": "market",
+            "limit_price": None,
+            "decision_price": 150.0,
+            "business_key": "adopt-buy|acct-1|broker-order-frac-1",
+            "submission_key": "adopt-submission-frac-1",
+            "fill_qty": 0.5,
+            "fill_price": 150.0,
+            "trade_date": date.today().isoformat(),
+        }
+    ]
+    repo.load_orphan_filled_buy_positions.return_value = []
+
+    broker = MagicMock()
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            allow_fractional_shares=True,
+            fractional_live_mode="entry_only",
+            execution_profile="custom",
+            swing_only=False,
+            profit_taker_pct=0.08,
+            manual_buy_stop_loss_pct=0.05,
+            trailing_stop_pct=0.05,
+        ),
+    )
+
+    summaries = watcher.run(account_id="acct-1")
+
+    assert len(summaries) == 1
+    assert summaries[0]["armed_missing_protections"] == 0
+    assert summaries[0]["armed_missing_protections_failed"] == 0
+    assert summaries[0]["fractional_policy_blocked_items"] == 1
+    broker.submit_oco_protection.assert_not_called()
+    broker.submit_intent.assert_not_called()
 
 
 def test_watcher_cancels_existing_take_profit_that_blocks_missing_stop() -> None:

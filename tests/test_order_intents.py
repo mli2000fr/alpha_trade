@@ -7,6 +7,7 @@ import pytest
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import ExecutionTarget, IntentRole
 from execution_engine.order_intents import (
+    build_oco_protection_payload,
     build_entry_intents,
     build_initial_stop_intent,
     build_take_profit_intent,
@@ -322,6 +323,57 @@ class TestIntentToPayload:
         p = intent_to_alpaca_payload(intent)
         assert p["qty"] == "0.125"
         assert p["type"] == "limit"
+
+    def test_fractional_stop_payload_uses_day_tif_in_intraday_only_mode(self) -> None:
+        cfg = ExecutionConfig(
+            allow_fractional_shares=True,
+            fractional_live_mode="intraday_only",
+            execution_profile="custom",
+            swing_only=False,
+            trailing_stop_pct=0.05,
+        )
+        target = _target(shares=0.5)
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        stop_intent = build_initial_stop_intent(parent, 0.5, 150.0, cfg, target=target)
+        assert stop_intent is not None
+
+        p = intent_to_alpaca_payload(stop_intent, config=cfg)
+
+        assert p["type"] == "stop"
+        assert p["time_in_force"] == "day"
+
+    def test_fractional_protection_payload_is_rejected_in_entry_only_mode(self) -> None:
+        cfg = ExecutionConfig(
+            allow_fractional_shares=True,
+            fractional_live_mode="entry_only",
+            trailing_stop_pct=0.05,
+        )
+        target = _target(shares=0.5)
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        trailing_intent = build_trailing_stop_intent(parent, 0.5, 150.0, cfg, target=target)
+
+        with pytest.raises(ValueError, match="Fractional protection payload"):
+            intent_to_alpaca_payload(trailing_intent, config=cfg)
+
+    def test_fractional_oco_payload_uses_day_tif_in_intraday_only_mode(self) -> None:
+        cfg = ExecutionConfig(
+            allow_fractional_shares=True,
+            fractional_live_mode="intraday_only",
+            execution_profile="custom",
+            swing_only=False,
+            profit_taker_pct=0.08,
+            trailing_stop_pct=0.05,
+        )
+        target = _target(shares=0.5)
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        tp_intent = build_take_profit_intent(parent, 0.5, 150.0, cfg, target=target)
+        stop_intent = build_initial_stop_intent(parent, 0.5, 150.0, cfg, target=target)
+        assert stop_intent is not None
+
+        payload = build_oco_protection_payload(parent, tp_intent, stop_intent, config=cfg)
+
+        assert payload["qty"] == "0.5"
+        assert payload["time_in_force"] == "day"
 
     def test_trailing_stop_payload(self) -> None:
         cfg = ExecutionConfig(trailing_stop_pct=0.05)

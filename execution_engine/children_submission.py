@@ -60,7 +60,11 @@ def submit_children(
     if fill_qty <= 0:
         return events
 
-    if not is_effectively_integer_quantity(fill_qty) and not cfg.fractional_live_protections_enabled:
+    protections_allowed, blocked_reason = cfg.can_submit_fractional_protection_orders(
+        fill_qty,
+        context="children",
+    )
+    if not protections_allowed:
         metrics["children_skipped_fractional_entry_only_mode"] = (
             metrics.get("children_skipped_fractional_entry_only_mode", 0) + 1
         )
@@ -75,10 +79,11 @@ def submit_children(
                 symbol=parent.symbol,
                 intent_id=parent.intent_id,
                 payload={
-                    "reason": "fractional_live_entry_only_mode",
+                    "reason": blocked_reason,
                     "fill_qty": fill_qty,
                     "fractional_live_entries_enabled": cfg.fractional_live_entries_enabled,
                     "fractional_live_protections_enabled": cfg.fractional_live_protections_enabled,
+                    "fractional_live_mode": cfg.resolved_fractional_live_mode,
                 },
             )
         )
