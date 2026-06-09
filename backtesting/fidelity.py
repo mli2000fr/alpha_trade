@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 
 import pandas as pd
 
+from common.quantity_utils import normalize_share_quantity
 
 REASON_TAXONOMY: dict[str, dict[str, str]] = {
     "stock_scores_history_empty": {
@@ -160,6 +161,13 @@ def _normalize_symbols(symbols: object) -> list[str]:
 def _safe_int(value: object, default: int = 0) -> int:
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return default
 
@@ -817,7 +825,7 @@ def build_candidate_target_parity_summary(
                     "risk_conviction_score": float(risk_row.get("conviction_score")) if pd.notna(risk_row.get("conviction_score")) else None,
                     "risk_conviction_source": risk_row.get("conviction_source"),
                     "target_weight": float(risk_row.get("target_weight")) if pd.notna(risk_row.get("target_weight")) else None,
-                    "approved_shares": int(risk_row.get("approved_shares")) if pd.notna(risk_row.get("approved_shares")) else None,
+                    "approved_shares": float(risk_row.get("approved_shares")) if pd.notna(risk_row.get("approved_shares")) else None,
                 }
             )
 
@@ -941,7 +949,7 @@ def _portfolio_entries_to_compare_frame(entries: Sequence[object], *, run_id: st
         symbol = str(getattr(entry, "symbol", "") or "").strip().upper()
         if not symbol:
             continue
-        approved_shares = _safe_int(getattr(entry, "approved_shares", 0), 0)
+        approved_shares = normalize_share_quantity(_safe_float(getattr(entry, "approved_shares", 0.0), 0.0))
         raw_decision = str(getattr(entry, "decision", "") or "").strip().upper()
         decision = "BUY" if approved_shares > 0 or raw_decision in {"ACCEPTED", "BUY", "LONG"} else "HOLD"
         rows.append(
@@ -967,7 +975,7 @@ def _execution_targets_to_compare_frame(targets: Sequence[object], *, run_id: st
             {
                 "symbol": symbol,
                 "decision": "BUY",
-                "approved_shares": _safe_int(getattr(target, "target_shares", 0), 0),
+                "approved_shares": normalize_share_quantity(_safe_float(getattr(target, "target_shares", 0.0), 0.0)),
                 "target_weight": float(getattr(target, "target_weight", 0.0) or 0.0),
                 "conviction_score": getattr(target, "conviction_score", None),
                 "run_id": run_id or getattr(target, "risk_run_id", None),
@@ -1670,7 +1678,7 @@ def build_compare_to_live_summary(
                 entry
                 for entry in risk_entries
                 if _normalize_timestamp_value(getattr(entry, "score_snapshot_date", pd.NaT)) == trade_date
-                and _safe_int(getattr(entry, "approved_shares", 0), 0) > 0
+                and normalize_share_quantity(_safe_float(getattr(entry, "approved_shares", 0.0), 0.0)) > 0
             ],
             run_id="backtest_portfolio",
         )

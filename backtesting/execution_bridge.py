@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from common.quantity_utils import normalize_share_quantity
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import ExecutionFill, ExecutionTarget, OrderIntent
 from execution_engine.order_intents import build_entry_intents, build_initial_stop_intent, build_take_profit_intent, build_trailing_stop_intent
@@ -42,7 +43,7 @@ def portfolio_entries_to_execution_targets(
 				trade_date=trade_date,
 				symbol=entry.symbol,
 				candidate_rank=entry.candidate_rank,
-				target_shares=int(entry.approved_shares),
+					target_shares=normalize_share_quantity(entry.approved_shares),
 				entry_price=float(entry.entry_price),
 				target_weight=float(entry.target_weight),
 				sector=entry.sector,

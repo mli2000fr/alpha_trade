@@ -24,8 +24,9 @@ from backtesting.microstructure import (
     should_skip_entry_for_gap,
 )
 from backtesting.risk_overlay import RiskOverlayConfig, compute_portfolio_vol_scaler
-from risk_management.config import RiskConfig
+from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from execution_engine.config import ExecutionConfig
+from risk_management.config import RiskConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ class _OpenPosition:
     entry_date: pd.Timestamp
     entry_idx: int
     entry_price: float
-    quantity: int
+    quantity: float
     peak_high: float
     entry_cost: float
     # Phase B.2 — stop-loss initial dur (None = désactivé).
@@ -305,6 +306,15 @@ class BacktestEngine:
     def _empty_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
         """Préserve l'index du marché tout en retirant toutes les colonnes symboles."""
         return frame.iloc[:, 0:0].copy()
+
+    def _allow_fractional_shares(self) -> bool:
+        return bool(self.config.risk_config is not None and self.config.risk_config.allow_fractional_shares)
+
+    def _normalize_trade_quantity(self, value: float | int | None) -> float:
+        normalized = max(normalize_share_quantity(value), 0.0)
+        if self._allow_fractional_shares():
+            return normalized
+        return float(int(normalized))
 
     def run(
         self,
@@ -866,13 +876,18 @@ class BacktestEngine:
             extra_slippage_pct = micro.slippage.compute_bps(preliminary_size_usd, adv_usd) / 10_000.0
             effective_unit_cost = entry_price * (1.0 + cfg.fees_pct + extra_slippage_pct)
             if quantity_override is not None:
-                affordable_quantity = int(state.settled_cash // effective_unit_cost) if effective_unit_cost > 0 else 0
-                quantity = min(int(quantity_override), affordable_quantity)
+                affordable_quantity = (
+                    self._normalize_trade_quantity(state.settled_cash / effective_unit_cost)
+                    if effective_unit_cost > 0
+                    else 0.0
+                )
+                quantity = min(self._normalize_trade_quantity(quantity_override), affordable_quantity)
                 if drawdown_allocation_scale < 1.0 and effective_unit_cost > 0:
-                    degraded_budget_quantity = int(candidate_budget // effective_unit_cost)
+                    degraded_budget_quantity = self._normalize_trade_quantity(candidate_budget / effective_unit_cost)
                     quantity = min(quantity, degraded_budget_quantity)
             else:
-                quantity = int(candidate_budget // effective_unit_cost)
+                quantity = self._normalize_trade_quantity(candidate_budget / effective_unit_cost)
+            quantity = self._normalize_trade_quantity(quantity)
             quantity_before_gross_exposure_cap = quantity
             gross_exposure_cap_binds = False
 
@@ -881,11 +896,12 @@ class BacktestEngine:
                     (gross_exposure_limit * current_equity) - current_gross_notional,
                     0.0,
                 )
-                max_quantity_for_gross_exposure = int(remaining_gross_notional // entry_price)
+                max_quantity_for_gross_exposure = self._normalize_trade_quantity(remaining_gross_notional / entry_price)
                 quantity = min(quantity, max_quantity_for_gross_exposure)
+                quantity = self._normalize_trade_quantity(quantity)
                 gross_exposure_cap_binds = quantity < quantity_before_gross_exposure_cap
 
-            if quantity <= 0:
+            if quantity <= QUANTITY_EPSILON:
                 if gross_exposure_cap_binds:
                     diagnostics.blocked_by_gross_exposure += 1
                     self._record_trade_event(
@@ -1284,8 +1300,7 @@ class BacktestEngine:
         except (KeyError, ValueError):
             return None
 
-    @staticmethod
-    def _resolve_signal_quantity_override(row: pd.Series) -> int | None:
+    def _resolve_signal_quantity_override(self, row: pd.Series) -> float | None:
         """Retourne une quantité explicite issue du signal, si disponible."""
         for column_name in ("filled_qty", "approved_shares", "target_shares"):
             if column_name not in row.index:
@@ -1294,10 +1309,10 @@ class BacktestEngine:
             if value is None or pd.isna(value):
                 continue
             try:
-                quantity = int(float(value))
+                quantity = self._normalize_trade_quantity(float(value))
             except (TypeError, ValueError):
                 continue
-            if quantity > 0:
+            if quantity > QUANTITY_EPSILON:
                 return quantity
         return None
 

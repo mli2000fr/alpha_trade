@@ -17,6 +17,7 @@ from backtesting.execution_broker_like import (
     save_execution_broker_like_artifacts,
 )
 from backtesting.execution_bridge import ExecutionBridgeResult, save_phase2_execution_artifacts
+from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import EventType, ExecutionFill, ExecutionTarget, IntentRole, OrderIntent, OrderStatus
 from execution_engine.order_intents import (
@@ -89,7 +90,7 @@ def _entry_to_target(
         trade_date=execution_date.date(),
         symbol=entry.symbol,
         candidate_rank=entry.candidate_rank,
-        target_shares=int(entry.approved_shares),
+        target_shares=normalize_share_quantity(entry.approved_shares),
         entry_price=float(entry_price),
         target_weight=float(entry.target_weight),
         sector=entry.sector,
@@ -150,12 +151,13 @@ def _build_synthetic_fill_attempts(
             )
         ]
 
-    first_fill_qty = float(int(normalized_target_qty * 0.6))
-    first_fill_qty = max(1.0, first_fill_qty)
+    first_fill_qty = normalize_share_quantity(normalized_target_qty * 0.6)
+    if normalized_target_qty >= 1.0 and first_fill_qty < 1.0:
+        first_fill_qty = 1.0
     if first_fill_qty >= normalized_target_qty:
-        first_fill_qty = max(1.0, normalized_target_qty - 1.0)
-    remaining_qty = max(normalized_target_qty - first_fill_qty, 0.0)
-    if remaining_qty <= 0.0:
+        first_fill_qty = normalize_share_quantity(normalized_target_qty / 2.0)
+    remaining_qty = normalize_share_quantity(max(normalized_target_qty - first_fill_qty, 0.0))
+    if remaining_qty <= QUANTITY_EPSILON:
         return [
             _SyntheticFillAttempt(
                 attempt_no=1,
@@ -723,7 +725,7 @@ def simulate_phase3_execution_replay(
                 "selector_earnings_blackout": entry.selector_earnings_blackout,
                 "target_weight": float(entry.target_weight),
                 "target_notional": float(entry.target_notional),
-                "approved_shares": int(entry.approved_shares),
+                "approved_shares": normalize_share_quantity(entry.approved_shares),
                 "filled_qty": fill_qty,
                 "fill_price": average_fill_price,
                 "entry_fill_timestamp": final_fill_timestamp,

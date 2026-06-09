@@ -9,6 +9,7 @@ from typing import Callable, Iterable, TYPE_CHECKING
 import pandas as pd
 
 from backtesting.signal_replay import _pick_score_column
+from common.quantity_utils import normalize_share_quantity
 from risk_management.config import RiskConfig
 from risk_management.models import CandidateScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
@@ -225,7 +226,7 @@ def portfolio_entries_to_signals(entries: list[PortfolioEntry], snapshot_date: d
                 "selector_earnings_blackout": entry.selector_earnings_blackout,
                 "target_weight": float(entry.target_weight),
                 "target_notional": float(entry.target_notional),
-                "approved_shares": int(entry.approved_shares),
+                "approved_shares": normalize_share_quantity(entry.approved_shares),
                 "decision": entry.decision,
                 "decision_reason": entry.decision_reason,
                 "decision_reason_code": str(entry.decision_reason_code) if entry.decision_reason_code is not None else None,

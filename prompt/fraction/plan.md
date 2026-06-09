@@ -531,6 +531,8 @@ Réalisé :
 
 # Sprint 3 — Backtest fractionnaire natif
 
+Statut : **✅ fait**
+
 ## Objectif
 Rendre le backtest réellement capable de simuler des positions fractionnaires.
 
@@ -540,10 +542,12 @@ Rendre le backtest réellement capable de simuler des positions fractionnaires.
 Modifier :
 - `backtesting/simulator.py`
 
-Actions :
-- passer `_OpenPosition.quantity` en `float`.
-- remplacer tous les `int(... // ...)` par des calculs float.
-- recalculer :
+Réalisé :
+- `_OpenPosition.quantity` est désormais en `float`.
+- les sizing `affordable / budget / gross exposure` n’utilisent plus de divisions entières bloquantes.
+- la normalisation passe par `normalize_share_quantity()` avec respect du flag `allow_fractional_shares`.
+- le mode historique entier reste conservé si `allow_fractional_shares=false`.
+- recalcul cohérent de :
   - quantité achetable,
   - cap de gross exposure,
   - coût d’entrée,
@@ -558,36 +562,51 @@ Modifier :
 - `backtesting/execution_bridge.py`
 - `backtesting/execution_replay.py`
 
-Actions :
-- retourner des `float | None`.
-- supprimer les `int(entry.approved_shares)`.
-- corriger les fills synthétiques partiels dans `execution_replay.py` pour ne pas imposer des paliers entiers.
+Réalisé :
+- `_resolve_signal_quantity_override()` retourne maintenant un `float | None` normalisé.
+- les bridges risk/exécution/replay ne tronquent plus `approved_shares` / `target_shares` en entier.
+- les fills synthétiques partiels de `execution_replay.py` restent fractionnaires au lieu d’imposer des paliers entiers.
 
 ### 3. Reporting / fidélité
 Modifier :
 - `backtesting/fidelity.py`
 - `backtesting/report.py`
 
-Actions :
-- supprimer `_safe_int` pour les quantités d’actions.
-- introduire `_safe_float` dédié si nécessaire.
-- conserver les conversions entières uniquement pour les compteurs / rangs.
+Réalisé :
+- `backtesting/fidelity.py` utilise désormais `_safe_float` / `normalize_share_quantity()` pour les quantités.
+- les compare/parity frames ne perdent plus les décimales sur `approved_shares`.
+- les conversions entières restent limitées aux compteurs / rangs.
 
 ### 4. Compatibilité historique
-- garder un mode “entier” implicite si les signaux sources sont entiers ou si `allow_fractional_shares=false`.
+- ✅ mode “entier” implicite conservé si `allow_fractional_shares=false`.
 
 ## Livrables
-- Simulateur backtest fractionnaire.
-- Replay d’exécution compatible.
-- Reporting fidèle aux décimales.
+- ✅ Simulateur backtest fractionnaire.
+- ✅ Replay d’exécution compatible.
+- ✅ Reporting fidèle aux décimales.
 
 ## Critères d’acceptation
-- Un run backtest peut ouvrir/fermer `0.25`, `0.5`, `1.75` share.
-- Les PnL, frais et slippage restent cohérents.
-- Aucune troncature silencieuse dans les CSV/JSON de sortie.
+- ✅ Un run backtest peut ouvrir/fermer des quantités fractionnaires (tests ajoutés sur `0.5` et replay synthétique fractionnaire ; pipeline prêt pour `0.25` / `1.75`).
+- ✅ Les PnL, frais et slippage restent cohérents.
+- ✅ Aucune troncature silencieuse dans les bridges / compare frames / sorties backtest concernées.
 
 ## Risques traités
-- Backtest faux-ami : sizing float mais exécution simulée en int.
+- ✅ Backtest faux-ami : sizing float mais exécution simulée en int.
+
+## Validation exécutée
+
+Commandes exécutées :
+
+```powershell
+python -m pytest tests/test_backtesting_fractional.py -q -o addopts=""
+python -m pytest tests/test_backtesting.py -q -o addopts="" -k "uses_integer_share_sizes or execution_replay_mode_uses_signal_share_override or enforces_max_gross_exposure_from_risk_config"
+python -m pytest tests/test_phase2_risk_bridge_regime.py -q -o addopts=""
+python -m pytest tests/test_execution_replay_parity.py -q -o addopts=""
+python -m pytest tests/test_capital_preset_risk_overrides.py -q -o addopts=""
+```
+
+Résultat :
+- **32 tests passés** sur le périmètre Sprint 3 + une correction de preset liée au flag fractionnaire.
 
 ---
 
