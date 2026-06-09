@@ -32,7 +32,7 @@ def _make_swing_backtest_config():  # type: ignore[no-untyped-def]
     from backtesting.simulator import BacktestConfig
     from backtesting.trading_constraints import TradingConstraintConfig
 
-    swing_constraints = TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True)
+    swing_constraints = TradingConstraintConfig(account_type="margin", swing_only=True)
     return BacktestConfig(  # type: ignore[arg-type]
         start_date=date(2025, 1, 1),
         end_date=date(2025, 1, 3),
@@ -126,8 +126,6 @@ def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() ->
     assert params["capital_preset_key"] == "capital_0_5000"
     assert params["fidelity_baseline_id"] == "smoke"
     assert params["ml_pit_strategy"] == "use-persisted"
-    assert "pdt_rule" not in params
-    assert "effective_pdt_rule" not in params
     assert params["microstructure"]["is_default"] is False
     assert params["risk_overlay"]["is_default"] is True
     assert params["phase2"]["execution_tca"] == {"fills": 2}
@@ -1113,7 +1111,6 @@ class TestBacktestConfig:
         assert cfg.max_positions == 20
         assert cfg.initial_equity == 100_000
         assert cfg.trading_constraints.account_type == "margin"
-        assert cfg.trading_constraints.pdt_rule == "auto"
         assert cfg.trading_constraints.swing_only is False
     def test_config_from_risk_and_exec(self):
         from backtesting.simulator import BacktestConfig
@@ -1467,7 +1464,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 2),
                 initial_equity=10_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True),
+                trading_constraints=TradingConstraintConfig(account_type="margin", swing_only=True),
             )
         )
 
@@ -1505,7 +1502,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 7),
                 initial_equity=2_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=False),
+                trading_constraints=TradingConstraintConfig(account_type="margin", swing_only=False),
             )
         )
 
@@ -1519,7 +1516,7 @@ class TestBacktestConfig:
         assert result.closed_trades_df.iloc[0]["entry_price"] == 101.0
         assert result.diagnostics.blocked_same_day_exits == 0
 
-    def test_backtest_engine_pdt_mode_is_not_active_above_25k(self):
+    def test_backtest_engine_margin_mode_allows_same_day_trades_when_not_swing_only(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine, BacktestResult
         from backtesting.trading_constraints import TradingConstraintConfig
 
@@ -1541,9 +1538,9 @@ class TestBacktestConfig:
             BacktestConfig(
                 start_date=date(2025, 1, 1),
                 end_date=date(2025, 1, 7),
-                initial_equity=30_000,
+                initial_equity=2_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="auto", swing_only=False),
+                trading_constraints=TradingConstraintConfig(account_type="margin", swing_only=False),
             )
         )
 
@@ -1551,10 +1548,9 @@ class TestBacktestConfig:
         assert isinstance(result, BacktestResult)
         assert hasattr(result, "trades")
         assert hasattr(result, "final_value")
-        assert result.diagnostics.blocked_pdt_day_trades == 0
         assert result.diagnostics.executed_day_trades > 0
 
-    def test_backtest_engine_pdt_mode_blocks_fourth_day_trade_in_rolling_window(self):
+    def test_backtest_engine_margin_mode_does_not_block_fourth_day_trade_in_rolling_window(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
         from backtesting.trading_constraints import TradingConstraintConfig
 
@@ -1578,17 +1574,15 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 7),
                 initial_equity=2_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="auto", swing_only=False),
+                trading_constraints=TradingConstraintConfig(account_type="margin", swing_only=False),
             )
         )
 
         result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
         trades_df = result.closed_trades_df
         assert len(trades_df) == 4
-        assert int(trades_df["is_day_trade"].sum()) == 3
-        assert trades_df.iloc[-1]["holding_days"] == 1
-        assert result.diagnostics.executed_day_trades == 3
-        assert result.diagnostics.blocked_pdt_day_trades == 1
+        assert int(trades_df["is_day_trade"].sum()) == 4
+        assert result.diagnostics.executed_day_trades == 4
 
     def test_backtest_engine_cash_mode_uses_settled_cash_only(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -1638,7 +1632,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 6),
                 initial_equity=10_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=False),
+                trading_constraints=TradingConstraintConfig(account_type="cash", swing_only=False),
             )
         )
 
@@ -1674,7 +1668,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 3),
                 initial_equity=10_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=False),
+                trading_constraints=TradingConstraintConfig(account_type="margin", swing_only=False),
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
@@ -1718,7 +1712,7 @@ class TestBacktestConfig:
                 fees_pct=0.0,
                 profit_taker_pct=1.0,
                 trailing_stop_pct=0.99,
-                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="off", swing_only=True),
+                trading_constraints=TradingConstraintConfig(account_type="cash", swing_only=True),
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
@@ -1779,7 +1773,7 @@ class TestBacktestConfig:
                 initial_equity=10_000,
                 max_positions=1,
                 risk_overlay=RiskOverlayConfig(target_annual_vol=None),
-                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="off", swing_only=True),
+                trading_constraints=TradingConstraintConfig(account_type="cash", swing_only=True),
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
@@ -1790,7 +1784,7 @@ class TestBacktestConfig:
                 initial_equity=10_000,
                 max_positions=1,
                 risk_overlay=RiskOverlayConfig(target_annual_vol=0.12),
-                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="off", swing_only=True),
+                trading_constraints=TradingConstraintConfig(account_type="cash", swing_only=True),
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
@@ -1830,22 +1824,22 @@ class TestBacktestConfig:
         assert trade["exit_reason"] == "trailing_stop"
         assert abs(float(trade["exit_price"]) - 10.07) < 1e-9
 
-    def test_trading_constraint_config_effective_pdt_rule_is_disabled_for_cash(self):
+    def test_trading_constraint_config_margin_defaults_do_not_require_stateful_simulation(self):
         from backtesting.trading_constraints import TradingConstraintConfig
 
-        cfg = TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=False)
+        cfg = TradingConstraintConfig(account_type="margin", swing_only=False)
 
-        assert cfg.effective_pdt_rule == "off"
-        assert cfg.applies_pdt_limit(2_000) is False
+        assert cfg.restrict_same_day_exit is False
+        assert cfg.use_settled_cash_only is False
+        assert cfg.requires_stateful_simulation(2_000) is False
 
     def test_trading_constraint_config_supports_cash_plus_swing_combination(self):
         from backtesting.trading_constraints import TradingConstraintConfig
 
-        cfg = TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=True)
+        cfg = TradingConstraintConfig(account_type="cash", swing_only=True)
 
         assert cfg.use_settled_cash_only is True
         assert cfg.restrict_same_day_exit is True
-        assert cfg.effective_pdt_rule == "off"
         assert cfg.requires_stateful_simulation(2_000) is True
 
 
@@ -2006,7 +2000,7 @@ class TestReport:
             output_dir=tmp_path,
             artifacts={"equity_curve_csv": str(equity_csv_path)},
             params={"start": "2025-01-01", "end": "2025-01-06"},
-            diagnostics={"blocked_pdt_day_trades": 1},
+            diagnostics={"blocked_same_day_exits": 1},
         )
 
         assert equity_csv_path.exists()
@@ -2017,7 +2011,7 @@ class TestReport:
         assert payload["summary"]["initial_equity"] == 10000.0
         assert payload["artifacts"]["equity_curve_csv"] == str(equity_csv_path)
         assert payload["params"]["start"] == "2025-01-01"
-        assert payload["diagnostics"]["blocked_pdt_day_trades"] == 1
+        assert payload["diagnostics"]["blocked_same_day_exits"] == 1
 
     def test_save_report_json_includes_fidelity_block(self, tmp_path):
         from backtesting.report import BacktestReport, save_report_json
@@ -2115,7 +2109,6 @@ class TestCLI:
         # Phase 6.1.e — profil custom par défaut.
         assert args.profile == "custom"
         assert args.account_type == "margin"
-        assert not hasattr(args, "pdt_rule")
         assert args.macro_missing_policy is None
         assert args.fidelity_baseline_id is None
         assert args.fidelity_baseline_catalog is None
@@ -2329,7 +2322,6 @@ class TestCLI:
             "--artifacts-dir", "artifacts/models",
         ])
         assert args.account_type == "cash"
-        assert not hasattr(args, "pdt_rule")
         assert args.swing_only is True
         assert args.ml_mode == "rebuild-missing"
         assert args.sentiment_mode == "off"
@@ -2482,7 +2474,6 @@ class TestCLI:
             max_positions=4,
             fees=0.001,
             account_type="cash",
-            pdt_rule="off",
             swing_only=True,
             sentiment_lookback=365,
             no_save=True,
@@ -2604,7 +2595,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -2723,7 +2713,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -2760,7 +2749,6 @@ class TestCLI:
             max_positions=5,
             fees=None,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -2797,7 +2785,6 @@ class TestCLI:
             max_positions=5,
             fees=None,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -2834,7 +2821,6 @@ class TestCLI:
             max_positions=5,
             fees=None,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -2871,7 +2857,6 @@ class TestCLI:
             max_positions=5,
             fees=None,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -3016,7 +3001,6 @@ class TestCLI:
             max_positions=1,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=False,
@@ -3224,7 +3208,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -3399,7 +3382,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -3724,7 +3706,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=False,
@@ -3915,7 +3896,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -4086,7 +4066,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -4229,7 +4208,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -4373,7 +4351,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,
@@ -4519,7 +4496,6 @@ class TestCLI:
             max_positions=5,
             fees=0.001,
             account_type="margin",
-            pdt_rule="auto",
             swing_only=False,
             sentiment_lookback=365,
             no_save=True,

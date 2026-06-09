@@ -222,7 +222,7 @@ ASD_BODY = "\n\n\n".join(
 # ---------------------------------------------------------------------------
 EXEC_HEADER = '''"""ihm/pages/_execution_center.py — Phase 6.2 (Backlog L10).
 
-Préfill exécution (compte/PDT/swing) + ``_build_launch_options`` (tous les
+Préfill exécution (compte/swing) + ``_build_launch_options`` (tous les
 panneaux de paramètres pipeline : execution, risk, ML, screener, selector,
 signal aggregator, corporate actions, data integrity).
 
@@ -251,7 +251,6 @@ from ihm.pages._shared import (
     _to_optional_positive_int,
 )
 from ihm.services.account_defaults import (
-    PDT_EQUITY_THRESHOLD,
     PipelineExecutionDefaults,
     get_pipeline_execution_defaults,
 )

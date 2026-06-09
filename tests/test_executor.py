@@ -117,7 +117,6 @@ class TestExecutor:
         assert summary["submitted_orders"] == 2
         assert summary["filled_orders"] == 1
         assert summary["fill_rate"] == 0.5
-        assert "effective_pdt_rule" not in summary
 
     def test_build_execution_run_summary_includes_risk_metrics(self) -> None:
         summary = build_execution_run_summary(

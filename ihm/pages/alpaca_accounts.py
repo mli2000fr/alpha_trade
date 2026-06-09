@@ -51,7 +51,6 @@ def _build_account_details_dataframe(account_payload: dict[str, Any]) -> pd.Data
 		("Devise", account_payload.get("currency")),
 		("Type de compte", account_payload.get("account_type") or account_payload.get("type")),
 		("Multiplier", account_payload.get("multiplier")),
-		("Pattern day trader", _format_bool(account_payload.get("pattern_day_trader"))),
 		("Trading bloqué", _format_bool(account_payload.get("trading_blocked"))),
 		("Compte bloqué", _format_bool(account_payload.get("account_blocked"))),
 		("Transferts bloqués", _format_bool(account_payload.get("transfers_blocked"))),
@@ -76,9 +75,8 @@ def _render_live_account_summary(account_payload: dict[str, Any]) -> None:
 		]
 	)
 	st.caption(
-		"Statut=`{}` | PDT=`{}` | Trading bloqué=`{}` | Short autorisé=`{}`".format(
+		"Statut=`{}` | Trading bloqué=`{}` | Short autorisé=`{}`".format(
 			account_payload.get("status", "—"),
-			_format_bool(account_payload.get("pattern_day_trader")),
 			_format_bool(account_payload.get("trading_blocked")),
 			_format_bool(account_payload.get("shorting_enabled")),
 		)

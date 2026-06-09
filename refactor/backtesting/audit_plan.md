@@ -15,7 +15,7 @@
 | Données | `data_loader.py` | Chargement OHLCV / scores / sentiment / preds avec introspection des colonnes |
 | Signaux | `signal_replay.py` | Reconstruction conviction PIT |
 | Moteur | `simulator.py` | Simulation jour par jour, TP/TS, contraintes |
-| Contraintes | `trading_constraints.py` | PDT, cash account T+1, swing-only |
+| Contraintes | `trading_constraints.py` | cash account T+1, swing-only |
 | Profils | `profiles.py` | Presets `strict_swing_cash`, `swing_cash_aggressive` |
 | Reporting | `report.py` | Sharpe/Sortino/CAGR/DD/PF + JSON manifeste |
 | Backfill | `backfill_scores_history.py` | Reconstruction historique snapshots |
@@ -28,7 +28,6 @@
 - Frais en bps explicites (commission + slippage) — Phase 6.1.b.
 - Dividendes lus depuis `portfolio_cash_ledger` (Phase 6.1.c).
 - Cash settlement T+1 simulé (`settled_cash` vs `unsettled_cash`).
-- Règle PDT sur fenêtre glissante avec compteur par jour.
 - Sizing equal-weight borné par cash settlé / candidats restants.
 - Frais inclus côté entrée ET sortie.
 
@@ -47,7 +46,7 @@
 Balayage OAT/grid, recommandation pondérée robustesse/survie/forward, classement par régime (`bull/bear/range/vol`), cross-régimes, par objectif (robuste/offensif/bear/exécutable), validation hold-out, lancement IHM.
 
 ### 1.6 Tests
-31 tests passent — couverture PDT, swing-only, cash settled, holdout, profils, backfill.
+31 tests passent — couverture swing-only, cash settled, holdout, profils, backfill.
 
 ---
 

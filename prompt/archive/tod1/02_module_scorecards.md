@@ -382,12 +382,12 @@ Module complet pour dividendes/splits/reverse-splits. Idempotence SHA-256, audit
 **Note : 8.0/10** *(révisée +0.5 Sprint S4 — A-022 ✅ `walk_forward_risk_params`)*
 
 ### Résumé
-Module backtesting mature avec modes research/pipeline, convention `signal J → entrée open J+1`, simulation PDT/cash/swing_only, phases de fidélité 2/3/4/5/7. Walk-forward, calibration sentiment, diagnostic screener. `BacktestReport` structuré avec `report.json`. PIT via `stock_scores_history`. Depuis Sprint S3 : ParquetCache branché (`--use-cache`), Bootstrap Monte Carlo exposé (`--bootstrap-samples`), bornes walk-forward enforced [0.05, 0.40]. Depuis Sprint S4 : `walk_forward_risk_params()` pour ATR/Kelly/correlation.
+Module backtesting mature avec modes research/pipeline, convention `signal J → entrée open J+1`, simulation cash/swing_only, phases de fidélité 2/3/4/5/7. Walk-forward, calibration sentiment, diagnostic screener. `BacktestReport` structuré avec `report.json`. PIT via `stock_scores_history`. Depuis Sprint S3 : ParquetCache branché (`--use-cache`), Bootstrap Monte Carlo exposé (`--bootstrap-samples`), bornes walk-forward enforced [0.05, 0.40]. Depuis Sprint S4 : `walk_forward_risk_params()` pour ATR/Kelly/correlation.
 
 ### Points forts
 - Convention fidèle `signal J → entrée J+1 open` (pas de look-ahead)
 - Phases de fidélité opt-in (risk_bridge, execution_replay, protection, watcher, exit)
-- `TradingConstraintConfig` : 3 axes indépendants (account_type, pdt_rule, swing_only)
+- `TradingConstraintConfig` : axes `account_type` et `swing_only` pour les contraintes actives
 - `BackfillScoresHistoryService` : reconstruction PIT historique
 - `run_metadata` avec git_commit_sha, dataset_hash (reproductibilité)
 - ✅ **`--use-cache`** : `ParquetCache` branché dans CLI `backtesting run` — 3x–10x vitesse (A-010 ✅ Sprint S3)

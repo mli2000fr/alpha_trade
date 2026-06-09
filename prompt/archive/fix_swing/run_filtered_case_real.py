@@ -39,7 +39,6 @@ TP: Final[float] = 0.08
 TS: Final[float] = 0.05
 MAX_POSITIONS: Final[int] = 2
 ACCOUNT_TYPE: Final[Literal["cash", "margin"]] = "cash"
-PDT_RULE: Final[Literal["auto", "off"]] = "off"
 SWING_ONLY: Final[bool] = True
 
 
@@ -141,7 +140,6 @@ def main() -> None:
             max_positions=MAX_POSITIONS,
             trading_constraints=TradingConstraintConfig(
                 account_type=ACCOUNT_TYPE,
-                pdt_rule=PDT_RULE,
                 swing_only=SWING_ONLY,
             ),
         )
@@ -174,7 +172,6 @@ def main() -> None:
             "ts": TS,
             "max_positions": MAX_POSITIONS,
             "account_type": ACCOUNT_TYPE,
-            "pdt_rule": PDT_RULE,
             "swing_only": SWING_ONLY,
             "execution_timing": "signal J (calculé après clôture) -> ordre pour J+1 open",
             "filters": FILTERS,

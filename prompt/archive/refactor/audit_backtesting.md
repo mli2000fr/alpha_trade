@@ -13,14 +13,14 @@
 
 `backtesting/` est le moteur **point-in-time** du projet : reconstruit l'historique
 `stock_scores_history`, rejoue les signaux jour par jour, simule l'exécution au prochain
-`open` avec contraintes de compte (`margin|cash`, `pdt_rule`, `swing_only`,
-settlement `T+1` cash), TP + trailing stop, calcule les métriques (Sharpe, Sortino,
+`open` avec contraintes de compte (`margin|cash`, `swing_only`, settlement `T+1`
+cash), TP + trailing stop, calcule les métriques (Sharpe, Sortino,
 CAGR, drawdown, win rate, profit factor). Inclut un diagnostic screener
 (`diagnose-screener`, `recommend-screener`) avec analyse cross-régime de marché et
 recommandations adaptatives par objectif (robuste / offensif / bear / exécutable).
 
 État global : **module ambitieux, riche fonctionnellement**, avec des choix corrects
-(exécution au `open` du J+1, séparation `account_type` / `pdt_rule` / `swing_only`,
+(exécution au `open` du J+1, séparation `account_type` / `swing_only`,
 modes ML / sentiment `auto|off|rebuild-missing`). Documentation très dense.
 
 Principaux risques :
@@ -60,7 +60,7 @@ Priorités immédiates :
 |---|---|
 | Constat | `run`, `backfill-scores-history`, `diagnose-screener`, `recommend-screener`. UX riche. |
 | Force | Découpage clair. Modes `--ml-mode`, `--sentiment-mode`, contraintes de compte exposés. |
-| Risque | **Maintenabilité** : nombreux paramètres (`--tp`, `--ts`, `--max-positions`, `--equity`, `--account-type`, `--pdt-rule`, etc.) → CLI surchargée. |
+| Risque | **Maintenabilité** : nombreux paramètres (`--tp`, `--ts`, `--max-positions`, `--equity`, `--account-type`, etc.) → CLI surchargée. |
 | Recommandation | Profil `--profile strict_swing_cash` qui présète tout. |
 
 ### 2.2 `data_loader.py`
@@ -87,9 +87,9 @@ Priorités immédiates :
 
 ### 2.5 `trading_constraints.py` — contraintes de compte
 
-| Constat | `account_type=margin|cash`, `pdt_rule=auto|off`, `swing_only`. Cash settlement T+1. PDT simulé `< 25 000 $`. |
+| Constat | `account_type=margin|cash`, `swing_only`. Cash settlement T+1. |
 | Force | Belle séparation conceptuelle, expose des artefacts diagnostics
-(`blocked_pdt_day_trades`, `blocked_same_day_exits`, `blocked_cash_entries`). |
+(`blocked_same_day_exits`, `blocked_cash_entries`). |
 | Recommandation | Étendre à `T+2` pour les vrais cash accounts US (T+1 depuis SEC May 2024 — OK pour 2026) ; documenter explicitement. |
 
 ### 2.6 `report.py`

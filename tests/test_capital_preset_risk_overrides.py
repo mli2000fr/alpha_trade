@@ -178,13 +178,16 @@ def test_micro_account_min_notional_viable(presets):
 
 
 # ---------------------------------------------------------------------------
-# Nettoyage legacy — aucun preset capital ne doit encore exposer l'ancien champ d'exécution
+# Nettoyage legacy — aucun preset capital ne doit encore exposer d'ancien champ rule d'exécution
 # ---------------------------------------------------------------------------
 
-def test_capital_presets_do_not_expose_legacy_execution_field(presets):
+def test_capital_presets_do_not_expose_legacy_execution_rule_fields(presets):
     """Les presets capital ne doivent plus propager d'ancien champ compat d'exécution."""
     for preset in presets:
-        assert "execution_pdt_rule" not in preset.values, (
+        assert not any(
+            str(key).startswith("execution_") and str(key).endswith("_rule")
+            for key in preset.values
+        ), (
             f"{preset.key}: reliquat compat legacy détecté dans capital_presets.yaml"
         )
 

@@ -102,7 +102,6 @@ class BacktestDiagnostics:
     """Compteurs métier utiles quand des contraintes de compte sont actives."""
 
     blocked_same_day_exits: int = 0
-    blocked_pdt_day_trades: int = 0
     blocked_cash_entries: int = 0
     executed_day_trades: int = 0
     # Phase B (refactor) — diagnostics micro-structure.
@@ -122,7 +121,6 @@ class BacktestDiagnostics:
     def to_dict(self) -> dict[str, int]:
         return {
             "blocked_same_day_exits": self.blocked_same_day_exits,
-            "blocked_pdt_day_trades": self.blocked_pdt_day_trades,
             "blocked_cash_entries": self.blocked_cash_entries,
             "executed_day_trades": self.executed_day_trades,
             "blocked_entry_gap": self.blocked_entry_gap,
@@ -188,7 +186,6 @@ class _RunState:
     closed_trades: list[dict[str, object]] = field(default_factory=list)
     trade_events: list[dict[str, object]] = field(default_factory=list)
     equity_points: list[float] = field(default_factory=list)
-    day_trade_counts: dict[pd.Timestamp, int] = field(default_factory=lambda: defaultdict(int))
     breaker_points: list[dict[str, object]] = field(default_factory=list)
 
 
@@ -1192,17 +1189,6 @@ class BacktestEngine:
                 position.peak_high = peak_high
                 continue
 
-            if is_same_day and constraints.applies_pdt_limit(cfg.initial_equity):
-                window_start = max(0, day_idx - constraints.rolling_window_days + 1)
-                day_trades_in_window = sum(
-                    state.day_trade_counts[pd.Timestamp(trading_days[idx])]
-                    for idx in range(window_start, day_idx + 1)
-                )
-                if day_trades_in_window >= constraints.max_day_trades:
-                    diagnostics.blocked_pdt_day_trades += 1
-                    position.peak_high = peak_high
-                    continue
-
             if exit_reason == "take_profit":
                 diagnostics.take_profit_exits += 1
             elif exit_reason == "trailing_stop":
@@ -1229,7 +1215,6 @@ class BacktestEngine:
 
             is_day_trade = is_same_day
             if is_day_trade:
-                state.day_trade_counts[trade_day] += 1
                 diagnostics.executed_day_trades += 1
 
             state.closed_trades.append(

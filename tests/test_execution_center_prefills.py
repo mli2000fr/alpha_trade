@@ -105,7 +105,6 @@ def test_apply_execution_prefills_sets_risk_equity_from_broker_equity_on_account
     assert session_state["pipeline_risk_account_equity"] == 2_000.0
     assert session_state[execution_center.DETECTED_ACCOUNT_TYPE_KEY] == "cash"
     assert "pipeline_detected_legacy_execution_rule" not in session_state
-    assert "pipeline_detected_pdt_rule" not in session_state
     assert session_state[execution_center.CAPITAL_PRESET_KEY] == "capital_0_2000_eur"
     assert session_state[execution_center.DETECTED_CAPITAL_PRESET_KEY] == "capital_0_2000_eur"
 
@@ -208,7 +207,6 @@ def test_apply_selected_capital_preset_can_override_execution_settings_from_buck
     assert session_state["pipeline_risk_account_equity"] == 60_000.0
     assert session_state["pipeline_execution_account_type"] == "margin"
     assert "pipeline_execution_legacy_rule" not in session_state
-    assert "pipeline_execution_pdt_rule" not in session_state
     assert session_state["pipeline_execution_submission_window"] == "both"
 
 

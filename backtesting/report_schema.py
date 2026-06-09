@@ -105,7 +105,6 @@ class DiagnosticsSchema:
     """Bloc ``diagnostics`` — compteurs simulator."""
 
     blocked_same_day_exits: int = 0
-    blocked_pdt_day_trades: int = 0
     blocked_cash_entries: int = 0
     executed_day_trades: int = 0
     blocked_entry_gap: int = 0

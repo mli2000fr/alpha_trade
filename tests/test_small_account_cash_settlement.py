@@ -20,13 +20,11 @@ def test_small_cash_account_preset_enables_settled_cash_simulation() -> None:
 
     constraints = TradingConstraintConfig(
         account_type=str(updated["account_type"]),
-        pdt_rule="off",
         swing_only=bool(updated["swing_only"]),
         cash_settlement_days=int(updated["cash_settlement_days"]),
     )
 
     assert constraints.account_type == "cash"
-    assert constraints.effective_pdt_rule == "off"
     assert constraints.use_settled_cash_only is True
     assert constraints.cash_settlement_days == 1
     assert constraints.requires_stateful_simulation(2_000.0) is True
@@ -48,7 +46,6 @@ def test_margin_preset_keeps_cash_settlement_at_zero() -> None:
 
     constraints = TradingConstraintConfig(
         account_type=str(updated["account_type"]),
-        pdt_rule="off",
         swing_only=bool(updated["swing_only"]),
         cash_settlement_days=int(updated["cash_settlement_days"]),
     )
