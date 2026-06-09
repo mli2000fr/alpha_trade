@@ -1842,6 +1842,17 @@ class TestBacktestConfig:
         assert cfg.restrict_same_day_exit is True
         assert cfg.requires_stateful_simulation(2_000) is True
 
+    def test_trading_constraint_config_no_longer_exposes_legacy_pdt_fields(self):
+        from dataclasses import fields
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        field_names = {field.name for field in fields(TradingConstraintConfig)}
+
+        assert "pdt_rule" not in field_names
+        assert "pdt_equity_threshold" not in field_names
+        assert "max_day_trades" not in field_names
+        assert "rolling_window_days" not in field_names
+
 
 # ============================================================
 # test report
