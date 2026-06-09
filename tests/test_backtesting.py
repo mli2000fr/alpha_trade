@@ -1788,8 +1788,16 @@ class TestBacktestConfig:
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
-        assert float(standard.closed_trades_df.iloc[0]["quantity"]) == 100.0
-        assert float(targeted.closed_trades_df.iloc[0]["quantity"]) == 50.0
+        standard_entry = standard.trade_events_df.iloc[0]
+        targeted_entry = targeted.trade_events_df.iloc[0]
+
+        assert standard_entry["event_type"] == "entry_opened"
+        assert targeted_entry["event_type"] == "entry_opened"
+        assert float(standard_entry["vol_target_scaler"]) == 1.0
+        assert float(targeted_entry["vol_target_scaler"]) == 0.5
+        assert float(standard_entry["quantity"]) == 99.0
+        assert float(targeted_entry["quantity"]) == 49.0
+        assert float(targeted_entry["quantity"]) < float(standard_entry["quantity"])
 
     def test_backtest_engine_conservative_trailing_stop_does_not_rachet_on_same_bar(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -1842,16 +1850,13 @@ class TestBacktestConfig:
         assert cfg.restrict_same_day_exit is True
         assert cfg.requires_stateful_simulation(2_000) is True
 
-    def test_trading_constraint_config_no_longer_exposes_legacy_pdt_fields(self):
+    def test_trading_constraint_config_exposes_only_supported_account_constraint_fields(self):
         from dataclasses import fields
         from backtesting.trading_constraints import TradingConstraintConfig
 
         field_names = {field.name for field in fields(TradingConstraintConfig)}
 
-        assert "pdt_rule" not in field_names
-        assert "pdt_equity_threshold" not in field_names
-        assert "max_day_trades" not in field_names
-        assert "rolling_window_days" not in field_names
+        assert field_names == {"account_type", "swing_only", "cash_settlement_days"}
 
 
 # ============================================================
@@ -2956,7 +2961,7 @@ class TestCLI:
             path.write_text("trade_date,portfolio_value\n2025-01-02,100000\n", encoding="utf-8")
             return path
 
-        def fake_save_trades_csv(pf, *, output_dir):
+        def fake_save_trades_csv(pf, *, output_dir, **kwargs):
             output_dir.mkdir(parents=True, exist_ok=True)
             path = output_dir / "trades.csv"
             path.write_text("symbol,entry_date\nBBB,2025-01-02\n", encoding="utf-8")
@@ -3492,7 +3497,7 @@ class TestCLI:
             path.write_text("trade_date,portfolio_value\n2025-01-02,100000\n", encoding="utf-8")
             return path
 
-        def fake_save_trades_csv(pf, *, output_dir):
+        def fake_save_trades_csv(pf, *, output_dir, **kwargs):
             output_dir.mkdir(parents=True, exist_ok=True)
             path = output_dir / "trades.csv"
             path.write_text("symbol,entry_date\nAAPL,2025-01-02\n", encoding="utf-8")

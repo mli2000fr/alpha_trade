@@ -11,7 +11,7 @@ Objectifs (cf. ``prompt/tod/08_sprint_plan.md`` — Sprint S6) :
        existent et sont bien des callables (anti-régression refactor).
     3. Vérifier qu'un appel direct à ``_build_launch_options`` renvoie des
        :class:`PipelineLaunchOptions` aux défauts swing attendus
-       (``simulate`` / ``cash`` / ``pdt=off`` / ``swing_only=True``).
+       (``simulate`` / ``cash`` / ``swing_only=True``).
 
 Les tests sont marqués ``e2e`` (cf. ``pytest.ini``) pour permettre
 ``pytest -m "not e2e"`` en mode rapide local.

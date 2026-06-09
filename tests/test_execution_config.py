@@ -65,7 +65,7 @@ class TestAccountConstraints:
         assert cfg.swing_only is True
         assert cfg.cash_settlement_days == 1
 
-    def test_margin_account_no_longer_requires_legacy_pdt_flags(self) -> None:
+    def test_margin_account_supports_intraday_configuration(self) -> None:
         cfg = ExecutionConfig(account_type="margin", swing_only=False)
 
         assert cfg.account_type == "margin"

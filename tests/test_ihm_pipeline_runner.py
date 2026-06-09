@@ -173,7 +173,6 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert "--auto-rebalance" in execution_command
     assert "--account-type" in execution_command
     assert execution_command[execution_command.index("--account-type") + 1] == "cash"
-    assert "--pdt-rule" not in execution_command
     assert "--swing-only" in execution_command
     assert "--profit-taker-pct" in execution_command
     assert execution_command[execution_command.index("--profit-taker-pct") + 1] == "0.065"
