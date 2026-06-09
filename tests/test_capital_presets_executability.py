@@ -52,3 +52,16 @@ def test_apply_backtest_defaults_from_preset_prefills_costs_and_settlement() -> 
     assert updated["commission_bps"] == pytest.approx(12.0)
     assert updated["slippage_bps"] == pytest.approx(20.0)
 
+
+def test_small_account_preset_uses_more_prudent_ml_defaults() -> None:
+    preset = get_capital_preset_by_key("capital_0_5000")
+
+    assert preset is not None
+    values = preset.values
+
+    assert values["risk_score_weight"] == pytest.approx(0.55)
+    assert values["risk_prediction_weight"] == pytest.approx(0.45)
+    assert values["risk_min_ml_coverage_ratio"] == pytest.approx(0.95)
+    assert values["backtesting_min_ml_coverage_ratio"] == pytest.approx(0.95)
+
+

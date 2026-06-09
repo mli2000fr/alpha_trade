@@ -416,6 +416,7 @@ def _build_backtest_common_params(
         "ml_mode": args.ml_mode,
         "sentiment_mode": args.sentiment_mode,
         "artifacts_dir": args.artifacts_dir,
+        "config_path": args.config_path,
         "score_column": args.score_column,
         "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
         "macro_missing_policy": getattr(args, "macro_missing_policy", None),
@@ -774,6 +775,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--artifacts-dir",
         default="artifacts/models",
         help="Répertoire des artefacts modèles pour reconstruire les prédictions ML",
+    )
+    run_p.add_argument(
+        "--config-path",
+        default=None,
+        help="Chemin YAML alternatif pour charger la configuration runtime (notamment `market_regimes`) sans modifier `config.yaml`.",
     )
     run_p.add_argument(
         "--output-dir",
@@ -1924,7 +1930,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 parse_market_regimes as _parse_mr_bt,
                 resolve_macro_pit_mode as _resolve_macro_pit_mode_bt,
             )
-            _yaml_bt = _load_yaml_bt()
+            _yaml_bt = _load_yaml_bt(getattr(args, "config_path", None))
             _mr_cfg_for_bt = _parse_mr_bt(_yaml_bt.get("market_regimes"))
             args.effective_macro_pit_mode = _resolve_macro_pit_mode_bt(
                 _yaml_bt,
