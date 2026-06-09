@@ -1157,6 +1157,45 @@ class TestExecutionDbIo:
         assert stored[0].action == "buy_more"
         assert stored[0].reconciliation_status == ReconciliationStatus.SAFE_AUTO
 
+    def test_replace_execution_reconciliation_results_preserves_fractional_quantities(self, repo) -> None:
+        results = [
+            ExecutionReconciliationResult(
+                exec_run_id="exec-rec-frac-1",
+                account_id="acct-1",
+                symbol="AAPL",
+                target_qty=0.5,
+                internal_position_qty=0.25,
+                broker_position_qty=0.25,
+                position_delta=-0.25,
+                open_request_buy_qty=0.125,
+                open_request_sell_qty=0.0,
+                open_broker_buy_qty=0.125,
+                open_broker_sell_qty=0.0,
+                has_open_protection=True,
+                protection_qty=0.25,
+                action="buy_more",
+                reconciliation_status=ReconciliationStatus.MANUAL_REVIEW,
+                reason_code="open_orders_in_flight",
+            )
+        ]
+
+        count = repo.replace_execution_reconciliation_results(
+            exec_run_id="exec-rec-frac-1",
+            account_id="acct-1",
+            results=results,
+        )
+
+        assert count == 1
+        stored = repo.load_execution_reconciliation_results(exec_run_id="exec-rec-frac-1", account_id="acct-1")
+        assert len(stored) == 1
+        assert stored[0].target_qty == pytest.approx(0.5)
+        assert stored[0].internal_position_qty == pytest.approx(0.25)
+        assert stored[0].broker_position_qty == pytest.approx(0.25)
+        assert stored[0].position_delta == pytest.approx(-0.25)
+        assert stored[0].open_request_buy_qty == pytest.approx(0.125)
+        assert stored[0].open_broker_buy_qty == pytest.approx(0.125)
+        assert stored[0].protection_qty == pytest.approx(0.25)
+
     def test_replace_execution_positions_writes_open_positions(self, repo) -> None:
         count = repo.replace_execution_positions(
             exec_run_id="exec-10",

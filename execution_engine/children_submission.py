@@ -235,15 +235,15 @@ def submit_rebalance_orders(
     for diff in action_diffs:
         if diff.action == "investigate":
             LOGGER.warning(
-                "Rebalance SKIP %s (investigate) : %.0f shares broker hors cible - action manuelle requise",
+                "Rebalance SKIP %s (investigate) : %s shares broker hors cible - action manuelle requise",
                 diff.symbol,
-                diff.broker_qty,
+                format_share_quantity(diff.broker_qty),
             )
             events.append(
                 make_event(
                     exec_run_id,
                     EventType.RECONCILE_DIFF,
-                    f"INVESTIGATE {diff.symbol}: {diff.broker_qty:.0f} broker, hors cible",
+                    f"INVESTIGATE {diff.symbol}: {format_share_quantity(diff.broker_qty)} broker, hors cible",
                     symbol=diff.symbol,
                 )
             )

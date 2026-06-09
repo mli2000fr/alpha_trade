@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal, cast
 
-from common.quantity_utils import is_effectively_integer_quantity
+from common.quantity_utils import QUANTITY_EPSILON, is_effectively_integer_quantity
 from common.config_loader import load_config
 from service.market import parse_trailing_stop
 
@@ -125,7 +125,8 @@ class ExecutionConfig:
 
     # --- Reconciliation ---
     reconcile_after_submit: bool = True
-    reconcile_tolerance_shares: int = 0
+    reconcile_tolerance_shares: float = 0.0
+    reconcile_tolerance_epsilon: float = QUANTITY_EPSILON
     auto_rebalance_on_reconcile: bool = False  # si True : soumet des ordres pour corriger les ecarts
 
     # --- TCA ---
@@ -199,6 +200,10 @@ class ExecutionConfig:
             raise ValueError("entry_mode invalide.")
         if self.fractional_live_mode not in ("entry_only", "intraday_only", "full_if_supported"):
             raise ValueError("fractional_live_mode doit être 'entry_only', 'intraday_only' ou 'full_if_supported'.")
+        if self.reconcile_tolerance_shares < 0:
+            raise ValueError("reconcile_tolerance_shares doit être >= 0.")
+        if self.reconcile_tolerance_epsilon <= 0:
+            raise ValueError("reconcile_tolerance_epsilon doit être > 0.")
         if self.regime_max_positions is not None and self.regime_max_positions < 1:
             raise ValueError("regime_max_positions doit être >= 1 quand renseigné.")
         if self.regime_max_position_weight is not None and not (0 < self.regime_max_position_weight <= 1):
@@ -278,6 +283,11 @@ class ExecutionConfig:
         raise ValueError(
             "Fractional protection payload requested while fractional_live_mode blocks server-side protections."
         )
+
+    @property
+    def effective_reconcile_tolerance_shares(self) -> float:
+        """Tolérance effective appliquée à la réconciliation, bornée par un epsilon configurable."""
+        return max(float(self.reconcile_tolerance_shares), float(self.reconcile_tolerance_epsilon))
 
     @property
     def blocks_new_entries(self) -> bool:

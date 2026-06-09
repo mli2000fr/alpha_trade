@@ -1,10 +1,12 @@
 from datetime import date
 
+import pytest
+
 from execution_engine import reconciliation
 from execution_engine.models import ExecutionPosition, ExecutionTarget, ReconciliationStatus
 
 
-def _target(symbol: str = "AAPL", shares: int = 100, entry_price: float = 150.0) -> ExecutionTarget:
+def _target(symbol: str = "AAPL", shares: float = 100, entry_price: float = 150.0) -> ExecutionTarget:
     return ExecutionTarget(
         risk_run_id="risk-1",
         trade_date=date(2026, 4, 26),
@@ -145,5 +147,54 @@ def test_reconcile_targets_vs_broker_returns_legacy_diff_projection() -> None:
     assert diffs[0].broker_qty == 8.0
     assert diffs[0].delta == -2.0
     assert diffs[0].action == "buy_more"
+
+
+def test_reconcile_execution_state_respects_fractional_tolerance() -> None:
+    results = reconciliation.reconcile_execution_state(
+        exec_run_id="exec-frac-1",
+        account_id="acct-1",
+        targets=[_target(shares=0.333333333)],
+        broker_positions=[{"symbol": "AAPL", "qty": 0.333333334}],
+        internal_positions=[ExecutionPosition(account_id="acct-1", symbol="AAPL", net_qty=0.333333334)],
+        open_order_state=[],
+        protection_state=[{"symbol": "AAPL", "protection_qty": 0.333333334}],
+        tolerance=1e-6,
+        buying_power_available=100_000.0,
+    )
+
+    assert results[0].action == "none"
+    assert results[0].reconciliation_status == ReconciliationStatus.SAFE_AUTO
+    assert results[0].reason_code is None
+
+
+def test_reconcile_execution_state_flags_fractional_shortfall_above_tolerance() -> None:
+    results = reconciliation.reconcile_execution_state(
+        exec_run_id="exec-frac-2",
+        account_id="acct-1",
+        targets=[_target(shares=0.75)],
+        broker_positions=[{"symbol": "AAPL", "qty": 0.25}],
+        internal_positions=[ExecutionPosition(account_id="acct-1", symbol="AAPL", net_qty=0.25)],
+        open_order_state=[],
+        protection_state=[{"symbol": "AAPL", "protection_qty": 0.25}],
+        tolerance=1e-6,
+        buying_power_available=100_000.0,
+    )
+
+    assert results[0].action == "buy_more"
+    assert results[0].position_delta == pytest.approx(-0.5)
+    assert results[0].reconciliation_status == ReconciliationStatus.SAFE_AUTO
+
+
+def test_reconcile_targets_vs_broker_keeps_fractional_target_qty() -> None:
+    diffs = reconciliation.reconcile_targets_vs_broker(
+        targets=[_target(symbol="AAPL", shares=0.5, entry_price=100.0)],
+        broker_positions=[{"symbol": "AAPL", "qty": 0.25}],
+        tolerance=1e-6,
+    )
+
+    assert len(diffs) == 1
+    assert diffs[0].target_qty == pytest.approx(0.5)
+    assert diffs[0].broker_qty == pytest.approx(0.25)
+    assert diffs[0].delta == pytest.approx(-0.25)
 
 

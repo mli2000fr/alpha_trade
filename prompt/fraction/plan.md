@@ -856,6 +856,42 @@ Créer/adapter :
 - Les runs historiques entiers continuent de fonctionner.
 - Le flag peut être activé progressivement sans migration manuelle dangereuse.
 
+## Implémentation réalisée — 2026-06-09
+
+Réalisé :
+- `execution_engine/config.py`
+  - `reconcile_tolerance_shares` migré en `float` ;
+  - ajout de `reconcile_tolerance_epsilon` ;
+  - ajout de `effective_reconcile_tolerance_shares` pour borner la tolérance runtime par un epsilon configurable.
+- `execution_engine/reconciliation.py`
+  - toutes les quantités de réconciliation passent maintenant par une normalisation float-safe ;
+  - les comparaisons utilisent une tolérance effective basée sur `QUANTITY_EPSILON` ;
+  - suppression de la projection legacy `int(result.target_qty)` dans `reconcile_targets_vs_broker()`.
+- `execution_engine/executor.py`
+  - l’executor transmet désormais la tolérance effective de réconciliation au moteur de reconcile.
+- `execution_engine/children_submission.py`
+  - suppression des derniers logs `%.0f` / `:.0f` qui masquaient les quantités fractionnaires sur les cas `investigate`.
+- `execution_engine/db_io.py`
+  - validation de la persistance / relecture des `ExecutionReconciliationResult` fractionnaires sans troncature via tests dédiés ;
+  - aucune migration de schéma supplémentaire n’a été requise sur ce sprint car les colonnes SQL concernées étaient déjà en `DOUBLE`.
+
+Conséquence technique :
+- plus d’hypothèse implicite “quantité entière” dans la réconciliation live ;
+- un diff `0.5 -> 0.25` reste exploitable jusqu’au rebalance ;
+- les audits et logs d’investigation restent lisibles sur des quantités décimales.
+
+## Tests exécutés
+
+```powershell
+python -m pytest -q -o addopts="" tests/test_execution_engine_reconciliation.py tests/test_execution_db_io.py tests/test_executor.py
+python -m pytest -q -o addopts="" tests/test_execution_engine_executor.py tests/test_order_intents.py tests/test_backtesting_fractional.py
+```
+
+Résultats :
+- **74 tests passés** sur le périmètre Sprint 6 ciblé
+- **48 tests passés** en régression complémentaire
+- **122 tests passés** au total sur le scope validé
+
 ---
 
 ## 6. Priorisation recommandée

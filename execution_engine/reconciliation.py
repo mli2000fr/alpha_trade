@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from execution_engine.models import (
     ExecutionPosition,
     ExecutionReconciliationResult,
@@ -17,7 +18,11 @@ def _symbol_key(raw_symbol: str | None) -> str:
 
 
 def _qty(value: Any) -> float:
-    return float(value or 0.0)
+    return normalize_share_quantity(value)
+
+
+def _effective_tolerance(tolerance: float | int) -> float:
+    return max(normalize_share_quantity(tolerance), QUANTITY_EPSILON)
 
 
 def reconcile_execution_state(
@@ -29,9 +34,10 @@ def reconcile_execution_state(
     internal_positions: list[ExecutionPosition],
     open_order_state: list[dict[str, Any]] | None = None,
     protection_state: list[dict[str, Any]] | None = None,
-    tolerance: int = 0,
+    tolerance: float = 0.0,
     buying_power_available: float | None = None,
 ) -> list[ExecutionReconciliationResult]:
+    effective_tolerance = _effective_tolerance(tolerance)
     target_map = {_symbol_key(target.symbol): target for target in targets}
     broker_map = {
         _symbol_key(position.get("symbol")): _qty(position.get("qty"))
@@ -63,19 +69,19 @@ def reconcile_execution_state(
     results: list[ExecutionReconciliationResult] = []
     for symbol in all_symbols:
         target = target_map.get(symbol)
-        target_qty = float(target.target_shares) if target is not None else 0.0
-        internal_qty = internal_map.get(symbol, 0.0)
-        broker_qty = broker_map.get(symbol, 0.0)
-        delta = broker_qty - target_qty
+        target_qty = _qty(target.target_shares) if target is not None else 0.0
+        internal_qty = _qty(internal_map.get(symbol, 0.0))
+        broker_qty = _qty(broker_map.get(symbol, 0.0))
+        delta = normalize_share_quantity(broker_qty - target_qty)
         order_state_for_symbol = order_map.get(symbol, {})
         open_request_buy_qty = _qty(order_state_for_symbol.get("open_request_buy_qty"))
         open_request_sell_qty = _qty(order_state_for_symbol.get("open_request_sell_qty"))
         open_broker_buy_qty = _qty(order_state_for_symbol.get("open_broker_buy_qty"))
         open_broker_sell_qty = _qty(order_state_for_symbol.get("open_broker_sell_qty"))
-        protection_qty = protection_map.get(symbol, 0.0)
-        has_open_protection = protection_qty > tolerance
+        protection_qty = _qty(protection_map.get(symbol, 0.0))
+        has_open_protection = protection_qty > effective_tolerance
 
-        if abs(delta) <= tolerance:
+        if abs(delta) <= effective_tolerance:
             action = "none"
         elif symbol not in target_map:
             action = "investigate"
@@ -85,20 +91,20 @@ def reconcile_execution_state(
             action = "buy_more"
 
         reasons: list[str] = []
-        if abs(broker_qty - internal_qty) > tolerance:
+        if abs(normalize_share_quantity(broker_qty - internal_qty)) > effective_tolerance:
             reasons.append("internal_position_mismatch")
         if any(
-            value > tolerance
+            value > effective_tolerance
             for value in (open_request_buy_qty, open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty)
         ):
             reasons.append("open_orders_in_flight")
-        if broker_qty > tolerance and not has_open_protection:
+        if broker_qty > effective_tolerance and not has_open_protection:
             reasons.append("missing_protection")
 
         if action == "buy_more" and buying_power_available is not None:
             reference_price = float(target.entry_price) if target is not None else 0.0
             estimated_notional = abs(delta) * max(reference_price, 0.0)
-            if estimated_notional > max(float(buying_power_available), 0.0) + 1e-9:
+            if estimated_notional > max(float(buying_power_available), 0.0) + effective_tolerance:
                 reasons.append("insufficient_buying_power")
 
         if action == "investigate":
@@ -135,7 +141,7 @@ def reconcile_execution_state(
 def reconcile_targets_vs_broker(
     targets: list[ExecutionTarget],
     broker_positions: list[dict],
-    tolerance: int = 0,
+    tolerance: float = 0.0,
 ) -> list[ReconcileDiff]:
     results = reconcile_execution_state(
         exec_run_id="legacy-reconcile",
@@ -151,7 +157,7 @@ def reconcile_targets_vs_broker(
     return [
         ReconcileDiff(
             symbol=result.symbol,
-            target_qty=int(result.target_qty),
+            target_qty=result.target_qty,
             broker_qty=result.broker_position_qty,
             delta=result.position_delta,
             action=result.action,

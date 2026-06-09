@@ -289,7 +289,7 @@ class ProductionExecutor:
             self._repo.insert_execution_run(
                 exec_run_id=exec_run_id,
                 risk_run_id=actual_risk_run_id,
-                trade_date=actual_trade_date,
+                trade_date=actual_trade_date or targets[0].trade_date,
                 broker_mode=self._cfg.broker_mode,
                 dry_run=self._cfg.dry_run,
                 total_targets=len(targets),
@@ -834,7 +834,7 @@ class ProductionExecutor:
                         internal_positions=self._repo.load_execution_positions(account_id=resolved_account_id),
                         open_order_state=self._repo.load_open_reconciliation_order_state(account_id=resolved_account_id),
                         protection_state=self._repo.load_reconciliation_protection_state(account_id=resolved_account_id),
-                        tolerance=self._cfg.reconcile_tolerance_shares,
+                        tolerance=self._cfg.effective_reconcile_tolerance_shares,
                         buying_power_available=account_state.buying_power_available,
                     )
                     self._repo.replace_execution_reconciliation_results(
@@ -1182,6 +1182,7 @@ class ProductionExecutor:
         target_qty = float(row.get("target_qty") or fill_qty)
         order_type = str(row.get("order_type") or "market")
         limit_price = row.get("limit_price")
+        limit_price_value = float(limit_price) if limit_price not in (None, "") else None
         broker_mode = str(row.get("broker_mode") or self._cfg.broker_mode)
         parent_intent = OrderIntent(
             intent_id=str(row["parent_intent_id"]),
@@ -1191,7 +1192,7 @@ class ProductionExecutor:
             side=str(row.get("side") or "buy"),
             qty=target_qty,
             order_type=order_type,
-            limit_price=float(limit_price) if limit_price is not None else None,
+            limit_price=limit_price_value,
             trail_percent=None,
             broker_mode=broker_mode,
             parent_intent_id=None,
@@ -1212,7 +1213,7 @@ class ProductionExecutor:
             avg_fill_price=fill_price,
             status=OrderStatus.FILLED,
             order_type=order_type,
-            limit_price=float(limit_price) if limit_price is not None else None,
+            limit_price=limit_price_value,
             stop_price=None,
             trail_percent=None,
             created_at=None,

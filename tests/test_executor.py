@@ -786,3 +786,39 @@ class TestExecutor:
         executor._submit_rebalance_orders.assert_not_called()
         assert repo.replace_execution_reconciliation_results.called
 
+    def test_reconcile_auto_rebalance_preserves_fractional_safe_auto_delta(self) -> None:
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            auto_rebalance_on_reconcile=True,
+            allow_fractional_shares=True,
+            reconcile_tolerance_shares=1e-6,
+        )
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 0.25}]
+        repo.load_execution_positions.return_value = [ExecutionPosition(account_id="default", symbol="AAPL", net_qty=0.25)]
+        repo.load_open_reconciliation_order_state.return_value = []
+        repo.load_reconciliation_protection_state.return_value = [{"symbol": "AAPL", "protection_qty": 0.25}]
+        repo.load_fractionable_asset_map.return_value = {"AAPL": True}
+        repo.load_portfolio_targets.return_value = [
+            ExecutionTarget(
+                risk_run_id="r1", trade_date=date(2026, 4, 18), symbol="AAPL",
+                target_shares=0.5, entry_price=150.0, target_weight=0.05,
+                sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+                decision_rank=1, stop_price_initial=140.0, risk_per_share=10.0,
+                risk_budget_dollars=1_000.0, initial_risk_dollars=1_000.0, target_notional=75.0,
+                price_asof_date=date(2026, 4, 18), atr_asof_date=date(2026, 4, 18), atr_20=5.0,
+            )
+        ]
+        executor._submit_rebalance_orders = MagicMock(return_value=[])
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["reconciliation_safe_auto"] >= 1
+        executor._submit_rebalance_orders.assert_called_once()
+        safe_auto_diffs = executor._submit_rebalance_orders.call_args.args[0]
+        assert len(safe_auto_diffs) == 1
+        assert safe_auto_diffs[0].target_qty == 0.5
+        assert safe_auto_diffs[0].broker_qty == 0.25
+        assert safe_auto_diffs[0].delta == -0.25
+
