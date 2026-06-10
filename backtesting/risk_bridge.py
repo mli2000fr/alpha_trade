@@ -13,7 +13,7 @@ from common.quantity_utils import normalize_share_quantity
 from risk_management.config import RiskConfig
 from risk_management.models import CandidateScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
-from risk_management.regime_apply import apply_snapshot
+from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
 
 if TYPE_CHECKING:
     from service.market import MarketRegimesConfig
@@ -253,10 +253,13 @@ def build_phase2_risk_result(
 ) -> RiskBridgeResult:
     """Construit les résultats phase 2 ``risk_execution``.
 
-    Si ``market_regimes_config`` est fourni et activé, un ``MarketRegimeSnapshot``
-    est calculé pour chaque ``snapshot_date`` puis appliqué à ``risk_config`` via
-    :func:`risk_management.regime_apply.apply_snapshot`. Cela garantit la parité
-    avec le live (``run_execution.py``).
+    Si ``market_regimes_config`` est fourni, les garde-fous structurels petit
+    compte (``enforce_min_notional`` + cap de slots) sont appliqués même quand
+    ``enabled=false``. Quand la couche régime est activée, un
+    ``MarketRegimeSnapshot`` est ensuite calculé pour chaque ``snapshot_date``
+    puis appliqué via :func:`risk_management.regime_apply.apply_snapshot`.
+    Cela garantit la parité avec le live (``run_execution.py``) tout en
+    découplant l'ablation macro des garde-fous structurels.
     """
     normalized_scores = _prepare_score_columns(scores_df, preferred_score_column=score_column)
     snapshot_dates = sorted({pd.Timestamp(value).date() for value in normalized_scores["trade_date"].dropna().tolist()})
@@ -272,6 +275,13 @@ def build_phase2_risk_result(
     slots_rejected_avoided = 0
     macro_data_quality_count: dict[str, int] = {}
     macro_missing_dates: list[str] = []
+
+    structural_cfg = apply_structural_market_guards(
+        risk_config,
+        market_regimes_config=market_regimes_config,
+        equity=risk_config.account_equity,
+    )
+    structural_guard_applied = structural_cfg is not risk_config
 
     use_regime = (
         market_regimes_config is not None
@@ -297,13 +307,13 @@ def build_phase2_risk_result(
         predictions = _build_predictions(predictions_df, snapshot_date)
         return_matrix = _build_return_matrix(close_df, snapshot_date, symbols, lookback)
 
-        cfg_for_day = risk_config
+        cfg_for_day = structural_cfg
         snap = None
         if use_regime and build_snapshot_fn is not None:
             equity = (
                 equity_provider(snapshot_date)
                 if equity_provider is not None
-                else risk_config.account_equity
+                else structural_cfg.account_equity
             )
             snap = build_snapshot_fn(
                 snapshot_date,
@@ -320,7 +330,7 @@ def build_phase2_risk_result(
             if macro_quality == "missing":
                 macro_missing_dates.append(snapshot_date.isoformat())
             regime_snapshots_dump[snapshot_date] = snap.to_summary_dict()
-            cfg_for_day = apply_snapshot(risk_config, snap)
+            cfg_for_day = apply_snapshot(structural_cfg, snap)
             if not snap.allow_new_entries:
                 entries_blocked_by_regime += len(candidates)
                 # On ignore les entrées de ce jour (cash_only / close_only / equity_too_low)
@@ -344,6 +354,17 @@ def build_phase2_risk_result(
         "signals_generated": len(signals_df),
         "bridge": "risk_management.portfolio_builder",
         "regime_enabled": bool(use_regime),
+        "structural_guard_applied": structural_guard_applied,
+        "structural_guard_min_notional": (
+            float(structural_cfg.effective_min_notional)
+            if structural_guard_applied
+            else None
+        ),
+        "structural_guard_effective_max_positions": (
+            int(structural_cfg.effective_max_positions)
+            if structural_guard_applied
+            else None
+        ),
         "regime_mode_distribution": regime_modes_count,
         "entries_blocked_by_regime": entries_blocked_by_regime,
         "slots_rejected_avoided": slots_rejected_avoided,

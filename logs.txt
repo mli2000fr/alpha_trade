@@ -7,14 +7,26 @@ sync_latest_quotes: 31/12/2025
 
 
 
-2022-07-27
-2022-08-24
-2022-09-29
-2022-10-28
-2022-11-23
-2022-12-29
+soit préparer le changement de baseline,
+soit ouvrir l’audit ciblé du bug/anomalie regime_off en Q2.
 
 
+9. Suite logique
+Je vous recommande deux chantiers séparés :
+Chantier A — ML
+audit des artefacts manquants
+audit des symboles sans modèle
+audit des rebuilds partiels
+objectif : avoir un ML ON non dégradé avant toute réintroduction
+Chantier B — régime
+auditer pourquoi regime_off donne 0 entrée acceptée en 2020_q2_rebound
+objectif : confirmer que l’effet positif du régime ne dépend pas d’une anomalie de la branche OFF
+
+
+règles capital_preservation
+règles cash_only
+seuils VIX / yields / sentiment
+caps appliqués une fois le mode activé
 
 
 

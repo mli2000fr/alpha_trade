@@ -51,6 +51,96 @@ def test_risk_bridge_without_regime_keeps_legacy_behavior():
     assert res.diagnostics["entries_blocked_by_regime"] == 0
 
 
+def test_risk_bridge_regime_off_keeps_structural_small_account_guard():
+    trade_date = date(2025, 5, 1)
+    symbols = [f"SYM{i:02d}" for i in range(12)]
+    scores_df = pd.DataFrame({
+        "trade_date": [trade_date] * len(symbols),
+        "symbol": symbols,
+        "sector": ["Technology"] * len(symbols),
+        "final_score": [float(100 - i) for i in range(len(symbols))],
+        "score": [float(100 - i) for i in range(len(symbols))],
+        "score_source": ["test"] * len(symbols),
+    })
+    predictions_df = pd.DataFrame()
+    idx = pd.DatetimeIndex([pd.Timestamp(trade_date) - pd.Timedelta(days=i) for i in range(30)][::-1])
+    close_df = pd.DataFrame({symbol: [100.0] * 30 for symbol in symbols}, index=idx)
+    high_df = close_df + 2
+    low_df = close_df - 2
+    cfg = RiskConfig(account_equity=5_000, min_position_notional=100, max_positions=20, max_sector_weight=1.0)
+    mr = MarketRegimesConfig(enabled=False, enforce_min_notional=500.0)
+
+    res = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=predictions_df,
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=cfg,
+        market_regimes_config=mr,
+    )
+
+    assert res.diagnostics["regime_enabled"] is False
+    accepted_symbols = {entry.symbol for entry in res.entries if entry.approved_shares > 0}
+    assert len(accepted_symbols) == 10
+    assert accepted_symbols == set(symbols[:10])
+
+
+def test_risk_bridge_q2_ablation_structural_guard_prevents_zero_signal_collapse(caplog):
+    trade_date = date(2020, 5, 1)
+    symbols = ["AAPL", "MSFT", "NVDA"]
+    scores_df = pd.DataFrame({
+        "trade_date": [trade_date] * len(symbols),
+        "symbol": symbols,
+        "sector": ["Technology"] * len(symbols),
+        "final_score": [3.0, 2.0, 1.0],
+        "score": [3.0, 2.0, 1.0],
+        "score_source": ["test"] * len(symbols),
+    })
+    predictions_df = pd.DataFrame()
+    idx = pd.DatetimeIndex([pd.Timestamp(trade_date) - pd.Timedelta(days=i) for i in range(30)][::-1])
+    close_df = pd.DataFrame({symbol: [100.0] * 30 for symbol in symbols}, index=idx)
+    high_df = close_df + 2
+    low_df = close_df - 2
+    cfg = RiskConfig(account_equity=2_000, min_position_notional=500, max_positions=3)
+
+    legacy = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=predictions_df,
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=cfg,
+    )
+
+    assert legacy.diagnostics["regime_enabled"] is False
+    assert legacy.diagnostics["structural_guard_applied"] is False
+    assert legacy.diagnostics["entries_accepted"] == 0
+    assert legacy.diagnostics["signals_generated"] == 0
+    assert {str(entry.decision_reason_code) for entry in legacy.entries} == {"rejected_notional"}
+
+    mr = MarketRegimesConfig(enabled=False, enforce_min_notional=155.0)
+    with caplog.at_level("INFO"):
+        guarded = build_phase2_risk_result(
+            scores_df=scores_df,
+            predictions_df=predictions_df,
+            close_df=close_df,
+            high_df=high_df,
+            low_df=low_df,
+            risk_config=cfg,
+            market_regimes_config=mr,
+        )
+
+    assert guarded.diagnostics["regime_enabled"] is False
+    assert guarded.diagnostics["structural_guard_applied"] is True
+    assert guarded.diagnostics["structural_guard_min_notional"] == 155.0
+    assert guarded.diagnostics["structural_guard_effective_max_positions"] == 3
+    assert guarded.diagnostics["entries_accepted"] == 3
+    assert guarded.diagnostics["signals_generated"] == 3
+    assert {entry.symbol for entry in guarded.entries if entry.approved_shares > 0} == set(symbols)
+    assert any("structural_guard_applied:" in record.getMessage() for record in caplog.records)
+
+
 def test_risk_bridge_cash_only_blocks_entries():
     """Sentiment critical en backtest -> mode cash_only -> entries bloquées."""
     reset_cache()

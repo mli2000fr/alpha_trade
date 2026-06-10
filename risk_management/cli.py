@@ -907,6 +907,21 @@ def main(args: list[str] | None = None) -> None:
         ),
         vol_target_lookback_days=int(args.vol_target_lookback_days),
     )
+    market_regimes_cfg = None
+    try:
+        from service.market import parse_market_regimes
+
+        market_regimes_cfg = parse_market_regimes((load_config() or {}).get("market_regimes"))
+    except Exception:
+        LOGGER.warning("Chargement de la configuration market_regimes impossible côté risk_management.", exc_info=True)
+
+    from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
+
+    config = apply_structural_market_guards(
+        config,
+        market_regimes_config=market_regimes_cfg,
+        equity=effective_equity,
+    )
     regime_snapshot = _resolve_market_regime_snapshot(trade_date, effective_equity, repo)
     regime_snapshot_payload = _serialize_market_regime_snapshot(regime_snapshot)
     if regime_snapshot is not None:
@@ -915,7 +930,6 @@ def main(args: list[str] | None = None) -> None:
             macro_payload=getattr(regime_snapshot, "macro", None),
             engine=getattr(repo, "engine", None),
         )
-        from risk_management.regime_apply import apply_snapshot
 
         config = apply_snapshot(config, regime_snapshot)
     requested_calibration_market_regime_mode = (

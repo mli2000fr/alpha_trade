@@ -16,15 +16,57 @@ retourne la config inchangée.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from risk_management.config import RiskConfig
 
 if TYPE_CHECKING:
+    from service.market import MarketRegimesConfig
     from service.market import MarketRegimeSnapshot
 
 LOGGER = logging.getLogger(__name__)
+
+
+def apply_structural_market_guards(
+    cfg: RiskConfig,
+    *,
+    market_regimes_config: "MarketRegimesConfig | None",
+    equity: float | None,
+) -> RiskConfig:
+    """Applique les garde-fous structurels petit compte indépendamment du régime.
+
+    ``market_regimes`` porte historiquement deux responsabilités :
+    - la logique macro/régime (modes, blocages d'entrées, caps défensifs) ;
+    - un garde-fou structurel petit capital (`enforce_min_notional` + slots max).
+
+    Pour qu'une ablation `regime_off` coupe uniquement la logique macro sans
+    supprimer ce garde-fou structurel, on applique ici la partie *small-account*
+    même lorsque ``market_regimes.enabled = false``.
+    """
+    if market_regimes_config is None:
+        return cfg
+
+    enforce_min_notional = float(getattr(market_regimes_config, "enforce_min_notional", 0.0) or 0.0)
+    if enforce_min_notional <= 0:
+        return cfg
+
+    updates: dict[str, float | int] = {"enforce_min_notional": enforce_min_notional}
+    if equity is not None and equity > 0:
+        allowed_slots = max(0, int(math.floor(float(equity) / enforce_min_notional)))
+        updates["effective_max_positions_override"] = min(cfg.effective_max_positions, allowed_slots)
+
+    new_cfg = replace(cfg, **updates)
+    LOGGER.info(
+        "structural_guard_applied: market_regimes_enabled=%s equity=%s base_min_position_notional=%.2f effective_min_notional=%.2f effective_max_positions=%s",
+        bool(getattr(market_regimes_config, "enabled", False)),
+        equity,
+        cfg.min_position_notional,
+        new_cfg.effective_min_notional,
+        new_cfg.effective_max_positions,
+    )
+    return new_cfg
 
 
 def apply_snapshot(
@@ -70,5 +112,5 @@ def apply_snapshot(
     return new_cfg
 
 
-__all__ = ["apply_snapshot"]
+__all__ = ["apply_snapshot", "apply_structural_market_guards"]
 

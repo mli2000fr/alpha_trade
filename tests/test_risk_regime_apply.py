@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import date
 
 from risk_management.config import RiskConfig
-from risk_management.regime_apply import apply_snapshot
+from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
+from service.market.config import MarketRegimesConfig
 from service.market.models import MarketRegimeSnapshot
 
 
@@ -17,6 +18,35 @@ def _make_snap(**kwargs) -> MarketRegimeSnapshot:
 def test_apply_snapshot_none_returns_same_cfg():
     cfg = RiskConfig()
     assert apply_snapshot(cfg, None) is cfg
+
+
+def test_apply_structural_market_guards_none_returns_same_cfg():
+    cfg = RiskConfig()
+    assert apply_structural_market_guards(cfg, market_regimes_config=None, equity=2_000.0) is cfg
+
+
+def test_apply_structural_market_guards_applies_min_notional_even_when_regime_disabled():
+    cfg = RiskConfig(max_positions=20)
+    market_cfg = MarketRegimesConfig(enabled=False, enforce_min_notional=155.0)
+
+    new = apply_structural_market_guards(cfg, market_regimes_config=market_cfg, equity=2_000.0)
+
+    assert new is not cfg
+    assert new.enforce_min_notional == 155.0
+    assert new.effective_min_notional == 155.0
+    assert new.effective_max_positions_override == 12
+    assert new.effective_max_positions == 12
+
+
+def test_apply_structural_market_guards_blocks_slots_when_equity_below_min_notional():
+    cfg = RiskConfig(max_positions=20)
+    market_cfg = MarketRegimesConfig(enabled=False, enforce_min_notional=155.0)
+
+    new = apply_structural_market_guards(cfg, market_regimes_config=market_cfg, equity=100.0)
+
+    assert new.enforce_min_notional == 155.0
+    assert new.effective_max_positions_override == 0
+    assert new.effective_max_positions == 0
 
 
 def test_apply_snapshot_risk_multiplier():
