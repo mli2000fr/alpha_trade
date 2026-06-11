@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 
 RegimeMode = Literal[
     "normal",              # comportement nominal
@@ -25,6 +25,56 @@ RegimeMode = Literal[
 ]
 
 EarningsShieldMode = Literal["strict_block", "negative_score"]
+
+
+@dataclass(frozen=True, slots=True)
+class MarketRegimeState:
+    """État persistant minimal de la machine de régime entre deux snapshots."""
+
+    trade_date: date
+    current_mode: RegimeMode = "normal"
+    previous_mode: RegimeMode | None = None
+    entered_at: date | None = None
+    last_transition_at: date | None = None
+    last_hard_trigger_at: date | None = None
+    soft_entry_streak: int = 0
+    soft_exit_streak: int = 0
+    hard_calm_streak: int = 0
+    days_in_current_mode: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trade_date": self.trade_date.isoformat(),
+            "current_mode": self.current_mode,
+            "previous_mode": self.previous_mode,
+            "entered_at": self.entered_at.isoformat() if self.entered_at else None,
+            "last_transition_at": self.last_transition_at.isoformat() if self.last_transition_at else None,
+            "last_hard_trigger_at": self.last_hard_trigger_at.isoformat() if self.last_hard_trigger_at else None,
+            "soft_entry_streak": self.soft_entry_streak,
+            "soft_exit_streak": self.soft_exit_streak,
+            "hard_calm_streak": self.hard_calm_streak,
+            "days_in_current_mode": self.days_in_current_mode,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "MarketRegimeState":
+        def _parse_date(value: Any) -> date | None:
+            if not value:
+                return None
+            return date.fromisoformat(str(value))
+
+        return cls(
+            trade_date=date.fromisoformat(str(payload["trade_date"])),
+            current_mode=cast(RegimeMode, str(payload.get("current_mode") or "normal")),
+            previous_mode=cast(RegimeMode | None, str(payload["previous_mode"]) if payload.get("previous_mode") else None),
+            entered_at=_parse_date(payload.get("entered_at")),
+            last_transition_at=_parse_date(payload.get("last_transition_at")),
+            last_hard_trigger_at=_parse_date(payload.get("last_hard_trigger_at")),
+            soft_entry_streak=int(payload.get("soft_entry_streak", 0) or 0),
+            soft_exit_streak=int(payload.get("soft_exit_streak", 0) or 0),
+            hard_calm_streak=int(payload.get("hard_calm_streak", 0) or 0),
+            days_in_current_mode=int(payload.get("days_in_current_mode", 0) or 0),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +117,14 @@ class MarketRegimeSnapshot:
     mode_why: Mapping[str, Any] = field(default_factory=dict)
     decision_trace: tuple[Mapping[str, Any], ...] = ()
     data_quality: Mapping[str, str] = field(default_factory=dict)
+    raw_mode: RegimeMode = "normal"
+    previous_mode: RegimeMode | None = None
+    transition_action: str | None = None
+    hysteresis_applied: bool = False
+    soft_signal_count: int = 0
+    hard_triggered: bool = False
+    state_age_days: int | None = None
+    next_state: MarketRegimeState | None = None
 
     # ------------------------------------------------------------------
     # Helpers de lecture
@@ -117,6 +175,14 @@ class MarketRegimeSnapshot:
             "mode_why": dict(self.mode_why),
             "decision_trace": [dict(item) for item in self.decision_trace],
             "data_quality": dict(self.data_quality),
+            "raw_mode": self.raw_mode,
+            "previous_mode": self.previous_mode,
+            "transition_action": self.transition_action,
+            "hysteresis_applied": self.hysteresis_applied,
+            "soft_signal_count": self.soft_signal_count,
+            "hard_triggered": self.hard_triggered,
+            "state_age_days": self.state_age_days,
+            "next_state": self.next_state.to_dict() if self.next_state is not None else None,
         }
 
     def to_dict(self) -> dict:
@@ -139,6 +205,7 @@ def neutral_snapshot(trade_date: date) -> MarketRegimeSnapshot:
 
 __all__ = [
     "MarketRegimeSnapshot",
+    "MarketRegimeState",
     "RegimeMode",
     "EarningsShieldMode",
     "neutral_snapshot",

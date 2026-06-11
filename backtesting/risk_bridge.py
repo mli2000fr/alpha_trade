@@ -292,6 +292,7 @@ def build_phase2_risk_result(
         from service.market import build_snapshot as _bs  # local import (parité)
         build_snapshot_fn = _bs
 
+    previous_regime_state = None
     for snapshot_date in snapshot_dates:
         candidates = _build_candidates(normalized_scores, snapshot_date)
         if not candidates:
@@ -323,7 +324,9 @@ def build_phase2_risk_result(
                 macro_provider=macro_provider,
                 sentiment_score_provider=sentiment_score_provider,
                 earnings_lookup=earnings_lookup,
+                previous_state=previous_regime_state,
             )
+            previous_regime_state = getattr(snap, "next_state", None)
             regime_modes_count[snap.mode] = regime_modes_count.get(snap.mode, 0) + 1
             macro_quality = str(snap.data_quality.get("macro", "unknown") or "unknown")
             macro_data_quality_count[macro_quality] = macro_data_quality_count.get(macro_quality, 0) + 1

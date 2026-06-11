@@ -19,6 +19,7 @@ from typing import cast
 import pytest
 
 from service.market import (
+    MarketRegimeState,
     MarketRegimesConfig,
     MacroDataUnavailableError,
     build_snapshot,
@@ -35,6 +36,7 @@ from service.market.config import (
     BuybackBlackoutConfig,
     CalendarPatternConfig,
     EarningsShieldConfig,
+    RegimeHysteresisConfig,
     SectorLimitsConfig,
     SentimentBreakerConfig,
     SentinelConfig,
@@ -491,6 +493,104 @@ def test_snapshot_rates_shock_stack_escalates_to_cash_only_in_backtest():
     assert any(item["source"] == "yield_spike_10y_hard" and item["triggered"] for item in snap.decision_trace)
 
 
+def test_hysteresis_requires_soft_confirmation_before_entering_defensive_mode() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        hysteresis=RegimeHysteresisConfig(enabled=True, enter_soft_signals_required=1, enter_confirm_days=2, min_hold_days_defensive=2),
+        vix=VixConfig(enabled=True, high_threshold=25.0),
+        yields=YieldsConfig(enabled=False),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+    provider = cast(MacroDataProvider, cast(object, _StubMacroProvider(vix=30.0, vix_short=24.0)))
+    reset_cache()
+
+    day_1 = build_snapshot(date(2025, 5, 1), config=cfg, equity=2_000.0, macro_provider=provider, earnings_lookup=lambda *_: {})
+    day_2 = build_snapshot(
+        date(2025, 5, 2),
+        config=cfg,
+        equity=2_000.0,
+        macro_provider=provider,
+        earnings_lookup=lambda *_: {},
+        previous_state=day_1.next_state,
+    )
+
+    assert day_1.raw_mode == "capital_preservation"
+    assert day_1.mode == "normal"
+    assert day_1.transition_action == "stay_normal_pending_entry"
+    assert day_2.mode == "capital_preservation"
+    assert day_2.transition_action == "enter_defensive"
+    assert day_2.next_state is not None
+    assert day_2.next_state.current_mode == "capital_preservation"
+
+
+def test_hysteresis_holds_then_exits_after_confirmed_calm_days() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        hysteresis=RegimeHysteresisConfig(
+            enabled=True,
+            enter_soft_signals_required=1,
+            enter_confirm_days=1,
+            exit_soft_signals_max=0,
+            exit_confirm_days=2,
+            min_hold_days_defensive=3,
+            hard_exit_confirm_days=1,
+        ),
+        vix=VixConfig(enabled=True, high_threshold=25.0),
+        yields=YieldsConfig(enabled=False),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+    hot_provider = cast(MacroDataProvider, cast(object, _StubMacroProvider(vix=30.0, vix_short=24.0)))
+    calm_provider = cast(MacroDataProvider, cast(object, _StubMacroProvider(vix=18.0, vix_short=17.0)))
+    reset_cache()
+
+    day_1 = build_snapshot(date(2025, 5, 1), config=cfg, equity=2_000.0, macro_provider=hot_provider, earnings_lookup=lambda *_: {})
+    day_2 = build_snapshot(date(2025, 5, 2), config=cfg, equity=2_000.0, macro_provider=calm_provider, earnings_lookup=lambda *_: {}, previous_state=day_1.next_state)
+    day_3 = build_snapshot(date(2025, 5, 5), config=cfg, equity=2_000.0, macro_provider=calm_provider, earnings_lookup=lambda *_: {}, previous_state=day_2.next_state)
+    day_4 = build_snapshot(date(2025, 5, 6), config=cfg, equity=2_000.0, macro_provider=calm_provider, earnings_lookup=lambda *_: {}, previous_state=day_3.next_state)
+
+    assert day_1.mode == "capital_preservation"
+    assert day_2.mode == "capital_preservation"
+    assert day_2.transition_action == "hold_defensive_min_hold"
+    assert day_3.mode == "capital_preservation"
+    assert day_3.transition_action == "hold_defensive_pending_exit"
+    assert day_4.mode == "normal"
+    assert day_4.transition_action == "exit_defensive"
+
+
+def test_hysteresis_hard_trigger_enters_immediately() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        hysteresis=RegimeHysteresisConfig(enabled=True, enter_soft_signals_required=2, enter_confirm_days=3),
+        vix=VixConfig(enabled=False),
+        yields=YieldsConfig(
+            enabled=True,
+            lookback_days=5,
+            relative_spike_threshold=0.05,
+            hard_relative_spike_threshold=0.08,
+            hard_mode_backtest="cash_only",
+            hard_requires_vix_high=False,
+            hard_requires_sentiment_warning=False,
+        ),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+    provider = cast(MacroDataProvider, cast(object, _StubMacroProvider(history=[4.0, 4.05, 4.1, 4.15, 4.2, 4.4])))
+    reset_cache()
+
+    snap = build_snapshot(
+        date(2025, 5, 1),
+        config=cfg,
+        equity=2_000.0,
+        execution_context="backtest",
+        macro_provider=provider,
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert snap.raw_mode == "cash_only"
+    assert snap.mode == "cash_only"
+    assert snap.hard_triggered is True
+    assert snap.transition_action == "hard_enter"
+
+
 # ---------------------------------------------------------------------------
 # YAML parser (C30)
 # ---------------------------------------------------------------------------
@@ -505,6 +605,7 @@ def test_parse_market_regimes_full():
     raw = {
         "enabled": True,
         "enforce_min_notional": 200,
+        "hysteresis": {"enabled": True, "enter_confirm_days": 4, "min_hold_days_defensive": 7},
         "vix": {"enabled": True, "high_threshold": 30.0},
         "patterns": {
             "tax_day": {"enabled": True, "start": "04-10", "end": "04-20", "risk_mult": 0.5},
@@ -513,9 +614,31 @@ def test_parse_market_regimes_full():
     cfg = parse_market_regimes(raw)
     assert cfg.enabled is True
     assert cfg.enforce_min_notional == 200.0
+    assert cfg.hysteresis.enabled is True
+    assert cfg.hysteresis.enter_confirm_days == 4
+    assert cfg.hysteresis.min_hold_days_defensive == 7
     assert cfg.vix.enabled is True and cfg.vix.high_threshold == 30.0
     assert cfg.patterns["tax_day"].enabled is True
     assert cfg.patterns["tax_day"].risk_mult == 0.5
+
+
+def test_market_regime_state_roundtrip() -> None:
+    state = MarketRegimeState(
+        trade_date=date(2025, 5, 1),
+        current_mode="capital_preservation",
+        previous_mode="normal",
+        entered_at=date(2025, 5, 1),
+        last_transition_at=date(2025, 5, 1),
+        last_hard_trigger_at=date(2025, 5, 1),
+        soft_entry_streak=2,
+        soft_exit_streak=0,
+        hard_calm_streak=1,
+        days_in_current_mode=3,
+    )
+
+    restored = MarketRegimeState.from_dict(state.to_dict())
+
+    assert restored == state
 
 
 def test_parse_trailing_stop_defaults():

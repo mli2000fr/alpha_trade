@@ -302,14 +302,73 @@ Alors le problème vient à la fois :
 
 ---
 
-## 11. Mise à jour à faire après exécution
+## 11. Mise à jour après exécution (générée automatiquement)
 
-À la fin des runs R1→R5, compléter ce document avec :
+- Généré le : `2026-06-10T20:19:00+00:00`
+- Matrice : `F:\projets\artifacts\ablation\regime_recalibration_matrix`
+- Baseline de comparaison : `F:\projets\artifacts\ablation\ml_regime_objective_structural_fix_full`
 
-- un tableau comparatif des 5 variantes vs baseline propre,
-- les effets par fenêtre,
-- la distribution des modes (`normal`, `capital_preservation`, `cash_only`),
-- et une recommandation finale :
-  - garder une variante,
-  - ou poursuivre la recalibration.
+### Tableau comparatif R1→R5 vs baseline actuelle
 
+| Variante | Return moyen effet régime | Sharpe moyen effet régime | DD moyen effet régime | Fenêtres return + | Fenêtres DD + | Q1 DD | FY return | Cash-only total | Entrées bloquées Q2/Q4/FY |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Baseline actuelle | -1.560 | -0.370 | -0.563 | 0 | 0 | -0.008 | -4.284 | 78 | 1104/1590/3594 |
+| R1 | -1.905 | -0.486 | -0.398 | 0 | 0 | -0.008 | -3.666 | 62 | 904/1190/2794 |
+| R2 | -2.489 | -0.574 | -0.461 | 0 | 0 | -0.000 | -6.209 | 62 | 904/1190/2794 |
+| R3 | -2.489 | -0.574 | -0.461 | 0 | 0 | -0.000 | -6.209 | 62 | 904/1190/2794 |
+| R4 | -1.497 | -0.428 | -0.368 | 0 | 0 | -0.008 | -2.219 | 0 | 0/0/0 |
+| R5 | -1.371 | -0.291 | -0.591 | 1 | 0 | -0.000 | -3.499 | 0 | 0/0/0 |
+
+### Effets par fenêtre + distribution des modes (`control`)
+
+| Variante | Fenêtre | Effet return | Effet Sharpe | Effet DD | Normal | Capital preservation | Cash only | Entrées bloquées |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| R1 | Q1 crash | -0.121 | -0.074 | -0.008 | 31 | 22 | 0 | 0 |
+| R1 | Q2 rebound | -0.812 | -0.871 | -0.510 | 0 | 52 | 12 | 904 |
+| R1 | Q3 momentum | -1.990 | -0.485 | -0.639 | 20 | 39 | 7 | 700 |
+| R1 | Q4 rotation | -2.936 | -0.630 | -0.537 | 33 | 20 | 12 | 1190 |
+| R1 | Full year | -3.666 | -0.372 | -0.294 | 84 | 133 | 31 | 2794 |
+| R2 | Q1 crash | +0.000 | +0.000 | -0.000 | 31 | 22 | 0 | 0 |
+| R2 | Q2 rebound | -0.812 | -0.871 | -0.510 | 0 | 52 | 12 | 904 |
+| R2 | Q3 momentum | -1.990 | -0.485 | -0.639 | 20 | 39 | 7 | 700 |
+| R2 | Q4 rotation | -3.433 | -0.760 | -0.632 | 33 | 20 | 12 | 1190 |
+| R2 | Full year | -6.209 | -0.753 | -0.526 | 84 | 133 | 31 | 2794 |
+| R3 | Q1 crash | +0.000 | +0.000 | -0.000 | 31 | 22 | 0 | 0 |
+| R3 | Q2 rebound | -0.812 | -0.871 | -0.510 | 0 | 52 | 12 | 904 |
+| R3 | Q3 momentum | -1.990 | -0.485 | -0.639 | 20 | 39 | 7 | 700 |
+| R3 | Q4 rotation | -3.433 | -0.760 | -0.632 | 33 | 20 | 12 | 1190 |
+| R3 | Full year | -6.209 | -0.753 | -0.526 | 84 | 133 | 31 | 2794 |
+| R4 | Q1 crash | -0.121 | -0.074 | -0.008 | 30 | 23 | 0 | 0 |
+| R4 | Q2 rebound | -0.812 | -0.871 | -0.510 | 0 | 64 | 0 | 0 |
+| R4 | Q3 momentum | -1.757 | -0.434 | -0.648 | 20 | 46 | 0 | 0 |
+| R4 | Q4 rotation | -2.576 | -0.511 | -0.479 | 32 | 33 | 0 | 0 |
+| R4 | Full year | -2.219 | -0.251 | -0.194 | 82 | 166 | 0 | 0 |
+| R5 | Q1 crash | +0.000 | +0.000 | -0.000 | 31 | 22 | 0 | 0 |
+| R5 | Q2 rebound | +0.204 | -0.207 | -0.510 | 14 | 50 | 0 | 0 |
+| R5 | Q3 momentum | -1.765 | -0.436 | -0.649 | 51 | 15 | 0 | 0 |
+| R5 | Q4 rotation | -1.793 | -0.319 | -0.817 | 45 | 20 | 0 | 0 |
+| R5 | Full year | -3.499 | -0.494 | -0.979 | 141 | 107 | 0 | 0 |
+
+### Distribution agrégée des modes
+
+| Variante | Normal total | Capital preservation total | Cash only total | Entrées bloquées total |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline actuelle | 164 | 254 | 78 | 7188 |
+| R1 | 168 | 266 | 62 | 5588 |
+| R2 | 168 | 266 | 62 | 5588 |
+| R3 | 168 | 266 | 62 | 5588 |
+| R4 | 164 | 332 | 0 | 0 |
+| R5 | 282 | 214 | 0 | 0 |
+
+### Recommandation finale
+
+- Variante en tête selon les critères A→D : **R5** — Suppression cash_only + triggers désensibilisés.
+- Effet moyen du régime sur cette variante : return `-1.371`, Sharpe `-0.291`, amélioration DD `-0.591`.
+- Réduction des blocages sur les fenêtres sensibles : Q2 `-1104`, Q4 `-1590`, full year `-3594` vs baseline actuelle (valeur négative = moins de blocages).
+- Distribution agrégée des modes pour R5 : normal `282`, capital_preservation `214`, cash_only `0`.
+- Classement synthétique observé : `R5, R4, R1, R2, R3`.
+
+### Artefacts de référence
+
+- `ablation_summary.json` et `ablation_decision.md` de chaque variante dans `artifacts/ablation/regime_recalibration_matrix/variants/R{1..5}/`
+- `phase2_risk_summary.json` de chaque run `control` pour la lecture des modes

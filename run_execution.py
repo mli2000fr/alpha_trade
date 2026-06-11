@@ -927,7 +927,13 @@ def run(
             build_snapshot as _build_regime_snapshot,
         )
         from service.market import (
+            load_regime_state as _load_regime_state,
+        )
+        from service.market import (
             parse_market_regimes as _parse_market_regimes,
+        )
+        from service.market import (
+            save_regime_state as _save_regime_state,
         )
 
         _yaml_cfg = _load_config_yaml()
@@ -935,6 +941,7 @@ def run(
         _macro_provider = _build_macro_provider(_yaml_cfg)
         _trade_date_for_regime = trade_date_val or date.today()
         _sentiment_provider = _DbSentimentScoreProvider(_trade_date_for_regime)
+        _previous_state = _load_regime_state()
         _snapshot = _build_regime_snapshot(
             _trade_date_for_regime,
             config=_mr_cfg,
@@ -942,7 +949,9 @@ def run(
             execution_context="live",
             macro_provider=_macro_provider,
             sentiment_score_provider=_sentiment_provider,
+            previous_state=_previous_state,
         )
+        _save_regime_state(getattr(_snapshot, "next_state", None))
         _snap_dict = _snapshot.to_dict() if hasattr(_snapshot, "to_dict") else {
             "trade_date": str(_trade_date_for_regime),
             "mode": getattr(_snapshot, "mode", "normal"),

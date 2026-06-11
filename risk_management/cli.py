@@ -72,7 +72,9 @@ def _resolve_market_regime_snapshot(
             DbSentimentScoreProvider,
             build_default_macro_provider,
             build_snapshot,
+            load_regime_state,
             parse_market_regimes,
+            save_regime_state,
         )
     except Exception:
         LOGGER.warning("Couche service.market indisponible pour risk_management.", exc_info=True)
@@ -85,14 +87,18 @@ def _resolve_market_regime_snapshot(
             return None
         macro_provider = build_default_macro_provider(yaml_cfg)
         sentiment_provider = DbSentimentScoreProvider(trade_date, engine=getattr(repo, "engine", None))
-        return build_snapshot(
+        previous_state = load_regime_state()
+        snapshot = build_snapshot(
             trade_date,
             config=market_regimes_cfg,
             equity=float(effective_equity),
             execution_context="live",
             macro_provider=macro_provider,
             sentiment_score_provider=sentiment_provider,
+            previous_state=previous_state,
         )
+        save_regime_state(getattr(snapshot, "next_state", None))
+        return snapshot
     except Exception:
         LOGGER.warning("Construction du snapshot de régime impossible côté risk_management.", exc_info=True)
         return None

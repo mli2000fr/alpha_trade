@@ -101,6 +101,18 @@ class SentinelConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RegimeHysteresisConfig:
+    enabled: bool = False
+    enter_soft_signals_required: int = 2
+    enter_confirm_days: int = 2
+    exit_soft_signals_max: int = 0
+    exit_confirm_days: int = 3
+    min_hold_days_defensive: int = 5
+    hard_trigger_immediate: bool = True
+    hard_exit_confirm_days: int = 2
+
+
+@dataclass(frozen=True, slots=True)
 class MarketRegimesConfig:
     enabled: bool = False
     cache_ttl_seconds: int = 300
@@ -110,6 +122,7 @@ class MarketRegimesConfig:
     macro_pit_mode_backtest: str = "asof_inclusive"
 
     sentinel: SentinelConfig = field(default_factory=SentinelConfig)
+    hysteresis: RegimeHysteresisConfig = field(default_factory=RegimeHysteresisConfig)
     vix: VixConfig = field(default_factory=VixConfig)
     yields: YieldsConfig = field(default_factory=YieldsConfig)
     sentiment_circuit_breaker: SentimentBreakerConfig = field(default_factory=SentimentBreakerConfig)
@@ -155,6 +168,7 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
     """Construit un ``MarketRegimesConfig`` à partir du dict YAML."""
     raw = raw or {}
     sentinel = raw.get("sentinel", {}) or {}
+    hysteresis = raw.get("hysteresis", {}) or {}
     vix = raw.get("vix", {}) or {}
     yields = raw.get("yields", {}) or {}
     breaker = raw.get("sentiment_circuit_breaker", {}) or {}
@@ -180,6 +194,16 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
         sentinel=SentinelConfig(
             enabled=bool(sentinel.get("enabled", True)),
             preflight_summary=bool(sentinel.get("preflight_summary", True)),
+        ),
+        hysteresis=RegimeHysteresisConfig(
+            enabled=bool(hysteresis.get("enabled", False)),
+            enter_soft_signals_required=max(1, int(hysteresis.get("enter_soft_signals_required", 2))),
+            enter_confirm_days=max(1, int(hysteresis.get("enter_confirm_days", 2))),
+            exit_soft_signals_max=max(0, int(hysteresis.get("exit_soft_signals_max", 0))),
+            exit_confirm_days=max(1, int(hysteresis.get("exit_confirm_days", 3))),
+            min_hold_days_defensive=max(1, int(hysteresis.get("min_hold_days_defensive", 5))),
+            hard_trigger_immediate=bool(hysteresis.get("hard_trigger_immediate", True)),
+            hard_exit_confirm_days=max(1, int(hysteresis.get("hard_exit_confirm_days", 2))),
         ),
         vix=VixConfig(
             enabled=bool(vix.get("enabled", False)),
@@ -306,6 +330,7 @@ __all__ = [
     "EarningsShieldConfig",
     "BuybackBlackoutConfig",
     "SentinelConfig",
+    "RegimeHysteresisConfig",
     "MarketRegimesConfig",
     "TrailingStopYAMLConfig",
     "parse_market_regimes",

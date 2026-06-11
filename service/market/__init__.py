@@ -12,17 +12,20 @@ Exporte :
 """
 from service.market.config import (
     MarketRegimesConfig,
+    RegimeHysteresisConfig,
     TrailingStopYAMLConfig,
     parse_market_regimes,
     parse_trailing_stop,
 )
 from service.market.models import (
     EarningsShieldMode,
+    MarketRegimeState,
     MarketRegimeSnapshot,
     RegimeMode,
     neutral_snapshot,
 )
 from service.market.regime_manager import MacroDataUnavailableError, build_snapshot, reset_cache
+from service.market.state_store import load_regime_state, save_regime_state
 from service.market.macro_providers import (
     CompositeMacroProvider,
     EodhdMacroProvider,
@@ -44,7 +47,9 @@ from service.market.sentiment_provider import (
 
 __all__ = [
     "MarketRegimeSnapshot",
+    "MarketRegimeState",
     "MarketRegimesConfig",
+    "RegimeHysteresisConfig",
     "TrailingStopYAMLConfig",
     "RegimeMode",
     "EarningsShieldMode",
@@ -54,6 +59,8 @@ __all__ = [
     "reset_cache",
     "parse_market_regimes",
     "parse_trailing_stop",
+    "load_regime_state",
+    "save_regime_state",
     "StooqMacroProvider",
     "EodhdMacroProvider",
     "FredMacroProvider",

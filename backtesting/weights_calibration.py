@@ -691,6 +691,7 @@ class EmpiricalRiskCalibrator:
             return {}
 
         resolved: dict[date, str] = {}
+        previous_regime_state = None
         for snapshot_date in unique_dates:
             try:
                 snapshot = build_snapshot(
@@ -699,10 +700,12 @@ class EmpiricalRiskCalibrator:
                     execution_context="backtest",
                     macro_provider=macro_provider,
                     sentiment_score_provider=DbSentimentScoreProvider(snapshot_date, engine=self.engine),
+                    previous_state=previous_regime_state,
                 )
             except Exception:
                 LOGGER.debug("Snapshot de régime introuvable pour %s ; fallback `all`.", snapshot_date, exc_info=True)
                 continue
+            previous_regime_state = getattr(snapshot, "next_state", None)
             resolved[snapshot_date] = normalize_market_regime_mode(getattr(snapshot, "mode", MARKET_REGIME_ALL))
         return resolved
 

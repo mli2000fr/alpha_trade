@@ -31,7 +31,7 @@ from service.market.macro_signals import (
     evaluate_vix,
     evaluate_yield_10y,
 )
-from service.market.models import MarketRegimeSnapshot, RegimeMode, neutral_snapshot
+from service.market.models import MarketRegimeSnapshot, MarketRegimeState, RegimeMode, neutral_snapshot
 from service.market.sentiment_regime import evaluate_sentiment_regime
 
 LOGGER = logging.getLogger(__name__)
@@ -50,6 +50,8 @@ class _CacheEntry:
 
 
 _SNAPSHOT_CACHE: dict[tuple, _CacheEntry] = {}
+_SOFT_SIGNAL_SOURCES = frozenset({"vix_high", "vix_curve_inverted", "yield_spike_10y", "sentiment_warning"})
+_HARD_SIGNAL_SOURCES = frozenset({"yield_spike_10y_hard", "sentiment_critical"})
 
 
 def _mode_strength(mode: RegimeMode) -> int:
@@ -154,6 +156,219 @@ def _tighten_numeric_limit(current: int | float | None, candidate: int | float |
     return min(current, candidate)
 
 
+def _state_cache_key(previous_state: MarketRegimeState | None) -> tuple[Any, ...]:
+    if previous_state is None:
+        return (None,)
+    return (
+        previous_state.trade_date.toordinal(),
+        previous_state.current_mode,
+        previous_state.previous_mode,
+        previous_state.entered_at.toordinal() if previous_state.entered_at else None,
+        previous_state.last_transition_at.toordinal() if previous_state.last_transition_at else None,
+        previous_state.last_hard_trigger_at.toordinal() if previous_state.last_hard_trigger_at else None,
+        previous_state.soft_entry_streak,
+        previous_state.soft_exit_streak,
+        previous_state.hard_calm_streak,
+        previous_state.days_in_current_mode,
+    )
+
+
+def _count_triggered_sources(trace: list[dict[str, Any]], sources: frozenset[str]) -> int:
+    return sum(1 for item in trace if item.get("triggered") and str(item.get("source")) in sources)
+
+
+def _transition_without_hysteresis(
+    trade_date: date,
+    *,
+    raw_mode: RegimeMode,
+    previous_state: MarketRegimeState | None,
+    hard_triggered: bool,
+) -> tuple[RegimeMode, MarketRegimeState, str, int]:
+    if previous_state is not None and previous_state.trade_date == trade_date:
+        return previous_state.current_mode, previous_state, "reuse_same_day_state", previous_state.days_in_current_mode
+
+    if previous_state is None:
+        days_in_current_mode = 1
+        previous_mode = None
+        entered_at = trade_date if raw_mode != "normal" else None
+    elif previous_state.current_mode == raw_mode:
+        days_in_current_mode = max(1, previous_state.days_in_current_mode + 1)
+        previous_mode = previous_state.previous_mode
+        entered_at = previous_state.entered_at if raw_mode != "normal" else None
+    else:
+        days_in_current_mode = 1
+        previous_mode = previous_state.current_mode
+        entered_at = trade_date if raw_mode != "normal" else None
+
+    next_state = MarketRegimeState(
+        trade_date=trade_date,
+        current_mode=raw_mode,
+        previous_mode=previous_mode,
+        entered_at=entered_at,
+        last_transition_at=trade_date if previous_state is None or previous_state.current_mode != raw_mode else previous_state.last_transition_at,
+        last_hard_trigger_at=trade_date if hard_triggered else (previous_state.last_hard_trigger_at if previous_state else None),
+        soft_entry_streak=0,
+        soft_exit_streak=0,
+        hard_calm_streak=0 if hard_triggered else (previous_state.hard_calm_streak + 1 if previous_state and previous_state.last_hard_trigger_at else 0),
+        days_in_current_mode=days_in_current_mode,
+    )
+    return raw_mode, next_state, "hysteresis_disabled", days_in_current_mode
+
+
+def _apply_hysteresis(
+    trade_date: date,
+    *,
+    raw_mode: RegimeMode,
+    previous_state: MarketRegimeState | None,
+    soft_signal_count: int,
+    hard_triggered: bool,
+    config: MarketRegimesConfig,
+) -> tuple[RegimeMode, MarketRegimeState, str, int]:
+    hysteresis_cfg = config.hysteresis
+    if not hysteresis_cfg.enabled:
+        return _transition_without_hysteresis(
+            trade_date,
+            raw_mode=raw_mode,
+            previous_state=previous_state,
+            hard_triggered=hard_triggered,
+        )
+
+    if previous_state is not None and previous_state.trade_date == trade_date:
+        return previous_state.current_mode, previous_state, "reuse_same_day_state", previous_state.days_in_current_mode
+
+    prev = previous_state or MarketRegimeState(trade_date=trade_date, current_mode="normal")
+
+    if prev.current_mode == "normal":
+        if hard_triggered and hysteresis_cfg.hard_trigger_immediate:
+            final_mode = cast(RegimeMode, raw_mode if raw_mode != "normal" else "capital_preservation")
+            next_state = MarketRegimeState(
+                trade_date=trade_date,
+                current_mode=final_mode,
+                previous_mode=prev.current_mode,
+                entered_at=trade_date,
+                last_transition_at=trade_date,
+                last_hard_trigger_at=trade_date,
+                soft_entry_streak=0,
+                soft_exit_streak=0,
+                hard_calm_streak=0,
+                days_in_current_mode=1,
+            )
+            return final_mode, next_state, "hard_enter", 1
+
+        if soft_signal_count >= hysteresis_cfg.enter_soft_signals_required:
+            entry_streak = prev.soft_entry_streak + 1
+            if entry_streak >= hysteresis_cfg.enter_confirm_days:
+                final_mode = cast(RegimeMode, raw_mode if raw_mode != "normal" else "capital_preservation")
+                next_state = MarketRegimeState(
+                    trade_date=trade_date,
+                    current_mode=final_mode,
+                    previous_mode=prev.current_mode,
+                    entered_at=trade_date,
+                    last_transition_at=trade_date,
+                    last_hard_trigger_at=None,
+                    soft_entry_streak=0,
+                    soft_exit_streak=0,
+                    hard_calm_streak=0,
+                    days_in_current_mode=1,
+                )
+                return final_mode, next_state, "enter_defensive", 1
+
+            next_state = MarketRegimeState(
+                trade_date=trade_date,
+                current_mode="normal",
+                previous_mode=prev.previous_mode,
+                entered_at=None,
+                last_transition_at=prev.last_transition_at,
+                last_hard_trigger_at=prev.last_hard_trigger_at,
+                soft_entry_streak=entry_streak,
+                soft_exit_streak=0,
+                hard_calm_streak=prev.hard_calm_streak,
+                days_in_current_mode=max(1, prev.days_in_current_mode + 1),
+            )
+            return "normal", next_state, "stay_normal_pending_entry", next_state.days_in_current_mode
+
+        next_state = MarketRegimeState(
+            trade_date=trade_date,
+            current_mode="normal",
+            previous_mode=prev.previous_mode,
+            entered_at=None,
+            last_transition_at=prev.last_transition_at,
+            last_hard_trigger_at=prev.last_hard_trigger_at,
+            soft_entry_streak=0,
+            soft_exit_streak=0,
+            hard_calm_streak=prev.hard_calm_streak,
+            days_in_current_mode=max(1, prev.days_in_current_mode + 1),
+        )
+        return "normal", next_state, "stay_normal", next_state.days_in_current_mode
+
+    hold_days = max(1, prev.days_in_current_mode + 1)
+    hard_calm_streak = 0 if hard_triggered else (prev.hard_calm_streak + 1 if prev.last_hard_trigger_at else 0)
+
+    if hard_triggered:
+        final_mode = _escalate(prev.current_mode, raw_mode)
+        transitioned = final_mode != prev.current_mode
+        next_state = MarketRegimeState(
+            trade_date=trade_date,
+            current_mode=final_mode,
+            previous_mode=prev.current_mode if transitioned else prev.previous_mode,
+            entered_at=prev.entered_at or trade_date,
+            last_transition_at=trade_date if transitioned else prev.last_transition_at,
+            last_hard_trigger_at=trade_date,
+            soft_entry_streak=0,
+            soft_exit_streak=0,
+            hard_calm_streak=0,
+            days_in_current_mode=1 if transitioned else hold_days,
+        )
+        return final_mode, next_state, "hold_defensive_hard", next_state.days_in_current_mode
+
+    if hold_days < hysteresis_cfg.min_hold_days_defensive:
+        next_state = MarketRegimeState(
+            trade_date=trade_date,
+            current_mode=prev.current_mode,
+            previous_mode=prev.previous_mode,
+            entered_at=prev.entered_at or trade_date,
+            last_transition_at=prev.last_transition_at,
+            last_hard_trigger_at=prev.last_hard_trigger_at,
+            soft_entry_streak=0,
+            soft_exit_streak=0,
+            hard_calm_streak=hard_calm_streak,
+            days_in_current_mode=hold_days,
+        )
+        return prev.current_mode, next_state, "hold_defensive_min_hold", hold_days
+
+    exit_streak = prev.soft_exit_streak + 1 if soft_signal_count <= hysteresis_cfg.exit_soft_signals_max else 0
+    hard_exit_ready = prev.last_hard_trigger_at is None or hard_calm_streak >= hysteresis_cfg.hard_exit_confirm_days
+    if exit_streak >= hysteresis_cfg.exit_confirm_days and hard_exit_ready:
+        next_state = MarketRegimeState(
+            trade_date=trade_date,
+            current_mode="normal",
+            previous_mode=prev.current_mode,
+            entered_at=None,
+            last_transition_at=trade_date,
+            last_hard_trigger_at=prev.last_hard_trigger_at,
+            soft_entry_streak=0,
+            soft_exit_streak=0,
+            hard_calm_streak=hard_calm_streak,
+            days_in_current_mode=1,
+        )
+        return "normal", next_state, "exit_defensive", 1
+
+    action = "hold_defensive_pending_exit" if exit_streak > 0 else "hold_defensive"
+    next_state = MarketRegimeState(
+        trade_date=trade_date,
+        current_mode=prev.current_mode,
+        previous_mode=prev.previous_mode,
+        entered_at=prev.entered_at or trade_date,
+        last_transition_at=prev.last_transition_at,
+        last_hard_trigger_at=prev.last_hard_trigger_at,
+        soft_entry_streak=0,
+        soft_exit_streak=exit_streak,
+        hard_calm_streak=hard_calm_streak,
+        days_in_current_mode=hold_days,
+    )
+    return prev.current_mode, next_state, action, hold_days
+
+
 def build_snapshot(
     trade_date: date,
     *,
@@ -163,6 +378,7 @@ def build_snapshot(
     macro_provider: MacroDataProvider | None = None,
     sentiment_score_provider: Callable[[int], float | None] | None = None,
     earnings_lookup: EarningsLookup | None = None,
+    previous_state: MarketRegimeState | None = None,
     use_cache: bool = True,
 ) -> MarketRegimeSnapshot:
     """Construit (ou retourne du cache) le snapshot de régime marché."""
@@ -177,6 +393,7 @@ def build_snapshot(
         id(macro_provider),
         id(sentiment_score_provider),
         id(earnings_lookup),
+        _state_cache_key(previous_state),
     )
     now = time.monotonic()
     if use_cache and config.cache_ttl_seconds > 0:
@@ -571,8 +788,8 @@ def build_snapshot(
     enforce_min_notional = float(config.enforce_min_notional)
     allowed_slots: int | None = None
     if equity is not None and equity > 0 and enforce_min_notional > 0:
-        allowed_slots = max(0, int(math.floor(equity / enforce_min_notional)))
-        allowed_slots_value = int(allowed_slots)
+        allowed_slots_value = max(0, int(math.floor(equity / enforce_min_notional)))
+        allowed_slots = allowed_slots_value
         if effective_max_positions is None:
             effective_max_positions = allowed_slots_value
         else:
@@ -597,6 +814,42 @@ def build_snapshot(
             ),
             details={"equity": equity, "enforce_min_notional": enforce_min_notional},
         )
+
+    raw_mode = mode
+    soft_signal_count = _count_triggered_sources(decision_trace, _SOFT_SIGNAL_SOURCES)
+    hard_triggered = bool(
+        raw_mode in ("close_only", "cash_only")
+        or _count_triggered_sources(decision_trace, _HARD_SIGNAL_SOURCES) > 0
+    )
+    mode, next_state, transition_action, state_age_days = _apply_hysteresis(
+        trade_date,
+        raw_mode=raw_mode,
+        previous_state=previous_state,
+        soft_signal_count=soft_signal_count,
+        hard_triggered=hard_triggered,
+        config=config,
+    )
+    _push_trace(
+        decision_trace,
+        source="hysteresis",
+        label="Machine d'état de régime",
+        triggered=transition_action not in {"hysteresis_disabled", "stay_normal", "hold_defensive", "reuse_same_day_state"},
+        severity="info",
+        resulting_mode=mode,
+        message=(
+            f"Hystérésis : raw_mode={raw_mode} → final_mode={mode} via `{transition_action}`"
+            if config.hysteresis.enabled
+            else f"Hystérésis désactivée : mode final `{mode}`"
+        ),
+        details={
+            "raw_mode": raw_mode,
+            "final_mode": mode,
+            "soft_signal_count": soft_signal_count,
+            "hard_triggered": hard_triggered,
+            "transition_action": transition_action,
+            "previous_mode": previous_state.current_mode if previous_state is not None else None,
+        },
+    )
 
     # 7. Modes restrictifs : ajustement allow_new_entries
     if mode in ("close_only", "cash_only"):
@@ -666,6 +919,14 @@ def build_snapshot(
         mode_why=_build_mode_why(mode, reasons, decision_trace),
         decision_trace=tuple(dict(item) for item in decision_trace),
         data_quality=dict(data_quality),
+        raw_mode=raw_mode,
+        previous_mode=previous_state.current_mode if previous_state is not None else None,
+        transition_action=transition_action,
+        hysteresis_applied=config.hysteresis.enabled,
+        soft_signal_count=soft_signal_count,
+        hard_triggered=hard_triggered,
+        state_age_days=state_age_days,
+        next_state=next_state,
     )
 
     if use_cache and config.cache_ttl_seconds > 0:
