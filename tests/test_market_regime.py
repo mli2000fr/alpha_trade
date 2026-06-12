@@ -517,10 +517,159 @@ def test_hysteresis_requires_soft_confirmation_before_entering_defensive_mode() 
     assert day_1.raw_mode == "capital_preservation"
     assert day_1.mode == "normal"
     assert day_1.transition_action == "stay_normal_pending_entry"
+    assert day_1.soft_constraints_active is False
     assert day_2.mode == "capital_preservation"
     assert day_2.transition_action == "enter_defensive"
     assert day_2.next_state is not None
     assert day_2.next_state.current_mode == "capital_preservation"
+
+
+def test_r9_1_gates_soft_constraints_until_defensive_entry_is_confirmed() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        hysteresis=RegimeHysteresisConfig(
+            enabled=True,
+            enter_soft_signals_required=1,
+            enter_confirm_days=2,
+            min_hold_days_defensive=2,
+            gate_soft_constraints_on_confirmed_entry=True,
+        ),
+        vix=VixConfig(enabled=False),
+        yields=YieldsConfig(
+            enabled=True,
+            lookback_days=5,
+            relative_spike_threshold=0.05,
+            risk_mult=0.45,
+            soft_max_positions=2,
+            soft_max_position_weight=0.20,
+            soft_max_sector_weight=0.25,
+            soft_max_gross_exposure=0.50,
+        ),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+    provider = cast(MacroDataProvider, cast(object, _StubMacroProvider(history=[4.0, 4.05, 4.10, 4.15, 4.20, 4.25])))
+    reset_cache()
+
+    day_1 = build_snapshot(
+        date(2025, 5, 1),
+        config=cfg,
+        equity=2_000.0,
+        execution_context="backtest",
+        macro_provider=provider,
+        earnings_lookup=lambda *_: {},
+    )
+    day_2 = build_snapshot(
+        date(2025, 5, 2),
+        config=cfg,
+        equity=2_000.0,
+        execution_context="backtest",
+        macro_provider=provider,
+        earnings_lookup=lambda *_: {},
+        previous_state=day_1.next_state,
+    )
+
+    assert day_1.raw_mode == "normal"
+    assert day_1.mode == "normal"
+    assert day_1.transition_action == "stay_normal_pending_entry"
+    assert day_1.soft_signal_count == 1
+    assert day_1.soft_constraints_active is False
+    assert day_1.deferred_soft_sources == ("yield_spike_10y",)
+    assert day_1.risk_multiplier == pytest.approx(1.0)
+    assert day_1.effective_max_positions == 12
+    assert day_1.max_position_weight is None
+    assert day_1.max_sector_weight is None
+    assert day_1.max_gross_exposure is None
+    assert day_1.blocked_sectors == ()
+
+    assert day_2.mode == "capital_preservation"
+    assert day_2.transition_action == "enter_defensive"
+    assert day_2.soft_constraints_active is True
+    assert day_2.deferred_soft_sources == ()
+    assert day_2.risk_multiplier == pytest.approx(0.45)
+    assert day_2.effective_max_positions == 2
+    assert day_2.max_position_weight == pytest.approx(0.20)
+    assert day_2.max_sector_weight == pytest.approx(0.25)
+    assert day_2.max_gross_exposure == pytest.approx(0.50)
+    assert "Technology" in day_2.blocked_sectors
+
+
+def test_r10_selective_gating_delays_caps_but_keeps_risk_and_sector_soft_constraints_immediate() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        hysteresis=RegimeHysteresisConfig(
+            enabled=True,
+            enter_soft_signals_required=1,
+            enter_confirm_days=2,
+            min_hold_days_defensive=2,
+            gate_soft_position_limits_on_confirmed_entry=True,
+            gate_soft_exposure_caps_on_confirmed_entry=True,
+        ),
+        vix=VixConfig(enabled=False),
+        yields=YieldsConfig(
+            enabled=True,
+            lookback_days=5,
+            relative_spike_threshold=0.05,
+            risk_mult=0.45,
+            soft_max_positions=2,
+            soft_max_position_weight=0.20,
+            soft_max_sector_weight=0.25,
+            soft_max_gross_exposure=0.50,
+            block_sectors=("Technology", "Growth"),
+            block_high_beta=True,
+            high_beta_threshold=1.1,
+        ),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+    provider = cast(MacroDataProvider, cast(object, _StubMacroProvider(history=[4.0, 4.05, 4.10, 4.15, 4.20, 4.25])))
+    reset_cache()
+
+    day_1 = build_snapshot(
+        date(2025, 5, 1),
+        config=cfg,
+        equity=2_000.0,
+        execution_context="backtest",
+        macro_provider=provider,
+        earnings_lookup=lambda *_: {},
+    )
+    day_2 = build_snapshot(
+        date(2025, 5, 2),
+        config=cfg,
+        equity=2_000.0,
+        execution_context="backtest",
+        macro_provider=provider,
+        earnings_lookup=lambda *_: {},
+        previous_state=day_1.next_state,
+    )
+
+    assert day_1.mode == "normal"
+    assert day_1.transition_action == "stay_normal_pending_entry"
+    assert day_1.soft_constraints_active is True
+    assert day_1.active_soft_constraint_families == ("risk_multiplier", "sector_blocks")
+    assert day_1.deferred_soft_constraint_families == ("position_limits", "exposure_caps")
+    assert day_1.deferred_soft_sources == ("yield_spike_10y",)
+    assert day_1.risk_multiplier == pytest.approx(0.45)
+    assert "Technology" in day_1.blocked_sectors
+    assert day_1.block_high_beta is True
+    assert day_1.high_beta_threshold == pytest.approx(1.1)
+    assert day_1.effective_max_positions == 12
+    assert day_1.max_position_weight is None
+    assert day_1.max_sector_weight is None
+    assert day_1.max_gross_exposure is None
+
+    assert day_2.mode == "capital_preservation"
+    assert day_2.transition_action == "enter_defensive"
+    assert day_2.active_soft_constraint_families == (
+        "risk_multiplier",
+        "sector_blocks",
+        "position_limits",
+        "exposure_caps",
+    )
+    assert day_2.deferred_soft_constraint_families == ()
+    assert day_2.risk_multiplier == pytest.approx(0.45)
+    assert day_2.effective_max_positions == 2
+    assert day_2.max_position_weight == pytest.approx(0.20)
+    assert day_2.max_sector_weight == pytest.approx(0.25)
+    assert day_2.max_gross_exposure == pytest.approx(0.50)
 
 
 def test_hysteresis_holds_then_exits_after_confirmed_calm_days() -> None:
@@ -605,7 +754,12 @@ def test_parse_market_regimes_full():
     raw = {
         "enabled": True,
         "enforce_min_notional": 200,
-        "hysteresis": {"enabled": True, "enter_confirm_days": 4, "min_hold_days_defensive": 7},
+        "hysteresis": {
+            "enabled": True,
+            "enter_confirm_days": 4,
+            "min_hold_days_defensive": 7,
+            "gate_soft_constraints_on_confirmed_entry": True,
+        },
         "vix": {"enabled": True, "high_threshold": 30.0},
         "patterns": {
             "tax_day": {"enabled": True, "start": "04-10", "end": "04-20", "risk_mult": 0.5},
@@ -617,9 +771,32 @@ def test_parse_market_regimes_full():
     assert cfg.hysteresis.enabled is True
     assert cfg.hysteresis.enter_confirm_days == 4
     assert cfg.hysteresis.min_hold_days_defensive == 7
+    assert cfg.hysteresis.gate_soft_constraints_on_confirmed_entry is True
     assert cfg.vix.enabled is True and cfg.vix.high_threshold == 30.0
     assert cfg.patterns["tax_day"].enabled is True
     assert cfg.patterns["tax_day"].risk_mult == 0.5
+
+
+def test_parse_market_regimes_supports_selective_soft_gating_flags() -> None:
+    raw = {
+        "enabled": True,
+        "hysteresis": {
+            "enabled": True,
+            "gate_soft_position_limits_on_confirmed_entry": True,
+            "gate_soft_exposure_caps_on_confirmed_entry": True,
+            "gate_soft_risk_multiplier_on_confirmed_entry": False,
+            "gate_soft_sector_blocks_on_confirmed_entry": False,
+        },
+    }
+
+    cfg = parse_market_regimes(raw)
+
+    assert cfg.hysteresis.enabled is True
+    assert cfg.hysteresis.gate_soft_constraints_on_confirmed_entry is False
+    assert cfg.hysteresis.gate_soft_position_limits_on_confirmed_entry is True
+    assert cfg.hysteresis.gate_soft_exposure_caps_on_confirmed_entry is True
+    assert cfg.hysteresis.gate_soft_risk_multiplier_on_confirmed_entry is False
+    assert cfg.hysteresis.gate_soft_sector_blocks_on_confirmed_entry is False
 
 
 def test_market_regime_state_roundtrip() -> None:

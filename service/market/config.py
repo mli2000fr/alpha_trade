@@ -110,6 +110,11 @@ class RegimeHysteresisConfig:
     min_hold_days_defensive: int = 5
     hard_trigger_immediate: bool = True
     hard_exit_confirm_days: int = 2
+    gate_soft_constraints_on_confirmed_entry: bool = False
+    gate_soft_risk_multiplier_on_confirmed_entry: bool = False
+    gate_soft_position_limits_on_confirmed_entry: bool = False
+    gate_soft_exposure_caps_on_confirmed_entry: bool = False
+    gate_soft_sector_blocks_on_confirmed_entry: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +209,21 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
             min_hold_days_defensive=max(1, int(hysteresis.get("min_hold_days_defensive", 5))),
             hard_trigger_immediate=bool(hysteresis.get("hard_trigger_immediate", True)),
             hard_exit_confirm_days=max(1, int(hysteresis.get("hard_exit_confirm_days", 2))),
+            gate_soft_constraints_on_confirmed_entry=bool(
+                hysteresis.get("gate_soft_constraints_on_confirmed_entry", False)
+            ),
+            gate_soft_risk_multiplier_on_confirmed_entry=bool(
+                hysteresis.get("gate_soft_risk_multiplier_on_confirmed_entry", False)
+            ),
+            gate_soft_position_limits_on_confirmed_entry=bool(
+                hysteresis.get("gate_soft_position_limits_on_confirmed_entry", False)
+            ),
+            gate_soft_exposure_caps_on_confirmed_entry=bool(
+                hysteresis.get("gate_soft_exposure_caps_on_confirmed_entry", False)
+            ),
+            gate_soft_sector_blocks_on_confirmed_entry=bool(
+                hysteresis.get("gate_soft_sector_blocks_on_confirmed_entry", False)
+            ),
         ),
         vix=VixConfig(
             enabled=bool(vix.get("enabled", False)),

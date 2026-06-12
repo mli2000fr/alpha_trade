@@ -415,6 +415,15 @@ def build_snapshot(
     max_position_weight: float | None = None
     max_sector_weight: float | None = None
     max_gross_exposure: float | None = None
+    soft_risk_multiplier = 1.0
+    soft_blocked_sectors: list[str] = []
+    soft_block_high_beta = False
+    soft_high_beta_threshold: float | None = None
+    soft_effective_max_positions: int | None = None
+    soft_max_position_weight: float | None = None
+    soft_max_sector_weight: float | None = None
+    soft_max_gross_exposure: float | None = None
+    soft_constraint_sources: list[str] = []
     macro_metrics: dict[str, Any] = {}
     sentiment_payload: dict[str, Any] = {}
     data_quality: dict[str, str] = {}
@@ -538,27 +547,33 @@ def build_snapshot(
         macro_metrics["yield_10y_5d_pct"] = rel
         data_quality.update(dq)
         if spike:
-            blocked_sectors.extend(config.yields.block_sectors)
-            block_high_beta = config.yields.block_high_beta
-            high_beta_threshold = config.yields.high_beta_threshold
-            risk_multiplier *= config.yields.risk_mult
+            soft_blocked_sectors.extend(config.yields.block_sectors)
+            soft_block_high_beta = soft_block_high_beta or config.yields.block_high_beta
+            if config.yields.block_high_beta:
+                if soft_high_beta_threshold is None:
+                    soft_high_beta_threshold = config.yields.high_beta_threshold
+                else:
+                    soft_high_beta_threshold = min(soft_high_beta_threshold, config.yields.high_beta_threshold)
+            soft_risk_multiplier *= config.yields.risk_mult
             reasons.append(f"yield_spike_10y:{rel:.3%}")
+            if "yield_spike_10y" not in soft_constraint_sources:
+                soft_constraint_sources.append("yield_spike_10y")
             if config.yields.soft_max_positions is not None:
-                effective_max_positions = cast(
+                soft_effective_max_positions = cast(
                     int | None,
-                    _tighten_numeric_limit(effective_max_positions, int(config.yields.soft_max_positions)),
+                    _tighten_numeric_limit(soft_effective_max_positions, int(config.yields.soft_max_positions)),
                 )
-            max_position_weight = cast(
+            soft_max_position_weight = cast(
                 float | None,
-                _tighten_numeric_limit(max_position_weight, config.yields.soft_max_position_weight),
+                _tighten_numeric_limit(soft_max_position_weight, config.yields.soft_max_position_weight),
             )
-            max_sector_weight = cast(
+            soft_max_sector_weight = cast(
                 float | None,
-                _tighten_numeric_limit(max_sector_weight, config.yields.soft_max_sector_weight),
+                _tighten_numeric_limit(soft_max_sector_weight, config.yields.soft_max_sector_weight),
             )
-            max_gross_exposure = cast(
+            soft_max_gross_exposure = cast(
                 float | None,
-                _tighten_numeric_limit(max_gross_exposure, config.yields.soft_max_gross_exposure),
+                _tighten_numeric_limit(soft_max_gross_exposure, config.yields.soft_max_gross_exposure),
             )
         _push_trace(
             decision_trace,
@@ -656,11 +671,20 @@ def build_snapshot(
         if sent.suggested_mode != "normal":
             mode = _escalate(mode, sent.suggested_mode)
         if sent.suggested_max_positions is not None:
-            effective_max_positions = (
-                sent.suggested_max_positions
-                if effective_max_positions is None
-                else min(effective_max_positions, sent.suggested_max_positions)
-            )
+            if sent.level == "warning":
+                soft_effective_max_positions = (
+                    sent.suggested_max_positions
+                    if soft_effective_max_positions is None
+                    else min(soft_effective_max_positions, sent.suggested_max_positions)
+                )
+                if "sentiment_warning" not in soft_constraint_sources:
+                    soft_constraint_sources.append("sentiment_warning")
+            else:
+                effective_max_positions = (
+                    sent.suggested_max_positions
+                    if effective_max_positions is None
+                    else min(effective_max_positions, sent.suggested_max_positions)
+                )
         reasons.extend(sent.reasons)
         sentiment_message = {
             "critical": (
@@ -851,6 +875,119 @@ def build_snapshot(
         },
     )
 
+    global_soft_gate = (
+        config.hysteresis.enabled
+        and config.hysteresis.gate_soft_constraints_on_confirmed_entry
+    )
+    gate_soft_risk_multiplier = global_soft_gate or (
+        config.hysteresis.enabled
+        and config.hysteresis.gate_soft_risk_multiplier_on_confirmed_entry
+    )
+    gate_soft_position_limits = global_soft_gate or (
+        config.hysteresis.enabled
+        and config.hysteresis.gate_soft_position_limits_on_confirmed_entry
+    )
+    gate_soft_exposure_caps = global_soft_gate or (
+        config.hysteresis.enabled
+        and config.hysteresis.gate_soft_exposure_caps_on_confirmed_entry
+    )
+    gate_soft_sector_blocks = global_soft_gate or (
+        config.hysteresis.enabled
+        and config.hysteresis.gate_soft_sector_blocks_on_confirmed_entry
+    )
+    soft_entry_confirmed = mode != "normal"
+    active_soft_constraint_families: list[str] = []
+    deferred_soft_constraint_families: list[str] = []
+
+    risk_multiplier_soft_present = abs(soft_risk_multiplier - 1.0) > 1e-9
+    sector_blocks_soft_present = bool(soft_blocked_sectors or soft_block_high_beta)
+    position_limits_soft_present = soft_effective_max_positions is not None
+    exposure_caps_soft_present = any(
+        value is not None
+        for value in (soft_max_position_weight, soft_max_sector_weight, soft_max_gross_exposure)
+    )
+
+    if risk_multiplier_soft_present:
+        if gate_soft_risk_multiplier and not soft_entry_confirmed:
+            deferred_soft_constraint_families.append("risk_multiplier")
+        else:
+            risk_multiplier *= soft_risk_multiplier
+            active_soft_constraint_families.append("risk_multiplier")
+
+    if sector_blocks_soft_present:
+        if gate_soft_sector_blocks and not soft_entry_confirmed:
+            deferred_soft_constraint_families.append("sector_blocks")
+        else:
+            if soft_blocked_sectors:
+                blocked_sectors.extend(soft_blocked_sectors)
+            if soft_block_high_beta:
+                block_high_beta = True
+                if soft_high_beta_threshold is not None:
+                    high_beta_threshold = min(high_beta_threshold, soft_high_beta_threshold)
+            active_soft_constraint_families.append("sector_blocks")
+
+    if position_limits_soft_present:
+        if gate_soft_position_limits and not soft_entry_confirmed:
+            deferred_soft_constraint_families.append("position_limits")
+        else:
+            effective_max_positions = cast(
+                int | None,
+                _tighten_numeric_limit(effective_max_positions, soft_effective_max_positions),
+            )
+            active_soft_constraint_families.append("position_limits")
+
+    if exposure_caps_soft_present:
+        if gate_soft_exposure_caps and not soft_entry_confirmed:
+            deferred_soft_constraint_families.append("exposure_caps")
+        else:
+            max_position_weight = cast(
+                float | None,
+                _tighten_numeric_limit(max_position_weight, soft_max_position_weight),
+            )
+            max_sector_weight = cast(
+                float | None,
+                _tighten_numeric_limit(max_sector_weight, soft_max_sector_weight),
+            )
+            max_gross_exposure = cast(
+                float | None,
+                _tighten_numeric_limit(max_gross_exposure, soft_max_gross_exposure),
+            )
+            active_soft_constraint_families.append("exposure_caps")
+
+    soft_constraints_active = bool(active_soft_constraint_families)
+    deferred_soft_sources = tuple(dict.fromkeys(soft_constraint_sources)) if deferred_soft_constraint_families else ()
+    _push_trace(
+        decision_trace,
+        source="soft_constraints_activation",
+        label="Activation des contraintes soft",
+        triggered=bool(soft_constraint_sources),
+        severity="info" if soft_constraints_active else "warning",
+        resulting_mode=mode,
+        message=(
+            f"Contraintes soft activées ({', '.join(active_soft_constraint_families)})"
+            if soft_constraints_active and active_soft_constraint_families
+            else (
+                f"Contraintes soft différées en attente de confirmation ({', '.join(deferred_soft_constraint_families)})"
+                if deferred_soft_constraint_families
+                else "Aucune contrainte soft candidate à activer"
+            )
+        ),
+        details={
+            "global_soft_gate": global_soft_gate,
+            "gate_soft_risk_multiplier": gate_soft_risk_multiplier,
+            "gate_soft_position_limits": gate_soft_position_limits,
+            "gate_soft_exposure_caps": gate_soft_exposure_caps,
+            "gate_soft_sector_blocks": gate_soft_sector_blocks,
+            "soft_entry_confirmed": soft_entry_confirmed,
+            "soft_constraints_active": soft_constraints_active,
+            "soft_sources": list(dict.fromkeys(soft_constraint_sources)),
+            "deferred_soft_sources": list(deferred_soft_sources),
+            "active_soft_constraint_families": list(active_soft_constraint_families),
+            "deferred_soft_constraint_families": list(deferred_soft_constraint_families),
+            "transition_action": transition_action,
+        },
+    )
+
     # 7. Modes restrictifs : ajustement allow_new_entries
     if mode in ("close_only", "cash_only"):
         allow_new_entries = False
@@ -924,6 +1061,10 @@ def build_snapshot(
         transition_action=transition_action,
         hysteresis_applied=config.hysteresis.enabled,
         soft_signal_count=soft_signal_count,
+        soft_constraints_active=soft_constraints_active,
+        deferred_soft_sources=deferred_soft_sources,
+        active_soft_constraint_families=tuple(active_soft_constraint_families),
+        deferred_soft_constraint_families=tuple(deferred_soft_constraint_families),
         hard_triggered=hard_triggered,
         state_age_days=state_age_days,
         next_state=next_state,

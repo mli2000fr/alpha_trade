@@ -122,6 +122,10 @@ class MarketRegimeSnapshot:
     transition_action: str | None = None
     hysteresis_applied: bool = False
     soft_signal_count: int = 0
+    soft_constraints_active: bool = False
+    deferred_soft_sources: tuple[str, ...] = ()
+    active_soft_constraint_families: tuple[str, ...] = ()
+    deferred_soft_constraint_families: tuple[str, ...] = ()
     hard_triggered: bool = False
     state_age_days: int | None = None
     next_state: MarketRegimeState | None = None
@@ -180,6 +184,10 @@ class MarketRegimeSnapshot:
             "transition_action": self.transition_action,
             "hysteresis_applied": self.hysteresis_applied,
             "soft_signal_count": self.soft_signal_count,
+            "soft_constraints_active": self.soft_constraints_active,
+            "deferred_soft_sources": list(self.deferred_soft_sources),
+            "active_soft_constraint_families": list(self.active_soft_constraint_families),
+            "deferred_soft_constraint_families": list(self.deferred_soft_constraint_families),
             "hard_triggered": self.hard_triggered,
             "state_age_days": self.state_age_days,
             "next_state": self.next_state.to_dict() if self.next_state is not None else None,
