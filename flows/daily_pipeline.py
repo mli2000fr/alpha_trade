@@ -29,6 +29,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from common.config_loader import override_config_path
+
 LOGGER = logging.getLogger("flows.daily_pipeline")
 
 # ---------------------------------------------------------------------------
@@ -215,6 +217,7 @@ def daily_pipeline(
     *,
     steps_override: tuple[tuple[str, str, str], ...] | None = None,
     dry_run: bool = False,
+    config_path: str | Path | None = None,
 ) -> FlowResult:
     """Exécute le pipeline quotidien complet pour un compte donné.
 
@@ -223,6 +226,8 @@ def daily_pipeline(
         account_id: Identifiant du compte (ex. ``"paper1"``).
         steps_override: Surcharger la séquence d'étapes (pour tests).
         dry_run: Si True, skip toutes les étapes (rapport vide).
+        config_path: Chemin YAML alternatif à appliquer à tout le process
+            pipeline (ex. candidate finale R13a) via override global.
 
     Returns:
         :class:`FlowResult` avec le statut global et les résultats par étape.
@@ -238,18 +243,21 @@ def daily_pipeline(
         account_id,
         dry_run,
     )
+    if config_path is not None:
+        LOGGER.info("Pipeline quotidien: override config actif -> %s", config_path)
 
-    for step_name, module_path, fn_name in steps_config:
-        if dry_run:
-            step_results[step_name] = StepResult(step=step_name, status="SKIPPED")
-            continue
+    with override_config_path(config_path):
+        for step_name, module_path, fn_name in steps_config:
+            if dry_run:
+                step_results[step_name] = StepResult(step=step_name, status="SKIPPED")
+                continue
 
-        fn = _safe_import_step(module_path, fn_name)
-        result = _run_step(step_name, fn, run_date, account_id)
-        step_results[step_name] = result
+            fn = _safe_import_step(module_path, fn_name)
+            result = _run_step(step_name, fn, run_date, account_id)
+            step_results[step_name] = result
 
-        if result.status == "FAILED":
-            errors.append(f"{step_name}: {result.error}")
+            if result.status == "FAILED":
+                errors.append(f"{step_name}: {result.error}")
 
     # Mise à jour jauge candidats si disponible depuis le résultat screener
     screener_result = step_results.get("screener")
@@ -326,6 +334,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Fichier JSON de sortie (défaut: stdout).",
     )
+    p.add_argument(
+        "--config-path",
+        type=Path,
+        default=None,
+        help="Chemin YAML alternatif à propager à toutes les étapes du pipeline (ex. config finale R13a).",
+    )
     return p
 
 
@@ -342,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
         run_date=run_date,
         account_id=args.account_id,
         dry_run=args.dry_run,
+        config_path=args.config_path,
     )
     payload = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
     if args.report_out:

@@ -36,6 +36,7 @@ from common.capital_presets import (
     build_risk_config_kwargs_from_preset,
     resolve_capital_preset_for_equity,
 )
+from common.config_loader import override_config_path
 from common.utils import configure_root_logging
 from database.macro_indicators import persist_market_macro_snapshot_daily
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
@@ -1237,6 +1238,12 @@ Exemples :
             "correspondre exactement aux paramètres du run."
         ),
     )
+    p.add_argument(
+        "--config-path",
+        dest="config_path",
+        default=None,
+        help="Chemin YAML alternatif à propager à tout le cycle d'exécution (ex. config finale R13a).",
+    )
     return p
 
 
@@ -1292,6 +1299,7 @@ def main() -> None:
         trailing_activation_profit_pct = None
         protection_transition_timeout_seconds = None
         protection_transition_poll_interval_seconds = None
+        config_path = getattr(args, "config_path", None)
     else:
         mode              = args.mode
         run_id            = args.run_id
@@ -1316,33 +1324,35 @@ def main() -> None:
         protection_transition_poll_interval_seconds = args.protection_transition_poll_interval_seconds
         approval_token = args.approval_token
         run_plan_file = args.run_plan_file
+        config_path = args.config_path
 
-    abort_missing_env(account_id=account_id, mode=mode)
-    run(
-        mode,
-        run_id,
-        trade_date,
-        debug,
-        allow_fractional_shares,
-        allow_outside_rth,
-        auto_rebalance,
-        account_id,
-        account_type,
-        swing_only,
-        submission_window,
-        auto_watcher=auto_watcher,
-        skip_preflight=skip_preflight,
-        take_profit_pct=take_profit_pct,
-        trailing_stop_pct=trailing_stop_pct,
-        max_entry_gap_pct=max_entry_gap_pct,
-        trailing_activation_trigger=trailing_activation_trigger,
-        trailing_activation_r_multiple=trailing_activation_r_multiple,
-        trailing_activation_profit_pct=trailing_activation_profit_pct,
-        protection_transition_timeout_seconds=protection_transition_timeout_seconds,
-        protection_transition_poll_interval_seconds=protection_transition_poll_interval_seconds,
-        approval_token=approval_token,
-        run_plan_file=run_plan_file,
-    )
+    with override_config_path(config_path):
+        abort_missing_env(account_id=account_id, mode=mode)
+        run(
+            mode,
+            run_id,
+            trade_date,
+            debug,
+            allow_fractional_shares,
+            allow_outside_rth,
+            auto_rebalance,
+            account_id,
+            account_type,
+            swing_only,
+            submission_window,
+            auto_watcher=auto_watcher,
+            skip_preflight=skip_preflight,
+            take_profit_pct=take_profit_pct,
+            trailing_stop_pct=trailing_stop_pct,
+            max_entry_gap_pct=max_entry_gap_pct,
+            trailing_activation_trigger=trailing_activation_trigger,
+            trailing_activation_r_multiple=trailing_activation_r_multiple,
+            trailing_activation_profit_pct=trailing_activation_profit_pct,
+            protection_transition_timeout_seconds=protection_transition_timeout_seconds,
+            protection_transition_poll_interval_seconds=protection_transition_poll_interval_seconds,
+            approval_token=approval_token,
+            run_plan_file=run_plan_file,
+        )
 
 
 if __name__ == "__main__":

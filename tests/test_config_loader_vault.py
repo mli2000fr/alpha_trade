@@ -79,6 +79,47 @@ def test_load_config_env_triggers_vault_build(yaml_with_placeholders, tmp_path, 
     assert cfg["broker"]["api_key"] == "from-env"
 
 
+def test_load_config_uses_env_override_for_default_repo_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    default_config = tmp_path / "config.yaml"
+    override_config = tmp_path / "regime_r13a_final.yaml"
+    default_config.write_text("value: default\n", encoding="utf-8")
+    override_config.write_text("value: override\n", encoding="utf-8")
+    monkeypatch.setattr(config_loader, "_DEFAULT_CONFIG_PATH", default_config)
+    monkeypatch.setenv(config_loader.CONFIG_PATH_ENV, str(override_config))
+
+    cfg_default = config_loader.load_config()
+    cfg_explicit_default = config_loader.load_config(str(default_config))
+
+    assert cfg_default["value"] == "override"
+    assert cfg_explicit_default["value"] == "override"
+
+
+def test_load_config_keeps_explicit_non_default_path_even_with_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    default_config = tmp_path / "config.yaml"
+    explicit_config = tmp_path / "custom.yaml"
+    override_config = tmp_path / "regime_r13a_final.yaml"
+    default_config.write_text("value: default\n", encoding="utf-8")
+    explicit_config.write_text("value: explicit\n", encoding="utf-8")
+    override_config.write_text("value: override\n", encoding="utf-8")
+    monkeypatch.setattr(config_loader, "_DEFAULT_CONFIG_PATH", default_config)
+    monkeypatch.setenv(config_loader.CONFIG_PATH_ENV, str(override_config))
+
+    cfg = config_loader.load_config(str(explicit_config))
+
+    assert cfg["value"] == "explicit"
+
+
+def test_override_config_path_restores_previous_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    previous = tmp_path / "previous.yaml"
+    current = tmp_path / "current.yaml"
+    monkeypatch.setenv(config_loader.CONFIG_PATH_ENV, str(previous))
+
+    with config_loader.override_config_path(current):
+        assert os.environ.get(config_loader.CONFIG_PATH_ENV) == str(current)
+
+    assert os.environ.get(config_loader.CONFIG_PATH_ENV) == str(previous)
+
+
 # ----------------------------- verify_vault_rotation ----------------------------
 
 

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from pathlib import Path
 
 import pytest
 
+from common.config_loader import CONFIG_PATH_ENV
 from flows.daily_pipeline import (
     FlowResult,
     StepResult,
@@ -218,6 +220,31 @@ def test_daily_pipeline_metrics_emitted_on_success(monkeypatch: pytest.MonkeyPat
     )
 
     assert any(step == "step_x" and status == "OK" for step, status in inc_calls)
+
+
+def test_daily_pipeline_applies_config_path_to_steps_and_restores_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "regime_r13a_final.yaml"
+    config_path.write_text("market_regimes:\n  enabled: true\n", encoding="utf-8")
+    monkeypatch.delenv(CONFIG_PATH_ENV, raising=False)
+
+    def _ok(_d, _a):
+        assert os.environ.get(CONFIG_PATH_ENV) == str(config_path)
+        return {}
+
+    monkeypatch.setattr("flows.daily_pipeline._safe_import_step", lambda _m, _f: _ok)
+
+    result = daily_pipeline(
+        run_date=date(2026, 5, 17),
+        account_id="paper1",
+        steps_override=(("step_cfg", "m", "f"),),
+        config_path=config_path,
+    )
+
+    assert result.status == "OK"
+    assert os.environ.get(CONFIG_PATH_ENV) is None
 
 
 def test_daily_pipeline_flow_result_to_dict_is_json_serializable() -> None:
