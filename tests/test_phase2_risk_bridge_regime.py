@@ -313,3 +313,58 @@ def test_risk_bridge_collects_macro_missing_dates_when_fallback_allowed() -> Non
     assert res.regime_snapshots[trade_date]["data_quality"]["macro"] == "missing"
 
 
+def test_risk_bridge_regime_snapshots_follow_backtest_market_calendar_when_scores_have_gaps() -> None:
+    reset_cache()
+    score_dates = [date(2025, 5, 1), date(2025, 5, 5)]
+    market_dates = pd.DatetimeIndex(
+        [
+            pd.Timestamp("2025-05-01"),
+            pd.Timestamp("2025-05-02"),
+            pd.Timestamp("2025-05-05"),
+        ]
+    )
+    scores_df = pd.DataFrame(
+        {
+            "trade_date": [score_dates[0], score_dates[0], score_dates[1], score_dates[1]],
+            "symbol": ["AAPL", "MSFT", "AAPL", "MSFT"],
+            "sector": ["Technology", "Technology", "Technology", "Technology"],
+            "final_score": [1.5, 1.2, 1.4, 1.1],
+            "score": [1.5, 1.2, 1.4, 1.1],
+            "score_source": ["test", "test", "test", "test"],
+        }
+    )
+    predictions_df = pd.DataFrame()
+    close_df = pd.DataFrame(
+        {
+            "AAPL": [100.0, 101.0, 102.0],
+            "MSFT": [200.0, 201.0, 202.0],
+        },
+        index=market_dates,
+    )
+    high_df = close_df + 2
+    low_df = close_df - 2
+    cfg = RiskConfig(account_equity=100_000, min_position_notional=100, max_positions=5)
+    mr = MarketRegimesConfig(
+        enabled=True,
+        allow_neutral_fallback_on_missing_macro_data=True,
+        vix=VixConfig(enabled=False),
+        yields=YieldsConfig(enabled=False),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+
+    res = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=predictions_df,
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=cfg,
+        market_regimes_config=mr,
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert sorted(res.regime_snapshots) == [date(2025, 5, 1), date(2025, 5, 2), date(2025, 5, 5)]
+    assert res.diagnostics["snapshot_dates"] == 3
+    assert set(res.regime_snapshots) - {score_dates[0], score_dates[1]} == {date(2025, 5, 2)}
+
+

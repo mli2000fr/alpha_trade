@@ -200,6 +200,20 @@ def _build_return_matrix(close_df: pd.DataFrame, snapshot_date: date, symbols: l
     return tail if not tail.empty else None
 
 
+def _resolve_regime_snapshot_dates(close_df: pd.DataFrame, execution_dates: list[date]) -> list[date]:
+    if not execution_dates:
+        return []
+    if close_df.empty or close_df.index.empty:
+        return execution_dates
+    market_dates = sorted({pd.Timestamp(value).date() for value in close_df.index.tolist()})
+    if not market_dates:
+        return execution_dates
+    start_date = min(execution_dates)
+    end_date = max(execution_dates)
+    aligned_dates = [market_date for market_date in market_dates if start_date <= market_date <= end_date]
+    return aligned_dates or execution_dates
+
+
 def portfolio_entries_to_signals(entries: list[PortfolioEntry], snapshot_date: date) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for idx, entry in enumerate(entries, start=1):
@@ -269,7 +283,7 @@ def build_phase2_risk_result(
     découplant l'ablation macro des garde-fous structurels.
     """
     normalized_scores = _prepare_score_columns(scores_df, preferred_score_column=score_column)
-    snapshot_dates = sorted({pd.Timestamp(value).date() for value in normalized_scores["trade_date"].dropna().tolist()})
+    execution_dates = sorted({pd.Timestamp(value).date() for value in normalized_scores["trade_date"].dropna().tolist()})
     all_entries: list[PortfolioEntry] = []
     signal_frames: list[pd.DataFrame] = []
     regime_snapshots_dump: dict[date, dict] = {}
@@ -299,21 +313,24 @@ def build_phase2_risk_result(
         from service.market import build_snapshot as _bs  # local import (parité)
         build_snapshot_fn = _bs
 
+    snapshot_dates = _resolve_regime_snapshot_dates(close_df, execution_dates) if use_regime else execution_dates
     previous_regime_state = None
     for snapshot_date in snapshot_dates:
         candidates = _build_candidates(normalized_scores, snapshot_date)
-        if not candidates:
-            continue
         symbols = [candidate.symbol for candidate in candidates]
-        prices = _build_prices(
-            close_df=close_df,
-            high_df=high_df,
-            low_df=low_df,
-            snapshot_date=snapshot_date,
-            symbols=symbols,
-        )
-        predictions = _build_predictions(predictions_df, snapshot_date)
-        return_matrix = _build_return_matrix(close_df, snapshot_date, symbols, lookback)
+        prices: dict[str, PriceInfo] = {}
+        predictions: dict[str, PredictionInfo] = {}
+        return_matrix = None
+        if candidates:
+            prices = _build_prices(
+                close_df=close_df,
+                high_df=high_df,
+                low_df=low_df,
+                snapshot_date=snapshot_date,
+                symbols=symbols,
+            )
+            predictions = _build_predictions(predictions_df, snapshot_date)
+            return_matrix = _build_return_matrix(close_df, snapshot_date, symbols, lookback)
 
         cfg_for_day = structural_cfg
         snap = None
@@ -348,6 +365,9 @@ def build_phase2_risk_result(
             # Compteur "ordres trop petits évités" : candidats > effective_max_positions
             if cfg_for_day.effective_max_positions < len(candidates):
                 slots_rejected_avoided += max(0, len(candidates) - cfg_for_day.effective_max_positions)
+
+        if not candidates:
+            continue
 
         builder = PortfolioBuilder(cfg_for_day)
         entries = builder.build(candidates, prices, predictions=predictions, return_matrix=return_matrix)
