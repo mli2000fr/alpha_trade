@@ -9,7 +9,7 @@ from common.config_loader import CONFIG_PATH_ENV
 
 
 def test_main_propagates_config_path_override(monkeypatch, tmp_path: Path) -> None:
-    config_path = tmp_path / "regime_r13a_final.yaml"
+    config_path = tmp_path / "override.yaml"
     config_path.write_text("market_regimes:\n  enabled: true\n", encoding="utf-8")
     seen: dict[str, str | None] = {}
 

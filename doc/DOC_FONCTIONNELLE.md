@@ -642,12 +642,12 @@ backtest. Les valeurs a retenir sont :
 - exposition brute max en `capital_preservation` : `0.65` ;
 - spike 10Y relatif a partir de `7 %` sur 5 jours ;
 - multiplicateur de risque soft sur spike 10Y : `0.85` ;
-- mode hard backtest : `capital_preservation` (et non plus `cash_only`) ;
+- modes hard / critiques backtest alignes sur le live : `close_only` ;
 - circuit breaker sentiment durci : warning `-0.20`, critique `-0.40`, max `3` positions en warning.
 
-Le fichier `config/regime_r13a_final.yaml` reste disponible comme reference
-explicite / override, mais il est desormais redondant avec le profil par
-defaut de `config.yaml` pour la couche `market_regimes`.
+Le profil `R13a` est desormais porte directement par `config.yaml` comme
+baseline versionnee du depot. Les overrides explicites restent possibles via
+les points d'entree CLI / IHM quand un YAML alternatif est souhaite.
 
 ### 8.6 Restitution IHM (Streamlit)
 Trois points d'entree IHM exposent la couche Market-Aware :

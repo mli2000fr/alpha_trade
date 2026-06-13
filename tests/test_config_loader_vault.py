@@ -81,7 +81,7 @@ def test_load_config_env_triggers_vault_build(yaml_with_placeholders, tmp_path, 
 
 def test_load_config_uses_env_override_for_default_repo_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     default_config = tmp_path / "config.yaml"
-    override_config = tmp_path / "regime_r13a_final.yaml"
+    override_config = tmp_path / "override.yaml"
     default_config.write_text("value: default\n", encoding="utf-8")
     override_config.write_text("value: override\n", encoding="utf-8")
     monkeypatch.setattr(config_loader, "_DEFAULT_CONFIG_PATH", default_config)
@@ -97,7 +97,7 @@ def test_load_config_uses_env_override_for_default_repo_config(tmp_path: Path, m
 def test_load_config_keeps_explicit_non_default_path_even_with_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     default_config = tmp_path / "config.yaml"
     explicit_config = tmp_path / "custom.yaml"
-    override_config = tmp_path / "regime_r13a_final.yaml"
+    override_config = tmp_path / "override.yaml"
     default_config.write_text("value: default\n", encoding="utf-8")
     explicit_config.write_text("value: explicit\n", encoding="utf-8")
     override_config.write_text("value: override\n", encoding="utf-8")
@@ -137,11 +137,11 @@ def test_repo_default_config_promotes_r13a_market_regime_profile(monkeypatch: py
     assert yields_cfg["soft_max_position_weight"] == pytest.approx(0.25)
     assert yields_cfg["soft_max_sector_weight"] == pytest.approx(0.30)
     assert yields_cfg["soft_max_gross_exposure"] == pytest.approx(0.65)
-    assert yields_cfg["hard_mode_backtest"] == "capital_preservation"
+    assert yields_cfg["hard_mode_backtest"] == "close_only"
     assert sentiment_cb["warning_threshold"] == pytest.approx(-0.20)
     assert sentiment_cb["critical_threshold"] == pytest.approx(-0.40)
     assert sentiment_cb["warning_max_positions"] == 3
-    assert sentiment_cb["critical_mode_backtest"] == "capital_preservation"
+    assert sentiment_cb["critical_mode_backtest"] == "close_only"
 
 
 # ----------------------------- verify_vault_rotation ----------------------------

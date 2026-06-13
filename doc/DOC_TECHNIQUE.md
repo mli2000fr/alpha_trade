@@ -892,11 +892,13 @@ partage par le live, le paper et le backtest embarque notamment :
 - `market_regimes.yields.relative_spike_threshold = 0.07` ;
 - `market_regimes.yields.risk_mult = 0.85` ;
 - `market_regimes.yields.soft_max_positions = 3` ;
-- `market_regimes.yields.hard_mode_backtest = capital_preservation`.
+- `market_regimes.yields.hard_mode_backtest = close_only` (aligne sur le live) ;
+- `market_regimes.sentiment_circuit_breaker.critical_mode_backtest = close_only` (aligne sur le live).
 
-Le fichier `config/regime_r13a_final.yaml` est conserve comme snapshot de
-reference / override explicite, mais il n'est plus necessaire pour retrouver
-la baseline regime promue.
+La baseline regime promue est desormais portee directement par
+`config.yaml`. Un override explicite reste possible via `--config-path` /
+`ALPHA_TRADE_CONFIG_PATH`, mais il n'existe plus de snapshot R13a dedie dans
+`config/`.
 ### 11.4 Tests
 - `tests/test_market_regime.py` (parser YAML, calendar, macro, earnings, buyback)
 - `tests/test_market_regime_preflight.py` (rendu console + derive_entry_mode)

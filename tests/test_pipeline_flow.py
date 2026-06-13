@@ -226,7 +226,7 @@ def test_daily_pipeline_applies_config_path_to_steps_and_restores_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    config_path = tmp_path / "regime_r13a_final.yaml"
+    config_path = tmp_path / "override.yaml"
     config_path.write_text("market_regimes:\n  enabled: true\n", encoding="utf-8")
     monkeypatch.delenv(CONFIG_PATH_ENV, raising=False)
 
