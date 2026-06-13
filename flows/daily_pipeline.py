@@ -338,7 +338,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config-path",
         type=Path,
         default=None,
-        help="Chemin YAML alternatif à propager à toutes les étapes du pipeline (ex. config finale R13a).",
+        help="Chemin YAML alternatif à propager à toutes les étapes du pipeline.",
     )
     return p
 

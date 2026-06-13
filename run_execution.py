@@ -1242,7 +1242,7 @@ Exemples :
         "--config-path",
         dest="config_path",
         default=None,
-        help="Chemin YAML alternatif à propager à tout le cycle d'exécution (ex. config finale R13a).",
+        help="Chemin YAML alternatif à propager à tout le cycle d'exécution.",
     )
     return p
 
