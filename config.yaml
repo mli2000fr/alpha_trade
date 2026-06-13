@@ -47,6 +47,8 @@ risk:
 
 # ---------------------------------------------------------------------------
 # Sprint S30 — Couche centralisée Market-Aware (Axe A du plan ``prompt/parttern/plan.md``).
+# Profil par défaut promu : variante gagnante R13a (calibration régime validée
+# en ablation 2026-06), désormais intégrée directement dans ``config.yaml``.
 # Quand ``market_regimes.enabled = false`` la couche reste désactivée et le
 # comportement historique du dépôt est strictement préservé.
 # Cf. ``service/market/`` et ``risk_management/regime_apply.py``.
@@ -70,10 +72,10 @@ market_regimes:
     enabled: true
     symbol: "VIX.INDX"
     short_symbol: "VIX9D.INDX"
-    high_threshold: 25.0
+    high_threshold: 30.0
     inverted_curve_mode: capital_preservation
 
-  capital_preservation_max_gross_exposure: 0.50
+  capital_preservation_max_gross_exposure: 0.65
 
   yields:
     enabled: true
@@ -81,20 +83,20 @@ market_regimes:
     symbol_10y: "US10Y"
     fred_series_10y: "DGS10"             # FRED 10Y constant maturity treasury
     lookback_days: 5
-    relative_spike_threshold: 0.05
+    relative_spike_threshold: 0.07
     block_sectors: ["Technology", "Tech", "Growth", "Real Estate", "Consumer Cyclical", "Financial Services"]
     block_high_beta: true
     high_beta_threshold: 1.2
-    risk_mult: 0.45
-    soft_max_positions: 2
-    soft_max_position_weight: 0.20
-    soft_max_sector_weight: 0.25
-    soft_max_gross_exposure: 0.50
-    hard_relative_spike_threshold: 0.08
+    risk_mult: 0.85
+    soft_max_positions: 3
+    soft_max_position_weight: 0.25
+    soft_max_sector_weight: 0.30
+    soft_max_gross_exposure: 0.65
+    hard_relative_spike_threshold: 0.10
     hard_block_sectors: ["Technology", "Tech", "Growth", "Real Estate", "Consumer Cyclical", "Financial Services"]
     hard_risk_mult: 0.30
     hard_mode_live: close_only
-    hard_mode_backtest: cash_only
+    hard_mode_backtest: capital_preservation
     hard_requires_vix_high: true
     hard_requires_sentiment_warning: true
     hard_max_positions: 1
@@ -105,11 +107,11 @@ market_regimes:
   sentiment_circuit_breaker:
     enabled: true
     lookback_days: 7
-    warning_threshold: -0.15
-    critical_threshold: -0.30
-    warning_max_positions: 2
+    warning_threshold: -0.20
+    critical_threshold: -0.40
+    warning_max_positions: 3
     critical_mode_live: close_only
-    critical_mode_backtest: cash_only
+    critical_mode_backtest: capital_preservation
 
   sector_limits:
     enabled: false

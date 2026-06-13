@@ -120,6 +120,30 @@ def test_override_config_path_restores_previous_env(monkeypatch: pytest.MonkeyPa
     assert os.environ.get(config_loader.CONFIG_PATH_ENV) == str(previous)
 
 
+def test_repo_default_config_promotes_r13a_market_regime_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(config_loader.CONFIG_PATH_ENV, raising=False)
+
+    cfg = config_loader.load_config()
+    market_regimes = cfg["market_regimes"]
+    yields_cfg = market_regimes["yields"]
+    sentiment_cb = market_regimes["sentiment_circuit_breaker"]
+
+    assert market_regimes["macro_provider"] == "eodhd"
+    assert market_regimes["capital_preservation_max_gross_exposure"] == pytest.approx(0.65)
+    assert market_regimes["vix"]["high_threshold"] == pytest.approx(30.0)
+    assert yields_cfg["relative_spike_threshold"] == pytest.approx(0.07)
+    assert yields_cfg["risk_mult"] == pytest.approx(0.85)
+    assert yields_cfg["soft_max_positions"] == 3
+    assert yields_cfg["soft_max_position_weight"] == pytest.approx(0.25)
+    assert yields_cfg["soft_max_sector_weight"] == pytest.approx(0.30)
+    assert yields_cfg["soft_max_gross_exposure"] == pytest.approx(0.65)
+    assert yields_cfg["hard_mode_backtest"] == "capital_preservation"
+    assert sentiment_cb["warning_threshold"] == pytest.approx(-0.20)
+    assert sentiment_cb["critical_threshold"] == pytest.approx(-0.40)
+    assert sentiment_cb["warning_max_positions"] == 3
+    assert sentiment_cb["critical_mode_backtest"] == "capital_preservation"
+
+
 # ----------------------------- verify_vault_rotation ----------------------------
 
 

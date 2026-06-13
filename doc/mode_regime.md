@@ -38,7 +38,7 @@ vix:
   enabled: true
   symbol: "VIX.INDX"
   short_symbol: "VIX9D.INDX"
-  high_threshold: 25.0
+  high_threshold: 30.0
   inverted_curve_mode: capital_preservation
 ```
 

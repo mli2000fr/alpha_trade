@@ -101,14 +101,19 @@ Source secondaire / alternative avec symboles de type :
 - `US10Y.INDX`
 
 ### Choix par défaut
-Le factory `build_default_macro_provider(...)` retourne par défaut un provider **composite** :
+Le code supporte toujours un provider **composite** via
+`build_default_macro_provider(...)` :
 
 - **Stooq d'abord** ;
 - **EODHD en secours** si un token EODHD est disponible dans l'environnement.
 
-C'est volontaire :
-- Stooq est gratuit et ne consomme pas de quota ;
-- EODHD est utilisé comme fallback si disponible.
+Mais le **defaut versionne du depot** n'est plus `composite` :
+
+- `config.yaml` selectionne explicitement `market_regimes.macro_provider: eodhd` ;
+- ce choix aligne le runtime nominal avec la calibration regime promue `R13a`.
+
+Le mode `composite` reste disponible si l'operateur veut privilegier Stooq en
+premier recours.
 
 ---
 
@@ -124,10 +129,16 @@ Exemple de log :
 Cela veut dire que la couche macro a tenté de récupérer la donnée macro `^vix` via Stooq et que l'appel réseau a expiré.
 
 ### Pourquoi Stooq est appelé ?
-Parce que le provider macro par défaut essaie Stooq en premier pour obtenir :
+Parce qu'un runtime a selectionne un provider qui passe par Stooq (`stooq` ou
+`composite`) pour obtenir :
 - le VIX ;
 - le VIX court terme ;
 - le 10Y US.
+
+Avec le **defaut versionne actuel** (`market_regimes.macro_provider: eodhd`),
+ces logs ne doivent donc plus etre la norme en production nominale ; ils
+restent attendus si l'operateur repasse explicitement en `stooq` ou
+`composite`.
 
 ### Est-ce bien pour de la macro ?
 **Oui.**
@@ -195,6 +206,22 @@ Le snapshot peut :
 - bloquer certains secteurs ;
 - bloquer les titres `high beta` ;
 - durcir la sélection du portefeuille.
+
+### 7.5 Profil runtime de référence (`R13a`)
+Le profil régime désormais promu dans `config.yaml` correspond à la variante
+`R13a`. Les garde-fous clefs sont :
+
+- VIX élevé à partir de `30.0` ;
+- exposition brute max en `capital_preservation` à `0.65` ;
+- spike 10Y si hausse relative >= `7 %` sur 5 jours ;
+- multiplicateur de risque soft sur spike 10Y : `0.85` ;
+- caps soft : `3` positions, `25 %` par ligne, `30 %` par secteur, `65 %` gross ;
+- mode hard backtest : `capital_preservation`.
+
+Conséquence opérationnelle : le dépôt ne démarre plus d'un profil très
+sur-défensif ; la baseline runtime est maintenant la calibration gagnante
+retenue contre les variantes plus agressives ou plus restrictives testées en
+ablation.
 
 ### 7.4 Si le mode résultant devient restrictif
 Dans `build_snapshot(...)`, certains modes (`close_only`, `cash_only`) forcent :

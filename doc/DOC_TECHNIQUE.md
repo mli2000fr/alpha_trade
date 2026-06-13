@@ -883,6 +883,20 @@ python run_execution.py check   # vérif environnement
 Tout echec du pre-flight est traite en fallback neutre (jamais bloquant).
 ### 11.3 Parite live / backtest
 Le snapshot est calcule par le **meme orchestrateur** (`build_snapshot`) cote live et cote `backtesting/risk_bridge.py::run_phase2_risk_bridge` (parametre `market_regimes_config`). Les memes patterns, seuils et modes sont donc rejoues a l'identique.
+
+Depuis la promotion **R13a** dans `config.yaml`, le profil regime par defaut
+partage par le live, le paper et le backtest embarque notamment :
+
+- `market_regimes.vix.high_threshold = 30.0` ;
+- `market_regimes.capital_preservation_max_gross_exposure = 0.65` ;
+- `market_regimes.yields.relative_spike_threshold = 0.07` ;
+- `market_regimes.yields.risk_mult = 0.85` ;
+- `market_regimes.yields.soft_max_positions = 3` ;
+- `market_regimes.yields.hard_mode_backtest = capital_preservation`.
+
+Le fichier `config/regime_r13a_final.yaml` est conserve comme snapshot de
+reference / override explicite, mais il n'est plus necessaire pour retrouver
+la baseline regime promue.
 ### 11.4 Tests
 - `tests/test_market_regime.py` (parser YAML, calendar, macro, earnings, buyback)
 - `tests/test_market_regime_preflight.py` (rendu console + derive_entry_mode)
@@ -902,8 +916,12 @@ choisit le fournisseur selon `config.yaml > market_regimes.macro_provider` :
   `service/stooq/clientStooq.py` preserve les symboles index `^...` et
   ajoute `apikey` si `STOOQ_API_KEY` / `STOOQ_APIKEY` est present.
 - `eodhd` → `EodhdMacroProvider` (token requis, symboles `VIX.INDX`, `VIX9D.INDX`, `US10Y.INDX`).
-- `composite` (defaut) → `CompositeMacroProvider([Stooq, Eodhd?])` : Stooq d'abord, EODHD en secours uniquement si `EODHD_API_TOKEN` est present.
+- `composite` (disponible mais non selectionne par defaut dans le depot) → `CompositeMacroProvider([Stooq, Eodhd?])` : Stooq d'abord, EODHD en secours uniquement si `EODHD_API_TOKEN` est present.
 - `none` → couche desactivee, snapshot neutre.
+
+Le **defaut versionne actuel** du depot est
+`market_regimes.macro_provider = eodhd` dans `config.yaml`, afin d'aligner le
+profil runtime de reference avec la calibration regime promue `R13a`.
 
 Les overrides de symboles passent par `market_regimes.vix.symbol`,
 `market_regimes.vix.short_symbol`, `market_regimes.yields.symbol_10y`.

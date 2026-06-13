@@ -593,7 +593,7 @@ Decider en debut de chaque cycle (live ou backtest) d'un `MarketRegimeSnapshot` 
 - le nombre maximal effectif de positions (`effective_max_positions`, `allowed_slots = floor(equity / enforce_min_notional)`),
 - les patterns calendaires actifs (Tax Day, Sept. Slump, Santa Rally, January Effect, OpEx, Month-End),
 - le mode marche (`normal` / `capital_preservation` / `close_only` / `cash_only`),
-- les filtres macro (VIX > 25, hausse rapide du 10Y, blacklist Tech / Growth / high beta),
+- les filtres macro (VIX > 30 par defaut, hausse rapide du 10Y >= 7 % sur 5 jours, blacklist Tech / Growth / high beta),
 - le sentiment circuit breaker,
 - l'earnings shield J-2 / J+2 (blocage strict ou score negatif force),
 - le buyback blackout (penalisation -30 % sur le score ML).
@@ -601,6 +601,7 @@ Decider en debut de chaque cycle (live ou backtest) d'un `MarketRegimeSnapshot` 
 - Calcul **une seule fois par cycle** (cache court par defaut 300 s).
 - En l'absence de donnee macro, fallback **neutre** documente dans `data_quality`.
 - Configuration centralisee dans `config.yaml > market_regimes` (cf. `service.market.config.parse_market_regimes`).
+- Depuis la promotion **R13a**, le profil versionne par defaut dans `config.yaml` est un profil defensif modere : `vix.high_threshold = 30.0`, `capital_preservation_max_gross_exposure = 0.65`, `yields.relative_spike_threshold = 0.07`, `yields.risk_mult = 0.85`, caps soft `3 positions / 25 % par ligne / 30 % par secteur / 65 % gross`.
 - En live, le snapshot est imprime via `execution_engine.market_regime_preflight.emit_preflight` puis persiste dans `artifacts/market_regime/`.
 - Le mode derive (`derive_entry_mode`) peut basculer `ExecutionConfig.entry_mode` vers `close_only` / `cash_only` avant l'execution.
 ### 8.3 Trailing stop ATR dynamique (Axe F)
@@ -623,15 +624,30 @@ La couche est desormais branchee sur deux fournisseurs production via
 - **EODHD** (cle requise) — symboles `VIX.INDX`, `VIX9D.INDX`, `US10Y.INDX`.
 
 Selection via `config.yaml > market_regimes.macro_provider` :
-`stooq` / `eodhd` / `composite` (defaut, Stooq d'abord puis EODHD si cle
-disponible) / `none`. Les overrides de symboles sont supportes
+`stooq` / `eodhd` / `composite` (disponible mais non selectionne par defaut dans le depot) / `none`. Les overrides de symboles sont supportes
 (`market_regimes.vix.symbol`, `market_regimes.yields.symbol_10y`, etc.).
 Les reponses sont cachees par instance et par cycle pour ne pas consommer
 le quota EODHD inutilement. Tout echec reseau retombe sur `None` →
 fallback neutre documente dans `data_quality`. En pratique, pour obtenir un
 mode non-`normal` de facon fiable en production sans mode de demo, le chemin
-minimal recommande est aujourd'hui `market_regimes.enabled: true` +
-`macro_provider: eodhd` + `vix.enabled: true`.
+minimal recommande est aujourd'hui deja le **defaut versionne** :
+`market_regimes.enabled: true` + `macro_provider: eodhd` + `vix.enabled: true`.
+
+### 8.5.1 Profil par defaut promu (`R13a`)
+Le depot embarque maintenant directement dans `config.yaml` la calibration
+regime gagnante `R13a` comme baseline operateur pour le live, le paper et le
+backtest. Les valeurs a retenir sont :
+
+- VIX eleve a partir de `30.0` ;
+- exposition brute max en `capital_preservation` : `0.65` ;
+- spike 10Y relatif a partir de `7 %` sur 5 jours ;
+- multiplicateur de risque soft sur spike 10Y : `0.85` ;
+- mode hard backtest : `capital_preservation` (et non plus `cash_only`) ;
+- circuit breaker sentiment durci : warning `-0.20`, critique `-0.40`, max `3` positions en warning.
+
+Le fichier `config/regime_r13a_final.yaml` reste disponible comme reference
+explicite / override, mais il est desormais redondant avec le profil par
+defaut de `config.yaml` pour la couche `market_regimes`.
 
 ### 8.6 Restitution IHM (Streamlit)
 Trois points d'entree IHM exposent la couche Market-Aware :

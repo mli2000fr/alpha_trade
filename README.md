@@ -153,6 +153,10 @@ Ces commandes permettent notamment de :
 >
 > Les autres étapes (quotes, metadata, exécution) restent toujours sur
 > Alpaca quel que soit ce flag.
+>
+> ⚙️ **Profil régime par défaut** : `config.yaml` embarque désormais la
+> calibration Market-Aware promue **R13a** (`market_regimes`), avec
+> `macro_provider: eodhd`, `vix.high_threshold: 30.0` et `yields.risk_mult: 0.85`.
 
 ### Ordre d'exécution
 
