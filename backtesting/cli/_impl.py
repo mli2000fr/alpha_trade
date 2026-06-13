@@ -416,7 +416,7 @@ def _build_backtest_common_params(
         "ml_mode": args.ml_mode,
         "sentiment_mode": args.sentiment_mode,
         "artifacts_dir": args.artifacts_dir,
-        "config_path": args.config_path,
+        "config_path": getattr(args, "config_path", None),
         "score_column": args.score_column,
         "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
         "macro_missing_policy": getattr(args, "macro_missing_policy", None),
@@ -1907,6 +1907,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
     phase7_exit_lifecycle_result = None
     phase2_risk_run_id = f"bt_phase2_{start:%Y%m%d}_{end:%Y%m%d}"
     research_signals_df = pd.DataFrame()
+    from execution_engine.config import ExecutionConfig, load_leverage_config_from_yaml
+
+    execution_config = ExecutionConfig(
+        broker_mode="paper",
+        dry_run=True,
+        account_type=args.account_type,
+        swing_only=args.swing_only,
+        allow_fractional_shares=bool(args.allow_fractional_shares),
+        simulated_account_equity=float(args.equity),
+        profit_taker_pct=float(args.tp),
+        trailing_stop_pct=float(args.ts),
+        leverage=load_leverage_config_from_yaml(),
+    )
     if phase2_mode == "off":
         research_signals_df = replay_signals(
             scores_df,
@@ -1993,18 +2006,6 @@ def _run_backtest(args: argparse.Namespace) -> None:
             )
         )
         if phase2_mode == "risk_execution":
-            from execution_engine.config import ExecutionConfig
-
-            execution_config = ExecutionConfig(
-                broker_mode="paper",
-                dry_run=True,
-                account_type=args.account_type,
-                swing_only=args.swing_only,
-                allow_fractional_shares=bool(args.allow_fractional_shares),
-                simulated_account_equity=float(args.equity),
-                profit_taker_pct=float(args.tp),
-                trailing_stop_pct=float(args.ts),
-            )
             if phase3_mode == "execution_replay":
                 from backtesting.execution_replay import simulate_phase3_execution_replay
 
@@ -2145,6 +2146,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         fees_pct=fees_pct,
         commission_bps=float(args.commission_bps),
         slippage_bps=float(args.slippage_bps),
+        exec_config=execution_config,
         trading_constraints=trading_constraints,
         microstructure=microstructure_cfg,
         risk_overlay=risk_overlay_cfg,

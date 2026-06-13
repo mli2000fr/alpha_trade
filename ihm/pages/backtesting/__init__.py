@@ -251,7 +251,10 @@ def _apply_run_capital_preset(selected_preset_key: str, equity: float) -> Capita
         st.session_state[BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY] = signature
         return None
     values = preset.values
-    st.session_state["bt_run_account_type"] = str(values.get("execution_account_type", st.session_state.get("bt_run_account_type", "margin")))
+    current_account_type = str(st.session_state.get("bt_run_account_type", "margin") or "margin").strip().lower()
+    if current_account_type not in {"margin", "cash"}:
+        current_account_type = "margin"
+    st.session_state["bt_run_account_type"] = current_account_type
     st.session_state["bt_run_swing_only"] = bool(values.get("execution_swing_only", st.session_state.get("bt_run_swing_only", False)))
     st.session_state["bt_run_max_positions"] = _to_int(
         values.get("risk_max_positions", st.session_state.get("bt_run_max_positions", 20)),

@@ -316,6 +316,52 @@ class BacktestEngine:
             return normalized
         return float(int(normalized))
 
+    def _resolve_margin_buying_power_multiplier(self, current_equity: float) -> float:
+        """Résout le multiplicateur de buying power margin en backtest.
+
+        Cohérence recherchée avec le monde exécution :
+        - sans `exec_config`, on reste en comportement backtest historique (1.0x) ;
+        - avec `exec_config.account_type=margin`, on applique le multiplicateur
+          simulé (`simulated_margin_buying_power_multiplier`) ;
+        - si la politique explicite `leverage` est active, on borne ce
+          multiplicateur avec `dry_run_simulated_leverage` et `max_leverage`.
+        """
+        exec_cfg = self.config.exec_config
+        if exec_cfg is None or str(exec_cfg.account_type).strip().lower() != "margin":
+            return 1.0
+
+        multiplier = max(float(exec_cfg.simulated_margin_buying_power_multiplier), 1.0)
+        leverage_cfg = exec_cfg.leverage
+        if not leverage_cfg.enabled or leverage_cfg.mode == "disabled" or leverage_cfg.max_leverage <= 1.0:
+            return multiplier
+        if current_equity < float(leverage_cfg.min_equity_usd):
+            return multiplier
+        if leverage_cfg.only_in_entry_mode == "normal" and exec_cfg.entry_mode != "normal":
+            return multiplier
+        if leverage_cfg.disable_in_capital_preservation and exec_cfg.entry_mode == "capital_preservation":
+            return multiplier
+        return min(
+            multiplier,
+            float(leverage_cfg.dry_run_simulated_leverage),
+            float(leverage_cfg.capped_live_max_leverage),
+        )
+
+    def _resolve_available_entry_budget(
+        self,
+        *,
+        constraints: TradingConstraintConfig,
+        settled_cash: float,
+        current_equity: float,
+        current_gross_notional: float,
+    ) -> float:
+        if constraints.use_settled_cash_only:
+            return max(float(settled_cash), 0.0)
+        if str(constraints.account_type).strip().lower() != "margin":
+            return max(float(settled_cash), 0.0)
+        effective_multiplier = self._resolve_margin_buying_power_multiplier(float(current_equity))
+        total_buying_power = max(float(current_equity) * effective_multiplier, 0.0)
+        return max(total_buying_power - max(float(current_gross_notional), 0.0), 0.0)
+
     def run(
         self,
         open_df: pd.DataFrame | None = None,
@@ -860,7 +906,13 @@ class BacktestEngine:
 
             remaining_candidates = max(len(candidate_rows) - candidate_pos, 1)
             per_position_cap = current_equity * target_weight_pct
-            candidate_budget = min(per_position_cap, state.settled_cash / remaining_candidates)
+            available_entry_budget = self._resolve_available_entry_budget(
+                constraints=constraints,
+                settled_cash=state.settled_cash,
+                current_equity=current_equity,
+                current_gross_notional=current_gross_notional,
+            )
+            candidate_budget = min(per_position_cap, available_entry_budget / remaining_candidates)
             settled_cash_before_entry = state.settled_cash
             gross_exposure_before_pct = (
                 (current_gross_notional / current_equity)
@@ -877,7 +929,7 @@ class BacktestEngine:
             effective_unit_cost = entry_price * (1.0 + cfg.fees_pct + extra_slippage_pct)
             if quantity_override is not None:
                 affordable_quantity = (
-                    self._normalize_trade_quantity(state.settled_cash / effective_unit_cost)
+                    self._normalize_trade_quantity(available_entry_budget / effective_unit_cost)
                     if effective_unit_cost > 0
                     else 0.0
                 )
@@ -944,7 +996,7 @@ class BacktestEngine:
                 continue
 
             entry_cost = quantity * effective_unit_cost
-            if entry_cost > state.settled_cash:
+            if entry_cost > available_entry_budget:
                 if constraints.use_settled_cash_only:
                     diagnostics.blocked_cash_entries += 1
                 self._record_trade_event(
@@ -957,6 +1009,7 @@ class BacktestEngine:
                     candidate_budget=candidate_budget,
                     quantity=quantity,
                     entry_cost=entry_cost,
+                    available_entry_budget=available_entry_budget,
                     effective_unit_cost=effective_unit_cost,
                     **signal_context,
                 )
@@ -1062,6 +1115,7 @@ class BacktestEngine:
                 target_weight_pct=target_weight_pct,
                 vol_target_scaler=vol_target_scaler,
                 candidate_budget=candidate_budget,
+                available_entry_budget=available_entry_budget,
                 settled_cash_before=settled_cash_before_entry,
                 settled_cash_after=state.settled_cash,
                 quantity_override=quantity_override,

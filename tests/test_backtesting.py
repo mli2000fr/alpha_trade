@@ -1644,6 +1644,101 @@ class TestBacktestConfig:
         assert trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
         assert trades_df.iloc[1]["entry_date"] == pd.Timestamp("2025-01-06")
 
+    def test_backtest_engine_margin_mode_uses_simulated_buying_power_for_oversized_target_weight(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+        from execution_engine.config import ExecutionConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 100.0, 110.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [100.0, 104.0, 110.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 99.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+                "approved_shares": [1_000.0],
+                "filled_qty": [1_000.0],
+                "target_weight": [1.5],
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+                execution_replay_mode="execution_replay",
+                trading_constraints=TradingConstraintConfig(account_type="margin", swing_only=False),
+                exec_config=ExecutionConfig(
+                    dry_run=True,
+                    account_type="margin",
+                    swing_only=False,
+                    simulated_account_equity=10_000.0,
+                ),
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert not result.closed_trades_df.empty
+        assert float(result.closed_trades_df.iloc[0]["quantity"]) == pytest.approx(199.0)
+
+    def test_backtest_engine_margin_mode_respects_explicit_leverage_cap_from_execution_config(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+        from execution_engine.config import ExecutionConfig, LeverageConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 100.0, 110.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [100.0, 104.0, 110.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 99.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+                "approved_shares": [1_000.0],
+                "filled_qty": [1_000.0],
+                "target_weight": [2.0],
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+                execution_replay_mode="execution_replay",
+                trading_constraints=TradingConstraintConfig(account_type="margin", swing_only=False),
+                exec_config=ExecutionConfig(
+                    dry_run=True,
+                    account_type="margin",
+                    swing_only=False,
+                    simulated_account_equity=10_000.0,
+                    leverage=LeverageConfig(
+                        enabled=True,
+                        mode="regt_swing",
+                        max_leverage=1.5,
+                        dry_run_simulated_leverage=1.5,
+                        audit_log=False,
+                    ),
+                ),
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert not result.closed_trades_df.empty
+        assert float(result.closed_trades_df.iloc[0]["quantity"]) == pytest.approx(149.0)
+
     def test_backtest_engine_standard_and_swing_share_same_entry_price(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
         from backtesting.trading_constraints import TradingConstraintConfig
