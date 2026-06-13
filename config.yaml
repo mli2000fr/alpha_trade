@@ -46,18 +46,71 @@ risk:
   max_daily_loss: 0.05
 
 leverage:
-  enabled: false
-  mode: disabled                        # disabled | regt_swing
-  max_leverage: 1.5                     # borne dure en code a 2.0 max overnight
+  # Active ou désactive la politique explicite de levier.
+  # - false : comportement historique conservé
+  # - true  : applique les garde-fous du bloc `leverage`
+  enabled: true
+
+  # Mode fonctionnel du levier.
+  # Valeurs possibles :
+  # - disabled   : désactive la feature ; `enabled` est alors sans effet pratique
+  # - regt_swing : levier long-only borné pour le swing overnight, avec lecture
+  #                prioritaire du buying power Reg-T broker (`regt_buying_power`)
+  mode: regt_swing
+
+  # Levier notionnel maximal visé par la stratégie.
+  # Exemples :
+  # - 1.0 = pas de levier additionnel
+  # - 1.5 = exposition cible max = 150 % de l'equity
+  # - 2.0 = plafond absolu autorisé en swing overnight
+  # NB : même si une valeur > 2.0 était saisie, le code borne de toute façon à 2.0 max.
+  max_leverage: 1.5
+
+  # Equity minimale requise pour autoriser la politique de levier.
+  # En dessous, le levier explicite est désactivé automatiquement.
   min_equity_usd: 2000
+
+  # Si true, la politique de levier n'est autorisée que sur un compte `margin`.
+  # Si false, la config peut théoriquement être chargée aussi sur d'autres types
+  # de compte, mais les garde-fous runtime restent prioritaires.
   require_margin_account: true
-  only_in_entry_mode: normal            # normal | any
+
+  # Restreint l'activation à certains modes d'entrée.
+  # Valeurs possibles :
+  # - normal : le levier explicite n'est autorisé qu'en mode d'entrée normal
+  # - any    : n'impose pas ce filtre spécifique (les autres garde-fous restent actifs)
+  only_in_entry_mode: normal
+
+  # Si true, coupe explicitement le levier quand le régime a basculé en
+  # `capital_preservation`, même si le compte est margin et l'equity suffisante.
   disable_in_capital_preservation: true
+
+  # Détermine le comportement si aucun champ de buying power prioritaire n'est
+  # disponible dans le snapshot broker.
+  # - true  : désactive la politique de levier explicite dans ce cas
+  # - false : fallback défensif sans crash, avec journalisation de la raison
   disable_if_buying_power_field_missing: false
+
+  # Ordre de priorité des champs lus dans le snapshot broker Alpaca.
+  # Le premier champ présent et exploitable est utilisé.
+  # Valeurs courantes :
+  # - regt_buying_power        : buying power Reg-T, prioritaire pour le swing margin
+  # - buying_power             : buying power générique broker
+  # D'autres champs pourraient être ajoutés plus tard si le contrat broker évolue.
   buying_power_field_priority:
     - regt_buying_power
     - buying_power
+
+  # Levier simulé utilisé en `dry_run` quand la politique explicite est active.
+  # Exemples :
+  # - 1.0 = simulation sans levier additionnel
+  # - 1.25 / 1.5 = simulation prudente
+  # - 2.0 = plafond maximal autorisé
   dry_run_simulated_leverage: 1.5
+
+  # Active les logs d'audit du moteur de levier.
+  # Si true, les décisions de levier (actif/inactif, champ broker retenu,
+  # budget effectif, raison de fallback) sont journalisées.
   audit_log: true
 
 # ---------------------------------------------------------------------------
