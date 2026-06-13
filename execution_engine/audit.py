@@ -200,6 +200,26 @@ def build_execution_run_summary(
         "tca_slippage_alerts": int(metrics.get("tca_slippage_alerts", 0) or 0),
         # Phase 5.2.b — dernière phase du run (informatif si tracker actif).
         "last_phase": str(metrics.get("last_phase", "") or "") or None,
+        "account_constraints": {
+            "equity": round(float(metrics.get("account_equity", 0.0) or 0.0), 2),
+            "buying_power_available": round(float(metrics.get("buying_power_available", 0.0) or 0.0), 2),
+            "settled_cash_available": round(float(metrics.get("settled_cash_available", 0.0) or 0.0), 2),
+            "daytrade_count": int(metrics.get("daytrade_count", 0) or 0),
+        },
+        "leverage": {
+            "feature_enabled": bool(metrics.get("leverage_feature_enabled", False)),
+            "active": bool(metrics.get("leverage_active", False)),
+            "configured_max": round(float(metrics.get("leverage_configured_max", 1.0) or 1.0), 4),
+            "effective": round(float(metrics.get("effective_leverage", 1.0) or 1.0), 4),
+            "target_budget": round(float(metrics.get("leverage_target_budget", 0.0) or 0.0), 2),
+            "broker_buying_power": (
+                round(float(metrics.get("leverage_broker_buying_power") or 0.0), 2)
+                if metrics.get("leverage_broker_buying_power") is not None
+                else None
+            ),
+            "buying_power_field": str(metrics.get("leverage_buying_power_field", "") or "") or None,
+            "reason": str(metrics.get("leverage_reason", "") or "") or None,
+        },
         "account_type": account_type,
         "swing_only": bool(swing_only),
         "dry_run": bool(dry_run),

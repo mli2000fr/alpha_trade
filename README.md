@@ -615,6 +615,51 @@ alpaca:
       mode: live
 ```
 
+### Levier optionnel (`config.yaml`)
+
+Le moteur d'exécution supporte désormais une **politique explicite de levier
+long-only**, pilotée par `config.yaml`. Quand ce bloc est activé, le budget
+effectif est borné par le snapshot broker (`get_account`) et par les garde-fous
+suivants :
+
+- **compte `margin` requis** ;
+- **equity minimale 2 000 $** ;
+- **max 2.0x** en swing overnight ;
+- priorité au champ broker **`regt_buying_power`**, sinon fallback
+  `buying_power` ;
+- désactivation automatique hors `entry_mode="normal"`.
+
+> Important : avec `account_type: margin`, le comportement historique du dépôt
+> (usage du `buying_power` broker) reste préservé si la feature `leverage`
+> n'est pas activée. Le bloc `leverage` sert donc à **encadrer** ce budget par
+> une politique plus stricte, pas à réécrire silencieusement la sémantique
+> legacy des comptes margin.
+
+Exemple de bloc :
+
+```yaml
+leverage:
+  enabled: false
+  mode: disabled                  # disabled | regt_swing
+  max_leverage: 1.5
+  min_equity_usd: 2000
+  require_margin_account: true
+  only_in_entry_mode: normal
+  disable_in_capital_preservation: true
+  disable_if_buying_power_field_missing: false
+  buying_power_field_priority:
+    - regt_buying_power
+    - buying_power
+  dry_run_simulated_leverage: 1.5
+  audit_log: true
+```
+
+En exécution, `run_execution.py` affiche désormais explicitement :
+
+- la **configuration de levier** chargée ;
+- le **levier effectif** du run (ex. `1.50x`) ;
+- le **budget disponible**, l'`equity` et le champ broker retenu.
+
 ### Déclaration par variables d'environnement
 
 Alternative sans `config.yaml` — le système détecte automatiquement les paires :

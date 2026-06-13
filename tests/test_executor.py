@@ -153,6 +153,17 @@ class TestExecutor:
                 "reconciliation_results": 2,
                 "reconciliation_safe_auto": 1,
                 "reconciliation_manual_review": 1,
+                "account_equity": 10_000.0,
+                "buying_power_available": 15_000.0,
+                "settled_cash_available": 10_000.0,
+                "daytrade_count": 0,
+                "leverage_feature_enabled": True,
+                "leverage_active": True,
+                "leverage_configured_max": 1.5,
+                "effective_leverage": 1.5,
+                "leverage_target_budget": 15_000.0,
+                "leverage_broker_buying_power": 15_500.0,
+                "leverage_buying_power_field": "regt_buying_power",
             },
             started_at=datetime(2026, 4, 24, 10, 0, 0),
             finished_at=datetime(2026, 4, 24, 10, 0, 10),
@@ -175,6 +186,11 @@ class TestExecutor:
         assert summary["selector_rank_available"] == 3
         assert summary["selector_rank_coverage_pct"] == 100.0
         assert summary["selector_earnings_blackout_targets"] == 1
+        assert summary["account_constraints"]["equity"] == 10_000.0
+        assert summary["account_constraints"]["buying_power_available"] == 15_000.0
+        assert summary["leverage"]["active"] is True
+        assert summary["leverage"]["effective"] == 1.5
+        assert summary["leverage"]["buying_power_field"] == "regt_buying_power"
 
     def test_build_execution_run_summary_includes_tca_metrics(self) -> None:
         summary = build_execution_run_summary(

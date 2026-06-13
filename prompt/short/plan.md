@@ -549,6 +549,41 @@ Pour un MVP short robuste, il faudra au minimum :
 
 ## 5. Points déjà prêts ou proches d’être prêts
 
+### Interaction short ↔ levier / marge (mise à jour 2026-06-13)
+
+Depuis l’ajout du **levier optionnel long-only** dans l’exécution, il faut figer
+dès maintenant la doctrine suivante pour la future V2 short :
+
+- le levier actuel ne doit **pas** être implicitement réutilisé pour shorter ;
+- l’ouverture short devra passer par une logique distincte de **marge / short
+  buying power / gross exposure / net exposure** ;
+- les contrôles actuels centrés sur `regt_buying_power` / `buying_power`
+  restent une bonne base, mais ils devront être étendus avec :
+  - validation `asset_shortable`,
+  - règles de borrow / locate si disponibles,
+  - budget par side,
+  - caps d’exposition brute et nette,
+  - reporting séparé du levier long et de l’utilisation de marge short.
+
+### Implication de conception
+
+Le contrat levier introduit en V1 doit donc être considéré comme :
+
+- **V1** : levier optionnel **long-only** borné par `config.yaml` ;
+- **V2 short** : gestion **directionnelle** de la marge, distincte du simple
+  multiplicateur long.
+
+### Implication pour les sprints short
+
+- **Sprint 2 backtest** : le modèle de compte devra intégrer un usage de marge
+  compatible long + short, et non seulement des achats cash/margin ;
+- **Sprint 3 live** : `execution_engine.account_state.py` devra évoluer d’un
+  budget de buying power orienté achat vers une couche de capacité directionnelle
+  (`long buying power`, `short capacity`, `gross/net exposure`) ;
+- **Sprint 4 reporting** : les rapports devront afficher séparément
+  `effective_leverage_long`, exposition short, exposition nette et utilisation
+  de marge.
+
 ## 5.1 Briques réutilisables
 
 - `ExecutionTarget.side` existe déjà

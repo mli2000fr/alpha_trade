@@ -118,6 +118,17 @@ Cette API composable permet d'évaluer une stratégie avec **2 000 $** ou un aut
 
 Cette logique n'est plus limitée au backtest : le module `execution_engine` applique aussi ces contraintes au moment de la soumission des ordres et de l'armement des sorties.
 
+Depuis l'ajout du **levier optionnel long-only**, le même moteur d'exécution sait
+aussi augmenter le budget notionnel **uniquement** si les préconditions métier
+sont réunies : compte `margin`, `equity >= 2 000 $`, régime d'entrée normal et
+pouvoir d'achat broker suffisant. Le levier effectif est plafonné à **2.0x max**
+en swing overnight et borné par `regt_buying_power` puis `buying_power`.
+
+Le bloc `leverage` joue ici le rôle d'une **politique explicite de contrôle**.
+Quand il n'est pas activé, le comportement historique des comptes `margin`
+reste conservé (usage du `buying_power` broker selon la sémantique legacy du
+dépôt).
+
 Le comportement opérateur associé est désormais le suivant :
 
 - **Backtest IHM** : un switch `Autoriser les quantités fractionnaires en backtest` est visible et activé par défaut ;
@@ -218,6 +229,7 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 | `max_daily_loss_pct` | 5% | Seuil circuit breaker perte journalière |
 | `rolling_peak_window_days` | 0 (live) / 252 (backtest) | Fenêtre du pic de référence (0 = historique absolu) |
 | `degraded_entry_allocation_pct` | 0.0 (blocage) / 0.02 (dégradé) | Allocation max autorisée quand le breaker est trippé |
+| `leverage.max_leverage` | 1.0 (désactivé) à 2.0 max | Levier notionnel max autorisé côté exécution, borné par le buying power broker |
 | `correlation_threshold` | 0.80 | Corrélation max entre deux positions retenues |
 | `risk_per_trade_pct` | 1% | Budget de risque par trade |
 
@@ -255,6 +267,7 @@ Les valeurs effectives sont pilotées par `config/capital_presets.yaml` (live + 
 - **Table `portfolio_targets`** : portefeuille cible issu du risk management
 - **Tables `broker_account_snapshots` / `broker_positions_snapshots`** : photos du compte et des positions broker après chaque run
 - **TCA (Transaction Cost Analysis)** : slippage moyen, max, implementation shortfall agrégé
+- **Résumé d'exécution (`run_summary`)** : publie désormais aussi le snapshot de contraintes compte (`equity`, `settled_cash`, `buying_power`) et un bloc `leverage` avec `effective`, `active`, `configured_max`, `buying_power_field`, `reason`
 - **Rapport de backtest** : exporte un `report.json` structuré avec résumé de performance, paramètres effectifs, diagnostics simulateur, métadonnées de reproductibilité (`git`, `python`, `dataset_hash`, `seed`) et manifeste de fidélité PIT
 
 La page `Exécution` de l'IHM privilégie désormais la lecture de ces tables canoniques **scopée par `exec_run_id`**, avec le contexte plus large du compte relégué dans des zones secondaires explicites.

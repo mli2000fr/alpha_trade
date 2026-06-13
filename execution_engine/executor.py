@@ -411,8 +411,32 @@ class ProductionExecutor:
                     "buying_power_available": account_state.buying_power_available,
                     "settled_cash_available": account_state.settled_cash_available,
                     "daytrade_count": account_state.daytrade_count,
+                    "leverage_feature_enabled": account_state.leverage_feature_enabled,
+                    "leverage_active": account_state.leverage_active,
+                    "effective_leverage": account_state.effective_leverage,
+                    "leverage_configured_max": account_state.leverage_configured_max,
+                    "leverage_target_budget": account_state.leverage_target_budget,
+                    "leverage_broker_buying_power": account_state.leverage_broker_buying_power,
+                    "leverage_buying_power_field": account_state.leverage_buying_power_field,
+                    "leverage_reason": account_state.leverage_reason,
                 },
             ))
+            metrics["account_equity"] = round(float(account_state.equity), 2)
+            metrics["buying_power_available"] = round(float(account_state.buying_power_available), 2)
+            metrics["settled_cash_available"] = round(float(account_state.settled_cash_available), 2)
+            metrics["daytrade_count"] = int(account_state.daytrade_count)
+            metrics["leverage_feature_enabled"] = bool(account_state.leverage_feature_enabled)
+            metrics["leverage_active"] = bool(account_state.leverage_active)
+            metrics["leverage_configured_max"] = round(float(account_state.leverage_configured_max), 4)
+            metrics["effective_leverage"] = round(float(account_state.effective_leverage), 4)
+            metrics["leverage_target_budget"] = round(float(account_state.leverage_target_budget), 2)
+            metrics["leverage_broker_buying_power"] = (
+                round(float(account_state.leverage_broker_buying_power), 2)
+                if account_state.leverage_broker_buying_power is not None
+                else None
+            )
+            metrics["leverage_buying_power_field"] = account_state.leverage_buying_power_field
+            metrics["leverage_reason"] = account_state.leverage_reason
             self._snapshot_account_constraints(exec_run_id, account_state)
 
             # Phase 2b — Corporate actions : alerter sur splits/dividendes pending
@@ -1054,6 +1078,14 @@ class ProductionExecutor:
                     "daytrade_count": account_state.daytrade_count,
                     "account_type": account_state.account_type,
                     "swing_only": account_state.swing_only,
+                    "leverage_feature_enabled": account_state.leverage_feature_enabled,
+                    "leverage_active": account_state.leverage_active,
+                    "leverage_configured_max": account_state.leverage_configured_max,
+                    "effective_leverage": account_state.effective_leverage,
+                    "leverage_target_budget": account_state.leverage_target_budget,
+                    "leverage_broker_buying_power": account_state.leverage_broker_buying_power,
+                    "leverage_buying_power_field": account_state.leverage_buying_power_field,
+                    "leverage_reason": account_state.leverage_reason,
                 },
                 snapshot_kind="preflight",
             )

@@ -2,7 +2,9 @@ import pytest
 
 from execution_engine.config import (
     ExecutionConfig,
+    LeverageConfig,
     ProtectionWatcherServiceConfig,
+    load_leverage_config_from_yaml,
     load_trailing_stop_config_from_yaml,
 )
 
@@ -100,6 +102,66 @@ def test_execution_config_accepts_optional_regime_guards() -> None:
     assert cfg.regime_max_position_weight == pytest.approx(0.20)
     assert cfg.regime_max_sector_weight == pytest.approx(0.35)
     assert cfg.regime_max_gross_exposure == pytest.approx(0.45)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"mode": "unsupported"}, "leverage.mode"),
+        ({"max_leverage": 0.99}, "leverage.max_leverage"),
+        ({"max_leverage": 2.01}, "leverage.max_leverage"),
+        ({"min_equity_usd": -1}, "leverage.min_equity_usd"),
+        ({"only_in_entry_mode": "close_only"}, "leverage.only_in_entry_mode"),
+        ({"dry_run_simulated_leverage": 2.5}, "leverage.dry_run_simulated_leverage"),
+        ({"buying_power_field_priority": tuple()}, "leverage.buying_power_field_priority"),
+    ],
+)
+def test_leverage_config_validates_invalid_values(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        LeverageConfig(**kwargs)
+
+
+def test_execution_config_embeds_leverage_config() -> None:
+    cfg = ExecutionConfig(
+        account_type="margin",
+        leverage=LeverageConfig(enabled=True, mode="regt_swing", max_leverage=1.5),
+    )
+
+    assert cfg.leverage.enabled is True
+    assert cfg.leverage.mode == "regt_swing"
+    assert cfg.leverage.capped_live_max_leverage == pytest.approx(1.5)
+
+
+def test_load_leverage_config_from_yaml_uses_leverage_section() -> None:
+    cfg = load_leverage_config_from_yaml(
+        {
+            "leverage": {
+                "enabled": True,
+                "mode": "regt_swing",
+                "max_leverage": 1.5,
+                "min_equity_usd": 2500,
+                "require_margin_account": True,
+                "only_in_entry_mode": "normal",
+                "disable_in_capital_preservation": True,
+                "disable_if_buying_power_field_missing": True,
+                "buying_power_field_priority": ["regt_buying_power", "buying_power"],
+                "dry_run_simulated_leverage": 1.25,
+                "audit_log": False,
+            }
+        }
+    )
+
+    assert cfg.enabled is True
+    assert cfg.mode == "regt_swing"
+    assert cfg.max_leverage == pytest.approx(1.5)
+    assert cfg.min_equity_usd == pytest.approx(2500)
+    assert cfg.require_margin_account is True
+    assert cfg.only_in_entry_mode == "normal"
+    assert cfg.disable_in_capital_preservation is True
+    assert cfg.disable_if_buying_power_field_missing is True
+    assert cfg.buying_power_field_priority == ("regt_buying_power", "buying_power")
+    assert cfg.dry_run_simulated_leverage == pytest.approx(1.25)
+    assert cfg.audit_log is False
 
 
 def test_load_trailing_stop_config_from_yaml_uses_risk_management_section() -> None:

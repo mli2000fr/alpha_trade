@@ -1,5 +1,17 @@
 presets:
   # ------------------------------------------------------------------
+  # Convention drawdown / circuit breaker :
+  # - Préfixe `risk_*`        = protections live / pipeline risk / execution
+  #   consommées par `RiskConfig` puis `risk_management.circuit_breaker`.
+  # - Préfixe `backtesting_*` = protections du simulateur / replay
+  #   consommées par `backtesting.risk_overlay`.
+  #
+  # Paires équivalentes principales :
+  # - `risk_max_drawdown_pct`                  ↔ `backtesting_max_portfolio_dd_pct`
+  # - `risk_drawdown_rolling_peak_window_days` ↔ `backtesting_dd_rolling_peak_window_days`
+  # - `risk_degraded_entry_allocation_pct`     ↔ `backtesting_dd_degraded_allocation_pct`
+  # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
   # Sprint S26 — micro-compte (~2 000 EUR ≈ 2 150 USD)
   # Cible : utilisateur débutant qui démarre avec ~2 000 €.
   # Toutes les valeurs sont en USD (le moteur ne gère pas l'EUR natif).
@@ -32,7 +44,7 @@ presets:
       risk_min_position_notional: 500.0        # ticket mini USD (sinon frais > alpha) — A-001 fix
       # Monotonie respectée : DD plus strict que les tranches supérieures
       # (ordre attendu par tests/test_capital_preset_risk_overrides.py).
-      risk_max_drawdown_pct: 0.07
+      risk_max_drawdown_pct: 0.10
       risk_max_daily_loss_pct: 0.025
       # Live / risk_management.circuit_breaker :
       # - rolling_peak_window_days = 0 => pic historique absolu (legacy)
@@ -120,7 +132,7 @@ presets:
       risk_max_sector_weight: 0.40
       risk_min_position_notional: 150.0
       # Sprint S3 / A-011 — petit compte : seuils circuit breaker plus stricts.
-      risk_max_drawdown_pct: 0.08
+      risk_max_drawdown_pct: 0.10
       risk_max_daily_loss_pct: 0.03
       risk_drawdown_rolling_peak_window_days: 252
       risk_degraded_entry_allocation_pct: 0.02

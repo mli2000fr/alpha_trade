@@ -45,6 +45,21 @@ risk:
   max_drawdown: 0.15
   max_daily_loss: 0.05
 
+leverage:
+  enabled: false
+  mode: disabled                        # disabled | regt_swing
+  max_leverage: 1.5                     # borne dure en code a 2.0 max overnight
+  min_equity_usd: 2000
+  require_margin_account: true
+  only_in_entry_mode: normal            # normal | any
+  disable_in_capital_preservation: true
+  disable_if_buying_power_field_missing: false
+  buying_power_field_priority:
+    - regt_buying_power
+    - buying_power
+  dry_run_simulated_leverage: 1.5
+  audit_log: true
+
 # ---------------------------------------------------------------------------
 # Sprint S30 — Couche centralisée Market-Aware (Axe A du plan ``prompt/parttern/plan.md``).
 # Profil par défaut promu : variante gagnante R13a (calibration régime validée

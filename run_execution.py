@@ -722,7 +722,11 @@ def run(
     try:
         from execution_engine.audit import build_execution_run_summary
         from execution_engine.broker_adapter import BrokerAdapter
-        from execution_engine.config import ExecutionConfig, load_trailing_stop_config_from_yaml
+        from execution_engine.config import (
+            ExecutionConfig,
+            load_leverage_config_from_yaml,
+            load_trailing_stop_config_from_yaml,
+        )
         from execution_engine.db_io import ExecutionRepository
         from execution_engine.executor import ProductionExecutor
         from execution_engine.oco_manager import OcoManager
@@ -733,6 +737,13 @@ def run(
         print(f"{RED}Erreur d'import : {exc}{RESET}")
         print("-> Verifie que le projet est installe : pip install -e .")
         sys.exit(1)
+
+    leverage_cfg = load_leverage_config_from_yaml()
+    leverage_status = "actif" if leverage_cfg.enabled and leverage_cfg.mode != "disabled" else "desactive"
+    print(
+        f"  Levier cfg  : {leverage_status}  |  mode={leverage_cfg.mode}  |  max={leverage_cfg.max_leverage:.2f}x  "
+        f"|  min_equity={leverage_cfg.min_equity_usd:.0f}$"
+    )
 
     # Sprint S11 / S11.4 — preflight obligatoire en mode live.
     # Refus de boot si un check critique échoue, à moins que --skip-preflight
@@ -819,6 +830,7 @@ def run(
     config   = ExecutionConfig(
         **preset,
         account_id=account_id,
+        leverage=leverage_cfg,
         trailing_stop=load_trailing_stop_config_from_yaml(),
     )
     repo     = ExecutionRepository()
@@ -1117,6 +1129,20 @@ def run(
     constraint_blocked = int(metrics.get("constraint_blocked", 0) or 0)
     if constraint_blocked:
         print(f"  Bloques     : {YELLOW}{constraint_blocked} contrainte(s) compte/capital{RESET}")
+    effective_leverage = float(summary.get("leverage", {}).get("effective", 1.0) or 1.0)
+    leverage_active = bool(summary.get("leverage", {}).get("active", False))
+    leverage_reason = summary.get("leverage", {}).get("reason")
+    leverage_field = summary.get("leverage", {}).get("buying_power_field")
+    leverage_budget = float(summary.get("account_constraints", {}).get("buying_power_available", 0.0) or 0.0)
+    leverage_equity = float(summary.get("account_constraints", {}).get("equity", 0.0) or 0.0)
+    leverage_marker = GREEN if effective_leverage > 1.0 else YELLOW
+    leverage_detail = "actif" if leverage_active else f"inactif ({leverage_reason or 'n/a'})"
+    if leverage_field:
+        leverage_detail = f"{leverage_detail}, champ={leverage_field}"
+    print(
+        f"  Levier eff. : {leverage_marker}{effective_leverage:.2f}x{RESET}  |  {leverage_detail}  "
+        f"|  budget={leverage_budget:.2f}$  |  equity={leverage_equity:.2f}$"
+    )
     rebal_sub = metrics.get("rebalance_submitted", 0)
     rebal_fail = metrics.get("rebalance_failed", 0)
     if rebal_sub or rebal_fail:

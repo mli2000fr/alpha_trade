@@ -26,7 +26,7 @@ from execution_engine.account_state import (
     build_account_constraint_state,
 )
 from execution_engine.broker_adapter import BrokerAdapter
-from execution_engine.config import ExecutionConfig
+from execution_engine.config import ExecutionConfig, LeverageConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.executor import ProductionExecutor
 from execution_engine.models import EventType, ExecutionPosition, ExecutionTarget
@@ -131,6 +131,116 @@ def test_build_account_constraint_state_accepts_positive_equity() -> None:
     }
     state = build_account_constraint_state(cfg, broker)
     assert state.equity == 100_000.0
+
+
+def test_build_account_constraint_state_applies_regt_buying_power_when_leverage_enabled() -> None:
+    cfg = ExecutionConfig(
+        dry_run=False,
+        allow_outside_rth=True,
+        account_type="margin",
+        leverage=LeverageConfig(
+            enabled=True,
+            mode="regt_swing",
+            max_leverage=1.5,
+            min_equity_usd=2_000.0,
+            audit_log=False,
+        ),
+    )
+    broker = MagicMock(spec=BrokerAdapter)
+    broker.get_account_snapshot.return_value = {
+        "equity": 10_000.0,
+        "cash": 10_000.0,
+        "buying_power": 40_000.0,
+        "regt_buying_power": 15_500.0,
+        "non_marginable_buying_power": 10_000.0,
+        "daytrade_count": 0,
+    }
+
+    state = build_account_constraint_state(cfg, broker)
+
+    assert state.buying_power_available == pytest.approx(15_000.0)
+    assert state.settled_cash_available == pytest.approx(10_000.0)
+    assert state.leverage_active is True
+    assert state.effective_leverage == pytest.approx(1.5)
+    assert state.leverage_buying_power_field == "regt_buying_power"
+
+
+def test_build_account_constraint_state_caps_margin_budget_to_one_x_when_leverage_disabled() -> None:
+    cfg = ExecutionConfig(
+        dry_run=False,
+        allow_outside_rth=True,
+        account_type="margin",
+        leverage=LeverageConfig(audit_log=False),
+    )
+    broker = MagicMock(spec=BrokerAdapter)
+    broker.get_account_snapshot.return_value = {
+        "equity": 8_000.0,
+        "cash": 8_000.0,
+        "buying_power": 16_000.0,
+        "regt_buying_power": 16_000.0,
+        "daytrade_count": 0,
+    }
+
+    state = build_account_constraint_state(cfg, broker)
+
+    assert state.buying_power_available == pytest.approx(16_000.0)
+    assert state.leverage_active is False
+    assert state.effective_leverage == pytest.approx(2.0)
+
+
+def test_build_account_constraint_state_disables_leverage_below_minimum_equity() -> None:
+    cfg = ExecutionConfig(
+        dry_run=False,
+        allow_outside_rth=True,
+        account_type="margin",
+        leverage=LeverageConfig(
+            enabled=True,
+            mode="regt_swing",
+            max_leverage=1.5,
+            min_equity_usd=2_000.0,
+            audit_log=False,
+        ),
+    )
+    broker = MagicMock(spec=BrokerAdapter)
+    broker.get_account_snapshot.return_value = {
+        "equity": 1_500.0,
+        "cash": 1_500.0,
+        "buying_power": 3_000.0,
+        "regt_buying_power": 3_000.0,
+        "daytrade_count": 0,
+    }
+
+    state = build_account_constraint_state(cfg, broker)
+
+    assert state.buying_power_available == pytest.approx(1_500.0)
+
+
+def test_build_account_constraint_state_disables_leverage_outside_normal_entry_mode() -> None:
+    cfg = ExecutionConfig(
+        dry_run=False,
+        allow_outside_rth=True,
+        account_type="margin",
+        entry_mode="capital_preservation",
+        leverage=LeverageConfig(
+            enabled=True,
+            mode="regt_swing",
+            max_leverage=2.0,
+            min_equity_usd=2_000.0,
+            audit_log=False,
+        ),
+    )
+    broker = MagicMock(spec=BrokerAdapter)
+    broker.get_account_snapshot.return_value = {
+        "equity": 12_000.0,
+        "cash": 12_000.0,
+        "buying_power": 24_000.0,
+        "regt_buying_power": 24_000.0,
+        "daytrade_count": 0,
+    }
+
+    state = build_account_constraint_state(cfg, broker)
+
+    assert state.buying_power_available == pytest.approx(12_000.0)
 
 
 # ---------------------------------------------------------------------------

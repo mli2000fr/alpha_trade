@@ -42,6 +42,51 @@ class TrailingStopConfig:
             raise ValueError("trailing_stop.break_even_after_atr_multiple doit être > 0.")
 
 
+@dataclass(frozen=True, slots=True)
+class LeverageConfig:
+    """Configuration de levier long-only bornée pour le swing overnight."""
+
+    enabled: bool = False
+    mode: Literal["disabled", "regt_swing"] = "disabled"
+    max_leverage: float = 1.0
+    min_equity_usd: float = 2_000.0
+    require_margin_account: bool = True
+    only_in_entry_mode: Literal["normal", "any"] = "normal"
+    disable_in_capital_preservation: bool = True
+    disable_if_buying_power_field_missing: bool = False
+    buying_power_field_priority: tuple[str, ...] = ("regt_buying_power", "buying_power")
+    dry_run_simulated_leverage: float = 1.0
+    audit_log: bool = True
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("disabled", "regt_swing"):
+            raise ValueError("leverage.mode doit être 'disabled' ou 'regt_swing'.")
+        if not (1.0 <= self.max_leverage <= 2.0):
+            raise ValueError("leverage.max_leverage doit être dans [1.0, 2.0].")
+        if self.min_equity_usd < 0:
+            raise ValueError("leverage.min_equity_usd doit être >= 0.")
+        if self.only_in_entry_mode not in ("normal", "any"):
+            raise ValueError("leverage.only_in_entry_mode doit être 'normal' ou 'any'.")
+        if not (1.0 <= self.dry_run_simulated_leverage <= 2.0):
+            raise ValueError("leverage.dry_run_simulated_leverage doit être dans [1.0, 2.0].")
+
+        normalized_priority = tuple(
+            str(field_name).strip()
+            for field_name in self.buying_power_field_priority
+            if str(field_name).strip()
+        )
+        if not normalized_priority:
+            raise ValueError("leverage.buying_power_field_priority ne doit pas être vide.")
+        object.__setattr__(self, "buying_power_field_priority", normalized_priority)
+        if self.mode == "disabled":
+            object.__setattr__(self, "enabled", False)
+
+    @property
+    def capped_live_max_leverage(self) -> float:
+        """Borne défensive hard : swing overnight limité à 2x max."""
+        return min(float(self.max_leverage), 2.0)
+
+
 def load_trailing_stop_config_from_yaml(raw_config: Mapping[str, Any] | None = None) -> TrailingStopConfig:
     """Charge la config ``risk_management.trailing_stop`` depuis ``config.yaml``.
 
@@ -61,6 +106,36 @@ def load_trailing_stop_config_from_yaml(raw_config: Mapping[str, Any] | None = N
         break_even_after_atr_multiple=float(parsed.break_even_after_atr_multiple),
         eod_check_time_est=str(parsed.eod_check_time_est),
         apply_to_manual_orphan_buys=bool(parsed.apply_to_manual_orphan_buys),
+    )
+
+
+def load_leverage_config_from_yaml(raw_config: Mapping[str, Any] | None = None) -> LeverageConfig:
+    """Charge la config ``leverage`` depuis ``config.yaml``."""
+    yaml_cfg = raw_config if raw_config is not None else load_config()
+    leverage_cfg = yaml_cfg.get("leverage", {}) if isinstance(yaml_cfg, Mapping) else {}
+    leverage_map = leverage_cfg if isinstance(leverage_cfg, Mapping) else {}
+    raw_priority = leverage_map.get("buying_power_field_priority", ("regt_buying_power", "buying_power"))
+    if isinstance(raw_priority, (list, tuple)):
+        priority = tuple(str(field_name) for field_name in raw_priority)
+    else:
+        priority = ("regt_buying_power", "buying_power")
+    return LeverageConfig(
+        enabled=bool(leverage_map.get("enabled", False)),
+        mode=cast(Literal["disabled", "regt_swing"], str(leverage_map.get("mode", "disabled"))),
+        max_leverage=float(leverage_map.get("max_leverage", 1.0)),
+        min_equity_usd=float(leverage_map.get("min_equity_usd", 2_000.0)),
+        require_margin_account=bool(leverage_map.get("require_margin_account", True)),
+        only_in_entry_mode=cast(
+            Literal["normal", "any"],
+            str(leverage_map.get("only_in_entry_mode", "normal")),
+        ),
+        disable_in_capital_preservation=bool(leverage_map.get("disable_in_capital_preservation", True)),
+        disable_if_buying_power_field_missing=bool(
+            leverage_map.get("disable_if_buying_power_field_missing", False)
+        ),
+        buying_power_field_priority=priority,
+        dry_run_simulated_leverage=float(leverage_map.get("dry_run_simulated_leverage", 1.0)),
+        audit_log=bool(leverage_map.get("audit_log", True)),
     )
 
 
@@ -139,6 +214,9 @@ class ExecutionConfig:
     regime_max_position_weight: float | None = None
     regime_max_sector_weight: float | None = None
     regime_max_gross_exposure: float | None = None
+
+    # --- Levier long-only borné (swing overnight) ---
+    leverage: LeverageConfig = field(default_factory=LeverageConfig)
 
     # --- Trailing stop ATR dynamique (Axe F) ---
     trailing_stop: TrailingStopConfig = field(default_factory=TrailingStopConfig)

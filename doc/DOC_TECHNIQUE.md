@@ -152,7 +152,7 @@ Points d'implémentation importants côté `modelFactory` :
 - `predictor.py` sait router vers `lstm_attention`, `lightgbm_tabular`, `catboost_tabular` et `global_tabular` ;
 - la base MySQL reste volontairement **résumée** : la gouvernance détaillée des challengers vit surtout dans les artefacts disque.
 
-**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes de compte côté exécution. Seul fichier à modifier pour changer de broker.
+**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes de compte côté exécution. Depuis l'ajout du levier optionnel, l'exécution peut appliquer une **politique stricte de levier** qui privilégie `regt_buying_power` puis `buying_power` pour calculer un **budget effectif** plafonné à `2.0x` max en swing overnight. Quand cette feature n'est pas activée, la sémantique historique des comptes `margin` reste conservée (budget broker legacy). Seul fichier à modifier pour changer de broker.
 
 **`ProtectionTransitionWatcher`** / **`ProtectionWatcherService`** (`execution_engine/protection_watcher.py`) — Watcher post-exécution secondaire chargé de surveiller les protections créées par `Execution` et, si ce mode est activé, de promouvoir les stops initiaux vers un trailing stop dynamique selon les conditions métier. `ProtectionWatcherService` encapsule la boucle persistante, les heartbeats, la persistance de santé dans `run_business_summaries` et les garde-fous de résilience.
 
@@ -166,6 +166,16 @@ Points d'implémentation importants côté `modelFactory` :
 - mode dégradé (`degraded_entry_allocation_pct > 0`) avec sizing réduit.
 
 Le breaker supporte aussi un **pic roulant** (`rolling_peak_window_days`) en plus du mode historique absolu (`0`).
+
+Important : les presets de capital portent déjà des **équivalents live** des
+paramètres backtest. Le mapping n'est simplement pas nommé pareil :
+
+- backtest `backtesting_max_portfolio_dd_pct` ↔ live `risk_max_drawdown_pct`
+- backtest `backtesting_dd_rolling_peak_window_days` ↔ live `risk_drawdown_rolling_peak_window_days`
+- backtest `backtesting_dd_degraded_allocation_pct` ↔ live `risk_degraded_entry_allocation_pct`
+
+Ces trois clés live sont injectées dans `RiskConfig`, puis consommées par
+`risk_management.circuit_breaker.CircuitBreaker` dans `run_execution.py`.
 
 **`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO logique : quand une protection enfant est `FILLED`, annule le sibling.
 
@@ -411,6 +421,16 @@ Le launcher canonique construit ensuite, dans cet ordre :
 - puis un `ProductionExecutor` qui exécute `execute_run(risk_run_id, trade_date)`.
 
 Depuis l'évolution fractionnaire, `run_execution.py` accepte aussi `--allow-fractional-shares` et l'injecte dans le preset runtime final avant instanciation de `ExecutionConfig`. La même sémantique est utilisée par la page `Pipeline` de l'IHM pour garder l'alignement entre UI et CLI.
+
+Depuis l'évolution **levier**, `ExecutionConfig` embarque aussi un
+`LeverageConfig` chargé depuis `config.yaml`. La résolution effective se fait
+dans `execution_engine.account_state.build_account_constraint_state()` et est
+propagée :
+
+- dans les `execution_events` (`ACCOUNT_CONSTRAINT_APPLIED`) ;
+- dans `broker_account_snapshots.raw_payload_json` ;
+- dans les `run_summary` d'exécution (`account_constraints` + bloc `leverage`) ;
+- dans la sortie console opérateur de `run_execution.py`.
 
 ### 5.2 Appels API
 

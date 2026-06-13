@@ -908,6 +908,33 @@ Le régime peut devenir un **contexte de décision** pour le modèle et/ou le po
 
 Attention : cela doit rester **explicable** et **rejouable** en backtest.
 
+## 6.11 Interaction avec le levier / la marge (mise à jour 2026-06-13)
+
+Le dépôt supporte désormais un **levier optionnel long-only** côté exécution,
+piloté par `config.yaml` et borné par le buying power broker. Cette évolution ne
+résout **pas** à elle seule le futur long+short ML, mais elle change le cadre :
+
+- la future V2 directionnelle devra distinguer **levier long** et
+  **utilisation de marge short** ;
+- les métriques ML et risk devront pouvoir raisonner en :
+  - `gross_long_exposure`,
+  - `gross_short_exposure`,
+  - `net_exposure`,
+  - `effective_leverage_long`,
+  - utilisation de marge / short buying power ;
+- le simple calcul `effective_budget = min(equity * leverage, buying_power)`
+  restera valable pour la poche long, mais devra être complété par des règles
+  spécifiques short (`asset_shortable`, borrow, locate, caps par side).
+
+### Impacts d’architecture
+
+- **selector / risk / conviction** : prévoir des budgets séparés long vs short ;
+- **backtest** : introduire un modèle de compte margin réellement bilatéral ;
+- **live execution** : faire évoluer `execution_engine.account_state.py` vers un
+  contrôle de capacité directionnel, et non un seul budget d’achat ;
+- **reporting / monitoring** : exposer séparément le levier effectif côté long et
+  l’utilisation de marge côté short.
+
 ---
 
 ## 7. Recommandation produit et data science
