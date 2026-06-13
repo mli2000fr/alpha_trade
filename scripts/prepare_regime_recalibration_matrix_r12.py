@@ -9,6 +9,7 @@ Le script génère :
 - un manifest JSON décrivant les variantes ;
 - un lanceur PowerShell pour exécuter ``scripts.run_ml_regime_ablation``
   sur chaque variante.
+
 Usage minimal::
 
     python -m scripts.prepare_regime_recalibration_matrix_r12
