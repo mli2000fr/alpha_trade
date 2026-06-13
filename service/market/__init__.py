@@ -37,6 +37,7 @@ from service.market.macro_providers import (
     build_default_macro_provider,
     normalize_macro_pit_mode,
     populate_macro_indicators_table,
+    recompute_macro_regime_table,
     resolve_macro_pit_mode,
 )
 from service.market.sentiment_provider import (
@@ -72,6 +73,7 @@ __all__ = [
     "normalize_macro_pit_mode",
     "resolve_macro_pit_mode",
     "populate_macro_indicators_table",
+    "recompute_macro_regime_table",
     "DbSentimentScoreProvider",
     "MarketSentimentReading",
     "load_market_sentiment_reading",

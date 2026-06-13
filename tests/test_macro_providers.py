@@ -16,6 +16,7 @@ from service.market.macro_providers import (
     TableFirstMacroProvider,
     build_default_macro_provider,
     populate_macro_indicators_table,
+    recompute_macro_regime_table,
     resolve_macro_pit_mode,
 )
 
@@ -721,5 +722,106 @@ def test_stooq_provider_works_without_api_key(monkeypatch):
     assert "apikey" not in captured_urls[0], (
         "Sans STOOQ_API_KEY, le paramètre 'apikey' ne doit PAS être transmis à Stooq (A-019)."
     )
+
+
+def test_recompute_macro_regime_table_reuses_cached_macro_values(monkeypatch):
+    from database.macro_indicators import (
+        get_macro_indicators_daily_table,
+        load_macro_indicator_daily_asof,
+        persist_macro_indicator_daily,
+    )
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        get_macro_indicators_daily_table().metadata.create_all(engine)
+        for trade_date, vix, vix9d, ten_y in [
+            (date(2025, 4, 9), 18.0, 17.0, 4.00),
+            (date(2025, 4, 10), 19.0, 18.5, 4.05),
+            (date(2025, 4, 11), 20.0, 19.5, 4.10),
+            (date(2025, 4, 14), 21.0, 22.0, 4.20),
+            (date(2025, 4, 15), 22.0, 24.0, 4.30),
+        ]:
+            persist_macro_indicator_daily(
+                trade_date=trade_date,
+                vix=vix,
+                vix9d=vix9d,
+                ten_y=ten_y,
+                engine=engine,
+            )
+
+        class _FakeSentimentProvider:
+            def __init__(self, trade_date, *, engine=None):
+                self.trade_date = trade_date
+                self.engine = engine
+                self.last_reading = None
+
+            def __call__(self, lookback_days: int) -> float | None:
+                return -0.25
+
+        def fake_build_snapshot(
+            trade_date,
+            *,
+            equity=None,
+            macro_provider=None,
+            sentiment_score_provider=None,
+            **kwargs,
+        ):
+            vix = macro_provider.get_vix_close(trade_date)
+            vix_short = macro_provider.get_vix_short_term_close(trade_date)
+            history = macro_provider.get_us10y_history(trade_date, 5)
+            sentiment_score = sentiment_score_provider(5) if callable(sentiment_score_provider) else None
+
+            class _Snap:
+                def to_dict(self):
+                    return {
+                        "mode": "capital_preservation",
+                        "risk_multiplier": 0.85,
+                        "effective_max_positions": 2 if equity else None,
+                        "allow_new_entries": True,
+                        "macro": {
+                            "vix_curve_inverted": bool(vix_short is not None and vix is not None and vix_short > vix),
+                            "yield_10y_5d_pct": ((history[-1] - history[0]) / history[0]) if history else None,
+                        },
+                        "sentiment": {
+                            "score": sentiment_score,
+                            "level": "warning",
+                            "source": "test_sentiment",
+                        },
+                    }
+
+            return _Snap()
+
+        monkeypatch.setattr("service.market.macro_providers.DbSentimentScoreProvider", _FakeSentimentProvider)
+        monkeypatch.setattr("service.market.macro_providers.build_snapshot", fake_build_snapshot)
+        monkeypatch.setattr("service.market.macro_providers.nyse_session_dates", lambda start, end: [date(2025, 4, 15)])
+
+        summary = recompute_macro_regime_table(
+            start_date=date(2025, 4, 15),
+            end_date=date(2025, 4, 15),
+            yaml_cfg={"market_regimes": {"enabled": True, "vix": {"enabled": True}, "yields": {"enabled": True}}},
+            equity=2_000.0,
+            engine=engine,
+        )
+
+        assert summary["sessions_total"] == 1
+        assert summary["persisted_rows"] == 1
+        assert summary["missing_rows"] == 0
+        row = load_macro_indicator_daily_asof(trade_date=date(2025, 4, 15), engine=engine)
+        assert row is not None
+        assert row["vix"] == 22.0
+        assert row["vix9d"] == 24.0
+        assert row["ten_y"] == 4.30
+        assert row["mode"] == "capital_preservation"
+        assert row["risk_multiplier"] == 0.85
+        assert row["effective_max_positions"] == 2
+        assert row["allow_new_entries"] is True
+        assert row["vix_curve_inverted"] is True
+        assert row["yield_10y_5d_pct"] == pytest.approx((4.30 - 4.00) / 4.00)
+        assert row["sentiment_score"] == -0.25
+        assert row["sentiment_level"] == "warning"
+        assert row["sentiment_source"] == "test_sentiment"
+        assert summary["rows"][0]["source_effective"] == "db_cache"
+    finally:
+        engine.dispose()
 
 

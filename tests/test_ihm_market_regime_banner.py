@@ -254,6 +254,60 @@ def test_populate_macro_table_forwards_range_to_service(monkeypatch):
     }
 
 
+def test_format_macro_import_command_exposes_dates():
+    import ihm.pages.market_regime as mod
+
+    command = mod._format_macro_import_command(date(2025, 4, 1), date(2025, 4, 30))
+
+    assert "from common.config_loader import load_config" in command
+    assert "from service.market import populate_macro_indicators_table" in command
+    assert "start_date=date.fromisoformat('2025-04-01')" in command
+    assert "end_date=date.fromisoformat('2025-04-30')" in command
+    assert "yaml_cfg=load_config() or {}" in command
+
+
+def test_recompute_macro_table_forwards_range_and_equity_to_service(monkeypatch):
+    import ihm.pages.market_regime as mod
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(mod, "_load_yaml", lambda: {"market_regimes": {"macro_provider": "eodhd"}})
+
+    import service.market as market
+
+    def _fake_recompute_macro_regime_table(**kwargs):
+        captured["kwargs"] = kwargs
+        return {"sessions_total": 1, "persisted_rows": 1, "missing_rows": 0, "rows": []}
+
+    monkeypatch.setattr(
+        market,
+        "recompute_macro_regime_table",
+        _fake_recompute_macro_regime_table,
+    )
+
+    result = mod._recompute_regime_table(date(2025, 4, 1), date(2025, 4, 30), 2000.0)
+
+    assert result["persisted_rows"] == 1
+    assert captured["kwargs"] == {
+        "start_date": date(2025, 4, 1),
+        "end_date": date(2025, 4, 30),
+        "yaml_cfg": {"market_regimes": {"macro_provider": "eodhd"}},
+        "equity": 2000.0,
+    }
+
+
+def test_format_regime_recompute_command_exposes_dates_and_equity():
+    import ihm.pages.market_regime as mod
+
+    command = mod._format_regime_recompute_command(date(2025, 4, 1), date(2025, 4, 30), 2000.0)
+
+    assert "from service.market import recompute_macro_regime_table" in command
+    assert "start_date=date.fromisoformat('2025-04-01')" in command
+    assert "end_date=date.fromisoformat('2025-04-30')" in command
+    assert "yaml_cfg=load_config() or {}" in command
+    assert "equity=2000.0" in command
+
+
 @pytest.mark.parametrize(
     ("scenario", "expected_mode", "expected_allow_new_entries"),
     [

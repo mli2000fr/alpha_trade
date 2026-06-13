@@ -23,6 +23,7 @@ import streamlit as st
 
 from ihm.pages import run_page_if_standalone
 
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
 ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "artifacts" / "market_regime"
 
 DEMO_SCENARIOS: dict[str, str] = {
@@ -118,6 +119,78 @@ def _populate_macro_table(start_date: _date, end_date: _date) -> dict[str, Any]:
         )
     except Exception as exc:
         return {"error": str(exc)}
+
+
+def _recompute_regime_table(start_date: _date, end_date: _date, equity: float | None) -> dict[str, Any]:
+    yaml_cfg = _load_yaml()
+    try:
+        from service.market import recompute_macro_regime_table
+    except Exception as exc:  # pragma: no cover - import-time
+        return {"error": f"Import service.market impossible : {exc}"}
+    try:
+        return recompute_macro_regime_table(
+            start_date=start_date,
+            end_date=end_date,
+            yaml_cfg=yaml_cfg,
+            equity=float(equity) if equity else None,
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _format_macro_import_command(start_date: _date, end_date: _date) -> str:
+    return "\n".join([
+        "from datetime import date",
+        "",
+        "from common.config_loader import load_config",
+        "from service.market import populate_macro_indicators_table",
+        "",
+        "populate_macro_indicators_table(",
+        f"    start_date=date.fromisoformat('{start_date.isoformat()}'),",
+        f"    end_date=date.fromisoformat('{end_date.isoformat()}'),",
+        "    yaml_cfg=load_config() or {},",
+        ")",
+    ])
+
+
+def _format_regime_recompute_command(start_date: _date, end_date: _date, equity: float | None) -> str:
+    equity_expr = "None" if not equity else repr(float(equity))
+    return "\n".join([
+        "from datetime import date",
+        "",
+        "from common.config_loader import load_config",
+        "from service.market import recompute_macro_regime_table",
+        "",
+        "recompute_macro_regime_table(",
+        f"    start_date=date.fromisoformat('{start_date.isoformat()}'),",
+        f"    end_date=date.fromisoformat('{end_date.isoformat()}'),",
+        "    yaml_cfg=load_config() or {},",
+        f"    equity={equity_expr},",
+        ")",
+    ])
+
+
+def _format_macro_runtime_context(yaml_cfg: dict[str, Any]) -> str:
+    mr_cfg = yaml_cfg.get("market_regimes") if isinstance(yaml_cfg, dict) else {}
+    mr_cfg = mr_cfg if isinstance(mr_cfg, dict) else {}
+    vix_cfg = mr_cfg.get("vix") if isinstance(mr_cfg.get("vix"), dict) else {}
+    yields_cfg = mr_cfg.get("yields") if isinstance(mr_cfg.get("yields"), dict) else {}
+    fred_cfg = yaml_cfg.get("fred") if isinstance(yaml_cfg, dict) and isinstance(yaml_cfg.get("fred"), dict) else {}
+    macro_provider = str(mr_cfg.get("macro_provider") or "composite")
+    fred_series = str(
+        yields_cfg.get("fred_series_10y")
+        or fred_cfg.get("series_10y")
+        or "DGS10"
+    )
+    vix_symbol = str(vix_cfg.get("symbol") or "VIX.INDX")
+    vix_short_symbol = str(vix_cfg.get("short_symbol") or "VIX9D.INDX")
+    return "\n".join([
+        f"Config utilisée: {CONFIG_PATH}",
+        f"macro_provider: {macro_provider}",
+        f"fred_series_10y: {fred_series}",
+        f"vix.symbol: {vix_symbol}",
+        f"vix.short_symbol: {vix_short_symbol}",
+    ])
 
 
 def _compute_demo_snapshot(scenario: str, trade_date: _date, equity: float | None) -> dict[str, Any]:
@@ -356,6 +429,48 @@ def render() -> None:
             rows = import_summary.get("rows")
             if isinstance(rows, list) and rows:
                 with st.expander("Voir le détail du dernier import macro", expanded=False):
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.markdown("### ♻️ Recalcul des colonnes de régime")
+    st.info(
+        "Cette action réutilise les valeurs déjà stockées dans `stock_macro_indicators_daily` "
+        "(`vix`, `vix9d`, `ten_y`) et recalcule uniquement les colonnes dérivées de régime "
+        "(`mode`, `risk_multiplier`, `effective_max_positions`, `allow_new_entries`, "
+        "`vix_curve_inverted`, `yield_10y_5d_pct`, `sentiment_*`)."
+    )
+    recalc_col1, recalc_col2 = st.columns([1, 1])
+    recalc_equity = recalc_col1.number_input(
+        "Equity simulée pour le recalcul ($)",
+        min_value=0.0,
+        value=0.0,
+        step=500.0,
+        key="market_regime_macro_recompute_equity",
+        help="0 = ignorer la contrainte de capital/min notional lors du recalcul des colonnes dérivées.",
+    )
+    recalc_equity_value = recalc_equity if recalc_equity > 0 else None
+    if st.button("♻️ Recalculer régime", use_container_width=True, key="market_regime_macro_recompute_button"):
+        if import_end < import_start:
+            st.error("La date de fin doit être postérieure ou égale à la date de début.")
+        else:
+            with st.spinner("Recalcul des colonnes de régime…"):
+                st.session_state["market_regime_macro_recompute_summary"] = _recompute_regime_table(
+                    import_start,
+                    import_end,
+                    recalc_equity_value,
+                )
+
+    recompute_summary = st.session_state.get("market_regime_macro_recompute_summary")
+    if isinstance(recompute_summary, dict):
+        if recompute_summary.get("error"):
+            st.error(str(recompute_summary.get("error")))
+        else:
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            metric_col1.metric("Séances parcourues", int(recompute_summary.get("sessions_total") or 0))
+            metric_col2.metric("Lignes recalculées", int(recompute_summary.get("persisted_rows") or 0))
+            metric_col3.metric("Séances en erreur / absentes", int(recompute_summary.get("missing_rows") or 0))
+            rows = recompute_summary.get("rows")
+            if isinstance(rows, list) and rows:
+                with st.expander("Voir le détail du dernier recalcul de régime", expanded=False):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     # --- Snapshot à la volée -------------------------------------------------

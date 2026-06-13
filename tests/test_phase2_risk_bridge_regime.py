@@ -1,11 +1,13 @@
 """Tests d'intégration ``risk_bridge`` + ``MarketRegimeSnapshot`` (Axe D)."""
 from __future__ import annotations
 
+import warnings
 from datetime import date
+from typing import cast
 
 import pandas as pd
 
-from backtesting.risk_bridge import build_phase2_risk_result
+from backtesting.risk_bridge import RISK_SIGNAL_COLUMNS, _concat_signal_frames, build_phase2_risk_result
 from risk_management.config import RiskConfig
 from service.market import reset_cache
 from service.market.config import (
@@ -36,6 +38,50 @@ def _make_inputs(trade_date: date):
     high_df = close_df + 2
     low_df = close_df - 2
     return scores_df, predictions_df, close_df, high_df, low_df
+
+
+def test_concat_signal_frames_ignores_empty_frames_without_futurewarning() -> None:
+    empty_frame = pd.DataFrame(columns=RISK_SIGNAL_COLUMNS)
+    non_empty_frame = pd.DataFrame(
+        [
+            {
+                "trade_date": pd.Timestamp("2025-05-01"),
+                "symbol": "AAPL",
+                "selected": True,
+                "rank": 1.0,
+                "candidate_rank": 1,
+                "score": 1.5,
+                "score_source": "test",
+                "conviction_score": 1.5,
+                "conviction_source": "test",
+                "predicted_proba": None,
+                "selector_signal_mode": None,
+                "selection_explanation": None,
+                "selector_earnings_blackout": None,
+                "target_weight": 0.2,
+                "target_notional": 20_000.0,
+                "approved_shares": 200.0,
+                "decision": "approved",
+                "decision_reason": "ok",
+                "decision_reason_code": None,
+            }
+        ],
+        columns=RISK_SIGNAL_COLUMNS,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", FutureWarning)
+        result = _concat_signal_frames([empty_frame, non_empty_frame, empty_frame.copy()])
+    caught = caught or []
+
+    assert tuple(result.columns) == RISK_SIGNAL_COLUMNS
+    assert len(result) == 1
+    assert result.iloc[0]["symbol"] == "AAPL"
+    assert not any(
+        warning.category is FutureWarning
+        and "DataFrame concatenation with empty or all-NA entries" in str(warning.message)
+        for warning in caught
+    )
 
 
 def test_risk_bridge_without_regime_keeps_legacy_behavior():
@@ -262,7 +308,8 @@ def test_risk_bridge_collects_macro_missing_dates_when_fallback_allowed() -> Non
 
     assert res.diagnostics["macro_missing_dates_count"] == 1
     assert res.diagnostics["macro_missing_dates"] == [trade_date.isoformat()]
-    assert res.diagnostics["macro_data_quality_distribution"]["missing"] == 1
+    macro_distribution = cast(dict[str, int], res.diagnostics["macro_data_quality_distribution"])
+    assert macro_distribution["missing"] == 1
     assert res.regime_snapshots[trade_date]["data_quality"]["macro"] == "missing"
 
 

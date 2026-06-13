@@ -1,0 +1,15 @@
+Date_Debut,Date_Fin,Regime_Marche,Justification_Historique
+2020-01-01,2020-02-19,normal,Marché normal de début d'année, records successifs sur les indices mondiaux.
+2020-02-20,2020-03-23,cash_only,Krach COVID-19. Chute verticale et historique des bourses mondiales. Volatilité extrême, interdiction d'acheter.
+2020-03-24,2020-05-31,capital_preservation,Début du rebond post-krach ("Bear Market Rally"). Le marché est ultra-nerveux, il faut protéger le capital et serrer les stops.
+2020-06-01,2021-11-15,normal,Grand Bull Market Post-COVID. Injection massive de liquidités par les banques centrales. Tendance haussière puissante et continue.
+2021-11-16,2021-12-31,close_only,Signaux de surchauffe inflationniste. Les indices s'essoufflent sur des sommets, danger de retournement sur les nouveaux achats.
+2022-01-01,2022-06-30,capital_preservation,Début du Bear Market de 2022 (Guerre en Ukraine, hausse historique des taux de la Fed). Marché très baissier.
+2022-07-01,2022-10-31,cash_only,Capitulation finale du marché baissier. Succession de nouveaux plus bas (creux d'octobre 2022). Risque maximum pour les acheteurs.
+2022-11-01,2023-03-31,normal,Rallye de fin d'année et début 2023. Reprise technique des indices, retour de tendances saines à court/moyen terme.
+2023-04-01,2023-10-31,close_only,Crise des banques régionales US (SVB) et craintes de récession. Marché instable et haché ("Range"). Beaucoup de faux signaux.
+2023-11-01,2024-07-15,normal,Explosion de la Tech et de la thématique IA (Nvidia, Microsoft). Marché haussier très directionnel, volatilité faible.
+2024-07-16,2024-10-31,capital_preservation,Rotation sectorielle violente, doutes d'été sur l'IA et incertitudes macroéconomiques. Forte instabilité.
+2024-11-01,2025-05-31,normal,Rallye post-élection américaine et optimisme de début d'année 2025. Nouveaux records sur les indices.
+2025-06-01,2025-08-31,close_only,Prises de bénéfices globales de l'été, essoufflement et stagnation latérale des marchés mondiaux.
+2025-09-01,2025-12-31,normal,Reprise de la tendance de fond pour finir l'année en hausse.

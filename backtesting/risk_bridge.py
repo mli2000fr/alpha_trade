@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from service.market import MarketRegimesConfig
 
 
-RISK_SIGNAL_COLUMNS = [
+RISK_SIGNAL_COLUMNS = (
     "trade_date",
     "symbol",
     "selected",
@@ -39,7 +39,7 @@ RISK_SIGNAL_COLUMNS = [
     "decision",
     "decision_reason",
     "decision_reason_code",
-]
+)
 
 
 @dataclass(slots=True)
@@ -232,7 +232,14 @@ def portfolio_entries_to_signals(entries: list[PortfolioEntry], snapshot_date: d
                 "decision_reason_code": str(entry.decision_reason_code) if entry.decision_reason_code is not None else None,
             }
         )
-    return pd.DataFrame(rows, columns=RISK_SIGNAL_COLUMNS)
+    return pd.DataFrame(rows, columns=list(RISK_SIGNAL_COLUMNS))
+
+
+def _concat_signal_frames(signal_frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
+    non_empty_signal_frames = [frame for frame in signal_frames if not frame.empty]
+    if not non_empty_signal_frames:
+        return pd.DataFrame(columns=list(RISK_SIGNAL_COLUMNS))
+    return pd.concat(non_empty_signal_frames, ignore_index=True).reindex(columns=RISK_SIGNAL_COLUMNS)
 
 
 def build_phase2_risk_result(
@@ -347,7 +354,7 @@ def build_phase2_risk_result(
         all_entries.extend(entries)
         signal_frames.append(portfolio_entries_to_signals(entries, snapshot_date))
 
-    signals_df = pd.concat(signal_frames, ignore_index=True) if signal_frames else pd.DataFrame(columns=RISK_SIGNAL_COLUMNS)
+    signals_df = _concat_signal_frames(signal_frames)
     accepted_entries = [entry for entry in all_entries if entry.approved_shares > 0]
     diagnostics = {
         "snapshot_dates": len(snapshot_dates),

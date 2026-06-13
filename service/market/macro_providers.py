@@ -1009,6 +1009,14 @@ def build_default_macro_provider(
     )
 
 
+def _snapshot_to_payload(snapshot: object) -> dict[str, Any]:
+    if hasattr(snapshot, "to_dict"):
+        return cast(dict[str, Any], dict(cast(Any, snapshot).to_dict()))
+    if hasattr(snapshot, "to_summary_dict"):
+        return cast(dict[str, Any], dict(cast(Any, snapshot).to_summary_dict()))
+    return {}
+
+
 def populate_macro_indicators_table(
     *,
     start_date: date,
@@ -1043,13 +1051,7 @@ def populate_macro_indicators_table(
             sentiment_score_provider=DbSentimentScoreProvider(session_date),
             use_cache=False,
         )
-        snap_payload: dict[str, Any]
-        if hasattr(snapshot, "to_dict"):
-            snap_payload = dict(snapshot.to_dict())
-        elif hasattr(snapshot, "to_summary_dict"):
-            snap_payload = dict(snapshot.to_summary_dict())
-        else:
-            snap_payload = {}
+        snap_payload = _snapshot_to_payload(snapshot)
         persisted = persist_market_macro_snapshot_daily(
             trade_date=session_date,
             macro_payload=snap_payload,
@@ -1105,6 +1107,124 @@ def populate_macro_indicators_table(
     }
 
 
+def recompute_macro_regime_table(
+    *,
+    start_date: date,
+    end_date: date,
+    yaml_cfg: Mapping[str, Any] | None = None,
+    equity: float | None = None,
+    engine=None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    if end_date < start_date:
+        raise ValueError("La date de fin doit être >= à la date de début.")
+    root_cfg = yaml_cfg if isinstance(yaml_cfg, Mapping) else {}
+    market_cfg = root_cfg.get("market_regimes") if isinstance(root_cfg, Mapping) else {}
+    market_cfg = market_cfg if isinstance(market_cfg, Mapping) else {}
+    market_regimes_cfg = parse_market_regimes(market_cfg)
+    provider = TableFirstMacroProvider(
+        None,
+        engine=engine,
+        strict_before=False,
+        persist_fallback_hits=False,
+    )
+    session_dates = nyse_session_dates(start_date, end_date)
+    rows: list[dict[str, Any]] = []
+    persisted_rows = 0
+    missing_rows = 0
+    total_sessions = len(session_dates)
+    for index, session_date in enumerate(session_dates, start=1):
+        existing_row = load_macro_indicator_daily_asof(
+            trade_date=session_date,
+            engine=engine,
+            strict_before=False,
+        )
+        exact_row = existing_row if existing_row and existing_row.get("trade_date") == session_date else None
+        if exact_row is None:
+            missing_rows += 1
+            row_payload = {
+                "trade_date": session_date.isoformat(),
+                "persisted": False,
+                "error": "Aucune ligne macro brute disponible pour cette séance.",
+            }
+            rows.append(row_payload)
+            if callable(progress_callback):
+                progress_callback({"current": index, "total": total_sessions, **row_payload})
+            continue
+
+        try:
+            snapshot = build_snapshot(
+                session_date,
+                config=market_regimes_cfg,
+                equity=equity,
+                execution_context="backtest",
+                macro_provider=provider,
+                sentiment_score_provider=DbSentimentScoreProvider(session_date, engine=engine),
+                use_cache=False,
+            )
+            snap_payload = _snapshot_to_payload(snapshot)
+            macro_data = snap_payload.get("macro") if isinstance(snap_payload.get("macro"), Mapping) else {}
+            sentiment_data = snap_payload.get("sentiment") if isinstance(snap_payload.get("sentiment"), Mapping) else {}
+            persisted = persist_macro_indicator_daily(
+                trade_date=session_date,
+                vix=exact_row.get("vix"),
+                vix9d=exact_row.get("vix9d"),
+                ten_y=exact_row.get("ten_y"),
+                mode=snap_payload.get("mode"),
+                risk_multiplier=snap_payload.get("risk_multiplier"),
+                effective_max_positions=snap_payload.get("effective_max_positions"),
+                allow_new_entries=snap_payload.get("allow_new_entries"),
+                vix_curve_inverted=macro_data.get("vix_curve_inverted"),
+                yield_10y_5d_pct=macro_data.get("yield_10y_5d_pct"),
+                sentiment_score=sentiment_data.get("score"),
+                sentiment_level=sentiment_data.get("level"),
+                sentiment_source=sentiment_data.get("source"),
+                engine=engine,
+            )
+            if persisted:
+                persisted_rows += 1
+            else:
+                missing_rows += 1
+            row_payload = {
+                "trade_date": session_date.isoformat(),
+                "vix": exact_row.get("vix"),
+                "vix9d": exact_row.get("vix9d"),
+                "ten_y": exact_row.get("ten_y"),
+                "mode": snap_payload.get("mode"),
+                "risk_multiplier": snap_payload.get("risk_multiplier"),
+                "effective_max_positions": snap_payload.get("effective_max_positions"),
+                "allow_new_entries": snap_payload.get("allow_new_entries"),
+                "vix_curve_inverted": macro_data.get("vix_curve_inverted"),
+                "yield_10y_5d_pct": macro_data.get("yield_10y_5d_pct"),
+                "sentiment_score": sentiment_data.get("score"),
+                "sentiment_level": sentiment_data.get("level"),
+                "sentiment_source": sentiment_data.get("source"),
+                "persisted": bool(persisted),
+                "source_effective": "db_cache",
+            }
+        except Exception as exc:
+            missing_rows += 1
+            row_payload = {
+                "trade_date": session_date.isoformat(),
+                "vix": exact_row.get("vix"),
+                "vix9d": exact_row.get("vix9d"),
+                "ten_y": exact_row.get("ten_y"),
+                "persisted": False,
+                "error": str(exc),
+            }
+        rows.append(row_payload)
+        if callable(progress_callback):
+            progress_callback({"current": index, "total": total_sessions, **row_payload})
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "sessions_total": total_sessions,
+        "persisted_rows": persisted_rows,
+        "missing_rows": missing_rows,
+        "rows": rows,
+    }
+
+
 __all__ = [
     "MACRO_PIT_MODE_ASOF_INCLUSIVE",
     "MACRO_PIT_MODE_J_MINUS_1_STRICT",
@@ -1118,5 +1238,6 @@ __all__ = [
     "resolve_macro_pit_mode",
     "build_default_macro_provider",
     "populate_macro_indicators_table",
+    "recompute_macro_regime_table",
 ]
 
