@@ -32,6 +32,7 @@ from database.macro_indicators import (
 )
 from service.market.regime_manager import build_snapshot
 from service.market.config import parse_market_regimes
+from service.market.models import MarketRegimeState
 from service.market.sentiment_provider import DbSentimentScoreProvider
 
 LOGGER = logging.getLogger("service.market.macro_providers")
@@ -1017,6 +1018,20 @@ def _snapshot_to_payload(snapshot: object) -> dict[str, Any]:
     return {}
 
 
+def _snapshot_to_next_state(snapshot: object, payload: Mapping[str, Any] | None = None) -> MarketRegimeState | None:
+    next_state = getattr(snapshot, "next_state", None)
+    if isinstance(next_state, MarketRegimeState):
+        return next_state
+    resolved_payload = payload if isinstance(payload, Mapping) else _snapshot_to_payload(snapshot)
+    raw_next_state = resolved_payload.get("next_state") if isinstance(resolved_payload, Mapping) else None
+    if isinstance(raw_next_state, Mapping):
+        try:
+            return MarketRegimeState.from_dict(raw_next_state)
+        except Exception:
+            return None
+    return None
+
+
 def populate_macro_indicators_table(
     *,
     start_date: date,
@@ -1041,6 +1056,7 @@ def populate_macro_indicators_table(
     rows: list[dict[str, Any]] = []
     persisted_rows = 0
     missing_rows = 0
+    previous_state: MarketRegimeState | None = None
     for index, session_date in enumerate(session_dates, start=1):
         snapshot = build_snapshot(
             session_date,
@@ -1049,9 +1065,11 @@ def populate_macro_indicators_table(
             execution_context="backtest",
             macro_provider=provider,
             sentiment_score_provider=DbSentimentScoreProvider(session_date),
+            previous_state=previous_state,
             use_cache=False,
         )
         snap_payload = _snapshot_to_payload(snapshot)
+        previous_state = _snapshot_to_next_state(snapshot, snap_payload)
         persisted = persist_market_macro_snapshot_daily(
             trade_date=session_date,
             macro_payload=snap_payload,
@@ -1133,6 +1151,7 @@ def recompute_macro_regime_table(
     persisted_rows = 0
     missing_rows = 0
     total_sessions = len(session_dates)
+    previous_state: MarketRegimeState | None = None
     for index, session_date in enumerate(session_dates, start=1):
         existing_row = load_macro_indicator_daily_asof(
             trade_date=session_date,
@@ -1160,9 +1179,11 @@ def recompute_macro_regime_table(
                 execution_context="backtest",
                 macro_provider=provider,
                 sentiment_score_provider=DbSentimentScoreProvider(session_date, engine=engine),
+                previous_state=previous_state,
                 use_cache=False,
             )
             snap_payload = _snapshot_to_payload(snapshot)
+            previous_state = _snapshot_to_next_state(snapshot, snap_payload)
             macro_data = snap_payload.get("macro") if isinstance(snap_payload.get("macro"), Mapping) else {}
             sentiment_data = snap_payload.get("sentiment") if isinstance(snap_payload.get("sentiment"), Mapping) else {}
             persisted = persist_macro_indicator_daily(

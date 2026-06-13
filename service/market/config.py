@@ -30,6 +30,8 @@ class VixConfig:
     symbol: str = "VIX"
     high_threshold: float = 25.0
     inverted_curve_mode: str = "capital_preservation"
+    inverted_curve_min_spread: float = 0.0
+    inverted_curve_min_ratio: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +232,8 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
             symbol=str(vix.get("symbol", "VIX")),
             high_threshold=float(vix.get("high_threshold", 25.0)),
             inverted_curve_mode=str(vix.get("inverted_curve_mode", "capital_preservation")),
+            inverted_curve_min_spread=float(vix.get("inverted_curve_min_spread", 0.0)),
+            inverted_curve_min_ratio=float(vix.get("inverted_curve_min_ratio", 1.0)),
         ),
         yields=YieldsConfig(
             enabled=bool(yields.get("enabled", False)),

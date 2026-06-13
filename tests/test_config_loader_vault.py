@@ -127,21 +127,31 @@ def test_repo_default_config_promotes_r13a_market_regime_profile(monkeypatch: py
     market_regimes = cfg["market_regimes"]
     yields_cfg = market_regimes["yields"]
     sentiment_cb = market_regimes["sentiment_circuit_breaker"]
+    hysteresis_cfg = market_regimes["hysteresis"]
+    vix_cfg = market_regimes["vix"]
 
     assert market_regimes["macro_provider"] == "eodhd"
     assert market_regimes["capital_preservation_max_gross_exposure"] == pytest.approx(0.65)
-    assert market_regimes["vix"]["high_threshold"] == pytest.approx(30.0)
+    assert hysteresis_cfg["enabled"] is True
+    assert hysteresis_cfg["enter_soft_signals_required"] == 1
+    assert hysteresis_cfg["enter_confirm_days"] == 2
+    assert hysteresis_cfg["exit_confirm_days"] == 3
+    assert hysteresis_cfg["min_hold_days_defensive"] == 5
+    assert hysteresis_cfg["gate_soft_constraints_on_confirmed_entry"] is True
+    assert vix_cfg["high_threshold"] == pytest.approx(30.0)
+    assert vix_cfg["inverted_curve_min_spread"] == pytest.approx(1.5)
+    assert vix_cfg["inverted_curve_min_ratio"] == pytest.approx(1.03)
     assert yields_cfg["relative_spike_threshold"] == pytest.approx(0.07)
     assert yields_cfg["risk_mult"] == pytest.approx(0.85)
     assert yields_cfg["soft_max_positions"] == 3
     assert yields_cfg["soft_max_position_weight"] == pytest.approx(0.25)
     assert yields_cfg["soft_max_sector_weight"] == pytest.approx(0.30)
     assert yields_cfg["soft_max_gross_exposure"] == pytest.approx(0.65)
-    assert yields_cfg["hard_mode_backtest"] == "close_only"
+    assert yields_cfg["hard_mode_backtest"] == "capital_preservation"
     assert sentiment_cb["warning_threshold"] == pytest.approx(-0.20)
     assert sentiment_cb["critical_threshold"] == pytest.approx(-0.40)
     assert sentiment_cb["warning_max_positions"] == 3
-    assert sentiment_cb["critical_mode_backtest"] == "close_only"
+    assert sentiment_cb["critical_mode_backtest"] == "capital_preservation"
 
 
 # ----------------------------- verify_vault_rotation ----------------------------

@@ -2277,11 +2277,21 @@ def _resolve_run_dir(run_record: dict[str, object]) -> Path | None:
     return path.parent if path.exists() or path.parent.exists() else None
 
 
+def _resolve_run_artifact_path(run_dir: Path, filename: str) -> Path:
+    nested_path = run_dir / "artifacts" / filename
+    if nested_path.exists():
+        return nested_path
+    root_path = run_dir / filename
+    if root_path.exists():
+        return root_path
+    return nested_path
+
+
 def _load_run_report(run_record: dict[str, object]) -> dict[str, object] | None:
     run_dir = _resolve_run_dir(run_record)
     if run_dir is None:
         return None
-    report_path = run_dir / "artifacts" / "report.json"
+    report_path = _resolve_run_artifact_path(run_dir, "report.json")
     signature = _file_cache_signature(report_path)
     if signature is None:
         return None
@@ -2295,7 +2305,7 @@ def _load_equity_curve_df(run_record: dict[str, object]) -> pd.DataFrame:
     run_dir = _resolve_run_dir(run_record)
     if run_dir is None:
         return pd.DataFrame(columns=["trade_date", "portfolio_value"])
-    equity_curve_csv = run_dir / "artifacts" / "equity_curve.csv"
+    equity_curve_csv = _resolve_run_artifact_path(run_dir, "equity_curve.csv")
     signature = _file_cache_signature(equity_curve_csv)
     if signature is None:
         return pd.DataFrame(columns=["trade_date", "portfolio_value"])
@@ -2314,7 +2324,7 @@ def _load_run_trades_df(run_record: dict[str, object]) -> pd.DataFrame:
     run_dir = _resolve_run_dir(run_record)
     if run_dir is None:
         return pd.DataFrame()
-    trades_csv = run_dir / "artifacts" / "trades.csv"
+    trades_csv = _resolve_run_artifact_path(run_dir, "trades.csv")
     signature = _file_cache_signature(trades_csv)
     if signature is None:
         return pd.DataFrame()
@@ -2334,6 +2344,24 @@ def _load_run_trades_df(run_record: dict[str, object]) -> pd.DataFrame:
     except Exception as exc:
         st.warning(f"Impossible de lire les trades du run : {exc}")
         return pd.DataFrame()
+
+
+def _load_market_regimes_df(run_record: dict[str, object]) -> pd.DataFrame:
+    run_dir = _resolve_run_dir(run_record)
+    if run_dir is None:
+        return pd.DataFrame(columns=["trade_date", "market_regime"])
+    market_regimes_csv = _resolve_run_artifact_path(run_dir, "market_regimes.csv")
+    signature = _file_cache_signature(market_regimes_csv)
+    if signature is None:
+        return pd.DataFrame(columns=["trade_date", "market_regime"])
+    try:
+        df = _read_cached_csv_file(*signature).copy()
+        if "trade_date" in df.columns:
+            df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
+        return df
+    except Exception as exc:
+        st.warning(f"Impossible de lire les régimes marché du run : {exc}")
+        return pd.DataFrame(columns=["trade_date", "market_regime"])
 
 
 def _format_position_quantity(quantity: float) -> str:
@@ -2382,9 +2410,11 @@ def _build_position_detail_text(symbol: str, quantity: float, entry_notional: fl
 def _build_daily_portfolio_snapshot_df(
     equity_curve_df: pd.DataFrame,
     trades_df: pd.DataFrame,
+    market_regimes_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     columns = [
         "trade_date",
+        "market_regime",
         "portfolio_value",
         "open_positions",
         "position_units_total",
@@ -2401,6 +2431,21 @@ def _build_daily_portfolio_snapshot_df(
     equity_df = equity_df.drop_duplicates(subset=["trade_date"], keep="last")
     if equity_df.empty:
         return pd.DataFrame(columns=columns)
+
+    regime_by_date: dict[pd.Timestamp, str] = {}
+    if market_regimes_df is not None and not market_regimes_df.empty:
+        normalized_regimes_df = market_regimes_df.copy()
+        if "trade_date" in normalized_regimes_df.columns:
+            normalized_regimes_df["trade_date"] = pd.to_datetime(
+                normalized_regimes_df["trade_date"], errors="coerce"
+            ).dt.normalize()
+        if {"trade_date", "market_regime"}.issubset(normalized_regimes_df.columns):
+            normalized_regimes_df = normalized_regimes_df.dropna(subset=["trade_date"])
+            normalized_regimes_df = normalized_regimes_df.drop_duplicates(subset=["trade_date"], keep="last")
+            regime_by_date = {
+                pd.Timestamp(row.trade_date).normalize(): str(row.market_regime or "").strip() or "—"
+                for row in normalized_regimes_df.itertuples(index=False)
+            }
 
     position_deltas: dict[pd.Timestamp, dict[str, float]] = {}
     position_notional_deltas: dict[pd.Timestamp, dict[str, float]] = {}
@@ -2475,6 +2520,7 @@ def _build_daily_portfolio_snapshot_df(
         snapshot_rows.append(
             {
                 "trade_date": trade_date,
+                "market_regime": regime_by_date.get(trade_date, "—"),
                 "portfolio_value": float(equity_row.portfolio_value) if pd.notna(equity_row.portfolio_value) else float("nan"),
                 "open_positions": len(held_symbols),
                 "position_units_total": sum(abs(float(quantity)) for quantity in active_positions.values()),
@@ -2950,7 +2996,8 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
 def _render_live_artifacts(run_record: dict[str, object]) -> bool:
     equity_curve_df = _load_equity_curve_df(run_record)
     trades_df = _load_run_trades_df(run_record)
-    daily_snapshot_df = _build_daily_portfolio_snapshot_df(equity_curve_df, trades_df)
+    market_regimes_df = _load_market_regimes_df(run_record)
+    daily_snapshot_df = _build_daily_portfolio_snapshot_df(equity_curve_df, trades_df, market_regimes_df)
     rendered = False
 
     if not equity_curve_df.empty and {"trade_date", "portfolio_value"}.issubset(equity_curve_df.columns):
@@ -2985,6 +3032,7 @@ def _render_live_artifacts(run_record: dict[str, object]) -> bool:
         display_df = daily_snapshot_df.rename(
             columns={
                 "trade_date": "Date",
+                "market_regime": "Régime",
                 "portfolio_value": "Valeur portefeuille",
                 "open_positions": "Positions ouvertes",
                 "position_units_total": "Quantité totale",

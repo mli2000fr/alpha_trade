@@ -123,6 +123,67 @@ def test_build_daily_portfolio_snapshot_df_falls_back_to_quantity_only_when_entr
     assert snapshot_df["positions_detail"].tolist() == ["AAPL (10)"]
 
 
+def test_build_daily_portfolio_snapshot_df_merges_market_regime_by_trade_date() -> None:
+    equity_curve_df = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2025-01-02", "2025-01-03"]),
+            "portfolio_value": [10_000.0, 10_150.0],
+        }
+    )
+    trades_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL"],
+            "execution_date": pd.to_datetime(["2025-01-02"]),
+            "quantity": [10.0],
+        }
+    )
+    market_regimes_df = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2025-01-02", "2025-01-03"]),
+            "market_regime": ["normal", "capital_preservation"],
+        }
+    )
+
+    snapshot_df = backtesting._build_daily_portfolio_snapshot_df(
+        equity_curve_df,
+        trades_df,
+        market_regimes_df,
+    )
+
+    assert snapshot_df["market_regime"].tolist() == ["normal", "capital_preservation"]
+
+
+def test_load_run_artifacts_supports_cli_style_root_output_dir(tmp_path) -> None:
+    run_dir = tmp_path / "manual_cli_run"
+    run_dir.mkdir()
+    (run_dir / "stdout.log").write_text("", encoding="utf-8")
+    (run_dir / "report.json").write_text(json.dumps({"summary": {"final_value": 101234.5}}), encoding="utf-8")
+    (run_dir / "equity_curve.csv").write_text(
+        "trade_date,portfolio_value\n2025-01-02,100000\n2025-01-03,101000\n",
+        encoding="utf-8",
+    )
+    (run_dir / "trades.csv").write_text(
+        "symbol,execution_date,quantity\nAAPL,2025-01-02,10\n",
+        encoding="utf-8",
+    )
+    (run_dir / "market_regimes.csv").write_text(
+        "trade_date,market_regime\n2025-01-02,normal\n2025-01-03,capital_preservation\n",
+        encoding="utf-8",
+    )
+    run_record = {"stdout_path": str(run_dir / "stdout.log")}
+
+    report_payload = backtesting._load_run_report(run_record)
+    equity_curve_df = backtesting._load_equity_curve_df(run_record)
+    trades_df = backtesting._load_run_trades_df(run_record)
+    market_regimes_df = backtesting._load_market_regimes_df(run_record)
+
+    assert report_payload is not None
+    assert report_payload["summary"]["final_value"] == 101234.5
+    assert equity_curve_df["portfolio_value"].tolist() == [100000, 101000]
+    assert trades_df["symbol"].tolist() == ["AAPL"]
+    assert market_regimes_df["market_regime"].tolist() == ["normal", "capital_preservation"]
+
+
 def test_run_configuration_preset_pipeline_live_like_exposes_expected_phase_chain() -> None:
     preset = backtesting._get_run_configuration_preset("pipeline_live_like")
 

@@ -68,12 +68,25 @@ market_regimes:
     enabled: true
     preflight_summary: true
 
+  hysteresis:
+    enabled: true
+    enter_soft_signals_required: 1
+    enter_confirm_days: 2
+    exit_soft_signals_max: 0
+    exit_confirm_days: 3
+    min_hold_days_defensive: 5
+    hard_trigger_immediate: true
+    hard_exit_confirm_days: 2
+    gate_soft_constraints_on_confirmed_entry: true
+
   vix:
     enabled: true
     symbol: "VIX.INDX"
     short_symbol: "VIX9D.INDX"
     high_threshold: 30.0
     inverted_curve_mode: capital_preservation
+    inverted_curve_min_spread: 1.5
+    inverted_curve_min_ratio: 1.03
 
   capital_preservation_max_gross_exposure: 0.65
 

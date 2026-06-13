@@ -608,7 +608,7 @@ def test_populate_macro_indicators_table_imports_date_range(monkeypatch) -> None
                 data_quality="ok",
             )
 
-        def fake_build_snapshot(trade_date, *, config, equity=None, execution_context="live", macro_provider=None, sentiment_score_provider=None, earnings_lookup=None, use_cache=True):
+        def fake_build_snapshot(trade_date, *, config, equity=None, execution_context="live", macro_provider=None, sentiment_score_provider=None, earnings_lookup=None, previous_state=None, use_cache=True):
             class _Snap:
                 def to_dict(self):
                     return {
@@ -673,6 +673,55 @@ def test_populate_macro_indicators_table_imports_date_range(monkeypatch) -> None
         assert row["sentiment_source"] == "ticker_daily_sentiment_features"
     finally:
         engine.dispose()
+
+
+def test_populate_macro_indicators_table_threads_previous_state_between_sessions(monkeypatch) -> None:
+    from service.market.models import MarketRegimeState
+
+    calls: list[str | None] = []
+
+    class _FakeSnapshot:
+        def __init__(self, trade_date: date, current_mode: str) -> None:
+            self.next_state = MarketRegimeState(trade_date=trade_date, current_mode=current_mode)
+            self._trade_date = trade_date
+            self._current_mode = current_mode
+
+        def to_dict(self):
+            return {
+                "trade_date": self._trade_date.isoformat(),
+                "mode": self._current_mode,
+                "risk_multiplier": 1.0,
+                "effective_max_positions": None,
+                "allow_new_entries": True,
+                "macro": {},
+                "sentiment": {},
+                "next_state": self.next_state.to_dict(),
+            }
+
+    def fake_build_snapshot(trade_date, *, previous_state=None, **kwargs):
+        calls.append(previous_state.current_mode if previous_state is not None else None)
+        current_mode = "capital_preservation" if previous_state is None else "normal"
+        return _FakeSnapshot(trade_date, current_mode)
+
+    monkeypatch.setattr("service.market.macro_providers._build_network_macro_provider", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("service.market.macro_providers.build_snapshot", fake_build_snapshot)
+    monkeypatch.setattr(
+        "service.market.macro_providers.nyse_session_dates",
+        lambda start, end: [date(2025, 4, 14), date(2025, 4, 15)],
+    )
+    monkeypatch.setattr(
+        "service.market.macro_providers.persist_market_macro_snapshot_daily",
+        lambda **kwargs: 1,
+    )
+
+    summary = populate_macro_indicators_table(
+        start_date=date(2025, 4, 14),
+        end_date=date(2025, 4, 15),
+        yaml_cfg={"market_regimes": {"enabled": True}},
+    )
+
+    assert summary["sessions_total"] == 2
+    assert calls == [None, "capital_preservation"]
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +870,69 @@ def test_recompute_macro_regime_table_reuses_cached_macro_values(monkeypatch):
         assert row["sentiment_level"] == "warning"
         assert row["sentiment_source"] == "test_sentiment"
         assert summary["rows"][0]["source_effective"] == "db_cache"
+    finally:
+        engine.dispose()
+
+
+def test_recompute_macro_regime_table_threads_previous_state_between_sessions(monkeypatch) -> None:
+    from database.macro_indicators import get_macro_indicators_daily_table, persist_macro_indicator_daily
+    from service.market.models import MarketRegimeState
+
+    engine = create_engine("sqlite:///:memory:")
+    calls: list[str | None] = []
+    try:
+        get_macro_indicators_daily_table().metadata.create_all(engine)
+        for trade_date in [date(2025, 4, 14), date(2025, 4, 15)]:
+            persist_macro_indicator_daily(trade_date=trade_date, vix=22.0, vix9d=21.0, ten_y=4.2, engine=engine)
+
+        class _FakeSentimentProvider:
+            def __init__(self, trade_date, *, engine=None):
+                self.trade_date = trade_date
+                self.engine = engine
+                self.last_reading = None
+
+            def __call__(self, lookback_days: int) -> float | None:
+                return None
+
+        class _FakeSnapshot:
+            def __init__(self, trade_date: date, current_mode: str) -> None:
+                self.next_state = MarketRegimeState(trade_date=trade_date, current_mode=current_mode)
+                self._trade_date = trade_date
+                self._current_mode = current_mode
+
+            def to_dict(self):
+                return {
+                    "trade_date": self._trade_date.isoformat(),
+                    "mode": self._current_mode,
+                    "risk_multiplier": 1.0,
+                    "effective_max_positions": None,
+                    "allow_new_entries": True,
+                    "macro": {},
+                    "sentiment": {},
+                    "next_state": self.next_state.to_dict(),
+                }
+
+        def fake_build_snapshot(trade_date, *, previous_state=None, **kwargs):
+            calls.append(previous_state.current_mode if previous_state is not None else None)
+            current_mode = "capital_preservation" if previous_state is None else "normal"
+            return _FakeSnapshot(trade_date, current_mode)
+
+        monkeypatch.setattr("service.market.macro_providers.DbSentimentScoreProvider", _FakeSentimentProvider)
+        monkeypatch.setattr("service.market.macro_providers.build_snapshot", fake_build_snapshot)
+        monkeypatch.setattr(
+            "service.market.macro_providers.nyse_session_dates",
+            lambda start, end: [date(2025, 4, 14), date(2025, 4, 15)],
+        )
+
+        summary = recompute_macro_regime_table(
+            start_date=date(2025, 4, 14),
+            end_date=date(2025, 4, 15),
+            yaml_cfg={"market_regimes": {"enabled": True}},
+            engine=engine,
+        )
+
+        assert summary["sessions_total"] == 2
+        assert calls == [None, "capital_preservation"]
     finally:
         engine.dispose()
 

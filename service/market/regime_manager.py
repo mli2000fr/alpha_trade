@@ -469,7 +469,11 @@ def build_snapshot(
     # 2. Macro VIX
     if config.vix.enabled:
         vix_value, vix_high, curve_inverted, dq = evaluate_vix(
-            macro_provider, trade_date, high_threshold=config.vix.high_threshold
+            macro_provider,
+            trade_date,
+            high_threshold=config.vix.high_threshold,
+            inverted_curve_min_spread=config.vix.inverted_curve_min_spread,
+            inverted_curve_min_ratio=config.vix.inverted_curve_min_ratio,
         )
         vix_short_value: float | None = None
         if macro_provider is not None:
@@ -516,15 +520,20 @@ def build_snapshot(
             value=vix_short_value,
             threshold=vix_value,
             message=(
-                f"Courbe VIX inversée ({vix_short_value:.2f} > {vix_value:.2f}) ⇒ {config.vix.inverted_curve_mode}"
+                f"Courbe VIX inversée ({vix_short_value:.2f} > {vix_value:.2f}, Δ≥{config.vix.inverted_curve_min_spread:.2f}, ratio≥{config.vix.inverted_curve_min_ratio:.3f}) ⇒ {config.vix.inverted_curve_mode}"
                 if curve_inverted and vix_short_value is not None and vix_value is not None
                 else (
-                    f"Courbe VIX non inversée ({vix_short_value:.2f} ≤ {vix_value:.2f})"
+                    f"Courbe VIX non inversée (short={vix_short_value:.2f}, spot={vix_value:.2f}, Δmin={config.vix.inverted_curve_min_spread:.2f}, ratio_min={config.vix.inverted_curve_min_ratio:.3f})"
                     if vix_short_value is not None and vix_value is not None
                     else "Courbe VIX indisponible"
                 )
             ),
-            details={"vix": vix_value, "vix_short": vix_short_value},
+            details={
+                "vix": vix_value,
+                "vix_short": vix_short_value,
+                "min_spread": config.vix.inverted_curve_min_spread,
+                "min_ratio": config.vix.inverted_curve_min_ratio,
+            },
         )
 
     # 3. Macro Yield 10Y

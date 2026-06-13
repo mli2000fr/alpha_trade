@@ -396,6 +396,33 @@ def entries_to_dataframe(entries: list[PortfolioEntry]) -> pd.DataFrame:
     return pd.DataFrame([asdict(entry) for entry in entries])
 
 
+def _regime_snapshots_to_dataframe(regime_snapshots: dict[date, dict]) -> pd.DataFrame:
+    if not regime_snapshots:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for snapshot_date in sorted(regime_snapshots):
+        payload = regime_snapshots.get(snapshot_date) or {}
+        mode_why = payload.get("mode_why") if isinstance(payload.get("mode_why"), dict) else {}
+        data_quality = payload.get("data_quality") if isinstance(payload.get("data_quality"), dict) else {}
+        rows.append(
+            {
+                "trade_date": snapshot_date.isoformat(),
+                "market_regime": payload.get("mode"),
+                "raw_mode": payload.get("raw_mode"),
+                "transition_action": payload.get("transition_action"),
+                "allow_new_entries": payload.get("allow_new_entries"),
+                "risk_multiplier": payload.get("risk_multiplier"),
+                "effective_max_positions": payload.get("effective_max_positions"),
+                "soft_signal_count": payload.get("soft_signal_count"),
+                "hard_triggered": payload.get("hard_triggered"),
+                "macro_data_quality": data_quality.get("macro"),
+                "summary": mode_why.get("summary"),
+                "primary_source": mode_why.get("primary_source"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def save_phase2_risk_artifacts(result: RiskBridgeResult, output_dir: Path) -> dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_paths: dict[str, str] = {}
@@ -404,6 +431,11 @@ def save_phase2_risk_artifacts(result: RiskBridgeResult, output_dir: Path) -> di
     diagnostics_path = output_dir / "phase2_risk_summary.json"
     diagnostics_path.write_text(pd.Series(result.diagnostics).to_json(force_ascii=False, indent=2), encoding="utf-8")
     artifact_paths["phase2_risk_summary_json"] = str(diagnostics_path)
+    regimes_df = _regime_snapshots_to_dataframe(result.regime_snapshots)
+    if not regimes_df.empty:
+        regimes_path = output_dir / "market_regimes.csv"
+        regimes_df.to_csv(regimes_path, index=False)
+        artifact_paths["market_regimes"] = str(regimes_path)
     if not entries_df.empty:
         entries_path = output_dir / "phase2_risk_entries.csv"
         entries_df.to_csv(entries_path, index=False)

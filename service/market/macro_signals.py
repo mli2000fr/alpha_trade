@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Iterable, Protocol
+from typing import Protocol
 
 
 class MacroDataProvider(Protocol):
@@ -38,7 +38,14 @@ class MacroEvaluation:
             object.__setattr__(self, "data_quality", {})
 
 
-def evaluate_vix(provider: MacroDataProvider | None, trade_date: date, *, high_threshold: float) -> tuple[float | None, bool, bool, dict[str, str]]:
+def evaluate_vix(
+    provider: MacroDataProvider | None,
+    trade_date: date,
+    *,
+    high_threshold: float,
+    inverted_curve_min_spread: float = 0.0,
+    inverted_curve_min_ratio: float = 1.0,
+) -> tuple[float | None, bool, bool, dict[str, str]]:
     """Retourne (vix_value, is_high, curve_inverted, data_quality)."""
     if provider is None:
         return None, False, False, {"vix": "no_provider"}
@@ -51,7 +58,15 @@ def evaluate_vix(provider: MacroDataProvider | None, trade_date: date, *, high_t
     inverted = False
     try:
         short = provider.get_vix_short_term_close(trade_date)
-        if short is not None and v is not None and short > v:
+        min_spread = max(0.0, float(inverted_curve_min_spread))
+        min_ratio = max(1.0, float(inverted_curve_min_ratio))
+        if (
+            short is not None
+            and v is not None
+            and short > v
+            and (short - v) >= min_spread
+            and (short / v) >= min_ratio
+        ):
             inverted = True
     except Exception:
         pass

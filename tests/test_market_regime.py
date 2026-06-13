@@ -155,6 +155,47 @@ def test_vix_no_provider_fallback_neutral():
     assert dq == {"vix": "no_provider"}
 
 
+def test_vix_curve_inversion_requires_min_spread_and_ratio_when_configured() -> None:
+    val, high, inverted, dq = evaluate_vix(
+        cast(MacroDataProvider, cast(object, _StubMacroProvider(vix=30.0, vix_short=30.6))),
+        date(2025, 5, 1),
+        high_threshold=35.0,
+        inverted_curve_min_spread=1.0,
+        inverted_curve_min_ratio=1.03,
+    )
+    assert val == 30.0
+    assert high is False
+    assert inverted is False
+    assert dq == {"vix": "ok"}
+
+
+def test_snapshot_vix_curve_inversion_respects_hardened_thresholds() -> None:
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        vix=VixConfig(
+            enabled=True,
+            high_threshold=35.0,
+            inverted_curve_min_spread=1.0,
+            inverted_curve_min_ratio=1.03,
+        ),
+        yields=YieldsConfig(enabled=False),
+        sentiment_circuit_breaker=SentimentBreakerConfig(enabled=False),
+    )
+    reset_cache()
+
+    snap = build_snapshot(
+        date(2025, 5, 1),
+        config=cfg,
+        equity=2_000.0,
+        macro_provider=cast(MacroDataProvider, cast(object, _StubMacroProvider(vix=30.0, vix_short=30.6))),
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert snap.mode == "normal"
+    assert snap.macro["vix_curve_inverted"] is False
+    assert all(not (item["source"] == "vix_curve_inverted" and item["triggered"]) for item in snap.decision_trace)
+
+
 def test_yield_spike_detected():
     rel, spike, dq = evaluate_yield_10y(
         cast(MacroDataProvider, cast(object, _StubMacroProvider(history=[4.0, 4.05, 4.1, 4.15, 4.2, 4.25]))),
@@ -760,7 +801,12 @@ def test_parse_market_regimes_full():
             "min_hold_days_defensive": 7,
             "gate_soft_constraints_on_confirmed_entry": True,
         },
-        "vix": {"enabled": True, "high_threshold": 30.0},
+        "vix": {
+            "enabled": True,
+            "high_threshold": 30.0,
+            "inverted_curve_min_spread": 1.5,
+            "inverted_curve_min_ratio": 1.03,
+        },
         "patterns": {
             "tax_day": {"enabled": True, "start": "04-10", "end": "04-20", "risk_mult": 0.5},
         },
@@ -773,6 +819,8 @@ def test_parse_market_regimes_full():
     assert cfg.hysteresis.min_hold_days_defensive == 7
     assert cfg.hysteresis.gate_soft_constraints_on_confirmed_entry is True
     assert cfg.vix.enabled is True and cfg.vix.high_threshold == 30.0
+    assert cfg.vix.inverted_curve_min_spread == pytest.approx(1.5)
+    assert cfg.vix.inverted_curve_min_ratio == pytest.approx(1.03)
     assert cfg.patterns["tax_day"].enabled is True
     assert cfg.patterns["tax_day"].risk_mult == 0.5
 
