@@ -1398,9 +1398,9 @@ def _build_run_options() -> BacktestRunOptions:
                 "Mode ML",
                 options=["auto", "off", "rebuild-missing"],
                 index=["auto", "off", "rebuild-missing"].index(
-                    cast(str, st.session_state.get("bt_run_ml_mode", "auto"))
-                    if st.session_state.get("bt_run_ml_mode", "auto") in {"auto", "off", "rebuild-missing"}
-                    else "auto"
+                    cast(str, st.session_state.get("bt_run_ml_mode", "off"))
+                    if st.session_state.get("bt_run_ml_mode", "off") in {"auto", "off", "rebuild-missing"}
+                    else "off"
                 ),
                 key="bt_run_ml_mode",
                 help="`auto` utilise ce qui existe, `off` ignore ML, `rebuild-missing` tente une reconstruction PIT des prédictions manquantes.",
