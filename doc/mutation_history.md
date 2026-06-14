@@ -53,3 +53,4 @@ Sont exclus du périmètre mutation testing :
 | 2026-05-24 | 2026-05-24 | None | None | None |
 | 2026-05-31 | 2026-05-31 | None | None | None |
 | 2026-06-07 | 2026-06-07 | None | None | None |
+| 2026-06-14 | 2026-06-14 | None | None | None |
