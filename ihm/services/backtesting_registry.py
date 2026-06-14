@@ -12,7 +12,7 @@ from dataclasses import replace
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from ihm.services.backtesting_runner import (
     BackfillScoresHistoryOptions,
@@ -154,6 +154,113 @@ def _kill_process_tree(process: subprocess.Popen[str]) -> None:
         )
     else:
         process.kill()
+
+
+def _kill_process_tree_by_pid(pid: int) -> None:
+    pid_int = int(pid)
+    if pid_int <= 0:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid_int), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    else:
+        try:
+            os.kill(pid_int, 9)
+        except ProcessLookupError:
+            return
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _compute_elapsed_seconds(executed_at: object) -> float:
+    started_at = _parse_iso_datetime(executed_at)
+    if started_at is None:
+        return 0.0
+    return round(max((datetime.now() - started_at).total_seconds(), 0.0), 2)
+
+
+def _find_backtesting_run_dir(run_id: str, run_kind: str | None = None) -> Path | None:
+    candidate_kinds: list[str] = []
+    if run_kind:
+        candidate_kinds.append(str(run_kind))
+
+    for entry in RUNS_DIR.iterdir() if RUNS_DIR.exists() else []:
+        if entry.is_dir() and entry.name not in candidate_kinds:
+            candidate_kinds.append(entry.name)
+
+    for kind in candidate_kinds:
+        candidate = _run_dir_for(cast(BacktestingCommandKind, kind), run_id)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _find_active_backtesting_lock(run_id: str | None = None) -> dict[str, object] | None:
+    from ihm.services.pipeline_lock import list_active_locks as _list_active_locks
+
+    for payload in _list_active_locks():
+        if str(payload.get("scope") or "") != "backtesting":
+            continue
+        if run_id is not None and str(payload.get("run_id") or "") != str(run_id):
+            continue
+        return payload
+    return None
+
+
+def _build_recovered_snapshot_from_lock(payload: dict[str, object]) -> dict[str, object]:
+    run_id = str(payload.get("run_id") or "")
+    history_record = _read_history_index().get(run_id, {})
+    run_kind = str(history_record.get("run_kind") or "run")
+    run_dir = _find_backtesting_run_dir(run_id, run_kind=run_kind)
+
+    stdout_path = str(history_record.get("stdout_path") or "")
+    stderr_path = str(history_record.get("stderr_path") or "")
+    combined_path = str(history_record.get("combined_path") or "")
+    if run_dir is not None:
+        if not stdout_path:
+            stdout_path = str(run_dir / "stdout.log")
+        if not stderr_path:
+            stderr_path = str(run_dir / "stderr.log")
+        if not combined_path:
+            combined_path = str(run_dir / "combined.log")
+
+    executed_at = str(
+        history_record.get("executed_at")
+        or payload.get("acquired_at")
+        or datetime.now().isoformat(timespec="seconds")
+    )
+    snapshot: dict[str, object] = {
+        **history_record,
+        "run_id": run_id,
+        "run_kind": run_kind,
+        "run_label": str(history_record.get("run_label") or f"Backtest récupéré ({run_kind})"),
+        "status": "running",
+        "executed_at": executed_at,
+        "finished_at": None,
+        "returncode": None,
+        "duration_seconds": _compute_elapsed_seconds(executed_at),
+        "stdout_path": stdout_path,
+        "stderr_path": stderr_path,
+        "combined_path": combined_path,
+        "stdout_tail": _read_text_tail(Path(stdout_path), TAIL_MAX_LINES) if stdout_path else "",
+        "stderr_tail": _read_text_tail(Path(stderr_path), TAIL_MAX_LINES) if stderr_path else "",
+        "is_active": True,
+        "recovered_from_lock": True,
+        "lock_pid": int(str(payload.get("pid") or 0)),
+    }
+    return snapshot
 
 
 def _with_updates(record: BacktestingRunRecord, **updates: object) -> BacktestingRunRecord:
@@ -374,19 +481,28 @@ def start_backtesting_run(
     command_display = format_command_for_display(command)
     screener_artifacts_dir = _resolve_screener_artifacts_dir(run_kind, options)
 
-    process = subprocess.Popen(
-        command,
-        cwd=str(PROJECT_ROOT),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        creationflags=_creation_flags(),
-    )
-    backtest_lock = _rebind_lock_pid(backtest_lock, pid=process.pid)
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=_creation_flags(),
+        )
+        backtest_lock = _rebind_lock_pid(backtest_lock, pid=process.pid)
+    except Exception:
+        try:
+            from ihm.services.pipeline_lock import release_lock as _release_lock
+
+            _release_lock(backtest_lock)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        raise
 
     events: queue.Queue[tuple[str, str]] = queue.Queue()
     stdout_thread = threading.Thread(target=_reader, args=(process.stdout, "stdout", events), daemon=True)
@@ -430,6 +546,13 @@ def list_active_backtesting_runs() -> list[dict[str, object]]:
         snapshot = poll_backtesting_run(run_id)
         if snapshot is not None:
             snapshots.append(snapshot)
+
+    recovered_lock = _find_active_backtesting_lock()
+    if recovered_lock is not None:
+        recovered_run_id = str(recovered_lock.get("run_id") or "")
+        if recovered_run_id and all(str(item.get("run_id") or "") != recovered_run_id for item in snapshots):
+            snapshots.append(_build_recovered_snapshot_from_lock(recovered_lock))
+
     snapshots.sort(key=lambda item: str(item.get("executed_at", "")), reverse=True)
     return snapshots
 
@@ -438,6 +561,9 @@ def poll_backtesting_run(run_id: str) -> dict[str, object] | None:
     with _REGISTRY_LOCK:
         managed = _ACTIVE_RUNS.get(run_id)
     if managed is None:
+        active_lock = _find_active_backtesting_lock(run_id)
+        if active_lock is not None:
+            return _build_recovered_snapshot_from_lock(active_lock)
         history = _read_history_index()
         return history.get(run_id)
 
@@ -460,7 +586,37 @@ def stop_backtesting_run(run_id: str) -> bool:
     with _REGISTRY_LOCK:
         managed = _ACTIVE_RUNS.get(run_id)
     if managed is None:
-        return False
+        active_lock = _find_active_backtesting_lock(run_id)
+        if active_lock is None:
+            return False
+
+        pid = int(str(active_lock.get("pid") or 0))
+        try:
+            _kill_process_tree_by_pid(pid)
+        finally:
+            from ihm.services.pipeline_lock import LockHandle, _lock_path, release_lock as _release_lock
+
+            _release_lock(
+                LockHandle(
+                    scope="backtesting",
+                    owner=str(active_lock.get("owner") or "backtesting:recovered"),
+                    run_id=run_id,
+                    pid=pid,
+                    path=_lock_path("backtesting"),
+                )
+            )
+
+        history = _read_history_index()
+        record = history.get(run_id)
+        if record is not None:
+            record["status"] = "stopped"
+            record["stop_requested"] = True
+            record["returncode"] = -3
+            record["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            record["duration_seconds"] = _compute_elapsed_seconds(record.get("executed_at"))
+            history[run_id] = record
+            _write_history_index(history)
+        return True
 
     managed.record = _with_updates(managed.record, stop_requested=True)
     _kill_process_tree(managed.process)

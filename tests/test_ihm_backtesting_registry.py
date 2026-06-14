@@ -147,6 +147,7 @@ def test_start_backtesting_run_fails_fast_when_db_preflight_fails(tmp_path: Path
     monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
     monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
     monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+    monkeypatch.setattr(backtesting_registry, "list_active_backtesting_runs_by_kind", lambda run_kind: [])
     monkeypatch.setattr(
         backtesting_registry,
         "validate_db_connection_config",
@@ -178,5 +179,194 @@ def test_start_backtesting_run_fails_fast_when_db_preflight_fails(tmp_path: Path
 
     assert "Accès MySQL refusé" in str(exc_info.value)
     assert popen_called is False
+
+
+def test_list_active_backtesting_runs_recovers_live_locked_run_after_restart(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry, pipeline_lock
+
+    run_id = "20260614_110349_17710755"
+    runs_dir = tmp_path / "ihm_runs"
+    run_dir = runs_dir / "run" / run_id
+    locks_dir = tmp_path / "locks"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "stdout.log").write_text("stdout line\n", encoding="utf-8")
+    (run_dir / "stderr.log").write_text("stderr line\n", encoding="utf-8")
+    (run_dir / "combined.log").write_text("combined line\n", encoding="utf-8")
+
+    monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
+    monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "history_index.json").write_text(
+        json.dumps(
+            {
+                run_id: {
+                    "run_id": run_id,
+                    "run_kind": "run",
+                    "run_label": "Backtest complet",
+                    "command": ["python", "-m", "backtesting", "run"],
+                    "command_display": "python -m backtesting run",
+                    "status": "running",
+                    "executed_at": "2026-06-14T11:03:49",
+                    "finished_at": None,
+                    "returncode": None,
+                    "duration_seconds": 0.0,
+                    "stdout_path": str(run_dir / "stdout.log"),
+                    "stderr_path": str(run_dir / "stderr.log"),
+                    "combined_path": str(run_dir / "combined.log"),
+                    "stdout_lines": 1,
+                    "stderr_lines": 1,
+                    "timeout_seconds": None,
+                    "stop_requested": False,
+                    "screener_artifacts_dir": None,
+                    "screener_artifact_summary": None,
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    pipeline_lock.set_locks_dir_for_tests(locks_dir)
+    monkeypatch.setattr(pipeline_lock, "_is_pid_alive", lambda pid: pid == 4242)
+    try:
+        locks_dir.mkdir(parents=True, exist_ok=True)
+        (locks_dir / "backtesting.lock").write_text(
+            json.dumps(
+                {
+                    "scope": "backtesting",
+                    "owner": "backtesting:run",
+                    "run_id": run_id,
+                    "pid": 4242,
+                    "acquired_at": "2026-06-14T11:03:49",
+                    "process_started_at": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        snapshots = backtesting_registry.list_active_backtesting_runs()
+
+        assert len(snapshots) == 1
+        assert snapshots[0]["run_id"] == run_id
+        assert snapshots[0]["status"] == "running"
+        assert snapshots[0]["is_active"] is True
+        assert snapshots[0]["recovered_from_lock"] is True
+        assert snapshots[0]["lock_pid"] == 4242
+        assert "stdout line" in snapshots[0]["stdout_tail"]
+        assert "stderr line" in snapshots[0]["stderr_tail"]
+    finally:
+        pipeline_lock.set_locks_dir_for_tests(None)
+
+
+def test_stop_backtesting_run_can_stop_recovered_locked_run(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry, pipeline_lock
+
+    run_id = "20260614_110349_17710755"
+    runs_dir = tmp_path / "ihm_runs"
+    run_dir = runs_dir / "run" / run_id
+    locks_dir = tmp_path / "locks"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "stdout.log").write_text("stdout line\n", encoding="utf-8")
+    (run_dir / "stderr.log").write_text("stderr line\n", encoding="utf-8")
+    (run_dir / "combined.log").write_text("combined line\n", encoding="utf-8")
+
+    monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
+    monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "history_index.json").write_text(
+        json.dumps(
+            {
+                run_id: {
+                    "run_id": run_id,
+                    "run_kind": "run",
+                    "run_label": "Backtest complet",
+                    "command": ["python", "-m", "backtesting", "run"],
+                    "command_display": "python -m backtesting run",
+                    "status": "running",
+                    "executed_at": "2026-06-14T11:03:49",
+                    "finished_at": None,
+                    "returncode": None,
+                    "duration_seconds": 0.0,
+                    "stdout_path": str(run_dir / "stdout.log"),
+                    "stderr_path": str(run_dir / "stderr.log"),
+                    "combined_path": str(run_dir / "combined.log"),
+                    "stdout_lines": 1,
+                    "stderr_lines": 1,
+                    "timeout_seconds": None,
+                    "stop_requested": False,
+                    "screener_artifacts_dir": None,
+                    "screener_artifact_summary": None,
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    killed_pids: list[int] = []
+    monkeypatch.setattr(backtesting_registry, "_kill_process_tree_by_pid", lambda pid: killed_pids.append(pid))
+    pipeline_lock.set_locks_dir_for_tests(locks_dir)
+    monkeypatch.setattr(pipeline_lock, "_is_pid_alive", lambda pid: pid == 4242)
+    try:
+        locks_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = locks_dir / "backtesting.lock"
+        lock_path.write_text(
+            json.dumps(
+                {
+                    "scope": "backtesting",
+                    "owner": "backtesting:run",
+                    "run_id": run_id,
+                    "pid": 4242,
+                    "acquired_at": "2026-06-14T11:03:49",
+                    "process_started_at": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert backtesting_registry.stop_backtesting_run(run_id) is True
+        history = backtesting_registry.get_backtesting_run_record(run_id)
+
+        assert killed_pids == [4242]
+        assert not lock_path.exists()
+        assert history is not None
+        assert history["status"] == "stopped"
+        assert history["stop_requested"] is True
+        assert history["returncode"] == -3
+    finally:
+        pipeline_lock.set_locks_dir_for_tests(None)
+
+
+def test_start_backtesting_run_releases_lock_if_popen_fails(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry, pipeline_lock
+    from ihm.services.backtesting_runner import BacktestRunOptions
+
+    runs_dir = tmp_path / "ihm_runs"
+    locks_dir = tmp_path / "locks"
+
+    monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
+    monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+    monkeypatch.setattr(backtesting_registry, "build_subprocess_env", lambda db_config=None: {})
+    monkeypatch.setattr(backtesting_registry.subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    pipeline_lock.set_locks_dir_for_tests(locks_dir)
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            backtesting_registry.start_backtesting_run(
+                "run",
+                "Backtesting run",
+                BacktestRunOptions(start="2026-01-01"),
+            )
+
+        assert not (locks_dir / "backtesting.lock").exists()
+    finally:
+        pipeline_lock.set_locks_dir_for_tests(None)
 
 

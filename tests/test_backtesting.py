@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 import json
 import os
+import warnings
 from types import SimpleNamespace
 from typing import cast
 
@@ -206,6 +207,32 @@ def test_build_backtest_component_details_returns_expected_component_payloads() 
     assert component_details["risk"]["enabled"] is False
     assert component_details["execution"]["enabled"] is False
     assert component_details["execution"]["broker_like"] == {}
+
+
+def test_build_pipeline_trade_export_frame_preserves_oco_flag_without_futurewarning() -> None:
+    from backtesting.report import _build_pipeline_trade_export_frame
+
+    pipeline = pd.DataFrame(
+        {
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-02"]),
+            "execution_date": pd.to_datetime(["2025-01-02", "2025-01-03"]),
+            "replay_oco_sibling_canceled": [True, None],
+        }
+    )
+
+    with warnings.catch_warnings(record=True) as recorded_warnings:
+        warnings.simplefilter("always")
+        export_df, counts = _build_pipeline_trade_export_frame(
+            pipeline,
+            legacy_trades_df=pd.DataFrame(),
+        )
+
+    future_warnings = [warning for warning in recorded_warnings if issubclass(warning.category, FutureWarning)]
+    assert future_warnings == []
+    assert export_df["oco_sibling_canceled"].dtype == bool
+    assert export_df["oco_sibling_canceled"].tolist() == [True, False]
+    assert counts["pipeline_signal_rows"] == 2
 
 
 # ============================================================
