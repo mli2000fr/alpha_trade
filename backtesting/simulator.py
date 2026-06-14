@@ -43,6 +43,7 @@ class BacktestConfig:
     # Paramètres bracket (défauts = production)
     profit_taker_pct: float = 0.08
     trailing_stop_pct: float = 0.05
+    use_live_protection_logic: bool = True
     max_positions: int = 20
 
     # Frais de transaction (Phase 6.1.b)
@@ -150,6 +151,7 @@ class _OpenPosition:
     entry_cost: float
     # Phase B.2 — stop-loss initial dur (None = désactivé).
     initial_stop_price: float | None = None
+    risk_per_share: float | None = None
     replay_take_profit_price: float | None = None
     replay_initial_stop_price: float | None = None
     replay_trailing_stop_pct: float | None = None
@@ -1098,10 +1100,10 @@ class BacktestEngine:
                 continue
 
             state.settled_cash -= entry_cost
-            initial_stop_price = (
-                entry_price * (1.0 - micro.initial_stop_pct)
-                if micro.initial_stop_pct > 0
-                else None
+            initial_stop_price, risk_per_share = self._resolve_initial_protection_state(
+                row=row,
+                entry_price=entry_price,
+                fallback_initial_stop_pct=micro.initial_stop_pct,
             )
             state.positions[symbol] = _OpenPosition(
                 symbol=symbol,
@@ -1113,6 +1115,7 @@ class BacktestEngine:
                 peak_high=entry_price,
                 entry_cost=entry_cost,
                 initial_stop_price=initial_stop_price,
+                risk_per_share=risk_per_share,
                 replay_take_profit_price=(
                     self._resolve_signal_float(row, "replay_take_profit_price")
                     if cfg.protection_replay_mode == "protection_replay"
@@ -1312,8 +1315,28 @@ class BacktestEngine:
                     else (position.replay_initial_stop_price or position.initial_stop_price)
                 )
             else:
-                take_profit_price = position.entry_price * (1.0 + cfg.profit_taker_pct)
-                trailing_stop_price = previous_peak_high * (1.0 - cfg.trailing_stop_pct)
+                if cfg.use_live_protection_logic:
+                    percent_target = position.entry_price * (1.0 + cfg.profit_taker_pct)
+                    risk_based_target = (
+                        position.entry_price + (2.0 * position.risk_per_share)
+                        if position.risk_per_share is not None and position.risk_per_share > 0
+                        else None
+                    )
+                    take_profit_price = max(percent_target, risk_based_target or percent_target)
+                    if (
+                        position.initial_stop_price is not None
+                        and position.entry_price > 0
+                        and position.initial_stop_price < position.entry_price
+                    ):
+                        trailing_stop_pct = (position.entry_price - position.initial_stop_price) / position.entry_price
+                    elif position.risk_per_share is not None and position.risk_per_share > 0 and position.entry_price > 0:
+                        trailing_stop_pct = position.risk_per_share / position.entry_price
+                    else:
+                        trailing_stop_pct = cfg.trailing_stop_pct
+                    trailing_stop_price = previous_peak_high * (1.0 - trailing_stop_pct)
+                else:
+                    take_profit_price = position.entry_price * (1.0 + cfg.profit_taker_pct)
+                    trailing_stop_price = previous_peak_high * (1.0 - cfg.trailing_stop_pct)
                 active_initial_stop = position.initial_stop_price
             is_same_day = trade_day.normalize() == position.entry_date.normalize()
 
@@ -1477,6 +1500,34 @@ class BacktestEngine:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _resolve_initial_protection_state(
+        self,
+        *,
+        row: pd.Series,
+        entry_price: float,
+        fallback_initial_stop_pct: float,
+    ) -> tuple[float | None, float | None]:
+        """Résout le stop initial/risk_per_share selon le mode live-like ou fixe."""
+        risk_per_share = self._resolve_signal_float(row, "risk_per_share")
+        stop_price_initial = self._resolve_signal_float(row, "stop_price_initial")
+
+        if self.config.use_live_protection_logic and entry_price > 0:
+            if (
+                stop_price_initial is not None
+                and stop_price_initial > 0
+                and stop_price_initial < entry_price
+            ):
+                return stop_price_initial, risk_per_share
+            if risk_per_share is not None and risk_per_share > 0:
+                derived_stop = entry_price - risk_per_share
+                if 0 < derived_stop < entry_price:
+                    return derived_stop, risk_per_share
+            return None, risk_per_share
+
+        if fallback_initial_stop_pct > 0 and entry_price > 0:
+            return entry_price * (1.0 - fallback_initial_stop_pct), risk_per_share
+        return None, risk_per_share
 
     @staticmethod
     def _resolve_signal_text(row: pd.Series, column_name: str) -> str | None:

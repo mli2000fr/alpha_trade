@@ -51,6 +51,10 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	phase7_mode_index = command.index("--phase7-mode")
 	assert command[phase7_mode_index + 1] == "off"
 	assert "--capital-preset-key" not in command
+	assert "--use-live-protection-logic" in command
+	assert "--use-fixed-protection-logic" not in command
+	assert "--tp" not in command
+	assert "--ts" not in command
 	assert "--swing-only" not in command
 	assert "--walk-forward-artifacts-dir" not in command
 	assert "--fail-on-missing-macro-data" in command
@@ -249,6 +253,27 @@ def test_build_backtesting_run_command_omits_allow_fractional_shares_flag_when_d
 	)
 
 	assert "--allow-fractional-shares" not in command
+
+
+def test_build_backtesting_run_command_includes_fixed_protection_flags_when_live_like_disabled():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			use_live_protection_logic=False,
+			tp=0.11,
+			ts=0.06,
+			initial_stop_pct=0.04,
+		),
+	)
+
+	assert "--use-fixed-protection-logic" in command
+	assert "--use-live-protection-logic" not in command
+	assert "--tp" in command and command[command.index("--tp") + 1] == "0.11"
+	assert "--ts" in command and command[command.index("--ts") + 1] == "0.06"
+	assert "--initial-stop-pct" in command and command[command.index("--initial-stop-pct") + 1] == "0.04"
 
 
 def test_build_backtesting_run_command_matches_pipeline_live_like_replay_preset():

@@ -708,6 +708,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--tp", type=float, default=0.08, help="Take-profit %% (défaut 0.08)")
     run_p.add_argument("--ts", type=float, default=0.05, help="Trailing stop %% (défaut 0.05)")
+    run_p.add_argument(
+        "--use-live-protection-logic",
+        dest="use_live_protection_logic",
+        action="store_true",
+        default=True,
+        help="Utilise la logique live pour TP/SL/trailing (par défaut).",
+    )
+    run_p.add_argument(
+        "--use-fixed-protection-logic",
+        dest="use_live_protection_logic",
+        action="store_false",
+        help="Force la logique historique fixe (TP/TS + initial_stop_pct).",
+    )
     run_p.add_argument("--max-positions", type=int, default=20, help="Positions max simultanées")
     run_p.add_argument(
         "--fees",
@@ -1707,6 +1720,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
     _safe_print(f"   preset_capital={effective_preset.key} ({preset_source}) | fingerprint={preset_fingerprint}\n")
     _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
+    _safe_print(
+        "   protection_logic={}\n".format(
+            "live_like" if bool(getattr(args, "use_live_protection_logic", True)) else "fixed_legacy"
+        )
+    )
     _safe_print(f"   engine_mode={engine_mode} strict_pit={strict_pit}\n")
     _safe_print(f"   scores_pit_mode={scores_pit_mode}\n")
     _safe_print(f"   macro_pit_mode={macro_pit_mode}\n")
@@ -2101,7 +2119,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             impact_coef=float(args.slippage_impact_coef),
             model=args.slippage_model,
         ),
-        initial_stop_pct=float(args.initial_stop_pct),
+        initial_stop_pct=(0.0 if bool(getattr(args, "use_live_protection_logic", True)) else float(args.initial_stop_pct)),
         max_entry_gap_pct=float(args.max_entry_gap_pct),
         intrabar_priority=args.intrabar_priority,
     )
@@ -2142,6 +2160,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         ),
         profit_taker_pct=args.tp,
         trailing_stop_pct=args.ts,
+        use_live_protection_logic=bool(getattr(args, "use_live_protection_logic", True)),
         max_positions=args.max_positions,
         fees_pct=fees_pct,
         commission_bps=float(args.commission_bps),

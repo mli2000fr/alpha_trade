@@ -30,5 +30,4 @@ caps appliqués une fois le mode activé
 
 
 
-
-20260613_084920_4a782a62 sans ML, sans R13a,
+faire la modification pour que le backtest utilise par défaut la même logique de calcul live pour TP + SL initial + trailing stop. dans ihmpage backtest, on ajoute un switch permet de choix entre par défaut la même logique de calcul live pour TP + SL initial + trailing stop, on laisse le switch par défaut la même logique de calcul live pour TP + SL initial + trailing stop, dans ce cas, les 2 champs (Take-profit (fraction) et Trailing stop (fraction)) ne seront pas pas utilisé, ainsi SL iniital (je ne sais pas où définit en fix) ne sera pas utilié non plus, tous sera calcus de la même manière que live

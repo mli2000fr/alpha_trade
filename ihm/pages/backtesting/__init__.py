@@ -824,6 +824,7 @@ def _build_overlay_options(
     engine_mode: str,
     selected_run_preset_key: str,
     auto_run_preset_key: str,
+    use_live_protection_logic: bool,
 ) -> dict[str, Any]:
     """Construit le sous-dict d'options pour les surcouches micro-structure / risk overlay.
 
@@ -942,16 +943,22 @@ def _build_overlay_options(
 
         micro_col4, micro_col5, micro_col6 = st.columns(3)
         with micro_col4:
-            initial_stop_pct = st.number_input(
-                "Stop-loss initial dur (fraction)",
-                min_value=0.0,
-                max_value=1.0,
-                value=float(st.session_state.get("bt_run_initial_stop_pct", 0.0)),
-                step=0.005,
-                format="%.4f",
-                key="bt_run_initial_stop_pct",
-                help="Ex 0.07 = 7%. 0 = désactivé.",
-            )
+            if use_live_protection_logic:
+                initial_stop_pct = 0.0
+                st.caption(
+                    "Stop-loss initial dur désactivé : en mode live-like, le SL initial est calculé depuis `stop_price_initial` / `risk_per_share`."
+                )
+            else:
+                initial_stop_pct = st.number_input(
+                    "Stop-loss initial dur (fraction)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("bt_run_initial_stop_pct", 0.0)),
+                    step=0.005,
+                    format="%.4f",
+                    key="bt_run_initial_stop_pct",
+                    help="Ex 0.07 = 7%. 0 = désactivé.",
+                )
         with micro_col5:
             max_entry_gap_pct = st.number_input(
                 "Max gap d'ouverture (fraction)",
@@ -1262,29 +1269,51 @@ def _build_run_options() -> BacktestRunOptions:
 
     current_engine_mode = str(st.session_state.get("bt_run_engine_mode", "research") or "research").strip().lower()
 
+    use_live_protection_logic = st.toggle(
+        "Aligner TP/SL/trailing sur la logique live",
+        value=bool(st.session_state.get("bt_run_use_live_protection_logic", True)),
+        key="bt_run_use_live_protection_logic",
+        help=(
+            "Activé (défaut) : TP, stop initial et trailing sont calculés comme dans le pipeline live. "
+            "Désactivé : logique fixe historique via TP/TS/SL initial."
+        ),
+    )
+    if use_live_protection_logic:
+        st.info(
+            "Mode live-like actif : les champs `Take-profit`, `Trailing stop` et `Stop-loss initial dur` ne sont pas utilisés."
+        )
+
+    tp = float(st.session_state.get("bt_run_tp", 0.08))
+    ts = float(st.session_state.get("bt_run_ts", 0.05))
     col4, col5, col6, col7 = st.columns(4)
     with col4:
-        tp = st.number_input(
-            "Take-profit (fraction)",
-            min_value=0.0,
-            max_value=1.0,
-            value=float(st.session_state.get("bt_run_tp", 0.08)),
-            step=0.01,
-            format="%.4f",
-            key="bt_run_tp",
-            help="Exemple : 0.08 = 8%.",
-        )
+        if use_live_protection_logic:
+            st.caption("Take-profit (fraction) ignoré en mode live-like.")
+        else:
+            tp = st.number_input(
+                "Take-profit (fraction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_tp", 0.08)),
+                step=0.01,
+                format="%.4f",
+                key="bt_run_tp",
+                help="Exemple : 0.08 = 8%.",
+            )
     with col5:
-        ts = st.number_input(
-            "Trailing stop (fraction)",
-            min_value=0.0,
-            max_value=1.0,
-            value=float(st.session_state.get("bt_run_ts", 0.05)),
-            step=0.01,
-            format="%.4f",
-            key="bt_run_ts",
-            help="Exemple : 0.05 = 5%.",
-        )
+        if use_live_protection_logic:
+            st.caption("Trailing stop (fraction) ignoré en mode live-like.")
+        else:
+            ts = st.number_input(
+                "Trailing stop (fraction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_ts", 0.05)),
+                step=0.01,
+                format="%.4f",
+                key="bt_run_ts",
+                help="Exemple : 0.05 = 5%.",
+            )
     with col6:
         max_positions = st.number_input(
             "Max positions",
@@ -1662,6 +1691,7 @@ def _build_run_options() -> BacktestRunOptions:
         capital_preset_key=None if selected_run_preset_key == CAPITAL_PRESET_CUSTOM else selected_run_preset_key,
         tp=float(tp),
         ts=float(ts),
+        use_live_protection_logic=bool(use_live_protection_logic),
         max_positions=int(max_positions),
         fees=None,
         commission_bps=float(commission_bps),
@@ -1692,6 +1722,7 @@ def _build_run_options() -> BacktestRunOptions:
             engine_mode=engine_mode,
             selected_run_preset_key=selected_run_preset_key,
             auto_run_preset_key=auto_run_preset_key,
+            use_live_protection_logic=bool(use_live_protection_logic),
         ),
     )
 

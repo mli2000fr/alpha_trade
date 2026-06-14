@@ -1135,6 +1135,7 @@ class TestBacktestConfig:
         cfg = BacktestConfig(start_date=date(2020, 1, 1), end_date=date(2025, 1, 1))
         assert cfg.profit_taker_pct == 0.08
         assert cfg.trailing_stop_pct == 0.05
+        assert cfg.use_live_protection_logic is True
         assert cfg.max_positions == 20
         assert cfg.initial_equity == 100_000
         assert cfg.trading_constraints.account_type == "margin"
@@ -1183,6 +1184,37 @@ class TestBacktestConfig:
         if hasattr(final_value, "iloc"):
             final_value = final_value.iloc[0]
         assert float(final_value) > 0.0
+
+    def test_backtest_engine_live_like_protection_logic_uses_risk_fields(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [100.0, 121.0, 100.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [100.0, 99.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "risk_per_share": [10.0],
+            }
+        )
+
+        result = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        trades_df = result.trades.records_readable
+        assert not trades_df.empty
+        assert float(trades_df["Avg Exit Price"].iloc[0]) == pytest.approx(120.0, abs=0.01)
+        assert str(trades_df["Exit Reason"].iloc[0]) == "take_profit"
 
     def test_backtest_engine_uses_integer_share_sizes(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -2299,6 +2331,7 @@ class TestCLI:
         args = parser.parse_args(["run", "--start", "2020-01-01"])
         assert args.tp == 0.08
         assert args.ts == 0.05
+        assert args.use_live_protection_logic is True
         assert args.max_positions == 20
         # Phase 6.1.b — `--fees` est déprécié (None par défaut), coûts via bps.
         assert args.fees is None
@@ -2311,6 +2344,15 @@ class TestCLI:
         assert args.fidelity_baseline_id is None
         assert args.fidelity_baseline_catalog is None
         assert args.min_ml_coverage_ratio is None
+
+    def test_parse_run_accepts_fixed_protection_logic_flag(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "run", "--start", "2020-01-01", "--use-fixed-protection-logic",
+        ])
+        assert args.use_live_protection_logic is False
 
     def test_apply_pipeline_defensive_defaults_from_preset_uses_overlay_and_ml_gate_defaults(self):
         import argparse

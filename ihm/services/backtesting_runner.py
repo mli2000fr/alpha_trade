@@ -28,6 +28,7 @@ class BacktestRunOptions:
     capital_preset_key: str | None = None
     tp: float = 0.08
     ts: float = 0.05
+    use_live_protection_logic: bool = True
     max_positions: int = 20
     fees: float | None = None
     commission_bps: float | None = None
@@ -178,8 +179,6 @@ def build_backtesting_command(
             command.extend(["--end", options.end])
         command.extend([
             "--equity", str(options.equity),
-            "--tp", str(options.tp),
-            "--ts", str(options.ts),
             "--max-positions", str(options.max_positions),
             "--account-type", options.account_type,
             "--sentiment-lookback", str(options.sentiment_lookback),
@@ -197,6 +196,14 @@ def build_backtesting_command(
             "--artifacts-dir", options.artifacts_dir,
             "--score-column", options.score_column,
         ])
+        if options.use_live_protection_logic:
+            command.append("--use-live-protection-logic")
+        else:
+            command.extend([
+                "--use-fixed-protection-logic",
+                "--tp", str(options.tp),
+                "--ts", str(options.ts),
+            ])
         if options.allow_fractional_shares:
             command.append("--allow-fractional-shares")
         if options.commission_bps is not None:
@@ -236,7 +243,7 @@ def build_backtesting_command(
             command.extend(["--slippage-base-bps", str(options.slippage_base_bps)])
         if options.slippage_impact_coef:
             command.extend(["--slippage-impact-coef", str(options.slippage_impact_coef)])
-        if options.initial_stop_pct:
+        if (not options.use_live_protection_logic) and options.initial_stop_pct:
             command.extend(["--initial-stop-pct", str(options.initial_stop_pct)])
         if options.max_entry_gap_pct:
             command.extend(["--max-entry-gap-pct", str(options.max_entry_gap_pct)])
