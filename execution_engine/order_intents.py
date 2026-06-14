@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import is_dataclass, replace
 import hashlib
 from typing import cast
 import uuid
@@ -110,6 +111,128 @@ def build_entry_intents(
             submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, "buy", qty, intent_id),
         ))
     return intents
+
+
+def apply_live_leverage_to_targets(
+    *,
+    targets: list[ExecutionTarget],
+    effective_leverage: float,
+    active: bool,
+    allow_fractional_shares: bool,
+) -> tuple[list[ExecutionTarget], dict[str, float | int | bool]]:
+    """Scale explicitement les cibles live pour consommer le buying power levier.
+
+    Les targets issues de ``portfolio_targets`` sont généralement calibrées sur
+    1.0x d'equity. Quand le levier live est actif, on doit multiplier les
+    quantités / notionnels visés, sinon l'exécuteur ne fait qu'autoriser un
+    budget supérieur sans jamais l'utiliser réellement.
+    """
+    normalized_leverage = max(float(effective_leverage or 1.0), 1.0)
+    gross_before = round(
+        sum(max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0) for target in targets),
+        6,
+    )
+    notional_before = round(
+        sum(float(target.target_notional or (target.target_shares * target.entry_price) or 0.0) for target in targets),
+        2,
+    )
+    if not active or normalized_leverage <= 1.0 + 1e-12 or not targets:
+        return list(targets), {
+            "leverage_active": bool(active),
+            "effective_leverage": round(normalized_leverage, 6),
+            "target_scale": 1.0,
+            "scaled_targets": 0,
+            "gross_exposure_before": gross_before,
+            "gross_exposure_after": gross_before,
+            "total_target_notional_before": notional_before,
+            "total_target_notional_after": notional_before,
+        }
+
+    scaled_targets: list[ExecutionTarget] = []
+    scaled_count = 0
+    gross_after = 0.0
+    notional_after = 0.0
+
+    for target in targets:
+        side = _normalized_target_side(target)
+        if side in {"sell", "short"} or float(target.target_shares) <= 0.0:
+            scaled_targets.append(target)
+            gross_after += max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0)
+            notional_after += float(target.target_notional or (target.target_shares * target.entry_price) or 0.0)
+            continue
+
+        scaled_shares = normalize_share_quantity(float(target.target_shares) * normalized_leverage)
+        if not allow_fractional_shares and is_effectively_integer_quantity(target.target_shares):
+            scaled_shares = float(int(scaled_shares))
+
+        scaled_notional = scaled_shares * float(target.entry_price)
+        scaled_weight = max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0) * normalized_leverage
+        scaled_risk_budget = (
+            float(target.risk_budget_dollars) * normalized_leverage
+            if target.risk_budget_dollars is not None
+            else None
+        )
+        scaled_initial_risk = (
+            float(target.initial_risk_dollars) * normalized_leverage
+            if target.initial_risk_dollars is not None
+            else None
+        )
+        if is_dataclass(target):
+            scaled_target = replace(
+                target,
+                target_shares=scaled_shares,
+                target_weight=scaled_weight,
+                target_notional=scaled_notional,
+                risk_budget_dollars=scaled_risk_budget,
+                initial_risk_dollars=scaled_initial_risk,
+            )
+        else:
+            scaled_target = ExecutionTarget(
+                risk_run_id=str(getattr(target, "risk_run_id")),
+                trade_date=getattr(target, "trade_date"),
+                symbol=str(getattr(target, "symbol")),
+                target_shares=scaled_shares,
+                entry_price=float(getattr(target, "entry_price")),
+                target_weight=scaled_weight,
+                sector=getattr(target, "sector", None),
+                conviction_score=getattr(target, "conviction_score", None),
+                sizing_method=getattr(target, "sizing_method", None),
+                kelly_fraction=getattr(target, "kelly_fraction", None),
+                candidate_rank=getattr(target, "candidate_rank", None),
+                decision_rank=getattr(target, "decision_rank", None),
+                selector_signal_mode=getattr(target, "selector_signal_mode", None),
+                selection_explanation=getattr(target, "selection_explanation", None),
+                selector_earnings_blackout=getattr(target, "selector_earnings_blackout", None),
+                side=getattr(target, "side", None),
+                atr_20=getattr(target, "atr_20", None),
+                price_asof_date=getattr(target, "price_asof_date", None),
+                atr_asof_date=getattr(target, "atr_asof_date", None),
+                stop_price_initial=getattr(target, "stop_price_initial", None),
+                risk_per_share=getattr(target, "risk_per_share", None),
+                risk_budget_dollars=scaled_risk_budget,
+                initial_risk_dollars=scaled_initial_risk,
+                target_notional=scaled_notional,
+                previous_close=getattr(target, "previous_close", None),
+            )
+        scaled_targets.append(scaled_target)
+        if (
+            abs(float(scaled_target.target_shares) - float(target.target_shares)) > 1e-9
+            or abs(float(scaled_target.target_weight) - float(target.target_weight)) > 1e-9
+        ):
+            scaled_count += 1
+        gross_after += max(float(scaled_target.target_weight or 0.0), 0.0)
+        notional_after += float(scaled_target.target_notional or 0.0)
+
+    return scaled_targets, {
+        "leverage_active": True,
+        "effective_leverage": round(normalized_leverage, 6),
+        "target_scale": round(normalized_leverage, 6),
+        "scaled_targets": int(scaled_count),
+        "gross_exposure_before": round(gross_before, 6),
+        "gross_exposure_after": round(gross_after, 6),
+        "total_target_notional_before": round(notional_before, 2),
+        "total_target_notional_after": round(notional_after, 2),
+    }
 
 
 def _target_priority_key(target: ExecutionTarget) -> tuple[int, int, str]:

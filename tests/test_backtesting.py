@@ -1399,12 +1399,19 @@ class TestBacktestConfig:
             ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
         assert not result.trade_events_df.empty
-        assert result.trade_events_df["event_type"].tolist() == ["entry_opened", "exit_closed"]
-        assert result.trade_events_df.iloc[0]["score"] == pytest.approx(0.81)
-        assert result.trade_events_df.iloc[0]["conviction"] == pytest.approx(0.762)
-        assert result.trade_events_df.iloc[0]["entry_reason"] == "top conviction daily basket"
+        event_types = result.trade_events_df["event_type"].tolist()
+        assert event_types.count("daily_leverage_snapshot") == 3
+        trade_events_only = result.trade_events_df[result.trade_events_df["event_type"] != "daily_leverage_snapshot"].reset_index(drop=True)
+        assert trade_events_only["event_type"].tolist() == ["entry_opened", "exit_closed"]
+        leverage_events = result.trade_events_df[result.trade_events_df["event_type"] == "daily_leverage_snapshot"].reset_index(drop=True)
+        assert leverage_events["effective_leverage"].tolist() == pytest.approx([1.0, 1.0, 1.0])
+        assert leverage_events["leverage_active"].tolist() == [False, False, False]
+        assert trade_events_only.iloc[0]["score"] == pytest.approx(0.81)
+        assert trade_events_only.iloc[0]["conviction"] == pytest.approx(0.762)
+        assert trade_events_only.iloc[0]["entry_reason"] == "top conviction daily basket"
         assert result.closed_trades_df.iloc[0]["score_source"] == "final_score_sentiment"
         assert result.closed_trades_df.iloc[0]["entry_reason"] == "top conviction daily basket"
+        assert any("event_type=daily_leverage_snapshot" in record.message for record in caplog.records)
         assert any("event_type=entry_opened" in record.message for record in caplog.records)
         assert any("event_type=exit_closed" in record.message for record in caplog.records)
 
@@ -1644,7 +1651,7 @@ class TestBacktestConfig:
         assert trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
         assert trades_df.iloc[1]["entry_date"] == pd.Timestamp("2025-01-06")
 
-    def test_backtest_engine_margin_mode_uses_simulated_buying_power_for_oversized_target_weight(self):
+    def test_backtest_engine_margin_mode_stays_capped_at_100_without_explicit_leverage(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
         from backtesting.trading_constraints import TradingConstraintConfig
         from execution_engine.config import ExecutionConfig
@@ -1686,7 +1693,7 @@ class TestBacktestConfig:
         result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
         assert not result.closed_trades_df.empty
-        assert float(result.closed_trades_df.iloc[0]["quantity"]) == pytest.approx(199.0)
+        assert float(result.closed_trades_df.iloc[0]["quantity"]) == pytest.approx(99.0)
 
     def test_backtest_engine_margin_mode_respects_explicit_leverage_cap_from_execution_config(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -1738,6 +1745,59 @@ class TestBacktestConfig:
 
         assert not result.closed_trades_df.empty
         assert float(result.closed_trades_df.iloc[0]["quantity"]) == pytest.approx(149.0)
+
+    def test_backtest_engine_explicit_leverage_scales_target_gross_exposure_dynamically(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+        from execution_engine.config import ExecutionConfig, LeverageConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0], "MSFT": [100.0, 100.0, 100.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0], "MSFT": [100.0, 100.0, 100.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0], "MSFT": [100.0, 100.0, 100.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [100.0, 100.0, 100.0], "MSFT": [100.0, 100.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+                "symbol": ["AAPL", "MSFT"],
+                "selected": [True, True],
+                "rank": [1.0, 2.0],
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=2,
+                fees_pct=0.0,
+                trading_constraints=TradingConstraintConfig(account_type="margin", swing_only=False),
+                exec_config=ExecutionConfig(
+                    dry_run=True,
+                    account_type="margin",
+                    swing_only=False,
+                    simulated_account_equity=10_000.0,
+                    leverage=LeverageConfig(
+                        enabled=True,
+                        mode="regt_swing",
+                        max_leverage=1.6,
+                        dry_run_simulated_leverage=1.6,
+                        audit_log=False,
+                    ),
+                ),
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        entry_events = result.trade_events_df.loc[result.trade_events_df["event_type"] == "entry_opened"].reset_index(drop=True)
+
+        assert len(entry_events) == 2
+        assert entry_events.iloc[0]["target_weight_pct"] == pytest.approx(0.8)
+        assert entry_events.iloc[0]["gross_exposure_after_pct"] == pytest.approx(0.8)
+        assert entry_events.iloc[1]["target_weight_pct"] == pytest.approx(0.8)
+        assert entry_events.iloc[1]["gross_exposure_after_pct"] == pytest.approx(1.6)
 
     def test_backtest_engine_standard_and_swing_share_same_entry_price(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine

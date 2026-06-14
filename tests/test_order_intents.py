@@ -7,6 +7,7 @@ import pytest
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import ExecutionTarget, IntentRole
 from execution_engine.order_intents import (
+    apply_live_leverage_to_targets,
     build_oco_protection_payload,
     build_entry_intents,
     build_initial_stop_intent,
@@ -60,6 +61,25 @@ class TestBuildEntryIntents:
         cfg = ExecutionConfig()
         intents = build_entry_intents([_target("AAPL"), _target("MSFT")], cfg, "run1")
         assert intents[0].idempotency_key != intents[1].idempotency_key
+
+    def test_apply_live_leverage_to_targets_scales_qty_weight_and_notional(self) -> None:
+        scaled_targets, summary = apply_live_leverage_to_targets(
+            targets=[_target(shares=100.0, price=150.0)],
+            effective_leverage=1.5,
+            active=True,
+            allow_fractional_shares=False,
+        )
+
+        assert len(scaled_targets) == 1
+        assert scaled_targets[0].target_shares == pytest.approx(150.0)
+        assert scaled_targets[0].target_weight == pytest.approx(0.075)
+        assert scaled_targets[0].target_notional == pytest.approx(22_500.0)
+        assert scaled_targets[0].risk_budget_dollars == pytest.approx(1_500.0)
+        assert scaled_targets[0].initial_risk_dollars == pytest.approx(1_500.0)
+        assert summary["scaled_targets"] == 1
+        assert summary["target_scale"] == pytest.approx(1.5)
+        assert summary["gross_exposure_before"] == pytest.approx(0.05)
+        assert summary["gross_exposure_after"] == pytest.approx(0.075)
 
     def test_submission_key_unique_per_exec_run_while_business_key_stays_stable(self) -> None:
         cfg = ExecutionConfig()

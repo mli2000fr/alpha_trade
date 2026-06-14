@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from execution_engine import executor as executor_module
-from execution_engine.config import ExecutionConfig
+from execution_engine.config import ExecutionConfig, LeverageConfig
 from execution_engine.executor import ProductionExecutor, _AccountConstraintState
 from execution_engine.models import BrokerOrder, EventType, OrderIntent, OrderStatus
 
@@ -393,5 +393,87 @@ def test_execute_run_applies_live_gross_exposure_guard_before_building_intents(m
     assert metrics["targets_blocked_by_regime_guards"] == 1
     assert metrics["skipped_by_regime_max_gross_exposure"] == 1
     assert built_targets == [["AAPL"]]
+
+
+def test_execute_run_scales_targets_with_effective_leverage_before_building_intents(monkeypatch) -> None:
+    config = ExecutionConfig(
+        dry_run=True,
+        allow_outside_rth=True,
+        account_type="margin",
+        inter_order_delay_ms=0,
+        poll_interval_seconds=0.01,
+        leverage=LeverageConfig(
+            enabled=True,
+            mode="regt_swing",
+            max_leverage=1.5,
+            dry_run_simulated_leverage=1.5,
+            audit_log=False,
+        ),
+    )
+    repo = MagicMock()
+    repo.acquire_execution_lock.return_value = True
+    repo.load_portfolio_targets.return_value = [
+        SimpleNamespace(
+            symbol="AAPL",
+            sector="Tech",
+            risk_run_id="risk-1",
+            trade_date=date(2026, 5, 1),
+            target_notional=1_500.0,
+            target_shares=10,
+            entry_price=150.0,
+            initial_risk_dollars=50.0,
+            risk_budget_dollars=100.0,
+            target_weight=0.10,
+            candidate_rank=1,
+            stop_price_initial=145.0,
+            risk_per_share=5.0,
+            price_asof_date=date(2026, 5, 1),
+        )
+    ]
+    broker = MagicMock()
+    broker.get_account_snapshot.return_value = {
+        "equity": 100_000.0,
+        "cash": 100_000.0,
+        "buying_power": 200_000.0,
+        "regt_buying_power": 150_000.0,
+        "non_marginable_buying_power": 100_000.0,
+        "daytrade_count": 0,
+    }
+    oco = MagicMock()
+
+    captured_targets: list[tuple[float, float, float | None]] = []
+
+    def _capture_build_entry_intents(targets, cfg, exec_run_id):
+        captured_targets.extend(
+            (float(target.target_shares), float(target.target_weight), target.target_notional)
+            for target in targets
+        )
+        return []
+
+    monkeypatch.setattr(executor_module, "build_entry_intents", _capture_build_entry_intents)
+
+    executor = ProductionExecutor(config, repo, broker, oco)
+
+    metrics = executor.execute_run(risk_run_id="risk-1", trade_date=date(2026, 5, 1))
+
+    assert metrics["status"] == "COMPLETED"
+    assert metrics["effective_leverage"] == pytest.approx(1.5)
+    assert metrics["leverage_target_scale"] == pytest.approx(1.5)
+    assert metrics["targets_scaled_for_leverage"] == 1
+    assert metrics["gross_exposure_before_leverage"] == pytest.approx(0.1)
+    assert metrics["gross_exposure_after_leverage"] == pytest.approx(0.15)
+    assert metrics["total_target_notional_before_leverage"] == pytest.approx(1_500.0)
+    assert metrics["total_target_notional_after_leverage"] == pytest.approx(2_250.0)
+    assert metrics["total_target_notional"] == pytest.approx(2_250.0)
+    assert len(captured_targets) == 1
+    assert captured_targets[0][0] == pytest.approx(15.0)
+    assert captured_targets[0][1] == pytest.approx(0.15)
+    assert captured_targets[0][2] == pytest.approx(2_250.0)
+    leverage_events = [
+        call.args[0]
+        for call in repo.insert_execution_event.call_args_list
+        if call.args and isinstance(call.args[0], dict) and call.args[0].get("event_type") == EventType.LEVERAGE_EVALUATED
+    ]
+    assert leverage_events
 
 

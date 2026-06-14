@@ -211,6 +211,8 @@ def build_execution_run_summary(
             "active": bool(metrics.get("leverage_active", False)),
             "configured_max": round(float(metrics.get("leverage_configured_max", 1.0) or 1.0), 4),
             "effective": round(float(metrics.get("effective_leverage", 1.0) or 1.0), 4),
+            "target_scale": round(float(metrics.get("leverage_target_scale", 1.0) or 1.0), 4),
+            "scaled_targets": int(metrics.get("targets_scaled_for_leverage", 0) or 0),
             "target_budget": round(float(metrics.get("leverage_target_budget", 0.0) or 0.0), 2),
             "broker_buying_power": (
                 round(float(metrics.get("leverage_broker_buying_power") or 0.0), 2)
@@ -218,6 +220,10 @@ def build_execution_run_summary(
                 else None
             ),
             "buying_power_field": str(metrics.get("leverage_buying_power_field", "") or "") or None,
+            "gross_exposure_before": round(float(metrics.get("gross_exposure_before_leverage", 0.0) or 0.0), 6),
+            "gross_exposure_after": round(float(metrics.get("gross_exposure_after_leverage", 0.0) or 0.0), 6),
+            "total_target_notional_before": round(float(metrics.get("total_target_notional_before_leverage", 0.0) or 0.0), 2),
+            "total_target_notional_after": round(float(metrics.get("total_target_notional_after_leverage", 0.0) or 0.0), 2),
             "reason": str(metrics.get("leverage_reason", "") or "") or None,
         },
         "account_type": account_type,

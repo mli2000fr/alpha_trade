@@ -190,6 +190,15 @@ class _RunState:
     breaker_points: list[dict[str, object]] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class _DailyLeverageState:
+    feature_enabled: bool
+    active: bool
+    effective_leverage: float
+    configured_max: float
+    reason: str | None = None
+
+
 class _ReadableTradesAccessor:
     """Façade minimale proche de vectorbt.trades pour les runs contraints."""
 
@@ -316,35 +325,81 @@ class BacktestEngine:
             return normalized
         return float(int(normalized))
 
-    def _resolve_margin_buying_power_multiplier(self, current_equity: float) -> float:
-        """Résout le multiplicateur de buying power margin en backtest.
-
-        Cohérence recherchée avec le monde exécution :
-        - sans `exec_config`, on reste en comportement backtest historique (1.0x) ;
-        - avec `exec_config.account_type=margin`, on applique le multiplicateur
-          simulé (`simulated_margin_buying_power_multiplier`) ;
-        - si la politique explicite `leverage` est active, on borne ce
-          multiplicateur avec `dry_run_simulated_leverage` et `max_leverage`.
-        """
+    def _resolve_daily_leverage_state(self, current_equity: float) -> _DailyLeverageState:
         exec_cfg = self.config.exec_config
-        if exec_cfg is None or str(exec_cfg.account_type).strip().lower() != "margin":
-            return 1.0
+        if exec_cfg is None:
+            return _DailyLeverageState(
+                feature_enabled=False,
+                active=False,
+                effective_leverage=1.0,
+                configured_max=1.0,
+                reason="missing_exec_config",
+            )
 
-        multiplier = max(float(exec_cfg.simulated_margin_buying_power_multiplier), 1.0)
         leverage_cfg = exec_cfg.leverage
-        if not leverage_cfg.enabled or leverage_cfg.mode == "disabled" or leverage_cfg.max_leverage <= 1.0:
-            return multiplier
+        feature_enabled = bool(leverage_cfg.enabled and leverage_cfg.mode != "disabled")
+        configured_max = float(leverage_cfg.capped_live_max_leverage)
+        if str(exec_cfg.account_type).strip().lower() != "margin":
+            return _DailyLeverageState(
+                feature_enabled=feature_enabled,
+                active=False,
+                effective_leverage=1.0,
+                configured_max=configured_max,
+                reason="cash_account",
+            )
+        if not feature_enabled or leverage_cfg.max_leverage <= 1.0:
+            return _DailyLeverageState(
+                feature_enabled=feature_enabled,
+                active=False,
+                effective_leverage=1.0,
+                configured_max=configured_max,
+                reason="feature_disabled",
+            )
         if current_equity < float(leverage_cfg.min_equity_usd):
-            return multiplier
+            return _DailyLeverageState(
+                feature_enabled=feature_enabled,
+                active=False,
+                effective_leverage=1.0,
+                configured_max=configured_max,
+                reason="equity_below_minimum",
+            )
         if leverage_cfg.only_in_entry_mode == "normal" and exec_cfg.entry_mode != "normal":
-            return multiplier
+            return _DailyLeverageState(
+                feature_enabled=feature_enabled,
+                active=False,
+                effective_leverage=1.0,
+                configured_max=configured_max,
+                reason="entry_mode_not_normal",
+            )
         if leverage_cfg.disable_in_capital_preservation and exec_cfg.entry_mode == "capital_preservation":
-            return multiplier
-        return min(
-            multiplier,
-            float(leverage_cfg.dry_run_simulated_leverage),
-            float(leverage_cfg.capped_live_max_leverage),
+            return _DailyLeverageState(
+                feature_enabled=feature_enabled,
+                active=False,
+                effective_leverage=1.0,
+                configured_max=configured_max,
+                reason="capital_preservation",
+            )
+        return _DailyLeverageState(
+            feature_enabled=feature_enabled,
+            active=True,
+            effective_leverage=min(
+                max(float(exec_cfg.simulated_margin_buying_power_multiplier), 1.0),
+                float(leverage_cfg.dry_run_simulated_leverage),
+                configured_max,
+            ),
+            configured_max=configured_max,
+            reason=None,
         )
+
+    def _resolve_margin_buying_power_multiplier(self, current_equity: float) -> float:
+        """Résout le multiplicateur de buying power/gross exposure en backtest.
+
+        En backtest, le simple fait d'être sur un compte ``margin`` ne suffit pas
+        à autoriser une exposition > 100 % : il faut que la politique explicite
+        ``leverage`` soit active et passe ses garde-fous runtime. Sinon on reste
+        volontairement à 1.0x.
+        """
+        return float(self._resolve_daily_leverage_state(current_equity).effective_leverage)
 
     def _resolve_available_entry_budget(
         self,
@@ -614,6 +669,31 @@ class BacktestEngine:
             entries_allowed_by_regime = cfg.risk_overlay.regime_filter.is_entry_allowed(
                 cfg.benchmark_close, trade_day,
             )
+            current_gross_notional = max(current_market_value, 0.0)
+            leverage_state = self._resolve_daily_leverage_state(float(current_equity))
+            self._record_trade_event(
+                state,
+                "daily_leverage_snapshot",
+                event_date=trade_day,
+                account_type=str(constraints.account_type),
+                entry_mode=(cfg.exec_config.entry_mode if cfg.exec_config is not None else None),
+                leverage_feature_enabled=leverage_state.feature_enabled,
+                leverage_active=leverage_state.active,
+                leverage_configured_max=leverage_state.configured_max,
+                effective_leverage=leverage_state.effective_leverage,
+                leverage_reason=leverage_state.reason,
+                current_equity=current_equity,
+                settled_cash=state.settled_cash,
+                unsettled_cash=state.unsettled_cash,
+                current_gross_notional=current_gross_notional,
+                gross_exposure_before_pct=(current_gross_notional / current_equity) if current_equity > 0 else 0.0,
+                available_entry_budget=self._resolve_available_entry_budget(
+                    constraints=constraints,
+                    settled_cash=state.settled_cash,
+                    current_equity=current_equity,
+                    current_gross_notional=current_gross_notional,
+                ),
+            )
 
             day_signals = signals_by_day.get(trade_day)
             candidate_rows = self._select_candidate_rows(
@@ -810,7 +890,7 @@ class BacktestEngine:
                     state.positions, close, trade_day, sector_map, current_equity
                 )
             )
-        gross_exposure_limit = self._resolve_max_gross_exposure_limit()
+        gross_exposure_limit = self._resolve_max_gross_exposure_limit(float(current_equity))
         current_gross_notional = max(self._mark_to_market(state.positions, close, trade_day), 0.0)
 
         for candidate_pos, row in enumerate(candidate_rows):
@@ -879,6 +959,8 @@ class BacktestEngine:
                 target_weight_pct = float(np.clip(target_weight_pct * vol_target_scaler, 0.0, 1.0))
             if drawdown_allocation_scale < 1.0:
                 target_weight_pct = float(np.clip(target_weight_pct * drawdown_allocation_scale, 0.0, 1.0))
+            if quantity_override is None:
+                target_weight_pct *= self._resolve_margin_buying_power_multiplier(float(current_equity))
 
             sector = (
                 str(row["sector"])
@@ -1443,17 +1525,20 @@ class BacktestEngine:
             )
         )
 
-    def _resolve_max_gross_exposure_limit(self) -> float | None:
-        limit: float | None = None
+    def _resolve_max_gross_exposure_limit(self, current_equity: float) -> float | None:
+        leverage_limit = self._resolve_margin_buying_power_multiplier(float(current_equity))
+        limit: float | None = leverage_limit if leverage_limit > 1.0 else None
         if self.config.risk_config is not None:
             risk_limit = float(self.config.risk_config.max_gross_exposure)
             if 0 < risk_limit < 1.0:
                 limit = risk_limit
+            elif leverage_limit > 1.0 and risk_limit > 1.0:
+                limit = min(limit, risk_limit) if limit is not None else risk_limit
         if self.config.exec_config is not None:
             exec_limit = getattr(self.config.exec_config, "regime_max_gross_exposure", None)
             if exec_limit is not None:
                 exec_limit = float(exec_limit)
-                if 0 < exec_limit <= 1.0:
+                if exec_limit > 0:
                     limit = min(limit, exec_limit) if limit is not None else exec_limit
         return limit
 

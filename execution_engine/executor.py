@@ -54,6 +54,7 @@ from execution_engine.models import (
 )
 from execution_engine.oco_manager import OcoManager
 from execution_engine.order_intents import (
+    apply_live_leverage_to_targets,
     build_entry_intents,
     filter_targets_by_live_regime_guards,
     intent_to_alpaca_payload,
@@ -212,79 +213,7 @@ class ProductionExecutor:
                         enriched_targets.append(replace(target, previous_close=float(previous_close)))
                     targets = enriched_targets
             loaded_targets_count = len(targets)
-            fractionable_by_symbol: dict[str, bool] = {}
-            if self._cfg.allow_fractional_shares and targets:
-                try:
-                    fractionable_by_symbol = self._repo.load_fractionable_asset_map(
-                        [str(target.symbol).strip().upper() for target in targets]
-                    )
-                except Exception:
-                    LOGGER.debug("Impossible de charger les métadonnées fractionable pour les garde-fous live.", exc_info=True)
-            filtered_targets, blocked_by_regime_guards = filter_targets_by_live_regime_guards(
-                targets=targets,
-                config=self._cfg,
-                fractionable_by_symbol=fractionable_by_symbol,
-            )
-            if blocked_by_regime_guards:
-                metrics["targets_loaded"] = loaded_targets_count
-                metrics["targets_blocked_by_regime_guards"] = len(blocked_by_regime_guards)
-                for blocked in blocked_by_regime_guards:
-                    reason = str(blocked.get("reason") or "regime_guard")
-                    metrics[f"skipped_by_{reason}"] = int(metrics.get(f"skipped_by_{reason}", 0)) + 1
-                    events.append(make_event(
-                        exec_run_id,
-                        EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT,
-                        f"SkippedByRegimeGuard[{reason}]: {blocked.get('symbol')}",
-                        symbol=str(blocked.get("symbol") or "") or None,
-                        payload=dict(blocked),
-                    ))
-                targets = filtered_targets
-            metrics["targets"] = len(targets)
-            metrics["total_target_notional"] = round(sum(float(t.target_notional or (t.target_shares * t.entry_price)) for t in targets), 2)
-            metrics["total_initial_risk_dollars"] = round(sum(float(t.initial_risk_dollars or 0.0) for t in targets), 2)
-            metrics["total_risk_budget_dollars"] = round(sum(float(t.risk_budget_dollars or 0.0) for t in targets), 2)
-            metrics["max_target_weight"] = round(max((float(t.target_weight) for t in targets), default=0.0), 4)
-            metrics["targets_with_risk_controls"] = sum(1 for t in targets if t.stop_price_initial is not None or (t.risk_per_share or 0.0) > 0)
-            metrics["targets_with_broker_initial_stop"] = sum(
-                1 for t in targets
-                if resolve_initial_stop_price(float(t.entry_price), t) is not None
-            )
-            metrics["selector_signal_mode_counts"] = dict(
-                Counter(
-                    str(getattr(target, "selector_signal_mode", "") or "").strip() or "unknown"
-                    for target in targets
-                )
-            )
-            metrics["selector_rank_available"] = sum(
-                1 for target in targets if getattr(target, "candidate_rank", None) is not None
-            )
-            metrics["selector_rank_coverage_pct"] = round(
-                (float(metrics["selector_rank_available"]) / float(len(targets))) * 100.0,
-                2,
-            ) if targets else 0.0
-            metrics["selector_earnings_blackout_targets"] = sum(
-                1
-                for target in targets
-                if int(getattr(target, "selector_earnings_blackout", 0) or 0) > 0
-            )
-            metrics["targets_eligible_for_dynamic_trailing"] = int(metrics["targets_with_broker_initial_stop"]) if self._cfg.enable_dynamic_trailing_transition else 0
-            metrics["targets_with_trailing_fallback"] = max(
-                len(targets) - int(metrics["targets_with_broker_initial_stop"]),
-                0,
-            )
-            metrics["stale_price_targets"] = sum(
-                1 for t in targets
-                if t.price_asof_date is not None and actual_trade_date is not None and t.price_asof_date < actual_trade_date
-            )
-            target_by_symbol = {t.symbol: t for t in targets}
             target_by_intent_id: dict[str, Any] = {}
-            self._emit_progress(
-                metrics,
-                current=len(targets),
-                total=max(len(targets), 1),
-                label="⚙️ Progression execution — pré-check & chargement des cibles",
-                phase="precheck",
-            )
 
             self._repo.insert_execution_run(
                 exec_run_id=exec_run_id,
@@ -297,14 +226,6 @@ class ProductionExecutor:
                 execution_profile=self._cfg.execution_profile,
                 submission_window=self._cfg.submission_window,
             )
-            try:
-                self._repo.snapshot_execution_targets(
-                    exec_run_id=exec_run_id,
-                    account_id=resolved_account_id,
-                    targets=targets,
-                )
-            except Exception as exc:
-                LOGGER.debug("Target snapshot skipped: %s", exc)
 
             # Circuit breaker check (injection)
             if self._circuit_breaker is not None:
@@ -357,15 +278,6 @@ class ProductionExecutor:
                         return metrics
                 except Exception:
                     LOGGER.warning("Cannot check market clock — proceeding")
-
-            events.append(make_event(exec_run_id, EventType.PRECHECK_OK, f"{len(targets)} targets loaded"))
-            if metrics["stale_price_targets"] > 0:
-                events.append(make_event(
-                    exec_run_id,
-                    EventType.PRECHECK_OK,
-                    f"WARNING: {metrics['stale_price_targets']} targets utilisent un price_asof_date antérieur au trade_date",
-                    payload={"stale_price_targets": metrics["stale_price_targets"]},
-                ))
 
             try:
                 account_state = self._build_account_constraint_state()
@@ -438,6 +350,131 @@ class ProductionExecutor:
             metrics["leverage_buying_power_field"] = account_state.leverage_buying_power_field
             metrics["leverage_reason"] = account_state.leverage_reason
             self._snapshot_account_constraints(exec_run_id, account_state)
+
+            targets, leverage_target_summary = apply_live_leverage_to_targets(
+                targets=targets,
+                effective_leverage=account_state.effective_leverage,
+                active=account_state.leverage_active,
+                allow_fractional_shares=self._cfg.allow_fractional_shares,
+            )
+            metrics["leverage_target_scale"] = round(float(leverage_target_summary["target_scale"]), 4)
+            metrics["targets_scaled_for_leverage"] = int(leverage_target_summary["scaled_targets"])
+            metrics["gross_exposure_before_leverage"] = round(float(leverage_target_summary["gross_exposure_before"]), 6)
+            metrics["gross_exposure_after_leverage"] = round(float(leverage_target_summary["gross_exposure_after"]), 6)
+            metrics["total_target_notional_before_leverage"] = round(float(leverage_target_summary["total_target_notional_before"]), 2)
+            metrics["total_target_notional_after_leverage"] = round(float(leverage_target_summary["total_target_notional_after"]), 2)
+            events.append(make_event(
+                exec_run_id,
+                EventType.LEVERAGE_EVALUATED,
+                (
+                    f"Leverage {'applied' if account_state.leverage_active else 'inactive'}: "
+                    f"effective={account_state.effective_leverage:.2f}x "
+                    f"target_scale={float(leverage_target_summary['target_scale']):.2f}x "
+                    f"scaled_targets={int(leverage_target_summary['scaled_targets'])}"
+                ),
+                payload={
+                    "leverage_feature_enabled": account_state.leverage_feature_enabled,
+                    "leverage_active": account_state.leverage_active,
+                    "effective_leverage": account_state.effective_leverage,
+                    "leverage_configured_max": account_state.leverage_configured_max,
+                    "leverage_target_scale": leverage_target_summary["target_scale"],
+                    "scaled_targets": leverage_target_summary["scaled_targets"],
+                    "gross_exposure_before": leverage_target_summary["gross_exposure_before"],
+                    "gross_exposure_after": leverage_target_summary["gross_exposure_after"],
+                    "total_target_notional_before": leverage_target_summary["total_target_notional_before"],
+                    "total_target_notional_after": leverage_target_summary["total_target_notional_after"],
+                    "leverage_reason": account_state.leverage_reason,
+                },
+            ))
+            fractionable_by_symbol: dict[str, bool] = {}
+            if self._cfg.allow_fractional_shares and targets:
+                try:
+                    fractionable_by_symbol = self._repo.load_fractionable_asset_map(
+                        [str(target.symbol).strip().upper() for target in targets]
+                    )
+                except Exception:
+                    LOGGER.debug("Impossible de charger les métadonnées fractionable pour les garde-fous live.", exc_info=True)
+            filtered_targets, blocked_by_regime_guards = filter_targets_by_live_regime_guards(
+                targets=targets,
+                config=self._cfg,
+                fractionable_by_symbol=fractionable_by_symbol,
+            )
+            if blocked_by_regime_guards:
+                metrics["targets_loaded"] = loaded_targets_count
+                metrics["targets_blocked_by_regime_guards"] = len(blocked_by_regime_guards)
+                for blocked in blocked_by_regime_guards:
+                    reason = str(blocked.get("reason") or "regime_guard")
+                    metrics[f"skipped_by_{reason}"] = int(metrics.get(f"skipped_by_{reason}", 0)) + 1
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT,
+                        f"SkippedByRegimeGuard[{reason}]: {blocked.get('symbol')}",
+                        symbol=str(blocked.get("symbol") or "") or None,
+                        payload=dict(blocked),
+                    ))
+                targets = filtered_targets
+            metrics.setdefault("targets_loaded", loaded_targets_count)
+            metrics["targets"] = len(targets)
+            metrics["total_target_notional"] = round(sum(float(t.target_notional or (t.target_shares * t.entry_price)) for t in targets), 2)
+            metrics["total_initial_risk_dollars"] = round(sum(float(t.initial_risk_dollars or 0.0) for t in targets), 2)
+            metrics["total_risk_budget_dollars"] = round(sum(float(t.risk_budget_dollars or 0.0) for t in targets), 2)
+            metrics["max_target_weight"] = round(max((float(t.target_weight) for t in targets), default=0.0), 4)
+            metrics["targets_with_risk_controls"] = sum(1 for t in targets if t.stop_price_initial is not None or (t.risk_per_share or 0.0) > 0)
+            metrics["targets_with_broker_initial_stop"] = sum(
+                1 for t in targets
+                if resolve_initial_stop_price(float(t.entry_price), t) is not None
+            )
+            metrics["selector_signal_mode_counts"] = dict(
+                Counter(
+                    str(getattr(target, "selector_signal_mode", "") or "").strip() or "unknown"
+                    for target in targets
+                )
+            )
+            metrics["selector_rank_available"] = sum(
+                1 for target in targets if getattr(target, "candidate_rank", None) is not None
+            )
+            metrics["selector_rank_coverage_pct"] = round(
+                (float(metrics["selector_rank_available"]) / float(len(targets))) * 100.0,
+                2,
+            ) if targets else 0.0
+            metrics["selector_earnings_blackout_targets"] = sum(
+                1
+                for target in targets
+                if int(getattr(target, "selector_earnings_blackout", 0) or 0) > 0
+            )
+            metrics["targets_eligible_for_dynamic_trailing"] = int(metrics["targets_with_broker_initial_stop"]) if self._cfg.enable_dynamic_trailing_transition else 0
+            metrics["targets_with_trailing_fallback"] = max(
+                len(targets) - int(metrics["targets_with_broker_initial_stop"]),
+                0,
+            )
+            metrics["stale_price_targets"] = sum(
+                1 for t in targets
+                if t.price_asof_date is not None and actual_trade_date is not None and t.price_asof_date < actual_trade_date
+            )
+            target_by_symbol = {t.symbol: t for t in targets}
+            events.append(make_event(exec_run_id, EventType.PRECHECK_OK, f"{len(targets)} targets loaded"))
+            if metrics["stale_price_targets"] > 0:
+                events.append(make_event(
+                    exec_run_id,
+                    EventType.PRECHECK_OK,
+                    f"WARNING: {metrics['stale_price_targets']} targets utilisent un price_asof_date antérieur au trade_date",
+                    payload={"stale_price_targets": metrics["stale_price_targets"]},
+                ))
+            self._emit_progress(
+                metrics,
+                current=len(targets),
+                total=max(len(targets), 1),
+                label="⚙️ Progression execution — pré-check & chargement des cibles",
+                phase="precheck",
+            )
+            try:
+                self._repo.snapshot_execution_targets(
+                    exec_run_id=exec_run_id,
+                    account_id=resolved_account_id,
+                    targets=targets,
+                )
+            except Exception as exc:
+                LOGGER.debug("Target snapshot skipped: %s", exc)
 
             # Phase 2b — Corporate actions : alerter sur splits/dividendes pending
             try:
