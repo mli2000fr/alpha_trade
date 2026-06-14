@@ -66,6 +66,7 @@ BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature
 BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
 BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
+RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     "pipeline_live_like": {
@@ -363,6 +364,10 @@ def _should_preload_runtime_details(status: str) -> bool:
 
 def _should_auto_refresh_runtime_center(*run_groups: list[dict[str, object]]) -> bool:
     return any(bool(group) for group in run_groups)
+
+
+def _is_runtime_center_auto_update_enabled() -> bool:
+    return bool(st.session_state.get(RUNTIME_CENTER_AUTO_UPDATE_KEY, True))
 
 
 def _render_log_block(title: str, content: str, *, key: str, expanded: bool = False) -> None:
@@ -1180,14 +1185,14 @@ def _build_run_options() -> BacktestRunOptions:
     with col1:
         start = st.text_input(
             "Date de début",
-            value=cast(str, st.session_state.get("bt_run_start", "2024-01-01")),
+            value=cast(str, st.session_state.get("bt_run_start", "2020-01-01")),
             key="bt_run_start",
             help="Format YYYY-MM-DD. C'est la borne basse du backtest.",
         )
     with col2:
         end = st.text_input(
             "Date de fin",
-            value=cast(str, st.session_state.get("bt_run_end", "2024-01-31")),
+            value=cast(str, st.session_state.get("bt_run_end", "2025-12-31")),
             key="bt_run_end",
             help="Format YYYY-MM-DD. Laissez une date future si vous voulez aller jusqu'au dernier bar dispo.",
         )
@@ -1709,14 +1714,14 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     with col1:
         start = st.text_input(
             "Date de début du backfill",
-            value=cast(str, st.session_state.get("bt_backfill_start", "2024-01-01")),
+            value=cast(str, st.session_state.get("bt_backfill_start", "2020-01-01")),
             key="bt_backfill_start",
             help="Première séance à reconstruire au format YYYY-MM-DD.",
         )
     with col2:
         end = st.text_input(
             "Date de fin du backfill",
-            value=cast(str, st.session_state.get("bt_backfill_end", "2024-01-31")),
+            value=cast(str, st.session_state.get("bt_backfill_end", "2025-12-31")),
             key="bt_backfill_end",
             help="Laissez vide pour laisser le service résoudre la borne utile automatiquement.",
         )
@@ -1831,13 +1836,13 @@ def _build_diagnose_screener_options() -> DiagnoseScreenerOptions:
     with col1:
         start = st.text_input(
             "Date de début diagnostic",
-            value=cast(str, st.session_state.get("bt_diag_start", "2024-01-01")),
+            value=cast(str, st.session_state.get("bt_diag_start", "2020-01-01")),
             key="bt_diag_start",
         )
     with col2:
         end = st.text_input(
             "Date de fin diagnostic",
-            value=cast(str, st.session_state.get("bt_diag_end", "2024-01-31")),
+            value=cast(str, st.session_state.get("bt_diag_end", "2025-12-31")),
             key="bt_diag_end",
         )
     with col3:
@@ -3552,12 +3557,27 @@ def _render_screener_artifact_summary(run_record: dict[str, object]) -> bool:
 
 def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
     active_runs, all_runs = _merge_runs()
+    has_active_runs = bool(active_runs)
 
     st.subheader("🖥️ Runs & logs backtesting")
+    auto_update_enabled = st.toggle(
+        "Auto update",
+        value=_is_runtime_center_auto_update_enabled(),
+        key=RUNTIME_CENTER_AUTO_UPDATE_KEY,
+        help=(
+            "Active ou désactive le rafraîchissement automatique toutes les 2 secondes "
+            "quand au moins un run backtest est en cours."
+        ),
+    )
     if auto_refresh_enabled:
         st.caption(
             "Rafraîchissement automatique toutes les 2 secondes car au moins un run est actif. "
             "Les commandes continuent en arrière-plan même si vous changez de page."
+        )
+    elif has_active_runs and not auto_update_enabled:
+        st.caption(
+            "Au moins un run est actif, mais l'auto-update est désactivé. "
+            "Utilisez `Rafraîchir maintenant` pour relire l'état manuellement."
         )
     else:
         st.caption(
@@ -4034,7 +4054,7 @@ def render() -> None:
         active_calibrate_runs,
         active_walkfwd_runs,
     )
-    if has_any_active_runs:
+    if has_any_active_runs and _is_runtime_center_auto_update_enabled():
         _render_runtime_center_live()
     else:
         _render_runtime_center_static()

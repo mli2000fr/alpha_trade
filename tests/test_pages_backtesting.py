@@ -870,3 +870,15 @@ def test_should_auto_refresh_runtime_center_only_when_some_run_group_is_active()
     assert backtesting._should_auto_refresh_runtime_center([{"run_id": "r1"}], [], []) is True
 
 
+def test_is_runtime_center_auto_update_enabled_defaults_to_true() -> None:
+    backtesting.st.session_state.pop(backtesting.RUNTIME_CENTER_AUTO_UPDATE_KEY, None)
+
+    assert backtesting._is_runtime_center_auto_update_enabled() is True
+
+
+def test_is_runtime_center_auto_update_enabled_reads_session_preference() -> None:
+    backtesting.st.session_state[backtesting.RUNTIME_CENTER_AUTO_UPDATE_KEY] = False
+
+    assert backtesting._is_runtime_center_auto_update_enabled() is False
+
+

@@ -1,0 +1,6 @@
+F:\projets\backtesting\execution_lifecycle_replay.py:274: FutureWarning: The behavior of DataFrame concatenation with empty or all-NA entries is deprecated. In a future version, this will no longer exclude empty or all-NA columns when determining the result dtypes. To retain the old behavior, exclude the relevant entries before the concat operation.
+  order_lifecycle_frame = pd.concat([order_lifecycle_frame, new_row_df.loc[:, order_lifecycle_frame.columns if not order_lifecycle_frame.empty else list(new_child_row.keys())]], ignore_index=True)
+F:\projets\backtesting\report.py:194: FutureWarning: Downcasting object dtype arrays on .fillna, .ffill, .bfill is deprecated and will change in a future version. Call result.infer_objects(copy=False) instead. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  ).fillna(False).infer_objects(copy=False)
+F:\projets\backtesting\report.py:194: FutureWarning: Downcasting object dtype arrays on .fillna, .ffill, .bfill is deprecated and will change in a future version. Call result.infer_objects(copy=False) instead. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  ).fillna(False).infer_objects(copy=False)
