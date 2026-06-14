@@ -44,6 +44,10 @@ class BacktestConfig:
     profit_taker_pct: float = 0.08
     trailing_stop_pct: float = 0.05
     use_live_protection_logic: bool = True
+    time_stop_enabled: bool = True
+    time_stop_max_business_days: int = 8
+    time_stop_min_tp_progress_ratio: float = 0.5
+    time_stop_near_zero_return_pct: float = 0.005
     max_positions: int = 20
 
     # Frais de transaction (Phase 6.1.b)
@@ -73,6 +77,16 @@ class BacktestConfig:
         if self.exec_config:
             self.profit_taker_pct = self.exec_config.profit_taker_pct
             self.trailing_stop_pct = self.exec_config.trailing_stop_pct
+            self.time_stop_enabled = self.exec_config.time_stop.enabled
+            self.time_stop_max_business_days = self.exec_config.time_stop.max_business_days
+            self.time_stop_min_tp_progress_ratio = self.exec_config.time_stop.min_tp_progress_ratio
+            self.time_stop_near_zero_return_pct = self.exec_config.time_stop.near_zero_return_pct
+        if self.time_stop_max_business_days < 1:
+            raise ValueError("time_stop_max_business_days doit être >= 1.")
+        if not (0.0 <= self.time_stop_min_tp_progress_ratio <= 1.0):
+            raise ValueError("time_stop_min_tp_progress_ratio doit être dans [0, 1].")
+        if not (0.0 <= self.time_stop_near_zero_return_pct < 1.0):
+            raise ValueError("time_stop_near_zero_return_pct doit être dans [0, 1[.")
         normalized_replay_mode = str(self.execution_replay_mode or "off").strip().lower()
         if normalized_replay_mode not in {"off", "execution_replay"}:
             raise ValueError(
@@ -111,6 +125,7 @@ class BacktestDiagnostics:
     initial_stop_exits: int = 0
     take_profit_exits: int = 0
     trailing_stop_exits: int = 0
+    time_stop_exits: int = 0
     # Phase C (refactor) — diagnostics risk overlay.
     blocked_by_regime: int = 0
     blocked_by_sectoral_cap: int = 0
@@ -129,6 +144,7 @@ class BacktestDiagnostics:
             "initial_stop_exits": self.initial_stop_exits,
             "take_profit_exits": self.take_profit_exits,
             "trailing_stop_exits": self.trailing_stop_exits,
+            "time_stop_exits": self.time_stop_exits,
             "blocked_by_regime": self.blocked_by_regime,
             "blocked_by_sectoral_cap": self.blocked_by_sectoral_cap,
             "blocked_by_gross_exposure": self.blocked_by_gross_exposure,
@@ -726,6 +742,7 @@ class BacktestEngine:
 
             self._try_close_positions(
                 state=state,
+                close=close,
                 high=high,
                 low=low,
                 trade_day=trade_day,
@@ -1217,6 +1234,7 @@ class BacktestEngine:
         self,
         *,
         state: _RunState,
+        close: pd.DataFrame,
         high: pd.DataFrame,
         low: pd.DataFrame,
         trade_day: pd.Timestamp,
@@ -1351,10 +1369,40 @@ class BacktestEngine:
                     rng=rng,
                 )
                 if not resolution.triggered:
-                    position.peak_high = peak_high
-                    continue
-                exit_price = resolution.exit_price
-                exit_reason = resolution.exit_reason
+                    if self.config.time_stop_enabled:
+                        close_price = float(close.at[trade_day, symbol])
+                        if np.isfinite(close_price) and close_price > 0:
+                            holding_business_days = int(day_idx - position.entry_idx)
+                            if holding_business_days >= int(self.config.time_stop_max_business_days):
+                                objective_move = max(take_profit_price - position.entry_price, 0.0)
+                                current_move = max(close_price - position.entry_price, 0.0)
+                                tp_progress = (
+                                    (current_move / objective_move)
+                                    if objective_move > 0
+                                    else 0.0
+                                )
+                                close_return_pct = (close_price / position.entry_price) - 1.0 if position.entry_price > 0 else 0.0
+                                if (
+                                    tp_progress < float(self.config.time_stop_min_tp_progress_ratio)
+                                    or abs(close_return_pct) <= float(self.config.time_stop_near_zero_return_pct)
+                                ):
+                                    exit_price = close_price
+                                    exit_reason = "time_stop"
+                                else:
+                                    position.peak_high = peak_high
+                                    continue
+                            else:
+                                position.peak_high = peak_high
+                                continue
+                        else:
+                            position.peak_high = peak_high
+                            continue
+                    else:
+                        position.peak_high = peak_high
+                        continue
+                else:
+                    exit_price = resolution.exit_price
+                    exit_reason = resolution.exit_reason
             else:
                 exit_price = float(explicit_resolution["exit_price"])
                 exit_reason = str(explicit_resolution["exit_reason"])
@@ -1370,6 +1418,8 @@ class BacktestEngine:
                 diagnostics.trailing_stop_exits += 1
             elif exit_reason == "initial_stop":
                 diagnostics.initial_stop_exits += 1
+            elif exit_reason == "time_stop":
+                diagnostics.time_stop_exits += 1
             if explicit_resolution is not None:
                 diagnostics.exit_lifecycle_replayed += 1
 

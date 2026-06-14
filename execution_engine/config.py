@@ -43,6 +43,24 @@ class TrailingStopConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TimeStopConfig:
+    """Configuration du mécanisme Time Stop live/backtest."""
+
+    enabled: bool = False
+    max_business_days: int = 8
+    min_tp_progress_ratio: float = 0.5
+    near_zero_return_pct: float = 0.005
+
+    def __post_init__(self) -> None:
+        if self.max_business_days < 1:
+            raise ValueError("time_stop.max_business_days doit être >= 1.")
+        if not (0.0 <= self.min_tp_progress_ratio <= 1.0):
+            raise ValueError("time_stop.min_tp_progress_ratio doit être dans [0, 1].")
+        if not (0.0 <= self.near_zero_return_pct < 1.0):
+            raise ValueError("time_stop.near_zero_return_pct doit être dans [0, 1[.")
+
+
+@dataclass(frozen=True, slots=True)
 class LeverageConfig:
     """Configuration de levier long-only bornée pour le swing overnight."""
 
@@ -106,6 +124,20 @@ def load_trailing_stop_config_from_yaml(raw_config: Mapping[str, Any] | None = N
         break_even_after_atr_multiple=float(parsed.break_even_after_atr_multiple),
         eod_check_time_est=str(parsed.eod_check_time_est),
         apply_to_manual_orphan_buys=bool(parsed.apply_to_manual_orphan_buys),
+    )
+
+
+def load_time_stop_config_from_yaml(raw_config: Mapping[str, Any] | None = None) -> TimeStopConfig:
+    """Charge la config ``risk_management.time_stop`` depuis ``config.yaml``."""
+    yaml_cfg = raw_config if raw_config is not None else load_config()
+    risk_management_cfg = yaml_cfg.get("risk_management", {}) if isinstance(yaml_cfg, Mapping) else {}
+    time_stop_cfg = risk_management_cfg.get("time_stop", {}) if isinstance(risk_management_cfg, Mapping) else {}
+    time_stop_map = time_stop_cfg if isinstance(time_stop_cfg, Mapping) else {}
+    return TimeStopConfig(
+        enabled=bool(time_stop_map.get("enabled", False)),
+        max_business_days=int(time_stop_map.get("max_business_days", 8)),
+        min_tp_progress_ratio=float(time_stop_map.get("min_tp_progress_ratio", 0.5)),
+        near_zero_return_pct=float(time_stop_map.get("near_zero_return_pct", 0.005)),
     )
 
 
@@ -220,6 +252,9 @@ class ExecutionConfig:
 
     # --- Trailing stop ATR dynamique (Axe F) ---
     trailing_stop: TrailingStopConfig = field(default_factory=TrailingStopConfig)
+
+    # --- Time stop : coupe manuelle si stagnation prolongée ---
+    time_stop: TimeStopConfig = field(default_factory=TimeStopConfig)
 
     def __post_init__(self) -> None:
         if self.broker_mode not in ("paper", "live"):

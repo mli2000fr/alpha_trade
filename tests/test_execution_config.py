@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
+from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig, TimeStopConfig
 
 
 class TestExecutionConfig:
@@ -15,6 +15,11 @@ class TestExecutionConfig:
         assert cfg.trailing_stop_pct == 0.05
         assert cfg.trailing_activation_trigger == "multiple_r"
         assert cfg.protection_transition_timeout_seconds == 0
+        assert cfg.time_stop.enabled is False
+
+    def test_time_stop_validation(self) -> None:
+        with pytest.raises(ValueError, match="time_stop.max_business_days"):
+            ExecutionConfig(time_stop=TimeStopConfig(max_business_days=0))
 
     def test_valid_paper_mode(self) -> None:
         cfg = ExecutionConfig(broker_mode="paper")

@@ -1216,6 +1216,39 @@ class TestBacktestConfig:
         assert float(trades_df["Avg Exit Price"].iloc[0]) == pytest.approx(120.0, abs=0.01)
         assert str(trades_df["Exit Reason"].iloc[0]) == "take_profit"
 
+    def test_backtest_engine_time_stop_closes_stagnating_position_after_business_days(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.bdate_range("2025-01-01", periods=14)
+        open_ = pd.DataFrame({"AAPL": [100.0] * len(idx)}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.2] * len(idx)}, index=idx)
+        high = pd.DataFrame({"AAPL": [100.6] * len(idx)}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.8] * len(idx)}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime([idx[0]]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+            }
+        )
+
+        result = BacktestEngine(
+            BacktestConfig(
+                start_date=idx[0].date(),
+                end_date=idx[-1].date(),
+                initial_equity=10_000,
+                max_positions=1,
+                time_stop_enabled=True,
+                time_stop_max_business_days=7,
+                time_stop_min_tp_progress_ratio=0.5,
+                time_stop_near_zero_return_pct=0.005,
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        trades_df = result.trades.records_readable
+        assert not trades_df.empty
+        assert str(trades_df["Exit Reason"].iloc[0]) == "time_stop"
+
     def test_backtest_engine_uses_integer_share_sizes(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
 

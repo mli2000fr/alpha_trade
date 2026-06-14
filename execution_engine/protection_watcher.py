@@ -10,11 +10,12 @@ from datetime import date, datetime
 from typing import Any, Callable, cast
 
 from common.utils import configure_root_logging
+from common.market_calendar import nyse_session_dates
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from execution_engine.audit import build_run_id, make_event
 from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.broker_state_sync import BrokerStateSynchronizer
-from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
+from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig, load_time_stop_config_from_yaml
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import (
     BrokerOrder,
@@ -26,6 +27,7 @@ from execution_engine.models import (
     ProtectionWatchItem,
 )
 from execution_engine.order_intents import (
+    build_rebalance_sell_intent,
     build_initial_stop_intent,
     build_manual_buy_initial_stop_intent,
     build_take_profit_intent,
@@ -68,6 +70,10 @@ def _build_summary(
         "fractional_policy_blocked_items": int(metrics.get("fractional_policy_blocked_items", 0) or 0),
         "adopted_orphan_buys": int(metrics.get("adopted_orphan_buys", 0) or 0),
         "adopted_orphan_buys_failed": int(metrics.get("adopted_orphan_buys_failed", 0) or 0),
+        "time_stop_candidates": int(metrics.get("time_stop_candidates", 0) or 0),
+        "time_stop_triggered": int(metrics.get("time_stop_triggered", 0) or 0),
+        "time_stop_submitted": int(metrics.get("time_stop_submitted", 0) or 0),
+        "time_stop_failed": int(metrics.get("time_stop_failed", 0) or 0),
         "broker_mode": metrics.get("broker_mode"),
         "account_id": metrics.get("account_id"),
     }
@@ -119,6 +125,10 @@ def _build_service_summary(
         "fractional_policy_blocked_items": int(metrics.get("fractional_policy_blocked_items", 0) or 0),
         "adopted_orphan_buys": int(metrics.get("adopted_orphan_buys", 0) or 0),
         "adopted_orphan_buys_failed": int(metrics.get("adopted_orphan_buys_failed", 0) or 0),
+        "time_stop_candidates": int(metrics.get("time_stop_candidates", 0) or 0),
+        "time_stop_triggered": int(metrics.get("time_stop_triggered", 0) or 0),
+        "time_stop_submitted": int(metrics.get("time_stop_submitted", 0) or 0),
+        "time_stop_failed": int(metrics.get("time_stop_failed", 0) or 0),
         "last_heartbeat_at": metrics.get("last_heartbeat_at"),
         "last_cycle_at": metrics.get("last_cycle_at"),
         "last_cycle_had_work": bool(metrics.get("last_cycle_had_work", False)),
@@ -189,6 +199,10 @@ class ProtectionTransitionWatcher:
                 "armed_missing_protections_failed": 0,
                 "adopted_orphan_buys": 0,
                 "adopted_orphan_buys_failed": 0,
+                "time_stop_candidates": 0,
+                "time_stop_triggered": 0,
+                "time_stop_submitted": 0,
+                "time_stop_failed": 0,
             }
         )
 
@@ -295,6 +309,13 @@ class ProtectionTransitionWatcher:
                 run_metrics["adopted_orphan_buys_failed"] = (
                     int(run_metrics.get("adopted_orphan_buys_failed", 0) or 0) + 1
                 )
+
+        # Time Stop live: coupe les positions stagnantes après N jours ouvrés.
+        for run_metrics in metrics_by_run.values():
+            try:
+                self._apply_time_stop_exits(run_metrics)
+            except Exception:
+                LOGGER.warning("Time Stop watcher failed", exc_info=True)
 
         summaries: list[dict[str, Any]] = []
         finished_at = datetime.now()
@@ -1137,6 +1158,163 @@ class ProtectionTransitionWatcher:
                 int(metrics.get("armed_missing_protections_failed", 0) or 0) + 1
             )
 
+    @staticmethod
+    def _compute_business_days_held(opened_at: datetime, as_of: date) -> int:
+        opened_date = opened_at.date()
+        if as_of < opened_date:
+            return 0
+        sessions = nyse_session_dates(opened_date, as_of)
+        return max(len(sessions) - 1, 0)
+
+    def _resolve_time_stop_take_profit_price(
+        self,
+        *,
+        entry_price: float,
+        risk_per_share: float | None,
+        open_children: list[BrokerOrder],
+        config: ExecutionConfig,
+    ) -> float:
+        open_tp_prices = [
+            float(child.limit_price)
+            for child in open_children
+            if child.order_type == "limit" and child.limit_price is not None
+        ]
+        if open_tp_prices:
+            return max(open_tp_prices)
+        percent_target = entry_price * (1.0 + float(config.profit_taker_pct))
+        if risk_per_share is not None and risk_per_share > 0:
+            return max(percent_target, entry_price + (2.0 * float(risk_per_share)))
+        return percent_target
+
+    def _apply_time_stop_exits(self, metrics: dict[str, Any]) -> None:
+        account_id = str(metrics.get("account_id") or "default")
+        broker_mode = str(metrics.get("broker_mode") or self._default_broker_mode)
+        cfg = self._config_for(broker_mode, account_id)
+        ts_cfg = cfg.time_stop
+        if not ts_cfg.enabled:
+            return
+
+        broker = self._broker_for(broker_mode, account_id)
+        candidates = self._repo.load_time_stop_positions(account_id=account_id, limit=300)
+        as_of = datetime.now().date()
+        time_stop_exec_run_id = f"watch-time-stop-{build_run_id()}"
+
+        for row in candidates:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+            metrics["time_stop_candidates"] = int(metrics.get("time_stop_candidates", 0) or 0) + 1
+
+            opened_at = row.get("opened_at")
+            if not isinstance(opened_at, datetime):
+                continue
+            holding_business_days = self._compute_business_days_held(opened_at, as_of)
+            if holding_business_days < int(ts_cfg.max_business_days):
+                continue
+
+            try:
+                if self._repo.has_open_exit_order_for_symbol(account_id=account_id, symbol=symbol):
+                    continue
+            except Exception:
+                LOGGER.debug("Time Stop: open exit guard unavailable for %s", symbol, exc_info=True)
+
+            entry_price = float(row.get("avg_entry_price") or 0.0)
+            qty = float(row.get("remaining_qty") or 0.0)
+            if entry_price <= 0 or qty <= 0:
+                continue
+
+            latest_price = broker.get_latest_market_price(symbol)
+            if latest_price is None or latest_price <= 0:
+                continue
+
+            parent_intent_id = str(row.get("parent_intent_id") or "")
+            if not parent_intent_id:
+                continue
+            try:
+                open_children = self._repo.load_open_child_orders(parent_intent_id)
+            except Exception:
+                open_children = []
+
+            tp_price = self._resolve_time_stop_take_profit_price(
+                entry_price=entry_price,
+                risk_per_share=(
+                    float(row["risk_per_share"])
+                    if row.get("risk_per_share") is not None
+                    else None
+                ),
+                open_children=open_children,
+                config=cfg,
+            )
+            objective_move = max(tp_price - entry_price, 0.0)
+            current_move = max(float(latest_price) - entry_price, 0.0)
+            tp_progress = (current_move / objective_move) if objective_move > 0 else 0.0
+            return_pct = (float(latest_price) / entry_price) - 1.0
+
+            if (
+                tp_progress >= float(ts_cfg.min_tp_progress_ratio)
+                and abs(return_pct) > float(ts_cfg.near_zero_return_pct)
+            ):
+                continue
+
+            metrics["time_stop_triggered"] = int(metrics.get("time_stop_triggered", 0) or 0) + 1
+
+            parent_intent = OrderIntent(
+                intent_id=parent_intent_id,
+                risk_run_id=str(row.get("parent_risk_run_id") or ""),
+                exec_run_id=str(row.get("parent_exec_run_id") or row.get("source_exec_run_id") or ""),
+                symbol=symbol,
+                side="buy",
+                qty=qty,
+                order_type=str(row.get("parent_order_type") or "market"),
+                limit_price=None,
+                trail_percent=None,
+                broker_mode=broker_mode,
+                parent_intent_id=None,
+                intent_role=IntentRole.ENTRY,
+                idempotency_key=str(row.get("business_key") or parent_intent_id),
+                decision_price=float(row.get("decision_price") or entry_price),
+                stop_price=None,
+                submission_key=str(row.get("submission_key")) if row.get("submission_key") else None,
+            )
+            try:
+                self._cancel_existing_protection_children(parent_intent, broker, account_id=account_id, leg="take_profit")
+                self._cancel_existing_protection_children(parent_intent, broker, account_id=account_id, leg="protection")
+
+                exit_intent = build_rebalance_sell_intent(
+                    exec_run_id=time_stop_exec_run_id,
+                    risk_run_id=str(row.get("parent_risk_run_id") or "time_stop"),
+                    symbol=symbol,
+                    qty=qty,
+                    broker_mode=broker_mode,
+                    current_price=float(latest_price),
+                )
+                exit_order = broker.submit_intent(exit_intent)
+                self._persist_order_state(exit_intent, exit_order, account_id=account_id)
+                metrics["time_stop_submitted"] = int(metrics.get("time_stop_submitted", 0) or 0) + 1
+                self._persist_event(make_event(
+                    str(parent_intent.exec_run_id or time_stop_exec_run_id),
+                    EventType.PROTECTION_TRANSITION_COMPLETED,
+                    f"Time Stop: sortie marché soumise pour {symbol}",
+                    symbol=symbol,
+                    intent_id=exit_intent.intent_id,
+                    payload={
+                        "trigger": "time_stop",
+                        "holding_business_days": holding_business_days,
+                        "max_business_days": int(ts_cfg.max_business_days),
+                        "tp_progress": round(float(tp_progress), 6),
+                        "min_tp_progress_ratio": float(ts_cfg.min_tp_progress_ratio),
+                        "return_pct": round(float(return_pct), 6),
+                        "near_zero_return_pct": float(ts_cfg.near_zero_return_pct),
+                        "market_price": float(latest_price),
+                        "entry_price": float(entry_price),
+                        "take_profit_price": float(tp_price),
+                        "qty": float(qty),
+                    },
+                ))
+            except Exception as exc:
+                metrics["time_stop_failed"] = int(metrics.get("time_stop_failed", 0) or 0) + 1
+                LOGGER.warning("Time Stop submit failed for %s: %s", symbol, exc, exc_info=True)
+
     def _process_item(self, item: ProtectionWatchItem, metrics: dict[str, Any]) -> None:
         if not item.initial_stop_broker_order_id:
             metrics["submit_failed_items"] += 1
@@ -1352,6 +1530,10 @@ class ProtectionWatcherService:
             "armed_missing_protections_failed": 0,
             "adopted_orphan_buys": 0,
             "adopted_orphan_buys_failed": 0,
+            "time_stop_candidates": 0,
+            "time_stop_triggered": 0,
+            "time_stop_submitted": 0,
+            "time_stop_failed": 0,
             "last_heartbeat_at": started_at.isoformat(timespec="seconds"),
             "last_cycle_at": None,
             "last_cycle_had_work": False,
@@ -1516,6 +1698,10 @@ class ProtectionWatcherService:
             "armed_missing_protections_failed": 0,
             "adopted_orphan_buys": 0,
             "adopted_orphan_buys_failed": 0,
+            "time_stop_candidates": 0,
+            "time_stop_triggered": 0,
+            "time_stop_submitted": 0,
+            "time_stop_failed": 0,
         }
         for summary in summaries:
             for key in aggregate:
@@ -1670,6 +1856,7 @@ def main(argv: list[str] | None = None) -> None:
             trailing_activation_trigger=args.trailing_activation_trigger,
             trailing_activation_r_multiple=args.trailing_activation_r_multiple,
             trailing_activation_profit_pct=args.trailing_activation_profit_pct,
+            time_stop=load_time_stop_config_from_yaml(),
         )
 
     def broker_factory(broker_mode: str, account_id: str | None) -> BrokerAdapter:

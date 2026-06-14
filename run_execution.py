@@ -725,6 +725,7 @@ def run(
         from execution_engine.config import (
             ExecutionConfig,
             load_leverage_config_from_yaml,
+            load_time_stop_config_from_yaml,
             load_trailing_stop_config_from_yaml,
         )
         from execution_engine.db_io import ExecutionRepository
@@ -832,6 +833,7 @@ def run(
         account_id=account_id,
         leverage=leverage_cfg,
         trailing_stop=load_trailing_stop_config_from_yaml(),
+        time_stop=load_time_stop_config_from_yaml(),
     )
     repo     = ExecutionRepository()
     client   = AlpacaTradingClient(broker_mode=config.broker_mode, account_id=account_id)

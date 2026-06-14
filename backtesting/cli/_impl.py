@@ -433,6 +433,12 @@ def _build_backtest_common_params(
             "intrabar_priority": args.intrabar_priority,
             "is_default": microstructure_cfg.is_default(),
         },
+        "time_stop": {
+            "enabled": bool(getattr(bt_config, "time_stop_enabled", False)),
+            "max_business_days": int(getattr(bt_config, "time_stop_max_business_days", 8)),
+            "min_tp_progress_ratio": float(getattr(bt_config, "time_stop_min_tp_progress_ratio", 0.5)),
+            "near_zero_return_pct": float(getattr(bt_config, "time_stop_near_zero_return_pct", 0.005)),
+        },
         "risk_overlay": {
             "sizing_mode": args.sizing_mode,
             "sizing_min_weight_pct": float(args.sizing_min_weight_pct),
@@ -1925,7 +1931,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     phase7_exit_lifecycle_result = None
     phase2_risk_run_id = f"bt_phase2_{start:%Y%m%d}_{end:%Y%m%d}"
     research_signals_df = pd.DataFrame()
-    from execution_engine.config import ExecutionConfig, load_leverage_config_from_yaml
+    from execution_engine.config import ExecutionConfig, load_leverage_config_from_yaml, load_time_stop_config_from_yaml
 
     execution_config = ExecutionConfig(
         broker_mode="paper",
@@ -1937,6 +1943,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         profit_taker_pct=float(args.tp),
         trailing_stop_pct=float(args.ts),
         leverage=load_leverage_config_from_yaml(),
+        time_stop=load_time_stop_config_from_yaml(),
     )
     if phase2_mode == "off":
         research_signals_df = replay_signals(

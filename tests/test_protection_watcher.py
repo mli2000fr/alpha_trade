@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
+from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig, TimeStopConfig
 from execution_engine.models import BrokerOrder, OrderStatus, ProtectionWatchItem
 from execution_engine import protection_watcher as protection_watcher_module
 from execution_engine.protection_watcher import ProtectionTransitionWatcher, ProtectionWatcherService, parse_args
@@ -374,6 +374,86 @@ def test_watcher_skips_when_both_protections_already_present() -> None:
     broker.submit_intent.assert_not_called()
     broker.submit_oco_protection.assert_not_called()
     broker.cancel_broker_order.assert_not_called()
+
+
+def test_watcher_time_stop_submits_market_exit_for_stagnating_position() -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "parent-time-stop-1",
+            "exec_run_id": "exec-time-stop-1",
+            "risk_run_id": "risk-time-stop-1",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "AAPL",
+            "side": "buy",
+            "parent_intent_role": "entry",
+            "has_open_take_profit": 1,
+            "has_open_protection": 1,
+            "target_qty": 2.0,
+            "order_type": "market",
+            "decision_price": 100.0,
+            "business_key": "bk-time-stop-1",
+            "submission_key": "sub-time-stop-1",
+            "fill_qty": 2.0,
+            "fill_price": 100.0,
+        }
+    ]
+    repo.load_orphan_filled_buy_positions.return_value = []
+    repo.load_time_stop_positions.return_value = [
+        {
+            "account_id": "acct-1",
+            "symbol": "AAPL",
+            "parent_intent_id": "parent-time-stop-1",
+            "parent_exec_run_id": "exec-time-stop-1",
+            "parent_risk_run_id": "risk-time-stop-1",
+            "opened_at": datetime.now(timezone.utc) - timedelta(days=14),
+            "remaining_qty": 2.0,
+            "avg_entry_price": 100.0,
+            "parent_order_type": "market",
+            "decision_price": 100.0,
+            "business_key": "bk-time-stop-1",
+            "submission_key": "sub-time-stop-1",
+            "broker_mode": "paper",
+            "risk_per_share": 2.0,
+        }
+    ]
+    repo.has_open_exit_order_for_symbol.return_value = False
+    repo.load_open_child_orders.return_value = []
+
+    broker = MagicMock()
+    broker.get_latest_market_price.return_value = 100.1
+    broker.submit_intent.return_value = _order(
+        "exit-time-stop-1",
+        "broker-exit-time-stop-1",
+        status=OrderStatus.SUBMITTED,
+        order_type="market",
+    )
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            profit_taker_pct=0.08,
+            trailing_stop_pct=0.05,
+            time_stop=TimeStopConfig(
+                enabled=True,
+                max_business_days=7,
+                min_tp_progress_ratio=0.5,
+                near_zero_return_pct=0.005,
+            ),
+        ),
+    )
+
+    summaries = watcher.run(account_id="acct-1")
+
+    assert len(summaries) == 1
+    assert summaries[0]["time_stop_triggered"] == 1
+    assert summaries[0]["time_stop_submitted"] == 1
+    broker.submit_intent.assert_called_once()
 
 
 def test_watcher_refreshes_broker_state_when_initial_scan_is_empty(monkeypatch) -> None:

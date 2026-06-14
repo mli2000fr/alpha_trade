@@ -275,6 +275,13 @@ risk_management:
     break_even_after_atr_multiple: 2.0
     eod_check_time_est: "15:50"
     apply_to_manual_orphan_buys: true
+  # Time Stop : coupe la position au marché si elle stagne trop longtemps.
+  # Exemple cible: 7 à 10 jours ouvrés (valeur recommandée ici: 8).
+  time_stop:
+    enabled: true
+    max_business_days: 8
+    min_tp_progress_ratio: 0.50
+    near_zero_return_pct: 0.005
 
 
 # ---------------------------------------------------------------------------

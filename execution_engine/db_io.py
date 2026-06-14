@@ -856,6 +856,91 @@ class ExecutionRepository:
             v2_rows = conn.execute(v2_query, {"parent_intent_id": parent_intent_id}).mappings().all()
         return [self._row_to_broker_order(row) for row in v2_rows]
 
+    def has_open_exit_order_for_symbol(self, *, account_id: str, symbol: str) -> bool:
+        stmt = text("""
+            SELECT 1
+            FROM execution_order_requests req
+            LEFT JOIN execution_broker_orders bo
+                   ON bo.request_id = req.request_id
+            WHERE req.account_id = :account_id
+              AND req.symbol = :symbol
+              AND req.side = 'sell'
+              AND req.intent_role = 'exit'
+              AND COALESCE(bo.normalized_status, req.status)
+                  IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                stmt,
+                {
+                    "account_id": str(account_id),
+                    "symbol": str(symbol).strip().upper(),
+                },
+            ).first()
+        return row is not None
+
+    def load_time_stop_positions(
+        self,
+        *,
+        account_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        query = text(f"""
+            SELECT
+                lot_agg.account_id,
+                lot_agg.symbol,
+                lot_agg.parent_intent_id,
+                lot_agg.parent_exec_run_id,
+                lot_agg.parent_risk_run_id,
+                lot_agg.opened_at,
+                lot_agg.remaining_qty,
+                lot_agg.avg_entry_price,
+                parent_req.order_type AS parent_order_type,
+                parent_req.decision_price,
+                parent_req.business_key,
+                parent_req.submission_key,
+                COALESCE(er.broker_mode, 'paper') AS broker_mode,
+                ets.stop_price_initial,
+                ets.risk_per_share
+            FROM (
+                SELECT
+                    lot.account_id AS account_id,
+                    lot.symbol AS symbol,
+                    lot.open_request_id AS parent_intent_id,
+                    lot.open_exec_run_id AS parent_exec_run_id,
+                    MIN(lot.opened_at) AS opened_at,
+                    SUM(lot.remaining_qty) AS remaining_qty,
+                    CASE
+                        WHEN SUM(lot.remaining_qty) > 0
+                            THEN SUM(lot.remaining_qty * lot.entry_price) / SUM(lot.remaining_qty)
+                        ELSE NULL
+                    END AS avg_entry_price,
+                    MAX(req.risk_run_id) AS parent_risk_run_id
+                FROM execution_position_lots lot
+                INNER JOIN execution_order_requests req
+                        ON req.request_id = lot.open_request_id
+                WHERE lot.lot_status = 'OPEN'
+                  AND lot.remaining_qty > 0
+                  AND req.intent_role IN ('entry', 'adopted_entry')
+                  AND req.side = 'buy'
+                  AND (:account_id IS NULL OR lot.account_id = :account_id)
+                GROUP BY lot.account_id, lot.symbol, lot.open_request_id, lot.open_exec_run_id
+            ) lot_agg
+            INNER JOIN execution_order_requests parent_req
+                    ON parent_req.request_id = lot_agg.parent_intent_id
+            LEFT JOIN execution_runs er
+                   ON er.exec_run_id = lot_agg.parent_exec_run_id
+            LEFT JOIN execution_targets_snapshot ets
+                   ON ets.exec_run_id = lot_agg.parent_exec_run_id
+                  AND ets.symbol = lot_agg.symbol
+            ORDER BY lot_agg.opened_at ASC
+            LIMIT {int(limit)}
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, {"account_id": account_id}).mappings().all()
+        return [dict(row) for row in rows]
+
     # ------------------------------------------------------------------
     # Sprint S26 (gap P3) — Filets de sécurité TP/SL
     # ------------------------------------------------------------------
