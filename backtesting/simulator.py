@@ -670,7 +670,7 @@ class BacktestEngine:
                 current_equity, state.peak_equity
             )
             _entry_mode = cfg.exec_config.entry_mode if cfg.exec_config is not None else None
-            cfg.risk_overlay.drawdown_breaker.update_regime_streak(_entry_mode)
+            cfg.risk_overlay.drawdown_breaker.update_regime_streak(_entry_mode, float(current_equity))
             drawdown_allocation_scale = cfg.risk_overlay.drawdown_breaker.allocation_scale(
                 entry_mode=_entry_mode
             )

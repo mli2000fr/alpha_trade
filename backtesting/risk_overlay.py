@@ -94,12 +94,13 @@ class DrawdownCircuitBreaker:
 
     Quand le breaker est trippé, l'allocation dégradée de base
     (``degraded_entry_allocation_pct``) peut être progressivement augmentée
-    si le régime de marché repasse en ``normal`` pendant N séances
-    consécutives. Le bonus quotidien est ``regime_ramp_up_pct_per_day``,
-    plafonné à ``regime_ramp_up_max_pct``.
+    si le régime de marché repasse en ``normal`` **et** que l'equity
+    progresse par rapport à la veille. Le bonus quotidien est
+    ``regime_ramp_up_pct_per_day``, plafonné à ``regime_ramp_up_max_pct``.
 
-    Dès que le régime quitte ``normal`` (ex. capital_preservation),
-    le streak est remis à zéro et l'allocation revient à la base dégradée.
+    Si le régime est normal mais que l'equity stagne ou baisse, le streak
+    est gelé (pas d'incrément, pas de reset). Dès que le régime quitte
+    ``normal``, le streak est remis à zéro.
     """
 
     enabled: bool = False
@@ -107,13 +108,14 @@ class DrawdownCircuitBreaker:
     recovery_pct: float = 0.95
     rolling_peak_window_days: int = 252
     degraded_entry_allocation_pct: float = 0.0
-    # Ramp-up progressif quand le régime redevient normal
+    # Ramp-up progressif quand le régime redevient normal ET l'equity monte
     regime_ramp_up_enabled: bool = False
     regime_ramp_up_pct_per_day: float = 0.025
     regime_ramp_up_max_pct: float = 0.40
     _tripped: bool = field(default=False, init=False)
     _equity_window: list[float] = field(default_factory=list, init=False)
     _normal_streak: int = field(default=0, init=False)
+    _equity_prev: float = field(default=0.0, init=False)
 
     def _reference_peak(self, peak_equity: float) -> float:
         if self.rolling_peak_window_days <= 0:
@@ -139,20 +141,30 @@ class DrawdownCircuitBreaker:
             return float(np.clip(base + ramp_bonus, base, float(self.regime_ramp_up_max_pct)))
         return base
 
-    def update_regime_streak(self, entry_mode: str | None) -> None:
-        """Met à jour le compteur de jours consécutifs en régime normal.
+    def update_regime_streak(self, entry_mode: str | None, current_equity: float = 0.0) -> None:
+        """Met à jour le compteur de jours de recovery.
 
         Doit être appelé une fois par jour de trading, après ``update()``.
-        Le streak n'est incrémenté que si le breaker est trippé ET le
-        régime est ``normal``. Tout autre régime remet le compteur à zéro.
+        Le streak n'est incrémenté que si :
+        - le breaker est trippé,
+        - le régime est ``normal``,
+        - l'equity du jour est supérieure à celle de la veille.
+
+        Si le régime est normal mais que l'equity stagne ou baisse,
+        le streak reste inchangé (ni incrément, ni reset).
+        Tout régime non-normal remet le compteur à zéro.
         """
         if not self.regime_ramp_up_enabled or not self._tripped:
             self._normal_streak = 0
+            self._equity_prev = float(current_equity)
             return
         if entry_mode and str(entry_mode).strip().lower() == "normal":
-            self._normal_streak += 1
+            if current_equity > self._equity_prev and self._equity_prev > 0:
+                self._normal_streak += 1
+            # else: streak gelé (normal mais equity ne monte pas)
         else:
             self._normal_streak = 0
+        self._equity_prev = float(current_equity)
 
     def update(self, equity: float, peak_equity: float) -> bool:
         if not self.enabled or peak_equity <= 0:
@@ -171,6 +183,8 @@ class DrawdownCircuitBreaker:
             self._tripped = True
         elif self._tripped and equity >= reference_peak * self.recovery_pct:
             self._tripped = False
+            self._normal_streak = 0
+            self._equity_prev = 0.0
             self._normal_streak = 0
         return not self._tripped
 
