@@ -47,7 +47,7 @@ class TimeStopConfig:
     """Configuration du mécanisme Time Stop live/backtest."""
 
     enabled: bool = False
-    max_business_days: int = 15
+    max_business_days: int = 20
     min_tp_progress_ratio: float = 0.5
     near_zero_return_pct: float = 0.005
 
@@ -135,7 +135,7 @@ def load_time_stop_config_from_yaml(raw_config: Mapping[str, Any] | None = None)
     time_stop_map = time_stop_cfg if isinstance(time_stop_cfg, Mapping) else {}
     return TimeStopConfig(
         enabled=bool(time_stop_map.get("enabled", False)),
-        max_business_days=int(time_stop_map.get("max_business_days", 15)),
+        max_business_days=int(time_stop_map.get("max_business_days", 20)),
         min_tp_progress_ratio=float(time_stop_map.get("min_tp_progress_ratio", 0.5)),
         near_zero_return_pct=float(time_stop_map.get("near_zero_return_pct", 0.005)),
     )
@@ -203,7 +203,7 @@ class ExecutionConfig:
     trailing_stop_type: str = "percent"
     enable_dynamic_trailing_transition: bool = True
     trailing_activation_trigger: Literal["multiple_r", "profit_pct"] = "multiple_r"
-    trailing_activation_r_multiple: float = 1.5
+    trailing_activation_r_multiple: float = 2.0
     trailing_activation_profit_pct: float = 0.03
     protection_transition_timeout_seconds: int = 0
     protection_transition_poll_interval_seconds: float = 2.0

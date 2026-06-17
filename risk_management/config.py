@@ -48,6 +48,10 @@ class RiskConfig:
     concentration_max_consecutive_losses: int = 3
     concentration_blacklist_duration_days: int = 90
 
+    # Anti-faux-départs (Quick Win 1) — nombre de jours consécutifs de
+    # présence dans le top-N avant qu'un candidat soit éligible.
+    min_breakout_days: int = 3
+
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60
 

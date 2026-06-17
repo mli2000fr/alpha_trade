@@ -18,6 +18,7 @@ def _cfg(**overrides) -> RiskConfig:  # type: ignore[no-untyped-def]
         "max_position_weight": 0.10,
         "max_sector_weight": 0.30,
         "min_position_notional": 500.0,
+        "min_breakout_days": 1,  # test: confirmation immédiate
     }
     defaults.update(overrides)
     return RiskConfig(**defaults)

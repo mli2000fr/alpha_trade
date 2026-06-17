@@ -28,6 +28,7 @@ from risk_management.models import (
 from risk_management.position_sizer import PositionSizer
 from risk_management.risk_checker import RiskCheckerImpl
 from risk_management.concentration import (
+    BreakoutConfirmationTracker,
     ConsecutiveLossTracker,
     SymbolTradeTracker,
 )
@@ -177,6 +178,7 @@ class PortfolioBuilder:
         circuit_breaker: CircuitBreaker | None = None,
         regime_snapshot: object | None = None,
         rotation_state: object | None = None,
+        breakout_tracker: object | None = None,
     ) -> None:
         self._cfg = config
         self._sizer = PositionSizer(config)
@@ -194,6 +196,14 @@ class PortfolioBuilder:
             max_consecutive_losses=config.concentration_max_consecutive_losses,
             blacklist_duration_days=config.concentration_blacklist_duration_days,
         )
+        # Anti-faux-départs (Quick Win 1) — peut être injecté depuis le CLI
+        # pour persister l'état entre les runs live.
+        if breakout_tracker is not None:
+            self._breakout_tracker = breakout_tracker
+        else:
+            self._breakout_tracker = BreakoutConfirmationTracker(
+                min_breakout_days=config.min_breakout_days,
+            )
         self.progress_callback: Callable[[dict[str, object]], None] | None = None
 
     def _emit_progress(
@@ -305,7 +315,25 @@ class PortfolioBuilder:
                 candidates, self._regime_snapshot, rotation_state=self._rotation_state
             )
 
-        # ── 0bis. Filtres de concentration (Priorité 4) ────────────────
+        # ── 0bis. Filtre anti-faux-départs (Quick Win 1) ────────────
+        if candidates and self._breakout_tracker is not None:
+            trade_date_resolved = trade_date if trade_date is not None else date.today()
+            candidate_symbols = [str(c.symbol).strip().upper() for c in candidates]
+            self._breakout_tracker.record_candidates(candidate_symbols, trade_date_resolved)
+            before = len(candidates)
+            candidates = [
+                c for c in candidates
+                if self._breakout_tracker.allow_entry(str(c.symbol))
+            ]
+            blocked_breakout = before - len(candidates)
+            if blocked_breakout:
+                LOGGER.info(
+                    "Breakout filter: blocked %d candidates (min %d days not met)",
+                    blocked_breakout,
+                    self._breakout_tracker.min_breakout_days,
+                )
+
+        # ── 0ter. Filtres de concentration (Priorité 4) ─────────────
         if candidates:
             candidates = _apply_concentration_filters(
                 candidates,

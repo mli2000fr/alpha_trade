@@ -28,6 +28,7 @@ from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from execution_engine.config import ExecutionConfig
 from risk_management.config import RiskConfig
 from risk_management.concentration import (
+    BreakoutConfirmationTracker,
     ConsecutiveLossTracker,
     SymbolTradeTracker,
 )
@@ -80,6 +81,9 @@ class BacktestConfig:
     concentration_window_calendar_days: int = 180
     concentration_max_consecutive_losses: int = 3
     concentration_blacklist_duration_days: int = 90
+
+    # Anti-faux-départs (Quick Win 1)
+    min_breakout_days: int = 3
 
     def __post_init__(self) -> None:
         if self.risk_config:
@@ -144,6 +148,8 @@ class BacktestDiagnostics:
     # Priorité 4 — concentration / diversification
     blocked_by_concentration: int = 0
     blocked_by_blacklist: int = 0
+    # Quick Win 1 — anti-faux-départs
+    blocked_by_breakout: int = 0
     protection_replay_activations: int = 0
     watcher_replay_transitions: int = 0
     exit_lifecycle_replayed: int = 0
@@ -164,6 +170,7 @@ class BacktestDiagnostics:
             "blocked_by_drawdown_breaker": self.blocked_by_drawdown_breaker,
             "blocked_by_concentration": self.blocked_by_concentration,
             "blocked_by_blacklist": self.blocked_by_blacklist,
+            "blocked_by_breakout": self.blocked_by_breakout,
             "protection_replay_activations": self.protection_replay_activations,
             "watcher_replay_transitions": self.watcher_replay_transitions,
             "exit_lifecycle_replayed": self.exit_lifecycle_replayed,
@@ -344,6 +351,10 @@ class BacktestEngine:
         self._concentration_loss_tracker = ConsecutiveLossTracker(
             max_consecutive_losses=config.concentration_max_consecutive_losses,
             blacklist_duration_days=config.concentration_blacklist_duration_days,
+        )
+        # Anti-faux-départs (Quick Win 1)
+        self._breakout_tracker = BreakoutConfirmationTracker(
+            min_breakout_days=config.min_breakout_days,
         )
 
     @staticmethod
@@ -754,6 +765,19 @@ class BacktestEngine:
                 entries_allowed_by_regime=entries_allowed_by_regime,
                 diagnostics=diagnostics,
             )
+
+            # Quick Win 1 — anti-faux-départs : enregistrer les candidats
+            # et filtrer ceux dont le breakout n'est pas confirmé.
+            if candidate_rows and self._breakout_tracker is not None:
+                trade_day_date = trade_day.date()
+                all_symbols = [str(row["symbol"]) for row in candidate_rows]
+                self._breakout_tracker.record_candidates(all_symbols, trade_day_date)
+                before = len(candidate_rows)
+                candidate_rows = [
+                    row for row in candidate_rows
+                    if self._breakout_tracker.allow_entry(str(row["symbol"]))
+                ]
+                diagnostics.blocked_by_breakout += before - len(candidate_rows)
 
             self._try_open_entries(
                 state=state,

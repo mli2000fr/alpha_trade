@@ -257,6 +257,126 @@ class ConsecutiveLossTracker:
 
 
 # ---------------------------------------------------------------------------
+# BreakoutConfirmationTracker — filtre anti-faux-départs (Quick Win 1)
+# ---------------------------------------------------------------------------
+
+DEFAULT_MIN_BREAKOUT_DAYS: int = 3
+
+
+class BreakoutConfirmationTracker:
+    """Exige qu'un candidat apparaisse N jours consécutifs avant d'être tradable.
+
+    Élimine les « faux départs » : un symbole qui entre dans le top-N pour
+    la première fois n'est éligible qu'après ``min_breakout_days`` jours
+    consécutifs de présence dans la liste des candidats.
+
+    Parameters
+    ----------
+    min_breakout_days : int
+        Nombre minimum de jours consécutifs de présence (défaut 3).
+    """
+
+    def __init__(self, min_breakout_days: int = DEFAULT_MIN_BREAKOUT_DAYS) -> None:
+        self._min_days = max(1, int(min_breakout_days))
+        # {symbol: consecutive_days_count}
+        self._streak: dict[str, int] = {}
+        # Date du dernier enregistrement (pour détecter les trous)
+        self._last_date: date | None = None
+
+    # ------------------------------------------------------------------
+    @property
+    def min_breakout_days(self) -> int:
+        return self._min_days
+
+    # ------------------------------------------------------------------
+    def record_candidates(self, symbols: list[str], trade_date: date) -> None:
+        """Enregistre les symboles présents dans la liste des candidats du jour.
+
+        Les symboles absents voient leur streak réinitialisé à 0.
+        Les symboles présents voient leur streak incrémenté de 1
+        (ou initialisé à 1 si nouveau).
+
+        Parameters
+        ----------
+        symbols : list[str]
+            Liste des symboles candidats du jour.
+        trade_date : date
+            Date de trading.
+        """
+        # Détection de gap : si on saute un jour, reset tous les streaks
+        if self._last_date is not None:
+            gap = (trade_date - self._last_date).days
+            if gap > 1:
+                self._streak.clear()
+
+        self._last_date = trade_date
+        present = {str(s).strip().upper() for s in symbols}
+        present.discard("")
+
+        # Incrémenter les symboles présents
+        for sym in present:
+            self._streak[sym] = self._streak.get(sym, 0) + 1
+
+        # Réinitialiser les symboles absents
+        absent = [s for s in self._streak if s not in present]
+        for sym in absent:
+            self._streak[sym] = 0
+
+    def is_confirmed(self, symbol: str) -> bool:
+        """Retourne True si le breakout du symbole est confirmé.
+
+        Parameters
+        ----------
+        symbol : str
+            Symbole à vérifier.
+        """
+        key = str(symbol).strip().upper()
+        return self._streak.get(key, 0) >= self._min_days
+
+    def allow_entry(self, symbol: str) -> bool:
+        """Alias sémantique de :meth:`is_confirmed`."""
+        return self.is_confirmed(symbol)
+
+    def reset(self) -> None:
+        """Réinitialise tous les streaks."""
+        self._streak.clear()
+        self._last_date = None
+
+    def to_summary(self) -> dict[str, object]:
+        """Résumé sérialisable pour diagnostics."""
+        return {
+            "min_breakout_days": self._min_days,
+            "tracked_symbols": len(self._streak),
+            "confirmed_symbols": sum(
+                1 for v in self._streak.values() if v >= self._min_days
+            ),
+            "pending_symbols": sum(
+                1 for v in self._streak.values() if 0 < v < self._min_days
+            ),
+        }
+
+    def to_dict(self) -> dict[str, object]:
+        """Sérialise l'état complet pour persistence cross-run (live)."""
+        return {
+            "min_breakout_days": self._min_days,
+            "last_date": self._last_date.isoformat() if self._last_date else None,
+            "streak": dict(self._streak),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> BreakoutConfirmationTracker:
+        """Reconstruit un tracker depuis un état persisté."""
+        tracker = cls(min_breakout_days=int(data.get("min_breakout_days", DEFAULT_MIN_BREAKOUT_DAYS)))
+        last_date_str = data.get("last_date")
+        if last_date_str and isinstance(last_date_str, str):
+            tracker._last_date = date.fromisoformat(last_date_str)
+        streak_data = data.get("streak")
+        if isinstance(streak_data, dict):
+            tracker._streak = {str(k): int(v) for k, v in streak_data.items()}
+        return tracker
+
+
+# ---------------------------------------------------------------------------
 # Helpers pratiques (intégration backtest / live)
 # ---------------------------------------------------------------------------
 
@@ -285,10 +405,12 @@ def build_entry_concentration_filter(
 
 
 __all__ = [
+    "BreakoutConfirmationTracker",
     "ConsecutiveLossTracker",
     "SymbolTradeTracker",
     "build_entry_concentration_filter",
     "DEFAULT_CONCENTRATION_WINDOW_CALENDAR_DAYS",
     "DEFAULT_MAX_CONSECUTIVE_LOSSES",
     "DEFAULT_MAX_TRADES_PER_SYMBOL",
+    "DEFAULT_MIN_BREAKOUT_DAYS",
 ]

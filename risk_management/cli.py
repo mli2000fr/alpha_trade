@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from collections import Counter
 from dataclasses import replace
 from datetime import date, datetime
+from pathlib import Path
 
 import pandas as pd
 
@@ -1036,6 +1038,23 @@ def main(args: list[str] | None = None) -> None:
             len(equity_history),
         )
 
+    # ── Breakout confirmation tracker (Quick Win 1) ──────────────────
+    from risk_management.concentration import BreakoutConfirmationTracker
+
+    _breakout_state_path = Path("artifacts/ihm_preferences/breakout_tracker.json")
+    breakout_tracker: BreakoutConfirmationTracker
+    if _breakout_state_path.exists():
+        try:
+            breakout_tracker = BreakoutConfirmationTracker.from_dict(
+                json.loads(_breakout_state_path.read_text(encoding="utf-8"))
+            )
+            LOGGER.info("Breakout tracker chargé: %s", breakout_tracker.to_summary())
+        except Exception:
+            LOGGER.warning("Breakout tracker load failed, creating new.", exc_info=True)
+            breakout_tracker = BreakoutConfirmationTracker(min_breakout_days=config.min_breakout_days)
+    else:
+        breakout_tracker = BreakoutConfirmationTracker(min_breakout_days=config.min_breakout_days)
+
     LOGGER.info("Chargement des candidats…")
     candidates = repo.load_candidates_asof(trade_date)
     LOGGER.info("Candidats charges : %d", len(candidates))
@@ -1134,7 +1153,7 @@ def main(args: list[str] | None = None) -> None:
             phase="load_return_matrix",
         )
 
-        builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker, regime_snapshot=regime_snapshot, rotation_state=rotation_state)
+        builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker, regime_snapshot=regime_snapshot, rotation_state=rotation_state, breakout_tracker=breakout_tracker)
         builder.progress_callback = emit_run_summary
         entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
         _emit_live_progress(
@@ -1393,6 +1412,7 @@ def main(args: list[str] | None = None) -> None:
             "lookback_weeks": rotation_state.lookback_weeks,
             "threshold": rotation_state.threshold,
         },
+        "breakout_factor": breakout_tracker.to_summary(),
         "regime_snapshot_applied": regime_snapshot is not None,
         "regime_mode": regime_snapshot_payload.get("mode") if regime_snapshot_payload else None,
         "regime_allow_new_entries": regime_allow_new_entries,
@@ -1416,6 +1436,18 @@ def main(args: list[str] | None = None) -> None:
         **ml_gate_state.to_summary(),
     }
     summary = attach_schema_version(summary, version=1)
+
+    # Persister l'état du breakout tracker pour le prochain run live
+    try:
+        _breakout_state_path.parent.mkdir(parents=True, exist_ok=True)
+        _breakout_state_path.write_text(
+            json.dumps(breakout_tracker.to_dict(), indent=2, default=str),
+            encoding="utf-8",
+        )
+        LOGGER.info("Breakout tracker saved: %s", breakout_tracker.to_summary())
+    except Exception:
+        LOGGER.warning("Breakout tracker save failed.", exc_info=True)
+
     persist_run_business_summary(
         summary=summary,
         step_key="risk_management",

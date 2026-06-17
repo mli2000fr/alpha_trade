@@ -276,10 +276,10 @@ risk_management:
     eod_check_time_est: "15:50"
     apply_to_manual_orphan_buys: true
   # Time Stop : coupe la position au marché si elle stagne trop longtemps.
-  # Exemple cible: 10 à 20 jours ouvrés (valeur recommandée ici: 15).
+  # Exemple cible: 15 à 25 jours ouvrés (valeur recommandée ici: 20).
   time_stop:
     enabled: true
-    max_business_days: 15
+    max_business_days: 20
     min_tp_progress_ratio: 0.50
     near_zero_return_pct: 0.005
 
