@@ -41,6 +41,13 @@ class RiskConfig:
     # dès que l'equity dépasse le max des N jours précédents (résilience aux
     # jours de stagnation).
     regime_ramp_up_peak_window_days: int = 5
+
+    # Concentration / diversification (Priorité 4)
+    concentration_max_trades_per_symbol: int = 5
+    concentration_window_calendar_days: int = 180
+    concentration_max_consecutive_losses: int = 3
+    concentration_blacklist_duration_days: int = 90
+
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60
 

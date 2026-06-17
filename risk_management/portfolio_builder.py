@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import date
 
 from pandas import DataFrame
 
@@ -25,7 +26,14 @@ from risk_management.models import (
     WinRateInfo,
 )
 from risk_management.position_sizer import PositionSizer
-from risk_management.risk_checker import RiskCheckerImpl
+from risk_management.concentration import (
+    ConsecutiveLossTracker,
+    SymbolTradeTracker,
+)
+from risk_management.concentration import (
+    ConsecutiveLossTracker,
+    SymbolTradeTracker,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -120,6 +128,40 @@ def _apply_regime_scoring_to_candidates(
         return candidates
 
 
+def _apply_concentration_filters(
+    candidates: list[CandidateScore],
+    *,
+    trade_tracker: object,
+    loss_tracker: object,
+    trade_date: date,
+) -> list[CandidateScore]:
+    """Filtre les candidats selon les règles de concentration (Priorité 4).
+
+    - Bloque si le symbole a déjà atteint le max de trades dans la fenêtre
+    - Bloque si le symbole est blacklisté (pertes consécutives)
+    """
+    filtered: list[CandidateScore] = []
+    blocked_trade_count = 0
+    blocked_blacklist = 0
+    for c in candidates:
+        symbol = str(c.symbol).strip().upper()
+        if not trade_tracker.allow_entry(symbol, trade_date):
+            blocked_trade_count += 1
+            continue
+        if loss_tracker.is_blacklisted(symbol, trade_date):
+            blocked_blacklist += 1
+            continue
+        filtered.append(c)
+    if blocked_trade_count or blocked_blacklist:
+        LOGGER.info(
+            "Concentration filters: blocked %d (max trades) + %d (blacklist) / %d candidates",
+            blocked_trade_count,
+            blocked_blacklist,
+            len(candidates),
+        )
+    return filtered
+
+
 class PortfolioBuilder:
     """Orchestre sizing + contraintes pour construire le portefeuille cible."""
 
@@ -136,6 +178,15 @@ class PortfolioBuilder:
         self._pnl = pnl
         self._circuit_breaker = circuit_breaker
         self._regime_snapshot = regime_snapshot
+        # Concentration filters (Priorité 4)
+        self._concentration_trade_tracker = SymbolTradeTracker(
+            max_trades=config.concentration_max_trades_per_symbol,
+            window_days=config.concentration_window_calendar_days,
+        )
+        self._concentration_loss_tracker = ConsecutiveLossTracker(
+            max_consecutive_losses=config.concentration_max_consecutive_losses,
+            blacklist_duration_days=config.concentration_blacklist_duration_days,
+        )
         self.progress_callback: Callable[[dict[str, object]], None] | None = None
 
     def _emit_progress(
@@ -229,6 +280,7 @@ class PortfolioBuilder:
         predictions: dict[str, PredictionInfo] | None = None,
         win_rates: dict[str, WinRateInfo] | None = None,
         return_matrix: DataFrame | None = None,
+        trade_date: date | None = None,
     ) -> list[PortfolioEntry]:
         """Construit la liste des PortfolioEntry.
 
@@ -244,6 +296,15 @@ class PortfolioBuilder:
         if self._regime_snapshot is not None and candidates:
             candidates = _apply_regime_scoring_to_candidates(
                 candidates, self._regime_snapshot
+            )
+
+        # ── 0bis. Filtres de concentration (Priorité 4) ────────────────
+        if candidates:
+            candidates = _apply_concentration_filters(
+                candidates,
+                trade_tracker=self._concentration_trade_tracker,
+                loss_tracker=self._concentration_loss_tracker,
+                trade_date=trade_date if trade_date is not None else date.today(),
             )
 
         total_candidates = len(candidates)

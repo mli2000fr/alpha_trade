@@ -27,6 +27,10 @@ from backtesting.risk_overlay import RiskOverlayConfig, compute_portfolio_vol_sc
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from execution_engine.config import ExecutionConfig
 from risk_management.config import RiskConfig
+from risk_management.concentration import (
+    ConsecutiveLossTracker,
+    SymbolTradeTracker,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +74,12 @@ class BacktestConfig:
     # Phase C.3 / D.1 — benchmark (utilisé par le filtre régime + métriques).
     benchmark_close: pd.Series | None = None
     seed: int | None = None
+
+    # Concentration / diversification (Priorité 4)
+    concentration_max_trades_per_symbol: int = 5
+    concentration_window_calendar_days: int = 180
+    concentration_max_consecutive_losses: int = 3
+    concentration_blacklist_duration_days: int = 90
 
     def __post_init__(self) -> None:
         if self.risk_config:
@@ -131,6 +141,9 @@ class BacktestDiagnostics:
     blocked_by_sectoral_cap: int = 0
     blocked_by_gross_exposure: int = 0
     blocked_by_drawdown_breaker: int = 0
+    # Priorité 4 — concentration / diversification
+    blocked_by_concentration: int = 0
+    blocked_by_blacklist: int = 0
     protection_replay_activations: int = 0
     watcher_replay_transitions: int = 0
     exit_lifecycle_replayed: int = 0
@@ -149,6 +162,8 @@ class BacktestDiagnostics:
             "blocked_by_sectoral_cap": self.blocked_by_sectoral_cap,
             "blocked_by_gross_exposure": self.blocked_by_gross_exposure,
             "blocked_by_drawdown_breaker": self.blocked_by_drawdown_breaker,
+            "blocked_by_concentration": self.blocked_by_concentration,
+            "blocked_by_blacklist": self.blocked_by_blacklist,
             "protection_replay_activations": self.protection_replay_activations,
             "watcher_replay_transitions": self.watcher_replay_transitions,
             "exit_lifecycle_replayed": self.exit_lifecycle_replayed,
@@ -321,6 +336,15 @@ class BacktestEngine:
 
     def __init__(self, config: BacktestConfig) -> None:
         self.config = config
+        # Concentration filters (Priorité 4)
+        self._concentration_trade_tracker = SymbolTradeTracker(
+            max_trades=config.concentration_max_trades_per_symbol,
+            window_days=config.concentration_window_calendar_days,
+        )
+        self._concentration_loss_tracker = ConsecutiveLossTracker(
+            max_consecutive_losses=config.concentration_max_consecutive_losses,
+            blacklist_duration_days=config.concentration_blacklist_duration_days,
+        )
 
     @staticmethod
     def _to_scalar(value) -> float:
@@ -971,6 +995,34 @@ class BacktestEngine:
                 )
                 continue
 
+            # Priorité 4 — concentration / anti-répétition
+            trade_day_date = trade_day.date()
+            if not self._concentration_trade_tracker.allow_entry(symbol, trade_day_date):
+                diagnostics.blocked_by_concentration += 1
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="concentration_max_trades_per_symbol",
+                    max_trades=self._concentration_trade_tracker.max_trades,
+                    window_days=self._concentration_trade_tracker.window_days,
+                    **signal_context,
+                )
+                continue
+            if self._concentration_loss_tracker.is_blacklisted(symbol, trade_day_date):
+                diagnostics.blocked_by_blacklist += 1
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="consecutive_loss_blacklist",
+                    max_consecutive_losses=self._concentration_loss_tracker.max_consecutive_losses,
+                    **signal_context,
+                )
+                continue
+
             signal_target_weight = self._resolve_signal_target_weight(row)
             if quantity_override is not None and signal_target_weight is not None:
                 target_weight_pct = signal_target_weight
@@ -1235,6 +1287,8 @@ class BacktestEngine:
                 entry_gap_pct=entry_gap_pct,
                 **signal_context,
             )
+            # Priorité 4 — enregistrer l'entrée dans le tracker de concentration
+            self._concentration_trade_tracker.record(symbol, trade_day.date())
 
     def _try_close_positions(
         self,
@@ -1496,6 +1550,8 @@ class BacktestEngine:
                 unsettled_cash_after=state.unsettled_cash,
                 **position.signal_context,
             )
+            # Priorité 4 — enregistrer le PnL dans le tracker de pertes consécutives
+            self._concentration_loss_tracker.record(symbol, pnl, trade_day.date())
             symbols_to_close.append(symbol)
 
         for symbol in symbols_to_close:
