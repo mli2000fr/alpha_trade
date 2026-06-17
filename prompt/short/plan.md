@@ -120,6 +120,31 @@ comme la fondation de la future V2 directionnelle décrite dans
 - **Ne pas** introduire des raccourcis non versionnés dans les schémas ou les
   exports qui obligeraient à refaire la V2.1 au moment d'activer le ML.
 
+### Contrats figés pour la V2 ML — check-list de compatibilité
+
+La V2.1 (hors ML) doit livrer des contrats **stables et versionnés** sur lesquels
+la V2.2 (avec ML directionnel, cf. `prompt/short/plan_with_ml.md`) pourra se
+brancher sans rupture. Le tableau ci-dessous liste chaque contrat, son état
+cible en V2.1 et le point de vérification associé.
+
+| # | Contrat | Cible V2.1 | Vérification | Consommateur V2.2 |
+|---|---------|------------|-------------|-------------------|
+| C1 | `side` dans `PortfolioEntry`, `CandidateScore`, `EnrichedCandidate`, `RiskDecisionRow`, `PortfolioTargetRow` | `side: str = "buy"` | Tests unitaires de propagation | `selector/ranking.py` (fournira `side` directionnel) |
+| C2 | `side` dans `canonical_columns` de `write_risk_decisions()` et `write_portfolio_targets()` | Colonne `side` ajoutée | Test d'intégration écriture/lecture | `modelFactory/db_registry.py` (persistance `predicted_side`) |
+| C3 | `side` dans `RISK_SIGNAL_COLUMNS` et `portfolio_entries_to_signals()` | Colonne exportée | Test backtest non-régression | `backtesting/signal_replay.py` (replay directionnel) |
+| C4 | `core/direction.py` exposant tous les helpers directionnels | Module créé, testé, utilisé par tous les call-sites | Couverture de test > 90% | `selector/ranking.py`, `core/conviction.py`, `backtesting/simulator.py` |
+| C5 | `ExecutionTarget.side` peuplé depuis `PortfolioEntry.side` (bridge) | `side` propagé, défaut `"buy"` | Test `execution_bridge` | `execution_engine/order_intents.py` (consommation native) |
+| C6 | Schémas DB versionnés (`portfolio_targets`, `risk_decisions`) | Migration Alembic avec colonne `side` | Test montée/descente migration | `modelFactory/db_registry.py` (nouveaux champs ML) |
+| C7 | `MarketRegimeSnapshot` avec `allowed_long_entries` / `allowed_short_entries` | Deux booléens distincts | Test régime `capital_preservation` | Policy layer ML (filtrage par direction) |
+| C8 | Feature flag `short_selling_enabled` dans `config.yaml` | `false` par défaut, extensible | Test activation/désactivation | `ml_directional_mode_enabled` (flag additionnel) |
+| C9 | Rapports backtest avec colonne `side` | Colonne présente même si valeur = `"buy"` | Test export CSV/JSON | Rapports ML (métriques par direction) |
+| C10 | Artefacts JSON versionnés (`schema_version` dans les payloads) | `schema_version: 1` dans tous les artefacts | Test rétrocompatibilité lecture | Artefacts ML (`schema_version: 2` avec probas multi-classes) |
+
+Chaque contrat manquant en V2.1 **obligera à une migration lourde** avant de
+pouvoir activer le ML directionnel. La V2.1 doit donc tous les honorer, même si
+certains champs restent constants (`side="buy"`, `schema_version=1`) tant que le
+feature flag `short_selling_enabled` est `false`.
+
 ---
 
 ## 4. Constat détaillé par sous-système
@@ -591,6 +616,10 @@ Le contrat levier introduit en V1 doit donc être considéré comme :
 - `replace_execution_positions()` sait stocker `qty` négatifs s’ils viennent du broker
 - la réconciliation par delta signé est partiellement exploitable
 - l’équity breakdown live sait déjà séparer long/short
+- `execution_engine/order_intents._normalized_target_side()` — helper directionnel déjà existant, à promouvoir dans `core/direction.py`
+- `execution_engine/db_io.load_portfolio_targets()` lit déjà la colonne `side` (le consommateur est prêt, seul l'écrivain risk doit être aligné)
+- `backtesting/execution_replay.py` stocke déjà `side` dans le contexte de signal lors du replay
+- `execution_engine/order_intents.apply_live_leverage_to_targets()` utilise déjà `_normalized_target_side()` pour exclure les shorts du scaling de levier
 
 ## 5.2 Opportunité
 
@@ -628,6 +657,20 @@ Fixer la représentation canonique du short avant d’éditer les moteurs.
   - `net_qty` signé uniquement pour positions broker/interne ;
 - figer un **contrat extensible** pour les schémas DB / JSON / artefacts afin
   de pouvoir enrichir plus tard la couche ML sans casser la V2.1 ;
+- **créer `core/direction.py`** — module central de helpers directionnels (zéro dépendance
+  externe) et y migrer `_normalized_target_side()` actuellement dans
+  `execution_engine/order_intents.py`. Les helpers à inclure *a minima* :
+  - `is_short_side(side: str) -> bool`
+  - `closing_side(entry_side: str) -> str`
+  - `direction_sign(side: str) -> int` (+1 pour buy, -1 pour sell)
+  - `compute_take_profit_price(entry_side, entry_price, pct, risk_per_share) -> float`
+  - `compute_initial_stop_price(entry_side, reference_price, risk_per_share) -> float | None`
+  - `compute_trailing_activation_price(entry_side, fill_price, ...) -> float | None`
+  - `compute_realized_pnl(entry_side, qty, entry_price, exit_price, fees) -> float`
+  - `compute_unrealized_pnl(entry_side, qty, current_price, entry_price) -> float`
+  - `compute_gross_notional(qty, price) -> float` (= `abs(qty) * price`)
+  - `compute_net_notional(side, qty, price) -> float` (= signé)
+  - `normalize_target_side(target) -> str` (promotion de `_normalized_target_side`)
 - définir la matrice régime ↔ directions autorisées ;
 - définir le MVP broker :
   - margin obligatoire,
@@ -679,6 +722,10 @@ Rendre le pipeline risk capable de produire des targets long **et** short, sans 
   - `RiskDecisionRow`
   - `PortfolioTargetRow`
 - faire remonter `side` jusqu’aux écritures `risk_decisions` / `portfolio_targets`
+  - **NB :** `execution_engine/db_io.load_portfolio_targets()` lit déjà la colonne `side`
+    (cf. `side=str(r["side"]) if r.get("side") else None`) → seul l'écrivain
+    `risk_management/audit.py` + `risk_management/db_io.py` doit être modifié ;
+    le contrat de lecture est déjà compatible
 - garder un défaut rétrocompatible `side="buy"`
 - rendre les contraintes de portefeuille side-aware :
   - gross exposure absolue,
@@ -730,6 +777,15 @@ Faire du backtest un moteur **long/short correct**, pas juste permissif.
   - PnL réalisé et non réalisé,
   - return %,
   - intrabar exit short
+  - **Formule clé → `gross_notional = abs(qty) * price` :**
+    - dans `constraints.py`, remplacer `notional = proposed_shares * price` par
+      `gross_notional = abs(proposed_shares) * price` pour les calculs d'exposition
+      brute (max_gross_exposure, max_position_weight, max_sector_weight) ;
+    - dans `simulator.py`, utiliser `abs(quantity) * price` pour le calcul de
+      l'exposition brute et la vérification des caps, tout en conservant une
+      valeur économique signée pour le mark-to-market et le PnL ;
+    - dans `simulator.py`, le `current_gross_notional = max(mtm, 0.0)` actuel
+      doit devenir `current_gross_notional = sum(abs(pos.qty) * px for each pos)`
 - corriger le replay execution/protection pour des parents short
 - corriger les exports report / pipeline
 - ajouter un coût de borrow simplifié en backtest (paramétrable, même statique au départ)
@@ -784,6 +840,10 @@ Permettre au pipeline live de soumettre, protéger et suivre des shorts.
 - rendre la reconstruction des lots compatible long/short
 - rendre la réconciliation “missing protection” compatible positions short
 - rendre le TCA directionnel
+- **rendre le time stop directionnel** (`backtesting/simulator.py:_try_close_positions`) :
+  - la logique actuelle vérifie `close_price >= entry_price` (progrès long) ;
+  - pour un short, vérifier `close_price <= entry_price` (progrès short) ;
+  - adapter `tp_progress` et `near_zero_return_pct` en fonction de la direction
 
 ### Critères de sortie
 
