@@ -715,8 +715,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Preset capital à utiliser pour charger les snapshots PIT et, si non contredit, préremplir les contraintes compte/positions.",
     )
-    run_p.add_argument("--tp", type=float, default=0.08, help="Take-profit %% (défaut 0.08)")
-    run_p.add_argument("--ts", type=float, default=0.05, help="Trailing stop %% (défaut 0.05)")
+    run_p.add_argument("--tp", type=float, default=0.12, help="Take-profit %% (défaut 0.12)")
+    run_p.add_argument("--ts", type=float, default=0.07, help="Trailing stop %% (défaut 0.07)")
     run_p.add_argument(
         "--use-live-protection-logic",
         dest="use_live_protection_logic",

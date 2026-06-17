@@ -74,7 +74,7 @@ presets:
       execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 1.0
+      execution_trailing_r_multiple: 1.5
       backtesting_commission_bps_stress: 15.0
       backtesting_slippage_bps_stress: 25.0
       backtesting_max_portfolio_dd_pct: 0.15
@@ -170,7 +170,7 @@ presets:
       execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 1.0
+      execution_trailing_r_multiple: 1.5
       backtesting_commission_bps_stress: 12.0
       backtesting_slippage_bps_stress: 20.0
       backtesting_max_portfolio_dd_pct: 0.15
@@ -259,7 +259,7 @@ presets:
       execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 1.0
+      execution_trailing_r_multiple: 1.5
       backtesting_commission_bps_stress: 10.0
       backtesting_slippage_bps_stress: 18.0
       backtesting_max_portfolio_dd_pct: 0.15
@@ -342,7 +342,7 @@ presets:
       execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 1.0
+      execution_trailing_r_multiple: 1.5
       backtesting_commission_bps_stress: 8.0
       backtesting_slippage_bps_stress: 15.0
       backtesting_max_portfolio_dd_pct: 0.15
@@ -422,7 +422,7 @@ presets:
       execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 1.0
+      execution_trailing_r_multiple: 1.5
       backtesting_commission_bps_stress: 6.0
       backtesting_slippage_bps_stress: 12.0
       backtesting_max_portfolio_dd_pct: 0.15
@@ -501,7 +501,7 @@ presets:
       execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 1.0
+      execution_trailing_r_multiple: 1.5
       backtesting_commission_bps_stress: 5.0
       backtesting_slippage_bps_stress: 10.0
       backtesting_max_portfolio_dd_pct: 0.15
@@ -591,7 +591,7 @@ presets:
       execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 1.1
+      execution_trailing_r_multiple: 1.5
       backtesting_commission_bps_stress: 4.0
       backtesting_slippage_bps_stress: 8.0
       backtesting_max_portfolio_dd_pct: 0.18

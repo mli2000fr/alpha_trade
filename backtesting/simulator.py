@@ -45,7 +45,7 @@ class BacktestConfig:
     trailing_stop_pct: float = 0.05
     use_live_protection_logic: bool = True
     time_stop_enabled: bool = True
-    time_stop_max_business_days: int = 8
+    time_stop_max_business_days: int = 15
     time_stop_min_tp_progress_ratio: float = 0.5
     time_stop_near_zero_return_pct: float = 0.005
     max_positions: int = 20
