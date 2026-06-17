@@ -70,6 +70,11 @@ class CircuitBreaker:
     Si ``degraded_entry_allocation_pct > 0``, ``is_active()`` retourne toujours
     ``False`` (le circuit breaker ne bloque plus totalement) mais ``allocation_scale()``
     retourne la fraction d'allocation autorisée.
+
+    Sprint short — ramp-up régimed : si ``regime_ramp_up_enabled``, l'allocation
+    dégradée est progressivement augmentée quand le régime est ``normal`` ET que
+    l'equity progresse vs la veille. Le streak est gelé si l'equity stagne/baisse,
+    et remis à zéro si le régime quitte ``normal``.
     """
 
     def __init__(self, config: RiskConfig, pnl: PnLSnapshot | None = None) -> None:
@@ -78,6 +83,8 @@ class CircuitBreaker:
         self._last_notified_signature: str | None = None
         self._peak_window: list[float] = []
         self._tripped: bool = False
+        self._normal_streak: int = 0
+        self._equity_prev: float = 0.0
 
     # ------------------------------------------------------------------
     # Pic de référence roulant (optionnel)
@@ -98,12 +105,44 @@ class CircuitBreaker:
             return hwm
         return float(max(self._peak_window))
 
-    def allocation_scale(self) -> float:
-        """Fraction d'allocation autorisée : 1.0 si normal, dégradé si trippé."""
+    def allocation_scale(self, entry_mode: str | None = None) -> float:
+        """Fraction d'allocation autorisée : 1.0 si normal, dégradé si trippé.
+
+        Si le ramp-up régimed est actif, l'allocation dégradée de base est
+        augmentée de ``regime_ramp_up_pct_per_day`` par jour où le régime
+        est ``normal`` ET l'equity progresse, plafonnée à ``regime_ramp_up_max_pct``.
+        """
         if not self._tripped:
             return 1.0
-        alloc = float(self._cfg.degraded_entry_allocation_pct)
-        return float(max(0.0, min(1.0, alloc)))
+        base = float(max(0.0, min(1.0, float(self._cfg.degraded_entry_allocation_pct))))
+        if not self._cfg.regime_ramp_up_enabled or not entry_mode:
+            return base
+        if str(entry_mode).strip().lower() == "normal" and self._normal_streak > 0:
+            ramp_bonus = float(self._normal_streak) * float(self._cfg.regime_ramp_up_pct_per_day)
+            return float(max(0.0, min(1.0, base + ramp_bonus, float(self._cfg.regime_ramp_up_max_pct))))
+        return base
+
+    def update_regime_streak(self, entry_mode: str | None, current_equity: float = 0.0) -> None:
+        """Met à jour le compteur de jours de recovery.
+
+        Le streak n'est incrémenté que si :
+        - le breaker est trippé,
+        - le régime est ``normal``,
+        - l'equity du jour est supérieure à celle de la veille.
+
+        Si le régime est normal mais que l'equity stagne ou baisse,
+        le streak reste inchangé. Tout régime non-normal remet à zéro.
+        """
+        if not self._cfg.regime_ramp_up_enabled or not self._tripped:
+            self._normal_streak = 0
+            self._equity_prev = float(current_equity)
+            return
+        if entry_mode and str(entry_mode).strip().lower() == "normal":
+            if current_equity > self._equity_prev and self._equity_prev > 0:
+                self._normal_streak += 1
+        else:
+            self._normal_streak = 0
+        self._equity_prev = float(current_equity)
 
     def status(self) -> CircuitBreakerStatus:
         """Évalue le statut courant sans journalisation ni notification."""

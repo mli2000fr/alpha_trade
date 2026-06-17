@@ -896,6 +896,24 @@ def run(
                     RiskConfig.__dataclass_fields__["degraded_entry_allocation_pct"].default,
                 )
             ),
+            regime_ramp_up_enabled=bool(
+                preset_risk_kwargs.get(
+                    "regime_ramp_up_enabled",
+                    RiskConfig.__dataclass_fields__["regime_ramp_up_enabled"].default,
+                )
+            ),
+            regime_ramp_up_pct_per_day=float(
+                preset_risk_kwargs.get(
+                    "regime_ramp_up_pct_per_day",
+                    RiskConfig.__dataclass_fields__["regime_ramp_up_pct_per_day"].default,
+                )
+            ),
+            regime_ramp_up_max_pct=float(
+                preset_risk_kwargs.get(
+                    "regime_ramp_up_max_pct",
+                    RiskConfig.__dataclass_fields__["regime_ramp_up_max_pct"].default,
+                )
+            ),
         ),
         pnl,
     )

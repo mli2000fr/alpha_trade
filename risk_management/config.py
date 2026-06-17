@@ -29,6 +29,11 @@ class RiskConfig:
     # 0.0 = blocage total (comportement original) ; > 0 = mode dégradé (sizing réduit)
     degraded_entry_allocation_pct: float = 0.0
     rolling_peak_window_days: int = 0   # 0 = pic historique absolu (comportement original)
+    # Ramp-up régimed : si le régime repasse en "normal" ET que l'equity
+    # progresse, l'allocation dégradée est progressivement augmentée.
+    regime_ramp_up_enabled: bool = False
+    regime_ramp_up_pct_per_day: float = 0.025
+    regime_ramp_up_max_pct: float = 0.40
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60
 

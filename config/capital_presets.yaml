@@ -54,7 +54,11 @@ presets:
       # 0.0 = blocage total (legacy), 0.02 = mode dégradé à 2%/position.
       # 0.10 = compromis : positions ~$60 (vs $600 normal), assez pour
       # permettre une recovery progressive sans hémorragie en bear market.
-      risk_degraded_entry_allocation_pct: 0.10
+      risk_degraded_entry_allocation_pct: 0.025
+      # Ramp-up régimed live : mêmes paramètres que le backtest
+      risk_regime_ramp_up_enabled: true
+      risk_regime_ramp_up_pct_per_day: 0.025
+      risk_regime_ramp_up_max_pct: 0.40
       risk_target_annual_vol: 0.12
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -143,7 +147,11 @@ presets:
       risk_max_drawdown_pct: 0.10
       risk_max_daily_loss_pct: 0.03
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.10
+      risk_degraded_entry_allocation_pct: 0.025
+      # Ramp-up régimed live
+      risk_regime_ramp_up_enabled: true
+      risk_regime_ramp_up_pct_per_day: 0.025
+      risk_regime_ramp_up_max_pct: 0.40
       risk_target_annual_vol: 0.13
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -225,7 +233,11 @@ presets:
       risk_max_drawdown_pct: 0.10
       risk_max_daily_loss_pct: 0.035
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.10
+      risk_degraded_entry_allocation_pct: 0.025
+      # Ramp-up régimed live
+      risk_regime_ramp_up_enabled: true
+      risk_regime_ramp_up_pct_per_day: 0.025
+      risk_regime_ramp_up_max_pct: 0.40
       risk_target_annual_vol: 0.14
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -301,7 +313,11 @@ presets:
       risk_max_drawdown_pct: 0.12
       risk_max_daily_loss_pct: 0.04
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.10
+      risk_degraded_entry_allocation_pct: 0.025
+      # Ramp-up régimed live
+      risk_regime_ramp_up_enabled: true
+      risk_regime_ramp_up_pct_per_day: 0.025
+      risk_regime_ramp_up_max_pct: 0.40
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -374,7 +390,11 @@ presets:
       risk_max_drawdown_pct: 0.14
       risk_max_daily_loss_pct: 0.045
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.10
+      risk_degraded_entry_allocation_pct: 0.025
+      # Ramp-up régimed live
+      risk_regime_ramp_up_enabled: true
+      risk_regime_ramp_up_pct_per_day: 0.025
+      risk_regime_ramp_up_max_pct: 0.40
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -446,7 +466,11 @@ presets:
       risk_max_drawdown_pct: 0.15
       risk_max_daily_loss_pct: 0.05
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.10
+      risk_degraded_entry_allocation_pct: 0.025
+      # Ramp-up régimed live
+      risk_regime_ramp_up_enabled: true
+      risk_regime_ramp_up_pct_per_day: 0.025
+      risk_regime_ramp_up_max_pct: 0.40
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -529,7 +553,11 @@ presets:
       risk_max_drawdown_pct: 0.18
       risk_max_daily_loss_pct: 0.05
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.10
+      risk_degraded_entry_allocation_pct: 0.025
+      # Ramp-up régimed live
+      risk_regime_ramp_up_enabled: true
+      risk_regime_ramp_up_pct_per_day: 0.025
+      risk_regime_ramp_up_max_pct: 0.40
       risk_target_annual_vol: 0.16
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95

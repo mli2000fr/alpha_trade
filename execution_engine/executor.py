@@ -245,7 +245,17 @@ class ProductionExecutor:
                         return metrics
                     # Mode dégradé (allocation réduite) : on continue mais on le logue
                     if hasattr(self._circuit_breaker, "allocation_scale"):
-                        _scale = self._circuit_breaker.allocation_scale()
+                        # Mise à jour du streak de recovery avant calcul de l'échelle
+                        _entry_mode = getattr(self._cfg, "entry_mode", None)
+                        _equity = (
+                            float(self._circuit_breaker._pnl.portfolio_current_value)
+                            if getattr(self._circuit_breaker, "_pnl", None) is not None
+                            and self._circuit_breaker._pnl.portfolio_current_value is not None
+                            else 0.0
+                        )
+                        if hasattr(self._circuit_breaker, "update_regime_streak"):
+                            self._circuit_breaker.update_regime_streak(_entry_mode, _equity)
+                        _scale = self._circuit_breaker.allocation_scale(entry_mode=_entry_mode)
                         if _scale < 1.0:
                             LOGGER.warning(
                                 "Circuit breaker mode dégradé actif — allocation_scale=%.2f%%",
