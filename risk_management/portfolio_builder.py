@@ -30,6 +30,96 @@ from risk_management.risk_checker import RiskCheckerImpl
 LOGGER = logging.getLogger(__name__)
 
 
+def _apply_regime_scoring_to_candidates(
+    candidates: list[CandidateScore],
+    regime_snapshot: object,
+) -> list[CandidateScore]:
+    """Applique les poids directionnels du régime aux scores des candidats.
+
+    Convertit la liste de ``CandidateScore`` en DataFrame, applique
+    :func:`~selector.regime_scoring.apply_regime_weights`, puis reconstruit
+    la liste avec les ``score_used`` ajustés.
+
+    En régime ``normal``, la fonction est une non-op (retourne la liste
+    inchangée).
+    """
+    mode = str(getattr(regime_snapshot, "mode", "normal") or "normal").strip().lower()
+    if mode == "normal":
+        return candidates
+
+    try:
+        import pandas as pd
+        from selector.regime_scoring import apply_regime_weights
+
+        # Convertir les candidats en DataFrame minimal
+        rows: list[dict[str, object]] = []
+        for c in candidates:
+            rows.append({
+                "symbol": c.symbol,
+                "sector": c.sector,
+                "score_used": c.score_used,
+                "final_score": c.score_used,
+                "trend_score": 0.0,
+                "vcp_score": 0.0,
+                "total_score": 0.0,
+                "relative_strength_index": 0.0,
+                "beta_126": None,
+                "market_cap": None,
+                "volatility_ratio": None,
+                "atr_pct_20": None,
+                "spread_bps": None,
+            })
+        df = pd.DataFrame(rows)
+
+        # Appliquer les poids du régime
+        adjusted = apply_regime_weights(df, regime_snapshot)
+
+        # Réinjecter les scores ajustés dans les candidats
+        if "final_score" in adjusted.columns:
+            score_map = dict(zip(
+                adjusted["symbol"].astype(str).str.upper(),
+                adjusted["final_score"],
+            ))
+            updated: list[CandidateScore] = []
+            for c in candidates:
+                new_score = score_map.get(c.symbol.upper(), c.score_used)
+                if new_score != c.score_used:
+                    updated.append(CandidateScore(
+                        symbol=c.symbol,
+                        sector=c.sector,
+                        score_used=float(new_score),
+                        score_source=f"{c.score_source}_regime_{mode}",
+                        company_idio_score=c.company_idio_score,
+                        macro_regime_score=c.macro_regime_score,
+                        company_idio_signal_norm=c.company_idio_signal_norm,
+                        macro_regime_signal_norm=c.macro_regime_signal_norm,
+                        company_idio_component=c.company_idio_component,
+                        macro_regime_component=c.macro_regime_component,
+                        quant_component=c.quant_component,
+                        walk_forward_sentiment_weight=c.walk_forward_sentiment_weight,
+                        walk_forward_macro_weight=c.walk_forward_macro_weight,
+                        walk_forward_quant_weight=c.walk_forward_quant_weight,
+                        calibration_run_id=c.calibration_run_id,
+                        calibration_source=c.calibration_source,
+                        snapshot_date=c.snapshot_date,
+                        candidate_rank=c.candidate_rank,
+                        selector_signal_mode=f"regime_{mode}",
+                        selection_explanation=c.selection_explanation,
+                        selector_earnings_blackout=c.selector_earnings_blackout,
+                    ))
+                else:
+                    updated.append(c)
+            return updated
+
+        return candidates
+    except Exception:
+        LOGGER.warning(
+            "apply_regime_weights a échoué pour le live — candidats inchangés.",
+            exc_info=True,
+        )
+        return candidates
+
+
 class PortfolioBuilder:
     """Orchestre sizing + contraintes pour construire le portefeuille cible."""
 
@@ -38,12 +128,14 @@ class PortfolioBuilder:
         config: RiskConfig,
         pnl: PnLSnapshot | None = None,
         circuit_breaker: CircuitBreaker | None = None,
+        regime_snapshot: object | None = None,
     ) -> None:
         self._cfg = config
         self._sizer = PositionSizer(config)
         self._kelly_sizer = KellySizer(config) if config.enable_kelly_sizing else None
         self._pnl = pnl
         self._circuit_breaker = circuit_breaker
+        self._regime_snapshot = regime_snapshot
         self.progress_callback: Callable[[dict[str, object]], None] | None = None
 
     def _emit_progress(
@@ -138,9 +230,22 @@ class PortfolioBuilder:
         win_rates: dict[str, WinRateInfo] | None = None,
         return_matrix: DataFrame | None = None,
     ) -> list[PortfolioEntry]:
-        """Construit la liste des PortfolioEntry."""
+        """Construit la liste des PortfolioEntry.
+
+        Si un ``regime_snapshot`` a été fourni au constructeur et que le
+        régime est défensif, les scores des candidats sont ajustés via
+        :func:`selector.regime_scoring.apply_regime_weights` avant la
+        construction du portefeuille.
+        """
         predictions = predictions or {}
         win_rates = win_rates or {}
+
+        # ── 0. Scoring directionnel (regime-aware) ──────────────────────
+        if self._regime_snapshot is not None and candidates:
+            candidates = _apply_regime_scoring_to_candidates(
+                candidates, self._regime_snapshot
+            )
+
         total_candidates = len(candidates)
 
         # 1. Enrichir puis trier par conviction DESC

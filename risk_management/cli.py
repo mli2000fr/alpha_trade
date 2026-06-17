@@ -1099,7 +1099,7 @@ def main(args: list[str] | None = None) -> None:
             phase="load_return_matrix",
         )
 
-        builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker)
+        builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker, regime_snapshot=regime_snapshot)
         builder.progress_callback = emit_run_summary
         entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
         _emit_live_progress(

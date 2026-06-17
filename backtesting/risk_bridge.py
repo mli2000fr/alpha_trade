@@ -80,6 +80,22 @@ def _build_candidates(scores_df: pd.DataFrame, snapshot_date: date) -> list[Cand
     day_df = day_df.loc[day_df["trade_date"] == pd.Timestamp(snapshot_date)]
     if day_df.empty:
         return []
+    return _build_candidates_from_day(day_df, snapshot_date)
+
+
+def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> list[CandidateScore]:
+    """Construit les ``CandidateScore`` depuis un DataFrame déjà filtré sur le jour.
+
+    Parameters
+    ----------
+    day_df : pd.DataFrame
+        DataFrame contenant UNIQUEMENT les lignes du ``snapshot_date``
+        (peut avoir déjà subi un ajustement régime via :func:`apply_regime_weights`).
+    snapshot_date : date
+        Date de snapshot pour le champ ``snapshot_date`` des candidats.
+    """
+    if day_df.empty:
+        return []
 
     candidates: list[CandidateScore] = []
     for _, row in day_df.iterrows():
@@ -316,22 +332,8 @@ def build_phase2_risk_result(
     snapshot_dates = _resolve_regime_snapshot_dates(close_df, execution_dates) if use_regime else execution_dates
     previous_regime_state = None
     for snapshot_date in snapshot_dates:
-        candidates = _build_candidates(normalized_scores, snapshot_date)
-        symbols = [candidate.symbol for candidate in candidates]
-        prices: dict[str, PriceInfo] = {}
-        predictions: dict[str, PredictionInfo] = {}
-        return_matrix = None
-        if candidates:
-            prices = _build_prices(
-                close_df=close_df,
-                high_df=high_df,
-                low_df=low_df,
-                snapshot_date=snapshot_date,
-                symbols=symbols,
-            )
-            predictions = _build_predictions(predictions_df, snapshot_date)
-            return_matrix = _build_return_matrix(close_df, snapshot_date, symbols, lookback)
-
+        # ── 0. Régime snapshot (doit être résolu avant les candidats pour le
+        #     scoring directionnel) ──────────────────────────────────────────
         cfg_for_day = structural_cfg
         snap = None
         if use_regime and build_snapshot_fn is not None:
@@ -359,12 +361,36 @@ def build_phase2_risk_result(
             regime_snapshots_dump[snapshot_date] = snap.to_summary_dict()
             cfg_for_day = apply_snapshot(structural_cfg, snap)
             if not snap.allow_new_entries:
-                entries_blocked_by_regime += len(candidates)
-                # On ignore les entrées de ce jour (cash_only / close_only / equity_too_low)
+                entries_blocked_by_regime += len(_build_candidates(normalized_scores, snapshot_date))
                 continue
             # Compteur "ordres trop petits évités" : candidats > effective_max_positions
-            if cfg_for_day.effective_max_positions < len(candidates):
-                slots_rejected_avoided += max(0, len(candidates) - cfg_for_day.effective_max_positions)
+            day_candidates_pre = _build_candidates(normalized_scores, snapshot_date)
+            if cfg_for_day.effective_max_positions < len(day_candidates_pre):
+                slots_rejected_avoided += max(0, len(day_candidates_pre) - cfg_for_day.effective_max_positions)
+
+        # ── 1. Scoring directionnel (regime-aware) ─────────────────────────
+        day_scores = normalized_scores.loc[
+            normalized_scores["trade_date"] == pd.Timestamp(snapshot_date)
+        ]
+        if snap is not None and not day_scores.empty:
+            from selector.regime_scoring import apply_regime_weights
+            day_scores = apply_regime_weights(day_scores.copy(), snap)
+
+        candidates = _build_candidates_from_day(day_scores, snapshot_date)
+        symbols = [candidate.symbol for candidate in candidates]
+        prices: dict[str, PriceInfo] = {}
+        predictions: dict[str, PredictionInfo] = {}
+        return_matrix = None
+        if candidates:
+            prices = _build_prices(
+                close_df=close_df,
+                high_df=high_df,
+                low_df=low_df,
+                snapshot_date=snapshot_date,
+                symbols=symbols,
+            )
+            predictions = _build_predictions(predictions_df, snapshot_date)
+            return_matrix = _build_return_matrix(close_df, snapshot_date, symbols, lookback)
 
         if not candidates:
             continue
