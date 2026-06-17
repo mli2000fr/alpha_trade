@@ -73,8 +73,9 @@ class CircuitBreaker:
 
     Sprint short — ramp-up régimed : si ``regime_ramp_up_enabled``, l'allocation
     dégradée est progressivement augmentée quand le régime est ``normal`` ET que
-    l'equity progresse vs la veille. Le streak est gelé si l'equity stagne/baisse,
-    et remis à zéro si le régime quitte ``normal``.
+    l'equity établit un nouveau pic sur la fenêtre glissante des N derniers jours
+    (``regime_ramp_up_peak_window_days``). Le streak est gelé si l'equity ne fait
+    pas de nouveau pic, et remis à zéro si le régime quitte ``normal``.
     """
 
     def __init__(self, config: RiskConfig, pnl: PnLSnapshot | None = None) -> None:
@@ -85,6 +86,7 @@ class CircuitBreaker:
         self._tripped: bool = False
         self._normal_streak: int = 0
         self._equity_prev: float = 0.0
+        self._equity_peak_window: list[float] = []
 
     # ------------------------------------------------------------------
     # Pic de référence roulant (optionnel)
@@ -128,21 +130,37 @@ class CircuitBreaker:
         Le streak n'est incrémenté que si :
         - le breaker est trippé,
         - le régime est ``normal``,
-        - l'equity du jour est supérieure à celle de la veille.
+        - l'equity du jour établit un nouveau pic sur la fenêtre glissante
+          des N derniers jours (``regime_ramp_up_peak_window_days``).
 
-        Si le régime est normal mais que l'equity stagne ou baisse,
-        le streak reste inchangé. Tout régime non-normal remet à zéro.
+        Cela rend le ramp-up résilient aux jours de stagnation : le streak
+        progresse dès que l'equity dépasse le meilleur niveau récent, sans
+        exiger une hausse quotidienne stricte.
+
+        Si le régime est normal mais que l'equity ne fait pas de nouveau pic,
+        le streak reste inchangé (gelé, pas de reset).
+        Tout régime non-normal remet le compteur à zéro.
         """
         if not self._cfg.regime_ramp_up_enabled or not self._tripped:
             self._normal_streak = 0
-            self._equity_prev = float(current_equity)
+            self._equity_peak_window.clear()
             return
         if entry_mode and str(entry_mode).strip().lower() == "normal":
-            if current_equity > self._equity_prev and self._equity_prev > 0:
-                self._normal_streak += 1
+            # Alimente la fenêtre glissante des N derniers jours
+            if current_equity > 0:
+                self._equity_peak_window.append(float(current_equity))
+                peak_window = int(self._cfg.regime_ramp_up_peak_window_days)
+                if peak_window > 0 and len(self._equity_peak_window) > peak_window:
+                    self._equity_peak_window = self._equity_peak_window[-peak_window:]
+            # Incrémente le streak si l'equity du jour bat le pic des jours précédents
+            if len(self._equity_peak_window) >= 2:
+                previous_peak = max(self._equity_peak_window[:-1])
+                if current_equity > previous_peak:
+                    self._normal_streak += 1
+            # else: streak gelé (normal mais equity ne fait pas de nouveau pic)
         else:
             self._normal_streak = 0
-        self._equity_prev = float(current_equity)
+            self._equity_peak_window.clear()
 
     def status(self) -> CircuitBreakerStatus:
         """Évalue le statut courant sans journalisation ni notification."""
@@ -155,12 +173,32 @@ class CircuitBreaker:
         return CircuitBreakerStatus(active=False)
 
     def is_active(self) -> bool:
-        """Retourne True si un circuit breaker est déclenché ET qu'il n'y a pas de mode dégradé."""
+        """Retourne True si un circuit breaker est déclenché ET qu'il n'y a pas de mode dégradé.
+
+        En mode dégradé (``degraded_entry_allocation_pct > 0``), le breaker
+        ne bloque jamais l'executor, mais bascule ``_tripped = True`` pour
+        activer l'allocation réduite. Une fois trippé, il ne revient à
+        ``False`` que si l'equity remonte au-dessus de
+        ``recovery_pct * high_watermark`` (hystérésis de réarmement).
+        """
         status = self.status()
-        if status.active and float(self._cfg.degraded_entry_allocation_pct) > 0.0:
+        degraded = float(self._cfg.degraded_entry_allocation_pct) > 0.0
+        if status.active and degraded:
             # Mode dégradé : on signale mais on ne bloque pas l'executor
             self._tripped = True
             return False
+        if self._tripped and degraded and not status.active:
+            # Vérifie si l'equity a suffisamment récupéré pour désactiver le mode dégradé
+            hwm = self._reference_hwm()
+            cur = self._pnl.portfolio_current_value
+            if hwm is not None and cur is not None and hwm > 0:
+                if cur >= hwm * float(self._cfg.recovery_pct):
+                    self._tripped = False
+                    self._normal_streak = 0
+                    self._equity_peak_window.clear()
+            # Si pas encore récupéré, on reste en mode dégradé
+            return False
+        # Mode non-dégradé (blocage total) : _tripped suit status.active sans hystérésis
         self._tripped = status.active
         return status.active
 

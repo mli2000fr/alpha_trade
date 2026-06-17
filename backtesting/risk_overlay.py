@@ -105,17 +105,22 @@ class DrawdownCircuitBreaker:
 
     enabled: bool = False
     max_dd_pct: float = 0.20
-    recovery_pct: float = 0.95
+    recovery_pct: float = 0.85
     rolling_peak_window_days: int = 252
     degraded_entry_allocation_pct: float = 0.0
     # Ramp-up progressif quand le régime redevient normal ET l'equity monte
     regime_ramp_up_enabled: bool = False
     regime_ramp_up_pct_per_day: float = 0.025
     regime_ramp_up_max_pct: float = 0.40
+    # Fenêtre glissante pour le « pic sur N jours » : le streak s'incrémente
+    # dès que l'equity dépasse le max des N jours précédents (et pas seulement
+    # la veille), ce qui rend le ramp-up résilient aux jours de stagnation.
+    regime_ramp_up_peak_window_days: int = 5
     _tripped: bool = field(default=False, init=False)
     _equity_window: list[float] = field(default_factory=list, init=False)
     _normal_streak: int = field(default=0, init=False)
     _equity_prev: float = field(default=0.0, init=False)
+    _equity_peak_window: list[float] = field(default_factory=list, init=False)
 
     def _reference_peak(self, peak_equity: float) -> float:
         if self.rolling_peak_window_days <= 0:
@@ -148,23 +153,37 @@ class DrawdownCircuitBreaker:
         Le streak n'est incrémenté que si :
         - le breaker est trippé,
         - le régime est ``normal``,
-        - l'equity du jour est supérieure à celle de la veille.
+        - l'equity du jour établit un nouveau pic sur la fenêtre glissante
+          des N derniers jours (``regime_ramp_up_peak_window_days``).
 
-        Si le régime est normal mais que l'equity stagne ou baisse,
-        le streak reste inchangé (ni incrément, ni reset).
+        Cela rend le ramp-up résilient aux jours de stagnation : le streak
+        progresse dès que l'equity dépasse le meilleur niveau récent, sans
+        exiger une hausse quotidienne stricte.
+
+        Si le régime est normal mais que l'equity ne fait pas de nouveau pic,
+        le streak reste inchangé (gelé, pas de reset).
         Tout régime non-normal remet le compteur à zéro.
         """
         if not self.regime_ramp_up_enabled or not self._tripped:
             self._normal_streak = 0
-            self._equity_prev = float(current_equity)
+            self._equity_peak_window.clear()
             return
         if entry_mode and str(entry_mode).strip().lower() == "normal":
-            if current_equity > self._equity_prev and self._equity_prev > 0:
-                self._normal_streak += 1
-            # else: streak gelé (normal mais equity ne monte pas)
+            # Alimente la fenêtre glissante des N derniers jours
+            if np.isfinite(current_equity) and current_equity > 0:
+                self._equity_peak_window.append(float(current_equity))
+                peak_window = int(self.regime_ramp_up_peak_window_days)
+                if peak_window > 0 and len(self._equity_peak_window) > peak_window:
+                    self._equity_peak_window = self._equity_peak_window[-peak_window:]
+            # Incrémente le streak si l'equity du jour bat le pic des jours précédents
+            if len(self._equity_peak_window) >= 2:
+                previous_peak = max(self._equity_peak_window[:-1])
+                if current_equity > previous_peak:
+                    self._normal_streak += 1
+            # else: streak gelé (normal mais equity ne fait pas de nouveau pic)
         else:
             self._normal_streak = 0
-        self._equity_prev = float(current_equity)
+            self._equity_peak_window.clear()
 
     def update(self, equity: float, peak_equity: float) -> bool:
         if not self.enabled or peak_equity <= 0:
@@ -184,7 +203,7 @@ class DrawdownCircuitBreaker:
         elif self._tripped and equity >= reference_peak * self.recovery_pct:
             self._tripped = False
             self._normal_streak = 0
-            self._equity_prev = 0.0
+            self._equity_peak_window.clear()
             self._normal_streak = 0
         return not self._tripped
 

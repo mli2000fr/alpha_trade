@@ -75,7 +75,7 @@ class BacktestRunOptions:
     regime_bear_threshold: float = -0.02
     max_sector_exposure_pct: float = 0.0
     max_portfolio_dd_pct: float = 0.0
-    dd_recovery_pct: float = 0.95
+    dd_recovery_pct: float = 0.85
     target_annual_vol: float | None = None
     min_ml_coverage_ratio: float | None = None
 

@@ -1038,7 +1038,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--dd-recovery-pct",
         type=float,
-        default=0.95,
+        default=0.85,
         help="Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (Phase C.5).",
     )
     run_p.add_argument(
@@ -1556,6 +1556,15 @@ def _apply_pipeline_defensive_defaults_from_preset(
         )
         if resolved_alloc is not None:
             args.dd_degraded_allocation_pct = float(resolved_alloc)
+
+    if "dd_recovery_pct" not in explicit_flags:
+        resolved_recovery = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_dd_recovery_pct",
+            default=0.85,
+        )
+        if resolved_recovery is not None:
+            args.dd_recovery_pct = float(resolved_recovery)
 
     # Ramp-up régime : résolus depuis le preset si non explicites
     if "dd_regime_ramp_up_enabled" not in explicit_flags:
@@ -2204,6 +2213,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             regime_ramp_up_enabled=bool(args.dd_regime_ramp_up_enabled),
             regime_ramp_up_pct_per_day=float(args.dd_regime_ramp_up_pct_per_day),
             regime_ramp_up_max_pct=float(args.dd_regime_ramp_up_max_pct),
+            regime_ramp_up_peak_window_days=int(getattr(args, "dd_regime_ramp_up_peak_window_days", 5) or 5),
         ),
         target_annual_vol=(
             float(args.target_annual_vol) if args.target_annual_vol is not None else None

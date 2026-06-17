@@ -81,7 +81,7 @@ class RiskOverlayParamsSchema:
     regime_bear_threshold: float = -0.02
     max_sector_exposure_pct: float = 0.0
     max_portfolio_dd_pct: float = 0.0
-    dd_recovery_pct: float = 0.95
+    dd_recovery_pct: float = 0.85
     dd_rolling_peak_window_days: int = 252
     dd_degraded_allocation_pct: float = 0.02
     target_annual_vol: float | None = None
