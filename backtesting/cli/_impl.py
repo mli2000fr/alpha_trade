@@ -451,6 +451,9 @@ def _build_backtest_common_params(
             "dd_recovery_pct": float(args.dd_recovery_pct),
             "dd_rolling_peak_window_days": int(args.dd_rolling_peak_window_days),
             "dd_degraded_allocation_pct": float(args.dd_degraded_allocation_pct),
+            "dd_regime_ramp_up_enabled": bool(args.dd_regime_ramp_up_enabled),
+            "dd_regime_ramp_up_pct_per_day": float(args.dd_regime_ramp_up_pct_per_day),
+            "dd_regime_ramp_up_max_pct": float(args.dd_regime_ramp_up_max_pct),
             "target_annual_vol": (
                 float(args.target_annual_vol) if args.target_annual_vol is not None else None
             ),
@@ -1051,6 +1054,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Allocation max par entrée quand le coupe-circuit DD est trippé (0.0 = blocage total).",
     )
     run_p.add_argument(
+        "--dd-regime-ramp-up-enabled",
+        action="store_true",
+        default=False,
+        help="Active le ramp-up progressif de l'allocation dégradée quand le régime repasse en 'normal'.",
+    )
+    run_p.add_argument(
+        "--dd-regime-ramp-up-pct-per-day",
+        type=float,
+        default=0.025,
+        help="Bonus quotidien d'allocation (en points de %%) par jour consécutif en régime normal.",
+    )
+    run_p.add_argument(
+        "--dd-regime-ramp-up-max-pct",
+        type=float,
+        default=0.40,
+        help="Plafond de l'allocation après ramp-up (ex. 0.40 = 40%% max).",
+    )
+    run_p.add_argument(
         "--target-annual-vol",
         type=float,
         default=None,
@@ -1246,6 +1267,9 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--dd-recovery-pct": "dd_recovery_pct",
         "--dd-rolling-peak-window-days": "dd_rolling_peak_window_days",
         "--dd-degraded-allocation-pct": "dd_degraded_allocation_pct",
+        "--dd-regime-ramp-up-enabled": "dd_regime_ramp_up_enabled",
+        "--dd-regime-ramp-up-pct-per-day": "dd_regime_ramp_up_pct_per_day",
+        "--dd-regime-ramp-up-max-pct": "dd_regime_ramp_up_max_pct",
         "--target-annual-vol": "target_annual_vol",
         "--min-ml-coverage-ratio": "min_ml_coverage_ratio",
     }
@@ -1532,6 +1556,32 @@ def _apply_pipeline_defensive_defaults_from_preset(
         )
         if resolved_alloc is not None:
             args.dd_degraded_allocation_pct = float(resolved_alloc)
+
+    # Ramp-up régime : résolus depuis le preset si non explicites
+    if "dd_regime_ramp_up_enabled" not in explicit_flags:
+        resolved_ramp_enabled = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_dd_regime_ramp_up_enabled",
+            default=0.0,
+        )
+        if resolved_ramp_enabled is not None:
+            args.dd_regime_ramp_up_enabled = bool(resolved_ramp_enabled)
+    if "dd_regime_ramp_up_pct_per_day" not in explicit_flags:
+        resolved_ramp_day = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_dd_regime_ramp_up_pct_per_day",
+            default=0.025,
+        )
+        if resolved_ramp_day is not None:
+            args.dd_regime_ramp_up_pct_per_day = float(resolved_ramp_day)
+    if "dd_regime_ramp_up_max_pct" not in explicit_flags:
+        resolved_ramp_max = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_dd_regime_ramp_up_max_pct",
+            default=0.40,
+        )
+        if resolved_ramp_max is not None:
+            args.dd_regime_ramp_up_max_pct = float(resolved_ramp_max)
 
 
 def _enforce_ml_coverage_gate(
@@ -2151,6 +2201,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
             recovery_pct=float(args.dd_recovery_pct),
             rolling_peak_window_days=int(args.dd_rolling_peak_window_days),
             degraded_entry_allocation_pct=float(args.dd_degraded_allocation_pct),
+            regime_ramp_up_enabled=bool(args.dd_regime_ramp_up_enabled),
+            regime_ramp_up_pct_per_day=float(args.dd_regime_ramp_up_pct_per_day),
+            regime_ramp_up_max_pct=float(args.dd_regime_ramp_up_max_pct),
         ),
         target_annual_vol=(
             float(args.target_annual_vol) if args.target_annual_vol is not None else None

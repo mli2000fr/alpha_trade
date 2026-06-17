@@ -669,7 +669,11 @@ class BacktestEngine:
             entries_allowed_by_breaker = cfg.risk_overlay.drawdown_breaker.update(
                 current_equity, state.peak_equity
             )
-            drawdown_allocation_scale = cfg.risk_overlay.drawdown_breaker.allocation_scale()
+            _entry_mode = cfg.exec_config.entry_mode if cfg.exec_config is not None else None
+            cfg.risk_overlay.drawdown_breaker.update_regime_streak(_entry_mode)
+            drawdown_allocation_scale = cfg.risk_overlay.drawdown_breaker.allocation_scale(
+                entry_mode=_entry_mode
+            )
 
             # Diagnostic quotidien breaker (C.5)
             if cfg.risk_overlay.drawdown_breaker.enabled:
@@ -681,6 +685,8 @@ class BacktestEngine:
                     "dd_pct": round(((current_equity / _ref_peak) - 1.0) * 100.0, 4) if _ref_peak > 0 else None,
                     "tripped": not entries_allowed_by_breaker,
                     "allocation_scale": drawdown_allocation_scale,
+                    "normal_streak": cfg.risk_overlay.drawdown_breaker._normal_streak,
+                    "entry_mode": _entry_mode,
                 })
 
             # Phase C.3 — filtre régime (benchmark).

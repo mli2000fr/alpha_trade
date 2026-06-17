@@ -52,7 +52,9 @@ presets:
       risk_drawdown_rolling_peak_window_days: 252
       # Allocation max autorisée quand le circuit breaker est trippé :
       # 0.0 = blocage total (legacy), 0.02 = mode dégradé à 2%/position.
-      risk_degraded_entry_allocation_pct: 0.02
+      # 0.10 = compromis : positions ~$60 (vs $600 normal), assez pour
+      # permettre une recovery progressive sans hémorragie en bear market.
+      risk_degraded_entry_allocation_pct: 0.10
       risk_target_annual_vol: 0.12
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -75,7 +77,13 @@ presets:
       # pic roulant de référence pour le déclenchement/réarmement C.5.
       backtesting_dd_rolling_peak_window_days: 252
       # Allocation max en mode dégradé (0.0 = blocage total comme legacy).
-      backtesting_dd_degraded_allocation_pct: 0.02
+      backtesting_dd_degraded_allocation_pct: 0.025
+      # Ramp-up régimed : si le régime repasse en "normal", l'allocation
+      # dégradée est progressivement augmentée de ramp_up_pct_per_day
+      # par jour consécutif, jusqu'au plafond ramp_up_max_pct.
+      backtesting_dd_regime_ramp_up_enabled: true
+      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+      backtesting_dd_regime_ramp_up_max_pct: 0.40
       backtesting_max_sector_exposure_pct: 0.25
       backtesting_max_entry_gap_pct: 0.03
       backtesting_target_annual_vol: 0.12
@@ -135,7 +143,7 @@ presets:
       risk_max_drawdown_pct: 0.10
       risk_max_daily_loss_pct: 0.03
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.02
+      risk_degraded_entry_allocation_pct: 0.10
       risk_target_annual_vol: 0.13
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -155,7 +163,12 @@ presets:
       backtesting_slippage_bps_stress: 20.0
       backtesting_max_portfolio_dd_pct: 0.12
       backtesting_dd_rolling_peak_window_days: 252
-      backtesting_dd_degraded_allocation_pct: 0.02
+      backtesting_dd_degraded_allocation_pct: 0.025
+      # Ramp-up régimed : si le régime repasse en "normal", l'allocation
+      # dégradée est progressivement augmentée pour accélérer la recovery.
+      backtesting_dd_regime_ramp_up_enabled: true
+      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+      backtesting_dd_regime_ramp_up_max_pct: 0.40
       backtesting_max_sector_exposure_pct: 0.30
       backtesting_max_entry_gap_pct: 0.03
       backtesting_target_annual_vol: 0.13
@@ -212,7 +225,7 @@ presets:
       risk_max_drawdown_pct: 0.10
       risk_max_daily_loss_pct: 0.035
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.02
+      risk_degraded_entry_allocation_pct: 0.10
       risk_target_annual_vol: 0.14
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -232,7 +245,11 @@ presets:
       backtesting_slippage_bps_stress: 18.0
       backtesting_max_portfolio_dd_pct: 0.12
       backtesting_dd_rolling_peak_window_days: 252
-      backtesting_dd_degraded_allocation_pct: 0.02
+      backtesting_dd_degraded_allocation_pct: 0.025
+      # Ramp-up régimed
+      backtesting_dd_regime_ramp_up_enabled: true
+      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+      backtesting_dd_regime_ramp_up_max_pct: 0.40
       backtesting_max_sector_exposure_pct: 0.30
       backtesting_max_entry_gap_pct: 0.03
       backtesting_target_annual_vol: 0.14
@@ -284,7 +301,7 @@ presets:
       risk_max_drawdown_pct: 0.12
       risk_max_daily_loss_pct: 0.04
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.02
+      risk_degraded_entry_allocation_pct: 0.10
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -304,7 +321,11 @@ presets:
       backtesting_slippage_bps_stress: 15.0
       backtesting_max_portfolio_dd_pct: 0.15
       backtesting_dd_rolling_peak_window_days: 252
-      backtesting_dd_degraded_allocation_pct: 0.02
+      backtesting_dd_degraded_allocation_pct: 0.025
+      # Ramp-up régimed
+      backtesting_dd_regime_ramp_up_enabled: true
+      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+      backtesting_dd_regime_ramp_up_max_pct: 0.40
       backtesting_max_sector_exposure_pct: 0.30
       backtesting_max_entry_gap_pct: 0.025
       backtesting_target_annual_vol: 0.15
@@ -353,7 +374,7 @@ presets:
       risk_max_drawdown_pct: 0.14
       risk_max_daily_loss_pct: 0.045
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.02
+      risk_degraded_entry_allocation_pct: 0.10
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -373,7 +394,11 @@ presets:
       backtesting_slippage_bps_stress: 12.0
       backtesting_max_portfolio_dd_pct: 0.15
       backtesting_dd_rolling_peak_window_days: 252
-      backtesting_dd_degraded_allocation_pct: 0.02
+      backtesting_dd_degraded_allocation_pct: 0.025
+      # Ramp-up régimed
+      backtesting_dd_regime_ramp_up_enabled: true
+      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+      backtesting_dd_regime_ramp_up_max_pct: 0.40
       backtesting_max_sector_exposure_pct: 0.30
       backtesting_max_entry_gap_pct: 0.025
       backtesting_target_annual_vol: 0.15
@@ -421,7 +446,7 @@ presets:
       risk_max_drawdown_pct: 0.15
       risk_max_daily_loss_pct: 0.05
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.02
+      risk_degraded_entry_allocation_pct: 0.10
       risk_target_annual_vol: 0.15
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -441,7 +466,11 @@ presets:
       backtesting_slippage_bps_stress: 10.0
       backtesting_max_portfolio_dd_pct: 0.15
       backtesting_dd_rolling_peak_window_days: 252
-      backtesting_dd_degraded_allocation_pct: 0.02
+      backtesting_dd_degraded_allocation_pct: 0.025
+      # Ramp-up régimed
+      backtesting_dd_regime_ramp_up_enabled: true
+      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+      backtesting_dd_regime_ramp_up_max_pct: 0.40
       backtesting_max_sector_exposure_pct: 0.28
       backtesting_max_entry_gap_pct: 0.02
       backtesting_target_annual_vol: 0.15
@@ -500,7 +529,7 @@ presets:
       risk_max_drawdown_pct: 0.18
       risk_max_daily_loss_pct: 0.05
       risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.02
+      risk_degraded_entry_allocation_pct: 0.10
       risk_target_annual_vol: 0.16
       risk_vol_target_lookback_days: 60
       risk_min_ml_coverage_ratio: 0.95
@@ -520,7 +549,11 @@ presets:
       backtesting_slippage_bps_stress: 8.0
       backtesting_max_portfolio_dd_pct: 0.18
       backtesting_dd_rolling_peak_window_days: 252
-      backtesting_dd_degraded_allocation_pct: 0.02
+      backtesting_dd_degraded_allocation_pct: 0.025
+      # Ramp-up régimed
+      backtesting_dd_regime_ramp_up_enabled: true
+      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+      backtesting_dd_regime_ramp_up_max_pct: 0.40
       backtesting_max_sector_exposure_pct: 0.25
       backtesting_max_entry_gap_pct: 0.02
       backtesting_target_annual_vol: 0.16
