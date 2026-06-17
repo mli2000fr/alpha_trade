@@ -405,13 +405,51 @@ Causes probables :
 2. contraintes portefeuille trop strictes ;
 3. prix ou ATR indisponibles ;
 4. sizing insuffisant ;
-5. circuit breaker actif.
+5. circuit breaker actif (voir §5.4 pour le comportement dégradé et le ramp-up).
 
 ### 5.3 Composante ML absente
 
 Le module peut continuer même si certaines prédictions ML sont absentes, et
 peut même ignorer volontairement `model_predictions` si le `ml_gate` le
 désactive. Le `run_summary` et l'IHM exposent cet état explicitement.
+
+### 5.4 Circuit breaker — mode dégradé et ramp-up régimed
+
+Le `CircuitBreaker` (`risk_management/circuit_breaker.py`) protège le compte en
+réduisant les allocations quand le drawdown dépasse `max_portfolio_drawdown_pct`.
+
+**Deux modes de dégradation :**
+
+- **Blocage total** (`degraded_entry_allocation_pct = 0.0`) : le trading est suspendu.
+- **Mode dégradé** (`degraded_entry_allocation_pct > 0.0`) : les entrées sont
+  réduites à la fraction configurée (ex. 10% = positions ~$60 au lieu de ~$600).
+
+**Ramp-up régimed** (quand `regime_ramp_up_enabled = true`) :
+
+Quand le breaker est trippé, l'allocation dégradée de base peut être
+progressivement augmentée si les conditions de marché s'améliorent :
+
+| Condition | Effet |
+|-----------|-------|
+| Régime ≠ `normal` | Streak = 0, allocation = base dégradée |
+| Régime = `normal`, equity ≤ veille | Streak gelé, allocation inchangée |
+| Régime = `normal`, equity > veille | Streak++, allocation = base + streak × `pct_per_day` (cap `max_pct`) |
+
+**Paramètres** (dans `RiskConfig` et `capital_presets.yaml`) :
+
+| Paramètre | Défaut | Description |
+|-----------|--------|-------------|
+| `degraded_entry_allocation_pct` | 0.10 | Allocation de base en mode dégradé |
+| `regime_ramp_up_enabled` | `true` | Active le ramp-up |
+| `regime_ramp_up_pct_per_day` | 0.025 | Bonus quotidien (+2.5%/jour) |
+| `regime_ramp_up_max_pct` | 0.40 | Plafond (40%) |
+
+**Exemple** : breaker trippé, base=10%, régime redevient normal et l'equity remonte :
+
+```
+Jour 1 normal + equity ↑ → 12.5%    Jour 5 → 22.5%    Jour 12 → 40% (cap)
+Si equity stagne → streak gelé       Si régime dégrade → reset à 10%
+```
 
 ---
 

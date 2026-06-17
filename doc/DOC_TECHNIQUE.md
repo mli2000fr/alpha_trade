@@ -223,7 +223,7 @@ Points d'implémentation importants côté `modelFactory` :
 - blocage total (`degraded_entry_allocation_pct = 0.0`) ;
 - mode dégradé (`degraded_entry_allocation_pct > 0`) avec sizing réduit.
 
-Le breaker supporte aussi un **pic roulant** (`rolling_peak_window_days`) en plus du mode historique absolu (`0`).
+Le breaker supporte aussi un **pic roulant** (`rolling_peak_window_days`) en plus du mode historique absolu (`0`), et un **ramp-up régimed** (sprint short juin 2026) : quand le breaker est trippé, l'allocation dégradée est progressivement augmentée de `regime_ramp_up_pct_per_day` par jour où le régime est `normal` ET l'equity progresse vs la veille, jusqu'au plafond `regime_ramp_up_max_pct`. Le streak est gelé si l'equity stagne, et remis à zéro si le régime quitte `normal`.
 
 Important : les presets de capital portent déjà des **équivalents live** des
 paramètres backtest. Le mapping n'est simplement pas nommé pareil :
@@ -231,6 +231,7 @@ paramètres backtest. Le mapping n'est simplement pas nommé pareil :
 - backtest `backtesting_max_portfolio_dd_pct` ↔ live `risk_max_drawdown_pct`
 - backtest `backtesting_dd_rolling_peak_window_days` ↔ live `risk_drawdown_rolling_peak_window_days`
 - backtest `backtesting_dd_degraded_allocation_pct` ↔ live `risk_degraded_entry_allocation_pct`
+- backtest `backtesting_dd_regime_ramp_up_*` ↔ live `risk_regime_ramp_up_*`
 
 Ces trois clés live sont injectées dans `RiskConfig`, puis consommées par
 `risk_management.circuit_breaker.CircuitBreaker` dans `run_execution.py`.
@@ -254,10 +255,12 @@ Les paramètres C.5 sont désormais pilotés via `config/capital_presets.yaml` e
 - **Live (`risk_management`)**
   - `risk_drawdown_rolling_peak_window_days`
   - `risk_degraded_entry_allocation_pct`
+  - `risk_regime_ramp_up_enabled` / `risk_regime_ramp_up_pct_per_day` / `risk_regime_ramp_up_max_pct`
   - (seuils historiques conservés) `risk_max_drawdown_pct`, `risk_max_daily_loss_pct`
 - **Backtesting (`backtesting`)**
   - `backtesting_dd_rolling_peak_window_days`
   - `backtesting_dd_degraded_allocation_pct`
+  - `backtesting_dd_regime_ramp_up_enabled` / `backtesting_dd_regime_ramp_up_pct_per_day` / `backtesting_dd_regime_ramp_up_max_pct`
   - (seuils) `backtesting_max_portfolio_dd_pct`
 
 Points d'intégration techniques :

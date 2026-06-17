@@ -67,6 +67,31 @@ Le présent document décrit l’état **réellement implémenté dans le code**
 | `backtesting/cache.py` | cache Parquet utilitaire non branché par défaut au `run` |
 | `backtesting/statistical_validation.py` | bootstrap et sensibilité paramétrique, surtout utilisés en code/tests |
 
+### 3.1 Drawdown breaker C.5 — ramp-up régimed
+
+Le `DrawdownCircuitBreaker` (`backtesting/risk_overlay.py`) protège le portefeuille
+en réduisant les allocations quand le drawdown dépasse `max_dd_pct`. Depuis le
+sprint short (juin 2026), il intègre un mécanisme de **ramp-up progressif**
+conditionné au régime de marché et à la progression de l'equity :
+
+| État | Condition | Allocation |
+|------|-----------|-----------|
+| Non trippé | DD < seuil | 100% (normale) |
+| Trippé, régime ≠ normal | — | `degraded_entry_allocation_pct` (base, ex. 10%) |
+| Trippé, régime normal, equity ↓ ou = | Streak gelé | allocation inchangée |
+| Trippé, régime normal, equity ↑ vs veille | Streak++ | base + streak × `ramp_up_pct_per_day` (cap `ramp_up_max_pct`) |
+
+**Paramètres CLI** (préfixe `--dd-regime-ramp-up-*`) :
+
+| Argument | Défaut | Description |
+|----------|--------|-------------|
+| `--dd-regime-ramp-up-enabled` | `False` | Active le ramp-up |
+| `--dd-regime-ramp-up-pct-per-day` | `0.025` | Bonus par jour de recovery |
+| `--dd-regime-ramp-up-max-pct` | `0.40` | Plafond d'allocation |
+
+**Artefact de diagnostic** : `drawdown_breaker_daily.csv` enrichi des colonnes
+`normal_streak` (compteur de jours de recovery) et `entry_mode` (régime courant).
+
 ---
 
 ## 4. Contrat de données
