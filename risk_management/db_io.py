@@ -637,6 +637,91 @@ class RiskRepository:
             source="broker_account_snapshots",
         )
 
+    def load_equity_history(
+        self,
+        account_id: str | None,
+        trade_date: date,
+        lookback_days: int = 25,
+    ) -> list[tuple[date, float]]:
+        """Charge l'historique d'equity pour le rotation factor.
+
+        Retourne une liste de ``(date, equity)`` triée par date ascendante
+        sur les ``lookback_days`` jours calendaires précédant ``trade_date``.
+
+        Sources essayées dans l'ordre :
+        1. ``account_risk_snapshots``
+        2. ``broker_account_snapshots`` (fallback)
+
+        Parameters
+        ----------
+        account_id : str or None
+            Identifiant du compte.
+        trade_date : date
+            Date de référence.
+        lookback_days : int
+            Nombre de jours calendaires de recul (défaut 25 ≈ 5 semaines).
+
+        Returns
+        -------
+        list[tuple[date, float]]
+            Liste de paires (date, equity), peut être vide.
+        """
+        resolved_account_id = account_id or "default"
+        rows: list[tuple[date, float]] = []
+
+        # Source 1 : account_risk_snapshots
+        if self._get_table_columns("account_risk_snapshots"):
+            query = text("""
+                SELECT trade_date, equity
+                FROM account_risk_snapshots
+                WHERE account_id = :account_id
+                  AND trade_date <= :trade_date
+                  AND equity IS NOT NULL
+                  AND equity > 0
+                ORDER BY trade_date ASC
+            """)
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    query,
+                    {"account_id": resolved_account_id, "trade_date": trade_date},
+                ).mappings().all()
+            for row in result:
+                dt = self._coerce_date(row["trade_date"])
+                if dt is not None:
+                    rows.append((dt, float(row["equity"])))
+            if rows:
+                return rows
+
+        # Source 2 : broker_account_snapshots (fallback)
+        if self._get_table_columns("broker_account_snapshots"):
+            query = text("""
+                SELECT DATE(created_at) AS trade_date, equity
+                FROM broker_account_snapshots
+                WHERE account_id = :account_id
+                  AND DATE(created_at) <= :trade_date
+                  AND equity IS NOT NULL
+                  AND equity > 0
+                ORDER BY DATE(created_at) ASC
+            """)
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    query,
+                    {"account_id": resolved_account_id, "trade_date": trade_date},
+                ).mappings().all()
+            for row in result:
+                dt = self._coerce_date(row["trade_date"])
+                if dt is not None:
+                    rows.append((dt, float(row["equity"])))
+            if rows:
+                return rows
+
+        LOGGER.warning(
+            "load_equity_history: aucun snapshot equity trouvé pour account=%s date=%s",
+            resolved_account_id,
+            trade_date,
+        )
+        return rows
+
     def load_account_equity_breakdown(
         self,
         account_id: str | None,

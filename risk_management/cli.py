@@ -1001,6 +1001,41 @@ def main(args: list[str] | None = None) -> None:
     circuit_breaker = CircuitBreaker(config, pnl_snapshot)
     circuit_breaker.notify_if_active()
 
+    # ── Rotation factor : tracker de performance momentum (live) ─────
+    from selector.regime_scoring import MomentumRotationState
+
+    rotation_state = MomentumRotationState(lookback_weeks=4, threshold=-0.03)
+    equity_history = repo.load_equity_history(
+        effective_account_id, trade_date, lookback_days=25
+    )
+    if len(equity_history) >= 2:
+        prev_equity: float | None = None
+        for _eq_date, eq_val in equity_history:
+            if prev_equity is not None and prev_equity > 0:
+                daily_ret = (eq_val / prev_equity) - 1.0
+                rotation_state.record(daily_ret)
+            prev_equity = eq_val
+        # Ajouter le retour du jour en cours (si PnL dispo)
+        if pnl_snapshot is not None and prev_equity is not None and prev_equity > 0:
+            current_equity = float(pnl_snapshot.portfolio_current_value)
+            if current_equity > 0 and current_equity != prev_equity:
+                daily_ret = (current_equity / prev_equity) - 1.0
+                rotation_state.record(daily_ret)
+        rot_triggered = rotation_state.should_rotate()
+        rot_cum = rotation_state.cumulative_return()
+        LOGGER.info(
+            "Rotation factor live | ready=%s triggered=%s cum_return=%.4f data_points=%d",
+            rotation_state.is_ready(),
+            rot_triggered,
+            rot_cum if rot_cum is not None else float('nan'),
+            len(equity_history),
+        )
+    else:
+        LOGGER.info(
+            "Rotation factor live | insuffisant equity_history=%d (besoin ≥ 2 points)",
+            len(equity_history),
+        )
+
     LOGGER.info("Chargement des candidats…")
     candidates = repo.load_candidates_asof(trade_date)
     LOGGER.info("Candidats charges : %d", len(candidates))
@@ -1099,7 +1134,7 @@ def main(args: list[str] | None = None) -> None:
             phase="load_return_matrix",
         )
 
-        builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker, regime_snapshot=regime_snapshot)
+        builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker, regime_snapshot=regime_snapshot, rotation_state=rotation_state)
         builder.progress_callback = emit_run_summary
         entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
         _emit_live_progress(
@@ -1348,6 +1383,16 @@ def main(args: list[str] | None = None) -> None:
         "snapshot_freshness_days": snapshot_freshness_days,
         "account_snapshot_trade_date": account_snapshot.trade_date.isoformat() if account_snapshot is not None else None,
         "circuit_breaker_active": circuit_breaker.is_active(),
+        # Rotation factor (Priorité 5)
+        "rotation_factor": {
+            "enabled": True,
+            "ready": rotation_state.is_ready(),
+            "triggered": rotation_state.should_rotate(),
+            "cumulative_return": rotation_state.cumulative_return(),
+            "data_points": len(rotation_state._daily_returns),
+            "lookback_weeks": rotation_state.lookback_weeks,
+            "threshold": rotation_state.threshold,
+        },
         "regime_snapshot_applied": regime_snapshot is not None,
         "regime_mode": regime_snapshot_payload.get("mode") if regime_snapshot_payload else None,
         "regime_allow_new_entries": regime_allow_new_entries,
