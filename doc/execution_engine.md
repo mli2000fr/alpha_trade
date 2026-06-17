@@ -21,15 +21,27 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 | `execution_engine/__main__.py` | Point d'entrée `python -m execution_engine` (façade de compatibilité) |
 | `execution_engine/cli.py` | Shim CLI : délègue le chemin `run` vers `run_execution.py`, garde `cancel-all` natif |
 | `execution_engine/executor.py` | Orchestrateur principal `ProductionExecutor` |
+| `execution_engine/executor_phases.py` | Découpage en phases de l'orchestrateur (opt-in `EXECUTOR_PHASES_ENABLED`) |
 | `execution_engine/broker_adapter.py` | Adaptation des intents vers le broker |
+| `execution_engine/broker_state_sync.py` | Synchronisation de l'état broker (positions, comptes) |
 | `execution_engine/order_intents.py` | Construction des ordres d'entrée et de rebalance |
+| `execution_engine/children_submission.py` | Soumission des ordres enfants (protections broker-side) |
+| `execution_engine/account_state.py` | Gestion des contraintes de compte (budget, levier, PDT) |
+| `execution_engine/preflight.py` | Pré-vérifications avant exécution |
+| `execution_engine/market_regime_preflight.py` | Vérifications liées au régime de marché |
 | `execution_engine/state_machine.py` | Mapping et états d'ordres internes |
 | `execution_engine/oco_manager.py` | Gestion logique OCO des protections broker-side |
+| `execution_engine/protection_watcher.py` | Watcher post-exécution des protections |
+| `execution_engine/protection_transition.py` | Transition de protections (stop → trailing stop) |
+| `execution_engine/protection_break_even.py` | Gestion du break-even des protections |
+| `execution_engine/orphan_adoption.py` | Adoption des ordres orphelins (hors pipeline) |
 | `execution_engine/reconciliation.py` | Réconciliation analytique targets / requests / broker / positions / protections |
+| `execution_engine/reconcile_statement.py` | Point d'entrée canonique de réconciliation broker |
 | `execution_engine/tca.py` | Transaction Cost Analysis |
 | `execution_engine/db_io.py` | Persistance SQL du module |
 | `execution_engine/models.py` | Modèles métiers d'exécution |
 | `execution_engine/config.py` | Paramètres immuables de l'exécution |
+| `execution_engine/audit.py` | Construction run_id et événements d'audit |
 | `run_execution.py` | Launcher canonique du flux `run` |
 
 ---
@@ -152,11 +164,15 @@ En exploitation Windows, on préfère généralement :
 python run_execution.py check
 ```
 
-### Exécution via le CLI bas niveau du module
+### Exécution via le CLI bas niveau du module (déprécié — préférer `run_execution.py`)
 
 ```powershell
+# Déprécié : émet un DeprecationWarning et délègue vers run_execution.py
 python -m execution_engine --broker-mode paper --dry-run
 python -m execution_engine --trade-date 2026-04-21 --risk-run-id abc123 --broker-mode paper
+
+# Sous-commande cancel-all : reste native à execution_engine
+python -m execution_engine cancel-all --account live1 --broker-mode live --confirm-account live1 --reason "incident"
 ```
 
 ---

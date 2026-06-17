@@ -21,7 +21,7 @@ Ce document résume le fonctionnement du module `selector/` et les commandes uti
 | `selector/alpha_scanner.py` | Scanner multi-facteurs principal |
 
 Le module `selector/` est volontairement compact : l'essentiel de la logique est concentré dans `AlphaScanner`.
-Les seuils stricts réutilisés par les reruns swing cash sont centralisés dans `selector/strict_filter_profiles.py` pour éviter toute divergence entre scanner, backfill et backtest PIT.
+Les seuils stricts réutilisés par les reruns swing cash sont centralisés dans `core/filter_profiles.py` (source canonique depuis la Phase 3.2.c du refactor) ; `selector/strict_filter_profiles.py` est un alias rétrocompatible pour ne pas casser les imports historiques.
 
 ---
 

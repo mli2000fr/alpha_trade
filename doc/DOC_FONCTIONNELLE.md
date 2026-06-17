@@ -175,7 +175,7 @@ Le scanner quotidien et les reruns/backtests "petit compte cash swing" utilisent
 - `earnings_blackout = 0`
 
 Cet ensemble de filtres vise à réduire les microcaps/penny stocks, améliorer l'exécutabilité réelle et éviter les entrées juste avant un événement binaire ou après une explosion de volatilité.
-Ils sont désormais centralisés dans un **profil partagé** (`selector/strict_filter_profiles.py`) pour garantir l'alignement entre :
+Ils sont désormais centralisés dans un **profil partagé** (`core/filter_profiles.py`, source canonique ; `selector/strict_filter_profiles.py` est un alias rétrocompatible) pour garantir l'alignement entre :
 
 - le scanner `AlphaScanner`,
 - le backfill point-in-time de `stock_scores_history`,

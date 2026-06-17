@@ -16,16 +16,25 @@ qui sera enforced via `import-linter` en Phase 7).
 core/
 ├── interfaces.py        # Tous les Protocol typés (BrokerPort, BarsRepository, …)
 ├── types.py             # Aliases (Symbol, AccountId, Adjustment, Feed)
+├── broker_models.py     # Modèles de données broker partagés
 ├── conviction.py        # Formule de fusion conviction partagée
 ├── filter_profiles.py   # Profils de filtres communs (STRICT_SWING_CASH_FILTERS)
 ├── eligibility.py       # Règles d'éligibilité (PIT-safe)
+├── metrics.py           # Métriques partagées
 ├── run_summary.py       # Helper schema_version + payload run_summary
-└── secrets.py           # Lecture stricte secrets DB (placeholders refusés)
+├── feature_flags.py     # Feature flags transverses
+├── secrets.py           # Lecture stricte secrets DB (placeholders refusés)
+└── _deprecation.py      # Dépréciation progressive
 
 common/
 ├── logging_setup.py     # configure_root_logging, RotatingFileHandler
 ├── market_calendar.py   # NYSE calendar (pandas_market_calendars)
 ├── config_loader.py     # load_config(YAML)
+├── config_vault.py      # Coffre-fort de configuration
+├── capital_presets.py   # Résolution presets de capital
+├── metrics.py           # Métriques transverses
+├── quantity_utils.py    # Utilitaires quantités fractionnaires
+├── windows_sleep_guard.py # Garde-fou veille Windows
 └── utils.py             # Façade rétrocompatible (re-exports)
 ```
 
@@ -112,10 +121,10 @@ Migration `signal_aggregator` → cet API : Phase 4.1.b.
 ## `core/filter_profiles.py` — Profils partagés
 
 Centralise `STRICT_SWING_CASH_FILTERS` et autres profils partagés entre
-`selector/`, `screener/`, `backtesting/`. Le module historique
-`selector/strict_filter_profiles.py` reste le **point d'implémentation** ;
-`core/filter_profiles.py` ré-exporte pour offrir un point d'import stable
-indépendant du module métier.
+`selector/`, `screener/`, `backtesting/`. `core/filter_profiles.py` est le
+**point d'implémentation canonique** (Phase 3.2.c du refactor) ;
+`selector/strict_filter_profiles.py` est un alias rétrocompatible pour ne
+pas casser les imports historiques.
 
 ## `common/utils.py` — Façade
 
@@ -126,6 +135,11 @@ Décomposition en sous-modules (Phase 2.1) :
 | `common.logging_setup` | `configure_root_logging`, `setup_logging_with_file_handler`, `DEFAULT_LOG_FORMAT`, `PROJECT_ROOT` | `from common.logging_setup import configure_root_logging` |
 | `common.market_calendar` | `is_trading_day`, `is_us_market_holiday`, `getLastDateMarche` | `from common.market_calendar import getLastDateMarche` |
 | `common.config_loader` | `load_config(path?)` | `from common.config_loader import load_config` |
+| `common.config_vault` | Coffre-fort de configuration | `from common.config_vault import ...` |
+| `common.capital_presets` | Résolution presets de capital | `from common.capital_presets import resolve_capital_preset_for_equity` |
+| `common.metrics` | Métriques transverses | `from common.metrics import ...` |
+| `common.quantity_utils` | Utilitaires quantités fractionnaires | `from common.quantity_utils import ...` |
+| `common.windows_sleep_guard` | Garde-fou veille Windows | `from common.windows_sleep_guard import ...` |
 | `common.utils` (façade) | Re-exports tous les symboles publics historiques | `from common.utils import configure_root_logging` (rétrocompatible) |
 
 Les **nouveaux** modules consommateurs doivent importer depuis le sous-module

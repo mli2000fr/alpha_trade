@@ -21,15 +21,22 @@ Ce document résume le fonctionnement du module `event_sentiment/` et les comman
 | `event_sentiment/__main__.py` | Point d'entrée `python -m event_sentiment` |
 | `event_sentiment/cli.py` | CLI du pipeline principal |
 | `event_sentiment/pipeline.py` | Orchestrateur `EventSentimentPipeline` |
+| `event_sentiment/sentiment_pipeline.py` | Pipeline principal de scoring sentiment |
+| `event_sentiment/event_sentiment_pipeline.py` | Pipeline complet d'événements + sentiment |
 | `event_sentiment/ingestion.py` | Ingestion et normalisation des news provider (`EODHD` / `Alpaca` / `Finnhub`) |
+| `event_sentiment/importe_news.py` | Import des news brutes |
 | `event_sentiment/scoring.py` | Scoring FinBERT |
 | `event_sentiment/macro_rules.py` | Détection de règles macro / événements majeurs |
 | `event_sentiment/aggregation.py` | Agrégations journalières ticker / secteur |
 | `event_sentiment/signal_aggregator.py` | Fusion quant + sentiment → `final_score_sentiment` |
+| `event_sentiment/relevance.py` | Calcul de pertinence article→ticker |
+| `event_sentiment/relevance_backfill.py` | Backfill de la pertinence |
+| `event_sentiment/history_backfill.py` | Backfill historique du sentiment |
 | `event_sentiment/db_io.py` | Accès base de données du module |
 | `event_sentiment/trading_calendar.py` | Alignement temporel vers séance de trading |
 | `event_sentiment/mapping.py` | Résolution ticker → secteur |
 | `event_sentiment/models.py` | Modèles de données news / sentiment |
+| `event_sentiment/config.py` | Configuration du module |
 
 ---
 

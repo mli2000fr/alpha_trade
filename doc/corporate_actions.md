@@ -21,7 +21,7 @@ Ce document rÃ©sume le fonctionnement du module `corporate_actions/` et les comm
 | `corporate_actions/__main__.py` | Point d'entrÃ©e `python -m corporate_actions` |
 | `corporate_actions/cli.py` | CLI `sync`, `apply`, `status`, `run` |
 | `corporate_actions/engine.py` | Orchestrateur principal `CorporateActionEngine` |
-| `corporate_actions/provider.py` | Provider Alpaca Corporate Actions |
+| `corporate_actions/provider.py` | Providers `AlpacaCorporateActionProvider` et `EodhdCorporateActionProvider` + factory `build_corporate_action_provider()` |
 | `corporate_actions/db_io.py` | Repository SQL du module |
 | `corporate_actions/processors.py` | Traitements dividendes / splits |
 | `corporate_actions/reconciliation.py` | RÃ©conciliation post-application |
@@ -347,11 +347,11 @@ python -m corporate_actions run  --portfolio-only --account live1 --cross-check 
 Comportement :
 
 - Lazy import de `yfinance` (jamais bloquant : si la lib est absente, anomalies = []).
-- Pour chaque dividende Yahoo dans la fenêtre `[start_date, end_date]` et la liste de symboles, on compare avec `corporate_actions_events` (provider Alpaca).
-- Trois types d'anomalies remontées dans `summary_json["anomalies_json"]` :
+- Pour chaque dividende Yahoo dans la fenï¿½tre `[start_date, end_date]` et la liste de symboles, on compare avec `corporate_actions_events` (provider Alpaca).
+- Trois types d'anomalies remontï¿½es dans `summary_json["anomalies_json"]` :
   - `missing_in_ingested` : Yahoo a un dividende, Alpaca non.
   - `missing_in_yahoo` : Alpaca a un dividende, Yahoo non.
-  - `amount_mismatch` : montant divergent au-delà de la tolérance (1e-4 par défaut).
+  - `amount_mismatch` : montant divergent au-delï¿½ de la tolï¿½rance (1e-4 par dï¿½faut).
 - Le cross-check **ne bloque jamais** la sync principale (try/except global).
 ### 9.4 Tests Phase 5.3
 ```powershell

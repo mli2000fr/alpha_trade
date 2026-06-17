@@ -63,7 +63,7 @@ presets:
       risk_score_weight: 0.55
       risk_prediction_weight: 0.45
       execution_account_type: cash             # compte cash : capital limité au settled cash
-      execution_swing_only: true               # interdit toute logique day-trade
+      execution_swing_only: false               # interdit toute logique day-trade
       execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -146,7 +146,7 @@ presets:
       risk_score_weight: 0.55
       risk_prediction_weight: 0.45
       execution_account_type: cash
-      execution_swing_only: true
+      execution_swing_only: false
       execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -223,7 +223,7 @@ presets:
       risk_score_weight: 0.55
       risk_prediction_weight: 0.45
       execution_account_type: cash
-      execution_swing_only: true
+      execution_swing_only: false
       execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -295,7 +295,7 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: cash
-      execution_swing_only: true
+      execution_swing_only: false
       execution_cash_settlement_days: 1
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -364,7 +364,7 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
-      execution_swing_only: true
+      execution_swing_only: false
       execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -432,7 +432,7 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
-      execution_swing_only: true
+      execution_swing_only: false
       execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -511,7 +511,7 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: margin
-      execution_swing_only: true
+      execution_swing_only: false
       execution_cash_settlement_days: 0
       execution_submission_window: both
       execution_trailing_trigger: multiple_r

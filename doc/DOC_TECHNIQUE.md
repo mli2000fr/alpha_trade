@@ -54,29 +54,87 @@ alpha_trade/
 ├── README.md                     ← Documentation rapide + ordre d'exécution
 ├── doc/
 │   ├── DOC_FONCTIONNELLE.md      ← Documentation fonctionnelle complète
-│   └── DOC_TECHNIQUE.md          ← Ce document
+│   ├── DOC_TECHNIQUE.md          ← Ce document
 │   ├── CONVENTIONS.md            ← Source unique des conventions canoniques
 │   └── CHANGELOG.md              ← Journal synthétique des changements doc
-├── core/interfaces.py            ← Contrats (Protocol) : PriceRepository, RiskChecker, etc.
-├── common/utils.py               ← Calendrier NYSE, RotatingFileHandler, load_config()
+├── core/                         ← Interfaces, modèles broker, profils de filtres, métriques
+│   ├── interfaces.py             ← Contrats (Protocol) : PriceRepository, RiskChecker, etc.
+│   ├── filter_profiles.py        ← Profils stricts swing cash (source canonique)
+│   ├── broker_models.py          ← Modèles de données broker partagés
+│   ├── conviction.py / eligibility.py / metrics.py / run_summary.py
+│   ├── feature_flags.py / secrets.py / types.py
+│   └── _deprecation.py
+├── common/                       ← Utilitaires transverses
+│   ├── utils.py                  ← Calendrier NYSE, RotatingFileHandler
+│   ├── capital_presets.py        ← Résolution presets de capital
+│   ├── config_loader.py / config_vault.py
+│   ├── logging_setup.py / market_calendar.py
+│   ├── metrics.py / quantity_utils.py / windows_sleep_guard.py
 ├── database/                     ← Persistance MySQL (SQLAlchemy + pymysql)
 │   ├── connection.py             ← Engine, Session, pool configuré
 │   ├── assets.py / bar_metadata.py / sanitizer_db_ops.py
 │   └── sql/                      ← DDL : stock/, news/, ml/, risk/, execution/, corporate_actions/
 ├── service/alpaca/               ← Clients HTTP Alpaca (data, news, trading) + registre multi-comptes
 ├── service/finnhub/              ← Client HTTP Finnhub (profil société)
+├── service/eodhd/                ← Client EODHD (barres OHLCV, news, corporate actions)
 ├── dataIntegrityEngine/          ← Ingestion & nettoyage des données
+│   ├── import_alpaca_assets.py / import_alpaca_bar.py / import_eodhd_bar.py
+│   ├── data_sanitizer_daily.py / update_sector.py
+│   ├── sync_latest_quotes.py / sync_earnings_calendar.py
+│   ├── backfill_eodhd_history.py / bar_importer_common.py
+│   ├── cross_check_stooq.py / data_source_health.py
+│   └── eodhd/                    ← Adaptateurs EODHD
 ├── screener/                     ← Screening liquidité/force relative (ProcessPoolExecutor)
 ├── selector/                     ← AlphaScanner multi-facteurs (ThreadPoolExecutor)
+│   └── strict_filter_profiles.py ← Alias rétrocompatible → core/filter_profiles.py
 ├── event_sentiment/              ← Pipeline NLP : news → FinBERT → agrégation → fusion
-├── modelFactory/                 ← LSTM + Temporal Attention (Lightning)
+├── modelFactory/                 ← Gouvernance ML multi-modèles (LSTM, LightGBM, CatBoost)
+│   ├── model.py / trainer.py / predictor.py
+│   ├── champion_selection.py / calibration.py / target_optimization.py
+│   ├── lightgbm_baseline.py / catboost_baseline.py / tabular_baseline.py
+│   ├── global_model.py / cross_sectional.py / orchestrator.py
+│   ├── drift_monitor.py / drift_policy.py / auto_rollback.py
+│   ├── data_loader.py / dataset.py / features.py / evaluation.py
+│   ├── reproducibility.py / runtime_status.py / db_registry.py
+│   └── run_train.py / run_predict.py / cli.py
 ├── risk_management/              ← Sizing, contraintes, circuit breaker, portefeuille cible
-├── execution_engine/             ← Exécution canonique : targets snapshot, requests, ordres broker, fills observés, positions/lots, réconciliation, TCA, watcher post-exécution secondaire
-├── scripts/windows/              ← Packaging Windows : launcher, Task Scheduler, NSSM, secret store, bridge read-only
+│   ├── portfolio_builder.py / position_sizer.py / kelly.py
+│   ├── circuit_breaker.py / constraints.py / correlation_filter.py
+│   ├── conviction.py / risk_checker.py / enums.py / models.py
+│   ├── regime_apply.py / live_pipeline_guards.py / ml_gate.py
+│   ├── shadow_compare.py / audit.py / db_io.py / config.py / cli.py
+│   └── run_risk.py
+├── execution_engine/             ← Exécution canonique
+│   ├── executor.py               ← Orchestrateur principal ProductionExecutor
+│   ├── executor_phases.py        ← Découpage en phases (opt-in)
+│   ├── broker_adapter.py / broker_state_sync.py
+│   ├── order_intents.py / children_submission.py
+│   ├── account_state.py / preflight.py / market_regime_preflight.py
+│   ├── protection_watcher.py / protection_transition.py / protection_break_even.py
+│   ├── oco_manager.py / reconciliation.py / reconcile_statement.py
+│   ├── orphan_adoption.py / tca.py / state_machine.py
+│   ├── db_io.py / models.py / config.py / audit.py / cli.py
+│   └── __main__.py
+├── backtesting/                  ← Backtest PIT, backfill, calibration, walk-forward
+│   ├── simulator.py / data_loader.py / signal_replay.py
+│   ├── fidelity.py / resilience.py / weights_calibration.py / walk_forward.py
+│   ├── microstructure.py / risk_overlay.py / risk_bridge.py / execution_bridge.py
+│   ├── execution_replay.py / execution_lifecycle_replay.py
+│   ├── protection_watcher_replay.py / exit_lifecycle_replay.py
+│   ├── execution_broker_like.py / profiles.py / parity.py
+│   ├── trading_constraints.py / sentiment_calibration.py
+│   ├── backfill_scores_history.py / run_metadata.py / attribution.py
+│   ├── report.py / report_schema.py / report_schema_pydantic.py
+│   ├── analytics.py / cache.py / statistical_validation.py / brinson_fachler.py
+│   ├── fuzz_runner.py / fuzz_tolerance.py / resilience.py
+│   └── cli/
 ├── corporate_actions/            ← Corporate actions : dividendes, splits, audit, cash ledger
+│   ├── engine.py / provider.py / db_io.py / processors.py
+│   ├── reconciliation.py / models.py / cli.py / corporate_action_run.py
+├── scripts/windows/              ← Packaging Windows : launcher, Task Scheduler, NSSM, secret store, bridge read-only
 ├── ihm/                          ← IHM opérateur Streamlit (dashboard de supervision)
-├── artifacts/models/             ← Checkpoints PyTorch
-├── tests/                        ← 40+ tests unitaires (pytest)
+├── artifacts/models/             ← Checkpoints PyTorch + artefacts ML
+├── tests/                        ← Suite de tests (pytest)
 ├── .github/                      ← CI/CD GitHub Actions
 └── htmlcov/                      ← Rapports couverture
 ```
@@ -123,7 +181,7 @@ Points d'implémentation importants :
 
 - les filtres `min_close` et `liquidity_threshold` existent à la fois en présélection SQL et en filet de sécurité pandas ;
 - le filtre `max_volatility_ratio` est appliqué **dans `apply_filters()`**, pas dans la présélection SQL, car il dépend de `compute_factors()` (`vol_10`, `vol_60`, puis `volatility_ratio = vol_10 / vol_60`) ;
-- les seuils stricts swing cash sont centralisés dans `selector/strict_filter_profiles.py` (`STRICT_SWING_CASH_FILTERS`) ; `AlphaScannerConfig.strict_swing_cash()` les projette côté scanner, et le chemin CLI standard charge désormais ce profil implicitement ;
+- les seuils stricts swing cash sont centralisés dans `core/filter_profiles.py` (`STRICT_SWING_CASH_FILTERS`, source canonique depuis la Phase 3.2.c du refactor) ; `selector/strict_filter_profiles.py` est un alias rétrocompatible ; `AlphaScannerConfig.strict_swing_cash()` les projette côté scanner, et le chemin CLI standard charge désormais ce profil implicitement ;
 - les filtres `market_cap`, `beta_126`, `spread_bps` et `earnings_blackout` sont appliqués dans `apply_filters()` après enrichissement via `stock_metadata`, `stock_quote_snapshots` et `stock_earnings_calendar` ;
 - `beta_126` est calculé localement contre `SPY` à partir des rendements journaliers alignés ;
 - `fetch_quote_snapshots(..., reference_date=...)` et `fetch_next_earnings(..., reference_date=...)` permettent au live et au backfill PIT de réutiliser exactement les mêmes règles métier.
@@ -152,7 +210,7 @@ Points d'implémentation importants côté `modelFactory` :
 - `predictor.py` sait router vers `lstm_attention`, `lightgbm_tabular`, `catboost_tabular` et `global_tabular` ;
 - la base MySQL reste volontairement **résumée** : la gouvernance détaillée des challengers vit surtout dans les artefacts disque.
 
-**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes de compte côté exécution. Depuis l'ajout du levier optionnel, l'exécution peut appliquer une **politique stricte de levier** qui privilégie `regt_buying_power` puis `buying_power` pour calculer un **budget effectif** plafonné à `2.0x` max en swing overnight. Quand cette feature n'est pas activée, la sémantique historique des comptes `margin` reste conservée (budget broker legacy). Seul fichier à modifier pour changer de broker.
+**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes de compte côté exécution. Depuis l'ajout du levier optionnel, l'exécution peut appliquer une **politique stricte de levier** qui privilégie `regt_buying_power` puis `buying_power` pour calculer un **budget effectif** plafonné à `2.0x` max en swing overnight. Quand cette feature n'est pas activée, la sémantique historique des comptes `margin` reste conservée (budget broker legacy). Le registre multi-comptes (`service/alpaca/accounts.py:AccountRegistry`) centralise la résolution des credentials ; `BrokerAdapter` consomme cette résolution via l'`account_id`.
 
 **`ProtectionTransitionWatcher`** / **`ProtectionWatcherService`** (`execution_engine/protection_watcher.py`) — Watcher post-exécution secondaire chargé de surveiller les protections créées par `Execution` et, si ce mode est activé, de promouvoir les stops initiaux vers un trailing stop dynamique selon les conditions métier. `ProtectionWatcherService` encapsule la boucle persistante, les heartbeats, la persistance de santé dans `run_business_summaries` et les garde-fous de résilience.
 
@@ -179,7 +237,7 @@ Ces trois clés live sont injectées dans `RiskConfig`, puis consommées par
 
 **`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO logique : quand une protection enfant est `FILLED`, annule le sibling.
 
-**`CorporateActionEngine`** (`corporate_actions/engine.py`) — Orchestrateur corporate actions en 2 phases : `sync()` (ingestion provider → DB) et `apply()` (application idempotente sur positions). Stratégie : les OHLCV restent gérés par Alpaca avec la convention projet `adjustment="split"`, ce module gère uniquement la comptabilité portefeuille (qty, cost basis, cash). La sync résout par défaut l'univers depuis `stock_metadata` (`status='active'`, `tradable=1`, `bars_available=1`), puis interroge Alpaca par lots configurables (`batch_size`, défaut 25) avec persistance immédiate en base après chaque lot.
+**`CorporateActionEngine`** (`corporate_actions/engine.py`) — Orchestrateur corporate actions en 2 phases : `sync()` (ingestion provider → DB) et `apply()` (application idempotente sur positions). Stratégie : les OHLCV restent gérés avec la convention projet `adjustment="split"`, ce module gère uniquement la comptabilité portefeuille (qty, cost basis, cash). La sync résout par défaut l'univers depuis `stock_metadata` (`status='active'`, `tradable=1`, `bars_available=1`), puis interroge le provider CA par lots configurables (`batch_size`, défaut 25) avec persistance immédiate en base après chaque lot. Deux providers sont supportés : `AlpacaCorporateActionProvider` (via API Alpaca `v1/corporate-actions`) et `EodhdCorporateActionProvider` (via API EODHD), sélectionnés automatiquement par la factory `build_corporate_action_provider()` selon le `bars_provider` configuré.
 
 **`AlpacaCorporateActionProvider`** (`corporate_actions/provider.py`) — Provider abstrait pour l'ingestion des dividendes et splits depuis l'API Alpaca Corporate Actions (`v1/corporate-actions`). Gère pagination (`next_page_token`), tri `asc`, `limit=1000`, retry réseau/HTTP, et retry spécifique aux timeouts sur le modèle de `fetch_bars` du client Alpaca. Extensible vers Polygon, Finnhub, etc.
 
@@ -287,10 +345,12 @@ Points d'intégration techniques :
 
 | API | Base URL | Usage |
 |---|---|---|
-| Alpaca Market Data | `data.alpaca.markets/v2` | Bars OHLCV, assets |
+| Alpaca Market Data | `data.alpaca.markets/v2` | Bars OHLCV (rétrocompatibilité), assets |
+| Alpaca Corporate Actions | `data.alpaca.markets/v1/corporate-actions` | Dividendes, splits (via `AlpacaCorporateActionProvider`) |
 | Alpaca News | `data.alpaca.markets/v1beta1/news` | Articles financiers |
 | Alpaca Trading paper | `paper-api.alpaca.markets/v2` | Ordres, positions, compte |
 | Alpaca Trading live | `api.alpaca.markets/v2` | Ordres, positions, compte |
+| EODHD | `eodhd.com/api` | Barres OHLCV (provider primaire), news financières, corporate actions |
 | Finnhub | `finnhub.io/api/v1` | Profil société, secteur, market cap, earnings calendar |
 
 ---
@@ -309,6 +369,7 @@ Points d'intégration techniques :
 | `ALPACA_<ID>_SECRET_KEY` | ⚠️ | Secret pour un compte supplémentaire |
 | `ALPACA_<ID>_MODE` | ⚠️ | Mode du compte (paper/live, défaut: paper) |
 | `FINNHUB_API_KEY` | ⚠️ | Token Finnhub (ou `CLE_FINNHUB`) — requis pour `update_sector` |
+| `EODHD_API_TOKEN` | ⚠️ | Token EODHD — requis pour les barres OHLCV (mode nominal `bars_provider=eodhd`) et le provider news EODHD |
 | `ALPHA_TRADE_METRICS_PORT` | ⚠️ | Active l'endpoint Prometheus `/metrics` (opt-in) |
 | `ALPHA_TRADE_SLACK_WEBHOOK` | ⚠️ | Webhook Slack pour alerting externe |
 | `ALPHA_TRADE_SMTP_HOST` / `ALPHA_TRADE_SMTP_PORT` | ⚠️ | SMTP alerting externe |
@@ -712,10 +773,10 @@ python run_execution.py paper --account live1
 python -m corporate_actions sync --account live1
 python -m corporate_actions apply --account live1
 
-# Compatibilité historique pour le flux run :
+# Compatibilité historique pour le flux run (déprécié — émet DeprecationWarning) :
 python -m execution_engine --broker-mode paper --dry-run
 
-# Kill switch global natif :
+# Kill switch global natif (cancel-all reste natif à execution_engine) :
 python -m execution_engine cancel-all --account live1 --dry-run
 python -m execution_engine cancel-all --account live1 --broker-mode live --confirm-account live1 --reason "incident"
 ```

@@ -94,11 +94,17 @@ Le module sert donc de **couche d’ingestion + préparation + audit**.
 | Fichier | Rôle opérationnel |
 |---|---|
 | `dataIntegrityEngine/import_alpaca_assets.py` | Charge les actifs Alpaca et alimente `stock_metadata` |
-| `dataIntegrityEngine/import_alpaca_bar.py` | Importe les bars OHLCV Alpaca vers `stock_bars` |
+| `dataIntegrityEngine/import_alpaca_bar.py` | Importe les bars OHLCV Alpaca vers `stock_bars` (mode rétrocompat `bars_provider=alpaca`) |
+| `dataIntegrityEngine/import_eodhd_bar.py` | Importe les bars OHLCV EODHD vers `stock_bars` (mode nominal `bars_provider=eodhd`) |
+| `dataIntegrityEngine/bar_importer_common.py` | Helpers communs partagés entre les importeurs Alpaca et EODHD |
 | `dataIntegrityEngine/data_sanitizer_daily.py` | Nettoie / aligne / audite les séries daily et remplit `stock_bars_daily` |
 | `dataIntegrityEngine/update_sector.py` | Enrichit `stock_metadata` avec `sector` et `market_cap` via Finnhub |
 | `dataIntegrityEngine/sync_latest_quotes.py` | Alimente `stock_quote_snapshots` avec les latest quotes Alpaca |
 | `dataIntegrityEngine/sync_earnings_calendar.py` | Alimente `stock_earnings_calendar` via Finnhub |
+| `dataIntegrityEngine/backfill_eodhd_history.py` | Backfill historique des barres EODHD |
+| `dataIntegrityEngine/cross_check_stooq.py` | Vérification croisée avec Stooq |
+| `dataIntegrityEngine/data_source_health.py` | Diagnostics de santé des sources de données |
+| `dataIntegrityEngine/eodhd/` | Adaptateurs EODHD (barres, mapping symboles, etc.) |
 
 ### 3.2 Dépendances directes importantes
 

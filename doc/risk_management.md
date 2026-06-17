@@ -29,12 +29,15 @@ Ce document résume le fonctionnement du module `risk_management/` et les comman
 | `risk_management/circuit_breaker.py` | Suspension sur drawdown / perte quotidienne |
 | `risk_management/conviction.py` | Fusion score quant + prédiction ML |
 | `risk_management/correlation_filter.py` | Filtre de corrélation |
+| `risk_management/models.py` | Modèles métiers risk (dataclasses) |
+| `risk_management/enums.py` | Valeurs canonisées `sizing_method` / `decision_reason_code` |
 | `risk_management/db_io.py` | Chargement candidats, prix, prédictions, historique |
 | `risk_management/audit.py` | Persistance décisions et cibles |
 | `risk_management/config.py` | Paramètres immuables |
 | `risk_management/regime_apply.py` | Application des overrides de régime live/backtest |
+| `risk_management/live_pipeline_guards.py` | Garde-fous spécifiques au pipeline live |
+| `risk_management/ml_gate.py` | Porte ML : validation des prédictions avant sizing |
 | `risk_management/shadow_compare.py` | Diff offline/piloté entre deux runs risk |
-| `risk_management/enums.py` | Valeurs canonisées `sizing_method` / `decision_reason_code` |
 
 ---
 
