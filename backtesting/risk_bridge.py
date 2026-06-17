@@ -329,6 +329,11 @@ def build_phase2_risk_result(
         from service.market import build_snapshot as _bs  # local import (parité)
         build_snapshot_fn = _bs
 
+    # ── Rotation factor : tracker de performance momentum ──────────────
+    from selector.regime_scoring import MomentumRotationState
+    rotation_state = MomentumRotationState(lookback_weeks=4, threshold=-0.03)
+    prev_equity: float | None = None
+
     snapshot_dates = _resolve_regime_snapshot_dates(close_df, execution_dates) if use_regime else execution_dates
     previous_regime_state = None
     for snapshot_date in snapshot_dates:
@@ -368,13 +373,24 @@ def build_phase2_risk_result(
             if cfg_for_day.effective_max_positions < len(day_candidates_pre):
                 slots_rejected_avoided += max(0, len(day_candidates_pre) - cfg_for_day.effective_max_positions)
 
-        # ── 1. Scoring directionnel (regime-aware) ─────────────────────────
+        # ── 1. Scoring directionnel (regime-aware + rotation factor) ────
         day_scores = normalized_scores.loc[
             normalized_scores["trade_date"] == pd.Timestamp(snapshot_date)
         ]
         if snap is not None and not day_scores.empty:
             from selector.regime_scoring import apply_regime_weights
-            day_scores = apply_regime_weights(day_scores.copy(), snap)
+            day_scores = apply_regime_weights(day_scores.copy(), snap, rotation_state=rotation_state)
+
+        # ── 1bis. Alimenter le rotation factor avec le retour quotidien ──
+        if equity_provider is not None and snap is not None:
+            try:
+                current_equity = float(equity_provider(snapshot_date))
+                if prev_equity is not None and prev_equity > 0:
+                    daily_return = (current_equity / prev_equity) - 1.0
+                    rotation_state.record(daily_return)
+                prev_equity = current_equity
+            except Exception:
+                pass
 
         candidates = _build_candidates_from_day(day_scores, snapshot_date)
         symbols = [candidate.symbol for candidate in candidates]
@@ -395,7 +411,7 @@ def build_phase2_risk_result(
         if not candidates:
             continue
 
-        builder = PortfolioBuilder(cfg_for_day)
+        builder = PortfolioBuilder(cfg_for_day, rotation_state=rotation_state)
         entries = builder.build(candidates, prices, predictions=predictions, return_matrix=return_matrix)
         all_entries.extend(entries)
         signal_frames.append(portfolio_entries_to_signals(entries, snapshot_date))
@@ -427,6 +443,10 @@ def build_phase2_risk_result(
         "macro_data_quality_distribution": macro_data_quality_count,
         "macro_missing_dates": macro_missing_dates,
         "macro_missing_dates_count": len(macro_missing_dates),
+        "rotation_factor_enabled": True,
+        "rotation_triggered": rotation_state.should_rotate(),
+        "rotation_cumulative_return": rotation_state.cumulative_return(),
+        "rotation_data_points": len(rotation_state._daily_returns),
     }
     return RiskBridgeResult(
         entries=all_entries,

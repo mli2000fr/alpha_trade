@@ -1038,7 +1038,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--dd-recovery-pct",
         type=float,
-        default=0.85,
+        default=0.92,
         help="Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (Phase C.5).",
     )
     run_p.add_argument(
@@ -1561,7 +1561,7 @@ def _apply_pipeline_defensive_defaults_from_preset(
         resolved_recovery = _resolve_pipeline_preset_float(
             effective_preset,
             "backtesting_dd_recovery_pct",
-            default=0.85,
+            default=0.92,
         )
         if resolved_recovery is not None:
             args.dd_recovery_pct = float(resolved_recovery)

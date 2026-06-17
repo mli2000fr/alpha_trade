@@ -105,7 +105,7 @@ class DrawdownCircuitBreaker:
 
     enabled: bool = False
     max_dd_pct: float = 0.20
-    recovery_pct: float = 0.85
+    recovery_pct: float = 0.92
     rolling_peak_window_days: int = 252
     degraded_entry_allocation_pct: float = 0.0
     # Ramp-up progressif quand le régime redevient normal ET l'equity monte

@@ -211,7 +211,7 @@ def _apply_run_configuration_preset(selected_preset_key: str) -> dict[str, objec
             st.session_state.pop(session_key, None)
     elif selected_preset_key == "standard_research":
         st.session_state["bt_run_max_portfolio_dd_pct"] = 0.0
-        st.session_state["bt_run_dd_recovery_pct"] = 0.85
+        st.session_state["bt_run_dd_recovery_pct"] = 0.92
         st.session_state["bt_run_target_annual_vol_raw"] = ""
         st.session_state["bt_run_min_ml_coverage_ratio_raw"] = ""
     return preset
@@ -275,7 +275,7 @@ def _resolve_pipeline_backtest_defaults(
         "max_portfolio_dd_pct": 0.0,
         "max_sector_exposure_pct": 0.0,
         "max_entry_gap_pct": 0.0,
-        "dd_recovery_pct": 0.85,
+        "dd_recovery_pct": 0.92,
         "target_annual_vol": None,
         "min_ml_coverage_ratio": None,
     }
@@ -299,7 +299,7 @@ def _resolve_pipeline_backtest_defaults(
             0.25,
         ),
         "max_entry_gap_pct": _to_float(values.get("backtesting_max_entry_gap_pct", 0.03), 0.03),
-        "dd_recovery_pct": _to_float(values.get("backtesting_dd_recovery_pct", 0.85), 0.85),
+        "dd_recovery_pct": _to_float(values.get("backtesting_dd_recovery_pct", 0.92), 0.92),
         "target_annual_vol": _to_float(values.get("backtesting_target_annual_vol", 0.15), 0.15),
         "min_ml_coverage_ratio": _to_float(values.get("backtesting_min_ml_coverage_ratio", 0.80), 0.80),
     }
@@ -855,7 +855,7 @@ def _build_overlay_options(
     dd_recovery_default = (
         float(st.session_state["bt_run_dd_recovery_pct"])
         if "bt_run_dd_recovery_pct" in st.session_state
-        else float(pipeline_defaults.get("dd_recovery_pct") or 0.85)
+        else float(pipeline_defaults.get("dd_recovery_pct") or 0.92)
     )
     target_annual_vol_default = pipeline_defaults.get("target_annual_vol")
     min_ml_coverage_ratio_default = pipeline_defaults.get("min_ml_coverage_ratio")

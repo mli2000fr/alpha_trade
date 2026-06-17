@@ -31,7 +31,7 @@ class RiskConfig:
     rolling_peak_window_days: int = 0   # 0 = pic historique absolu (comportement original)
     # Seuil de recovery : une fois trippé en mode dégradé, le breaker ne se
     # désactive que si l'equity remonte à cette fraction du pic de référence.
-    recovery_pct: float = 0.85
+    recovery_pct: float = 0.92
     # Ramp-up régimed : si le régime repasse en "normal" ET que l'equity
     # progresse, l'allocation dégradée est progressivement augmentée.
     regime_ramp_up_enabled: bool = False

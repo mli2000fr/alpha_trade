@@ -26,10 +26,7 @@ from risk_management.models import (
     WinRateInfo,
 )
 from risk_management.position_sizer import PositionSizer
-from risk_management.concentration import (
-    ConsecutiveLossTracker,
-    SymbolTradeTracker,
-)
+from risk_management.risk_checker import RiskCheckerImpl
 from risk_management.concentration import (
     ConsecutiveLossTracker,
     SymbolTradeTracker,
@@ -41,6 +38,7 @@ LOGGER = logging.getLogger(__name__)
 def _apply_regime_scoring_to_candidates(
     candidates: list[CandidateScore],
     regime_snapshot: object,
+    rotation_state: object | None = None,
 ) -> list[CandidateScore]:
     """Applique les poids directionnels du régime aux scores des candidats.
 
@@ -48,11 +46,18 @@ def _apply_regime_scoring_to_candidates(
     :func:`~selector.regime_scoring.apply_regime_weights`, puis reconstruit
     la liste avec les ``score_used`` ajustés.
 
-    En régime ``normal``, la fonction est une non-op (retourne la liste
-    inchangée).
+    En régime ``normal`` (sans rotation forcée), la fonction est une non-op
+    (retourne la liste inchangée).
     """
+    from selector.regime_scoring import MomentumRotationState
+
     mode = str(getattr(regime_snapshot, "mode", "normal") or "normal").strip().lower()
-    if mode == "normal":
+    rotated = (
+        isinstance(rotation_state, MomentumRotationState)
+        and rotation_state.is_ready()
+        and rotation_state.should_rotate()
+    )
+    if mode == "normal" and not rotated:
         return candidates
 
     try:
@@ -79,8 +84,8 @@ def _apply_regime_scoring_to_candidates(
             })
         df = pd.DataFrame(rows)
 
-        # Appliquer les poids du régime
-        adjusted = apply_regime_weights(df, regime_snapshot)
+        # Appliquer les poids du régime (avec rotation factor)
+        adjusted = apply_regime_weights(df, regime_snapshot, rotation_state=rotation_state)
 
         # Réinjecter les scores ajustés dans les candidats
         if "final_score" in adjusted.columns:
@@ -171,6 +176,7 @@ class PortfolioBuilder:
         pnl: PnLSnapshot | None = None,
         circuit_breaker: CircuitBreaker | None = None,
         regime_snapshot: object | None = None,
+        rotation_state: object | None = None,
     ) -> None:
         self._cfg = config
         self._sizer = PositionSizer(config)
@@ -178,6 +184,7 @@ class PortfolioBuilder:
         self._pnl = pnl
         self._circuit_breaker = circuit_breaker
         self._regime_snapshot = regime_snapshot
+        self._rotation_state = rotation_state
         # Concentration filters (Priorité 4)
         self._concentration_trade_tracker = SymbolTradeTracker(
             max_trades=config.concentration_max_trades_per_symbol,
@@ -292,10 +299,10 @@ class PortfolioBuilder:
         predictions = predictions or {}
         win_rates = win_rates or {}
 
-        # ── 0. Scoring directionnel (regime-aware) ──────────────────────
+        # ── 0. Scoring directionnel (regime-aware + rotation factor) ──
         if self._regime_snapshot is not None and candidates:
             candidates = _apply_regime_scoring_to_candidates(
-                candidates, self._regime_snapshot
+                candidates, self._regime_snapshot, rotation_state=self._rotation_state
             )
 
         # ── 0bis. Filtres de concentration (Priorité 4) ────────────────
