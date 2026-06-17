@@ -1438,9 +1438,9 @@ def _build_run_options() -> BacktestRunOptions:
                 "Mode moteur",
                 options=["research", "pipeline"],
                 index=["research", "pipeline"].index(
-                    cast(str, st.session_state.get("bt_run_engine_mode", "research"))
-                    if st.session_state.get("bt_run_engine_mode", "research") in {"research", "pipeline"}
-                    else "research"
+                    cast(str, st.session_state.get("bt_run_engine_mode", "pipeline"))
+                    if st.session_state.get("bt_run_engine_mode", "pipeline") in {"research", "pipeline"}
+                    else "pipeline"
                 ),
                 key="bt_run_engine_mode",
                 help="`research` conserve le comportement tolérant du backtest standard ; `pipeline` exige des snapshots PIT valides et évite les écritures implicites.",
@@ -1483,9 +1483,9 @@ def _build_run_options() -> BacktestRunOptions:
                 "Mode Phase 2",
                 options=["off", "risk", "risk_execution"],
                 index=["off", "risk", "risk_execution"].index(
-                    cast(str, st.session_state.get("bt_run_phase2_mode", "off"))
-                    if st.session_state.get("bt_run_phase2_mode", "off") in {"off", "risk", "risk_execution"}
-                    else "off"
+                    cast(str, st.session_state.get("bt_run_phase2_mode", "risk_execution"))
+                    if st.session_state.get("bt_run_phase2_mode", "risk_execution") in {"off", "risk", "risk_execution"}
+                    else "risk_execution"
                 ),
                 key="bt_run_phase2_mode",
                 help="Active de manière opt-in les bridges de fidélité Phase 2. `off` conserve strictement le replay historique ; `risk` réutilise `risk_management`; `risk_execution` ajoute les intents/fills simulés via `execution_engine`.",
