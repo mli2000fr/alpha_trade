@@ -544,6 +544,28 @@ Introduire une matrice d’autorisation explicite, par exemple :
 
 Si tu veux absolument shorter aussi en `cash_only`, il vaut mieux créer un mode explicite (`short_only`, `defensive_short`, etc.) plutôt que casser la sémantique historique de `cash_only`.
 
+### Interaction avec le `DrawdownCircuitBreaker` (point critique)
+
+Le `DrawdownCircuitBreaker` (`backtesting/risk_overlay.py`) applique aujourd'hui
+une réduction d'allocation **uniforme** à toutes les nouvelles entrées quand il
+est trippé, sans distinction long/short. Cela crée un conflit direct avec la
+matrice d'autorisation directionnelle :
+
+- en `capital_preservation`, le breaker trippé avec `degraded_entry_allocation_pct = 0`
+  **bloque aussi les shorts**, alors que le régime les autorise ;
+- le ramp-up (`update_regime_streak`) ne s'active qu'en régime `normal`, donc
+  les shorts en `capital_preservation` restent indéfiniment dégradés même si
+  l'equity remonte ;
+- le `breaker_hard_blocked` dans `_select_candidate_rows()` ne filtre pas par
+  direction — tous les candidats sont rejetés.
+
+**Correctif nécessaire :** rendre le breaker **side-aware**, soit via un paramètre
+`degraded_short_allocation_pct` distinct (défaut `1.0`), soit en faisant
+respecter à `allocation_scale(side, entry_mode)` les flags `allowed_long_entries`
+/ `allowed_short_entries` du snapshot régime. Ce correctif est prévu au
+**Sprint 2**. En attendant, le paramètre `degraded_entry_allocation_pct` doit
+rester > 0 tant que le feature flag `short_selling_enabled` est activé.
+
 ---
 
 ## 4.5 Données broker / contraintes externes encore absentes
@@ -786,6 +808,19 @@ Faire du backtest un moteur **long/short correct**, pas juste permissif.
       valeur économique signée pour le mark-to-market et le PnL ;
     - dans `simulator.py`, le `current_gross_notional = max(mtm, 0.0)` actuel
       doit devenir `current_gross_notional = sum(abs(pos.qty) * px for each pos)`
+- **rendre le `DrawdownCircuitBreaker` side-aware** (`backtesting/risk_overlay.py`) :
+  - aujourd'hui, `allocation_scale()` s'applique uniformément à toutes les entrées,
+    y compris les shorts ; quand le breaker est trippé avec
+    `degraded_entry_allocation_pct = 0.0`, il bloque **toutes** les nouvelles
+    entrées, contredisant la politique de régime qui autorise les shorts en
+    `capital_preservation` ;
+  - le ramp-up (`update_regime_streak`) ne s'active qu'en régime `normal`,
+    donc les shorts en `capital_preservation` ne peuvent jamais remonter ;
+  - **cible :** `allocation_scale()` doit accepter un paramètre `side` et
+    retourner `1.0` (pas de dégradation) pour les shorts quand le régime
+    les autorise explicitement (`allowed_short_entries = true`) ;
+  - a minima, ajouter un `degraded_short_allocation_pct` distinct (défaut `1.0`
+    = pas de dégradation des shorts en période de drawdown)
 - corriger le replay execution/protection pour des parents short
 - corriger les exports report / pipeline
 - ajouter un coût de borrow simplifié en backtest (paramétrable, même statique au départ)
@@ -982,6 +1017,15 @@ Il faudra prévoir des garde-fous conservateurs.
 
 Un `sell` broker n’est pas forcément une clôture de long.
 Sans classification explicite, l’OMS peut mal reconstruire l’historique.
+
+### Risque 5 — Drawdown breaker pénalisant les shorts en régime défensif
+
+Le `DrawdownCircuitBreaker` réduit actuellement **toutes** les nouvelles entrées
+du même facteur sans distinguer long/short. Si `degraded_entry_allocation_pct = 0`
+et que le breaker est trippé, **les shorts sont bloqués même quand le régime les
+autorise** (ex. `capital_preservation`). Le ramp-up ne fonctionne qu'en `normal`,
+donc les shorts ne peuvent jamais remonter en régime défensif. Une correction
+side-aware est indispensable (cf. Sprint 2).
 
 ---
 

@@ -908,6 +908,19 @@ Le régime peut devenir un **contexte de décision** pour le modèle et/ou le po
 
 Attention : cela doit rester **explicable** et **rejouable** en backtest.
 
+### Interaction avec le `DrawdownCircuitBreaker`
+
+Le `DrawdownCircuitBreaker` (`backtesting/risk_overlay.py`) applique une
+réduction d’allocation **uniforme** long/short quand il est trippé.
+Pour que le régime directionnel fonctionne correctement en backtest ML :
+
+- le breaker doit être rendu **side-aware** (cf. `plan.md` Sprint 2) ;
+- en régime `capital_preservation`, l’allocation des shorts ne doit **pas**
+  être dégradée par le breaker, même en période de drawdown ;
+- les métriques de contribution short aux drawdowns (cf. §6.8) doivent
+  permettre de vérifier que le breaker side-aware ne pénalise pas
+  indûment la jambe short.
+
 ## 6.11 Interaction avec le levier / la marge (mise à jour 2026-06-13)
 
 Le dépôt supporte désormais un **levier optionnel long-only** côté exécution,
@@ -1156,6 +1169,10 @@ Rejouer fidèlement la stratégie long+short ML-aware.
 - PnL / exposure / stops / trailing directionnels
 - reporting séparé long et short
 - fidelity directionnelle
+- **rendre le `DrawdownCircuitBreaker` side-aware** (cf. `plan.md` Sprint 2) :
+  l’allocation dégradée ne doit pas pénaliser les shorts quand le régime
+  les autorise explicitement ; ajouter un paramètre `degraded_short_allocation_pct`
+  (défaut `1.0`) ou rendre `allocation_scale()` directionnel
 
 ### Validation métier recommandée
 
