@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 RISK_SIGNAL_COLUMNS = (
     "trade_date",
     "symbol",
+    "side",
     "selected",
     "rank",
     "candidate_rank",
@@ -239,6 +240,7 @@ def portfolio_entries_to_signals(entries: list[PortfolioEntry], snapshot_date: d
             {
                 "trade_date": pd.Timestamp(snapshot_date),
                 "symbol": entry.symbol,
+                "side": entry.side,
                 "selected": True,
                 "rank": float(entry.decision_rank or entry.candidate_rank or idx),
                 "candidate_rank": entry.candidate_rank,

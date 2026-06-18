@@ -31,6 +31,8 @@ class CandidateScore:
     selector_signal_mode: str | None = None
     selection_explanation: str | None = None
     selector_earnings_blackout: int | None = None
+    # Sprint 1 short — direction canonique
+    side: str = "buy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +105,8 @@ class PortfolioEntry:
     selector_signal_mode: str | None = None
     selection_explanation: str | None = None
     selector_earnings_blackout: int | None = None
+    # Sprint 1 short
+    side: str = "buy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +167,8 @@ class EnrichedCandidate:
     selector_signal_mode: str | None = None
     selection_explanation: str | None = None
     selector_earnings_blackout: int | None = None
+    # Sprint 1 short
+    side: str = "buy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +201,8 @@ class RiskDecisionRow:
     approved_shares: float
     target_weight: float
     sector: str
+    # Sprint 1 short
+    side: str = "buy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,3 +217,5 @@ class PortfolioTargetRow:
     sector: str
     score_used: float
     score_source: str
+    # Sprint 1 short
+    side: str = "buy"

@@ -109,6 +109,9 @@ class MarketRegimeSnapshot:
     earnings_negative_score_value: float = -1.0
 
     allow_new_entries: bool = True
+    # Sprint 0 short — autorisation directionnelle (cf. plan_v2.md §C7)
+    allowed_long_entries: bool = True
+    allowed_short_entries: bool = False
     active_patterns: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
 
@@ -136,8 +139,23 @@ class MarketRegimeSnapshot:
     def is_defensive(self) -> bool:
         return self.mode in ("capital_preservation", "close_only", "cash_only")
 
-    def blocks_entry_for(self, symbol: str, sector: str | None) -> tuple[bool, str | None]:
-        """Retourne (blocked, reason) pour un candidat à l'entrée."""
+    def blocks_entry_for(self, symbol: str, sector: str | None, side: str = "buy") -> tuple[bool, str | None]:
+        """Retourne (blocked, reason) pour un candidat à l'entrée, direction-aware.
+
+        Parameters
+        ----------
+        side : str
+            ``"buy"`` ou ``"sell"``. Si ``"sell"``, vérifie ``allowed_short_entries``.
+        """
+        from core.direction import is_short_side
+
+        if is_short_side(side):
+            if not self.allowed_short_entries:
+                return True, "regime_blocks_short_entries"
+        else:
+            if not self.allowed_long_entries:
+                return True, "regime_blocks_long_entries"
+
         if not self.allow_new_entries:
             return True, "regime_blocks_new_entries"
         if symbol in self.blocked_symbols:
@@ -170,6 +188,10 @@ class MarketRegimeSnapshot:
             "blocked_symbols": list(self.blocked_symbols),
             "block_high_beta": self.block_high_beta,
             "earnings_shielded_symbols": dict(self.earnings_shielded_symbols),
+            "buyback_blackout_symbols": dict(self.buyback_blackout_symbols),
+            "allow_new_entries": self.allow_new_entries,
+            "allowed_long_entries": self.allowed_long_entries,
+            "allowed_short_entries": self.allowed_short_entries,
             "buyback_blackout_symbols": dict(self.buyback_blackout_symbols),
             "allow_new_entries": self.allow_new_entries,
             "active_patterns": list(self.active_patterns),

@@ -43,6 +43,7 @@ def persist_decisions(
             "approved_shares": e.approved_shares,
             "target_weight": e.target_weight,
             "sector": e.sector,
+            "side": e.side,
             # --- V2 audit fields ---
             "conviction_score": e.conviction_score,
             "predicted_proba": e.predicted_proba,
@@ -125,6 +126,7 @@ def persist_portfolio_targets(
             "atr_20": e.atr_20,
             "target_weight": e.target_weight,
             "sector": e.sector,
+            "side": e.side,
             "score_used": e.score_used,
             "score_source": e.score_source,
             "reason_code": e.decision_reason_code,

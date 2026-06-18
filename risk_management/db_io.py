@@ -1292,7 +1292,7 @@ class RiskRepository:
         canonical_columns = [
             "run_id", "trade_date", "symbol", "decision", "reason", "reason_code", "score_used",
             "score_source", "entry_price", "atr_20", "proposed_shares", "approved_shares",
-            "target_weight", "sector", "conviction_score", "predicted_proba",
+            "target_weight", "sector", "side", "conviction_score", "predicted_proba",
             "historical_win_rate", "effective_probability", "kelly_fraction",
             "sizing_method", "correlation_blocker", "correlation_value",
             "company_idio_score", "macro_regime_score",
@@ -1330,7 +1330,7 @@ class RiskRepository:
             return 0
         canonical_columns = [
             "run_id", "trade_date", "symbol", "shares", "entry_price", "atr_20", "target_weight",
-            "sector", "score_used", "score_source", "reason_code", "conviction_score", "sizing_method",
+            "sector", "side", "score_used", "score_source", "reason_code", "conviction_score", "sizing_method",
             "kelly_fraction", "company_idio_score", "macro_regime_score",
             "company_idio_signal_norm", "macro_regime_signal_norm",
             "company_idio_component", "macro_regime_component", "quant_component",

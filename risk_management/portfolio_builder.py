@@ -279,6 +279,7 @@ class PortfolioBuilder:
                     selector_signal_mode=candidate.selector_signal_mode,
                     selection_explanation=candidate.selection_explanation,
                     selector_earnings_blackout=candidate.selector_earnings_blackout,
+                    side=candidate.side,
                 )
             )
         enriched.sort(
@@ -555,6 +556,7 @@ class PortfolioBuilder:
                 selector_signal_mode=ec.selector_signal_mode,
                 selection_explanation=ec.selection_explanation,
                 selector_earnings_blackout=ec.selector_earnings_blackout,
+                side=ec.side,
             ))
             processed_candidates += 1
             self._emit_progress(
@@ -620,4 +622,5 @@ class PortfolioBuilder:
             selector_signal_mode=ec.selector_signal_mode,
             selection_explanation=ec.selection_explanation,
             selector_earnings_blackout=ec.selector_earnings_blackout,
+            side=ec.side,
         )

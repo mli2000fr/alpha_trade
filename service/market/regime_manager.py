@@ -1007,6 +1007,18 @@ def build_snapshot(
     elif mode == "capital_preservation" and effective_max_positions is None:
         effective_max_positions = max(1, (effective_max_positions or 1))
 
+    # Sprint 0 short — autorisation directionnelle (cf. plan_v2.md §C7)
+    allowed_long_entries = allow_new_entries
+    allowed_short_entries = False
+    if mode == "capital_preservation":
+        # En régime défensif, on autorise le short pour hedger
+        allowed_long_entries = False
+        allowed_short_entries = True
+        reasons.append("short_allowed_capital_preservation")
+    elif mode == "normal":
+        # En régime normal, seul le long est autorisé (short = feature flag ML futur)
+        allowed_short_entries = False
+
     capital_preservation_max_gross_exposure = config.capital_preservation_max_gross_exposure
     capital_preservation_gross_exposure_triggered = False
     if mode == "capital_preservation" and capital_preservation_max_gross_exposure is not None:
@@ -1058,6 +1070,8 @@ def build_snapshot(
         buyback_blackout_symbols=dict(earnings.buyback_blackout),
         earnings_negative_score_value=earnings.negative_score_value,
         allow_new_entries=allow_new_entries,
+        allowed_long_entries=allowed_long_entries,
+        allowed_short_entries=allowed_short_entries,
         active_patterns=tuple(active_patterns),
         reasons=tuple(reasons),
         macro=dict(macro_metrics),
