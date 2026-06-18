@@ -401,6 +401,14 @@ class BacktestReport:
     ulcer_index: float = 0.0
     # Phase A.6 — risk-free rate annualisé utilisé pour Sharpe/Sortino.
     risk_free_rate: float = 0.0
+    # Sprint 4 — métriques directionnelles long/short
+    long_trades: int = 0
+    short_trades: int = 0
+    long_win_rate_pct: float = 0.0
+    short_win_rate_pct: float = 0.0
+    long_pnl_total: float = 0.0
+    short_pnl_total: float = 0.0
+    force_close_exits: int = 0
 
     def to_serializable_dict(self) -> dict[str, float | int | str]:
         # Phase A.7 — conserver +inf comme sentinel JSON-friendly ("inf").
@@ -429,6 +437,14 @@ class BacktestReport:
             "win_rate_pct": float(self.win_rate_pct),
             "avg_trade_duration_days": float(self.avg_trade_duration_days),
             "profit_factor": _serialize_float(self.profit_factor),
+            # Sprint 4 — directionnelles
+            "long_trades": int(self.long_trades),
+            "short_trades": int(self.short_trades),
+            "long_win_rate_pct": float(self.long_win_rate_pct),
+            "short_win_rate_pct": float(self.short_win_rate_pct),
+            "long_pnl_total": float(self.long_pnl_total),
+            "short_pnl_total": float(self.short_pnl_total),
+            "force_close_exits": int(self.force_close_exits),
         }
 
     def to_dict(self) -> dict:
@@ -451,6 +467,10 @@ class BacktestReport:
             "Win Rate": f"{self.win_rate_pct:.1f}%",
             "Durée moy. trade (j)": f"{self.avg_trade_duration_days:.1f}",
             "Profit Factor": pf_display,
+            # Sprint 4 — split directionnel
+            "Trades Long": f"{self.long_trades} (WR: {self.long_win_rate_pct:.1f}%, PnL: ${self.long_pnl_total:,.2f})",
+            "Trades Short": f"{self.short_trades} (WR: {self.short_win_rate_pct:.1f}%, PnL: ${self.short_pnl_total:,.2f})",
+            "Force-close exits": self.force_close_exits,
         }
 
     def print_summary(self) -> None:
@@ -560,6 +580,14 @@ def generate_report(
 
         trades_df = closed_trades_df.copy()
         n_trades = int(len(trades_df))
+        # Sprint 4 — split directionnel long/short
+        long_trades = 0
+        short_trades = 0
+        long_win_rate = 0.0
+        short_win_rate = 0.0
+        long_pnl_total = 0.0
+        short_pnl_total = 0.0
+        force_close_exits = 0
         if n_trades > 0:
             pnl = trades_df["pnl"].astype(float)
             win_rate = float((pnl > 0).mean() * 100)
@@ -573,6 +601,20 @@ def generate_report(
                 pf_factor = float("inf")
             else:
                 pf_factor = 0.0
+            # Sprint 4 — directionnelles
+            if "side" in trades_df.columns:
+                long_mask = trades_df["side"] == "buy"
+                short_mask = trades_df["side"] == "sell"
+                long_trades = int(long_mask.sum())
+                short_trades = int(short_mask.sum())
+                if long_trades > 0:
+                    long_win_rate = float((pnl[long_mask] > 0).mean() * 100)
+                    long_pnl_total = float(pnl[long_mask].sum())
+                if short_trades > 0:
+                    short_win_rate = float((pnl[short_mask] > 0).mean() * 100)
+                    short_pnl_total = float(pnl[short_mask].sum())
+            if "exit_reason" in trades_df.columns:
+                force_close_exits = int((trades_df["exit_reason"] == "force_close_breaker").sum())
         else:
             win_rate = 0.0
             avg_dur = 0.0
@@ -599,6 +641,14 @@ def generate_report(
             calmar_ratio=calmar,
             ulcer_index=ulcer,
             risk_free_rate=float(risk_free_rate),
+            # Sprint 4 — directionnelles
+            long_trades=long_trades,
+            short_trades=short_trades,
+            long_win_rate_pct=long_win_rate,
+            short_win_rate_pct=short_win_rate,
+            long_pnl_total=long_pnl_total,
+            short_pnl_total=short_pnl_total,
+            force_close_exits=force_close_exits,
         )
 
     final_val = _as_float(pf.final_value())

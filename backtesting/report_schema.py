@@ -54,6 +54,14 @@ class SummarySchema:
     # Phase A.5 (refactor) — ratios additionnels.
     calmar_ratio: float = 0.0
     ulcer_index: float = 0.0
+    # Sprint 4 — directionnelles
+    long_trades: int = 0
+    short_trades: int = 0
+    long_win_rate_pct: float = 0.0
+    short_win_rate_pct: float = 0.0
+    long_pnl_total: float = 0.0
+    short_pnl_total: float = 0.0
+    force_close_exits: int = 0
 
 
 @dataclass(slots=True)
