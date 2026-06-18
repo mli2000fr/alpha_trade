@@ -1099,12 +1099,18 @@ def main(args: list[str] | None = None) -> None:
             # Convertir les candidats en DataFrame pour le tagging
             try:
                 import pandas as pd
+                # ML Sprint 6 — inclure les prédictions ML dans le DataFrame
                 rows = [
                     {
                         "symbol": c.symbol,
                         "sector": c.sector,
                         "score": c.score_used,
                         "side": getattr(c, "side", "buy") or "buy",
+                        "predicted_side": (
+                            predictions.get(c.symbol).predicted_side
+                            if c.symbol in predictions and getattr(predictions.get(c.symbol), "predicted_side", None)
+                            else None
+                        ),
                     }
                     for c in candidates
                 ]

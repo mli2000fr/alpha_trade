@@ -107,60 +107,75 @@ def _tag_short_candidates(
 
     result = day_df.copy()
 
-    # Déterminer la colonne de score
-    # Option B (Sprint 5) : short_score dédié > final_score (Option C)
-    if "short_score" in result.columns:
-        score_col = "short_score"
-        ascending = False  # short_score élevé = plus baissier → prioritaire
-    elif "score" in result.columns:
-        score_col = "score"
-        ascending = True  # score faible = pire candidat long → short
-    elif "final_score_sentiment" in result.columns:
-        score_col = "final_score_sentiment"
-        ascending = True
-    elif "final_score" in result.columns:
-        score_col = "final_score"
-        ascending = True
-    else:
-        score_col = None
-        ascending = True
-
-    if all_shorts:
-        # Régime capital_preservation : tous les candidats → short
-        result["side"] = "sell"
-        return result
-
-    # Mode rotation : seuls les bottom-N → short
-    if score_col is None or score_col not in result.columns:
-        result["side"] = "buy"
-        return result
+    # ── ML Sprint 6 — si le ML prédit le side, priorité absolue ──
+    ml_side_col = None
+    if "predicted_side" in result.columns:
+        ml_side_col = "predicted_side"
 
     # Initialiser tout à "buy"
     result["side"] = "buy"
 
-    # Trier par score : croissant pour final_score (bottom-N), décroissant pour short_score (top-N)
-    sorted_idx = result[score_col].argsort().values
-    if not ascending:
-        sorted_idx = sorted_idx[::-1]  # décroissant pour short_score
+    # Appliquer les prédictions ML si disponibles
+    if ml_side_col:
+        ml_shorts = result[ml_side_col] == "short"
+        result.loc[ml_shorts, "side"] = "sell"
+        # Limiter au max_short_positions
+        n_ml = int(ml_shorts.sum())
+        if n_ml > max_short_positions:
+            # Prendre les N premiers shorts ML
+            ml_indices = result.index[ml_shorts][max_short_positions:]
+            result.loc[ml_indices, "side"] = "buy"
 
-    # Marquer les bottom-N / top-N comme shorts.
-    # Si min_score_for_short <= 0, on prend les N sans condition de seuil.
-    short_count = 0
-    for pos in sorted_idx:
-        if short_count >= max_short_positions:
-            break
-        score_val = float(result.iloc[pos][score_col]) if pd.notna(result.iloc[pos][score_col]) else 0.0
-        # Pour short_score (ascending=False), on veut les scores ÉLEVÉS
-        # Pour final_score (ascending=True), on veut les scores FAIBLES
-        if min_score_for_short <= 0:
-            result.iloc[pos, result.columns.get_loc("side")] = "sell"
-            short_count += 1
-        elif ascending and score_val <= min_score_for_short:
-            result.iloc[pos, result.columns.get_loc("side")] = "sell"
-            short_count += 1
-        elif not ascending and score_val >= min_score_for_short:
-            result.iloc[pos, result.columns.get_loc("side")] = "sell"
-            short_count += 1
+    # Si pas de ML, utiliser le scoring heuristique (Option B/C)
+    if not ml_side_col:
+        # Déterminer la colonne de score
+        # Option B (Sprint 5) : short_score dédié > final_score (Option C)
+        if "short_score" in result.columns:
+            score_col = "short_score"
+            ascending = False  # short_score élevé = plus baissier → prioritaire
+        elif "score" in result.columns:
+            score_col = "score"
+            ascending = True  # score faible = pire candidat long → short
+        elif "final_score_sentiment" in result.columns:
+            score_col = "final_score_sentiment"
+            ascending = True
+        elif "final_score" in result.columns:
+            score_col = "final_score"
+            ascending = True
+        else:
+            score_col = None
+            ascending = True
+
+        if all_shorts:
+            result["side"] = "sell"
+            return result
+
+        if score_col is None or score_col not in result.columns:
+            return result
+
+        # Trier par score : croissant pour final_score (bottom-N), décroissant pour short_score (top-N)
+        sorted_idx = result[score_col].argsort().values
+        if not ascending:
+            sorted_idx = sorted_idx[::-1]
+
+        # Marquer les bottom-N / top-N comme shorts.
+        # Si min_score_for_short <= 0, on prend les N sans condition de seuil.
+        short_count = 0
+        for pos in sorted_idx:
+            if short_count >= max_short_positions:
+                break
+            score_val = float(result.iloc[pos][score_col]) if pd.notna(result.iloc[pos][score_col]) else 0.0
+            # Pour short_score (ascending=False), on veut les scores ÉLEVÉS
+            # Pour final_score (ascending=True), on veut les scores FAIBLES
+            if min_score_for_short <= 0:
+                result.iloc[pos, result.columns.get_loc("side")] = "sell"
+                short_count += 1
+            elif ascending and score_val <= min_score_for_short:
+                result.iloc[pos, result.columns.get_loc("side")] = "sell"
+                short_count += 1
+            elif not ascending and score_val >= min_score_for_short:
+                result.iloc[pos, result.columns.get_loc("side")] = "sell"
+                short_count += 1
 
     return result
 
@@ -506,6 +521,12 @@ def build_phase2_risk_result(
                 pass
 
         # ── 1ter. Option C — short selling via MomentumRotationState ────
+        # ML Sprint 6 — injecter predicted_side ML dans day_scores
+        if not day_scores.empty and not predictions_df.empty:
+            pred_day = predictions_df[predictions_df["trade_date"] == pd.Timestamp(snapshot_date)]
+            if not pred_day.empty and "predicted_side" in pred_day.columns:
+                side_map = dict(zip(pred_day["symbol"], pred_day["predicted_side"]))
+                day_scores["predicted_side"] = day_scores["symbol"].map(side_map).fillna("")
         # Deux déclencheurs possibles :
         #   a) Régime capital_preservation → allowed_short_entries=True (Sprint 0)
         #   b) Rotation momentum → should_rotate() (cumul < -3% sur 4 semaines)
