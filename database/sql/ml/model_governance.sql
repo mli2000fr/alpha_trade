@@ -27,8 +27,10 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_governance (
     wf_auc                           DOUBLE          DEFAULT NULL,
     val_threshold_business_score     DOUBLE          DEFAULT NULL,
     test_threshold_business_score    DOUBLE          DEFAULT NULL,
-    wf_threshold_business_score      DOUBLE          DEFAULT NULL,
-    created_at                       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    wf_threshold_business_score      DOUBLE          DEFAULT NULL,    -- ML Sprint 7 — support ternaire
+    num_classes                      TINYINT         DEFAULT 2 COMMENT '2=binaire, 3=ternaire long/flat/short',
+    val_f1_macro                     DOUBLE          DEFAULT NULL COMMENT 'F1 macro (ternaire uniquement)',
+    test_f1_macro                    DOUBLE          DEFAULT NULL COMMENT 'F1 macro (ternaire uniquement)',    created_at                       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (governance_id),
     UNIQUE KEY uq_model_governance_run_symbol_model (run_id, symbol, model_name),
     INDEX idx_model_governance_symbol (symbol),

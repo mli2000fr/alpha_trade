@@ -377,21 +377,34 @@ def load_training_run(engine: Engine, symbol: str, run_id: str | None = None) ->
 # ---------------------------------------------------------------------------
 
 def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, metrics: dict[str, float]) -> None:
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO model_metrics (run_id, symbol, split_name, loss, directional_accuracy, `precision`, recall, auc) "
-                "VALUES (:rid, :sym, :split, :loss, :da, :prec, :rec, :auc)"
-            ),
-            {
-                "rid": run_id, "sym": symbol, "split": split_name,
-                "loss": metrics.get("loss"),
-                "da": metrics.get("directional_accuracy"),
-                "prec": metrics.get("precision"),
-                "rec": metrics.get("recall"),
-                "auc": metrics.get("auc"),
-            },
+    # ML Sprint 7 — inclure les métriques ternaires si disponibles
+    has_ternary = "f1_macro" in metrics or "f1_short" in metrics
+    if has_ternary:
+        sql = text(
+            "INSERT INTO model_metrics (run_id, symbol, split_name, loss, directional_accuracy, `precision`, recall, auc, "
+            "f1_macro, f1_short, f1_flat, f1_long) "
+            "VALUES (:rid, :sym, :split, :loss, :da, :prec, :rec, :auc, :f1m, :f1s, :f1f, :f1l)"
         )
+    else:
+        sql = text(
+            "INSERT INTO model_metrics (run_id, symbol, split_name, loss, directional_accuracy, `precision`, recall, auc) "
+            "VALUES (:rid, :sym, :split, :loss, :da, :prec, :rec, :auc)"
+        )
+    params = {
+        "rid": run_id, "sym": symbol, "split": split_name,
+        "loss": metrics.get("loss"),
+        "da": metrics.get("directional_accuracy") or metrics.get("accuracy"),
+        "prec": metrics.get("precision"),
+        "rec": metrics.get("recall"),
+        "auc": metrics.get("auc"),
+    }
+    if has_ternary:
+        params["f1m"] = metrics.get("f1_macro") or metrics.get("f1_score")
+        params["f1s"] = metrics.get("f1_short")
+        params["f1f"] = metrics.get("f1_flat")
+        params["f1l"] = metrics.get("f1_long")
+    with engine.begin() as conn:
+        conn.execute(sql, params)
 
 
 def count_completed_runs(
