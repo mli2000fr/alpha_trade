@@ -25,6 +25,15 @@ from backtesting.microstructure import (
 )
 from backtesting.risk_overlay import RiskOverlayConfig, compute_portfolio_vol_scaler
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
+from core.direction import (
+    compute_gross_notional,
+    compute_pullback_limit_price,
+    compute_realized_pnl,
+    compute_return_pct,
+    compute_take_profit_price,
+    compute_trailing_stop_price,
+    is_short_side,
+)
 from execution_engine.config import ExecutionConfig
 from risk_management.config import RiskConfig
 from risk_management.concentration import (
@@ -190,7 +199,9 @@ class _OpenPosition:
     entry_price: float
     quantity: float
     peak_high: float
+    trough_low: float  # Sprint 2 — trailing short
     entry_cost: float
+    side: str = "buy"  # Sprint 2 — direction
     # Phase B.2 — stop-loss initial dur (None = désactivé).
     initial_stop_price: float | None = None
     risk_per_share: float | None = None
@@ -709,7 +720,7 @@ class BacktestEngine:
                 current_equity, state.peak_equity
             )
 
-            # Quick Win — force-close partiel si le breaker trippe
+            # Quick Win — force-close partiel si le breaker trippe (direction-aware)
             if (
                 cfg.risk_overlay.drawdown_breaker.force_close_on_breaker
                 and cfg.risk_overlay.drawdown_breaker.just_tripped()
@@ -720,8 +731,10 @@ class BacktestEngine:
                 position_pnls = []
                 for symbol, position in state.positions.items():
                     close_price = float(close.at[trade_day, symbol]) if symbol in close.columns else position.entry_price
-                    pnl = (close_price - position.entry_price) * position.quantity
-                    position_pnls.append((symbol, pnl, close_price))
+                    pos_side = getattr(position, "side", "buy") or "buy"
+                    abs_qty = abs(position.quantity)
+                    pnl = compute_realized_pnl(pos_side, abs_qty, position.entry_price, close_price)
+                    position_pnls.append((symbol, pnl, close_price, pos_side))
                 position_pnls.sort(key=lambda x: x[1])  # pire PnL d'abord
                 
                 n_close = max(1, int(len(position_pnls) * force_pct + 0.5))
@@ -733,13 +746,19 @@ class BacktestEngine:
                 )
                 diagnostics.blocked_by_drawdown_breaker += n_close
                 
-                for symbol, pnl, close_price in to_close:
+                for symbol, pnl, close_price, pos_side in to_close:
                     position = state.positions[symbol]
-                    proceeds = position.quantity * close_price
-                    state.settled_cash += proceeds
-                    return_pct = (close_price / position.entry_price - 1.0) * 100.0 if position.entry_price > 0 else 0.0
+                    abs_qty = abs(position.quantity)
+                    return_pct = compute_return_pct(pos_side, position.entry_price, close_price)
+                    if is_short_side(pos_side):
+                        # Short close: buy back, debit cash
+                        state.settled_cash -= abs_qty * close_price
+                    else:
+                        # Long close: sell, credit cash
+                        state.settled_cash += abs_qty * close_price
                     state.closed_trades.append({
                         "symbol": symbol,
+                        "side": pos_side,
                         "quantity": position.quantity,
                         "entry_date": position.entry_date,
                         "entry_price": position.entry_price,
@@ -781,7 +800,7 @@ class BacktestEngine:
             entries_allowed_by_regime = cfg.risk_overlay.regime_filter.is_entry_allowed(
                 cfg.benchmark_close, trade_day,
             )
-            current_gross_notional = max(current_market_value, 0.0)
+            current_gross_notional = self._compute_gross_notional(state.positions, mtm_close, trade_day)
             leverage_state = self._resolve_daily_leverage_state(float(current_equity))
             self._record_trade_event(
                 state,
@@ -1019,11 +1038,16 @@ class BacktestEngine:
                 )
             )
         gross_exposure_limit = self._resolve_max_gross_exposure_limit(float(current_equity))
-        current_gross_notional = max(self._mark_to_market(state.positions, close, trade_day), 0.0)
+        current_gross_notional = self._compute_gross_notional(state.positions, close, trade_day)
 
         for candidate_pos, row in enumerate(candidate_rows):
             symbol = str(row["symbol"])
             signal_context = self._build_signal_context(row)
+
+            # Sprint 2 — direction
+            side = str(row.get("side", "buy") or "buy").strip().lower()
+            if side not in ("buy", "sell"):
+                side = "buy"
 
             # Quick Win 2 — score threshold
             if cfg.min_score_threshold > 0:
@@ -1044,26 +1068,28 @@ class BacktestEngine:
                 )
                 continue
 
-            # Quick Win 3 — pullback entry (limit -X% sous le prix signal)
+            # Quick Win 3 — pullback entry (direction-aware)
             entry_price = signal_price
             if cfg.entry_limit_offset_pct > 0:
-                limit_price = signal_price * (1.0 - float(cfg.entry_limit_offset_pct))
-                day_low = float(low_df.at[trade_day, symbol]) if symbol in low_df.columns else None
-                if day_low is not None and np.isfinite(day_low) and day_low <= limit_price:
+                limit_price = compute_pullback_limit_price(side, signal_price, float(cfg.entry_limit_offset_pct))
+                if is_short_side(side):
+                    # TODO(Sprint 3) : pour le short, vérifier day_high >= limit_price (nécessite high_df)
+                    # Pour l'instant, short_selling_enabled=false donc ce chemin n'est pas emprunté.
                     entry_price = limit_price
                 else:
-                    self._record_trade_event(
-                        state,
-                        "entry_rejected",
-                        event_date=trade_day,
-                        symbol=symbol,
-                        rejection_reason="pullback_limit_not_reached",
-                        attempted_entry_price=signal_price,
-                        limit_price=limit_price,
-                        day_low=day_low,
-                        **signal_context,
-                    )
-                    continue
+                    day_low = float(low_df.at[trade_day, symbol]) if symbol in low_df.columns else None
+                    if day_low is not None and np.isfinite(day_low) and day_low <= limit_price:
+                        entry_price = limit_price
+                    else:
+                        self._record_trade_event(
+                            state, "entry_rejected",
+                            event_date=trade_day, symbol=symbol,
+                            rejection_reason="pullback_limit_not_reached",
+                            attempted_entry_price=signal_price,
+                            limit_price=limit_price, side=side,
+                            **signal_context,
+                        )
+                        continue
 
             quantity_override = (
                 self._resolve_signal_quantity_override(row)
@@ -1281,20 +1307,30 @@ class BacktestEngine:
                 )
                 continue
 
-            state.settled_cash -= entry_cost
+            # Sprint 2 — direction-aware cash and position creation
+            quantity_abs = abs(quantity)
+            if is_short_side(side):
+                # Short sale: credit cash (proceeds from short selling)
+                state.settled_cash += quantity_abs * entry_price - (quantity_abs * entry_price * cfg.fees_pct)
+            else:
+                state.settled_cash -= entry_cost
+
             initial_stop_price, risk_per_share = self._resolve_initial_protection_state(
                 row=row,
                 entry_price=entry_price,
                 fallback_initial_stop_pct=micro.initial_stop_pct,
+                side=side,
             )
             state.positions[symbol] = _OpenPosition(
                 symbol=symbol,
+                side=side,
                 signal_date=pd.Timestamp(row["signal_date"]),
                 entry_date=trade_day,
                 entry_idx=day_idx,
                 entry_price=entry_price,
                 quantity=quantity,
                 peak_high=entry_price,
+                trough_low=entry_price,
                 entry_cost=entry_cost,
                 initial_stop_price=initial_stop_price,
                 risk_per_share=risk_per_share,
@@ -1374,6 +1410,7 @@ class BacktestEngine:
                 "entry_opened",
                 event_date=trade_day,
                 symbol=symbol,
+                side=side,
                 sector=sector,
                 quantity=quantity,
                 entry_price=entry_price,
@@ -1423,8 +1460,14 @@ class BacktestEngine:
             if not np.isfinite(day_high) or not np.isfinite(day_low):
                 continue
 
+            # Sprint 2 — direction-aware state
+            side = getattr(position, "side", "buy") or "buy"
+            short = is_short_side(side)
+
             previous_peak_high = position.peak_high
-            peak_high = max(previous_peak_high, day_high)
+            peak_high = max(previous_peak_high or 0.0, day_high)
+            previous_trough_low = getattr(position, "trough_low", position.entry_price) or position.entry_price
+            trough_low = min(previous_trough_low or float("inf"), day_low)
             explicit_resolution = None
             if (
                 cfg.exit_lifecycle_replay_mode == "exit_lifecycle_replay"
@@ -1439,6 +1482,7 @@ class BacktestEngine:
                     }
                 else:
                     position.peak_high = peak_high
+                    position.trough_low = trough_low
                     continue
             if cfg.protection_replay_mode == "protection_replay" and self._position_uses_replayed_protection(position):
                 take_profit_price = (
@@ -1500,28 +1544,34 @@ class BacktestEngine:
                     else (position.replay_initial_stop_price or position.initial_stop_price)
                 )
             else:
+                # Sprint 2 — direction-aware protection prices
                 if cfg.use_live_protection_logic:
-                    percent_target = position.entry_price * (1.0 + cfg.profit_taker_pct)
-                    risk_based_target = (
-                        position.entry_price + (2.0 * position.risk_per_share)
-                        if position.risk_per_share is not None and position.risk_per_share > 0
-                        else None
-                    )
-                    take_profit_price = max(percent_target, risk_based_target or percent_target)
+                    percent_target = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
+                    risk_based_target = None
+                    if position.risk_per_share is not None and position.risk_per_share > 0 and position.entry_price > 0:
+                        sign = -1 if short else 1
+                        risk_based_target = position.entry_price + sign * (2.0 * position.risk_per_share)
+                    if risk_based_target is not None:
+                        take_profit_price = max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target)
+                    else:
+                        take_profit_price = percent_target
                     if (
                         position.initial_stop_price is not None
                         and position.entry_price > 0
-                        and position.initial_stop_price < position.entry_price
                     ):
-                        trailing_stop_pct = (position.entry_price - position.initial_stop_price) / position.entry_price
+                        trailing_stop_pct = (
+                            abs(position.entry_price - position.initial_stop_price) / position.entry_price
+                        )
                     elif position.risk_per_share is not None and position.risk_per_share > 0 and position.entry_price > 0:
                         trailing_stop_pct = position.risk_per_share / position.entry_price
                     else:
-                        trailing_stop_pct = cfg.trailing_stop_pct
-                    trailing_stop_price = previous_peak_high * (1.0 - trailing_stop_pct)
+                        trailing_stop_pct = float(cfg.trailing_stop_pct)
+                    trailing_ref = (previous_trough_low if short else previous_peak_high)
+                    trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, trailing_stop_pct)
                 else:
-                    take_profit_price = position.entry_price * (1.0 + cfg.profit_taker_pct)
-                    trailing_stop_price = previous_peak_high * (1.0 - cfg.trailing_stop_pct)
+                    take_profit_price = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
+                    trailing_ref = (previous_trough_low if short else previous_peak_high)
+                    trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, float(cfg.trailing_stop_pct))
                 active_initial_stop = position.initial_stop_price
             is_same_day = trade_day.normalize() == position.entry_date.normalize()
 
@@ -1541,14 +1591,19 @@ class BacktestEngine:
                         if np.isfinite(close_price) and close_price > 0:
                             holding_business_days = int(day_idx - position.entry_idx)
                             if holding_business_days >= int(self.config.time_stop_max_business_days):
-                                objective_move = max(take_profit_price - position.entry_price, 0.0)
-                                current_move = max(close_price - position.entry_price, 0.0)
+                                # Sprint 2 — direction-aware time stop
+                                if short:
+                                    objective_move = max(position.entry_price - take_profit_price, 0.0)
+                                    current_move = max(position.entry_price - close_price, 0.0)
+                                else:
+                                    objective_move = max(take_profit_price - position.entry_price, 0.0)
+                                    current_move = max(close_price - position.entry_price, 0.0)
                                 tp_progress = (
                                     (current_move / objective_move)
                                     if objective_move > 0
                                     else 0.0
                                 )
-                                close_return_pct = (close_price / position.entry_price) - 1.0 if position.entry_price > 0 else 0.0
+                                close_return_pct = compute_return_pct(side, position.entry_price, close_price)
                                 if (
                                     tp_progress < float(self.config.time_stop_min_tp_progress_ratio)
                                     or abs(close_return_pct) <= float(self.config.time_stop_near_zero_return_pct)
@@ -1557,15 +1612,19 @@ class BacktestEngine:
                                     exit_reason = "time_stop"
                                 else:
                                     position.peak_high = peak_high
+                                    position.trough_low = trough_low
                                     continue
                             else:
                                 position.peak_high = peak_high
+                                position.trough_low = trough_low
                                 continue
                         else:
                             position.peak_high = peak_high
+                            position.trough_low = trough_low
                             continue
                     else:
                         position.peak_high = peak_high
+                        position.trough_low = trough_low
                         continue
                 else:
                     exit_price = resolution.exit_price
@@ -1577,6 +1636,7 @@ class BacktestEngine:
             if is_same_day and constraints.restrict_same_day_exit:
                 diagnostics.blocked_same_day_exits += 1
                 position.peak_high = peak_high
+                position.trough_low = trough_low
                 continue
 
             if exit_reason == "take_profit":
@@ -1590,20 +1650,38 @@ class BacktestEngine:
             if explicit_resolution is not None:
                 diagnostics.exit_lifecycle_replayed += 1
 
-            size_usd = position.quantity * exit_price
+            # Sprint 2 — direction-aware PnL and settlement
+            abs_qty = abs(position.quantity)
+            exit_notional = abs_qty * exit_price
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
-            extra_slippage_pct = micro.slippage.compute_bps(size_usd, adv_usd) / 10_000.0
-            proceeds = position.quantity * exit_price * (1.0 - cfg.fees_pct - extra_slippage_pct)
-            pnl = proceeds - position.entry_cost
-            holding_days = int((trade_day - position.entry_date).days)
+            extra_slippage_pct = micro.slippage.compute_bps(exit_notional, adv_usd) / 10_000.0
+            fees_rate = float(cfg.fees_pct) + extra_slippage_pct
 
-            if constraints.use_settled_cash_only:
-                settlement_day_idx = day_idx + constraints.cash_settlement_days
-                state.unsettled_cash += proceeds
-                if settlement_day_idx < len(trading_days):
-                    state.settlements_by_day[settlement_day_idx] += proceeds
+            if short:
+                # Short exit = buy back → cost = qty * exit_price * (1 + fees)
+                exit_cost = abs_qty * exit_price * (1.0 + fees_rate)
+                proceeds = -exit_cost  # negative cash flow (buy to cover)
+                if constraints.use_settled_cash_only:
+                    settlement_day_idx = day_idx + constraints.cash_settlement_days
+                    state.unsettled_cash -= exit_cost
+                    if settlement_day_idx < len(trading_days):
+                        state.settlements_by_day[settlement_day_idx] -= exit_cost
+                else:
+                    state.settled_cash -= exit_cost
             else:
-                state.settled_cash += proceeds
+                # Long exit = sell → proceeds = qty * exit_price * (1 - fees)
+                proceeds = abs_qty * exit_price * (1.0 - fees_rate)
+                if constraints.use_settled_cash_only:
+                    settlement_day_idx = day_idx + constraints.cash_settlement_days
+                    state.unsettled_cash += proceeds
+                    if settlement_day_idx < len(trading_days):
+                        state.settlements_by_day[settlement_day_idx] += proceeds
+                else:
+                    state.settled_cash += proceeds
+
+            pnl = compute_realized_pnl(side, abs_qty, position.entry_price, exit_price, fees=0.0)
+            return_pct = compute_return_pct(side, position.entry_price, exit_price)
+            holding_days = int((trade_day - position.entry_date).days)
 
             is_day_trade = is_same_day
             if is_day_trade:
@@ -1612,6 +1690,7 @@ class BacktestEngine:
             state.closed_trades.append(
                 {
                     "symbol": symbol,
+                    "side": side,
                     "sector": position.sector,
                     "signal_date": position.signal_date,
                     "quantity": position.quantity,
@@ -1622,9 +1701,7 @@ class BacktestEngine:
                     "entry_cost": position.entry_cost,
                     "proceeds": proceeds,
                     "pnl": pnl,
-                    "return_pct": ((proceeds / position.entry_cost) - 1.0) * 100.0
-                    if position.entry_cost
-                    else 0.0,
+                    "return_pct": return_pct,
                     "holding_days": holding_days,
                     "exit_reason": exit_reason,
                     "exit_source": "explicit_replay" if explicit_resolution is not None else "intrabar_resolution",
@@ -1641,6 +1718,7 @@ class BacktestEngine:
                 "exit_closed",
                 event_date=trade_day,
                 symbol=symbol,
+                side=side,
                 sector=position.sector,
                 entry_date=position.entry_date,
                 entry_price=position.entry_price,
@@ -1650,7 +1728,7 @@ class BacktestEngine:
                 exit_source="explicit_replay" if explicit_resolution is not None else "intrabar_resolution",
                 proceeds=proceeds,
                 pnl=pnl,
-                return_pct=((proceeds / position.entry_cost) - 1.0) * 100.0 if position.entry_cost else 0.0,
+                return_pct=return_pct,
                 holding_days=holding_days,
                 is_day_trade=is_day_trade,
                 settled_cash_after=state.settled_cash,
@@ -1726,26 +1804,36 @@ class BacktestEngine:
         row: pd.Series,
         entry_price: float,
         fallback_initial_stop_pct: float,
+        side: str = "buy",
     ) -> tuple[float | None, float | None]:
-        """Résout le stop initial/risk_per_share selon le mode live-like ou fixe."""
+        """Résout le stop initial/risk_per_share selon le mode live-like ou fixe.
+
+        Sprint 2 — direction-aware : pour un short, le stop est au-dessus du prix.
+        """
         risk_per_share = self._resolve_signal_float(row, "risk_per_share")
         stop_price_initial = self._resolve_signal_float(row, "stop_price_initial")
+        short = is_short_side(side)
 
         if self.config.use_live_protection_logic and entry_price > 0:
             if (
                 stop_price_initial is not None
                 and stop_price_initial > 0
-                and stop_price_initial < entry_price
             ):
-                return stop_price_initial, risk_per_share
+                # Direction-aware: for long stop < entry, for short stop > entry
+                if not short and stop_price_initial < entry_price:
+                    return stop_price_initial, risk_per_share
+                if short and stop_price_initial > entry_price:
+                    return stop_price_initial, risk_per_share
             if risk_per_share is not None and risk_per_share > 0:
-                derived_stop = entry_price - risk_per_share
-                if 0 < derived_stop < entry_price:
+                sign = -1 if short else 1
+                derived_stop = entry_price - sign * risk_per_share
+                if (not short and 0 < derived_stop < entry_price) or (short and derived_stop > entry_price):
                     return derived_stop, risk_per_share
             return None, risk_per_share
 
         if fallback_initial_stop_pct > 0 and entry_price > 0:
-            return entry_price * (1.0 - fallback_initial_stop_pct), risk_per_share
+            sign = -1 if short else 1
+            return entry_price * (1.0 - sign * fallback_initial_stop_pct), risk_per_share
         return None, risk_per_share
 
     @staticmethod
@@ -1818,7 +1906,11 @@ class BacktestEngine:
         close: pd.DataFrame,
         trade_day: pd.Timestamp,
     ) -> float:
-        """Phase E.4 — calcule la valeur de marché courante des positions ouvertes."""
+        """Phase E.4 — calcule la valeur de marché nette des positions ouvertes.
+
+        Longs : +qty * px (positive)
+        Shorts : -qty * px (négative, car due au broker)
+        """
         if not positions:
             return 0.0
         total = 0.0
@@ -1826,7 +1918,27 @@ class BacktestEngine:
             try:
                 px = float(close.at[trade_day, position.symbol])
                 if np.isfinite(px):
-                    total += position.quantity * px
+                    sign = -1 if is_short_side(getattr(position, "side", "buy") or "buy") else 1
+                    total += sign * abs(position.quantity) * px
+            except (KeyError, ValueError):
+                continue
+        return total
+
+    @staticmethod
+    def _compute_gross_notional(
+        positions: dict[str, _OpenPosition],
+        close: pd.DataFrame,
+        trade_day: pd.Timestamp,
+    ) -> float:
+        """Phase E.4 — exposition brute = somme des |qty| * px, toujours positive."""
+        if not positions:
+            return 0.0
+        total = 0.0
+        for position in positions.values():
+            try:
+                px = float(close.at[trade_day, position.symbol])
+                if np.isfinite(px):
+                    total += abs(position.quantity) * px
             except (KeyError, ValueError):
                 continue
         return total

@@ -133,13 +133,17 @@ class DrawdownCircuitBreaker:
             return float(peak_equity)
         return float(max(self._equity_window))
 
-    def allocation_scale(self, entry_mode: str | None = None) -> float:
+    def allocation_scale(self, entry_mode: str | None = None, side: str | None = None) -> float:
         """Retourne l'échelle d'allocation courante.
 
         - 1.0 si le breaker n'est pas trippé.
         - ``degraded_entry_allocation_pct`` si trippé sans ramp-up.
         - valeur rampée si trippé + régime normal depuis N séances.
+
+        Sprint 2 — ``side`` permet un scaling différent long/short (réservé).
+        Pour l'instant, le même scale s'applique aux deux directions.
         """
+        _ = side  # reserved for future per-side scaling
         if not self._tripped:
             return 1.0
         base = float(np.clip(self.degraded_entry_allocation_pct, 0.0, 1.0))
