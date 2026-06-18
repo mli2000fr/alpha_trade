@@ -9,7 +9,8 @@ from pandas import DataFrame
 
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from core.conviction import ConvictionWeights
-from core.conviction import fuse as _fuse_conviction
+from core.conviction import fuse as _fuse_conviction_long
+from core.conviction import compute_conviction_short as _fuse_conviction_short
 from core.run_summary import attach_live_progress
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
@@ -244,14 +245,28 @@ class PortfolioBuilder:
             win_rate = win_rates.get(candidate.symbol)
             predicted_proba = prediction.predicted_proba if prediction else None
             historical_win_rate = win_rate.directional_accuracy if win_rate else None
-            conviction = _fuse_conviction(
-                quant_score=candidate.score_used,
-                predicted_proba=predicted_proba,
-                weights=ConvictionWeights(
-                    score_weight=self._cfg.score_weight,
-                    prediction_weight=self._cfg.prediction_weight,
-                ),
-            )
+            # ML Sprint 4 — conviction directionnelle
+            side = getattr(candidate, "side", "buy") or "buy"
+            if side == "sell":
+                # Pour un short : proba_short > proba_long
+                proba_short = getattr(prediction, "proba_short", None) if prediction else None
+                conviction = _fuse_conviction_short(
+                    quant_score=candidate.score_used,
+                    predicted_proba_short=proba_short,
+                    weights=ConvictionWeights(
+                        score_weight=self._cfg.score_weight,
+                        prediction_weight=self._cfg.prediction_weight,
+                    ),
+                )
+            else:
+                conviction = _fuse_conviction_long(
+                    quant_score=candidate.score_used,
+                    predicted_proba=predicted_proba,
+                    weights=ConvictionWeights(
+                        score_weight=self._cfg.score_weight,
+                        prediction_weight=self._cfg.prediction_weight,
+                    ),
+                )
             enriched.append(
                 EnrichedCandidate(
                     symbol=candidate.symbol,
@@ -338,21 +353,30 @@ class PortfolioBuilder:
                 )
 
         # ── 0ter. Score threshold (Quick Win 2) ────────────────────
-        # Sprint 2 — les shorts (side="sell") ne sont pas soumis au seuil
-        # score long-only. Ils utilisent leur propre logique de sélection
-        # (bottom-N via MomentumRotationState ou régime capital_preservation).
-        if candidates and self._cfg.min_score_threshold > 0:
+        # Sprint 2 — shorts ignorés par le seuil long. ML Sprint 4 — seuil
+        # distinct pour les shorts via min_score_threshold_short.
+        if candidates:
             before = len(candidates)
-            candidates = [
-                c for c in candidates
-                if getattr(c, "side", "buy") == "sell" or c.score_used >= self._cfg.min_score_threshold
-            ]
+            short_threshold = float(getattr(self._cfg, "min_score_threshold_short", 0.0) or 0.0)
+            long_threshold = float(self._cfg.min_score_threshold)
+            filtered: list[CandidateScore] = []
+            for c in candidates:
+                side = getattr(c, "side", "buy") or "buy"
+                if side == "sell":
+                    if short_threshold > 0 and c.score_used < short_threshold:
+                        continue
+                else:
+                    if long_threshold > 0 and c.score_used < long_threshold:
+                        continue
+                filtered.append(c)
+            candidates = filtered
             blocked_score = before - len(candidates)
             if blocked_score:
                 LOGGER.info(
-                    "Score threshold: blocked %d candidates (score < %.2f)",
+                    "Score threshold: blocked %d candidates (long < %.2f, short < %.2f)",
                     blocked_score,
-                    self._cfg.min_score_threshold,
+                    long_threshold,
+                    short_threshold,
                 )
 
         # ── 0quat. Filtres de concentration (Priorité 4) ─────────────

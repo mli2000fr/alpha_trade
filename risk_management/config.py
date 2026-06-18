@@ -72,6 +72,8 @@ class RiskConfig:
     short_tp_pct: float = 0.08
     short_trailing_pct: float = 0.10
     short_time_stop_days: int = 20
+    # ML Sprint 4 — seuil de score minimum pour les shorts (distinct des longs)
+    min_score_threshold_short: float = 0.0
 
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60

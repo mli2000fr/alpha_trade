@@ -60,10 +60,30 @@ def compute_conviction(
     (auparavant déléguée à ``risk_management.conviction``, désormais déprécié).
     Les nouveaux consommateurs sont encouragés à passer par :func:`fuse` qui
     prend un objet :class:`ConvictionWeights` typé.
+
+    Pour la conviction short, utiliser :func:`compute_conviction_short`.
     """
     if predicted_proba is not None:
         return score_weight * score_used + prediction_weight * predicted_proba
     return score_used
+
+
+def compute_conviction_short(
+    score_used: float,
+    predicted_proba_short: float | None,
+    score_weight: float,
+    prediction_weight: float,
+) -> float:
+    """Retourne le conviction score pour un short.
+
+    ML Sprint 4 — pour un short, on utilise la probabilité de baisse
+    (``predicted_proba_short``) au lieu de la probabilité de hausse.
+    Le score quant est inversé : un score faible → conviction short élevée.
+    """
+    inverted_score = 1.0 - score_used
+    if predicted_proba_short is not None:
+        return score_weight * inverted_score + prediction_weight * predicted_proba_short
+    return inverted_score
 
 
 def fuse(
