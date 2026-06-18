@@ -1,632 +1,663 @@
 presets:
-  # ------------------------------------------------------------------
-  # Convention drawdown / circuit breaker :
-  # - Préfixe `risk_*`        = protections live / pipeline risk / execution
-  #   consommées par `RiskConfig` puis `risk_management.circuit_breaker`.
-  # - Préfixe `backtesting_*` = protections du simulateur / replay
-  #   consommées par `backtesting.risk_overlay`.
-  #
-  # Paires équivalentes principales :
-  # - `risk_max_drawdown_pct`                  ↔ `backtesting_max_portfolio_dd_pct`
-  # - `risk_drawdown_rolling_peak_window_days` ↔ `backtesting_dd_rolling_peak_window_days`
-  # - `risk_degraded_entry_allocation_pct`     ↔ `backtesting_dd_degraded_allocation_pct`
-  # ------------------------------------------------------------------
-  # ------------------------------------------------------------------
-  # Sprint S26 — micro-compte (~2 000 EUR ≈ 2 150 USD)
-  # Cible : utilisateur débutant qui démarre avec ~2 000 €.
-  # Toutes les valeurs sont en USD (le moteur ne gère pas l'EUR natif).
-  # Voir doc/audit/preset_petit_capital_2000eur.md pour la justification.
-  # ------------------------------------------------------------------
-  - key: capital_0_2000_eur
-    label: "0 → 2 000 € (micro-compte)"
-    min_equity: 0
-    max_equity: 2000
-    description: "Micro-compte cash (~2 000 EUR / 2 150 USD). Concentration assumée (3 lignes), ticket minimum bas, filtres selector relâchés pour ne pas vider l'univers, frais de transaction à monter manuellement à 25 bps en backtest pour refléter le coût des petits ordres."
-    strict_profile_justifications:
-      selector_liquidity_threshold: "Univers micro-compte : 5 M$ suffit pour garder quelques dossiers exécutables malgré des tickets plus petits."
-      selector_max_volatility_ratio: "Tolérance de volatilité portée à 1.0 pour ne pas exclure toute la poche de croissance accessible aux petits tickets."
-      selector_min_ibd_rs_rank: "RS abaissé à 90 afin de conserver un univers investissable malgré la faible taille du compte."
-      selector_min_high_52w_proximity: "Relâchement volontaire pour accepter des breakouts moins mûrs quand l'univers est déjà réduit."
-      selector_min_weekly_trend_score: "Seuil abaissé sous 1.0 pour éviter un univers vide sur micro-compte."
-      selector_min_atr_pct_20: "ATR minimum abaissé pour laisser entrer des titres encore tradables avec petits tickets."
-      selector_max_atr_pct_20: "Plafond ATR relevé pour tolérer davantage de volatilité sur petites/mid caps."
-      selector_min_market_cap: "Mid caps autorisées à partir de 500 M$ pour élargir l'univers accessible."
-      selector_min_beta_126: "Beta minimal abaissé à 0.65 : compromis assumé entre qualité et nombre d'opportunités."
-      selector_max_spread_bps: "Spreads plus larges acceptés car les petits comptes ont moins d'alternatives liquides."
-      selector_max_spread_bps_iex: "Version IEX alignée sur le relâchement de spread pour éviter une exclusion excessive."
-      selector_earnings_blackout_days: "Fenêtre earnings réduite à 2 jours pour ne pas neutraliser trop longtemps un univers déjà étroit."
-    values:
-      risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.01                 # Sprint S1 / A-001 — 1.0 % max sur micro-compte
-      risk_max_positions: 5                     # 5 lignes ≈ 400 € chacune — diversifié
-      risk_max_position_weight: 0.35           # 35 % par ligne (concentration assumée)
-      risk_max_sector_weight: 0.55             # 1 secteur peut héberger 2 lignes /3
-      risk_min_position_notional: 500.0        # ticket mini USD (sinon frais > alpha) — A-001 fix
-      # Monotonie respectée : DD plus strict que les tranches supérieures
-      # (ordre attendu par tests/test_capital_preset_risk_overrides.py).
-      risk_max_drawdown_pct: 0.15
-      risk_max_daily_loss_pct: 0.025
-      # Live / risk_management.circuit_breaker :
-      # - rolling_peak_window_days = 0 => pic historique absolu (legacy)
-      # - >0 => pic roulant sur N séances (réarmement possible après stress)
-      risk_drawdown_rolling_peak_window_days: 252
-      # Allocation max autorisée quand le circuit breaker est trippé :
-      # 0.0 = blocage total (legacy), 0.02 = mode dégradé à 2%/position.
-      # 0.10 = compromis : positions ~$60 (vs $600 normal), assez pour
-      # permettre une recovery progressive sans hémorragie en bear market.
-      risk_degraded_entry_allocation_pct: 0.025
-      risk_dd_recovery_pct: 0.92
-      # Ramp-up régimed live : mêmes paramètres que le backtest
-      risk_regime_ramp_up_enabled: true
-      risk_regime_ramp_up_pct_per_day: 0.025
-      risk_regime_ramp_up_max_pct: 0.80
-      risk_target_annual_vol: 0.12
-      risk_vol_target_lookback_days: 60
-      risk_min_ml_coverage_ratio: 0.95
-      risk_correlation_threshold: 0.92
-      risk_correlation_lookback_days: 40
-      risk_correlation_min_overlap: 25
-      risk_enable_kelly: false
-      risk_score_weight: 0.55
-      risk_prediction_weight: 0.45
-      execution_account_type: cash             # compte cash : capital limité au settled cash
-      execution_swing_only: false               # interdit toute logique day-trade
-      execution_cash_settlement_days: 1
-      execution_submission_window: both
-      execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 2.0
-      backtesting_commission_bps_stress: 15.0
-      backtesting_slippage_bps_stress: 25.0
-      backtesting_max_portfolio_dd_pct: 0.15
-      # Backtest / backtesting.risk_overlay.DrawdownCircuitBreaker :
-      # pic roulant de référence pour le déclenchement/réarmement C.5.
-      backtesting_dd_rolling_peak_window_days: 252
-      # Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (fraction du pic de référence).
-      backtesting_dd_recovery_pct: 0.92
-            # Allocation max en mode dégradé (0.0 = blocage total comme legacy).
-      backtesting_dd_degraded_allocation_pct: 0.025
-      # Ramp-up régimed : si le régime repasse en "normal", l'allocation
-      # dégradée est progressivement augmentée de ramp_up_pct_per_day
-      # par jour consécutif, jusqu'au plafond ramp_up_max_pct.
-      backtesting_dd_regime_ramp_up_enabled: true
-      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-      backtesting_dd_regime_ramp_up_max_pct: 0.80
-      backtesting_max_sector_exposure_pct: 0.25
-      backtesting_max_entry_gap_pct: 0.03
-      backtesting_target_annual_vol: 0.12
-      backtesting_min_ml_coverage_ratio: 0.95
-      execution_max_entry_gap_pct: 0.03
-      screener_liquidity_threshold_usd: 2000000.0   # relâché vs 5M$ pour 0_5000
-      screener_min_relative_strength_index: 90.0
-      screener_historical_range_lookback_days: 252
-      screener_min_historical_range_score: 55.0
-      screener_first_pass_window_days: 252
-      selector_selection_size: 15
-      selector_sector_cap_ratio: 0.55
-      selector_liquidity_threshold: 5000000.0
-      selector_min_close: 10.0                 # min 10$ : limite l'impact des frais fixes
-      selector_max_volatility_ratio: 1.0
-      selector_min_ibd_rs_rank: 90.0           # Sprint S1 / A-028 — nouveau nom explicite
-      selector_min_high_52w_proximity: 0.55
-      selector_min_weekly_trend_score: 0.65
-      selector_min_atr_pct_20: 0.01
-      selector_max_atr_pct_20: 0.09            # tolère un peu plus de vol pour micro-cap
-      selector_min_market_cap: 500000000.0     # mid-cap accessibles (vs 1Md$ pour 0_5000)
-      selector_min_beta_126: 0.65
-      selector_max_spread_bps: 80.0            # spreads plus larges acceptés
-      selector_max_spread_bps_iex: 100.0       # relâchement IEX >= max_spread_bps
-      selector_earnings_blackout_days: 2
-      selector_max_anomaly_count: 15
-      selector_require_above_ma200: true
-
-  - key: capital_0_5000
-    label: "2 001 → 5 000 $"
-    min_equity: 2000.01
-    max_equity: 5000
-    description: "Petit compte swing cash : lignes concentrées, ticket minimum réduit et filtres selector légèrement relâchés pour conserver quelques opportunités exécutables."
-    strict_profile_justifications:
-      selector_liquidity_threshold: "Seuil ramené à 10 M$ pour préserver un univers suffisamment large sur petit compte."
-      selector_max_volatility_ratio: "Tolérance à 1.0 pour rester investissable sur des titres un peu plus nerveux mais encore gérables."
-      selector_min_ibd_rs_rank: "RS abaissé à 95 afin de compenser la taille limitée de l'univers filtré."
-      selector_min_high_52w_proximity: "Relâchement modéré pour accepter des setups encore en construction."
-      selector_min_weekly_trend_score: "Seuil sous 1.0 pour éviter la raréfaction extrême des candidats."
-      selector_min_atr_pct_20: "ATR minimum abaissé pour laisser passer des titres moins explosifs mais exécutables."
-      selector_max_atr_pct_20: "Plafond ATR élargi à 0.08 pour garder des opportunités sur petits comptes."
-      selector_min_market_cap: "Plancher réduit à 1 Md$ afin de ne pas fermer l'accès aux mid caps liquides."
-      selector_min_beta_126: "Beta minimal abaissé à 0.70 pour élargir l'univers sans abandonner totalement le biais momentum."
-      selector_max_spread_bps: "Spreads jusqu'à 60 bps tolérés pour conserver des titres exécutables en petite taille."
-      selector_max_spread_bps_iex: "Relâchement IEX cohérent avec l'assouplissement du spread principal."
-      selector_earnings_blackout_days: "Fenêtre blackout réduite à 2 jours pour éviter un assèchement excessif de l'univers."
-    values:
-      risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.0125               # Sprint S1 / A-001 — 1.25 % max sur 2–5k$
-      # Sprint Market-Aware — petit compte : ``allowed_slots = floor(equity / 500)``
-      # garantit qu'aucun ordre <150–155 USD ne sera proposé en cash (cf. plan §5.2).
-      risk_max_positions: 6
-      risk_max_position_weight: 0.20
-      risk_max_sector_weight: 0.40
-      risk_min_position_notional: 150.0
-      # Sprint S3 / A-011 — petit compte : seuils circuit breaker plus stricts.
-      risk_max_drawdown_pct: 0.15
-      risk_max_daily_loss_pct: 0.03
-      risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.025
-      risk_dd_recovery_pct: 0.92
-      # Ramp-up régimed live
-      risk_regime_ramp_up_enabled: true
-      risk_regime_ramp_up_pct_per_day: 0.025
-      risk_regime_ramp_up_max_pct: 0.80
-      risk_target_annual_vol: 0.13
-      risk_vol_target_lookback_days: 60
-      risk_min_ml_coverage_ratio: 0.95
-      risk_correlation_threshold: 0.90
-      risk_correlation_lookback_days: 40
-      risk_correlation_min_overlap: 25
-      risk_enable_kelly: false
-      risk_score_weight: 0.55
-      risk_prediction_weight: 0.45
-      execution_account_type: cash
-      execution_swing_only: false
-      execution_cash_settlement_days: 1
-      execution_submission_window: both
-      execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 2.0
-      backtesting_commission_bps_stress: 12.0
-      backtesting_slippage_bps_stress: 20.0
-      backtesting_max_portfolio_dd_pct: 0.15
-      backtesting_dd_rolling_peak_window_days: 252
-      # Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (fraction du pic de référence).
-      backtesting_dd_recovery_pct: 0.92
-      backtesting_dd_degraded_allocation_pct: 0.025
-      # Ramp-up régimed : si le régime repasse en "normal", l'allocation
-      # dégradée est progressivement augmentée pour accélérer la recovery.
-      backtesting_dd_regime_ramp_up_enabled: true
-      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-      backtesting_dd_regime_ramp_up_max_pct: 0.80
-      backtesting_max_sector_exposure_pct: 0.30
-      backtesting_max_entry_gap_pct: 0.03
-      backtesting_target_annual_vol: 0.13
-      backtesting_min_ml_coverage_ratio: 0.95
-      execution_max_entry_gap_pct: 0.03
-      screener_liquidity_threshold_usd: 5000000.0
-      screener_min_relative_strength_index: 95.0
-      screener_historical_range_lookback_days: 252
-      screener_min_historical_range_score: 60.0
-      screener_first_pass_window_days: 252
-      selector_selection_size: 20
-      selector_sector_cap_ratio: 0.40
-      selector_liquidity_threshold: 10000000.0
-      selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 5.0)
-      selector_max_volatility_ratio: 1.0
-      selector_min_ibd_rs_rank: 95.0
-      selector_min_high_52w_proximity: 0.65
-      selector_min_weekly_trend_score: 0.75
-      selector_min_atr_pct_20: 0.01
-      selector_max_atr_pct_20: 0.08
-      selector_min_market_cap: 1000000000.0
-      selector_min_beta_126: 0.70
-      selector_max_spread_bps: 60.0
-      selector_max_spread_bps_iex: 80.0
-      selector_earnings_blackout_days: 2
-      selector_max_anomaly_count: 16
-      selector_require_above_ma200: true
-
-  - key: capital_5001_10000
-    label: "5 001 → 10 000 $"
-    min_equity: 5000.01
-    max_equity: 10000
-    description: "Petit/moyen compte swing cash : diversification modérée, ticket minimum toujours bas et filtres encore assez ouverts pour rester investissable."
-    strict_profile_justifications:
-      selector_liquidity_threshold: "15 M$ reste un compromis adapté aux comptes 5–10k$ sans retomber sur un univers trop étroit."
-      selector_max_volatility_ratio: "Léger assouplissement à 0.95 pour conserver quelques leaders plus dynamiques."
-      selector_min_ibd_rs_rank: "RS fixé à 98 : proche du strict mais encore un peu plus ouvert pour cette tranche."
-      selector_min_high_52w_proximity: "Proximité 52w légèrement relâchée pour ne pas dépendre uniquement des breakouts déjà parfaits."
-      selector_min_weekly_trend_score: "Seuil à 0.80 pour rester investissable sur un univers réaliste."
-      selector_min_atr_pct_20: "ATR minimum abaissé à 0.0125 pour laisser entrer des titres encore actifs mais moins explosifs."
-      selector_max_atr_pct_20: "ATR max porté à 0.075 afin d'accepter un peu plus de volatilité que le strict."
-      selector_min_market_cap: "Plancher réduit à 1.5 Md$ pour inclure davantage de mid/large caps accessibles."
-      selector_min_beta_126: "Beta minimal à 0.75 pour équilibrer qualité momentum et profondeur d'univers."
-      selector_max_spread_bps: "Spreads à 55 bps tolérés pour éviter une sélection trop pauvre."
-      selector_max_spread_bps_iex: "IEX relâché à 75 bps pour rester cohérent avec le spread principal."
-    values:
-      risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.0175
-      risk_max_positions: 8
-      risk_max_position_weight: 0.18
-      risk_max_sector_weight: 0.35
-      risk_min_position_notional: 200.0
-      # Sprint S3 / A-011 — tranche 5–10k : seuils encore stricts.
-      risk_max_drawdown_pct: 0.15
-      risk_max_daily_loss_pct: 0.035
-      risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.025
-      risk_dd_recovery_pct: 0.92
-      # Ramp-up régimed live
-      risk_regime_ramp_up_enabled: true
-      risk_regime_ramp_up_pct_per_day: 0.025
-      risk_regime_ramp_up_max_pct: 0.80
-      risk_target_annual_vol: 0.14
-      risk_vol_target_lookback_days: 60
-      risk_min_ml_coverage_ratio: 0.95
-      risk_correlation_threshold: 0.88
-      risk_correlation_lookback_days: 45
-      risk_correlation_min_overlap: 30
-      risk_enable_kelly: false
-      risk_score_weight: 0.55
-      risk_prediction_weight: 0.45
-      execution_account_type: cash
-      execution_swing_only: false
-      execution_cash_settlement_days: 1
-      execution_submission_window: both
-      execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 2.0
-      backtesting_commission_bps_stress: 10.0
-      backtesting_slippage_bps_stress: 18.0
-      backtesting_max_portfolio_dd_pct: 0.15
-      backtesting_dd_rolling_peak_window_days: 252
-      # Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (fraction du pic de référence).
-      backtesting_dd_recovery_pct: 0.92
-      backtesting_dd_degraded_allocation_pct: 0.025
-      # Ramp-up régimed
-      backtesting_dd_regime_ramp_up_enabled: true
-      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-      backtesting_dd_regime_ramp_up_max_pct: 0.80
-      backtesting_max_sector_exposure_pct: 0.30
-      backtesting_max_entry_gap_pct: 0.03
-      backtesting_target_annual_vol: 0.14
-      backtesting_min_ml_coverage_ratio: 0.95
-      execution_max_entry_gap_pct: 0.03
-      screener_liquidity_threshold_usd: 7500000.0
-      screener_min_relative_strength_index: 97.0
-      screener_historical_range_lookback_days: 252
-      screener_min_historical_range_score: 65.0
-      screener_first_pass_window_days: 300
-      selector_selection_size: 25
-      selector_sector_cap_ratio: 0.35
-      selector_liquidity_threshold: 15000000.0
-      selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 7.0)
-      selector_max_volatility_ratio: 0.95
-      selector_min_ibd_rs_rank: 98.0
-      selector_min_high_52w_proximity: 0.70
-      selector_min_weekly_trend_score: 0.80
-      selector_min_atr_pct_20: 0.0125
-      selector_max_atr_pct_20: 0.075
-      selector_min_market_cap: 1500000000.0
-      selector_min_beta_126: 0.75
-      selector_max_spread_bps: 55.0
-      selector_max_spread_bps_iex: 75.0
-      selector_earnings_blackout_days: 3
-      selector_max_anomaly_count: 18
-      selector_require_above_ma200: true
-
-  - key: capital_10001_25000
-    label: "10 001 → 25 000 $"
-    min_equity: 10000.01
-    max_equity: 25000
-    description: "Compte intermédiaire : diversification plus régulière, contraintes risk plus proches du swing standard tout en restant compatibles avec un compte encore modeste."
-    strict_profile_justifications:
-      selector_liquidity_threshold: "20 M$ suffit encore sur cette tranche tout en préservant un univers raisonnablement large."
-      selector_min_high_52w_proximity: "Léger relâchement à 0.72 pour accepter des leaders proches mais pas collés au plus haut."
-      selector_min_weekly_trend_score: "Seuil à 0.85 pour éviter la rigidité excessive du score parfait."
-      selector_max_atr_pct_20: "ATR max à 0.07 pour tolérer un peu plus de mouvement que le profil strict."
-      selector_max_spread_bps: "Spreads jusqu'à 50 bps encore acceptables à ce niveau de capital."
-      selector_max_spread_bps_iex: "IEX à 70 bps pour rester aligné avec le relâchement du spread global."
-    values:
-      risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.015
-      risk_max_positions: 10
-      risk_max_position_weight: 0.15
-      risk_max_sector_weight: 0.30
-      risk_min_position_notional: 300.0
-      # Sprint S3 / A-011 — tranche 10–25k : convergence vers le standard.
-      risk_max_drawdown_pct: 0.17
-      risk_max_daily_loss_pct: 0.04
-      risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.025
-      risk_dd_recovery_pct: 0.92
-      # Ramp-up régimed live
-      risk_regime_ramp_up_enabled: true
-      risk_regime_ramp_up_pct_per_day: 0.025
-      risk_regime_ramp_up_max_pct: 0.80
-      risk_target_annual_vol: 0.15
-      risk_vol_target_lookback_days: 60
-      risk_min_ml_coverage_ratio: 0.95
-      risk_correlation_threshold: 0.85
-      risk_correlation_lookback_days: 50
-      risk_correlation_min_overlap: 35
-      risk_enable_kelly: false
-      risk_score_weight: 0.40
-      risk_prediction_weight: 0.60
-      execution_account_type: cash
-      execution_swing_only: false
-      execution_cash_settlement_days: 1
-      execution_submission_window: both
-      execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 2.0
-      backtesting_commission_bps_stress: 8.0
-      backtesting_slippage_bps_stress: 15.0
-      backtesting_max_portfolio_dd_pct: 0.15
-      backtesting_dd_rolling_peak_window_days: 252
-      # Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (fraction du pic de référence).
-      backtesting_dd_recovery_pct: 0.92
-      backtesting_dd_degraded_allocation_pct: 0.025
-      # Ramp-up régimed
-      backtesting_dd_regime_ramp_up_enabled: true
-      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-      backtesting_dd_regime_ramp_up_max_pct: 0.80
-      backtesting_max_sector_exposure_pct: 0.30
-      backtesting_max_entry_gap_pct: 0.025
-      backtesting_target_annual_vol: 0.15
-      backtesting_min_ml_coverage_ratio: 0.95
-      execution_max_entry_gap_pct: 0.025
-      screener_liquidity_threshold_usd: 10000000.0
-      screener_min_relative_strength_index: 100.0
-      screener_historical_range_lookback_days: 378
-      screener_min_historical_range_score: 70.0
-      screener_first_pass_window_days: 350
-      selector_selection_size: 35
-      selector_sector_cap_ratio: 0.30
-      selector_liquidity_threshold: 20000000.0
-      selector_min_close: 10.0                # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0 (was 8.0)
-      selector_max_volatility_ratio: 0.90
-      selector_min_ibd_rs_rank: 100.0
-      selector_min_high_52w_proximity: 0.72
-      selector_min_weekly_trend_score: 0.85
-      selector_min_atr_pct_20: 0.015
-      selector_max_atr_pct_20: 0.07
-      selector_min_market_cap: 2000000000.0
-      selector_min_beta_126: 0.80
-      selector_max_spread_bps: 50.0
-      selector_max_spread_bps_iex: 70.0
-      selector_earnings_blackout_days: 3
-      selector_max_anomaly_count: 20
-      selector_require_above_ma200: true
-
-  - key: capital_25001_50000
-    label: "25 001 → 50 000 $"
-    min_equity: 25000.01
-    max_equity: 50000
-    description: "Compte swing déjà diversifiable : allocation plus équilibrée, davantage de lignes et retour vers des filtres selector proches du profil strict standard."
-    strict_profile_justifications:
-      selector_liquidity_threshold: "25 M$ maintient un univers suffisamment large tout en restant proche du strict."
-      selector_min_weekly_trend_score: "Seuil à 0.90 pour éviter que le score weekly parfait ne raréfie trop les candidats."
-      selector_max_spread_bps: "Spreads jusqu'à 45 bps tolérés, assouplissement marginal par rapport au strict."
-    values:
-      risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.0125
-      risk_max_positions: 14
-      risk_max_position_weight: 0.12
-      risk_max_sector_weight: 0.30
-      risk_min_position_notional: 400.0
-      # Sprint S3 / A-011 — tranche 25–50k : seuils swing standard.
-      risk_max_drawdown_pct: 0.18
-      risk_max_daily_loss_pct: 0.045
-      risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.025
-      risk_dd_recovery_pct: 0.92
-      # Ramp-up régimed live
-      risk_regime_ramp_up_enabled: true
-      risk_regime_ramp_up_pct_per_day: 0.025
-      risk_regime_ramp_up_max_pct: 0.80
-      risk_target_annual_vol: 0.15
-      risk_vol_target_lookback_days: 60
-      risk_min_ml_coverage_ratio: 0.95
-      risk_correlation_threshold: 0.82
-      risk_correlation_lookback_days: 60
-      risk_correlation_min_overlap: 40
-      risk_enable_kelly: true
-      risk_score_weight: 0.40
-      risk_prediction_weight: 0.60
-      execution_account_type: margin
-      execution_swing_only: false
-      execution_cash_settlement_days: 0
-      execution_submission_window: both
-      execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 2.0
-      backtesting_commission_bps_stress: 6.0
-      backtesting_slippage_bps_stress: 12.0
-      backtesting_max_portfolio_dd_pct: 0.15
-      backtesting_dd_rolling_peak_window_days: 252
-      # Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (fraction du pic de référence).
-      backtesting_dd_recovery_pct: 0.92
-      backtesting_dd_degraded_allocation_pct: 0.025
-      # Ramp-up régimed
-      backtesting_dd_regime_ramp_up_enabled: true
-      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-      backtesting_dd_regime_ramp_up_max_pct: 0.80
-      backtesting_max_sector_exposure_pct: 0.30
-      backtesting_max_entry_gap_pct: 0.025
-      backtesting_target_annual_vol: 0.15
-      backtesting_min_ml_coverage_ratio: 0.95
-      execution_max_entry_gap_pct: 0.025
-      screener_liquidity_threshold_usd: 10000000.0
-      screener_min_relative_strength_index: 100.0
-      screener_historical_range_lookback_days: 504
-      screener_min_historical_range_score: 70.0
-      screener_first_pass_window_days: 400
-      selector_selection_size: 45
-      selector_sector_cap_ratio: 0.30
-      selector_liquidity_threshold: 25000000.0
-      selector_min_close: 10.0
-      selector_max_volatility_ratio: 0.90
-      selector_min_ibd_rs_rank: 100.0
-      selector_min_high_52w_proximity: 0.75
-      selector_min_weekly_trend_score: 0.90
-      selector_min_atr_pct_20: 0.015
-      selector_max_atr_pct_20: 0.06
-      selector_min_market_cap: 2000000000.0
-      selector_min_beta_126: 0.80
-      selector_max_spread_bps: 45.0
-      selector_max_spread_bps_iex: 65.0
-      selector_earnings_blackout_days: 3
-      selector_max_anomaly_count: 21
-      selector_require_above_ma200: true
-
-  - key: capital_50001_100000
-    label: "50 001 → 100 000 $"
-    min_equity: 50000.01
-    max_equity: 100000
-    description: "Preset swing standard du projet : portefeuille plus diversifié, contraintes corrélation plus disciplinées et filtre selector strict quasi nominal."
-    strict_profile_justifications:
-      selector_min_weekly_trend_score: "Le preset standard reste à 0.95 pour éviter l'effet univers vide d'un score weekly fixé à 1.0."
-      selector_max_spread_bps_iex: "IEX conservé à 60 bps pour absorber le bruit des snapshots quotes tout en restant strict."
-    values:
-      risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.01
-      risk_max_positions: 17
-      risk_max_position_weight: 0.10
-      risk_max_sector_weight: 0.28
-      risk_min_position_notional: 500.0
-      # Sprint S3 / A-011 — tranche 50–100k : seuils standards config.yaml.
-      risk_max_drawdown_pct: 0.19
-      risk_max_daily_loss_pct: 0.05
-      risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.025
-      risk_dd_recovery_pct: 0.92
-      # Ramp-up régimed live
-      risk_regime_ramp_up_enabled: true
-      risk_regime_ramp_up_pct_per_day: 0.025
-      risk_regime_ramp_up_max_pct: 0.80
-      risk_target_annual_vol: 0.15
-      risk_vol_target_lookback_days: 60
-      risk_min_ml_coverage_ratio: 0.95
-      risk_correlation_threshold: 0.80
-      risk_correlation_lookback_days: 60
-      risk_correlation_min_overlap: 40
-      risk_enable_kelly: true
-      risk_score_weight: 0.40
-      risk_prediction_weight: 0.60
-      execution_account_type: margin
-      execution_swing_only: false
-      execution_cash_settlement_days: 0
-      execution_submission_window: both
-      execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 2.0
-      backtesting_commission_bps_stress: 5.0
-      backtesting_slippage_bps_stress: 10.0
-      backtesting_max_portfolio_dd_pct: 0.15
-      backtesting_dd_rolling_peak_window_days: 252
-      # Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (fraction du pic de référence).
-      backtesting_dd_recovery_pct: 0.92
-      backtesting_dd_degraded_allocation_pct: 0.025
-      # Ramp-up régimed
-      backtesting_dd_regime_ramp_up_enabled: true
-      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-      backtesting_dd_regime_ramp_up_max_pct: 0.80
-      backtesting_max_sector_exposure_pct: 0.28
-      backtesting_max_entry_gap_pct: 0.02
-      backtesting_target_annual_vol: 0.15
-      backtesting_min_ml_coverage_ratio: 0.95
-      execution_max_entry_gap_pct: 0.02
-      screener_liquidity_threshold_usd: 10000000.0
-      screener_min_relative_strength_index: 100.0
-      screener_historical_range_lookback_days: 504
-      screener_min_historical_range_score: 70.0
-      screener_first_pass_window_days: 400
-      selector_selection_size: 50
-      selector_sector_cap_ratio: 0.28
-      selector_liquidity_threshold: 30000000.0
-      selector_min_close: 10.0
-      selector_max_volatility_ratio: 0.90
-      selector_min_ibd_rs_rank: 100.0
-      selector_min_relative_strength_index: 100.0  # alias rétrocompatible 1 release
-      selector_min_high_52w_proximity: 0.75
-      selector_min_weekly_trend_score: 0.95
-      selector_min_atr_pct_20: 0.015
-      selector_max_atr_pct_20: 0.06
-      selector_min_market_cap: 2000000000.0
-      selector_min_beta_126: 0.80
-      selector_max_spread_bps: 40.0
-      selector_max_spread_bps_iex: 60.0
-      selector_earnings_blackout_days: 3
-      selector_max_anomaly_count: 22
-      selector_require_above_ma200: true
-
-  - key: capital_100001_plus
-    label: "100 001 $+"
-    min_equity: 100000.01
-    max_equity:
-    description: "Grand compte swing : diversification large, tickets plus importants et filtres selector les plus stricts pour privilégier la qualité moyenne du book cible."
-    strict_profile_justifications:
-      selector_liquidity_threshold: "Seuil relevé à 40 M$ pour privilégier les dossiers les plus liquides adaptés à de plus gros tickets."
-      selector_min_close: "Prix minimal relevé à 12 $ afin de réduire encore les coûts implicites et le bruit microstructurel."
-      selector_max_volatility_ratio: "Volatilité maximale abaissée à 0.85 pour cibler un book plus stable et plus institutionnel."
-      selector_min_ibd_rs_rank: "RS porté à 102 pour privilégier les leaders les plus forts sur grand compte."
-      selector_min_high_52w_proximity: "Proximité 52w relevée à 0.78 pour renforcer l'exigence de leadership."
-      selector_min_weekly_trend_score: "Le score reste à 0.95 plutôt que 1.0 afin d'éviter une exigence irréaliste de perfection absolue."
-      selector_max_atr_pct_20: "ATR max abaissé à 0.055 pour contenir la variabilité sur gros tickets."
-      selector_min_market_cap: "Capitalisation minimale relevée à 3 Md$ pour privilégier les large caps."
-      selector_min_beta_126: "Beta minimal relevé à 0.90 afin de rester concentré sur les leaders les plus réactifs."
-      selector_max_spread_bps: "Spread maximal abaissé à 35 bps pour imposer une meilleure qualité d'exécution."
-      selector_max_spread_bps_iex: "Spread IEX abaissé à 55 bps pour conserver une discipline de liquidité cohérente."
-      selector_earnings_blackout_days: "Blackout étendu à 4 jours pour réduire davantage le risque événementiel sur gros compte."
-    values:
-      risk_account_equity: "__DETECTED_EQUITY__"
-      risk_per_trade_pct: 0.008
-      risk_max_positions: 20
-      risk_max_position_weight: 0.08
-      risk_max_sector_weight: 0.25
-      risk_min_position_notional: 750.0
-      # Sprint S3 / A-011 — gros compte : tolérance maximale (drawdown plus large).
-      risk_max_drawdown_pct: 0.20
-      risk_max_daily_loss_pct: 0.05
-      risk_drawdown_rolling_peak_window_days: 252
-      risk_degraded_entry_allocation_pct: 0.025
-      risk_dd_recovery_pct: 0.92
-      # Ramp-up régimed live
-      risk_regime_ramp_up_enabled: true
-      risk_regime_ramp_up_pct_per_day: 0.025
-      risk_regime_ramp_up_max_pct: 0.80
-      risk_target_annual_vol: 0.16
-      risk_vol_target_lookback_days: 60
-      risk_min_ml_coverage_ratio: 0.95
-      risk_correlation_threshold: 0.78
-      risk_correlation_lookback_days: 90
-      risk_correlation_min_overlap: 50
-      risk_enable_kelly: true
-      risk_score_weight: 0.40
-      risk_prediction_weight: 0.60
-      execution_account_type: margin
-      execution_swing_only: false
-      execution_cash_settlement_days: 0
-      execution_submission_window: both
-      execution_trailing_trigger: multiple_r
-      execution_trailing_r_multiple: 2.0
-      backtesting_commission_bps_stress: 4.0
-      backtesting_slippage_bps_stress: 8.0
-      backtesting_max_portfolio_dd_pct: 0.18
-      backtesting_dd_rolling_peak_window_days: 252
-      # Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (fraction du pic de référence).
-      backtesting_dd_recovery_pct: 0.92
-      backtesting_dd_degraded_allocation_pct: 0.025
-      # Ramp-up régimed
-      backtesting_dd_regime_ramp_up_enabled: true
-      backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-      backtesting_dd_regime_ramp_up_max_pct: 0.80
-      backtesting_max_sector_exposure_pct: 0.25
-      backtesting_max_entry_gap_pct: 0.02
-      backtesting_target_annual_vol: 0.16
-      backtesting_min_ml_coverage_ratio: 0.95
-      execution_max_entry_gap_pct: 0.02
-      screener_liquidity_threshold_usd: 15000000.0
-      screener_min_relative_strength_index: 102.0
-      screener_historical_range_lookback_days: 504
-      screener_min_historical_range_score: 75.0
-      screener_first_pass_window_days: 400
-      selector_selection_size: 60
-      selector_sector_cap_ratio: 0.25
-      selector_liquidity_threshold: 40000000.0
-      selector_min_close: 12.0
-      selector_max_volatility_ratio: 0.85
-      selector_min_ibd_rs_rank: 102.0
-      selector_min_high_52w_proximity: 0.78
-      selector_min_weekly_trend_score: 0.95
-      selector_min_atr_pct_20: 0.015
-      selector_max_atr_pct_20: 0.055
-      selector_min_market_cap: 3000000000.0
-      selector_min_beta_126: 0.90
-      selector_max_spread_bps: 35.0
-      selector_max_spread_bps_iex: 55.0
-      selector_earnings_blackout_days: 4
-      selector_max_anomaly_count: 23
-      selector_require_above_ma200: true
+- key: capital_0_2000_eur
+  label: 0 → 2 000 € (micro-compte)
+  min_equity: 0
+  max_equity: 2000
+  description: Micro-compte cash (~2 000 EUR / 2 150 USD). Concentration assumée
+    (3 lignes), ticket minimum bas, filtres selector relâchés pour ne pas vider
+    l'univers, frais de transaction à monter manuellement à 25 bps en backtest pour
+    refléter le coût des petits ordres.
+  strict_profile_justifications:
+    selector_liquidity_threshold: 'Univers micro-compte : 5 M$ suffit pour garder
+      quelques dossiers exécutables malgré des tickets plus petits.'
+    selector_max_volatility_ratio: Tolérance de volatilité portée à 1.0 pour ne
+      pas exclure toute la poche de croissance accessible aux petits tickets.
+    selector_min_ibd_rs_rank: RS abaissé à 90 afin de conserver un univers investissable
+      malgré la faible taille du compte.
+    selector_min_high_52w_proximity: Relâchement volontaire pour accepter des breakouts
+      moins mûrs quand l'univers est déjà réduit.
+    selector_min_weekly_trend_score: Seuil abaissé sous 1.0 pour éviter un univers
+      vide sur micro-compte.
+    selector_min_atr_pct_20: ATR minimum abaissé pour laisser entrer des titres encore
+      tradables avec petits tickets.
+    selector_max_atr_pct_20: Plafond ATR relevé pour tolérer davantage de volatilité
+      sur petites/mid caps.
+    selector_min_market_cap: Mid caps autorisées à partir de 500 M$ pour élargir
+      l'univers accessible.
+    selector_min_beta_126: 'Beta minimal abaissé à 0.65 : compromis assumé entre
+      qualité et nombre d''opportunités.'
+    selector_max_spread_bps: Spreads plus larges acceptés car les petits comptes
+      ont moins d'alternatives liquides.
+    selector_max_spread_bps_iex: Version IEX alignée sur le relâchement de spread
+      pour éviter une exclusion excessive.
+    selector_earnings_blackout_days: Fenêtre earnings réduite à 2 jours pour ne
+      pas neutraliser trop longtemps un univers déjà étroit.
+  values:
+    risk_account_equity: __DETECTED_EQUITY__
+    risk_per_trade_pct: 0.01
+    risk_max_positions: 3
+    risk_max_position_weight: 0.35
+    risk_max_sector_weight: 0.55
+    risk_min_position_notional: 500.0
+    risk_max_drawdown_pct: 0.15
+    risk_max_daily_loss_pct: 0.025
+    risk_drawdown_rolling_peak_window_days: 252
+    risk_degraded_entry_allocation_pct: 0.025
+    risk_dd_recovery_pct: 0.92
+    risk_regime_ramp_up_enabled: true
+    risk_regime_ramp_up_pct_per_day: 0.025
+    risk_regime_ramp_up_max_pct: 0.8
+    risk_target_annual_vol: 0.12
+    risk_vol_target_lookback_days: 60
+    risk_min_ml_coverage_ratio: 0.95
+    risk_correlation_threshold: 0.92
+    risk_correlation_lookback_days: 40
+    risk_correlation_min_overlap: 25
+    risk_enable_kelly: false
+    risk_score_weight: 0.55
+    risk_prediction_weight: 0.45
+    risk_min_score_threshold: 0.7
+    risk_min_breakout_days: 1
+    execution_account_type: cash
+    execution_swing_only: false
+    execution_cash_settlement_days: 1
+    execution_submission_window: both
+    execution_trailing_trigger: multiple_r
+    execution_trailing_r_multiple: 2.0
+    execution_entry_order_type: limit
+    execution_limit_price_buffer_bps: -100
+    backtesting_commission_bps_stress: 15.0
+    backtesting_slippage_bps_stress: 25.0
+    backtesting_max_portfolio_dd_pct: 0.15
+    backtesting_dd_rolling_peak_window_days: 252
+    backtesting_dd_recovery_pct: 0.92
+    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_regime_ramp_up_enabled: true
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_max_sector_exposure_pct: 0.25
+    backtesting_max_entry_gap_pct: 0.03
+    backtesting_target_annual_vol: 0.12
+    backtesting_min_ml_coverage_ratio: 0.95
+    execution_max_entry_gap_pct: 0.03
+    screener_liquidity_threshold_usd: 2000000.0
+    screener_min_relative_strength_index: 90.0
+    screener_historical_range_lookback_days: 252
+    screener_min_historical_range_score: 55.0
+    screener_first_pass_window_days: 252
+    selector_selection_size: 15
+    selector_sector_cap_ratio: 0.55
+    selector_liquidity_threshold: 5000000.0
+    selector_min_close: 10.0
+    selector_max_volatility_ratio: 1.0
+    selector_min_ibd_rs_rank: 90.0
+    selector_min_high_52w_proximity: 0.55
+    selector_min_weekly_trend_score: 0.65
+    selector_min_atr_pct_20: 0.01
+    selector_max_atr_pct_20: 0.09
+    selector_min_market_cap: 500000000.0
+    selector_min_beta_126: 0.65
+    selector_max_spread_bps: 80.0
+    selector_max_spread_bps_iex: 100.0
+    selector_earnings_blackout_days: 2
+    selector_max_anomaly_count: 15
+    selector_require_above_ma200: true
+- key: capital_0_5000
+  label: 2 001 → 5 000 $
+  min_equity: 2000.01
+  max_equity: 5000
+  description: 'Petit compte swing cash : lignes concentrées, ticket minimum réduit
+    et filtres selector légèrement relâchés pour conserver quelques opportunités
+    exécutables.'
+  strict_profile_justifications:
+    selector_liquidity_threshold: Seuil ramené à 10 M$ pour préserver un univers
+      suffisamment large sur petit compte.
+    selector_max_volatility_ratio: Tolérance à 1.0 pour rester investissable sur
+      des titres un peu plus nerveux mais encore gérables.
+    selector_min_ibd_rs_rank: RS abaissé à 95 afin de compenser la taille limitée
+      de l'univers filtré.
+    selector_min_high_52w_proximity: Relâchement modéré pour accepter des setups
+      encore en construction.
+    selector_min_weekly_trend_score: Seuil sous 1.0 pour éviter la raréfaction extrême
+      des candidats.
+    selector_min_atr_pct_20: ATR minimum abaissé pour laisser passer des titres moins
+      explosifs mais exécutables.
+    selector_max_atr_pct_20: Plafond ATR élargi à 0.08 pour garder des opportunités
+      sur petits comptes.
+    selector_min_market_cap: Plancher réduit à 1 Md$ afin de ne pas fermer l'accès
+      aux mid caps liquides.
+    selector_min_beta_126: Beta minimal abaissé à 0.70 pour élargir l'univers sans
+      abandonner totalement le biais momentum.
+    selector_max_spread_bps: Spreads jusqu'à 60 bps tolérés pour conserver des
+      titres exécutables en petite taille.
+    selector_max_spread_bps_iex: Relâchement IEX cohérent avec l'assouplissement
+      du spread principal.
+    selector_earnings_blackout_days: Fenêtre blackout réduite à 2 jours pour éviter
+      un assèchement excessif de l'univers.
+  values:
+    risk_account_equity: __DETECTED_EQUITY__
+    risk_per_trade_pct: 0.0125
+    risk_max_positions: 6
+    risk_max_position_weight: 0.2
+    risk_max_sector_weight: 0.4
+    risk_min_position_notional: 150.0
+    risk_max_drawdown_pct: 0.15
+    risk_max_daily_loss_pct: 0.03
+    risk_drawdown_rolling_peak_window_days: 252
+    risk_degraded_entry_allocation_pct: 0.025
+    risk_dd_recovery_pct: 0.92
+    risk_regime_ramp_up_enabled: true
+    risk_regime_ramp_up_pct_per_day: 0.025
+    risk_regime_ramp_up_max_pct: 0.8
+    risk_target_annual_vol: 0.13
+    risk_vol_target_lookback_days: 60
+    risk_min_ml_coverage_ratio: 0.95
+    risk_correlation_threshold: 0.9
+    risk_correlation_lookback_days: 40
+    risk_correlation_min_overlap: 25
+    risk_enable_kelly: false
+    risk_score_weight: 0.55
+    risk_prediction_weight: 0.45
+    risk_min_score_threshold: 0.7
+    risk_min_breakout_days: 1
+    execution_account_type: cash
+    execution_swing_only: false
+    execution_cash_settlement_days: 1
+    execution_submission_window: both
+    execution_trailing_trigger: multiple_r
+    execution_trailing_r_multiple: 2.0
+    execution_entry_order_type: limit
+    execution_limit_price_buffer_bps: -100
+    backtesting_commission_bps_stress: 12.0
+    backtesting_slippage_bps_stress: 20.0
+    backtesting_max_portfolio_dd_pct: 0.15
+    backtesting_dd_rolling_peak_window_days: 252
+    backtesting_dd_recovery_pct: 0.92
+    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_regime_ramp_up_enabled: true
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_max_sector_exposure_pct: 0.3
+    backtesting_max_entry_gap_pct: 0.03
+    backtesting_target_annual_vol: 0.13
+    backtesting_min_ml_coverage_ratio: 0.95
+    execution_max_entry_gap_pct: 0.03
+    screener_liquidity_threshold_usd: 5000000.0
+    screener_min_relative_strength_index: 95.0
+    screener_historical_range_lookback_days: 252
+    screener_min_historical_range_score: 60.0
+    screener_first_pass_window_days: 252
+    selector_selection_size: 20
+    selector_sector_cap_ratio: 0.4
+    selector_liquidity_threshold: 10000000.0
+    selector_min_close: 10.0
+    selector_max_volatility_ratio: 1.0
+    selector_min_ibd_rs_rank: 95.0
+    selector_min_high_52w_proximity: 0.65
+    selector_min_weekly_trend_score: 0.75
+    selector_min_atr_pct_20: 0.01
+    selector_max_atr_pct_20: 0.08
+    selector_min_market_cap: 1000000000.0
+    selector_min_beta_126: 0.7
+    selector_max_spread_bps: 60.0
+    selector_max_spread_bps_iex: 80.0
+    selector_earnings_blackout_days: 2
+    selector_max_anomaly_count: 16
+    selector_require_above_ma200: true
+- key: capital_5001_10000
+  label: 5 001 → 10 000 $
+  min_equity: 5000.01
+  max_equity: 10000
+  description: 'Petit/moyen compte swing cash : diversification modérée, ticket
+    minimum toujours bas et filtres encore assez ouverts pour rester investissable.'
+  strict_profile_justifications:
+    selector_liquidity_threshold: 15 M$ reste un compromis adapté aux comptes 5–10k$
+      sans retomber sur un univers trop étroit.
+    selector_max_volatility_ratio: Léger assouplissement à 0.95 pour conserver quelques
+      leaders plus dynamiques.
+    selector_min_ibd_rs_rank: 'RS fixé à 98 : proche du strict mais encore un peu
+      plus ouvert pour cette tranche.'
+    selector_min_high_52w_proximity: Proximité 52w légèrement relâchée pour ne
+      pas dépendre uniquement des breakouts déjà parfaits.
+    selector_min_weekly_trend_score: Seuil à 0.80 pour rester investissable sur un
+      univers réaliste.
+    selector_min_atr_pct_20: ATR minimum abaissé à 0.0125 pour laisser entrer des
+      titres encore actifs mais moins explosifs.
+    selector_max_atr_pct_20: ATR max porté à 0.075 afin d'accepter un peu plus de
+      volatilité que le strict.
+    selector_min_market_cap: Plancher réduit à 1.5 Md$ pour inclure davantage de
+      mid/large caps accessibles.
+    selector_min_beta_126: Beta minimal à 0.75 pour équilibrer qualité momentum
+      et profondeur d'univers.
+    selector_max_spread_bps: Spreads à 55 bps tolérés pour éviter une sélection
+      trop pauvre.
+    selector_max_spread_bps_iex: IEX relâché à 75 bps pour rester cohérent avec
+      le spread principal.
+  values:
+    risk_account_equity: __DETECTED_EQUITY__
+    risk_per_trade_pct: 0.0175
+    risk_max_positions: 8
+    risk_max_position_weight: 0.18
+    risk_max_sector_weight: 0.35
+    risk_min_position_notional: 200.0
+    risk_max_drawdown_pct: 0.15
+    risk_max_daily_loss_pct: 0.035
+    risk_drawdown_rolling_peak_window_days: 252
+    risk_degraded_entry_allocation_pct: 0.025
+    risk_dd_recovery_pct: 0.92
+    risk_regime_ramp_up_enabled: true
+    risk_regime_ramp_up_pct_per_day: 0.025
+    risk_regime_ramp_up_max_pct: 0.8
+    risk_target_annual_vol: 0.14
+    risk_vol_target_lookback_days: 60
+    risk_min_ml_coverage_ratio: 0.95
+    risk_correlation_threshold: 0.88
+    risk_correlation_lookback_days: 45
+    risk_correlation_min_overlap: 30
+    risk_enable_kelly: false
+    risk_score_weight: 0.55
+    risk_prediction_weight: 0.45
+    risk_min_score_threshold: 0.7
+    risk_min_breakout_days: 1
+    execution_account_type: cash
+    execution_swing_only: false
+    execution_cash_settlement_days: 1
+    execution_submission_window: both
+    execution_trailing_trigger: multiple_r
+    execution_trailing_r_multiple: 2.0
+    execution_entry_order_type: limit
+    execution_limit_price_buffer_bps: -100
+    backtesting_commission_bps_stress: 10.0
+    backtesting_slippage_bps_stress: 18.0
+    backtesting_max_portfolio_dd_pct: 0.15
+    backtesting_dd_rolling_peak_window_days: 252
+    backtesting_dd_recovery_pct: 0.92
+    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_regime_ramp_up_enabled: true
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_max_sector_exposure_pct: 0.3
+    backtesting_max_entry_gap_pct: 0.03
+    backtesting_target_annual_vol: 0.14
+    backtesting_min_ml_coverage_ratio: 0.95
+    execution_max_entry_gap_pct: 0.03
+    screener_liquidity_threshold_usd: 7500000.0
+    screener_min_relative_strength_index: 97.0
+    screener_historical_range_lookback_days: 252
+    screener_min_historical_range_score: 65.0
+    screener_first_pass_window_days: 300
+    selector_selection_size: 25
+    selector_sector_cap_ratio: 0.35
+    selector_liquidity_threshold: 15000000.0
+    selector_min_close: 10.0
+    selector_max_volatility_ratio: 0.95
+    selector_min_ibd_rs_rank: 98.0
+    selector_min_high_52w_proximity: 0.7
+    selector_min_weekly_trend_score: 0.8
+    selector_min_atr_pct_20: 0.0125
+    selector_max_atr_pct_20: 0.075
+    selector_min_market_cap: 1500000000.0
+    selector_min_beta_126: 0.75
+    selector_max_spread_bps: 55.0
+    selector_max_spread_bps_iex: 75.0
+    selector_earnings_blackout_days: 3
+    selector_max_anomaly_count: 18
+    selector_require_above_ma200: true
+- key: capital_10001_25000
+  label: 10 001 → 25 000 $
+  min_equity: 10000.01
+  max_equity: 25000
+  description: 'Compte intermédiaire : diversification plus régulière, contraintes
+    risk plus proches du swing standard tout en restant compatibles avec un compte
+    encore modeste.'
+  strict_profile_justifications:
+    selector_liquidity_threshold: 20 M$ suffit encore sur cette tranche tout en préservant
+      un univers raisonnablement large.
+    selector_min_high_52w_proximity: Léger relâchement à 0.72 pour accepter des
+      leaders proches mais pas collés au plus haut.
+    selector_min_weekly_trend_score: Seuil à 0.85 pour éviter la rigidité excessive
+      du score parfait.
+    selector_max_atr_pct_20: ATR max à 0.07 pour tolérer un peu plus de mouvement
+      que le profil strict.
+    selector_max_spread_bps: Spreads jusqu'à 50 bps encore acceptables à ce niveau
+      de capital.
+    selector_max_spread_bps_iex: IEX à 70 bps pour rester aligné avec le relâchement
+      du spread global.
+  values:
+    risk_account_equity: __DETECTED_EQUITY__
+    risk_per_trade_pct: 0.015
+    risk_max_positions: 10
+    risk_max_position_weight: 0.15
+    risk_max_sector_weight: 0.3
+    risk_min_position_notional: 300.0
+    risk_max_drawdown_pct: 0.17
+    risk_max_daily_loss_pct: 0.04
+    risk_drawdown_rolling_peak_window_days: 252
+    risk_degraded_entry_allocation_pct: 0.025
+    risk_dd_recovery_pct: 0.92
+    risk_regime_ramp_up_enabled: true
+    risk_regime_ramp_up_pct_per_day: 0.025
+    risk_regime_ramp_up_max_pct: 0.8
+    risk_target_annual_vol: 0.15
+    risk_vol_target_lookback_days: 60
+    risk_min_ml_coverage_ratio: 0.95
+    risk_correlation_threshold: 0.85
+    risk_correlation_lookback_days: 50
+    risk_correlation_min_overlap: 35
+    risk_enable_kelly: false
+    risk_score_weight: 0.4
+    risk_prediction_weight: 0.6
+    risk_min_score_threshold: 0.7
+    risk_min_breakout_days: 1
+    execution_account_type: cash
+    execution_swing_only: false
+    execution_cash_settlement_days: 1
+    execution_submission_window: both
+    execution_trailing_trigger: multiple_r
+    execution_trailing_r_multiple: 2.0
+    execution_entry_order_type: limit
+    execution_limit_price_buffer_bps: -100
+    backtesting_commission_bps_stress: 8.0
+    backtesting_slippage_bps_stress: 15.0
+    backtesting_max_portfolio_dd_pct: 0.15
+    backtesting_dd_rolling_peak_window_days: 252
+    backtesting_dd_recovery_pct: 0.92
+    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_regime_ramp_up_enabled: true
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_max_sector_exposure_pct: 0.3
+    backtesting_max_entry_gap_pct: 0.025
+    backtesting_target_annual_vol: 0.15
+    backtesting_min_ml_coverage_ratio: 0.95
+    execution_max_entry_gap_pct: 0.025
+    screener_liquidity_threshold_usd: 10000000.0
+    screener_min_relative_strength_index: 100.0
+    screener_historical_range_lookback_days: 378
+    screener_min_historical_range_score: 70.0
+    screener_first_pass_window_days: 350
+    selector_selection_size: 35
+    selector_sector_cap_ratio: 0.3
+    selector_liquidity_threshold: 20000000.0
+    selector_min_close: 10.0
+    selector_max_volatility_ratio: 0.9
+    selector_min_ibd_rs_rank: 100.0
+    selector_min_high_52w_proximity: 0.72
+    selector_min_weekly_trend_score: 0.85
+    selector_min_atr_pct_20: 0.015
+    selector_max_atr_pct_20: 0.07
+    selector_min_market_cap: 2000000000.0
+    selector_min_beta_126: 0.8
+    selector_max_spread_bps: 50.0
+    selector_max_spread_bps_iex: 70.0
+    selector_earnings_blackout_days: 3
+    selector_max_anomaly_count: 20
+    selector_require_above_ma200: true
+- key: capital_25001_50000
+  label: 25 001 → 50 000 $
+  min_equity: 25000.01
+  max_equity: 50000
+  description: 'Compte swing déjà diversifiable : allocation plus équilibrée,
+    davantage de lignes et retour vers des filtres selector proches du profil strict
+    standard.'
+  strict_profile_justifications:
+    selector_liquidity_threshold: 25 M$ maintient un univers suffisamment large tout
+      en restant proche du strict.
+    selector_min_weekly_trend_score: Seuil à 0.90 pour éviter que le score weekly
+      parfait ne raréfie trop les candidats.
+    selector_max_spread_bps: Spreads jusqu'à 45 bps tolérés, assouplissement marginal
+      par rapport au strict.
+  values:
+    risk_account_equity: __DETECTED_EQUITY__
+    risk_per_trade_pct: 0.0125
+    risk_max_positions: 14
+    risk_max_position_weight: 0.12
+    risk_max_sector_weight: 0.3
+    risk_min_position_notional: 400.0
+    risk_max_drawdown_pct: 0.18
+    risk_max_daily_loss_pct: 0.045
+    risk_drawdown_rolling_peak_window_days: 252
+    risk_degraded_entry_allocation_pct: 0.025
+    risk_dd_recovery_pct: 0.92
+    risk_regime_ramp_up_enabled: true
+    risk_regime_ramp_up_pct_per_day: 0.025
+    risk_regime_ramp_up_max_pct: 0.8
+    risk_target_annual_vol: 0.15
+    risk_vol_target_lookback_days: 60
+    risk_min_ml_coverage_ratio: 0.95
+    risk_correlation_threshold: 0.82
+    risk_correlation_lookback_days: 60
+    risk_correlation_min_overlap: 40
+    risk_enable_kelly: true
+    risk_score_weight: 0.4
+    risk_prediction_weight: 0.6
+    risk_min_score_threshold: 0.7
+    risk_min_breakout_days: 1
+    execution_account_type: margin
+    execution_swing_only: false
+    execution_cash_settlement_days: 0
+    execution_submission_window: both
+    execution_trailing_trigger: multiple_r
+    execution_trailing_r_multiple: 2.0
+    execution_entry_order_type: limit
+    execution_limit_price_buffer_bps: -100
+    backtesting_commission_bps_stress: 6.0
+    backtesting_slippage_bps_stress: 12.0
+    backtesting_max_portfolio_dd_pct: 0.15
+    backtesting_dd_rolling_peak_window_days: 252
+    backtesting_dd_recovery_pct: 0.92
+    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_regime_ramp_up_enabled: true
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_max_sector_exposure_pct: 0.3
+    backtesting_max_entry_gap_pct: 0.025
+    backtesting_target_annual_vol: 0.15
+    backtesting_min_ml_coverage_ratio: 0.95
+    execution_max_entry_gap_pct: 0.025
+    screener_liquidity_threshold_usd: 10000000.0
+    screener_min_relative_strength_index: 100.0
+    screener_historical_range_lookback_days: 504
+    screener_min_historical_range_score: 70.0
+    screener_first_pass_window_days: 400
+    selector_selection_size: 45
+    selector_sector_cap_ratio: 0.3
+    selector_liquidity_threshold: 25000000.0
+    selector_min_close: 10.0
+    selector_max_volatility_ratio: 0.9
+    selector_min_ibd_rs_rank: 100.0
+    selector_min_high_52w_proximity: 0.75
+    selector_min_weekly_trend_score: 0.9
+    selector_min_atr_pct_20: 0.015
+    selector_max_atr_pct_20: 0.06
+    selector_min_market_cap: 2000000000.0
+    selector_min_beta_126: 0.8
+    selector_max_spread_bps: 45.0
+    selector_max_spread_bps_iex: 65.0
+    selector_earnings_blackout_days: 3
+    selector_max_anomaly_count: 21
+    selector_require_above_ma200: true
+- key: capital_50001_100000
+  label: 50 001 → 100 000 $
+  min_equity: 50000.01
+  max_equity: 100000
+  description: 'Preset swing standard du projet : portefeuille plus diversifié, contraintes
+    corrélation plus disciplinées et filtre selector strict quasi nominal.'
+  strict_profile_justifications:
+    selector_min_weekly_trend_score: Le preset standard reste à 0.95 pour éviter
+      l'effet univers vide d'un score weekly fixé à 1.0.
+    selector_max_spread_bps_iex: IEX conservé à 60 bps pour absorber le bruit des
+      snapshots quotes tout en restant strict.
+  values:
+    risk_account_equity: __DETECTED_EQUITY__
+    risk_per_trade_pct: 0.01
+    risk_max_positions: 17
+    risk_max_position_weight: 0.1
+    risk_max_sector_weight: 0.28
+    risk_min_position_notional: 500.0
+    risk_max_drawdown_pct: 0.19
+    risk_max_daily_loss_pct: 0.05
+    risk_drawdown_rolling_peak_window_days: 252
+    risk_degraded_entry_allocation_pct: 0.025
+    risk_dd_recovery_pct: 0.92
+    risk_regime_ramp_up_enabled: true
+    risk_regime_ramp_up_pct_per_day: 0.025
+    risk_regime_ramp_up_max_pct: 0.8
+    risk_target_annual_vol: 0.15
+    risk_vol_target_lookback_days: 60
+    risk_min_ml_coverage_ratio: 0.95
+    risk_correlation_threshold: 0.8
+    risk_correlation_lookback_days: 60
+    risk_correlation_min_overlap: 40
+    risk_enable_kelly: true
+    risk_score_weight: 0.4
+    risk_prediction_weight: 0.6
+    risk_min_score_threshold: 0.7
+    risk_min_breakout_days: 1
+    execution_account_type: margin
+    execution_swing_only: false
+    execution_cash_settlement_days: 0
+    execution_submission_window: both
+    execution_trailing_trigger: multiple_r
+    execution_trailing_r_multiple: 2.0
+    execution_entry_order_type: limit
+    execution_limit_price_buffer_bps: -100
+    backtesting_commission_bps_stress: 5.0
+    backtesting_slippage_bps_stress: 10.0
+    backtesting_max_portfolio_dd_pct: 0.15
+    backtesting_dd_rolling_peak_window_days: 252
+    backtesting_dd_recovery_pct: 0.92
+    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_regime_ramp_up_enabled: true
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_max_sector_exposure_pct: 0.28
+    backtesting_max_entry_gap_pct: 0.02
+    backtesting_target_annual_vol: 0.15
+    backtesting_min_ml_coverage_ratio: 0.95
+    execution_max_entry_gap_pct: 0.02
+    screener_liquidity_threshold_usd: 10000000.0
+    screener_min_relative_strength_index: 100.0
+    screener_historical_range_lookback_days: 504
+    screener_min_historical_range_score: 70.0
+    screener_first_pass_window_days: 400
+    selector_selection_size: 50
+    selector_sector_cap_ratio: 0.28
+    selector_liquidity_threshold: 30000000.0
+    selector_min_close: 10.0
+    selector_max_volatility_ratio: 0.9
+    selector_min_ibd_rs_rank: 100.0
+    selector_min_relative_strength_index: 100.0
+    selector_min_high_52w_proximity: 0.75
+    selector_min_weekly_trend_score: 0.95
+    selector_min_atr_pct_20: 0.015
+    selector_max_atr_pct_20: 0.06
+    selector_min_market_cap: 2000000000.0
+    selector_min_beta_126: 0.8
+    selector_max_spread_bps: 40.0
+    selector_max_spread_bps_iex: 60.0
+    selector_earnings_blackout_days: 3
+    selector_max_anomaly_count: 22
+    selector_require_above_ma200: true
+- key: capital_100001_plus
+  label: 100 001 $+
+  min_equity: 100000.01
+  max_equity: null
+  description: 'Grand compte swing : diversification large, tickets plus importants
+    et filtres selector les plus stricts pour privilégier la qualité moyenne du
+    book cible.'
+  strict_profile_justifications:
+    selector_liquidity_threshold: Seuil relevé à 40 M$ pour privilégier les dossiers
+      les plus liquides adaptés à de plus gros tickets.
+    selector_min_close: Prix minimal relevé à 12 $ afin de réduire encore les coûts
+      implicites et le bruit microstructurel.
+    selector_max_volatility_ratio: Volatilité maximale abaissée à 0.85 pour cibler
+      un book plus stable et plus institutionnel.
+    selector_min_ibd_rs_rank: RS porté à 102 pour privilégier les leaders les plus
+      forts sur grand compte.
+    selector_min_high_52w_proximity: Proximité 52w relevée à 0.78 pour renforcer
+      l'exigence de leadership.
+    selector_min_weekly_trend_score: Le score reste à 0.95 plutôt que 1.0 afin d'éviter
+      une exigence irréaliste de perfection absolue.
+    selector_max_atr_pct_20: ATR max abaissé à 0.055 pour contenir la variabilité
+      sur gros tickets.
+    selector_min_market_cap: Capitalisation minimale relevée à 3 Md$ pour privilégier
+      les large caps.
+    selector_min_beta_126: Beta minimal relevé à 0.90 afin de rester concentré
+      sur les leaders les plus réactifs.
+    selector_max_spread_bps: Spread maximal abaissé à 35 bps pour imposer une meilleure
+      qualité d'exécution.
+    selector_max_spread_bps_iex: Spread IEX abaissé à 55 bps pour conserver une
+      discipline de liquidité cohérente.
+    selector_earnings_blackout_days: Blackout étendu à 4 jours pour réduire davantage
+      le risque événementiel sur gros compte.
+  values:
+    risk_account_equity: __DETECTED_EQUITY__
+    risk_per_trade_pct: 0.008
+    risk_max_positions: 20
+    risk_max_position_weight: 0.08
+    risk_max_sector_weight: 0.25
+    risk_min_position_notional: 750.0
+    risk_max_drawdown_pct: 0.2
+    risk_max_daily_loss_pct: 0.05
+    risk_drawdown_rolling_peak_window_days: 252
+    risk_degraded_entry_allocation_pct: 0.025
+    risk_dd_recovery_pct: 0.92
+    risk_regime_ramp_up_enabled: true
+    risk_regime_ramp_up_pct_per_day: 0.025
+    risk_regime_ramp_up_max_pct: 0.8
+    risk_target_annual_vol: 0.16
+    risk_vol_target_lookback_days: 60
+    risk_min_ml_coverage_ratio: 0.95
+    risk_correlation_threshold: 0.78
+    risk_correlation_lookback_days: 90
+    risk_correlation_min_overlap: 50
+    risk_enable_kelly: true
+    risk_score_weight: 0.4
+    risk_prediction_weight: 0.6
+    risk_min_score_threshold: 0.7
+    risk_min_breakout_days: 1
+    execution_account_type: margin
+    execution_swing_only: false
+    execution_cash_settlement_days: 0
+    execution_submission_window: both
+    execution_trailing_trigger: multiple_r
+    execution_trailing_r_multiple: 2.0
+    execution_entry_order_type: limit
+    execution_limit_price_buffer_bps: -100
+    backtesting_commission_bps_stress: 4.0
+    backtesting_slippage_bps_stress: 8.0
+    backtesting_max_portfolio_dd_pct: 0.18
+    backtesting_dd_rolling_peak_window_days: 252
+    backtesting_dd_recovery_pct: 0.92
+    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_regime_ramp_up_enabled: true
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
+    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_max_sector_exposure_pct: 0.25
+    backtesting_max_entry_gap_pct: 0.02
+    backtesting_target_annual_vol: 0.16
+    backtesting_min_ml_coverage_ratio: 0.95
+    execution_max_entry_gap_pct: 0.02
+    screener_liquidity_threshold_usd: 15000000.0
+    screener_min_relative_strength_index: 102.0
+    screener_historical_range_lookback_days: 504
+    screener_min_historical_range_score: 75.0
+    screener_first_pass_window_days: 400
+    selector_selection_size: 60
+    selector_sector_cap_ratio: 0.25
+    selector_liquidity_threshold: 40000000.0
+    selector_min_close: 12.0
+    selector_max_volatility_ratio: 0.85
+    selector_min_ibd_rs_rank: 102.0
+    selector_min_high_52w_proximity: 0.78
+    selector_min_weekly_trend_score: 0.95
+    selector_min_atr_pct_20: 0.015
+    selector_max_atr_pct_20: 0.055
+    selector_min_market_cap: 3000000000.0
+    selector_min_beta_126: 0.9
+    selector_max_spread_bps: 35.0
+    selector_max_spread_bps_iex: 55.0
+    selector_earnings_blackout_days: 4
+    selector_max_anomaly_count: 23
+    selector_require_above_ma200: true

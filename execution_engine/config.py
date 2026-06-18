@@ -194,7 +194,7 @@ class ExecutionConfig:
 
     # --- Bracket legs ---
     profit_taker_pct: float = 0.12
-    trailing_stop_pct: float = 0.07
+    trailing_stop_pct: float = 0.10
     # Stop-loss appliqué EXCLUSIVEMENT aux achats manuels orphelins adoptés par
     # le watcher (positions ouvertes hors Alpha Trade — site / app Alpaca).
     # Pour les achats normaux, le stop initial reste calculé à partir de

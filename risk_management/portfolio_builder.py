@@ -333,7 +333,22 @@ class PortfolioBuilder:
                     self._breakout_tracker.min_breakout_days,
                 )
 
-        # ── 0ter. Filtres de concentration (Priorité 4) ─────────────
+        # ── 0ter. Score threshold (Quick Win 2) ────────────────────
+        if candidates and self._cfg.min_score_threshold > 0:
+            before = len(candidates)
+            candidates = [
+                c for c in candidates
+                if c.score_used >= self._cfg.min_score_threshold
+            ]
+            blocked_score = before - len(candidates)
+            if blocked_score:
+                LOGGER.info(
+                    "Score threshold: blocked %d candidates (score < %.2f)",
+                    blocked_score,
+                    self._cfg.min_score_threshold,
+                )
+
+        # ── 0quat. Filtres de concentration (Priorité 4) ─────────────
         if candidates:
             candidates = _apply_concentration_filters(
                 candidates,

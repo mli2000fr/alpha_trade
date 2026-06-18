@@ -54,6 +54,10 @@ class RiskConfig:
     # Pour le live, peut être remonté à 3 avec persistence JSON.
     min_breakout_days: int = 1
 
+    # Quick Win 2 — score minimum pour qu'un candidat soit tradable.
+    # 0.0 = filtre désactivé. 0.7 recommandé pour filtrer les entrées faibles.
+    min_score_threshold: float = 0.0
+
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60
 

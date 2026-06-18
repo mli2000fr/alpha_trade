@@ -85,6 +85,10 @@ class BacktestConfig:
     # Anti-faux-départs (Quick Win 1)
     min_breakout_days: int = 1
 
+    # Quick Win 2+3 — score minimum + pullback entry
+    min_score_threshold: float = 0.7
+    entry_limit_offset_pct: float = 0.01  # 1% sous le prix signal
+
     def __post_init__(self) -> None:
         if self.risk_config:
             self.max_positions = self.risk_config.max_positions
@@ -783,6 +787,7 @@ class BacktestEngine:
                 state=state,
                 candidate_rows=candidate_rows,
                 open_df=open_df,
+                low_df=low,
                 close=close,
                 trade_day=trade_day,
                 day_idx=day_idx,
@@ -924,6 +929,7 @@ class BacktestEngine:
         state: _RunState,
         candidate_rows: list[pd.Series],
         open_df: pd.DataFrame,
+        low_df: pd.DataFrame,
         close: pd.DataFrame,
         trade_day: pd.Timestamp,
         day_idx: int,
@@ -969,18 +975,46 @@ class BacktestEngine:
         for candidate_pos, row in enumerate(candidate_rows):
             symbol = str(row["symbol"])
             signal_context = self._build_signal_context(row)
-            entry_price = float(open_df.at[trade_day, symbol])
-            if not np.isfinite(entry_price) or entry_price <= 0:
+
+            # Quick Win 2 — score threshold
+            if cfg.min_score_threshold > 0:
+                score_val = float(row.get("score", row.get("score_used", 0.0) or 0.0))
+                if score_val < cfg.min_score_threshold:
+                    continue  # silently skip low-score candidates
+
+            signal_price = float(open_df.at[trade_day, symbol])
+            if not np.isfinite(signal_price) or signal_price <= 0:
                 self._record_trade_event(
                     state,
                     "entry_rejected",
                     event_date=trade_day,
                     symbol=symbol,
                     rejection_reason="missing_entry_price",
-                    attempted_entry_price=entry_price,
+                    attempted_entry_price=signal_price,
                     **signal_context,
                 )
                 continue
+
+            # Quick Win 3 — pullback entry (limit -X% sous le prix signal)
+            entry_price = signal_price
+            if cfg.entry_limit_offset_pct > 0:
+                limit_price = signal_price * (1.0 - float(cfg.entry_limit_offset_pct))
+                day_low = float(low_df.at[trade_day, symbol]) if symbol in low_df.columns else None
+                if day_low is not None and np.isfinite(day_low) and day_low <= limit_price:
+                    entry_price = limit_price
+                else:
+                    self._record_trade_event(
+                        state,
+                        "entry_rejected",
+                        event_date=trade_day,
+                        symbol=symbol,
+                        rejection_reason="pullback_limit_not_reached",
+                        attempted_entry_price=signal_price,
+                        limit_price=limit_price,
+                        day_low=day_low,
+                        **signal_context,
+                    )
+                    continue
 
             quantity_override = (
                 self._resolve_signal_quantity_override(row)
