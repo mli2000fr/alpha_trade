@@ -34,7 +34,7 @@ class DataConfig:
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert
     benchmark_symbol: str = "SPY"
-    target_mode: str = "binary"  # binary | swing_cash
+    target_mode: str = "binary"  # binary | swing_cash | ternary
     target_up_threshold: float = 0.0
     target_down_threshold: float = 0.0
     decision_threshold: float = 0.5
@@ -63,8 +63,8 @@ class DataConfig:
             raise ValueError("feature_set doit être 'v1' ou 'expert'.")
         if self.cross_sectional_min_universe < 2:
             raise ValueError("cross_sectional_min_universe doit être >= 2.")
-        if self.target_mode not in {"binary", "swing_cash"}:
-            raise ValueError("target_mode doit être 'binary' ou 'swing_cash'.")
+        if self.target_mode not in {"binary", "swing_cash", "ternary"}:
+            raise ValueError("target_mode doit être 'binary', 'swing_cash' ou 'ternary'.")
         if not (0.0 < self.decision_threshold < 1.0):
             raise ValueError("decision_threshold doit être dans ]0, 1[.")
         if self.target_down_threshold > self.target_up_threshold:

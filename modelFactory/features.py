@@ -539,24 +539,39 @@ def build_target(
     """Construit la target pour l'horizon futur.
 
     Retourne une Series alignée sur l'index de df.
-    Les dernières `horizon` lignes seront NaN.
+    Les dernières ``horizon`` lignes seront NaN.
 
     Modes
     -----
-    - `binary`     : 1 si future_return > positive_threshold, sinon 0.
-    - `swing_cash` : 1 si future_return >= positive_threshold,
-                     0 si future_return <= negative_threshold,
-                     NaN entre les deux (zone no-trade ignorée à l'entraînement).
+    - ``binary``      : 1 si future_return > positive_threshold, sinon 0.
+    - ``swing_cash``  : 1 si future_return >= positive_threshold,
+                        0 si future_return <= negative_threshold,
+                        NaN entre les deux (zone no-trade ignorée).
+    - ``ternary``     : +1 (long)  si future_return > positive_threshold,
+                        -1 (short) si future_return < negative_threshold,
+                         0 (flat)  entre les deux.
+
+      Pour ``ternary``, ``negative_threshold`` doit être < 0 (ex: -0.08 pour -8%).
     """
     close = _build_adjusted_price_frame(df)["close"]
     future_return = close.shift(-horizon) / close - 1.0
+
     if mode == "binary":
         return (future_return > positive_threshold).astype(float).where(future_return.notna())
+
     if mode == "swing_cash":
         target = pd.Series(np.nan, index=df.index, dtype=float)
         target = target.mask(future_return >= positive_threshold, 1.0)
         target = target.mask(future_return <= negative_threshold, 0.0)
         return target.where(future_return.notna())
+
+    if mode == "ternary":
+        # Sprint 1 ML — target directionnelle long (+1) / flat (0) / short (-1)
+        target = pd.Series(0, index=df.index, dtype=int)
+        target = target.mask(future_return > positive_threshold, 1)
+        target = target.mask(future_return < negative_threshold, -1)
+        return target.where(future_return.notna())
+
     raise ValueError(f"Unsupported target mode: {mode}")
 
 
