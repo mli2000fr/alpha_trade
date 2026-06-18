@@ -517,21 +517,24 @@ def build_phase2_risk_result(
         )
         if (short_by_regime or short_by_rotation) and not day_scores.empty:
             n_before = len(day_scores)
-            score_col = "score" if "score" in day_scores.columns else (
-                "final_score_sentiment" if "final_score_sentiment" in day_scores.columns else (
-                    "final_score" if "final_score" in day_scores.columns else None
-                )
-            )
-            # Toujours utiliser le mode bottom-N : seuls les pires scores
-            # (sous short_min_score) sont flippés en "sell". Les autres
-            # restent "buy" — ils seront filtrés ci-dessous si le régime
-            # bloque les longs.
             # Sprint 5 / Option B — enrichir avec short_score dédié
             try:
                 from selector.short_score import enrich_with_short_score
-                day_scores = enrich_with_short_score(day_scores)
-            except Exception:
-                pass
+                day_scores = enrich_with_short_score(day_scores, close_df=close_df, trade_day=pd.Timestamp(snapshot_date))
+                if "short_score" in day_scores.columns:
+                    LOGGER.info("Option B short_score: date=%s enriched=%d rows", snapshot_date, len(day_scores))
+                else:
+                    LOGGER.debug("Option B short_score: not enriched (missing factor columns)")
+            except Exception as _exc:
+                LOGGER.debug("Option B short_score: enrichment failed: %s", _exc)
+            # Score utilisé par _tag_short_candidates (après enrichissement)
+            score_col = (
+                "short_score" if "short_score" in day_scores.columns
+                else "score" if "score" in day_scores.columns
+                else "final_score_sentiment" if "final_score_sentiment" in day_scores.columns
+                else "final_score" if "final_score" in day_scores.columns
+                else None
+            )
             day_scores = _tag_short_candidates(
                 day_scores,
                 max_short_positions=int(getattr(risk_config, "short_max_positions", 2)),

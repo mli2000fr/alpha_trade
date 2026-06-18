@@ -101,14 +101,46 @@ def enrich_with_short_score(
     close_df: pd.DataFrame | None = None,
     trade_day: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """Ajoute la colonne ``short_score`` au DataFrame des candidats.
+    """Ajoute la colonne ``short_score`` et les SMA au DataFrame des candidats.
 
-    Si ``close_df`` est fourni, les SMA sont calculés à la volée.
-    Sinon, seuls les facteurs trend_score et RSI sont utilisés.
+    Si ``close_df`` est fourni, les SMA50/200 sont calculés à la volée
+    pour chaque symbole.
     """
     result = day_df.copy()
+
+    # Calculer les SMA si close_df est fourni
+    if close_df is not None and trade_day is not None and "symbol" in result.columns:
+        sma_50_vals = []
+        sma_200_vals = []
+        for _, row in result.iterrows():
+            symbol = str(row["symbol"])
+            sma_50_vals.append(compute_sma_column(close_df, symbol, trade_day, 50))
+            sma_200_vals.append(compute_sma_column(close_df, symbol, trade_day, 200))
+        result["sma_50"] = sma_50_vals
+        result["sma_200"] = sma_200_vals
+        # Prix actuel pour comparaison SMA
+        result["last_close"] = [
+            _get_close(close_df, str(row["symbol"]), trade_day)
+            for _, row in result.iterrows()
+        ]
+
     result["short_score"] = compute_short_score(result, close_df, trade_day)
     return result
+
+
+def _get_close(
+    close_df: pd.DataFrame,
+    symbol: str,
+    trade_day: pd.Timestamp,
+) -> float | None:
+    """Récupère le prix de clôture pour un symbole à une date donnée."""
+    try:
+        if symbol not in close_df.columns:
+            return None
+        val = close_df.at[trade_day, symbol]
+        return float(val) if pd.notna(val) else None
+    except (KeyError, IndexError):
+        return None
 
 
 def compute_sma_column(

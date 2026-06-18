@@ -151,10 +151,11 @@ def _apply_concentration_filters(
     blocked_blacklist = 0
     for c in candidates:
         symbol = str(c.symbol).strip().upper()
-        if not trade_tracker.allow_entry(symbol, trade_date):
+        c_side = getattr(c, "side", None)
+        if not trade_tracker.allow_entry(symbol, trade_date, side=c_side):
             blocked_trade_count += 1
             continue
-        if loss_tracker.is_blacklisted(symbol, trade_date):
+        if loss_tracker.is_blacklisted(symbol, trade_date, side=c_side):
             blocked_blacklist += 1
             continue
         filtered.append(c)

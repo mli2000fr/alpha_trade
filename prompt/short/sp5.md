@@ -113,3 +113,25 @@ que l'Option C (bottom-N final_score).
 | Calculer SMA50/200 dans `risk_bridge` depuis `close_df` | Moyenne |
 | Calibrer les poids des facteurs short_score par ablation | Faible |
 | Option D — ML ternaire long/flat/short | long terme |
+---
+
+## C6 — Concentration trackers side-aware (complément)
+
+### `SymbolTradeTracker`
+- `allow_entry(symbol, as_of, side=None)` — préfixe `"long:"` ou `"short:"` si side renseigné
+- `record(symbol, trade_date, side=None)` — idem
+
+### `ConsecutiveLossTracker`
+- `is_blacklisted(symbol, as_of, side=None)` — idem
+- `record(symbol, pnl, trade_date, side=None)` — idem
+
+### Call sites mis à jour
+| Fichier | Méthode |
+|---|---|
+| `simulator.py` | `_try_open_entries` → `allow_entry(..., side=side)` |
+| `simulator.py` | `_try_open_entries` → `is_blacklisted(..., side=side)` |
+| `simulator.py` | `_try_open_entries` → `record(..., side=side)` |
+| `simulator.py` | `_try_close_positions` → `record(..., side=side)` |
+| `portfolio_builder.py` | `_apply_concentration_filters` → `allow_entry/is_blacklisted(..., side=c_side)` |
+
+Rétrocompatibilité : `side=None` → comportement identique (clé sans préfixe).

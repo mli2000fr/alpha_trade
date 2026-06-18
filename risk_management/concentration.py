@@ -90,7 +90,7 @@ class SymbolTradeTracker:
         return len(self._history.get(symbol, []))
 
     # ------------------------------------------------------------------
-    def allow_entry(self, symbol: str, as_of: date) -> bool:
+    def allow_entry(self, symbol: str, as_of: date, side: str | None = None) -> bool:
         """Retourne True si le symbole peut encore être tradé.
 
         Parameters
@@ -99,13 +99,15 @@ class SymbolTradeTracker:
             Symbole à vérifier.
         as_of : date
             Date de référence (jour de trading).
+        side : str or None
+            ``"buy"``, ``"sell"`` ou None (rétrocompatible, pas de distinction).
         """
-        key = str(symbol).strip().upper()
+        key = self._make_key(symbol, side)
         if not key:
             return False
         return self._count(key, as_of) < self._max_trades
 
-    def record(self, symbol: str, trade_date: date) -> None:
+    def record(self, symbol: str, trade_date: date, side: str | None = None) -> None:
         """Enregistre une entrée pour un symbole.
 
         Parameters
@@ -114,14 +116,26 @@ class SymbolTradeTracker:
             Symbole tradé.
         trade_date : date
             Date de l'entrée.
+        side : str or None
+            ``"buy"``, ``"sell"`` ou None (rétrocompatible).
         """
-        key = str(symbol).strip().upper()
+        key = self._make_key(symbol, side)
         if not key:
             return
         if key not in self._history:
             self._history[key] = []
         self._history[key].append(trade_date)
         self._prune(key, trade_date)
+
+    @staticmethod
+    def _make_key(symbol: str, side: str | None) -> str:
+        """Construit la clé interne, avec préfixe side si renseigné."""
+        base = str(symbol).strip().upper()
+        if not base:
+            return ""
+        if side and str(side).strip().lower() == "sell":
+            return f"short:{base}"
+        return f"long:{base}" if side else base
 
     def reset(self) -> None:
         """Vide tout l'historique."""
@@ -174,7 +188,7 @@ class ConsecutiveLossTracker:
         return self._max_losses
 
     # ------------------------------------------------------------------
-    def is_blacklisted(self, symbol: str, as_of: date | None = None) -> bool:
+    def is_blacklisted(self, symbol: str, as_of: date | None = None, side: str | None = None) -> bool:
         """Retourne True si le symbole est blacklisté.
 
         Parameters
@@ -183,15 +197,17 @@ class ConsecutiveLossTracker:
             Symbole à vérifier.
         as_of : date or None
             Date de référence. Si None, utilise la date du jour.
+        side : str or None
+            ``"buy"``, ``"sell"`` ou None (rétrocompatible).
         """
-        key = str(symbol).strip().upper()
+        key = self._make_key(symbol, side)
         if key not in self._blacklist:
             return False
         if as_of is None:
             as_of = date.today()
         return self._blacklist[key] >= as_of
 
-    def record(self, symbol: str, pnl: float, trade_date: date | None = None) -> bool:
+    def record(self, symbol: str, pnl: float, trade_date: date | None = None, side: str | None = None) -> bool:
         """Enregistre le résultat d'un trade pour un symbole.
 
         Parameters
@@ -202,13 +218,15 @@ class ConsecutiveLossTracker:
             PnL du trade (négatif = perte).
         trade_date : date or None
             Date du trade. Utilisé pour fixer la durée de blacklist.
+        side : str or None
+            ``"buy"``, ``"sell"`` ou None (rétrocompatible).
 
         Returns
         -------
         bool
             True si le symbole vient d'être blacklisté.
         """
-        key = str(symbol).strip().upper()
+        key = self._make_key(symbol, side)
         if not key:
             return False
 
@@ -239,6 +257,16 @@ class ConsecutiveLossTracker:
         """Réinitialise tous les compteurs et blacklists."""
         self._streak.clear()
         self._blacklist.clear()
+
+    @staticmethod
+    def _make_key(symbol: str, side: str | None) -> str:
+        """Construit la clé interne, avec préfixe side si renseigné."""
+        base = str(symbol).strip().upper()
+        if not base:
+            return ""
+        if side and str(side).strip().lower() == "sell":
+            return f"short:{base}"
+        return f"long:{base}" if side else base
 
     def to_summary(self) -> dict[str, object]:
         """Résumé sérialisable pour diagnostics."""

@@ -1148,7 +1148,7 @@ class BacktestEngine:
 
             # Priorité 4 — concentration / anti-répétition
             trade_day_date = trade_day.date()
-            if not self._concentration_trade_tracker.allow_entry(symbol, trade_day_date):
+            if not self._concentration_trade_tracker.allow_entry(symbol, trade_day_date, side=side):
                 diagnostics.blocked_by_concentration += 1
                 self._record_trade_event(
                     state,
@@ -1161,7 +1161,7 @@ class BacktestEngine:
                     **signal_context,
                 )
                 continue
-            if self._concentration_loss_tracker.is_blacklisted(symbol, trade_day_date):
+            if self._concentration_loss_tracker.is_blacklisted(symbol, trade_day_date, side=side):
                 diagnostics.blocked_by_blacklist += 1
                 self._record_trade_event(
                     state,
@@ -1450,7 +1450,7 @@ class BacktestEngine:
                 **signal_context,
             )
             # Priorité 4 — enregistrer l'entrée dans le tracker de concentration
-            self._concentration_trade_tracker.record(symbol, trade_day.date())
+            self._concentration_trade_tracker.record(symbol, trade_day.date(), side=side)
 
     def _try_close_positions(
         self,
@@ -1754,7 +1754,7 @@ class BacktestEngine:
                 **position.signal_context,
             )
             # Priorité 4 — enregistrer le PnL dans le tracker de pertes consécutives
-            self._concentration_loss_tracker.record(symbol, pnl, trade_day.date())
+            self._concentration_loss_tracker.record(symbol, pnl, trade_day.date(), side=side)
             symbols_to_close.append(symbol)
 
         for symbol in symbols_to_close:
