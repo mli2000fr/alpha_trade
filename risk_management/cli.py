@@ -1109,6 +1109,12 @@ def main(args: list[str] | None = None) -> None:
                     for c in candidates
                 ]
                 candidates_df = pd.DataFrame(rows)
+                # Sprint 5 / Option B — enrichir avec short_score (dégradé si colonnes absentes)
+                try:
+                    from selector.short_score import enrich_with_short_score
+                    candidates_df = enrich_with_short_score(candidates_df)
+                except Exception:
+                    pass
                 from backtesting.risk_bridge import _tag_short_candidates
                 all_shorts_flag = (
                     regime_snapshot is not None
