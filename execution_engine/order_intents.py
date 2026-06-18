@@ -41,17 +41,34 @@ def _alpaca_client_order_id(exec_run_id: str, symbol: str, role: str, side: str,
     return _submission_key(exec_run_id, symbol, role, side, qty)
 
 
-def resolve_initial_stop_price(reference_price: float, target: ExecutionTarget | None = None) -> float | None:
-    """Détermine un stop initial broker-side exploitable à partir des champs risque."""
+def resolve_initial_stop_price(
+    reference_price: float,
+    target: ExecutionTarget | None = None,
+    side: str = "buy",
+) -> float | None:
+    """Détermine un stop initial broker-side exploitable, direction-aware (Sprint 3).
+
+    Long  : stop < reference_price
+    Short : stop > reference_price
+    """
+    from core.direction import is_short_side
+    short = is_short_side(side)
+
     if target is None or reference_price <= 0:
         return None
 
-    if target.stop_price_initial is not None and 0 < target.stop_price_initial < reference_price:
-        return round(float(target.stop_price_initial), 2)
+    if target.stop_price_initial is not None and target.stop_price_initial > 0:
+        if not short and target.stop_price_initial < reference_price:
+            return round(float(target.stop_price_initial), 2)
+        if short and target.stop_price_initial > reference_price:
+            return round(float(target.stop_price_initial), 2)
 
     if target.risk_per_share is not None and target.risk_per_share > 0:
-        derived_stop = reference_price - float(target.risk_per_share)
-        if 0 < derived_stop < reference_price:
+        sign = -1 if short else 1
+        derived_stop = reference_price - sign * float(target.risk_per_share)
+        if not short and 0 < derived_stop < reference_price:
+            return round(derived_stop, 2)
+        if short and derived_stop > reference_price:
             return round(derived_stop, 2)
     return None
 
@@ -60,17 +77,25 @@ def resolve_trailing_activation_price(
     fill_price: float,
     config: ExecutionConfig,
     target: ExecutionTarget | None = None,
+    side: str = "buy",
 ) -> tuple[float | None, str | None]:
-    """Détermine le prix auquel le stop initial doit être promu en trailing dynamique."""
+    """Détermine le prix auquel le stop initial doit être promu en trailing dynamique, direction-aware (Sprint 3)."""
+    from core.direction import is_short_side
+    short = is_short_side(side)
+
     if fill_price <= 0:
         return None, None
 
     if config.trailing_activation_trigger == "multiple_r":
         if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
-            return round(fill_price + (float(target.risk_per_share) * config.trailing_activation_r_multiple), 2), "multiple_r"
-        return round(fill_price * (1 + config.trailing_activation_profit_pct), 2), "profit_pct_fallback"
+            sign = -1 if short else 1
+            activation = fill_price + sign * (float(target.risk_per_share) * config.trailing_activation_r_multiple)
+            return round(activation, 2), "multiple_r"
+        sign = -1 if short else 1
+        return round(fill_price * (1 + sign * config.trailing_activation_profit_pct), 2), "profit_pct_fallback"
 
-    return round(fill_price * (1 + config.trailing_activation_profit_pct), 2), "profit_pct"
+    sign = -1 if short else 1
+    return round(fill_price * (1 + sign * config.trailing_activation_profit_pct), 2), "profit_pct"
 
 
 def build_entry_intents(
@@ -78,6 +103,9 @@ def build_entry_intents(
     config: ExecutionConfig,
     exec_run_id: str,
 ) -> list[OrderIntent]:
+    """Construit les OrderIntent d'entrée, direction-aware (Sprint 3)."""
+    from core.direction import is_short_side
+
     intents: list[OrderIntent] = []
     for t in targets:
         if t.target_shares <= 0:
@@ -85,9 +113,20 @@ def build_entry_intents(
         qty = normalize_share_quantity(float(t.target_shares))
         if qty <= 0:
             continue
+        # Sprint 3 — side canonique depuis la target
+        side = str(getattr(t, "side", None) or "buy").strip().lower()
+        if side not in ("buy", "sell"):
+            side = "buy"
+        short = is_short_side(side)
+
         limit_price: float | None = None
         if config.entry_order_type == "limit":
-            limit_price = round(t.entry_price * (1 + config.limit_price_buffer_bps / 10_000), 2)
+            # Sprint 3 — buffer signé : négatif = favorable (sous signal pour long,
+            # au-dessus pour short). Pour le short, on inverse le signe du buffer.
+            bps = float(config.limit_price_buffer_bps)
+            if short:
+                bps = -bps  # short: on veut être au-dessus du signal
+            limit_price = round(t.entry_price * (1 + bps / 10_000), 2)
 
         intent_id = _make_id()
         intents.append(OrderIntent(
@@ -95,7 +134,7 @@ def build_entry_intents(
             risk_run_id=t.risk_run_id,
             exec_run_id=exec_run_id,
             symbol=t.symbol,
-            side="buy",
+            side=side,
             qty=qty,
             order_type=config.entry_order_type,
             limit_price=limit_price,
@@ -104,11 +143,11 @@ def build_entry_intents(
             parent_intent_id=None,
             intent_role=IntentRole.ENTRY,
             idempotency_key=_idempotency_key(
-                t.risk_run_id, t.symbol, IntentRole.ENTRY, "buy", qty, config.broker_mode,
+                t.risk_run_id, t.symbol, IntentRole.ENTRY, side, qty, config.broker_mode,
             ),
             decision_price=t.entry_price,
             stop_price=None,
-            submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, "buy", qty, intent_id),
+            submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, side, qty, intent_id),
         ))
     return intents
 
@@ -458,18 +497,29 @@ def build_take_profit_intent(
     config: ExecutionConfig,
     target: ExecutionTarget | None = None,
 ) -> OrderIntent:
-    percent_target = avg_fill_price * (1 + config.profit_taker_pct)
+    # Sprint 3 — direction-aware TP
+    from core.direction import compute_take_profit_price, is_short_side
+    parent_side = str(getattr(parent, "side", "buy") or "buy").strip().lower()
+    short = is_short_side(parent_side)
+    exit_side = "buy" if short else "sell"
+
+    percent_target = compute_take_profit_price(parent_side, avg_fill_price, float(config.profit_taker_pct))
     risk_based_target = None
     if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
-        risk_based_target = avg_fill_price + (2.0 * target.risk_per_share)
-    limit_price = round(max(percent_target, risk_based_target or percent_target), 2)
+        sign = -1 if short else 1
+        risk_based_target = avg_fill_price + sign * (2.0 * target.risk_per_share)
+    if risk_based_target is not None:
+        limit_price = round(max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target), 2)
+    else:
+        limit_price = round(percent_target, 2)
+
     intent_id = _make_id()
     return OrderIntent(
         intent_id=intent_id,
         risk_run_id=parent.risk_run_id,
         exec_run_id=parent.exec_run_id,
         symbol=parent.symbol,
-        side="sell",
+        side=exit_side,
         qty=fill_qty,
         order_type="limit",
         limit_price=limit_price,
@@ -479,11 +529,11 @@ def build_take_profit_intent(
         intent_role=IntentRole.TAKE_PROFIT,
         idempotency_key=_idempotency_key(
             parent.exec_run_id, parent.symbol, IntentRole.TAKE_PROFIT,
-            "sell", fill_qty, parent.broker_mode,
+            exit_side, fill_qty, parent.broker_mode,
         ),
         decision_price=parent.decision_price,
         stop_price=None,
-        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TAKE_PROFIT, "sell", fill_qty, intent_id),
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TAKE_PROFIT, exit_side, fill_qty, intent_id),
     )
 
 
@@ -494,8 +544,14 @@ def build_initial_stop_intent(
     config: ExecutionConfig,
     target: ExecutionTarget | None = None,
 ) -> OrderIntent | None:
+    # Sprint 3 — direction-aware stop
+    from core.direction import compute_initial_stop_price, is_short_side
+    parent_side = str(getattr(parent, "side", "buy") or "buy").strip().lower()
+    short = is_short_side(parent_side)
+    exit_side = "buy" if short else "sell"
+
     reference_price = avg_fill_price or parent.decision_price
-    stop_price = resolve_initial_stop_price(reference_price, target)
+    stop_price = resolve_initial_stop_price(reference_price, target, side=parent_side)
     if stop_price is None:
         return None
 
@@ -505,7 +561,7 @@ def build_initial_stop_intent(
         risk_run_id=parent.risk_run_id,
         exec_run_id=parent.exec_run_id,
         symbol=parent.symbol,
-        side="sell",
+        side=exit_side,
         qty=fill_qty,
         order_type="stop",
         limit_price=None,
@@ -515,11 +571,11 @@ def build_initial_stop_intent(
         intent_role=IntentRole.INITIAL_STOP,
         idempotency_key=_idempotency_key(
             parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP,
-            "sell", fill_qty, parent.broker_mode,
+            exit_side, fill_qty, parent.broker_mode,
         ),
         decision_price=parent.decision_price,
         stop_price=stop_price,
-        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty, intent_id),
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, exit_side, fill_qty, intent_id),
     )
 
 
@@ -597,11 +653,17 @@ def build_trailing_stop_intent(
     config: ExecutionConfig,
     target: ExecutionTarget | None = None,
 ) -> OrderIntent:
+    # Sprint 3 — direction-aware trailing stop
+    from core.direction import is_short_side
+    parent_side = str(getattr(parent, "side", "buy") or "buy").strip().lower()
+    short = is_short_side(parent_side)
+    exit_side = "buy" if short else "sell"
+
     reference_price = avg_fill_price or parent.decision_price
     risk_based_trail_pct = None
     if target is not None:
-        if target.stop_price_initial is not None and reference_price > 0 and target.stop_price_initial < reference_price:
-            risk_based_trail_pct = (reference_price - target.stop_price_initial) / reference_price
+        if target.stop_price_initial is not None and reference_price > 0:
+            risk_based_trail_pct = abs(reference_price - target.stop_price_initial) / reference_price
         elif target.risk_per_share is not None and target.risk_per_share > 0 and reference_price > 0:
             risk_based_trail_pct = target.risk_per_share / reference_price
     trail_pct = round((risk_based_trail_pct if risk_based_trail_pct is not None else config.trailing_stop_pct) * 100, 2)
@@ -611,7 +673,7 @@ def build_trailing_stop_intent(
         risk_run_id=parent.risk_run_id,
         exec_run_id=parent.exec_run_id,
         symbol=parent.symbol,
-        side="sell",
+        side=exit_side,
         qty=fill_qty,
         order_type="trailing_stop",
         limit_price=None,
@@ -621,11 +683,11 @@ def build_trailing_stop_intent(
         intent_role=IntentRole.TRAILING_STOP,
         idempotency_key=_idempotency_key(
             parent.exec_run_id, parent.symbol, IntentRole.TRAILING_STOP,
-            "sell", fill_qty, parent.broker_mode,
+            exit_side, fill_qty, parent.broker_mode,
         ),
         decision_price=parent.decision_price,
         stop_price=None,
-        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TRAILING_STOP, "sell", fill_qty, intent_id),
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TRAILING_STOP, exit_side, fill_qty, intent_id),
     )
 
 

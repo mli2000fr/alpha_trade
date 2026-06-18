@@ -282,23 +282,34 @@ class ProductionExecutor:
                         )
                         try:
                             positions = self._broker.list_positions()
-                            # Trier par unrealized PnL (on liquide les plus gros perdants)
+                            # Sprint 3 — tri side-aware : on liquide les plus gros perdants
+                            # Pour les shorts, le PnL est correctement signé (positif si gain)
                             pos_with_pnl = []
                             for pos in positions:
                                 symbol = str(getattr(pos, "symbol", ""))
+                                side = str(getattr(pos, "side", "long") or "long").strip().lower()
                                 qty = float(getattr(pos, "qty", 0) or 0)
                                 unrealized = float(getattr(pos, "unrealized_pl", 0) or 0)
-                                if qty > 0 and symbol:
-                                    pos_with_pnl.append((symbol, qty, unrealized))
-                            pos_with_pnl.sort(key=lambda x: x[2])  # pire PnL d'abord
+                                # qty absolue > 0 (long ou short)
+                                abs_qty = abs(qty)
+                                if abs_qty > 0 and symbol:
+                                    pos_with_pnl.append((symbol, abs_qty, unrealized, side))
+                            # Trier par PnL croissant (pires pertes d'abord)
+                            pos_with_pnl.sort(key=lambda x: x[2])
                             n_close = max(1, int(len(pos_with_pnl) * force_pct + 0.5))
                             to_close = pos_with_pnl[:n_close]
                             
-                            for symbol, qty, _ in to_close:
-                                LOGGER.warning("Force-close: liquidating %s x%.4f", symbol, qty)
+                            for symbol, qty, _, pos_side in to_close:
+                                # Sprint 3 — close side directionnel
+                                if pos_side in ("sell", "short"):
+                                    close_side = "buy"  # buy-to-cover
+                                else:
+                                    close_side = "sell"
+                                LOGGER.warning("Force-close: liquidating %s (side=%s) x%.4f -> %s",
+                                              symbol, pos_side, qty, close_side)
                                 try:
                                     self._broker.submit_order(
-                                        symbol=symbol, qty=qty, side="sell", order_type="market",
+                                        symbol=symbol, qty=qty, side=close_side, order_type="market",
                                     )
                                 except Exception as exc:
                                     LOGGER.error("Force-close failed for %s: %s", symbol, exc)

@@ -1082,6 +1082,62 @@ def main(args: list[str] | None = None) -> None:
         unit="étapes",
     )
 
+    # ── Sprint 3 — Option C short selling live ──────────────────────
+    if (
+        getattr(config, "short_selling_enabled", False)
+        and candidates
+    ):
+        short_by_regime = (
+            regime_snapshot is not None
+            and bool(getattr(regime_snapshot, "allowed_short_entries", False))
+        )
+        short_by_rotation = (
+            rotation_state.is_ready()
+            and rotation_state.should_rotate()
+        )
+        if short_by_regime or short_by_rotation:
+            # Convertir les candidats en DataFrame pour le tagging
+            try:
+                import pandas as pd
+                rows = [
+                    {
+                        "symbol": c.symbol,
+                        "sector": c.sector,
+                        "score": c.score_used,
+                        "side": getattr(c, "side", "buy") or "buy",
+                    }
+                    for c in candidates
+                ]
+                candidates_df = pd.DataFrame(rows)
+                from backtesting.risk_bridge import _tag_short_candidates
+                all_shorts_flag = (
+                    regime_snapshot is not None
+                    and not bool(getattr(regime_snapshot, "allowed_long_entries", True))
+                )
+                candidates_df = _tag_short_candidates(
+                    candidates_df,
+                    max_short_positions=int(getattr(config, "short_max_positions", 2)),
+                    min_score_for_short=float(getattr(config, "short_min_score", 0.0)),
+                    all_shorts=all_shorts_flag,
+                )
+                # Appliquer le side aux candidats
+                side_map = dict(zip(candidates_df["symbol"], candidates_df["side"]))
+                for c in candidates:
+                    new_side = side_map.get(c.symbol, "buy")
+                    if new_side == "sell":
+                        c.side = "sell"
+                n_sells = sum(1 for c in candidates if getattr(c, "side", "buy") == "sell")
+                LOGGER.info(
+                    "Option C live: date=%s candidates=%d shorts=%d short_by_regime=%s short_by_rotation=%s",
+                    trade_date, len(candidates), n_sells, short_by_regime, short_by_rotation,
+                )
+                # Si le régime bloque les longs, ne garder que les shorts
+                if all_shorts_flag:
+                    candidates = [c for c in candidates if getattr(c, "side", "buy") == "sell"]
+                    LOGGER.info("Option C live: filtered to %d shorts (longs blocked by regime)", len(candidates))
+            except Exception as _exc:
+                LOGGER.warning("Option C live tagging failed: %s", _exc)
+
     from risk_management.ml_gate import apply_ml_gate_to_risk_config, resolve_ml_gate_state
 
     ml_gate_state = resolve_ml_gate_state(getattr(repo, "engine", None))
