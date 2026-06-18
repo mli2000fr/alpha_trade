@@ -415,6 +415,7 @@ def _collect_outputs(model: LSTMAttentionModule, dataloader: DataLoader | None, 
             "labels": np.empty(0, dtype=np.int64),
             "raw_proba": np.empty(0, dtype=np.float64),
             "margins": np.empty(0, dtype=np.float64),
+            "num_classes": 2,
         }
 
     logits_parts: list[torch.Tensor] = []
@@ -438,13 +439,21 @@ def _collect_outputs(model: LSTMAttentionModule, dataloader: DataLoader | None, 
 
     logits = torch.cat(logits_parts, dim=0)
     labels = torch.cat(labels_parts, dim=0)
-    raw_proba = torch.softmax(logits, dim=1)[:, 1].numpy().astype(np.float64)
-    margins = margin_from_logits(logits)
+    probs = torch.softmax(logits, dim=1)
+    num_classes = logits.shape[1]
+    if num_classes == 3:
+        # Ternary : on garde toutes les probas + prédictions
+        raw_proba = probs.numpy().astype(np.float64)  # [N, 3]
+        margins = np.zeros((len(logits),), dtype=np.float64)  # pas de marge binaire
+    else:
+        raw_proba = probs[:, 1].numpy().astype(np.float64)  # [N]
+        margins = margin_from_logits(logits)
     return {
         "logits": logits.numpy(),
         "labels": labels.numpy().astype(np.int64),
         "raw_proba": raw_proba,
         "margins": margins,
+        "num_classes": num_classes,
     }
 
 
@@ -505,9 +514,55 @@ def _compute_metrics(
 ) -> dict[str, Any]:
     labels = outputs["labels"]
     logits = outputs["logits"]
+    num_classes = int(outputs.get("num_classes", 2))
     if len(labels) == 0:
         return {}
 
+    if num_classes == 3:
+        # ── Ternary metrics ──────────────────────────────────────
+        probs = outputs["raw_proba"]  # [N, 3]
+        preds = np.argmax(probs, axis=1)  # {0, 1, 2}
+        # Décale labels {-1, 0, 1} → {0, 1, 2}
+        labels_shifted = labels + 1
+        accuracy = float((preds == labels_shifted).mean())
+        loss = float(torch.nn.functional.cross_entropy(
+            torch.as_tensor(logits, dtype=torch.float32),
+            torch.as_tensor(labels_shifted, dtype=torch.long),
+        ).item())
+
+        # F1 par classe
+        f1_per_class = {}
+        for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+            tp = int(((preds == cls_idx) & (labels_shifted == cls_idx)).sum())
+            fp = int(((preds == cls_idx) & (labels_shifted != cls_idx)).sum())
+            fn = int(((preds != cls_idx) & (labels_shifted == cls_idx)).sum())
+            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1_per_class[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
+
+        # Distribution des prédictions
+        pred_dist = {
+            "pred_short_pct": float((preds == 0).mean() * 100),
+            "pred_flat_pct": float((preds == 1).mean() * 100),
+            "pred_long_pct": float((preds == 2).mean() * 100),
+        }
+        label_dist = {
+            "true_short_pct": float((labels_shifted == 0).mean() * 100),
+            "true_flat_pct": float((labels_shifted == 1).mean() * 100),
+            "true_long_pct": float((labels_shifted == 2).mean() * 100),
+        }
+
+        return {
+            "loss": loss,
+            "accuracy": accuracy,
+            "n_samples": int(len(labels)),
+            "num_classes": 3,
+            **f1_per_class,
+            **pred_dist,
+            **label_dist,
+        }
+
+    # ── Binary metrics (comportement existant) ──────────────────
     raw_proba = outputs["raw_proba"]
     margins = outputs["margins"]
     proba = calibrator.predict_proba(margins) if calibrator is not None and calibrator.fitted else raw_proba
@@ -546,6 +601,9 @@ def _fit_calibrator(
     cfg: TrainingConfig,
 ) -> PlattCalibrator | None:
     if cfg.calibration.method != "platt":
+        return None
+    if outputs.get("num_classes", 2) != 2:
+        LOGGER.info("calibration skipped reason=ternary_mode (Platt calibrator is binary-only)")
         return None
     labels = outputs["labels"]
     margins = outputs["margins"]
