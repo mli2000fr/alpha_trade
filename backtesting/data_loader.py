@@ -518,6 +518,10 @@ def load_predictions(
                {date_col} AS trade_date,
                predicted_proba,
                predicted_class,
+               {_optional_select(columns, 'predicted_side')},
+               {_optional_select(columns, 'proba_long')},
+               {_optional_select(columns, 'proba_flat')},
+               {_optional_select(columns, 'proba_short')},
                {_optional_select(columns, 'run_id')},
                {_optional_select(columns, 'created_at')}
         FROM model_predictions

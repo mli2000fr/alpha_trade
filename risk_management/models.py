@@ -117,6 +117,11 @@ class PredictionInfo:
     predicted_class: int
     run_id: str
     prediction_date: date | None = None
+    # ML Sprint 3 — colonnes ternaires optionnelles
+    predicted_side: str | None = None   # "long" | "flat" | "short"
+    proba_long: float | None = None
+    proba_flat: float | None = None
+    proba_short: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

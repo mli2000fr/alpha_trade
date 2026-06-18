@@ -31,6 +31,14 @@ _PREDICTION_REQUIRED_COLUMNS = {
     "calibration_method",
 }
 
+# ML Sprint 3 — colonnes optionnelles pour le mode ternaire
+_PREDICTION_TERNARY_COLUMNS = {
+    "predicted_side",   # "long" | "flat" | "short"
+    "proba_long",       # probabilité long
+    "proba_flat",       # probabilité flat
+    "proba_short",      # probabilité short
+}
+
 
 def _required_text(value: Any, *, field_name: str) -> str:
     normalized = str(value or "").strip()
@@ -518,20 +526,44 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
     if predictions.empty:
         return 0
     _validate_predictions_frame(predictions)
-    stmt_v2 = text(
-        "INSERT INTO model_predictions ("
-        "symbol, prediction_date, predicted_proba, predicted_class, run_id, "
-        "selected_model, decision_threshold, signal_label, calibration_method"
-        ") VALUES ("
-        ":sym, :pd, :pp, :pc, :rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
-        ") ON DUPLICATE KEY UPDATE "
-        "predicted_proba = VALUES(predicted_proba), "
-        "predicted_class = VALUES(predicted_class), "
-        "selected_model = VALUES(selected_model), "
-        "decision_threshold = VALUES(decision_threshold), "
-        "signal_label = VALUES(signal_label), "
-        "calibration_method = VALUES(calibration_method)"
-    )
+    # ML Sprint 3 — détecter si les colonnes ternaires sont présentes
+    has_ternary = "predicted_side" in predictions.columns
+    if has_ternary:
+        stmt_v2 = text(
+            "INSERT INTO model_predictions ("
+            "symbol, prediction_date, predicted_proba, predicted_class, "
+            "predicted_side, proba_long, proba_flat, proba_short, "
+            "run_id, selected_model, decision_threshold, signal_label, calibration_method"
+            ") VALUES ("
+            ":sym, :pd, :pp, :pc, :ps, :pl, :pf, :psh, "
+            ":rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
+            ") ON DUPLICATE KEY UPDATE "
+            "predicted_proba = VALUES(predicted_proba), "
+            "predicted_class = VALUES(predicted_class), "
+            "predicted_side = VALUES(predicted_side), "
+            "proba_long = VALUES(proba_long), "
+            "proba_flat = VALUES(proba_flat), "
+            "proba_short = VALUES(proba_short), "
+            "selected_model = VALUES(selected_model), "
+            "decision_threshold = VALUES(decision_threshold), "
+            "signal_label = VALUES(signal_label), "
+            "calibration_method = VALUES(calibration_method)"
+        )
+    else:
+        stmt_v2 = text(
+            "INSERT INTO model_predictions ("
+            "symbol, prediction_date, predicted_proba, predicted_class, run_id, "
+            "selected_model, decision_threshold, signal_label, calibration_method"
+            ") VALUES ("
+            ":sym, :pd, :pp, :pc, :rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
+            ") ON DUPLICATE KEY UPDATE "
+            "predicted_proba = VALUES(predicted_proba), "
+            "predicted_class = VALUES(predicted_class), "
+            "selected_model = VALUES(selected_model), "
+            "decision_threshold = VALUES(decision_threshold), "
+            "signal_label = VALUES(signal_label), "
+            "calibration_method = VALUES(calibration_method)"
+        )
     with engine.begin() as conn:
         for _, row in predictions.iterrows():
             params = {
@@ -545,6 +577,11 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
                 "signal_label": _required_text(row.get("signal_label"), field_name="signal_label"),
                 "calibration_method": _required_text(row.get("calibration_method"), field_name="calibration_method"),
             }
+            if has_ternary:
+                params["ps"] = str(row.get("predicted_side") or "") or None
+                params["pl"] = float(row.get("proba_long")) if pd.notna(row.get("proba_long")) else None
+                params["pf"] = float(row.get("proba_flat")) if pd.notna(row.get("proba_flat")) else None
+                params["psh"] = float(row.get("proba_short")) if pd.notna(row.get("proba_short")) else None
             conn.execute(stmt_v2, params)
     LOGGER.info("insert_predictions rows=%d", len(predictions))
     return len(predictions)

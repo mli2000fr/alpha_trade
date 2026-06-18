@@ -307,6 +307,11 @@ def _build_predictions(predictions_df: pd.DataFrame, snapshot_date: date) -> dic
             predicted_class=pred_class,
             run_id=str(row.get("run_id") or "backtest"),
             prediction_date=snapshot_date,
+            # ML Sprint 3 — colonnes ternaires optionnelles
+            predicted_side=str(row.get("predicted_side")) if row.get("predicted_side") and pd.notna(row.get("predicted_side")) else None,
+            proba_long=float(row.get("proba_long")) if row.get("proba_long") and pd.notna(row.get("proba_long")) else None,
+            proba_flat=float(row.get("proba_flat")) if row.get("proba_flat") and pd.notna(row.get("proba_flat")) else None,
+            proba_short=float(row.get("proba_short")) if row.get("proba_short") and pd.notna(row.get("proba_short")) else None,
         )
     return result
 
