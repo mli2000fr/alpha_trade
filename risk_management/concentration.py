@@ -260,7 +260,7 @@ class ConsecutiveLossTracker:
 # BreakoutConfirmationTracker — filtre anti-faux-départs (Quick Win 1)
 # ---------------------------------------------------------------------------
 
-DEFAULT_MIN_BREAKOUT_DAYS: int = 3
+DEFAULT_MIN_BREAKOUT_DAYS: int = 1
 
 
 class BreakoutConfirmationTracker:

@@ -83,7 +83,7 @@ class BacktestConfig:
     concentration_blacklist_duration_days: int = 90
 
     # Anti-faux-départs (Quick Win 1)
-    min_breakout_days: int = 3
+    min_breakout_days: int = 1
 
     def __post_init__(self) -> None:
         if self.risk_config:

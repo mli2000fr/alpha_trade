@@ -50,7 +50,9 @@ class RiskConfig:
 
     # Anti-faux-départs (Quick Win 1) — nombre de jours consécutifs de
     # présence dans le top-N avant qu'un candidat soit éligible.
-    min_breakout_days: int = 3
+    # 1 = confirmation immédiate (filtre désactivé).
+    # Pour le live, peut être remonté à 3 avec persistence JSON.
+    min_breakout_days: int = 1
 
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60

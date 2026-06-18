@@ -152,7 +152,7 @@ market_regimes:
     symbol: "VIX.INDX"
     short_symbol: "VIX9D.INDX"
     high_threshold: 30.0
-    inverted_curve_mode: capital_preservation
+    inverted_curve_mode: close_only
     inverted_curve_min_spread: 1.5
     inverted_curve_min_ratio: 1.03
 
@@ -176,10 +176,10 @@ market_regimes:
     hard_relative_spike_threshold: 0.10
     hard_block_sectors: ["Technology", "Tech", "Growth", "Real Estate", "Consumer Cyclical", "Financial Services"]
     hard_risk_mult: 0.30
-    hard_mode_live: capital_preservation
-    hard_mode_backtest: capital_preservation
+    hard_mode_live: close_only
+    hard_mode_backtest: close_only
     hard_requires_vix_high: true
-    hard_requires_sentiment_warning: true
+    hard_requires_sentiment_warning: false
     hard_max_positions: 1
     hard_max_position_weight: 0.15
     hard_max_sector_weight: 0.20
@@ -191,8 +191,8 @@ market_regimes:
     warning_threshold: -0.20
     critical_threshold: -0.40
     warning_max_positions: 3
-    critical_mode_live: capital_preservation
-    critical_mode_backtest: capital_preservation
+    critical_mode_live: close_only
+    critical_mode_backtest: close_only
 
   sector_limits:
     enabled: false
