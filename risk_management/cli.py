@@ -915,6 +915,21 @@ def main(args: list[str] | None = None) -> None:
         ),
         vol_target_lookback_days=int(args.vol_target_lookback_days),
     )
+
+    # Appliquer force_close_on_breaker depuis config.yaml si non défini par preset
+    if "force_close_on_breaker" not in preset_risk_kwargs:
+        try:
+            yaml_cfg = load_config() or {}
+            risk_cfg = yaml_cfg.get("risk_management", {}) if isinstance(yaml_cfg, dict) else {}
+            yaml_force_close = risk_cfg.get("force_close_on_breaker")
+            if yaml_force_close is not None:
+                config = replace(config, force_close_on_breaker=bool(yaml_force_close))
+            yaml_force_close_pct = risk_cfg.get("force_close_pct")
+            if yaml_force_close_pct is not None:
+                config = replace(config, force_close_pct=float(yaml_force_close_pct))
+        except Exception:
+            pass
+
     market_regimes_cfg = None
     try:
         from service.market import parse_market_regimes

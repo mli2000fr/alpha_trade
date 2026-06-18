@@ -708,6 +708,55 @@ class BacktestEngine:
             entries_allowed_by_breaker = cfg.risk_overlay.drawdown_breaker.update(
                 current_equity, state.peak_equity
             )
+
+            # Quick Win — force-close partiel si le breaker trippe
+            if (
+                cfg.risk_overlay.drawdown_breaker.force_close_on_breaker
+                and cfg.risk_overlay.drawdown_breaker.just_tripped()
+                and state.positions
+            ):
+                force_pct = float(cfg.risk_overlay.drawdown_breaker.force_close_pct)
+                # Trier par PnL (on liquide les plus gros perdants d'abord)
+                position_pnls = []
+                for symbol, position in state.positions.items():
+                    close_price = float(close.at[trade_day, symbol]) if symbol in close.columns else position.entry_price
+                    pnl = (close_price - position.entry_price) * position.quantity
+                    position_pnls.append((symbol, pnl, close_price))
+                position_pnls.sort(key=lambda x: x[1])  # pire PnL d'abord
+                
+                n_close = max(1, int(len(position_pnls) * force_pct + 0.5))
+                to_close = position_pnls[:n_close]
+                
+                LOGGER.warning(
+                    "Force-close partiel (%.0f%%): liquidation de %d/%d positions (equity=%.2f)",
+                    force_pct * 100, n_close, len(state.positions), current_equity,
+                )
+                diagnostics.blocked_by_drawdown_breaker += n_close
+                
+                for symbol, pnl, close_price in to_close:
+                    position = state.positions[symbol]
+                    proceeds = position.quantity * close_price
+                    state.settled_cash += proceeds
+                    return_pct = (close_price / position.entry_price - 1.0) * 100.0 if position.entry_price > 0 else 0.0
+                    state.closed_trades.append({
+                        "symbol": symbol,
+                        "quantity": position.quantity,
+                        "entry_date": position.entry_date,
+                        "entry_price": position.entry_price,
+                        "exit_date": trade_day,
+                        "exit_price": close_price,
+                        "pnl": pnl,
+                        "return_pct": return_pct,
+                        "holding_days": (trade_day - position.entry_date).days,
+                        "exit_reason": "force_close_breaker",
+                        "sector": position.sector,
+                    })
+                    del state.positions[symbol]
+                
+                current_market_value = self._mark_to_market(state.positions, mtm_close, trade_day)
+                current_equity = state.settled_cash + state.unsettled_cash + current_market_value
+                state.peak_equity = max(state.peak_equity, current_equity)
+
             _entry_mode = cfg.exec_config.entry_mode if cfg.exec_config is not None else None
             cfg.risk_overlay.drawdown_breaker.update_regime_streak(_entry_mode, float(current_equity))
             drawdown_allocation_scale = cfg.risk_overlay.drawdown_breaker.allocation_scale(

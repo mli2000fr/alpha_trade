@@ -243,6 +243,16 @@ def _run_execution(args: argparse.Namespace) -> None:
         max_slippage_bps=int(args.max_slippage_bps),
         execution_batch_size=int(args.execution_batch_size),
         inter_order_delay_ms=int(args.inter_order_delay_ms),
+        force_close_on_breaker=bool(
+            __import__("common.config_loader", fromlist=["load_config"]).load_config()
+            .get("risk_management", {})
+            .get("force_close_on_breaker", False)
+        ),
+        force_close_pct=float(
+            __import__("common.config_loader", fromlist=["load_config"]).load_config()
+            .get("risk_management", {})
+            .get("force_close_pct", 0.50)
+        ),
     )
 
 

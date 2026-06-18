@@ -283,6 +283,13 @@ risk_management:
     min_tp_progress_ratio: 0.50
     near_zero_return_pct: 0.005
 
+  # Force-close sur circuit breaker : liquide les positions les plus
+  # perdantes quand le drawdown atteint max_portfolio_drawdown_pct.
+  # force_close_on_breaker: true  = active la liquidation
+  # force_close_pct: 0.50         = fraction des positions liquidées
+  force_close_on_breaker: true
+  force_close_pct: 1.0
+
 
 # ---------------------------------------------------------------------------
 # Source primaire des barres OHLCV (`stock_bars` + `stock_bars_daily`).

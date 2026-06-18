@@ -84,6 +84,7 @@ class CircuitBreaker:
         self._last_notified_signature: str | None = None
         self._peak_window: list[float] = []
         self._tripped: bool = False
+        self._was_tripped: bool = False
         self._normal_streak: int = 0
         self._equity_prev: float = 0.0
         self._equity_peak_window: list[float] = []
@@ -199,8 +200,15 @@ class CircuitBreaker:
             # Si pas encore récupéré, on reste en mode dégradé
             return False
         # Mode non-dégradé (blocage total) : _tripped suit status.active sans hystérésis
+        self._was_tripped = self._tripped
         self._tripped = status.active
         return status.active
+
+    def just_tripped(self) -> bool:
+        """Retourne True si le breaker vient de se déclencher (transition)."""
+        result = self._tripped and not self._was_tripped
+        self._was_tripped = self._tripped
+        return result
 
     def notify_if_active(self) -> bool:
         """Envoie au plus une alerte par statut déclenché."""

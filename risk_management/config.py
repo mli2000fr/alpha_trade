@@ -58,6 +58,12 @@ class RiskConfig:
     # 0.0 = filtre désactivé. 0.7 recommandé pour filtrer les entrées faibles.
     min_score_threshold: float = 0.0
 
+    # Force-close sur circuit breaker : liquide toutes les positions quand
+    # le breaker trippe (max_drawdown_pct atteint).
+    force_close_on_breaker: bool = False
+    # Fraction des positions à liquider (0.0-1.0). 1.0 = tout, 0.5 = moitié.
+    force_close_pct: float = 0.50
+
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60
 

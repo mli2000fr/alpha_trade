@@ -116,7 +116,11 @@ class DrawdownCircuitBreaker:
     # dès que l'equity dépasse le max des N jours précédents (et pas seulement
     # la veille), ce qui rend le ramp-up résilient aux jours de stagnation.
     regime_ramp_up_peak_window_days: int = 5
+    # Force-close : liquide toutes les positions quand le breaker trippe.
+    force_close_on_breaker: bool = False
+    force_close_pct: float = 0.50  # fraction liquidée (1.0 = tout)
     _tripped: bool = field(default=False, init=False)
+    _was_tripped: bool = field(default=False, init=False)
     _equity_window: list[float] = field(default_factory=list, init=False)
     _normal_streak: int = field(default=0, init=False)
     _equity_prev: float = field(default=0.0, init=False)
@@ -198,6 +202,7 @@ class DrawdownCircuitBreaker:
         if reference_peak <= 0:
             return True
         dd = (equity / reference_peak) - 1.0
+        self._was_tripped = self._tripped
         if not self._tripped and dd <= -abs(self.max_dd_pct):
             self._tripped = True
         elif self._tripped and equity >= reference_peak * self.recovery_pct:
@@ -206,6 +211,10 @@ class DrawdownCircuitBreaker:
             self._equity_peak_window.clear()
             self._normal_streak = 0
         return not self._tripped
+
+    def just_tripped(self) -> bool:
+        """Retourne True si le breaker vient de se déclencher CE JOUR."""
+        return self._tripped and not self._was_tripped
 
 
 def compute_portfolio_vol_scaler(

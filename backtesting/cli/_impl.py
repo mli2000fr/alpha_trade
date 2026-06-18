@@ -2214,6 +2214,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
             regime_ramp_up_pct_per_day=float(args.dd_regime_ramp_up_pct_per_day),
             regime_ramp_up_max_pct=float(args.dd_regime_ramp_up_max_pct),
             regime_ramp_up_peak_window_days=int(getattr(args, "dd_regime_ramp_up_peak_window_days", 5) or 5),
+            force_close_on_breaker=(
+                bool(getattr(args, "force_close_on_breaker", False))
+                or bool(
+                    __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                    .get("risk_management", {})
+                    .get("force_close_on_breaker", False)
+                )
+            ),
+            force_close_pct=float(
+                __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                .get("risk_management", {})
+                .get("force_close_pct", 0.50)
+            ),
         ),
         target_annual_vol=(
             float(args.target_annual_vol) if args.target_annual_vol is not None else None

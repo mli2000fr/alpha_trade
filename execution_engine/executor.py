@@ -267,7 +267,51 @@ class ProductionExecutor:
                                 f"CB degraded mode — allocation_scale={_scale:.2%}",
                             ))
                             metrics["cb_allocation_scale"] = _scale
-                except Exception as exc:
+
+                # Force-close : liquider partiellement les positions si le breaker trippe
+                if (
+                    self._cfg.force_close_on_breaker
+                    and self._circuit_breaker is not None
+                    and hasattr(self._circuit_breaker, "just_tripped")
+                    and self._circuit_breaker.just_tripped()
+                ):
+                    force_pct = float(getattr(self._cfg, "force_close_pct", 0.50))
+                    LOGGER.warning(
+                        "Force-close partiel (%.0f%%) actif — liquidation des positions les plus perdantes",
+                        force_pct * 100,
+                    )
+                    try:
+                        positions = self._broker.list_positions()
+                        # Trier par unrealized PnL (on liquide les plus gros perdants)
+                        pos_with_pnl = []
+                        for pos in positions:
+                            symbol = str(getattr(pos, "symbol", ""))
+                            qty = float(getattr(pos, "qty", 0) or 0)
+                            unrealized = float(getattr(pos, "unrealized_pl", 0) or 0)
+                            if qty > 0 and symbol:
+                                pos_with_pnl.append((symbol, qty, unrealized))
+                        pos_with_pnl.sort(key=lambda x: x[2])  # pire PnL d'abord
+                        n_close = max(1, int(len(pos_with_pnl) * force_pct + 0.5))
+                        to_close = pos_with_pnl[:n_close]
+                        
+                        for symbol, qty, _ in to_close:
+                            LOGGER.warning("Force-close: liquidating %s x%.4f", symbol, qty)
+                            try:
+                                self._broker.submit_order(
+                                    symbol=symbol, qty=qty, side="sell", order_type="market",
+                                )
+                            except Exception as exc:
+                                LOGGER.error("Force-close failed for %s: %s", symbol, exc)
+                        
+                        events.append(make_event(
+                            exec_run_id,
+                            EventType.CIRCUIT_BREAKER_ACTIVE,
+                            f"Force-close partiel ({force_pct:.0%}): {n_close}/{len(pos_with_pnl)} positions liquidées",
+                        ))
+                    except Exception as exc:
+                        LOGGER.error("Force-close broker error: %s", exc)
+
+            except Exception as exc:
                     LOGGER.warning("Circuit breaker check failed: %s", exc)
 
             # Market hours check

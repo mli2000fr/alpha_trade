@@ -247,6 +247,10 @@ class ExecutionConfig:
     regime_max_sector_weight: float | None = None
     regime_max_gross_exposure: float | None = None
 
+    # Force-close : liquide toutes les positions quand le circuit breaker trippe
+    force_close_on_breaker: bool = False
+    force_close_pct: float = 0.50
+
     # --- Levier long-only borné (swing overnight) ---
     leverage: LeverageConfig = field(default_factory=LeverageConfig)
 
