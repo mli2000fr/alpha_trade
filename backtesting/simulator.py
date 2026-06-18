@@ -166,6 +166,9 @@ class BacktestDiagnostics:
     protection_replay_activations: int = 0
     watcher_replay_transitions: int = 0
     exit_lifecycle_replayed: int = 0
+    # Sprint 5 — force-close par side
+    force_close_exits_long: int = 0
+    force_close_exits_short: int = 0
 
     def to_dict(self) -> dict[str, int]:
         return {
@@ -187,6 +190,9 @@ class BacktestDiagnostics:
             "protection_replay_activations": self.protection_replay_activations,
             "watcher_replay_transitions": self.watcher_replay_transitions,
             "exit_lifecycle_replayed": self.exit_lifecycle_replayed,
+            # Sprint 5 — force-close par side
+            "force_close_exits_long": self.force_close_exits_long,
+            "force_close_exits_short": self.force_close_exits_short,
         }
 
 
@@ -745,6 +751,12 @@ class BacktestEngine:
                     force_pct * 100, n_close, len(state.positions), current_equity,
                 )
                 diagnostics.blocked_by_drawdown_breaker += n_close
+                # Sprint 5 — compter force-close par side
+                for symbol, pnl, close_price, pos_side in to_close:
+                    if is_short_side(pos_side):
+                        diagnostics.force_close_exits_short += 1
+                    else:
+                        diagnostics.force_close_exits_long += 1
                 
                 for symbol, pnl, close_price, pos_side in to_close:
                     position = state.positions[symbol]

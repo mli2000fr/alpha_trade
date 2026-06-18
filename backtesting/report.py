@@ -409,6 +409,9 @@ class BacktestReport:
     long_pnl_total: float = 0.0
     short_pnl_total: float = 0.0
     force_close_exits: int = 0
+    # Sprint 5 — force-close par side (ML)
+    force_close_exits_long: int = 0
+    force_close_exits_short: int = 0
 
     def to_serializable_dict(self) -> dict[str, float | int | str]:
         # Phase A.7 — conserver +inf comme sentinel JSON-friendly ("inf").
@@ -445,6 +448,8 @@ class BacktestReport:
             "long_pnl_total": float(self.long_pnl_total),
             "short_pnl_total": float(self.short_pnl_total),
             "force_close_exits": int(self.force_close_exits),
+            "force_close_exits_long": int(self.force_close_exits_long),
+            "force_close_exits_short": int(self.force_close_exits_short),
         }
 
     def to_dict(self) -> dict:
@@ -470,7 +475,9 @@ class BacktestReport:
             # Sprint 4 — split directionnel
             "Trades Long": f"{self.long_trades} (WR: {self.long_win_rate_pct:.1f}%, PnL: ${self.long_pnl_total:,.2f})",
             "Trades Short": f"{self.short_trades} (WR: {self.short_win_rate_pct:.1f}%, PnL: ${self.short_pnl_total:,.2f})",
-            "Force-close exits": self.force_close_exits,
+            "Force-close (total)": self.force_close_exits,
+            "Force-close Long": self.force_close_exits_long,
+            "Force-close Short": self.force_close_exits_short,
         }
 
     def print_summary(self) -> None:
@@ -615,12 +622,30 @@ def generate_report(
                     short_pnl_total = float(pnl[short_mask].sum())
             if "exit_reason" in trades_df.columns:
                 force_close_exits = int((trades_df["exit_reason"] == "force_close_breaker").sum())
+                # Sprint 5 — force-close par side
+                fc_long = 0
+                fc_short = 0
+                if force_close_exits > 0 and "side" in trades_df.columns:
+                    fc_mask = trades_df["exit_reason"] == "force_close_breaker"
+                    fc_long = int((fc_mask & (trades_df["side"] == "buy")).sum())
+                    fc_short = int((fc_mask & (trades_df["side"] == "sell")).sum())
+            else:
+                force_close_exits = 0
+                fc_long = 0
+                fc_short = 0
         else:
             win_rate = 0.0
             avg_dur = 0.0
             pf_factor = 0.0
-
-        return BacktestReport(
+            long_trades = 0
+            short_trades = 0
+            long_win_rate = 0.0
+            short_win_rate = 0.0
+            long_pnl_total = 0.0
+            short_pnl_total = 0.0
+            force_close_exits = 0
+            fc_long = 0
+            fc_short = 0
             initial_equity=initial_equity,
             final_value=final_val,
             total_return_pct=total_ret,
@@ -649,6 +674,9 @@ def generate_report(
             long_pnl_total=long_pnl_total,
             short_pnl_total=short_pnl_total,
             force_close_exits=force_close_exits,
+            # Sprint 5 — force-close par side
+            force_close_exits_long=fc_long,
+            force_close_exits_short=fc_short,
         )
 
     final_val = _as_float(pf.final_value())
