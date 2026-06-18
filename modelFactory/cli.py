@@ -170,6 +170,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--hidden-size", type=int, default=128)
+    p.add_argument("--num-classes", type=int, default=2,
+                   help="Nombre de classes : 2=binaire, 3=ternaire long/flat/short")
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
@@ -199,7 +201,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Nombre minimum de symboles disponibles par date pour calculer des ranks cross-sectionnels fiables")
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
     p.add_argument("--benchmark-symbol", type=str, default="SPY")
-    p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash"])
+    p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary"])
     p.add_argument("--target-up-threshold", type=float, default=0.0,
                    help="Seuil de rendement futur pour classer une hausse tradeable")
     p.add_argument("--target-down-threshold", type=float, default=0.0,
@@ -315,7 +317,7 @@ def main(args: list[str] | None = None) -> None:
             target_down_threshold=opts.target_down_threshold,
             decision_threshold=opts.decision_threshold,
         ),
-        model=ModelConfig(batch_size=opts.batch_size, hidden_size=opts.hidden_size, max_epochs=opts.max_epochs),
+        model=ModelConfig(batch_size=opts.batch_size, hidden_size=opts.hidden_size, max_epochs=opts.max_epochs, num_classes=opts.num_classes),
         calibration=CalibrationConfig(
             method=opts.calibration_method,
             min_samples=opts.calibration_min_samples,

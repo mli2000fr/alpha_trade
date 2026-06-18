@@ -3232,7 +3232,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_opt_col3:
             ml_enable_global_model = st.checkbox(
                 "Entraîner aussi un modèle global multi-symboles",
-                value=_session_state_bool("pipeline_ml_enable_global_model", False),
+                value=_session_state_bool("pipeline_ml_enable_global_model", True),
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`.",
             )
@@ -3252,7 +3252,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
             ml_enable_cross_sectional = st.checkbox(
                 "Activer les features cross-sectionnelles",
-                value=_session_state_bool("pipeline_ml_enable_cross_sectional", False),
+                value=_session_state_bool("pipeline_ml_enable_cross_sectional", True),
                 key="pipeline_ml_enable_cross_sectional",
                 help="Ajoute `--enable-cross-sectional` pour enrichir les features séquentielles et le modèle global.",
             )
@@ -3281,14 +3281,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 str,
                 st.selectbox(
                     "Mode de cible",
-                    options=["binary", "swing_cash"],
-                    index=["binary", "swing_cash"].index(
+                    options=["binary", "swing_cash", "ternary"],
+                    index=["binary", "swing_cash", "ternary"].index(
                         cast(str, st.session_state.get("pipeline_ml_target_mode", DEFAULT_ML_TARGET_MODE))
-                        if st.session_state.get("pipeline_ml_target_mode", DEFAULT_ML_TARGET_MODE) in {"binary", "swing_cash"}
+                        if st.session_state.get("pipeline_ml_target_mode", DEFAULT_ML_TARGET_MODE) in {"binary", "swing_cash", "ternary"}
                         else DEFAULT_ML_TARGET_MODE
                     ),
                     key="pipeline_ml_target_mode",
-                    help="`swing_cash` = cible asymétrique up/down adaptée au swing cash (recommandé).",
+                    help="`swing_cash` = cible asymétrique up/down. `ternary` = long/flat/short (ML Sprint 1).",
                 ),
             )
             ml_forecast_horizon = int(

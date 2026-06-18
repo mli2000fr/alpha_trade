@@ -120,10 +120,10 @@ DEFAULT_EXEC_TRAILING_TRIGGER = "multiple_r"
 DEFAULT_EXEC_TRAILING_R_MULTIPLE = 1.0
 DEFAULT_EXEC_TRAILING_PROFIT_PCT = 0.03
 # ML train — cible swing cash + walk-forward
-DEFAULT_ML_TARGET_MODE = "swing_cash"
+DEFAULT_ML_TARGET_MODE = "ternary"
 DEFAULT_ML_FORECAST_HORIZON = 5              # 5 jours = horizon swing typique
-DEFAULT_ML_TARGET_UP_THRESHOLD = 0.02        # +2 % cible long
-DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.01
+DEFAULT_ML_TARGET_UP_THRESHOLD = 0.12        # +12 % cible long (aligné TP)
+DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.08     # -8 % cible short (aligné TP short)
 DEFAULT_ML_DECISION_THRESHOLD = 0.55
 DEFAULT_ML_CALIBRATION_METHOD = "platt"
 DEFAULT_ML_FEATURE_SET = "v1"
@@ -210,7 +210,7 @@ AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
 MLGlobalModelName = Literal["catboost", "lightgbm"]
 MLChampionMetric = Literal["selection_score", "business_score", "auc"]
-MLTargetMode = Literal["binary", "swing_cash"]
+MLTargetMode = Literal["binary", "swing_cash", "ternary"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
@@ -1969,6 +1969,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             options.ml_accelerator,
             "--target-mode",
             options.ml_target_mode,
+        ]
+        # ML Sprint 1 — ajouter num-classes pour mode ternaire
+        if options.ml_target_mode == "ternary":
+            command.extend(["--num-classes", "3"])
+        command.extend([
             "--forecast-horizon",
             str(options.ml_forecast_horizon),
             "--target-up-threshold",
@@ -2025,7 +2030,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_heartbeat_interval_seconds),
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
-        ]
+        ])
         if options.ml_watchdog_timeout_seconds and options.ml_watchdog_timeout_seconds > 0:
             command.extend(["--watchdog-timeout-seconds", str(int(options.ml_watchdog_timeout_seconds))])
         if ml_training_end_date:
