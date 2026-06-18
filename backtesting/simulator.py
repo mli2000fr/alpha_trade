@@ -840,6 +840,7 @@ class BacktestEngine:
 
             # Quick Win 1 — anti-faux-départs : enregistrer les candidats
             # et filtrer ceux dont le breakout n'est pas confirmé.
+            # Sprint 2 — les shorts (side="sell") ne sont pas soumis au breakout.
             if candidate_rows and self._breakout_tracker is not None:
                 trade_day_date = trade_day.date()
                 all_symbols = [str(row["symbol"]) for row in candidate_rows]
@@ -847,7 +848,8 @@ class BacktestEngine:
                 before = len(candidate_rows)
                 candidate_rows = [
                     row for row in candidate_rows
-                    if self._breakout_tracker.allow_entry(str(row["symbol"]))
+                    if str(row.get("side", "buy") or "buy").strip().lower() == "sell"
+                    or self._breakout_tracker.allow_entry(str(row["symbol"]))
                 ]
                 diagnostics.blocked_by_breakout += before - len(candidate_rows)
 
@@ -957,6 +959,14 @@ class BacktestEngine:
         cfg = self.config
         if day_signals is None:
             return []
+        # Sprint 2 — log les signaux shorts entrants
+        n_sells_day = int((day_signals["side"] == "sell").sum()) if "side" in day_signals.columns else 0
+        if n_sells_day > 0:
+            LOGGER.info(
+                "BT short signals received: date=%s total_signals=%d sells=%d available_slots=%d positions=%d",
+                trade_day.date(), len(day_signals), n_sells_day,
+                max(cfg.max_positions - len(state.positions), 0), len(state.positions),
+            )
         available_slots = max(cfg.max_positions - len(state.positions), 0)
         filtered_rows = [
             row
@@ -1048,9 +1058,17 @@ class BacktestEngine:
             side = str(row.get("side", "buy") or "buy").strip().lower()
             if side not in ("buy", "sell"):
                 side = "buy"
+            short = is_short_side(side)
+            if short:
+                LOGGER.info(
+                    "BT short candidate: date=%s symbol=%s side=%s score=%.4f available_slots=%d",
+                    trade_day.date(), symbol, side,
+                    float(row.get("score", row.get("score_used", 0.0) or 0.0)),
+                    len(candidate_rows) - candidate_pos,
+                )
 
-            # Quick Win 2 — score threshold
-            if cfg.min_score_threshold > 0:
+            # Quick Win 2 — score threshold (Sprint 2: skip pour shorts)
+            if cfg.min_score_threshold > 0 and not short:
                 score_val = float(row.get("score", row.get("score_used", 0.0) or 0.0))
                 if score_val < cfg.min_score_threshold:
                     continue  # silently skip low-score candidates

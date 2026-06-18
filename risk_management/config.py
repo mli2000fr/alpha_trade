@@ -64,6 +64,15 @@ class RiskConfig:
     # Fraction des positions à liquider (0.0-1.0). 1.0 = tout, 0.5 = moitié.
     force_close_pct: float = 0.50
 
+    # Sprint 2 — short selling (Option C : MomentumRotationState)
+    short_selling_enabled: bool = False
+    short_max_positions: int = 2
+    short_min_score: float = 0.30
+    short_rotation_required: bool = True
+    short_tp_pct: float = 0.08
+    short_trailing_pct: float = 0.10
+    short_time_stop_days: int = 20
+
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60
 

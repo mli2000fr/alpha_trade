@@ -1,6 +1,7 @@
 """Bridge opt-in entre le backtesting et le moteur réel de risk management."""
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
@@ -14,6 +15,8 @@ from risk_management.config import RiskConfig
 from risk_management.models import CandidateScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
 from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
+
+LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from service.market import MarketRegimesConfig
@@ -65,6 +68,80 @@ def _resolve_float(row: pd.Series, column: str) -> float | None:
     return float(value)
 
 
+def _tag_short_candidates(
+    day_df: pd.DataFrame,
+    *,
+    max_short_positions: int = 2,
+    min_score_for_short: float = 0.30,
+    max_long_positions: int = 3,
+    all_shorts: bool = False,
+) -> pd.DataFrame:
+    """Option C — tag les candidats comme ``side="sell"`` (short).
+
+    Deux modes :
+    - ``all_shorts=False`` (rotation momentum) : seuls les bottom-N (score le
+      plus bas, sous ``min_score_for_short``) sont tagués ``"sell"``.
+    - ``all_shorts=True`` (régime capital_preservation) : TOUS les candidats
+      sont tagués ``"sell"`` car les longs sont bloqués par le régime.
+
+    Parameters
+    ----------
+    day_df : pd.DataFrame
+        Candidats du jour (doit contenir une colonne ``score`` ou ``final_score``).
+    max_short_positions : int
+        Nombre maximum de shorts à taguer (mode rotation).
+    min_score_for_short : float
+        Score maximum pour être éligible short.
+    max_long_positions : int
+        Nombre maximum de longs à conserver (mode rotation).
+    all_shorts : bool
+        Si True, tous les candidats deviennent ``side="sell"``.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame avec colonne ``side`` ajoutée/mise à jour.
+    """
+    if day_df.empty:
+        return day_df
+
+    result = day_df.copy()
+
+    # Déterminer la colonne de score
+    score_col = "score" if "score" in result.columns else (
+        "final_score_sentiment" if "final_score_sentiment" in result.columns else "final_score"
+    )
+
+    if all_shorts:
+        # Régime capital_preservation : tous les candidats → short
+        result["side"] = "sell"
+        return result
+
+    # Mode rotation : seuls les bottom-N → short
+    if score_col not in result.columns:
+        result["side"] = "buy"
+        return result
+
+    # Initialiser tout à "buy"
+    result["side"] = "buy"
+
+    # Trier par score croissant (les pires d'abord)
+    sorted_idx = result[score_col].argsort().values
+
+    # Marquer les bottom-N comme shorts.
+    # Si min_score_for_short <= 0, on prend les N plus bas sans condition de seuil.
+    short_count = 0
+    for pos in sorted_idx:
+        if short_count >= max_short_positions:
+            break
+        score_val = float(result.iloc[pos][score_col]) if pd.notna(result.iloc[pos][score_col]) else 0.0
+        if min_score_for_short <= 0 or score_val <= min_score_for_short:
+            result.iloc[pos, result.columns.get_loc("side")] = "sell"
+            short_count += 1
+
+    return result
+
+
 def _prepare_score_columns(scores_df: pd.DataFrame, *, preferred_score_column: str | None = None) -> pd.DataFrame:
     prepared = _normalize_trade_dates(scores_df)
     score_series, source_series = _pick_score_column(prepared, preferred=preferred_score_column)
@@ -100,6 +177,11 @@ def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> lis
 
     candidates: list[CandidateScore] = []
     for _, row in day_df.iterrows():
+        # Sprint 2 — lire le side depuis le DataFrame si présent (Option C short)
+        side = str(row.get("side") or "buy").strip().lower()
+        if side not in ("buy", "sell"):
+            side = "buy"
+
         candidates.append(
             CandidateScore(
                 symbol=str(row.get("symbol") or ""),
@@ -125,6 +207,7 @@ def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> lis
                 selector_earnings_blackout=int(row.get("selector_earnings_blackout")) if row.get("selector_earnings_blackout") is not None and not pd.isna(row.get("selector_earnings_blackout")) else (
                     int(row.get("earnings_blackout")) if row.get("earnings_blackout") is not None and not pd.isna(row.get("earnings_blackout")) else None
                 ),
+                side=side,
             )
         )
     return candidates
@@ -394,7 +477,69 @@ def build_phase2_risk_result(
             except Exception:
                 pass
 
+        # ── 1ter. Option C — short selling via MomentumRotationState ────
+        # Deux déclencheurs possibles :
+        #   a) Régime capital_preservation → allowed_short_entries=True (Sprint 0)
+        #   b) Rotation momentum → should_rotate() (cumul < -3% sur 4 semaines)
+        short_enabled = bool(getattr(risk_config, "short_selling_enabled", False))
+        short_by_regime = (
+            short_enabled
+            and snap is not None
+            and bool(getattr(snap, "allowed_short_entries", False))
+        )
+        short_by_rotation = (
+            short_enabled
+            and rotation_state.is_ready()
+            and rotation_state.should_rotate()
+        )
+        if (short_by_regime or short_by_rotation) and not day_scores.empty:
+            n_before = len(day_scores)
+            score_col = "score" if "score" in day_scores.columns else (
+                "final_score_sentiment" if "final_score_sentiment" in day_scores.columns else (
+                    "final_score" if "final_score" in day_scores.columns else None
+                )
+            )
+            # Toujours utiliser le mode bottom-N : seuls les pires scores
+            # (sous short_min_score) sont flippés en "sell". Les autres
+            # restent "buy" — ils seront filtrés ci-dessous si le régime
+            # bloque les longs.
+            day_scores = _tag_short_candidates(
+                day_scores,
+                max_short_positions=int(getattr(risk_config, "short_max_positions", 2)),
+                min_score_for_short=float(getattr(risk_config, "short_min_score", 0.30)),
+                max_long_positions=int(getattr(risk_config, "max_positions", 3)),
+                all_shorts=False,
+            )
+            n_tagged = int((day_scores["side"] == "sell").sum())
+            # Si le régime bloque les longs, on ne garde que les shorts
+            if snap is not None and not bool(getattr(snap, "allowed_long_entries", True)):
+                day_scores = day_scores[day_scores["side"] == "sell"]
+            n_after = len(day_scores)
+            LOGGER.info(
+                "Option C short: date=%s regime=%s short_by_regime=%s short_by_rotation=%s "
+                "score_col=%s before=%d tagged=%d after=%d allow_long=%s allow_short=%s",
+                snapshot_date,
+                getattr(snap, "mode", "?"),
+                short_by_regime,
+                short_by_rotation,
+                score_col,
+                n_before,
+                n_tagged,
+                n_after,
+                getattr(snap, "allowed_long_entries", "?"),
+                getattr(snap, "allowed_short_entries", "?"),
+            )
+
         candidates = _build_candidates_from_day(day_scores, snapshot_date)
+        n_sells = sum(1 for c in candidates if c.side == "sell")
+        if n_sells > 0:
+            LOGGER.info(
+                "Option C candidates: date=%s total=%d shorts=%d symbols=%s",
+                snapshot_date,
+                len(candidates),
+                n_sells,
+                [c.symbol for c in candidates if c.side == "sell"][:5],
+            )
         symbols = [candidate.symbol for candidate in candidates]
         prices: dict[str, PriceInfo] = {}
         predictions: dict[str, PredictionInfo] = {}
@@ -415,6 +560,17 @@ def build_phase2_risk_result(
 
         builder = PortfolioBuilder(cfg_for_day, rotation_state=rotation_state)
         entries = builder.build(candidates, prices, predictions=predictions, return_matrix=return_matrix)
+        n_entry_sells = sum(1 for e in entries if getattr(e, "side", "buy") == "sell")
+        n_accepted_sells = sum(1 for e in entries if getattr(e, "side", "buy") == "sell" and e.approved_shares > 0)
+        if n_sells > 0:
+            LOGGER.info(
+                "Option C entries: date=%s total=%d sells=%d accepted_sells=%d decisions=%s",
+                snapshot_date,
+                len(entries),
+                n_entry_sells,
+                n_accepted_sells,
+                [(e.symbol, e.side, e.decision, e.decision_reason) for e in entries if getattr(e, "side", "buy") == "sell"],
+            )
         all_entries.extend(entries)
         signal_frames.append(portfolio_entries_to_signals(entries, snapshot_date))
 

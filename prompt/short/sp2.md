@@ -86,3 +86,39 @@ inchangé.
 - `executor.py` : force-close side-aware (buy-to-cover pour shorts)
 - `execution_engine/config.py` : `limit_price_buffer_bps` directionnel
 - Protection watcher directionnel (TP/TS selon side)
+
+---
+
+## Annexe — Option C : Short via MomentumRotationState
+
+### Injection
+| Fichier | Changement |
+|---|---|
+| `backtesting/risk_bridge.py` | `_tag_short_candidates()` — helper qui flip bottom-N en `side="sell"` |
+| `backtesting/risk_bridge.py` | `_build_candidates_from_day()` — lit `side` depuis le DataFrame |
+| `backtesting/risk_bridge.py` | `build_phase2_risk_result()` — injection après rotation check |
+| `risk_management/config.py` | Champs `short_selling_enabled`, `short_max_positions`, `short_min_score`, etc. |
+| `config.yaml` | Section `short_*` avec valeurs par défaut |
+
+### Fonctionnement
+1. `MomentumRotationState` accumule les returns quotidiens de l'equity
+2. Quand `should_rotate()` = True (cumul < -3% sur 4 semaines) ET `short_selling_enabled` = True
+3. `_tag_short_candidates()` trie les candidats par score ascendant
+4. Les N pires scores (sous `short_min_score`) reçoivent `side="sell"`
+5. Les autres restent `side="buy"`
+6. Le `side` est propagé via `CandidateScore` → `PortfolioBuilder` → signaux → simulateur
+
+### Test de validation
+```bash
+# 1. Activer le short dans config.yaml
+#    short_selling_enabled: true
+
+# 2. Lancer un backtest sur 2022 (année baissière)
+python -m backtesting run --preset micro_capital --start 2022-01-01 --end 2022-12-31
+
+# 3. Vérifier dans les diagnostics :
+#    - rotation_state.should_rotate() doit être True pendant les drawdowns
+#    - Des candidats avec side="sell" doivent apparaître dans les signaux
+#    - Les trades shorts doivent avoir un PnL positif si le prix baisse
+#    - Le return_pct des shorts doit utiliser la formule directionnelle
+```

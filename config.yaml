@@ -292,7 +292,15 @@ risk_management:
 
   # Sprint 0 short — feature flag global (cf. plan_v2.md §C8)
   # Active le pipeline long+short. false = long-only (comportement actuel)
-  short_selling_enabled: false
+  short_selling_enabled: true
+
+  # Sprint 2 — Option C : short via MomentumRotationState
+  short_max_positions: 2            # nombre max de shorts simultanés
+  short_min_score: 0                # 0 = bottom-N absolu (pas de seuil de score)
+  short_rotation_required: true     # exiger rotation_state.should_rotate()
+  short_tp_pct: 0.08                # TP short (8% de baisse)
+  short_trailing_pct: 0.10          # trailing stop short (10% de hausse)
+  short_time_stop_days: 20          # time stop directionnel
 
 
 # ---------------------------------------------------------------------------

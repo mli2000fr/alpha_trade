@@ -317,6 +317,8 @@ class PortfolioBuilder:
             )
 
         # ── 0bis. Filtre anti-faux-départs (Quick Win 1) ────────────
+        # Sprint 2 — les shorts (side="sell") ne sont pas soumis au breakout
+        # filter car ils ne sont pas dans le top-N (ce sont les bottom-N).
         if candidates and self._breakout_tracker is not None:
             trade_date_resolved = trade_date if trade_date is not None else date.today()
             candidate_symbols = [str(c.symbol).strip().upper() for c in candidates]
@@ -324,7 +326,7 @@ class PortfolioBuilder:
             before = len(candidates)
             candidates = [
                 c for c in candidates
-                if self._breakout_tracker.allow_entry(str(c.symbol))
+                if getattr(c, "side", "buy") == "sell" or self._breakout_tracker.allow_entry(str(c.symbol))
             ]
             blocked_breakout = before - len(candidates)
             if blocked_breakout:
@@ -335,11 +337,14 @@ class PortfolioBuilder:
                 )
 
         # ── 0ter. Score threshold (Quick Win 2) ────────────────────
+        # Sprint 2 — les shorts (side="sell") ne sont pas soumis au seuil
+        # score long-only. Ils utilisent leur propre logique de sélection
+        # (bottom-N via MomentumRotationState ou régime capital_preservation).
         if candidates and self._cfg.min_score_threshold > 0:
             before = len(candidates)
             candidates = [
                 c for c in candidates
-                if c.score_used >= self._cfg.min_score_threshold
+                if getattr(c, "side", "buy") == "sell" or c.score_used >= self._cfg.min_score_threshold
             ]
             blocked_score = before - len(candidates)
             if blocked_score:
