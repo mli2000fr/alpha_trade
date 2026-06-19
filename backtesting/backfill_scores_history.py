@@ -271,7 +271,7 @@ class BackfillScoresHistoryService:
         sentiment_input = selector_df[[
             "symbol", "final_score", "trend_score", "vcp_score", "total_score", "sector",
             "liquidity_val", "relative_strength_index", "historical_range_score",
-            "anomaly_count", "missing_days_count", "is_candidate",
+            "anomaly_count", "missing_days_count", "is_candidate", "selector_signal_mode",
         ]].copy()
         enriched = self.aggregator.merge(sentiment_input, trade_date=as_of_date)
         history_df = self._to_history_snapshot(enriched, as_of_date)
@@ -497,10 +497,32 @@ class BackfillScoresHistoryService:
 
         merged_candidates = cast(pd.DataFrame, pd.concat(all_frames, ignore_index=True))
         merged_candidates = cast(pd.DataFrame, scanner._apply_factor_neutralization(merged_candidates))
+        # Plan v2 Sprint 5 — enrichir short_score avant selection
+        self._enrich_short_score_pit(merged_candidates, as_of_date)
         selected = scanner.rank_and_select(merged_candidates)
+        short_selected = scanner.rank_and_select_short(merged_candidates, selected)
+        if not short_selected.empty:
+            selected = pd.concat([selected, short_selected], ignore_index=True)
+            selected = selected.drop_duplicates(subset=["symbol"], keep="first")
         selected_symbols = set(selected["symbol"].astype(str).tolist()) if not selected.empty else set()
         merged_candidates["is_candidate"] = merged_candidates["symbol"].astype(str).isin(selected_symbols).astype(int)
+        # Propager selector_signal_mode aux candidats
+        if "selector_signal_mode" in selected.columns:
+            mode_map = selected.set_index("symbol")["selector_signal_mode"]
+            merged_candidates["selector_signal_mode"] = merged_candidates["symbol"].map(mode_map)
         return merged_candidates
+
+    @staticmethod
+    def _enrich_short_score_pit(merged_df: pd.DataFrame, as_of_date: date) -> None:
+        """Enrichit avec short_score dans le contexte PIT (backfill)."""
+        try:
+            from selector.short_score import enrich_with_short_score
+            trade_day = pd.Timestamp(as_of_date)
+            enriched = enrich_with_short_score(merged_df, close_df=None, trade_day=trade_day)
+            if "short_score" in enriched.columns:
+                merged_df["short_score"] = enriched["short_score"]
+        except Exception:
+            LOGGER.debug("_enrich_short_score_pit: skipped", exc_info=True)
 
     @staticmethod
     def _empty_quote_snapshot_frame() -> pd.DataFrame:
@@ -736,6 +758,7 @@ class BackfillScoresHistoryService:
             "days_to_earnings": None,
             "earnings_blackout": 0,
             "is_candidate": 0,
+            "selector_signal_mode": None,  # Plan v2 Sprint 5 — long/short
             "sentiment_net_agg": 0.0,
             "sector_impact_agg": 0.0,
             "company_idio_score": 0.0,

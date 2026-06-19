@@ -256,7 +256,9 @@ class AlphaScanner:
             if hasattr(self, "_price_cache") and self._price_cache is not None:
                 close_df = self._price_cache
             trade_day = getattr(self, "_reference_date", None)
-            enrich_with_short_score(merged_df, close_df=close_df, trade_day=trade_day)
+            enriched = enrich_with_short_score(merged_df, close_df=close_df, trade_day=trade_day)
+            if "short_score" in enriched.columns:
+                merged_df["short_score"] = enriched["short_score"]
         except Exception:
             LOGGER.debug("_enrich_short_score: short_score enrichment skipped", exc_info=True)
 
