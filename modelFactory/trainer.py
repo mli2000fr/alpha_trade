@@ -219,6 +219,13 @@ def _build_loader(dataset: SequenceDataset | None, batch_size: int, *, shuffle: 
 
 
 def _selection_score_from_metrics(metrics: dict[str, Any]) -> float:
+    # Ternary : utiliser f1_macro comme score principal
+    if metrics.get("num_classes") == 3:
+        return float(
+            metrics.get("f1_macro")
+            or metrics.get("accuracy")
+            or 0.0
+        )
     return float(
         metrics.get("threshold_business_score")
         or metrics.get("auc")
@@ -552,11 +559,16 @@ def _compute_metrics(
             "true_long_pct": float((labels_shifted == 2).mean() * 100),
         }
 
+        # F1 macro (moyenne des 3 classes)
+        f1_values = [v for k, v in f1_per_class.items() if v is not None]
+        f1_macro = float(np.mean(f1_values)) if f1_values else 0.0
+
         return {
             "loss": loss,
             "accuracy": accuracy,
             "n_samples": int(len(labels)),
             "num_classes": 3,
+            "f1_macro": f1_macro,
             **f1_per_class,
             **pred_dist,
             **label_dist,

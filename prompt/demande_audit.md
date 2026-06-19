@@ -521,22 +521,22 @@ Pour chaque test de sprint, donne si possible :
 
 ---
 
-## 9) Format des livrables à produire dans `prompt/tod4/`
+## 9) Format des livrables à produire dans `prompt/tod5/`
 
-Tu dois créer le dossier **`prompt/tod4/`** s’il n’existe pas, puis y produire **au minimum** les fichiers suivants :
+Tu dois créer le dossier **`prompt/tod5/`** s’il n’existe pas, puis y produire **au minimum** les fichiers suivants :
 
-1. `prompt/tod4/00_audit_executive_summary.md`
-2. `prompt/tod4/01_global_scorecard.md`
-3. `prompt/tod4/02_module_scorecards.md`
-4. `prompt/tod4/03_anomalies_register.md`
-5. `prompt/tod4/04_parametrage_review.md`
-6. `prompt/tod4/05_doc_code_gap_matrix.md`
-7. `prompt/tod4/06_ohlcv_data_conventions_audit.md`
-8. `prompt/tod4/07_swing_trade_fitness_assessment.md`
-9. `prompt/tod4/08_sprint_plan.md`
-10. `prompt/tod4/09_final_verdict.md`
-11. `prompt/tod4/README.md`
-12. `prompt/tod4/10_anomaly_test_matrix.md`
+1. `prompt/tod5/00_audit_executive_summary.md`
+2. `prompt/tod5/01_global_scorecard.md`
+3. `prompt/tod5/02_module_scorecards.md`
+4. `prompt/tod5/03_anomalies_register.md`
+5. `prompt/tod5/04_parametrage_review.md`
+6. `prompt/tod5/05_doc_code_gap_matrix.md`
+7. `prompt/tod5/06_ohlcv_data_conventions_audit.md`
+8. `prompt/tod5/07_swing_trade_fitness_assessment.md`
+9. `prompt/tod5/08_sprint_plan.md`
+10. `prompt/tod5/09_final_verdict.md`
+11. `prompt/tod5/README.md`
+12. `prompt/tod5/10_anomaly_test_matrix.md`
 
 En plus de ces livrables d’audit, tu dois produire les **mises à jour documentaires dans `doc/`** pour réaligner la documentation avec le code courant et les constats de l’audit.
 

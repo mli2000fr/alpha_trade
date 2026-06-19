@@ -285,6 +285,10 @@ def build_governance_rows(
                 "val_threshold_business_score": _optional_float(val_metrics.get("threshold_business_score")),
                 "test_threshold_business_score": _optional_float(test_metrics.get("threshold_business_score")),
                 "wf_threshold_business_score": _optional_float(wf_mean.get("threshold_business_score")),
+                # ML Sprint 7 — colonnes ternaires
+                "num_classes": int(challenger.get("num_classes", 2)),
+                "val_f1_macro": _optional_float(val_metrics.get("f1_macro") or val_metrics.get("f1_score")),
+                "test_f1_macro": _optional_float(test_metrics.get("f1_macro") or test_metrics.get("f1_score")),
             }
         )
     return rows
@@ -502,12 +506,14 @@ def replace_model_governance(
         "run_id, symbol, model_name, `rank`, is_selected_model, selection_mode, selection_metric, selection_score, "
         "model_status, selection_eligible, eligibility_reason, reason, inference_backend, backend_model_name, "
         "calibration_method, decision_threshold, artifact_symbol, checkpoint_path, scaler_path, model_path, config_path, "
-        "calibrator_path, val_auc, test_auc, wf_auc, val_threshold_business_score, test_threshold_business_score, wf_threshold_business_score"
+        "calibrator_path, val_auc, test_auc, wf_auc, val_threshold_business_score, test_threshold_business_score, wf_threshold_business_score, "
+        "num_classes, val_f1_macro, test_f1_macro"
         ") VALUES ("
         ":run_id, :symbol, :model_name, :rank, :is_selected_model, :selection_mode, :selection_metric, :selection_score, "
         ":model_status, :selection_eligible, :eligibility_reason, :reason, :inference_backend, :backend_model_name, "
         ":calibration_method, :decision_threshold, :artifact_symbol, :checkpoint_path, :scaler_path, :model_path, :config_path, "
-        ":calibrator_path, :val_auc, :test_auc, :wf_auc, :val_threshold_business_score, :test_threshold_business_score, :wf_threshold_business_score"
+        ":calibrator_path, :val_auc, :test_auc, :wf_auc, :val_threshold_business_score, :test_threshold_business_score, :wf_threshold_business_score, "
+        ":num_classes, :val_f1_macro, :test_f1_macro"
         ")"
     )
     with engine.begin() as conn:

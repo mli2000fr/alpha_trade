@@ -174,7 +174,13 @@ def _extract_positive_class_probability(
     symbol: str,
     selected_model: str,
     model_path: Path,
+    target_mode: str = "binary",
 ) -> float:
+    """Extrait la probabilite de la classe positive (long) depuis predict_proba.
+
+    - binaire : colonne [:, 1] = classe positive
+    - ternaire : colonne [:, 2] = long (apres label shift {0=short, 1=flat, 2=long})
+    """
     try:
         proba = np.asarray(prediction_output, dtype=float)
     except Exception as exc:  # noqa: BLE001
@@ -199,6 +205,9 @@ def _extract_positive_class_probability(
         )
         _record_artifact_issue(symbol, reason=reason, path=model_path)
         raise ArtifactIntegrityError(reason, path=model_path)
+    # Ternary : 3 colonnes [short, flat, long] -> colonne 2 = long
+    if target_mode == "ternary" and proba.shape[1] >= 3:
+        return float(proba[0, 2])
     return float(proba[0, 1])
 
 
@@ -850,6 +859,7 @@ def _predict_with_tabular_model(
             symbol=symbol,
             selected_model=selected_model,
             model_path=model_path,
+            target_mode=data_cfg.target_mode,
         )
     except ArtifactIntegrityError:
         raise

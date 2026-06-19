@@ -161,14 +161,19 @@ def run_tabular_baseline(
 	model = model_builder(resolved_seed)
 	model.fit(train_df[feature_columns], train_df["target"].astype(int))
 
-	val_raw = model.predict_proba(val_df[feature_columns])[:, 1]
-	calibrator = fit_tabular_calibrator(val_raw, val_df["target"].astype(int).to_numpy(), cfg)
+	is_ternary = cfg.data.target_mode == "ternary"
+	long_col = 2 if is_ternary else 1  # ternaire: colonne 2=long; binaire: colonne 1=long
+
+	val_raw = model.predict_proba(val_df[feature_columns])[:, long_col]
+	# Pour la calibration, on binarise la target : 1 si long (+1), 0 sinon
+	cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
+	calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg)
 	val_proba = apply_tabular_calibration(val_raw, calibrator)
 
 	if cfg.threshold_optimization.enabled:
 		threshold_summary = optimize_decision_threshold(
 			val_proba,
-			val_df["target"].astype(int).to_numpy(),
+			cal_labels,  # binarisee : 1=long, 0=sinon
 			val_df["future_return"].to_numpy(),
 			candidate_thresholds=cfg.threshold_optimization.candidate_decision_thresholds,
 			default_threshold=cfg.data.decision_threshold,
@@ -187,16 +192,19 @@ def run_tabular_baseline(
 			"candidates": [],
 		}
 
-	test_raw = model.predict_proba(test_df[feature_columns])[:, 1]
+	test_raw = model.predict_proba(test_df[feature_columns])[:, long_col]
 	test_proba = apply_tabular_calibration(test_raw, calibrator)
+	# Pour les metriques, on binarise aussi la target test
+	test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
+	val_labels = cal_labels
 	val_metrics = compute_tabular_metrics(
-		val_df["target"].astype(int).to_numpy(),
+		val_labels,
 		val_proba,
 		val_df["future_return"].to_numpy(),
 		selected_threshold,
 	)
 	test_metrics = compute_tabular_metrics(
-		test_df["target"].astype(int).to_numpy(),
+		test_labels,
 		test_proba,
 		test_df["future_return"].to_numpy(),
 		selected_threshold,
