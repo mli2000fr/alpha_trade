@@ -1,6 +1,6 @@
 # Alpha Trade — Documentation Fonctionnelle
 
-> *Version : 0.3.0 — Dernière mise à jour : mai 2026*
+> *Version : 0.3.1 — Dernière mise à jour : juin 2026 (audit TOD5)*
 
 <!-- primary_provider: eodhd -->
 
@@ -29,16 +29,26 @@
 
 ---
 
-## 0. État des sprints au 2026-06-08
+## 0. État des sprints au 2026-06-19
 
 - **S1** : livré et revalidé (micro-comptes, alias `selector_min_ibd_rs_rank`, doctrine de dépréciation `execution_engine`).
 - **S2** : noyau livré, y compris le reliquat A-004 désormais exposé via le proxy
   `quote_iex_vs_consolidated_bps` dans les `run_summary` de `sync_latest_quotes`.
 - **S3** : robustesse réelle swing confirmée (réconciliation J+1, TCA agrégé, gel IHM live).
 - **S4** : convention corrélation et oracle total return documentés / testés.
-- **S5** : signatures d’artefacts ML et doctrine failover broker livrées.
+- **S5** : signatures d'artefacts ML et doctrine failover broker livrées.
 - **S6** : `macro_provider=composite`, Kelly conditionnel (≥ 25 k$), clarification drawdown et SMTP.
 - **S7** : garde-fous gouvernance ML (`model_predictions`) + factorisation importeurs de barres (helper commun) + tests walk-forward ML.
+- **S8** *(audit TOD5, juin 2026)* : audit exhaustif réalisé, livrables dans `prompt/tod5/`. Corrections critiques des presets de capital planifiées.
+
+### Plans en cours (v2)
+
+| Plan | Statut | Description |
+|---|---|---|
+| **Plan v2 — Short Selling** (Sprint 0-5) | 🔄 En cours | `core/direction.py`, `selector/short_score.py`, `risk_management/concentration.py`, `backtesting/simulator.py` |
+| **Plan ML v2 — Ternaire long/flat/short** (Sprint 1-7) | 🔄 En cours | `modelFactory/features.py` (`target_mode="ternary"`), `model.py` (CrossEntropyLoss 3 classes), `db_registry.py` (colonnes `predicted_side`, `proba_long/flat/short`) |
+
+> ⚠️ Les plans v2 ne sont pas encore validés en production. Le comportement par défaut reste **long-only** avec cible binaire. Les fonctionnalités short/ternaire sont opt-in.
 
 ---
 
@@ -170,8 +180,8 @@ Le scanner quotidien et les reruns/backtests "petit compte cash swing" utilisent
 - `weekly_trend_score >= 1.0`
 - `1.5 % <= atr_pct_20 <= 6 %`
 - `market_cap >= 2 Md$`
-- `beta_126 >= 0.8` — profil strict canonique (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) ; accepte les leaders moins directionnels en régime risk-off (valeur historique de doc : ≥ 1.0 — Sprint S4 / A-005-résidu corrigé)
-- `spread_bps <= 40` — profil strict canonique ; les snapshots EOD IEX avoisinent ~50 bps vs NBBO réel, 40 bps est réaliste (valeur historique de doc : ≤ 25 bps — Sprint S4 / A-008-doc corrigé) ; mode IEX relâché : `max_spread_bps_iex = 65` avec `min_quote_size = 100`
+- `beta_126 >= 0.8` — profil strict canonique (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`)
+- `spread_bps <= 40` — profil strict canonique ; mode IEX relâché : `max_spread_bps_iex = 65` avec `min_quote_size = 100`
 - `earnings_blackout = 0`
 
 Cet ensemble de filtres vise à réduire les microcaps/penny stocks, améliorer l'exécutabilité réelle et éviter les entrées juste avant un événement binaire ou après une explosion de volatilité.

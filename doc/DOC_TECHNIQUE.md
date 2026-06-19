@@ -1,6 +1,6 @@
 ﻿# Alpha Trade — Documentation Technique
 
-> *Version : 0.4.0 — Python ≥ 3.12 — Dernière mise à jour : mai 2026*
+> *Version : 0.4.1 — Python ≥ 3.12 — Dernière mise à jour : juin 2026 (audit TOD5)*
 
 <!-- primary_provider: eodhd -->
 
@@ -34,27 +34,28 @@
 - **S4** : convention corrélation / total return verrouillée par tests.
 - **S5** : signatures SHA-256 d’artefacts ML et doctrine failover broker exposées.
 - **S6** : `macro_provider=composite`, Kelly conditionnel ≥ 25 k$, bandeaux SMTP.
-- **S7** : garde-fou de persistance `model_predictions`, test walk-forward ML dedie, factorisation helper commun entre importeurs Alpaca/EODHD.
+- **S7** : garde-fou de persistance `model_predictions`, test walk-forward ML dédié, factorisation helper commun entre importeurs Alpaca/EODHD.
+- **S8** *(audit TOD5, juin 2026)* : audit exhaustif, livrables `prompt/tod5/`, corrections presets planifiées.
 
-### Plan v2 -- Short Selling (Sprint 0-5, juin 2026)
+### Plan v2 -- Short Selling (Sprint 0-5, juin 2026) — 🔄 EN COURS
 
-- **Sp0** : `core/direction.py` -- 18 helpers purs pour logique directionnelle (long/short)
-- **Sp1-2** : `risk_management/models.py` -- `CandidateScore.side`, `PredictionInfo` (+4 champs ternaires)
-- **Sp2** : `backtesting/simulator.py` -- `_OpenPosition.side`, PnL/TP/TS direction-aware, force-close par side
-- **Sp3** : `execution_engine/order_intents.py` -- TP/SL/trailing direction-aware, buy-to-cover pour shorts
-- **Sp4** : `backtesting/report.py` -- metriques split long/short/force-close
-- **Sp5** : `selector/short_score.py` (Option B), `risk_management/concentration.py` (trackers side-aware)
-- **Option C** : injection directe du `predicted_side` ML ternaire dans le pipeline live
+- **Sp0** : `core/direction.py` -- 18 helpers purs pour logique directionnelle (long/short) — ✅ Livré
+- **Sp1-2** : `risk_management/models.py` -- `CandidateScore.side`, `PredictionInfo` (+4 champs ternaires) — 🔄 En cours
+- **Sp2** : `backtesting/simulator.py` -- `_OpenPosition.side`, PnL/TP/TS direction-aware, force-close par side — 🔄 En cours
+- **Sp3** : `execution_engine/order_intents.py` -- TP/SL/trailing direction-aware, buy-to-cover pour shorts — 🔜 Planifié
+- **Sp4** : `backtesting/report.py` -- metriques split long/short/force-close — 🔜 Planifié
+- **Sp5** : `selector/short_score.py` (Option B), `risk_management/concentration.py` (trackers side-aware) — 🔄 En cours
+- **Option C** : injection directe du `predicted_side` ML ternaire dans le pipeline live — 🔜 Planifié
 
-### Plan ML v2 -- Ternaire long/flat/short (Sprint 1-7, juin 2026)
+### Plan ML v2 -- Ternaire long/flat/short (Sprint 1-7, juin 2026) — 🔄 EN COURS
 
-- **ML1** : `modelFactory/features.py` -- `build_target(mode="ternary")` labels {-1,0,+1}
-- **ML2** : `modelFactory/model.py` -- `LSTMAttentionModule(num_classes=3)`, loss CrossEntropyLoss, label shift {-1,0,1}->{0,1,2}
-- **ML3** : `modelFactory/db_registry.py` + migration 0038 -- `predicted_side`, `proba_long/flat/short`
-- **ML4-5** : `risk_management/config.py` -- `min_score_threshold_short`
-- **ML6** : `risk_management/cli.py` -- Option C live injection, `predicted_side` dans le DF candidats
-- **ML7** : migration 0039 -- `model_governance` + `model_metrics` colonnes F1 ternaire
-- **IHM** : defauts ML ternaire (target_mode=ternary, up=0.12, down=-0.08, global_model=ON, cross_sectional=ON)
+- **ML1** : `modelFactory/features.py` -- `build_target(mode="ternary")` labels {-1,0,+1} — ✅ Livré
+- **ML2** : `modelFactory/model.py` -- `LSTMAttentionModule(num_classes=3)`, loss CrossEntropyLoss, label shift {-1,0,1}->{0,1,2} — ✅ Livré
+- **ML3** : `modelFactory/db_registry.py` + migration 0038 -- `predicted_side`, `proba_long/flat/short` — 🔄 En cours
+- **ML4-5** : `risk_management/config.py` -- `min_score_threshold_short` — 🔜 Planifié
+- **ML6** : `risk_management/cli.py` -- Option C live injection, `predicted_side` dans le DF candidats — 🔜 Planifié
+- **ML7** : migration 0039 -- `model_governance` + `model_metrics` colonnes F1 ternaire — 🔜 Planifié
+- **IHM** : defauts ML ternaire (target_mode=ternary, up=0.12, down=-0.08, global_model=ON, cross_sectional=ON) — 🔄 En cours
 
 
 
