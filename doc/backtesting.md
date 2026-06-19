@@ -153,9 +153,97 @@ Ces champs alignent les snapshots PIT, les contraintes portefeuille et l’IHM.
 
 ---
 
+
+
+---
+
+## Short Selling Support (Plan v2 Sprint 2-5)
+
+Le simulateur backtest supporte desormais les positions short en complement des positions long.
+
+### _OpenPosition.side
+
+La dataclass `_OpenPosition` porte un champ `side` (`"buy"` ou `"sell"`).
+Le PnL, les take-profit et les trailing stops sont calcules directionnellement :
+
+- **Long** : PnL = `(current_price - entry_price) * qty`
+- **Short** : PnL = `(entry_price - current_price) * qty`
+
+### Force-close direction-aware
+
+Les force-close (liquidations, stops, take-profit) detectent `pos.side` et utilisent
+le bon sens de sortie :
+- **Long** → `exit_side = "sell"`
+- **Short** → `exit_side = "buy"` (buy-to-cover)
+
+### BacktestDiagnostics
+
+Les diagnostics exposes par le rapport de backtest incluent desormais :
+- `force_close_exits_long` : nombre de force-close long
+- `force_close_exits_short` : nombre de force-close short
+
+### Risk Bridge — Option B / Option C
+
+Le bridge risk (`backtesting/risk_bridge.py`) supporte deux modes de tagging short :
+
+- **Option B** : `short_score` calcule par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%)
+- **Option C** : injection directe du `predicted_side` issu du modele ternaire ML
+- **Priorite** : Option C > Option B > defaut (long only)
+
+### Concentration side-aware
+
+Les trackers de concentration (`SymbolTradeTracker`, `ConsecutiveLossTracker`)
+sont side-aware : les limites de trades et de pertes consecutives sont comptabilisees
+separement pour les longs et les shorts.
+
+
 ## 5. Commande `run`
 
-### 5.1 Convention d’exécution
+#
+
+---
+
+## Short Selling Support (Plan v2 Sprint 2-5)
+
+Le simulateur backtest supporte desormais les positions short en complement des positions long.
+
+### _OpenPosition.side
+
+La dataclass `_OpenPosition` porte un champ `side` (`"buy"` ou `"sell"`).
+Le PnL, les take-profit et les trailing stops sont calcules directionnellement :
+
+- **Long** : PnL = `(current_price - entry_price) * qty`
+- **Short** : PnL = `(entry_price - current_price) * qty`
+
+### Force-close direction-aware
+
+Les force-close (liquidations, stops, take-profit) detectent `pos.side` et utilisent
+le bon sens de sortie :
+- **Long** → `exit_side = "sell"`
+- **Short** → `exit_side = "buy"` (buy-to-cover)
+
+### BacktestDiagnostics
+
+Les diagnostics exposes par le rapport de backtest incluent desormais :
+- `force_close_exits_long` : nombre de force-close long
+- `force_close_exits_short` : nombre de force-close short
+
+### Risk Bridge — Option B / Option C
+
+Le bridge risk (`backtesting/risk_bridge.py`) supporte deux modes de tagging short :
+
+- **Option B** : `short_score` calcule par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%)
+- **Option C** : injection directe du `predicted_side` issu du modele ternaire ML
+- **Priorite** : Option C > Option B > defaut (long only)
+
+### Concentration side-aware
+
+Les trackers de concentration (`SymbolTradeTracker`, `ConsecutiveLossTracker`)
+sont side-aware : les limites de trades et de pertes consecutives sont comptabilisees
+separement pour les longs et les shorts.
+
+
+## 5.1 Convention d’exécution
 
 Convention du simulateur :
 
@@ -164,13 +252,101 @@ Convention du simulateur :
 - sorties évaluées après l’entrée sur barres daily ;
 - `swing_only` interdit une sortie le jour même.
 
-### 5.2 Exemple minimal
+#
+
+---
+
+## Short Selling Support (Plan v2 Sprint 2-5)
+
+Le simulateur backtest supporte desormais les positions short en complement des positions long.
+
+### _OpenPosition.side
+
+La dataclass `_OpenPosition` porte un champ `side` (`"buy"` ou `"sell"`).
+Le PnL, les take-profit et les trailing stops sont calcules directionnellement :
+
+- **Long** : PnL = `(current_price - entry_price) * qty`
+- **Short** : PnL = `(entry_price - current_price) * qty`
+
+### Force-close direction-aware
+
+Les force-close (liquidations, stops, take-profit) detectent `pos.side` et utilisent
+le bon sens de sortie :
+- **Long** → `exit_side = "sell"`
+- **Short** → `exit_side = "buy"` (buy-to-cover)
+
+### BacktestDiagnostics
+
+Les diagnostics exposes par le rapport de backtest incluent desormais :
+- `force_close_exits_long` : nombre de force-close long
+- `force_close_exits_short` : nombre de force-close short
+
+### Risk Bridge — Option B / Option C
+
+Le bridge risk (`backtesting/risk_bridge.py`) supporte deux modes de tagging short :
+
+- **Option B** : `short_score` calcule par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%)
+- **Option C** : injection directe du `predicted_side` issu du modele ternaire ML
+- **Priorite** : Option C > Option B > defaut (long only)
+
+### Concentration side-aware
+
+Les trackers de concentration (`SymbolTradeTracker`, `ConsecutiveLossTracker`)
+sont side-aware : les limites de trades et de pertes consecutives sont comptabilisees
+separement pour les longs et les shorts.
+
+
+## 5.2 Exemple minimal
 
 ```powershell
 python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 100000
 ```
 
-### 5.3 Paramètres principaux
+#
+
+---
+
+## Short Selling Support (Plan v2 Sprint 2-5)
+
+Le simulateur backtest supporte desormais les positions short en complement des positions long.
+
+### _OpenPosition.side
+
+La dataclass `_OpenPosition` porte un champ `side` (`"buy"` ou `"sell"`).
+Le PnL, les take-profit et les trailing stops sont calcules directionnellement :
+
+- **Long** : PnL = `(current_price - entry_price) * qty`
+- **Short** : PnL = `(entry_price - current_price) * qty`
+
+### Force-close direction-aware
+
+Les force-close (liquidations, stops, take-profit) detectent `pos.side` et utilisent
+le bon sens de sortie :
+- **Long** → `exit_side = "sell"`
+- **Short** → `exit_side = "buy"` (buy-to-cover)
+
+### BacktestDiagnostics
+
+Les diagnostics exposes par le rapport de backtest incluent desormais :
+- `force_close_exits_long` : nombre de force-close long
+- `force_close_exits_short` : nombre de force-close short
+
+### Risk Bridge — Option B / Option C
+
+Le bridge risk (`backtesting/risk_bridge.py`) supporte deux modes de tagging short :
+
+- **Option B** : `short_score` calcule par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%)
+- **Option C** : injection directe du `predicted_side` issu du modele ternaire ML
+- **Priorite** : Option C > Option B > defaut (long only)
+
+### Concentration side-aware
+
+Les trackers de concentration (`SymbolTradeTracker`, `ConsecutiveLossTracker`)
+sont side-aware : les limites de trades et de pertes consecutives sont comptabilisees
+separement pour les longs et les shorts.
+
+
+## 5.3 Paramètres principaux
 
 #### Portefeuille
 
@@ -217,7 +393,51 @@ Effets principaux :
 - `--risk-free-rate`
 - `--seed`
 
-### 5.4 Profils et presets
+#
+
+---
+
+## Short Selling Support (Plan v2 Sprint 2-5)
+
+Le simulateur backtest supporte desormais les positions short en complement des positions long.
+
+### _OpenPosition.side
+
+La dataclass `_OpenPosition` porte un champ `side` (`"buy"` ou `"sell"`).
+Le PnL, les take-profit et les trailing stops sont calcules directionnellement :
+
+- **Long** : PnL = `(current_price - entry_price) * qty`
+- **Short** : PnL = `(entry_price - current_price) * qty`
+
+### Force-close direction-aware
+
+Les force-close (liquidations, stops, take-profit) detectent `pos.side` et utilisent
+le bon sens de sortie :
+- **Long** → `exit_side = "sell"`
+- **Short** → `exit_side = "buy"` (buy-to-cover)
+
+### BacktestDiagnostics
+
+Les diagnostics exposes par le rapport de backtest incluent desormais :
+- `force_close_exits_long` : nombre de force-close long
+- `force_close_exits_short` : nombre de force-close short
+
+### Risk Bridge — Option B / Option C
+
+Le bridge risk (`backtesting/risk_bridge.py`) supporte deux modes de tagging short :
+
+- **Option B** : `short_score` calcule par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%)
+- **Option C** : injection directe du `predicted_side` issu du modele ternaire ML
+- **Priorite** : Option C > Option B > defaut (long only)
+
+### Concentration side-aware
+
+Les trackers de concentration (`SymbolTradeTracker`, `ConsecutiveLossTracker`)
+sont side-aware : les limites de trades et de pertes consecutives sont comptabilisees
+separement pour les longs et les shorts.
+
+
+## 5.4 Profils et presets
 
 Deux notions distinctes :
 
@@ -234,7 +454,51 @@ Profils disponibles :
 | `swing_cash_aggressive` | 0.12 | 0.06 | 25 | 5 bps | 8 bps | `cash` | oui |
 | `custom` | défauts CLI | défauts CLI | défauts CLI | défauts CLI | défauts CLI | libre | libre |
 
-### 5.5 Phases de fidélité opt-in
+#
+
+---
+
+## Short Selling Support (Plan v2 Sprint 2-5)
+
+Le simulateur backtest supporte desormais les positions short en complement des positions long.
+
+### _OpenPosition.side
+
+La dataclass `_OpenPosition` porte un champ `side` (`"buy"` ou `"sell"`).
+Le PnL, les take-profit et les trailing stops sont calcules directionnellement :
+
+- **Long** : PnL = `(current_price - entry_price) * qty`
+- **Short** : PnL = `(entry_price - current_price) * qty`
+
+### Force-close direction-aware
+
+Les force-close (liquidations, stops, take-profit) detectent `pos.side` et utilisent
+le bon sens de sortie :
+- **Long** → `exit_side = "sell"`
+- **Short** → `exit_side = "buy"` (buy-to-cover)
+
+### BacktestDiagnostics
+
+Les diagnostics exposes par le rapport de backtest incluent desormais :
+- `force_close_exits_long` : nombre de force-close long
+- `force_close_exits_short` : nombre de force-close short
+
+### Risk Bridge — Option B / Option C
+
+Le bridge risk (`backtesting/risk_bridge.py`) supporte deux modes de tagging short :
+
+- **Option B** : `short_score` calcule par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%)
+- **Option C** : injection directe du `predicted_side` issu du modele ternaire ML
+- **Priorite** : Option C > Option B > defaut (long only)
+
+### Concentration side-aware
+
+Les trackers de concentration (`SymbolTradeTracker`, `ConsecutiveLossTracker`)
+sont side-aware : les limites de trades et de pertes consecutives sont comptabilisees
+separement pour les longs et les shorts.
+
+
+## 5.5 Phases de fidélité opt-in
 
 | Phase | Flag | Effet | Dépendance |
 |---|---|---|---|
@@ -259,7 +523,51 @@ python -m backtesting run \
   --phase7-mode exit_lifecycle_replay
 ```
 
-### 5.6 Microstructure
+#
+
+---
+
+## Short Selling Support (Plan v2 Sprint 2-5)
+
+Le simulateur backtest supporte desormais les positions short en complement des positions long.
+
+### _OpenPosition.side
+
+La dataclass `_OpenPosition` porte un champ `side` (`"buy"` ou `"sell"`).
+Le PnL, les take-profit et les trailing stops sont calcules directionnellement :
+
+- **Long** : PnL = `(current_price - entry_price) * qty`
+- **Short** : PnL = `(entry_price - current_price) * qty`
+
+### Force-close direction-aware
+
+Les force-close (liquidations, stops, take-profit) detectent `pos.side` et utilisent
+le bon sens de sortie :
+- **Long** → `exit_side = "sell"`
+- **Short** → `exit_side = "buy"` (buy-to-cover)
+
+### BacktestDiagnostics
+
+Les diagnostics exposes par le rapport de backtest incluent desormais :
+- `force_close_exits_long` : nombre de force-close long
+- `force_close_exits_short` : nombre de force-close short
+
+### Risk Bridge — Option B / Option C
+
+Le bridge risk (`backtesting/risk_bridge.py`) supporte deux modes de tagging short :
+
+- **Option B** : `short_score` calcule par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%)
+- **Option C** : injection directe du `predicted_side` issu du modele ternaire ML
+- **Priorite** : Option C > Option B > defaut (long only)
+
+### Concentration side-aware
+
+Les trackers de concentration (`SymbolTradeTracker`, `ConsecutiveLossTracker`)
+sont side-aware : les limites de trades et de pertes consecutives sont comptabilisees
+separement pour les longs et les shorts.
+
+
+## 5.6 Microstructure
 
 Flags disponibles :
 
@@ -270,7 +578,51 @@ Flags disponibles :
 - `--max-entry-gap-pct`
 - `--intrabar-priority conservative|tp_first|ts_first|random`
 
-### 5.7 Risk overlays
+#
+
+---
+
+## Short Selling Support (Plan v2 Sprint 2-5)
+
+Le simulateur backtest supporte desormais les positions short en complement des positions long.
+
+### _OpenPosition.side
+
+La dataclass `_OpenPosition` porte un champ `side` (`"buy"` ou `"sell"`).
+Le PnL, les take-profit et les trailing stops sont calcules directionnellement :
+
+- **Long** : PnL = `(current_price - entry_price) * qty`
+- **Short** : PnL = `(entry_price - current_price) * qty`
+
+### Force-close direction-aware
+
+Les force-close (liquidations, stops, take-profit) detectent `pos.side` et utilisent
+le bon sens de sortie :
+- **Long** → `exit_side = "sell"`
+- **Short** → `exit_side = "buy"` (buy-to-cover)
+
+### BacktestDiagnostics
+
+Les diagnostics exposes par le rapport de backtest incluent desormais :
+- `force_close_exits_long` : nombre de force-close long
+- `force_close_exits_short` : nombre de force-close short
+
+### Risk Bridge — Option B / Option C
+
+Le bridge risk (`backtesting/risk_bridge.py`) supporte deux modes de tagging short :
+
+- **Option B** : `short_score` calcule par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%)
+- **Option C** : injection directe du `predicted_side` issu du modele ternaire ML
+- **Priorite** : Option C > Option B > defaut (long only)
+
+### Concentration side-aware
+
+Les trackers de concentration (`SymbolTradeTracker`, `ConsecutiveLossTracker`)
+sont side-aware : les limites de trades et de pertes consecutives sont comptabilisees
+separement pour les longs et les shorts.
+
+
+## 5.7 Risk overlays
 
 Flags disponibles :
 

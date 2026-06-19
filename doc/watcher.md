@@ -515,3 +515,14 @@ python -m pytest `
   tests/test_watcher_runtime.py `
   tests/test_windows_watcher_bridge.py --no-cov -q
 ```
+
+
+---
+
+## Note Plan v2 (juin 2026)
+
+Le watcher de protection gere desormais les positions short :
+- Detection du `side` de la position a proteger
+- Arme les stops et trailing stops dans la bonne direction
+- Les force-close utilisent `buy-to-cover` pour les shorts
+- Migration 0037 : colonne `side` ajoutee dans `protection_watch_items`

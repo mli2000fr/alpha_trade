@@ -226,16 +226,29 @@ python -m modelFactory --mode predict
 | `--feature-set v1|expert` | set de features |
 | `--benchmark-symbol` | benchmark pour features expert / cross-sectionnelles |
 
-### 4.5 Options target et décision
+### 4.5 Options target et décision (modes binaire, swing_cash, ternaire)
 
 | Option | Rôle |
 |---|---|
-| `--target-mode binary|swing_cash` | sémantique de target |
-| `--target-up-threshold` | seuil de hausse tradeable |
-| `--target-down-threshold` | seuil de baisse / no-trade |
-| `--decision-threshold` | seuil par défaut pour classer `long` vs `no_trade` |
+| `--target-mode binary|swing_cash|ternary` | sémantique de target. **ternary** = long/flat/short (3 classes, Plan ML v2) |
+| `--num-classes 2|3` | nombre de classes. 2 = binaire, 3 = ternaire |
+| `--target-up-threshold` | seuil de hausse tradeable (long) |
+| `--target-down-threshold` | seuil de baisse tradeable (short) |
+| `--decision-threshold` | seuil par défaut pour classer `long` vs `no_trade` (binaire seulement) |
 | `--optimize-target` | recherche du meilleur horizon / seuils swing |
-| `--optimize-thresholds` | recherche du meilleur seuil de décision |
+| `--optimize-thresholds` | recherche du meilleur seuil de décision (désactivé en ternaire) |
+
+#### Mode ternaire (Plan ML v2 — Sprint 1-7)
+
+Activé avec `--target-mode ternary --num-classes 3`. Différences clés :
+
+- **Target** : `build_target(mode="ternary")` produit des labels `{-1, 0, +1}` (short, flat, long)
+- **Modèle** : `LSTMAttentionModule(num_classes=3)` → 3 logits en sortie. Loss = `CrossEntropyLoss` (labels décalés `{-1,0,1} → {0,1,2}`)
+- **Métriques** : `MulticlassAccuracy`, `MulticlassF1Score` (macro), + F1 par classe (`f1_short`, `f1_flat`, `f1_long`)
+- **Calibration Platt** : désactivée automatiquement (binaire seulement)
+- **Optimisation de seuil** : désactivée automatiquement (le seuil binaire n'a pas de sens en 3-classes)
+- **Predictions** : `model_predictions` reçoit `predicted_side` + `proba_long/flat/short` (migration 0038)
+- **Gouvernance** : `model_governance` et `model_metrics` reçoivent `num_classes`, `f1_macro`, `f1_short/flat/long` (migration 0039)
 
 ### 4.6 Options calibration et évaluation
 

@@ -334,3 +334,18 @@ python -m dataIntegrityEngine.import_eodhd_bar --write   # nominal si bars_provi
 python -m dataIntegrityEngine.data_sanitizer_daily
 python -m screener.stock_screener --chunk-size 500 --max-workers 8
 ```
+
+
+---
+
+## Note Plan v2 / Plan ML v2 (juin 2026)
+
+Le screener reste independant du mode de trading (long/short) et du mode ML
+(binaire/ternaire). Les scores produits par le screener sont consommes
+indifferemment par :
+- Le selector (pour le scoring long et short)
+- Le pipeline ML (features contexte selector)
+- Le risk management (conviction score)
+
+Le `selector_signal_mode` peut etre filtre dans le pipeline ML via
+`--selector-universe-signal-modes`.

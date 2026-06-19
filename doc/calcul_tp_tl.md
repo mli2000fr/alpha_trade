@@ -341,3 +341,57 @@ Cela demanderait un arbitrage car on perdrait en partie :
 - **Backtest standard** : les valeurs visibles dans l'IHM (`0.08`, `0.05`, etc.) sont **bien des paramètres fixes**.
 - **Parité live ↔ backtest** : **possible**, et déjà partiellement implémentée via les presets `pipeline_live_like` / `production_parity` et la chaîne `execution_replay → protection_replay → watcher_replay → exit_lifecycle_replay`.
 
+
+
+---
+
+## Direction-aware — Long vs Short (Plan v2 Sprint 3)
+
+Depuis le Sprint 3, tous les calculs de TP/SL/Trailing sont **direction-aware**.
+Le parametre `side` (`"buy"` = long, `"sell"` = short) est propage par `core/direction.py`.
+
+### Take Profit
+
+| Direction | Formule | Exemple (entree 100$, TP=12%) |
+|---|---|---|
+| **Long** | `entry * (1 + tp_pct)` → au-dessus | **112 $** |
+| **Short** | `entry * (1 - tp_pct)` → en-dessous | **88 $** |
+
+Si `risk_per_share` est disponible (ATR), un second TP base sur `2 × risk_per_share`
+est calcule et le plus favorable (le plus eloigne) est retenu.
+
+### Stop Loss initial
+
+| Direction | Formule | Exemple (entree 100$, risk=3$) |
+|---|---|---|
+| **Long** | `entry - risk_per_share` → en-dessous | **97 $** |
+| **Short** | `entry + risk_per_share` → au-dessus | **103 $** |
+
+### Trailing Stop
+
+- **Long** : `reference_price * (1 - trailing_pct)` — suit le prix vers le haut
+- **Short** : `reference_price * (1 + trailing_pct)` — suit le prix vers le bas
+
+### Activation du trailing
+
+- **Long** : `entry + risk_per_share * r_multiple` → activation > entry
+- **Short** : `entry - risk_per_share * r_multiple` → activation < entry
+
+### Force-close (liquidations)
+
+Le force-close detecte `pos.side` et utilise `buy-to-cover` pour fermer les shorts
+(dans `execution_engine/executor.py` et `backtesting/simulator.py`).
+
+### Fonctions de reference
+
+Dans `core/direction.py` :
+- `compute_take_profit_price(side, entry_price, tp_pct)`
+- `compute_initial_stop_price(side, entry_price, risk_per_share, stop_pct)`
+- `compute_trailing_stop_price(side, reference_price, trailing_pct)`
+
+Dans `execution_engine/order_intents.py` :
+- `resolve_initial_stop_price(reference_price, target, side)`
+- `resolve_trailing_activation_price(fill_price, config, target, side)`
+- `build_take_profit_intent(parent, fill_qty, avg_fill_price, config, target)`
+- `build_initial_stop_intent(parent, fill_qty, avg_fill_price, config, target)`
+- `build_trailing_stop_intent(parent, fill_qty, avg_fill_price, config, target)`

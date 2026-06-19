@@ -27,6 +27,7 @@ Ce document résume le fonctionnement du module `risk_management/` et les comman
 | `risk_management/constraints.py` | Contraintes portefeuille |
 | `risk_management/risk_checker.py` | Vérifications de risque |
 | `risk_management/circuit_breaker.py` | Suspension sur drawdown / perte quotidienne |
+| `risk_management/concentration.py` | Trackers anti-concentration et anti-répétition (Plan v2 Sprint 5) |
 | `risk_management/conviction.py` | Fusion score quant + prédiction ML |
 | `risk_management/correlation_filter.py` | Filtre de corrélation |
 | `risk_management/models.py` | Modèles métiers risk (dataclasses) |
@@ -152,17 +153,41 @@ Le CLI :
 7. émet un `run_summary` riche (préflight, régime, ML gate, equity, post-mortem) ;
 8. persiste décisions / targets, puis optionnellement un rapport de shadow compare.
 
-### 4.2 Construction des entrées
+### 4.2 Construction des entrées (direction-aware, Plan v2 Sprint 2-4)
 
 `PortfolioBuilder.build()` :
 
-1. enrichit les candidats avec `predicted_proba` et `historical_win_rate` ;
-2. calcule `conviction_score` ;
+1. enrichit les candidats avec `predicted_proba` / `predicted_side` et `historical_win_rate` ;
+2. calcule `conviction_score` directionnel (long ET short) ;
 3. trie les candidats par conviction décroissante ;
 4. applique le filtre de corrélation ;
-5. applique le sizing ATR ou Kelly ;
-6. vérifie les contraintes ;
-7. produit des `PortfolioEntry` avec statut `ACCEPTED`, `REDUCED` ou `REJECTED`.
+5. applique les trackers de concentration (`SymbolTradeTracker` + `ConsecutiveLossTracker`), **side-aware** ;
+6. applique le sizing ATR ou Kelly, direction-aware (le sizing short utilise la même logique ATR mais avec `risk_per_share` inversé) ;
+7. vérifie les contraintes (dont `short_max_positions`, `short_min_score`) ;
+8. produit des `PortfolioEntry` avec statut `ACCEPTED`, `REDUCED` ou `REJECTED`.
+
+### 4.2.ter Short selling (Plan v2 — Sprint 2-5)
+
+Le module supporte désormais les **positions short** en complément des positions long :
+
+- **Option B** : `short_score` dédié calculé par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%). Les shorts sont taggés si le `short_score` dépasse `min_score_threshold_short`.
+- **Option C** : injection directe du `predicted_side` (ternaire long/flat/short) issu de `model_predictions`. Prioritaire sur l'Option B si disponible.
+- **min_score_threshold_short** (défaut `0.0`) : seuil minimal de score pour qu'un candidat soit éligible short. Relevable pour restreindre les shorts aux signaux les plus forts.
+- **short_max_positions** (défaut `2`) : limite le nombre de positions short simultanées.
+- **Capital preservation** : en régime de préservation du capital, les shorts sont automatiquement désactivés (sauf configuration contraire).
+
+La colonne `side` est portée par `CandidateScore` et propagée dans `risk_decisions` et `portfolio_targets`.
+
+### 4.2.quater Concentration trackers (Plan v2 — Sprint 5)
+
+Deux nouveaux trackers side-aware dans `risk_management/concentration.py` :
+
+| Tracker | Rôle |
+|---|---|
+| `SymbolTradeTracker` | Limite le nombre d'entrées par symbole sur une fenêtre glissante (défaut : 5 trades / 180 jours). Les entrées long et short sont comptabilisées **séparément**. |
+| `ConsecutiveLossTracker` | Blackliste temporairement un symbole après N pertes consécutives sur le même side (défaut : 3). Uniquement les pertes **réalisées** (PnL ≤ 0). |
+
+Ces trackers sont utilisables à la fois par le backtest (`backtesting/simulator.py`) et le pipeline live (`risk_management/portfolio_builder.py`).
 
 ### 4.2.bis Politique Kelly conditionnelle par tranche
 
@@ -174,12 +199,17 @@ La décision opératoire S6 est désormais explicite :
 
 Objectif métier : éviter d'augmenter artificiellement la variance sur les petits comptes, tout en autorisant un sizing plus informatif sur les portefeuilles suffisamment capitalisés et diversifiables.
 
-### 4.3 Conviction score
+### 4.3 Conviction score (direction-aware, ML ternaire)
 
 Le score de conviction combine :
 
 - une composante quant (`score_weight`) ;
 - une composante ML (`prediction_weight`).
+
+En mode **ternaire** (`num_classes=3`, Plan ML v2), la composante ML est enrichie :
+- `predicted_side` ∈ {`long`, `flat`, `short`} — issu de `model_predictions` (colonne ajoutée par la migration 0038)
+- `proba_long`, `proba_flat`, `proba_short` — probabilités calibrées par classe
+- Le `conviction_score` est **directionnel** : un score long élevé favorise une entrée `buy`, un score short élevé favorise une entrée `sell`
 
 Par défaut, le builder marque `score_source = final_score_sentiment`, ce qui fait du module risk un consommateur direct de la fusion quant + sentiment si elle a déjà été calculée.
 

@@ -304,3 +304,28 @@ with engine.connect() as conn:
     print(dict(row))'
 ```
 
+
+
+---
+
+## Migrations recentes (Plan v2 + Plan ML v2)
+
+| Migration | Sprint | Description |
+|---|---|---|
+| `0037_*` | Plan v2 Sp5 | Ajout colonne `side` dans `protection_watch_items` |
+| `0038_*` | ML Sp3 | Ajout `predicted_side`, `proba_long`, `proba_flat`, `proba_short` dans `model_predictions` |
+| `0039_*` | ML Sp7 | Ajout `num_classes`, `val_f1_macro`, `test_f1_macro` dans `model_governance` ; ajout `f1_macro`, `f1_short`, `f1_flat`, `f1_long` dans `model_metrics` |
+
+### Tables ML (schema `alpha_trade`)
+
+| Table | Role |
+|---|---|
+| `model_predictions` | Predictions quotidiennes (symbol, date, run_id, probas, predicted_side) |
+| `model_governance` | Gouvernance champion (run_id, symbol, model_name, F1, AUC, eligibility) |
+| `model_metrics` | Metriques par split (loss, accuracy, precision, recall, F1 par classe) |
+| `model_metrics_full` | Metriques completes JSON |
+| `model_registry` | Registre symbol/architecture/version |
+| `model_training_run` | Metadonnees du run d'entrainement |
+| `ml_drift_runs` | Runs de detection de drift |
+| `weights_calibration_runs` | Calibration des poids conviction |
+| `weights_calibration_segment_drifts` | Derives par segment |

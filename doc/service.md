@@ -300,3 +300,12 @@ python -m pytest tests/test_phase1_http_retry.py tests/test_clientAlpaca.py test
 > Matrice détaillée table-par-table : voir [`doc/data_lineage_matrix.md`](data_lineage_matrix.md).
 
 <!-- END provider_table_matrix -->
+
+
+---
+
+## Note Plan v2 / Plan ML v2 (juin 2026)
+
+Le module `service/` n'a pas ete modifie pour le support short selling ou
+le mode ternaire ML. Les services broker (Alpaca), market data (EODHD),
+et news (Finnhub) restent inchanges.

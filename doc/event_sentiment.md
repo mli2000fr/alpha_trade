@@ -554,3 +554,16 @@ Ordre conseillé :
 python -m event_sentiment --news-provider eodhd --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T23:59:59Z
 python -m event_sentiment.signal_aggregator --trade-date 2026-04-17
 ```
+
+
+---
+
+## Note Plan ML v2 (juin 2026)
+
+Le pipeline sentiment est compatible avec le mode ternaire ML :
+- Les features sentiment peuvent etre incluses dans l'entrainement ternaire
+  (`--include-sentiment`)
+- Le `signal_aggregator` continue de produire des scores compatibles avec
+  les deux modes (binaire et ternaire)
+- Aucune modification du pipeline sentiment n'a ete necessaire pour le
+  support du mode ternaire

@@ -737,3 +737,18 @@ Couvre : parsing `;`, validation email, persistance JSON, défaut
 filtrage statuts, exclusion sous-runs, robustesse aux erreurs SMTP.
 
 
+
+
+---
+
+## Mise a jour ML ternaire (juin 2026)
+
+La page Pipeline supporte desormais le mode de cible **ternaire** (long/flat/short) :
+
+- **Mode de cible** : `ternary` est le defaut (remplace `swing_cash`)
+- **Seuils par defaut** : UP = +12% (aligne TP long), DOWN = -8% (aligne TP short)
+- **Modeles globaux** : actives par defaut (`--enable-global-model` coche)
+- **Features cross-sectionnelles** : activees par defaut (`--enable-cross-sectional` coche)
+- **Documentation complete** : voir `doc/ml.md` pour les 61 parametres ML
+
+Voir aussi `ihm/services/pipeline_runner.py` pour les valeurs `DEFAULT_ML_*`.

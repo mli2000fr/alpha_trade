@@ -682,3 +682,22 @@ Trois points d'entree IHM exposent la couche Market-Aware :
   reutilisable par tout outil tiers (audit, supervision).
 
 
+
+
+---
+
+## Short Selling (Plan v2 — juin 2026)
+
+Le systeme supporte desormais les positions **short** (vente a decouvert) en
+complement des positions long. Points cles :
+
+- **Score short** : calcule par `selector/short_score.py` (tendance, RSI, SMA50, SMA200)
+- **Mode ternaire ML** : le modele predit long / flat / short en une seule passe
+- **Protections direction-aware** : TP, SL et trailing stop adaptes automatiquement
+  au sens de la position (long ou short)
+- **Concentration side-aware** : limites de trades et blacklist comptabilisees
+  separement pour les longs et les shorts
+- **Capital preservation** : shorts automatiquement desactives en regime de
+  preservation du capital
+
+Voir `doc/calcul_tp_tl.md` pour les formules exactes de TP/SL directionnels.

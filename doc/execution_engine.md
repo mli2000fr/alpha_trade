@@ -219,9 +219,24 @@ Le pattern canonique (« synthetic bracket ») est :
 4. journaliser les requests, ordres broker et événements ;
 5. reconstruire positions, lots et réconciliation.
 
-> ℹ️ Alpaca ne supporte pas le `trailing_stop` comme leg native d'un bracket order. Le moteur utilise donc un **bracket synthétique** : l'entrée est soumise seule, puis TP + SL sont armés post-fill côté application. L'OCO est gérée applicativement (`oco_manager.py`).
+> Alpaca ne supporte pas le `trailing_stop` comme leg native d'un bracket order. Le moteur utilise donc un **bracket synthetique** : l'entrée est soumise seule, puis TP + SL sont armes post-fill cote application. L'OCO est geree applicativement (`oco_manager.py`).
 
-#### 4.3.bis Filet de sécurité TP/SL (Phase 7b — sprint S26)
+#### Direction-aware — Long vs Short (Plan v2 Sprint 3)
+
+Depuis le Sprint 3, tous les calculs de protection sont **direction-aware**. Le parametre `side` (`"buy"` = long, `"sell"` = short) est propage dans toutes les fonctions de construction d'intents :
+
+| Fonction | Long | Short |
+|---|---|---|
+| `compute_take_profit_price` | `entry * (1 + tp_pct)` au-dessus | `entry * (1 - tp_pct)` en-dessous |
+| `resolve_initial_stop_price` | stop < entry | stop > entry |
+| `resolve_trailing_activation_price` | activation > entry | activation < entry |
+| `build_take_profit_intent` | `exit_side = "sell"` | `exit_side = "buy"` (buy-to-cover) |
+| `build_initial_stop_intent` | `exit_side = "sell"` | `exit_side = "buy"` |
+| `build_trailing_stop_intent` | `exit_side = "sell"` | `exit_side = "buy"` |
+
+Le **force-close** (liquidations) detecte `pos.side` et utilise `buy-to-cover` pour fermer les shorts.
+
+#### 4.3.bis Filet de securite TP/SL (Phase 7b — sprint S26)
 
 **Problème historique** : en profil `overnight_cash_swing` (presets `paper`/`live`), l'entrée est soumise hors RTH. La phase de polling et `_submit_children` étaient sautées (`if not dry_run and market_open_for_poll:`). Résultat : si l'entrée se remplissait à l'ouverture suivante, **TP/SL n'étaient jamais armés**.
 

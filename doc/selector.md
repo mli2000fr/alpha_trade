@@ -53,6 +53,33 @@ $env:PASSWORD_DB = "pass"
 
 ---
 
+---
+
+## 2.bis Short Score & Regime Scoring (Plan v2 Sprint 5, ML Sprint 5-6)
+
+Deux modules complementaires ajoutes pour le support short selling :
+
+### `selector/short_score.py`
+
+Calcule un score short dedie independant du score long principal :
+
+| Composante | Poids | Description |
+|---|---|---|
+| Trend baissier | 30% | Force de la tendance baissiere recente |
+| RSI | 25% | Sur-evaluation (RSI eleve = bon candidat short) |
+| SMA50 | 25% | Prix sous la moyenne mobile 50 jours |
+| SMA200 | 20% | Prix sous la moyenne mobile 200 jours |
+
+Utilise par `risk_management/risk_bridge.py:_tag_short_candidates()` (Option B).
+Le score est compris entre 0 et 1 ; un seuil `min_score_threshold_short` (defaut 0.0)
+filtre les candidats shorts insuffisamment scores.
+
+### `selector/regime_scoring.py`
+
+Ajuste les scores en fonction du regime de marche detecte.
+En regime `capital_preservation`, les shorts sont automatiquement desactives.
+
+
 ## 3. Commandes utiles
 
 ### Lancement standard
