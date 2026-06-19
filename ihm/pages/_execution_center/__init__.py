@@ -122,6 +122,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
     DEFAULT_ML_TRAINING_START_DATE,
+    DEFAULT_ML_TRAINING_END_DATE,
     DEFAULT_ML_LOG_LEVEL,
     DEFAULT_ML_MAX_ACTION_RATE,
     DEFAULT_ML_MAX_EPOCHS,
@@ -3083,7 +3084,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 st.date_input(
                     "Date de fin du training ML",
                     value=_coerce_session_date(
-                        st.session_state.get("pipeline_ml_training_end_date", date.today().isoformat()),
+                        st.session_state.get("pipeline_ml_training_end_date", DEFAULT_ML_TRAINING_END_DATE),
                         default=date.today(),
                     ),
                     key="pipeline_ml_training_end_date",

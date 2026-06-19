@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -311,11 +312,17 @@ class SymbolDataModule(L.LightningDataModule):
         self.cross_sectional_diagnostics: dict[str, object] = {}
         self._pin_memory = torch.cuda.is_available()
         default_num_workers = min(os.cpu_count() or 0, 4)
-        self._force_single_process_dataloader = os.name == "nt" and self._pin_memory
+        # Python 3.14+ / Windows : le multiprocessing 'spawn' ne supporte pas
+        # les lambdas dans worker_init_fn → force single-process.
+        _py314_win = os.name == "nt" and sys.version_info >= (3, 14)
+        self._force_single_process_dataloader = (os.name == "nt" and self._pin_memory) or _py314_win
         self._num_workers = 0 if self._force_single_process_dataloader else default_num_workers
         if self._force_single_process_dataloader:
             LOGGER.info(
-                "windows+cuda detected -> forcing dataloader num_workers=0 persistent_workers=False to avoid teardown crashes"
+                "forcing dataloader num_workers=0 persistent_workers=False "
+                "(windows+cuda=%s py314=%s)",
+                self._pin_memory,
+                _py314_win,
             )
 
     def setup(self, stage: Optional[str] = None) -> None:

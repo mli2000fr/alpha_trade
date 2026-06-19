@@ -175,6 +175,7 @@ DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
 DEFAULT_ML_MODE = "rebuild-missing"
 DEFAULT_ML_TRAINING_START_DATE = "2020-01-01"
+DEFAULT_ML_TRAINING_END_DATE = "2025-12-31"
 DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT = True
 DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES: tuple[str, ...] = ()
 DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK: int | None = None
@@ -324,7 +325,7 @@ class PipelineLaunchOptions:
     ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
     ml_mode: MLMode = DEFAULT_ML_MODE
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
-    ml_training_end_date: str | None = None
+    ml_training_end_date: str = DEFAULT_ML_TRAINING_END_DATE
     ml_train_symbol_source: MLTrainSymbolSource = "candidates"
     ml_predict_symbol_source: MLTrainSymbolSource = "candidates"
     ml_predict_use_historical_range: bool = False

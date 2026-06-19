@@ -111,8 +111,19 @@ def compute_threshold_metrics(
     decision_threshold: float,
     n_buckets: int = 5,
 ) -> dict[str, Any]:
-    """Calcule les métriques business conditionnelles au seuil de décision."""
-    probs = np.asarray(probabilities, dtype=np.float64).reshape(-1)
+    """Calcule les métriques business conditionnelles au seuil de décision.
+
+    Pour les probabilités multi-classes (shape [N, C] avec C > 1), la colonne
+    correspondant à la classe "long" (indice 2 ou dernière colonne) est extraite
+    automatiquement.
+    """
+    probs_raw = np.asarray(probabilities, dtype=np.float64)
+    if probs_raw.ndim == 2 and probs_raw.shape[1] > 1:
+        # Multi-classes → extraire la colonne "long" (classe positive)
+        long_col = min(2, probs_raw.shape[1] - 1)
+        probs = probs_raw[:, long_col].reshape(-1)
+    else:
+        probs = probs_raw.reshape(-1)
     y = np.asarray(labels, dtype=np.int64).reshape(-1)
     future_ret = np.asarray(future_returns, dtype=np.float64).reshape(-1) if future_returns is not None else None
 

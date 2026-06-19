@@ -649,7 +649,8 @@ def _evaluate_best_checkpoint(
         "selected_threshold": selected_decision_threshold,
         "candidates": [],
     }
-    if cfg.threshold_optimization.enabled and len(val_outputs["labels"]) > 0:
+    num_classes = int(val_outputs.get("num_classes", 2))
+    if cfg.threshold_optimization.enabled and len(val_outputs["labels"]) > 0 and num_classes == 2:
         calibrated_val_proba = (
             calibrator.predict_proba(val_outputs["margins"])
             if calibrator is not None and calibrator.fitted
