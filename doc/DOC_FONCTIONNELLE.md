@@ -711,3 +711,48 @@ complement des positions long. Points cles :
   preservation du capital
 
 Voir `doc/calcul_tp_tl.md` pour les formules exactes de TP/SL directionnels.
+
+### Valeurs de `selector_signal_mode` (colonne `stock_scores` / `stock_scores_history`)
+
+La colonne `selector_signal_mode` (`VARCHAR(32)`, migration `0029`) identifie le
+mode de signal ayant conduit a la selection d'un candidat. Les valeurs possibles
+sont enumerees ci-dessous, par ordre de priorite dans le pipeline selector :
+
+| Valeur | Direction | Origine | Signification |
+|---|---|---|---|
+| `NULL` | — | Non-candidat | Symbole non selectionne par le scanner |
+| `"factor_only"` | **Long** | `selector/ranking.py` (defaut) | Score facteurs purs, aucun signal auxiliaire (sentiment/macro) |
+| `"multi_factor"` | **Long** | `selector/ranking.py` | Scoring multi-factoriel standard (chemin sans neutralisation) |
+| `"sector_neutralized"` | **Long** | `selector/ranking.py` | Scoring avec neutralisation sectorielle (chemin nominal) |
+| `"regime_normal"` | **Long** | `selector/regime_scoring.py` | Rotation regime : normal (comportement nominal) |
+| `"regime_capital_preservation"` | **Long** | `selector/regime_scoring.py` | Rotation regime : preservation du capital (shorts desactives) |
+| `"short"` | **Short** | `selector/ranking.py` → `rank_and_select_short()` | Candidat short (top N par `short_score`) |
+| `"regime_close_only"` | ❌ Bloqué | `selector/regime_scoring.py` | Rotation regime : plus d'entrees, sorties uniquement (live) |
+| `"regime_cash_only"` | ❌ Bloqué | `selector/regime_scoring.py` | Rotation regime : plus d'entrees du tout (backtest / risk) |
+
+**Ordre de priorite dans le pipeline :**
+
+1. `_apply_selection_explainability` → `"factor_only"` (defaut) ou `"multi_factor"` / `"sector_neutralized"`
+2. `rank_and_select_short` → `"short"` (pour les candidats short, exclut les longs deja selectionnes)
+3. `regime_scoring` → `"regime_{mode}"` (ecrase si le score final a ete modifie par la rotation regime)
+
+**Role de chaque mode :**
+
+| Mode | Poids appliques | Filtres | Comportement |
+|---|---|---|---|
+| `"factor_only"` | Trend/VCP 50% + Total 30% + RSI 20% | Standards | Fallback : aucun signal auxiliaire (sentiment/macro) disponible |
+| `"multi_factor"` | Trend/VCP 50% + Total 30% + RSI 20% | Standards | Scoring standard sans neutralisation sectorielle |
+| `"sector_neutralized"` | Trend/VCP 50% + Total 30% + RSI 20% | Standards | **Chemin nominal** : z-score intra-secteur elimine le biais sectoriel |
+| `"regime_normal"` | Identique standard (50/30/20) | Standards | Regime normal actif, pas de rotation defensive |
+| `"regime_capital_preservation"` | Trend/VCP 25% + Total 15% + RSI 10% + Beta 22% + Size 13% + LowVol 15% | Renforces : beta ≤ 1.2, spread ≤ 15 bps, market cap ≥ 2 Md$, ATR ≤ 6% | Rotation 50% defensif : preserve le capital, reduit la volatilite, shorts desactives |
+| `"short"` | Short score (trend 30%, RSI 25%, SMA50 25%, SMA200 20%) | Standards | Selection baissiere : top N par short_score, exclusions des longs deja retenus |
+| `"regime_close_only"` | — | — | Marche stresse : **plus d'entrees** (ni long ni short), sorties et gestion d'urgence actives |
+| `"regime_cash_only"` | — | — | Crise : **liquidations uniquement**, toutes les entrees sont bloquees |
+
+**Consommation aval :**
+
+- `risk_management/portfolio_builder.py` filtre les candidats par `selector_signal_mode` pour
+  distinguer longs (`"sector_neutralized"`, `"multi_factor"`) et shorts (`"short"`)
+- `execution_engine/order_intents.py` propage le mode dans les intentions d'ordre
+- Les regimes `"close_only"` et `"cash_only"` bloquent les entrees (long et short)
+- Les shorts sont automatiquement desactives en regime `"capital_preservation"`
