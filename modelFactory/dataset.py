@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, Optional
 
 import numpy as np
@@ -312,17 +313,20 @@ class SymbolDataModule(L.LightningDataModule):
         self.cross_sectional_diagnostics: dict[str, object] = {}
         self._pin_memory = torch.cuda.is_available()
         default_num_workers = min(os.cpu_count() or 0, 4)
-        # Python 3.14+ / Windows : le multiprocessing 'spawn' ne supporte pas
-        # les lambdas dans worker_init_fn → force single-process.
-        _py314_win = os.name == "nt" and sys.version_info >= (3, 14)
-        self._force_single_process_dataloader = (os.name == "nt" and self._pin_memory) or _py314_win
+        # Python 3.14+ / Windows : lambdas ne sont plus picklables par le
+        # multiprocessing 'spawn'. On remplace par functools.partial (picklable).
+        # On garde le forced-single-process uniquement si CUDA n'est pas dispo
+        # (le path Windows+CUDA utilise persistent_workers=True pour éviter les
+        # crashes de teardown).
+        _py314_win_no_cuda = os.name == "nt" and sys.version_info >= (3, 14) and not self._pin_memory
+        self._force_single_process_dataloader = (os.name == "nt" and self._pin_memory) or _py314_win_no_cuda
         self._num_workers = 0 if self._force_single_process_dataloader else default_num_workers
         if self._force_single_process_dataloader:
             LOGGER.info(
                 "forcing dataloader num_workers=0 persistent_workers=False "
-                "(windows+cuda=%s py314=%s)",
+                "(windows+cuda=%s py314_no_cuda=%s)",
                 self._pin_memory,
-                _py314_win,
+                _py314_win_no_cuda,
             )
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -369,7 +373,9 @@ class SymbolDataModule(L.LightningDataModule):
         generator_seed = derive_seed(self.reproducibility_seed, "symbol_datamodule", "train" if shuffle else "eval")
         worker_init_fn: Callable[[int], None] | None = None
         if nw > 0:
-            worker_init_fn = lambda worker_id: seed_worker(generator_seed, worker_id)
+            # functools.partial est picklable (contrairement à lambda) — requis
+            # par Python 3.14+ qui utilise 'spawn' pour le multiprocessing.
+            worker_init_fn = partial(seed_worker, generator_seed)
         return DataLoader(
             dataset,
             batch_size=self.model_cfg.batch_size,
