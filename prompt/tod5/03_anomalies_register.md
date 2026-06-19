@@ -17,32 +17,32 @@
 
 ## Anomalies P0 (Bloquantes)
 
-### A-CAP-001 — Presets capital : `execution_swing_only=false` sur tous les presets
-- **Sévérité** : P0
+### A-CAP-001 — ~~Presets capital : `execution_swing_only=false` sur tous les presets~~ ✅ RÉSOLU (Changement réglementaire FINRA 2026-06-04)
+- **Sévérité** : ~~P0~~ → **RÉSOLU**
 - **Domaine** : Configuration / Presets capital
-- **Description** : Tous les presets de capital (micro-compte à 100k$+) utilisent `execution_swing_only: false`. Pour les comptes cash (≤25k$), le swing-only devrait être obligatoire car les comptes cash ne peuvent pas day-trader efficacement. Pour les comptes margin (≥25k$), le swing-only est la doctrine affichée du projet.
-- **Preuve** : `config/capital_presets.yaml` — tous les presets ont `execution_swing_only: false` ; `README.md:1-10` définit le projet comme « swing trading US » ; `doc/DOC_FONCTIONNELLE.md` §1.2 : « stratégie swing trading ».
-- **Impact métier** : Risque de day-trading involontaire sur compte cash → settlement violations → compte gelé par le broker.
-- **Impact technique** : Incohérence entre la doctrine affichée (swing) et la configuration effective.
-- **Probabilité** : Élevée si l'opérateur ne vérifie pas ce flag.
-- **Niveau de confiance** : Élevé (95%).
-- **Recommandation** : Mettre `execution_swing_only: true` pour les presets ≤25k$ (cash). Pour les presets ≥25k$ (margin), activer `swing_only=true` par défaut avec possibilité de désactiver explicitement.
-- **Test associé** : Voir bloc test T-CAP-001 ci-dessous.
+- **Description** : ~~Tous les presets de capital (micro-compte à 100k$+) utilisent `execution_swing_only: false`. Pour les comptes cash (≤25k$), le swing-only devrait être obligatoire car les comptes cash ne peuvent pas day-trader efficacement.~~
+- **Résolution** : La **règle PDT (Pattern Day Trader)** a été **officiellement supprimée par la FINRA le 4 juin 2026**. Alpaca a mis à jour sa plateforme. Il n'y a plus de limite de 3 day trades par période de 5 jours, ni d'exigence de capital minimum de 25 000 $. L'achat et la vente d'un même titre dans la même journée sont désormais autorisés sans restriction, quel que soit le montant du compte. **`execution_swing_only=false` est donc le bon paramétrage pour tous les presets.**
+- **Preuve** : FINRA Regulatory Notice 2026-06-04 ; Alpaca Markets Platform Update June 2026.
+- **Impact métier** : N/A — l'anomalie est résolue par le changement réglementaire.
+- **Impact technique** : Les presets sont **déjà corrects**. C'est l'IHM qui doit être mise à jour (son défaut `execution_swing_only=True` est désormais trop restrictif).
+- **Probabilité** : N/A.
+- **Niveau de confiance** : Élevé (100%).
+- **Recommandation** : ~~Mettre `execution_swing_only: true` pour les presets ≤25k$~~ → **Ne rien changer aux presets**. Mettre à jour l'IHM pour que le défaut soit `execution_swing_only=false` (aligné sur la nouvelle réalité réglementaire).
+- **Test associé** : ~~Voir bloc test T-CAP-001 ci-dessous.~~ → Test inversé : vérifier que l'IHM a bien `swing_only=false` par défaut.
 
-**Bloc test T-CAP-001** :
-- **Objectif** : Vérifier que tous les presets cash imposent `execution_swing_only=true`
-- **Type** : Test de configuration (config)
-- **Priorité** : P0
-- **Module(s)** : `common/capital_presets.py`, `config/capital_presets.yaml`
-- **Fichier probable** : `tests/test_capital_presets_consistency.py` (étendre)
+**Bloc test T-CAP-001 (révisé)** :
+- **Objectif** : Vérifier que le défaut IHM pour `execution_swing_only` est `false` (post-PDT)
+- **Type** : Test IHM (intégration)
+- **Priorité** : P1
+- **Module(s)** : `ihm/services/pipeline_runner.py`
+- **Fichier probable** : `tests/test_ihm_cli_contract.py` (étendre)
 - **Scénario** :
-  - Given : le fichier `config/capital_presets.yaml` chargé
-  - When : on itère sur tous les presets
-  - Then : pour chaque preset avec `execution_account_type=cash`, `execution_swing_only` doit être `true`
-- **Fixtures** : `CAPITAL_PRESETS_CONFIG_PATH`
-- **Oracle** : Assertion booléenne sur chaque preset cash
-- **Régression empêchée** : Introduction d'un preset cash sans swing_only
-- **Si le test existe partiellement** : `test_capital_presets_consistency.py` existe, ajouter ce check
+  - Given : `PipelineLaunchOptions()` instanciée avec les défauts
+  - When : on lit `execution_swing_only`
+  - Then : la valeur par défaut doit être `false` (conforme à la réglementation post-PDT)
+- **Fixtures** : `PipelineLaunchOptions()`
+- **Oracle** : `execution_swing_only == false`
+- **Régression empêchée** : Retour à un défaut `true` obsolète
 
 ---
 
@@ -105,31 +105,31 @@
 
 ## Anomalies P1 (Majeures)
 
-### A-IHM-001 — Défauts IHM incohérents avec les presets capital
+### A-IHM-001 — Défauts IHM incohérents avec les presets capital (post-PDT)
 - **Sévérité** : P1
 - **Domaine** : IHM / Configuration
-- **Description** : L'IHM (`pipeline_runner.py`) définit `execution_account_type='cash'` et `execution_swing_only=True` comme défauts de `PipelineLaunchOptions`, mais les presets capital pour les tranches ≥25k$ utilisent `margin` et `swing_only=false`. L'opérateur qui sélectionne un preset ≥25k$ dans l'IHM peut se retrouver avec des paramètres incohérents.
-- **Preuve** : `ihm/services/pipeline_runner.py` — `execution_account_type: Literal["margin", "cash"] = "cash"` et `execution_swing_only: bool = True` vs `config/capital_presets.yaml` — presets ≥25k$ avec `execution_account_type: margin` et `execution_swing_only: false`.
-- **Impact métier** : Mauvais paramétrage d'exécution → comportement inattendu.
-- **Impact technique** : Incohérence IHM↔presets non détectée automatiquement.
-- **Probabilité** : Moyenne.
-- **Niveau de confiance** : Élevé (90%).
-- **Recommandation** : Aligner les défauts IHM sur le preset de capital détecté. Ajouter un bandeau d'avertissement dans l'IHM quand les paramètres divergent du preset.
+- **Description** : L'IHM (`pipeline_runner.py`) définit `execution_swing_only=True` comme défaut de `PipelineLaunchOptions`, mais les presets capital utilisent `swing_only=false` — ce qui est le **bon choix** depuis la suppression de la règle PDT par la FINRA (4 juin 2026). Le défaut IHM `True` est désormais **trop restrictif** et empêche le day trading pourtant autorisé. L'opérateur qui ne modifie pas ce flag dans l'IHM sera bridé inutilement.
+- **Preuve** : `ihm/services/pipeline_runner.py` — `execution_swing_only: bool = True` vs `config/capital_presets.yaml` — tous les presets avec `execution_swing_only: false`.
+- **Impact métier** : Restriction injustifiée du day trading → opportunités manquées.
+- **Impact technique** : Incohérence IHM↔presets non détectée automatiquement ; l'IHM est en retard sur la réalité réglementaire.
+- **Probabilité** : Élevée (le défaut IHM sera utilisé par tout nouvel opérateur).
+- **Niveau de confiance** : Élevé (95%).
+- **Recommandation** : Changer le défaut IHM de `execution_swing_only=True` à `execution_swing_only=False`. Ajouter un bandeau d'avertissement dans l'IHM quand les paramètres divergent du preset.
 - **Test associé** : Voir bloc test T-IHM-001.
 
-**Bloc test T-IHM-001** :
-- **Objectif** : Vérifier que les défauts IHM sont cohérents avec le preset par défaut
+**Bloc test T-IHM-001 (révisé)** :
+- **Objectif** : Vérifier que le défaut IHM `execution_swing_only` est `false` (post-PDT)
 - **Type** : Test d'intégration IHM
 - **Priorité** : P1
 - **Module(s)** : `ihm/services/pipeline_runner.py`, `common/capital_presets.py`
 - **Fichier probable** : `tests/test_ihm_cli_contract.py` (étendre)
 - **Scénario** :
-  - Given : le preset par défaut (`capital_0_2000_eur`) résolu
-  - When : on instancie `PipelineLaunchOptions()` avec les défauts
-  - Then : `execution_account_type` et `execution_swing_only` correspondent aux valeurs du preset, ou un avertissement est émis
-- **Fixtures** : Mock du preset loader
-- **Oracle** : Les valeurs par défaut IHM sont soit identiques au preset, soit explicitement overridées avec avertissement
-- **Régression empêchée** : Divergence silencieuse IHM/presets
+  - Given : `PipelineLaunchOptions()` instanciée avec les défauts
+  - When : on lit `execution_swing_only`
+  - Then : la valeur doit être `false` (conforme à la réglementation post-PDT FINRA 2026-06-04)
+- **Fixtures** : `PipelineLaunchOptions()`
+- **Oracle** : `execution_swing_only == false`
+- **Régression empêchée** : Restauration d'un défaut `true` obsolète
 
 ---
 

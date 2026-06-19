@@ -29,8 +29,8 @@ L'application est **fonctionnellement très riche** et témoigne d'un **investis
 ## 3. Faiblesses critiques
 
 1. **Documentation partiellement obsolète** : `DOC_FONCTIONNELLE.md` et `DOC_TECHNIQUE.md` mentionnent des versions de sprints (S1-S7) mais ne reflètent pas toujours les plans v2 (short selling, ML ternaire) en cours d'implémentation. Plusieurs documents de `doc/` contiennent des références croisées qui peuvent être périmées.
-2. **Presets de capital inconsistants entre tranches** : le preset micro-compte (0-2000€) utilise `execution_swing_only: false` alors que les petits comptes cash devraient être swing-only. Les paramètres de drawdown breaker (`degraded_entry_allocation_pct=0.025`, `ramp_up_max_pct=0.8`) sont identiques pour TOUTES les tranches, ce qui n'a pas de sens métier.
-3. **Défaut IHM vs preset divergence** : l'IHM utilise `execution_account_type='cash'` et `execution_swing_only=True` comme défauts, mais les presets capital pour les tranches ≥25k$ utilisent `margin` et `swing_only=false`. L'opérateur peut facilement se tromper.
+2. **Presets de capital inconsistants entre tranches** : les paramètres de drawdown breaker (`degraded_entry_allocation_pct=0.025`, `ramp_up_max_pct=0.8`) sont identiques pour TOUTES les tranches, ce qui n'a pas de sens métier. En revanche, `execution_swing_only=false` sur tous les presets est désormais **correct** depuis la suppression de la règle PDT par la FINRA le 4 juin 2026 : le day trading (achat/vente intraday) est autorisé sans restriction, y compris sur les petits comptes.
+3. **Défaut IHM vs preset divergence** : l'IHM utilise `execution_swing_only=True` comme défaut, mais les presets capital utilisent `swing_only=false` — ce qui est désormais le bon choix post-PDT. C'est l'IHM qui doit être mise à jour pour refléter la nouvelle réalité réglementaire (swing_only=false par défaut). L'opérateur peut se tromper s'il se fie aux défauts IHM sans vérifier.
 4. **Complexité ML élevée** : le plan ML v2 ternaire (long/flat/short) et le plan v2 short selling s'ajoutent à une gouvernance ML déjà complexe (LSTM + LightGBM + CatBoost + global model + cross-sectional). Le risque d'overfitting et de fragilité opérationnelle est réel.
 5. **Pas de sandbox de pré-production** : pas de mode "paper strict" simulant exactement les contraintes live avant de passer en live.
 
@@ -41,7 +41,7 @@ L'application est **fonctionnellement très riche** et témoigne d'un **investis
 | Risque | Sévérité | Probabilité |
 |---|---|---|
 | Univers vide sur micro-comptes avec les filtres stricts actuels | **P0** | Élevée |
-| Incohérence IHM/presets pouvant causer une mauvaise config d'exécution | **P0** | Moyenne |
+| IHM par défaut `swing_only=True` en contradiction avec les presets (post-PDT, swing_only=false est correct) | **P1** | Moyenne |
 | Double-ajustement corporate actions si provider switch mal maîtrisé | **P1** | Faible |
 | Backtest trompeur dû à une fidélité PIT insuffisante sur les données exotiques | **P1** | Moyenne |
 | Fragilité du pipeline si un module ML échoue silencieusement | **P1** | Faible |
@@ -51,7 +51,7 @@ L'application est **fonctionnellement très riche** et témoigne d'un **investis
 
 ## 5. Recommandations immédiates (quick wins)
 
-1. **Harmoniser `execution_swing_only` dans tous les presets** : tous les comptes ≤25k$ en cash devraient être `swing_only=true`.
+1. **Mettre à jour le défaut `execution_swing_only` dans l'IHM** : depuis la suppression de la règle PDT par la FINRA (4 juin 2026), `swing_only=false` est le bon choix pour tous les comptes. L'IHM doit refléter ce nouveau défaut.
 2. **Réviser les paramètres de drawdown breaker par tranche** : un micro-compte ne devrait pas avoir le même `ramp_up_max_pct=0.8` qu'un compte 100k$+.
 3. **Mettre à jour `DOC_FONCTIONNELLE.md` et `DOC_TECHNIQUE.md`** pour refléter les plans v2 en cours.
 4. **Ajouter un test E2E IHM → backend** qui vérifie que tous les paramètres exposés dans l'IHM sont bien transmis et acceptés par les modules backend.

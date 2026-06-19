@@ -11,7 +11,7 @@
 | Aspect | Valeur | Évaluation |
 |---|---|---|
 | `execution_account_type` | `cash` | ✅ Adapté |
-| `execution_swing_only` | `false` | ❌ **Incohérent** — devrait être `true` |
+| `execution_swing_only` | `false` | ✅ **Cohérent** — post-PDT FINRA (4 juin 2026), day trading libre |
 | `risk_max_positions` | 3 | ✅ Réaliste |
 | `risk_max_position_weight` | 0.35 | ⚠️ Élevé mais assumé pour micro-compte |
 | `risk_min_position_notional` | 500$ | ✅ OK |
@@ -23,7 +23,7 @@
 | `risk_correlation_threshold` | 0.92 | ⚠️ Très permissif |
 | `risk_enable_kelly` | `false` | ✅ Adapté |
 
-**Verdict** : **Fragile** — Le preset est conçu pour ne pas vider l'univers mais les relâchements sont tellement importants que la qualité de sélection est compromise. Le `swing_only=false` est une erreur. Le `max_volatility_ratio=1.0` laisse passer tous les titres.
+**Verdict** : **Fragile** — Le preset est conçu pour ne pas vider l'univers mais les relâchements sont tellement importants que la qualité de sélection est compromise. Le `max_volatility_ratio=1.0` laisse passer tous les titres. Note : `swing_only=false` est correct (post-PDT FINRA 2026-06-04).
 
 ---
 
@@ -32,7 +32,7 @@
 | Aspect | Valeur | Évaluation |
 |---|---|---|
 | `execution_account_type` | `cash` | ✅ Adapté |
-| `execution_swing_only` | `false` | ❌ **Incohérent** |
+| `execution_swing_only` | `false` | ✅ **Cohérent** — post-PDT FINRA (4 juin 2026) |
 | `risk_max_positions` | 6 | ✅ Réaliste |
 | `risk_max_position_weight` | 0.20 | ✅ OK |
 | `risk_min_position_notional` | 150$ | ❌ **Inférieur au min Alpaca (155$)** |
@@ -42,7 +42,7 @@
 | `risk_correlation_threshold` | 0.90 | ⚠️ Permissif |
 | `risk_enable_kelly` | `false` | ✅ Adapté |
 
-**Verdict** : **Fragile** — Le `min_position_notional` à 150$ est inapplicable. Le `swing_only=false` expose à des violations de settlement.
+**Verdict** : **Fragile** — Le `min_position_notional` à 150$ est inapplicable (en dessous du min Alpaca). Note : `swing_only=false` est correct (post-PDT FINRA).
 
 ---
 
@@ -51,7 +51,7 @@
 | Aspect | Valeur | Évaluation |
 |---|---|---|
 | `execution_account_type` | `cash` | ✅ Adapté |
-| `execution_swing_only` | `false` | ❌ **Incohérent** |
+| `execution_swing_only` | `false` | ✅ **Cohérent** — post-PDT FINRA (4 juin 2026) |
 | `risk_max_positions` | 8 | ✅ Réaliste |
 | `risk_max_position_weight` | 0.18 | ✅ OK |
 | `risk_min_position_notional` | 200$ | ⚠️ OK mais limite basse |
@@ -60,7 +60,7 @@
 | `risk_correlation_threshold` | 0.88 | ⚠️ Permissif |
 | `risk_enable_kelly` | `false` | ✅ Adapté |
 
-**Verdict** : **Cohérent mais perfectible** — Les filtres se resserrent progressivement. Le `swing_only=false` reste le point noir.
+**Verdict** : **Cohérent mais perfectible** — Les filtres se resserrent progressivement. `swing_only=false` est correct (post-PDT FINRA).
 
 ---
 
@@ -69,7 +69,7 @@
 | Aspect | Valeur | Évaluation |
 |---|---|---|
 | `execution_account_type` | `cash` | ✅ Adapté |
-| `execution_swing_only` | `false` | ❌ **Incohérent** |
+| `execution_swing_only` | `false` | ✅ **Cohérent** — post-PDT FINRA (4 juin 2026) |
 | `risk_max_positions` | 10 | ✅ Bon |
 | `risk_max_position_weight` | 0.15 | ✅ Bon |
 | `risk_min_position_notional` | 300$ | ✅ OK |
@@ -80,7 +80,7 @@
 | `risk_enable_kelly` | `false` | ✅ Adapté |
 | `risk_score_weight` | 0.4 | ⚠️ Bascule à 60% ML — non justifié |
 
-**Verdict** : **Cohérent mais perfectible** — Proche du profil strict canonique. Le passage à 60% ML à ce niveau de capital est discutable.
+**Verdict** : **Cohérent mais perfectible** — Proche du profil strict canonique. Le passage à 60% ML à ce niveau de capital est discutable. `swing_only=false` est correct (post-PDT FINRA).
 
 ---
 
@@ -89,14 +89,14 @@
 | Aspect | Valeur | Évaluation |
 |---|---|---|
 | `execution_account_type` | `margin` | ⚠️ Transition brutale |
-| `execution_swing_only` | `false` | ⚠️ Pourquoi désactiver ? |
+| `execution_swing_only` | `false` | ✅ Post-PDT FINRA : day trading autorisé |
 | `risk_max_positions` | 14 | ✅ Bon |
 | `risk_max_position_weight` | 0.12 | ✅ Bon |
 | `risk_enable_kelly` | `true` | ✅ Cohérent avec la doctrine (≥25k$) |
 | `risk_score_weight` | 0.4 (60% ML) | ⚠️ Poids ML dominant |
 | `selector_max_spread_bps` | 45 | ✅ Bon |
 
-**Verdict** : **Cohérent mais perfectible** — Le passage à `margin` est justifié par la doctrine PDT mais le `swing_only=false` est inexpliqué. Les paramètres de drawdown breaker sont toujours identiques aux autres tranches.
+**Verdict** : **Cohérent mais perfectible** — Le passage à `margin` était historiquement lié à la PDT ; ce seuil peut être révisé. `swing_only=false` est correct (post-PDT FINRA). Les paramètres de drawdown breaker sont toujours identiques aux autres tranches.
 
 ---
 
@@ -105,7 +105,7 @@
 | Aspect | Valeur | Évaluation |
 |---|---|---|
 | `execution_account_type` | `margin` | ✅ Adapté |
-| `execution_swing_only` | `false` | ⚠️ Inexpliqué |
+| `execution_swing_only` | `false` | ✅ Post-PDT FINRA : day trading autorisé |
 | `risk_max_positions` | 17 | ✅ Bon |
 | `risk_max_drawdown_pct` | 0.19 | ⚠️ Plus permissif que les petites tranches (0.15) |
 | `risk_enable_kelly` | `true` | ✅ OK |
@@ -121,7 +121,7 @@
 | Aspect | Valeur | Évaluation |
 |---|---|---|
 | `execution_account_type` | `margin` | ✅ Adapté |
-| `execution_swing_only` | `false` | ⚠️ Inexpliqué |
+| `execution_swing_only` | `false` | ✅ Post-PDT FINRA : day trading autorisé |
 | `risk_max_positions` | 20 | ✅ Bon |
 | `risk_max_drawdown_pct` | 0.20 | ⚠️ Le plus élevé de tous les presets |
 | `risk_per_trade_pct` | 0.8% | ✅ Prudent |
@@ -147,12 +147,14 @@
 - Resserrement progressif des filtres selector
 
 ### Points d'incohérence ❌
-1. **`execution_swing_only=false` partout** : Aucun preset n'active le swing-only, en contradiction avec la doctrine swing du projet
-2. **Paramètres de drawdown breaker identiques** : `degraded_entry_allocation_pct=0.025`, `ramp_up_max_pct=0.8` pour toutes les tranches
-3. **`max_drawdown_pct` croissant avec le capital** : 0.15 (micro) → 0.20 (100k$+), ce qui est contre-intuitif
-4. **Transition cash→margin brutale à 25k$** : Pas de période de transition ou de warning
-5. **Premier preset en EUR, les autres en USD** : Ambiguïté de devise
-6. **`risk_min_position_notional` décroissant puis croissant** : 500 → 150 → 200 → 300 → 400 → 500 → 750 — le preset 2k-5k$ a la valeur la plus basse
+1. **Paramètres de drawdown breaker identiques** : `degraded_entry_allocation_pct=0.025`, `ramp_up_max_pct=0.8` pour toutes les tranches
+2. **`max_drawdown_pct` croissant avec le capital** : 0.15 (micro) → 0.20 (100k$+), ce qui est contre-intuitif
+3. **Transition cash→margin brutale à 25k$** : Ce seuil était lié à la PDT (désormais supprimée), il pourrait être révisé ou supprimé
+4. **Premier preset en EUR, les autres en USD** : Ambiguïté de devise
+5. **`risk_min_position_notional` décroissant puis croissant** : 500 → 150 → 200 → 300 → 400 → 500 → 750 — le preset 2k-5k$ a la valeur la plus basse
+
+### Points désormais cohérents ✅ (Post-PDT FINRA)
+1. **`execution_swing_only=false` partout** : ✅ Correct — la règle PDT a été supprimée le 4 juin 2026, le day trading (achat/vente intraday) est libre pour tous les comptes
 
 ---
 
@@ -161,8 +163,8 @@
 | Contrainte | Statut |
 |---|---|
 | Min notionnel Alpaca (~155$) | ❌ Preset 2k-5k$ à 150$ — cf. A-CAP-003 |
-| PDT rule (25k$ min pour day trading) | ✅ Transition margin à 25k$ |
-| Swing-only pour comptes cash | ❌ Non activé — cf. A-CAP-001 |
+| PDT rule (25k$ min pour day trading) | ✅ Règle supprimée par la FINRA le 4 juin 2026 — n'est plus une contrainte |
+| Swing-only pour comptes cash | ✅ Non activé — correct, le day trading est désormais libre (post-PDT FINRA) |
 | Liquidité suffisante pour la taille de position | ⚠️ Pas de vérification croisée taille/volume |
 | Spreads compatibles avec les tailles | ⚠️ Spreads relâchés sur petits comptes |
 
@@ -191,10 +193,11 @@ Tous les écarts sont documentés dans les `strict_profile_justifications` du YA
 
 ## 5. Recommandations globales
 
-1. **Activer `execution_swing_only=true` sur tous les presets** (ou a minima sur les comptes cash)
-2. **Différencier les paramètres de drawdown breaker** par tranche de capital
-3. **Remonter `risk_min_position_notional` à ≥155$** pour le preset 2k-5k$
-4. **Uniformiser la devise** de référence (USD)
-5. **Documenter le rationnel du seuil cash→margin** à 25k$
-6. **Réviser `max_drawdown_pct`** pour qu'il soit dégressif avec le capital (un grand compte devrait être plus strict, pas moins)
-7. **Ajouter un test automatisé** de cohérence inter-presets dans la CI
+1. ~~**Activer `execution_swing_only=true`**~~ → **Ne rien changer** : `swing_only=false` est correct depuis la suppression de la PDT (FINRA 2026-06-04)
+2. **Mettre à jour l'IHM** pour que le défaut `execution_swing_only` soit `false` (aligné sur les presets et la réglementation)
+3. **Différencier les paramètres de drawdown breaker** par tranche de capital
+4. **Remonter `risk_min_position_notional` à ≥155$** pour le preset 2k-5k$
+5. **Uniformiser la devise** de référence (USD)
+6. **Revoir le seuil cash→margin** à 25k$ : ce seuil était lié à la PDT, désormais obsolète. Évaluer si la distinction cash/margin reste pertinente.
+7. **Réviser `max_drawdown_pct`** pour qu'il soit dégressif avec le capital (un grand compte devrait être plus strict, pas moins)
+8. **Ajouter un test automatisé** de cohérence inter-presets dans la CI

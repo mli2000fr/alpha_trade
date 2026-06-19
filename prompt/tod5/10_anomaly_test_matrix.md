@@ -8,10 +8,10 @@
 
 | ID Anomalie | Sévérité | Correctif | Test(s) associé(s) | Sprint |
 |---|---|---|---|---|
-| A-CAP-001 | P0 | Activer swing_only sur presets cash | T-CAP-001 (config) | S8 |
+| A-CAP-001 | ~~P0~~ → **RÉSOLU** | ~~Activer swing_only~~ → Résolu par FINRA 2026-06-04 | ~~T-CAP-001~~ → T-IHM-001 (IHM) | ~~S8~~ → S8-bis |
 | A-CAP-002 | P0 | Différencier drawdown breaker par tranche | T-CAP-002 (config) | S8 |
 | A-CAP-003 | P0 | Remonter min_notional ≥ 155$ | T-CAP-003 (config) | S8 |
-| A-IHM-001 | P1 | Aligner défauts IHM sur preset | T-IHM-001 (intégration IHM) | S9 |
+| A-IHM-001 | P1 | Changer défaut IHM `swing_only` → `False` | T-IHM-001 (intégration IHM) | S8-bis |
 | A-IHM-002 | P1 | Validation croisée IHM/preset | T-IHM-002 (intégration IHM) | S9 |
 | A-DOC-001 | P1 | Nettoyer valeurs obsolètes doc | T-DOC-001 (non-régression doc) | S10 |
 | A-ML-001 | P1 | Mode Expert ML dans l'IHM | T-ML-001 (E2E IHM) | S12 |
@@ -29,14 +29,14 @@
 ### Tests de configuration
 | ID Test | Fichier probable | Sprint |
 |---|---|---|
-| T-CAP-001 : swing_only sur presets cash | `tests/test_capital_presets_consistency.py` | S8 |
+| T-CAP-001 : ~~swing_only sur presets cash~~ → **RÉSOLU** (FINRA 2026-06-04) | — | — |
 | T-CAP-002 : drawdown breaker croissant | `tests/test_capital_presets_consistency.py` | S8 |
 | T-CAP-003 : min_notional ≥ enforce_min | `tests/test_capital_presets_consistency.py` | S8 |
 
 ### Tests d'intégration IHM / CLI
 | ID Test | Fichier probable | Sprint |
 |---|---|---|
-| T-IHM-001 : défauts IHM cohérents avec preset | `tests/test_ihm_cli_contract.py` | S9 |
+| T-IHM-001 : défaut swing_only=False (post-PDT) | `tests/test_ihm_cli_contract.py` | S8-bis |
 | T-IHM-002 : validation rejette combinaisons incohérentes | `tests/test_ihm_pipeline_runner.py` | S9 |
 | T-EXE-001 : équivalence run_execution / __main__ | `tests/test_execution_cli_cancel_all.py` | S10 |
 
@@ -92,8 +92,9 @@
 ## Priorisation des tests par sprint
 
 ```
-S8  : ████████ (3 tests config)
-S9  : ████████████ (3 tests IHM)
+S8     : ██████ (2 tests config — T-CAP-002, T-CAP-003)
+S8-bis : ████████████ (3 tests IHM — post-PDT)
+S9     : ██████ (finalisation IHM)
 S10 : ████████ (3 tests doc/CLI)
 S11 : ████████████████ (5 tests backtest/conviction)
 S12 : ████████ (2 tests ML)

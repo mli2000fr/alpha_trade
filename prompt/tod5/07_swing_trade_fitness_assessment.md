@@ -69,10 +69,10 @@ L'application se définit comme une plateforme de **swing trading actions US** a
 | Idempotence des ordres (SHA-256) | ✅ | 9/10 |
 | Réconciliation post-exécution | ✅ | 9/10 |
 | Gestion des contraintes de compte (margin/cash) | ✅ | 8/10 |
-| Swing-only désactivable (mais désactivé par défaut !) | ⚠️ | 5/10 |
+| Swing-only désactivable : `false` par défaut (correct post-PDT) | ✅ | 8/10 |
 | Watcher post-exécution pour promotion trailing stop | ✅ | 7/10 |
 
-**Note exécution** : **7.8/10** — Très bon, pénalisé par le swing-only non activé par défaut
+**Note exécution** : **8.0/10** — Très bon ; `swing_only=false` est correct depuis la suppression de la PDT (FINRA 2026-06-04)
 
 ### 2.5 Backtesting et validation
 
@@ -97,17 +97,18 @@ L'application se définit comme une plateforme de **swing trading actions US** a
 | Filtres relâchés pour éviter l'univers vide | ⚠️ Trop relâchés ? | 5/10 |
 | Tailles fractionnaires supportées | ✅ | 8/10 |
 | Contraintes cash settled modélisées | ✅ | 8/10 |
-| Swing-only non activé par défaut | ❌ | 3/10 |
+| Swing-only non activé par défaut | ✅ Correct — post-PDT FINRA, day trading libre | 8/10 |
 | Min notionnel cohérent avec Alpaca | ❌ Preset 2k-5k$ à 150$ | 4/10 |
 
-**Note small account** : **6.0/10** — Perfectible, les presets ont des incohérences
+**Note small account** : **6.5/10** — Perfectible, le min_notional et les drawdown breakers restent à corriger
 
 ---
 
 ## 3. Ce qui manque pour un swing trading de niveau professionnel
 
 ### 3.1 Court terme (sprints 1-3)
-- [ ] Activer `swing_only=true` par défaut sur tous les presets
+- [x] ~~Activer `swing_only=true`~~ → Résolu : `swing_only=false` est correct depuis la suppression de la PDT par la FINRA (4 juin 2026)
+- [ ] Mettre à jour l'IHM pour que `execution_swing_only=False` soit le défaut
 - [ ] Corriger le `min_position_notional` du preset 2k-5k$
 - [ ] Activer le module microstructure dans le backtesting par défaut
 - [ ] Ajouter un modèle de frais de transaction réaliste (tiered par volume)
@@ -137,8 +138,10 @@ L'application est **bien conçue pour le swing trading** dans son architecture e
 - La modélisation des contraintes de compte
 
 Les points faibles sont :
-- Le `swing_only` désactivé par défaut (en contradiction avec la doctrine)
 - La microstructure et les frais de transaction trop simplistes en backtest
-- Les presets petits comptes qui pourraient être mieux calibrés
+- Les presets petits comptes qui pourraient être mieux calibrés (min_notional, drawdown breaker)
+- L'IHM qui utilise encore `swing_only=True` comme défaut (obsolète depuis la suppression de la PDT)
 
-**L'application est apte au swing trading paper. Pour le live, les corrections P0 (A-CAP-001, A-CAP-002, A-CAP-003) doivent être résolues au préalable.**
+**Note** : `swing_only=false` sur tous les presets est désormais **correct** depuis la suppression de la règle PDT par la FINRA (4 juin 2026). Le day trading intraday est autorisé sans restriction.
+
+**L'application est apte au swing trading paper. Pour le live, les corrections restantes (A-CAP-002, A-CAP-003) doivent être résolues au préalable.**

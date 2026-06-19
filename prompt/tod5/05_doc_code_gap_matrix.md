@@ -64,8 +64,8 @@
 | Point | IHM | Backend | Statut |
 |---|---|---|---|
 | Step 1 (barres) | `import_alpaca_bar` dans le workflow | `import_eodhd_bar` si `bars_provider=eodhd` | ⚠️ L'IHM devrait afficher le bon module selon le provider |
-| `execution_account_type` défaut | `cash` | Preset ≥25k$ = `margin` | ❌ Divergence — cf. A-IHM-001 |
-| `execution_swing_only` défaut | `True` | Presets = `false` | ❌ Divergence — cf. A-IHM-001 |
+| `execution_account_type` défaut | `cash` | Preset ≥25k$ = `margin` | ⚠️ Divergence mineure — le seuil cash→margin est à revoir post-PDT |
+| `execution_swing_only` défaut | `True` | Presets = `false` (correct post-PDT) | ❌ Divergence — l'IHM doit passer à `false` (cf. A-IHM-001 révisé) |
 | Options screener | Exposées dans l'IHM | Supportées par `stock_screener` | ✅ Aligné |
 | Options selector | Exposées dans l'IHM | Supportées par `alpha_scanner` | ✅ Aligné |
 | Options ML | 30+ paramètres exposés | Supportés par `modelFactory` | ⚠️ Trop de paramètres — cf. A-ML-001 |

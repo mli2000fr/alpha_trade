@@ -30,9 +30,9 @@
 
 ---
 
-## 2. Configuration — 6.0/10
+## 2. Configuration — 6.5/10
 
-**Résumé** : `config.yaml` est bien structuré et commenté. Les secrets sont gérés proprement via placeholders `${VAR}`. Le système de presets de capital (`config/capital_presets.yaml`) est une bonne idée mais souffre d'incohérences entre tranches.
+**Résumé** : `config.yaml` est bien structuré et commenté. Les secrets sont gérés proprement via placeholders `${VAR}`. Le système de presets de capital (`config/capital_presets.yaml`) est une bonne idée mais souffre de quelques incohérences entre tranches.
 
 **Points forts** :
 - Secrets par variables d'environnement, placeholders `${VAR}`
@@ -40,15 +40,16 @@
 - Bloc `market_regimes` riche et paramétrable
 - Bloc `leverage` avec garde-fous explicites
 - Presets de capital avec justifications documentées
+- `execution_swing_only=false` sur tous les presets est **correct** depuis la suppression de la règle PDT par la FINRA (4 juin 2026) : achat/vente intraday autorisé sans restriction
 
 **Faiblesses** :
 - Paramètres de drawdown breaker identiques pour toutes les tranches (`degraded_entry_allocation_pct=0.025`, `ramp_up_max_pct=0.8`)
-- `execution_swing_only` incohérent : `false` pour micro-comptes, `false` pour comptes 5k-25k, `false` pour ≥25k — or le swing-only devrait être la norme
-- `execution_account_type` : `cash` pour ≤25k$, `margin` pour ≥25k$ — mais le preset 25k-50k$ utilise `margin` sans `swing_only`, ce qui est dangereux
+- `execution_account_type` : `cash` pour ≤25k$, `margin` pour ≥25k$ — la transition cash→margin à 25k$ était historiquement liée à la PDT, ce seuil pourrait être révisé
 - `risk_min_position_notional` à 150$ pour le preset 2k-5k$ — en dessous du min_notional Alpaca (155$ configuré dans `market_regimes.enforce_min_notional`)
+- L'IHM utilise encore `execution_swing_only=True` comme défaut, en contradiction avec les presets (post-PDT, `false` est le bon choix)
 
 **Risques principaux** :
-- Mauvais paramétrage d'exécution si l'opérateur se fie aux presets sans vérifier
+- Mauvais paramétrage d'exécution si l'opérateur se fie aux défauts IHM (`swing_only=True`) sans vérifier les presets
 - Micro-comptes potentiellement inopérants avec les contraintes combinées
 
 **Pour atteindre 10/10** : Harmonisation complète des presets par tranche, validation automatisée de la cohérence inter-presets, golden config testée en backtest.
@@ -261,7 +262,7 @@
 - Chaîne d'exécution en 10 phases bien définies
 - Idempotence par SHA-256 (`idempotency_key`)
 - Support multi-comptes natif
-- Gestion des contraintes de compte (margin/cash/swing_only)
+- Gestion des contraintes de compte (margin/cash) — le mode swing_only est désactivable mais post-PDT le day trading est libre
 - Politique de levier explicite avec garde-fous
 - Réconciliation structurée avec `ReconcileDiff`
 - TCA (slippage, implementation shortfall)
@@ -347,7 +348,7 @@
 - Historicalisation des runs IHM
 
 **Faiblesses** :
-- **Incohérence IHM/presets** : l'IHM utilise `execution_account_type='cash'` et `execution_swing_only=True` comme défauts, mais les presets ≥25k$ utilisent `margin` et `swing_only=false` — cf. anomalie A-IHM-001
+- **Incohérence IHM/presets** : l'IHM utilise `execution_swing_only=True` comme défaut, mais les presets utilisent `swing_only=false` — ce qui est le bon choix depuis la suppression de la PDT (4 juin 2026). L'IHM doit être alignée sur les presets (défaut `false`). Cf. anomalie A-IHM-001.
 - Pas de validation dans l'IHM que les paramètres sont cohérents avec le preset de capital actif
 - Trop d'options ML exposées (30+ paramètres)
 - Pas de mode « lecture seule » pour éviter les actions dangereuses
@@ -355,7 +356,7 @@
 
 **Risques principaux** :
 - Opérateur qui change des paramètres dans l'IHM sans comprendre l'impact
-- Défauts IHM non alignés avec les presets → mauvaises décisions d'exécution
+- Défauts IHM non alignés avec les presets → mauvaises décisions d'exécution (`swing_only=True` restrictif au lieu du `false` post-PDT)
 
 **Pour atteindre 10/10** : Validation IHM des paramètres vs preset, simplification des options exposées, mode lecture seule, alignement des défauts IHM avec les presets.
 

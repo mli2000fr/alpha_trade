@@ -8,8 +8,9 @@
 
 | Sprint | Objectif | Priorité | Durée estimée | Anomalies traitées |
 |---|---|---|---|---|
-| **S8** | Quick wins — corrections critiques | 🔴 P0 | 2 semaines | A-CAP-001, A-CAP-002, A-CAP-003 |
-| **S9** | Alignement IHM/presets | 🔴 P0-P1 | 2 semaines | A-IHM-001, A-IHM-002 |
+| **S8** | Quick wins — corrections critiques | 🔴 P0 | 2 semaines | A-CAP-002, A-CAP-003 |
+| **S8-bis** | Mise à jour IHM post-PDT | 🔴 P1 | 1 semaine | A-IHM-001 (IHM : `swing_only=False`), A-IHM-002 |
+| **S9** | Alignement IHM/presets (suite) | 🟡 P1 | 1 semaine | Finalisation IHM, validation croisée |
 | **S10** | Remise à niveau documentaire | 🟡 P1 | 2 semaines | A-DOC-001, A-DOC-002, A-DOC-003, A-DOC-004 |
 | **S11** | Robustesse backtesting | 🟡 P1 | 3 semaines | A-BACK-001, A-BACK-002, A-CONV-001 |
 | **S12** | Gouvernance ML et rollback | 🟡 P1 | 3 semaines | A-ML-001, A-ML-002, A-ML-003 |
@@ -19,46 +20,46 @@
 | **S16** | Optimisations et polish | 🟢 P2-P3 | 2 semaines | A-DATA-001, A-DATA-002, A-IHM-004, A-CAP-004, A-CAP-005, A-CAP-006 |
 | **S17** | Validation live et paper | 🔵 Validation | 4 semaines | — |
 
-**Total** : 10 sprints sur ~6 mois
+**Total** : 11 sprints sur ~6 mois (S8-bis ajouté pour la mise à jour IHM post-PDT)
 
 ---
 
 ## Sprint S8 — Quick wins : corrections critiques
 
-**Objectif** : Corriger les 3 anomalies P0 sur les presets de capital.
+**Objectif** : Corriger les anomalies P0 restantes sur les presets de capital.
+
+> **Note** : L'anomalie A-CAP-001 (`execution_swing_only=false`) est **résolue** par le changement réglementaire FINRA du 4 juin 2026 (suppression de la règle PDT). `swing_only=false` est désormais le bon paramétrage. Aucune action n'est nécessaire sur les presets.
 
 **Priorité** : 🔴 Critique (P0)
 
 **Modules impactés** : `common/capital_presets.py`, `config/capital_presets.yaml`
 
-**Anomalies traitées** : A-CAP-001, A-CAP-002, A-CAP-003
+**Anomalies traitées** : A-CAP-002, A-CAP-003
 
 ### Tâches
 
-1. **Activer `execution_swing_only=true`** sur tous les presets (a minima les comptes cash)
-   - Fichiers : `config/capital_presets.yaml` (tous les presets)
-   
-2. **Différencier les paramètres de drawdown breaker** par tranche
+1. **Différencier les paramètres de drawdown breaker** par tranche
    - `degraded_entry_allocation_pct` : 0.05 (micro) → 0.15 (100k$+)
    - `ramp_up_max_pct` : 0.20 (micro) → 0.60 (100k$+)
    - Fichiers : `config/capital_presets.yaml`
 
-3. **Remonter `risk_min_position_notional` à ≥155$** pour le preset 2k-5k$
+2. **Remonter `risk_min_position_notional` à ≥155$** pour le preset 2k-5k$
    - Fichiers : `config/capital_presets.yaml` (preset `capital_0_5000`)
 
-4. **Uniformiser la devise en USD** pour le preset micro-compte
+3. **Uniformiser la devise en USD** pour le preset micro-compte
    - Fichiers : `config/capital_presets.yaml` (preset `capital_0_2000_eur`)
 
+4. **Revoir le seuil cash→margin à 25k$** : ce seuil était lié à la PDT (désormais supprimée). Documenter la nouvelle logique.
+
 ### Critères d'acceptation
-- [ ] Tous les presets cash ont `execution_swing_only: true`
 - [ ] Les paramètres de drawdown breaker sont croissants avec le capital
 - [ ] `risk_min_position_notional ≥ 155` pour tous les presets
+- [ ] Le seuil cash→margin est documenté et justifié post-PDT
 - [ ] Tous les tests `test_capital_presets_consistency.py` passent
 
 ### Tests à ajouter
 | Test | Type | Fichier |
 |---|---|---|
-| T-CAP-001 : swing_only sur presets cash | Config | `tests/test_capital_presets_consistency.py` |
 | T-CAP-002 : drawdown breaker croissant | Config | `tests/test_capital_presets_consistency.py` |
 | T-CAP-003 : min_notional ≥ enforce_min | Config | `tests/test_capital_presets_consistency.py` |
 
@@ -68,36 +69,38 @@
 
 ---
 
-## Sprint S9 — Alignement IHM / Presets
+## Sprint S8-bis — Mise à jour IHM post-PDT
 
-**Objectif** : Résoudre les incohérences entre les défauts IHM et les presets de capital.
+**Objectif** : Mettre à jour l'IHM pour refléter la nouvelle réalité réglementaire (suppression PDT).
 
-**Priorité** : 🔴 Haute (P0-P1)
+**Priorité** : 🔴 Haute (P1)
 
-**Modules impactés** : `ihm/services/pipeline_runner.py`, `ihm/pages/pipeline.py`, `common/capital_presets.py`
+**Modules impactés** : `ihm/services/pipeline_runner.py`, `ihm/pages/pipeline.py`
 
-**Anomalies traitées** : A-IHM-001, A-IHM-002
+**Anomalies traitées** : A-IHM-001 (révisé)
 
 ### Tâches
 
-1. **Aligner les défauts IHM sur le preset détecté**
-   - `execution_account_type` et `execution_swing_only` doivent être lus depuis le preset
+1. **Changer le défaut `execution_swing_only` de `True` à `False`** dans l'IHM
+   - Refléter la réalité post-PDT : le day trading intraday est autorisé
    - Fichiers : `ihm/services/pipeline_runner.py`
 
-2. **Ajouter une validation dans `PipelineLaunchOptions.__post_init__`**
+2. **Aligner les défauts IHM sur le preset détecté**
+   - `execution_account_type` doit être lu depuis le preset
+   - Fichiers : `ihm/services/pipeline_runner.py`
+
+3. **Ajouter une validation dans `PipelineLaunchOptions.__post_init__`**
    - Vérifier la cohérence avec le preset actif
    - Émettre un warning si divergence
    - Fichiers : `ihm/services/pipeline_runner.py`
 
-3. **Corriger le step 1 IHM** pour refléter le provider actif
+4. **Corriger le step 1 IHM** pour refléter le provider actif
    - Afficher `import_eodhd_bar` si `bars_provider=eodhd`
    - Fichiers : `ihm/pages/pipeline.py`
 
-4. **Ajouter un bandeau d'avertissement** dans l'IHM quand les paramètres divergent du preset
-   - Fichiers : `ihm/pages/pipeline.py`
-
 ### Critères d'acceptation
-- [ ] Les défauts IHM sont lus depuis le preset de capital
+- [ ] Le défaut `execution_swing_only` est `False` dans l'IHM
+- [ ] Les défauts IHM sont cohérents avec les presets
 - [ ] Un warning est affiché en cas de divergence
 - [ ] Le step 1 reflète le bon provider
 - [ ] Tests IHM mis à jour
@@ -105,13 +108,38 @@
 ### Tests à ajouter
 | Test | Type | Fichier |
 |---|---|---|
-| T-IHM-001 : défauts IHM cohérents avec preset | Intégration IHM | `tests/test_ihm_cli_contract.py` |
+| T-IHM-001 : défaut swing_only=False (post-PDT) | Intégration IHM | `tests/test_ihm_cli_contract.py` |
 | T-IHM-002 : validation rejette combinaisons incohérentes | Intégration IHM | `tests/test_ihm_pipeline_runner.py` |
 | Test E2E : workflow complet IHM → backend | E2E IHM | `tests/test_ihm_pipeline_e2e.py` (étendre) |
 
 ### Gain attendu
 - IHM : 6.0 → 7.5
-- Configuration : 7.5 → 8.0
+
+---
+
+## Sprint S9 — Alignement IHM / Presets (suite)
+
+**Objectif** : Finaliser l'alignement IHM/presets et la validation croisée.
+
+**Priorité** : 🟡 Moyenne (P1)
+
+**Modules impactés** : `ihm/`, `common/capital_presets.py`
+
+**Anomalies traitées** : A-IHM-002, finalisation S8-bis
+
+### Tâches
+
+1. **Ajouter un bandeau d'avertissement** dans l'IHM quand les paramètres divergent du preset
+   - Fichiers : `ihm/pages/pipeline.py`
+
+2. **Ajouter une infobulle explicative** sur `execution_swing_only` mentionnant le changement réglementaire FINRA 2026-06-04
+   - Fichiers : `ihm/pages/pipeline.py`
+
+3. **Finaliser les tests E2E IHM** 
+
+### Critères d'acceptation
+- [ ] Avertissement visible en cas de divergence IHM/preset
+- [ ] Tests IHM complets et passants
 
 ---
 

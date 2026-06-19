@@ -55,8 +55,8 @@
 
 ### Faiblesses à corriger 🔴
 
-1. **Presets de capital incohérents** : P0 sur les paramètres de swing-only et drawdown breaker
-2. **IHM désynchronisée des presets** : défauts différents, pas de validation croisée
+1. **Presets de capital incohérents** : P0 sur les paramètres de drawdown breaker (A-CAP-002, A-CAP-003). Note : `swing_only=false` est désormais correct (post-PDT FINRA 2026-06-04).
+2. **IHM désynchronisée des presets** : défaut `swing_only=True` obsolète, pas de validation croisée
 3. **Complexité ML non maîtrisée** : trop de paramètres exposés, pas de procédure de rollback documentée
 4. **Documentation partiellement obsolète** : valeurs historiques, plans v2 sans statut
 5. **Backtesting pas assez réaliste** : microstructure et frais optionnels, cache non branché
@@ -81,15 +81,17 @@
 ### ❌ No-Go aujourd'hui (2026-06-19)
 
 Raisons :
-- Presets incohérents (A-CAP-001, A-CAP-002, A-CAP-003)
-- IHM peut induire en erreur (A-IHM-001)
+- Presets incohérents (A-CAP-002, A-CAP-003 — drawdown breaker et min_notional)
+- IHM peut induire en erreur (A-IHM-001 — défaut `swing_only=True` obsolète post-PDT)
 - Backtesting pas assez réaliste (A-BACK-001, A-BACK-002)
 
-### ✅ Go conditionnel après Sprint S9 + S11 (~2 mois)
+> **Note** : A-CAP-001 (`execution_swing_only=false`) est **résolue** depuis la suppression de la règle PDT par la FINRA le 4 juin 2026.
+
+### ✅ Go conditionnel après Sprint S8 + S8-bis + S11 (~2 mois)
 
 Conditions :
-- Tous les P0 résolus
-- IHM alignée sur les presets
+- Tous les P0 restants résolus (A-CAP-002, A-CAP-003)
+- IHM alignée sur la réalité post-PDT (`swing_only=False` par défaut)
 - Backtesting avec microstructure activée
 - 4 semaines de paper trading validées
 
