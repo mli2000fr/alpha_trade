@@ -293,21 +293,31 @@ def _build_prediction_result(
     signal_label: str,
     calibration_method: str,
     selected_model: str,
+    # ML Sprint 3 — champs ternaires optionnels
+    predicted_side: str | None = None,
+    proba_long: float | None = None,
+    proba_flat: float | None = None,
+    proba_short: float | None = None,
 ) -> pd.DataFrame:
-    return pd.DataFrame([
-        {
-            "symbol": symbol,
-            "prediction_date": prediction_date,
-            "predicted_proba": round(proba, 6),
-            "predicted_class": pred_class,
-            "run_id": run_id,
-            "raw_proba": round(raw_proba, 6),
-            "decision_threshold": decision_threshold,
-            "signal_label": signal_label,
-            "calibration_method": calibration_method,
-            "selected_model": selected_model,
-        }
-    ])
+    row: dict[str, object] = {
+        "symbol": symbol,
+        "prediction_date": prediction_date,
+        "predicted_proba": round(proba, 6),
+        "predicted_class": pred_class,
+        "run_id": run_id,
+        "raw_proba": round(raw_proba, 6),
+        "decision_threshold": decision_threshold,
+        "signal_label": signal_label,
+        "calibration_method": calibration_method,
+        "selected_model": selected_model,
+    }
+    # Ajoute les colonnes ternaires si presentes
+    if predicted_side is not None:
+        row["predicted_side"] = predicted_side
+        row["proba_long"] = round(proba_long, 6) if proba_long is not None else None
+        row["proba_flat"] = round(proba_flat, 6) if proba_flat is not None else None
+        row["proba_short"] = round(proba_short, 6) if proba_short is not None else None
+    return pd.DataFrame([row])
 
 
 def _has_matching_latest_feature_date(df: pd.DataFrame, cutoff_date: date | None) -> bool:
@@ -1184,7 +1194,21 @@ def predict_symbol(
             logits_tensor = torch.as_tensor(logits)
             if logits_tensor.ndim != 2 or logits_tensor.shape[0] < 1 or logits_tensor.shape[1] < 2:
                 raise ValueError(f"invalid_logits_shape={tuple(logits_tensor.shape)}")
-            raw_proba = torch.softmax(logits_tensor, dim=1)[0, 1].item()
+            num_classes = logits_tensor.shape[1]
+            probs_all = torch.softmax(logits_tensor, dim=1)[0]  # [C]
+            is_ternary = num_classes == 3 or data_cfg.target_mode == "ternary"
+            if is_ternary and num_classes >= 3:
+                # Ternaire : classe 0=short, 1=flat, 2=long (apres label shift)
+                proba_long_val = probs_all[2].item()
+                proba_flat_val = probs_all[1].item()
+                proba_short_val = probs_all[0].item()
+                raw_proba = proba_long_val  # pour compatibilite binaire
+            else:
+                # Binaire : colonne 1 = classe positive (long)
+                raw_proba = probs_all[1].item()
+                proba_long_val = None
+                proba_flat_val = None
+                proba_short_val = None
         except Exception as exc:  # noqa: BLE001
             reason = f"lstm_runtime_incompatible:{selected_architecture}"
             LOGGER.error("predict_symbol %s symbol=%s path=%s error=%s", reason, symbol, ckpt_path, exc)
@@ -1217,8 +1241,19 @@ def predict_symbol(
         return None
 
     pred_date = prediction_date or date.today()
-    pred_class = 1 if proba >= data_cfg.decision_threshold else 0
-    signal_label = "long" if pred_class == 1 else "no_trade"
+    if is_ternary and num_classes >= 3:
+        # Ternaire : predicted_side via argmax, backward-compat pred_class/signal_label
+        side_idx = int(torch.argmax(probs_all).item())
+        side_map = {0: "short", 1: "flat", 2: "long"}
+        predicted_side_val = side_map.get(side_idx, "flat")
+        pred_class = 1 if predicted_side_val == "long" else 0
+        signal_label = predicted_side_val
+        # proba = proba_long (pour la colonne predicted_proba historique)
+        proba = float(proba_long_val) if proba_long_val is not None else 0.0
+    else:
+        pred_class = 1 if proba >= data_cfg.decision_threshold else 0
+        signal_label = "long" if pred_class == 1 else "no_trade"
+        predicted_side_val = None
 
     result = _build_prediction_result(
         symbol=symbol,
@@ -1231,6 +1266,10 @@ def predict_symbol(
         signal_label=signal_label,
         calibration_method=calibration_method,
         selected_model=selected_architecture,
+        predicted_side=predicted_side_val,
+        proba_long=proba_long_val,
+        proba_flat=proba_flat_val,
+        proba_short=proba_short_val,
     )
     update_runtime_status(
         last_prediction_symbol=symbol,
