@@ -199,6 +199,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE,
     DEFAULT_SELECTOR_SECTOR_CAP_RATIO,
     DEFAULT_SELECTOR_SELECTION_SIZE,
+    DEFAULT_SELECTOR_SHORT_SELECTION_SIZE,
     is_gpu_available,
     RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS,
     RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL,
@@ -1853,6 +1854,19 @@ def _render_selector_block() -> dict[str, Any]:
                 key="pipeline_selector_selection_size",
             )
         )
+        selector_short_selection_size = int(
+            st.number_input(
+                "Alpha Scanner — candidats short",
+                min_value=0,
+                value=_session_state_int(
+                    "pipeline_selector_short_selection_size",
+                    DEFAULT_SELECTOR_SHORT_SELECTION_SIZE,
+                ),
+                step=5,
+                key="pipeline_selector_short_selection_size",
+                help="Nombre de candidats short selectionnes par short_score. 0 = desactive.",
+            )
+        )
         selector_max_workers = int(
             st.number_input(
                 "Alpha Scanner — max workers (0 = auto)",
@@ -2075,6 +2089,7 @@ def _render_selector_block() -> dict[str, Any]:
     return {
         "selector_chunk_size": selector_chunk_size,
         "selector_selection_size": selector_selection_size,
+        "selector_short_selection_size": selector_short_selection_size,
         "selector_max_workers": selector_max_workers,
         "selector_log_level": selector_log_level,
         "selector_liquidity_threshold": selector_liquidity_threshold,
@@ -3866,6 +3881,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         _selector_vars = _render_selector_block()
         selector_chunk_size = _selector_vars["selector_chunk_size"]
         selector_selection_size = _selector_vars["selector_selection_size"]
+        selector_short_selection_size = _selector_vars["selector_short_selection_size"]
         selector_max_workers = _selector_vars["selector_max_workers"]
         selector_log_level = _selector_vars["selector_log_level"]
         selector_liquidity_threshold = _selector_vars["selector_liquidity_threshold"]
@@ -4133,6 +4149,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ),
             selector_chunk_size=int(selector_chunk_size),
             selector_selection_size=int(selector_selection_size),
+            selector_short_selection_size=int(selector_short_selection_size),
             selector_max_workers=_to_optional_positive_int(selector_max_workers),
             selector_liquidity_threshold=float(selector_liquidity_threshold),
             selector_min_close=float(selector_min_close),

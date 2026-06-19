@@ -286,6 +286,8 @@ class SymbolDataModule(L.LightningDataModule):
         universe_df: pd.DataFrame | None = None,
         selector_df: pd.DataFrame | None = None,
         reproducibility_seed: int = 42,
+        *,
+        cross_sectional_df: pd.DataFrame | None = None,
     ) -> None:
         super().__init__()
         self.bars_df = bars_df
@@ -295,6 +297,7 @@ class SymbolDataModule(L.LightningDataModule):
         self.benchmark_df = benchmark_df
         self.universe_df = universe_df
         self.selector_df = selector_df
+        self.cross_sectional_df = cross_sectional_df
         self.reproducibility_seed = int(reproducibility_seed)
         self._feature_cols = get_feature_columns(
             data_cfg.include_sentiment_features,
@@ -337,6 +340,7 @@ class SymbolDataModule(L.LightningDataModule):
             benchmark_df=self.benchmark_df,
             universe_df=self.universe_df,
             selector_df=self.selector_df,
+            cross_sectional_df=self.cross_sectional_df,
         )
         self.prepared_df = df
         self.cross_sectional_diagnostics = dict(df.attrs.get("cross_sectional_diagnostics", {}))
@@ -396,8 +400,15 @@ def prepare_symbol_frame(
     benchmark_df: pd.DataFrame | None = None,
     universe_df: pd.DataFrame | None = None,
     selector_df: pd.DataFrame | None = None,
+    *,
+    cross_sectional_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Prépare le DataFrame final features + target pour un symbole."""
+    """Prepare le DataFrame final features + target pour un symbole.
+
+    If ``cross_sectional_df`` is provided (pre-computed via
+    ``build_cross_sectional_features_from_db``), the ``universe_df``
+    parameter is ignored for cross-sectional computation.
+    """
     df = compute_features(
         bars_df,
         sentiment_df=sentiment_df,
@@ -409,11 +420,15 @@ def prepare_symbol_frame(
     )
     cross_sectional_diagnostics: dict[str, object] = {}
     if data_cfg.enable_cross_sectional_features:
-        cross_sectional_df, cross_sectional_diagnostics = build_cross_sectional_features(
-            universe_df,
-            benchmark_df=benchmark_df,
-            min_universe_size=data_cfg.cross_sectional_min_universe,
-        )
+        if cross_sectional_df is not None:
+            # Pre-computed by caller (symbol-by-symbol loading)
+            pass
+        else:
+            cross_sectional_df, cross_sectional_diagnostics = build_cross_sectional_features(
+                universe_df,
+                benchmark_df=benchmark_df,
+                min_universe_size=data_cfg.cross_sectional_min_universe,
+            )
         df = merge_cross_sectional_features(df, cross_sectional_df)
     df["future_return"] = compute_future_return(df, horizon=data_cfg.forecast_horizon)
     df["target"] = build_target(

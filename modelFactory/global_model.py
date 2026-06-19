@@ -105,20 +105,24 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
     model_name = cfg.global_model.model_name
     if model_name == "lightgbm":
         lgb = _import_lightgbm()
+        is_ternary = cfg.data.target_mode == "ternary"
         return model_name, lgb.LGBMClassifier(
-            objective="binary",
+            objective="multiclass" if is_ternary else "binary",
+            num_class=3 if is_ternary else 1,
             max_depth=cfg.baseline.max_depth,
             n_estimators=cfg.baseline.n_estimators,
             learning_rate=cfg.baseline.learning_rate,
             random_state=resolved_seed,
+            verbosity=-1,
         )
     CatBoostClassifier = _import_catboost()
+    is_ternary = cfg.data.target_mode == "ternary"
     return model_name, CatBoostClassifier(
         depth=cfg.baseline.catboost_depth,
         iterations=cfg.baseline.catboost_iterations,
         learning_rate=cfg.baseline.catboost_learning_rate,
         random_seed=resolved_seed,
-        loss_function="Logloss",
+        loss_function="MultiClass" if is_ternary else "Logloss",
         verbose=False,
     )
 
@@ -285,10 +289,23 @@ def train_global_model(
             "reason": f"{cfg.global_model.model_name}_not_installed",
         }
 
-    model.fit(train_df[feature_columns], train_df["target"].astype(int))
+    train_targets = train_df["target"].astype(int)
     is_ternary = effective_data_cfg.target_mode == "ternary"
-    long_col = 2 if is_ternary else 1  # ternaire: colonne 2=long; binaire: colonne 1=long
-    val_raw = model.predict_proba(val_df[feature_columns])[:, long_col]
+    # LightGBM/CatBoost exigent des labels consecutifs a partir de 0.
+    if is_ternary:
+        train_targets = train_targets + 1  # shift: -1->0, 0->1, +1->2
+    unique_classes = train_targets.unique()
+    if len(unique_classes) < 2:
+        return {"status": "skipped", "model_name": "global_model", "reason": f"single_class_target_{unique_classes[0]}"}
+    model.fit(train_df[feature_columns], train_targets)
+    is_ternary = effective_data_cfg.target_mode == "ternary"
+    raw_val_all = model.predict_proba(val_df[feature_columns])
+    num_val_cols = raw_val_all.shape[1]
+    if is_ternary and num_val_cols >= 3:
+        long_col = 2  # full ternary: [short, flat, long]
+    else:
+        long_col = num_val_cols - 1  # fallback: last column
+    val_raw = raw_val_all[:, long_col]
     cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
     calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg)
     val_proba = apply_tabular_calibration(val_raw, calibrator)
@@ -317,7 +334,10 @@ def train_global_model(
             "candidates": [],
         }
 
-    test_raw = model.predict_proba(test_df[feature_columns])[:, long_col]
+    raw_test_all = model.predict_proba(test_df[feature_columns])
+    num_test_cols = raw_test_all.shape[1]
+    test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
+    test_raw = raw_test_all[:, test_long_col]
     test_proba = apply_tabular_calibration(test_raw, calibrator)
     test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
     val_metrics = compute_tabular_metrics(

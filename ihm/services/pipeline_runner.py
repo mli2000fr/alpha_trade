@@ -45,6 +45,7 @@ DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS = DEFAULT_SCREENER_CONFIG.first_pass_win
 DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING = DEFAULT_SCREENER_CONFIG.enable_two_pass_loading
 DEFAULT_SELECTOR_CHUNK_SIZE = 500
 DEFAULT_SELECTOR_SELECTION_SIZE = 50
+DEFAULT_SELECTOR_SHORT_SELECTION_SIZE = 20  # Plan v2 Sprint 5 — candidats short
 DEFAULT_SELECTOR_MAX_ANOMALY_COUNT = 20
 DEFAULT_SELECTOR_SECTOR_CAP_RATIO = 0.30
 DEFAULT_SELECTOR_LOG_LEVEL = "INFO"
@@ -410,6 +411,7 @@ class PipelineLaunchOptions:
     screener_enable_two_pass_loading: bool = DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING
     selector_chunk_size: int = DEFAULT_SELECTOR_CHUNK_SIZE
     selector_selection_size: int = DEFAULT_SELECTOR_SELECTION_SIZE
+    selector_short_selection_size: int = DEFAULT_SELECTOR_SHORT_SELECTION_SIZE
     selector_max_workers: int | None = None
     selector_liquidity_threshold: float = float(DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD)
     selector_min_close: float = float(DEFAULT_SELECTOR_MIN_CLOSE)
@@ -1670,6 +1672,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.selector_chunk_size),
             "--selection-size",
             str(options.selector_selection_size),
+            "--short-selection-size",
+            str(options.selector_short_selection_size),
             "--liquidity-threshold",
             str(options.selector_liquidity_threshold),
             "--min-close",

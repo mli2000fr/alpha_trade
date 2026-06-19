@@ -318,13 +318,52 @@ def load_benchmark_bars(
     return df
 
 
+# Taille maximale d'un lot de symboles pour load_universe_bars.
+# Au-dela, la clause IN() + le volume de donnees depassent max_allowed_packet MySQL.
+_UNIVERSE_CHUNK_SIZE = 500
+
+
 def load_universe_bars(
     engine: Engine,
     symbols: list[str] | None = None,
     end_date: date | None = None,
     start_date: date | None = None,
 ) -> pd.DataFrame:
-    """Charge un panel historique minimal de l'univers pour les features cross-sectionnelles."""
+    """Charge un panel historique minimal de l'univers pour les features cross-sectionnelles.
+
+    Les symboles sont charges par lots de 500 pour eviter les clauses IN()
+    trop volumineuses et les timeouts MySQL.
+    """
+    if symbols is None or len(symbols) <= _UNIVERSE_CHUNK_SIZE:
+        return _load_universe_bars_chunk(engine, symbols, end_date, start_date)
+
+    frames: list[pd.DataFrame] = []
+    for i in range(0, len(symbols), _UNIVERSE_CHUNK_SIZE):
+        chunk = symbols[i:i + _UNIVERSE_CHUNK_SIZE]
+        chunk_df = _load_universe_bars_chunk(engine, chunk, end_date, start_date)
+        if not chunk_df.empty:
+            frames.append(chunk_df)
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    LOGGER.info(
+        "load_universe_bars symbols=%d start_date=%s end_date=%s rows=%d chunks=%d",
+        len(symbols),
+        start_date,
+        end_date,
+        len(df),
+        len(frames),
+    )
+    return df
+
+
+def _load_universe_bars_chunk(
+    engine: Engine,
+    symbols: list[str] | None,
+    end_date: date | None,
+    start_date: date | None,
+) -> pd.DataFrame:
+    """Charge les barres pour un lot de symboles (max 500)."""
     where_clauses: list[str] = []
     params: dict[str, object] = {}
     if symbols:
@@ -344,13 +383,6 @@ def load_universe_bars(
     )
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params=params, parse_dates=["date"])
-    LOGGER.info(
-        "load_universe_bars symbols=%s start_date=%s end_date=%s rows=%d",
-        len(symbols) if symbols else "ALL",
-        start_date,
-        end_date,
-        len(df),
-    )
     return df
 
 

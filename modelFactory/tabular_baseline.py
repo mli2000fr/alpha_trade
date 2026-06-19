@@ -159,13 +159,33 @@ def run_tabular_baseline(
 		context=f"tabular_baseline:{model_name}:{symbol_tag}",
 	)
 	model = model_builder(resolved_seed)
-	model.fit(train_df[feature_columns], train_df["target"].astype(int))
+	is_ternary = cfg.data.target_mode == "ternary"
+	train_targets = train_df["target"].astype(int)
+	# LightGBM/CatBoost exigent des labels consecutifs a partir de 0.
+	# On decale {-1,0,+1} -> {0,1,2} pour le mode ternaire.
+	if is_ternary:
+		train_targets = train_targets + 1  # shift: -1->0, 0->1, +1->2
+	unique_classes = train_targets.unique()
+	if len(unique_classes) < 2:
+		return {"status": "skipped", "model_name": model_name, "reason": f"single_class_target_{unique_classes[0]}"}
+	model.fit(train_df[feature_columns], train_targets)
 
 	is_ternary = cfg.data.target_mode == "ternary"
-	long_col = 2 if is_ternary else 1  # ternaire: colonne 2=long; binaire: colonne 1=long
+	# Determine which predict_proba column holds the long probability.
+	# For ternary with all 3 classes present: 3 cols -> col 2=long.
+	# For binary or ternary with missing classes: use last column.
+	raw_proba_all = model.predict_proba(val_df[feature_columns])
+	num_proba_cols = raw_proba_all.shape[1]
+	if is_ternary and num_proba_cols >= 3:
+		long_col = 2  # full ternary: [short, flat, long]
+	else:
+		long_col = num_proba_cols - 1  # fallback: last column
 
-	val_raw = model.predict_proba(val_df[feature_columns])[:, long_col]
+	val_raw = raw_proba_all[:, long_col]
 	# Pour la calibration, on binarise la target : 1 si long (+1), 0 sinon
+	# Pour la calibration et les metriques, on binarise : 1 si long, 0 sinon.
+	# En ternaire (apres shift), long = 2. En binaire, long = 1.
+	long_class = 2 if is_ternary else 1
 	cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
 	calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg)
 	val_proba = apply_tabular_calibration(val_raw, calibrator)
@@ -192,7 +212,10 @@ def run_tabular_baseline(
 			"candidates": [],
 		}
 
-	test_raw = model.predict_proba(test_df[feature_columns])[:, long_col]
+	test_raw_all = model.predict_proba(test_df[feature_columns])
+	num_test_cols = test_raw_all.shape[1]
+	test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
+	test_raw = test_raw_all[:, test_long_col]
 	test_proba = apply_tabular_calibration(test_raw, calibrator)
 	# Pour les metriques, on binarise aussi la target test
 	test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()

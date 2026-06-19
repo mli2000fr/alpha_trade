@@ -32,7 +32,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AlphaScanner multi-facteurs")
     parser.add_argument("--preset", choices=["strict"], default="strict", help=argparse.SUPPRESS)
     parser.add_argument("--chunk-size", type=int, default=500, help="Taille des chunks de symboles")
-    parser.add_argument("--selection-size", type=int, default=50, help="Nombre final de titres à retenir")
+    parser.add_argument("--selection-size", type=int, default=50, help="Nombre final de titres a retenir (long)")
+    parser.add_argument("--short-selection-size", type=int, default=20, help="Nombre de candidats short (0 = desactive)")
     parser.add_argument("--max-workers", type=int, default=None, help="Nombre maximum de threads")
     parser.add_argument("--liquidity-threshold", type=float, default=None, help="Seuil minimal de liquidité en dollar volume moyen 20j")
     parser.add_argument("--min-close", type=float, default=None, help="Prix minimal de clôture")
@@ -149,6 +150,7 @@ def _build_config_from_args(args: argparse.Namespace) -> AlphaScannerConfig:
     common_kwargs = {
         "chunk_size": args.chunk_size,
         "selection_size": args.selection_size,
+        "short_selection_size": args.short_selection_size,  # Plan v2 Sprint 5
         "max_workers": args.max_workers,
         "max_anomaly_count": args.max_anomaly_count,
         "sector_cap_ratio": args.sector_cap_ratio,

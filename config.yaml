@@ -248,6 +248,15 @@ fred:
   series_10y: DGS10
 
 # ---------------------------------------------------------------------------
+# Selector / Alpha Scanner — tailles de selection long et short.
+# Lu par ``selector/config.py`` (AlphaScannerConfig) en fallback des defauts
+# code. Les valeurs IHM (pipeline_runner.py) prennent priorite si definies.
+# ---------------------------------------------------------------------------
+selector:
+  selection_size: 100            # candidats long (top N par final_score)
+  short_selection_size: 100      # candidats short (top N par short_score, 0 = desactive)
+
+# ---------------------------------------------------------------------------
 # Sprint S30 — Trailing stop ATR dynamique pour les achats manuels orphelins
 # (Axe F du plan ``prompt/parttern/plan.md``). Lu par ``execution_engine/config.py``
 # (TrailingStopConfig) via ``service.market.parse_trailing_stop``.

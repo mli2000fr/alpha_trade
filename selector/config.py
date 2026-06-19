@@ -284,6 +284,7 @@ class AlphaScannerConfig:
     score_table: str = "stock_scores"
     chunk_size: int = 500
     selection_size: int = 100
+    short_selection_size: int = 20  # Plan v2 Sprint 5 — candidats short paralleles
     min_history_days: int = 252
     liquidity_threshold: float = 20_000_000.0
     min_close: float = 5.0
@@ -356,11 +357,23 @@ class AlphaScannerConfig:
     def strict_swing_cash(cls, **overrides: object) -> AlphaScannerConfig:
         return cls.from_filter_profile(STRICT_SWING_CASH_FILTERS, **overrides)
 
+    @staticmethod
+    def _yaml_defaults() -> dict[str, object]:
+        """Charge les valeurs par defaut depuis ``config.yaml`` (section ``selector``)."""
+        try:
+            from common.config_loader import load_config
+            cfg = load_config() or {}
+            return dict(cfg.get("selector") or {})
+        except Exception:
+            return {}
+
     def __post_init__(self) -> None:
         if self.chunk_size < 1:
             raise ValueError("chunk_size doit être supérieur ou égal à 1.")
         if self.selection_size < 1:
-            raise ValueError("selection_size doit être supérieur ou égal à 1.")
+            raise ValueError("selection_size doit etre superieur ou egal a 1.")
+        if self.short_selection_size < 0:
+            raise ValueError("short_selection_size doit etre superieur ou egal a 0.")
         if self.min_history_days < self.trailing_range_window:
             raise ValueError("min_history_days doit être supérieur ou égal à trailing_range_window.")
         if self.liquidity_threshold <= 0:

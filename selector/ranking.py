@@ -446,3 +446,55 @@ def rank_and_select(
             selected[column] = np.nan
     return selected.loc[:, OUTPUT_COLUMNS].copy()
 
+
+def rank_and_select_short(
+    merged_df: pd.DataFrame,
+    config: AlphaScannerConfig,
+    *,
+    long_selected_symbols: set[str] | None = None,
+) -> pd.DataFrame:
+    """Selection short parallele basee sur le short_score dedie.
+
+    Plan v2 Sprint 5 — les candidats short sont selectionnes independamment
+    des longs, via le score calcule par ``selector/short_score.py``.
+
+    La colonne ``short_score`` doit deja etre presente dans ``merged_df``.
+    Les symboles deja selectionnes en long sont exclus.
+    """
+    if merged_df.empty or config.short_selection_size <= 0:
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    if "short_score" not in merged_df.columns:
+        LOGGER.warning("rank_and_select_short: short_score column missing, skipping short selection")
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    short_candidates = merged_df.copy()
+    # Exclure les symboles deja selectionnes en long (evite les doublons)
+    if long_selected_symbols:
+        short_candidates = short_candidates[~short_candidates["symbol"].isin(long_selected_symbols)]
+
+    if short_candidates.empty:
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    short_candidates = short_candidates.sort_values(
+        ["short_score", "avg_dollar_volume_20d"],
+        ascending=[False, False],
+    ).reset_index(drop=True)
+
+    target_size = min(config.short_selection_size, len(short_candidates))
+    selected = short_candidates.head(target_size).copy()
+    selected.insert(0, "rank", np.arange(1, len(selected) + 1))
+    selected["candidate_rank"] = selected["rank"]
+    selected["selector_signal_mode"] = "short"
+
+    LOGGER.info(
+        "Classement short termine | selection_finale=%s/%s top3=%s",
+        len(selected),
+        config.short_selection_size,
+        selected["symbol"].head(3).tolist(),
+    )
+    for column in OUTPUT_COLUMNS:
+        if column not in selected.columns:
+            selected[column] = np.nan
+    return selected.loc[:, OUTPUT_COLUMNS].copy()
+

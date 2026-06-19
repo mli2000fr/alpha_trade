@@ -34,16 +34,19 @@ def run_lightgbm_baseline(
         LOGGER.warning("LightGBM indisponible: baseline ignorée")
         return {"status": "unavailable", "model_name": "lightgbm", "reason": "lightgbm_not_installed"}
 
+    is_ternary = cfg.data.target_mode == "ternary"
     return run_tabular_baseline(
         prepared_df,
         cfg,
         model_name="lightgbm",
         model_builder=lambda resolved_seed: lgb.LGBMClassifier(
-            objective="binary",
+            objective="multiclass" if is_ternary else "binary",
+            num_class=3 if is_ternary else 1,
             max_depth=cfg.baseline.max_depth,
             n_estimators=cfg.baseline.n_estimators,
             learning_rate=cfg.baseline.learning_rate,
             random_state=resolved_seed,
+            verbosity=-1,
         ),
         artifact_dir=artifact_dir,
         # Phase 4.2.c — format natif LightGBM (.txt). Plus de pickle.

@@ -43,7 +43,7 @@ def run_catboost_baseline(
 			iterations=cfg.baseline.catboost_iterations,
 			learning_rate=cfg.baseline.catboost_learning_rate,
 			random_seed=resolved_seed,
-			loss_function="Logloss",
+			loss_function="MultiClass" if cfg.data.target_mode == "ternary" else "Logloss",
 			verbose=False,
 		),
 		artifact_dir=artifact_dir,

@@ -51,6 +51,7 @@ from selector.ranking import (
     apply_sector_neutrality,
     merge_scores,
     rank_and_select,
+    rank_and_select_short,
 )
 from selector.run_summary import _build_run_id, _summarize_zero_candidate_filters
 
@@ -240,6 +241,24 @@ class AlphaScanner:
 
     def rank_and_select(self, merged_df: pd.DataFrame) -> pd.DataFrame:
         return rank_and_select(merged_df, self.config)
+
+    def rank_and_select_short(self, merged_df: pd.DataFrame, long_selected: pd.DataFrame) -> pd.DataFrame:
+        long_symbols = set(long_selected["symbol"].astype(str).tolist()) if not long_selected.empty else None
+        return rank_and_select_short(merged_df, self.config, long_selected_symbols=long_symbols)
+
+    def _enrich_short_score(self, merged_df: pd.DataFrame) -> None:
+        """Ajoute la colonne ``short_score`` pour la selection short (Option B)."""
+        if self.config.short_selection_size <= 0:
+            return
+        try:
+            from selector.short_score import enrich_with_short_score
+            close_df = None
+            if hasattr(self, "_price_cache") and self._price_cache is not None:
+                close_df = self._price_cache
+            trade_day = getattr(self, "_reference_date", None)
+            enrich_with_short_score(merged_df, close_df=close_df, trade_day=trade_day)
+        except Exception:
+            LOGGER.debug("_enrich_short_score: short_score enrichment skipped", exc_info=True)
 
     def _enrich_and_filter_equities(
         self, merged_df: pd.DataFrame, metadata_df: pd.DataFrame
@@ -537,7 +556,14 @@ class AlphaScanner:
             if len(runtime_variants) == 1:
                 merged_candidates, scan_meta = self._scan_primary_candidates()
                 merged_candidates = self._apply_factor_neutralization(merged_candidates)
+                # Plan v2 Sprint 5 — enrichir avec short_score avant selection
+                self._enrich_short_score(merged_candidates)
                 selected = self.rank_and_select(merged_candidates)
+                # Plan v2 Sprint 5 — selection short parallele
+                short_selected = self.rank_and_select_short(merged_candidates, selected)
+                if not short_selected.empty:
+                    selected = pd.concat([selected, short_selected], ignore_index=True)
+                    selected = selected.drop_duplicates(subset=["symbol"], keep="first")
                 scored_for_persistence = merged_candidates.copy()
             else:
                 merged_candidates_by_variant, stats_by_variant, scan_meta = self._scan_ablation_candidates(runtime_variants)

@@ -24,7 +24,6 @@ from modelFactory.data_loader import (
     load_symbol_latest_bar_dates,
     load_symbol_selector_context,
     load_symbol_sentiment,
-    load_universe_bars,
     resolve_training_start_date,
 )
 from modelFactory.features import build_feature_contract
@@ -291,7 +290,13 @@ def _filter_symbols_by_mode(
     return kept
 
 
-def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] | None = None) -> TrainResult:
+def _train_worker(
+    symbol: str,
+    cfg: TrainingConfig,
+    universe_symbols: list[str] | None = None,
+    *,
+    cross_sectional_cache: pd.DataFrame | None = None,
+) -> TrainResult:
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
     from database.connection import get_sqlalchemy_engine
 
@@ -330,15 +335,23 @@ def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] 
             end_date=history_end_date,
             start_date=history_start_date,
         )
-    universe_df = None
+    cross_sectional_df = None
     if cfg.data.enable_cross_sectional_features:
-        effective_universe = list(dict.fromkeys((universe_symbols or []) + [symbol]))
-        universe_df = load_universe_bars(
-            engine,
-            effective_universe,
-            end_date=history_end_date,
-            start_date=history_start_date,
-        )
+        if cross_sectional_cache is not None and not cross_sectional_cache.empty:
+            # Filter pre-computed cache to this symbol's rows
+            cross_sectional_df = cross_sectional_cache[cross_sectional_cache["symbol"] == symbol].copy()
+        else:
+            # Fallback: compute on the fly (ProcessPoolExecutor path)
+            from modelFactory.cross_sectional import build_cross_sectional_features_from_db
+            effective_universe = list(dict.fromkeys((universe_symbols or []) + [symbol]))
+            cross_sectional_df, _ = build_cross_sectional_features_from_db(
+                engine,
+                effective_universe,
+                benchmark_df=benchmark_df,
+                min_universe_size=cfg.data.cross_sectional_min_universe,
+                start_date=history_start_date,
+                end_date=history_end_date,
+            )
     return train_symbol(
         symbol,
         bars,
@@ -346,8 +359,9 @@ def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] 
         engine,
         sentiment_df=sentiment_df,
         benchmark_df=benchmark_df,
-        universe_df=universe_df,
+        universe_df=None,  # not used when cross_sectional_df is provided
         selector_df=selector_df,
+        cross_sectional_df=cross_sectional_df,
     )
 
 
@@ -450,6 +464,40 @@ def run_training_batch(
     )
     results: list[TrainResult] = []
 
+    # Pre-compute cross-sectional features ONCE for all symbols.
+    # Each symbol only needs its own (symbol, date) rows, which we look up
+    # by symbol in _train_worker.  This avoids loading the entire universe
+    # 12k times.
+    cross_sectional_cache: pd.DataFrame | None = None
+    if cfg.data.enable_cross_sectional_features and symbols:
+        from modelFactory.cross_sectional import build_cross_sectional_features_from_db
+        from modelFactory.data_loader import load_benchmark_bars, load_symbol_latest_bar_date
+        LOGGER.info("run_training_batch pre-computing cross-sectional features for %d symbols", len(symbols))
+        bench_df = None
+        if cfg.data.feature_set == "expert" or cfg.data.benchmark_symbol:
+            try:
+                bench_df = load_benchmark_bars(
+                    engine,
+                    cfg.data.benchmark_symbol,
+                    end_date=cfg.data.training_end_date,
+                    start_date=cfg.data.training_start_date,
+                )
+            except Exception:
+                pass
+        cross_sectional_cache, _ = build_cross_sectional_features_from_db(
+            engine,
+            symbols,
+            benchmark_df=bench_df,
+            min_universe_size=cfg.data.cross_sectional_min_universe,
+            start_date=cfg.data.training_start_date,
+            end_date=cfg.data.training_end_date,
+        )
+        LOGGER.info(
+            "run_training_batch cross-sectional cache ready rows=%d symbols=%d",
+            len(cross_sectional_cache),
+            cross_sectional_cache["symbol"].nunique() if not cross_sectional_cache.empty else 0,
+        )
+
     if effective_workers == 1:
         for index, sym in enumerate(symbols, start=1):
             try:
@@ -460,7 +508,7 @@ def run_training_batch(
                     progress_item=sym,
                 )
                 if cfg.data.enable_cross_sectional_features:
-                    result = _train_worker(sym, cfg, symbols)
+                    result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache)
                 else:
                     result = _train_worker(sym, cfg)
                 results.append(result)
@@ -487,6 +535,8 @@ def run_training_batch(
                 )
     else:
         with ProcessPoolExecutor(max_workers=effective_workers) as pool:
+            # Cross-sectional cache NOT passed to subprocess (pickling overhead).
+            # Each worker falls back to symbol-by-symbol DB loading.
             if cfg.data.enable_cross_sectional_features:
                 futures = {pool.submit(_train_worker, sym, cfg, symbols): sym for sym in symbols}
             else:
