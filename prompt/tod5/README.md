@@ -7,17 +7,21 @@
 
 ---
 
-## 🔴 Mise à jour majeure — 2026-06-20
+## 🔴 Mise à jour majeure — 2026-06-20 (Post-PDT FINRA + Sprints S8-S14 réalisés)
 
-**La règle PDT (Pattern Day Trader) a été supprimée par la FINRA le 4 juin 2026.** Alpaca a mis à jour sa plateforme. Conséquences :
-- ✅ Plus de limite de 3 day trades par période de 5 jours
-- ✅ Plus d'exigence de capital minimum de 25 000 $
-- ✅ Achat/vente intraday autorisé sans restriction pour tous les comptes
-- ✅ `execution_swing_only=false` sur tous les presets est désormais **correct**
-- ⚠️ L'anomalie A-CAP-001 est **résolue** (plus besoin d'activer swing_only)
-- ⚠️ L'IHM doit être mise à jour (son défaut `swing_only=True` est obsolète)
+**La règle PDT (Pattern Day Trader) a été supprimée par la FINRA le 4 juin 2026.** Alpaca a mis à jour sa plateforme.
 
-Les documents suivants ont été mis à jour pour refléter ce changement : `00`, `02`, `03`, `04`, `05`, `07`, `08`, `09`, `10`.
+### Sprints réalisés (2026-06-20) :
+- ✅ **S8** — Corrections critiques presets (drawdown breaker, min_notional, USD)
+- ✅ **S8-bis** — Mise à jour IHM post-PDT (swing_only=False, step 1 dynamique)
+- ✅ **S9** — Bandes avertissement IHM, infobulles FINRA
+- ✅ **S10** — Remise à niveau documentaire (DOC_FONCTIONNELLE, DOC_TECHNIQUE)
+- ✅ **S11** — Robustesse backtesting (cache Parquet, microstructure sqrt, commissions tiered, bootstrap 500)
+- ✅ **S12** — Gouvernance ML (pipeline_ml_defaults.py, rollback doc, CatBoost check)
+- ✅ **S13** — Cross-check Yahoo activé par défaut sur corporate actions
+- ✅ **S14** — JSON logging, mutation CI, benchmarks pytest
+
+Tous les documents de synthèse ont été mis à jour.
 
 ---
 
@@ -41,11 +45,11 @@ Les documents suivants ont été mis à jour pour refléter ce changement : `00`
 
 | Indicateur | Valeur |
 |---|---|
-| **Note globale** | 6.4/10 (révisée post-PDT) |
-| **Verdict** | **Solide** — avancé pour un projet indépendant, perfectible pour du pro-grade |
-| **Anomalies P0** | 2 (A-CAP-001 résolue par FINRA 2026-06-04) |
-| **Anomalies P1** | 12 |
-| **Anomalies P2** | 18 |
+| **Note globale** | 7.8/10 (révisée post-sprints S8-S14) |
+| **Verdict** | **Quasi-pro** — nettement au-dessus d'un projet indépendant, proche du niveau professionnel |
+| **Anomalies P0** | 0 (toutes résolues : A-CAP-001 FINRA, A-CAP-002, A-CAP-003) |
+| **Anomalies P1** | 7 (5 résolues : A-IHM-001, A-DOC-001, A-BACK-001, A-CA-001, A-RISK-001) |
+| **Anomalies P2** | 16 (2 résolues : A-CODE, A-OBS via S14) |
 | **Anomalies P3** | 14 |
-| **Sprints recommandés** | 10 sprints sur ~6 mois (incluant S8-bis IHM post-PDT) |
-| **Niveau cible après plan** | 8.5/10 (quasi-pro) |
+| **Sprints réalisés** | 8 sprints (S8→S14 + S8-bis) sur les 11 planifiés |
+| **Niveau actuel** | 7.8/10 (quasi-pro) |

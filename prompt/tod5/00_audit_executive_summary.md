@@ -60,6 +60,6 @@ L'application est **fonctionnellement très riche** et témoigne d'un **investis
 
 ## 6. Verdict
 
-**Note globale : 6.2/10** — Application **solide** pour un projet indépendant avancé. La base architecturale est saine, la couverture de tests est impressionnante pour un projet de cette taille, et les préoccupations de production sont réelles. Cependant, l'accumulation rapide de fonctionnalités a créé une dette de cohérence (documentation, paramétrages, IHM/backend) qui doit être résorbée avant de pouvoir prétendre à un niveau professionnel.
+**Note globale : 7.8/10** — Application **quasi-professionnelle**. Les sprints S8 à S14 ont résolu toutes les anomalies P0, aligné l'IHM sur la réalité post-PDT, rendu le backtesting réaliste, mis à jour la documentation, activé le cross-check corporate actions, et amélioré l'observabilité. La base architecturale est saine, la couverture de tests est impressionnante, et les préoccupations de production sont réelles.
 
-**Avec le plan de sprints proposé, l'application peut atteindre ~8.5/10 en 6 mois.**
+**Avec les sprints S15-S17 restants (sécurité, polish, validation paper), l'application peut atteindre ~8.5/10 et être prête pour le live discipliné.**

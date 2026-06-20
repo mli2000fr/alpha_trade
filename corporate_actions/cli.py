@@ -153,8 +153,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_p.add_argument(
         "--cross-check",
         choices=("none", "yahoo"),
-        default="none",
-        help="Cross-check optionnel des dividendes ingérés contre Yahoo Finance (best-effort).",
+        default="yahoo",
+        help="Cross-check des dividendes ingérés contre Yahoo Finance (best-effort). Défaut S13 : yahoo. Utiliser --cross-check none pour désactiver.",
     )
 
     # --- apply ---
@@ -189,8 +189,8 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--cross-check",
         choices=("none", "yahoo"),
-        default="none",
-        help="Phase 5.3.c â€” cross-check optionnel des dividendes ingÃ©rÃ©s contre Yahoo Finance (yfinance requis).",
+        default="yahoo",
+        help="Phase 5.3.c — cross-check des dividendes ingérés contre Yahoo Finance (yfinance requis). Défaut S13 : yahoo. Utiliser --cross-check none pour désactiver.",
     )
 
     return parser

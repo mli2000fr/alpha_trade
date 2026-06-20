@@ -1,0 +1,54 @@
+name: Mutation Testing (Weekly)
+
+# Sprint S14 — Tests de mutation hebdomadaires pour évaluer la qualité de la suite de tests.
+# Exécuté chaque dimanche à 03:00 UTC, ou manuellement via workflow_dispatch.
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"   # chaque dimanche 03:00 UTC
+  workflow_dispatch:       # déclenchement manuel
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install mutmut  # outil de mutation testing léger
+
+      - name: Run mutation tests (core modules)
+        run: |
+          # Modules critiques : common, backtesting (trading_constraints), corporate_actions (cross_check)
+          mutmut run \
+            --paths-to-mutate "common/capital_presets.py common/logging_setup.py backtesting/trading_constraints.py corporate_actions/cross_check_yahoo.py" \
+            --tests-dir tests/ \
+            --runner "pytest -x -o addopts=" \
+            || echo "Mutation survivors are expected — review HTML report."
+
+      - name: Generate mutation report
+        if: always()
+        run: |
+          mutmut results
+          mutmut html
+        continue-on-error: true
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: mutmut-results/
+        continue-on-error: true

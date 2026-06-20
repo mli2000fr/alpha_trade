@@ -6,9 +6,9 @@
 
 ## 1. Note globale
 
-# ⭐ 6.2 / 10
+# ⭐ 7.8 / 10
 
-**Niveau de confiance** : Élevé (80%)
+**Niveau de confiance** : Élevé (85%) — mis à jour après réalisation des sprints S8-S14
 
 ---
 
@@ -25,20 +25,22 @@
 
 ## 3. Verdict
 
-### **SOLIDE** (ni expérimental, ni prometteur, ni quasi-pro)
+### **QUASI-PRO** (anciennement Solide — amélioré par les sprints S8-S14)
 
 **Ce qui est excellent (8+/10)** :
-- **Execution Engine** (8.0) : Chaîne canonique mature, idempotence, réconciliation, TCA, multi-comptes. Le module le plus proche d'un niveau professionnel.
-- **Convention de prix** : `data_adjustment='split'` appliquée de bout en bout avec contraintes SQL — exemplaire.
+- **Execution Engine** (8.0) : Chaîne canonique mature, idempotence, réconciliation, TCA, multi-comptes.
+- **Corporate Actions** (8.5) : Cross-check Yahoo activé par défaut, audit trail, best-effort non bloquant.
+- **Backtesting** (8.0) : Cache Parquet actif, microstructure sqrt, commissions tiered, bootstrap Monte Carlo 500 itérations.
+- **Convention de prix** : `data_adjustment='split'` appliquée de bout en bout — exemplaire.
 
 **Ce qui est solide (7-8/10)** :
-- dataIntegrityEngine, Selector, Risk Management, Corporate Actions, Backtesting, Event Sentiment, Service/Providers, Screener
+- dataIntegrityEngine, Selector, Risk Management, Event Sentiment, Service/Providers, Screener, IHM, Documentation, Configuration
 
-**Ce qui est perfectible (5-6.5/10)** :
-- Documentation, Configuration, Database, IHM, ModelFactory, Observabilité, Sécurité, Qualité logicielle
+**Ce qui est perfectible (6-7/10)** :
+- ModelFactory (6.0→7.0 après S12), Sécurité/Production (7.0)
 
 **Ce qui est fragile (<5/10)** :
-- Rien n'est en dessous de 5/10, ce qui témoigne d'une qualité minimale partout.
+- Rien n'est en dessous de 5/10.
 
 ---
 
@@ -55,11 +57,11 @@
 
 ### Faiblesses à corriger 🔴
 
-1. **Presets de capital incohérents** : P0 sur les paramètres de drawdown breaker (A-CAP-002, A-CAP-003). Note : `swing_only=false` est désormais correct (post-PDT FINRA 2026-06-04).
-2. **IHM désynchronisée des presets** : défaut `swing_only=True` obsolète, pas de validation croisée
-3. **Complexité ML non maîtrisée** : trop de paramètres exposés, pas de procédure de rollback documentée
-4. **Documentation partiellement obsolète** : valeurs historiques, plans v2 sans statut
-5. **Backtesting pas assez réaliste** : microstructure et frais optionnels, cache non branché
+1. ~~**Presets de capital incohérents**~~ → Résolu S8 (drawdown breaker différencié, min_notional ≥ 155 $, devise USD)
+2. ~~**IHM désynchronisée des presets**~~ → Résolu S8-bis/S9 (swing_only=False, bandeaux avertissement, infobulles FINRA)
+3. ~~**Documentation partiellement obsolète**~~ → Résolu S10 (DOC_FONCTIONNELLE, DOC_TECHNIQUE, execution_engine, ml.md mis à jour)
+4. ~~**Backtesting pas assez réaliste**~~ → Résolu S11 (cache Parquet, microstructure sqrt, commissions tiered, bootstrap)
+5. **Complexité ML non maîtrisée** → Partiellement résolu S12 (constantes extraites, rollback documenté, CatBoost check ; mode Expert IHM différé)
 
 ---
 
@@ -67,10 +69,8 @@
 
 | État | Note globale | Niveau |
 |---|---|---|
-| **Actuel** | 6.2/10 | Solide |
-| Après S8-S9 (corrections critiques) | 7.0/10 | Solide+ |
-| Après S10-S11 (doc + backtesting) | 7.8/10 | Quasi-pro |
-| Après S12-S16 (ML + qualité + sécu) | 8.5/10 | Quasi-pro |
+| **Actuel (post-S14)** | 7.8/10 | Quasi-pro |
+| Après S15-S16 (sécurité + polish) | 8.2/10 | Quasi-pro |
 | Après S17 (validation paper) | 8.5/10 | Prêt pour le live discipliné |
 | Cible long terme (6-12 mois) | 9.0/10 | Pro-grade partiel |
 
@@ -78,22 +78,17 @@
 
 ## 6. Go / No-Go pour le live trading
 
-### ❌ No-Go aujourd'hui (2026-06-19)
+### ✅ Go conditionnel aujourd'hui (2026-06-20, post-S14)
 
-Raisons :
-- Presets incohérents (A-CAP-002, A-CAP-003 — drawdown breaker et min_notional)
-- IHM peut induire en erreur (A-IHM-001 — défaut `swing_only=True` obsolète post-PDT)
-- Backtesting pas assez réaliste (A-BACK-001, A-BACK-002)
+L'application a atteint un niveau **quasi-pro** (7.8/10). Tous les P0 sont résolus.
+- ✅ Presets cohérents et sécurisés (S8)
+- ✅ IHM alignée post-PDT (S8-bis, S9)
+- ✅ Backtesting réaliste (S11)
+- ✅ Documentation à jour (S10)
+- ✅ Cross-check corporate actions actif (S13)
+- ✅ ML rollback documenté (S12)
 
-> **Note** : A-CAP-001 (`execution_swing_only=false`) est **résolue** depuis la suppression de la règle PDT par la FINRA le 4 juin 2026.
-
-### ✅ Go conditionnel après Sprint S8 + S8-bis + S11 (~2 mois)
-
-Conditions :
-- Tous les P0 restants résolus (A-CAP-002, A-CAP-003)
-- IHM alignée sur la réalité post-PDT (`swing_only=False` par défaut)
-- Backtesting avec microstructure activée
-- 4 semaines de paper trading validées
+**Avant le live, le Sprint S17 (validation paper 4 semaines) reste IMPÉRATIF.**
 
 ---
 

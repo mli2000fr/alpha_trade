@@ -8,10 +8,14 @@
 
 | ID Anomalie | Sévérité | Correctif | Test(s) associé(s) | Sprint |
 |---|---|---|---|---|
-| A-CAP-001 | ~~P0~~ → **RÉSOLU** | ~~Activer swing_only~~ → Résolu par FINRA 2026-06-04 | ~~T-CAP-001~~ → T-IHM-001 (IHM) | ~~S8~~ → S8-bis |
-| A-CAP-002 | P0 | Différencier drawdown breaker par tranche | T-CAP-002 (config) | S8 |
-| A-CAP-003 | P0 | Remonter min_notional ≥ 155$ | T-CAP-003 (config) | S8 |
-| A-IHM-001 | P1 | Changer défaut IHM `swing_only` → `False` | T-IHM-001 (intégration IHM) | S8-bis |
+| A-CAP-001 | ~~P0~~ → **RÉSOLU** | ~~Activer swing_only~~ → Résolu par FINRA 2026-06-04 | ~~T-CAP-001~~ | ~~S8~~ |
+| A-CAP-002 | ~~P0~~ → **RÉSOLU S8** | Drawdown breaker différencié | T-CAP-002 ✅ | S8 ✅ |
+| A-CAP-003 | ~~P0~~ → **RÉSOLU S8** | min_notional ≥ 155 $ | T-CAP-003 ✅ | S8 ✅ |
+| A-IHM-001 | ~~P1~~ → **RÉSOLU S8-bis** | swing_only=False IHM | T-IHM-001 ✅ | S8-bis ✅ |
+| A-DOC-001 | ~~P1~~ → **RÉSOLU S10** | Nettoyage doc | T-DOC-001 | S10 ✅ |
+| A-CA-001 | ~~P1~~ → **RÉSOLU S13** | Cross-check Yahoo par défaut | T-CA-001 ✅ | S13 ✅ |
+| A-BACK-001 | ~~P1~~ → **RÉSOLU S11** | Cache Parquet + microstructure | T-BACK-001 ⏳ | S11 ✅ |
+| A-RISK-001 | P1 | Justifier poids de conviction | T-RISK-001 ⏳ | S11 (ablation différée) |
 | A-IHM-002 | P1 | Validation croisée IHM/preset | T-IHM-002 (intégration IHM) | S9 |
 | A-DOC-001 | P1 | Nettoyer valeurs obsolètes doc | T-DOC-001 (non-régression doc) | S10 |
 | A-ML-001 | P1 | Mode Expert ML dans l'IHM | T-ML-001 (E2E IHM) | S12 |

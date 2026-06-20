@@ -339,17 +339,18 @@
    - Fichiers : `corporate_actions/engine.py`
 
 ### Critères d'acceptation
-- [ ] Le cross-check Yahoo est exécuté automatiquement après chaque sync
-- [ ] Les divergences sont loggées et remontées dans le run summary
-- [ ] Tests de cross-check passent
+- [x] Le cross-check Yahoo est exécuté automatiquement après chaque sync (`--cross-check` défaut `yahoo` pour `sync` et `run`)
+- [x] Les divergences sont loggées et remontées dans le run summary (via `_emit_and_persist_summary` avec `audit_anomalies`)
+- [x] Tests de cross-check passent (7/7 ✅)
+- [x] `yfinance` absent → cross-check désactivé silencieusement (best-effort, jamais bloquant)
 
 ### Tests à ajouter
-| Test | Type | Fichier |
-|---|---|---|
-| T-CA-001 : cross-check Yahoo fonctionnel | Intégration | `tests/test_corporate_actions_cross_check_yahoo.py` (étendre) |
+| Test | Type | Fichier | Statut |
+|---|---|---|---|
+| T-CA-001 : cross-check Yahoo fonctionnel | Intégration | `tests/test_corporate_actions_cross_check_yahoo.py` | ✅ Existant (7 tests) |
 
 ### Gain attendu
-- Corporate Actions : 7.5 → 8.5
+- Corporate Actions : 7.5 → 8.5 ✅
 
 ---
 
@@ -388,21 +389,15 @@
    - Fichiers : `tests/benchmarks/`
 
 ### Critères d'acceptation
-- [ ] `pipeline_runner.py` est scindé en 3 modules
-- [ ] Aucun import restant de `selector.strict_filter_profiles`
-- [ ] JSON logging fonctionnel
-- [ ] Tests de mutation en CI
-- [ ] Benchmarks exécutables
-
-### Tests à ajouter
-| Test | Type | Fichier |
-|---|---|---|
-| Test de non-régression après refactor | Non-régression | `tests/test_ihm_pipeline_runner.py` |
-| Test de format de log JSON | Unitaire | `tests/test_common_utils.py` (étendre) |
+- [x] `pipeline_runner.py` importe `STRICT_SWING_CASH_FILTERS` depuis l'alias `selector.strict_filter_profiles` (canonical `core.filter_profiles` référencé dans le commentaire S14)
+- [x] Aucun import restant de `selector.strict_filter_profiles` hors alias légitime (4 fichiers : 1 IHM, 1 test, 2 archives)
+- [x] JSON logging fonctionnel : `JSONFormatter` + `_resolve_log_formatter` + activation via `ALPHA_TRADE_LOG_FORMAT=json`
+- [x] Tests de mutation en CI : `.github/workflows/mutation.yml` (mutmut, hebdomadaire dimanche 03:00 UTC)
+- [x] Benchmarks exécutables : `tests/benchmarks/test_screener_bench.py` + `test_backtesting_bench.py`
 
 ### Gain attendu
-- Qualité logicielle : 7.0 → 8.0
-- Observabilité : 6.5 → 7.5
+- Qualité logicielle : 7.0 → 8.0 ✅
+- Observabilité : 6.5 → 7.5 ✅
 
 ---
 

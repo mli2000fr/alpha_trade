@@ -129,7 +129,7 @@ L'application se définit comme une plateforme de **swing trading actions US** a
 
 ## 4. Verdict Swing Trade Fitness
 
-**Note globale adéquation swing trade : 7.0/10**
+**Note globale adéquation swing trade : 7.8/10** (révisée post-sprints S8-S14)
 
 L'application est **bien conçue pour le swing trading** dans son architecture et ses paramètres de base. Les points forts sont :
 - La convention de prix split-only avec dividendes séparés

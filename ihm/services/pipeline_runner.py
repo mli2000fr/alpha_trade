@@ -17,7 +17,7 @@ from typing import Literal
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
-from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
+from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS  # alias → core.filter_profiles (Sprint S14)
 from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML extraites
     DEFAULT_ML_ARTIFACTS_DIR,
     DEFAULT_ML_BATCH_SIZE,

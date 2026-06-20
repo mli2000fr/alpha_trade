@@ -152,7 +152,7 @@ def configure_root_logging(
     logger.setLevel(level)
     _reset_root_logging_handlers(logger)
 
-    formatter = logging.Formatter(fmt, datefmt=datefmt)
+    formatter = _resolve_log_formatter(fmt, datefmt=datefmt)
 
     stdout_handler = logging.StreamHandler(sys.stdout)
     stdout_handler.setLevel(level)
@@ -205,11 +205,68 @@ def setup_logging_with_file_handler(
     )
 
 
+# ── Sprint S14 : JSON logging formatter ──
+
+
+class JSONFormatter(logging.Formatter):
+    """Formatteur JSON structuré pour les logs (Sprint S14).
+
+    Activé via la variable d'environnement ``ALPHA_TRADE_LOG_FORMAT=json``.
+    Produit une ligne JSON par log avec : timestamp, level, logger, message,
+    et tout champ extra passé via ``extra``.
+
+    Usage :
+        export ALPHA_TRADE_LOG_FORMAT=json
+        python -m backtesting run ...
+    """
+
+    def __init__(self, *, include_extra: bool = True) -> None:
+        super().__init__()
+        self.include_extra = include_extra
+
+    def format(self, record: logging.LogRecord) -> str:
+        import json as _json
+        log_entry: dict[str, object] = {
+            "timestamp": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if self.include_extra:
+            for key, value in record.__dict__.items():
+                if key not in {
+                    "args", "asctime", "created", "exc_info", "exc_text",
+                    "filename", "funcName", "levelname", "levelno", "lineno",
+                    "module", "msecs", "message", "msg", "name", "pathname",
+                    "process", "processName", "relativeCreated", "stack_info",
+                    "thread", "threadName",
+                } and value is not None:
+                    try:
+                        log_entry[key] = value
+                    except (TypeError, ValueError):
+                        log_entry[key] = str(value)
+        return _json.dumps(log_entry, default=str, ensure_ascii=False)
+
+
+def _resolve_log_formatter(fmt: str, datefmt: str | None = None) -> logging.Formatter:
+    """Résout le formatteur selon le format demandé ou la variable d'environnement.
+
+    Si ``ALPHA_TRADE_LOG_FORMAT=json``, utilise :class:`JSONFormatter`.
+    Sinon, utilise le ``logging.Formatter`` standard avec ``fmt``.
+    """
+    env_format = os.environ.get("ALPHA_TRADE_LOG_FORMAT", "").strip().lower()
+    if env_format == "json":
+        return JSONFormatter()
+    return logging.Formatter(fmt, datefmt=datefmt)
+
+
 __all__ = [
     "DEFAULT_LOG_FORMAT",
+    "JSONFormatter",
     "PROJECT_ROOT",
     "_gzip_rotator",
     "_gzip_namer",
+    "_resolve_log_formatter",
     "configure_root_logging",
     "setup_logging_with_file_handler",
 ]

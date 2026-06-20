@@ -46,17 +46,11 @@
 
 ---
 
-### A-CAP-002 — Paramètres de drawdown breaker identiques pour toutes les tranches
-- **Sévérité** : P0
+### A-CAP-002 — ~~Paramètres de drawdown breaker identiques pour toutes les tranches~~ ✅ RÉSOLU (Sprint S8)
+- **Sévérité** : ~~P0~~ → **RÉSOLU**
 - **Domaine** : Configuration / Risk
-- **Description** : Les paramètres `degraded_entry_allocation_pct=0.025`, `ramp_up_pct_per_day=0.025`, `ramp_up_max_pct=0.8` sont strictement identiques pour les 7 tranches de capital. Un micro-compte (0-2000€) ne devrait pas avoir le même plafond de ramp-up (80%) qu'un compte 100k$+. De plus, un `degraded_entry_allocation_pct=0.025` (2.5% d'allocation) sur un micro-compte signifie des tickets de ~50$ — en dessous de tout minimum notionnel réaliste.
-- **Preuve** : `config/capital_presets.yaml` — comparer les champs `risk_degraded_entry_allocation_pct`, `risk_regime_ramp_up_max_pct` sur tous les presets.
-- **Impact métier** : Allocation dégradée inadaptée au capital → soit univers vide, soit risque disproportionné.
-- **Impact technique** : Paramétrage non différencié par tranche.
-- **Probabilité** : Élevée en cas de drawdown sur petit compte.
-- **Niveau de confiance** : Élevé (95%).
-- **Recommandation** : Différencier les paramètres de drawdown breaker par tranche : `degraded_entry_allocation_pct` croissant avec le capital (ex: 0.05 pour micro-comptes, 0.10 pour ≥50k$), `ramp_up_max_pct` croissant (ex: 0.20 pour micro, 0.60 pour ≥50k$).
-- **Test associé** : Voir bloc test T-CAP-002.
+- **Résolution** : Les paramètres `degraded_entry_allocation_pct`, `ramp_up_pct_per_day` et `ramp_up_max_pct` sont désormais différenciés par tranche de capital (micro : 0.05/0.05/0.20 → 100k$+ : 0.15/0.10/0.60). Les équivalents `backtesting_dd_*` sont alignés. Tests T-CAP-002 et T-CAP-005 validés.
+- **Test associé** : T-CAP-002 ✅, T-CAP-005 ✅
 
 **Bloc test T-CAP-002** :
 - **Objectif** : Vérifier que les paramètres de drawdown breaker sont croissants avec le capital
@@ -75,17 +69,11 @@
 
 ---
 
-### A-CAP-003 — `risk_min_position_notional` à 150$ < minimum Alpaca (155$)
-- **Sévérité** : P0
+### A-CAP-003 — ~~`risk_min_position_notional` à 150$ < minimum Alpaca (155$)~~ ✅ RÉSOLU (Sprint S8)
+- **Sévérité** : ~~P0~~ → **RÉSOLU**
 - **Domaine** : Configuration / Exécution
-- **Description** : Le preset `capital_0_5000` (2k-5k$) définit `risk_min_position_notional: 150.0` alors que `config.yaml` configure `market_regimes.enforce_min_notional: 155`. Un notionnel minimum de 150$ est en dessous du minimum Alpaca et pourrait causer des rejets d'ordres.
-- **Preuve** : `config/capital_presets.yaml` ligne `risk_min_position_notional: 150.0` pour le preset `capital_0_5000` ; `config.yaml` ligne `enforce_min_notional: 155`.
-- **Impact métier** : Ordres rejetés par Alpaca → positions non ouvertes → portefeuille incomplet.
-- **Impact technique** : Incohérence entre les garde-fous configurés.
-- **Probabilité** : Élevée pour les petits comptes.
-- **Niveau de confiance** : Élevé (90%).
-- **Recommandation** : Relever `risk_min_position_notional` à ≥155$ pour tous les presets, ou supprimer `enforce_min_notional` et utiliser systématiquement la valeur du preset.
-- **Test associé** : Voir bloc test T-CAP-003.
+- **Résolution** : `risk_min_position_notional` du preset `capital_0_5000` remonté de 150 $ à 155 $. Tous les presets ont désormais `risk_min_position_notional ≥ 155`. Test T-CAP-003 validé.
+- **Test associé** : T-CAP-003 ✅
 
 **Bloc test T-CAP-003** :
 - **Objectif** : Vérifier que tous les `risk_min_position_notional` ≥ `enforce_min_notional`
@@ -133,17 +121,10 @@
 
 ---
 
-### A-DOC-001 — `DOC_FONCTIONNELLE.md` : valeurs de filtres obsolètes
-- **Sévérité** : P1
+### A-DOC-001 — ~~`DOC_FONCTIONNELLE.md` : valeurs de filtres obsolètes~~ ✅ RÉSOLU (Sprint S10)
+- **Sévérité** : ~~P1~~ → **RÉSOLU**
 - **Domaine** : Documentation
-- **Description** : `DOC_FONCTIONNELLE.md` mentionne `max_spread_bps <= 25` comme valeur historique (corrigée en S4 à ≤ 40 bps) et `min_beta_126 >= 1.0` (corrigé à ≥ 0.8). Ces corrections sont mentionnées en commentaire mais le texte principal pourrait encore induire en erreur.
-- **Preuve** : `doc/DOC_FONCTIONNELLE.md` §2.3 — commentaires « valeur historique de doc : ≥ 1.0 — Sprint S4 / A-005-résidu corrigé » et « valeur historique de doc : ≤ 25 bps — Sprint S4 / A-008-doc corrigé ». Le code source canonique (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) a `max_spread_bps=40.0` et `min_beta_126=0.8`.
-- **Impact métier** : Opérateur utilisant d'anciennes valeurs pour évaluer la qualité des filtres.
-- **Impact technique** : Dette documentaire.
-- **Probabilité** : Faible (les corrections sont mentionnées).
-- **Niveau de confiance** : Élevé (95%).
-- **Recommandation** : Nettoyer `DOC_FONCTIONNELLE.md` pour ne garder que les valeurs canoniques actuelles, déplacer l'historique dans un CHANGELOG.
-- **Test associé** : Voir bloc test T-DOC-001.
+- **Résolution** : `DOC_FONCTIONNELLE.md` et `DOC_TECHNIQUE.md` mis à jour avec les sprints S8-S14, le contexte post-PDT FINRA, et les valeurs canoniques actuelles. Aucune valeur historique ambiguë restante.
 
 **Bloc test T-DOC-001** :
 - **Objectif** : Vérifier que les valeurs numériques dans `DOC_FONCTIONNELLE.md` correspondent au code
@@ -218,17 +199,10 @@
 
 ---
 
-### A-CA-001 — Pas de cross-check automatique multi-provider pour les corporate actions
-- **Sévérité** : P1
+### A-CA-001 — ~~Pas de cross-check automatique multi-provider pour les corporate actions~~ ✅ RÉSOLU (Sprint S13)
+- **Sévérité** : ~~P1~~ → **RÉSOLU**
 - **Domaine** : Corporate Actions
-- **Description** : Le module corporate actions utilise un seul provider (EODHD ou Alpaca selon `bars_provider`). Aucun cross-check automatique avec Yahoo Finance ou un autre provider n'est effectué, ce qui pourrait laisser passer des dividendes/splits manqués.
-- **Preuve** : `corporate_actions/provider.py` — `build_corporate_action_provider()` sélectionne un seul provider. `corporate_actions/cross_check_yahoo.py` existe mais est optionnel.
-- **Impact métier** : Dividende manqué → cash ledger incomplet → performance sous-estimée.
-- **Impact technique** : Pas de filet de sécurité sur les données CA.
-- **Probabilité** : Faible.
-- **Niveau de confiance** : Moyen (70%).
-- **Recommandation** : Activer le cross-check Yahoo par défaut avec un mode warning (ne pas bloquer le pipeline).
-- **Test associé** : Voir bloc test T-CA-001.
+- **Résolution** : Le cross-check Yahoo Finance est désormais activé par défaut (`--cross-check yahoo` pour `sync` et `run`). Les divergences sont loggées et remontées dans les run summaries. Best-effort, jamais bloquant (si `yfinance` absent, désactivé silencieusement). Tests T-CA-001 passent (7/7 ✅).
 
 **Bloc test T-CA-001** :
 - **Objectif** : Vérifier que le cross-check Yahoo fonctionne et détecte les écarts
@@ -246,17 +220,10 @@
 
 ---
 
-### A-BACK-001 — Cache Parquet non branché par défaut
-- **Sévérité** : P1
+### A-BACK-001 — ~~Cache Parquet non branché par défaut~~ ✅ RÉSOLU (Sprint S11)
+- **Sévérité** : ~~P1~~ → **RÉSOLU**
 - **Domaine** : Backtesting
-- **Description** : `backtesting/cache.py` implémente un cache Parquet pour les données OHLCV/scores/prédictions, mais il n'est pas branché par défaut dans la commande `run`. Les backtests répétés rechargent toutes les données depuis MySQL.
-- **Preuve** : `doc/DOC_TECHNIQUE.md` §2.1 — « ParquetCache … Présent dans le code et les tests, mais pas encore branché par défaut à la commande run. »
-- **Impact métier** : Backtests plus lents → itération de recherche ralentie.
-- **Impact technique** : Performance dégradée, charge DB inutile.
-- **Probabilité** : Élevée pour les utilisateurs fréquents du backtesting.
-- **Niveau de confiance** : Élevé (95%).
-- **Recommandation** : Activer le cache Parquet par défaut avec une option `--no-cache` pour le désactiver.
-- **Test associé** : Voir bloc test T-BACK-001.
+- **Résolution** : Le cache Parquet est désormais actif par défaut (`--no-cache` pour désactiver). La microstructure est activée avec slippage `sqrt` (2 bps base + 5 bps impact), gap 3%. Les commissions sont modélisées par palier de capital (`TieredCommissionConfig`). Bootstrap Monte Carlo activé (500 itérations).
 
 **Bloc test T-BACK-001** :
 - **Objectif** : Vérifier que le cache Parquet accélère le chargement des données
