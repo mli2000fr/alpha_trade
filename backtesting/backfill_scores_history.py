@@ -70,8 +70,22 @@ HISTORY_COLUMNS = [
     "earnings_date",
     "days_to_earnings",
     "earnings_blackout",
+    "candidate_rank",
+    "raw_final_score",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
+    "atr_pct_20",
+    "weekly_trend_score",
+    "high_52w_proximity",
+    "volatility_ratio",
     "is_candidate",
     "selector_signal_mode",  # Plan v2 Sprint 5 — long/short
+    "selection_explanation",
     "sentiment_net_agg",
     "sector_impact_agg",
     "company_idio_score",
@@ -269,11 +283,24 @@ class BackfillScoresHistoryService:
             LOGGER.warning("Aucun score selector exploitable pour %s.", as_of_date)
             return self._empty_history_frame()
 
-        sentiment_input = selector_df[[
+        # Construire sentiment_input en préservant toutes les colonnes
+        # du pipeline selector pertinentes pour l'historique PIT.
+        _selector_columns_to_preserve = [
             "symbol", "final_score", "trend_score", "vcp_score", "total_score", "sector",
             "liquidity_val", "relative_strength_index", "historical_range_score",
             "anomaly_count", "missing_days_count", "is_candidate", "selector_signal_mode",
-        ]].copy()
+            # Colonnes enrichies par le pipeline selector (metadata / quotes / earnings / ranking)
+            "market_cap", "beta_126", "spread_bps",
+            "earnings_date", "days_to_earnings", "earnings_blackout",
+            "candidate_rank", "raw_final_score",
+            "normalized_total_score", "normalized_rsi",
+            "total_score_neutralized", "relative_strength_index_neutralized",
+            "trend_vcp_component", "total_score_component", "rsi_component",
+            "atr_pct_20", "weekly_trend_score", "high_52w_proximity", "volatility_ratio",
+            "selection_explanation",
+        ]
+        _available_selector_cols = [c for c in _selector_columns_to_preserve if c in selector_df.columns]
+        sentiment_input = selector_df[_available_selector_cols].copy()
         enriched = self.aggregator.merge(sentiment_input, trade_date=as_of_date)
         history_df = self._to_history_snapshot(enriched, as_of_date)
         LOGGER.info(
@@ -507,10 +534,13 @@ class BackfillScoresHistoryService:
             selected = selected.drop_duplicates(subset=["symbol"], keep="first")
         selected_symbols = set(selected["symbol"].astype(str).tolist()) if not selected.empty else set()
         merged_candidates["is_candidate"] = merged_candidates["symbol"].astype(str).isin(selected_symbols).astype(int)
-        # Propager selector_signal_mode aux candidats
+        # Propager selector_signal_mode et candidate_rank aux candidats
         if "selector_signal_mode" in selected.columns:
             mode_map = selected.set_index("symbol")["selector_signal_mode"]
             merged_candidates["selector_signal_mode"] = merged_candidates["symbol"].map(mode_map)
+        if "candidate_rank" in selected.columns and not selected.empty:
+            rank_map = selected.set_index("symbol")["candidate_rank"]
+            merged_candidates["candidate_rank"] = merged_candidates["symbol"].map(rank_map)
         return merged_candidates
 
     @staticmethod
@@ -758,8 +788,22 @@ class BackfillScoresHistoryService:
             "earnings_date": None,
             "days_to_earnings": None,
             "earnings_blackout": 0,
+            "candidate_rank": None,
+            "raw_final_score": None,
+            "normalized_total_score": None,
+            "normalized_rsi": None,
+            "total_score_neutralized": None,
+            "relative_strength_index_neutralized": None,
+            "trend_vcp_component": 0.0,
+            "total_score_component": 0.0,
+            "rsi_component": 0.0,
+            "atr_pct_20": None,
+            "weekly_trend_score": None,
+            "high_52w_proximity": None,
+            "volatility_ratio": None,
             "is_candidate": 0,
             "selector_signal_mode": None,  # Plan v2 Sprint 5 — long/short
+            "selection_explanation": None,
             "sentiment_net_agg": 0.0,
             "sector_impact_agg": 0.0,
             "company_idio_score": 0.0,
@@ -828,7 +872,12 @@ class BackfillScoresHistoryService:
                 liquidity_val, relative_strength_index, historical_range_score, total_score,
                 trend_score, vcp_score, final_score,
                 market_cap, beta_126, spread_bps, earnings_date, days_to_earnings, earnings_blackout,
-                is_candidate, selector_signal_mode,
+                candidate_rank, raw_final_score,
+                normalized_total_score, normalized_rsi,
+                total_score_neutralized, relative_strength_index_neutralized,
+                trend_vcp_component, total_score_component, rsi_component,
+                atr_pct_20, weekly_trend_score, high_52w_proximity, volatility_ratio,
+                is_candidate, selector_signal_mode, selection_explanation,
                 sentiment_net_agg, sector_impact_agg,
                 company_idio_score, macro_regime_score,
                 company_idio_signal_norm, macro_regime_signal_norm,
@@ -843,7 +892,12 @@ class BackfillScoresHistoryService:
                 :liquidity_val, :relative_strength_index, :historical_range_score, :total_score,
                 :trend_score, :vcp_score, :final_score,
                 :market_cap, :beta_126, :spread_bps, :earnings_date, :days_to_earnings, :earnings_blackout,
-                :is_candidate, :selector_signal_mode,
+                :candidate_rank, :raw_final_score,
+                :normalized_total_score, :normalized_rsi,
+                :total_score_neutralized, :relative_strength_index_neutralized,
+                :trend_vcp_component, :total_score_component, :rsi_component,
+                :atr_pct_20, :weekly_trend_score, :high_52w_proximity, :volatility_ratio,
+                :is_candidate, :selector_signal_mode, :selection_explanation,
                 :sentiment_net_agg, :sector_impact_agg,
                 :company_idio_score, :macro_regime_score,
                 :company_idio_signal_norm, :macro_regime_signal_norm,

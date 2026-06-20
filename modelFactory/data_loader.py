@@ -23,6 +23,18 @@ SELECTOR_HISTORY_CONTEXT_COLUMNS: tuple[str, ...] = (
     "volatility_ratio",
     "earnings_blackout",
     "selector_signal_mode",
+    # Colonnes supplémentaires — backfill PIT (Sprint S7)
+    "market_cap",
+    "beta_126",
+    "spread_bps",
+    "days_to_earnings",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
 )
 
 

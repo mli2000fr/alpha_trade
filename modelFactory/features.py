@@ -71,6 +71,18 @@ SELECTOR_CONTEXT_FEATURE_COLUMNS: list[str] = [
     "selector_volatility_ratio",
     "selector_earnings_blackout",
     "selector_mode_sector_neutralized",
+    # Nouvelles features — backfill PIT enrichi (Sprint S7)
+    "selector_market_cap",
+    "selector_beta_126",
+    "selector_spread_bps",
+    "selector_days_to_earnings",
+    "selector_normalized_total_score",
+    "selector_normalized_rsi",
+    "selector_total_score_neutralized",
+    "selector_relative_strength_index_neutralized",
+    "selector_trend_vcp_component",
+    "selector_total_score_component",
+    "selector_rsi_component",
 ]
 
 _SELECTOR_CONTEXT_SOURCE_TO_FEATURE = {
@@ -84,6 +96,18 @@ _SELECTOR_CONTEXT_SOURCE_TO_FEATURE = {
     "high_52w_proximity": "selector_high_52w_proximity",
     "volatility_ratio": "selector_volatility_ratio",
     "earnings_blackout": "selector_earnings_blackout",
+    # Nouvelles colonnes — backfill PIT enrichi (Sprint S7)
+    "market_cap": "selector_market_cap",
+    "beta_126": "selector_beta_126",
+    "spread_bps": "selector_spread_bps",
+    "days_to_earnings": "selector_days_to_earnings",
+    "normalized_total_score": "selector_normalized_total_score",
+    "normalized_rsi": "selector_normalized_rsi",
+    "total_score_neutralized": "selector_total_score_neutralized",
+    "relative_strength_index_neutralized": "selector_relative_strength_index_neutralized",
+    "trend_vcp_component": "selector_trend_vcp_component",
+    "total_score_component": "selector_total_score_component",
+    "rsi_component": "selector_rsi_component",
 }
 
 _SELECTOR_CONTEXT_DEFAULTS = {
@@ -98,6 +122,18 @@ _SELECTOR_CONTEXT_DEFAULTS = {
     "selector_volatility_ratio": 0.0,
     "selector_earnings_blackout": 0.0,
     "selector_mode_sector_neutralized": 0.0,
+    # Nouvelles features — backfill PIT enrichi (Sprint S7)
+    "selector_market_cap": 0.0,
+    "selector_beta_126": 0.0,
+    "selector_spread_bps": 0.0,
+    "selector_days_to_earnings": 0.0,
+    "selector_normalized_total_score": 0.0,
+    "selector_normalized_rsi": 0.0,
+    "selector_total_score_neutralized": 0.0,
+    "selector_relative_strength_index_neutralized": 0.0,
+    "selector_trend_vcp_component": 0.0,
+    "selector_total_score_component": 0.0,
+    "selector_rsi_component": 0.0,
 }
 
 

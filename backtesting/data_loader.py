@@ -271,6 +271,9 @@ def load_scores(
                    {_optional_select(history_columns, 'walk_forward_quant_weight')},
                    {_optional_select(history_columns, 'calibration_run_id')},
                    {_optional_select(history_columns, 'calibration_source')},
+                   {_optional_select(history_columns, 'candidate_rank')},
+                   {_optional_select(history_columns, 'selection_explanation')},
+                   {_optional_select(history_columns, 'earnings_blackout')},
                    CASE
                        WHEN {('final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
                        WHEN final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
@@ -321,6 +324,9 @@ def load_scores(
                        {('s.walk_forward_quant_weight' if 'walk_forward_quant_weight' in history_columns else 'NULL AS walk_forward_quant_weight')},
                        {('s.calibration_run_id' if 'calibration_run_id' in history_columns else 'NULL AS calibration_run_id')},
                        {('s.calibration_source' if 'calibration_source' in history_columns else 'NULL AS calibration_source')},
+                       {('s.candidate_rank' if 'candidate_rank' in history_columns else 'NULL AS candidate_rank')},
+                       {('s.selection_explanation' if 'selection_explanation' in history_columns else 'NULL AS selection_explanation')},
+                       {('s.earnings_blackout' if 'earnings_blackout' in history_columns else 'NULL AS earnings_blackout')},
                        CASE
                            WHEN {('s.final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
                            WHEN s.final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
