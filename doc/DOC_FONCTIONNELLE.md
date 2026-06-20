@@ -39,7 +39,9 @@
 - **S5** : signatures d'artefacts ML et doctrine failover broker livrées.
 - **S6** : `macro_provider=composite`, Kelly conditionnel (≥ 25 k$), clarification drawdown et SMTP.
 - **S7** : garde-fous gouvernance ML (`model_predictions`) + factorisation importeurs de barres (helper commun) + tests walk-forward ML.
-- **S8** *(audit TOD5, juin 2026)* : audit exhaustif réalisé, livrables dans `prompt/tod5/`. Corrections critiques des presets de capital planifiées.
+- **S8** *(audit TOD5, juin 2026)* : audit exhaustif réalisé, livrables dans `prompt/tod5/`. Corrections critiques des presets de capital : drawdown breaker différencié par tranche, `risk_min_position_notional` ≥ 155 $ pour tous les presets, libellé micro-compte uniformisé en USD. ✅ Livré.
+- **S8-bis** *(post-PDT FINRA, juin 2026)* : mise à jour IHM suite à la suppression de la règle PDT par la FINRA le 4 juin 2026. Défaut `execution_swing_only` passé de `True` à `False` dans l'IHM, step 1 dynamique selon le provider actif (EODHD/Alpaca), validation `__post_init__` dans `PipelineLaunchOptions`. ✅ Livré.
+- **S9** *(juin 2026)* : alignement IHM/presets finalisé. Bandes d'avertissement dans l'IHM quand `swing_only=True` (obsolète), infobulles mentionnant le changement réglementaire FINRA 2026-06-04. ✅ Livré.
 
 ### Plans en cours (v2)
 
@@ -61,6 +63,8 @@
 ### 1.2 Contexte métier
 
 Le système cible le **marché actions US (NYSE/NASDAQ)**, en stratégie **swing trading** (horizon de détention de quelques jours à quelques semaines). Il est conçu pour fonctionner en **paper trading** (compte fictif Alpaca) ou en **live trading** (argent réel), avec un mode simulation (dry-run) sans aucun envoi d'ordre.
+
+> 🔴 **Mise à jour réglementaire — 2026-06-04** : La **règle PDT (Pattern Day Trader)** a été supprimée par la FINRA. Le day trading (achat/vente intraday) est désormais autorisé sans restriction, sans limite de 3 trades par période de 5 jours ni seuil de capital minimum de 25 000 $. Alpaca a mis à jour sa plateforme. Le paramètre `execution_swing_only=False` (défaut) permet le day trading libre ; `swing_only=True` reste disponible pour les opérateurs souhaitant se restreindre volontairement au swing seul.
 
 ### 1.3 Cas d'usage principal
 

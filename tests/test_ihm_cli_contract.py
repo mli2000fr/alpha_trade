@@ -232,3 +232,15 @@ def test_ihm_cli_contract_ops_kill_switch_flags_known_by_execution_engine() -> N
 
 
 
+
+
+# Sprint S8-bis : T-IHM-001 - defaut swing_only post-PDT
+
+def test_pipeline_launch_options_default_swing_only_is_false():
+    """T-IHM-001 : Le defaut execution_swing_only doit etre False (post-PDT FINRA 2026-06-04)."""
+    from ihm.services.pipeline_runner import PipelineLaunchOptions
+    options = PipelineLaunchOptions()
+    assert options.execution_swing_only is False, (
+        f"execution_swing_only={options.execution_swing_only} - "
+        f"le defaut doit etre False depuis la suppression de la regle PDT par la FINRA (2026-06-04)"
+    )

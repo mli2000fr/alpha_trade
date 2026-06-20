@@ -2725,13 +2725,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with exec_col2:
             execution_swing_only_default = _session_state_bool(
                 "pipeline_execution_swing_only",
-                True,
+                False,
             )
             execution_swing_only = st.checkbox(
                 "Execution — swing only",
                 value=execution_swing_only_default,
                 key="pipeline_execution_swing_only",
-                help="Défaut swing : True. Si coché, le moteur diffère l'armement des sorties le jour même du fill.",
+                help="Depuis le 2026-06-04 (FINRA), la règle PDT est supprimée : le day trading intraday est libre. "
+                "Défaut : False (décoché). Si coché, le moteur diffère l'armement des sorties le jour même du fill.",
             )
 
         constraint_notes = [
@@ -2745,6 +2746,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         if execution_swing_only:
             constraint_notes.append("Les children TP/TS sont différés le jour même du fill.")
         st.info(" | ".join(constraint_notes))
+        if execution_swing_only:
+            st.warning(
+                "⚠️ **SWING ONLY** est coché. Depuis le 4 juin 2026, la FINRA a **supprimé la règle PDT** : "
+                "le day trading intraday est autorisé sans restriction. Tous les presets de capital utilisent "
+                "`swing_only=False`. Décochez cette option sauf restriction volontaire explicite."
+            )
 
         # ──────────────────────────────────────────────────────────────────
         # Stratégie de protection (sortie) — P1 cf. audit_ihm_pipeline_options.md

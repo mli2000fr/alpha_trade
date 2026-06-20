@@ -97,6 +97,7 @@ from ihm.services.ml_artifacts import list_ml_artifact_symbols
 from ihm.services.pipeline_runner import (
     build_pipeline_command,
     format_command_for_display,
+    resolve_step_display_name,
 )
 from ihm.services.process_registry import stop_pipeline_run
 from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
@@ -652,6 +653,28 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
         detected_account_type=detected_account_type,
     )
     getattr(st, account_severity)(account_message)
+    swing_severity, swing_message = _build_swing_only_banner_payload(options)
+    getattr(st, swing_severity)(swing_message)
+
+
+def _build_swing_only_banner_payload(options: PipelineLaunchOptions) -> tuple[str, str]:
+    """Alerte si ``execution_swing_only=True`` (obsolète post-PDT FINRA 2026-06-04).
+
+    Depuis la suppression de la règle PDT par la FINRA, le day trading intraday
+    est autorisé sans restriction. Tous les presets de capital utilisent
+    ``execution_swing_only=False``. Un opérateur qui active ``swing_only=True``
+    se bride inutilement.
+    """
+    if options.execution_swing_only is True:
+        return (
+            "warning",
+            "⚠️ **SWING ONLY ACTIF** — Ce mode restreint les achats/ventes intraday. "
+            "Depuis le 4 juin 2026, la FINRA a **supprimé la règle PDT** : le day trading "
+            "est libre pour tous les comptes, sans limite de 3 trades ni seuil de 25 000 $. "
+            "Tous les presets de capital utilisent ``swing_only=False``. "
+            "**Décochez cette option** sauf si vous voulez explicitement vous restreindre au swing seul.",
+        )
+    return "info", ""
 
 
 def _render_ml_inspection_link(step_key: str) -> None:
@@ -977,7 +1000,7 @@ def _render_launchable_step_panel(
     live_guard: dict[str, object],
 ) -> None:
     command_preview = format_command_for_display(build_pipeline_command(step.key, options))
-    with st.expander(f"**{step.num}. {step.name}**", expanded=False):
+    with st.expander(f"**{step.num}. {resolve_step_display_name(step)}**", expanded=False):
         info_col, action_col = st.columns([5, 2])
 
         with info_col:
@@ -1078,7 +1101,7 @@ def _render_launchable_step_panel(
                 if run_clicked:
                     _launch_pipeline_step(
                         step.key,
-                        f"{step.num}. {step.name}",
+                        f"{step.num}. {resolve_step_display_name(step)}",
                         options,
                         db_config,
                         all_runs,

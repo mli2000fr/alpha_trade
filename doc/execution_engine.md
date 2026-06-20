@@ -18,7 +18,7 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 | Fichier | Rôle |
 |---|---|
 | `execution_engine/__init__.py` | Package Python |
-| `execution_engine/__main__.py` | Point d'entrée `python -m execution_engine` (façade de compatibilité) |
+| `execution_engine/__main__.py` | Point d'entrée `python -m execution_engine` (**déprécié** — façade de compatibilité, émet un `DeprecationWarning`) |
 | `execution_engine/cli.py` | Shim CLI : délègue le chemin `run` vers `run_execution.py`, garde `cancel-all` natif |
 | `execution_engine/executor.py` | Orchestrateur principal `ProductionExecutor` |
 | `execution_engine/executor_phases.py` | Découpage en phases de l'orchestrateur (opt-in `EXECUTOR_PHASES_ENABLED`) |

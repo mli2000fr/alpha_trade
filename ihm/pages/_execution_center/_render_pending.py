@@ -65,9 +65,9 @@ def render_execution_block(
     )
     execution_swing_only = st.checkbox(
         "Execution — swing only",
-        value=True,
+        value=False,
         key="pipeline_execution_swing_only",
-        help="Diffère l'armement des sorties le jour même du fill.",
+        help="Depuis FINRA 2026-06-04 : PDT supprimée, day trading libre. Défaut : False.",
     )
     execution_submission_window = st.selectbox(
         "Execution — fenêtre de soumission",

@@ -267,9 +267,10 @@ class PipelineLaunchOptions:
     allow_fractional_shares: bool = True
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
-    # Défauts swing cash : compte cash + swing only (cf. audit_ihm_pipeline_options.md P1)
+    # Défauts swing cash : compte cash + swing only désactivé (post-PDT FINRA 2026-06-04)
+    # Le day trading intraday est autorisé sans restriction depuis la suppression de la règle PDT.
     execution_account_type: Literal["margin", "cash"] = "cash"
-    execution_swing_only: bool = True
+    execution_swing_only: bool = False
     # Stratégie de protection (sortie) — P1
     execution_submission_window: ExecutionSubmissionWindow = "both"
     execution_take_profit_pct: float = DEFAULT_EXEC_TAKE_PROFIT_PCT
@@ -468,6 +469,30 @@ class PipelineLaunchOptions:
     eodhd_backfill_symbols: str | None = None
     eodhd_backfill_resume: bool = True
     eodhd_backfill_write: bool = True
+
+    def __post_init__(self) -> None:
+        """Validation post-initialisation : cohérence avec les presets et la réglementation.
+
+        Émet un avertissement si ``execution_swing_only=True`` (obsolète depuis
+        la suppression de la règle PDT par la FINRA le 2026-06-04) ou si les
+        paramètres divergent du preset de capital actif.
+        """
+        import logging
+        _logger = logging.getLogger(__name__)
+
+        if self.execution_swing_only is True:
+            _logger.warning(
+                "execution_swing_only=True est obsolète depuis la suppression de la règle PDT "
+                "par la FINRA (2026-06-04). Le day trading intraday est autorisé sans restriction. "
+                "Utilisez execution_swing_only=False."
+            )
+
+        # Vérification de cohérence minimale avec les presets
+        if self.execution_account_type == "cash" and self.execution_swing_only is True:
+            _logger.warning(
+                "Compte cash avec swing_only=True : cette combinaison était pertinente avant la "
+                "suppression de la PDT. Post-PDT, swing_only=False est recommandé pour tous les comptes."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,6 +740,18 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
 
 def get_pipeline_steps() -> tuple[PipelineStepDefinition, ...]:
     return PIPELINE_STEPS
+
+
+def resolve_step_display_name(step: PipelineStepDefinition) -> str:
+    """Résout le nom d'affichage dynamique d'une étape du pipeline.
+
+    Pour l'étape 1 (import bars), le nom reflète le provider actif
+    (EODHD ou Alpaca) plutôt qu'un libellé statique.
+    """
+    if step.key == "import_alpaca_bar":
+        provider = _resolve_bars_provider_for_ihm().upper()
+        return f"Import Bars {provider} + rattrapage auto"
+    return step.name
 
 
 def get_pipeline_workflow_steps(

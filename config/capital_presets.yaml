@@ -1,6 +1,6 @@
 presets:
 - key: capital_0_2000_eur
-  label: 0 → 2 000 € (micro-compte)
+  label: 0 → 2 000 $ (micro-compte)
   min_equity: 0
   max_equity: 2000
   description: Micro-compte cash (~2 000 EUR / 2 150 USD). Concentration assumée
@@ -42,11 +42,11 @@ presets:
     risk_max_drawdown_pct: 0.15
     risk_max_daily_loss_pct: 0.025
     risk_drawdown_rolling_peak_window_days: 252
-    risk_degraded_entry_allocation_pct: 0.025
+    risk_degraded_entry_allocation_pct: 0.05
     risk_dd_recovery_pct: 0.92
     risk_regime_ramp_up_enabled: true
-    risk_regime_ramp_up_pct_per_day: 0.025
-    risk_regime_ramp_up_max_pct: 0.8
+    risk_regime_ramp_up_pct_per_day: 0.05
+    risk_regime_ramp_up_max_pct: 0.20
     risk_target_annual_vol: 0.12
     risk_vol_target_lookback_days: 60
     risk_min_ml_coverage_ratio: 0.95
@@ -58,7 +58,7 @@ presets:
     risk_prediction_weight: 0.45
     risk_min_score_threshold: 0.7
     risk_min_breakout_days: 1
-    execution_account_type: cash
+    execution_account_type: margin
     execution_swing_only: false
     execution_cash_settlement_days: 1
     execution_submission_window: both
@@ -71,10 +71,10 @@ presets:
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
-    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_degraded_allocation_pct: 0.05
     backtesting_dd_regime_ramp_up_enabled: true
-    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.05
+    backtesting_dd_regime_ramp_up_max_pct: 0.20
     backtesting_max_sector_exposure_pct: 0.25
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.12
@@ -140,15 +140,15 @@ presets:
     risk_max_positions: 6
     risk_max_position_weight: 0.2
     risk_max_sector_weight: 0.4
-    risk_min_position_notional: 150.0
+    risk_min_position_notional: 155.0
     risk_max_drawdown_pct: 0.15
     risk_max_daily_loss_pct: 0.03
     risk_drawdown_rolling_peak_window_days: 252
-    risk_degraded_entry_allocation_pct: 0.025
+    risk_degraded_entry_allocation_pct: 0.06
     risk_dd_recovery_pct: 0.92
     risk_regime_ramp_up_enabled: true
-    risk_regime_ramp_up_pct_per_day: 0.025
-    risk_regime_ramp_up_max_pct: 0.8
+    risk_regime_ramp_up_pct_per_day: 0.06
+    risk_regime_ramp_up_max_pct: 0.25
     risk_target_annual_vol: 0.13
     risk_vol_target_lookback_days: 60
     risk_min_ml_coverage_ratio: 0.95
@@ -160,7 +160,7 @@ presets:
     risk_prediction_weight: 0.45
     risk_min_score_threshold: 0.7
     risk_min_breakout_days: 1
-    execution_account_type: cash
+    execution_account_type: margin
     execution_swing_only: false
     execution_cash_settlement_days: 1
     execution_submission_window: both
@@ -173,10 +173,10 @@ presets:
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
-    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_degraded_allocation_pct: 0.06
     backtesting_dd_regime_ramp_up_enabled: true
-    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.06
+    backtesting_dd_regime_ramp_up_max_pct: 0.25
     backtesting_max_sector_exposure_pct: 0.3
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.13
@@ -243,11 +243,11 @@ presets:
     risk_max_drawdown_pct: 0.15
     risk_max_daily_loss_pct: 0.035
     risk_drawdown_rolling_peak_window_days: 252
-    risk_degraded_entry_allocation_pct: 0.025
+    risk_degraded_entry_allocation_pct: 0.07
     risk_dd_recovery_pct: 0.92
     risk_regime_ramp_up_enabled: true
-    risk_regime_ramp_up_pct_per_day: 0.025
-    risk_regime_ramp_up_max_pct: 0.8
+    risk_regime_ramp_up_pct_per_day: 0.07
+    risk_regime_ramp_up_max_pct: 0.30
     risk_target_annual_vol: 0.14
     risk_vol_target_lookback_days: 60
     risk_min_ml_coverage_ratio: 0.95
@@ -259,7 +259,7 @@ presets:
     risk_prediction_weight: 0.45
     risk_min_score_threshold: 0.7
     risk_min_breakout_days: 1
-    execution_account_type: cash
+    execution_account_type: margin
     execution_swing_only: false
     execution_cash_settlement_days: 1
     execution_submission_window: both
@@ -272,10 +272,10 @@ presets:
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
-    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_degraded_allocation_pct: 0.07
     backtesting_dd_regime_ramp_up_enabled: true
-    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.07
+    backtesting_dd_regime_ramp_up_max_pct: 0.30
     backtesting_max_sector_exposure_pct: 0.3
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.14
@@ -333,11 +333,11 @@ presets:
     risk_max_drawdown_pct: 0.17
     risk_max_daily_loss_pct: 0.04
     risk_drawdown_rolling_peak_window_days: 252
-    risk_degraded_entry_allocation_pct: 0.025
+    risk_degraded_entry_allocation_pct: 0.08
     risk_dd_recovery_pct: 0.92
     risk_regime_ramp_up_enabled: true
-    risk_regime_ramp_up_pct_per_day: 0.025
-    risk_regime_ramp_up_max_pct: 0.8
+    risk_regime_ramp_up_pct_per_day: 0.07
+    risk_regime_ramp_up_max_pct: 0.35
     risk_target_annual_vol: 0.15
     risk_vol_target_lookback_days: 60
     risk_min_ml_coverage_ratio: 0.95
@@ -349,7 +349,7 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_breakout_days: 1
-    execution_account_type: cash
+    execution_account_type: margin
     execution_swing_only: false
     execution_cash_settlement_days: 1
     execution_submission_window: both
@@ -362,10 +362,10 @@ presets:
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
-    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_degraded_allocation_pct: 0.08
     backtesting_dd_regime_ramp_up_enabled: true
-    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.07
+    backtesting_dd_regime_ramp_up_max_pct: 0.35
     backtesting_max_sector_exposure_pct: 0.3
     backtesting_max_entry_gap_pct: 0.025
     backtesting_target_annual_vol: 0.15
@@ -399,7 +399,11 @@ presets:
   max_equity: 50000
   description: 'Compte swing déjà diversifiable : allocation plus équilibrée,
     davantage de lignes et retour vers des filtres selector proches du profil strict
-    standard.'
+    standard. Note Sprint S8 : le seuil cash→margin à 25k$ était historiquement lié
+    à la règle PDT (supprimée par la FINRA le 2026-06-04). Le passage en margin est
+    conservé pour permettre le levier, le short selling (plan v2) et éviter les
+    contraintes de settlement T+1 des comptes cash. Ce seuil pourra être révisé
+    ultérieurement.'
   strict_profile_justifications:
     selector_liquidity_threshold: 25 M$ maintient un univers suffisamment large tout
       en restant proche du strict.
@@ -417,11 +421,11 @@ presets:
     risk_max_drawdown_pct: 0.18
     risk_max_daily_loss_pct: 0.045
     risk_drawdown_rolling_peak_window_days: 252
-    risk_degraded_entry_allocation_pct: 0.025
+    risk_degraded_entry_allocation_pct: 0.10
     risk_dd_recovery_pct: 0.92
     risk_regime_ramp_up_enabled: true
-    risk_regime_ramp_up_pct_per_day: 0.025
-    risk_regime_ramp_up_max_pct: 0.8
+    risk_regime_ramp_up_pct_per_day: 0.08
+    risk_regime_ramp_up_max_pct: 0.45
     risk_target_annual_vol: 0.15
     risk_vol_target_lookback_days: 60
     risk_min_ml_coverage_ratio: 0.95
@@ -446,10 +450,10 @@ presets:
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
-    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_degraded_allocation_pct: 0.10
     backtesting_dd_regime_ramp_up_enabled: true
-    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.08
+    backtesting_dd_regime_ramp_up_max_pct: 0.45
     backtesting_max_sector_exposure_pct: 0.3
     backtesting_max_entry_gap_pct: 0.025
     backtesting_target_annual_vol: 0.15
@@ -498,11 +502,11 @@ presets:
     risk_max_drawdown_pct: 0.19
     risk_max_daily_loss_pct: 0.05
     risk_drawdown_rolling_peak_window_days: 252
-    risk_degraded_entry_allocation_pct: 0.025
+    risk_degraded_entry_allocation_pct: 0.12
     risk_dd_recovery_pct: 0.92
     risk_regime_ramp_up_enabled: true
-    risk_regime_ramp_up_pct_per_day: 0.025
-    risk_regime_ramp_up_max_pct: 0.8
+    risk_regime_ramp_up_pct_per_day: 0.09
+    risk_regime_ramp_up_max_pct: 0.55
     risk_target_annual_vol: 0.15
     risk_vol_target_lookback_days: 60
     risk_min_ml_coverage_ratio: 0.95
@@ -527,10 +531,10 @@ presets:
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
-    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_degraded_allocation_pct: 0.12
     backtesting_dd_regime_ramp_up_enabled: true
-    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.09
+    backtesting_dd_regime_ramp_up_max_pct: 0.55
     backtesting_max_sector_exposure_pct: 0.28
     backtesting_max_entry_gap_pct: 0.02
     backtesting_target_annual_vol: 0.15
@@ -601,11 +605,11 @@ presets:
     risk_max_drawdown_pct: 0.2
     risk_max_daily_loss_pct: 0.05
     risk_drawdown_rolling_peak_window_days: 252
-    risk_degraded_entry_allocation_pct: 0.025
+    risk_degraded_entry_allocation_pct: 0.15
     risk_dd_recovery_pct: 0.92
     risk_regime_ramp_up_enabled: true
-    risk_regime_ramp_up_pct_per_day: 0.025
-    risk_regime_ramp_up_max_pct: 0.8
+    risk_regime_ramp_up_pct_per_day: 0.10
+    risk_regime_ramp_up_max_pct: 0.60
     risk_target_annual_vol: 0.16
     risk_vol_target_lookback_days: 60
     risk_min_ml_coverage_ratio: 0.95
@@ -630,10 +634,10 @@ presets:
     backtesting_max_portfolio_dd_pct: 0.18
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
-    backtesting_dd_degraded_allocation_pct: 0.025
+    backtesting_dd_degraded_allocation_pct: 0.15
     backtesting_dd_regime_ramp_up_enabled: true
-    backtesting_dd_regime_ramp_up_pct_per_day: 0.025
-    backtesting_dd_regime_ramp_up_max_pct: 0.8
+    backtesting_dd_regime_ramp_up_pct_per_day: 0.10
+    backtesting_dd_regime_ramp_up_max_pct: 0.60
     backtesting_max_sector_exposure_pct: 0.25
     backtesting_max_entry_gap_pct: 0.02
     backtesting_target_annual_vol: 0.16

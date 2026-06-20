@@ -35,7 +35,9 @@
 - **S5** : signatures SHA-256 d’artefacts ML et doctrine failover broker exposées.
 - **S6** : `macro_provider=composite`, Kelly conditionnel ≥ 25 k$, bandeaux SMTP.
 - **S7** : garde-fou de persistance `model_predictions`, test walk-forward ML dédié, factorisation helper commun entre importeurs Alpaca/EODHD.
-- **S8** *(audit TOD5, juin 2026)* : audit exhaustif, livrables `prompt/tod5/`, corrections presets planifiées.
+- **S8** *(audit TOD5, juin 2026)* : corrections presets de capital — drawdown breaker différencié par tranche, `risk_min_position_notional` ≥ 155 $, libellé micro-compte USD. ✅ Livré.
+- **S8-bis** *(post-PDT FINRA, juin 2026)* : IHM mise à jour — défaut `execution_swing_only=False`, step 1 nom dynamique selon provider, validation `__post_init__`. ✅ Livré.
+- **S9** *(juin 2026)* : bandeaux avertissement IHM si `swing_only=True` (obsolète), infobulles FINRA 2026-06-04. ✅ Livré.
 
 ### Plan v2 -- Short Selling (Sprint 0-5, juin 2026) — 🔄 EN COURS
 
