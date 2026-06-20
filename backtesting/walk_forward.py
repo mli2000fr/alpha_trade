@@ -36,6 +36,7 @@ _WEIGHT_FILENAMES = (
     "latest_best_weights.json",
     "walk_forward_best_weights_latest.json",
     "champion_weights.json",
+    "sentiment_weight_calibration_best.json",
 )
 
 

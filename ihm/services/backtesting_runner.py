@@ -137,6 +137,7 @@ class CalibrateSentimentWeightsOptions:
     horizons: str = "5,10,20"
     output_dir: str = "artifacts/sentiment_calibration"
     all_symbols: bool = False
+    capital_preset_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +158,7 @@ class WalkForwardSentimentOptions:
     fees: float = 0.001
     output_dir: str = "artifacts/sentiment_walk_forward"
     all_symbols: bool = False
+    capital_preset_key: str | None = None
 
 
 def build_backtesting_command(
@@ -350,6 +352,8 @@ def build_backtesting_command(
         ])
         if options.all_symbols:
             command.append("--all-symbols")
+        if options.capital_preset_key:
+            command.extend(["--capital-preset-key", options.capital_preset_key])
         return command
 
     if kind == "walk-forward-sentiment":
@@ -375,6 +379,8 @@ def build_backtesting_command(
             command.extend(["--step-days", str(options.step_days)])
         if options.all_symbols:
             command.append("--all-symbols")
+        if options.capital_preset_key:
+            command.extend(["--capital-preset-key", options.capital_preset_key])
         return command
 
     raise KeyError(f"Commande backtesting inconnue : {kind}")

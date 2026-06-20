@@ -1624,12 +1624,15 @@ def _build_run_options() -> BacktestRunOptions:
             ),
         )
     with extra_col2:
-        walk_forward_artifacts_dir = st.text_input(
-            "Répertoire artefacts walk-forward (optionnel)",
-            value=cast(str, st.session_state.get("bt_run_walk_forward_artifacts_dir", "")),
-            key="bt_run_walk_forward_artifacts_dir",
-            help="Si renseigné, le backtest standard cherchera explicitement les meilleurs poids walk-forward dans ce répertoire.",
-        )
+        # Auto-dérivé depuis le preset capital PIT sélectionné.
+        if selected_run_preset_key and selected_run_preset_key != CAPITAL_PRESET_CUSTOM:
+            walk_forward_artifacts_dir = f"artifacts/sentiment_calibration/{selected_run_preset_key}"
+        else:
+            walk_forward_artifacts_dir = ""
+        if walk_forward_artifacts_dir:
+            st.caption(f"📁 Walk-forward : `{walk_forward_artifacts_dir}`")
+        else:
+            st.caption("📁 Walk-forward : *aucun preset sélectionné*")
     baseline_col1, baseline_col2 = st.columns(2)
     with baseline_col1:
         fidelity_baseline_id = st.text_input(
@@ -2107,10 +2110,17 @@ def _build_calibrate_sentiment_options() -> "CalibrateSentimentWeightsOptions":
             key="bt_calibrate_horizons",
         )
     with col5:
-        output_dir = st.text_input(
-            "Répertoire artefacts",
-            value=cast(str, st.session_state.get("bt_calibrate_output_dir", "artifacts/sentiment_calibration")),
-            key="bt_calibrate_output_dir",
+        calibrate_preset_options = _get_capital_preset_options()
+        _ensure_capital_preset_session_key("bt_calibrate_capital_preset_key", None)
+        selected_calibrate_preset = cast(
+            str,
+            st.selectbox(
+                "Preset capital PIT",
+                options=calibrate_preset_options,
+                format_func=_format_capital_preset_label,
+                key="bt_calibrate_capital_preset_key",
+                help="Filtre stock_scores_history par preset. Le répertoire artefacts est dérivé automatiquement.",
+            ),
         )
     with col6:
         all_symbols = st.checkbox(
@@ -2120,13 +2130,20 @@ def _build_calibrate_sentiment_options() -> "CalibrateSentimentWeightsOptions":
             help="Sinon limité aux candidats historiques.",
         )
 
+    calibrate_preset_key = selected_calibrate_preset if selected_calibrate_preset != CAPITAL_PRESET_CUSTOM else None
+    if calibrate_preset_key:
+        output_dir = f"artifacts/sentiment_calibration/{calibrate_preset_key}"
+    else:
+        output_dir = "artifacts/sentiment_calibration"
+
     options = CalibrateSentimentWeightsOptions(
         start=start.strip(),
         end=end.strip(),
         top_n=int(top_n),
         horizons=horizons.strip() or "5,10,20",
-        output_dir=output_dir.strip() or "artifacts/sentiment_calibration",
+        output_dir=output_dir,
         all_symbols=bool(all_symbols),
+        capital_preset_key=calibrate_preset_key,
     )
     st.code(
         format_command_for_display(build_backtesting_command("calibrate-sentiment-weights", options)),
@@ -2253,11 +2270,23 @@ def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
             key="bt_wfs_all_symbols",
         )
 
-    output_dir = st.text_input(
-        "Répertoire artefacts",
-        value=cast(str, st.session_state.get("bt_wfs_output_dir", "artifacts/sentiment_walk_forward")),
-        key="bt_wfs_output_dir",
+    wfs_preset_options = _get_capital_preset_options()
+    _ensure_capital_preset_session_key("bt_wfs_capital_preset_key", None)
+    selected_wfs_preset = cast(
+        str,
+        st.selectbox(
+            "Preset capital PIT",
+            options=wfs_preset_options,
+            format_func=_format_capital_preset_label,
+            key="bt_wfs_capital_preset_key",
+            help="Filtre stock_scores_history par preset. Le répertoire artefacts est dérivé automatiquement.",
+        ),
     )
+    wfs_preset_key = selected_wfs_preset if selected_wfs_preset != CAPITAL_PRESET_CUSTOM else None
+    if wfs_preset_key:
+        output_dir = f"artifacts/sentiment_walk_forward/{wfs_preset_key}"
+    else:
+        output_dir = "artifacts/sentiment_walk_forward"
 
     options = WalkForwardSentimentOptions(
         start=start.strip(),
@@ -2271,8 +2300,9 @@ def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
         tp=float(tp),
         ts=float(ts),
         fees=float(fees),
-        output_dir=output_dir.strip() or "artifacts/sentiment_walk_forward",
+        output_dir=output_dir,
         all_symbols=bool(all_symbols_wf),
+        capital_preset_key=wfs_preset_key,
     )
     st.code(
         format_command_for_display(build_backtesting_command("walk-forward-sentiment", options)),

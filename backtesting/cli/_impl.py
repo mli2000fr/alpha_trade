@@ -1216,6 +1216,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Utiliser tout l'univers historisé et pas seulement les candidats",
     )
+    calibrate_p.add_argument(
+        "--capital-preset-key",
+        default=None,
+        help="Preset capital à utiliser pour filtrer stock_scores_history (ex: capital_0_2000). Si absent, tous les presets sont mélangés.",
+    )
 
     walk_forward_p = sub.add_parser(
         "walk-forward-sentiment",
@@ -1242,6 +1247,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--all-symbols",
         action="store_true",
         help="Utiliser tout l'univers historisé et pas seulement les candidats",
+    )
+    walk_forward_p.add_argument(
+        "--capital-preset-key",
+        default=None,
+        help="Preset capital à utiliser pour filtrer stock_scores_history (ex: capital_0_2000). Si absent, tous les presets sont mélangés.",
     )
 
     return parser
@@ -3214,7 +3224,8 @@ def _run_calibrate_sentiment_weights(args: argparse.Namespace) -> None:
     _safe_print(f"\n🧪 Calibration poids sentiment : {start} → {end}")
     _safe_print(
         f"   horizons={','.join(str(horizon) for horizon in horizons)} top_n={args.top_n} "
-        f"all_symbols={args.all_symbols} output_dir={args.output_dir}\n"
+        f"all_symbols={args.all_symbols} capital_preset_key={args.capital_preset_key or 'all'} "
+        f"output_dir={args.output_dir}\n"
     )
 
     calibrator = SentimentWeightCalibrator()
@@ -3225,6 +3236,7 @@ def _run_calibrate_sentiment_weights(args: argparse.Namespace) -> None:
         top_n=args.top_n,
         candidates_only=not args.all_symbols,
         output_dir=Path(args.output_dir),
+        capital_preset_key=args.capital_preset_key,
     )
 
     _safe_print("✅ Calibration terminée")
@@ -3266,13 +3278,14 @@ def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
 
     _safe_print(f"\n🧭 Walk-forward sentiment : {start} → {end}")
     _safe_print(
-        "   horizons={} top_n={} min_train_days={} test_days={} step_days={} max_positions={} output_dir={}\n".format(
+        "   horizons={} top_n={} min_train_days={} test_days={} step_days={} max_positions={} capital_preset_key={} output_dir={}\n".format(
             ",".join(str(horizon) for horizon in horizons),
             args.top_n,
             args.min_train_days,
             args.test_days,
             args.step_days,
             args.max_positions,
+            args.capital_preset_key or "all",
             args.output_dir,
         )
     )
@@ -3293,6 +3306,7 @@ def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
         trailing_stop_pct=args.ts,
         fees_pct=args.fees,
         output_dir=Path(args.output_dir),
+        capital_preset_key=args.capital_preset_key,
     )
 
     _safe_print("✅ Walk-forward terminé")

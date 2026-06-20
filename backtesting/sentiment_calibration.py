@@ -121,12 +121,16 @@ class SentimentWeightCalibrator:
         end_date: date,
         horizons: tuple[int, ...] = (5, 10, 20),
         candidates_only: bool = True,
+        capital_preset_key: str | None = None,
     ) -> pd.DataFrame:
         source_filter_sql, source_filter_params = get_required_bars_source_filter(
             self.engine,
             table_name="stock_bars_daily",
             table_alias="b",
         )
+        preset_clause = ""
+        if capital_preset_key:
+            preset_clause = "AND h.capital_preset_key = :capital_preset_key"
         query = text(
             f"""
             SELECT
@@ -148,20 +152,24 @@ class SentimentWeightCalibrator:
              {source_filter_sql}
             WHERE h.snapshot_date BETWEEN :start_date AND :end_date
               AND (:candidates_only = 0 OR h.is_candidate = 1)
+              {preset_clause}
             ORDER BY h.snapshot_date, h.symbol, b.date
             """
         )
+        params: dict[str, object] = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "end_date_plus_buffer": end_date + pd.Timedelta(days=max(horizons) * 3),
+            "candidates_only": 1 if candidates_only else 0,
+            **source_filter_params,
+        }
+        if capital_preset_key:
+            params["capital_preset_key"] = capital_preset_key
         with self.engine.connect() as conn:
             raw = pd.read_sql_query(
                 query,
                 conn,
-                params={
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "end_date_plus_buffer": end_date + pd.Timedelta(days=max(horizons) * 3),
-                    "candidates_only": 1 if candidates_only else 0,
-                    **source_filter_params,
-                },
+                params=params,
             )
         if raw.empty:
             return pd.DataFrame()
@@ -479,9 +487,10 @@ class SentimentWeightCalibrator:
         top_n: int = 20,
         candidates_only: bool = True,
         output_dir: Path | None = None,
+        capital_preset_key: str | None = None,
     ) -> tuple[SentimentCalibrationResult, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
-        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only)
+        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_key=capital_preset_key)
         result_df = self.evaluate_scenarios(dataset, scenario_list, horizons=horizons, top_n=top_n)
         artifacts: dict[str, str] = {}
         if output_dir is not None:
@@ -525,9 +534,10 @@ class SentimentWeightCalibrator:
         trailing_stop_pct: float = 0.05,
         fees_pct: float = 0.001,
         output_dir: Path | None = None,
+        capital_preset_key: str | None = None,
     ) -> tuple[WalkForwardCalibrationResult, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
-        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only)
+        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_key=capital_preset_key)
         windows = self.build_walk_forward_windows(
             dataset.get("snapshot_date", pd.Series(dtype="datetime64[ns]")),
             min_train_days=min_train_days,
