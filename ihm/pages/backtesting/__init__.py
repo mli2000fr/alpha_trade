@@ -1969,12 +1969,30 @@ def _build_diagnose_screener_options() -> DiagnoseScreenerOptions:
         value=cast(str, st.session_state.get("bt_diag_liquidity_threshold_values", "5000000,10000000,20000000")),
         key="bt_diag_liquidity_threshold_values",
     )
-    output_dir = st.text_input(
-        "Répertoire des artefacts screener",
-        value=cast(str, st.session_state.get("bt_diag_output_dir", "artifacts/screener_diagnostics")),
-        key="bt_diag_output_dir",
-        help="Le dashboard Screening lira ce dossier par défaut s'il correspond à `artifacts/screener_diagnostics`.",
+
+    diag_preset_options = _get_capital_preset_options()
+    _ensure_capital_preset_session_key("bt_diag_capital_preset_key", None)
+    selected_diag_preset = cast(
+        str,
+        st.selectbox(
+            "Preset capital PIT",
+            options=diag_preset_options,
+            format_func=_format_capital_preset_label,
+            key="bt_diag_capital_preset_key",
+            help="Filtre les snapshots PIT par preset capital. Le répertoire artefacts est dérivé automatiquement.",
+        ),
     )
+    diag_preset_key = selected_diag_preset if selected_diag_preset != CAPITAL_PRESET_CUSTOM else None
+    if diag_preset_key:
+        output_dir = f"artifacts/screener_diagnostics/{diag_preset_key}"
+        st.caption(f"📁 Artefacts : `{output_dir}`")
+    else:
+        output_dir = st.text_input(
+            "Répertoire des artefacts screener",
+            value=cast(str, st.session_state.get("bt_diag_output_dir", "artifacts/screener_diagnostics")),
+            key="bt_diag_output_dir",
+            help="Le dashboard Screening lira ce dossier par défaut.",
+        )
 
     limit_days = _parse_optional_int(limit_days_raw, label="limit_days")
     screener_workers = _parse_optional_int(screener_workers_raw, label="screener_workers")
@@ -1994,6 +2012,7 @@ def _build_diagnose_screener_options() -> DiagnoseScreenerOptions:
         historical_range_score_values=historical_range_score_values.strip() or "65,70,75",
         liquidity_threshold_values=liquidity_threshold_values.strip() or "5000000,10000000,20000000",
         output_dir=output_dir.strip() or "artifacts/screener_diagnostics",
+        capital_preset_key=diag_preset_key,
     )
 
     st.code(format_command_for_display(build_backtesting_command("diagnose-screener", options)), language="powershell")
@@ -2050,6 +2069,22 @@ def _build_recommend_screener_options() -> RecommendScreenerOptions:
             key="bt_reco_baseline_name",
         )
 
+    reco_preset_options = _get_capital_preset_options()
+    _ensure_capital_preset_session_key("bt_reco_capital_preset_key", None)
+    selected_reco_preset = cast(
+        str,
+        st.selectbox(
+            "Preset capital PIT",
+            options=reco_preset_options,
+            format_func=_format_capital_preset_label,
+            key="bt_reco_capital_preset_key",
+            help="Pour cohérence avec le diagnostic utilisé. Si un preset est sélectionné, le répertoire source est dérivé automatiquement.",
+        ),
+    )
+    reco_preset_key = selected_reco_preset if selected_reco_preset != CAPITAL_PRESET_CUSTOM else None
+    if reco_preset_key and (not input_dir.strip() or input_dir.strip() == "artifacts/screener_diagnostics"):
+        input_dir = f"artifacts/screener_diagnostics/{reco_preset_key}"
+
     options = RecommendScreenerOptions(
         input_dir=input_dir.strip() or "artifacts/screener_diagnostics",
         summary_csv=summary_csv.strip() or None,
@@ -2057,6 +2092,7 @@ def _build_recommend_screener_options() -> RecommendScreenerOptions:
         output_dir=output_dir.strip() or None,
         baseline_name=baseline_name.strip() or None,
         target_horizon=int(target_horizon),
+        capital_preset_key=reco_preset_key,
     )
 
     st.code(format_command_for_display(build_backtesting_command("recommend-screener", options)), language="powershell")

@@ -113,6 +113,7 @@ class DiagnoseScreenerOptions:
     historical_range_score_values: str = "65,70,75"
     liquidity_threshold_values: str = "5000000,10000000,20000000"
     output_dir: str = "artifacts/screener_diagnostics"
+    capital_preset_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,7 @@ class RecommendScreenerOptions:
     output_dir: str | None = None
     baseline_name: str | None = None
     target_horizon: int = 20
+    capital_preset_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +321,8 @@ def build_backtesting_command(
         ])
         if options.screener_workers is not None:
             command.extend(["--screener-workers", str(options.screener_workers)])
+        if options.capital_preset_key:
+            command.extend(["--capital-preset-key", options.capital_preset_key])
         return command
 
     if kind == "recommend-screener":

@@ -1150,6 +1150,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Phase 6.1.d — fin de la fenêtre de test (YYYY-MM-DD).",
     )
+    diag_p.add_argument(
+        "--capital-preset-key",
+        default=None,
+        help="Preset capital à utiliser pour les snapshots PIT (ex: capital_0_2000). Si absent, utilise le preset par défaut.",
+    )
 
     # --- recommend-screener ---
     recommend_p = sub.add_parser(
@@ -2746,7 +2751,8 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
     _safe_print(f"\n🧪 Diagnostic screener phase 4 : {start} → {end}")
     _safe_print(
         f"   mode={args.mode} scénarios={len(scenarios)} limit_days={args.limit_days or 'all'} "
-        f"chunk_size={args.chunk_size} selection_size={args.selection_size} max_positions={args.max_positions}\n"
+        f"chunk_size={args.chunk_size} selection_size={args.selection_size} max_positions={args.max_positions} "
+        f"capital_preset_key={args.capital_preset_key or 'default'}\n"
     )
 
     service = ScreenerDiagnosticsService(
@@ -2758,6 +2764,7 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         sentiment_config=SentimentBoostConfig(),
         risk_config=RiskConfig(max_positions=args.max_positions),
         screener_max_workers=args.screener_workers,
+        capital_preset_key=args.capital_preset_key,
     )
     result = service.analyze_period(
         start_date=start,

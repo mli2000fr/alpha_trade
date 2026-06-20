@@ -1361,6 +1361,7 @@ class ScreenerDiagnosticsService:
         risk_config: RiskConfig | None = None,
         screener_max_workers: int | None = None,
         forward_return_horizons: Sequence[int] = DEFAULT_FORWARD_HORIZONS,
+        capital_preset_key: str | None = None,
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.base_screener_config = base_screener_config or ScreenerConfig.strict_swing_cash()
@@ -1368,6 +1369,7 @@ class ScreenerDiagnosticsService:
         self.sentiment_config = sentiment_config or SentimentBoostConfig()
         self.risk_config = risk_config or RiskConfig()
         self.screener_max_workers = screener_max_workers
+        self.capital_preset_key = str(capital_preset_key).strip() if capital_preset_key else None
         self.forward_return_horizons = tuple(sorted({int(value) for value in forward_return_horizons if int(value) > 0}))
         if not self.forward_return_horizons:
             raise ValueError("Au moins un horizon forward positif est requis.")
@@ -1477,6 +1479,7 @@ class ScreenerDiagnosticsService:
             scanner_config=self.scanner_config,
             sentiment_config=self.sentiment_config,
             screener_max_workers=self.screener_max_workers,
+            capital_preset_key=self.capital_preset_key or None,
         )
 
     def _evaluate_scenario_on_date(
