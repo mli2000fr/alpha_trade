@@ -44,7 +44,13 @@ class ConvictionWeights:
     def __post_init__(self) -> None:
         if self.score_weight < 0 or self.prediction_weight < 0:
             raise ValueError("ConvictionWeights : poids négatifs interdits.")
-        if self.score_weight + self.prediction_weight <= 0:
+        total = self.score_weight + self.prediction_weight
+        if not np.isclose(total, 1.0, atol=1e-6):
+            raise ValueError(
+                "ConvictionWeights : la somme des poids doit etre ~1.0 "
+                f"(actuel : {total:.6f})."
+            )
+        if total <= 0:
             raise ValueError("ConvictionWeights : somme des poids doit être > 0.")
 
 
@@ -64,8 +70,8 @@ def compute_conviction(
     Pour la conviction short, utiliser :func:`compute_conviction_short`.
     """
     if predicted_proba is not None:
-        return score_weight * score_used + prediction_weight * predicted_proba
-    return score_used
+        return float(np.clip(score_weight * score_used + prediction_weight * predicted_proba, 0.0, 1.0))
+    return float(np.clip(score_used, 0.0, 1.0))
 
 
 def compute_conviction_short(
@@ -82,8 +88,8 @@ def compute_conviction_short(
     """
     inverted_score = 1.0 - score_used
     if predicted_proba_short is not None:
-        return score_weight * inverted_score + prediction_weight * predicted_proba_short
-    return inverted_score
+        return float(np.clip(score_weight * inverted_score + prediction_weight * predicted_proba_short, 0.0, 1.0))
+    return float(np.clip(inverted_score, 0.0, 1.0))
 
 
 def fuse(
