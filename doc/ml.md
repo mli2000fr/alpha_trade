@@ -854,3 +854,106 @@ Les paramètres sont présentés dans l'ordre exact de l'écran, de haut en bas.
 | Feature set | `v1` | Robuste, rapide |
 | LightGBM depth | `4` | Anti-overfitting |
 | CatBoost depth | `6` | Profondeur modérée |
+
+
+---
+
+## Rollback du champion ML — Procédure (Sprint S12)
+
+### Contexte
+
+Le système `modelFactory` sélectionne automatiquement un **champion ML** par symbole
+(LSTM+Attention, LightGBM, CatBoost ou modèle global) via la métrique `selection_score`.
+En cas de dégradation des performances du champion (drift détecté, overfitting, erreur
+silencieuse), une procédure de rollback permet de revenir au champion précédent ou au
+modèle par défaut (`lstm_attention`).
+
+### Quand déclencher un rollback ?
+
+- **Drift monitor** : le `modelFactory` émet un avertissement dans les `run_summary`
+  si le champion actuel sous-performe le champion précédent de plus de 10 % sur la
+  métrique de sélection (précision, F1, ou business_score).
+- **Dégradation live** : si le taux d'action (`action_rate`) chute en dessous de
+  `ml_min_action_rate` (défaut 3 %) ou dépasse `ml_max_action_rate` (défaut 20 %).
+- **Erreur d'inférence** : si le champion échoue à produire des prédictions pour
+  plus de 5 % des symboles de l'univers (`ml_min_coverage_ratio`).
+
+### Procédure de rollback pas à pas
+
+#### Étape 1 — Identifier le champion problématique
+
+```bash
+# Lister les champions actuels par symbole
+python -m modelFactory.cli list-champions --format json > champions_$(date +%Y%m%d).json
+
+# Vérifier le drift
+python -m modelFactory.cli drift-check --window 20
+```
+
+#### Étape 2 — Désactiver le champion défaillant
+
+Dans l'IHM, page **Pipeline → Paramètres Model Factory** :
+1. Décocher **Select champion** (`ml_select_champion = False`)
+2. Sélectionner **Default champion** = `lstm_attention` (modèle de secours)
+3. Lancer un **ML Predict** manuel pour vérifier que l'inférence fonctionne
+
+#### Étape 3 — Rollback en ligne de commande
+
+```bash
+# Forcer le rollback vers le champion précédent pour un symbole
+python -m modelFactory.cli rollback-champion --symbol AAPL
+
+# Rollback global (tous les symboles)
+python -m modelFactory.cli rollback-champion --all --reason "drift_detected"
+
+# Rollback avec réentraînement du champion précédent
+python -m modelFactory.cli rollback-champion --all --retrain
+```
+
+#### Étape 4 — Vérifier le rollback
+
+```bash
+# Vérifier que les prédictions sont revenues à la normale
+python -m modelFactory.cli list-champions --format table | grep -v "lstm_attention"
+
+# Si aucune sortie, tous les symboles utilisent le fallback lstm_attention
+```
+
+#### Étape 5 — Investiguer la cause racine
+
+1. Consulter les logs ML : `artifacts/models/*/training_log.txt`
+2. Vérifier les métriques dans `model_metrics` (table SQL)
+3. Comparer les features driftées avec `ml_regime_ablation.py`
+4. Si overfitting : réduire `ml_max_epochs` ou augmenter `ml_wf_min_train_size`
+5. Si données corrompues : relancer l'ingestion (`step 1`) puis réentraîner
+
+### Rollback automatique (drift monitor)
+
+Le `modelFactory` peut être configuré pour un rollback automatique :
+
+```yaml
+# config.yaml
+model_factory:
+  auto_rollback:
+    enabled: true
+    max_consecutive_failures: 3
+    fallback_champion: "lstm_attention"
+    notify_on_rollback: true
+```
+
+Quand activé, si le champion échoue 3 jours consécutifs (inférence KO ou drift > seuil),
+le système bascule automatiquement sur `fallback_champion` et envoie une notification
+email à l'opérateur.
+
+### Restauration après rollback
+
+Une fois le problème corrigé (réentraînement, correction des données) :
+
+```bash
+# Réactiver la sélection automatique du champion
+python -m modelFactory.cli select-champion --all
+```
+
+Le système réévalue tous les backends et sélectionne le meilleur champion pour chaque
+symbole. L'ancien champion problématique n'est pas exclu définitivement : il sera
+réévalué lors du prochain cycle de sélection.

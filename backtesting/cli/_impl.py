@@ -915,12 +915,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # Sprint S3 / A-010 — cache Parquet pour accélérer les re-runs.
+    # Sprint S11 : activé par défaut, --no-cache pour désactiver.
     run_p.add_argument(
-        "--use-cache",
+        "--no-cache",
         action="store_true",
         default=False,
-        help="Active le cache Parquet local pour OHLCV/scores/predictions (artifacts/backtest_cache/). "
-        "Accélère les re-runs sur le même jeu de données. Ignorer si le dataset a changé.",
+        help="Désactive le cache Parquet local (artifacts/backtest_cache/). "
+        "Par défaut le cache est actif pour accélérer les re-runs.",
     )
     run_p.add_argument(
         "--cache-dir",
@@ -928,13 +929,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Répertoire du cache Parquet (défaut: artifacts/backtest_cache/).",
     )
 
-    # Sprint S3 / A-011 — bootstrap trades + analyse de sensibilité.
+    # Sprint S3 / A-011 → Sprint S11 : bootstrap trades activé par défaut.
     run_p.add_argument(
         "--bootstrap-samples",
         type=int,
-        default=0,
+        default=500,
         help="Nombre d'itérations Monte Carlo pour le bootstrap des trades (G1). "
-        "0 = désactivé. Recommandé : 1000.",
+        "0 = désactivé. Défaut S11 : 500.",
     )
     run_p.add_argument(
         "--sensitivity-analysis",
@@ -948,23 +949,24 @@ def _build_parser() -> argparse.ArgumentParser:
     # Phase B (refactor) — micro-structure (slippage volume-aware,
     # initial stop dur, gap filter, intra-bar priority).
     # ------------------------------------------------------------------
+    # Sprint S11 : microstructure activée par défaut avec des valeurs réalistes.
     run_p.add_argument(
         "--slippage-model",
         choices=["fixed", "linear", "sqrt"],
-        default="fixed",
-        help="Modèle de slippage volume-aware additionnel (Phase B.1). 'fixed' = neutre.",
+        default="sqrt",
+        help="Modèle de slippage volume-aware additionnel (Phase B.1). 'sqrt' = Almgren-Chriss par défaut (S11).",
     )
     run_p.add_argument(
         "--slippage-base-bps",
         type=float,
-        default=0.0,
-        help="Composante fixe (bps) du slippage volume-aware additionnel.",
+        default=2.0,
+        help="Composante fixe (bps) du slippage volume-aware additionnel. Défaut S11 : 2 bps.",
     )
     run_p.add_argument(
         "--slippage-impact-coef",
         type=float,
-        default=0.0,
-        help="Coefficient d'impact (bps) appliqué à size/ADV (Phase B.1).",
+        default=5.0,
+        help="Coefficient d'impact (bps) appliqué à sqrt(size/ADV) (Phase B.1). Défaut S11 : 5 bps.",
     )
     run_p.add_argument(
         "--initial-stop-pct",
@@ -975,8 +977,8 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--max-entry-gap-pct",
         type=float,
-        default=0.0,
-        help="Skip d'entrée si |open - prev_close| / prev_close > seuil (Phase B.3). 0.0 = désactivé.",
+        default=0.03,
+        help="Skip d'entrée si |open - prev_close| / prev_close > seuil (Phase B.3). Défaut S11 : 3%%.",
     )
     run_p.add_argument(
         "--intrabar-priority",
@@ -1836,8 +1838,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
     # 1. Charger les données
     engine = get_sqlalchemy_engine()
 
-    # Sprint S3 / A-010 — cache Parquet optionnel.
-    use_cache = bool(getattr(args, "use_cache", False))
+    # Sprint S3 / A-010 → Sprint S11 : cache Parquet actif par défaut, --no-cache pour désactiver.
+    use_cache = not bool(getattr(args, "no_cache", False))
     cache: object
     if use_cache:
         from backtesting.cache import ParquetCache
