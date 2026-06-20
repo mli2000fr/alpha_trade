@@ -836,73 +836,140 @@ pour générer :
 
 ## 10. Calibration sentiment et walk-forward
 
+La calibration optimise les poids de fusion sentiment/macro/quant utilisés pour
+calculer `final_score_sentiment`. Deux niveaux :
+
+| Niveau | Commande | Temps | Usage |
+|---|---|---|---|
+| Calibration simple | `calibrate-sentiment-weights` | ~minutes | Trouver les meilleurs poids via grille + IC |
+| Walk-forward | `walk-forward-sentiment` | ~heures | Valider la robustesse hors échantillon par folds glissants |
+
+**Prérequis** : `stock_scores_history` doit être backfillé sur la période.
+
+**Filtrage par preset** : utiliser `--capital-preset-key` (ou le dropdown IHM) pour
+ne calibrer que sur les snapshots d'un preset spécifique.
+
 ### 10.1 Calibration simple
+
+Teste une grille de poids (sentiment 5-25%, macro 0-15%) et retient le meilleur
+selon l'Information Coefficient multi-horizon (5j, 10j, 20j).
 
 ```powershell
 python -m backtesting calibrate-sentiment-weights \
-  --start 2024-01-01 \
-  --end 2025-12-31 \
-  --top-n 20 \
-  --horizons 5,10,20
+  --start 2024-01-01 --end 2025-12-31 \
+  --capital-preset-key capital_0_2000 \
+  --output-dir artifacts/sentiment_calibration/capital_0_2000
 ```
 
-Artefacts :
-
-- `sentiment_weight_calibration.csv`
-- `sentiment_weight_calibration_best.json`
+Artefacts : `sentiment_weight_calibration.csv`, `sentiment_weight_calibration_best.json`
 
 ### 10.2 Walk-forward strict
 
+Découpe en folds glissants (252j train / 63j test), recalibre sur chaque train,
+backtest portefeuille sur le test. Mesure la performance réelle hors échantillon.
+
 ```powershell
 python -m backtesting walk-forward-sentiment \
-  --start 2024-01-01 \
-  --end 2025-12-31 \
-  --min-train-days 252 \
-  --test-days 63 \
-  --max-positions 20
+  --start 2024-01-01 --end 2025-12-31 \
+  --capital-preset-key capital_0_2000 \
+  --min-train-days 252 --test-days 63 \
+  --max-positions 20 \
+  --output-dir artifacts/sentiment_walk_forward/capital_0_2000
 ```
 
-Artefacts principaux :
+Artefacts : `walk_forward_folds.csv`, `latest_best_weights.json`, `report.json`
 
-- `walk_forward_folds.csv`
-- `fold_metrics.csv`
-- `walk_forward_out_of_sample_scores.csv`
-- `walk_forward_selected_signals.csv`
-- `selected_weights.csv`
-- `latest_best_weights.json`
-- `champion_weights.json`
-- `report.json`
+### 10.3 Utilisation dans le backtest
 
-Ces poids peuvent ensuite être relus par `--walk-forward-artifacts-dir` ou via `backtesting/walk_forward.py`.
+Les poids calibrés sont appliqués **en mémoire** pendant le backtest, sans écriture
+dans `stock_scores_history`. Le backtest lit les artefacts JSON via
+`--walk-forward-artifacts-dir` (auto-rempli par l'IHM selon le preset sélectionné).
+
+Cascade de priorité des scores dans le backtest :
+```
+1. final_score_walk_forward  (via artefacts de calibration, si dispo)
+2. final_score_sentiment     (poids par défaut)
+3. final_score               (score quant pur)
+```
+
+### 10.4 Workflow complet
+
+```
+1. Backfill  → stock_scores_history (avec capital_preset_key)
+2. Calibrate → lit stock_scores_history → artefacts/sentiment_calibration/{preset}/
+3. Backtest  → lit stock_scores_history + artefacts → applique poids optimaux
+```
+
+Les artefacts sont organisés par preset : `artifacts/sentiment_calibration/{preset_key}/`.
+L'IHM dérive automatiquement le répertoire depuis le dropdown "Preset capital PIT".
 
 ---
 
 ## 11. IHM Streamlit
 
-La page `ihm/pages/backtesting.py` expose directement quatre familles d’actions :
+La page `ihm/pages/backtesting.py` expose **7 onglets** :
 
-- `run`
-- `backfill-scores-history`
-- `diagnose-screener`
-- `recommend-screener`
+| Onglet | Commande | Usage |
+|---|---|---|
+| ▶️ Backtest | `run` | Backtest portefeuille complet |
+| 🧱 Backfill scores history | `backfill-scores-history` | Reconstruire `stock_scores_history` |
+| 🧪 Diagnose screener | `diagnose-screener` | Tester l’impact des paramètres screener |
+| 🎯 Recommend screener | `recommend-screener` | Recommandation depuis un diagnostic |
+| 📰 Calibrate sentiment | `calibrate-sentiment-weights` | Calibration des poids sentiment/macro |
+| 🚶 Walk-forward sentiment | `walk-forward-sentiment` | Backtest hors échantillon par folds |
+| 🎛️ Calibration trimestrielle | (script ops) | Recalibration périodique automatisée |
 
-L’IHM permet aussi :
+Fonctionnalités :
+- lancement en arrière-plan avec suivi live ;
+- historique des runs consultable ;
+- logs téléchargeables ;
+- KPIs extraits de `report.json` ;
+- dropdown "Preset capital PIT" partagé entre tous les onglets ;
+- dérivation automatique des répertoires d’artefacts par preset ;
+- le champ `walk_forward_artifacts_dir` est auto-rempli selon le preset.
 
-- de lancer les commandes en arrière-plan ;
-- de suivre l’historique des runs ;
-- de lire / télécharger les logs ;
-- d’afficher les KPIs issus de `report.json` ;
-- de relire les artefacts screener.
+## 12. Schéma de `stock_scores_history`
 
-Important :
+Table centrale du backtesting PIT. Chaque ligne = un snapshot (date, preset, symbole).
 
-- l’IHM expose bien `engine_mode`, `ml_pit_strategy`, `phase2/3/4/5/7`, `risk_free_rate`, `seed`, microstructure et risk overlays ;
-- l’IHM **n’expose pas encore** les sous-commandes `calibrate-sentiment-weights` et `walk-forward-sentiment` ;
-- l’IHM continue de construire la commande `run` avec `--fees` plutôt qu’avec `--commission-bps` / `--slippage-bps` séparés.
+### 12.1 Colonnes peuplées par le backfill
 
----
+| Catégorie | Colonnes | Source |
+|---|---|---|
+| Identité | `snapshot_date`, `capital_preset_key`, `config_fingerprint`, `symbol` | Backfill |
+| Scores screener | `total_score`, `trend_score`, `vcp_score`, `final_score`, `relative_strength_index`, `historical_range_score`, `liquidity_val` | Screener PIT |
+| Scores selector | `candidate_rank`, `raw_final_score`, `normalized_total_score`, `normalized_rsi`, `trend_vcp_component`, `total_score_component`, `rsi_component`, `selection_explanation` | AlphaScanner PIT |
+| Neutralisation | `total_score_neutralized`, `relative_strength_index_neutralized` | `_apply_factor_neutralization` |
+| Facteurs techniques | `atr_pct_20`, `weekly_trend_score`, `high_52w_proximity`, `volatility_ratio`, `beta_126` | `compute_factors` |
+| Métadonnées | `market_cap`, `sector` | `stock_metadata` |
+| Quotes PIT | `spread_bps` | `stock_quote_snapshots` (NULL si pas d'historique) |
+| Earnings PIT | `earnings_date`, `days_to_earnings`, `earnings_blackout` | `stock_earnings_calendar` (NULL si pas d'historique) |
+| Sentiment | `sentiment_net_agg`, `sector_impact_agg`, `company_idio_*`, `macro_regime_*`, `final_score_sentiment`, `quant_component` | `SentimentSignalAggregator` |
 
-## 12. Écart actuel avec le pipeline live
+### 12.2 Colonnes de calibration (toujours NULL)
+
+Ces colonnes sont des placeholders. Les poids calibrés sont appliqués **en mémoire**
+pendant le backtest via les artefacts JSON, pas écrits en base.
+
+| Colonne | Valeur |
+|---|---|
+| `final_score_walk_forward` | NULL |
+| `walk_forward_sentiment_weight` | NULL |
+| `walk_forward_macro_weight` | NULL |
+| `walk_forward_quant_weight` | NULL |
+| `calibration_run_id` | NULL |
+| `calibration_source` | NULL |
+
+### 12.3 Consommateurs
+
+| Colonne | Backtest (`load_scores`) | ML (`modelFactory`) |
+|---|---|---|
+| `candidate_rank`, `selection_explanation`, `earnings_blackout` | ✅ (depuis juin 2026) | ✅ |
+| `market_cap`, `beta_126`, `spread_bps`, `days_to_earnings`, `normalized_*`, `*_neutralized`, `*_component`, `atr_pct_20`, `weekly_trend_score`, `high_52w_proximity`, `volatility_ratio` | ❌ | ✅ |
+| `final_score`, `final_score_sentiment`, `sentiment_*`, `company_idio_*`, `macro_regime_*`, `quant_component` | ✅ | ❌ |
+| `walk_forward_*`, `calibration_*` | ❌ (utilise artefacts JSON) | ❌ |
+
+## 14. Écart actuel avec le pipeline live
 
 Le backtest est désormais :
 
@@ -926,7 +993,7 @@ Le bon message à retenir est donc :
 
 ---
 
-## 13. Vérifications et validations utiles
+## 16. Vérifications et validations utiles
 
 ### 13.1 Vérifier la couverture de `stock_scores_history`
 
@@ -983,22 +1050,38 @@ pytest tests/test_ihm_backtesting_runner.py tests/test_pages_backtesting.py test
 
 ---
 
-## 14. Séquence recommandée
+## 15. Séquence recommandée
 
-Ordre conseillé :
+### 15.1 Workflow standard (recherche)
 
-1. tester un backfill sur 1 jour ;
-2. étendre à 5 jours ;
-3. lancer le backfill complet ;
-4. lancer ensuite le backtest ;
-5. activer les phases 2/3/4/5/7 seulement si l’objectif est un audit de fidélité.
-
-Exemple :
-
-```powershell
-python -m backtesting backfill-scores-history --start 2025-01-01 --limit-days 1 --screener-workers 2
-python -m backtesting backfill-scores-history --start 2025-01-01 --limit-days 5 --screener-workers 2
-python -m backtesting backfill-scores-history --start 2025-01-01 --screener-workers 2
-python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode auto --sentiment-mode auto
+```
+1. Backfill  → python -m backtesting backfill-scores-history --start 2020-01-01 --end 2025-12-31 --capital 2000
+2. Backtest  → python -m backtesting run --start 2025-01-01 --end 2025-12-31 --equity 2000
 ```
 
+### 15.2 Workflow avancé (avec calibration)
+
+```
+1. Backfill   → stock_scores_history
+2. Calibrate  → calibrate-sentiment-weights (optionnel : walk-forward-sentiment)
+3. Backtest   → run (walk_forward_artifacts_dir auto-dérivé du preset)
+```
+
+### 15.3 Workflow optimisation screener
+
+```
+1. Backfill   → stock_scores_history (avec params par défaut)
+2. Diagnose   → diagnose-screener (teste 50+ combinaisons de params screener)
+3. Recommend  → recommend-screener (recommandation actionnable)
+4. MàJ        → capital_presets.yaml avec les params optimaux
+5. Re-backfill → backfill --overwrite-existing (avec nouveaux params)
+```
+
+### 15.4 Test progressif
+
+```powershell
+# Test sur 1 jour
+python -m backtesting backfill-scores-history --start 2025-01-01 --limit-days 1 --screener-workers 2
+# Test sur 5 jours
+python -m backtesting backfill-scores-history --start 2025-01-01 --limit-days 5 --screener-workers 2
+```
