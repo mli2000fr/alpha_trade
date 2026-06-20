@@ -72,7 +72,7 @@
 ### A-CAP-003 — ~~`risk_min_position_notional` à 150$ < minimum Alpaca (155$)~~ ✅ RÉSOLU (Sprint S8)
 - **Sévérité** : ~~P0~~ → **RÉSOLU**
 - **Domaine** : Configuration / Exécution
-- **Résolution** : `risk_min_position_notional` du preset `capital_0_5000` remonté de 150 $ à 155 $. Tous les presets ont désormais `risk_min_position_notional ≥ 155`. Test T-CAP-003 validé.
+- **Résolution** : `risk_min_position_notional` du preset `capital_2001_5000` remonté de 150 $ à 155 $. Tous les presets ont désormais `risk_min_position_notional ≥ 155`. Test T-CAP-003 validé.
 - **Test associé** : T-CAP-003 ✅
 
 **Bloc test T-CAP-003** :
@@ -425,7 +425,7 @@
 
 ---
 
-### A-CAP-005 — Preset `capital_0_2000_eur` en EUR mais le reste en USD
+### A-CAP-005 — Preset `capital_0_2000` en EUR mais le reste en USD
 - **Sévérité** : P2
 - **Domaine** : Configuration
 - **Description** : Le premier preset est libellé en EUR (`0 → 2 000 €`) tandis que tous les autres sont en USD. La conversion n'est pas documentée. Le `min_equity` est 0 et `max_equity` est 2000 — mais 2000 quoi ? EUR ou USD ?

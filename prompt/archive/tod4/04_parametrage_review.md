@@ -30,7 +30,7 @@ Source : `core/filter_profiles.py`
 
 ## 2. Analyse par tranche de capital
 
-### Tranche 0 → 2 000 € (`capital_0_2000_eur`)
+### Tranche 0 → 2 000 € (`capital_0_2000`)
 
 | Paramètre | Valeur | Cohérence |
 |---|---|---|
@@ -50,7 +50,7 @@ Source : `core/filter_profiles.py`
 
 ---
 
-### Tranche 2 001 → 5 000 $ (`capital_0_5000`)
+### Tranche 2 001 → 5 000 $ (`capital_2001_5000`)
 
 | Paramètre | Valeur | Cohérence |
 |---|---|---|
@@ -179,7 +179,7 @@ Tous les presets ont `execution_swing_only: true`, ce qui est cohérent avec l'o
 ### 4.1 Spreads et liquidité
 
 - Les presets petits comptes acceptent des spreads jusqu'à 80 bps. Sur un ordre de 500 $, 80 bps = 4 $ de spread, soit 0.8% du montant. C'est élevé mais acceptable en swing (l'horizon est de plusieurs jours).
-- Le preset micro-compte (`capital_0_2000_eur`) recommande 25 bps de frais en backtest. Avec un spread de 80 bps, le coût total aller-retour est de (80 + 25) × 2 = 210 bps = 2.1%. C'est significatif et réduit l'espérance de gain.
+- Le preset micro-compte (`capital_0_2000`) recommande 25 bps de frais en backtest. Avec un spread de 80 bps, le coût total aller-retour est de (80 + 25) × 2 = 210 bps = 2.1%. C'est significatif et réduit l'espérance de gain.
 
 ### 4.2 Contraintes de compte
 

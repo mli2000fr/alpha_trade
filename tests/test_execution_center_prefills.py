@@ -105,8 +105,8 @@ def test_apply_execution_prefills_sets_risk_equity_from_broker_equity_on_account
     assert session_state["pipeline_risk_account_equity"] == 2_000.0
     assert session_state[execution_center.DETECTED_ACCOUNT_TYPE_KEY] == "cash"
     assert "pipeline_detected_legacy_execution_rule" not in session_state
-    assert session_state[execution_center.CAPITAL_PRESET_KEY] == "capital_0_2000_eur"
-    assert session_state[execution_center.DETECTED_CAPITAL_PRESET_KEY] == "capital_0_2000_eur"
+    assert session_state[execution_center.CAPITAL_PRESET_KEY] == "capital_0_2000"
+    assert session_state[execution_center.DETECTED_CAPITAL_PRESET_KEY] == "capital_0_2000"
 
 
 def test_apply_execution_prefills_preserves_manual_risk_equity_for_same_account(monkeypatch) -> None:
@@ -134,7 +134,7 @@ def test_apply_execution_prefills_preserves_manual_risk_equity_for_same_account(
 
 def test_apply_selected_capital_preset_for_small_account_sets_expected_values(monkeypatch) -> None:
     session_state: dict[str, object] = {
-        execution_center.CAPITAL_PRESET_KEY: "capital_0_5000",
+        execution_center.CAPITAL_PRESET_KEY: "capital_2001_5000",
     }
     monkeypatch.setattr(execution_center.st, "session_state", session_state, raising=False)
 
@@ -160,7 +160,7 @@ def test_apply_selected_capital_preset_for_small_account_sets_expected_values(mo
     assert session_state["pipeline_selector_selection_size"] == 20
     assert session_state["pipeline_execution_account_type"] == "cash"
     assert session_state["pipeline_execution_max_entry_gap_pct"] == 0.03
-    assert str(session_state[execution_center.CAPITAL_PRESET_APPLIED_SIGNATURE_KEY]).startswith("capital_0_5000|")
+    assert str(session_state[execution_center.CAPITAL_PRESET_APPLIED_SIGNATURE_KEY]).startswith("capital_2001_5000|")
 
 
 def test_apply_selected_capital_preset_custom_does_not_override_existing_values(monkeypatch) -> None:

@@ -94,7 +94,7 @@ Pour calibrer Option B sur backtest 2020-2022 :
 
 ```bash
 python -m backtesting run --start 2020-01-01 --end 2022-12-31 \
-  --equity 5000 --capital-preset-key capital_0_5000 \
+  --equity 5000 --capital-preset-key capital_2001_5000 \
   --phase2-mode risk_execution --engine-mode pipeline
 ```
 

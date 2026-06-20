@@ -1716,8 +1716,8 @@ def test_build_execution_account_banner_payload_marks_detected_account_mismatch_
 
 def test_build_capital_preset_banner_payload_marks_detected_bucket_as_applied() -> None:
     payload = pipeline._build_capital_preset_banner_payload(
-        "capital_0_5000",
-        detected_preset_key="capital_0_5000",
+        "capital_2001_5000",
+        detected_preset_key="capital_2001_5000",
         detected_equity=2_000.0,
     )
 

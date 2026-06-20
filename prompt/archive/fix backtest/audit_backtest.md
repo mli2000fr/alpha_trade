@@ -190,7 +190,7 @@ Le backtest pouvait mathématiquement laisser courir un drawdown de **-53 %**, s
 
 ## 3.5 Le petit capital force une concentration structurelle
 
-Le preset `capital_0_2000_eur` est explicitement décrit comme un preset de **micro-compte** avec **“concentration assumée (3 lignes)”**.
+Le preset `capital_0_2000` est explicitement décrit comme un preset de **micro-compte** avec **“concentration assumée (3 lignes)”**.
 
 Pour rappel (`config/capital_presets.yaml`) :
 

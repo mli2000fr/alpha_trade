@@ -71,7 +71,7 @@
 | Fusion signal | 75% quant + 15% sentiment + 10% macro | `quant_weight: 0.75, sentiment_weight: 0.15, macro_weight: 0.10` | `SentimentSignalAggregator` utilise ces poids | ✅ |
 | Conviction risk | 40% quant + 60% ML | (`risk_score_weight: 0.40, risk_prediction_weight: 0.60` dans presets) | `compute_conviction()` | ✅ |
 | DOC_FONCTIONNELLE §2.4 | "40% quant + 60% ML" | Presets 10k+ | Code | ✅ |
-| DOC_FONCTIONNELLE §2.4 | "40% quant + 60% ML" | Preset micro-compte : `0.45/0.55` ⚠️ | Capital preset `capital_0_2000_eur` différent | ⚠️ Légère incohérence preset vs doc |
+| DOC_FONCTIONNELLE §2.4 | "40% quant + 60% ML" | Preset micro-compte : `0.45/0.55` ⚠️ | Capital preset `capital_0_2000` différent | ⚠️ Légère incohérence preset vs doc |
 
 **Écart mineur** : La doc cite "40%/60%" comme défaut mais les présets petits comptes utilisent "45%/55%". C'est intentionnel (plus de poids quant car ML moins fiable sur micro-compte) mais non documenté.
 

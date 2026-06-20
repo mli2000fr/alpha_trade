@@ -130,7 +130,7 @@ risk_management:
 
 ## 2. `config/capital_presets.yaml` — Revue par tranche
 
-### 2.1 Tranche `0 → 2 000 €` (`capital_0_2000_eur`)
+### 2.1 Tranche `0 → 2 000 €` (`capital_0_2000`)
 
 | Paramètre | Valeur | Évaluation |
 |---|---|---|
@@ -150,7 +150,7 @@ risk_management:
 
 ---
 
-### 2.2 Tranche `2 001 → 5 000 $` (`capital_0_5000`)
+### 2.2 Tranche `2 001 → 5 000 $` (`capital_2001_5000`)
 
 | Paramètre | Valeur | Évaluation |
 |---|---|---|
@@ -275,7 +275,7 @@ risk_management:
 
 ### Actions prioritaires
 
-1. ✅ ~~**P1** : Corriger `capital_0_2000_eur.risk_max_positions: 3`~~ — **FAIT Sprint S1**
+1. ✅ ~~**P1** : Corriger `capital_0_2000.risk_max_positions: 3`~~ — **FAIT Sprint S1**
 2. ✅ ~~**P2** : Uniformiser `selector_min_close: 10.0` sur toutes les tranches~~ — **FAIT Sprint S2**
 3. ✅ ~~**P2** : Clarifier les tranches margin sur les 3 presets concernés~~ — **FAIT Sprint S2**
 4. **P3** : Activer Kelly (au moins sur presets ≥ 50k$) avec `max_kelly_fraction: 0.25` comme garde-fou

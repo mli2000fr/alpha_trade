@@ -1,6 +1,6 @@
 [stdout] 
 [stdout] 🚀 Backtest Alpha Trade : 2024-11-01 → 2024-12-05, capital=2,000$
-[stdout]    preset_capital=capital_0_2000_eur (explicit_key) | fingerprint=971f046391554128
+[stdout]    preset_capital=capital_0_2000 (explicit_key) | fingerprint=971f046391554128
 [stdout] 
 [stdout]    TP=8.0%, TS=5.0%, max_positions=10
 [stdout] 
@@ -32,7 +32,7 @@
 [stdout]    warmup_ohlcv=67 jours calendaires (2024-08-26 → 2024-11-01) pour ATR/corrélation phase2
 [stdout] 
 [stdout] 📈 Chargement scores...
-[stdout] 2026-05-10 10:11:11,039 INFO     backtesting.data_loader -- Scores candidats chargés depuis stock_scores_history : 375 lignes | preset=capital_0_2000_eur
+[stdout] 2026-05-10 10:11:11,039 INFO     backtesting.data_loader -- Scores candidats chargés depuis stock_scores_history : 375 lignes | preset=capital_0_2000
 [stdout] 🤖 Chargement prédictions ML...
 [stdout] 2026-05-10 10:11:12,472 INFO     backtesting.data_loader -- Prédictions ML chargées : 0 lignes (filter symbols=False)
 [stdout] 2026-05-10 10:11:12,486 WARNING  backtesting.resilience -- ML PIT strategy=use-persisted — 375 prédiction(s) manquante(s), aucun rebuild tenté.

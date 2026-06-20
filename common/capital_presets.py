@@ -19,7 +19,7 @@ from core.filter_profiles import STRICT_SWING_CASH_FILTERS
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CAPITAL_PRESETS_CONFIG_PATH = PROJECT_ROOT / "config" / "capital_presets.yaml"
 DETECTED_EQUITY_PLACEHOLDER = "__DETECTED_EQUITY__"
-DEFAULT_CAPITAL_PRESET_KEY = "capital_0_2000_eur"
+DEFAULT_CAPITAL_PRESET_KEY = "capital_0_2000"
 SELECTOR_RS_ALIAS_KEY = "selector_min_ibd_rs_rank"
 SELECTOR_RS_LEGACY_KEY = "selector_min_relative_strength_index"
 

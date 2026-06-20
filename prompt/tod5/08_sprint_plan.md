@@ -44,10 +44,10 @@
    - Fichiers : `config/capital_presets.yaml`
 
 2. **Remonter `risk_min_position_notional` à ≥155$** pour le preset 2k-5k$
-   - Fichiers : `config/capital_presets.yaml` (preset `capital_0_5000`)
+   - Fichiers : `config/capital_presets.yaml` (preset `capital_2001_5000`)
 
 3. **Uniformiser la devise en USD** pour le preset micro-compte
-   - Fichiers : `config/capital_presets.yaml` (preset `capital_0_2000_eur`)
+   - Fichiers : `config/capital_presets.yaml` (preset `capital_0_2000`)
 
 4. **Revoir le seuil cash→margin à 25k$** : ce seuil était lié à la PDT (désormais supprimée). Documenter la nouvelle logique.
 

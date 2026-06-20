@@ -36,7 +36,7 @@ for preset in data["presets"]:
             added_after = True
 
     # Fix max_positions for micro account
-    if key == "capital_0_2000_eur":
+    if key == "capital_0_2000":
         new_vals["risk_max_positions"] = 3
 
     preset["values"] = new_vals

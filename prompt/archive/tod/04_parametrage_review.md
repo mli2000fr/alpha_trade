@@ -16,7 +16,7 @@
 
 ## 2. `config/capital_presets.yaml` — analyse par tranche
 
-### Tranche **0 → 5 000 $** (`capital_0_5000`)
+### Tranche **0 → 5 000 $** (`capital_2001_5000`)
 
 | Catégorie | Valeur | Évaluation |
 |---|---|---|

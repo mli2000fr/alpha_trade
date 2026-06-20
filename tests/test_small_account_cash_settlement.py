@@ -5,7 +5,7 @@ from backtesting.trading_constraints import TradingConstraintConfig
 
 
 def test_small_cash_account_preset_enables_settled_cash_simulation() -> None:
-    preset = get_capital_preset_by_key("capital_0_2000_eur")
+    preset = get_capital_preset_by_key("capital_0_2000")
 
     assert preset is not None
     updated = apply_backtest_defaults_from_preset(

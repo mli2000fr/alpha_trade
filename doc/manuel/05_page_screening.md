@@ -53,7 +53,7 @@ Si le tableau est vide :
    - Page **🏠 Vue d'ensemble** → bloc « Dernier pipeline ».
    - S'il est ⚪ ou 🔴 : relancer (cf. [04_page_pipeline.md](04_page_pipeline.md)).
 2. **Vérifiez votre preset de capital** :
-   - Avec `capital_0_2000_eur` vous aurez ~50-150 candidats.
+   - Avec `capital_0_2000` vous aurez ~50-150 candidats.
    - Avec `capital_50001_100000` vous pouvez tomber à 5-10 si le marché est baissier.
 3. **Date du marché** : vérifiez en haut « Date trade : YYYY-MM-DD ». Si
    c'est un jour férié US, il n'y a pas de nouvelles barres.

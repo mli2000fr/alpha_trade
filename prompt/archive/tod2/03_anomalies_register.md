@@ -83,7 +83,7 @@
 
 - Sévérité : **P1**
 - Domaine : presets capital / exécution
-- Description : `capital_0_2000_eur` décrit ticket minimum bas, mais `risk_min_position_notional=500`, 3 positions, `max_position_weight=35%`.
+- Description : `capital_0_2000` décrit ticket minimum bas, mais `risk_min_position_notional=500`, 3 positions, `max_position_weight=35%`.
 - Preuve : `config/capital_presets.yaml:8-20`.
 - Impact métier : micro-compte fortement concentré, peu de lignes, risque psychologique et drawdown.
 - Recommandation : renommer “concentration assumée” partout, ou abaisser min notional avec frais/slippage adaptés.

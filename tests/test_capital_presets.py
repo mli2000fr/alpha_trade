@@ -8,21 +8,21 @@ def test_load_capital_presets_reads_versioned_yaml_file() -> None:
 
     assert len(presets) >= 6
     # Sprint S26 — preset micro-compte (~2 000 €) prepended.
-    assert presets[0].key == "capital_0_2000_eur"
+    assert presets[0].key == "capital_0_2000"
     assert presets[-1].key == "capital_100001_plus"
 
 
 def test_resolve_capital_preset_for_equity_selects_expected_bucket() -> None:
     # Sprint S26 — 2 000 USD relève désormais du preset micro-compte EUR.
-    assert capital_presets.resolve_capital_preset_for_equity(2_000.0).key == "capital_0_2000_eur"
-    assert capital_presets.resolve_capital_preset_for_equity(3_500.0).key == "capital_0_5000"
+    assert capital_presets.resolve_capital_preset_for_equity(2_000.0).key == "capital_0_2000"
+    assert capital_presets.resolve_capital_preset_for_equity(3_500.0).key == "capital_2001_5000"
     assert capital_presets.resolve_capital_preset_for_equity(7_500.0).key == "capital_5001_10000"
     assert capital_presets.resolve_capital_preset_for_equity(75_000.0).key == "capital_50001_100000"
     assert capital_presets.resolve_capital_preset_for_equity(150_000.0).key == "capital_100001_plus"
 
 
 def test_capital_preset_maps_detected_equity_placeholder_to_pipeline_session_key() -> None:
-    preset = capital_presets.get_capital_preset_by_key("capital_0_5000")
+    preset = capital_presets.get_capital_preset_by_key("capital_2001_5000")
 
     assert preset is not None
     session_values = preset.to_session_state_values(detected_equity=2_345.67)
@@ -42,7 +42,7 @@ def test_capital_preset_max_anomaly_count_monotonic() -> None:
 
 
 def test_capital_preset_selector_rs_alias_is_preserved() -> None:
-    preset = capital_presets.get_capital_preset_by_key("capital_0_2000_eur")
+    preset = capital_presets.get_capital_preset_by_key("capital_0_2000")
 
     assert preset is not None
     assert preset.values["selector_min_ibd_rs_rank"] == 90.0

@@ -18,7 +18,7 @@ Les presets de `config/capital_presets.yaml` sont détaillés et globalement ori
 
 ### 0 → 2 500 $
 
-Preset le plus proche : `capital_0_2000_eur` (`min_equity=0`, `max_equity=2000`) et début `capital_0_5000` pour 2k–2.5k.
+Preset le plus proche : `capital_0_2000` (`min_equity=0`, `max_equity=2000`) et début `capital_2001_5000` pour 2k–2.5k.
 
 - Risk : `risk_per_trade_pct=1.5%`, 3 lignes, `max_position_weight=35%`, DD 7%.
 - Selector : market cap min 500M, spread 80/100 bps, min close 10.
@@ -29,7 +29,7 @@ Preset le plus proche : `capital_0_2000_eur` (`min_equity=0`, `max_equity=2000`)
 
 ### 2 501 → 5 000 $
 
-Preset : `capital_0_5000`.
+Preset : `capital_2001_5000`.
 
 - Risk : 2% par trade, 4 positions, 20% max/ligne, min notional 150.
 - Selector : ADV 10M, spread 60/80 bps, market cap 1B.

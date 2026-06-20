@@ -27,7 +27,7 @@ max_positions = {int} 3
 "fees_pct":0.001
 "fees":0.001
 "profile":"custom"
-"capital_preset_key":"capital_0_2000_eur"
+"capital_preset_key":"capital_0_2000"
 "capital_preset_source":"explicit_key"
 "capital_preset_fingerprint":"971f046391554128"
 "engine_mode":"pipeline"

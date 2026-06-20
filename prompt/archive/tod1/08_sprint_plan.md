@@ -24,7 +24,7 @@
 **Anomalies clôturées** : A-001 ✅, A-002 ✅, A-004-résidu ✅, A-016 ✅
 
 > ✅ **Toutes les anomalies S1 résolues** :
-> - A-001 ✅ (risk_max_positions: 3, min_notional: 500 USD sur capital_0_2000_eur)
+> - A-001 ✅ (risk_max_positions: 3, min_notional: 500 USD sur capital_0_2000)
 > - A-002 ✅ (LINEAGE_SPEC corrigé, data_lineage_matrix.md régénéré, CI check vert)
 > - A-004-résidu ✅ (argparse description backtesting/cli/_impl.py:67 corrigée)
 > - A-004 ✅ (DOC_TECHNIQUE §9 — déjà corrigé avant S1, entièrement clos)
@@ -34,7 +34,7 @@
 
 ### Tâches livrées
 
-**T1.1** ✅ — `config/capital_presets.yaml` preset `capital_0_2000_eur` corrigé
+**T1.1** ✅ — `config/capital_presets.yaml` preset `capital_0_2000` corrigé
 ```yaml
 risk_max_positions: 3                     # 3 lignes ≈ 600-700 € chacune — A-001 fix
 risk_min_position_notional: 500.0        # ticket mini USD — A-001 fix
@@ -84,7 +84,7 @@ description="Backtest intégré Alpha Trade (simulateur custom PIT)"
 
 > ✅ **Toutes les anomalies S2 résolues** :
 > - A-006 ✅ (contraintes margin clarifiées sur 3 presets — capital_25001_50000, capital_50001_100000, capital_100001_plus)
-> - A-007 ✅ (`selector_min_close: 10.0` sur capital_0_5000, capital_5001_10000, capital_10001_25000)
+> - A-007 ✅ (`selector_min_close: 10.0` sur capital_2001_5000, capital_5001_10000, capital_10001_25000)
 > - A-017 ✅ (`fill_timeout_seconds: 180` dans execution_engine/config.py)
 
 ### Tâches livrées
@@ -97,7 +97,7 @@ description="Backtest intégré Alpha Trade (simulateur custom PIT)"
 
 **T2.2** ✅ — `selector_min_close: 10.0` uniformisé sur tous les presets (`config/capital_presets.yaml`)
 ```yaml
-# capital_0_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0)
+# capital_2001_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0)
 selector_min_close: 10.0  # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0
 ```
 

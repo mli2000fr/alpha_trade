@@ -2,7 +2,7 @@
 Sur les 5 runs, tu gardes strictement identiques :
 fenêtre : 2020-01-01 → 2020-12-31
 equity : 2000
-preset de base : capital_0_2000_eur
+preset de base : capital_0_2000
 compte : cash
 allow_fractional_shares = true
 mêmes phases :
@@ -23,7 +23,7 @@ python -m backtesting run `
   --start 2020-01-01 `
   --end 2020-12-31 `
   --equity 2000 `
-  --capital-preset-key capital_0_2000_eur `
+  --capital-preset-key capital_0_2000 `
   --engine-mode pipeline `
   --ml-mode rebuild-missing `
   --ml-pit-strategy rebuild-missing `
@@ -55,7 +55,7 @@ python -m backtesting run `
   --start 2020-01-01 `
   --end 2020-12-31 `
   --equity 2000 `
-  --capital-preset-key capital_0_2000_eur `
+  --capital-preset-key capital_0_2000 `
   --engine-mode pipeline `
   --ml-mode off `
   --account-type cash `
@@ -85,7 +85,7 @@ python -m backtesting run `
   --start 2020-01-01 `
   --end 2020-12-31 `
   --equity 2000 `
-  --capital-preset-key capital_0_2000_eur `
+  --capital-preset-key capital_0_2000 `
   --engine-mode pipeline `
   --ml-mode rebuild-missing `
   --ml-pit-strategy rebuild-missing `
@@ -131,7 +131,7 @@ python -m backtesting run `
   --start 2020-01-01 `
   --end 2020-12-31 `
   --equity 2000 `
-  --capital-preset-key capital_0_2000_eur `
+  --capital-preset-key capital_0_2000 `
   --engine-mode pipeline `
   --ml-mode rebuild-missing `
   --ml-pit-strategy rebuild-missing `
@@ -160,7 +160,7 @@ Tester si le moteur a de l’edge mais ne le monétise pas assez, à cause d’u
 Différence vs BT0
 Tu ne touches qu’au sizing du preset micro-compte, pas au régime.
 Patch minimal à faire dans config/capital_presets.yaml
-Dans le preset capital_0_2000_eur, change uniquement :
+Dans le preset capital_0_2000, change uniquement :
 risk_per_trade_pct: 0.01
 en
 risk_per_trade_pct: 0.015
@@ -170,7 +170,7 @@ python -m backtesting run `
   --start 2020-01-01 `
   --end 2020-12-31 `
   --equity 2000 `
-  --capital-preset-key capital_0_2000_eur `
+  --capital-preset-key capital_0_2000 `
   --engine-mode pipeline `
   --ml-mode rebuild-missing `
   --ml-pit-strategy rebuild-missing `

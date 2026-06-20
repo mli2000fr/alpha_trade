@@ -6,7 +6,7 @@
 ## Hypothèses
 
 - Capital : ~2 000 € (~2 150 USD).
-- Preset : `capital_0_2000_eur`.
+- Preset : `capital_0_2000`.
 - Mode : `paper` les premières semaines, puis `live` après validation.
 - Compte : Alpaca cash, US stocks long-only.
 - Horizon : 2-10 jours par trade.

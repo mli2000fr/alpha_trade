@@ -25,7 +25,7 @@
 
 ## 2. Audit par tranche
 
-### 2.1 — `0 → 2 000 €` (`capital_0_2000_eur`)
+### 2.1 — `0 → 2 000 €` (`capital_0_2000`)
 
 | Aspect | Constat |
 |---|---|
@@ -41,7 +41,7 @@ prend les défauts comme paramétrage swing sérieux. **Recommandation** :
 mode "discovery" explicite ou warning IHM "ce preset assume une perte de
 30 % acceptable sur 6 mois".
 
-### 2.2 — `2 001 → 5 000 $` (`capital_0_5000`)
+### 2.2 — `2 001 → 5 000 $` (`capital_2001_5000`)
 
 | Aspect | Constat |
 |---|---|

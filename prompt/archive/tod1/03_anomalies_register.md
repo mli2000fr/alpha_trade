@@ -22,13 +22,13 @@
 
 ## ~~Anomalies P1 (majeures) — actives~~ → Toutes résolues ✅ (après Sprint S1)
 
-### A-001 ✅ — `capital_0_2000_eur` : `risk_max_positions: 10` incohérent — RÉSOLU (Sprint S1)
+### A-001 ✅ — `capital_0_2000` : `risk_max_positions: 10` incohérent — RÉSOLU (Sprint S1)
 - **Sévérité initiale** : P1
 - **Domaine** : Configuration / capital_presets
 - **Résolution** : `config/capital_presets.yaml:16` — corrigé en `risk_max_positions: 3` et `risk_min_position_notional: 500.0`.
 - **Tests ajoutés** : `test_capital_preset_risk_overrides.py` :
   - `test_positions_notional_solvency` — vérifie `max_positions × min_notional ≤ 0.95 × max_equity`
-  - `test_micro_account_max_positions_coherent` — vérifie `max_positions ≤ 5` pour `capital_0_2000_eur`
+  - `test_micro_account_max_positions_coherent` — vérifie `max_positions ≤ 5` pour `capital_0_2000`
   - `test_micro_account_min_notional_viable` — vérifie `min_notional ≥ 400 USD`
   - `test_positions_increase_with_account_size` — monotonie des positions entre tranches
 - **Résultat test** : 13/13 passed ✅
@@ -66,7 +66,7 @@
 - **Sévérité initiale** : P2
 - **Domaine** : Configuration / selector
 - **Résolution** : `config/capital_presets.yaml` — tous les presets ayant `selector_min_close < 10.0` corrigés à `10.0` :
-  - `capital_0_5000` : 5.0 → 10.0
+  - `capital_2001_5000` : 5.0 → 10.0
   - `capital_5001_10000` : 7.0 → 10.0
   - `capital_10001_25000` : 8.0 → 10.0
 - Aligné avec `STRICT_SWING_CASH_FILTERS.min_close = 10.0` (`core/filter_profiles.py:241`)

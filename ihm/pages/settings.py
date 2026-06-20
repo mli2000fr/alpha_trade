@@ -65,7 +65,7 @@ VAR_ENV_UPLOAD_SIGNATURE_KEY = "settings_var_env_upload_signature"
 VAR_ENV_UPLOAD_RESULT_KEY = "settings_var_env_upload_result"
 VAR_ENV_EXPORT_DATA_KEY = "settings_var_env_export_data"
 VAR_ENV_EXPORT_FILENAME_KEY = "settings_var_env_export_filename"
-MICRO_CAPITAL_PRESET_KEY = "capital_0_2000_eur"
+MICRO_CAPITAL_PRESET_KEY = "capital_0_2000"
 
 VAR_ENV_UPLOAD_WIDGET_CSS = """
 <style>

@@ -25,7 +25,7 @@
 | Probabilité | Élevée si l'opérateur enchaîne 5–10 trades dans une fenêtre adverse. |
 | Recommandation | Réduire à `risk_per_trade_pct: 0.0075–0.01` pour 0–2 k€ et 0–5 k$ ; ajouter un test propriété "DD théorique max si N trades stop-loss consécutifs ≤ `risk_max_drawdown_pct`". |
 | Test associé | `tests/test_capital_preset_risk_overrides.py` (étendre) — voir matrice. |
-| Avancement 2026-05-22 | ✅ `risk_per_trade_pct` est à `0.01` sur `capital_0_2000_eur` et `0.0125` sur `capital_0_5000`, validé par tests. |
+| Avancement 2026-05-22 | ✅ `risk_per_trade_pct` est à `0.01` sur `capital_0_2000` et `0.0125` sur `capital_2001_5000`, validé par tests. |
 
 ---
 

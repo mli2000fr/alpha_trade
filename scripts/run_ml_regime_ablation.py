@@ -920,7 +920,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--phase4-mode", choices=("off", "protection_replay"), default="protection_replay")
     parser.add_argument("--phase5-mode", choices=("off", "watcher_replay"), default="watcher_replay")
     parser.add_argument("--phase7-mode", choices=("off", "exit_lifecycle_replay"), default="exit_lifecycle_replay")
-    parser.add_argument("--capital-preset-key", default="capital_0_2000_eur")
+    parser.add_argument("--capital-preset-key", default="capital_0_2000")
     parser.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS_DIR)
     parser.add_argument("--score-column", choices=("auto", "final_score_walk_forward", "final_score_sentiment", "final_score"), default="auto")
     parser.add_argument("--walk-forward-artifacts-dir", type=Path, default=None)

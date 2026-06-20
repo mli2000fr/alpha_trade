@@ -6,7 +6,7 @@
 
 ## 1. Synthèse par tranche de capital
 
-### Tranche 0 → 2 500 $ (`capital_0_2000_eur`)
+### Tranche 0 → 2 500 $ (`capital_0_2000`)
 
 | Aspect | Valeur | Évaluation |
 |---|---|---|
@@ -27,7 +27,7 @@
 
 ---
 
-### Tranche 2 501 → 5 000 $ (`capital_0_5000`)
+### Tranche 2 501 → 5 000 $ (`capital_2001_5000`)
 
 | Aspect | Valeur | Évaluation |
 |---|---|---|
@@ -183,8 +183,8 @@ Le profil `STRICT_SWING_CASH_FILTERS` (`core/filter_profiles.py`) définit :
 - `capital_50001_100000` : Aligné sur les critères principaux
 
 **Presets significativement divergents** :
-- `capital_0_2000_eur` : Écarts majeurs sur 12 critères — justifiés mais risqués
-- `capital_0_5000` : Écarts sur 9 critères
+- `capital_0_2000` : Écarts majeurs sur 12 critères — justifiés mais risqués
+- `capital_2001_5000` : Écarts sur 9 critères
 - `capital_100001_plus` : Plus strict que le canonique (justifié)
 
 Tous les écarts sont documentés dans les `strict_profile_justifications` du YAML, ce qui est une bonne pratique. ✅

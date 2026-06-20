@@ -57,7 +57,7 @@ La configuration est centralisée dans `config.yaml` (224 lignes) et `config/cap
 - **P3** : `risk_management.trailing_stop.enabled: false` par défaut mais configuration `dynamic_atr` complète présente — recommandé d'activer en paper
 
 ### Anomalies résolues dans cette section
-- ✅ `capital_0_2000_eur.risk_max_positions: 3`, `risk_min_position_notional: 500.0` (A-001 ✅ Sprint S1)
+- ✅ `capital_0_2000.risk_max_positions: 3`, `risk_min_position_notional: 500.0` (A-001 ✅ Sprint S1)
 - ✅ `selector_min_close: 10.0` sur tous les presets (A-007 ✅ Sprint S2)
 - ✅ Contraintes margin clarifiées sur les 3 presets ≥ 25k$ (A-006 ✅ Sprint S2)
 - ✅ Reliquats cash clarifiés sur 4 presets (A-016 ✅ Sprint S1)

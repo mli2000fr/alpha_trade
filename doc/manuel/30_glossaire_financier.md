@@ -165,7 +165,7 @@ backtest, médiocre en live.
 **Position** — Quantité d'actions détenues sur un symbole.
 
 **Preset (capital preset)** — Bouquet de paramètres calibrés pour une
-tranche de capital (ex. `capital_0_2000_eur`).
+tranche de capital (ex. `capital_0_2000`).
 
 **Probability long** — Probabilité (0-1) calculée par le ML que le cours
 atteigne le seuil de hausse cible dans l'horizon.

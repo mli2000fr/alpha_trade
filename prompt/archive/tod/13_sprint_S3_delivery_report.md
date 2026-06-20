@@ -65,7 +65,7 @@ Logging info enrichi (`shares=`, `price=`, `notional=`, `min=`).
 
 | Preset | `risk_max_drawdown_pct` | `risk_max_daily_loss_pct` |
 |---|---|---|
-| capital_0_5000 | 0.08 (8 %) | 0.030 (3.0 %) |
+| capital_2001_5000 | 0.08 (8 %) | 0.030 (3.0 %) |
 | capital_5001_10000 | 0.10 | 0.035 |
 | capital_10001_25000 | 0.12 | 0.040 |
 | capital_25001_50000 | 0.14 | 0.045 |

@@ -47,7 +47,7 @@ cas ». Ce n'est pas une garantie.
 
 ### ❓ Combien de trades par mois sur 2 000 € ?
 
-Avec preset `capital_0_2000_eur` et 3 positions max : ~10-30
+Avec preset `capital_0_2000` et 3 positions max : ~10-30
 trades/mois (rotation tous les 5-10 jours en moyenne).
 
 ## Argent et performance
@@ -65,7 +65,7 @@ vous pouvez perdre **intégralement** sans impact sur votre vie.
 ### ❓ Puis-je faire du levier (margin) ?
 
 **Non, pas avant 25 000 USD.** Le levier multiplie les pertes. Le preset
-`capital_0_2000_eur` impose `cash` automatiquement.
+`capital_0_2000` impose `cash` automatiquement.
 
 ### ❓ Faut-il déclarer aux impôts ?
 

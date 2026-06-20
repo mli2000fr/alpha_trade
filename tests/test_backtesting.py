@@ -97,7 +97,7 @@ def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() ->
     params = _impl._build_backtest_common_params(
         args=args,
         fees_pct=0.001,
-        effective_preset=SimpleNamespace(key="capital_0_5000"),
+        effective_preset=SimpleNamespace(key="capital_2001_5000"),
         preset_source="explicit_key",
         preset_fingerprint="abc123",
         engine_mode="pipeline",
@@ -124,7 +124,7 @@ def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() ->
         phase7_exit_lifecycle_result=SimpleNamespace(diagnostics={"exit_rows": 1}),
     )
 
-    assert params["capital_preset_key"] == "capital_0_5000"
+    assert params["capital_preset_key"] == "capital_2001_5000"
     assert params["fidelity_baseline_id"] == "smoke"
     assert params["ml_pit_strategy"] == "use-persisted"
     assert params["microstructure"]["is_default"] is False
@@ -434,11 +434,11 @@ class TestDataLoader:
             cast(Engine, self._FakeEngine()),
             date(2025, 1, 1),
             date(2025, 1, 31),
-            capital_preset_key="capital_0_5000",
+            capital_preset_key="capital_2001_5000",
         )
         assert not df.empty
         assert "capital_preset_key = :capital_preset_key" in captured["sql"]
-        assert captured["params"]["capital_preset_key"] == "capital_0_5000"
+        assert captured["params"]["capital_preset_key"] == "capital_2001_5000"
 
     def test_load_scores_falls_back_when_history_is_empty(self, monkeypatch):
         from backtesting import data_loader
@@ -514,7 +514,7 @@ class TestDataLoader:
                 cast(Engine, self._FakeEngine()),
                 date(2025, 1, 1),
                 date(2025, 1, 31),
-                capital_preset_key="capital_0_5000",
+                capital_preset_key="capital_2001_5000",
                 strict_pit=True,
             )
 
@@ -545,7 +545,7 @@ class TestDataLoader:
                     "symbol": ["AAPL"],
                     "trade_date": pd.to_datetime(["2025-01-03"]),
                     "source_snapshot_date": [date(2025, 1, 2)],
-                    "capital_preset_key": ["capital_0_5000"],
+                    "capital_preset_key": ["capital_2001_5000"],
                     "config_fingerprint": ["fp-001"],
                     "final_score": [0.8],
                     "final_score_sentiment": [0.82],
@@ -563,7 +563,7 @@ class TestDataLoader:
             cast(Engine, self._FakeEngine()),
             date(2025, 1, 1),
             date(2025, 1, 31),
-            capital_preset_key="capital_0_5000",
+            capital_preset_key="capital_2001_5000",
             scores_pit_mode="asof_latest",
         )
 
@@ -572,7 +572,7 @@ class TestDataLoader:
         assert "MAX(snapshot_date)" in captured["sql"]
         assert "FROM stock_bars_daily" in captured["sql"]
         assert "source_snapshot_date" in captured["sql"]
-        assert captured["params"]["capital_preset_key"] == "capital_0_5000"
+        assert captured["params"]["capital_preset_key"] == "capital_2001_5000"
 
     def test_load_scores_rejects_unknown_scores_pit_mode(self):
         from backtesting import data_loader
@@ -1008,7 +1008,7 @@ class TestResilience:
             "trade_date": pd.to_datetime(["2025-01-01"]),
             "final_score": [0.7],
             "final_score_sentiment": [None],
-            "capital_preset_key": ["capital_0_5000"],
+            "capital_preset_key": ["capital_2001_5000"],
             "config_fingerprint": ["fp-123"],
         })
         persisted: list[bool] = []
@@ -2758,7 +2758,7 @@ class TestCLI:
             walk_forward_artifacts_dir=None,
             engine_mode="pipeline",
             ml_pit_strategy="use-persisted",
-            capital_preset_key="capital_0_5000",
+            capital_preset_key="capital_2001_5000",
             **{**self._CLI_NEUTRAL_DEFAULTS, "phase2_mode": "risk"},
         )
 
@@ -4802,7 +4802,7 @@ class TestCLI:
             "backfill-scores-history",
             "--start", "2025-01-01",
             "--capital", "2000",
-            "--capital-preset-key", "capital_0_5000",
+            "--capital-preset-key", "capital_2001_5000",
             "--limit-days", "5",
             "--chunk-size", "250",
             "--selection-size", "50",
@@ -4811,7 +4811,7 @@ class TestCLI:
         assert args.command == "backfill-scores-history"
         assert args.start == "2025-01-01"
         assert args.capital == 2000
-        assert args.capital_preset_key == "capital_0_5000"
+        assert args.capital_preset_key == "capital_2001_5000"
         assert args.limit_days == 5
         assert args.chunk_size == 250
         assert args.selection_size == 50
@@ -4913,11 +4913,11 @@ class TestCLI:
         args = parser.parse_args([
             "run",
             "--start", "2025-01-01",
-            "--capital-preset-key", "capital_0_5000",
+            "--capital-preset-key", "capital_2001_5000",
         ])
 
         assert args.command == "run"
-        assert args.capital_preset_key == "capital_0_5000"
+        assert args.capital_preset_key == "capital_2001_5000"
 
     def test_parse_diagnose_screener_command(self):
         from backtesting.cli import _build_parser

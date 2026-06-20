@@ -10,12 +10,12 @@ from common.capital_presets import (
 
 
 def test_build_capital_preset_executability_summary_for_small_cash_account() -> None:
-    preset = get_capital_preset_by_key("capital_0_5000")
+    preset = get_capital_preset_by_key("capital_2001_5000")
 
     assert preset is not None
     summary = build_capital_preset_executability_summary(preset, detected_equity=3_500.0)
 
-    assert summary["preset_key"] == "capital_0_5000"
+    assert summary["preset_key"] == "capital_2001_5000"
     assert summary["account_type"] == "cash"
     assert summary["swing_only"] is True
     assert summary["cash_settlement_days"] == 1
@@ -29,7 +29,7 @@ def test_build_capital_preset_executability_summary_for_small_cash_account() -> 
 
 
 def test_apply_backtest_defaults_from_preset_prefills_costs_and_settlement() -> None:
-    preset = get_capital_preset_by_key("capital_0_5000")
+    preset = get_capital_preset_by_key("capital_2001_5000")
 
     assert preset is not None
     updated = apply_backtest_defaults_from_preset(
@@ -54,7 +54,7 @@ def test_apply_backtest_defaults_from_preset_prefills_costs_and_settlement() -> 
 
 
 def test_small_account_preset_uses_more_prudent_ml_defaults() -> None:
-    preset = get_capital_preset_by_key("capital_0_5000")
+    preset = get_capital_preset_by_key("capital_2001_5000")
 
     assert preset is not None
     values = preset.values

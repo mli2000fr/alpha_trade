@@ -522,7 +522,7 @@ def test_archive_scores_snapshot_executes_insert_select() -> None:
 
     engine.connection.execute = patched_execute
 
-    count = db_io.archive_scores_snapshot(engine, snapshot_date=_date(2025, 6, 15), capital_preset_key="capital_0_5000")
+    count = db_io.archive_scores_snapshot(engine, snapshot_date=_date(2025, 6, 15), capital_preset_key="capital_2001_5000")
 
     assert count == 5
     # Vérifie qu'on a bien exécuté une requête avec la bonne date
@@ -530,7 +530,7 @@ def test_archive_scores_snapshot_executes_insert_select() -> None:
     _, params = engine.connection.executed[0]
     assert params == {
         "snapshot_date": _date(2025, 6, 15),
-        "capital_preset_key": "capital_0_5000",
+        "capital_preset_key": "capital_2001_5000",
         "config_fingerprint": None,
     }
 
@@ -584,7 +584,7 @@ def test_upsert_scores_snapshot_calls_archive(monkeypatch) -> None:
     db_io.upsert_scores_snapshot(engine, scores_df, chunksize=1000)
 
     assert len(archive_calls) == 1, "archive_scores_snapshot doit être appelé une fois"
-    # DEFAULT_CAPITAL_PRESET_KEY = "capital_0_2000_eur" (mis à jour Sprint S3)
+    # DEFAULT_CAPITAL_PRESET_KEY = "capital_0_2000" (mis à jour Sprint S3)
     from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
     assert archive_calls[0][1]["capital_preset_key"] == DEFAULT_CAPITAL_PRESET_KEY
 

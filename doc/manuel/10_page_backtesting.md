@@ -19,7 +19,7 @@ backtest que :
 
 1. **Période** : choisir start (ex. `2022-01-01`) et end (`2026-04-30`).
 2. **Capital** : entrez votre capital (ex. `2150 USD` pour 2 000 €).
-3. **Preset** : sélectionnez `capital_0_2000_eur` si applicable.
+3. **Preset** : sélectionnez `capital_0_2000` si applicable.
 4. **Frais** :
    - Commission `--commission-bps` : **25** pour micro-compte (vs 5 défaut)
    - Slippage `--slippage-bps` : **15** pour micro-compte (vs 5 défaut)

@@ -643,7 +643,7 @@ Pilote par `risk_management.trailing_stop` dans `config.yaml` :
 - `eod_check_time_est` (defaut 15:50) -> revalidation des protections en fin de seance,
 - `apply_to_manual_orphan_buys: true` -> applique a chaque achat orphelin adopte.
 ### 8.4 Petit capital
-Le preset `capital_0_5000` impose `risk_max_positions = 4` et `risk_min_position_notional = 150`. Combine avec `allowed_slots = floor(equity / enforce_min_notional)`, aucun ordre sous ~150 USD ne peut plus etre soumis.
+Le preset `capital_2001_5000` impose `risk_max_positions = 4` et `risk_min_position_notional = 150`. Combine avec `allowed_slots = floor(equity / enforce_min_notional)`, aucun ordre sous ~150 USD ne peut plus etre soumis.
 
 ### 8.5 Sources macro VIX / 10Y (production)
 La couche est desormais branchee sur deux fournisseurs production via

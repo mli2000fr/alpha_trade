@@ -34,7 +34,7 @@ suivants déjà présents dans le dépôt :
   phase 2 `risk_execution`, paramètre `market_regimes_config`.
 - `config.yaml` — sections `market_regimes` et `risk_management.trailing_stop`
   conformes au §7 du plan.
-- `config/capital_presets.yaml` — preset petit capital (`capital_0_5000`)
+- `config/capital_presets.yaml` — preset petit capital (`capital_2001_5000`)
   durci à `risk_max_positions: 4` pour aligner avec
   `allowed_slots = floor(equity / 500)` (cf. C15).
 
@@ -51,7 +51,7 @@ suivants déjà présents dans le dépôt :
    - persistance JSON best-effort dans
      `artifacts/market_regime/snapshot_<ts>_<account>.json`,
    - tout échec → fallback neutre (jamais bloquant).
-3. **Preset petit capital** : `capital_0_5000.risk_max_positions` passé de
+3. **Preset petit capital** : `capital_2001_5000.risk_max_positions` passé de
    `10` → `4` afin d'aligner sur le test
    `tests/test_execution_center_prefills.py::test_apply_selected_capital_preset_for_small_account_sets_expected_values`
    et la consigne C15 du plan (notional minimum effectif ≈ `equity / 500`).
@@ -117,7 +117,7 @@ suivants déjà présents dans le dépôt :
 | C12 | Earnings Shield J-2/J+2 | ✔️ | `service/market/earnings_shield.py::compute_earnings_shield` |
 | C13 | Score négatif forcé | ✔️ | `EarningsShieldConfig.mode = negative_score` + `selector.regime_filters` |
 | C14 | Buyback blackout -30% | ✔️ | `MarketRegimesConfig.buyback_blackout` + `selector.regime_filters` |
-| C15 | `allowed_slots = floor(equity / 155)` | ✔️ | `regime_manager.build_snapshot` + `risk_management.regime_apply.apply_snapshot` + preset `capital_0_5000` |
+| C15 | `allowed_slots = floor(equity / 155)` | ✔️ | `regime_manager.build_snapshot` + `risk_management.regime_apply.apply_snapshot` + preset `capital_2001_5000` |
 | C16 | Plus de `Notional insuffisant < 150$` | ✔️ | `risk_management.constraints` + ajustement `risk_max_positions` du preset |
 | C17 | Pré-flight context summary | ✔️ | `execution_engine.market_regime_preflight` + intégration `run_execution.run()` |
 | C18 | Sentiment Circuit Breaker | ✔️ | `service/market/sentiment_regime.py` + `MarketRegimesConfig.sentiment_circuit_breaker` |
@@ -160,7 +160,7 @@ python -m pytest --no-cov tests/test_api_v1_stability.py \
 
 ## Écarts volontaires vs `prompt/parttern/plan.md`
 
-1. **Préset `capital_0_5000.risk_max_positions = 4`** au lieu de `floor(2000/155) ≈ 12`.
+1. **Préset `capital_2001_5000.risk_max_positions = 4`** au lieu de `floor(2000/155) ≈ 12`.
    Justification : à $2 000 d'equity, 12 lignes implique des tickets ~$167
    très exposés aux frais fixes ; le test métier
    `test_apply_selected_capital_preset_for_small_account_sets_expected_values`

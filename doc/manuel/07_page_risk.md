@@ -79,7 +79,7 @@ capital** mais vous pouvez les surcharger.
 
 ## Pour un micro-compte 2 000 €
 
-Le preset `capital_0_2000_eur` impose :
+Le preset `capital_0_2000` impose :
 - 3 positions max (concentration assumée),
 - 1.5 % de risque par trade (~30 €),
 - 200 USD minimum par ticket (sous ce seuil les frais mangent l'alpha).

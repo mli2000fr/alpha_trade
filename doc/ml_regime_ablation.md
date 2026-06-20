@@ -25,7 +25,7 @@ Le protocole fige explicitement :
 - `phase4_mode=protection_replay`
 - `phase5_mode=watcher_replay`
 - `phase7_mode=exit_lifecycle_replay`
-- `capital_preset_key=capital_0_2000_eur`
+- `capital_preset_key=capital_0_2000`
 - coûts d’exécution (`commission_bps`, `slippage_bps`)
 - overlays de risque importants (`max_entry_gap_pct`, `max_sector_exposure_pct`, `max_portfolio_dd_pct`, `target_annual_vol`, etc.)
 

@@ -42,7 +42,7 @@ Light / dark / auto.
 
 - Ne modifiez **jamais** les paramètres ML / Risk sans avoir lu la doc
   technique correspondante.
-- Pour un micro-compte, laissez le preset `capital_0_2000_eur` faire son
+- Pour un micro-compte, laissez le preset `capital_0_2000` faire son
   travail et ne touchez à rien.
 
 ## Pour aller plus loin

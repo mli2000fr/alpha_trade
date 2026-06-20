@@ -17,7 +17,7 @@
 | Objectif | Garantir que `risk_per_trade_pct × risk_max_positions ≤ risk_max_drawdown_pct / 2` pour les tranches 0–5 k$. |
 | Type / Priorité | C / haute |
 | Fichier | `tests/test_capital_preset_risk_overrides.py` (étendre) |
-| Given | Preset `capital_0_2000_eur`, `capital_0_5000` chargés via `common.capital_presets`. |
+| Given | Preset `capital_0_2000`, `capital_2001_5000` chargés via `common.capital_presets`. |
 | When | Calcul `risk_per_trade_pct * risk_max_positions`. |
 | Then | Résultat ≤ `risk_max_drawdown_pct / 2`. |
 | Fixtures | `capital_presets.yaml` complet. |

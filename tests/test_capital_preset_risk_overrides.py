@@ -13,7 +13,7 @@ Vérifie que :
   et ``--max-daily-loss-pct``.
 - [A-001] ``risk_max_positions × risk_min_position_notional ≤ 0.95 × max_equity``
   (solvabilité notionnelle).
-- [A-001] Le preset micro-compte ``capital_0_2000_eur`` a au plus 5 positions.
+- [A-001] Le preset micro-compte ``capital_0_2000`` a au plus 5 positions.
 - [A-007] Tous les presets ont ``selector_min_close ≥ 10.0``.
 - Aucun preset capital n'expose encore de reliquat compat legacy d'exécution.
 """
@@ -67,7 +67,7 @@ def test_thresholds_increase_with_account_size(presets):
 
 
 def test_small_account_has_strictest_thresholds(presets):
-    smallest = next(p for p in presets if p.key == "capital_0_5000")
+    smallest = next(p for p in presets if p.key == "capital_2001_5000")
     biggest = next(p for p in presets if p.key == "capital_100001_plus")
     assert float(smallest.values["risk_max_drawdown_pct"]) < float(
         biggest.values["risk_max_drawdown_pct"]
@@ -124,7 +124,7 @@ def test_positions_notional_solvency(presets):
 
     Garantit qu'un portefeuille entièrement chargé au minimum de notionnel
     reste en dessous de 95 % du capital de la tranche.
-    Note : ``capital_0_2000_eur`` a max_equity=2000 EUR ≈ 2000 USD (approx).
+    Note : ``capital_0_2000`` a max_equity=2000 EUR ≈ 2000 USD (approx).
     """
     for preset in presets:
         max_equity = preset.max_equity
@@ -142,39 +142,39 @@ def test_positions_notional_solvency(presets):
 
 
 def test_capital_preset_risk_per_trade_micro(presets):
-    micro = next((p for p in presets if p.key == "capital_0_2000_eur"), None)
-    assert micro is not None, "Preset capital_0_2000_eur non trouvé"
+    micro = next((p for p in presets if p.key == "capital_0_2000"), None)
+    assert micro is not None, "Preset capital_0_2000 non trouvé"
     assert float(micro.values["risk_per_trade_pct"]) == pytest.approx(0.01)
 
 
 def test_micro_account_max_positions_coherent(presets):
-    """[A-001] Le preset capital_0_2000_eur doit avoir au plus 5 positions.
+    """[A-001] Le preset capital_0_2000 doit avoir au plus 5 positions.
 
     Un compte de ~2 000 € avec >5 positions implique des tickets si petits
     que les frais de transaction deviennent supérieurs à l'alpha attendu.
     """
-    micro = next((p for p in presets if p.key == "capital_0_2000_eur"), None)
+    micro = next((p for p in presets if p.key == "capital_0_2000"), None)
     if micro is None:
-        pytest.skip("Preset capital_0_2000_eur non trouvé")
+        pytest.skip("Preset capital_0_2000 non trouvé")
     max_pos = int(micro.values["risk_max_positions"])
     assert max_pos <= 5, (
-        f"capital_0_2000_eur.risk_max_positions={max_pos} > 5 — "
+        f"capital_0_2000.risk_max_positions={max_pos} > 5 — "
         f"tickets trop petits pour être rentables après frais"
     )
 
 
 def test_micro_account_min_notional_viable(presets):
-    """[A-001] Le preset capital_0_2000_eur doit avoir un ticket min ≥ 400 USD.
+    """[A-001] Le preset capital_0_2000 doit avoir un ticket min ≥ 400 USD.
 
     Sous 400 USD, la commission relative (≥ 1 USD/trade Alpaca) dépasse 0.25 %
     par aller-retour, détruisant l'alpha sur un swing trade standard de 5-8 %.
     """
-    micro = next((p for p in presets if p.key == "capital_0_2000_eur"), None)
+    micro = next((p for p in presets if p.key == "capital_0_2000"), None)
     if micro is None:
-        pytest.skip("Preset capital_0_2000_eur non trouvé")
+        pytest.skip("Preset capital_0_2000 non trouvé")
     min_notional = float(micro.values["risk_min_position_notional"])
     assert min_notional >= 400.0, (
-        f"capital_0_2000_eur.risk_min_position_notional={min_notional} < 400$ — "
+        f"capital_0_2000.risk_min_position_notional={min_notional} < 400$ — "
         f"frais relatifs trop élevés pour le swing trade"
     )
 

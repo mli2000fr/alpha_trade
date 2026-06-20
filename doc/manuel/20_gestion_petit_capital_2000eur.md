@@ -20,7 +20,7 @@ Le moteur a été initialement calibré pour des comptes ≥ 50 000 USD. À
 - Avec 15 positions max, chaque ligne ferait 130 USD ⇒ frictions trop
   élevées.
 
-Le preset `capital_0_2000_eur` (Sprint S26) corrige ces 3 points. Voir
+Le preset `capital_0_2000` (Sprint S26) corrige ces 3 points. Voir
 [doc/audit/preset_petit_capital_2000eur.md](../audit/preset_petit_capital_2000eur.md)
 pour le détail des valeurs.
 
@@ -29,7 +29,7 @@ pour le détail des valeurs.
 1. Page **🔄 Pipeline** → bandeau « Capital » :
    - **Soit** vous saisissez `equity = 2150 USD` → le preset est résolu
      automatiquement.
-   - **Soit** vous forcez la clé `capital_0_2000_eur` dans le sélecteur.
+   - **Soit** vous forcez la clé `capital_0_2000` dans le sélecteur.
 2. Vérifiez que le label affiché est bien **« 0 → 2 000 € (micro-compte) »**.
 3. Lancez le pipeline.
 
@@ -54,7 +54,7 @@ micro-compte. Lancez :
 
 ```powershell
 python -m backtesting run `
-  --capital-preset-key capital_0_2000_eur `
+  --capital-preset-key capital_0_2000 `
   --equity 2150 `
   --commission-bps 25 `
   --slippage-bps   15 `

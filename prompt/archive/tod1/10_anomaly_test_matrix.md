@@ -8,13 +8,13 @@
 
 | ID | Titre | Sévérité | Statut | Correctif | Tests | Sprint |
 |---|---|---|---|---|---|---|
-| A-001 | max_positions 10 vs "3 lignes" | P1 | ✅ **RÉSOLU Sprint S1** | `risk_max_positions: 3`, `min_notional: 500.0` dans `capital_0_2000_eur` | `test_capital_preset_risk_overrides.py` (5 nouveaux tests) | — |
+| A-001 | max_positions 10 vs "3 lignes" | P1 | ✅ **RÉSOLU Sprint S1** | `risk_max_positions: 3`, `min_notional: 500.0` dans `capital_0_2000` | `test_capital_preset_risk_overrides.py` (5 nouveaux tests) | — |
 | A-002 | Noms tables obsolètes lineage matrix | P1 | ✅ **RÉSOLU Sprint S1** | LINEAGE_SPEC corrigé, MD régénéré, CI `--check` vert | `test_data_lineage_autogen.py` (7/7 pass) | — |
 | A-003 | model_predictions absence governance ML | P1 | ✅ **RÉSOLU** | `selected_model`, `decision_threshold`, `calibration_method`, `signal_label` présents dans `model_predictions.sql:8-11` + persistés par `db_registry.py:336-363` | `test_model_factory_db_registry.py` | — |
 | A-004 | vectorbt mention obsolète DOC_TECHNIQUE | P1 | ✅ **RÉSOLU Sprint S1** (résidu argparse corrigé) | `backtesting/cli/_impl.py:67` description mise à jour | `test_doc_provider_alignment.py` | — |
 | A-005 | CA provider ambigu (Alpaca vs EODHD) | P1 | ✅ **RÉSOLU** | Règle documentée : `DOC_FONCTIONNELLE.md:246` + `data_lineage_matrix.md §7:109-111` + factory `corporate_actions/provider.py:402-432` | `test_corporate_actions.py` | — |
 | A-006 | Contraintes margin clarifiées sur comptes ≥ 25k$ | P2 | ✅ **RÉSOLU Sprint S2** | presets margin clarifiés et logique runtime réalignée | `test_capital_preset_risk_overrides.py` + tests d'exécution | — |
-| A-007 | min_close < 10$ sur presets intermédiaires | P2 | ✅ **RÉSOLU Sprint S2** | `selector_min_close: 10.0` sur capital_0_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0) | `test_capital_preset_risk_overrides.py` (1 nouveau) | — |
+| A-007 | min_close < 10$ sur presets intermédiaires | P2 | ✅ **RÉSOLU Sprint S2** | `selector_min_close: 10.0` sur capital_2001_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0) | `test_capital_preset_risk_overrides.py` (1 nouveau) | — |
 | A-008 | Spreads IEX biaisés (~50 bps vs NBBO réel) | P2 | ✅ **RÉSOLU Sprint S4** (doc) | `doc/dataIntegrityEngine.md §3.4` : biais ~50 bps documenté, mitigation `max_spread_bps_iex=65` + `min_quote_size=100`, `DOC_FONCTIONNELLE.md §2.3` corrigé | `test_strict_filter_profiles.py` | S4 |
 | A-009 | model_predictions pas d'unicité symbol/date | P2 | ✅ **RÉSOLU** | `UNIQUE KEY uq_symbol_date_run` présent (`model_predictions.sql:14`) + `ON DUPLICATE KEY UPDATE` | `test_model_factory_db_registry.py` | — |
 | A-010 | ParquetCache non branché | P2 | ✅ **RÉSOLU Sprint S3** | `--use-cache` ajouté dans CLI `backtesting run` — 3x–10x vitesse backtests > 2 ans | `test_backtesting.py` | S3 |
@@ -107,8 +107,8 @@ test_walk_forward_risk_params_raises_on_too_few_observations()  # ValueError obs
 Tests ajoutés :
 ```python
 test_positions_notional_solvency()          # max_pos × min_notional ≤ 0.95 × max_equity
-test_micro_account_max_positions_coherent() # capital_0_2000_eur.max_positions ≤ 5
-test_micro_account_min_notional_viable()    # capital_0_2000_eur.min_notional ≥ 400 USD
+test_micro_account_max_positions_coherent() # capital_0_2000.max_positions ≤ 5
+test_micro_account_min_notional_viable()    # capital_0_2000.min_notional ≥ 400 USD
 test_positions_increase_with_account_size() # monotonie des positions entre tranches
 test_capital_presets_do_not_expose_legacy_execution_field()  # aucun reliquat legacy côté presets
 ```
@@ -164,7 +164,7 @@ tests runtime cash/margin/swing alignés sur les contraintes réellement support
 
 ### A-007 ✅ — `test_all_presets_selector_min_close_gte_10` — RÉSOLU Sprint S2
 
-**Résolution** : `selector_min_close: 10.0` appliqué sur capital_0_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0). Test ajouté :
+**Résolution** : `selector_min_close: 10.0` appliqué sur capital_2001_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0). Test ajouté :
 ```python
 # test_capital_preset_risk_overrides.py
 test_all_presets_selector_min_close_gte_10()    # tous les presets ont min_close >= 10.0

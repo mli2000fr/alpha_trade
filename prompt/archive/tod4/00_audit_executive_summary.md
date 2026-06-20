@@ -41,7 +41,7 @@ L'application est **exploitable en paper trading discipliné dès aujourd'hui**.
 4. **Tests d'intégration insuffisants** : pas de tests avec MySQL Docker, pas de tests E2E complets du pipeline.
 5. **Surveillance production encore partielle** : des notifications email de fin de workflow existent côté IHM et une instrumentation Prometheus minimale est présente, mais il n'y a pas encore de stack Grafana / alerting critique généralisé (Slack/SMS/webhook).
 6. **Dérive documentaire résiduelle** : plusieurs constats historiques sur le schéma ML et la lineage matrix doivent être requalifiés ou synchronisés avec le code réel pour éviter les faux positifs d'audit.
-7. **Risque d'univers vide sur petits comptes** : les presets `capital_0_5000` sont très restrictifs et peuvent produire 0 candidats en régime de marché normal.
+7. **Risque d'univers vide sur petits comptes** : les presets `capital_2001_5000` sont très restrictifs et peuvent produire 0 candidats en régime de marché normal.
 8. **Absence de short selling** : limitation de design assumée mais qui empêche les stratégies baissières.
 
 ---

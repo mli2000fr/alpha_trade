@@ -66,11 +66,11 @@ def test_build_backtesting_run_command_includes_capital_preset_key():
 
 	command = build_backtesting_command(
 		"run",
-		BacktestRunOptions(start="2025-01-01", equity=2_000, capital_preset_key="capital_0_5000"),
+		BacktestRunOptions(start="2025-01-01", equity=2_000, capital_preset_key="capital_2001_5000"),
 	)
 
 	assert "--capital-preset-key" in command
-	assert command[command.index("--capital-preset-key") + 1] == "capital_0_5000"
+	assert command[command.index("--capital-preset-key") + 1] == "capital_2001_5000"
 
 
 def test_build_backtesting_run_command_includes_walk_forward_options():
@@ -409,14 +409,14 @@ def test_build_backtesting_backfill_command_includes_capital_and_preset():
 			start="2025-01-01",
 			end="2025-01-31",
 			capital=2_000,
-			capital_preset_key="capital_0_5000",
+			capital_preset_key="capital_2001_5000",
 		),
 	)
 
 	assert "--capital" in command
 	assert command[command.index("--capital") + 1] == "2000"
 	assert "--capital-preset-key" in command
-	assert command[command.index("--capital-preset-key") + 1] == "capital_0_5000"
+	assert command[command.index("--capital-preset-key") + 1] == "capital_2001_5000"
 
 
 def test_backfill_options_defaults_to_optimized_chunk_and_workers():

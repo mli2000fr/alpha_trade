@@ -36,7 +36,7 @@ En haut de la page, un sélecteur **« Mode d'exécution »** :
 
 Sélecteur **« Capital preset »** :
 - Si vous avez ~2 000 € → choisissez **`0 → 2 000 € (micro-compte)`**
-  (clé `capital_0_2000_eur`).
+  (clé `capital_0_2000`).
 - Sinon, laissez la valeur résolue automatiquement à partir de l'equity de
   votre compte Alpaca.
 

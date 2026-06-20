@@ -51,7 +51,7 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 
 > ✅ = Confirmées RÉSOLUES après vérification code ou livraison Sprint S1/S2/S3
 
-1. ✅ ~~**`capital_0_2000_eur` : `risk_max_positions: 10`**~~ — **RÉSOLU Sprint S1** : `risk_max_positions: 3`, `risk_min_position_notional: 500.0`, conventions cash clarifiées sur 4 presets. Tests ajoutés. **(A-001 ✅, A-016 ✅)**
+1. ✅ ~~**`capital_0_2000` : `risk_max_positions: 10`**~~ — **RÉSOLU Sprint S1** : `risk_max_positions: 3`, `risk_min_position_notional: 500.0`, conventions cash clarifiées sur 4 presets. Tests ajoutés. **(A-001 ✅, A-016 ✅)**
 2. ✅ ~~**`data_lineage_matrix.md` : provider CA ambigu**~~ — **RÉSOLU** avant Sprint S1 : règle conditionnelle documentée dans `DOC_FONCTIONNELLE.md:246` et `data_lineage_matrix.md §7`. **(A-005 ✅)**
 3. ✅ ~~**`data_lineage_matrix.md` nomme `execution_orders`**~~ — **RÉSOLU Sprint S1** : LINEAGE_SPEC corrigé → `execution_order_requests` + `execution_broker_orders` + `execution_events`, MD régénéré, CI check vert. **(A-002 ✅)**
 4. ✅ ~~**`DOC_TECHNIQUE.md §9` mentionne "vectorbt"**~~ — **RÉSOLU** (résidu argparse `backtesting/cli/_impl.py:67` corrigé Sprint S1). **(A-004 ✅)**

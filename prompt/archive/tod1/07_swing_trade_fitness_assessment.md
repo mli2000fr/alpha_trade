@@ -74,7 +74,7 @@ Avec les filtres du profil strict (close ≥ 10$, ADV ≥ 30M$, market_cap ≥ 2
 
 **Mitigation** : Les presets petits comptes relâchent les filtres (ce qui crée d'autres risques). C'est un compromis difficile.
 
-**f) `risk_min_position_notional: 150 USD` sur petit compte (capital_0_5000)**  
+**f) `risk_min_position_notional: 150 USD` sur petit compte (capital_2001_5000)**  
 Sur un ordre de 150 USD, le spread de 40–80 bps représente 60–120 cents d'impact. Pour un objectif de profit de 8%, le coût total (entrée + sortie) est ~1.6–2.4% → ratio coût/objectif 20–30%. Marginal pour swing trade court.
 
 ### 3.3 ML / Signal qualité

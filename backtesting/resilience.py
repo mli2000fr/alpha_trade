@@ -263,7 +263,7 @@ def prepare_scores_for_sentiment_mode(
     service = BackfillScoresHistoryService(
         engine=engine,
         screener_max_workers=1,
-        capital_preset_key=resolved_preset_key or "capital_0_2000_eur",
+        capital_preset_key=resolved_preset_key or "capital_0_2000",
         config_fingerprint=resolved_config_fingerprint,
     )
     rebuilt_dates = 0

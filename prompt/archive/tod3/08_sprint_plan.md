@@ -16,7 +16,7 @@ Convention sprint : 2 semaines, 1 dev temps plein.
 
 **État au 2026-05-22** : ✅ **livré et revalidé**.
 
-- ✅ `risk_per_trade_pct` abaissé à `0.01` sur `capital_0_2000_eur` et `0.0125` sur `capital_0_5000`.
+- ✅ `risk_per_trade_pct` abaissé à `0.01` sur `capital_0_2000` et `0.0125` sur `capital_2001_5000`.
 - ✅ `selector_max_anomaly_count` remis en monotonie croissante sur l'ensemble des presets (y compris `capital_100001_plus`).
 - ✅ Alias `selector_min_ibd_rs_rank` introduit avec compatibilité `selector_min_relative_strength_index`.
 - ✅ Bandeau IHM micro-compte présent dans `ihm/pages/settings.py`.
