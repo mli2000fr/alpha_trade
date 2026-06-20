@@ -3860,6 +3860,12 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
 
 @st.fragment(run_every="2s")
 def _render_runtime_center_live() -> None:
+    # Garde-fou : si l'auto-update a été désactivé entre-temps
+    # (ex: toggle OFF pendant que le fragment était actif),
+    # on rebascule immédiatement en mode statique.
+    if not _is_runtime_center_auto_update_enabled():
+        _render_runtime_center_static()
+        return
     _render_runtime_center_body(auto_refresh_enabled=True)
 
 
