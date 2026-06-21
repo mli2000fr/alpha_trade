@@ -974,41 +974,41 @@ def sync_latest_quotes(
                                 session=session,
                                 account_id=_bump_account(account_cycler),
                             )
-                        symbol_api_calls += 1
-                        if quote is not None:
-                            row = _build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now)
-                            row["quote_date"] = session_date
-                            symbol_rows.append(row)
-                            symbol_fetched_days += 1
+                            symbol_api_calls += 1
+                            if quote is not None:
+                                row = _build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now)
+                                row["quote_date"] = session_date
+                                symbol_rows.append(row)
+                                symbol_fetched_days += 1
 
-                        # ── UPSERT incremental tous les N rows ──
-                        if len(symbol_rows) >= HISTORICAL_UPSERT_BATCH_ROWS:
-                            batch_upserted = upsert_quote_snapshots(symbol_rows)
-                            summary["rows_upserted"] += batch_upserted
-                            symbol_rows.clear()
+                            # ── UPSERT incremental tous les N rows ──
+                            if len(symbol_rows) >= HISTORICAL_UPSERT_BATCH_ROWS:
+                                batch_upserted = upsert_quote_snapshots(symbol_rows)
+                                summary["rows_upserted"] += batch_upserted
+                                symbol_rows.clear()
 
-                        if (
-                            day_index == 1
-                            or day_index == len(block_session_dates)
-                            or day_index - last_progress_log >= HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS
-                        ):
-                            last_progress_log = day_index
-                            LOGGER.info(
-                                "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=day_progress range=%s/%s day=%s/%s session=%s fetched=%s api_calls=%s total_rows_upserted=%s",
-                                resolved_symbol_source,
-                                index,
-                                len(symbols),
-                                (index / len(symbols)) * 100.0,
-                                symbol,
-                                range_index,
-                                len(missing_ranges),
-                                day_index,
-                                len(block_session_dates),
-                                session_date,
-                                symbol_fetched_days,
-                                symbol_api_calls,
-                                summary["rows_upserted"],
-                            )
+                            if (
+                                day_index == 1
+                                or day_index == len(block_session_dates)
+                                or day_index - last_progress_log >= HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS
+                            ):
+                                last_progress_log = day_index
+                                LOGGER.info(
+                                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=day_progress range=%s/%s day=%s/%s session=%s fetched=%s api_calls=%s total_rows_upserted=%s",
+                                    resolved_symbol_source,
+                                    index,
+                                    len(symbols),
+                                    (index / len(symbols)) * 100.0,
+                                    symbol,
+                                    range_index,
+                                    len(missing_ranges),
+                                    day_index,
+                                    len(block_session_dates),
+                                    session_date,
+                                    symbol_fetched_days,
+                                    symbol_api_calls,
+                                    summary["rows_upserted"],
+                                )
 
                 # ── Flush des rows restantes (< HISTORICAL_UPSERT_BATCH_ROWS) ──
                 if symbol_rows:
