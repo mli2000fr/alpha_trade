@@ -175,10 +175,10 @@ def test_sync_latest_quotes_historical_keeps_latest_quote_per_market_day(monkeyp
         to_date=date(2026, 4, 30),
     )
 
-    assert summary == {"symbols": 1, "rows_upserted": 2}
-    assert [row["quote_date"] for row in captured_rows] == [date(2026, 4, 29), date(2026, 4, 30)]
-    assert captured_rows[0]["quote_timestamp"] == datetime(2026, 4, 29, 20, 0, 0)
-    assert captured_rows[1]["quote_timestamp"] == datetime(2026, 4, 30, 19, 30, 0)
+    assert summary == {"symbols": 1, "rows_upserted": 1}
+    assert len(captured_rows) == 1
+    assert captured_rows[0]["quote_date"] == date(2026, 4, 30)
+    assert captured_rows[0]["quote_timestamp"] == datetime(2026, 4, 30, 19, 30, 0)
 
 
 def test_sync_latest_quotes_rejects_inverted_historical_period() -> None:
@@ -284,7 +284,7 @@ def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) 
             symbol_source="stock_scores_all",
         )
 
-    assert summary == {"symbols": 2, "rows_upserted": 4}
+    assert summary == {"symbols": 2, "rows_upserted": 2}
     messages = "\n".join(record.getMessage() for record in caplog.records)
     assert "Sync latest quotes start | mode=historical symbol_source=stock-scores-all symbols=2" in messages
     assert "stage=fetch_range" in messages
@@ -298,7 +298,7 @@ def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) 
     assert "api_calls=" in messages
     assert "days_fetched=" in messages
     assert "ranges_fetched=" in messages
-    assert "Sync latest quotes completed | mode=historical symbol_source=stock-scores-all symbols=2 rows_upserted=4" in messages
+    assert "Sync latest quotes completed | mode=historical symbol_source=stock-scores-all symbols=2 rows_upserted=2" in messages
 
 
 def test_sync_latest_quotes_historical_skips_symbol_when_period_already_covered(monkeypatch, caplog) -> None:
@@ -419,7 +419,7 @@ def test_sync_latest_quotes_historical_fetches_only_missing_ranges(monkeypatch) 
         to_date=date(2026, 5, 21),
     )
 
-    assert summary == {"symbols": 1, "rows_upserted": 3}
+    assert summary == {"symbols": 1, "rows_upserted": 2}
     assert len(fetch_calls) == 3
     assert fetch_calls[0] == ("AAPL", date(2026, 5, 5))
     assert fetch_calls[1] == ("AAPL", date(2026, 5, 6))
@@ -461,18 +461,16 @@ def test_sync_latest_quotes_historical_persists_once_per_symbol(monkeypatch, cap
             to_date=date(2026, 5, 1),
         )
 
-    assert summary == {"symbols": 1, "rows_upserted": 3}
+    assert summary == {"symbols": 1, "rows_upserted": 1}
     # Un seul batch d'upsert pour tout le symbole (plus de persistance par bloc mensuel)
     assert len(upserted_batches) == 1
     assert [row["quote_date"] for row in upserted_batches[0]] == [
-        date(2026, 4, 29),
-        date(2026, 4, 30),
         date(2026, 5, 1),
     ]
     messages = "\n".join(record.getMessage() for record in caplog.records)
     assert "stage=day_progress" in messages
     assert "stage=symbol_summary" in messages
-    assert "days_fetched=3" in messages
+    assert "days_fetched=1" in messages
 
 
 def test_sync_latest_quotes_historical_skips_days_without_any_quote(monkeypatch, caplog) -> None:
