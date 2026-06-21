@@ -28,9 +28,13 @@ from service.alpaca.clientAlpaca import (
     fetch_latest_historical_quote_in_window,
     fetch_latest_quotes,
 )
+from service.yahoo.clientYahooFinance import (
+    fetch_latest_quotes_yahoo,
+)
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 200
+DEFAULT_QUOTES_PROVIDER_LIVE = "yahoo"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 MARKET_TZ = ZoneInfo("America/New_York")
 QUOTE_IEX_BIAS_PROXY_NAME = "same_session_mid_vs_stock_bars_daily_close"
@@ -197,6 +201,62 @@ def _bump_account(account_cycler: itertools.cycle[str] | None) -> str | None:
     if account_cycler is None:
         return None
     return next(account_cycler)
+
+
+def _resolve_latest_quotes_fetcher() -> tuple[
+    object,  # primary fetcher callable
+    str,     # primary provider name
+    object | None,  # secondary fetcher callable (or None)
+]:
+    """Résout le(s) provider(s) de quotes live depuis ``config.yaml``.
+
+    - ``market_data.quotes_provider_live`` (défaut ``"yahoo"``)
+    - ``market_data.quotes_provider_live_second`` (optionnel)
+
+    Returns ``(primary_fn, primary_name, secondary_fn)``.
+    """
+    try:
+        from common.config_loader import load_config
+
+        cfg = load_config() or {}
+    except Exception:
+        cfg = {}
+    market_cfg = cfg.get("market_data") or {}
+    if not isinstance(market_cfg, dict):
+        market_cfg = {}
+
+    provider_map: dict[str, object] = {
+        "alpaca": fetch_latest_quotes,
+        "yahoo": fetch_latest_quotes_yahoo,
+    }
+
+    primary_name = str(
+        market_cfg.get("quotes_provider_live") or DEFAULT_QUOTES_PROVIDER_LIVE
+    ).strip().lower()
+    primary_fn = provider_map.get(primary_name)
+    if primary_fn is None:
+        LOGGER.warning(
+            "quotes_provider_live='%s' inconnu — fallback sur '%s'.",
+            primary_name,
+            DEFAULT_QUOTES_PROVIDER_LIVE,
+        )
+        primary_name = DEFAULT_QUOTES_PROVIDER_LIVE
+        primary_fn = provider_map[primary_name]
+
+    secondary_raw = market_cfg.get("quotes_provider_live_second")
+    secondary_name = str(secondary_raw or "").strip().lower()
+    secondary_fn = provider_map.get(secondary_name) if secondary_name else None
+
+    if secondary_fn is not None:
+        LOGGER.info(
+            "Quotes provider live | primary=%s secondary=%s",
+            primary_name,
+            secondary_name,
+        )
+    else:
+        LOGGER.info("Quotes provider live | primary=%s", primary_name)
+
+    return primary_fn, primary_name, secondary_fn
 
 
 def _symbol_has_any_quotes_in_window(
@@ -679,13 +739,39 @@ def sync_latest_quotes(
 
     session = requests.Session()
     account_cycler = _resolve_account_cycler()
+    # Résolution du/des provider(s) live (mode latest uniquement)
+    primary_fn, primary_name, secondary_fn = _resolve_latest_quotes_fetcher()
     try:
         run_utc_now = _utc_now_naive()
         if resolved_from_date is None or resolved_to_date is None:
             total_batches = (len(symbols) + batch_size - 1) // batch_size
             for start in range(0, len(symbols), batch_size):
                 batch = symbols[start:start + batch_size]
-                payload = fetch_latest_quotes(batch, session=session, account_id=_bump_account(account_cycler))
+
+                # ── Provider principal ──
+                used_provider = primary_name
+                try:
+                    payload = primary_fn(batch, session=session, account_id=_bump_account(account_cycler))
+                except Exception:
+                    LOGGER.warning(
+                        "Quotes provider primary='%s' a echoue — tentative fallback",
+                        primary_name,
+                        exc_info=True,
+                    )
+                    payload = {}
+
+                # ── Fallback secondaire si aucune donnée ──
+                if not payload and secondary_fn is not None:
+                    try:
+                        payload = secondary_fn(batch, session=session, account_id=_bump_account(account_cycler))
+                        used_provider = f"{primary_name}→fallback"
+                    except Exception:
+                        LOGGER.warning(
+                            "Quotes provider secondary a egalement echoue",
+                            exc_info=True,
+                        )
+                        payload = {}
+
                 rows: list[dict[str, object]] = []
                 for symbol in batch:
                     quote = payload.get(symbol)
@@ -696,7 +782,7 @@ def sync_latest_quotes(
                 summary["rows_upserted"] += batch_upserted
                 batch_index = (start // batch_size) + 1
                 LOGGER.info(
-                    "Sync latest quotes | mode=latest symbol_source=%s batch=%s/%s range=%s-%s symbols=%s rows_in_batch=%s rows_upserted=%s",
+                    "Sync latest quotes | mode=latest symbol_source=%s batch=%s/%s range=%s-%s symbols=%s rows_in_batch=%s rows_upserted=%s provider=%s",
                     resolved_symbol_source,
                     batch_index,
                     total_batches,
@@ -705,6 +791,7 @@ def sync_latest_quotes(
                     len(batch),
                     len(rows),
                     summary["rows_upserted"],
+                    used_provider,
                 )
         else:
             expected_quote_dates = tuple(nyse_session_dates(resolved_from_date, resolved_to_date))

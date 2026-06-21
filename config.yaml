@@ -327,6 +327,14 @@ risk_management:
 market_data:
   bars_provider: eodhd   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
 
+  # ── Provider quotes live (mode latest) ──
+  # `quotes_provider_live` : provider principal pour les snapshots bid/ask temps réel.
+  #   Valeurs : 'yahoo' (défaut) | 'alpaca'
+  # `quotes_provider_live_second` : provider de secours si le principal échoue
+  #   ou ne retourne aucune donnée. Optionnel.
+  quotes_provider_live: yahoo
+  quotes_provider_live_second: alpaca
+
 eodhd:
   # NB : l'activation runtime se pilote via market_data.bars_provider.
   # Aucun flag `enabled` ici (cf. audit S1 / A-002 : clé fantôme supprimée).

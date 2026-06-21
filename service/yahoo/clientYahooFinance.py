@@ -102,3 +102,84 @@ def fetch_symbol_fundamentals_record(symbol: str, session: Optional[object] = No
     }
 
 
+def fetch_latest_quotes_yahoo(
+    symbols: list[str],
+    *,
+    session: Any = None,
+    account_id: str | None = None,
+    max_workers: int = 8,
+    per_symbol_timeout: float = 5.0,
+) -> dict[str, dict[str, Any]]:
+    """Récupère les dernières quotes (bid/ask) depuis Yahoo Finance.
+
+    Contrairement à Alpaca, Yahoo Finance ne propose pas d'endpoint batch :
+    chaque symbole nécessite un appel individuel à ``Ticker.info``. Pour
+    limiter la latence, les appels sont parallélisés via ``ThreadPoolExecutor``.
+
+    Returns
+    -------
+    dict[symbol, quote]
+        Même contrat que :func:`~service.alpaca.clientAlpaca.fetch_latest_quotes` :
+        chaque quote est un dict avec les clés ``bp``, ``ap``, ``bs``, ``as``, ``t``.
+        Les symboles sans quote (erreur réseau, ticker invalide, ni bid ni ask)
+        sont absents du dict retourné.
+    """
+    del session, account_id  # homogénéité d'interface
+
+    if not symbols:
+        return {}
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from datetime import datetime, timezone
+
+    yf = _import_yfinance()
+    results: dict[str, dict[str, Any]] = {}
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _fetch_one(symbol: str) -> tuple[str, dict[str, Any] | None]:
+        try:
+            ticker = yf.Ticker(symbol)
+            info = _coerce_mapping(getattr(ticker, "info", None))
+            bid = info.get("bid")
+            ask = info.get("ask")
+            # Si ni bid ni ask, on ignore ce symbole
+            if bid is None and ask is None:
+                return symbol, None
+            return symbol, {
+                "bp": float(bid) if bid is not None else None,
+                "ap": float(ask) if ask is not None else None,
+                "bs": (
+                    float(info["bidSize"]) * 100.0
+                    if info.get("bidSize") is not None
+                    else None
+                ),
+                "as": (
+                    float(info["askSize"]) * 100.0
+                    if info.get("askSize") is not None
+                    else None
+                ),
+                "t": now_iso,
+            }
+        except Exception:
+            LOGGER.debug(
+                "Yahoo Finance quote indisponible pour %s", symbol, exc_info=True
+            )
+            return symbol, None
+
+    workers = min(max_workers, len(symbols))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {
+            executor.submit(_fetch_one, s): s
+            for s in symbols
+        }
+        for future in as_completed(future_map):
+            symbol, quote = future.result()
+            if quote is not None:
+                results[symbol] = quote
+
+    LOGGER.info(
+        "Yahoo Finance latest quotes | requested=%s resolved=%s",
+        len(symbols),
+        len(results),
+    )
+    return results

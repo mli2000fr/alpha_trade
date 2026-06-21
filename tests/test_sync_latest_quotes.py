@@ -112,6 +112,11 @@ def test_sync_latest_quotes_derives_quote_date_from_alpaca_timestamp(monkeypatch
     monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL"])
     monkeypatch.setattr(
         sync_latest_quotes,
+        "_resolve_latest_quotes_fetcher",
+        lambda: (sync_latest_quotes.fetch_latest_quotes, "alpaca", None),
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
         "fetch_latest_quotes",
         lambda symbols, session=None, account_id=None: {
             "AAPL": {
@@ -195,6 +200,11 @@ def test_sync_latest_quotes_resolves_requested_symbol_source(monkeypatch) -> Non
     )
     monkeypatch.setattr(
         sync_latest_quotes,
+        "_resolve_latest_quotes_fetcher",
+        lambda: (sync_latest_quotes.fetch_latest_quotes, "alpaca", None),
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
         "fetch_latest_quotes",
         lambda symbols, session=None, account_id=None: {"AAPL": {"bp": 100.0, "ap": 100.4, "bs": 1, "as": 2, "t": "2026-04-29T20:00:00Z"}},
     )
@@ -213,6 +223,11 @@ def test_sync_latest_quotes_passes_start_symbol_when_requested(monkeypatch) -> N
         sync_latest_quotes,
         "list_symbols_for_source",
         lambda symbol_source=None, limit=None, start_symbol=None: captured_sources.append((symbol_source, limit, start_symbol)) or ["AAG"],
+    )
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "_resolve_latest_quotes_fetcher",
+        lambda: (sync_latest_quotes.fetch_latest_quotes, "alpaca", None),
     )
     monkeypatch.setattr(
         sync_latest_quotes,
@@ -508,6 +523,12 @@ def test_sync_latest_quotes_emits_latest_batch_progress_logs(monkeypatch, caplog
     import logging
 
     monkeypatch.setattr(sync_latest_quotes, "list_symbols_for_source", lambda symbol_source=None, limit=None: ["AAPL", "MSFT", "NVDA"])
+    # Force le provider 'alpaca' pour que le mock fetch_latest_quotes soit utilisé
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "_resolve_latest_quotes_fetcher",
+        lambda: (sync_latest_quotes.fetch_latest_quotes, "alpaca", None),
+    )
     monkeypatch.setattr(
         sync_latest_quotes,
         "fetch_latest_quotes",
