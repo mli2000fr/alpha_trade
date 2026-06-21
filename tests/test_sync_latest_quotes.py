@@ -100,7 +100,6 @@ def test_estimate_sync_latest_quotes_cost_flags_large_historical_runs() -> None:
 
     assert estimate["mode"] == "historical"
     assert int(estimate["trading_days"]) > 0
-    assert int(estimate["hourly_windows"]) == 8
     assert int(estimate["estimated_api_calls"]) >= 300
     assert estimate["warning_required"] is True
     assert estimate["severity"] == "high"

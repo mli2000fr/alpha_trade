@@ -38,8 +38,8 @@ DEFAULT_QUOTES_PROVIDER_LIVE = "yahoo"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 MARKET_TZ = ZoneInfo("America/New_York")
 QUOTE_IEX_BIAS_PROXY_NAME = "same_session_mid_vs_stock_bars_daily_close"
-HISTORICAL_HOURLY_WINDOWS = 8
 HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS = 10
+HISTORICAL_UPSERT_BATCH_ROWS = 50
 
 # Format Alpaca latest quote : RFC 3339 / ISO 8601 avec suffixe `Z` (UTC) et
 # fraction de seconde jusqu'à 9 chiffres (nanosecondes). MySQL DATETIME(6) ne
@@ -153,32 +153,27 @@ def _iter_monthly_blocks(start: date, end: date) -> list[tuple[date, date]]:
     return blocks
 
 
-def _iter_hourly_close_windows(session_date: date) -> list[tuple[datetime, datetime]]:
-    """Génère jusqu'à ``HISTORICAL_HOURLY_WINDOWS`` fenêtres d'1 heure glissant
-    depuis la clôture vers l'ouverture, puis une fenêtre « session entière »
-    en dernier recours. Chaque fenêtre est une tranche d'1 heure consécutive
-    (tronquée à l'ouverture du marché si nécessaire)."""
+def _iter_yearly_subranges(start: date, end: date) -> list[tuple[date, date]]:
+    """Découpe ``[start, end]`` en tranches annuelles pour limiter les
+    quick-checks à des périodes raisonnables. Une plage de 6 ans devient
+    6 plages d'1 an max."""
+    if end < start:
+        return []
+    subranges: list[tuple[date, date]] = []
+    cursor = start
+    while cursor <= end:
+        year_end = min(date(cursor.year, 12, 31), end)
+        subranges.append((cursor, year_end))
+        cursor = year_end + timedelta(days=1)
+    return subranges
+
+
+def _session_window(session_date: date) -> list[tuple[datetime, datetime]]:
+    """Retourne une unique fenêtre couvrant la session NYSE entière.
+    Avec ``limit=1&sort=desc`` côté Alpaca, cela donne la quote la plus
+    tardive de la journée — exactement ce dont on a besoin."""
     market_open_utc, market_close_utc = get_nyse_session_bounds(session_date)
-    windows: list[tuple[datetime, datetime]] = []
-    seen: set[tuple[str, str]] = set()
-
-    for hour_offset in range(1, HISTORICAL_HOURLY_WINDOWS + 1):
-        window_end = market_close_utc - timedelta(hours=hour_offset - 1)
-        window_start = max(market_open_utc, market_close_utc - timedelta(hours=hour_offset))
-        if window_start >= window_end:
-            continue
-        key = (_to_iso_zulu(window_start), _to_iso_zulu(window_end))
-        if key in seen:
-            continue
-        seen.add(key)
-        windows.append((window_start, window_end))
-
-    # Fenêtre « session entière » en dernier recours
-    full_key = (_to_iso_zulu(market_open_utc), _to_iso_zulu(market_close_utc))
-    if full_key not in seen:
-        windows.append((market_open_utc, market_close_utc))
-
-    return windows
+    return [(market_open_utc, market_close_utc)]
 
 
 def _resolve_account_cycler() -> itertools.cycle[str] | None:
@@ -289,7 +284,7 @@ def _fetch_near_close_quote_for_session(
     session: requests.Session,
     account_id: str | None = None,
 ) -> tuple[dict[str, object] | None, int | None, tuple[datetime, datetime] | None]:
-    for window_index, (window_start, window_end) in enumerate(_iter_hourly_close_windows(session_date), start=1):
+    for window_index, (window_start, window_end) in enumerate(_session_window(session_date), start=1):
         quote = fetch_latest_historical_quote_in_window(
             symbol,
             start=_to_iso_zulu(window_start),
@@ -649,8 +644,8 @@ def estimate_sync_latest_quotes_cost(
 
     trading_days = len(nyse_session_dates(resolved_from_date, resolved_to_date))
     symbol_days = int(symbol_count * trading_days)
-    # Pire cas : chaque jour manquant nécessite jusqu'à HISTORICAL_HOURLY_WINDOWS+1 appels
-    estimated_api_calls = int(symbol_days * (HISTORICAL_HOURLY_WINDOWS + 1))
+    # 1 appel API par jour manquant + 1 quick-check par plage (estimé ~1 plage/symbole)
+    estimated_api_calls = int(symbol_days + symbol_count)
     estimated_duration_seconds = round(estimated_api_calls * 0.40, 2)
     severity = "low"
     if symbol_days >= 15_000 or estimated_api_calls >= 800:
@@ -665,7 +660,6 @@ def estimate_sync_latest_quotes_cost(
         "to_date": resolved_to_date.isoformat(),
         "trading_days": int(trading_days),
         "symbol_days": int(symbol_days),
-        "hourly_windows": int(HISTORICAL_HOURLY_WINDOWS),
         "estimated_api_calls": int(estimated_api_calls),
         "estimated_duration_seconds": float(estimated_duration_seconds),
         "estimated_duration_minutes": round(estimated_duration_seconds / 60.0, 2),
@@ -872,89 +866,26 @@ def sync_latest_quotes(
                 symbol_fetched_ranges = 0
 
                 for range_index, (range_start, range_end) in enumerate(missing_ranges, start=1):
-                    range_session_dates = nyse_session_dates(range_start, range_end)
-                    if not range_session_dates:
-                        LOGGER.info(
-                            "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_range_empty_calendar range=%s/%s range_start=%s range_end=%s",
-                            resolved_symbol_source,
-                            index,
-                            len(symbols),
-                            (index / len(symbols)) * 100.0,
-                            symbol,
-                            range_index,
-                            len(missing_ranges),
-                            range_start,
-                            range_end,
-                        )
-                        continue
+                    # ── Découpage en tranches annuelles pour éviter de
+                    #     parcourir 5 ans de jours sans quote ──
+                    yearly_subranges = _iter_yearly_subranges(range_start, range_end)
+                    for sub_start, sub_end in yearly_subranges:
+                        sub_session_dates = nyse_session_dates(sub_start, sub_end)
+                        if not sub_session_dates:
+                            continue
 
-                    # ── Quick check : cette plage a-t-elle au moins 1 quote IEX ? ──
-                    range_open_utc, _ = get_nyse_session_bounds(range_start)
-                    _, range_close_utc = get_nyse_session_bounds(range_end)
-                    if not _symbol_has_any_quotes_in_window(
-                        symbol,
-                        range_start,
-                        range_end,
-                        session=session,
-                        account_id=_bump_account(account_cycler),
-                    ):
-                        LOGGER.info(
-                            "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_range_no_quotes_iex range=%s/%s range_start=%s range_end=%s window_utc=%s..%s sessions=%s total_rows_upserted=%s",
-                            resolved_symbol_source,
-                            index,
-                            len(symbols),
-                            (index / len(symbols)) * 100.0,
+                        # Quick check : cette année a-t-elle au moins 1 quote ?
+                        sub_open_utc, _ = get_nyse_session_bounds(sub_start)
+                        _, sub_close_utc = get_nyse_session_bounds(sub_end)
+                        if not _symbol_has_any_quotes_in_window(
                             symbol,
-                            range_index,
-                            len(missing_ranges),
-                            range_start,
-                            range_end,
-                            _to_iso_zulu(range_open_utc),
-                            _to_iso_zulu(range_close_utc),
-                            len(range_session_dates),
-                            summary["rows_upserted"],
-                        )
-                        continue
-
-                    symbol_fetched_ranges += 1
-                    last_progress_log = 0
-                    LOGGER.info(
-                        "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=fetch_range range=%s/%s range_start=%s range_end=%s sessions=%s",
-                        resolved_symbol_source,
-                        index,
-                        len(symbols),
-                        (index / len(symbols)) * 100.0,
-                        symbol,
-                        range_index,
-                        len(missing_ranges),
-                        range_start,
-                        range_end,
-                        len(range_session_dates),
-                    )
-
-                    for day_index, session_date in enumerate(range_session_dates, start=1):
-                        quote, window_index, window_used = _fetch_near_close_quote_for_session(
-                            symbol,
-                            session_date,
+                            sub_start,
+                            sub_end,
                             session=session,
                             account_id=_bump_account(account_cycler),
-                        )
-                        symbol_api_calls += window_index if window_index is not None else (HISTORICAL_HOURLY_WINDOWS + 1)
-                        if quote is not None:
-                            row = _build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now)
-                            row["quote_date"] = session_date
-                            symbol_rows.append(row)
-                            symbol_fetched_days += 1
-
-                        if (
-                            day_index == 1
-                            or day_index == len(range_session_dates)
-                            or day_index - last_progress_log >= HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS
                         ):
-                            last_progress_log = day_index
-                            session_open_utc, session_close_utc = get_nyse_session_bounds(session_date)
                             LOGGER.info(
-                                "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=day_progress range=%s/%s day=%s/%s session=%s window_utc=%s..%s fetched=%s api_calls=%s total_rows_upserted=%s",
+                                "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_range_no_quotes_iex range=%s/%s sub=%s-%s window_utc=%s..%s sessions=%s total_rows_upserted=%s",
                                 resolved_symbol_source,
                                 index,
                                 len(symbols),
@@ -962,22 +893,79 @@ def sync_latest_quotes(
                                 symbol,
                                 range_index,
                                 len(missing_ranges),
-                                day_index,
-                                len(range_session_dates),
-                                session_date,
-                                _to_iso_zulu(session_open_utc),
-                                _to_iso_zulu(session_close_utc),
-                                symbol_fetched_days,
-                                symbol_api_calls,
+                                sub_start,
+                                sub_end,
+                                _to_iso_zulu(sub_open_utc),
+                                _to_iso_zulu(sub_close_utc),
+                                len(sub_session_dates),
                                 summary["rows_upserted"],
                             )
+                            continue
 
-                # Upsert en un seul batch pour le symbole
+                        symbol_fetched_ranges += 1
+                        last_progress_log = 0
+                        LOGGER.info(
+                            "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=fetch_range range=%s/%s sub=%s-%s sessions=%s",
+                            resolved_symbol_source,
+                            index,
+                            len(symbols),
+                            (index / len(symbols)) * 100.0,
+                            symbol,
+                            range_index,
+                            len(missing_ranges),
+                            sub_start,
+                            sub_end,
+                            len(sub_session_dates),
+                        )
+
+                        for day_index, session_date in enumerate(sub_session_dates, start=1):
+                            quote, window_index, window_used = _fetch_near_close_quote_for_session(
+                                symbol,
+                                session_date,
+                                session=session,
+                                account_id=_bump_account(account_cycler),
+                            )
+                            symbol_api_calls += 1
+                            if quote is not None:
+                                row = _build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now)
+                                row["quote_date"] = session_date
+                                symbol_rows.append(row)
+                                symbol_fetched_days += 1
+
+                            # ── UPSERT incremental tous les N rows ──
+                            if len(symbol_rows) >= HISTORICAL_UPSERT_BATCH_ROWS:
+                                batch_upserted = upsert_quote_snapshots(symbol_rows)
+                                summary["rows_upserted"] += batch_upserted
+                                symbol_rows.clear()
+
+                            if (
+                                day_index == 1
+                                or day_index == len(sub_session_dates)
+                                or day_index - last_progress_log >= HISTORICAL_CLOSE_PROGRESS_LOG_EVERY_DAYS
+                            ):
+                                last_progress_log = day_index
+                                LOGGER.info(
+                                    "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=day_progress range=%s/%s day=%s/%s session=%s fetched=%s api_calls=%s total_rows_upserted=%s",
+                                    resolved_symbol_source,
+                                    index,
+                                    len(symbols),
+                                    (index / len(symbols)) * 100.0,
+                                    symbol,
+                                    range_index,
+                                    len(missing_ranges),
+                                    day_index,
+                                    len(sub_session_dates),
+                                    session_date,
+                                    symbol_fetched_days,
+                                    symbol_api_calls,
+                                    summary["rows_upserted"],
+                                )
+
+                # ── Flush des rows restantes (< HISTORICAL_UPSERT_BATCH_ROWS) ──
                 if symbol_rows:
                     batch_upserted = upsert_quote_snapshots(symbol_rows)
                     summary["rows_upserted"] += batch_upserted
-                else:
-                    batch_upserted = 0
+                    symbol_rows.clear()
 
                 _log_historical_symbol_summary(
                     symbol_source=resolved_symbol_source,
@@ -1001,7 +989,7 @@ def sync_latest_quotes(
                     symbol_api_calls,
                     symbol_fetched_days,
                     symbol_fetched_ranges,
-                    batch_upserted,
+                    symbol_fetched_days,
                     resolved_from_date,
                     resolved_to_date,
                 )
