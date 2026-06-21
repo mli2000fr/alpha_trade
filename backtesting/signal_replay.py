@@ -84,6 +84,8 @@ def _vectorized_fuse(
         weights.score_weight * score_arr + weights.prediction_weight * np.nan_to_num(proba_arr),
         score_arr,
     )
+    # Clip de securite [0, 1] — coherent avec core.conviction.compute_conviction
+    fused = np.clip(fused, 0.0, 1.0)
     return pd.Series(fused, index=scores.index, name="conviction")
 
 
