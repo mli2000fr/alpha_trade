@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars (
     data_source VARCHAR(16) NOT NULL DEFAULT 'alpaca_iex' COMMENT 'Origine des barres : alpaca_iex | alpaca_sip | eodhd_eod | stooq | yahoo',
     UNIQUE KEY uq_stock_bars_symbol_timeframe_timestamp (symbol, timeframe, `timestamp`),
     KEY idx_stock_bars_symbol_timestamp (symbol, `timestamp`),
-    KEY idx_stock_bars_timeframe_symbol_timestamp (timeframe, symbol, `timestamp`),
     CONSTRAINT chk_bars_adj CHECK (data_adjustment = 'split')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

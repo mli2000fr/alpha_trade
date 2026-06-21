@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars_daily (
     -- 核心索引設計
     PRIMARY KEY (`symbol`, `date`),
     INDEX `idx_date` (`date`),
+    INDEX `idx_symbol` (`symbol`),
+    INDEX `idx_datasource_date` (`data_source`, `date`)
     INDEX `idx_ingested_at` (`ingested_at`) COMMENT 'Permet d auditer les lots de re-ingestion par plage de temps',
     CONSTRAINT chk_daily_adj CHECK (data_adjustment = 'split')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=COMPRESSED COMMENT='Alpha Prime 每日行情數據表';
