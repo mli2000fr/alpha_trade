@@ -159,11 +159,29 @@ def _backfill_diag_float(diag: dict[str, object], key: str, default: float = 0.0
         return default
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _resolve_symbols_for_diagnostic(
+    symbols_csv: str | None,
+    symbol_source: str,
+) -> list[str]:
+    """Résout la liste complète des symboles pour filtrer les compteurs."""
+    repository = EventSentimentRepository()
+    symbols, _ = resolve_symbols_from_inputs(
+        symbols_csv=symbols_csv or None,
+        symbol_source=symbol_source,
+        repository=repository,
+    )
+    return symbols
+
+
 def _render_backfill_completeness_panel(
     start_value: DateValue,
     end_value: DateValue,
     *,
     use_expander: bool = True,
+    import_options: PipelineLaunchOptions | None = None,
+    db_config: dict[str, str | None] | None = None,
+    all_runs: list[dict[str, object]] | None = None,
 ) -> None:
     """Panneau de compteurs de complétude des backfills history + relevance."""
 
@@ -172,9 +190,18 @@ def _render_backfill_completeness_panel(
     with panel_context:
         if not use_expander:
             st.markdown(f"**{panel_title}**")
+
+        # Résoudre les symboles de l'univers sélectionné pour filtrer les compteurs
+        diag_symbols: list[str] | None = None
+        if import_options is not None:
+            diag_symbols = _resolve_symbols_for_diagnostic(
+                symbols_csv=import_options.news_import_symbols or None,
+                symbol_source=import_options.news_import_symbol_source or "",
+            )
+            if not diag_symbols:
+                diag_symbols = None  # fallback : pas de filtre si résolution vide
+
         st.caption(
-            "Ces compteurs interrogent la base en temps réel pour vérifier l'avancement "
-            "des deux backfills sur la fenêtre configurée ci-dessus (date début → date fin). "
             "Le TTL de cache est de 30 s ; cliquez sur 🔄 pour forcer l'actualisation."
         )
 
@@ -182,10 +209,27 @@ def _render_backfill_completeness_panel(
         with col_refresh:
             if st.button("🔄 Actualiser les compteurs", key="refresh_backfill_completeness"):
                 get_backfill_completeness_diagnostic.clear()  # type: ignore[attr-defined]
+                if import_options is not None:
+                    _resolve_symbols_for_diagnostic.clear()  # type: ignore[attr-defined]
+
+        # Seuil de pertinence contextuelle : aligné sur le job de scoring (Niveau 4)
+        diag_contextual_min_relevance: float | None = None
+        if import_options is not None:
+            # Priorité au seuil configuré dans l'IHM (sentiment_contextual_min_relevance),
+            # sinon utiliser celui du backfill relevance (backfill_relevance_contextual_min_relevance).
+            diag_contextual_min_relevance = (
+                import_options.sentiment_contextual_min_relevance
+                or import_options.backfill_relevance_contextual_min_relevance
+                or None
+            )
+            if diag_contextual_min_relevance is not None and diag_contextual_min_relevance <= 0.0:
+                diag_contextual_min_relevance = None
 
         diag = get_backfill_completeness_diagnostic(
             start_date=start_value,
             end_date=end_value,
+            symbols=diag_symbols,
+            contextual_min_relevance=diag_contextual_min_relevance,
         )
 
         if diag.get("query_error"):
@@ -264,6 +308,26 @@ def _render_backfill_completeness_panel(
                 f"({r_pct:.1f} % des paires scorées). "
                 "→ Relancez **Calcul relevance_score (Niveau 2/3)** dans le panneau de maintenance pour combler."
             )
+            if import_options is not None and db_config is not None and all_runs is not None:
+                quick_options = replace(import_options, news_import_start_date=None, news_import_end_date=None)  # type: ignore[arg-type]
+                quick_command = build_pipeline_command("sentiment_relevance_backfill", quick_options)
+                st.caption("Commande qui sera exécutée (tout l'historique, sans filtre de date) :")
+                st.code(format_command_for_display(quick_command), language="powershell")
+                if st.button(
+                    "🚀 Lancer le backfill relevance maintenant",
+                    key="quick_launch_relevance_backfill",
+                    use_container_width=True,
+                    help="Lance la commande affichée ci-dessus pour combler les `relevance_score` manquants.",
+                ):
+                    record = start_pipeline_run(
+                        "sentiment_relevance_backfill",
+                        "News-Sentiement — Backfill relevance (Niveau 2/3) [lancé depuis les compteurs]",
+                        quick_options,
+                        db_config=db_config,
+                    )
+                    _register_new_run(record, all_runs)
+                    st.success(f"Backfill relevance démarré : `{record.run_id}`")
+                    _rerun_app()
             if r_total > 0:
                 progress_val = min(1.0, max(0.0, r_scored / r_total))
                 st.progress(progress_val, text=f"{r_scored}/{r_total} paires scorées")
@@ -271,12 +335,19 @@ def _render_backfill_completeness_panel(
         st.divider()
 
         st.markdown("##### Contextual backfill — Niveau 4 FinBERT (`news_ticker_sentiment`)")
-        st.caption(
-            "Compte les paires article↔ticker présentes dans `news_ticker_map` "
-            "mais absentes de `news_ticker_sentiment`. "
-            "**Zéro pending = backfill contextuel complet** sur cette fenêtre "
-            "(uniquement pertinent si le scoring contextuel Niveau 4 est activé)."
-        )
+        if diag_contextual_min_relevance is not None and diag_contextual_min_relevance > 0.0:
+            st.caption(
+                f"Compte les paires article↔ticker avec `relevance_score ≥ {diag_contextual_min_relevance:g}` "
+                "absentes de `news_ticker_sentiment`. "
+                "**Zéro pending = backfill contextuel complet** sur cette fenêtre."
+            )
+        else:
+            st.caption(
+                "Compte les paires article↔ticker présentes dans `news_ticker_map` "
+                "mais absentes de `news_ticker_sentiment`. "
+                "**Zéro pending = backfill contextuel complet** sur cette fenêtre "
+                "(uniquement pertinent si le scoring contextuel Niveau 4 est activé)."
+            )
         c_pending = _backfill_diag_int(diag, "contextual_pending")
         c_scored = _backfill_diag_int(diag, "contextual_scored")
         c_total = _backfill_diag_int(diag, "contextual_total")
@@ -304,6 +375,26 @@ def _render_backfill_completeness_panel(
                 f"({c_pct:.1f} % des paires traitées). "
                 "→ Relancez **Scoring FinBERT contextuel (Niveau 4)** dans le panneau de maintenance si nécessaire."
             )
+            if import_options is not None and db_config is not None and all_runs is not None:
+                quick_options = replace(import_options, news_import_start_date=None, news_import_end_date=None)  # type: ignore[arg-type]
+                quick_command = build_pipeline_command("sentiment_contextual_scoring", quick_options)
+                st.caption("Commande qui sera exécutée (tout l'historique, sans filtre de date) :")
+                st.code(format_command_for_display(quick_command), language="powershell")
+                if st.button(
+                    "🚀 Lancer le scoring contextuel maintenant",
+                    key="quick_launch_contextual_scoring",
+                    use_container_width=True,
+                    help="Lance la commande affichée ci-dessus pour combler les scores contextuels FinBERT manquants. ⚠️ Opération lourde (FinBERT).",
+                ):
+                    record = start_pipeline_run(
+                        "sentiment_contextual_scoring",
+                        "News-Sentiement — Scoring contextuel (Niveau 4) [lancé depuis les compteurs]",
+                        quick_options,
+                        db_config=db_config,
+                    )
+                    _register_new_run(record, all_runs)
+                    st.success(f"Scoring contextuel démarré : `{record.run_id}`")
+                    _rerun_app()
             if c_total > 0:
                 progress_val = min(1.0, max(0.0, c_scored / c_total))
                 st.progress(progress_val, text=f"{c_scored}/{c_total} paires scorées contextuellement")
@@ -694,5 +785,8 @@ def _render_import_news_panel(
             cast(DateValue, start_value),
             cast(DateValue, end_value),
             use_expander=False,
+            import_options=import_options,
+            db_config=db_config,
+            all_runs=all_runs,
         )
 

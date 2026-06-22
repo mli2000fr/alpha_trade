@@ -1890,11 +1890,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         )
 
     if step_key == "sentiment_relevance_backfill":
-        if news_import_start_date is None:
-            raise ValueError("La date de début est obligatoire pour le calcul manuel de relevance_score.")
         command = _build_sentiment_relevance_backfill_command(
             options,
-            sentiment_start_utc=f"{news_import_start_date}T00:00:00Z",
+            sentiment_start_utc=f"{news_import_start_date}T00:00:00Z" if news_import_start_date else None,
             sentiment_end_utc=f"{news_import_end_date}T23:59:59Z" if news_import_end_date else None,
             sentiment_symbols=news_import_symbols,
         )
@@ -1910,11 +1908,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "sentiment_contextual_scoring":
-        if news_import_start_date is None:
-            raise ValueError("La date de début est obligatoire pour le scoring FinBERT contextuel manuel.")
         command = _build_sentiment_contextual_command(
             options,
-            sentiment_start_utc=f"{news_import_start_date}T00:00:00Z",
+            sentiment_start_utc=f"{news_import_start_date}T00:00:00Z" if news_import_start_date else None,
             sentiment_end_utc=f"{news_import_end_date}T23:59:59Z" if news_import_end_date else None,
             sentiment_symbols=None,
         )

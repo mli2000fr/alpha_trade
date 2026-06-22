@@ -2137,6 +2137,8 @@ def get_backfill_completeness_diagnostic(
     *,
     start_date: date | None = None,
     end_date: date | None = None,
+    symbols: list[str] | None = None,
+    contextual_min_relevance: float | None = None,
 ) -> dict[str, object]:
     """Retourne les compteurs de complétude des deux backfills 7bis.
 
@@ -2144,7 +2146,9 @@ def get_backfill_completeness_diagnostic(
       dont ``relevance_score IS NULL`` sur la fenêtre demandée.
     - **Contextual backfill** (Niveau 4 FinBERT) : compte les paires
       ``(article, symbol)`` présentes dans ``news_ticker_map`` mais absentes de
-      ``news_ticker_sentiment`` (indépendamment du ``relevance_score``).
+      ``news_ticker_sentiment``. Si ``contextual_min_relevance`` est fourni,
+      seules les paires avec ``relevance_score >= seuil`` sont comptées
+      (reflète le filtre ``--contextual-min-relevance`` des jobs de scoring).
     - **History backfill** : compare les trade-dates scorées (``news_raw`` ∩
       ``news_sentiment``) avec les dates couvertes dans
       ``ticker_daily_sentiment_features``.  Retourne le nombre de dates
@@ -2153,6 +2157,9 @@ def get_backfill_completeness_diagnostic(
     Les paramètres ``start_date`` / ``end_date`` filtrent sur
     ``news_raw.effective_trade_date`` (bornes incluses). Si ``None``, la borne
     correspondante est ignorée.
+
+    Si ``symbols`` est fourni, les compteurs relevance et contextual sont
+    restreints aux symboles de cette liste (filtre ``ntm.symbol IN (...)``).
     """
     date_filters_trade = ""
     date_filters_pub = ""
@@ -2166,6 +2173,23 @@ def get_backfill_completeness_diagnostic(
         date_filters_pub += " AND nr.effective_trade_date <= :end_date"
         params["end_date"] = end_date
 
+    # --- Filtre symboles (optionnel) ---
+    symbol_filter_trade = ""
+    if symbols:
+        # Utiliser l'interpolation directe (safe : les tickers sont des symboles
+        # boursiers alphanumériques, pas du user input libre). Évite les limites
+        # de placeholders SQL quand l'univers est large (>1000 symboles).
+        escaped = [f"'{sym.replace(chr(39), '')}'" for sym in symbols]
+        symbol_filter_trade = f" AND ntm.symbol IN ({', '.join(escaped)})"
+
+    # --- Filtre pertinence contextuelle (optionnel) ---
+    contextual_relevance_filter = ""
+    if contextual_min_relevance is not None and contextual_min_relevance > 0.0:
+        contextual_relevance_filter = (
+            f" AND ntm.relevance_score IS NOT NULL"
+            f" AND ntm.relevance_score >= {float(contextual_min_relevance):g}"
+        )
+
     # --- Relevance backfill : lignes news_ticker_map sans relevance_score ---
     relevance_null_raw, relevance_null_error = _safe_scalar_with_error(
         f"""
@@ -2174,6 +2198,7 @@ def get_backfill_completeness_diagnostic(
         JOIN news_raw nr ON nr.article_id = ntm.article_id
         WHERE ntm.relevance_score IS NULL
         {date_filters_trade}
+        {symbol_filter_trade}
         """,
         params or None,
     )
@@ -2187,6 +2212,7 @@ def get_backfill_completeness_diagnostic(
         JOIN news_raw nr ON nr.article_id = ntm.article_id
         WHERE 1=1
         {date_filters_trade}
+        {symbol_filter_trade}
         """,
         params or None,
     )
@@ -2203,6 +2229,8 @@ def get_backfill_completeness_diagnostic(
             ON nts.article_id = ntm.article_id AND nts.symbol = ntm.symbol
         WHERE nts.article_id IS NULL
         {date_filters_trade}
+        {symbol_filter_trade}
+        {contextual_relevance_filter}
         """,
         params or None,
     )
@@ -2215,6 +2243,8 @@ def get_backfill_completeness_diagnostic(
         JOIN news_raw nr ON nr.article_id = ntm.article_id
         WHERE 1=1
         {date_filters_trade}
+        {symbol_filter_trade}
+        {contextual_relevance_filter}
         """,
         params or None,
     )
