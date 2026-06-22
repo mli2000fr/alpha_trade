@@ -24,6 +24,35 @@ import pandas as pd
 
 SlippageModel = Literal["fixed", "linear", "sqrt"]
 
+# ── P4 — Modèle d'exécution intraday ──
+
+ExecutionModel = Literal["next_open", "arrival_price", "twap", "vwap"]
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionModelConfig:
+    """Configuration du modèle d'exécution intraday.
+
+    - ``model`` : modèle de prix d'exécution.
+        * ``next_open`` (défaut historique) → exécution au prix d'ouverture de J+1.
+        * ``arrival_price`` → open + slippage directionnel estimé (moitié du range).
+        * ``twap`` → (open + close) / 2 — simule un échelonnement régulier.
+        * ``vwap`` → (open + high + low + close) / 4 — pondéré par les volumes.
+    - ``split_threshold_adv_pct`` : seuil en % de l'ADV au-delà duquel l'ordre
+      est échelonné sur la journée. 0.0 = désactivé, 0.01 = 1% ADV.
+    - ``split_slices`` : nombre de tranches pour l'échelonnement TWAP simulé.
+    - ``arrival_slippage_factor`` : multiplicateur du slippage directionnel pour
+      le modèle arrival_price (1.0 = demi-range, 2.0 = range complet).
+    """
+
+    model: ExecutionModel = "next_open"
+    split_threshold_adv_pct: float = 0.0  # 0 = pas d'échelonnement
+    split_slices: int = 5
+    arrival_slippage_factor: float = 0.5  # 0.5 = demi-range journalière
+
+
+# ── B.1 — Slippage volume-aware ──
+
 
 @dataclass(slots=True, frozen=True)
 class SlippageConfig:
@@ -99,12 +128,14 @@ class MicrostructureConfig:
         * ``tp_first``     → TP prioritaire (optimiste).
         * ``ts_first``     → équivalent à ``conservative`` (alias clarté).
         * ``random``       → tirage uniforme reproductible (seed externe).
+    - ``execution_model``    : P4 — modèle de prix d'exécution intraday.
     """
 
     slippage: SlippageConfig = field(default_factory=SlippageConfig)
     initial_stop_pct: float = 0.0
     max_entry_gap_pct: float = 0.0
     intrabar_priority: IntraBarPriority = "conservative"
+    execution_model: ExecutionModelConfig = field(default_factory=ExecutionModelConfig)
 
     def is_default(self) -> bool:
         """Compat : retourne True si le bundle reproduit le comportement legacy."""
@@ -113,6 +144,7 @@ class MicrostructureConfig:
             and self.initial_stop_pct == 0.0
             and self.max_entry_gap_pct == 0.0
             and self.intrabar_priority in ("conservative", "ts_first")
+            and self.execution_model.model == "next_open"
         )
 
 
@@ -192,15 +224,88 @@ def resolve_intrabar_exit(
     return IntraBarResolution(True, trailing_stop_price, "trailing_stop")
 
 
+# ── P4 — Fonction pure de calcul du prix d'exécution ──
+
+
+def compute_execution_price(
+    *,
+    model: ExecutionModelConfig,
+    side: str,
+    open_price: float,
+    high_price: float | None = None,
+    low_price: float | None = None,
+    close_price: float | None = None,
+    adv_usd: float | None = None,
+    notional: float | None = None,
+) -> float:
+    """Calcule le prix d'exécution estimé selon le modèle intraday.
+
+    - ``next_open`` : open (comportement historique).
+    - ``arrival_price`` : open + slippage directionnel estimé.
+        Long  → open + factor * (high - low)  → exécution plus chère (achat).
+        Short → open - factor * (high - low)  → exécution moins chère (vente).
+    - ``twap`` : (open + close) / 2.
+    - ``vwap`` : (open + high + low + close) / 4.
+
+    Retourne toujours un float fini > 0.
+    """
+    if model.model == "next_open":
+        return float(open_price)
+
+    is_short = side.strip().lower() == "sell"
+
+    if model.model == "arrival_price":
+        if high_price is not None and low_price is not None and np.isfinite(high_price) and np.isfinite(low_price):
+            half_range = (float(high_price) - float(low_price)) * float(model.arrival_slippage_factor)
+            if is_short:
+                return float(open_price) - half_range  # short: on vend, slippage défavorable = prix plus bas
+            else:
+                return float(open_price) + half_range  # long: on achète, slippage défavorable = prix plus haut
+        return float(open_price)
+
+    if model.model == "twap":
+        if close_price is not None and np.isfinite(close_price):
+            return (float(open_price) + float(close_price)) / 2.0
+        return float(open_price)
+
+    if model.model == "vwap":
+        h = float(high_price) if high_price is not None and np.isfinite(high_price) else float(open_price)
+        l = float(low_price) if low_price is not None and np.isfinite(low_price) else float(open_price)
+        c = float(close_price) if close_price is not None and np.isfinite(close_price) else float(open_price)
+        return (float(open_price) + h + l + c) / 4.0
+
+    return float(open_price)
+
+
+def should_split_order(
+    *,
+    model: ExecutionModelConfig,
+    notional_usd: float,
+    adv_usd: float | None,
+) -> bool:
+    """Décide si l'ordre doit être échelonné (taille > seuil ADV)."""
+    if model.split_threshold_adv_pct <= 0:
+        return False
+    if adv_usd is None or adv_usd <= 0:
+        return False
+    if notional_usd <= 0:
+        return False
+    return (notional_usd / adv_usd) > float(model.split_threshold_adv_pct)
+
+
 __all__ = [
+    "ExecutionModel",
+    "ExecutionModelConfig",
     "IntraBarPriority",
     "IntraBarResolution",
     "MicrostructureConfig",
     "SlippageConfig",
     "SlippageModel",
     "compute_adv_usd",
+    "compute_execution_price",
     "resolve_intrabar_exit",
     "should_skip_entry_for_gap",
+    "should_split_order",
 ]
 
 

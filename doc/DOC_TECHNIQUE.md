@@ -38,6 +38,7 @@
 - **S8** *(audit TOD5, juin 2026)* : corrections presets de capital — drawdown breaker différencié par tranche, `risk_min_position_notional` ≥ 155 $, libellé micro-compte USD. ✅ Livré.
 - **S8-bis** *(post-PDT FINRA, juin 2026)* : IHM mise à jour — défaut `execution_swing_only=False`, step 1 nom dynamique selon provider, validation `__post_init__`. ✅ Livré.
 - **S9** *(juin 2026)* : bandeaux avertissement IHM si `swing_only=True` (obsolète), infobulles FINRA 2026-06-04. ✅ Livré.
+- **S10** *(juin 2026)* : **Impact Marché P1-P4** — spread réel comme coût (P1), slippage volume-aware activé par défaut par tranche de capital (P2), commission tiercée câblée dans le simulateur (P3), modèle d'exécution intraday configurable `arrival_price`/`twap`/`vwap` (P4). ✅ Livré.
 
 ### Plan v2 -- Short Selling (Sprint 0-5, juin 2026) — 🔄 EN COURS
 
@@ -153,6 +154,9 @@ alpha_trade/
 │   ├── simulator.py / data_loader.py / signal_replay.py
 │   ├── fidelity.py / resilience.py / weights_calibration.py / walk_forward.py
 │   ├── microstructure.py / risk_overlay.py / risk_bridge.py / execution_bridge.py
+│   │   └─ P4 : ExecutionModelConfig (next_open|arrival_price|twap|vwap) + compute_execution_price()
+│   ├── trading_constraints.py  ← P3 : TieredCommissionConfig + resolve_commission_preset()
+│   ├── data_loader.py  ← P1 : load_spreads() depuis stock_quote_snapshots
 │   ├── execution_replay.py / execution_lifecycle_replay.py
 │   ├── protection_watcher_replay.py / exit_lifecycle_replay.py
 │   ├── execution_broker_like.py / profiles.py / parity.py
@@ -302,7 +306,7 @@ Ces trois clés live sont injectées dans `RiskConfig`, puis consommées par
 
 **`AccountRegistry`** (`service/alpaca/accounts.py`) — Singleton de résolution multi-comptes. Charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique. Fournit `resolve(account_id)` → `BrokerAccount(api_key, secret_key, mode)`. Tous les clients (trading, market data, news, corporate actions) passent par cette résolution.
 
-**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest stateful utilisé par la CLI `run`. Il applique la convention `signal J -> entrée J+1 open`, simule les contraintes de compte (`margin`, `cash`, `swing_only`), supporte les phases opt-in `execution_replay`, `protection_replay`, `watcher_replay`, `exit_lifecycle_replay`, et sait consommer les bundles `MicrostructureConfig` et `RiskOverlayConfig`. Le moteur conserve un `BacktestDiagnostics` structuré exporté dans `report.json`.
+**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest stateful utilisé par la CLI `run`. Il applique la convention `signal J -> entrée J+1 open` (ou le modèle d'exécution P4 configuré), simule les contraintes de compte (`margin`, `cash`, `swing_only`), supporte les phases opt-in `execution_replay`, `protection_replay`, `watcher_replay`, `exit_lifecycle_replay`, et sait consommer les bundles `MicrostructureConfig` et `RiskOverlayConfig`. **P1** : accepte un `spread_df` (spreads réels par ticker) chargé via `load_spreads()`. **P3** : supporte la commission tiercée (`TieredCommissionConfig`) activable via `BacktestConfig.use_tiered_commission`. **P4** : utilise `compute_execution_price()` pour les modèles `arrival_price`, `twap`, `vwap`. Le moteur conserve un `BacktestDiagnostics` structuré exporté dans `report.json`.
 
 ### 2.1.b Paramétrage `capital_presets.yaml` — circuit breaker live/backtest
 
@@ -318,6 +322,7 @@ Les paramètres C.5 sont désormais pilotés via `config/capital_presets.yaml` e
   - `backtesting_dd_degraded_allocation_pct`
   - `backtesting_dd_regime_ramp_up_enabled` / `backtesting_dd_regime_ramp_up_pct_per_day` / `backtesting_dd_regime_ramp_up_max_pct`
   - (seuils) `backtesting_max_portfolio_dd_pct`
+  - **P2** : `backtesting_slippage_base_bps` / `backtesting_slippage_impact_coef` (microstructure par tranche)
 
 Points d'intégration techniques :
 

@@ -42,6 +42,7 @@
 - **S8** *(audit TOD5, juin 2026)* : audit exhaustif réalisé, livrables dans `prompt/tod5/`. Corrections critiques des presets de capital : drawdown breaker différencié par tranche, `risk_min_position_notional` ≥ 155 $ pour tous les presets, libellé micro-compte uniformisé en USD. ✅ Livré.
 - **S8-bis** *(post-PDT FINRA, juin 2026)* : mise à jour IHM suite à la suppression de la règle PDT par la FINRA le 4 juin 2026. Défaut `execution_swing_only` passé de `True` à `False` dans l'IHM, step 1 dynamique selon le provider actif (EODHD/Alpaca), validation `__post_init__` dans `PipelineLaunchOptions`. ✅ Livré.
 - **S9** *(juin 2026)* : alignement IHM/presets finalisé. Bandes d'avertissement dans l'IHM quand `swing_only=True` (obsolète), infobulles mentionnant le changement réglementaire FINRA 2026-06-04. ✅ Livré.
+- **S10** *(juin 2026)* : **Impact Marché P1-P4** — modélisation complète des coûts de transaction dans le backtest. ✅ Livré.
 
 ### Plans en cours (v2)
 
@@ -50,6 +51,7 @@
 | **Plan v2 — Short Selling** (Sprint 0-5) | 🔄 En cours | `core/direction.py`, `selector/short_score.py`, `risk_management/concentration.py`, `backtesting/simulator.py` |
 | **Plan ML v2 — Ternaire long/flat/short** (Sprint 1-7) | 🔄 En cours | `modelFactory/features.py` (`target_mode="ternary"`), `model.py` (CrossEntropyLoss 3 classes), `db_registry.py` (colonnes `predicted_side`, `proba_long/flat/short`) |
 | **Priorité 3 — Modèle de risque factoriel CWMS** | ✅ Livré (juin 2026) | `risk_management/factor_model.py` — Expositions factorielles, covariance EWMA, décomposition risque, contraintes, filtre corrélation factoriel. Intégré live + backtest. 33 tests. |
+| **Impact Marché P1-P4** | ✅ Livré (juin 2026) | P1 : spread réel ticker via `stock_quote_snapshots`. P2 : slippage volume-aware activé par défaut par tranche de capital. P3 : commission tiercée (`TieredCommissionConfig`). P4 : modèle d'exécution intraday (`arrival_price`/`twap`/`vwap`). |
 
 > ⚠️ Les plans v2 ne sont pas encore validés en production. Le comportement par défaut reste **long-only** avec cible binaire. Les fonctionnalités short/ternaire sont opt-in.
 
@@ -164,7 +166,7 @@ Sur la page backtest, cette évolution s'accompagne d'un enrichissement du table
 - **Filtre de volatilité relative optionnel** : exclusion explicite si `volatility_ratio = vol10 / vol60` dépasse un seuil métier (ex. `0.90`) afin d'éviter les titres en spike de volatilité récent
 - **Filtre market cap** : exclusion des petites capitalisations sous `2 Md$`
 - **Filtre bêta** : calcul local `beta_126` vs `SPY`, utilisé pour exiger un comportement suffisamment directionnel
-- **Filtre spread** : exclusion des titres au spread bid/ask trop large via les snapshots de quotes Alpaca
+- **Filtre spread** : exclusion des titres au spread bid/ask trop large via les snapshots de quotes Alpaca. **P1** : le `spread_bps` réel est également utilisé comme **coût de transaction** dans le backtest (`load_spreads()` → `BacktestEngine.run(spread_df=...)`)
 - **Observabilité biais quotes IEX** : `sync_latest_quotes` publie aussi le proxy
   `quote_iex_vs_consolidated_bps`, soit l’écart moyen absolu (en bps) entre
   le mid bid/ask IEX et `stock_bars_daily.close` sur la même séance quand le
@@ -339,7 +341,8 @@ Le module `backtesting/` n'est plus un simple replay de signaux. Fonctionnelleme
   - **Phase 5** : replay du watcher de protection,
   - **Phase 7** : replay de l'exit terminal et de l'annulation OCO logique ;
 - des **presets capital** PIT et des **profils** de backtest pour garder la cohérence entre backfill, reruns et IHM ;
-- des surcouches **microstructure** et **risk overlay** activables pour la recherche (slippage volume-aware, stop initial, filtre de gap, sizing conviction-weighted, cap sectoriel, drawdown breaker, etc.) ;
+- des surcouches **microstructure** et **risk overlay** activables pour la recherche (slippage volume-aware activé par défaut P2, stop initial, filtre de gap, **modèle d'exécution intraday P4**, sizing conviction-weighted, cap sectoriel, drawdown breaker, etc.) ;
+- une **modélisation granulaire des coûts de transaction** (P1/P2/P3) : spread réel par ticker, slippage volume-aware calibré par tranche de capital, commission tiercée (fixe + taux) ;
 - un breaker drawdown C.5 paramétrable par preset (`dd_rolling_peak_window_days`, `dd_degraded_allocation_pct`, `dd_regime_ramp_up_*`) avec ramp-up régimed progressif ;
 - un outillage complet de **diagnostic screener** avec recommandations globales, par régime et par objectif ;
 - des commandes de **calibration des poids sentiment** et de **walk-forward** pour rejouer des poids hors échantillon.

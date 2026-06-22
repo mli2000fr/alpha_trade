@@ -16,12 +16,14 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from backtesting.trading_constraints import TradingConstraintConfig
+from backtesting.trading_constraints import TradingConstraintConfig, resolve_commission_preset
 from backtesting.microstructure import (
     MicrostructureConfig,
     compute_adv_usd,
+    compute_execution_price,
     resolve_intrabar_exit,
     should_skip_entry_for_gap,
+    should_split_order,
 )
 from backtesting.risk_overlay import RiskOverlayConfig, compute_portfolio_vol_scaler
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
@@ -70,6 +72,9 @@ class BacktestConfig:
     fees_pct: float = 0.001  # 10 bps
     commission_bps: float = 5.0
     slippage_bps: float = 5.0
+    # P3 — commission tiered (TieredCommissionConfig) : remplace le commission_bps
+    # plat quand activé. Le fees_pct est alors recalculé = slippage_bps/10000 + tiered.
+    use_tiered_commission: bool = False
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
     execution_replay_mode: str = "off"
@@ -502,6 +507,8 @@ class BacktestEngine:
         sector_map: dict[str, str] | None = None,
         # Phase A.1 (refactor) — alias de rétro-compatibilité.
         # L'ancien paramètre s'appelait ``open`` et ombrait la builtin Python.
+        # P1 — spread réel par ticker (stock_quote_snapshots).
+        spread_df: pd.DataFrame | None = None,
         **legacy_kwargs,
     ) -> BacktestResult:
         """Lance le backtest.
@@ -558,6 +565,7 @@ class BacktestEngine:
                 signals_df=selected,
                 volume=self._empty_market_frame(volume) if volume is not None else None,
                 sector_map=sector_map,
+                spread_df=spread_df,
             )
 
         symbols = sorted(set(selected["symbol"]) & set(close.columns))
@@ -571,6 +579,7 @@ class BacktestEngine:
                 signals_df=selected,
                 volume=self._empty_market_frame(volume) if volume is not None else None,
                 sector_map=sector_map,
+                spread_df=spread_df,
             )
 
         open_df = open_df[symbols].copy()
@@ -588,6 +597,7 @@ class BacktestEngine:
             return self._run_with_constraints(
                 open_df=open_df, close=close, high=high, low=low,
                 signals_df=selected, volume=volume, sector_map=sector_map,
+                spread_df=spread_df,
             )
 
         LOGGER.info(
@@ -599,6 +609,7 @@ class BacktestEngine:
         return self._run_with_constraints(
             open_df=open_df, close=close, high=high, low=low,
             signals_df=selected, volume=volume, sector_map=sector_map,
+            spread_df=spread_df,
         )
 
     @staticmethod
@@ -695,6 +706,7 @@ class BacktestEngine:
         signals_df: pd.DataFrame,
         volume: pd.DataFrame | None = None,
         sector_map: dict[str, str] | None = None,
+        spread_df: pd.DataFrame | None = None,
     ) -> BacktestResult:
         cfg = self.config
         constraints = cfg.trading_constraints
@@ -869,6 +881,7 @@ class BacktestEngine:
                 state=state,
                 candidate_rows=candidate_rows,
                 open_df=open_df,
+                high_df=high,
                 low_df=low,
                 close=close,
                 trade_day=trade_day,
@@ -879,6 +892,7 @@ class BacktestEngine:
                 current_equity=current_equity,
                 drawdown_allocation_scale=drawdown_allocation_scale,
                 diagnostics=diagnostics,
+                spread_df=spread_df,
             )
 
             self._try_close_positions(
@@ -892,6 +906,8 @@ class BacktestEngine:
                 adv_usd_df=adv_usd_df,
                 rng=rng,
                 diagnostics=diagnostics,
+                spread_df=spread_df,
+                current_equity=current_equity,
             )
 
             # Phase E.4 — single mark-to-market final pour equity du jour.
@@ -1019,6 +1035,7 @@ class BacktestEngine:
         state: _RunState,
         candidate_rows: list[pd.Series],
         open_df: pd.DataFrame,
+        high_df: pd.DataFrame | None = None,
         low_df: pd.DataFrame,
         close: pd.DataFrame,
         trade_day: pd.Timestamp,
@@ -1029,6 +1046,7 @@ class BacktestEngine:
         current_equity: float,
         drawdown_allocation_scale: float,
         diagnostics: BacktestDiagnostics,
+        spread_df: pd.DataFrame | None = None,
     ) -> None:
         """Phase E.3 — ouvre les nouvelles positions (gap, sectoral, sizing, slippage)."""
         cfg = self.config
@@ -1098,8 +1116,22 @@ class BacktestEngine:
                 )
                 continue
 
+            # P4 — modèle d'exécution intraday : calcul du prix d'exécution estimé
+            day_high_for_exec = float(high_df.at[trade_day, symbol]) if high_df is not None and symbol in high_df.columns else None
+            day_low_for_exec = float(low_df.at[trade_day, symbol]) if symbol in low_df.columns else None
+            day_close_for_exec = float(close.at[trade_day, symbol]) if symbol in close.columns else None
+            exec_entry_price = compute_execution_price(
+                model=micro.execution_model,
+                side=side,
+                open_price=signal_price,
+                high_price=day_high_for_exec,
+                low_price=day_low_for_exec,
+                close_price=day_close_for_exec,
+            )
+
             # Quick Win 3 — pullback entry (direction-aware)
-            entry_price = signal_price
+            # Le pullback utilise le signal_price (open) comme référence, pas le prix d'exécution
+            entry_price = exec_entry_price
             if cfg.entry_limit_offset_pct > 0:
                 limit_price = compute_pullback_limit_price(side, signal_price, float(cfg.entry_limit_offset_pct))
                 if is_short_side(side):
@@ -1248,7 +1280,19 @@ class BacktestEngine:
             )
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
             extra_slippage_pct = micro.slippage.compute_bps(preliminary_size_usd, adv_usd) / 10_000.0
-            effective_unit_cost = entry_price * (1.0 + cfg.fees_pct + extra_slippage_pct)
+            # P1 — spread réel par ticker comme coût de transaction
+            spread_cost_pct = self._get_spread_bps(
+                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
+            ) / 10_000.0
+            # P3 — commission tiered ou plate
+            if cfg.use_tiered_commission:
+                commission_config = resolve_commission_preset(float(current_equity))
+                # Pour le calcul préliminaire, on utilise le taux seul (le fixe sera ajouté après)
+                commission_rate_pct = commission_config.bps_rate / 10_000.0
+                base_cost_pct = commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct
+            else:
+                base_cost_pct = cfg.fees_pct + extra_slippage_pct + spread_cost_pct
+            effective_unit_cost = entry_price * (1.0 + base_cost_pct)
             if quantity_override is not None:
                 affordable_quantity = (
                     self._normalize_trade_quantity(available_entry_budget / effective_unit_cost)
@@ -1339,11 +1383,22 @@ class BacktestEngine:
 
             # Sprint 2 — direction-aware cash and position creation
             quantity_abs = abs(quantity)
+            # P3 — ajout de la commission fixe tiered après détermination de la quantité
+            entry_notional = quantity_abs * entry_price
+            if cfg.use_tiered_commission:
+                tiered_fixed = commission_config.fixed_per_trade_usd
+                effective_cost_pct = base_cost_pct
+            else:
+                tiered_fixed = 0.0
+                effective_cost_pct = base_cost_pct
+
             if is_short_side(side):
                 # Short sale: credit cash (proceeds from short selling)
-                state.settled_cash += quantity_abs * entry_price - (quantity_abs * entry_price * cfg.fees_pct)
+                # P1+P3 — cost inclut commission tiered + slippage volume + spread réel
+                short_credit = quantity_abs * entry_price * (1.0 - effective_cost_pct) - tiered_fixed
+                state.settled_cash += short_credit
             else:
-                state.settled_cash -= entry_cost
+                state.settled_cash -= entry_cost + tiered_fixed
 
             initial_stop_price, risk_per_share = self._resolve_initial_protection_state(
                 row=row,
@@ -1477,6 +1532,8 @@ class BacktestEngine:
         adv_usd_df: pd.DataFrame | None,
         rng: np.random.Generator | None,
         diagnostics: BacktestDiagnostics,
+        spread_df: pd.DataFrame | None = None,
+        current_equity: float = 0.0,
     ) -> None:
         """Phase E.3 — résout les sorties (TP/TS/initial stop) et applique le settlement."""
         cfg = self.config
@@ -1685,11 +1742,23 @@ class BacktestEngine:
             exit_notional = abs_qty * exit_price
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
             extra_slippage_pct = micro.slippage.compute_bps(exit_notional, adv_usd) / 10_000.0
-            fees_rate = float(cfg.fees_pct) + extra_slippage_pct
+            # P1 — spread réel par ticker comme coût de sortie
+            spread_cost_pct = self._get_spread_bps(
+                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
+            ) / 10_000.0
+            # P3 — commission tiered ou plate en sortie
+            if cfg.use_tiered_commission:
+                exit_commission_config = resolve_commission_preset(float(current_equity))
+                exit_commission_rate_pct = exit_commission_config.bps_rate / 10_000.0
+                fees_rate = exit_commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct
+                exit_fixed_commission = exit_commission_config.fixed_per_trade_usd
+            else:
+                fees_rate = float(cfg.fees_pct) + extra_slippage_pct + spread_cost_pct
+                exit_fixed_commission = 0.0
 
             if short:
-                # Short exit = buy back → cost = qty * exit_price * (1 + fees)
-                exit_cost = abs_qty * exit_price * (1.0 + fees_rate)
+                # Short exit = buy back → cost = qty * exit_price * (1 + fees) + fixed
+                exit_cost = abs_qty * exit_price * (1.0 + fees_rate) + exit_fixed_commission
                 proceeds = -exit_cost  # negative cash flow (buy to cover)
                 if constraints.use_settled_cash_only:
                     settlement_day_idx = day_idx + constraints.cash_settlement_days
@@ -1699,8 +1768,8 @@ class BacktestEngine:
                 else:
                     state.settled_cash -= exit_cost
             else:
-                # Long exit = sell → proceeds = qty * exit_price * (1 - fees)
-                proceeds = abs_qty * exit_price * (1.0 - fees_rate)
+                # Long exit = sell → proceeds = qty * exit_price * (1 - fees) - fixed
+                proceeds = abs_qty * exit_price * (1.0 - fees_rate) - exit_fixed_commission
                 if constraints.use_settled_cash_only:
                     settlement_day_idx = day_idx + constraints.cash_settlement_days
                     state.unsettled_cash += proceeds
@@ -1771,6 +1840,34 @@ class BacktestEngine:
 
         for symbol in symbols_to_close:
             state.positions.pop(symbol, None)
+
+    @staticmethod
+    def _get_spread_bps(
+        spread_df: pd.DataFrame | None,
+        trade_day: pd.Timestamp,
+        symbol: str,
+        *,
+        fallback_bps: float = 5.0,
+    ) -> float:
+        """Lookup du spread bid-ask réel en bps pour un ticker/jour donné.
+
+        Priorité :
+        1. Donnée réelle depuis ``stock_quote_snapshots`` (spread_df pivoté).
+        2. Fallback à ``fallback_bps`` si la donnée est absente.
+
+        La valeur retournée est toujours >= 0.
+        """
+        if spread_df is None or spread_df.empty:
+            return max(float(fallback_bps), 0.0)
+        if symbol not in spread_df.columns or trade_day not in spread_df.index:
+            return max(float(fallback_bps), 0.0)
+        try:
+            value = float(spread_df.at[trade_day, symbol])
+            if np.isfinite(value) and value >= 0:
+                return value
+            return max(float(fallback_bps), 0.0)
+        except (KeyError, ValueError):
+            return max(float(fallback_bps), 0.0)
 
     @staticmethod
     def _get_adv_usd(

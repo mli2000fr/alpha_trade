@@ -990,6 +990,26 @@ def _build_parser() -> argparse.ArgumentParser:
     # ------------------------------------------------------------------
     # Phase C (refactor) — risk overlays (sizing, regime, sectoral, DD breaker, vol-target).
     # ------------------------------------------------------------------
+    # P4 — modèle d'exécution intraday
+    run_p.add_argument(
+        "--execution-model",
+        choices=["next_open", "arrival_price", "twap", "vwap"],
+        default="next_open",
+        help="Modèle de prix d'exécution intraday (P4). next_open = legacy. "
+        "arrival_price = open + slippage directionnel. twap/vwap = prix moyen journalier.",
+    )
+    run_p.add_argument(
+        "--execution-split-threshold-adv-pct",
+        type=float,
+        default=0.0,
+        help="Seuil ADV (ex: 0.01 = 1%%) au-delà duquel l'ordre est échelonné (P4). 0 = désactivé.",
+    )
+    run_p.add_argument(
+        "--execution-arrival-slippage-factor",
+        type=float,
+        default=0.5,
+        help="Facteur de slippage pour arrival_price (P4). 0.5 = demi-range journalière.",
+    )
     run_p.add_argument(
         "--sizing-mode",
         choices=["equal_weight", "conviction_weighted"],
@@ -1504,6 +1524,27 @@ def _apply_pipeline_defensive_defaults_from_preset(
             default=15.0,
         )
 
+    # P2 — microstructure slippage volume-aware : résoudre les défauts depuis le preset capital
+    if (
+        "slippage_base_bps" not in explicit_flags
+        and float(getattr(args, "slippage_base_bps", 0.0) or 0.0) <= 2.0
+    ):
+        args.slippage_base_bps = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_slippage_base_bps",
+            default=2.0,
+        )
+
+    if (
+        "slippage_impact_coef" not in explicit_flags
+        and float(getattr(args, "slippage_impact_coef", 0.0) or 0.0) <= 5.0
+    ):
+        args.slippage_impact_coef = _resolve_pipeline_preset_float(
+            effective_preset,
+            "backtesting_slippage_impact_coef",
+            default=5.0,
+        )
+
     if (
         "max_portfolio_dd_pct" not in explicit_flags
         and float(getattr(args, "max_portfolio_dd_pct", 0.0) or 0.0) <= 0.0
@@ -1680,7 +1721,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.signal_replay import replay_signals
     from backtesting.trading_constraints import build_current_trading_constraints
     from backtesting.simulator import BacktestConfig, BacktestEngine
-    from backtesting.microstructure import MicrostructureConfig, SlippageConfig
+    from backtesting.microstructure import MicrostructureConfig, SlippageConfig, ExecutionModelConfig
     from backtesting.risk_overlay import (
         DrawdownCircuitBreaker,
         RegimeFilterConfig,
@@ -2221,6 +2262,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
         initial_stop_pct=(0.0 if bool(getattr(args, "use_live_protection_logic", True)) else float(args.initial_stop_pct)),
         max_entry_gap_pct=float(args.max_entry_gap_pct),
         intrabar_priority=args.intrabar_priority,
+        execution_model=ExecutionModelConfig(
+            model=getattr(args, "execution_model", "next_open") or "next_open",
+            split_threshold_adv_pct=float(getattr(args, "execution_split_threshold_adv_pct", 0.0) or 0.0),
+            arrival_slippage_factor=float(getattr(args, "execution_arrival_slippage_factor", 0.5) or 0.5),
+        ),
     )
     risk_overlay_cfg = RiskOverlayConfig(
         sizing=SizingConfig(

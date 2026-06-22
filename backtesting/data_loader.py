@@ -205,6 +205,85 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
     return df
 
 
+def load_spreads(
+    engine: Engine,
+    start: date,
+    end: date,
+    *,
+    table_name: str = "stock_quote_snapshots",
+    fallback_spread_bps: float = 5.0,
+) -> pd.DataFrame:
+    """Charge les spreads historiques (bid-ask) par symbole et date.
+
+    Retourne un DataFrame pivoté (index=quote_date, columns=symbol, values=spread_bps)
+    utilisable comme coût de transaction additionnel dans le simulateur.
+
+    Si la table ou la colonne est absente, retourne un DataFrame vide (le simulateur
+    utilisera le fallback).
+    """
+    if not _table_exists(engine, table_name):
+        LOGGER.warning(
+            "Table %s indisponible — spread réel désactivé, fallback à %.1f bps.",
+            table_name, fallback_spread_bps,
+        )
+        return pd.DataFrame()
+
+    columns = _get_table_columns(engine, table_name)
+    if "spread_bps" not in columns:
+        LOGGER.warning(
+            "Colonne spread_bps absente de %s — fallback à %.1f bps.",
+            table_name, fallback_spread_bps,
+        )
+        return pd.DataFrame()
+
+    date_col = "quote_date" if "quote_date" in columns else "date"
+    if date_col not in columns:
+        LOGGER.warning(
+            "Aucune colonne date dans %s — spread réel désactivé.", table_name,
+        )
+        return pd.DataFrame()
+
+    query = text(f"""
+        SELECT symbol,
+               `{date_col}` AS quote_date,
+               spread_bps
+        FROM {table_name}
+        WHERE `{date_col}` BETWEEN :start AND :end
+          AND spread_bps IS NOT NULL
+          AND spread_bps >= 0
+        ORDER BY `{date_col}`, symbol
+    """)
+    with engine.connect() as conn:
+        df = pd.read_sql(
+            query,
+            conn,
+            params={"start": start, "end": end},
+            parse_dates=["quote_date"],
+        )
+
+    if df.empty:
+        LOGGER.info("Aucune donnée de spread dans %s sur [%s → %s].",
+                     table_name, start, end)
+        return pd.DataFrame()
+
+    # Pivoter pour obtenir une matrice (date × symbole)
+    spread_df = df.pivot_table(
+        index="quote_date",
+        columns="symbol",
+        values="spread_bps",
+        aggfunc="first",
+    )
+    # Forward-fill pour les jours sans snapshots (le spread change peu jour à jour)
+    spread_df = spread_df.ffill().fillna(fallback_spread_bps)
+    LOGGER.info(
+        "Spreads chargés : %d jours, %d symboles, médiane=%.1f bps, [%s → %s]",
+        len(spread_df), len(spread_df.columns) if not spread_df.empty else 0,
+        float(spread_df.stack().median()) if not spread_df.empty else fallback_spread_bps,
+        start, end,
+    )
+    return spread_df
+
+
 def load_scores(
     engine: Engine,
     start: date,

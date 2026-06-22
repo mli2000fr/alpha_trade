@@ -62,6 +62,7 @@ Le pipeline couvre les besoins suivants :
 | `event_sentiment/` | Pipeline news, FinBERT, agrégations ticker / secteur |
 | `risk_management/` | Sizing, contraintes, circuit breaker, portefeuille cible |
 | `execution_engine/` | Exécution canonique : snapshot des targets, requests, ordres broker, fills observés, positions/lots, réconciliation, TCA ; watcher post-run secondaire |
+| `backtesting/` | Backtest PIT, backfill, calibration, **coûts granulaires** (spread réel, slippage volume-aware, commission tiercée, exécution intraday P4) |
 | `corporate_actions/` | Sync des événements et application sur les positions |
 | `modelFactory/` | Entraînement et prédiction LSTM par symbole |
 | `ihm/` | IHM Streamlit de supervision et de consultation |

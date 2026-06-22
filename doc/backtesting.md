@@ -51,9 +51,11 @@ Le présent document décrit l’état **réellement implémenté dans le code**
 | `backtesting/fidelity.py` | diagnostics PIT + `fidelity_manifest.json` |
 | `backtesting/resilience.py` | politiques `ml_mode`, `sentiment_mode`, stratégie PIT ML |
 | `backtesting/signal_replay.py` | reconstruction des signaux et fusion conviction |
-| `backtesting/simulator.py` | simulateur journalier stateful (`signal J -> entrée J+1 open`) |
-| `backtesting/microstructure.py` | slippage volume-aware, gap filter, initial stop, intrabar priority |
+| `backtesting/simulator.py` | simulateur journalier stateful (`signal J -> entrée J+1 open`), **coûts complets P1/P3** (spread réel par ticker + commission tiered) |
+| `backtesting/microstructure.py` | slippage volume-aware (P2), gap filter, initial stop, intrabar priority, **modèle d'exécution intraday P4** (`arrival_price`, `twap`, `vwap`) |
 | `backtesting/risk_overlay.py` | sizing avancé, filtre régime, cap sectoriel, drawdown breaker, vol target |
+| `backtesting/trading_constraints.py` | contraintes de compte + **TieredCommissionConfig P3** (commission fixe + taux dégressif par tranche) |
+| `backtesting/data_loader.py` | chargement OHLCV, scores PIT, prédictions ML, **spreads PIT P1** (`load_spreads()` depuis `stock_quote_snapshots`) |
 | `backtesting/risk_bridge.py` | bridge Phase 2 vers `risk_management` |
 | `backtesting/execution_bridge.py` | bridge Phase 2 vers `execution_engine` |
 | `backtesting/execution_replay.py` | Phase 3 : replay explicite des entrées |
@@ -365,11 +367,24 @@ separement pour les longs et les shorts.
 
 #### Coûts
 
-- `--commission-bps`
-- `--slippage-bps`
+- `--commission-bps` — commission plate en bps (ignorée si tiered commission actif)
+- `--slippage-bps` — slippage générique en bps
 - `--fees` (déprécié mais encore accepté)
+- `--use-tiered-commission` — active la **commission tiercée P3** (fixe + taux par tranche de capital)
 
-Le `fees_pct` effectif vaut `(commission_bps + slippage_bps) / 10_000`.
+**P1 — Spread réel** : chargé automatiquement depuis `stock_quote_snapshots` via
+`load_spreads()` et passé au `BacktestEngine.run(spread_df=...)`. Si la table
+est indisponible, fallback au `slippage_bps`.
+
+**Formule legacy** : `fees_pct = (commission_bps + slippage_bps) / 10_000`.
+
+**Formule P1+P2+P3 activée** :
+```
+coût_total = commission_tiercée(taux + fixe_usd)
+           + slippage_bps / 10000
+           + extra_slippage_volume_aware  # sqrt(size/ADV) selon capital_presets
+           + spread_réel_ticker           # depuis stock_quote_snapshots
+```
 
 #### Contraintes de compte
 
@@ -571,12 +586,31 @@ separement pour les longs et les shorts.
 
 Flags disponibles :
 
-- `--slippage-model fixed|linear|sqrt`
-- `--slippage-base-bps`
-- `--slippage-impact-coef`
+- `--slippage-model fixed|linear|sqrt` (défaut `sqrt` — P2)
+- `--slippage-base-bps` (défaut résolu depuis le preset capital — P2)
+- `--slippage-impact-coef` (défaut résolu depuis le preset capital — P2)
 - `--initial-stop-pct`
 - `--max-entry-gap-pct`
 - `--intrabar-priority conservative|tp_first|ts_first|random`
+
+### P4 — Exécution intraday
+
+- `--execution-model next_open|arrival_price|twap|vwap` (défaut `next_open`)
+- `--execution-split-threshold-adv-pct` (seuil ADV pour échelonnement, 0 = désactivé)
+- `--execution-arrival-slippage-factor` (facteur de slippage directionnel, défaut 0.5 = demi-range)
+
+### P2 — Défauts microstructure par tranche de capital
+
+Les valeurs par défaut de `--slippage-base-bps` et `--slippage-impact-coef` sont
+résolues depuis `capital_presets.yaml` selon l'equity du compte :
+
+| Tranche | base_bps | impact_coef |
+|---|---|---|
+| Micro (≤$2K) | 5.0 | 5.0 |
+| Small ($2K–$10K) | 4.0 | 4.0 |
+| Intermédiaire ($10K–$25K) | 2.5 | 3.0 |
+| Diversifié ($25K–$50K) | 2.0 | 2.5 |
+| Standard (>$50K) | 1.5 | 2.0 |
 
 #
 
@@ -965,7 +999,7 @@ pendant le backtest via les artefacts JSON, pas écrits en base.
 | Colonne | Backtest (`load_scores`) | ML (`modelFactory`) |
 |---|---|---|
 | `candidate_rank`, `selection_explanation`, `earnings_blackout` | ✅ (depuis juin 2026) | ✅ |
-| `market_cap`, `beta_126`, `spread_bps`, `days_to_earnings`, `normalized_*`, `*_neutralized`, `*_component`, `atr_pct_20`, `weekly_trend_score`, `high_52w_proximity`, `volatility_ratio` | ❌ | ✅ |
+| `market_cap`, `beta_126`, `spread_bps` (filtre + **coût P1**), `days_to_earnings`, `normalized_*`, `*_neutralized`, `*_component`, `atr_pct_20`, `weekly_trend_score`, `high_52w_proximity`, `volatility_ratio` | ❌ | ✅ |
 | `final_score`, `final_score_sentiment`, `sentiment_*`, `company_idio_*`, `macro_regime_*`, `quant_component` | ✅ | ❌ |
 | `walk_forward_*`, `calibration_*` | ❌ (utilise artefacts JSON) | ❌ |
 
@@ -983,7 +1017,7 @@ En revanche, il ne remplace pas le live :
 
 - pas d’ordres broker réels ;
 - pas de fills observés réels ;
-- pas de runtime intraday complet ;
+- **P4** : modèle d'exécution intraday (`arrival_price`, `twap`, `vwap`) mais sans barres intraday réelles ;
 - pas de réconciliation broker native dans la boucle PnL ;
 - pas de reconstruction complète des étapes live 1→10 à chaque séance de backtest.
 
