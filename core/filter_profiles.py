@@ -21,10 +21,14 @@ Phase 3.3.c/d ajoute deux extensions IEX :
 - ``market_cap_max_age_days`` : TTL appliqué au filtre ``market_cap`` à
   partir de ``stock_metadata.market_cap_refreshed_at`` (alimenté en Phase
   3.1.e). ``None`` = TTL désactivé.
+
+Phase 4 — ADV minimum adaptatif (LiquiditeDynamique.md P4) :
+:func:`with_adaptive_adv` permet de dériver un profil dont le seuil
+``min_avg_dollar_volume_20d`` est ajusté dynamiquement à la taille du compte.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
@@ -235,6 +239,24 @@ class StrictFilterProfile:
                 raise ValueError(f"Colonne manquante pour appliquer {self.name}: {earnings_blackout_col}")
             filtered = filtered[(filtered[earnings_blackout_col].fillna(0).astype(int)) == 0]
         return filtered.copy()
+
+
+def with_adaptive_adv(
+    base: StrictFilterProfile,
+    equity: float,
+    max_position_weight: float = 0.10,
+    target_pct_of_adv: float = 0.01,
+) -> StrictFilterProfile:
+    """Dérive un profil dont ``min_avg_dollar_volume_20d`` est adapté à l'equity.
+
+    Le nouveau seuil = max(seuil adaptatif, seuil statique du profil de base).
+    On ne descend **jamais** en dessous du seuil canonique.
+    """
+    from common.capital_presets import adaptive_min_adv
+
+    adaptive = adaptive_min_adv(equity, max_position_weight, target_pct_of_adv)
+    new_threshold = max(adaptive, base.min_avg_dollar_volume_20d)
+    return replace(base, min_avg_dollar_volume_20d=new_threshold)
 
 
 STRICT_SWING_CASH_FILTERS = StrictFilterProfile(

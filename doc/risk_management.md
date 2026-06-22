@@ -1,6 +1,6 @@
 # Risk Management — Guide d'usage
 
-> Dernière mise à jour : 2026-06-22 — Priorité 3 : modèle factoriel CWMS livré
+> Dernière mise à jour : 2026-06-22 — Contrainte de liquidité dynamique (P1/P3/P4) livrée
 
 ## Objectif
 
@@ -217,6 +217,44 @@ Deux nouveaux trackers side-aware dans `risk_management/concentration.py` :
 |---|---|
 | `SymbolTradeTracker` | Limite le nombre d'entrées par symbole sur une fenêtre glissante (défaut : 5 trades / 180 jours). Les entrées long et short sont comptabilisées **séparément**. |
 | `ConsecutiveLossTracker` | Blackliste temporairement un symbole après N pertes consécutives sur le même side (défaut : 3). Uniquement les pertes **réalisées** (PnL ≤ 0). |
+
+### 4.2.quinquies Contrainte de liquidité dynamique (P1/P3/P4 — nouveau juin 2026)
+
+Le module intègre désormais une **contrainte de liquidité** liant la taille de position au volume quotidien moyen (ADV 20j). Voir le document de conception : `prompt/todo/LiquiditeDynamique.md`.
+
+**P1 — Garde-fou position ≤ X% ADV** :
+
+- Nouveau champ `RiskConfig.max_position_pct_of_adv: float | None` (défaut `None` = désactivé).
+- Exemple : `0.01` = une position ne peut pas dépasser 1% de l'ADV 20j du ticker.
+- La contrainte est appliquée dans `ConstraintChecker.check()` **après** toutes les autres contraintes (weight, secteur, exposure).
+- Si la position dépasse le seuil, elle est **réduite** (pas rejetée), avec un log `INFO`.
+- Code de décision : `CONSTRAINT_MAX_POSITION_PCT_OF_ADV`.
+
+**P3 — Warning ADV agrégé portefeuille** :
+
+- Dans `PortfolioBuilder.build()`, après construction du portefeuille : si le notionnel total > 5% de l'ADV agrégé moyen, un `LOGGER.warning` est émis.
+- Ne bloque pas les entrées — c'est un signal d'alerte pour l'opérateur.
+
+**P4 — ADV minimum adaptatif** :
+
+- `common/capital_presets.py` : `adaptive_min_adv(equity, max_position_weight=0.10, target_pct_of_adv=0.01)` retourne le seuil ADV minimum pour qu'une position max soit ≤ 1% de l'ADV.
+- `core/filter_profiles.py` : `with_adaptive_adv(base_profile, equity)` dérive un `StrictFilterProfile` avec un seuil ADV adapté.
+- Le seuil adaptatif ne descend **jamais** en dessous du seuil canonique ($30M).
+
+**Donnée ADV** :
+
+- `PriceInfo` embarque désormais `adv_usd: float | None` (None si donnée indisponible → contrainte ignorée).
+- **Live** : `db_io.load_prices_asof()` calcule l'ADV 20j depuis `stock_bars_daily` (close × volume).
+- **Backtest** : `risk_bridge._build_prices()` accepte `volume_df` et calcule l'ADV 20j aligné sur les index close/volume.
+
+**Activation** : dans `config.yaml`, section `risk_management` :
+
+```yaml
+risk_management:
+  max_position_pct_of_adv: 0.01   # 1% de l'ADV max par position
+```
+
+(Laisser `null` ou omettre pour désactiver — rétrocompatible.)
 
 Ces trackers sont utilisables à la fois par le backtest (`backtesting/simulator.py`) et le pipeline live (`risk_management/portfolio_builder.py`).
 

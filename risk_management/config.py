@@ -130,6 +130,11 @@ class RiskConfig:
     max_tickers_per_sector: int | None = None
     allow_fractional_shares: bool = False
 
+    # --- Liquidité dynamique (LiquiditeDynamique.md P1) ---
+    # Position max en % de l'ADV 20j du ticker. None = contrainte désactivée.
+    # Ex: 0.01 = une position ne peut pas dépasser 1% du volume quotidien.
+    max_position_pct_of_adv: float | None = None
+
     def __post_init__(self) -> None:
         if self.account_equity <= 0:
             raise ValueError("account_equity doit être > 0.")

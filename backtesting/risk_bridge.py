@@ -275,6 +275,7 @@ def _build_prices(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
     low_df: pd.DataFrame,
+    volume_df: pd.DataFrame | None = None,
     snapshot_date: date,
     symbols: Iterable[str],
 ) -> dict[str, PriceInfo]:
@@ -283,6 +284,7 @@ def _build_prices(
     close_hist = close_df.loc[close_df.index <= snapshot_ts]
     high_hist = high_df.loc[high_df.index <= snapshot_ts]
     low_hist = low_df.loc[low_df.index <= snapshot_ts]
+    vol_hist = None if volume_df is None else volume_df.loc[volume_df.index <= snapshot_ts]
     for symbol in symbols:
         if symbol not in close_hist.columns:
             continue
@@ -295,12 +297,25 @@ def _build_prices(
             low_hist[symbol].dropna() if symbol in low_hist.columns else pd.Series(dtype=float),
             symbol_close,
         )
+        # ADV 20j : moyenne(close × volume) sur la fenêtre glissante
+        adv_usd = None
+        if vol_hist is not None and symbol in vol_hist.columns:
+            symbol_vol = vol_hist[symbol].dropna()
+            # Aligner close et volume sur les mêmes index
+            common_idx = symbol_close.index.intersection(symbol_vol.index)
+            if len(common_idx) >= 20:
+                aligned_close = symbol_close.loc[common_idx]
+                aligned_vol = symbol_vol.loc[common_idx]
+                dollar_vol = aligned_close * aligned_vol
+                adv_usd = float(dollar_vol.tail(20).mean())
+
         prices[symbol] = PriceInfo(
             symbol=symbol,
             last_close=last_close,
             atr_20=atr_20,
             price_asof_date=snapshot_date,
             atr_asof_date=snapshot_date if atr_20 is not None else None,
+            adv_usd=adv_usd,
         )
     return prices
 
@@ -407,6 +422,7 @@ def build_phase2_risk_result(
     close_df: pd.DataFrame,
     high_df: pd.DataFrame,
     low_df: pd.DataFrame,
+    volume_df: pd.DataFrame | None = None,
     risk_config: RiskConfig,
     score_column: str | None = None,
     correlation_lookback_days: int | None = None,
@@ -607,6 +623,7 @@ def build_phase2_risk_result(
                 close_df=close_df,
                 high_df=high_df,
                 low_df=low_df,
+                volume_df=volume_df,
                 snapshot_date=snapshot_date,
                 symbols=symbols,
             )

@@ -598,7 +598,7 @@ class PortfolioBuilder:
                 )
                 continue
 
-            approved = normalize_share_quantity(checker.check_position_size(ec.symbol, sizing.proposed_shares, pi.last_close))
+            approved = normalize_share_quantity(checker.check_position_size(ec.symbol, sizing.proposed_shares, pi.last_close, adv_usd=pi.adv_usd))
             if approved < minimum_viable_shares:
                 reason = checker.get_last_decision_reason()
                 reason_code = checker.get_last_decision_reason_code()
@@ -700,6 +700,24 @@ class PortfolioBuilder:
                 phase="build_portfolio",
                 item=ec.symbol,
             )
+
+        # ── P3 : Contrainte ADV agrégée au niveau portefeuille ──────────
+        accepted_entries = [e for e in entries if e.decision in (Decision.ACCEPTED, Decision.REDUCED)]
+        if accepted_entries:
+            advs = [
+                prices[entry.symbol].adv_usd
+                for entry in accepted_entries
+                if entry.symbol in prices and prices[entry.symbol].adv_usd is not None
+            ]
+            if advs:
+                total_notional = sum(e.target_notional for e in accepted_entries)
+                avg_adv = sum(advs) / len(advs)
+                if avg_adv > 0 and total_notional > 0.05 * avg_adv:
+                    LOGGER.warning(
+                        "Portfolio notional ($%.0f) > 5%% ADV agrégé ($%.0f) — risque de liquidité en cas de liquidation",
+                        total_notional,
+                        avg_adv,
+                    )
 
         return entries
 

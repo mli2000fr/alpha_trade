@@ -18,6 +18,7 @@ _REASON_TO_CODE = {
     "max_position_weight atteint": DecisionReasonCode.CONSTRAINT_MAX_POSITION_WEIGHT,
     "max_sector_weight atteint": DecisionReasonCode.CONSTRAINT_MAX_SECTOR_WEIGHT,
     "min_position_notional non atteint": DecisionReasonCode.CONSTRAINT_MIN_POSITION_NOTIONAL,
+    "max_position_pct_of_adv atteint": DecisionReasonCode.CONSTRAINT_MAX_POSITION_PCT_OF_ADV,
 }
 
 
@@ -60,6 +61,8 @@ class ConstraintChecker:
         proposed_shares: float,
         price: float,
         state: PortfolioState,
+        *,
+        adv_usd: float | None = None,
     ) -> tuple[float, str]:
         """Retourne (approved_shares, reason).  reason == 'OK' si aucune réduction."""
         equity = self._cfg.account_equity
@@ -79,6 +82,7 @@ class ConstraintChecker:
                 return 0.0, "max_tickers_per_sector atteint"
 
         notional = proposed_shares * price
+        original_notional = notional
 
         # max gross exposure
         if (state.total_notional + notional) / equity > self._cfg.max_gross_exposure:
@@ -113,6 +117,23 @@ class ConstraintChecker:
             if proposed_shares < minimum_viable_shares:
                 return 0.0, "max_sector_weight atteint"
             reduction_reason = "max_sector_weight atteint"
+
+        # ── Liquidité dynamique : position ≤ X% de l'ADV (P1) ──────────
+        if self._cfg.max_position_pct_of_adv is not None and adv_usd is not None and adv_usd > 0:
+            max_notional_from_adv = adv_usd * self._cfg.max_position_pct_of_adv
+            if notional > max_notional_from_adv:
+                proposed_shares = self._normalize_approved_shares(max_notional_from_adv / price)
+                notional = proposed_shares * price
+                if proposed_shares < minimum_viable_shares:
+                    return 0.0, "max_position_pct_of_adv atteint"
+                reduction_reason = "max_position_pct_of_adv atteint"
+                LOGGER.info(
+                    "Position réduite par contrainte ADV pour %s : $%.0f → $%.0f (%.1f%% ADV)",
+                    symbol,
+                    original_notional,
+                    notional,
+                    self._cfg.max_position_pct_of_adv * 100,
+                )
 
         # min position notional (effectif — `enforce_min_notional` du régime prioritaire)
         if notional < self._cfg.effective_min_notional:

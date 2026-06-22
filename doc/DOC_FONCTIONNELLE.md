@@ -1,6 +1,6 @@
 # Alpha Trade — Documentation Fonctionnelle
 
-> *Version : 0.4.0 — Dernière mise à jour : 2026-06-22 (Priorité 3 — Modèle factoriel CWMS)*
+> *Version : 0.4.1 — Dernière mise à jour : 2026-06-22 (Contrainte de liquidité dynamique P1/P3/P4)*
 
 <!-- primary_provider: eodhd -->
 
@@ -43,6 +43,7 @@
 - **S8-bis** *(post-PDT FINRA, juin 2026)* : mise à jour IHM suite à la suppression de la règle PDT par la FINRA le 4 juin 2026. Défaut `execution_swing_only` passé de `True` à `False` dans l'IHM, step 1 dynamique selon le provider actif (EODHD/Alpaca), validation `__post_init__` dans `PipelineLaunchOptions`. ✅ Livré.
 - **S9** *(juin 2026)* : alignement IHM/presets finalisé. Bandes d'avertissement dans l'IHM quand `swing_only=True` (obsolète), infobulles mentionnant le changement réglementaire FINRA 2026-06-04. ✅ Livré.
 - **S10** *(juin 2026)* : **Impact Marché P1-P4** — modélisation complète des coûts de transaction dans le backtest. ✅ Livré.
+- **S11** *(juin 2026)* : **Liquidité Dynamique P1/P3/P4** — contrainte position/ADV, warning agrégé portefeuille, seuil ADV adaptatif. ✅ Livré.
 
 ### Plans en cours (v2)
 
@@ -52,6 +53,7 @@
 | **Plan ML v2 — Ternaire long/flat/short** (Sprint 1-7) | 🔄 En cours | `modelFactory/features.py` (`target_mode="ternary"`), `model.py` (CrossEntropyLoss 3 classes), `db_registry.py` (colonnes `predicted_side`, `proba_long/flat/short`) |
 | **Priorité 3 — Modèle de risque factoriel CWMS** | ✅ Livré (juin 2026) | `risk_management/factor_model.py` — Expositions factorielles, covariance EWMA, décomposition risque, contraintes, filtre corrélation factoriel. Intégré live + backtest. 33 tests. |
 | **Impact Marché P1-P4** | ✅ Livré (juin 2026) | P1 : spread réel ticker via `stock_quote_snapshots`. P2 : slippage volume-aware activé par défaut par tranche de capital. P3 : commission tiercée (`TieredCommissionConfig`). P4 : modèle d'exécution intraday (`arrival_price`/`twap`/`vwap`). |
+| **Liquidité Dynamique P1/P3/P4** | ✅ Livré (juin 2026) | P1 : contrainte `max_position_pct_of_adv` dans le `ConstraintChecker`. P3 : warning ADV agrégé portefeuille. P4 : `adaptive_min_adv()` + `with_adaptive_adv()`. Voir `prompt/todo/LiquiditeDynamique.md`. |
 
 > ⚠️ Les plans v2 ne sont pas encore validés en production. Le comportement par défaut reste **long-only** avec cible binaire. Les fonctionnalités short/ternaire sont opt-in.
 
@@ -179,7 +181,7 @@ Sur la page backtest, cette évolution s'accompagne d'un enrichissement du table
 Le scanner quotidien et les reruns/backtests "petit compte cash swing" utilisent désormais systématiquement le même profil strict partagé. Les seuils durcis utilisés sont :
 
 - `close >= 10 $`
-- `avg_dollar_volume_20d >= 30 M$`
+- `avg_dollar_volume_20d >= 30 M$`  *(seuil canonique ; peut être relevé dynamiquement via `with_adaptive_adv()` — voir §2.5 « Liquidité dynamique »)*
 - `volatility_ratio <= 0.90`
 - `relative_strength_index >= 100`
 - `close > MA200`
@@ -232,6 +234,7 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 - **Sizing Kelly** (optionnel) : fraction Kelly pondérée par probabilité prédite et win rate historique
 - **Score de conviction** : combinaison score quantitatif (40%) + probabilité prédiction ML (60%)
 - Tri des candidats par conviction décroissante
+- **Contrainte de liquidité** (nouveau) : chaque position est plafonnée à `max_position_pct_of_adv` × ADV 20j du ticker. Exemple : `0.01` = max 1% du volume quotidien. Activé par configuration, rétrocompatible (désactivé par défaut).
 
 ### 2.5 Gestion du risque
 
@@ -252,6 +255,7 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 | `leverage.max_leverage` | 1.0 (désactivé) à 2.0 max | Levier notionnel max autorisé côté exécution, borné par le buying power broker |
 | `correlation_threshold` | 0.80 | Corrélation max entre deux positions retenues |
 | `risk_per_trade_pct` | 1% | Budget de risque par trade |
+| `max_position_pct_of_adv` | `null` (désactivé) | Position max en % de l'ADV 20j du ticker. Ex: `0.01` = 1% du volume quotidien. |
 
 **Circuit breaker** :
 
@@ -297,6 +301,18 @@ graph TD
 > 🔴 = Nouvelles étapes (Priorité 3). Désactivées par défaut, activation via `enable_factor_model: true`.
 
 **Formule clé** : $\\Sigma_{port} = \\mathbf{B} \\cdot \\mathbf{F} \\cdot \\mathbf{B}^T + \\mathbf{S}$ — le risque total se décompose en risque systématique (facteurs communs) + risque spécifique (idiosyncratique).
+
+**Contrainte de liquidité dynamique** *(nouveau — juin 2026)* : garantit qu'une position individuelle ne dépasse jamais une fraction configurable du volume quotidien du ticker (ADV 20j). Voir `prompt/todo/LiquiditeDynamique.md`.
+
+| Priorité | Statut | Description |
+|---|---|---|
+| **P1** | ✅ Livré | Contrainte `max_position_pct_of_adv` dans `ConstraintChecker.check()` — réduit la position si elle dépasse X% de l'ADV. Code décision : `CONSTRAINT_MAX_POSITION_PCT_OF_ADV`. Rétrocompatible (`null` = désactivé). |
+| **P3** | ✅ Livré | Warning passif dans `PortfolioBuilder.build()` si le notionnel total du portefeuille > 5% de l'ADV agrégé moyen. |
+| **P4** | ✅ Livré | `adaptive_min_adv(equity)` dans `common/capital_presets.py` — calcule le seuil ADV minimum pour qu'une position max ≤ 1% de l'ADV. `with_adaptive_adv()` dans `core/filter_profiles.py` dérive un profil de filtre adapté à la taille du compte. |
+
+**Principe** : pour un compte à $100K avec `max_position_weight=10%` et `max_position_pct_of_adv=1%`, une position de $10K sur un ticker à $30M d'ADV représente 0.033% du volume quotidien — parfaitement liquide. Si le compte passe à $500K ou que `max_position_weight` est relevé à 25%, la contrainte devient active automatiquement.
+
+**Donnée ADV** : le champ `PriceInfo.adv_usd` est alimenté automatiquement : en live depuis `stock_bars_daily` (close × volume, 20j), en backtest depuis la matrice `volume_df` passée au bridge risk. Si absent (`None`), la contrainte est silencieusement ignorée.
 
 ### 2.6 Alertes / notifications
 

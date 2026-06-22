@@ -1,8 +1,8 @@
 # Contrainte de Liquidité Dynamique — Position Size vs ADV
 
 > **Date** : 2026-06-22
-> **Statut** : ⚠️ ADV filtré mais pas contraint — risque modéré pour petits comptes, critique pour comptes > $100K
-> **Verdict** : Le filtre ADV est présent ($30M minimum), mais il n'y a **aucune contrainte liant la taille de position au volume quotidien**. Pour les petits comptes c'est acceptable, mais le code ne se protège pas contre un scaling futur.
+> **Statut** : ✅ P1, P3, P4 implémentés (2026-06-22). P2 non retenu (redondant avec P1).
+> **Verdict** : Le filtre ADV est présent ($30M minimum), et désormais une **contrainte explicite** position/ADV existe dans le `ConstraintChecker`.
 
 ---
 
@@ -254,27 +254,43 @@ Exemples :
 
 ---
 
-## 6. Synthèse
+## 6. Synthèse (mise à jour post-implémentation 2026-06-22)
 
 | Point | Statut | Détail |
 |---|---|---|
 | Filtre ADV minimum ($30M) | ✅ Présent | Élimine les penny stocks et micro-caps |
 | Filtre market cap ($2B) | ✅ Présent | Redondance partielle avec ADV |
 | ADV utilisé pour slippage | ✅ Présent | Modèle sqrt Almgren-Chriss |
-| **Contrainte position ≤ X% ADV** | ❌ **Absent** | Risk si max_position_weight > 10% ou compte > $250K |
-| **Kelly réduit par ADV** | ❌ **Absent** | Kelly peut théoriquement surdimensionner |
-| **ADV minimum adaptatif** | ❌ **Absent** | Seuil fixe, pas lié à la taille du compte |
+| **Contrainte position ≤ X% ADV** | ✅ **P1 implémenté** | `max_position_pct_of_adv` dans `RiskConfig` + `ConstraintChecker.check()` |
+| **Kelly réduit par ADV** | ❌ Non retenu | Redondant avec P1 — le `ConstraintChecker` capture déjà tout cas de dépassement |
+| **ADV agrégé portefeuille** | ✅ **P3 implémenté** | `LOGGER.warning` dans `PortfolioBuilder.build()` si notional > 5% ADV agrégé |
+| **ADV minimum adaptatif** | ✅ **P4 implémenté** | `adaptive_min_adv()` dans `common/capital_presets.py` + `with_adaptive_adv()` dans `core/filter_profiles.py` |
 
-### Verdict : ⚠️ Protection suffisante pour le scope actuel, mais fragile
+### Fichiers modifiés
 
-Pour les **petits comptes (< $100K)** que le système cible, le filtre ADV à $30M combiné au `max_position_weight` de 10% garantit que la position ne dépasse jamais ~0.03% de l'ADV. C'est parfaitement liquide.
+| Fichier | Modification |
+|---|---|
+| `risk_management/models.py` | `PriceInfo` + champ `adv_usd: float \| None` |
+| `risk_management/enums.py` | + `CONSTRAINT_MAX_POSITION_PCT_OF_ADV` |
+| `risk_management/config.py` | `RiskConfig` + `max_position_pct_of_adv: float \| None` |
+| `risk_management/constraints.py` | `ConstraintChecker.check()` + contrainte ADV (P1) + reason mapping |
+| `risk_management/risk_checker.py` | `check_position_size()` + param `adv_usd=` |
+| `risk_management/portfolio_builder.py` | Passe `adv_usd` au checker + P3 warning agrégé |
+| `common/capital_presets.py` | + `adaptive_min_adv()` + `resolve_adaptive_liquidity_threshold()` (P4) |
+| `core/filter_profiles.py` | + `with_adaptive_adv()` (P4) |
+| `risk_management/db_io.py` | Live : `load_prices_asof()` calcule l'ADV 20j depuis `stock_bars_daily` |
+| `backtesting/risk_bridge.py` | Backtest : `_build_prices()` + `volume_df`, calcule ADV 20j |
+| `backtesting/cli/_impl.py` | Backtest : passe `volume_df=pivoted.get("volume")` |
 
-**Mais le code n'a pas de contrainte explicite**, ce qui signifie que :
-- Si quelqu'un monte `max_position_weight` à 25%, rien ne l'arrête
-- Si le compte passe à $500K, les positions deviennent significatives
-- Si on abaisse le filtre ADV à $5M pour élargir l'univers, le risque explose
+### Verdict final : ✅ Protection complète
 
-**Recommandation** : ajouter la contrainte `max_position_pct_of_adv` (P1) comme filet de sécurité, même si elle n'est pas contraignante dans le régime actuel. C'est une protection contre les futures modifications de paramètres.
+- **P1** : contrainte dure `position ≤ max_position_pct_of_adv × ADV` dans le `ConstraintChecker`. Activée dès que `max_position_pct_of_adv` est défini dans la config (ex: `0.01` pour 1%).
+- **P3** : warning passif si le notionnel total du portefeuille dépasse 5% de l'ADV agrégé.
+- **P4** : seuil ADV minimum adaptatif via `adaptive_min_adv(equity)` — utilisable dans l'IHM/pipeline pour ajuster dynamiquement le filtre d'éligibilité.
+
+Pour les **petits comptes (< $100K)** avec `max_position_pct_of_adv=0.01`, la contrainte n'est pas contraignante (position max ~0.03% ADV). Elle devient active automatiquement si le compte grossit ou si les paramètres changent.
+
+**Note** : P2 n'a pas été implémenté car redondant — le `ConstraintChecker` (P1) est exécuté après le `KellySizer` dans `PortfolioBuilder.build()`, donc toute position surdimensionnée par Kelly est de toute façon réduite par P1.
 
 ---
 

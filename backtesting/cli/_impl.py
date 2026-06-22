@@ -2142,6 +2142,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 close_df=pivoted["close"],
                 high_df=pivoted["high"],
                 low_df=pivoted["low"],
+                volume_df=pivoted.get("volume"),
                 risk_config=phase2_risk_config,
                 score_column=None if args.score_column == "auto" else args.score_column,
                 market_regimes_config=_mr_cfg_for_bt,

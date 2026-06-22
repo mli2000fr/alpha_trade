@@ -32,7 +32,10 @@ class RiskCheckerImpl:
         self._last_decision_reason_code = DecisionReasonCode.OK
 
     # --- Protocol RiskChecker -------------------------------------------
-    def check_position_size(self, symbol: str, proposed_shares: float, price: float) -> float:
+    def check_position_size(
+        self, symbol: str, proposed_shares: float, price: float,
+        *, adv_usd: float | None = None,
+    ) -> float:
         """Retourne le nombre de parts autorisé (<= proposed_shares)."""
         if self._cb.is_active():
             LOGGER.warning("Circuit breaker actif — position rejetee pour %s.", symbol)
@@ -46,6 +49,7 @@ class RiskCheckerImpl:
             proposed_shares=proposed_shares,
             price=price,
             state=self._state,
+            adv_usd=adv_usd,
         )
         self._last_decision_reason = reason
         self._last_decision_reason_code = self._constraints.reason_to_code(reason)

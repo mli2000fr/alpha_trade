@@ -47,6 +47,8 @@ class DecisionReasonCode(StrEnum):
     # Factor risk model (Priorité 3)
     FACTOR_CONSTRAINT_VIOLATION = "factor_constraint_violation"
     FACTOR_CORRELATION_FILTER = "factor_correlation_filter"
+    # Liquidité dynamique (LiquiditeDynamique.md P1)
+    CONSTRAINT_MAX_POSITION_PCT_OF_ADV = "constraint_max_position_pct_of_adv"
 
 
 __all__ = [

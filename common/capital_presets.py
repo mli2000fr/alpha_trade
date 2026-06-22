@@ -335,6 +335,50 @@ def build_screener_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str,
     }
 
 
+# ---------------------------------------------------------------------------
+# P4 — ADV minimum adaptatif (LiquiditeDynamique.md)
+# ---------------------------------------------------------------------------
+
+
+def adaptive_min_adv(equity: float, max_position_weight: float = 0.10, target_pct_of_adv: float = 0.01) -> float:
+    """ADV minimum pour qu'une position ≤ *target_pct_of_adv* de l'ADV.
+
+    .. math::
+
+        \\text{min\\_adv} = \\frac{\\text{equity} \\times \\text{max\\_position\\_weight}}{\\text{target\\_pct\\_of\\_adv}}
+
+    Exemples (target_pct_of_adv = 1% = 0.01, max_position_weight = 10%) :
+
+    - $2K  compte → ADV ≥ $20K
+    - $100K compte → ADV ≥ $1M
+    - $500K compte → ADV ≥ $5M
+
+    Le résultat est arrondi au million supérieur pour rester lisible.
+    """
+    max_position = equity * max_position_weight
+    raw = max_position / target_pct_of_adv
+    # Arrondi au million supérieur, minimum $1M pour éviter les micro-caps
+    return max(1_000_000.0, float(int((raw + 999_999.0) / 1_000_000.0) * 1_000_000.0))
+
+
+def resolve_adaptive_liquidity_threshold(
+    equity: float,
+    static_threshold: float | None = None,
+    max_position_weight: float = 0.10,
+    target_pct_of_adv: float = 0.01,
+) -> float:
+    """Retourne le seuil de liquidité adaptatif pour une equity donnée.
+
+    Combine le seuil statique (depuis capital_presets.yaml) avec le seuil
+    adaptatif (P4) : on prend le **max** des deux pour ne jamais être plus
+    permissif que le preset statique.
+    """
+    adaptive = adaptive_min_adv(equity, max_position_weight, target_pct_of_adv)
+    if static_threshold is not None and static_threshold > 0:
+        return max(adaptive, float(static_threshold))
+    return adaptive
+
+
 def build_selector_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str, Any]:
     values = preset.values
     rs_threshold = values.get(SELECTOR_RS_ALIAS_KEY)

@@ -330,7 +330,7 @@ class RiskRepository:
         return self.load_prices_asof(symbols, trade_date or date.today(), atr_window=atr_window)
 
     def load_prices_asof(self, symbols: list[str], trade_date: date, atr_window: int = 20) -> dict[str, PriceInfo]:
-        """Charge le dernier close et l'ATR depuis stock_bars_daily à la date de trade."""
+        """Charge le dernier close, l'ATR et l'ADV 20j depuis stock_bars_daily à la date de trade."""
         if not symbols:
             return {}
         placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))
@@ -345,12 +345,13 @@ class RiskRepository:
                     `close` AS close_price,
                     `high` AS high_price,
                     `low` AS low_price,
+                    `volume` AS volume,
                     ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY `date` DESC) AS rn
                 FROM stock_bars_daily
                 WHERE symbol IN ({placeholders})
                   AND `date` <= :trade_date
             )
-            SELECT symbol, trade_day, close_price, high_price, low_price
+            SELECT symbol, trade_day, close_price, high_price, low_price, volume
             FROM ranked
             WHERE rn <= :row_limit
             ORDER BY symbol ASC, trade_day ASC
@@ -364,6 +365,7 @@ class RiskRepository:
             grouped.setdefault(sym, []).append(dict(row))
 
         result: dict[str, PriceInfo] = {}
+        adv_window = atr_window  # 20j par défaut, cohérent avec ATR
         for sym, sym_rows in grouped.items():
             if not sym_rows:
                 continue
@@ -372,12 +374,16 @@ class RiskRepository:
             price_asof_date = self._coerce_date(last_row.get("trade_day"))
 
             tr_values: list[float] = []
+            dollar_volumes: list[float] = []
             for idx in range(1, len(sym_rows)):
                 prev_close = float(sym_rows[idx - 1]["close_price"])
                 high_price = float(sym_rows[idx]["high_price"])
                 low_price = float(sym_rows[idx]["low_price"])
                 true_range = max(high_price - low_price, abs(high_price - prev_close), abs(low_price - prev_close))
                 tr_values.append(true_range)
+                # ADV : close × volume (en dollars)
+                vol = float(sym_rows[idx].get("volume", 0) or 0)
+                dollar_volumes.append(float(sym_rows[idx]["close_price"]) * vol)
 
             atr_val = None
             atr_asof_date = None
@@ -386,12 +392,18 @@ class RiskRepository:
                 atr_val = sum(atr_window_values) / atr_window
                 atr_asof_date = price_asof_date
 
+            # ADV 20j = moyenne des dollar_volumes sur la fenêtre
+            adv_usd = None
+            if len(dollar_volumes) >= adv_window:
+                adv_usd = sum(dollar_volumes[-adv_window:]) / adv_window
+
             result[sym] = PriceInfo(
                 symbol=sym,
                 last_close=last_close,
                 atr_20=atr_val,
                 price_asof_date=price_asof_date,
                 atr_asof_date=atr_asof_date,
+                adv_usd=adv_usd,
             )
         return result
 

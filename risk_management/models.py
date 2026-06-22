@@ -67,6 +67,9 @@ class PriceInfo:
     atr_20: float | None
     price_asof_date: date | None = None
     atr_asof_date: date | None = None
+    # Liquidité : ADV 20 jours en dollars (close × volume moyen).
+    # None = donnée indisponible → contrainte ADV ignorée silencieusement.
+    adv_usd: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
