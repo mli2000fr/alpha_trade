@@ -449,6 +449,7 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_breakout_days: 1
+    risk_max_position_pct_of_adv: null      # désactivé à $25K (non contraignant)
     execution_account_type: margin
     execution_swing_only: false
     execution_cash_settlement_days: 0
@@ -533,6 +534,7 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_breakout_days: 1
+    risk_max_position_pct_of_adv: 0.005   # 0.5% ADV — contrainte active à $50K+
     execution_account_type: margin
     execution_swing_only: false
     execution_cash_settlement_days: 0
@@ -639,6 +641,7 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_breakout_days: 1
+    risk_max_position_pct_of_adv: 0.01    # 1% ADV — full protection à $100K+
     execution_account_type: margin
     execution_swing_only: false
     execution_cash_settlement_days: 0

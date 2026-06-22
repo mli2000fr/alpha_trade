@@ -299,6 +299,14 @@ risk_management:
   force_close_on_breaker: true
   force_close_pct: 1.0
 
+  # ── Liquidité dynamique (LiquiditeDynamique.md P1) ──
+  # Position max en % de l'ADV 20j du ticker. null = contrainte désactivée.
+  # Ex: 0.01 = une position ne peut pas dépasser 1% du volume quotidien du ticker.
+  # Pour un compte à $100K avec max_position_weight=10%, la position max est
+  # $10K, ce qui représente 0.033% d'un ADV à $30M → contrainte non active.
+  # Elle le devient automatiquement si le compte ou le poids augmente.
+  max_position_pct_of_adv: null   # 0.01 recommandé pour comptes > $100K
+
   # Sprint 0 short — feature flag global (cf. plan_v2.md §C8)
   # Active le pipeline long+short. false = long-only (comportement actuel)
   short_selling_enabled: true

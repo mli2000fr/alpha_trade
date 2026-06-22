@@ -438,6 +438,8 @@ _RISK_CONFIG_PRESET_MAPPING: tuple[tuple[str, str, type], ...] = (
     ("risk_prediction_weight", "prediction_weight", float),
     ("risk_min_score_threshold", "min_score_threshold", float),
     ("risk_min_breakout_days", "min_breakout_days", int),
+    # Liquidité dynamique (P1) — None = désactivé
+    ("risk_max_position_pct_of_adv", "max_position_pct_of_adv", float),
 )
 
 
@@ -457,6 +459,10 @@ def build_risk_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str, Any
         raw_value = preset.values[preset_key]
         if raw_value == DETECTED_EQUITY_PLACEHOLDER:
             # Le placeholder est résolu côté appelant (account_equity vient de l'equity réelle).
+            continue
+        if raw_value is None:
+            # Champs nullable (ex: max_position_pct_of_adv) — on passe None tel quel
+            kwargs[field_name] = None
             continue
         if cast_fn is bool:
             if isinstance(raw_value, bool):
