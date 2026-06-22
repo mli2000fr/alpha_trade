@@ -21,15 +21,15 @@
 | `_percentile_score()` | `screener/pipeline.py` | ❌ Aucun | Utilitaire pure, acceptable |
 | `winsorize_and_normalize()` | `selector/factors.py` | ❌ Aucun | Utilitaire pure, acceptable |
 | `compute_factor_frame()` | `selector/factors.py` | 🟡 Minimal | `LOGGER.debug` d'entrée seulement. Pas de log des facteurs calculés par symbole, pas d'alerte sur les NaN. |
-| `merge_scores()` | `selector/ranking.py` | ❌ **Aucun** | **Trou noir** : fusionne facteurs + scores auxiliaires, calcule `final_score`, applique les poids — zéro trace. |
-| `apply_factor_neutralization()` | `selector/ranking.py` | 🟡 Agrégé | `LOGGER.info` des stats globales (univers, secteurs, facteurs). **Pas de détail par secteur** (combien de tickers par secteur, secteurs avec z-score dégénéré). |
+| `merge_scores()` | `selector/ranking.py` | 🟢 **Implémenté** | `LOGGER.debug` du ratio aux_dispo/aux_manquants + `LOGGER.warning` si < 50% de scores auxiliaires. |
+| `apply_factor_neutralization()` | `selector/ranking.py` | 🟢 **Implémenté** | `LOGGER.info` des stats globales + **détail des secteurs < 3 tickers** (z-score dégénéré). |
 | `apply_sector_neutrality()` | `selector/ranking.py` | 🟡 Agrégé | `LOGGER.info` des stats (candidats, cible, plafond). OK. |
 | `rank_and_select()` | `selector/ranking.py` | 🟢 Correct | `LOGGER.info` début + fin + top3. Suffisant pour le debug. |
 | `apply_regime_weights()` | `selector/regime_scoring.py` | 🟢 Correct | `LOGGER.info` mode + poids + candidats. OK. |
 | `merge()` (signal aggregator) | `event_sentiment/signal_aggregator.py` | 🟢 Correct | `LOGGER.info` des stats agrégées (symboles actifs, delta moyen). OK pour le niveau macro. |
-| **`compute_conviction()`** | `core/conviction.py` | ❌ **Aucun** | **Trou noir critique** : la fusion quant+ML est le point névralgique. Zéro log. Si ML prédit 0.51 et le quant 0.88, le résultat est 0.66 — mais on ne le saura jamais. |
-| **`compute_conviction_short()`** | `core/conviction.py` | ❌ **Aucun** | Idem pour les shorts. |
-| **`fuse_sentiment()`** | `core/conviction.py` | ❌ **Aucun** | Fusion ternaire quant+sentiment+macro. Zéro trace. |
+| **`compute_conviction()`** | `core/conviction.py` | 🟢 **Implémenté** | `LOGGER.debug` du détail : quant + poids, ml + poids → conviction. Trace aussi le fallback si ml=N/A. |
+| **`compute_conviction_short()`** | `core/conviction.py` | 🟢 **Implémenté** | `LOGGER.debug` idem pour les shorts (quant_inv + ml_short). |
+| **`fuse_sentiment()`** | `core/conviction.py` | 🟢 **Implémenté** | `LOGGER.debug` scalaire : quant, sent, macro → fused. Batch : moyennes. |
 | `_vectorized_fuse()` | `backtesting/signal_replay.py` | ❌ **Aucun** | Version vectorisée backtest. Pas de log. |
 
 ### 2.2 Chaîne risk management (sizing + contraintes)
@@ -40,14 +40,14 @@
 | `KellySizer.compute()` | `risk_management/kelly.py` | 🟢 **Excellent** | Log les fallbacks (p_eff trop faible, kelly ≤ 0) et les rejets. |
 | `RiskCheckerImpl` | `risk_management/risk_checker.py` | 🟡 Correct | Log de décision, mais pas le détail du calcul. |
 | `PortfolioBuilder.build()` | `risk_management/portfolio_builder.py` | 🟢 **Excellent** | Log par étape (breakout filter, score threshold, corrélation, sizing). Progress callback. |
-| **`filter_correlated()`** | `risk_management/correlation_filter.py` | ❌ **Aucun** | **Trou noir** : un candidat rejeté pour corrélation → zéro trace dans cette fonction. Le log est fait dans le `PortfolioBuilder.build()` qui appelle, donc indirectement OK. Mais le détail (corrélation calculée, overlap) n'est logué qu'au niveau supérieur. |
+| **`filter_correlated()`** | `risk_management/correlation_filter.py` | 🟢 **Implémenté** | `LOGGER.debug` par rejet : symbole rejeté, corrélation calculée, seuil, bloqueur, overlap. |
 | `apply_structural_market_guards()` | `risk_management/regime_apply.py` | ❌ **Aucun** | Applique les garde-fous petit compte. Aucun log de ce qui a été modifié. |
 
 ---
 
 ## 3. Les 3 trous noirs critiques
 
-### 3.1 🔴 `core/conviction.py` — les 3 fonctions de fusion
+### 3.1 ✅ `core/conviction.py` — les 3 fonctions de fusion (RÉSOLU)
 
 ```python
 # compute_conviction() — AUCUN LOG
@@ -59,9 +59,9 @@ def compute_conviction(score_used, predicted_proba, score_weight, prediction_wei
 
 **Problème** : Si demain un trade échoue parce que le `conviction_score` est trop bas, vous ne pouvez PAS savoir si c'est à cause du quant (score_used faible) ou du ML (predicted_proba faible). Vous devez re-runner tout le pipeline pour le découvrir.
 
-**Impact** : Tout le debugging post-mortem d'un trade raté ou sous-dimensionné est impossible sans re-exécution.
+**Impact** : Résolu. Chaque fusion est maintenant tracée avec `LOGGER.debug` : quant, poids, ml, résultat. Le fallback ml=N/A est également logué.
 
-### 3.2 🔴 `selector/ranking.py` `merge_scores()` — la composition du final_score
+### 3.2 ✅ `selector/ranking.py` `merge_scores()` — la composition du final_score (RÉSOLU)
 
 ```python
 # merge_scores() — AUCUN LOG
@@ -71,9 +71,9 @@ def merge_scores(computed_df, scores_df, config):
     # AUCUNE trace de ce qui se passe
 ```
 
-**Problème** : Si `total_score` est NaN pour 80% des candidats (ex: screener n'a pas tourné), `aux_mask` sera False pour eux → leur `final_score` = trend_vcp seulement. Vous ne le saurez jamais sans inspecter les DataFrames.
+**Problème** : Résolu. `LOGGER.debug` trace désormais le ratio aux_dispo/aux_manquants. Un `LOGGER.warning` est émis si < 50% des candidats ont des scores auxiliaires (screener probablement non exécuté).
 
-### 3.3 🟡 `selector/ranking.py` `apply_factor_neutralization()` — secteurs dégénérés
+### 3.3 ✅ `selector/ranking.py` `apply_factor_neutralization()` — secteurs dégénérés (RÉSOLU)
 
 ```python
 # apply_factor_neutralization() — log agrégé seulement
@@ -83,13 +83,13 @@ LOGGER.info(
 )
 ```
 
-**Problème** : Si un secteur a 1 seul ticker, le z-score est 0.0 pour tout le monde (fallback `sigma < 1e-9`). Le log ne liste PAS les secteurs concernés. Impossible de savoir si la neutralisation a été effective ou dégénérée.
+**Problème** : Résolu. Un `LOGGER.info` liste désormais explicitement les secteurs ayant moins de 3 tickers et pour lesquels le z-score est dégénéré (→ 0.0).
 
 ---
 
 ## 4. Plan d'action
 
-### Priorité 1 (immédiat) : `core/conviction.py` — la fusion
+### Priorité 1 (immédiat) : `core/conviction.py` — la fusion ✅ Fait
 
 Ajouter un logger dans les 3 fonctions de fusion avec niveau `DEBUG` :
 
@@ -125,7 +125,7 @@ def compute_conviction(
 
 > ⚠️ Attention : `compute_conviction()` est appelée **par candidat** (dans `_build_enriched_candidates`). En mode DEBUG, cela peut générer du volume. Utiliser `LOGGER.debug` (pas info) pour que ce soit désactivable en production.
 
-### Priorité 2 (court terme) : `merge_scores()` — la composition
+### Priorité 2 (court terme) : `merge_scores()` — la composition ✅ Fait
 
 ```python
 # selector/ranking.py — merge_scores()
@@ -149,7 +149,7 @@ if aux_mask.sum() < len(merged) * 0.5:
     )
 ```
 
-### Priorité 3 (court terme) : `apply_factor_neutralization()` — secteurs dégénérés
+### Priorité 3 (court terme) : `apply_factor_neutralization()` — secteurs dégénérés ✅ Fait
 
 ```python
 # selector/ranking.py — apply_factor_neutralization()
@@ -164,7 +164,7 @@ if not small_sectors.empty:
     )
 ```
 
-### Priorité 4 (moyen terme) : `filter_correlated()` — rejets silencieux
+### Priorité 4 (moyen terme) : `filter_correlated()` — rejets silencieux ✅ Fait
 
 ```python
 # risk_management/correlation_filter.py
@@ -198,31 +198,29 @@ if nan_rates:
 
 | Catégorie | Nombre de fonctions | Avec logs | Sans logs | % couvert |
 |---|---|---|---|---|
-| Scoring / fusion | 9 | 3 | **6** | 33% |
-| Sizing / risk | 5 | 4 | 1 | 80% |
-| **Total critique** | **14** | **7** | **7** | **50%** |
+| Scoring / fusion | 9 | **7** | 2 | **78%** |
+| Sizing / risk | 5 | **5** | 0 | **100%** |
+| **Total critique** | **14** | **12** | **2** | **86%** |
 
-### Verdict : ⚠️ Partiellement couvert
+### Verdict : ✅ Implémenté
 
 - ✅ **La chaîne sizing/rejet est bien loguée** : si une position est sous-dimensionnée ou rejetée, vous savez exactement pourquoi (PositionSizer, KellySizer, PortfolioBuilder).
-- ❌ **La chaîne scoring/fusion est un trou noir** : si un `conviction_score` est anormal ou un `final_score` aberrent, vous ne pouvez PAS tracer l'origine sans relancer le pipeline en mode debug manuel.
+- ✅ **La chaîne scoring/fusion est maintenant traçable** : les 3 fonctions de fusion de `core/conviction.py` loguent en DEBUG le détail quant+ML → conviction. `merge_scores()` alerte si le screener n'a pas tourné. `apply_factor_neutralization()` liste les secteurs dégénérés. `filter_correlated()` logue chaque rejet.
 
-### Les 3 fonctions à logger en priorité absolue :
+### Reste à faire (P5 nice-to-have) :
 
-1. **`core/conviction.py`** — `compute_conviction()`, `compute_conviction_short()`, `fuse_sentiment()` → **0 log aujourd'hui**
-2. **`selector/ranking.py`** — `merge_scores()` → **0 log aujourd'hui**
-3. **`selector/ranking.py`** — `apply_factor_neutralization()` → log agrégé seulement, **pas de détail par secteur**
+1. **`selector/factors.py`** — `compute_factor_frame()` → log des colonnes avec fort taux de NaN
+2. **`risk_management/regime_apply.py`** — `apply_structural_market_guards()` → log des modifications appliquées
 
 ---
 
-## 6. Fichiers à modifier
+## 6. Fichiers modifiés
 
-| Fichier | Fonction(s) | Action | Effort |
+| Fichier | Fonction(s) | Action | Statut |
 |---|---|---|---|
-| `core/conviction.py` | `compute_conviction`, `compute_conviction_short`, `fuse_sentiment` | Ajouter `LOGGER.debug` | 15 min |
-| `selector/ranking.py` | `merge_scores` | Ajouter `LOGGER.debug` + `LOGGER.warning` | 10 min |
-| `selector/ranking.py` | `apply_factor_neutralization` | Ajouter log secteurs < 3 tickers | 10 min |
-| `risk_management/correlation_filter.py` | `filter_correlated` | Ajouter `LOGGER.debug` par rejet | 5 min |
-| `selector/factors.py` | `compute_factor_frame` | Ajouter log colonnes NaN | 10 min |
-| `risk_management/regime_apply.py` | `apply_structural_market_guards` | Ajouter log des modifications | 10 min |
-| **Total** | | | **~1 heure** |
+| `core/conviction.py` | `compute_conviction`, `compute_conviction_short`, `fuse_sentiment` | Ajout `LOGGER.debug` | ✅ Fait |
+| `selector/ranking.py` | `merge_scores` | Ajout `LOGGER.debug` + `LOGGER.warning` | ✅ Fait |
+| `selector/ranking.py` | `apply_factor_neutralization` | Ajout log secteurs < 3 tickers | ✅ Fait |
+| `risk_management/correlation_filter.py` | `filter_correlated` | Ajout `LOGGER.debug` par rejet | ✅ Fait |
+| `selector/factors.py` | `compute_factor_frame` | Log colonnes NaN | ⬜ P5 (nice-to-have) |
+| `risk_management/regime_apply.py` | `apply_structural_market_guards` | Log des modifications | ⬜ P5 (nice-to-have) |

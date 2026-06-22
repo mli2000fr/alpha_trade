@@ -15,10 +15,13 @@ permet aux modules amont d'importer une seule API stable :
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Union
 
 import numpy as np
+
+LOGGER = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
@@ -70,8 +73,18 @@ def compute_conviction(
     Pour la conviction short, utiliser :func:`compute_conviction_short`.
     """
     if predicted_proba is not None:
-        return float(np.clip(score_weight * score_used + prediction_weight * predicted_proba, 0.0, 1.0))
-    return float(np.clip(score_used, 0.0, 1.0))
+        result = float(np.clip(score_weight * score_used + prediction_weight * predicted_proba, 0.0, 1.0))
+        LOGGER.debug(
+            "conviction_fusion | quant=%.4f (w=%.2f) ml=%.4f (w=%.2f) → conviction=%.4f",
+            score_used, score_weight, predicted_proba, prediction_weight, result,
+        )
+        return result
+    result = float(np.clip(score_used, 0.0, 1.0))
+    LOGGER.debug(
+        "conviction_fusion | quant=%.4f (w=%.2f) ml=N/A → conviction=%.4f (ml fallback)",
+        score_used, score_weight, result,
+    )
+    return result
 
 
 def compute_conviction_short(
@@ -88,8 +101,18 @@ def compute_conviction_short(
     """
     inverted_score = 1.0 - score_used
     if predicted_proba_short is not None:
-        return float(np.clip(score_weight * inverted_score + prediction_weight * predicted_proba_short, 0.0, 1.0))
-    return float(np.clip(inverted_score, 0.0, 1.0))
+        result = float(np.clip(score_weight * inverted_score + prediction_weight * predicted_proba_short, 0.0, 1.0))
+        LOGGER.debug(
+            "conviction_short_fusion | quant_inv=%.4f (w=%.2f) ml_short=%.4f (w=%.2f) → conviction=%.4f",
+            inverted_score, score_weight, predicted_proba_short, prediction_weight, result,
+        )
+        return result
+    result = float(np.clip(inverted_score, 0.0, 1.0))
+    LOGGER.debug(
+        "conviction_short_fusion | quant_inv=%.4f (w=%.2f) ml_short=N/A → conviction=%.4f (ml fallback)",
+        inverted_score, score_weight, result,
+    )
+    return result
 
 
 def fuse(
@@ -172,6 +195,19 @@ def fuse_sentiment(
     quant_component = w.quant_weight * quant_arr
     fused = np.clip(quant_component + sent_component + macro_component, 0.0, 1.0)
     if fused.ndim == 0:
-        return float(fused)
+        result = float(fused)
+        LOGGER.debug(
+            "sentiment_fusion | quant=%.4f (w=%.2f) sent=%.4f (w=%.2f) macro=%.4f (w=%.2f) → fused=%.4f",
+            float(quant_arr), w.quant_weight,
+            float(sentiment_arr), w.sentiment_weight,
+            float(macro_arr), w.macro_weight,
+            result,
+        )
+        return result
+    LOGGER.debug(
+        "sentiment_fusion | batch=%s quant_mean=%.4f sent_mean=%.4f macro_mean=%.4f fused_mean=%.4f",
+        fused.size, float(quant_arr.mean()), float(sentiment_arr.mean()),
+        float(macro_arr.mean()), float(fused.mean()),
+    )
     return fused
 

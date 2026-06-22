@@ -236,6 +236,18 @@ def merge_scores(
         merged["trend_score"].fillna(0.0) + merged["vcp_score"].fillna(0.0)
     )
     aux_mask = merged[["total_score", "relative_strength_index"]].notna().any(axis=1)
+    aux_available = int(aux_mask.sum())
+    aux_missing = int((~aux_mask).sum())
+    LOGGER.debug(
+        "merge_scores | univers=%s aux_disponibles=%s aux_manquants=%s",
+        len(merged), aux_available, aux_missing,
+    )
+    if aux_available < len(merged) * 0.5 and len(merged) > 0:
+        LOGGER.warning(
+            "merge_scores | Moins de 50%% des candidats ont des scores auxiliaires "
+            "(screener probablement non exécuté). aux_dispo=%s/%s",
+            aux_available, len(merged),
+        )
     trend_component = factor_component.copy()
     total_component = pd.Series(0.0, index=merged.index, dtype=float)
     rsi_component = pd.Series(0.0, index=merged.index, dtype=float)
@@ -309,6 +321,15 @@ def apply_factor_neutralization(
         result["sector"].nunique(),
         factors_to_neutralize,
     )
+
+    # Alerter sur les secteurs avec < 3 tickers (z-score dégénéré → 0.0)
+    sector_counts = result.groupby("sector").size()
+    small_sectors = sector_counts[sector_counts < 3]
+    if not small_sectors.empty:
+        LOGGER.info(
+            "Neutralisation sectorielle | secteurs_sous_3_tickers=%s (z-score dégénéré → 0.0)",
+            {k: int(v) for k, v in small_sectors.items()},
+        )
 
     factor_component = 0.5 * (
         result["trend_score"].fillna(0.0) + result["vcp_score"].fillna(0.0)

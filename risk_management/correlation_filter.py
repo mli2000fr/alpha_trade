@@ -84,6 +84,10 @@ def filter_correlated(
                     correlation_value=round(corr, 4),
                     threshold=threshold,
                 ))
+                LOGGER.debug(
+                    "correlation_filter | %s REJETÉ (corr=%.4f > seuil=%.2f avec %s, overlap=%s jours)",
+                    sym, corr, threshold, kept_sym, len(pair),
+                )
                 correlated_with_retained = True
                 break
 
