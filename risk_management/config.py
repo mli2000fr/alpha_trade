@@ -85,6 +85,25 @@ class RiskConfig:
     correlation_lookback_days: int = 60
     correlation_min_overlap: int = 40
 
+    # --- Factor risk model (Priorité 3 — RisqueSectoriel.md) ---
+    # Active le modèle de risque factoriel CWMS (Phases A-E).
+    enable_factor_model: bool = False
+    # Active le filtre de corrélation basé sur le modèle factoriel (Phase E).
+    # Remplace le filtre Pearson quand activé.
+    use_factor_correlation_filter: bool = False
+    # Seuil de corrélation implicite max pour le filtre factoriel (Phase E).
+    factor_correlation_threshold: float = 0.70
+    # Beta moyen pondéré maximum du portefeuille (Phase D).
+    max_portfolio_beta: float = 1.2
+    # Part maximale du risque total venant d'un seul facteur (Phase D).
+    max_factor_concentration_pct: float = 0.60
+    # Nombre minimum de facteurs avec contribution > 10% (Phase D).
+    min_factor_diversification: int = 2
+    # Demi-vie EWMA pour l'estimation de la covariance factorielle (Phase B).
+    factor_ewma_half_life: int = 60
+    # Fenêtre de lookback pour l'estimation factorielle en jours (Phase B).
+    factor_lookback_days: int = 252
+
     # --- Kelly sizing V2 ---
     enable_kelly_sizing: bool = False
     assumed_payoff_ratio: float = 1.5
@@ -154,6 +173,19 @@ class RiskConfig:
             raise ValueError("effective_max_positions_override doit être >= 0 quand renseigné.")
         if self.max_tickers_per_sector is not None and self.max_tickers_per_sector < 1:
             raise ValueError("max_tickers_per_sector doit être >= 1 quand renseigné.")
+        # --- Factor model validations (Priorité 3) ---
+        if self.factor_correlation_threshold <= 0 or self.factor_correlation_threshold > 1:
+            raise ValueError("factor_correlation_threshold doit être dans ]0, 1].")
+        if self.max_portfolio_beta <= 0:
+            raise ValueError("max_portfolio_beta doit être > 0.")
+        if not (0 < self.max_factor_concentration_pct <= 1):
+            raise ValueError("max_factor_concentration_pct doit être dans ]0, 1].")
+        if self.min_factor_diversification < 1:
+            raise ValueError("min_factor_diversification doit être >= 1.")
+        if self.factor_ewma_half_life < 2:
+            raise ValueError("factor_ewma_half_life doit être >= 2.")
+        if self.factor_lookback_days < 20:
+            raise ValueError("factor_lookback_days doit être >= 20.")
 
     @property
     def effective_min_notional(self) -> float:

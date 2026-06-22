@@ -1236,7 +1236,74 @@ def main(args: list[str] | None = None) -> None:
             phase="load_return_matrix",
         )
 
-        builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker, regime_snapshot=regime_snapshot, rotation_state=rotation_state, breakout_tracker=breakout_tracker)
+        builder = PortfolioBuilder(
+            config,
+            pnl=pnl_snapshot,
+            circuit_breaker=circuit_breaker,
+            regime_snapshot=regime_snapshot,
+            rotation_state=rotation_state,
+            breakout_tracker=breakout_tracker,
+        )
+        # ── Factor risk model (Priorité 3) : construire les exposures ──
+        if config.enable_factor_model:
+            try:
+                from risk_management.factor_model import (
+                    build_exposures_from_score_frame,
+                    build_factor_returns,
+                    estimate_factor_covariance,
+                )
+                # Charger les colonnes factorielles depuis stock_scores_history
+                factor_df = repo.load_factor_columns_asof(
+                    [c.symbol for c in candidates],
+                    trade_date,
+                )
+                if not factor_df.empty:
+                    factor_exposures_raw = build_exposures_from_score_frame(
+                        factor_df, trade_date,
+                    )
+                    factor_exposures_live: dict[str, object] = {
+                        sym: exp for sym, exp in factor_exposures_raw.items()
+                    }
+                    # Construire les rendements factoriels
+                    if not return_matrix.empty:
+                        factor_returns = build_factor_returns(
+                            symbols=list(factor_exposures_live.keys()),
+                            close_prices=return_matrix,
+                            benchmark_prices=None,
+                            factor_exposures_map=factor_exposures_raw,
+                        )
+                        factor_cov_live = estimate_factor_covariance(
+                            factor_returns,
+                            lookback_days=config.factor_lookback_days,
+                            ewma_half_life=config.factor_ewma_half_life,
+                            estimation_date=trade_date,
+                            stock_returns=return_matrix,
+                        ) if factor_returns is not None else None
+                        # Recréer le builder avec le modèle factoriel
+                        builder = PortfolioBuilder(
+                            config,
+                            pnl=pnl_snapshot,
+                            circuit_breaker=circuit_breaker,
+                            regime_snapshot=regime_snapshot,
+                            rotation_state=rotation_state,
+                            breakout_tracker=breakout_tracker,
+                            factor_exposures=factor_exposures_live,
+                            factor_covariance=factor_cov_live,
+                        )
+                        LOGGER.info(
+                            "Factor model enabled: %d exposures, %d factor names",
+                            len(factor_exposures_live),
+                            len(getattr(factor_cov_live, "factor_names", [])),
+                        )
+                    else:
+                        LOGGER.warning("Factor model: no return matrix, skipping covariance estimation")
+                else:
+                    LOGGER.warning("Factor model: no factor columns loaded from DB")
+            except Exception:
+                LOGGER.warning(
+                    "Factor model setup failed for live pipeline",
+                    exc_info=True,
+                )
         builder.progress_callback = emit_run_summary
         entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
         _emit_live_progress(

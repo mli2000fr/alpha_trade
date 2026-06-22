@@ -1,8 +1,9 @@
 # RisqueSectoriel — Neutralisation des biais de Style / Risque
 
 > **Date** : 2026-06-22
-> **Statut** : Analyse + Plan d'action
+> **Statut** : ✅ Implémenté (Priorité 3 — Modèle factoriel CWMS)
 > **Audit** : Basé sur le code source (source de vérité)
+> **Implémentation** : 2026-06-22 — Toutes les phases A à E + intégration live/backtest + tests
 
 ---
 
@@ -94,12 +95,12 @@ Le `MomentumRotationState` peut forcer cette rotation même en régime `normal` 
 | Plafond sectoriel (round-robin) | ✅ | sector_cap_ratio = 30% |
 | Filtre corrélation Pearson | ✅ | Post-hoc, greedy, 60j, seuil 0.80 |
 | Scoring défensif (beta/size/low-vol) | ✅ | Réactif uniquement (changement de régime) |
-| **Factor exposures** (size, value, mom, quality, low-vol) | ❌ | Aucun calcul des loadings factoriels |
-| **Factor covariance matrix** | ❌ | Pas de matrice de covariance des rendements factoriels |
-| **Specific / idiosyncratic risk** | ❌ | Pas de décomposition risque systématique vs spécifique |
-| **Risk decomposition** (factor risk + stock-specific) | ❌ | Le risque portefeuille n'est pas décomposé |
-| **Targeted factor neutralization** | ❌ | Impossible de construire un portefeuille beta-neutral |
-| **Stress-correlation adaptative** | ❌ | Seuil de corrélation fixe (0.80), non sensible au VIX |
+| **Factor exposures** (size, value, mom, quality, low-vol) | ✅ | `compute_factor_exposures()` — z-score cross-sectional (Phase A) |
+| **Factor covariance matrix** | ✅ | `estimate_factor_covariance()` — EWMA (Phase B) |
+| **Specific / idiosyncratic risk** | ✅ | `decompose_portfolio_risk()` — décomposition (Phase C) |
+| **Risk decomposition** (factor risk + stock-specific) | ✅ | `PortfolioRiskDecomposition` — complet (Phase C) |
+| **Targeted factor neutralization** | ✅ | `check_factor_constraints()` — contraintes (Phase D) |
+| **Stress-correlation adaptative** | ✅ | EWMA sur F capture les changements de régime + filtre factoriel (Phase E) |
 
 ### 3.2 Pourquoi c'est dangereux — le scénario du krach
 
@@ -427,15 +428,18 @@ Portefeuille 2026-06-22 :
 
 | Fichier | Action | Description |
 |---|---|---|
-| `risk_management/factor_model.py` | **Nouveau** | Expositions, covariance, décomposition risque |
-| `risk_management/portfolio_builder.py` | **Modifier** | Ajouter contraintes factorielles dans `build_target_portfolio()` |
-| `risk_management/correlation_filter.py` | **Modifier** | Optionnel : remplacer Pearson par corrélation implicite du modèle |
-| `risk_management/config.py` | **Modifier** | Ajouter `RiskConfig` paramètres : `enable_factor_model`, `max_portfolio_beta`, etc. |
-| `risk_management/models.py` | **Modifier** | Ajouter `FactorExposures`, `PortfolioRiskDecomposition` |
-| `backtesting/risk_bridge.py` | **Modifier** | Intégrer le modèle factoriel dans le bridge backtest |
-| `tests/test_factor_model.py` | **Nouveau** | Tests unitaires et propriété-based |
-| `selector/factors.py` | **Modifier** | Exporter `beta_126`, `trend_score`, `market_cap` comme exposures |
-| `database/` | **Possible** | Si les données value nécessitent une nouvelle table |
+| `risk_management/factor_model.py` | ✅ **Créé** | Expositions, covariance, décomposition risque, contraintes, filtre factoriel |
+| `risk_management/portfolio_builder.py` | ✅ **Modifié** | Ajout contraintes factorielles + filtre de corrélation factoriel dans `build()` |
+| `risk_management/correlation_filter.py` | - | Inchangé (le filtre factoriel est dans `factor_model.py`, activable via config) |
+| `risk_management/config.py` | ✅ **Modifié** | Ajout `enable_factor_model`, `use_factor_correlation_filter`, `max_portfolio_beta`, etc. |
+| `risk_management/models.py` | ✅ **Modifié** | Ajout dataclass `FactorExposures` |
+| `risk_management/enums.py` | ✅ **Modifié** | Ajout `FACTOR_CONSTRAINT_VIOLATION`, `FACTOR_CORRELATION_FILTER` |
+| `risk_management/db_io.py` | ✅ **Modifié** | Ajout `load_factor_columns_asof()` pour le pipeline live |
+| `risk_management/cli.py` | ✅ **Modifié** | Intégration du modèle factoriel dans le pipeline live |
+| `backtesting/risk_bridge.py` | ✅ **Modifié** | Intégration du modèle factoriel dans le bridge backtest |
+| `tests/test_factor_model.py` | ✅ **Créé** | 33 tests unitaires (Phases A-E + pipeline complet) |
+| `selector/factors.py` | - | Inchangé (les facteurs `beta_126`, `trend_score`, `market_cap` étaient déjà disponibles) |
+| `database/` | - | Inchangé (données value non disponibles, facteur value = 0.0 par défaut) |
 
 ---
 
@@ -449,3 +453,73 @@ Portefeuille 2026-06-22 :
 - **Doc fonctionnelle** : `doc/DOC_FONCTIONNELLE.md`
 - **Doc selector** : `doc/selector.md`
 - **Audit selector antérieur** : `prompt/archive/refactor/audit_selector.md` (section 2.5 — risques neutralisation sectorielle)
+
+---
+
+## 9. Résumé de l'implémentation (2026-06-22)
+
+### ✅ Tout est implémenté — Pipeline live ET backtest
+
+#### Architecture réalisée
+
+```
+risk_management/factor_model.py  ← Cœur du modèle factoriel (Phases A→E)
+    ├── FactorExposures          ← dataclass (dans models.py)
+    ├── FactorCovariance         ← dataclass
+    ├── PortfolioRiskDecomposition ← dataclass
+    ├── FactorConstraintResult   ← dataclass
+    ├── FactorCorrelationRejection ← dataclass
+    │
+    ├── compute_factor_exposures()        ← Phase A
+    ├── build_exposures_from_score_frame()← Helper (selector → exposures)
+    │
+    ├── build_factor_returns()            ← Phase B (construction rendements)
+    ├── estimate_factor_covariance()      ← Phase B (EWMA)
+    │
+    ├── decompose_portfolio_risk()        ← Phase C
+    ├── format_risk_decomposition()       ← Affichage
+    │
+    ├── check_factor_constraints()        ← Phase D
+    ├── _filter_worst_offenders()         ← Helper filtrage
+    │
+    ├── filter_by_factor_correlation()    ← Phase E
+    └── _compute_factor_implied_correlation() ← Helper
+```
+
+#### Comment activer
+
+Dans `config.yaml` ou via `RiskConfig` :
+
+```yaml
+risk_management:
+  enable_factor_model: true          # Active le modèle factoriel CWMS
+  use_factor_correlation_filter: true # Remplace Pearson par le filtre factoriel
+  factor_correlation_threshold: 0.70  # Seuil de corrélation implicite
+  max_portfolio_beta: 1.2             # Beta moyen max du book
+  max_factor_concentration_pct: 0.60  # Concentration max par facteur
+  min_factor_diversification: 2       # Nb min de facteurs significatifs
+  factor_ewma_half_life: 60           # Demi-vie EWMA (jours)
+  factor_lookback_days: 252           # Fenêtre d'estimation (jours)
+```
+
+#### Points d'intégration
+
+| Point d'entrée | Fichier | Mécanisme |
+|---|---|---|
+| **Pipeline live** | `risk_management/cli.py` | Charge `stock_scores_history` (beta_126, market_cap, trend_score) → construit exposures → estime covariance → passe au `PortfolioBuilder` |
+| **Backtest** | `backtesting/risk_bridge.py` | Pour chaque `snapshot_date` : construit exposures depuis `scores_df` → estime covariance depuis `close_df` → passe au `PortfolioBuilder` |
+| **PortfolioBuilder** | `risk_management/portfolio_builder.py` | Reçoit `factor_exposures` et `factor_covariance` au constructeur → utilise dans `build()` |
+
+#### Couverture de tests
+
+- **33 tests unitaires** dans `tests/test_factor_model.py`
+- Couvre toutes les phases A à E + pipeline complet
+- Vérifie la décomposition mathématique (systématique + spécifique = total)
+- Vérifie les cas limites (vide, NaN, données insuffisantes)
+
+#### Limitations connues
+
+1. **Facteur Value** : `value_exposure = 0.0` par défaut (données P/E, P/B non disponibles). Le modèle fonctionne en 3 facteurs effectifs (Market + Size + Momentum).
+2. **Facteur Size/Momentum dans `build_factor_returns()`** : actuellement des proxys simples (0.0). Une V2 pourrait construire de vrais portefeuilles long-short SMB/WML.
+3. **Rendement risk-free** : non utilisé (les rendements sont des rendements totaux, pas excédentaires).
+4. **Calibration backtest** : la demi-vie EWMA de 60 jours et la fenêtre de 252 jours sont des valeurs par défaut raisonnables mais méritent une calibration empirique.

@@ -7,6 +7,30 @@ from datetime import date
 from risk_management.enums import Decision, DecisionReasonCode, SizingMethod
 
 
+# ---------------------------------------------------------------------------
+# Factor Risk Model (Priorité 3 — RisqueSectoriel.md)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class FactorExposures:
+    """Expositions factorielles normalisées pour un titre à une date donnée.
+
+    Modèle CWMS à 4 facteurs (Country + World + Market-cap + Style) :
+    - market_beta : beta_126 vs SPY (déjà calculé par ``compute_factor_frame``)
+    - size_exposure : z-score log(market_cap) cross-sectional (≈ SMB)
+    - momentum_exposure : z-score trend_score cross-sectional (≈ WML)
+    - value_exposure : z-score earnings_yield cross-sectional (≈ HML)
+    """
+
+    symbol: str
+    date: date
+    market_beta: float = 1.0
+    size_exposure: float = 0.0
+    momentum_exposure: float = 0.0
+    value_exposure: float = 0.0
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateScore:
     """Candidat lu depuis stock_scores (is_candidate=1)."""

@@ -1,6 +1,6 @@
 # Alpha Trade — Documentation Fonctionnelle
 
-> *Version : 0.3.1 — Dernière mise à jour : juin 2026 (audit TOD5)*
+> *Version : 0.4.0 — Dernière mise à jour : 2026-06-22 (Priorité 3 — Modèle factoriel CWMS)*
 
 <!-- primary_provider: eodhd -->
 
@@ -49,6 +49,7 @@
 |---|---|---|
 | **Plan v2 — Short Selling** (Sprint 0-5) | 🔄 En cours | `core/direction.py`, `selector/short_score.py`, `risk_management/concentration.py`, `backtesting/simulator.py` |
 | **Plan ML v2 — Ternaire long/flat/short** (Sprint 1-7) | 🔄 En cours | `modelFactory/features.py` (`target_mode="ternary"`), `model.py` (CrossEntropyLoss 3 classes), `db_registry.py` (colonnes `predicted_side`, `proba_long/flat/short`) |
+| **Priorité 3 — Modèle de risque factoriel CWMS** | ✅ Livré (juin 2026) | `risk_management/factor_model.py` — Expositions factorielles, covariance EWMA, décomposition risque, contraintes, filtre corrélation factoriel. Intégré live + backtest. 33 tests. |
 
 > ⚠️ Les plans v2 ne sont pas encore validés en production. Le comportement par défaut reste **long-only** avec cible binaire. Les fonctionnalités short/ternaire sont opt-in.
 
@@ -261,6 +262,39 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 Les valeurs effectives sont pilotées par `config/capital_presets.yaml` (live + backtest), selon le bucket de capital actif.
 
 **Filtre de corrélation** : rejette les candidats trop corrélés (> 0.80 sur 60 jours) pour diversifier.
+
+**Modèle de risque factoriel CWMS** *(nouveau — juin 2026)* : décompose le risque du portefeuille en risque systématique (lié à 4 facteurs communs : Market, Size, Momentum, Value) et risque spécifique (idiosyncratique). Permet de :
+
+- **Mesurer** l'exposition factorielle du portefeuille (beta moyen, concentration size/momentum/value)
+- **Contraindre** le portefeuille : beta ≤ 1.2, max 60% du risque venant d'un seul facteur, au moins 2 facteurs significatifs
+- **Filtrer** les candidats par corrélation implicite (modèle factoriel) en替代 du Pearson historique
+- **Anticiper** les chocs : la covariance EWMA (demi-vie 60 jours) capte naturellement les changements de régime
+
+Activé via `enable_factor_model: true` dans la config risk_management. Voir `prompt/todo/RisqueSectoriel.md` pour le plan complet.
+
+**Résumé visuel — où intervient le modèle factoriel dans le pipeline** :
+
+```mermaid
+graph TD
+    A["📊 Selector : scores + beta_126 + market_cap + trend_score"] --> B
+    B["🔴 Phase A : compute_factor_exposures()<br/>z-score cross-sectional (4 facteurs)"] --> C
+    C["🔴 Phase B : estimate_factor_covariance()<br/>EWMA (demi-vie 60j, lookback 252j)"] --> D
+    D["PortfolioBuilder.build()"] --> E
+    E["🔴 Phase E : filter_by_factor_correlation()<br/>corrélation implicite (modèle factoriel)"] --> F
+    F["🔴 Phase D : check_factor_constraints()<br/>beta ≤ 1.2 · concentration ≤ 60% · div ≥ 2 facteurs"] --> G
+    G["🔴 Phase C : decompose_portfolio_risk()<br/>systématique vs spécifique → LOG"] --> H
+    H["Sizing ATR/Kelly + contraintes classiques<br/>→ ACCEPTED / REDUCED / REJECTED"]
+
+    style B fill:#ff6b6b,color:#fff
+    style C fill:#ff6b6b,color:#fff
+    style E fill:#ff6b6b,color:#fff
+    style F fill:#ff6b6b,color:#fff
+    style G fill:#ff6b6b,color:#fff
+```
+
+> 🔴 = Nouvelles étapes (Priorité 3). Désactivées par défaut, activation via `enable_factor_model: true`.
+
+**Formule clé** : $\\Sigma_{port} = \\mathbf{B} \\cdot \\mathbf{F} \\cdot \\mathbf{B}^T + \\mathbf{S}$ — le risque total se décompose en risque systématique (facteurs communs) + risque spécifique (idiosyncratique).
 
 ### 2.6 Alertes / notifications
 
@@ -583,6 +617,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 | **Latence Alpaca API** | Fill timeout, ordres children non soumis | Faible |
 | **Circuit breaker déclenché** | Aucune allocation possible | Faible (sauf crash marché) |
 | **Corrélation élevée entre candidats** | Portefeuille réduit (moins de positions) | Moyenne |
+| **Corrélations cachées par facteurs de style** (small-cap, high-beta, momentum) | Tous les titres chutent simultanément en crash → circuit breaker | ⚠️ Atténué par le modèle factoriel CWMS (Priorité 3) |
 | **Pas de gestion multi-devises** | Uniquement USD / actions US | Limitation de design |
 | **Pas de short selling** | Uniquement des positions long | Limitation de design |
 | **Pas de streaming temps réel** | Polling périodique (2s) pour les fills | Limitation de design |

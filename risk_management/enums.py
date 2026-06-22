@@ -44,6 +44,9 @@ class DecisionReasonCode(StrEnum):
     REJECTED_NOTIONAL = SizingMethod.REJECTED_NOTIONAL
     REJECTED_NOTIONAL_BELOW_ENFORCED = SizingMethod.REJECTED_NOTIONAL_BELOW_ENFORCED
     REJECTED_ZERO_SHARES = SizingMethod.REJECTED_ZERO_SHARES
+    # Factor risk model (Priorité 3)
+    FACTOR_CONSTRAINT_VIOLATION = "factor_constraint_violation"
+    FACTOR_CORRELATION_FILTER = "factor_correlation_filter"
 
 
 __all__ = [

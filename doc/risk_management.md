@@ -1,5 +1,7 @@
 # Risk Management — Guide d'usage
 
+> Dernière mise à jour : 2026-06-22 — Priorité 3 : modèle factoriel CWMS livré
+
 ## Objectif
 
 Ce document résume le fonctionnement du module `risk_management/` et les commandes utiles pour :
@@ -29,8 +31,9 @@ Ce document résume le fonctionnement du module `risk_management/` et les comman
 | `risk_management/circuit_breaker.py` | Suspension sur drawdown / perte quotidienne |
 | `risk_management/concentration.py` | Trackers anti-concentration et anti-répétition (Plan v2 Sprint 5) |
 | `risk_management/conviction.py` | Fusion score quant + prédiction ML |
-| `risk_management/correlation_filter.py` | Filtre de corrélation |
-| `risk_management/models.py` | Modèles métiers risk (dataclasses) |
+| `risk_management/correlation_filter.py` | Filtre de corrélation Pearson |
+| `risk_management/factor_model.py` | Modèle de risque factoriel CWMS (4 facteurs : Market, Size, Momentum, Value) — Priorité 3 RisqueSectoriel |
+| `risk_management/models.py` | Modèles métiers risk (dataclasses), dont `FactorExposures` |
 | `risk_management/enums.py` | Valeurs canonisées `sizing_method` / `decision_reason_code` |
 | `risk_management/db_io.py` | Chargement candidats, prix, prédictions, historique |
 | `risk_management/audit.py` | Persistance décisions et cibles |
@@ -160,11 +163,39 @@ Le CLI :
 1. enrichit les candidats avec `predicted_proba` / `predicted_side` et `historical_win_rate` ;
 2. calcule `conviction_score` directionnel (long ET short) ;
 3. trie les candidats par conviction décroissante ;
-4. applique le filtre de corrélation ;
-5. applique les trackers de concentration (`SymbolTradeTracker` + `ConsecutiveLossTracker`), **side-aware** ;
-6. applique le sizing ATR ou Kelly, direction-aware (le sizing short utilise la même logique ATR mais avec `risk_per_share` inversé) ;
-7. vérifie les contraintes (dont `short_max_positions`, `short_min_score`) ;
-8. produit des `PortfolioEntry` avec statut `ACCEPTED`, `REDUCED` ou `REJECTED`.
+4. applique le filtre de corrélation (Pearson ou **factoriel** si `enable_factor_model + use_factor_correlation_filter`) ;
+5. applique les contraintes factorielles (Phase D) si `enable_factor_model` — beta moyen ≤ 1.2, concentration ≤ 60%, diversification ≥ 2 facteurs ;
+6. log la décomposition du risque factoriel (Phase C) si activé ;
+7. applique les trackers de concentration (`SymbolTradeTracker` + `ConsecutiveLossTracker`), **side-aware** ;
+8. applique le sizing ATR ou Kelly, direction-aware (le sizing short utilise la même logique ATR mais avec `risk_per_share` inversé) ;
+9. vérifie les contraintes (dont `short_max_positions`, `short_min_score`) ;
+10. produit des `PortfolioEntry` avec statut `ACCEPTED`, `REDUCED` ou `REJECTED`.
+
+### 4.2.bis Modèle de risque factoriel CWMS (Priorité 3 — nouveau juin 2026)
+
+Le modèle factoriel (`risk_management/factor_model.py`) apporte 5 capacités :
+
+| Phase | Fonction | Rôle |
+|---|---|---|
+| **A** | `compute_factor_exposures()` | Calcule les exposures normalisées (z-score cross-sectional) pour 4 facteurs : Market (beta_126), Size (log market_cap), Momentum (trend_score), Value (earnings yield). |
+| **B** | `estimate_factor_covariance()` | Estime la matrice de covariance factorielle avec EWMA (demi-vie 60j, lookback 252j). Les poids exponentiels donnent plus d'importance aux observations récentes → capture automatique des changements de régime. |
+| **C** | `decompose_portfolio_risk()` | Décompose le risque total en systématique (factoriel) vs spécifique (idiosyncratique) : $\\Sigma_{port} = B \\cdot F \\cdot B^T + S$ |
+| **D** | `check_factor_constraints()` | Vérifie : beta moyen ≤ 1.2, concentration par facteur ≤ 60%, au moins 2 facteurs avec contribution > 10%. Filtre les candidats qui aggravent les violations. |
+| **E** | `filter_by_factor_correlation()` | Filtre de corrélation implicite (via le modèle factoriel). Avantage vs Pearson : distingue corrélation structurelle (facteurs communs) du bruit idiosyncratique. |
+
+**Activation** : dans `config.yaml`, section `risk_management` :
+
+```yaml
+risk_management:
+  enable_factor_model: true
+  use_factor_correlation_filter: true   # remplace Pearson par le filtre factoriel
+  factor_correlation_threshold: 0.70
+  max_portfolio_beta: 1.2
+  max_factor_concentration_pct: 0.60
+  min_factor_diversification: 2
+  factor_ewma_half_life: 60
+  factor_lookback_days: 252
+```
 
 ### 4.2.ter Short selling (Plan v2 — Sprint 2-5)
 
@@ -198,6 +229,36 @@ La décision opératoire S6 est désormais explicite :
 - même activé, le sizing Kelly reste encadré par les caps ATR, `max_position_weight` et `effective_min_notional`.
 
 Objectif métier : éviter d'augmenter artificiellement la variance sur les petits comptes, tout en autorisant un sizing plus informatif sur les portefeuilles suffisamment capitalisés et diversifiables.
+
+---
+
+### 4.2.quinquies Résumé visuel : où intervient le modèle factoriel
+
+```mermaid
+graph TD
+    A["📊 Selector : scores + beta_126 + market_cap + trend_score"] --> B
+    B["🔴 Phase A : compute_factor_exposures()<br/>z-score cross-sectional (4 facteurs)"] --> C
+    C["🔴 Phase B : estimate_factor_covariance()<br/>EWMA (demi-vie 60j, lookback 252j)"] --> D
+    D["PortfolioBuilder.build()"] --> E
+    E["🔴 Phase E : filter_by_factor_correlation()<br/>corrélation implicite (modèle factoriel)"] --> F
+    F["🔴 Phase D : check_factor_constraints()<br/>beta ≤ 1.2 · concentration ≤ 60% · div ≥ 2 facteurs"] --> G
+    G["🔴 Phase C : decompose_portfolio_risk()<br/>systématique vs spécifique → LOG"] --> H
+    H["Sizing ATR/Kelly + contraintes classiques<br/>→ ACCEPTED / REDUCED / REJECTED"]
+
+    style B fill:#ff6b6b,color:#fff
+    style C fill:#ff6b6b,color:#fff
+    style E fill:#ff6b6b,color:#fff
+    style F fill:#ff6b6b,color:#fff
+    style G fill:#ff6b6b,color:#fff
+```
+
+> 🔴 = Nouvelles étapes du modèle factoriel (Priorité 3). Désactivées par défaut (`enable_factor_model: false`).
+
+**Formule clé** : $\\Sigma_{port} = \\mathbf{B} \\cdot \\mathbf{F} \\cdot \\mathbf{B}^T + \\mathbf{S}$
+
+Où $\\mathbf{B}$ = matrice des exposures $(N \\times 4)$, $\\mathbf{F}$ = covariance factorielle EWMA $(4 \\times 4)$, $\\mathbf{S}$ = variances spécifiques diagonales $(N \\times N)$.
+
+---
 
 ### 4.3 Conviction score (direction-aware, ML ternaire)
 

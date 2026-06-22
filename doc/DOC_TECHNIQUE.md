@@ -1,6 +1,6 @@
 ﻿# Alpha Trade — Documentation Technique
 
-> *Version : 0.4.1 — Python ≥ 3.12 — Dernière mise à jour : juin 2026 (audit TOD5)*
+> *Version : 0.5.0 — Python ≥ 3.12 — Dernière mise à jour : 2026-06-22 (Priorité 3 — Modèle factoriel CWMS)*
 
 <!-- primary_provider: eodhd -->
 
@@ -48,6 +48,15 @@
 - **Sp4** : `backtesting/report.py` -- metriques split long/short/force-close — 🔜 Planifié
 - **Sp5** : `selector/short_score.py` (Option B), `risk_management/concentration.py` (trackers side-aware) — 🔄 En cours
 - **Option C** : injection directe du `predicted_side` ML ternaire dans le pipeline live — 🔜 Planifié
+
+### Priorité 3 — Modèle de risque factoriel CWMS (juin 2026) — ✅ LIVRÉ
+
+- **Phase A** : `compute_factor_exposures()` — z-score cross-sectional (Market, Size, Momentum, Value)
+- **Phase B** : `estimate_factor_covariance()` — EWMA (demi-vie 60j, lookback 252j)
+- **Phase C** : `decompose_portfolio_risk()` — systématique vs spécifique ($\\Sigma = BFB^T + S$)
+- **Phase D** : `check_factor_constraints()` — beta ≤ 1.2, concentration ≤ 60%, diversification ≥ 2 facteurs
+- **Phase E** : `filter_by_factor_correlation()` — corrélation implicite (modèle factoriel) en替代 du Pearson
+- **Fichiers** : `risk_management/factor_model.py` (coeur, 12 fonctions + 6 dataclasses), `risk_management/portfolio_builder.py` (intégration), `backtesting/risk_bridge.py` (backtest), `risk_management/cli.py` (live), `risk_management/db_io.py` (`load_factor_columns_asof()`), `tests/test_factor_model.py` (33 tests)
 
 ### Plan ML v2 -- Ternaire long/flat/short (Sprint 1-7, juin 2026) — 🔄 EN COURS
 
@@ -215,7 +224,29 @@ Points d'implémentation importants :
   biais potentiel des quotes Alpaca/IEX par rapport au close consolidé
   `stock_bars_daily.close` sur la même séance.
 
-**`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction portefeuille : enrichir candidats (conviction score) → trier par conviction DESC → filtre corrélation → sizing ATR/Kelly → check contraintes → ACCEPTED / REDUCED / REJECTED.
+**`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction portefeuille : enrichir candidats (conviction score) → trier par conviction DESC → filtre corrélation (Pearson ou factoriel) → contraintes factorielles (Phase D) → sizing ATR/Kelly → check contraintes → ACCEPTED / REDUCED / REJECTED.
+
+**Modèle de risque factoriel CWMS** (`risk_management/factor_model.py`, nouveau juin 2026) — Modèle à 4 facteurs (Market, Size, Momentum, Value) avec estimation EWMA de la covariance factorielle. Les dataclasses clés sont `FactorExposures` (dans `models.py`), `FactorCovariance`, `PortfolioRiskDecomposition`, `FactorConstraintResult`. Le modèle est intégré à la fois au pipeline live (`cli.py`) et au backtest (`risk_bridge.py`). Activé via `RiskConfig.enable_factor_model`.
+
+```mermaid
+graph TD
+    A["📊 Selector : scores + beta_126 + market_cap + trend_score"] --> B
+    B["🔴 Phase A : compute_factor_exposures()<br/>z-score cross-sectional (4 facteurs)"] --> C
+    C["🔴 Phase B : estimate_factor_covariance()<br/>EWMA (demi-vie 60j, lookback 252j)"] --> D
+    D["PortfolioBuilder.build()"] --> E
+    E["🔴 Phase E : filter_by_factor_correlation()<br/>corrélation implicite (modèle factoriel)"] --> F
+    F["🔴 Phase D : check_factor_constraints()<br/>beta ≤ 1.2 · concentration ≤ 60% · div ≥ 2 facteurs"] --> G
+    G["🔴 Phase C : decompose_portfolio_risk()<br/>systématique vs spécifique → LOG"] --> H
+    H["Sizing ATR/Kelly + contraintes classiques<br/>→ ACCEPTED / REDUCED / REJECTED"]
+
+    style B fill:#ff6b6b,color:#fff
+    style C fill:#ff6b6b,color:#fff
+    style E fill:#ff6b6b,color:#fff
+    style F fill:#ff6b6b,color:#fff
+    style G fill:#ff6b6b,color:#fff
+```
+
+> 🔴 = Nouvelles étapes (Priorité 3). $\\Sigma_{port} = \\mathbf{B} \\cdot \\mathbf{F} \\cdot \\mathbf{B}^T + \\mathbf{S}$
 
 **`SentimentSignalAggregator`** (`event_sentiment/signal_aggregator.py`) — Fusion `75% quant + 15% sentiment ticker + 10% macro sectoriel` → `final_score_sentiment`.
 

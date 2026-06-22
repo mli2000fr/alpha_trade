@@ -181,6 +181,9 @@ class PortfolioBuilder:
         regime_snapshot: object | None = None,
         rotation_state: object | None = None,
         breakout_tracker: object | None = None,
+        # Factor risk model (Priorité 3)
+        factor_exposures: dict[str, object] | None = None,
+        factor_covariance: object | None = None,
     ) -> None:
         self._cfg = config
         self._sizer = PositionSizer(config)
@@ -189,6 +192,9 @@ class PortfolioBuilder:
         self._circuit_breaker = circuit_breaker
         self._regime_snapshot = regime_snapshot
         self._rotation_state = rotation_state
+        # Factor risk model (Priorité 3)
+        self._factor_exposures: dict[str, object] = factor_exposures or {}
+        self._factor_covariance: object | None = factor_covariance
         # Concentration filters (Priorité 4)
         self._concentration_trade_tracker = SymbolTradeTracker(
             max_trades=config.concentration_max_trades_per_symbol,
@@ -394,9 +400,50 @@ class PortfolioBuilder:
         enriched = self._build_enriched_candidates(candidates, predictions, win_rates)
         enriched_by_symbol = {entry.symbol: entry for entry in enriched}
 
-        # 2. Filtre corrélation
+        # 2. Filtre corrélation (Pearson ou factoriel selon config)
         entries: list[PortfolioEntry] = []
-        if return_matrix is not None and not return_matrix.empty:
+        use_factor_filter = (
+            self._cfg.enable_factor_model
+            and self._cfg.use_factor_correlation_filter
+            and self._factor_covariance is not None
+            and bool(self._factor_exposures)
+        )
+        if use_factor_filter:
+            # Phase E : filtre de corrélation basé sur le modèle factoriel
+            from risk_management.factor_model import (
+                FactorCovariance,
+                FactorExposures,
+                filter_by_factor_correlation,
+            )
+            fc = self._factor_covariance
+            if isinstance(fc, FactorCovariance):
+                typed_exposures: dict[str, FactorExposures] = {}
+                for sym, exp in self._factor_exposures.items():
+                    if isinstance(exp, FactorExposures):
+                        typed_exposures[str(sym)] = exp
+                retained, factor_rejections = filter_by_factor_correlation(
+                    enriched,
+                    typed_exposures,
+                    fc,
+                    max_factor_correlation=self._cfg.factor_correlation_threshold,
+                )
+                for rej in factor_rejections:
+                    ec = enriched_by_symbol.get(rej.rejected_symbol)
+                    if ec is None:
+                        continue
+                    reason = (
+                        f"corrélation factorielle {rej.implied_correlation:.2f} "
+                        f"> {rej.threshold} avec {rej.blocker_symbol}"
+                    )[:255]
+                    entries.append(self._make_entry_v2(
+                        ec, prices.get(ec.symbol), 0, 0, Decision.REJECTED, reason,
+                        decision_reason_code=DecisionReasonCode.FACTOR_CORRELATION_FILTER,
+                        correlation_blocker=rej.blocker_symbol,
+                        correlation_value=rej.implied_correlation,
+                    ))
+            else:
+                retained = enriched
+        elif return_matrix is not None and not return_matrix.empty:
             retained, rejections = filter_correlated(
                 enriched, return_matrix, self._cfg.correlation_threshold, self._cfg.correlation_min_overlap,
             )
@@ -427,6 +474,57 @@ class PortfolioBuilder:
                 phase="build_portfolio",
                 item="filtre corrélation" if processed_candidates > 0 else None,
             )
+
+        # ── 2bis. Contraintes factorielles (Phase D — Priorité 3) ────────
+        factor_check_performed = False
+        if (
+            self._cfg.enable_factor_model
+            and self._factor_covariance is not None
+            and bool(self._factor_exposures)
+            and retained
+        ):
+            from risk_management.factor_model import (
+                FactorCovariance,
+                FactorExposures,
+                check_factor_constraints,
+            )
+            fc = self._factor_covariance
+            if isinstance(fc, FactorCovariance):
+                typed_exposures: dict[str, FactorExposures] = {}
+                for sym, exp in self._factor_exposures.items():
+                    if isinstance(exp, FactorExposures):
+                        typed_exposures[str(sym)] = exp
+                factor_result = check_factor_constraints(
+                    retained,
+                    typed_exposures,
+                    fc,
+                    constraints={
+                        "max_portfolio_beta": self._cfg.max_portfolio_beta,
+                        "max_size_concentration": self._cfg.max_factor_concentration_pct,
+                        "max_momentum_concentration": self._cfg.max_factor_concentration_pct,
+                        "min_factor_diversification": self._cfg.min_factor_diversification,
+                    },
+                )
+                factor_check_performed = True
+                if factor_result.has_violations:
+                    LOGGER.warning(
+                        "Factor constraints violations: %s",
+                        "; ".join(factor_result.violations),
+                    )
+                    # Filtrer les candidats qui aggravent les violations
+                    before_filter = len(retained)
+                    retained = factor_result.filtered_candidates
+                    if len(retained) < before_filter:
+                        LOGGER.info(
+                            "Factor constraints: filtered %d → %d candidates",
+                            before_filter, len(retained),
+                        )
+                if factor_result.decomposition is not None:
+                    from risk_management.factor_model import format_risk_decomposition
+                    LOGGER.info(
+                        "Factor risk decomposition:\n%s",
+                        format_risk_decomposition(factor_result.decomposition),
+                    )
 
         # 3. Sizing + contraintes
         sector_map = {c.symbol: c.sector for c in candidates}

@@ -616,7 +616,57 @@ def build_phase2_risk_result(
         if not candidates:
             continue
 
-        builder = PortfolioBuilder(cfg_for_day, rotation_state=rotation_state)
+        # ── Factor risk model (Priorité 3) : construire les exposures ──
+        factor_exposures: dict[str, object] = {}
+        factor_covariance: object | None = None
+        if risk_config.enable_factor_model:
+            try:
+                from risk_management.factor_model import (
+                    build_exposures_from_score_frame,
+                    build_factor_returns,
+                    estimate_factor_covariance,
+                )
+                factor_exposures_raw = build_exposures_from_score_frame(
+                    day_scores, snapshot_date,
+                )
+                factor_exposures = {
+                    sym: exp for sym, exp in factor_exposures_raw.items()
+                }
+                # Construire les rendements factoriels et estimer la covariance
+                factor_returns = build_factor_returns(
+                    symbols=list(set(symbols) | set(factor_exposures.keys())),
+                    close_prices=close_df,
+                    benchmark_prices=None,  # SPY sera cherché dans close_df
+                    factor_exposures_map=factor_exposures_raw,
+                )
+                if factor_returns is not None:
+                    factor_covariance = estimate_factor_covariance(
+                        factor_returns,
+                        lookback_days=risk_config.factor_lookback_days,
+                        ewma_half_life=risk_config.factor_ewma_half_life,
+                        estimation_date=snapshot_date,
+                        stock_returns=return_matrix if return_matrix is not None else None,
+                    )
+                if factor_covariance is not None:
+                    LOGGER.debug(
+                        "Factor model: date=%s exposures=%d factors=%s",
+                        snapshot_date,
+                        len(factor_exposures),
+                        getattr(factor_covariance, "factor_names", []),
+                    )
+            except Exception:
+                LOGGER.warning(
+                    "Factor model construction failed for %s",
+                    snapshot_date,
+                    exc_info=True,
+                )
+
+        builder = PortfolioBuilder(
+            cfg_for_day,
+            rotation_state=rotation_state,
+            factor_exposures=factor_exposures if factor_exposures else None,
+            factor_covariance=factor_covariance,
+        )
         entries = builder.build(candidates, prices, predictions=predictions, return_matrix=return_matrix)
         n_entry_sells = sum(1 for e in entries if getattr(e, "side", "buy") == "sell")
         n_accepted_sells = sum(1 for e in entries if getattr(e, "side", "buy") == "sell" and e.approved_shares > 0)
@@ -663,6 +713,8 @@ def build_phase2_risk_result(
         "rotation_triggered": rotation_state.should_rotate(),
         "rotation_cumulative_return": rotation_state.cumulative_return(),
         "rotation_data_points": len(rotation_state._daily_returns),
+        "factor_model_enabled": bool(risk_config.enable_factor_model),
+        "factor_correlation_filter": bool(risk_config.use_factor_correlation_filter),
     }
     return RiskBridgeResult(
         entries=all_entries,

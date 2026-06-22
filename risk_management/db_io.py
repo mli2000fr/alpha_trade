@@ -503,6 +503,89 @@ class RiskRepository:
             for r in rows
         }
 
+    def load_factor_columns_asof(
+        self, symbols: list[str], trade_date: date,
+    ) -> pd.DataFrame:
+        """Charge les colonnes factorielles (beta_126, market_cap, trend_score)
+        depuis stock_scores_history pour le modèle de risque factoriel (Priorité 3).
+
+        Parameters
+        ----------
+        symbols : list[str]
+            Symboles à charger.
+        trade_date : date
+            Date de trading (PIT : snapshot le plus récent <= trade_date).
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame avec colonnes : symbol, beta_126, market_cap, trend_score.
+        """
+        if not symbols:
+            return pd.DataFrame()
+
+        import pandas as pd
+
+        stock_score_columns = self._get_table_columns("stock_scores_history")
+        if not stock_score_columns:
+            LOGGER.warning("load_factor_columns_asof: stock_scores_history indisponible")
+            return pd.DataFrame()
+
+        # Vérifier quelles colonnes factorielles sont disponibles
+        factor_cols_available = [
+            col for col in ["beta_126", "market_cap", "trend_score"]
+            if col in stock_score_columns
+        ]
+        if not factor_cols_available:
+            LOGGER.warning("load_factor_columns_asof: aucune colonne factorielle trouvée")
+            return pd.DataFrame()
+
+        placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))
+        params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
+        params["trade_date"] = trade_date
+
+        select_cols = ["s.symbol"] + [f"s.{col}" for col in factor_cols_available]
+
+        # Résoudre le snapshot_date le plus récent
+        resolve_query = text(f"""
+            SELECT MAX(snapshot_date) AS snapshot_date
+            FROM stock_scores_history
+            WHERE snapshot_date <= :trade_date
+              AND symbol IN ({placeholders})
+              AND is_candidate = 1
+        """)
+        query = text(f"""
+            SELECT {', '.join(select_cols)}
+            FROM stock_scores_history s
+            WHERE s.snapshot_date = :snapshot_date
+              AND s.symbol IN ({placeholders})
+              AND s.is_candidate = 1
+        """)
+
+        try:
+            with self.engine.connect() as conn:
+                resolved = conn.execute(resolve_query, params).mappings().first()
+                if resolved is None:
+                    return pd.DataFrame()
+                snapshot_date = self._coerce_date(resolved["snapshot_date"])
+                if snapshot_date is None:
+                    return pd.DataFrame()
+                params["snapshot_date"] = snapshot_date
+                rows = conn.execute(query, params).mappings().all()
+        except Exception:
+            LOGGER.warning(
+                "load_factor_columns_asof: échec chargement colonnes factorielles",
+                exc_info=True,
+            )
+            return pd.DataFrame()
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
+        return df
+
     def load_return_matrix(
         self, symbols: list[str], lookback_days: int, trade_date: date | None = None,
     ) -> pd.DataFrame:
