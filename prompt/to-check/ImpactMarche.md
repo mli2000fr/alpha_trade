@@ -263,17 +263,18 @@ proceeds = quantity * exit_price * (1.0 - fees_rate) - fixed_commission_usd
 
 ### Activation
 
-| Fonctionnalité | Comment activer |
-|---|---|
-| **P1 — Spread réel** | Passer `spread_df` à `BacktestEngine.run()` (chargé via `load_spreads()`) |
-| **P2 — Slippage activé** | Automatique via les presets de capital (défauts dans `capital_presets.yaml`) |
-| **P3 — Commission tiercée** | `BacktestConfig(use_tiered_commission=True)` |
-| **P4 — Exécution intraday** | `MicrostructureConfig(execution_model=ExecutionModelConfig(model="arrival_price"))` ou `--execution-model arrival_price` en CLI |
+| Fonctionnalité | Statut par défaut | Comment activer / désactiver |
+|---|---|---|
+| **P1 — Spread réel** | ✅ **ON** (auto) | Chargé automatiquement via `load_spreads()` dans la CLI. `--no-spread-cost` pour désactiver. |
+| **P2 — Slippage activé** | ✅ **ON** (auto) | Volume passé automatiquement. Défauts microstructure par tranche dans `capital_presets.yaml`. |
+| **P3 — Commission tiercée** | ✅ **ON en mode pipeline** | `--use-tiered-commission` (auto en pipeline). `BacktestConfig(use_tiered_commission=False)` pour désactiver. |
+| **P4 — Exécution intraday** | ✅ `next_open` (legacy) | `--execution-model arrival_price|twap|vwap` pour changer. |
 
 ### Amélioration restante
 
 | Point | Priorité |
 |---|---|
 | Profondeur de carnet d'ordres (order book depth) | Future — nécessite des données L2 |
+| Pipeline live — coûts pré-trade estimés | Future — le live utilise les fills réels du broker, le TCA post-trade existe déjà |
 
 **Verdict final** : le backtest n'est plus structurellement optimiste. Les coûts de transaction sont modélisés de façon granulaire : spread réel par ticker, commission tiercée par tranche de capital, slippage volume-aware calibré, et prix d'exécution intraday configurable. L'écart backtest vs live devrait être réduit de 20-50 bps à moins de 5-10 bps pour les small-caps.

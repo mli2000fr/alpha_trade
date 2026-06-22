@@ -1010,6 +1010,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.5,
         help="Facteur de slippage pour arrival_price (P4). 0.5 = demi-range journalière.",
     )
+    # P3 — commission tiercée
+    run_p.add_argument(
+        "--use-tiered-commission",
+        action="store_true",
+        default=False,
+        help="Active la commission tiercée P3 (fixe + taux par tranche de capital) "
+        "au lieu du fees_pct plat legacy.",
+    )
+    # P1 — spread réel
+    run_p.add_argument(
+        "--no-spread-cost",
+        action="store_true",
+        default=False,
+        help="Désactive le coût du spread réel P1 (utilise uniquement le slippage_bps comme fallback).",
+    )
     run_p.add_argument(
         "--sizing-mode",
         choices=["equal_weight", "conviction_weighted"],
@@ -1545,6 +1560,14 @@ def _apply_pipeline_defensive_defaults_from_preset(
             default=5.0,
         )
 
+    # P3 — commission tiercée activée par défaut en mode pipeline
+    if (
+        "use_tiered_commission" not in explicit_flags
+        and not getattr(args, "use_tiered_commission", False)
+    ):
+        args.use_tiered_commission = True
+        LOGGER.info("P3 tiered commission activée par défaut (mode pipeline).")
+
     if (
         "max_portfolio_dd_pct" not in explicit_flags
         and float(getattr(args, "max_portfolio_dd_pct", 0.0) or 0.0) <= 0.0
@@ -1715,6 +1738,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         load_ohlcv,
         load_predictions,
         load_scores,
+        load_spreads,
         pivot_ohlcv,
     )
     from backtesting.resilience import prepare_predictions_for_ml_mode, prepare_scores_for_sentiment_mode
@@ -2034,6 +2058,20 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # 2. Pivoter OHLCV
     pivoted = pivot_ohlcv(ohlcv_df)
+
+    # P1 — Charger les spreads réels depuis stock_quote_snapshots
+    spread_df = None
+    if not bool(getattr(args, "no_spread_cost", False)):
+        try:
+            _safe_print("📊 Chargement spreads bid-ask (P1)...")
+            spread_df = load_spreads(engine, start, end)
+            if spread_df.empty:
+                _safe_print("   ⚠️ Aucun spread chargé — fallback au slippage_bps.")
+            else:
+                _safe_print(f"   ✅ {len(spread_df)} jours × {len(spread_df.columns)} symboles chargés.")
+        except Exception as _spread_exc:
+            _safe_print(f"   ⚠️ Spreads indisponibles ({_spread_exc}) — fallback au slippage_bps.")
+
     nyse_sessions = pd.DatetimeIndex(nyse_session_dates(ohlcv_start, end))
     if len(nyse_sessions) > 0:
         original_session_count = len(pivoted["close"].index)
@@ -2328,6 +2366,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         fees_pct=fees_pct,
         commission_bps=float(args.commission_bps),
         slippage_bps=float(args.slippage_bps),
+        use_tiered_commission=bool(getattr(args, "use_tiered_commission", False)),
         exec_config=execution_config,
         trading_constraints=trading_constraints,
         microstructure=microstructure_cfg,
@@ -2341,6 +2380,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
     bt_engine = BacktestEngine(bt_config)
     pf = bt_engine.run(
         open=execution_pivoted["open"], close=execution_pivoted["close"], high=execution_pivoted["high"], low=execution_pivoted["low"],
+        volume=execution_pivoted.get("volume"),
+        spread_df=spread_df,
         signals_df=signals_df,
     )
     diagnostics = extract_diagnostics(pf)

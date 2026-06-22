@@ -370,19 +370,24 @@ separement pour les longs et les shorts.
 - `--commission-bps` — commission plate en bps (ignorée si tiered commission actif)
 - `--slippage-bps` — slippage générique en bps
 - `--fees` (déprécié mais encore accepté)
-- `--use-tiered-commission` — active la **commission tiercée P3** (fixe + taux par tranche de capital)
+- `--use-tiered-commission` — active la **commission tiercée P3** (fixe + taux par tranche de capital). **Activé par défaut en mode `pipeline`**.
+- `--no-spread-cost` — désactive le coût du spread réel P1 (utilise uniquement le `slippage_bps` comme fallback).
 
 **P1 — Spread réel** : chargé automatiquement depuis `stock_quote_snapshots` via
-`load_spreads()` et passé au `BacktestEngine.run(spread_df=...)`. Si la table
-est indisponible, fallback au `slippage_bps`.
+`load_spreads()` et passé au `BacktestEngine.run(spread_df=...)`. **Activé par défaut**.
+Si la table est indisponible, fallback silencieux au `slippage_bps`.
+Utiliser `--no-spread-cost` pour désactiver.
+
+**P2 — Volume** : passé automatiquement à `BacktestEngine.run(volume=...)` pour
+alimenter le calcul ADV du slippage volume-aware. **Activé par défaut**.
 
 **Formule legacy** : `fees_pct = (commission_bps + slippage_bps) / 10_000`.
 
-**Formule P1+P2+P3 activée** :
+**Formule P1+P2+P3 activée par défaut (mode pipeline)** :
 ```
 coût_total = commission_tiercée(taux + fixe_usd)
            + slippage_bps / 10000
-           + extra_slippage_volume_aware  # sqrt(size/ADV) selon capital_presets
+           + extra_slippage_volume_aware  # sqrt(size/ADV) avec volume réel
            + spread_réel_ticker           # depuis stock_quote_snapshots
 ```
 
