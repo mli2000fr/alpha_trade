@@ -129,6 +129,30 @@ def evaluate_drift_gate(
             "ML kill switch ACTIVATED model_id=%s status=%s ks_pvalue=%s psi=%s",
             report.model_id, status, report.ks_pvalue, report.psi,
         )
+        # Métrique Prometheus
+        try:
+            from service.prometheus_metrics import set_model_drift_active
+            set_model_drift_active(True)
+        except Exception:
+            pass
+        # Alerte système multi-canal
+        try:
+            from service.alerting import send_system_alert
+            send_system_alert(
+                event="ML_MODEL_DRIFT_KILL_SWITCH",
+                payload={
+                    "model_id": report.model_id,
+                    "drift_status": status,
+                    "ks_pvalue": report.ks_pvalue,
+                    "psi": report.psi,
+                    "n_samples": report.n_samples,
+                    "n_baseline": report.n_baseline,
+                    "reason": decision.reason,
+                },
+                severity="critical",
+            )
+        except Exception:
+            LOGGER.debug("Alerte ML drift indisponible.", exc_info=True)
         return decision
 
     if status == "WARN":
@@ -136,6 +160,23 @@ def evaluate_drift_gate(
             "ML drift WARN (grace) model_id=%s ks_pvalue=%s psi=%s",
             report.model_id, report.ks_pvalue, report.psi,
         )
+        # Alerte précoce : drift en warning
+        try:
+            from service.alerting import send_system_alert
+            send_system_alert(
+                event="ML_MODEL_DRIFT_WARNING",
+                payload={
+                    "model_id": report.model_id,
+                    "drift_status": status,
+                    "ks_pvalue": report.ks_pvalue,
+                    "psi": report.psi,
+                    "n_samples": report.n_samples,
+                    "n_baseline": report.n_baseline,
+                },
+                severity="warning",
+            )
+        except Exception:
+            LOGGER.debug("Alerte ML drift warning indisponible.", exc_info=True)
 
     return MLPolicyDecision(
         model_id=report.model_id,

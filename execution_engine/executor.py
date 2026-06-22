@@ -132,6 +132,12 @@ class ProductionExecutor:
         trade_date: date | None = None,
     ) -> dict[str, Any]:
         exec_run_id = build_run_id()
+        # Métrique Prometheus : incrémente le compteur de runs
+        try:
+            from service.prometheus_metrics import bump_execution_run
+            bump_execution_run()
+        except Exception:
+            pass
         resolved_account_id = self._cfg.resolved_account_id
         metrics: dict[str, Any] = {
             "exec_run_id": exec_run_id,
@@ -416,6 +422,29 @@ class ProductionExecutor:
             metrics["leverage_reason"] = account_state.leverage_reason
             self._snapshot_account_constraints(exec_run_id, account_state)
 
+            # Sprint S9 — Cash ledger consistency check (best-effort)
+            try:
+                from execution_engine.cash_ledger_guard import check_cash_ledger_consistency
+                # Récupère la market value depuis le broker si disponible
+                _market_value = 0.0
+                try:
+                    positions = self._broker.list_positions()
+                    _market_value = sum(
+                        abs(float(getattr(p, "market_value", 0) or 0))
+                        for p in (positions or [])
+                    )
+                except Exception:
+                    LOGGER.debug("Cash ledger guard: impossible de récupérer la market value.", exc_info=True)
+                check_cash_ledger_consistency(
+                    settled_cash=float(account_state.settled_cash_available),
+                    unsettled_cash=0.0,  # sera enrichi quand le broker le fournira
+                    market_value=_market_value,
+                    reported_equity=float(account_state.equity),
+                    account_id=resolved_account_id,
+                )
+            except Exception:
+                LOGGER.debug("Cash ledger guard indisponible.", exc_info=True)
+
             targets, leverage_target_summary = apply_live_leverage_to_targets(
                 targets=targets,
                 effective_leverage=account_state.effective_leverage,
@@ -658,6 +687,27 @@ class ProductionExecutor:
                 if self._cfg.enable_kill_switch and consecutive_failures >= self._cfg.max_consecutive_failures:
                     events.append(make_event(exec_run_id, EventType.KILL_SWITCH_ACTIVATED,
                                              f"Kill switch after {consecutive_failures} failures"))
+                    # Métrique Prometheus
+                    try:
+                        from service.prometheus_metrics import set_kill_switch_active
+                        set_kill_switch_active(True)
+                    except Exception:
+                        pass
+                    # Alerte système multi-canal
+                    try:
+                        from service.alerting import send_system_alert
+                        send_system_alert(
+                            event="KILL_SWITCH_ACTIVATED",
+                            payload={
+                                "exec_run_id": exec_run_id,
+                                "consecutive_failures": consecutive_failures,
+                                "max_consecutive_failures": self._cfg.max_consecutive_failures,
+                                "account_id": resolved_account_id,
+                            },
+                            severity="critical",
+                        )
+                    except Exception:
+                        LOGGER.debug("Kill switch alert indisponible.", exc_info=True)
                     break
 
                 # Throttle
@@ -791,6 +841,22 @@ class ProductionExecutor:
                                 f"Slippage {fill.slippage_bps:.1f} bps on {intent.symbol}",
                                 symbol=intent.symbol,
                             ))
+                            # Alerte système (best-effort, anti-doublon via send_system_alert)
+                            try:
+                                from service.alerting import send_system_alert
+                                send_system_alert(
+                                    event="SLIPPAGE_EXCEEDED",
+                                    payload={
+                                        "exec_run_id": exec_run_id,
+                                        "symbol": intent.symbol,
+                                        "slippage_bps": round(fill.slippage_bps, 2),
+                                        "max_slippage_bps": self._cfg.max_slippage_bps,
+                                        "account_id": resolved_account_id,
+                                    },
+                                    severity="warning",
+                                )
+                            except Exception:
+                                LOGGER.debug("Slippage alert indisponible.", exc_info=True)
 
                         # Phase 6 — Submit children (synthetic bracket)
                         child_events = self._submit_children(

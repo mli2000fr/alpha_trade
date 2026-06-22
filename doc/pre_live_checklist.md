@@ -31,6 +31,10 @@
 
 - [ ] Variables d'environnement présentes pour le compte cible :
       `ALPACA_<ID>_API_KEY`, `ALPACA_<ID>_SECRET_KEY`, `LOGIN_DB`, `PASSWORD_DB`.
+- [ ] **Variables d'environnement alerting** (Sprint S9) configurées :
+      `ALPHA_TRADE_SLACK_WEBHOOK`, `ALPHA_TRADE_TELEGRAM_BOT_TOKEN`/`CHAT_ID`,
+      `ALPHA_TRADE_DISCORD_WEBHOOK`, `TWILIO_*`, `NUM_SMS_ALERT`.
+      Voir `doc/service.md` §10 pour la liste complète.
 - [ ] Compte Alpaca live déclaré dans `config.yaml` avec `mode: live` et
       placeholders `${VAR}` (jamais de littéral).
 - [ ] Aucun verrou pipeline IHM actif (cf. dashboard Pipeline).

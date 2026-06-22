@@ -647,8 +647,34 @@ class AlphaScanner:
                     elapsed,
                     zero_candidate_diagnostic,
                 )
+                # Métrique Prometheus
+                try:
+                    from service.prometheus_metrics import set_empty_universe
+                    set_empty_universe(True)
+                except Exception:
+                    pass
+                # Alerte système : univers de trading vide
+                try:
+                    from service.alerting import send_system_alert
+                    send_system_alert(
+                        event="EMPTY_TRADING_UNIVERSE",
+                        payload={
+                            "duration_seconds": round(elapsed, 2),
+                            "diagnostic": zero_candidate_diagnostic,
+                            "symbols_initial": int(self.get_aggregated_filter_stats().get("initial", 0)),
+                        },
+                        severity="warning",
+                    )
+                except Exception:
+                    LOGGER.debug("Alerte empty universe indisponible.", exc_info=True)
             else:
                 LOGGER.info("AlphaScanner termine en %.2fs | candidats=%s", elapsed, len(selected))
+                # Métrique Prometheus : univers non vide
+                try:
+                    from service.prometheus_metrics import set_empty_universe
+                    set_empty_universe(False)
+                except Exception:
+                    pass
 
             return selected
         finally:

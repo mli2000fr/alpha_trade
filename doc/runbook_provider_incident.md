@@ -8,14 +8,28 @@
 
 ## 1. Détection
 
-### Signaux automatiques
+### Signaux automatiques (alertes push)
+
+> **Sprint S9** : Tous les signaux ci-dessous déclenchent désormais une alerte
+> multi-canal automatique (Slack, Telegram, Discord, SMS, Email) en plus des
+> métriques Prometheus. Voir `doc/service.md` §10-11 pour la configuration.
+
+| Signal | Source | Seuil | Alerte auto ? |
+|---|---|---|---|
+| Erreur API Alpaca (auth 401/403) | `service/alpaca/clientAlpaca.py` | immédiat | ✅ `API_ALPACA_*_FAILURE` |
+| Erreur API Alpaca (5xx répétés) | `service/_http_retry.py` | après retries | ✅ `API_ALPACA_*_FAILURE` |
+| Sync quotes échoué | `dataIntegrityEngine/sync_latest_quotes.py` | run en erreur | ✅ `SYNC_QUOTES_FAILED` |
+| Univers de trading vide | `selector/scanner.py` | 0 candidats | ✅ `EMPTY_TRADING_UNIVERSE` |
+| Métrique `alpha_trade_data_freshness_hours` | Prometheus `/metrics` | > 36h | ⚠️ Grafana alert |
+| Code retour ≠ 0 de `import-bars` | run_summary | exit_code ≠ 0 | ⚠️ Log + IHM |
+| `errors > 0` dans `cleaning_audit_runs` | DB | toute valeur | ⚠️ Log + IHM |
+
+### Signaux automatiques (Prometheus)
 
 | Signal | Source | Seuil |
 |---|---|---|
-| Métrique `alpha_trade_data_freshness_hours{table="stock_bars_daily"}` | Prometheus (`/metrics`) | > 36h |
-| `alpha_trade_iex_zero_volume_count` brutal +20 % jour-à-jour | Prometheus | delta > 0.2 |
-| Code retour ≠ 0 de `python -m dataIntegrityEngine import-bars` | run_summary | exit_code ≠ 0 |
-| `errors > 0` dans `cleaning_audit_runs` | DB | toute valeur |
+| Métrique `alpha_trade_api_errors_total{service="alpaca"}` | Prometheus (`/metrics`) | rate > 0.05/s |
+| Métrique `alpha_trade_empty_universe` | Prometheus (`/metrics`) | == 1 |
 | HTTP 5xx répétés dans `service/_http_retry.py` (logs) | logs | ≥ 5 / minute |
 
 ### Diagnostic rapide

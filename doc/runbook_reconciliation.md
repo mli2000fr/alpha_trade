@@ -8,11 +8,15 @@
 
 ## 1. Cas couverts
 
-| Statut | Module | Cause typique |
-|---|---|---|
-| `MANUAL_REVIEW` | `execution_engine.executor` | Diff irréconciliable broker ↔ DB (qty / fill price) |
-| `BLOCKED` | `execution_engine` | Equity broker indisponible / kill switch actif |
-| `RECON_FAILED` | `corporate_actions.reconciliation` | Idempotency conflict / amount mismatch |
+| Statut | Module | Cause typique | Alerte auto ? |
+|---|---|---|---|
+| `MANUAL_REVIEW` | `execution_engine.executor` | Diff irréconciliable broker ↔ DB (qty / fill price) | ⚠️ Log + IHM |
+| `BLOCKED` | `execution_engine` | Equity broker indisponible / kill switch actif | ✅ `KILL_SWITCH_ACTIVATED` |
+| `RECON_FAILED` | `corporate_actions.reconciliation` | Idempotency conflict / amount mismatch | ⚠️ Log |
+| `CASH_LEDGER_MISALIGNMENT` | `execution_engine.cash_ledger_guard` | Écart equity calculée vs rapportée > 1% | ✅ `CASH_LEDGER_MISALIGNMENT` |
+
+> **Sprint S9** : Les alertes automatiques sont envoyées sur tous les canaux
+> configurés (Slack, Telegram, Discord, SMS, Email). Voir `doc/service.md` §10.
 
 ---
 

@@ -44,6 +44,32 @@ _VALID_FEEDS: frozenset[str] = frozenset({"iex", "sip"})
 LOGGER = logging.getLogger(__name__)
 
 
+def _try_alert_api_failure(service: str, error: str, status_code: int | None = None) -> None:
+    """Alerte best-effort en cas d'échec d'API Alpaca (auth, down, timeout)."""
+    # Métrique Prometheus
+    try:
+        from service.prometheus_metrics import bump_api_error
+        bump_api_error(service)
+    except Exception:
+        pass
+
+    try:
+        from service.alerting import send_system_alert
+
+        severity = "critical" if status_code in (401, 403) else "warning"
+        send_system_alert(
+            event=f"API_{service.upper()}_FAILURE",
+            payload={
+                "service": service,
+                "error": error,
+                "status_code": status_code,
+            },
+            severity=severity,
+        )
+    except Exception:
+        LOGGER.debug("API alert indisponible pour %s.", service, exc_info=True)
+
+
 class AlpacaBarsFetchError(RuntimeError):
     """Erreur technique lors d'un chargement de bars Alpaca.
 
@@ -274,6 +300,9 @@ def fetch_latest_quotes(
             raise RuntimeError("Réponse latest quotes Alpaca invalide.")
         _telemetry_bump("alpaca", "success_total")
         return {str(symbol): quote for symbol, quote in quotes.items() if isinstance(quote, dict)}
+    except Exception:
+        _try_alert_api_failure("alpaca_latest_quotes", "API call failed after retries")
+        raise
     finally:
         if owned_session:
             client.close()

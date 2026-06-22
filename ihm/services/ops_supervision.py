@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -15,6 +16,8 @@ from ihm.services.queries import get_ops_latest_critical_summaries, get_ops_serv
 from ihm.services.run_summary import build_run_summary_caption, get_run_summary
 from ihm.services.windows_watcher_bridge import get_windows_watcher_status, list_windows_watcher_log_sources
 from ihm.services.watcher_runtime import WATCHER_ONCE_STEP_KEY, WATCHER_SERVICE_STEP_KEY, build_windows_integration_rows, list_watcher_run_history
+
+LOGGER = logging.getLogger(__name__)
 
 SERVICE_LABELS: dict[str, str] = {
     "execution_protection_watch_service": "Watcher protections",
@@ -405,16 +408,52 @@ def build_ops_alerts(
     else:
         for row in service_health_df.to_dict(orient="records"):
             heartbeat_level = str(row.get("heartbeat_level", "") or "")
+            heartbeat_age = row.get("heartbeat_age_seconds")
             if heartbeat_level == "error":
                 alerts.append({
                     "severity": "error",
                     "message": f"Service {row.get('service')} scope={row.get('scope')} en état {row.get('heartbeat_label')}.",
                 })
+                # Métrique Prometheus
+                try:
+                    from service.prometheus_metrics import set_heartbeat_stale
+                    set_heartbeat_stale(True)
+                except Exception:
+                    pass
+                # Alerte système : heartbeat stale
+                try:
+                    from service.alerting import send_system_alert
+                    send_system_alert(
+                        event="WATCHER_STALE_HEARTBEAT",
+                        payload={
+                            "service": str(row.get("service", "")),
+                            "scope": str(row.get("scope", "")),
+                            "heartbeat_label": str(row.get("heartbeat_label", "")),
+                            "heartbeat_age_seconds": int(heartbeat_age) if heartbeat_age is not None else None,
+                            "last_heartbeat_at": str(row.get("last_heartbeat_at", "—")),
+                            "status": str(row.get("status", "")),
+                        },
+                        severity="critical",
+                    )
+                except Exception:
+                    LOGGER.debug("Alerte heartbeat stale indisponible.", exc_info=True)
             elif heartbeat_level == "warn":
                 alerts.append({
                     "severity": "warn",
                     "message": f"Service {row.get('service')} scope={row.get('scope')} à surveiller (heartbeat).",
                 })
+
+        # Si aucun heartbeat en erreur, réinitialise la gauge Prometheus
+        has_error_heartbeat = any(
+            str(row.get("heartbeat_level", "") or "") == "error"
+            for row in service_health_df.to_dict(orient="records")
+        )
+        if not has_error_heartbeat:
+            try:
+                from service.prometheus_metrics import set_heartbeat_stale
+                set_heartbeat_stale(False)
+            except Exception:
+                pass
 
     for row in latest_runs_df.to_dict(orient="records"):
         status = _status_upper(row.get("status"))

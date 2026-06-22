@@ -1137,6 +1137,21 @@ def main() -> None:
         error_message = repr(exc)
         summary = {"symbols": 0, "rows_upserted": 0}
         finished_at = _utc_now_naive()
+        # Alerte système : sync latest quotes en échec (API down probable)
+        try:
+            from service.alerting import send_system_alert
+            send_system_alert(
+                event="SYNC_QUOTES_FAILED",
+                payload={
+                    "run_id": run_id,
+                    "error": error_message,
+                    "symbol_source": normalize_symbol_source(args.symbol_source),
+                    "mode": "historical" if resolved_from_date else "latest",
+                },
+                severity="critical",
+            )
+        except Exception:
+            LOGGER.debug("Alerte sync_quotes indisponible.", exc_info=True)
         # Phase 3.1.c — audit dédié quotes.
         record_quotes_audit_run(
             run_id=run_id,

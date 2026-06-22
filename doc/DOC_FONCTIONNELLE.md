@@ -1,6 +1,6 @@
 # Alpha Trade — Documentation Fonctionnelle
 
-> *Version : 0.4.1 — Dernière mise à jour : 2026-06-22 (Contrainte de liquidité dynamique P1/P3/P4)*
+> *Version : 0.5.0 — Dernière mise à jour : 2026-06-22 (Système d'Alerting & Monitoring S12)*
 
 <!-- primary_provider: eodhd -->
 
@@ -44,6 +44,7 @@
 - **S9** *(juin 2026)* : alignement IHM/presets finalisé. Bandes d'avertissement dans l'IHM quand `swing_only=True` (obsolète), infobulles mentionnant le changement réglementaire FINRA 2026-06-04. ✅ Livré.
 - **S10** *(juin 2026)* : **Impact Marché P1-P4** — modélisation complète des coûts de transaction dans le backtest. ✅ Livré.
 - **S11** *(juin 2026)* : **Liquidité Dynamique P1/P3/P4** — contrainte position/ADV, warning agrégé portefeuille, seuil ADV adaptatif. ✅ Livré.
+- **S12** *(juin 2026)* : **Système d'Alerting & Monitoring** — 6 canaux (Slack, Email, Log, Telegram, Discord, SMS), 14 événements critiques branchés, cash ledger guard, 9 métriques Prometheus, anti-doublon global. ✅ Livré.
 
 ### Plans en cours (v2)
 
@@ -54,6 +55,7 @@
 | **Priorité 3 — Modèle de risque factoriel CWMS** | ✅ Livré (juin 2026) | `risk_management/factor_model.py` — Expositions factorielles, covariance EWMA, décomposition risque, contraintes, filtre corrélation factoriel. Intégré live + backtest. 33 tests. |
 | **Impact Marché P1-P4** | ✅ Livré (juin 2026) | P1 : spread réel ticker via `stock_quote_snapshots`. P2 : slippage volume-aware activé par défaut par tranche de capital. P3 : commission tiercée (`TieredCommissionConfig`). P4 : modèle d'exécution intraday (`arrival_price`/`twap`/`vwap`). |
 | **Liquidité Dynamique P1/P3/P4** | ✅ Livré (juin 2026) | P1 : contrainte `max_position_pct_of_adv` dans le `ConstraintChecker`. P3 : warning ADV agrégé portefeuille. P4 : `adaptive_min_adv()` + `with_adaptive_adv()`. Voir `prompt/todo/LiquiditeDynamique.md`. |
+| **Système d'Alerting & Monitoring (S12)** | ✅ Livré (juin 2026) | 6 canaux de notification, 14 événements couverts, cash ledger guard, 9 métriques Prometheus, anti-doublon SHA256. Voir `doc/service.md` §10-12. |
 
 > ⚠️ Les plans v2 ne sont pas encore validés en production. Le comportement par défaut reste **long-only** avec cible binaire. Les fonctionnalités short/ternaire sont opt-in.
 
@@ -314,14 +316,60 @@ graph TD
 
 **Donnée ADV** : le champ `PriceInfo.adv_usd` est alimenté automatiquement : en live depuis `stock_bars_daily` (close × volume, 20j), en backtest depuis la matrice `volume_df` passée au bridge risk. Si absent (`None`), la contrainte est silencieusement ignorée.
 
-### 2.6 Alertes / notifications
+### 2.6 Alertes / notifications (Sprint S12)
 
-- **Alerte slippage** : déclenchée si l'écart prix fill vs prix de décision > seuil (défaut 30 bps)
-- **Kill switch** : arrêt automatique après N échecs consécutifs (défaut : 3)
-- **Circuit breaker actif** : événement loggé, run avorté + notification externe best-effort (email IHM + canal `service.alerting` Slack/SMTP selon env)
-- **Logs critiques** : si le scanner produit 0 candidats (LOGGER.critical)
-- Tous les événements sont persistés dans la table `execution_events`
-- **Monitoring Prometheus** : endpoint `/metrics` disponible en mode opt-in (`ALPHA_TRADE_METRICS_PORT`) et utilisable avec Prometheus/Grafana
+Le système dispose d'un **système d'alerte actif multicanal** qui notifie l'opérateur en temps réel sur toute anomalie critique, sans nécessiter l'ouverture de l'IHM.
+
+#### Canaux de notification (6 canaux)
+
+| Canal | Activation | Usage recommandé |
+|---|---|---|
+| **Slack** | `ALPHA_TRADE_SLACK_WEBHOOK` | Canal ops principal |
+| **Email SMTP** | `ALPHA_TRADE_SMTP_*` | Rapports quotidiens, trace écrite |
+| **Telegram** | `ALPHA_TRADE_TELEGRAM_BOT_TOKEN` + `CHAT_ID` | Alertes mobiles instantanées (gratuit) |
+| **Discord** | `ALPHA_TRADE_DISCORD_WEBHOOK` | Communauté trading / second canal |
+| **SMS (Twilio)** | `TWILIO_*` + `NUM_SMS_ALERT` | Alertes critiques en mobilité sans data |
+| **Log (fallback)** | Toujours actif | Fallback si aucun autre canal configuré |
+
+Tous les canaux sont **auto-détectés** depuis les variables d'environnement et fonctionnent en **best-effort** : si un canal échoue, les autres continuent, le fallback log garantit qu'aucune alerte n'est perdue.
+
+#### Événements couverts (14 événements)
+
+| Événement | Déclencheur | Severity |
+|---|---|---|
+| `CIRCUIT_BREAKER_FIRED` | Drawdown > seuil ou perte quotidienne > seuil | `critical` |
+| `DRAWDOWN_APPROACHING` | Drawdown ≥ 80% du seuil (early warning) | `warning` |
+| `KILL_SWITCH_ACTIVATED` | Échecs consécutifs > max au run d'exécution | `critical` |
+| `SLIPPAGE_EXCEEDED` | Slippage par fill > seuil TCA | `warning` |
+| `CASH_LEDGER_MISALIGNMENT` | Écart equity calculée vs rapportée > 1% | `critical` |
+| `SYNC_QUOTES_FAILED` | Échec du job `sync_latest_quotes` | `critical` |
+| `API_ALPACA_*_FAILURE` | Erreur API Alpaca (auth 401/403 ou 5xx) | `critical`/`warning` |
+| `WATCHER_STALE_HEARTBEAT` | Heartbeat du watcher protection stale | `critical` |
+| `EMPTY_TRADING_UNIVERSE` | AlphaScanner = 0 candidats | `warning` |
+| `ML_MODEL_DRIFT_KILL_SWITCH` | Drift ML statut ALERT → kill switch | `critical` |
+| `ML_MODEL_DRIFT_WARNING` | Drift ML statut WARN | `warning` |
+
+**Anti-doublon** : chaque alerte est hashée (SHA256 event+payload) avec cooldown de 5 minutes.
+
+#### Cash Ledger Guard
+
+Vérification automatique de cohérence du cash ledger à chaque run d'exécution (`execution_engine/cash_ledger_guard.py`) : compare l'equity calculée avec l'equity rapportée par le broker, alerte si écart > 1%.
+
+#### Métriques Prometheus (9 métriques)
+
+| Métrique | Type | Description |
+|---|---|---|
+| `alpha_trade_api_errors_total` | counter | Erreurs API par service |
+| `alpha_trade_execution_runs_total` | counter | Nombre total de runs d'exécution |
+| `alpha_trade_alerts_total` | counter | Alertes émises par severity |
+| `alpha_trade_circuit_breaker_active` | gauge | Circuit breaker actif (0/1) |
+| `alpha_trade_heartbeat_stale` | gauge | Heartbeat stale (0/1) |
+| `alpha_trade_empty_universe` | gauge | Univers vide (0/1) |
+| `alpha_trade_kill_switch_active` | gauge | Kill switch actif (0/1) |
+| `alpha_trade_model_drift_active` | gauge | Drift ML actif (0/1) |
+| `alpha_trade_cash_ledger_aligned` | gauge | Cash ledger aligné (0/1) |
+
+Deux modes : fichier `.prom` (node_exporter) et endpoint HTTP `GET /metrics` (`ALPHA_TRADE_PROMETHEUS_PORT`, défaut 9090).
 
 ### 2.7 Historique / reporting
 
@@ -599,7 +647,43 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 | `contextual_min_relevance` | `0.0` | Seuil minimal de pertinence pour autoriser le scoring contextuel |
 | `contextual_max_pairs_per_run` | `5000` | Cap opérateur pour éviter une explosion de tokenisations FinBERT |
 
-### 4.4 Horaires
+### 4.5 Variables d'environnement — Alerting & Monitoring (Sprint S12)
+
+```bash
+# ─── Slack ───
+$env:ALPHA_TRADE_SLACK_WEBHOOK = "https://hooks.slack.com/services/..."
+
+# ─── Email SMTP ───
+$env:ALPHA_TRADE_SMTP_HOST = "smtp.gmail.com"
+$env:ALPHA_TRADE_SMTP_PORT = "587"
+$env:ALPHA_TRADE_SMTP_FROM = "alpha-trade@example.com"
+$env:ALPHA_TRADE_SMTP_TO = "ops@example.com"
+$env:ALPHA_TRADE_SMTP_USER = "user@example.com"
+$env:ALPHA_TRADE_SMTP_PASSWORD = "..."
+
+# ─── Telegram ───
+$env:ALPHA_TRADE_TELEGRAM_BOT_TOKEN = "123456:ABC-DEF..."
+$env:ALPHA_TRADE_TELEGRAM_CHAT_ID = "-1001234567890"
+
+# ─── Discord ───
+$env:ALPHA_TRADE_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/..."
+
+# ─── SMS (Twilio) ───
+$env:TWILIO_ACCOUNT_SID = "AC..."
+$env:TWILIO_AUTH_TOKEN = "..."
+$env:TWILIO_PHONE_NUMBER = "+1234567890"
+$env:NUM_SMS_ALERT = "+33612345678"
+
+# ─── Prometheus ───
+$env:ALPHA_TRADE_PROMETHEUS_PORT = "9090"
+$env:ALPHA_TRADE_PROMETHEUS_FILE = "artifacts/metrics/alpha_trade.prom"
+```
+
+> **Important** : Au moins un canal d'alerte doit être configuré pour la production.
+> Sans aucune variable, seul le fallback `LogNotifier` (log applicatif) est actif.
+> Voir `doc/service.md` §10-12 pour la documentation technique complète.
+
+### 4.6 Horaires
 
 - Le système vérifie l'horloge NYSE avant exécution (sauf dry-run ou `allow_outside_rth`)
 - Calendrier : `pandas_market_calendars` (NYSE) avec couverture complète des jours fériés US
@@ -640,7 +724,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 | **Pas de gestion multi-devises** | Uniquement USD / actions US | Limitation de design |
 | **Pas de short selling** | Uniquement des positions long | Limitation de design |
 | **Pas de streaming temps réel** | Polling périodique (2s) pour les fills | Limitation de design |
-| **Alerting externe partiel** | Email IHM + Slack/SMTP disponibles surtout sur incidents critiques (ex: circuit breaker), couverture encore incomplète sur tous les événements métier | Moyenne |
+| **Alerting externe complet** | ✅ 6 canaux, 14 événements, anti-doublon, cash ledger guard, Prometheus (Sprint S12) | Très faible |
 
 Concernant les contraintes petit capital simulées en backtest :
 
@@ -659,7 +743,7 @@ Concernant l'exécution réelle/paper :
 
 ## 7. Suggestions d'Amélioration Métier
 
-1. ~~**Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run~~ → ✅ **Partiellement implémenté** : email workflow IHM + alerting externe via `service.alerting` (Slack/SMTP/log), circuit breaker branché ; extension SMS et couverture de tous les événements critiques encore à compléter
+1. ~~**Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run~~ → ✅ **Implémenté (Sprint S12)** : 6 canaux (Slack, Email, Telegram, Discord, SMS, Log), 14 événements critiques couverts, anti-doublon SHA256, cash ledger guard, 9 métriques Prometheus. Voir §2.6 et `doc/service.md` §10-12.
 2. ~~**Dashboard temps réel**~~ → ✅ **Implémenté** : IHM Streamlit opérateur (`ihm/app.py`)
 3. ~~**Backtesting intégré**~~ → ✅ **Implémenté** : module `backtesting/` research/pipeline avec replay PIT, contraintes compte (`cash settled` / `margin` / `swing_only`), phases de fidélité 2/3/4/5/7, diagnostics screener et reporting structuré (`report.json`, `fidelity_manifest.json`)
 4. **Support short selling** : étendre la stratégie aux positions short

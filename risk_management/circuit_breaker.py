@@ -51,12 +51,17 @@ def _try_send_alert(event: str, payload: dict) -> None:
     except Exception:  # noqa: BLE001 — alerting best-effort, ne bloque jamais le trading
         LOGGER.debug("Notification email circuit_breaker indisponible.", exc_info=True)
 
-    # Alerting multi-canaux (Slack / SMTP / log) via service.alerting
-    if event == "circuit_breaker_fired":
+    # Alerting multi-canaux (Slack / SMTP / Telegram / Discord / SMS / log) via service.alerting
+    if event in ("circuit_breaker_fired", "early_warning_drawdown"):
         try:
             from service.alerting import send_system_alert
 
-            send_system_alert(event="CIRCUIT_BREAKER_FIRED", payload=payload, severity="critical")
+            severity = "critical" if event == "circuit_breaker_fired" else "warning"
+            send_system_alert(
+                event="CIRCUIT_BREAKER_FIRED" if event == "circuit_breaker_fired" else "DRAWDOWN_APPROACHING",
+                payload=payload,
+                severity=severity,
+            )
         except Exception:  # noqa: BLE001 — alerting best-effort
             LOGGER.debug("Notification externe circuit_breaker indisponible.", exc_info=True)
 
@@ -187,6 +192,7 @@ class CircuitBreaker:
         if status.active and degraded:
             # Mode dégradé : on signale mais on ne bloque pas l'executor
             self._tripped = True
+            _set_cb_prometheus(True)
             return False
         if self._tripped and degraded and not status.active:
             # Vérifie si l'equity a suffisamment récupéré pour désactiver le mode dégradé
@@ -197,6 +203,7 @@ class CircuitBreaker:
                     self._tripped = False
                     self._normal_streak = 0
                     self._equity_peak_window.clear()
+                    _set_cb_prometheus(False)
             # Si pas encore récupéré, on reste en mode dégradé
             return False
         # Mode non-dégradé (blocage total) : _tripped suit status.active sans hystérésis
@@ -211,8 +218,23 @@ class CircuitBreaker:
         return result
 
     def notify_if_active(self) -> bool:
-        """Envoie au plus une alerte par statut déclenché."""
+        """Envoie au plus une alerte par statut déclenché.
+
+        Inclut également une alerte précoce (early warning) quand le drawdown
+        ou la perte quotidienne approche du seuil (≥ 80% du seuil), sans
+        déclencher le circuit breaker.
+        """
         status = self.status()
+        # --- Early warning : drawdown approche le seuil ---
+        if not status.active:
+            early_warning = self._evaluate_early_warning()
+            if early_warning is not None:
+                signature = f"early_warning:{early_warning}"
+                if signature != self._last_notified_signature:
+                    self._last_notified_signature = signature
+                    _try_send_alert(event="early_warning_drawdown", payload=early_warning)
+                return False
+
         if not status.active or not status.trigger or not status.payload:
             return False
         signature = f"{status.trigger}:{status.payload}"
@@ -233,6 +255,43 @@ class CircuitBreaker:
             )
         _try_send_alert(event="circuit_breaker_fired", payload=status.payload)
         return True
+
+    def _evaluate_early_warning(self) -> dict[str, Any] | None:
+        """Évalue si le drawdown ou la perte quotidienne approche du seuil
+        (≥ 80% du seuil) et retourne un payload d'alerte précoce, ou None."""
+        hwm = self._reference_hwm()
+        cur = self._pnl.portfolio_current_value
+        early_warning_ratio = 0.80  # alerte à 80% du seuil
+
+        if hwm is not None and cur is not None and hwm > 0:
+            dd = (hwm - cur) / hwm
+            dd_threshold = self._cfg.max_portfolio_drawdown_pct
+            if dd >= dd_threshold * early_warning_ratio and dd < dd_threshold:
+                return {
+                    "trigger": "drawdown_approaching",
+                    "drawdown_pct": round(dd * 100, 2),
+                    "threshold_pct": round(dd_threshold * 100, 2),
+                    "early_warning_at_pct": round(dd_threshold * early_warning_ratio * 100, 2),
+                    "portfolio_high_watermark": hwm,
+                    "portfolio_current_value": cur,
+                }
+
+        daily = self._pnl.daily_pnl
+        equity = self._cfg.account_equity
+        if daily is not None and equity > 0:
+            loss_pct = abs(min(daily, 0.0)) / equity
+            loss_threshold = self._cfg.max_daily_loss_pct
+            if loss_pct >= loss_threshold * early_warning_ratio and loss_pct < loss_threshold:
+                return {
+                    "trigger": "daily_loss_approaching",
+                    "daily_loss_pct": round(loss_pct * 100, 2),
+                    "threshold_pct": round(loss_threshold * 100, 2),
+                    "early_warning_at_pct": round(loss_threshold * early_warning_ratio * 100, 2),
+                    "daily_pnl": daily,
+                    "account_equity": equity,
+                }
+
+        return None
 
     # ------------------------------------------------------------------
     def _evaluate_drawdown(self) -> CircuitBreakerStatus:
@@ -276,3 +335,15 @@ class CircuitBreaker:
                 },
             )
         return CircuitBreakerStatus(active=False)
+
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics helper (best-effort, ne bloque jamais)
+# ---------------------------------------------------------------------------
+
+def _set_cb_prometheus(active: bool) -> None:
+    try:
+        from service.prometheus_metrics import set_circuit_breaker_active
+        set_circuit_breaker_active(active)
+    except Exception:
+        pass
