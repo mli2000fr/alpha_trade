@@ -319,6 +319,18 @@ risk_management:
   short_trailing_pct: 0.10          # trailing stop short (10% de hausse)
   short_time_stop_days: 20          # time stop directionnel
 
+  # ── Modèle de risque factoriel CWMS (Priorité 3 — RisqueSectoriel) ──
+  # Décompose le risque en systématique (facteurs communs) vs spécifique.
+  # Active les contraintes factorielles + filtre de corrélation implicite.
+  enable_factor_model: true
+  use_factor_correlation_filter: true    # remplace Pearson par la corrélation implicite
+  factor_correlation_threshold: 0.70     # seuil de corrélation implicite max
+  max_portfolio_beta: 1.2                # beta moyen pondéré maximum du book
+  max_factor_concentration_pct: 0.60     # max 60% du risque venant d'un seul facteur
+  min_factor_diversification: 2          # au moins 2 facteurs avec contribution > 10%
+  factor_ewma_half_life: 60              # demi-vie EWMA en jours
+  factor_lookback_days: 252              # fenêtre d'estimation en jours
+
 
 # ---------------------------------------------------------------------------
 # Source primaire des barres OHLCV (`stock_bars` + `stock_bars_daily`).
