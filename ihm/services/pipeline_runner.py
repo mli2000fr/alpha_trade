@@ -1148,7 +1148,8 @@ def _build_import_news_command(
     command = [
         sys.executable,
         "-u",
-        str(PROJECT_ROOT / "event_sentiment" / "importe_news.py"),
+        "-m",
+        "event_sentiment.importe_news",
     ]
     if import_start_date:
         command.extend(["--start-date", import_start_date])
