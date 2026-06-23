@@ -1625,8 +1625,16 @@ def _build_run_options() -> BacktestRunOptions:
         )
     with extra_col2:
         # Auto-dérivé depuis le preset capital PIT sélectionné.
+        # Priorité : walk-forward (validation OOS) > calibration simple.
         if selected_run_preset_key and selected_run_preset_key != CAPITAL_PRESET_CUSTOM:
-            walk_forward_artifacts_dir = f"artifacts/sentiment_calibration/{selected_run_preset_key}"
+            wf_candidate = Path(f"artifacts/sentiment_walk_forward/{selected_run_preset_key}")
+            cal_candidate = Path(f"artifacts/sentiment_calibration/{selected_run_preset_key}")
+            if (wf_candidate / "latest_best_weights.json").exists():
+                walk_forward_artifacts_dir = str(wf_candidate)
+            elif (cal_candidate / "latest_best_weights.json").exists():
+                walk_forward_artifacts_dir = str(cal_candidate)
+            else:
+                walk_forward_artifacts_dir = str(wf_candidate)  # défaut walk-forward (sera créé)
         else:
             walk_forward_artifacts_dir = ""
         if walk_forward_artifacts_dir:

@@ -123,14 +123,144 @@ class SentimentWeightCalibrator:
         candidates_only: bool = True,
         capital_preset_key: str | None = None,
     ) -> pd.DataFrame:
+        """Charge le dataset scores + forward returns.
+
+        Traitement symbole par symbole : chaque batch SQL (300 symboles) est
+        découpé en traitements unitaires. ``build_forward_return_frame`` ne
+        voit qu'un seul symbole à la fois → pic RAM minimal (~60K lignes).
+        """
+        buffer_days = max(horizons) * 3
+        end_date_plus_buffer = end_date + pd.Timedelta(days=buffer_days)
+
+        symbols = self._list_symbols(
+            start_date=start_date,
+            end_date=end_date,
+            candidates_only=candidates_only,
+            capital_preset_key=capital_preset_key,
+        )
+        if not symbols:
+            return pd.DataFrame()
+
+        final_frames: list[pd.DataFrame] = []
+        batch_size = 300
+        total_symbols = len(symbols)
+        processed = 0
+        LOGGER.info("Chargement dataset | symboles=%d batches=%d batch_size=%d",
+                     total_symbols, (total_symbols + batch_size - 1) // batch_size, batch_size)
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            total_batches = (total_symbols + batch_size - 1) // batch_size
+            LOGGER.info("Batch %d/%d | %d symboles | chargement SQL...",
+                         batch_num, total_batches, len(batch))
+            # 1. Charger le raw pour tout le batch (un seul SQL)
+            batch_raw = self._load_dataset_batch_sql(
+                batch_symbols=batch,
+                start_date=start_date,
+                end_date=end_date,
+                end_date_plus_buffer=end_date_plus_buffer,
+                candidates_only=candidates_only,
+                capital_preset_key=capital_preset_key,
+            )
+            if batch_raw.empty:
+                LOGGER.info("Batch %d/%d | aucun résultat, skip.", batch_num, total_batches)
+                continue
+
+            raw_rows = len(batch_raw)
+            LOGGER.info("Batch %d/%d | %d lignes raw chargées | traitement symbole par symbole...",
+                         batch_num, total_batches, raw_rows)
+            # 2. Traiter symbole par symbole (évite les copies massives)
+            batch_processed = 0
+            for sym in batch:
+                sym_raw = batch_raw[batch_raw["symbol"] == sym]
+                if sym_raw.empty:
+                    continue
+                sym_final = self.build_forward_return_frame(sym_raw, horizons=horizons)
+                if not sym_final.empty:
+                    final_frames.append(sym_final)
+                    batch_processed += 1
+                processed += 1
+                if processed % 500 == 0:
+                    LOGGER.info("Progression | %d/%d symboles traités (%d lignes finales accumulées)",
+                                 processed, total_symbols, sum(len(f) for f in final_frames))
+
+            # 3. Libérer le raw du batch avant de passer au suivant
+            del batch_raw
+            LOGGER.info("Batch %d/%d terminé | %d symboles produisant des données | %d/%d symboles totaux",
+                         batch_num, total_batches, batch_processed, processed, total_symbols)
+
+        total_rows = sum(len(f) for f in final_frames)
+        LOGGER.info("Chargement dataset terminé | %d symboles → %d lignes finales",
+                     processed, total_rows)
+
+        if not final_frames:
+            return pd.DataFrame()
+        return pd.concat(final_frames, ignore_index=True)
+
+    def _list_symbols(
+        self,
+        start_date: date,
+        end_date: date,
+        candidates_only: bool = True,
+        capital_preset_key: str | None = None,
+    ) -> list[str]:
+        """Retourne la liste des symboles distincts sur la période."""
+        preset_clause = ""
+        params: dict[str, object] = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "candidates_only": 1 if candidates_only else 0,
+        }
+        if capital_preset_key:
+            preset_clause = "AND h.capital_preset_key = :capital_preset_key"
+            params["capital_preset_key"] = capital_preset_key
+        query = text(
+            f"""
+            SELECT DISTINCT h.symbol
+            FROM stock_scores_history h
+            WHERE h.snapshot_date BETWEEN :start_date AND :end_date
+              AND (:candidates_only = 0 OR h.is_candidate = 1)
+              {preset_clause}
+            ORDER BY h.symbol
+            """
+        )
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, params).scalars().all()
+        return [str(r) for r in rows]
+
+    def _load_dataset_batch_sql(
+        self,
+        batch_symbols: list[str],
+        start_date: date,
+        end_date: date,
+        end_date_plus_buffer: date,
+        candidates_only: bool = True,
+        capital_preset_key: str | None = None,
+    ) -> pd.DataFrame:
+        """Range-JOIN SQL pour un batch de symboles.
+
+        Le JOIN ``b.date >= h.snapshot_date AND b.date <= buffer`` est exécuté
+        côté MySQL avec les index, produisant uniquement les lignes nécessaires
+        (pas de cartésien pandas).
+        """
         source_filter_sql, source_filter_params = get_required_bars_source_filter(
             self.engine,
             table_name="stock_bars_daily",
             table_alias="b",
         )
+        escaped = ", ".join([f"'{sym.replace(chr(39), '')}'" for sym in batch_symbols])
         preset_clause = ""
+        params: dict[str, object] = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "end_date_plus_buffer": end_date_plus_buffer,
+            "candidates_only": 1 if candidates_only else 0,
+            **source_filter_params,
+        }
         if capital_preset_key:
             preset_clause = "AND h.capital_preset_key = :capital_preset_key"
+            params["capital_preset_key"] = capital_preset_key
+
         query = text(
             f"""
             SELECT
@@ -150,32 +280,16 @@ class SentimentWeightCalibrator:
              AND b.date >= h.snapshot_date
              AND b.date <= :end_date_plus_buffer
              {source_filter_sql}
-            WHERE h.snapshot_date BETWEEN :start_date AND :end_date
+            WHERE h.symbol IN ({escaped})
+              AND h.snapshot_date BETWEEN :start_date AND :end_date
               AND (:candidates_only = 0 OR h.is_candidate = 1)
               {preset_clause}
             ORDER BY h.snapshot_date, h.symbol, b.date
             """
         )
-        params: dict[str, object] = {
-            "start_date": start_date,
-            "end_date": end_date,
-            "end_date_plus_buffer": end_date + pd.Timedelta(days=max(horizons) * 3),
-            "candidates_only": 1 if candidates_only else 0,
-            **source_filter_params,
-        }
-        if capital_preset_key:
-            params["capital_preset_key"] = capital_preset_key
         with self.engine.connect() as conn:
-            raw = pd.read_sql_query(
-                query,
-                conn,
-                params=params,
-            )
-        if raw.empty:
-            return pd.DataFrame()
-        raw["snapshot_date"] = pd.to_datetime(raw["snapshot_date"])
-        raw["bar_date"] = pd.to_datetime(raw["bar_date"])
-        return self.build_forward_return_frame(raw, horizons=horizons)
+            raw = pd.read_sql_query(query, conn, params=params)
+        return raw
 
     @staticmethod
     def build_forward_return_frame(raw: pd.DataFrame, horizons: tuple[int, ...] = (5, 10, 20)) -> pd.DataFrame:
