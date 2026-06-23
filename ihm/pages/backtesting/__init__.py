@@ -1631,7 +1631,7 @@ def _build_run_options() -> BacktestRunOptions:
             cal_candidate = Path(f"artifacts/sentiment_calibration/{selected_run_preset_key}")
             if (wf_candidate / "latest_best_weights.json").exists():
                 walk_forward_artifacts_dir = str(wf_candidate)
-            elif (cal_candidate / "latest_best_weights.json").exists():
+            elif (cal_candidate / "latest_best_weights.json").exists() or (cal_candidate / "sentiment_weight_calibration_best.json").exists():
                 walk_forward_artifacts_dir = str(cal_candidate)
             else:
                 walk_forward_artifacts_dir = str(wf_candidate)  # défaut walk-forward (sera créé)
