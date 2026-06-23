@@ -646,6 +646,8 @@ def generate_report(
             force_close_exits = 0
             fc_long = 0
             fc_short = 0
+
+        return BacktestReport(
             initial_equity=initial_equity,
             final_value=final_val,
             total_return_pct=total_ret,
