@@ -956,6 +956,84 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 8 | **Fills parfaits en backtest** | `fill_price = entry_price` — pas de slippage simulé en backtest |
 | 9 | **Concentration trackers non persistés en backtest** | Trackers frais par run → pas de mémoire cross-run des trades passés |
 
+### 11.1 Pourquoi c'est important — Avantages à activer / corriger
+
+| # | Caveat | Pourquoi c'est problématique | Avantage si résolu |
+|---|--------|------------------------------|--------------------|
+| 1 | **Sentiment/macro désactivés** | Le `final_score` ignore complètement l'information news et macro-économique. Même si l'IC est faible aujourd'hui, un signal sentiment pourrait devenir significatif dans certains régimes (ex: forte volatilité, crise) | **Diversification alpha** : le sentiment capte un signal orthogonal au momentum technique. En période de news-driven market, cela pourrait améliorer le timing d'entrée/sortie |
+| 2 | **Champion selection off** | Le LSTM est toujours utilisé même si CatBoost ou LightGBM le surpassent sur un symbole donné. Pas d'adaptation automatique au meilleur modèle | **Performance ML** : chaque symbole pourrait bénéficier du modèle le plus adapté à ses données. CatBoost excelle sur les données tabulaires avec peu d'échantillons, LSTM sur les séquences longues |
+| 3 | **Target optimization off** | Horizon et seuils fixes (5j, +12%/-8%) pour tous les symboles, alors que certains peuvent avoir un edge sur 3j ou 10j, avec des seuils différents | **Edge spécifique** : un symbole peu volatil aura besoin d'un seuil plus serré, un symbole très volatil d'un horizon plus court. Optimiser par symbole maximise le signal/bruit |
+| 4 | **Filtres régime non câblés** | Les trades passent sans tenir compte des earnings (risque de gap -15% overnight), des blackouts buyback, ou des secteurs sensibles aux taux. Les filtres sont codés mais non appelés | **Protection événementielle** : éviter les trades autour des earnings réduit le risque idiosyncratique. En backtest, cela éviterait des pertes irréalistes qui faussent les métriques |
+| 5 | **Short_score PIT dégradé** | En backtest, le short_score est amputé de 45% de sa formule (SMA50 + SMA200 = 0.45 du poids). Le score short backtesté n'est pas le même que le score short live | **Backtest fidèle** : le backtest short refléterait la réalité live. Aujourd'hui, les shorts backtestés sont sous-évalués → fausse impression de sous-performance short |
+| 6 | **Short non affecté par le régime** | En marché baissier, les longs passent en mode défensif mais les shorts restent inchangés. Pourtant, shorter en bear market est plus facile — on pourrait être plus agressif | **Adaptation tactique** : en capital_preservation, on pourrait baisser le min_score_short (plus facile d'entrer) ou augmenter le max_positions_short (plus d'opportunités) |
+| 7 | **Breakout filter long-only** | Les shorts peuvent entrer sur un faux signal baissier d'un seul jour, sans confirmation de tendance. Les longs ont une protection anti-faux-départs que les shorts n'ont pas | **Qualité shorts** : réduire les entrées short sur des mouvements baissiers non confirmés → moins de whipsaws, meilleur hit_rate short |
+| 8 | **Fills parfaits en backtest** | Le backtest suppose un fill au prix d'ouverture J+1 sans slippage. En réalité, le slippage peut coûter 5-20 bps par trade, surtout sur les small caps | **Backtest réaliste** : intégrer un slippage model simple (ex: 5 bps + spread/2) rendrait les métriques backtest plus proches du live, éviterait les stratégies non rentables après coûts |
+| 9 | **Concentration trackers non persistés** | Chaque run de backtest part d'une table rase. Impossible de détecter qu'un symbole a déjà été tradé 3x cette semaine — le backtest peut concentrer plus que le live | **Fidélité cross-run** : le backtest refléterait les limites de concentration réelles. Utile pour les walk-forward multi-folds où l'état des trackers devrait persister entre folds |
+
+### 11.2 Priorité recommandée
+
+| Priorité | # | Action | Effort | Gain |
+|----------|---|--------|--------|------|
+| 🔴 P0 | 5 | Corriger le short_score PIT (SMA manquants) | Faible — utiliser `stock_bars_daily` comme fallback pour close_df | Fort — backtest short fidèle |
+| 🔴 P0 | 4 | Câbler `earnings_shield` (le plus impactant des 3) | Moyen — ajouter l'appel dans `alpha_scanner.py` | Fort — éviter gaps -15% |
+| 🟡 P1 | 8 | Ajouter slippage model en backtest | Faible — 5 bps + spread/2 | Moyen — backtest plus réaliste |
+| 🟡 P1 | 7 | Étendre le breakout filter aux shorts | Faible — retirer l'exemption dans `portfolio_builder.py` | Moyen — meilleure qualité short |
+| 🟢 P2 | 6 | Adapter les paramètres short au régime | Moyen — ajouter logique dans `apply_regime_weights()` | Modéré — plus de shorts en bear |
+| 🟢 P2 | 9 | Persister les concentration trackers en backtest | Moyen — DB table pour trackers cross-run | Faible — surtout utile pour walk-forward |
+| ⚪ P3 | 1 | Activer sentiment/macro (recalibrer d'abord) | Élevé — besoin preuve IC robuste avant activation | Incertain — IC≈0 actuellement |
+| ⚪ P3 | 2 | Activer champion selection | Élevé — nécessite d'abord entraîner CatBoost/LightGBM | Modéré — seulement si challengers meilleurs |
+| ⚪ P3 | 3 | Activer target optimization | Faible techniquement, mais élevé en validation | Modéré — symbole par symbole, supervision requise |
+
+```diff
++ TODO P0 — Corriger le short_score PIT (SMA manquants)
++       → Fichier : selector/short_score.py → compute_short_score()
++       → Problème : close_df=None dans backfill_scores_history.py → SMA50/SMA200 non calculés
++       → Solution : dans backfill_scores_history.py, charger stock_bars_daily comme fallback pour close_df
++       → Impact : 45% du poids du short_score est muet en backtest → scores shorts sous-évalués
+
++ TODO P0 — Câbler earnings_shield dans le pipeline
++       → Fichier : selector/regime_filters.py (déjà codé et testé !)
++       → Solution : ajouter l'appel à apply_regime_filters() dans alpha_scanner.py, après apply_regime_weights()
++       → Config : earnings_shield_mode = "strict_block" (exclut J-2/J+2) ou "negative_score" (pénalise)
++       → Impact : éviter les gaps overnight de -15% sur earnings surprise
+
++ TODO P1 — Ajouter un slippage model en backtest
++       → Fichier : backtesting/execution_bridge.py → fill_price actuellement = entry_price
++       → Solution : fill_price = entry_price × (1 + slippage_bps/10000) avec slippage_bps = 5 + spread_bps/2
++       → Impact : backtest plus réaliste, évite les stratégies rentables seulement sans coûts
+
++ TODO P1 — Étendre le breakout filter aux shorts
++       → Fichier : risk_management/portfolio_builder.py → étape 0bis
++       → Solution : retirer l'exemption shorts du BreakoutConfirmationFilter
++       → Paramètre : min_days_in_candidates_short (ex: 2 jours au lieu de 3 pour les longs)
++       → Impact : réduire les whipsaws short, améliorer le hit_rate
+
++ TODO P2 — Adapter les paramètres short au régime de marché
++       → Fichier : selector/regime_scoring.py → apply_regime_weights()
++       → Solution : en capital_preservation, baisser min_score_short (0.20 au lieu de 0.30) et monter max_positions_short (4 au lieu de 2)
++       → Impact : plus d'opportunités short en bear market
+
++ TODO P2 — Persister les concentration trackers en backtest
++       → Fichier : risk_management/concentration.py → SymbolTradeTracker, ConsecutiveLossTracker
++       → Solution : créer une table SQLite/DB pour sauvegarder l'état des trackers entre folds walk-forward
++       → Impact : backtest multi-fold plus fidèle aux limites de concentration réelles
+
++ TODO P3 — Recalibrer et activer sentiment/macro
++       → Prérequis : relancer un diagnostic IC sur données récentes (2023-2025)
++       → Si IC > 0.02 et t-stat > 2.0 → activer avec w_sentiment=0.05, w_macro=0.02
++       → Commande : python -m backtesting calibrate-sentiment-weights --start 2023-01-01 --end 2025-12-31
+
++ TODO P3 — Activer champion selection (après entraînement challengers)
++       → Prérequis : lancer --compare-lightgbm et --enable-catboost sur 10+ symboles
++       → Puis configurer min_runs=3, min_days=30, allow_auto_selection=True
++       → Fichier : modelFactory/champion_selection.py
+
++ TODO P3 — Activer target optimization (supervisée)
++       → Lancer symbole par symbole, valider manuellement trade_rate / separation / class_balance
++       → Fichier : modelFactory/target_optimization.py → optimize_target_parameters()
++       → Commande : python -m modelFactory train --symbol AAPL --optimize-target
+```
+
 ---
 
 ## 12. RÉSUMÉ SYNTHÉTIQUE (rappel)
