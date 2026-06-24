@@ -41,6 +41,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
     DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT,
+    DEFAULT_ML_INCLUDE_SHORT_SCORE,
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
@@ -289,6 +290,7 @@ class PipelineLaunchOptions:
     ml_accelerator: MLAccelerator = "auto"
     ml_include_sentiment: bool = True
     ml_include_selector_context: bool = DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT
+    ml_include_short_score: bool = DEFAULT_ML_INCLUDE_SHORT_SCORE
     ml_enable_lightgbm: bool = True
     ml_enable_catboost: bool = True
     ml_enable_global_model: bool = False
@@ -2078,6 +2080,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-sentiment")
         if options.ml_include_selector_context:
             command.append("--include-selector-context")
+        if options.ml_include_short_score:
+            command.append("--include-short-score")
         if options.ml_debug_train:
             command.append("--debug-train")
         if options.ml_enable_lightgbm:

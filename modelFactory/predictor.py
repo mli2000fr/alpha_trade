@@ -418,6 +418,7 @@ def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -
             feature_set=str(data_cfg.get("feature_set", "v1")),
             include_cross_sectional=bool(data_cfg.get("enable_cross_sectional_features", False)),
             include_selector_context=bool(data_cfg.get("include_selector_context_features", False)),
+            include_short_score=bool(data_cfg.get("include_short_score_features", False)),
             persisted_feature_columns=cfg_data.get("feature_columns"),
             persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
             allow_legacy_missing_contract=False,
@@ -630,6 +631,7 @@ def _load_data_cfg_from_payload(cfg_data: dict) -> DataConfig:
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
         include_sentiment_features=cfg_data["data"].get("include_sentiment_features", False),
         include_selector_context_features=cfg_data["data"].get("include_selector_context_features", False),
+        include_short_score_features=cfg_data["data"].get("include_short_score_features", False),
         enable_cross_sectional_features=cfg_data["data"].get("enable_cross_sectional_features", False),
         cross_sectional_min_universe=cfg_data["data"].get("cross_sectional_min_universe", 20),
         feature_set=cfg_data["data"].get("feature_set", "v1"),
@@ -675,7 +677,7 @@ def _prepare_prediction_frame(
             _record_db_issue(operation="load_benchmark_bars", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
             return pd.DataFrame()
     selector_df = None
-    if data_cfg.include_selector_context_features:
+    if data_cfg.include_selector_context_features or data_cfg.include_short_score_features:
         try:
             selector_df = load_symbol_selector_context(engine, symbol, end_date=cutoff_date)
         except Exception as exc:  # noqa: BLE001
@@ -691,6 +693,7 @@ def _prepare_prediction_frame(
             feature_set=data_cfg.feature_set,
             selector_df=selector_df,
             include_selector_context=data_cfg.include_selector_context_features,
+            include_short_score=data_cfg.include_short_score_features,
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)
@@ -722,6 +725,7 @@ def _prepare_prediction_frame(
             feature_set=data_cfg.feature_set,
             include_cross_sectional=True,
             include_selector_context=data_cfg.include_selector_context_features,
+            include_short_score=data_cfg.include_short_score_features,
         )
         df = df.dropna(subset=active_features).reset_index(drop=True)
     return df
@@ -785,6 +789,7 @@ def _predict_with_tabular_model(
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_selector_context=data_cfg.include_selector_context_features,
+        include_short_score=data_cfg.include_short_score_features,
     ))
     if df.empty or len(df) == 0:
         return None
@@ -804,6 +809,7 @@ def _predict_with_tabular_model(
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_selector_context=data_cfg.include_selector_context_features,
+        include_short_score=data_cfg.include_short_score_features,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
         route_feature_columns=resolved_feature_columns,
@@ -1137,6 +1143,7 @@ def predict_symbol(
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_selector_context=data_cfg.include_selector_context_features,
+        include_short_score=data_cfg.include_short_score_features,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
         scaler_feature_names=list(getattr(scaler, "feature_names", [])),

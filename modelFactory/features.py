@@ -83,6 +83,7 @@ SELECTOR_CONTEXT_FEATURE_COLUMNS: list[str] = [
     "selector_trend_vcp_component",
     "selector_total_score_component",
     "selector_rsi_component",
+    "selector_short_score",
 ]
 
 _SELECTOR_CONTEXT_SOURCE_TO_FEATURE = {
@@ -108,6 +109,7 @@ _SELECTOR_CONTEXT_SOURCE_TO_FEATURE = {
     "trend_vcp_component": "selector_trend_vcp_component",
     "total_score_component": "selector_total_score_component",
     "rsi_component": "selector_rsi_component",
+    "short_score": "selector_short_score",
 }
 
 _SELECTOR_CONTEXT_DEFAULTS = {
@@ -134,6 +136,7 @@ _SELECTOR_CONTEXT_DEFAULTS = {
     "selector_trend_vcp_component": 0.0,
     "selector_total_score_component": 0.0,
     "selector_rsi_component": 0.0,
+    "selector_short_score": 0.0,
 }
 
 
@@ -142,6 +145,7 @@ def get_feature_columns(
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
     include_selector_context: bool = False,
+    include_short_score: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnel sentiment)."""
     cols = list(FEATURE_COLUMNS)
@@ -155,6 +159,8 @@ def get_feature_columns(
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
     if include_selector_context:
         cols.extend(SELECTOR_CONTEXT_FEATURE_COLUMNS)
+    if include_short_score and "selector_short_score" not in cols:
+        cols.append("selector_short_score")
     return cols
 
 
@@ -164,6 +170,7 @@ def fingerprint(
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
     include_selector_context: bool = False,
+    include_short_score: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -178,6 +185,7 @@ def fingerprint(
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
         include_selector_context=include_selector_context,
+        include_short_score=include_short_score,
     ))
     payload = {
         "columns": columns,
@@ -185,6 +193,7 @@ def fingerprint(
         "include_sentiment": bool(include_sentiment),
         "include_cross_sectional": bool(include_cross_sectional),
         "include_selector_context": bool(include_selector_context),
+        "include_short_score": bool(include_short_score),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -205,6 +214,7 @@ def build_feature_contract(
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
     include_selector_context: bool = False,
+    include_short_score: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -214,6 +224,7 @@ def build_feature_contract(
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
         include_selector_context=include_selector_context,
+        include_short_score=include_short_score,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -224,6 +235,7 @@ def build_feature_contract(
             feature_set=feature_set,
             include_cross_sectional=include_cross_sectional,
             include_selector_context=include_selector_context,
+            include_short_score=include_short_score,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
@@ -241,6 +253,7 @@ def validate_feature_contract(
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
     include_selector_context: bool = False,
+    include_short_score: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -254,12 +267,14 @@ def validate_feature_contract(
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
         include_selector_context=include_selector_context,
+        include_short_score=include_short_score,
     )
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
         include_selector_context=include_selector_context,
+        include_short_score=include_short_score,
         feature_columns=expected_columns,
     )
 
@@ -360,6 +375,7 @@ def compute_features(
     feature_set: str = "v1",
     selector_df: pd.DataFrame | None = None,
     include_selector_context: bool = False,
+    include_short_score: bool = False,
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
@@ -505,7 +521,7 @@ def compute_features(
             else:
                 df[col] = df[col].fillna(0.0).astype(float)
 
-    if include_selector_context:
+    if include_selector_context or include_short_score:
         if selector_df is not None and not selector_df.empty:
             selector = selector_df.copy()
             if "snapshot_date" in selector.columns and "date" not in selector.columns:
@@ -544,6 +560,7 @@ def compute_features(
         include_sentiment,
         feature_set=feature_set,
         include_selector_context=include_selector_context,
+        include_short_score=include_short_score,
     )
 
     feature_matrix = df.loc[:, active_features].astype(np.float64)

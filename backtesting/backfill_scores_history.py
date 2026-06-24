@@ -20,6 +20,7 @@ from screener.db_io import iter_symbol_chunks, load_spy_return_6m
 from screener.models import ScreenerConfig
 from screener.stock_screener import _process_chunk as screener_process_chunk
 from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig
+from selector.short_score import compute_short_score
 
 LOGGER = logging.getLogger(__name__)
 
@@ -105,6 +106,9 @@ HISTORY_COLUMNS = [
     "signal_active",
     "anomaly_count",
     "missing_days_count",
+    "short_score",
+    "sma_50",
+    "sma_200",
 ]
 
 
@@ -301,6 +305,9 @@ class BackfillScoresHistoryService:
         ]
         _available_selector_cols = [c for c in _selector_columns_to_preserve if c in selector_df.columns]
         sentiment_input = selector_df[_available_selector_cols].copy()
+        # ── P3 — SMA50/200 + short_score (score baissier complet) ──
+        sentiment_input = self._enrich_with_sma(sentiment_input, as_of_date)
+        sentiment_input["short_score"] = compute_short_score(sentiment_input)
         enriched = self.aggregator.merge(sentiment_input, trade_date=as_of_date)
         history_df = self._to_history_snapshot(enriched, as_of_date)
         LOGGER.info(
@@ -764,6 +771,69 @@ class BackfillScoresHistoryService:
             df["date"] = pd.to_datetime(df["date"], utc=False)
         return df
 
+    def _enrich_with_sma(
+        self,
+        selector_df: pd.DataFrame,
+        as_of_date: date,
+    ) -> pd.DataFrame:
+        """Ajoute les colonnes ``sma_50`` et ``sma_200`` PIT depuis stock_bars_daily."""
+        df = selector_df.copy()
+        if df.empty or "symbol" not in df.columns:
+            df["sma_50"] = None
+            df["sma_200"] = None
+            return df
+
+        symbols = df["symbol"].unique().tolist()
+        if not symbols:
+            df["sma_50"] = None
+            df["sma_200"] = None
+            return df
+
+        placeholders = ", ".join([f":s{i}" for i in range(len(symbols))])
+        params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
+        params["trade_date"] = as_of_date
+        params["limit_50"] = 50 + 1
+        params["limit_200"] = 200 + 1
+
+        # Une seule requête pour les deux SMA
+        query = text(f"""
+            WITH ranked AS (
+                SELECT
+                    symbol,
+                    COALESCE(adj_close, close) AS close_price,
+                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+                FROM stock_bars_daily
+                WHERE symbol IN ({placeholders})
+                  AND date <= :trade_date
+            )
+            SELECT
+                symbol,
+                AVG(CASE WHEN rn <= 50 THEN close_price END) AS sma_50,
+                AVG(CASE WHEN rn <= 200 THEN close_price END) AS sma_200,
+                MAX(CASE WHEN rn = 1 THEN close_price END) AS last_close
+            FROM ranked
+            WHERE rn <= 200
+            GROUP BY symbol
+        """)
+
+        with self.engine.connect() as conn:
+            sma_rows = conn.execute(query, params).mappings().all()
+
+        sma_map: dict[str, dict[str, float | None]] = {}
+        for row in sma_rows:
+            sym = str(row["symbol"])
+            sma_map[sym] = {
+                "sma_50": float(row["sma_50"]) if row["sma_50"] is not None else None,
+                "sma_200": float(row["sma_200"]) if row["sma_200"] is not None else None,
+                "last_close": float(row["last_close"]) if row["last_close"] is not None else None,
+            }
+
+        df["sma_50"] = [sma_map.get(str(s), {}).get("sma_50") for s in df["symbol"]]
+        df["sma_200"] = [sma_map.get(str(s), {}).get("sma_200") for s in df["symbol"]]
+        # Ajouter aussi last_close pour la comparaison SMA
+        df["last_close"] = [sma_map.get(str(s), {}).get("last_close") for s in df["symbol"]]
+        return df
+
     def _to_history_snapshot(self, enriched_df: pd.DataFrame, snapshot_date: date) -> pd.DataFrame:
         """Normalise un DataFrame enrichi vers le schéma `stock_scores_history`."""
         if enriched_df.empty:
@@ -823,6 +893,9 @@ class BackfillScoresHistoryService:
             "signal_active": 0,
             "anomaly_count": 0,
             "missing_days_count": 0,
+            "short_score": None,
+            "sma_50": None,
+            "sma_200": None,
         }
         for col, default in defaults.items():
             if col not in history_df.columns:
@@ -833,6 +906,10 @@ class BackfillScoresHistoryService:
         history_df["earnings_blackout"] = history_df["earnings_blackout"].fillna(0).astype(int)
         history_df["anomaly_count"] = history_df["anomaly_count"].fillna(0).astype(int)
         history_df["missing_days_count"] = history_df["missing_days_count"].fillna(0).astype(int)
+        # SMA50/200 et short_score sont optionnels (garder None si absents)
+        for col in ("sma_50", "sma_200", "short_score"):
+            if col not in history_df.columns:
+                history_df[col] = None
         earnings_dates = pd.to_datetime(history_df["earnings_date"], errors="coerce", utc=False)
         history_df["earnings_date"] = pd.Series(
             [value.date() if not pd.isna(value) else None for value in earnings_dates],
@@ -886,7 +963,7 @@ class BackfillScoresHistoryService:
                 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
                 calibration_run_id, calibration_source,
                 signal_active,
-                anomaly_count, missing_days_count
+                anomaly_count, missing_days_count, short_score, sma_50, sma_200
             ) VALUES (
                 :snapshot_date, :capital_preset_key, :config_fingerprint, :symbol, :sector,
                 :liquidity_val, :relative_strength_index, :historical_range_score, :total_score,
@@ -906,7 +983,7 @@ class BackfillScoresHistoryService:
                 :walk_forward_sentiment_weight, :walk_forward_macro_weight, :walk_forward_quant_weight,
                 :calibration_run_id, :calibration_source,
                 :signal_active,
-                :anomaly_count, :missing_days_count
+                :anomaly_count, :missing_days_count, :short_score, :sma_50, :sma_200
             )
             """
         )

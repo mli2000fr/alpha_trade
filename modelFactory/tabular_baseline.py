@@ -140,6 +140,7 @@ def run_tabular_baseline(
 		feature_set=cfg.data.feature_set,
 		include_cross_sectional=cfg.data.enable_cross_sectional_features,
 		include_selector_context=cfg.data.include_selector_context_features,
+		include_short_score=cfg.data.include_short_score_features,
 	)
 	train_df, val_df, test_df = tabular_split(
 		prepared_df,
@@ -243,6 +244,7 @@ def run_tabular_baseline(
 		feature_set=cfg.data.feature_set,
 		include_cross_sectional=cfg.data.enable_cross_sectional_features,
 		include_selector_context=cfg.data.include_selector_context_features,
+		include_short_score=cfg.data.include_short_score_features,
 		feature_columns=feature_columns,
 		scaler_feature_names=feature_columns,
 	)
@@ -257,6 +259,7 @@ def run_tabular_baseline(
 			feature_set=cfg.data.feature_set,
 			include_cross_sectional=cfg.data.enable_cross_sectional_features,
 			include_selector_context=cfg.data.include_selector_context_features,
+			include_short_score=cfg.data.include_short_score_features,
 			feature_columns=feature_columns,
 		),
 		"val": val_metrics,

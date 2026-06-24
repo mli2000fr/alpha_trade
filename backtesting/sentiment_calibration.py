@@ -309,6 +309,7 @@ class SentimentWeightCalibrator:
                 h.sentiment_net_agg,
                 h.sector_impact_agg,
                 h.final_score_sentiment,
+                h.short_score,
                 h.is_candidate,
                 b.date AS bar_date,
                 COALESCE(b.adj_close, b.close) AS close_price
@@ -342,6 +343,7 @@ class SentimentWeightCalibrator:
             "sentiment_net_agg",
             "sector_impact_agg",
             "final_score_sentiment",
+            "short_score",
             "is_candidate",
         ]
         snapshot_df = raw[base_columns].drop_duplicates(subset=["snapshot_date", "symbol"], keep="first").copy()
@@ -558,6 +560,79 @@ class SentimentWeightCalibrator:
             if column in signals.columns
         ]
         return signals.loc[:, keep_columns].sort_values(["trade_date", "rank", "symbol"]).reset_index(drop=True)
+
+    @staticmethod
+    def build_portfolio_signals_long_short(
+        scored_df: pd.DataFrame,
+        *,
+        score_column: str = "final_score_walk_forward",
+        max_positions_long: int = 4,
+        max_positions_short: int = 4,
+    ) -> pd.DataFrame:
+        """Construit les signaux long + short pour le walk-forward.
+
+        Longs  : top-N par ``score_column`` décroissant, side="buy"
+        Shorts : top-N par ``short_score`` décroissant, side="sell"
+                 (exclut les symboles déjà sélectionnés en long)
+
+        Retourne un DataFrame compatible avec ``BacktestEngine.run()``
+        (colonnes trade_date, symbol, score, rank, selected, side).
+        """
+        if scored_df.empty:
+            return pd.DataFrame(columns=["trade_date", "symbol", "sector", "score", "rank", "selected", "side"])
+
+        long_frames: list[pd.DataFrame] = []
+        short_frames: list[pd.DataFrame] = []
+
+        for trade_date, daily in scored_df.groupby("snapshot_date"):
+            day_df = daily.copy()
+            trade_date_ts = pd.Timestamp(trade_date)
+
+            # ── Longs ──
+            long_candidates = day_df.copy()
+            long_candidates["score"] = pd.to_numeric(long_candidates[score_column], errors="coerce").fillna(0.0)
+            long_candidates = long_candidates.sort_values("score", ascending=False)
+            n_long = min(max_positions_long, len(long_candidates))
+            long_selected = long_candidates.head(n_long).copy()
+            long_selected["trade_date"] = trade_date_ts
+            long_selected["rank"] = range(1, n_long + 1)
+            long_selected["selected"] = True
+            long_selected["side"] = "buy"
+            long_frames.append(long_selected)
+
+            # ── Shorts ──
+            long_symbols = set(long_selected["symbol"].tolist()) if n_long > 0 else set()
+            short_candidates = day_df[~day_df["symbol"].isin(long_symbols)].copy()
+
+            if "short_score" in short_candidates.columns:
+                short_candidates["score"] = pd.to_numeric(short_candidates["short_score"], errors="coerce").fillna(0.0)
+                # Exclure les short_score nuls (pas de signal baissier)
+                short_candidates = short_candidates[short_candidates["score"] > 0.0]
+                short_candidates = short_candidates.sort_values("score", ascending=False)
+                n_short = min(max_positions_short, len(short_candidates))
+                short_selected = short_candidates.head(n_short).copy()
+                short_selected["trade_date"] = trade_date_ts
+                short_selected["rank"] = range(1, n_short + 1)
+                short_selected["selected"] = True
+                short_selected["side"] = "sell"
+                short_frames.append(short_selected)
+
+        all_signals = pd.concat(long_frames + short_frames, ignore_index=True) if (long_frames or short_frames) else pd.DataFrame(
+            columns=["trade_date", "symbol", "sector", "score", "rank", "selected", "side"]
+        )
+
+        if all_signals.empty:
+            return all_signals
+
+        keep_columns = [
+            column
+            for column in [
+                "trade_date", "symbol", "sector", "score", "rank", "selected", "side",
+                "scenario_name", score_column, "short_score",
+            ]
+            if column in all_signals.columns
+        ]
+        return all_signals.loc[:, keep_columns].sort_values(["trade_date", "rank", "symbol"]).reset_index(drop=True)
 
     @staticmethod
     def _scenario_from_row(row: dict[str, Any]) -> SentimentCalibrationScenario:
@@ -875,10 +950,18 @@ class SentimentWeightCalibrator:
                 len(fold_df),
             )
 
-        signals_df = self.build_portfolio_signals(
+        # ── P3 — signaux long + short (chaque côté = max_positions) ──
+        signals_df = self.build_portfolio_signals_long_short(
             scored_oos_df,
             score_column="final_score_walk_forward",
-            max_positions=max_positions,
+            max_positions_long=max_positions,
+            max_positions_short=max_positions,
+        )
+        LOGGER.info(
+            "Signaux long+short construits | total=%d longs=%d shorts=%d",
+            len(signals_df),
+            int((signals_df["side"] == "buy").sum()) if not signals_df.empty and "side" in signals_df.columns else 0,
+            int((signals_df["side"] == "sell").sum()) if not signals_df.empty and "side" in signals_df.columns else 0,
         )
         if signals_df.empty:
             empty_result = WalkForwardCalibrationResult(

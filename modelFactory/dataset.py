@@ -304,6 +304,7 @@ class SymbolDataModule(L.LightningDataModule):
             feature_set=data_cfg.feature_set,
             include_cross_sectional=data_cfg.enable_cross_sectional_features,
             include_selector_context=data_cfg.include_selector_context_features,
+            include_short_score=data_cfg.include_short_score_features,
         )
         self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
@@ -417,6 +418,7 @@ def prepare_symbol_frame(
         feature_set=data_cfg.feature_set,
         selector_df=selector_df,
         include_selector_context=data_cfg.include_selector_context_features,
+        include_short_score=data_cfg.include_short_score_features,
     )
     cross_sectional_diagnostics: dict[str, object] = {}
     if data_cfg.enable_cross_sectional_features:
@@ -443,6 +445,7 @@ def prepare_symbol_frame(
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_selector_context=data_cfg.include_selector_context_features,
+        include_short_score=data_cfg.include_short_score_features,
     )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics

@@ -177,6 +177,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
     p.add_argument("--include-selector-context", action="store_true", default=False,
                    help="Inclure un contexte selector PIT-safe issu de stock_scores_history dans les features ML")
+    p.add_argument("--include-short-score", action="store_true", default=False,
+                   help="Inclure le score baissier composite (short_score) comme feature ML independante")
     p.add_argument(
         "--selector-universe-signal-modes",
         nargs="*",
@@ -305,6 +307,7 @@ def main(args: list[str] | None = None) -> None:
             training_end_date=opts.training_end_date,
             include_sentiment_features=opts.include_sentiment,
             include_selector_context_features=opts.include_selector_context,
+            include_short_score_features=opts.include_short_score,
             selector_universe_signal_modes=_parse_selector_signal_modes_arg(opts.selector_universe_signal_modes),
             selector_universe_max_candidate_rank=opts.selector_universe_max_candidate_rank,
             selector_universe_exclude_earnings_blackout=opts.selector_universe_exclude_earnings_blackout,
@@ -741,6 +744,7 @@ def _build_run_summary(
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_selector_context=cfg.data.include_selector_context_features,
+        include_short_score=cfg.data.include_short_score_features,
     )
     payload: dict[str, object] = {
         "run_id": run_id,
@@ -781,6 +785,7 @@ def _build_run_summary(
             feature_set=cfg.data.feature_set,
             include_cross_sectional=cfg.data.enable_cross_sectional_features,
             include_selector_context=cfg.data.include_selector_context_features,
+            include_short_score=cfg.data.include_short_score_features,
         )),
         "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),
         "champion_min_days": int(getattr(opts, "champion_min_days", 0)),

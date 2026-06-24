@@ -343,6 +343,7 @@ def _build_feature_contract_for_columns(cfg: TrainingConfig, feature_columns: li
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_selector_context=cfg.data.include_selector_context_features,
+        include_short_score=cfg.data.include_short_score_features,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
     )
@@ -796,6 +797,7 @@ def _run_walk_forward_validation(
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_selector_context=cfg.data.include_selector_context_features,
+        include_short_score=cfg.data.include_short_score_features,
     )
     fold_metrics: list[dict[str, Any]] = []
     walk_forward_seed = derive_seed(cfg.reproducibility.seed, "walk_forward", symbol)
@@ -1223,6 +1225,7 @@ def train_symbol(
             feature_set=effective_cfg.data.feature_set,
             include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
             include_selector_context=effective_cfg.data.include_selector_context_features,
+            include_short_score=effective_cfg.data.include_short_score_features,
             feature_columns=list(dm.scaler.feature_names),
             scaler_feature_names=list(dm.scaler.feature_names),
         )
@@ -1333,6 +1336,7 @@ def train_symbol(
                 feature_set=effective_cfg.data.feature_set,
                 include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
                 include_selector_context=effective_cfg.data.include_selector_context_features,
+                include_short_score=effective_cfg.data.include_short_score_features,
                 feature_columns=list(dm.scaler.feature_names),
             ),
         }

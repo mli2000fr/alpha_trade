@@ -35,6 +35,7 @@ SELECTOR_HISTORY_CONTEXT_COLUMNS: tuple[str, ...] = (
     "trend_vcp_component",
     "total_score_component",
     "rsi_component",
+    "short_score",
 )
 
 

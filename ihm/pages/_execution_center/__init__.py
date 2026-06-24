@@ -118,6 +118,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
     DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT,
+    DEFAULT_ML_INCLUDE_SHORT_SCORE,
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
@@ -3213,6 +3214,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_selector_context",
                 help="Ajoute `--include-selector-context` pour enrichir le dataset ML avec un contexte PIT-safe issu de `stock_scores_history`.",
             )
+            ml_include_short_score = st.checkbox(
+                "Inclure le short_score dédié (score baissier)",
+                value=_session_state_bool("pipeline_ml_include_short_score", DEFAULT_ML_INCLUDE_SHORT_SCORE),
+                key="pipeline_ml_include_short_score",
+                help="Ajoute `--include-short-score` pour intégrer le score baissier composite (trend+RSI+SMA) comme feature ML indépendante.",
+            )
             ml_enable_lightgbm = st.checkbox(
                 "Comparer LightGBM local",
                 value=_session_state_bool("pipeline_ml_enable_lightgbm", True),
@@ -4015,6 +4022,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_accelerator=cast(Any, ml_accelerator),
             ml_include_sentiment=bool(ml_include_sentiment),
             ml_include_selector_context=bool(ml_include_selector_context),
+            ml_include_short_score=bool(ml_include_short_score),
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),
