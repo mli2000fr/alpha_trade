@@ -39,8 +39,8 @@
 | **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
-| **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, pas sentiment seul), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE(walk_forward, sentiment, final_score)` | 🟣 HYBRIDE |
-| **8. Calibration des Poids** | 3 niveaux : Conviction (quant/ML), Sentiment (quant/sentiment/macro), Kelly (fraction, payoff, edge) | 🟣 HYBRIDE |
+| **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, **long-only** — pas de calibration short), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE` | 🟣 HYBRIDE |
+| **8. Calibration des Poids** | 3 niveaux : Conviction, Sentiment, Kelly. IHM : onglets `📰 Calibrate sentiment`, `🚶 Walk-forward`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` pour consulter l'historique | 🟣 HYBRIDE |
 | **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
 | **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
 | **11. Caveats** | 9 points d'attention : fonctionnalités désactivées, PIT dégradé, asymétries long/short, limites backtest | — |
@@ -244,8 +244,8 @@ Si le signal sentiment n'est **pas actif** (pas assez de news), on utilise **0.5
 
 **IMPORTANT** — Les poids par défaut sont :
 - `quant_weight` = **1.00** (100% quantitatif)
-- `sentiment_weight` = <span style="color:red">**0.00** (désactivé par défaut !)</span>
-- `macro_weight` = <span style="color:red">**0.00** (désactivé par défaut !)</span>
+- `sentiment_weight` = <span style="color:red">⚠️ **0.00** (désactivé par défaut !)</span>
+- `macro_weight` = <span style="color:red">⚠️ **0.00** (désactivé par défaut !)</span>
 
 **Pourquoi ?** Le diagnostic empirique (IC = Information Coefficient) sur 2020-2025 a montré :
 - **Sentiment** : IC ≈ 0.01, t-stat ≈ 1.1 → **non significatif statistiquement**
@@ -608,7 +608,19 @@ Borné par la limite ATR.
 3. Si `|corr| > correlation_threshold` (défaut 0.70) → **REJETÉ**
 4. Sinon → **ACCEPTÉ**
 
-Alternative : **filtre factoriel** (`factor_model.py`) qui utilise un modèle à 4 facteurs (market, size, momentum, value) avec covariance EWMA.
+Alternative : **filtre factoriel** (`factor_model.py`) qui utilise un modèle à 4 facteurs (market, size, momentum, value) avec covariance EWMA. La corrélation est dite *implicite* car déduite des expositions factorielles plutôt que calculée directement sur les prix.
+
+> **Pearson vs Factoriel — lequel est meilleur ?**
+>
+> | Aspect | Pearson (défaut) | Factoriel (opt-in) |
+> |--------|-----------------|-------------------|
+> | **Données** | Prix historiques réels | Expositions × covariance factorielle |
+> | **Robustesse** | Capte toute la corrélation (y compris le bruit) | Décompose systématique vs spécifique |
+> | **Stress marché** | Tout corrèle à 1 → peut rejeter trop de candidats | Distingue les sources de corrélation |
+> | **Fiabilité actuelle** | ✅ Fiable (données réelles) | ⚠️ Limitée : seuls les betas market sont calculés, size/momentum/value utilisent des proxys à zéro |
+> | **Recommandation** | Plus conservateur, éprouvé | Intéressant mais immature — les facteurs size/momentum/value nécessitent des données ETF (IWM, MTUM, IWD/IWF) pour être pleinement opérationnel |
+
+En pratique, **Pearson est recommandé** car le filtre factoriel est limité par l'absence de données ETF pour les facteurs size/momentum/value — il se réduit essentiellement à un filtre sur le beta market.
 
 ### 6.5 Circuit Breaker (`risk_management/circuit_breaker.py`)
 
@@ -661,6 +673,15 @@ La calibration utilise le **même moteur de backtest que `backtesting run`** (`B
 
 $$score_{scénario} = w_{quant} \times final\_score + w_{sentiment} \times sentiment\_norm + w_{macro} \times macro\_norm$$
 
+> ⚠️ **Important — cette calibration est LONG-ONLY.** La formule ci-dessus fusionne le `final_score` (score long) avec le sentiment. Le `short_score` est présent dans le dataset mais **n'est pas utilisé** dans la calibration. Les poids optimaux trouvés ne s'appliquent donc qu'à la sélection long. Il n'existe pas de calibration walk-forward équivalente pour le côté short — le `short_score` reste un score composite fixe (30% trend + 25% RSI + 25% SMA50 + 20% SMA200) sans calibration de poids.
+>
+> ```diff
+> + TODO : Ajouter une calibration walk-forward pour le côté short
+> +       → backtesting/sentiment_calibration.py : evaluate_scenarios() ne teste que top-N par composite_score
+> +       → Il faudrait tester bottom-N (short_score + sentiment) ou une formule short_score_sentiment
+> +       → Impact : aujourd'hui les poids sentiment/macro calibrés ne bénéficient qu'aux longs
+> ```
+
 > ⚠️ **Important** : les décisions achat/vente ne sont **pas** basées uniquement sur le sentiment. Chaque scénario exécute un backtest complet avec le score fusionné en entrée, et toute la logique métier (stops, sizing, corrélation, circuit breaker) s'applique normalement. On mesure quel mix de poids produit les meilleurs résultats globaux.
 
 1. **Chargement du dataset** : `stock_scores_history` + forward returns (rendements futurs à J+5, J+10, J+20)
@@ -702,6 +723,13 @@ Quand les poids walk-forward sont appliqués (via `SentimentBoostConfig`), le `f
 | `walk_forward_quant_weight` | Poids quant calibré |
 
 ⚠️ **En pratique actuelle** : vu que les poids calibrés optimaux tendent vers `sentiment=0, macro=0, quant=1`, le walk-forward confirme que le signal quantitatif seul est le plus robuste.
+>
+> ```diff
+> + TODO : Lancer un walk-forward sentiment pour confirmer ce point avec tes propres données
+> +       → python -m backtesting walk-forward-sentiment --start 2023-01-01 --end 2025-12-31 --top-n 20
+> +       → Vérifier que le best_scenario est bien quant=1.00, sentiment=0.00, macro=0.00
+> +       → Si ce n'est pas le cas, appliquer les poids trouvés dans latest_best_weights.json
+> ```
 
 ### 7.6 Les poids calibrés servent pour les DEUX modes 🟢🔵
 
@@ -724,7 +752,33 @@ Autrement dit :
 
 ## 8. CALIBRATION DES POIDS — Multi-niveaux 🟣 HYBRIDE
 
-Le système possède **3 niveaux de calibration** indépendants, tous effectués en backtest :
+Le système possède **3 niveaux de calibration** indépendants, tous effectués en backtest.
+
+> **Comment faire depuis l'IHM ?** Onglet `🧪 Backtesting` :
+>
+> | Calibration | Onglet IHM | Action |
+> |-------------|-----------|--------|
+> | **Sentiment** (quant/sentiment/macro) | `📰 Calibrate sentiment` | Lance `calibrate-sentiment-weights`. Définir dates, top-N, horizons. Produit `sentiment_weight_calibration.csv` + `_best.json` dans `artifacts/sentiment_calibration/` |
+> | **Walk-Forward** (validation OOS) | `🚶 Walk-forward sentiment` | Lance `walk-forward-sentiment`. Backtest complet par folds glissants. Produit `latest_best_weights.json` dans `artifacts/sentiment_walk_forward/` |
+> | **Trimestrielle** (conviction + Kelly) | `🎛️ Calibration trimestrielle poids` | Lance `scripts/run_quarterly_weights_calibration.py`. Recalibre poids score (Sharpe/hit-ratio/IC) sur 4 trimestres |
+> | **Conviction uniquement** | ❌ Pas d'onglet IHM | ⚠️ `backtesting calibrate-weights` non câblé. En attendant, utiliser la calibration trimestrielle ou le CLI |
+> | **Kelly uniquement** | ❌ Pas d'onglet IHM | ⚠️ Même situation — inclus dans la calibration trimestrielle |
+>
+> ```diff
+> + TODO : Câbler l'onglet IHM pour la calibration Conviction (quant/ML)
+> +       → backtesting/weights_calibration.py ligne 16 : "à câbler ultérieurement"
+> +       → Créer un onglet dans ihm/pages/backtesting/__init__.py (ex: "🎯 Calibrate conviction")
+> +       → Commande CLI : python -m backtesting calibrate-weights --scope conviction
+> +       → Impact : aujourd'hui les poids 40/60 sont fixes, jamais recalibrés automatiquement
+> +
+> + TODO : Câbler l'onglet IHM pour la calibration Kelly
+> +       → backtesting/weights_calibration.py : calibrate_conviction_kelly() existe déjà
+> +       → Créer un onglet ou l'intégrer dans "🎯 Calibrate conviction" avec checkbox "Inclure Kelly"
+> +       → Commande CLI : python -m backtesting calibrate-weights --scope kelly
+> +       → Impact : aujourd'hui le Kelly fraction/payoff/edge ne sont jamais recalibrés automatiquement
+> ```
+>
+> **Consultation des résultats** : page `📊 Weights Calibration Runs` → historique des runs dans `weights_calibration_runs` (DB), avec segments (régime × horizon), drifts, et best_weights.
 
 ### 8.1 Poids de Conviction (`backtesting/weights_calibration.py`)
 
@@ -742,7 +796,7 @@ Calibre le mix quant vs sentiment vs macro :
 
 $$final\_score\_sentiment = w_{quant} \times score + w_{sentiment} \times sentiment\_norm + w_{macro} \times macro\_norm$$
 
-- **Défaut** : `quant=1.00`, <span style="color:red">**`sentiment=0.00`**</span>, <span style="color:red">**`macro=0.00`**</span> (désactivé)
+- ⚠️ **Défaut** : `quant=1.00`, <span style="color:red">**`sentiment=0.00`**</span>, <span style="color:red">**`macro=0.00`**</span> (désactivé)
 - **Résultat empirique** : IC(sentiment) ≈ 0.01 non significatif, IC(macro) ≈ 0
 - **Supporte la segmentation par régime** : peut calibrer des poids différents pour `normal` vs `capital_preservation`
 
@@ -767,6 +821,18 @@ Quand activé, le processus :
 3. **Classement** : sélectionne le meilleur parmi LSTM, CatBoost, LightGBM, GlobalModel
 4. **Métrique** : `selection_score` (défaut), `business_score`, ou `auc`
 
+> **🔧 Faut-il l'activer ?** — **❌ Pas utile pour l'instant.**
+>
+> CatBoost et LightGBM ne sont entraînés que si tu passes les flags `--compare-lightgbm` et `--enable-catboost`. Sans ces flags (le défaut), seul LSTM est entraîné → la champion selection n'a **rien à comparer** et retournera toujours `lstm_attention`.
+>
+> **Quand et comment l'activer :**
+> 1. D'abord lancer des entraînements **avec** `--compare-lightgbm` et `--enable-catboost` sur plusieurs symboles
+> 2. Laisser accumuler **3+ runs** par challenger (pour avoir des métriques fiables)
+> 3. Activer la quarantine avec `min_runs=3` et `min_days=30` pour éviter de promouvoir un modèle non testé
+> 4. Puis passer `allow_auto_selection=True`
+>
+> Même activée, le fallback reste `lstm_attention` si aucun challenger n'est éligible → **pas de risque de régression**. Le risque principal est de promouvoir un CatBoost/LightGBM overfitté sur un petit dataset — d'où l'importance de la quarantine.
+
 ### 9.2 Target Optimization (`modelFactory/target_optimization.py`)
 
 ⚠️ **Désactivé par défaut** (`enabled=False`). Optimise les paramètres de la target de trading :
@@ -782,12 +848,48 @@ Quand activé, le processus :
 - `class_balance` : `1 - |pos_rate - 0.5|/0.5` (pénalise le déséquilibre)
 - `separation` : rendement moyen positif - rendement moyen négatif
 
+> **🔧 Faut-il l'activer ?** — **⚠️ Possible, mais à superviser.**
+>
+> Le scoring est purement statistique sur le train set — il ne tient pas compte des coûts de transaction, du slippage, ni de la généralisation OOS. Une target avec 0% de seuil produira beaucoup de signaux mais peu de séparation → potentiellement du bruit.
+>
+> **Quand et comment l'activer :**
+> 1. Quand tu suspectes que le **horizon par défaut (5j)** ou les **seuils par défaut (+12%/-8% en IHM)** ne sont pas adaptés à certains symboles
+> 2. À lancer **symbole par symbole**, PAS en masse
+> 3. **Toujours valider manuellement** le résultat avant de l'adopter :
+>    - `trade_rate` ni < 5% (target trop exigeante, pas assez de signaux) ni > 40% (target trop facile, que du bruit)
+>    - `separation` > 0 (sinon la target ne sépare rien)
+>    - `class_balance` proche de 1.0 (évite un modèle qui prédit toujours la même classe)
+> 4. Idéalement, confirmer avec un **walk-forward ML** que les nouveaux paramètres améliorent le Sharpe OOS
+>
+> ⚠️ **Piège** : si `separation=0` (ex: up_threshold=0%, down_threshold=0%), le score tombe à 0 quel que soit le trade_rate — ces candidats seront écartés mais c'est un faux négatif si le vrai edge est ailleurs.
+
 ### 9.3 Business Score vs Selection Score (`modelFactory/evaluation.py`)
 
 **`business_score`** : orienté décision opérationnelle
 $$business\_score = precision\_long \times coverage + \max(avg\_return, 0) + 0.10 \times hit\_rate$$
 
 **`selection_score`** : score composite du training run (fallback : `threshold_business_score` → `auc` → 0)
+
+> **🔧 Lequel utiliser ?** — **Garde `selection_score` (le défaut).**
+>
+> | Critère | `business_score` | `selection_score` |
+> |---------|-----------------|-------------------|
+> | **Aligné P&L** | ✅ Valorise précision et rendement | ⚠️ Peut dégrader en AUC pur (métrique statistique) |
+> | **Robustesse** | ❌ Fragile si threshold optimization pas encore lancée | ✅ Fallback toujours disponible (AUC en dernier recours) |
+> | **Mode ternaire** | ❌ Non adapté (pense binaire long/pas long) | ✅ Utilise f1_macro, équilibré par classe |
+> | **Risque** | Peut favoriser un modèle qui dit rarement LONG mais juste | Peut favoriser un modèle bon en AUC mais inutile en trading |
+>
+> **Quand utiliser `business_score` :**
+> - Tu es en mode **binaire** (long vs pas long)
+> - Tu as lancé la **threshold optimization** (les `threshold_business_score` sont calculés)
+> - Tu veux que le champion soit celui qui **gagne de l'argent**, pas celui qui a la plus belle courbe ROC
+>
+> **Quand utiliser `selection_score` :**
+> - Tu es en mode **ternaire** (short/flat/long) → seul le `selection_score` utilise f1_macro
+> - Tu n'as **pas encore** de threshold optimization → le fallback AUC évite un score à 0
+> - Tu veux un **filet de sécurité** : si le business_score est indisponible, ça dégrade proprement
+>
+> **Pour ton usage (IHM, mode ternaire par défaut) : garde `selection_score`.** C'est le bon choix car le mode ternaire n'a pas de `precision_long` naturelle, le fallback AUC protège contre les cas où le business_score n'est pas calculable, et si tu passes en binaire un jour, le `selection_score` utilisera automatiquement `threshold_business_score` en premier.
 
 **Threshold optimization** : évalue les seuils de décision [0.50, 0.55, 0.60, 0.65, 0.70] avec contraintes :
 - Taux d'action min : 3%
@@ -844,9 +946,9 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 
 | # | Caveat | Impact |
 |---|--------|--------|
-| 1 | **Sentiment/macro désactivés par défaut** | <span style="color:red">**`sentiment_weight=0`, `macro_weight=0`**</span> — le `final_score_sentiment` = `final_score` pur |
-| 2 | **Champion selection désactivée par défaut** | Le système utilise toujours `lstm_attention`, même si CatBoost/LightGBM sont meilleurs |
-| 3 | **Target optimization désactivée par défaut** | Les paramètres de target (horizon, seuils) sont fixes, non optimisés automatiquement |
+| 1 | ⚠️ **Sentiment/macro désactivés par défaut** | <span style="color:red">**`sentiment_weight=0`, `macro_weight=0`**</span> — le `final_score_sentiment` = `final_score` pur |
+| 2 | ⚠️ **Champion selection désactivée par défaut** | Le système utilise toujours `lstm_attention`, même si CatBoost/LightGBM sont meilleurs |
+| 3 | ⚠️ **Target optimization désactivée par défaut** | Les paramètres de target (horizon, seuils) sont fixes, non optimisés automatiquement |
 | 4 | **Filtres de régime `regime_filters.py` non câblés (ni live ni backtest)** | `earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés. Les filtres défensifs de `regime_scoring.py` sont eux bien actifs |
 | 5 | **Short_score PIT dégradé** | En backfill PIT, les facteurs SMA du short_score ne sont pas calculés (`close_df=None`) |
 | 6 | **Short non affecté par le régime** | `apply_regime_weights()` modifie `final_score` mais pas `short_score` — les shorts sont insensibles à la rotation factorielle du régime |
@@ -1014,10 +1116,5 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 
 ---
 
-> **Dernière mise à jour** : 2026-06-24
-> **Prochaine mise à jour** : après discussion continue
-
----
-
-> **Dernière mise à jour** : 2026-06-24
+> **Dernière mise à jour** : 2026-06-25
 > **Prochaine mise à jour** : après discussion continue
