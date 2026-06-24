@@ -28,6 +28,28 @@
 
 ---
 
+## SOMMAIRE DES SECTIONS
+
+| Section | Contenu | Mode |
+|---------|---------|------|
+| **0. Architecture Backtest vs Live** | Préface : 2 modes (LIVE/BACKTEST), rôle de `stock_scores_history` (PIT), cycle hybride walk-forward | — |
+| **1. Calcul des scores Long/Short** | Formules `final_score` et `short_score`, facteurs techniques, neutralisation sectorielle, rank_and_select | 🟢 LIVE |
+| **2. Utilisation du sentiment** | Pipeline FinBERT → agrégation → fusion ternaire → `final_score_sentiment`, poids par défaut (sentiment=0) | 🟢 LIVE |
+| **3. Walk-Forward Sentiment** | Calibration OOS par folds glissants, `latest_best_weights.json`, application live, bornes [0.05, 0.40] | 🟣 HYBRIDE |
+| **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
+| **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
+| **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
+| **7. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs, asymétrie long/short | 🟢🔵 BOTH |
+| **8. Calibration des Poids** | 3 niveaux : Conviction (quant/ML), Sentiment (quant/sentiment/macro), Kelly (fraction, payoff, edge) | 🟣 HYBRIDE |
+| **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
+| **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
+| **11. Caveats** | 9 points d'attention : fonctionnalités désactivées, PIT dégradé, asymétries long/short, limites backtest | — |
+| **12. Résumé Synthétique** | Tableau récapitulatif (rappel en fin de document) | — |
+| **13. Backtest vs Live — Détail** | 8 sous-sections : sources, sentiment, ML, exécution, walk-forward, CLI, dégradation PIT par composant | — |
+| **14. Glossaire** | Tous les fichiers clés avec leur mode (LIVE / BACKTEST / BOTH / HYBRIDE) | — |
+
+---
+
 ## 0. ARCHITECTURE BACKTEST vs LIVE
 
 Le système fonctionne selon **deux modes** radicalement différents qu'il faut bien distinguer.
