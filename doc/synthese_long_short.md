@@ -35,7 +35,7 @@
 | **0. Architecture Backtest vs Live** | Préface : 2 modes (LIVE/BACKTEST), rôle de `stock_scores_history` (PIT), cycle hybride walk-forward | — |
 | **1. Calcul des scores Long/Short** | Formules `final_score` et `short_score`, facteurs techniques, neutralisation sectorielle, rank_and_select | 🟢 LIVE |
 | **2. Utilisation du sentiment** | Pipeline FinBERT → agrégation → fusion ternaire → `final_score_sentiment`, poids par défaut (sentiment=0) | 🟢 LIVE |
-| **3. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs, asymétrie long/short | 🟢🔵 BOTH |
+| **3. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs actifs (beta/spread/mcap/ATR), filtres `regime_filters.py` non câblés (earnings/buyback/yield), asymétrie long/short | 🟢🔵 BOTH |
 | **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
@@ -309,15 +309,17 @@ Mécanisme automatique qui force le passage en mode défensif même en régime `
 
 $$rotation\_active = \mathbf{1}[\, return_{cumul\_4w} < -0.03 \,]$$
 
-### 3.3 Filtres de régime (`selector/regime_filters.py`)
+### 3.3 Filtres de régime (`selector/regime_filters.py`) — earnings, buyback, yield
 
-⚠️ **Ces filtres sont définis et testés mais PAS encore câblés dans le pipeline de production.** Ils sont disponibles pour intégration future.
+⚠️ **Ces filtres ne sont utilisés NI en production, NI en backtest.** Ils sont codés, testés unitairement, mais **pas câblés** dans le pipeline. Ils sont disponibles pour intégration future.
 
-| Filtre | Comportement | Impact |
-|--------|-------------|--------|
-| `earnings_shield` | `strict_block` : exclut les symboles à J-2/J+2 des earnings. `negative_score` : applique un score négatif | Long + Short |
-| `buyback_blackout` | Multiplie le score par ~0.70 pour les symboles en période de blackout pré-earnings | Long + Short |
-| `yield_filter` | Exclut les secteurs sur liste noire (taux élevés) et les symboles bloqués | Long + Short |
+> **Distinction importante** : les filtres défensifs (beta ≤ 1.2, spread ≤ 15 bps, market cap ≥ $2B, ATR% ≤ 6%) sont dans `selector/regime_scoring.py` → `apply_regime_filters()`, appelé par `apply_regime_weights()`. **Ceux-là sont bien actifs** en production et en backtest (via `portfolio_builder.py` et `risk_bridge.py`). Les filtres ci-dessous (`selector/regime_filters.py`) sont une couche **supplémentaire** non activée.
+
+| Filtre | Comportement | Impact | Actif ? |
+|--------|-------------|--------|---------|
+| `earnings_shield` | `strict_block` : exclut les symboles à J-2/J+2 des earnings. `negative_score` : applique un score négatif | Long + Short | <span style="color:red">**❌**</span> |
+| `buyback_blackout` | Multiplie le score par ~0.70 pour les symboles en période de blackout pré-earnings | Long + Short | <span style="color:red">**❌**</span> |
+| `yield_filter` | Exclut les secteurs sur liste noire (taux élevés) et les symboles bloqués | Long + Short | <span style="color:red">**❌**</span> |
 
 ### 3.4 Impact Long vs Short
 
@@ -817,7 +819,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 1 | **Sentiment/macro désactivés par défaut** | <span style="color:red">**`sentiment_weight=0`, `macro_weight=0`**</span> — le `final_score_sentiment` = `final_score` pur |
 | 2 | **Champion selection désactivée par défaut** | Le système utilise toujours `lstm_attention`, même si CatBoost/LightGBM sont meilleurs |
 | 3 | **Target optimization désactivée par défaut** | Les paramètres de target (horizon, seuils) sont fixes, non optimisés automatiquement |
-| 4 | **Filtres de régime non câblés** | `earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés dans le pipeline de production |
+| 4 | **Filtres de régime `regime_filters.py` non câblés (ni live ni backtest)** | `earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés. Les filtres défensifs de `regime_scoring.py` sont eux bien actifs |
 | 5 | **Short_score PIT dégradé** | En backfill PIT, les facteurs SMA du short_score ne sont pas calculés (`close_df=None`) |
 | 6 | **Short non affecté par le régime** | `apply_regime_weights()` modifie `final_score` mais pas `short_score` — les shorts sont insensibles à la rotation factorielle du régime |
 | 7 | **Breakout filter long-only** | Les shorts ne passent pas par le filtre de confirmation de breakout |
