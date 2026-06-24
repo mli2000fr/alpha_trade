@@ -90,11 +90,20 @@ class BacktestConfig:
     benchmark_close: pd.Series | None = None
     seed: int | None = None
 
+    # ── P1 — Trailing stop adaptatif basé sur l'ATR ──
+    # Si > 0, remplace le trailing_stop_pct fixe par un stop dynamique :
+    #   trailing_distance = atr_trailing_stop_multiplier * ATR_20
+    # 0.0 = désactivé (utilise trailing_stop_pct fixe).
+    # Pour les microcaps (vol daily 3-8%), une valeur de 1.5–2.5 est recommandée.
+    atr_trailing_stop_multiplier: float = 0.0
+
     # Concentration / diversification (Priorité 4)
-    concentration_max_trades_per_symbol: int = 5
-    concentration_window_calendar_days: int = 180
-    concentration_max_consecutive_losses: int = 3
-    concentration_blacklist_duration_days: int = 90
+    # Assoupli pour le walk-forward sur petits univers (< 50 candidats/jour)
+    # afin d'éviter l'étouffement par concentration.
+    concentration_max_trades_per_symbol: int = 10
+    concentration_window_calendar_days: int = 90
+    concentration_max_consecutive_losses: int = 5
+    concentration_blacklist_duration_days: int = 30
 
     # Anti-faux-départs (Quick Win 1)
     min_breakout_days: int = 1
@@ -719,6 +728,10 @@ class BacktestEngine:
 
         # Phase B.1 — ADV pré-calculé pour le slippage volume-aware.
         adv_usd_df = compute_adv_usd(close, volume, window=20) if volume is not None else None
+        # ── P1 — ATR pré-calculé pour le trailing stop adaptatif ──
+        atr_df: pd.DataFrame | None = None
+        if cfg.atr_trailing_stop_multiplier > 0:
+            atr_df = self._compute_atr(high, low, close, window=20)
         mtm_close = close.ffill()
 
         state = _RunState(
@@ -938,6 +951,32 @@ class BacktestEngine:
     # ------------------------------------------------------------------
     # Phase E.3 (refactor) — sous-méthodes du run constraint.
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_atr(
+        high: pd.DataFrame,
+        low: pd.DataFrame,
+        close: pd.DataFrame,
+        window: int = 20,
+    ) -> pd.DataFrame:
+        """Calcule l'ATR (Average True Range) sur ``window`` jours.
+
+        Retourne un DataFrame de même shape que ``close``, avec l'ATR
+        en dollars (pas en pourcentage). Utilisé par le trailing stop
+        adaptatif (P1).
+        """
+        prev_close = close.shift(1).fillna(close)  # fallback: utilise close au lieu de NaN
+        tr1 = high - low
+        tr2 = (high - prev_close).abs()
+        tr3 = (low - prev_close).abs()
+        # Combiner les trois true ranges en prenant le max par élément
+        tr_combined = pd.DataFrame(
+            np.maximum(np.maximum(tr1.values, tr2.values), tr3.values),
+            index=close.index,
+            columns=close.columns,
+        )
+        atr = tr_combined.rolling(window=window, min_periods=1).mean()
+        return pd.DataFrame(atr, index=close.index, columns=close.columns)
 
     def _prepare_signals_by_day(
         self,
@@ -1534,6 +1573,7 @@ class BacktestEngine:
         diagnostics: BacktestDiagnostics,
         spread_df: pd.DataFrame | None = None,
         current_equity: float = 0.0,
+        atr_df: pd.DataFrame | None = None,
     ) -> None:
         """Phase E.3 — résout les sorties (TP/TS/initial stop) et applique le settlement."""
         cfg = self.config
@@ -1659,6 +1699,18 @@ class BacktestEngine:
                     take_profit_price = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
                     trailing_ref = (previous_trough_low if short else previous_peak_high)
                     trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, float(cfg.trailing_stop_pct))
+                # ── P1 — ATR-based trailing stop override ──
+                if cfg.atr_trailing_stop_multiplier > 0 and atr_df is not None and symbol in atr_df.columns:
+                    atr_value = float(atr_df.at[trade_day, symbol])
+                    if np.isfinite(atr_value) and atr_value > 0:
+                        sign = -1 if short else 1
+                        atr_distance = float(cfg.atr_trailing_stop_multiplier) * atr_value
+                        atr_stop_price = round(trailing_ref - sign * atr_distance, 4)
+                        # Prendre le stop le plus large des deux (fixe vs ATR)
+                        if not short:
+                            trailing_stop_price = min(trailing_stop_price, atr_stop_price)
+                        else:
+                            trailing_stop_price = max(trailing_stop_price, atr_stop_price)
                 active_initial_stop = position.initial_stop_price
             is_same_day = trade_day.normalize() == position.entry_date.normalize()
 

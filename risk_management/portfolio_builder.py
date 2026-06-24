@@ -10,7 +10,7 @@ from pandas import DataFrame
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from core.conviction import ConvictionWeights
 from core.conviction import fuse as _fuse_conviction_long
-from core.conviction import compute_conviction_short as _fuse_conviction_short
+from core.conviction import fuse_short as _fuse_conviction_short
 from core.run_summary import attach_live_progress
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig

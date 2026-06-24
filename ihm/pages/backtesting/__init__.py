@@ -2308,6 +2308,20 @@ def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
             key="bt_wfs_ts",
         )
     with col12:
+        atr_ts = st.number_input(
+            "ATR TS (0=désactivé)",
+            min_value=0.0,
+            max_value=10.0,
+            value=float(st.session_state.get("bt_wfs_atr_ts", 2.0)),
+            step=0.5,
+            format="%.1f",
+            key="bt_wfs_atr_ts",
+            help="Multiplicateur ATR pour trailing stop adaptatif. 0 = désactivé (utilise TS fixe). "
+                 "2.0 recommandé pour microcaps. stop = peak - N×ATR_20.",
+        )
+
+    col13, col14, col15 = st.columns(3)
+    with col13:
         all_symbols_wf = st.checkbox(
             "Univers entier (`--all-symbols`)",
             value=bool(st.session_state.get("bt_wfs_all_symbols", False)),
@@ -2343,6 +2357,7 @@ def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
         equity=float(equity),
         tp=float(tp),
         ts=float(ts),
+        atr_ts=float(atr_ts),
         fees=float(fees),
         output_dir=output_dir,
         all_symbols=bool(all_symbols_wf),

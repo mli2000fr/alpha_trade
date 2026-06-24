@@ -126,11 +126,23 @@ def fuse(
     return compute_conviction(quant_score, predicted_proba, w.score_weight, w.prediction_weight)
 
 
+def fuse_short(
+    *,
+    quant_score: float,
+    predicted_proba_short: float | None,
+    weights: ConvictionWeights | None = None,
+) -> float:
+    """Variante typée pour les shorts — inverse le score quant."""
+    w = weights or ConvictionWeights()
+    return compute_conviction_short(quant_score, predicted_proba_short, w.score_weight, w.prediction_weight)
+
+
 __all__ = [
     "ConvictionWeights",
     "SentimentFusionWeights",
     "compute_conviction",
     "fuse",
+    "fuse_short",
     "fuse_sentiment",
 ]
 
@@ -139,14 +151,18 @@ __all__ = [
 class SentimentFusionWeights:
     """Pondérations pour la fusion ternaire **quant + sentiment + macro**.
 
-    Convention historique projet (`event_sentiment.signal_aggregator
-    .SentimentBoostConfig`, défauts : 0.75 / 0.15 / 0.10). La somme doit être
-    proche de 1.0 (tolérance ``1e-4``). Tous les poids doivent être ≥ 0.
+    Convention calibrée empiriquement (diagnostic IC 2024-2025) :
+    - macro_weight = 0.00 (IC ≈ 0, t-stat ≈ 0 — aucun pouvoir prédictif)
+    - sentiment_weight = 0.00 (IC ≈ 0.01, t-stat ≈ 1.1 — non significatif,
+      désactivé par défaut ; laissé explorable dans la grille de calibration)
+    - quant_weight = 1.00 (IC ≈ 0.03, t-stat ≈ 2.5 — seul signal significatif)
+
+    La somme doit être proche de 1.0 (tolérance ``1e-4``). Tous les poids doivent être ≥ 0.
     """
 
-    quant_weight: float = 0.75
-    sentiment_weight: float = 0.15
-    macro_weight: float = 0.10
+    quant_weight: float = 1.00
+    sentiment_weight: float = 0.00
+    macro_weight: float = 0.00
 
     def __post_init__(self) -> None:
         if self.quant_weight < 0 or self.sentiment_weight < 0 or self.macro_weight < 0:

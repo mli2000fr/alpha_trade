@@ -13,6 +13,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+import numpy as np
+
 from backtesting.data_loader import get_required_bars_source_filter, load_ohlcv, pivot_ohlcv
 from backtesting.report import (
     BacktestReport,
@@ -100,19 +102,40 @@ class SentimentWeightCalibrator:
 
     @staticmethod
     def default_scenarios() -> list[SentimentCalibrationScenario]:
+        """Grille de scénarios pour la calibration walk-forward.
+
+        Diagnostic empirique (capital_2001_5000, 2024-2025) :
+        - macro_weight : IC ≈ 0, t-stat ≈ 0 → fixé à 0.0 (désactivé)
+        - sentiment_weight : IC ≈ 0.01, t-stat ≈ 1.1 → plage réduite [0.00, 0.10]
+        - quant_weight : IC ≈ 0.03, t-stat ≈ 2.5 → seul signal significatif
+
+        La grille explore 11 scénarios : sentiment ∈ {0.00, 0.02, 0.05, 0.08, 0.10}
+        avec quant = 1.0 - sentiment, macro = 0.0. On ajoute aussi des variantes
+        avec un peu de macro pour validation croisée (macro=0.02).
+        """
         scenarios: list[SentimentCalibrationScenario] = []
-        for sentiment_weight in (0.05, 0.10, 0.15, 0.20, 0.25):
-            for macro_weight in (0.00, 0.05, 0.10, 0.15):
-                quant_weight = round(1.0 - sentiment_weight - macro_weight, 6)
-                if quant_weight < 0.50:
-                    continue
-                scenarios.append(
-                    SentimentCalibrationScenario(
-                        sentiment_weight=round(sentiment_weight, 4),
-                        macro_weight=round(macro_weight, 4),
-                        quant_weight=quant_weight,
-                    )
+        # Scénarios principaux : macro = 0.0, sentiment variable
+        for sentiment_weight in (0.00, 0.02, 0.05, 0.08, 0.10):
+            quant_weight = round(1.0 - sentiment_weight, 6)
+            scenarios.append(
+                SentimentCalibrationScenario(
+                    sentiment_weight=round(sentiment_weight, 4),
+                    macro_weight=0.0,
+                    quant_weight=quant_weight,
                 )
+            )
+        # Scénarios de validation croisée : macro = 0.02, sentiment variable
+        for sentiment_weight in (0.00, 0.02, 0.05, 0.08):
+            quant_weight = round(1.0 - sentiment_weight - 0.02, 6)
+            if quant_weight < 0.80:
+                continue
+            scenarios.append(
+                SentimentCalibrationScenario(
+                    sentiment_weight=round(sentiment_weight, 4),
+                    macro_weight=0.02,
+                    quant_weight=quant_weight,
+                )
+            )
         return scenarios
 
     def load_dataset(
@@ -334,7 +357,21 @@ class SentimentWeightCalibrator:
 
     @staticmethod
     def _normalize_signal(series: pd.Series) -> pd.Series:
-        return SentimentSignalAggregator._normalize_signed_signal(series)
+        """Normalise un signal signé [-1, 1] vers [0, 1] par ranking cross-sectional.
+
+        Contrairement à ``_normalize_signed_signal`` (linéaire ``(x+1)/2``) qui
+        écrase la dispersion quand les valeurs sont concentrées autour de 0,
+        cette méthode applique un **ranking percentile par jour** sur les valeurs
+        non-NaN, garantissant une distribution uniforme dans [0, 1] et donc un
+        pouvoir discriminant maximal.
+
+        Les NaN restent NaN (pas de ``fillna(0)`` qui créerait un faux signal
+        neutre à 0.5). L'appelant décide du traitement (exclusion ou imputation).
+        """
+        numeric = pd.to_numeric(series, errors="coerce").astype(float)
+        numeric = numeric.where(np.isfinite(numeric), np.nan)
+        numeric = numeric.clip(-1.0, 1.0)
+        return numeric.rank(pct=True, na_option="keep")
 
     @staticmethod
     def build_walk_forward_windows(
@@ -344,6 +381,14 @@ class SentimentWeightCalibrator:
         test_days: int = 63,
         step_days: int | None = None,
     ) -> list[dict[str, Any]]:
+        """Construit des fenêtres walk-forward avec sémantique calendaire.
+
+        ``min_train_days``, ``test_days`` et ``step_days`` sont désormais
+        interprétés en **jours calendaires** (et non en nombre de snapshots).
+        Cela garantit que des historiques PIT à fréquence irrégulière
+        (ex. hebdomadaire) produisent des folds même quand le nombre de
+        snapshots uniques est inférieur à ``min_train_days``.
+        """
         if min_train_days <= 0:
             raise ValueError("min_train_days doit être strictement positif.")
         if test_days <= 0:
@@ -352,30 +397,83 @@ class SentimentWeightCalibrator:
             raise ValueError("step_days doit être strictement positif s'il est fourni.")
 
         unique_dates = sorted(pd.to_datetime(pd.Index(list(snapshot_dates)).dropna().unique()).tolist())
-        if len(unique_dates) <= min_train_days:
+        if len(unique_dates) < 2:
+            LOGGER.info(
+                "build_walk_forward_windows: %d snapshot(s) unique(s) → pas assez pour construire des folds.",
+                len(unique_dates),
+            )
+            return []
+
+        total_span_days = (unique_dates[-1] - unique_dates[0]).days
+        if total_span_days < min_train_days:
+            LOGGER.info(
+                "build_walk_forward_windows: %d snapshots uniques couvrent %d jours calendaires, "
+                "min_train_days=%d → aucune fenêtre possible.",
+                len(unique_dates),
+                total_span_days,
+                min_train_days,
+            )
             return []
 
         step = step_days or test_days
         windows: list[dict[str, Any]] = []
-        cursor = min_train_days
-        while cursor < len(unique_dates):
-            test_end = min(cursor + test_days, len(unique_dates))
-            train_dates = unique_dates[:cursor]
-            test_dates = unique_dates[cursor:test_end]
-            if not test_dates:
+
+        # Trouver l'index du premier snapshot dont la date est >= first_date + min_train_days
+        first_date = unique_dates[0]
+        min_split_date = first_date + pd.Timedelta(days=min_train_days)
+        cursor_idx: int | None = None
+        for i, d in enumerate(unique_dates):
+            if d >= min_split_date:
+                cursor_idx = i
+                break
+        if cursor_idx is None or cursor_idx == 0:
+            LOGGER.info(
+                "build_walk_forward_windows: aucun snapshot au-delà de %s + %d jours → pas de fold.",
+                first_date.date().isoformat(),
+                min_train_days,
+            )
+            return []
+
+        cursor_date = unique_dates[cursor_idx]
+        while cursor_idx < len(unique_dates):
+            train_dates_list = unique_dates[:cursor_idx]
+            cursor_date = unique_dates[cursor_idx]
+            test_end_date = cursor_date + pd.Timedelta(days=test_days)
+            test_dates_list = [d for d in unique_dates[cursor_idx:] if d <= test_end_date]
+            if not test_dates_list:
                 break
             windows.append(
                 {
                     "fold_index": len(windows) + 1,
-                    "train_dates": train_dates,
-                    "test_dates": test_dates,
-                    "train_start_date": pd.Timestamp(train_dates[0]),
-                    "train_end_date": pd.Timestamp(train_dates[-1]),
-                    "test_start_date": pd.Timestamp(test_dates[0]),
-                    "test_end_date": pd.Timestamp(test_dates[-1]),
+                    "train_dates": train_dates_list,
+                    "test_dates": test_dates_list,
+                    "train_start_date": pd.Timestamp(train_dates_list[0]),
+                    "train_end_date": pd.Timestamp(train_dates_list[-1]),
+                    "test_start_date": pd.Timestamp(test_dates_list[0]),
+                    "test_end_date": pd.Timestamp(test_dates_list[-1]),
                 }
             )
-            cursor += step
+            # Avancer le curseur de ``step`` jours calendaires
+            next_cursor_date = cursor_date + pd.Timedelta(days=step)
+            new_cursor_idx: int | None = None
+            for i in range(cursor_idx + 1, len(unique_dates)):
+                if unique_dates[i] >= next_cursor_date:
+                    new_cursor_idx = i
+                    break
+            if new_cursor_idx is None:
+                break
+            cursor_idx = new_cursor_idx
+
+        LOGGER.info(
+            "build_walk_forward_windows: %d snapshots uniques, span=%d jours calendaires, "
+            "min_train=%d test=%d step=%d → %d fold(s).",
+            len(unique_dates),
+            total_span_days,
+            min_train_days,
+            test_days,
+            step,
+            len(windows),
+        )
         return windows
 
     def score_dataset_for_scenario(
@@ -394,8 +492,10 @@ class SentimentWeightCalibrator:
             index=scored.index,
             dtype=float,
         ).fillna(0.0).clip(0.0, 1.0)
-        scored["company_idio_signal_norm"] = self._normalize_signal(scored["sentiment_net_agg"])
-        scored["macro_regime_signal_norm"] = self._normalize_signal(scored["sector_impact_agg"])
+        # P2 — ranking cross-sectional : les NaN restent NaN, on les fill à 0.0
+        # pour le calcul du composite (pas de contribution si pas de signal).
+        scored["company_idio_signal_norm"] = self._normalize_signal(scored["sentiment_net_agg"]).fillna(0.0)
+        scored["macro_regime_signal_norm"] = self._normalize_signal(scored["sector_impact_agg"]).fillna(0.0)
         scored["quant_component"] = scenario.quant_weight * scored["quant_score"]
         scored["company_idio_component"] = scenario.sentiment_weight * scored["company_idio_signal_norm"]
         scored["macro_regime_component"] = scenario.macro_weight * scored["macro_regime_signal_norm"]
@@ -484,13 +584,17 @@ class SentimentWeightCalibrator:
                     valid = daily[["composite_score", return_col]].dropna().copy()
                     if len(valid) < 3:
                         continue
+                    # P2 — cap top_n à max(5, len(valid)//3) pour garantir que
+                    # le bucket « top » est un vrai sous-ensemble de l'univers.
+                    # Évite le cas où top_n >= len(valid) → spread = 0 systématique.
+                    effective_top_n = max(5, min(top_n, len(valid) // 3))
                     score_rank = valid["composite_score"].rank(method="average")
                     return_rank = valid[return_col].rank(method="average")
                     if score_rank.nunique() > 1 and return_rank.nunique() > 1:
                         rank_ic = score_rank.corr(return_rank)
                         if pd.notna(rank_ic):
                             ic_values.append(float(rank_ic))
-                    top_slice = valid.nlargest(min(top_n, len(valid)), "composite_score")
+                    top_slice = valid.nlargest(effective_top_n, "composite_score")
                     if not top_slice.empty:
                         top_bucket_returns.append(float(top_slice[return_col].mean()))
                     universe_returns.append(float(valid[return_col].mean()))
@@ -649,6 +753,7 @@ class SentimentWeightCalibrator:
         fees_pct: float = 0.001,
         output_dir: Path | None = None,
         capital_preset_key: str | None = None,
+        atr_trailing_stop_multiplier: float = 0.0,
     ) -> tuple[WalkForwardCalibrationResult, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
         dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_key=capital_preset_key)
@@ -659,6 +764,16 @@ class SentimentWeightCalibrator:
             step_days=step_days,
         )
         if dataset.empty or not windows:
+            LOGGER.warning(
+                "walk_forward_backtest: dataset.empty=%s | windows=%d | "
+                "snapshots_uniques=%d | min_train_days=%d | test_days=%d | capital_preset_key=%s → early exit (0 folds).",
+                dataset.empty,
+                len(windows),
+                int(dataset["snapshot_date"].nunique()) if not dataset.empty else 0,
+                min_train_days,
+                test_days,
+                capital_preset_key,
+            )
             empty_result = WalkForwardCalibrationResult(
                 start_date=start_date,
                 end_date=end_date,
@@ -675,16 +790,28 @@ class SentimentWeightCalibrator:
             )
             return empty_result, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
 
+        # Normaliser snapshot_date en datetime64[ns] pour garantir la compatibilité
+        # avec les pd.Timestamp produits par build_walk_forward_windows.
+        dataset["snapshot_date"] = pd.to_datetime(dataset["snapshot_date"])
+
         fold_rows: list[dict[str, Any]] = []
         out_of_sample_frames: list[pd.DataFrame] = []
+        skipped_empty_train = 0
+        skipped_empty_test = 0
+        skipped_empty_ranking = 0
         for window in windows:
             train_df = dataset[dataset["snapshot_date"].isin(window["train_dates"])].copy()
             test_df = dataset[dataset["snapshot_date"].isin(window["test_dates"])].copy()
-            if train_df.empty or test_df.empty:
+            if train_df.empty:
+                skipped_empty_train += 1
+                continue
+            if test_df.empty:
+                skipped_empty_test += 1
                 continue
 
             train_ranking = self.evaluate_scenarios(train_df, scenario_list, horizons=horizons, top_n=top_n)
             if train_ranking.empty:
+                skipped_empty_ranking += 1
                 continue
 
             best_train_row = train_ranking.iloc[0].to_dict()
@@ -721,6 +848,18 @@ class SentimentWeightCalibrator:
 
         fold_df = pd.DataFrame(fold_rows)
         scored_oos_df = pd.concat(out_of_sample_frames, ignore_index=True) if out_of_sample_frames else pd.DataFrame()
+
+        if skipped_empty_train or skipped_empty_test or skipped_empty_ranking:
+            LOGGER.warning(
+                "walk_forward_backtest: %d window(s) au total, "
+                "train_df vide=%d, test_df vide=%d, train_ranking vide=%d, folds réussis=%d.",
+                len(windows),
+                skipped_empty_train,
+                skipped_empty_test,
+                skipped_empty_ranking,
+                len(fold_df),
+            )
+
         signals_df = self.build_portfolio_signals(
             scored_oos_df,
             score_column="final_score_walk_forward",
@@ -756,6 +895,7 @@ class SentimentWeightCalibrator:
                 trailing_stop_pct=trailing_stop_pct,
                 max_positions=max_positions,
                 fees_pct=fees_pct,
+                atr_trailing_stop_multiplier=atr_trailing_stop_multiplier,
             )
         ).run(
             open=pivoted["open"],
@@ -763,6 +903,7 @@ class SentimentWeightCalibrator:
             high=pivoted["high"],
             low=pivoted["low"],
             signals_df=signals_df,
+            volume=pivoted.get("volume"),
         )
         report = generate_report(pf, initial_equity)
 

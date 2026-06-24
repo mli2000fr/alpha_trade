@@ -1276,7 +1276,12 @@ def _build_parser() -> argparse.ArgumentParser:
     walk_forward_p.add_argument("--max-positions", type=int, default=20, help="Nombre maximal de positions simultanées")
     walk_forward_p.add_argument("--equity", type=float, default=100_000, help="Capital initial ($)")
     walk_forward_p.add_argument("--tp", type=float, default=0.08, help="Take-profit %%)")
-    walk_forward_p.add_argument("--ts", type=float, default=0.05, help="Trailing stop %%)")
+    walk_forward_p.add_argument("--ts", type=float, default=0.05, help="Trailing stop %%")
+    walk_forward_p.add_argument(
+        "--atr-ts", type=float, default=0.0,
+        help="Multiplicateur ATR pour trailing stop adaptatif (0 = désactivé, utilise --ts fixe). "
+             "Ex: 2.0 → stop = peak - 2*ATR_20. Recommandé 1.5-2.5 pour microcaps.",
+    )
     walk_forward_p.add_argument("--fees", type=float, default=0.001, help="Frais par trade (défaut 0.1%%)")
     walk_forward_p.add_argument(
         "--output-dir",
@@ -3402,6 +3407,7 @@ def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
         fees_pct=args.fees,
         output_dir=Path(args.output_dir),
         capital_preset_key=args.capital_preset_key,
+        atr_trailing_stop_multiplier=args.atr_ts,
     )
 
     _safe_print("✅ Walk-forward terminé")

@@ -313,11 +313,15 @@ class SentimentBoostConfig:
     Paramètres de fusion sentiment → score quantitatif.
 
     sentiment_weight     : fraction du final_score attribuée au signal de sentiment
-                           ticker (sentiment_net_mean_1d normalisé). Défaut 15 %.
+                           ticker (sentiment_net_mean_1d normalisé). Défaut 0 %.
+                           (IC ≈ 0.01, t-stat ≈ 1.1 — non significatif, désactivé
+                           par défaut ; conservé dans la grille de calibration).
     macro_sector_weight  : fraction attribuée au signal macro sectoriel
-                           (sector_impact_score normalisé). Défaut 10 %.
+                           (sector_impact_score normalisé). Défaut 0 %.
+                           (IC ≈ 0, t-stat ≈ 0 — désactivé car aucun pouvoir
+                           prédictif mesuré sur capital_2001_5000, 2020-2025).
     quant_weight         : fraction conservée pour le score quantitatif originel.
-                           Défaut 75 %. La somme des trois doit être 1.0.
+                           Défaut 100 %. La somme des trois doit être 1.0.
     lookback_days              : fenêtre en jours pour la moyenne glissante du sentiment
                                  (robustesse au bruit d'un seul article). Défaut 5 jours.
     min_news_count             : nb minimal d'articles pour activer le boost sentiment
@@ -329,9 +333,9 @@ class SentimentBoostConfig:
     Pour calibrer les poids, calculer IC (Information Coefficient) sentiment → retour
     J+1/J+5 sur historique via backtest.
     """
-    sentiment_weight: float = 0.15
-    macro_sector_weight: float = 0.10
-    quant_weight: float = 0.75
+    sentiment_weight: float = 0.00
+    macro_sector_weight: float = 0.00
+    quant_weight: float = 1.00
     lookback_days: int = 5
     min_news_count: int = 2
     time_decay_half_life_days: float = 2.0

@@ -433,7 +433,9 @@ def apply_regime_weights(
     # 7. Mettre à jour l'explication
     if "selection_explanation" in result.columns:
         result["selector_signal_mode"] = result.get("selector_signal_mode", "factor_only")
-        mask = result["final_score"] != trend_vcp_raw  # a été modifié
+        # Aligner sur l'index de result pour éviter ValueError quand
+        # les deux séries n'ont pas le même index (ex: colonne absente).
+        mask = result["final_score"] != trend_vcp_raw.reindex(result.index)
         result.loc[mask, "selector_signal_mode"] = f"regime_{mode}"
 
     LOGGER.info(

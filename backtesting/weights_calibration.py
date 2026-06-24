@@ -203,20 +203,38 @@ def _conviction_grid(step: float = 0.05) -> Iterable[ConvictionWeights]:
 
 
 def _sentiment_grid(step: float = 0.05) -> Iterable[SentimentFusionWeights]:
+    """Grille de poids quant/sentiment/macro pour calibration formelle.
+
+    Diagnostic empirique (capital_2001_5000, 2024-2025) :
+    macro_weight a un IC ≈ 0 → on le fixe à 0.0 (désactivé) par défaut.
+    On ajoute macro=0.02 uniquement pour validation croisée.
+    """
     vals = np.round(np.arange(0.0, 1.0 + step, step), 6)
-    for q in vals:
-        for s in vals:
-            m = round(1.0 - float(q) - float(s), 6)
-            if m < 0.0 or m > 1.0:
-                continue
-            try:
-                yield SentimentFusionWeights(
-                    quant_weight=float(q),
-                    sentiment_weight=float(s),
-                    macro_weight=float(m),
-                )
-            except ValueError:
-                continue
+    for s in vals:
+        q = round(1.0 - float(s), 6)
+        if q < 0.0:
+            continue
+        try:
+            yield SentimentFusionWeights(
+                quant_weight=float(q),
+                sentiment_weight=float(s),
+                macro_weight=0.0,
+            )
+        except ValueError:
+            continue
+    # Validation croisée : macro = 0.02
+    for s in vals:
+        q = round(1.0 - float(s) - 0.02, 6)
+        if q < 0.0:
+            continue
+        try:
+            yield SentimentFusionWeights(
+                quant_weight=float(q),
+                sentiment_weight=float(s),
+                macro_weight=0.02,
+            )
+        except ValueError:
+            continue
 
 
 def _kelly_grid(

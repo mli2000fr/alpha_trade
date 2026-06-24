@@ -157,6 +157,7 @@ class WalkForwardSentimentOptions:
     equity: float = 100_000.0
     tp: float = 0.08
     ts: float = 0.05
+    atr_ts: float = 2.0
     fees: float = 0.001
     output_dir: str = "artifacts/sentiment_walk_forward"
     all_symbols: bool = False
@@ -376,6 +377,7 @@ def build_backtesting_command(
             "--equity", str(options.equity),
             "--tp", str(options.tp),
             "--ts", str(options.ts),
+            "--atr-ts", str(options.atr_ts),
             "--fees", str(options.fees),
             "--output-dir", options.output_dir,
         ])
