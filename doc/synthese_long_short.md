@@ -35,11 +35,11 @@
 | **0. Architecture Backtest vs Live** | Préface : 2 modes (LIVE/BACKTEST), rôle de `stock_scores_history` (PIT), cycle hybride walk-forward | — |
 | **1. Calcul des scores Long/Short** | Formules `final_score` et `short_score`, facteurs techniques, neutralisation sectorielle, rank_and_select | 🟢 LIVE |
 | **2. Utilisation du sentiment** | Pipeline FinBERT → agrégation → fusion ternaire → `final_score_sentiment`, poids par défaut (sentiment=0) | 🟢 LIVE |
-| **3. Walk-Forward Sentiment** | Calibration OOS par folds glissants, `latest_best_weights.json`, application live, bornes [0.05, 0.40] | 🟣 HYBRIDE |
+| **3. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs, asymétrie long/short | 🟢🔵 BOTH |
 | **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
-| **7. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs, asymétrie long/short | 🟢🔵 BOTH |
+| **7. Walk-Forward Sentiment** | Calibration OOS par folds glissants, `latest_best_weights.json`, application live, bornes [0.05, 0.40] | 🟣 HYBRIDE |
 | **8. Calibration des Poids** | 3 niveaux : Conviction (quant/ML), Sentiment (quant/sentiment/macro), Kelly (fraction, payoff, edge) | 🟣 HYBRIDE |
 | **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
 | **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
@@ -260,57 +260,71 @@ Donc **en production, le sentiment n'a pas d'impact par défaut**. Les poids son
 
 ---
 
-## 3. WALK-FORWARD SENTIMENT — Calibration des poids 🟣 HYBRIDE (backtest → live)
+## 3. RÉGIME DE MARCHÉ — Impact sur les scores 🟢🔵 BOTH
 
-### 3.1 Qu'est-ce que c'est ?
+### 3.1 Poids directionnels par régime (`selector/regime_scoring.py`)
 
-Le **Walk-Forward Sentiment** (`backtesting/sentiment_calibration.py` + `backtesting/walk_forward.py`) est un processus de **calibration hors-échantillon** qui détermine les meilleurs poids `(w_sentiment, w_macro, w_quant)` à utiliser pour la fusion.
+Le régime de marché modifie les poids de composition du `final_score`. Deux jeux de poids :
 
-### 3.2 Fonctionnement
+#### NORMAL (marché haussier/neutre)
 
-1. **Chargement du dataset** : `stock_scores_history` + forward returns (rendements futurs à J+5, J+10, J+20)
-2. **Grille de scénarios** (11 scénarios par défaut) :
-   - `sentiment_weight` ∈ {0.00, 0.02, 0.05, 0.08, 0.10}
-   - `macro_weight` ∈ {0.00, 0.02}
-   - `quant_weight = 1.0 - sentiment - macro`
-3. **Walk-forward par folds glissants** :
-   - Pour chaque fold (ex: train 2020-2022 → test 2023) :
-     - Sur la période **train** : teste tous les scénarios, garde le meilleur
-     - Sur la période **test** (OOS) : évalue le scénario gagnant
-   - On obtient un score OOS moyen pour chaque scénario
-4. **Sélection** : le scénario avec le meilleur score OOS global (Sharpe, rendement total, max drawdown)
+| Facteur | Poids |
+|---------|-------|
+| `trend_vcp` (momentum) | **0.50** |
+| `total_score` (qualité) | **0.30** |
+| `rsi` (force relative) | **0.20** |
+| `defensive_beta` | 0.00 |
+| `defensive_size` | 0.00 |
+| `defensive_low_vol` | 0.00 |
 
-### 3.3 Fichiers produits
+#### CAPITAL_PRESERVATION (marché baissier/défensif, calibré 2026-06-17)
 
-- `latest_best_weights.json` (ou `walk_forward_best_weights_latest.json`)
-- Contient : `sentiment_weight`, `macro_weight`, `quant_weight`, `calibration_run_id`, `best_scenario_name`
+| Facteur | Poids |
+|---------|-------|
+| `trend_vcp` (momentum) | **0.25** |
+| `total_score` (qualité) | **0.15** |
+| `rsi` (force relative) | **0.10** |
+| `defensive_beta` (low beta) | **0.22** |
+| `defensive_size` (large cap) | **0.13** |
+| `defensive_low_vol` (low volatility) | **0.15** |
 
-### 3.4 Application des poids calibrés (`backtesting/walk_forward.py`)
+**Logique** : en régime `capital_preservation`, ~50% du poids est transféré du momentum vers des facteurs défensifs (low beta, large cap, low vol). Le momentum reste à 25% car l'analyse a montré que les trades momentum restent rentables même en marché baissier, mais la volatilité excessive déclenche le circuit breaker.
 
-La fonction `resolve_latest_walk_forward_weights()` cherche ces fichiers dans :
-- `artifacts/sentiment_walk_forward/`
-- `artifacts/sentiment_calibration/`
-- `artifacts/`
+**Filtres défensifs additionnels** appliqués uniquement en `capital_preservation` :
 
-Les poids sont **clippés** dans [0.05, 0.40] (bornes business de sécurité) via `validate_walk_forward_weights()`.
+| Filtre | Seuil |
+|--------|-------|
+| Market cap minimum | $2B |
+| Spread max | 15 bps |
+| Beta max | 1.2 |
+| ATR% max | 6% |
 
-### 3.5 Impact sur long et short
+### 3.2 MomentumRotationState — Rotation forcée
 
-Quand les poids walk-forward sont appliqués (via `SentimentBoostConfig`), le `final_score_sentiment` remplace ou complète le `final_score` quantitatif pur. Les colonnes impactées dans `stock_scores` :
+Mécanisme automatique qui force le passage en mode défensif même en régime `normal` :
 
-| Colonne | Signification |
-|---------|---------------|
-| `final_score_sentiment` | Score final avec boost sentiment (utilisé si calibré) |
-| `final_score_walk_forward` | Score final avec poids walk-forward appliqués |
-| `walk_forward_sentiment_weight` | Poids sentiment calibré |
-| `walk_forward_macro_weight` | Poids macro calibré |
-| `walk_forward_quant_weight` | Poids quant calibré |
+- **Fenêtre** : 4 semaines (~20 jours de trading)
+- **Seuil** : rendement cumulé du portefeuille < **-3%**
+- **Action** : si le portefeuille perd plus de 3% sur 4 semaines → bascule forcée vers les poids `CAPITAL_PRESERVATION`
 
-⚠️ **En pratique actuelle** : vu que les poids calibrés optimaux tendent vers `sentiment=0, macro=0, quant=1`, le walk-forward confirme que le signal quantitatif seul est le plus robuste.
+$$rotation\_active = \mathbf{1}[\, return_{cumul\_4w} < -0.03 \,]$$
 
-#### Fichiers clés :
-- `backtesting/sentiment_calibration.py` — `SentimentWeightCalibrator`
-- `backtesting/walk_forward.py` — `resolve_latest_walk_forward_weights()`, `WalkForwardWeights`
+### 3.3 Filtres de régime (`selector/regime_filters.py`)
+
+⚠️ **Ces filtres sont définis et testés mais PAS encore câblés dans le pipeline de production.** Ils sont disponibles pour intégration future.
+
+| Filtre | Comportement | Impact |
+|--------|-------------|--------|
+| `earnings_shield` | `strict_block` : exclut les symboles à J-2/J+2 des earnings. `negative_score` : applique un score négatif | Long + Short |
+| `buyback_blackout` | Multiplie le score par ~0.70 pour les symboles en période de blackout pré-earnings | Long + Short |
+| `yield_filter` | Exclut les secteurs sur liste noire (taux élevés) et les symboles bloqués | Long + Short |
+
+### 3.4 Impact Long vs Short
+
+**Asymétrie importante** :
+- **Long** : le `final_score` est recalculé avec les poids du régime → impact direct sur le classement
+- **Short** : utilise `short_score` (colonne indépendante), **non affecté** par `apply_regime_weights()`. Les shorts sont immunisés contre la rotation factorielle du régime
+- **Filtres défensifs** (beta, spread, market cap, ATR) : appliqués au DataFrame **avant** ranking → affectent **les deux** (long et short)
 
 ---
 
@@ -605,71 +619,57 @@ graph TD
 
 ---
 
-## 7. RÉGIME DE MARCHÉ — Impact sur les scores 🟢🔵 BOTH
+## 7. WALK-FORWARD SENTIMENT — Calibration des poids 🟣 HYBRIDE (backtest → live)
 
-### 7.1 Poids directionnels par régime (`selector/regime_scoring.py`)
+### 7.1 Qu'est-ce que c'est ?
 
-Le régime de marché modifie les poids de composition du `final_score`. Deux jeux de poids :
+Le **Walk-Forward Sentiment** (`backtesting/sentiment_calibration.py` + `backtesting/walk_forward.py`) est un processus de **calibration hors-échantillon** qui détermine les meilleurs poids `(w_sentiment, w_macro, w_quant)` à utiliser pour la fusion.
 
-#### NORMAL (marché haussier/neutre)
+### 7.2 Fonctionnement
 
-| Facteur | Poids |
-|---------|-------|
-| `trend_vcp` (momentum) | **0.50** |
-| `total_score` (qualité) | **0.30** |
-| `rsi` (force relative) | **0.20** |
-| `defensive_beta` | 0.00 |
-| `defensive_size` | 0.00 |
-| `defensive_low_vol` | 0.00 |
+1. **Chargement du dataset** : `stock_scores_history` + forward returns (rendements futurs à J+5, J+10, J+20)
+2. **Grille de scénarios** (11 scénarios par défaut) :
+   - `sentiment_weight` ∈ {0.00, 0.02, 0.05, 0.08, 0.10}
+   - `macro_weight` ∈ {0.00, 0.02}
+   - `quant_weight = 1.0 - sentiment - macro`
+3. **Walk-forward par folds glissants** :
+   - Pour chaque fold (ex: train 2020-2022 → test 2023) :
+     - Sur la période **train** : teste tous les scénarios, garde le meilleur
+     - Sur la période **test** (OOS) : évalue le scénario gagnant
+   - On obtient un score OOS moyen pour chaque scénario
+4. **Sélection** : le scénario avec le meilleur score OOS global (Sharpe, rendement total, max drawdown)
 
-#### CAPITAL_PRESERVATION (marché baissier/défensif, calibré 2026-06-17)
+### 7.3 Fichiers produits
 
-| Facteur | Poids |
-|---------|-------|
-| `trend_vcp` (momentum) | **0.25** |
-| `total_score` (qualité) | **0.15** |
-| `rsi` (force relative) | **0.10** |
-| `defensive_beta` (low beta) | **0.22** |
-| `defensive_size` (large cap) | **0.13** |
-| `defensive_low_vol` (low volatility) | **0.15** |
+- `latest_best_weights.json` (ou `walk_forward_best_weights_latest.json`)
+- Contient : `sentiment_weight`, `macro_weight`, `quant_weight`, `calibration_run_id`, `best_scenario_name`
 
-**Logique** : en régime `capital_preservation`, ~50% du poids est transféré du momentum vers des facteurs défensifs (low beta, large cap, low vol). Le momentum reste à 25% car l'analyse a montré que les trades momentum restent rentables même en marché baissier, mais la volatilité excessive déclenche le circuit breaker.
+### 7.4 Application des poids calibrés (`backtesting/walk_forward.py`)
 
-**Filtres défensifs additionnels** appliqués uniquement en `capital_preservation` :
+La fonction `resolve_latest_walk_forward_weights()` cherche ces fichiers dans :
+- `artifacts/sentiment_walk_forward/`
+- `artifacts/sentiment_calibration/`
+- `artifacts/`
 
-| Filtre | Seuil |
-|--------|-------|
-| Market cap minimum | $2B |
-| Spread max | 15 bps |
-| Beta max | 1.2 |
-| ATR% max | 6% |
+Les poids sont **clippés** dans [0.05, 0.40] (bornes business de sécurité) via `validate_walk_forward_weights()`.
 
-### 7.2 MomentumRotationState — Rotation forcée
+### 7.5 Impact sur long et short
 
-Mécanisme automatique qui force le passage en mode défensif même en régime `normal` :
+Quand les poids walk-forward sont appliqués (via `SentimentBoostConfig`), le `final_score_sentiment` remplace ou complète le `final_score` quantitatif pur. Les colonnes impactées dans `stock_scores` :
 
-- **Fenêtre** : 4 semaines (~20 jours de trading)
-- **Seuil** : rendement cumulé du portefeuille < **-3%**
-- **Action** : si le portefeuille perd plus de 3% sur 4 semaines → bascule forcée vers les poids `CAPITAL_PRESERVATION`
+| Colonne | Signification |
+|---------|---------------|
+| `final_score_sentiment` | Score final avec boost sentiment (utilisé si calibré) |
+| `final_score_walk_forward` | Score final avec poids walk-forward appliqués |
+| `walk_forward_sentiment_weight` | Poids sentiment calibré |
+| `walk_forward_macro_weight` | Poids macro calibré |
+| `walk_forward_quant_weight` | Poids quant calibré |
 
-$$rotation\_active = \mathbf{1}[\, return_{cumul\_4w} < -0.03 \,]$$
+⚠️ **En pratique actuelle** : vu que les poids calibrés optimaux tendent vers `sentiment=0, macro=0, quant=1`, le walk-forward confirme que le signal quantitatif seul est le plus robuste.
 
-### 7.3 Filtres de régime (`selector/regime_filters.py`)
-
-⚠️ **Ces filtres sont définis et testés mais PAS encore câblés dans le pipeline de production.** Ils sont disponibles pour intégration future.
-
-| Filtre | Comportement | Impact |
-|--------|-------------|--------|
-| `earnings_shield` | `strict_block` : exclut les symboles à J-2/J+2 des earnings. `negative_score` : applique un score négatif | Long + Short |
-| `buyback_blackout` | Multiplie le score par ~0.70 pour les symboles en période de blackout pré-earnings | Long + Short |
-| `yield_filter` | Exclut les secteurs sur liste noire (taux élevés) et les symboles bloqués | Long + Short |
-
-### 7.4 Impact Long vs Short
-
-**Asymétrie importante** :
-- **Long** : le `final_score` est recalculé avec les poids du régime → impact direct sur le classement
-- **Short** : utilise `short_score` (colonne indépendante), **non affecté** par `apply_regime_weights()`. Les shorts sont immunisés contre la rotation factorielle du régime
-- **Filtres défensifs** (beta, spread, market cap, ATR) : appliqués au DataFrame **avant** ranking → affectent **les deux** (long et short)
+#### Fichiers clés :
+- `backtesting/sentiment_calibration.py` — `SentimentWeightCalibrator`
+- `backtesting/walk_forward.py` — `resolve_latest_walk_forward_weights()`, `WalkForwardWeights`
 
 ---
 
