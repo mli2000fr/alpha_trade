@@ -11,9 +11,9 @@
 |----------|---------|
 | **Comment on calcule les scores long ?** | `final_score = 0.50×(trend+vcp)/2 + 0.30×total_score + 0.20×RSI`, winsorisé puis normalisé [0,1], avec neutralisation sectorielle |
 | **Comment on calcule les scores short ?** | Score baissier composite indépendant : 30% trend faible + 25% RSI bas + 25% prix<SMA50 + 20% prix<SMA200 |
-| **Comment le sentiment impacte long/short ?** | Fusion ternaire : `w_quant×score + w_sentiment×sentiment_norm + w_macro×macro_norm`. Mais par défaut `w_sentiment=0`, `w_macro=0` car IC non significatif |
-| **Qu'est-ce que le forward sentiment ?** | Walk-forward calibration : backtest OOS par folds glissants pour trouver les meilleurs poids (sentiment, macro, quant). Produit `latest_best_weights.json` |
-| **Son impact ?** | Quand calibré et appliqué, ajuste le `final_score` en ajoutant une composante sentiment/macro. Mais la calibration confirme que le quant seul est optimal |
+| **Comment le sentiment impacte long/short ?** | Fusion ternaire : `w_quant×score + w_sentiment×sentiment_norm + w_macro×macro_norm`. Mais par défaut <span style="color:red">**`w_sentiment=0`, `w_macro=0`**</span> car IC non significatif |
+| **Qu'est-ce que le forward sentiment ?** | Walk-forward calibration : exécute des backtests complets avec différentes pondérations du score fusionné (quant+sentiment+macro). Ne décide PAS sur le sentiment seul — chaque scénario utilise le moteur de backtest complet (stops, sizing, etc.). Produit `latest_best_weights.json` |
+| **Son impact ?** | Les poids calibrés servent pour les **deux modes** : en LIVE via `SentimentBoostConfig`, en BACKTEST via la colonne `final_score_walk_forward` dans `stock_scores_history` (cascade `COALESCE`). Mais la calibration confirme que le quant seul est optimal |
 | **Comment ML entraîne long/short ?** | LSTM 2 couches + Attention temporelle sur séquences de 20 jours. Features OHLCV + sentiment + contexte selector. Target = rendement forward binaire ou ternaire. Split chronologique avec purge |
 | **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt → `predicted_proba` inséré en DB |
 | **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter 3) Score threshold 4) Concentration 5) Conviction = 40%×quant + 60%×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
@@ -39,7 +39,7 @@
 | **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
-| **7. Walk-Forward Sentiment** | Calibration OOS par folds glissants, `latest_best_weights.json`, application live, bornes [0.05, 0.40] | 🟣 HYBRIDE |
+| **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, pas sentiment seul), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE(walk_forward, sentiment, final_score)` | 🟣 HYBRIDE |
 | **8. Calibration des Poids** | 3 niveaux : Conviction (quant/ML), Sentiment (quant/sentiment/macro), Kelly (fraction, payoff, edge) | 🟣 HYBRIDE |
 | **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
 | **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
@@ -95,10 +95,10 @@ C'est la **pierre angulaire** du backtest. Cette table est remplie par `backfill
 ### 🟣 Mode HYBRIDE : Walk-Forward Sentiment
 
 La calibration des poids sentiment/macro/quant est un **méta-backtest** :
-1. On exécute plusieurs backtests avec différentes combinaisons de poids
+1. On exécute des **backtests complets** (moteur `BacktestEngine` normal : stops, sizing, corrélation, etc.) avec différentes combinaisons de poids — les décisions **ne sont pas basées sur le sentiment seul** mais sur le score fusionné `w_quant×score + w_sentiment×sentiment_norm + w_macro×macro_norm`
 2. On évalue les performances OOS (Out-Of-Sample) par folds glissants
 3. On sélectionne les meilleurs poids → sauvegardés dans `latest_best_weights.json`
-4. Ces poids peuvent ensuite être appliqués en LIVE
+4. Ces poids peuvent ensuite être appliqués **en LIVE** (via `SentimentBoostConfig`) **et en BACKTEST** (via la colonne `final_score_walk_forward` dans `stock_scores_history`, consommée par la cascade `COALESCE` de `data_loader.py`)
 
 ---
 
@@ -244,8 +244,8 @@ Si le signal sentiment n'est **pas actif** (pas assez de news), on utilise **0.5
 
 **IMPORTANT** — Les poids par défaut sont :
 - `quant_weight` = **1.00** (100% quantitatif)
-- `sentiment_weight` = **0.00** (désactivé par défaut !)
-- `macro_weight` = **0.00** (désactivé par défaut !)
+- `sentiment_weight` = <span style="color:red">**0.00** (désactivé par défaut !)</span>
+- `macro_weight` = <span style="color:red">**0.00** (désactivé par défaut !)</span>
 
 **Pourquoi ?** Le diagnostic empirique (IC = Information Coefficient) sur 2020-2025 a montré :
 - **Sentiment** : IC ≈ 0.01, t-stat ≈ 1.1 → **non significatif statistiquement**
@@ -627,6 +627,12 @@ Le **Walk-Forward Sentiment** (`backtesting/sentiment_calibration.py` + `backtes
 
 ### 7.2 Fonctionnement
 
+La calibration utilise le **même moteur de backtest que `backtesting run`** (`BacktestEngine` complet : brackets, Kelly sizing, stops, circuit breaker). La **seule différence** entre les scénarios est la pondération du score :
+
+$$score_{scénario} = w_{quant} \times final\_score + w_{sentiment} \times sentiment\_norm + w_{macro} \times macro\_norm$$
+
+> ⚠️ **Important** : les décisions achat/vente ne sont **pas** basées uniquement sur le sentiment. Chaque scénario exécute un backtest complet avec le score fusionné en entrée, et toute la logique métier (stops, sizing, corrélation, circuit breaker) s'applique normalement. On mesure quel mix de poids produit les meilleurs résultats globaux.
+
 1. **Chargement du dataset** : `stock_scores_history` + forward returns (rendements futurs à J+5, J+10, J+20)
 2. **Grille de scénarios** (11 scénarios par défaut) :
    - `sentiment_weight` ∈ {0.00, 0.02, 0.05, 0.08, 0.10}
@@ -634,10 +640,10 @@ Le **Walk-Forward Sentiment** (`backtesting/sentiment_calibration.py` + `backtes
    - `quant_weight = 1.0 - sentiment - macro`
 3. **Walk-forward par folds glissants** :
    - Pour chaque fold (ex: train 2020-2022 → test 2023) :
-     - Sur la période **train** : teste tous les scénarios, garde le meilleur
-     - Sur la période **test** (OOS) : évalue le scénario gagnant
-   - On obtient un score OOS moyen pour chaque scénario
-4. **Sélection** : le scénario avec le meilleur score OOS global (Sharpe, rendement total, max drawdown)
+     - Sur la période **train** : exécute un backtest complet pour chaque scénario, garde le meilleur
+     - Sur la période **test** (OOS) : évalue le scénario gagnant avec un backtest complet
+   - On obtient un score OOS moyen (Sharpe, rendement total, max drawdown)
+4. **Sélection** : le scénario avec le meilleur score OOS global
 
 ### 7.3 Fichiers produits
 
@@ -655,17 +661,30 @@ Les poids sont **clippés** dans [0.05, 0.40] (bornes business de sécurité) vi
 
 ### 7.5 Impact sur long et short
 
-Quand les poids walk-forward sont appliqués (via `SentimentBoostConfig`), le `final_score_sentiment` remplace ou complète le `final_score` quantitatif pur. Les colonnes impactées dans `stock_scores` :
+Quand les poids walk-forward sont appliqués (via `SentimentBoostConfig`), le `final_score` est ajusté. Les colonnes impactées dans `stock_scores` :
 
 | Colonne | Signification |
 |---------|---------------|
-| `final_score_sentiment` | Score final avec boost sentiment (utilisé si calibré) |
-| `final_score_walk_forward` | Score final avec poids walk-forward appliqués |
+| `final_score_sentiment` | Score avec boost sentiment (poids par défaut ou configurés) |
+| `final_score_walk_forward` | Score avec poids walk-forward calibrés appliqués |
 | `walk_forward_sentiment_weight` | Poids sentiment calibré |
 | `walk_forward_macro_weight` | Poids macro calibré |
 | `walk_forward_quant_weight` | Poids quant calibré |
 
 ⚠️ **En pratique actuelle** : vu que les poids calibrés optimaux tendent vers `sentiment=0, macro=0, quant=1`, le walk-forward confirme que le signal quantitatif seul est le plus robuste.
+
+### 7.6 Les poids calibrés servent pour les DEUX modes 🟢🔵
+
+Les poids walk-forward **ne sont pas réservés au LIVE**. Ils sont utilisés dans les deux modes :
+
+| Mode | Mécanisme | Détail |
+|------|-----------|--------|
+| **🟢 LIVE** | `SentimentSignalAggregator.merge()` applique les poids via `SentimentBoostConfig` → écrit `final_score_sentiment` dans `stock_scores` | Les poids sont chargés depuis `latest_best_weights.json` |
+| **🔵 BACKTEST** | `data_loader.load_scores()` lit `final_score_walk_forward` depuis `stock_scores_history` et l'utilise dans la cascade : `COALESCE(walk_forward, sentiment, final_score)` | La colonne est snapshottée quotidiennement par `backfill_scores_history.py` |
+
+Autrement dit :
+- **En LIVE** : les poids calibrés modifient le score du jour → impactent la sélection live
+- **En BACKTEST** : les poids calibrés sont déjà dans l'historique PIT → le backtest les consomme comme n'importe quel autre score, permettant de mesurer rétrospectivement leur impact
 
 #### Fichiers clés :
 - `backtesting/sentiment_calibration.py` — `SentimentWeightCalibrator`
@@ -693,7 +712,7 @@ Calibre le mix quant vs sentiment vs macro :
 
 $$final\_score\_sentiment = w_{quant} \times score + w_{sentiment} \times sentiment\_norm + w_{macro} \times macro\_norm$$
 
-- **Défaut** : `quant=1.00`, `sentiment=0.00`, `macro=0.00` (désactivé)
+- **Défaut** : `quant=1.00`, <span style="color:red">**`sentiment=0.00`**</span>, <span style="color:red">**`macro=0.00`**</span> (désactivé)
 - **Résultat empirique** : IC(sentiment) ≈ 0.01 non significatif, IC(macro) ≈ 0
 - **Supporte la segmentation par régime** : peut calibrer des poids différents pour `normal` vs `capital_preservation`
 
@@ -795,7 +814,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 
 | # | Caveat | Impact |
 |---|--------|--------|
-| 1 | **Sentiment/macro désactivés par défaut** | `sentiment_weight=0`, `macro_weight=0` — le `final_score_sentiment` = `final_score` pur |
+| 1 | **Sentiment/macro désactivés par défaut** | <span style="color:red">**`sentiment_weight=0`, `macro_weight=0`**</span> — le `final_score_sentiment` = `final_score` pur |
 | 2 | **Champion selection désactivée par défaut** | Le système utilise toujours `lstm_attention`, même si CatBoost/LightGBM sont meilleurs |
 | 3 | **Target optimization désactivée par défaut** | Les paramètres de target (horizon, seuils) sont fixes, non optimisés automatiquement |
 | 4 | **Filtres de régime non câblés** | `earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés dans le pipeline de production |
@@ -813,7 +832,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 |----------|---------|
 | **Comment on calcule les scores long ?** | `final_score = 0.50×(trend+vcp)/2 + 0.30×total_score + 0.20×RSI`, winsorisé puis normalisé [0,1], avec neutralisation sectorielle |
 | **Comment on calcule les scores short ?** | Score baissier composite indépendant : 30% trend faible + 25% RSI bas + 25% prix<SMA50 + 20% prix<SMA200 |
-| **Comment le sentiment impacte long/short ?** | Fusion ternaire : `w_quant×score + w_sentiment×sentiment_norm + w_macro×macro_norm`. Mais par défaut `w_sentiment=0`, `w_macro=0` car IC non significatif |
+| **Comment le sentiment impacte long/short ?** | Fusion ternaire : `w_quant×score + w_sentiment×sentiment_norm + w_macro×macro_norm`. Mais par défaut <span style="color:red">**`w_sentiment=0`, `w_macro=0`**</span> car IC non significatif |
 | **Qu'est-ce que le forward sentiment ?** | Walk-forward calibration : backtest OOS par folds glissants pour trouver les meilleurs poids (sentiment, macro, quant). Produit `latest_best_weights.json` |
 | **Son impact ?** | Quand calibré et appliqué, ajuste le `final_score` en ajoutant une composante sentiment/macro. Mais la calibration confirme que le quant seul est optimal |
 | **Comment ML entraîne long/short ?** | LSTM 2 couches + Attention temporelle sur séquences de 20 jours. Features OHLCV + sentiment + contexte selector. Target = rendement forward binaire ou ternaire. Split chronologique avec purge |
