@@ -5,7 +5,59 @@
 
 ---
 
-## 1. CALCUL DES SCORES LONG ET SHORT
+## 0. ARCHITECTURE BACKTEST vs LIVE
+
+Le système fonctionne selon **deux modes** radicalement différents qu'il faut bien distinguer.
+
+### 🟢 Mode LIVE (production)
+
+Le pipeline **calcule tout en temps réel** :
+
+```
+EODHD/API → stock_bars_daily → Screener → stock_scores
+                                          → Selector → stock_scores (final_score)
+News API  → FinBERT → ticker_daily_sentiment_features
+                     → Signal Aggregator → stock_scores (final_score_sentiment)
+                                          → ModelFactory → model_predictions
+                                          → PortfolioBuilder → portfolio_targets
+                                          → Execution Engine → Ordres Alpaca
+```
+
+- **Source de données** : `stock_bars_daily` (OHLCV temps réel), `stock_scores` (snapshot courant)
+- **Sentiment** : calculé LIVE par `SentimentSignalAggregator.merge()` → persiste dans `stock_scores`
+- **ML** : inférence LIVE par `predictor.py` → persiste dans `model_predictions`
+- **Exécution** : vrais ordres Bracket OCO chez Alpaca (paper ou live)
+
+### 🔵 Mode BACKTEST (recherche/calibration)
+
+Le backtest **ne recalcule rien**, il **rejoue l'historique** à partir de snapshots PIT (Point-In-Time) :
+
+```
+stock_scores_history (PIT)  ──→  signal_replay.py (rejoue la fusion conviction)
+model_predictions (DB)      ──→  simulator.py (simule les entrées/sorties in-memory)
+stock_bars_daily (EODHD)    ──→  data_loader.py (charge l'OHLCV historique)
+```
+
+- **Source de données** : `stock_scores_history` (snapshots PIT quotidiens), `stock_bars_daily` avec `source='eodhd_eod'` uniquement
+- **Sentiment** : déjà pré-calculé dans `stock_scores_history.final_score_sentiment` (pas de recalcul)
+- **ML** : lit les prédictions déjà persistées dans `model_predictions` (pas d'inférence live)
+- **Exécution** : simulation synthétique in-memory (fills parfaits au prix d'ouverture J+1, bracket stops simulés)
+
+### 🔄 Table de snapshot PIT : `stock_scores_history`
+
+C'est la **pierre angulaire** du backtest. Cette table est remplie par `backfill_scores_history.py` qui capture **chaque jour** l'état exact de `stock_scores` (scores, sentiment, walk-forward weights). Sans cette table, le backtest n'est pas strictement PIT et utilise un fallback dégradé.
+
+### 🟣 Mode HYBRIDE : Walk-Forward Sentiment
+
+La calibration des poids sentiment/macro/quant est un **méta-backtest** :
+1. On exécute plusieurs backtests avec différentes combinaisons de poids
+2. On évalue les performances OOS (Out-Of-Sample) par folds glissants
+3. On sélectionne les meilleurs poids → sauvegardés dans `latest_best_weights.json`
+4. Ces poids peuvent ensuite être appliqués en LIVE
+
+---
+
+## 1. CALCUL DES SCORES LONG ET SHORT 🟢 LIVE
 
 ### 1.1 Architecture en 3 couches
 
@@ -93,7 +145,7 @@ La sélection short est faite par `rank_and_select_short()` qui trie par `short_
 
 ---
 
-## 2. UTILISATION DU SENTIMENT POUR LONG ET SHORT
+## 2. UTILISATION DU SENTIMENT POUR LONG ET SHORT 🟢 LIVE
 
 ### 2.1 Pipeline Sentiment (`event_sentiment/`)
 
@@ -163,7 +215,7 @@ Donc **en production, le sentiment n'a pas d'impact par défaut**. Les poids son
 
 ---
 
-## 3. WALK-FORWARD SENTIMENT — Calibration des poids
+## 3. WALK-FORWARD SENTIMENT — Calibration des poids 🟣 HYBRIDE (backtest → live)
 
 ### 3.1 Qu'est-ce que c'est ?
 
@@ -217,7 +269,7 @@ Quand les poids walk-forward sont appliqués (via `SentimentBoostConfig`), le `f
 
 ---
 
-## 4. ML — ENTRAÎNEMENT LONG ET SHORT
+## 4. ML — ENTRAÎNEMENT LONG ET SHORT 🟢 LIVE (training offline)
 
 ### 4.1 Architecture du modèle (`modelFactory/model.py`)
 
@@ -318,7 +370,7 @@ Le trainer supporte aussi le **walk-forward ML** : on entraîne sur des fenêtre
 
 ---
 
-## 5. ML — PRÉDICTION LONG ET SHORT
+## 5. ML — PRÉDICTION LONG ET SHORT 🟢 LIVE
 
 ### 5.1 Service d'inférence (`modelFactory/predictor.py`)
 
@@ -382,7 +434,7 @@ Avant d'utiliser les prédictions, le système vérifie la **dérive du modèle*
 
 ---
 
-## 6. MODULE RISQUE — SÉLECTION LONG ET SHORT
+## 6. MODULE RISQUE — SÉLECTION LONG ET SHORT 🟢🔵 BOTH (live + backtest)
 
 ### 6.1 Pipeline complet (`risk_management/portfolio_builder.py`)
 
@@ -520,37 +572,154 @@ graph TD
 | **Comment ML entraîne long/short ?** | LSTM 2 couches + Attention temporelle sur séquences de 20 jours. Features OHLCV + sentiment + contexte selector. Target = rendement forward binaire ou ternaire. Split chronologique avec purge |
 | **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt → `predicted_proba` inséré en DB |
 | **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter 3) Score threshold 4) Concentration 5) Conviction = 40%×quant + 60%×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
+| **Backtest vs Live ?** | **Backtest** = rejoue l'historique depuis `stock_scores_history` (PIT), prédictions ML persistées, simulation in-memory. **Live** = recalcule tout en temps réel depuis `stock_bars_daily`, inférence ML live, vrais ordres Alpaca |
 
 ---
 
-## 8. GLOSSAIRE DES FICHIERS CLÉS
+## 8. BACKTEST vs LIVE — DÉTAIL PAR COMPOSANT
 
-| Fichier | Rôle |
-|---------|------|
-| `selector/ranking.py` | Fusion scores, neutralisation sectorielle, rank_and_select |
-| `selector/short_score.py` | Score baissier dédié pour shorts |
-| `selector/factors.py` | Calcul facteurs techniques (trend, VCP, MA, ATR, beta) |
-| `selector/regime_scoring.py` | Ajustement des poids selon régime de marché |
-| `core/conviction.py` | Formule de fusion conviction (quant+ML+sentiment) |
-| `event_sentiment/signal_aggregator.py` | Fusion scores quant + sentiment → final_score_sentiment |
-| `event_sentiment/scoring.py` | FinBERT sentiment scoring |
-| `event_sentiment/aggregation.py` | Agrégation journalière ticker/secteur |
-| `event_sentiment/macro_rules.py` | Détection événements macro |
-| `backtesting/sentiment_calibration.py` | Calibration walk-forward des poids sentiment |
-| `backtesting/walk_forward.py` | Résolution des poids walk-forward calibrés |
-| `modelFactory/model.py` | LSTM + Temporal Attention (PyTorch Lightning) |
-| `modelFactory/trainer.py` | Service d'entraînement mono-symbole |
-| `modelFactory/predictor.py` | Service d'inférence |
-| `modelFactory/features.py` | Feature engineering (OHLCV + sentiment + selector) |
-| `modelFactory/dataset.py` | SequenceDataset, splits chronologiques |
-| `modelFactory/drift_monitor.py` | Détection de dérive ML (KS test + PSI) |
-| `risk_management/portfolio_builder.py` | Construction du portefeuille final |
-| `risk_management/kelly.py` | Kelly fractional sizing V2 |
-| `risk_management/correlation_filter.py` | Filtre de corrélation glouton |
-| `risk_management/circuit_breaker.py` | Circuit breaker (drawdown, perte journalière) |
-| `risk_management/concentration.py` | Filtres anti-répétition et blacklist |
-| `risk_management/factor_model.py` | Modèle factoriel CWMS 4 facteurs |
-| `risk_management/ml_gate.py` | Kill-switch ML (drift policy) |
+### 8.1 Tableau récapitulatif
+
+| Composant | Scope | Différence clé |
+|-----------|-------|----------------|
+| `backtesting/simulator.py` | 🔵 BACKTEST | Simule les brackets in-memory ; LIVE utilise de vrais ordres OCO Alpaca |
+| `backtesting/signal_replay.py` | 🔵 BACKTEST | Rejoue la fusion conviction en vectorisé sur scores historiques |
+| `backtesting/execution_replay.py` | 🔵 BACKTEST | Rejoue le cycle de vie synthétique des ordres (`synthetic_*`) — opt-in |
+| `backtesting/execution_bridge.py` | 🟢🔵 BOTH | Modèle de données partagé ; fill `price = entry_price` en backtest (parfait) |
+| `backtesting/execution_broker_like.py` | 🔵 BACKTEST | Frames synthétiques pour comparer backtest vs live |
+| `backtesting/fidelity.py` | 🟢🔵 BOTH | Traque la dégradation PIT, compare backtest↔live |
+| `backtesting/data_loader.py` | 🔵 BACKTEST | Charge `stock_scores_history` (PIT) ou fallback `stock_scores` ; `eodhd_eod` uniquement |
+| `backtesting/sentiment_calibration.py` | 🔵 BACKTEST | Grid search des poids → produit `best_weights.json` |
+| `backtesting/walk_forward.py` | 🟣 HYBRIDE | Charge les artefacts calibrés ; la calibration est backtest-only |
+| `risk_management/portfolio_builder.py` | 🟢🔵 BOTH | Même code ; les sources de données diffèrent (historique vs courant) |
+| `event_sentiment/signal_aggregator.py` | 🟢 LIVE | LIVE : calcule `final_score_sentiment` ; BACKTEST : le lit depuis `stock_scores_history` |
+| `modelFactory/predictor.py` | 🟢 LIVE | LIVE : exécute l'inférence ; BACKTEST : lit `model_predictions` DB |
+| `selector/alpha_scanner.py` | 🟢 LIVE | LIVE : score les candidats ; BACKTEST : lit `stock_scores_history` |
+| `core/run_summary.py` | 🟢🔵 BOTH | Infrastructure partagée de suivi d'exécution |
+
+### 8.2 Scores — Différence de source de données
+
+| Aspect | 🟢 LIVE | 🔵 BACKTEST |
+|--------|---------|-------------|
+| **Table source** | `stock_scores` (snapshot courant) | `stock_scores_history` (snapshots PIT quotidiens) |
+| **Calcul** | `AlphaScanner.run()` → calcule facteurs + scores | `data_loader.load_scores()` → lit les snapshots |
+| **Fraîcheur** | Dernier run du scanner | `snapshot_date` = date historique exacte |
+| **Fallback** | N/A | Si `stock_scores_history` vide → fallback `stock_scores` (dégradé, non PIT) |
+| **Mode strict** | N/A | `--strict-pit` → lève `PitHistoryRequiredError` si pas d'historique |
+
+### 8.3 Sentiment — Différence de calcul
+
+| Aspect | 🟢 LIVE | 🔵 BACKTEST |
+|--------|---------|-------------|
+| **Calcul** | `SentimentSignalAggregator.merge()` → fusionne scores + sentiment du jour | Lit `final_score_sentiment` déjà stocké dans `stock_scores_history` |
+| **Données sentiment** | `ticker_daily_sentiment_features` (temps réel) | Pré-calculées et snapshottées dans l'historique |
+| **Walk-forward** | Poids calibrés appliqués si `walk_forward_overlay_applied=True` | Poids lus depuis `walk_forward_*_weight` dans `stock_scores_history` |
+| **Fallback** | Si pas assez de news → signal neutre (0.5) | Si colonne absente → fallback vers `final_score` (sans sentiment) |
+
+### 8.4 ML — Différence de prédiction
+
+| Aspect | 🟢 LIVE | 🔵 BACKTEST |
+|--------|---------|-------------|
+| **Inférence** | `predictor.predict_symbol()` → charge le modèle, exécute l'inférence | Lit `model_predictions` table (prédictions déjà persistées) |
+| **Persistance** | `insert_predictions()` → écrit dans `model_predictions` | Pas d'écriture |
+| **Stratégie PIT** | N/A | `--ml-pit-strategy` : `use-persisted` (défaut), `rebuild-missing`, `walk-forward-train-then-predict` |
+| **Drift** | Vérifié par `drift_monitor.py` → kill-switch si ALERT | Non vérifié (les prédictions historiques sont figées) |
+| **Fallback** | Si drift ALERT → ML désactivé, conviction = score quant uniquement | Si prédiction manquante → conviction = score quant uniquement |
+
+### 8.5 Exécution — Différence d'envoi d'ordres
+
+| Aspect | 🟢 LIVE | 🔵 BACKTEST |
+|--------|---------|-------------|
+| **Ordres** | Vrais ordres Bracket OCO chez Alpaca (paper/live) | Simulation synthétique in-memory |
+| **Fill** | Prix réel du marché avec slippage | Prix `next_open` parfait (pas de slippage) |
+| **Stop/trailing** | Ordres OCO gérés par le broker | Simulés en mémoire (peak_high/trough_low tracking) |
+| **Protection logic** | `execution_engine` + `protection_watcher` | `simulator.py` avec `use_live_protection_logic=True` (mêmes règles, simulées) |
+| **Concentration** | Trackers persistés en DB (état cross-run) | Trackers frais par run (pas de persistance) |
+| **Dry-run** | Disponible (`--dry-run`) : calcule sans envoyer | N/A (toujours simulé) |
+
+### 8.6 Walk-Forward — Cycle calibration → application
+
+```mermaid
+graph LR
+    subgraph "🔵 BACKTEST (calibration)"
+        A[stock_scores_history] --> B[SentimentWeightCalibrator]
+        B --> C[Grid search poids]
+        C --> D[Walk-forward par folds]
+        D --> E[latest_best_weights.json]
+    end
+    subgraph "🟢 LIVE (application)"
+        E --> F[resolve_latest_walk_forward_weights]
+        F --> G[SentimentBoostConfig]
+        G --> H[SentimentSignalAggregator.merge]
+        H --> I[final_score avec poids calibrés]
+    end
+```
+
+### 8.7 CLI — Points d'entrée
+
+| Commande | Mode | Description |
+|----------|------|-------------|
+| `python -m backtesting run` | 🔵 BACKTEST | Backtest principal |
+| `python -m backtesting calibrate-sentiment-weights` | 🔵 BACKTEST | Calibration des poids sentiment |
+| `python -m backtesting walk-forward-sentiment` | 🔵 BACKTEST | Walk-forward calibration |
+| `python -m backtesting backfill-scores-history` | 🔵 BACKTEST | Remplit `stock_scores_history` pour PIT |
+| `python run_execution.py simulate` | 🟢 LIVE (dry-run) | Simulation sans ordre réel |
+| `python run_execution.py paper` | 🟢 LIVE (paper) | Paper trading Alpaca |
+| `python run_execution.py live` | 🟢 LIVE (real) | Trading réel Alpaca |
+
+### 8.8 Indicateurs de dégradation PIT (fidelity.py)
+
+Ces indicateurs traquent la qualité du backtest par rapport au live :
+
+| Indicateur | Signification |
+|------------|---------------|
+| `stock_scores_history_empty` | Aucun snapshot PIT disponible → fallback dégradé |
+| `stock_scores_history_missing` | Certaines dates manquent dans l'historique |
+| `ml_predictions_missing` | Prédictions ML absentes pour certains symboles |
+| `sentiment_missing_fallback_final_score` | Sentiment absent → utilisation du score quant uniquement |
+| `walk_forward_artifact_missing` | Artefact de calibration introuvable |
+| `ml_rebuild_partial_failure` | Échec de reconstruction des prédictions ML |
+
+---
+
+## 9. GLOSSAIRE DES FICHIERS CLÉS
+
+| Fichier | Mode | Rôle |
+|---------|------|------|
+| `selector/ranking.py` | 🟢 LIVE | Fusion scores, neutralisation sectorielle, rank_and_select |
+| `selector/short_score.py` | 🟢 LIVE | Score baissier dédié pour shorts |
+| `selector/factors.py` | 🟢 LIVE | Calcul facteurs techniques (trend, VCP, MA, ATR, beta) |
+| `selector/regime_scoring.py` | 🟢 LIVE | Ajustement des poids selon régime de marché |
+| `core/conviction.py` | 🟢🔵 BOTH | Formule de fusion conviction (quant+ML+sentiment) |
+| `event_sentiment/signal_aggregator.py` | 🟢 LIVE | Fusion scores quant + sentiment → final_score_sentiment |
+| `event_sentiment/scoring.py` | 🟢 LIVE | FinBERT sentiment scoring |
+| `event_sentiment/aggregation.py` | 🟢 LIVE | Agrégation journalière ticker/secteur |
+| `event_sentiment/macro_rules.py` | 🟢 LIVE | Détection événements macro |
+| `backtesting/simulator.py` | 🔵 BACKTEST | Moteur de backtest (simule entrées/sorties in-memory) |
+| `backtesting/signal_replay.py` | 🔵 BACKTEST | Rejoue la fusion conviction sur scores historiques |
+| `backtesting/data_loader.py` | 🔵 BACKTEST | Chargement PIT : `stock_scores_history` + `model_predictions` |
+| `backtesting/sentiment_calibration.py` | 🔵 BACKTEST | Calibration walk-forward des poids sentiment |
+| `backtesting/walk_forward.py` | 🟣 HYBRIDE | Résolution des poids walk-forward calibrés (charge + valide) |
+| `backtesting/fidelity.py` | 🟢🔵 BOTH | Comparaison backtest↔live, diagnostic PIT |
+| `backtesting/execution_bridge.py` | 🟢🔵 BOTH | Pont données entre risk et exécution (backtest + live) |
+| `modelFactory/model.py` | 🟢 LIVE | LSTM + Temporal Attention (PyTorch Lightning) |
+| `modelFactory/trainer.py` | 🟢 LIVE | Service d'entraînement mono-symbole |
+| `modelFactory/predictor.py` | 🟢 LIVE | Service d'inférence (charge modèle → prédit → persiste) |
+| `modelFactory/features.py` | 🟢 LIVE | Feature engineering (OHLCV + sentiment + selector) |
+| `modelFactory/dataset.py` | 🟢 LIVE | SequenceDataset, splits chronologiques |
+| `modelFactory/drift_monitor.py` | 🟢 LIVE | Détection de dérive ML (KS test + PSI) |
+| `risk_management/portfolio_builder.py` | 🟢🔵 BOTH | Construction du portefeuille final |
+| `risk_management/kelly.py` | 🟢🔵 BOTH | Kelly fractional sizing V2 |
+| `risk_management/correlation_filter.py` | 🟢🔵 BOTH | Filtre de corrélation glouton |
+| `risk_management/circuit_breaker.py` | 🟢🔵 BOTH | Circuit breaker (drawdown, perte journalière) |
+| `risk_management/concentration.py` | 🟢🔵 BOTH | Filtres anti-répétition et blacklist |
+| `risk_management/factor_model.py` | 🟢🔵 BOTH | Modèle factoriel CWMS 4 facteurs |
+| `risk_management/ml_gate.py` | 🟢 LIVE | Kill-switch ML (drift policy) |
+
+---
+
+> **Dernière mise à jour** : 2026-06-24
+> **Prochaine mise à jour** : après discussion continue
 
 ---
 
