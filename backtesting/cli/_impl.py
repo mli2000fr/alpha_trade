@@ -1294,9 +1294,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Utiliser tout l'univers historisé et pas seulement les candidats",
     )
     walk_forward_p.add_argument(
+        "--capital-preset-keys",
+        default=None,
+        help="Presets capital à utiliser (CSV, ex: capital_0_2000,capital_2001_5000). "
+             "Si absent, tous les presets sont mélangés. "
+             "Pour 3000€: capital_0_2000,capital_2001_5000,capital_5001_10000.",
+    )
+    # Retrocompatibilité : --capital-preset-key (singulier)
+    walk_forward_p.add_argument(
         "--capital-preset-key",
         default=None,
-        help="Preset capital à utiliser pour filtrer stock_scores_history (ex: capital_0_2000). Si absent, tous les presets sont mélangés.",
+        help=argparse.SUPPRESS,  # déprécié, utiliser --capital-preset-keys
     )
 
     return parser
@@ -3390,6 +3398,13 @@ def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
         )
     )
 
+    # Résoudre les presets (nouveau format CSV prioritaire, fallback singulier)
+    preset_keys: str | list[str] | None = None
+    if getattr(args, "capital_preset_keys", None):
+        preset_keys = str(args.capital_preset_keys)
+    elif getattr(args, "capital_preset_key", None):
+        preset_keys = str(args.capital_preset_key)
+
     calibrator = SentimentWeightCalibrator()
     result, fold_df, _, _, artifacts = calibrator.walk_forward_backtest(
         start_date=start,
@@ -3406,7 +3421,7 @@ def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
         trailing_stop_pct=args.ts,
         fees_pct=args.fees,
         output_dir=Path(args.output_dir),
-        capital_preset_key=args.capital_preset_key,
+        capital_preset_keys=preset_keys,
         atr_trailing_stop_multiplier=args.atr_ts,
     )
 

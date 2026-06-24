@@ -13,8 +13,6 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-import numpy as np
-
 from backtesting.data_loader import get_required_bars_source_filter, load_ohlcv, pivot_ohlcv
 from backtesting.report import (
     BacktestReport,
@@ -34,6 +32,21 @@ from event_sentiment.signal_aggregator import SentimentSignalAggregator
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 STEP_KEY = "backtesting_sentiment_calibration"
+
+
+def _normalize_preset_keys(
+    keys: str | list[str] | None,
+) -> list[str] | None:
+    """Normalise les clés de preset capital en liste ou None (tous)."""
+    if keys is None:
+        return None
+    if isinstance(keys, str):
+        keys = [k.strip() for k in keys.split(",") if k.strip()]
+        return keys if keys else None
+    if isinstance(keys, list):
+        cleaned = [str(k).strip() for k in keys if str(k).strip()]
+        return cleaned if cleaned else None
+    return None
 
 
 def _utc_now_naive() -> datetime:
@@ -144,7 +157,7 @@ class SentimentWeightCalibrator:
         end_date: date,
         horizons: tuple[int, ...] = (5, 10, 20),
         candidates_only: bool = True,
-        capital_preset_key: str | None = None,
+        capital_preset_keys: str | list[str] | None = None,
     ) -> pd.DataFrame:
         """Charge le dataset scores + forward returns.
 
@@ -159,7 +172,7 @@ class SentimentWeightCalibrator:
             start_date=start_date,
             end_date=end_date,
             candidates_only=candidates_only,
-            capital_preset_key=capital_preset_key,
+            capital_preset_keys=capital_preset_keys,
         )
         if not symbols:
             return pd.DataFrame()
@@ -183,7 +196,7 @@ class SentimentWeightCalibrator:
                 end_date=end_date,
                 end_date_plus_buffer=end_date_plus_buffer,
                 candidates_only=candidates_only,
-                capital_preset_key=capital_preset_key,
+                capital_preset_keys=capital_preset_keys,
             )
             if batch_raw.empty:
                 LOGGER.info("Batch %d/%d | aucun résultat, skip.", batch_num, total_batches)
@@ -225,7 +238,7 @@ class SentimentWeightCalibrator:
         start_date: date,
         end_date: date,
         candidates_only: bool = True,
-        capital_preset_key: str | None = None,
+        capital_preset_keys: str | list[str] | None = None,
     ) -> list[str]:
         """Retourne la liste des symboles distincts sur la période."""
         preset_clause = ""
@@ -234,9 +247,10 @@ class SentimentWeightCalibrator:
             "end_date": end_date,
             "candidates_only": 1 if candidates_only else 0,
         }
-        if capital_preset_key:
-            preset_clause = "AND h.capital_preset_key = :capital_preset_key"
-            params["capital_preset_key"] = capital_preset_key
+        keys = _normalize_preset_keys(capital_preset_keys)
+        if keys is not None:
+            preset_clause = "AND h.capital_preset_key IN :capital_preset_keys"
+            params["capital_preset_keys"] = tuple(keys)
         query = text(
             f"""
             SELECT DISTINCT h.symbol
@@ -258,7 +272,7 @@ class SentimentWeightCalibrator:
         end_date: date,
         end_date_plus_buffer: date,
         candidates_only: bool = True,
-        capital_preset_key: str | None = None,
+        capital_preset_keys: str | list[str] | None = None,
     ) -> pd.DataFrame:
         """Range-JOIN SQL pour un batch de symboles.
 
@@ -280,9 +294,10 @@ class SentimentWeightCalibrator:
             "candidates_only": 1 if candidates_only else 0,
             **source_filter_params,
         }
-        if capital_preset_key:
-            preset_clause = "AND h.capital_preset_key = :capital_preset_key"
-            params["capital_preset_key"] = capital_preset_key
+        keys = _normalize_preset_keys(capital_preset_keys)
+        if keys is not None:
+            preset_clause = "AND h.capital_preset_key IN :capital_preset_keys"
+            params["capital_preset_keys"] = tuple(keys)
 
         query = text(
             f"""
@@ -705,10 +720,10 @@ class SentimentWeightCalibrator:
         top_n: int = 20,
         candidates_only: bool = True,
         output_dir: Path | None = None,
-        capital_preset_key: str | None = None,
+        capital_preset_keys: str | list[str] | None = None,
     ) -> tuple[SentimentCalibrationResult, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
-        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_key=capital_preset_key)
+        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_keys=capital_preset_keys)
         result_df = self.evaluate_scenarios(dataset, scenario_list, horizons=horizons, top_n=top_n)
         artifacts: dict[str, str] = {}
         if output_dir is not None:
@@ -752,11 +767,11 @@ class SentimentWeightCalibrator:
         trailing_stop_pct: float = 0.05,
         fees_pct: float = 0.001,
         output_dir: Path | None = None,
-        capital_preset_key: str | None = None,
+        capital_preset_keys: str | list[str] | None = None,
         atr_trailing_stop_multiplier: float = 0.0,
     ) -> tuple[WalkForwardCalibrationResult, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
-        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_key=capital_preset_key)
+        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_keys=capital_preset_keys)
         windows = self.build_walk_forward_windows(
             dataset.get("snapshot_date", pd.Series(dtype="datetime64[ns]")),
             min_train_days=min_train_days,
@@ -766,13 +781,13 @@ class SentimentWeightCalibrator:
         if dataset.empty or not windows:
             LOGGER.warning(
                 "walk_forward_backtest: dataset.empty=%s | windows=%d | "
-                "snapshots_uniques=%d | min_train_days=%d | test_days=%d | capital_preset_key=%s → early exit (0 folds).",
+                "snapshots_uniques=%d | min_train_days=%d | test_days=%d | capital_preset_keys=%s → early exit (0 folds).",
                 dataset.empty,
                 len(windows),
                 int(dataset["snapshot_date"].nunique()) if not dataset.empty else 0,
                 min_train_days,
                 test_days,
-                capital_preset_key,
+                capital_preset_keys,
             )
             empty_result = WalkForwardCalibrationResult(
                 start_date=start_date,
@@ -903,7 +918,6 @@ class SentimentWeightCalibrator:
             high=pivoted["high"],
             low=pivoted["low"],
             signals_df=signals_df,
-            volume=pivoted.get("volume"),
         )
         report = generate_report(pf, initial_equity)
 
