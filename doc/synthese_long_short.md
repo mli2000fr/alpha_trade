@@ -5,6 +5,29 @@
 
 ---
 
+## TABLEAU RÉCAPITULATIF (Quick Reference)
+
+| Question | Réponse |
+|----------|---------|
+| **Comment on calcule les scores long ?** | `final_score = 0.50×(trend+vcp)/2 + 0.30×total_score + 0.20×RSI`, winsorisé puis normalisé [0,1], avec neutralisation sectorielle |
+| **Comment on calcule les scores short ?** | Score baissier composite indépendant : 30% trend faible + 25% RSI bas + 25% prix<SMA50 + 20% prix<SMA200 |
+| **Comment le sentiment impacte long/short ?** | Fusion ternaire : `w_quant×score + w_sentiment×sentiment_norm + w_macro×macro_norm`. Mais par défaut `w_sentiment=0`, `w_macro=0` car IC non significatif |
+| **Qu'est-ce que le forward sentiment ?** | Walk-forward calibration : backtest OOS par folds glissants pour trouver les meilleurs poids (sentiment, macro, quant). Produit `latest_best_weights.json` |
+| **Son impact ?** | Quand calibré et appliqué, ajuste le `final_score` en ajoutant une composante sentiment/macro. Mais la calibration confirme que le quant seul est optimal |
+| **Comment ML entraîne long/short ?** | LSTM 2 couches + Attention temporelle sur séquences de 20 jours. Features OHLCV + sentiment + contexte selector. Target = rendement forward binaire ou ternaire. Split chronologique avec purge |
+| **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt → `predicted_proba` inséré en DB |
+| **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter 3) Score threshold 4) Concentration 5) Conviction = 40%×quant + 60%×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
+| **Backtest vs Live ?** | **Backtest** = rejoue l'historique depuis `stock_scores_history` (PIT), prédictions ML persistées, simulation in-memory. **Live** = recalcule tout en temps réel depuis `stock_bars_daily`, inférence ML live, vrais ordres Alpaca |
+| **Qu'est-ce qui diffère entre long et short ?** | Short = score dédié indépendant du `final_score`, conviction inversée (`1-score`), exempté du breakout filter, proba ML distincte (`proba_short`), paramètres risk dédiés (max 2 positions, TP 8%, trailing 10%) |
+| **Comment sont calibrés les poids ?** | Grid search backtest sur `stock_scores_history` : conviction (quant/ML), sentiment (quant/sentiment/macro), Kelly (fraction, payoff). Métriques : IC, hit_rate, Sharpe, log_growth |
+| **Comment le régime impacte les scores ?** | 2 jeux de poids : **NORMAL** (trend_vcp=0.50, total=0.30, rsi=0.20) vs **CAPITAL_PRESERVATION** (trend_vcp=0.25, total=0.15, rsi=0.10 + 0.50 défensif). Rotation forcée si perte > -3% sur 4 semaines. Shortscore non affecté |
+| **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
+| **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
+| **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter exempté. Conviction = 0.40×(1-score) + 0.60×proba_ml_short |
+| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, filtres régime non câblés, short_score PIT dégradé (SMA absents), fills parfaits en backtest |
+
+---
+
 ## 0. ARCHITECTURE BACKTEST vs LIVE
 
 Le système fonctionne selon **deux modes** radicalement différents qu'il faut bien distinguer.
@@ -560,7 +583,209 @@ graph TD
 
 ---
 
-## 7. RÉSUMÉ SYNTHÉTIQUE
+## 7. RÉGIME DE MARCHÉ — Impact sur les scores 🟢🔵 BOTH
+
+### 7.1 Poids directionnels par régime (`selector/regime_scoring.py`)
+
+Le régime de marché modifie les poids de composition du `final_score`. Deux jeux de poids :
+
+#### NORMAL (marché haussier/neutre)
+
+| Facteur | Poids |
+|---------|-------|
+| `trend_vcp` (momentum) | **0.50** |
+| `total_score` (qualité) | **0.30** |
+| `rsi` (force relative) | **0.20** |
+| `defensive_beta` | 0.00 |
+| `defensive_size` | 0.00 |
+| `defensive_low_vol` | 0.00 |
+
+#### CAPITAL_PRESERVATION (marché baissier/défensif, calibré 2026-06-17)
+
+| Facteur | Poids |
+|---------|-------|
+| `trend_vcp` (momentum) | **0.25** |
+| `total_score` (qualité) | **0.15** |
+| `rsi` (force relative) | **0.10** |
+| `defensive_beta` (low beta) | **0.22** |
+| `defensive_size` (large cap) | **0.13** |
+| `defensive_low_vol` (low volatility) | **0.15** |
+
+**Logique** : en régime `capital_preservation`, ~50% du poids est transféré du momentum vers des facteurs défensifs (low beta, large cap, low vol). Le momentum reste à 25% car l'analyse a montré que les trades momentum restent rentables même en marché baissier, mais la volatilité excessive déclenche le circuit breaker.
+
+**Filtres défensifs additionnels** appliqués uniquement en `capital_preservation` :
+
+| Filtre | Seuil |
+|--------|-------|
+| Market cap minimum | $2B |
+| Spread max | 15 bps |
+| Beta max | 1.2 |
+| ATR% max | 6% |
+
+### 7.2 MomentumRotationState — Rotation forcée
+
+Mécanisme automatique qui force le passage en mode défensif même en régime `normal` :
+
+- **Fenêtre** : 4 semaines (~20 jours de trading)
+- **Seuil** : rendement cumulé du portefeuille < **-3%**
+- **Action** : si le portefeuille perd plus de 3% sur 4 semaines → bascule forcée vers les poids `CAPITAL_PRESERVATION`
+
+$$rotation\_active = \mathbf{1}[\, return_{cumul\_4w} < -0.03 \,]$$
+
+### 7.3 Filtres de régime (`selector/regime_filters.py`)
+
+⚠️ **Ces filtres sont définis et testés mais PAS encore câblés dans le pipeline de production.** Ils sont disponibles pour intégration future.
+
+| Filtre | Comportement | Impact |
+|--------|-------------|--------|
+| `earnings_shield` | `strict_block` : exclut les symboles à J-2/J+2 des earnings. `negative_score` : applique un score négatif | Long + Short |
+| `buyback_blackout` | Multiplie le score par ~0.70 pour les symboles en période de blackout pré-earnings | Long + Short |
+| `yield_filter` | Exclut les secteurs sur liste noire (taux élevés) et les symboles bloqués | Long + Short |
+
+### 7.4 Impact Long vs Short
+
+**Asymétrie importante** :
+- **Long** : le `final_score` est recalculé avec les poids du régime → impact direct sur le classement
+- **Short** : utilise `short_score` (colonne indépendante), **non affecté** par `apply_regime_weights()`. Les shorts sont immunisés contre la rotation factorielle du régime
+- **Filtres défensifs** (beta, spread, market cap, ATR) : appliqués au DataFrame **avant** ranking → affectent **les deux** (long et short)
+
+---
+
+## 8. CALIBRATION DES POIDS — Multi-niveaux 🟣 HYBRIDE
+
+Le système possède **3 niveaux de calibration** indépendants, tous effectués en backtest :
+
+### 8.1 Poids de Conviction (`backtesting/weights_calibration.py`)
+
+Calibre le mix quant vs ML dans la fusion conviction :
+
+$$conviction = w_{score} \times score\_quant + w_{prediction} \times proba\_ml$$
+
+- **Défaut** : `score_weight=0.40`, `prediction_weight=0.60`
+- **Grille** : pas de 0.05 sur [0, 1], somme = 1.0
+- **Métriques** : IC (Information Coefficient), hit_rate, Sharpe, log_growth
+
+### 8.2 Poids Sentiment (`backtesting/sentiment_calibration.py`)
+
+Calibre le mix quant vs sentiment vs macro :
+
+$$final\_score\_sentiment = w_{quant} \times score + w_{sentiment} \times sentiment\_norm + w_{macro} \times macro\_norm$$
+
+- **Défaut** : `quant=1.00`, `sentiment=0.00`, `macro=0.00` (désactivé)
+- **Résultat empirique** : IC(sentiment) ≈ 0.01 non significatif, IC(macro) ≈ 0
+- **Supporte la segmentation par régime** : peut calibrer des poids différents pour `normal` vs `capital_preservation`
+
+### 8.3 Paramètres Kelly (`backtesting/weights_calibration.py`)
+
+Grid search sur :
+- `kelly_fraction_multiplier` : [0.25, 0.50, 0.75, 1.0]
+- `min_effective_probability` : probabilité edge minimum
+- `assumed_payoff_ratio` : ratio gain/perte supposé
+
+---
+
+## 9. ML — DÉTAILS AVANCÉS
+
+### 9.1 Champion Selection (`modelFactory/champion_selection.py`)
+
+⚠️ **Désactivé par défaut** (`enabled=False`, `allow_auto_selection=False`) → le système utilise toujours `lstm_attention` comme champion.
+
+Quand activé, le processus :
+1. **Quarantaine** : un modèle doit avoir `min_runs` walk-forward et `min_days` d'ancienneté
+2. **Éligibilité** : vérifie les artefacts requis par type de modèle (checkpoint, scaler, config)
+3. **Classement** : sélectionne le meilleur parmi LSTM, CatBoost, LightGBM, GlobalModel
+4. **Métrique** : `selection_score` (défaut), `business_score`, ou `auc`
+
+### 9.2 Target Optimization (`modelFactory/target_optimization.py`)
+
+⚠️ **Désactivé par défaut** (`enabled=False`). Optimise les paramètres de la target de trading :
+
+| Paramètre | Valeurs candidates |
+|-----------|-------------------|
+| Horizons | 3, 5, 10, 15 jours |
+| Seuils UP | 0%, +1%, +2% |
+| Seuils DOWN | 0%, -0.5%, -1% |
+
+**Formule de scoring** : `score = trade_rate × class_balance × separation`
+- `trade_rate` : % d'observations avec target non-NaN
+- `class_balance` : `1 - |pos_rate - 0.5|/0.5` (pénalise le déséquilibre)
+- `separation` : rendement moyen positif - rendement moyen négatif
+
+### 9.3 Business Score vs Selection Score (`modelFactory/evaluation.py`)
+
+**`business_score`** : orienté décision opérationnelle
+$$business\_score = precision\_long \times coverage + \max(avg\_return, 0) + 0.10 \times hit\_rate$$
+
+**`selection_score`** : score composite du training run (fallback : `threshold_business_score` → `auc` → 0)
+
+**Threshold optimization** : évalue les seuils de décision [0.50, 0.55, 0.60, 0.65, 0.70] avec contraintes :
+- Taux d'action min : 3%
+- Taux d'action max : 35%
+- Précision long min : 52%
+
+---
+
+## 10. SHORT — Spécificités et paramètres dédiés
+
+### 10.1 Paramètres Risk spécifiques aux shorts
+
+| Paramètre | Défaut | Description |
+|-----------|--------|-------------|
+| `short_selling_enabled` | `False` | Active/désactive les ventes à découvert |
+| `short_max_positions` | `2` | Nombre max de positions short simultanées |
+| `short_min_score` | `0.30` | Score minimum pour entrer en short |
+| `short_rotation_required` | `True` | Exige une rotation sectorielle pour shorter |
+| `short_tp_pct` | `0.08` (8%) | Take-profit |
+| `short_trailing_pct` | `0.10` (10%) | Trailing stop |
+| `short_time_stop_days` | `20` jours | Time-stop (sortie si pas de mouvement) |
+| `min_score_threshold_short` | `0.0` | Seuil de score minimum (ML Sprint 4) |
+
+### 10.2 Différences Long vs Short dans le pipeline
+
+| Aspect | Long | Short |
+|--------|------|-------|
+| **Score** | `final_score` (multi-factoriel) | `short_score` (baissier composite indépendant) |
+| **Regime weights** | Affecté par `apply_regime_weights()` | Non affecté (score indépendant) |
+| **Breakout filter** | Soumis au filtre anti-faux-départs | **Exempté** (shorts n'ont pas besoin de confirmation de breakout) |
+| **Conviction** | `0.40×score + 0.60×proba_ml_long` | `0.40×(1-score) + 0.60×proba_ml_short` |
+| **Score threshold** | `min_score_threshold` | `min_score_threshold_short` (distinct) |
+| **Circuit breaker** | Bloqué si actif | Bloqué si actif (identique) |
+| **Sizing** | Kelly/ATR standard | Même logique, paramètres distincts |
+| **Exécution** | Bracket OCO long | Bracket OCO short (inversé) |
+
+### 10.3 Consommation du `short_score` dans le pipeline
+
+1. `AlphaScanner.run()` → `_enrich_short_score()` ajoute la colonne `short_score` aux candidats
+2. `rank_and_select_short()` trie par `short_score` décroissant, exclut les symboles déjà longs, prend le top N
+3. En **backtest PIT** (`backfill_scores_history.py`) : `close_df=None` → les facteurs SMA (prix<SMA50, prix<SMA200) du `short_score` ne sont **pas calculés** (seuls trend_score et RSI contribuent)
+
+### 10.4 Conviction Short (`core/conviction.py`)
+
+$$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_short$$
+
+- Le score quant est **inversé** : un bon long (score élevé) → mauvais short
+- `proba_ml_short` = probabilité de baisse (classe 0 en mode ternaire, ou `1-proba_long` en mode binaire)
+- Si `proba_ml_short` est `None` → fallback = `1 - score_quant` uniquement
+
+---
+
+## 11. CAVEATS — Points d'attention
+
+| # | Caveat | Impact |
+|---|--------|--------|
+| 1 | **Sentiment/macro désactivés par défaut** | `sentiment_weight=0`, `macro_weight=0` — le `final_score_sentiment` = `final_score` pur |
+| 2 | **Champion selection désactivée par défaut** | Le système utilise toujours `lstm_attention`, même si CatBoost/LightGBM sont meilleurs |
+| 3 | **Target optimization désactivée par défaut** | Les paramètres de target (horizon, seuils) sont fixes, non optimisés automatiquement |
+| 4 | **Filtres de régime non câblés** | `earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés dans le pipeline de production |
+| 5 | **Short_score PIT dégradé** | En backfill PIT, les facteurs SMA du short_score ne sont pas calculés (`close_df=None`) |
+| 6 | **Short non affecté par le régime** | `apply_regime_weights()` modifie `final_score` mais pas `short_score` — les shorts sont insensibles à la rotation factorielle du régime |
+| 7 | **Breakout filter long-only** | Les shorts ne passent pas par le filtre de confirmation de breakout |
+| 8 | **Fills parfaits en backtest** | `fill_price = entry_price` — pas de slippage simulé en backtest |
+| 9 | **Concentration trackers non persistés en backtest** | Trackers frais par run → pas de mémoire cross-run des trades passés |
+
+---
+
+## 12. RÉSUMÉ SYNTHÉTIQUE (rappel)
 
 | Question | Réponse |
 |----------|---------|
@@ -576,9 +801,9 @@ graph TD
 
 ---
 
-## 8. BACKTEST vs LIVE — DÉTAIL PAR COMPOSANT
+## 13. BACKTEST vs LIVE — DÉTAIL PAR COMPOSANT
 
-### 8.1 Tableau récapitulatif
+### 13.1 Tableau récapitulatif
 
 | Composant | Scope | Différence clé |
 |-----------|-------|----------------|
@@ -597,7 +822,7 @@ graph TD
 | `selector/alpha_scanner.py` | 🟢 LIVE | LIVE : score les candidats ; BACKTEST : lit `stock_scores_history` |
 | `core/run_summary.py` | 🟢🔵 BOTH | Infrastructure partagée de suivi d'exécution |
 
-### 8.2 Scores — Différence de source de données
+### 13.2 Scores — Différence de source de données
 
 | Aspect | 🟢 LIVE | 🔵 BACKTEST |
 |--------|---------|-------------|
@@ -607,7 +832,7 @@ graph TD
 | **Fallback** | N/A | Si `stock_scores_history` vide → fallback `stock_scores` (dégradé, non PIT) |
 | **Mode strict** | N/A | `--strict-pit` → lève `PitHistoryRequiredError` si pas d'historique |
 
-### 8.3 Sentiment — Différence de calcul
+### 13.3 Sentiment — Différence de calcul
 
 | Aspect | 🟢 LIVE | 🔵 BACKTEST |
 |--------|---------|-------------|
@@ -616,7 +841,7 @@ graph TD
 | **Walk-forward** | Poids calibrés appliqués si `walk_forward_overlay_applied=True` | Poids lus depuis `walk_forward_*_weight` dans `stock_scores_history` |
 | **Fallback** | Si pas assez de news → signal neutre (0.5) | Si colonne absente → fallback vers `final_score` (sans sentiment) |
 
-### 8.4 ML — Différence de prédiction
+### 13.4 ML — Différence de prédiction
 
 | Aspect | 🟢 LIVE | 🔵 BACKTEST |
 |--------|---------|-------------|
@@ -626,7 +851,7 @@ graph TD
 | **Drift** | Vérifié par `drift_monitor.py` → kill-switch si ALERT | Non vérifié (les prédictions historiques sont figées) |
 | **Fallback** | Si drift ALERT → ML désactivé, conviction = score quant uniquement | Si prédiction manquante → conviction = score quant uniquement |
 
-### 8.5 Exécution — Différence d'envoi d'ordres
+### 13.5 Exécution — Différence d'envoi d'ordres
 
 | Aspect | 🟢 LIVE | 🔵 BACKTEST |
 |--------|---------|-------------|
@@ -637,7 +862,7 @@ graph TD
 | **Concentration** | Trackers persistés en DB (état cross-run) | Trackers frais par run (pas de persistance) |
 | **Dry-run** | Disponible (`--dry-run`) : calcule sans envoyer | N/A (toujours simulé) |
 
-### 8.6 Walk-Forward — Cycle calibration → application
+### 13.6 Walk-Forward — Cycle calibration → application
 
 ```mermaid
 graph LR
@@ -655,7 +880,7 @@ graph LR
     end
 ```
 
-### 8.7 CLI — Points d'entrée
+### 13.7 CLI — Points d'entrée
 
 | Commande | Mode | Description |
 |----------|------|-------------|
@@ -667,7 +892,7 @@ graph LR
 | `python run_execution.py paper` | 🟢 LIVE (paper) | Paper trading Alpaca |
 | `python run_execution.py live` | 🟢 LIVE (real) | Trading réel Alpaca |
 
-### 8.8 Indicateurs de dégradation PIT (fidelity.py)
+### 13.8 Indicateurs de dégradation PIT (fidelity.py)
 
 Ces indicateurs traquent la qualité du backtest par rapport au live :
 
@@ -682,7 +907,7 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 
 ---
 
-## 9. GLOSSAIRE DES FICHIERS CLÉS
+## 14. GLOSSAIRE DES FICHIERS CLÉS
 
 | Fichier | Mode | Rôle |
 |---------|------|------|
