@@ -1079,7 +1079,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 +         ("les patterns momentum marchent différemment entre tech et utilities")
 +       → Fichier : modelFactory/model.py → GlobalModel (déjà référencé dans champion_selection)
 +       → Point d'entrée : --model-type global_tabular
-
+```
 ---
 
 ## 12. RÉSUMÉ SYNTHÉTIQUE (rappel)
