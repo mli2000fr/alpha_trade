@@ -362,14 +362,22 @@ En mode ternaire, les poids de classe sont asymétriques pour contrer le déséq
 #### Features Expert (18 colonnes supplémentaires)
 Distances aux SMA/EMA, momentum, force relative vs marché, régimes bull/risk-off
 
+> **Activation IHM** : dans l'onglet « Exécution » → bloc « ML — Hyperparams », dropdown **`ML — feature set`** → choisir `expert`. **C'est le défaut** (`DEFAULT_ML_FEATURE_SET = "expert"` dans `ihm/services/pipeline_ml_defaults.py`). Le flag CLI correspondant est `--feature-set expert`.
+
 #### Features Sentiment (4 colonnes) — si `include_sentiment=True`
 `sentiment_net_mean_1d, sentiment_confidence_mean_1d, news_count_log, major_event_flag`
+
+> **Activation IHM** : case à cocher **`Inclure les features sentiment`** (défaut : ✅ `True`). CLI : `--include-sentiment`.
 
 #### Features Contexte Selector (23 colonnes) — si `include_selector_context=True`
 `trend_score, vcp_score, final_score, short_score, market_cap, beta_126, spread_bps, days_to_earnings`, etc.
 
+> **Activation IHM** : case à cocher **`Inclure les features contexte selector`** (défaut : ✅ `True`, `DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT`). CLI : `--include-selector-context`.
+
 #### Features Cross-Sectionnelles — si `enable_cross_sectional=True`
 Rangs cross-sectionnels dans l'univers (ret_20_rank, relative_strength_rank, volatility_rank, dollar_volume_rank)
+
+> **Récapitulatif des défauts IHM** : `feature_set=expert` ✅, `include_sentiment=True` ✅, `include_selector_context=True` ✅, `include_short_score=True` ✅. Soit **~58 colonnes** au total (13 V1 + 18 expert + 4 sentiment + 23 selector) par défaut.
 
 ### 4.3 Target (étiquette à prédire)
 
@@ -464,6 +472,26 @@ if calibrator and calibrator.fitted:
 # 6. Insertion dans model_predictions (DB)
 insert_predictions(symbol, predicted_proba, prediction_date)
 ```
+
+> **Qu'est-ce que la calibration Platt ?** (`modelFactory/calibration.py`)
+>
+> La **calibration Platt** (ou *Platt scaling*) est une technique qui corrige les probabilités brutes du modèle pour les rendre **statistiquement fiables**. Sans calibration, une probabilité de 0.70 ne correspond pas forcément à 70% de chances réelles — le modèle peut être trop confiant ou pas assez.
+>
+> **Fonctionnement** : on entraîne une régression logistique sur les *margins* (logit_pos − logit_neg) produites par le modèle sur l'ensemble de validation. Cette régression apprend une sigmoïde `A × margin + B` qui ajuste les probabilités :
+>
+> $$P_{calibré} = \frac{1}{1 + e^{-(A \times margin + B)}}$$
+>
+> - **Entraînement** : optimisé via LBFGS sur la validation loss (binary cross-entropy)
+> - **Stockage** : les paramètres `(slope=A, intercept=B)` sont sauvegardés dans un fichier `.pkl` avec le checkpoint
+> - **Activation IHM** : dropdown `Méthode de calibration` → `platt` (défaut IHM : `platt`)
+> - ⚠️ **Limitation** : désactivé automatiquement en mode **ternaire** (3 classes) car l'implémentation actuelle est conçue pour une marge binaire unique (`logit_pos − logit_neg`). Ce n'est pas une impossibilité théorique — on pourrait calibrer en ternaire via *temperature scaling* (un seul paramètre pour toutes les classes) ou *one-vs-rest* (3 calibrateurs binaires indépendants), mais ces approches ne sont pas implémentées. En attendant, les probabilités softmax brutes sont utilisées directement en mode ternaire.
+>
+> ```diff
+> + TODO : Implémenter la calibration Platt pour le mode ternaire (temperature scaling ou one-vs-rest)
+> +       → modelFactory/calibration.py : _fit_calibrator() skip quand num_classes != 2
+> +       → modelFactory/trainer.py ligne 618 : if outputs.get("num_classes", 2) != 2: return None
+> +       → Impact : aujourd'hui les probas ternaires ne sont pas calibrées, ce qui peut fausser le Kelly sizing
+> ```
 
 ### 5.2 Pour les shorts
 
