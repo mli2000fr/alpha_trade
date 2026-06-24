@@ -19,7 +19,7 @@ Screener → Selector (factors + ranking) → Signal Aggregator (sentiment boost
 
 Le screener est le **premier filtre large**. Il produit pour chaque symbole un `total_score` ∈ [0,1] composé de :
 
-$$\text{total\_score} = 0.15 \times \text{liquidity\_val} + 0.55 \times \text{RSI\_norm} + 0.30 \times \text{historical\_range\_score}$$
+$$total\_score = 0.15 \times liquidity\_val + 0.55 \times RSI\_norm + 0.30 \times historical\_range\_score$$
 
 - **`liquidity_val`** : dollar volume moyen sur 20 jours, normalisé via winsorisation [1%, 99%] + min-max [0,1]
 - **`RSI_norm`** : force relative vs SPY (relative strength index), normalisé
@@ -48,7 +48,7 @@ La fonction `compute_factor_frame()` calcule ces facteurs **purs** (sans I/O) :
 
 C'est le cœur du calcul. La formule produit un `final_score` ∈ [0,1] :
 
-$$\text{final\_score} = w_{trend\_vcp} \times \frac{trend\_score + vcp\_score}{2} + w_{total\_score} \times total\_score_{norm} + w_{rsi} \times RSI_{norm}$$
+$$final\_score = w_{trend\_vcp} \times \frac{trend\_score + vcp\_score}{2} + w_{total\_score} \times total\_score_{norm} + w_{rsi} \times RSI_{norm}$$
 
 Les poids **par défaut** (en régime `normal`) :
 - `weight_trend_vcp` = **0.50** (momentum technique)
@@ -61,7 +61,7 @@ Chaque composante est **winsorisée** [1%, 99%] puis **normalisée** [0,1] via `
 
 Applique un **z-score intra-secteur** sur `total_score` et `relative_strength_index` :
 
-$$\text{z\_score}_{secteur} = \frac{x - \mu_{secteur}}{\sigma_{secteur}}$$
+$$z\_score_{secteur} = \frac{x - \mu_{secteur}}{\sigma_{secteur}}$$
 
 Puis re-normalise en [0,1]. Cela évite qu'un secteur entier soit sur/sous-représenté à cause d'un biais sectoriel.
 
@@ -77,7 +77,7 @@ Puis re-normalise en [0,1]. Cela évite qu'un secteur entier soit sur/sous-repr�
 
 Les shorts ne sont PAS les bottom-N du `final_score`. Ils utilisent un **score baissier composite** indépendant (0-1, plus c'est haut = plus baissier) :
 
-$$\text{short\_score} = 0.30 \times (1 - trend\_score) + 0.25 \times (1 - \frac{RSI}{100}) + 0.25 \times \mathbb{1}[prix < SMA50] + 0.20 \times \mathbb{1}[prix < SMA200]$$
+$$short\_score = 0.30 \times (1 - trend\_score) + 0.25 \times (1 - \frac{RSI}{100}) + 0.25 \times \mathbf{1}[prix < SMA50] + 0.20 \times \mathbf{1}[prix < SMA200]$$
 
 Les 4 facteurs :
 1. **Trend faible** (30%) : `1 - trend_score` — un trend_score bas (ex: 0.1) donne 0.9 de contribution bearish
@@ -131,13 +131,13 @@ Condition d'activation : il faut au moins `min_news_count` articles (défaut = 2
 
 Le signal agrégé `sentiment_net_agg` ∈ [-1, 1] est transformé en [0, 1] :
 
-$$\text{sentiment\_signal\_norm} = \frac{\text{clamp}(sentiment\_net\_agg, -1, 1) + 1}{2}$$
+$$sentiment\_signal\_norm = \frac{\mathrm{clamp}(sentiment\_net\_agg,\, -1,\, 1) + 1}{2}$$
 
 0.5 = neutre, 0 = très négatif, 1 = très positif.
 
 #### Étape 3 — Fusion ternaire (`fuse_sentiment()` dans `core/conviction.py`)
 
-$$\text{final\_score\_sentiment} = w_{quant} \times final\_score + w_{sentiment} \times sentiment\_norm + w_{macro} \times macro\_norm$$
+$$final\_score\_sentiment = w_{quant} \times final\_score + w_{sentiment} \times sentiment\_norm + w_{macro} \times macro\_norm$$
 
 Le tout clippé dans [0, 1].
 
@@ -265,7 +265,7 @@ La target est construite par `build_target()` :
 - **Binary** : `1` si le rendement forward (J+horizon) > `target_threshold_up` (ex: +2%), sinon `0`
 - **Swing Cash** : `1` si rendement > seuil UP, `0` si rendement < seuil DOWN, `NaN` (ignoré) si entre les deux
 
-$$\text{target\_binary} = \mathbb{1}[r_{t, t+horizon} > threshold\_up]$$
+$$target\_binary = \mathbf{1}[\, r_{t,\, t+horizon} > threshold\_up \,]$$
 
 ### 4.4 Pipeline d'entraînement (`modelFactory/trainer.py`)
 
@@ -430,7 +430,7 @@ C'est le **score clé** qui détermine tout. Défini dans `core/conviction.py` :
 
 #### Pour les LONGS :
 
-$$\text{conviction\_long} = 0.40 \times score\_quant + 0.60 \times proba\_ml\_long$$
+$$conviction\_long = 0.40 \times score\_quant + 0.60 \times proba\_ml\_long$$
 
 Clampé dans [0, 1].
 
@@ -440,7 +440,7 @@ Clampé dans [0, 1].
 
 #### Pour les SHORTS (`compute_conviction_short()`) :
 
-$$\text{conviction\_short} = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_short$$
+$$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_short$$
 
 - Le score quant est **inversé** (un bon long a un score élevé → mauvais short)
 - `proba_ml_short` = probabilité de baisse prédite par le ML (en mode ternaire)
