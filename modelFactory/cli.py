@@ -179,6 +179,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure un contexte selector PIT-safe issu de stock_scores_history dans les features ML")
     p.add_argument("--include-short-score", action="store_true", default=False,
                    help="Inclure le score baissier composite (short_score) comme feature ML independante")
+    p.add_argument("--include-macro-vix", action="store_true", default=False,
+                   help="Inclure les features VIX/VIX9D (volatilité implicite S&P 500) dans le modèle")
+    p.add_argument("--include-macro-vxn", action="store_true", default=False,
+                   help="Inclure les features VXN (volatilité implicite NASDAQ-100) dans le modèle")
+    p.add_argument("--include-macro-vix3m", action="store_true", default=False,
+                   help="Inclure les features VIX3M + ratio term structure (contango/backwardation) dans le modèle")
+    p.add_argument("--include-macro-move", action="store_true", default=False,
+                   help="Inclure les features MOVE (volatilité obligataire ICE BofA) dans le modèle")
     p.add_argument(
         "--selector-universe-signal-modes",
         nargs="*",
@@ -308,6 +316,10 @@ def main(args: list[str] | None = None) -> None:
             include_sentiment_features=opts.include_sentiment,
             include_selector_context_features=opts.include_selector_context,
             include_short_score_features=opts.include_short_score,
+            include_macro_vix_features=opts.include_macro_vix,
+            include_macro_vxn_features=opts.include_macro_vxn,
+            include_macro_vix3m_features=opts.include_macro_vix3m,
+            include_macro_move_features=opts.include_macro_move,
             selector_universe_signal_modes=_parse_selector_signal_modes_arg(opts.selector_universe_signal_modes),
             selector_universe_max_candidate_rank=opts.selector_universe_max_candidate_rank,
             selector_universe_exclude_earnings_blackout=opts.selector_universe_exclude_earnings_blackout,

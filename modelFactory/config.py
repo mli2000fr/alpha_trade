@@ -31,6 +31,10 @@ class DataConfig:
     include_sentiment_features: bool = False
     include_selector_context_features: bool = False
     include_short_score_features: bool = False
+    include_macro_vix_features: bool = False     # VIX + VIX9D
+    include_macro_vxn_features: bool = False     # VXN (Nasdaq-100 vol)
+    include_macro_vix3m_features: bool = False   # VIX3M + term structure ratio
+    include_macro_move_features: bool = False    # MOVE (bond volatility)
     enable_cross_sectional_features: bool = False
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert

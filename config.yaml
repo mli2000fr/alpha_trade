@@ -156,6 +156,30 @@ market_regimes:
     inverted_curve_min_spread: 1.5
     inverted_curve_min_ratio: 1.03
 
+  # Nasdaq-100 Volatility Index (CBOE VXN)
+  vxn:
+    enabled: true
+    symbol: "VXN.INDX"
+    high_threshold: 23.0
+
+  # VIX 3-Month — term structure (contango/backwardation)
+  vix3m:
+    enabled: true
+    symbol: "VIX3M.INDX"
+    backwardation_threshold: 1.0
+
+  # ICE BofA Bond Volatility Index (MOVE)
+  move:
+    enabled: true
+    symbol: "MOVE.INDX"
+    high_threshold: 120.0
+
+  # Russell 2000 Volatility Index (CBOE RVX) — Small Caps
+  rvx:
+    enabled: true
+    symbol: "RVX.INDX"
+    high_threshold: 30.0
+
   capital_preservation_max_gross_exposure: 0.65
 
   yields:

@@ -59,6 +59,18 @@ SENTIMENT_FEATURE_COLUMNS: list[str] = [
     "major_event_flag",
 ]
 
+# Features macro contextuelles (depuis stock_macro_indicators_daily)
+MACRO_FEATURE_COLUMNS: list[str] = [
+    "vix_close",
+    "vix_momentum_5j",
+    "vxn_close",
+    "vxn_spread_vix",
+    "vix3m_close",
+    "vix_term_structure_ratio",
+    "vix_backwardation",
+    "move_close",
+]
+
 SELECTOR_CONTEXT_FEATURE_COLUMNS: list[str] = [
     "selector_trend_score",
     "selector_vcp_score",
@@ -146,8 +158,12 @@ def get_feature_columns(
     include_cross_sectional: bool = False,
     include_selector_context: bool = False,
     include_short_score: bool = False,
+    include_macro_vix: bool = False,
+    include_macro_vxn: bool = False,
+    include_macro_vix3m: bool = False,
+    include_macro_move: bool = False,
 ) -> list[str]:
-    """Retourne la liste complète des colonnes features (OHLCV + optionnel sentiment)."""
+    """Retourne la liste complète des colonnes features (OHLCV + optionnels)."""
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
         cols.extend(EXPERT_FEATURE_COLUMNS)
@@ -161,6 +177,22 @@ def get_feature_columns(
         cols.extend(SELECTOR_CONTEXT_FEATURE_COLUMNS)
     if include_short_score and "selector_short_score" not in cols:
         cols.append("selector_short_score")
+    # Macro features — ajoutées après les features OHLCV pour préserver l'ordre canonique
+    if include_macro_vix:
+        for col in ["vix_close", "vix_momentum_5j"]:
+            if col not in cols:
+                cols.append(col)
+    if include_macro_vxn:
+        for col in ["vxn_close", "vxn_spread_vix"]:
+            if col not in cols:
+                cols.append(col)
+    if include_macro_vix3m:
+        for col in ["vix3m_close", "vix_term_structure_ratio", "vix_backwardation"]:
+            if col not in cols:
+                cols.append(col)
+    if include_macro_move:
+        if "move_close" not in cols:
+            cols.append("move_close")
     return cols
 
 
@@ -171,6 +203,10 @@ def fingerprint(
     include_cross_sectional: bool = False,
     include_selector_context: bool = False,
     include_short_score: bool = False,
+    include_macro_vix: bool = False,
+    include_macro_vxn: bool = False,
+    include_macro_vix3m: bool = False,
+    include_macro_move: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -186,6 +222,10 @@ def fingerprint(
         include_cross_sectional=include_cross_sectional,
         include_selector_context=include_selector_context,
         include_short_score=include_short_score,
+        include_macro_vix=include_macro_vix,
+        include_macro_vxn=include_macro_vxn,
+        include_macro_vix3m=include_macro_vix3m,
+        include_macro_move=include_macro_move,
     ))
     payload = {
         "columns": columns,
@@ -194,6 +234,10 @@ def fingerprint(
         "include_cross_sectional": bool(include_cross_sectional),
         "include_selector_context": bool(include_selector_context),
         "include_short_score": bool(include_short_score),
+        "include_macro_vix": bool(include_macro_vix),
+        "include_macro_vxn": bool(include_macro_vxn),
+        "include_macro_vix3m": bool(include_macro_vix3m),
+        "include_macro_move": bool(include_macro_move),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]

@@ -81,6 +81,38 @@ class SectorLimitsConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class VxnConfig:
+    """Volatilité implicite NASDAQ-100 (CBOE VXN)."""
+    enabled: bool = False
+    symbol: str = "VXN"
+    high_threshold: float = 23.0
+
+
+@dataclass(frozen=True, slots=True)
+class Vix3mConfig:
+    """VIX 3-Month — structure à terme (contango / backwardation)."""
+    enabled: bool = False
+    symbol: str = "VIX3M"
+    backwardation_threshold: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class MoveConfig:
+    """ICE BofA Bond Volatility Index (MOVE)."""
+    enabled: bool = False
+    symbol: str = "MOVE"
+    high_threshold: float = 120.0
+
+
+@dataclass(frozen=True, slots=True)
+class RvxConfig:
+    """Russell 2000 Volatility Index (CBOE RVX) — Small Caps."""
+    enabled: bool = False
+    symbol: str = "RVX"
+    high_threshold: float = 30.0
+
+
+@dataclass(frozen=True, slots=True)
 class EarningsShieldConfig:
     enabled: bool = False
     days_before: int = 2
@@ -131,6 +163,10 @@ class MarketRegimesConfig:
     sentinel: SentinelConfig = field(default_factory=SentinelConfig)
     hysteresis: RegimeHysteresisConfig = field(default_factory=RegimeHysteresisConfig)
     vix: VixConfig = field(default_factory=VixConfig)
+    vxn: VxnConfig = field(default_factory=VxnConfig)
+    vix3m: Vix3mConfig = field(default_factory=Vix3mConfig)
+    move: MoveConfig = field(default_factory=MoveConfig)
+    rvx: RvxConfig = field(default_factory=RvxConfig)
     yields: YieldsConfig = field(default_factory=YieldsConfig)
     sentiment_circuit_breaker: SentimentBreakerConfig = field(default_factory=SentimentBreakerConfig)
     sector_limits: SectorLimitsConfig = field(default_factory=SectorLimitsConfig)
@@ -177,6 +213,10 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
     sentinel = raw.get("sentinel", {}) or {}
     hysteresis = raw.get("hysteresis", {}) or {}
     vix = raw.get("vix", {}) or {}
+    vxn = raw.get("vxn", {}) or {}
+    vix3m = raw.get("vix3m", {}) or {}
+    move = raw.get("move", {}) or {}
+    rvx = raw.get("rvx", {}) or {}
     yields = raw.get("yields", {}) or {}
     breaker = raw.get("sentiment_circuit_breaker", {}) or {}
     sector_limits = raw.get("sector_limits", {}) or {}
@@ -234,6 +274,26 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
             inverted_curve_mode=str(vix.get("inverted_curve_mode", "capital_preservation")),
             inverted_curve_min_spread=float(vix.get("inverted_curve_min_spread", 0.0)),
             inverted_curve_min_ratio=float(vix.get("inverted_curve_min_ratio", 1.0)),
+        ),
+        vxn=VxnConfig(
+            enabled=bool(vxn.get("enabled", False)),
+            symbol=str(vxn.get("symbol", "VXN")),
+            high_threshold=float(vxn.get("high_threshold", 23.0)),
+        ),
+        vix3m=Vix3mConfig(
+            enabled=bool(vix3m.get("enabled", False)),
+            symbol=str(vix3m.get("symbol", "VIX3M")),
+            backwardation_threshold=float(vix3m.get("backwardation_threshold", 1.0)),
+        ),
+        move=MoveConfig(
+            enabled=bool(move.get("enabled", False)),
+            symbol=str(move.get("symbol", "MOVE")),
+            high_threshold=float(move.get("high_threshold", 120.0)),
+        ),
+        rvx=RvxConfig(
+            enabled=bool(rvx.get("enabled", False)),
+            symbol=str(rvx.get("symbol", "RVX")),
+            high_threshold=float(rvx.get("high_threshold", 30.0)),
         ),
         yields=YieldsConfig(
             enabled=bool(yields.get("enabled", False)),

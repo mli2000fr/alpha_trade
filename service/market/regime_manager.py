@@ -28,7 +28,10 @@ from service.market.earnings_shield import (
 )
 from service.market.macro_signals import (
     MacroDataProvider,
+    VixTermStructure,
     evaluate_vix,
+    evaluate_vxn,
+    evaluate_vix_term_structure,
     evaluate_yield_10y,
 )
 from service.market.models import MarketRegimeSnapshot, MarketRegimeState, RegimeMode, neutral_snapshot
@@ -132,6 +135,14 @@ def _required_macro_data_quality_keys(config: MarketRegimesConfig) -> tuple[str,
     keys: list[str] = []
     if config.vix.enabled:
         keys.append("vix")
+    if config.vxn.enabled:
+        keys.append("vxn")
+    if config.vix3m.enabled:
+        keys.append("vix3m")
+    if config.move.enabled:
+        keys.append("move")
+    if config.rvx.enabled:
+        keys.append("rvx")
     if config.yields.enabled:
         keys.append("yield_10y")
     return tuple(keys)
@@ -534,6 +545,152 @@ def build_snapshot(
                 "min_spread": config.vix.inverted_curve_min_spread,
                 "min_ratio": config.vix.inverted_curve_min_ratio,
             },
+        )
+
+    # 2b. Macro VXN (Nasdaq-100 volatility)
+    if config.vxn.enabled:
+        vxn_value, vxn_high, dq = evaluate_vxn(
+            macro_provider,
+            trade_date,
+            high_threshold=config.vxn.high_threshold,
+        )
+        macro_metrics["vxn"] = vxn_value
+        data_quality.update(dq)
+        if vxn_high:
+            mode = _escalate(mode, "capital_preservation")
+            reasons.append(f"vxn_high:{vxn_value:.1f}")
+        _push_trace(
+            decision_trace,
+            source="vxn_high",
+            label="VXN élevé",
+            triggered=vxn_high,
+            severity="warning" if vxn_high else "info",
+            resulting_mode="capital_preservation" if vxn_high else "normal",
+            value=vxn_value,
+            threshold=config.vxn.high_threshold,
+            message=(
+                f"VXN élevé ({vxn_value:.2f} ≥ {config.vxn.high_threshold:.2f}) ⇒ capital_preservation"
+                if vxn_high and vxn_value is not None
+                else (
+                    f"VXN sous seuil ({vxn_value:.2f} < {config.vxn.high_threshold:.2f})"
+                    if vxn_value is not None
+                    else "VXN indisponible"
+                )
+            ),
+        )
+
+    # 2c. Term structure VIX/VIX3M (contango / backwardation)
+    if config.vix3m.enabled:
+        ts: VixTermStructure = evaluate_vix_term_structure(
+            macro_provider,
+            trade_date,
+            backwardation_threshold=config.vix3m.backwardation_threshold,
+        )
+        macro_metrics["vix3m"] = ts.vix3m_value
+        macro_metrics["vix_term_structure_ratio"] = ts.ratio
+        macro_metrics["vix_backwardation"] = ts.backwardation
+        data_quality.update(ts.data_quality)
+        if ts.backwardation:
+            mode = _escalate(mode, "capital_preservation")
+            reasons.append("vix_backwardation")
+        _push_trace(
+            decision_trace,
+            source="vix_backwardation",
+            label="VIX/VIX3M backwardation",
+            triggered=ts.backwardation,
+            severity="warning" if ts.backwardation else "info",
+            resulting_mode="capital_preservation" if ts.backwardation else "normal",
+            value=ts.ratio,
+            threshold=config.vix3m.backwardation_threshold,
+            message=(
+                f"Backwardation VIX/VIX3M (ratio={ts.ratio:.3f} > {config.vix3m.backwardation_threshold}) ⇒ capital_preservation"
+                if ts.backwardation and ts.ratio is not None
+                else (
+                    f"Term structure normale (ratio={ts.ratio:.3f})"
+                    if ts.ratio is not None
+                    else "Term structure VIX/VIX3M indisponible"
+                )
+            ),
+            details={
+                "vix": ts.vix_value,
+                "vix3m": ts.vix3m_value,
+                "ratio": ts.ratio,
+                "backwardation_threshold": config.vix3m.backwardation_threshold,
+            },
+        )
+
+    # 2d. MOVE (ICE BofA Bond Volatility)
+    if config.move.enabled:
+        move_value: float | None = None
+        if macro_provider is not None:
+            try:
+                move_value = macro_provider.get_move_close(trade_date)
+            except Exception:
+                move_value = None
+        macro_metrics["move"] = move_value
+        move_high = move_value is not None and move_value >= config.move.high_threshold
+        data_quality["move"] = (
+            "missing" if move_value is None
+            else "ok"
+        )
+        if move_high:
+            mode = _escalate(mode, "capital_preservation")
+            reasons.append(f"move_high:{move_value:.1f}")
+        _push_trace(
+            decision_trace,
+            source="move_high",
+            label="MOVE élevé",
+            triggered=move_high,
+            severity="warning" if move_high else "info",
+            resulting_mode="capital_preservation" if move_high else "normal",
+            value=move_value,
+            threshold=config.move.high_threshold,
+            message=(
+                f"MOVE élevé ({move_value:.2f} ≥ {config.move.high_threshold:.2f}) ⇒ capital_preservation"
+                if move_high and move_value is not None
+                else (
+                    f"MOVE sous seuil ({move_value:.2f} < {config.move.high_threshold:.2f})"
+                    if move_value is not None
+                    else "MOVE indisponible"
+                )
+            ),
+        )
+
+    # 2e. RVX (Russell 2000 Volatility — Small Caps)
+    if config.rvx.enabled:
+        rvx_value: float | None = None
+        if macro_provider is not None:
+            try:
+                rvx_value = macro_provider.get_rvx_close(trade_date)
+            except Exception:
+                rvx_value = None
+        macro_metrics["rvx"] = rvx_value
+        rvx_high = rvx_value is not None and rvx_value >= config.rvx.high_threshold
+        data_quality["rvx"] = (
+            "missing" if rvx_value is None
+            else "ok"
+        )
+        if rvx_high:
+            mode = _escalate(mode, "capital_preservation")
+            reasons.append(f"rvx_high:{rvx_value:.1f}")
+        _push_trace(
+            decision_trace,
+            source="rvx_high",
+            label="RVX élevé",
+            triggered=rvx_high,
+            severity="warning" if rvx_high else "info",
+            resulting_mode="capital_preservation" if rvx_high else "normal",
+            value=rvx_value,
+            threshold=config.rvx.high_threshold,
+            message=(
+                f"RVX élevé ({rvx_value:.2f} ≥ {config.rvx.high_threshold:.2f}) ⇒ capital_preservation"
+                if rvx_high and rvx_value is not None
+                else (
+                    f"RVX sous seuil ({rvx_value:.2f} < {config.rvx.high_threshold:.2f})"
+                    if rvx_value is not None
+                    else "RVX indisponible"
+                )
+            ),
         )
 
     # 3. Macro Yield 10Y
