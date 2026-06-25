@@ -484,6 +484,16 @@ insert_predictions(symbol, predicted_proba, prediction_date)
 > - **Entraînement** : optimisé via LBFGS sur la validation loss (binary cross-entropy)
 > - **Stockage** : les paramètres `(slope=A, intercept=B)` sont sauvegardés dans un fichier `.pkl` avec le checkpoint
 > - **Activation IHM** : dropdown `Méthode de calibration` → `platt` (défaut IHM : `platt`)
+>   - Onglet **Exécution** → bloc **ML — Hyperparams** → `Méthode de calibration`
+>   - Le dropdown contrôle `cfg.calibration.method` :
+>
+>   ```
+>   Dropdown IHM "Méthode de calibration"
+>   ├─ "none"  → cfg.calibration.method = "none"  → AUCUNE calibration
+>   └─ "platt" → cfg.calibration.method = "platt" → calibration ACTIVÉE
+>                    ├─ binaire (2 classes)  → Platt Scaling
+>                    └─ ternaire (3 classes) → Temperature Scaling (automatique)
+>   ```
 > - ✅ **RÉSOLU (2026-06-25)** : le mode ternaire est désormais calibré via **Temperature Scaling**. Un seul paramètre T est optimisé sur le set de validation, puis appliqué à tous les logits avant softmax : `softmax(logits / T)`. La classe `TemperatureScaler` est dans `modelFactory/calibration.py`, intégrée au pipeline d'entraînement (`trainer.py:_fit_calibrator`) et d'inférence (`predictor.py:predict_symbol`). Les 3 probabilités (short, flat, long) sont calibrées conjointement.
 >
 > ```diff
