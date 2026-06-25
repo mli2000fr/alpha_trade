@@ -108,6 +108,8 @@ class RiskConfig:
     enable_kelly_sizing: bool = False
     assumed_payoff_ratio: float = 1.5
     kelly_fraction_multiplier: float = 0.25
+    # Plafond de sécurité absolu sur la fraction Kelly (P0 2026-06-25)
+    max_kelly_fraction: float = 0.25
     min_effective_probability: float = 0.52
     default_win_rate: float = 0.55
 
@@ -161,6 +163,8 @@ class RiskConfig:
             raise ValueError("assumed_payoff_ratio doit être > 0.")
         if not (0 < self.kelly_fraction_multiplier <= 1):
             raise ValueError("kelly_fraction_multiplier doit être dans ]0, 1].")
+        if not (0 < self.max_kelly_fraction <= 1):
+            raise ValueError("max_kelly_fraction doit être dans ]0, 1].")
         if not (0.5 <= self.min_effective_probability < 1):
             raise ValueError("min_effective_probability doit être dans [0.5, 1[.")
         if not (0.5 <= self.default_win_rate < 1):

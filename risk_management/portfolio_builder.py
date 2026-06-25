@@ -713,7 +713,7 @@ class PortfolioBuilder:
                 if p_eff >= cfg.min_effective_probability:
                     q = 1.0 - p_eff
                     raw = p_eff - q / cfg.assumed_payoff_ratio
-                    kf = min(max(0.0, raw) * cfg.kelly_fraction_multiplier, cfg.max_position_weight)
+                    kf = min(max(0.0, raw) * cfg.kelly_fraction_multiplier, cfg.max_kelly_fraction, cfg.max_position_weight)
 
             entries.append(PortfolioEntry(
                 symbol=ec.symbol, sector=ec.sector, entry_price=pi.last_close,

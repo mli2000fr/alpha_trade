@@ -971,7 +971,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 9 | **Concentration trackers non persistés en backtest** | Trackers frais par run → pas de mémoire cross-run des trades passés |
 | 10 | ⚠️ **Conviction : ML trop central (60% ML, 40% quant)** | Le LSTM sur actions individuelles a beaucoup de bruit, peu de signal stable, et change de régime. Risque d'apprendre la volatilité récente ou des patterns temporaires. Le ML devrait être un **filtre de qualité**, pas le moteur principal |
 | 11 | ⚠️ **LSTM par symbole = risque de données insuffisantes** | Chaque symbole a son propre modèle (AAPL→modèle, MSFT→modèle…). Un modèle individuel manque souvent de données d'entraînement. Une approche globale avec ticker embedding (secteur, market cap, beta) serait plus robuste |
-| 12 | ⚠️ **Kelly sizing ultra-sensible aux erreurs de probabilité ML** | Si le ML prédit `proba=0.65` mais que la vraie probabilité est `0.55`, le Kelly peut surdimensionner dangereusement. La calibration Platt est désactivée en ternaire (§5.1) → les probas ne sont même pas fiables |
+| 12 | ✅ **Kelly sizing plafonné à 25% (2026-06-25)** | ~~Si le ML prédit `proba=0.65` mais que la vraie probabilité est `0.55`, le Kelly peut surdimensionner dangereusement.~~ → Fix : `max_kelly_fraction=0.25` dans `RiskConfig`, appliqué dans `KellySizer.compute()`, `PortfolioBuilder` (audit kf), et `weights_calibration.py` (backtesting) |
 
 ### 11.1 Pourquoi c'est important — Avantages à activer / corriger
 
@@ -988,7 +988,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 9 | **Concentration trackers non persistés** | Chaque run de backtest part d'une table rase. Impossible de détecter qu'un symbole a déjà été tradé 3x cette semaine — le backtest peut concentrer plus que le live | **Fidélité cross-run** : le backtest refléterait les limites de concentration réelles. Utile pour les walk-forward multi-folds où l'état des trackers devrait persister entre folds |
 | 10 | **ML trop central (60/40)** | Le ML apprend la volatilité récente, des patterns de marché temporaires, des artefacts de période. Sur des actions individuelles, le bruit domine le signal | **Robustesse** : passer à 70% quant / 30% ML, puis augmenter progressivement si l'OOS confirme. Le ML doit filtrer la qualité, pas piloter la décision |
 | 11 | **LSTM par symbole** | Chaque symbole a son modèle → AAPL, MSFT, NVDA… Mais un modèle individuel manque de données. Un GlobalModel avec ticker embedding capterait "les patterns momentum marchent différemment entre tech et utilities" | **Généralisation** : un modèle global avec embeddings (ticker, secteur, market cap, beta) apprend des relations cross-sectionnelles, pas juste l'historique d'un seul symbole |
-| 12 | **Kelly + probas ML non fiables** | Kelly est extrêmement sensible : ML dit `proba=0.65` mais vraie proba `0.55` → sizing dangereux. Sans calibration ternaire, les probas softmax brutes ne sont pas fiables | **Sécurité** : plafonner le Kelly à 25% par position. Attendre la calibration Temperature Scaling (§5.1) avant d'utiliser des fractions plus élevées |
+| 12 | ✅ **Kelly plafonné à 25%** | ~~Kelly est extrêmement sensible : ML dit `proba=0.65` mais vraie proba `0.55` → sizing dangereux. Sans calibration ternaire, les probas softmax brutes ne sont pas fiables~~ → **RÉSOLU** : `max_kelly_fraction=0.25` ajouté dans `RiskConfig`, cap appliqué dans `KellySizer`, `PortfolioBuilder`, et `weights_calibration` | **Sécurité** : ✅ fait — le Kelly ne peut plus dépasser 25% de l'equity par position, quelle que soit la confiance du ML |
 
 ### 11.2 Priorité recommandée
 
@@ -1003,7 +1003,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | ⚪ P3 | 1 | Activer sentiment/macro (recalibrer d'abord) | Élevé — besoin preuve IC robuste avant activation | Incertain — IC≈0 actuellement |
 | ⚪ P3 | 2 | Activer champion selection | Élevé — nécessite d'abord entraîner CatBoost/LightGBM | Modéré — seulement si challengers meilleurs |
 | ⚪ P3 | 3 | Activer target optimization | Faible techniquement, mais élevé en validation | Modéré — symbole par symbole, supervision requise |
-| 🔴 P0 | 12 | Plafonner le Kelly à 25% max par position | Faible — ajouter `max_kelly_fraction=0.25` dans `kelly.py` | Fort — éviter surdimensionnement sur probas non calibrées |
+| ✅ FAIT | 12 | ~~Plafonner le Kelly à 25% max par position~~ | ~~Faible~~ — Plafonné le 2026-06-25 | ~~Fort~~ — Kelly ne dépassera jamais 25% equity/position |
 | 🟡 P1 | 10 | Réduire poids ML dans conviction (70/30) | Faible — changer les défauts dans `core/conviction.py` | Moyen — réduire l'impact du bruit ML |
 | 🟢 P2 | 11 | Explorer GlobalModel avec ticker embeddings | Élevé — nouveau pipeline d'entraînement | Modéré — gain de généralisation cross-sectionnelle |
 
@@ -1062,12 +1062,16 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 +       → Fichier : modelFactory/target_optimization.py → optimize_target_parameters()
 +       → Commande : python -m modelFactory train --symbol AAPL --optimize-target
 
-+ TODO P0 — Plafonner le Kelly à 25% max par position
-+       → Fichier : risk_management/kelly.py → KellySizer.compute()
-+       → Solution : ajouter max_kelly_fraction=0.25 dans la config, clamp f_fraction à max 0.25
-+       → Justification : sans calibration ternaire (§5.1), les probas ML ne sont pas fiables
-+         Kelly est extrêmement sensible aux erreurs de probabilité (0.65 vs 0.55 réelle)
-+       → Impact : éviter le surdimensionnement dangereux sur des probas non calibrées
++ ✅ FAIT P0 — Plafonner le Kelly à 25% max par position — IMPLÉMENTÉ le 2026-06-25
++       → Fichiers modifiés :
++         - risk_management/config.py → ajout du champ max_kelly_fraction=0.25 + validation
++         - risk_management/kelly.py → KellySizer.compute() : min(fraction, max_kelly_fraction, max_position_weight)
++         - risk_management/portfolio_builder.py → audit kf : même formule avec max_kelly_fraction
++         - backtesting/weights_calibration.py → _compute_kelly_fraction() : idem
++       → Formule : fractional_kelly = min(raw_kelly × multiplier, 0.25, max_position_weight)
++       → Avec les défauts (multiplier=0.25, max_kelly=0.25, max_position=0.10),
++         c'est max_position_weight=0.10 qui est contraignant en pratique
++       → Le cap à 25% protège si quelqu'un augmente max_position_weight un jour
 
 + TODO P1 — Réduire le poids ML dans la conviction (70% quant / 30% ML)
 +       → Fichier : core/conviction.py → compute_conviction(), compute_conviction_short()

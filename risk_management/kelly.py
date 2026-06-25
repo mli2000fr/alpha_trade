@@ -49,6 +49,8 @@ class KellySizer:
         b = cfg.assumed_payoff_ratio
         raw_kelly = p_eff - q / b
         fractional_kelly = max(0.0, raw_kelly) * cfg.kelly_fraction_multiplier
+        # ── P0 (2026-06-25) : plafond de sécurité Kelly ──
+        fractional_kelly = min(fractional_kelly, cfg.max_kelly_fraction)
         fractional_kelly = min(fractional_kelly, cfg.max_position_weight)
 
         # 4. Si kelly <= 0 → fallback

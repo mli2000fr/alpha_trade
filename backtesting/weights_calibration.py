@@ -516,12 +516,15 @@ def _compute_kelly_fraction(
     prediction_confidence_weight: float = 0.60,
     historical_win_rate_weight: float = 0.40,
     max_position_weight: float = 0.10,
+    max_kelly_fraction: float = 0.25,
 ) -> np.ndarray:
     p_eff = (prediction_confidence_weight * predicted_proba) + (historical_win_rate_weight * historical_win_rate)
     p_eff = np.clip(p_eff, 0.001, 0.999)
     raw_kelly = p_eff - ((1.0 - p_eff) / assumed_payoff_ratio)
     kelly_fraction = np.maximum(raw_kelly, 0.0) * float(kelly_fraction_multiplier)
     kelly_fraction = np.where(p_eff >= float(min_effective_probability), kelly_fraction, 0.0)
+    # ── P0 (2026-06-25) : plafond de sécurité Kelly ──
+    kelly_fraction = np.minimum(kelly_fraction, float(max_kelly_fraction))
     return np.minimum(kelly_fraction, float(max_position_weight))
 
 
