@@ -779,6 +779,47 @@ Autrement dit :
 
 Le système possède **3 niveaux de calibration** indépendants, tous effectués en backtest.
 
+> **⚡ Parcours complet — à faire après chaque entraînement ML et avant mise en prod :**
+>
+> ```
+> 1. ENTRAÎNEMENT ML
+>    └─ python -m modelFactory train --symbol AAPL ...
+>    └─ Lit : stock_bars_daily (OHLCV) + stock_scores (snapshot live) + ticker_daily_sentiment_features
+>    └─ Produit : champion.ckpt, scaler.pkl, calibrator.pkl
+>
+>    ⚠️ Indépendant du BACKFILL PIT : l'entraînement ML ne lit PAS stock_scores_history.
+>    Les étapes ① et ② peuvent être faites dans n'importe quel ordre, ou en parallèle.
+>
+> 2. BACKFILL PIT (prérequis pour les calibrations ③④⑤)
+>    └─ python -m backtesting backfill-scores-history
+>    └─ Remplit stock_scores_history avec short_score corrigé (P0#5)
+>    └─ À faire une fois (rafraîchir après chaque correction des scores)
+>
+>    ⚠️ Ne pas confondre : stock_scores_history (PIT, backtest) ≠ stock_scores (live, ML).
+>
+> 3. CALIBRATION CONVICTION (quant/ML)
+>    └─ IHM → 🎯 Calibrate conviction (décocher "Inclure Kelly")
+>    └─ Ou CLI : python -m backtesting calibrate-conviction-weights --scope conviction
+>    └─ Trouve le meilleur mix score_weight / prediction_weight
+>    └─ Produit : artifacts/conviction_calibration/
+>
+> 4. CALIBRATION KELLY (sizing)
+>    └─ IHM → 🎯 Calibrate conviction (cocher "Inclure Kelly")
+>    └─ Ou CLI : python -m backtesting calibrate-conviction-weights --scope all
+>    └─ Trouve le meilleur fraction_multiplier / payoff_ratio / min_probability
+>    └─ Produit : mêmes artefacts, colonnes Kelly en plus
+>
+> 5. VALIDATION WALK-FORWARD (optionnel mais recommandé)
+>    └─ IHM → 🚶 Walk-forward sentiment
+>    └─ Vérifie que les poids calibrés tiennent hors-échantillon
+>
+> 6. APPLICATION
+>    └─ Mettre à jour config.yaml avec les poids trouvés
+>    └─ Ou utiliser l'onglet 🎛️ Calibration trimestrielle (fait tout en une fois)
+> ```
+>
+> **Fréquence recommandée** : tous les 3 mois (trimestrielle), ou après un changement de régime, nouvel entraînement ML, ou dérive détectée.
+>
 > **Comment faire depuis l'IHM ?** Onglet `🧪 Backtesting` :
 >
 > | Calibration | Onglet IHM | Action |
