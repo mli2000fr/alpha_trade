@@ -147,6 +147,9 @@ def _apply_optional_calibration(
 ) -> tuple[float, str]:
     if calibrator is None or not getattr(calibrator, "fitted", False):
         return raw_proba, "none"
+    # Temperature Scaling est géré séparément dans predict_symbol (ternaire)
+    if getattr(calibrator, "method", None) == "temperature":
+        return raw_proba, "none"
     try:
         calibrated = float(calibrator.predict_proba(margin)[0])
     except Exception as exc:  # noqa: BLE001
@@ -1257,16 +1260,57 @@ def predict_symbol(
         )
         return None
 
+    # ── Temperature Scaling ternaire (2026-06-25) ────────────────
+    # Si un TemperatureScaler est disponible, recalibrer TOUTES les
+    # probas ternaires (pas seulement proba_long).
+    calibrated_ternary_probs: dict[str, float | None] = {
+        "proba_short": proba_short_val,
+        "proba_flat": proba_flat_val,
+        "proba_long": proba_long_val,
+    }
+    if (
+        is_ternary
+        and num_classes >= 3
+        and calibrator is not None
+        and getattr(calibrator, "method", None) == "temperature"
+        and getattr(calibrator, "fitted", False)
+    ):
+        try:
+            cal_probs = calibrator.predict(logits_tensor.detach().cpu().numpy())
+            # cal_probs: [1, 3] → extraire les 3 probas
+            calibrated_ternary_probs["proba_short"] = float(cal_probs[0, 0])
+            calibrated_ternary_probs["proba_flat"] = float(cal_probs[0, 1])
+            calibrated_ternary_probs["proba_long"] = float(cal_probs[0, 2])
+            proba = calibrated_ternary_probs["proba_long"]
+            calibration_method = "temperature"
+            LOGGER.debug(
+                "Temperature scaling applied symbol=%s T=%.3f short=%.3f flat=%.3f long=%.3f",
+                symbol,
+                getattr(calibrator, "temperature", 1.0),
+                calibrated_ternary_probs["proba_short"],
+                calibrated_ternary_probs["proba_flat"],
+                calibrated_ternary_probs["proba_long"],
+            )
+        except Exception as _exc:
+            LOGGER.warning("Temperature scaling failed symbol=%s: %s", symbol, _exc)
+
     pred_date = prediction_date or date.today()
     if is_ternary and num_classes >= 3:
-        # Ternaire : predicted_side via argmax, backward-compat pred_class/signal_label
-        side_idx = int(torch.argmax(probs_all).item())
+        # Ternaire : predicted_side via argmax sur probas calibrées si dispo
+        cal_short = calibrated_ternary_probs.get("proba_short", 0.0) or 0.0
+        cal_flat = calibrated_ternary_probs.get("proba_flat", 0.0) or 0.0
+        cal_long = calibrated_ternary_probs.get("proba_long", 0.0) or 0.0
+        cal_probs_tensor = torch.tensor([cal_short, cal_flat, cal_long])
+        side_idx = int(torch.argmax(cal_probs_tensor).item())
         side_map = {0: "short", 1: "flat", 2: "long"}
         predicted_side_val = side_map.get(side_idx, "flat")
         pred_class = 1 if predicted_side_val == "long" else 0
         signal_label = predicted_side_val
-        # proba = proba_long (pour la colonne predicted_proba historique)
-        proba = float(proba_long_val) if proba_long_val is not None else 0.0
+        # P0 (2026-06-25) : ne plus écraser proba avec raw — utiliser la valeur calibrée
+        proba = cal_long
+        proba_long_val = cal_long
+        proba_flat_val = cal_flat
+        proba_short_val = cal_short
     else:
         pred_class = 1 if proba >= data_cfg.decision_threshold else 0
         signal_label = "long" if pred_class == 1 else "no_trade"

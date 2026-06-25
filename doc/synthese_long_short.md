@@ -15,7 +15,7 @@
 | **Qu'est-ce que le forward sentiment ?** | Walk-forward calibration : exécute des backtests complets avec différentes pondérations du score fusionné (quant+sentiment+macro). Ne décide PAS sur le sentiment seul — chaque scénario utilise le moteur de backtest complet (stops, sizing, etc.). Produit `latest_best_weights.json` |
 | **Son impact ?** | Les poids calibrés servent pour les **deux modes** : en LIVE via `SentimentBoostConfig`, en BACKTEST via la colonne `final_score_walk_forward` dans `stock_scores_history` (cascade `COALESCE`). Mais la calibration confirme que le quant seul est optimal |
 | **Comment ML entraîne long/short ?** | LSTM 2 couches + Attention temporelle sur séquences de 20 jours. Features OHLCV + sentiment + contexte selector. Target = rendement forward binaire ou ternaire. Split chronologique avec purge |
-| **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt → `predicted_proba` inséré en DB |
+| **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt (binaire) ou Temperature Scaling (ternaire, 2026-06-25) → `predicted_proba` inséré en DB |
 | **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter (long+short depuis P1) 3) Score threshold 4) Concentration 5) Conviction = 0.70×quant + 0.30×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
 | **Backtest vs Live ?** | **Backtest** = rejoue l'historique depuis `stock_scores_history` (PIT), prédictions ML persistées, simulation in-memory. **Live** = recalcule tout en temps réel depuis `stock_bars_daily`, inférence ML live, vrais ordres Alpaca |
 | **Qu'est-ce qui diffère entre long et short ?** | Short = score dédié indépendant du `final_score`, conviction inversée (`1-score`), proba ML distincte (`proba_short`), paramètres risk dédiés (max 2 positions, TP 8%, trailing 10%). Depuis P1 (2026-06-25) : breakout filter appliqué aussi aux shorts |
@@ -484,27 +484,25 @@ insert_predictions(symbol, predicted_proba, prediction_date)
 > - **Entraînement** : optimisé via LBFGS sur la validation loss (binary cross-entropy)
 > - **Stockage** : les paramètres `(slope=A, intercept=B)` sont sauvegardés dans un fichier `.pkl` avec le checkpoint
 > - **Activation IHM** : dropdown `Méthode de calibration` → `platt` (défaut IHM : `platt`)
-> - ⚠️ **Limitation** : désactivé automatiquement en mode **ternaire** (3 classes) car l'implémentation actuelle est conçue pour une marge binaire unique (`logit_pos − logit_neg`). Ce n'est pas une impossibilité théorique — on pourrait calibrer en ternaire via *temperature scaling* (un seul paramètre pour toutes les classes) ou *one-vs-rest* (3 calibrateurs binaires indépendants), mais ces approches ne sont pas implémentées. En attendant, les probabilités softmax brutes sont utilisées directement en mode ternaire.
+> - ✅ **RÉSOLU (2026-06-25)** : le mode ternaire est désormais calibré via **Temperature Scaling**. Un seul paramètre T est optimisé sur le set de validation, puis appliqué à tous les logits avant softmax : `softmax(logits / T)`. La classe `TemperatureScaler` est dans `modelFactory/calibration.py`, intégrée au pipeline d'entraînement (`trainer.py:_fit_calibrator`) et d'inférence (`predictor.py:predict_symbol`). Les 3 probabilités (short, flat, long) sont calibrées conjointement.
 >
 > ```diff
-> + TODO : Implémenter la calibration pour le mode ternaire via Temperature Scaling
-> +       → Approche simplifiée (recommandée) : Temperature Scaling avec un seul paramètre T
-> +         Principe : au lieu du softmax classique exp(z_i) / Σ exp(z_j),
-> +         on utilise exp(z_i / T) / Σ exp(z_j / T) avec T optimisé sur le set de validation
-> +         - T > 1 : adoucit les probabilités (modèle trop confiant)
-> +         - T < 1 : durcit les probabilités (modèle pas assez confiant)
-> +         - T = 1 : softmax standard (aucun changement)
-> +         Avantage : ultra simple à coder (~10 lignes), fonctionne nativement en multi-classe,
-> +         pas besoin de 3 calibrateurs binaires comme one-vs-rest
-> +       → Implémentation : ajouter une classe TemperatureScaler dans modelFactory/calibration.py
-> +         - __init__ : self.temperature = nn.Parameter(torch.ones(1))
-> +         - fit(val_logits, val_labels) : optimiser T via LBFGS sur la NLL loss
-> +         - predict(logits) : return softmax(logits / self.temperature)
-> +       → Fichiers concernés :
-> +         - modelFactory/calibration.py : _fit_calibrator() skip quand num_classes != 2
-> +         - modelFactory/trainer.py ligne 618 : if outputs.get("num_classes", 2) != 2: return None
-> +       → Impact : aujourd'hui les probas ternaires ne sont pas calibrées, ce qui fausse le Kelly sizing
-> +         (le bet sizing dépend directement de la fiabilité des probas)
+> - TODO : Implémenter la calibration pour le mode ternaire via Temperature Scaling
+> + ✅ FAIT — Temperature Scaling implémenté le 2026-06-25
+> +       → Fichiers modifiés :
+> +         - modelFactory/calibration.py → classe TemperatureScaler (~60 lignes)
+> +         - modelFactory/trainer.py → _fit_calibrator() : fallback automatique
+> +           vers TemperatureScaler quand num_classes != 2
+> +         - modelFactory/predictor.py → predict_symbol() : calibration
+> +           des 3 probas ternaires (short/flat/long) via le scaler
+> +       → Principe : softmax(logits / T) avec T optimisé via LBFGS sur
+> +         la NLL loss du set de validation
+> +       → Stockage : state_dict() / from_state_dict() → calibrator.pkl
+> +         (même fichier que Platt, méthode="temperature")
+> +       → Impact : probas ternaires calibrées → Kelly sizing plus fiable,
+> +         meilleure estimation de la confiance réelle du modèle
+> +       → Correction bug : predictor.py n'écrase plus proba avec raw
+> +         en mode ternaire (était un bug qui annulait toute calibration)
 > ```
 
 ### 5.2 Pour les shorts
@@ -972,7 +970,7 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | 9 | ✅ **Trackers persistés en backtest (2026-06-25)** | ~~Trackers frais par run → pas de mémoire cross-run des trades passés~~ → Fix : `to_dict()`/`from_dict()` ajoutés à `SymbolTradeTracker` et `ConsecutiveLossTracker`. Sauvegarde automatique dans `tracker_state.json` à la fin du run, chargement via `--tracker-state` ou `--load-tracker-state` |
 | 10 | ✅ **Conviction : ML réduit à 30% (70/30, 2026-06-25)** | ~~Le LSTM sur actions individuelles a beaucoup de bruit, peu de signal stable. Le ML était trop central (60%).~~ → Fix : `score_weight=0.70`, `prediction_weight=0.30` dans `ConvictionWeights` et `RiskConfig`. Le ML redevient un filtre de qualité |
 | 11 | ⚠️ **LSTM par symbole = risque de données insuffisantes** | Chaque symbole a son propre modèle (AAPL→modèle, MSFT→modèle…). Un modèle individuel manque souvent de données d'entraînement. Une approche globale avec ticker embedding (secteur, market cap, beta) serait plus robuste |
-| 12 | ✅ **Kelly sizing plafonné à 25% (2026-06-25)** | ~~Si le ML prédit `proba=0.65` mais que la vraie probabilité est `0.55`, le Kelly peut surdimensionner dangereusement.~~ → Fix : `max_kelly_fraction=0.25` dans `RiskConfig`, appliqué dans `KellySizer.compute()`, `PortfolioBuilder` (audit kf), et `weights_calibration.py` (backtesting) |
+| 12 | ✅ **Kelly sizing plafonné à 25% (2026-06-25)** | ~~Si le ML prédit `proba=0.65` mais que la vraie probabilité est `0.55`, le Kelly peut surdimensionner dangereusement.~~ → Fix : `max_kelly_fraction=0.25` dans `RiskConfig`, appliqué dans `KellySizer.compute()`, `PortfolioBuilder` (audit kf), et `weights_calibration.py` (backtesting). ✅ Depuis 2026-06-25, les probas ternaires sont calibrées via Temperature Scaling |
 
 ### 11.1 Pourquoi c'est important — Avantages à activer / corriger
 
@@ -1122,7 +1120,7 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | **Qu'est-ce que le forward sentiment ?** | Walk-forward calibration : backtest OOS par folds glissants pour trouver les meilleurs poids (sentiment, macro, quant). Produit `latest_best_weights.json` |
 | **Son impact ?** | Quand calibré et appliqué, ajuste le `final_score` en ajoutant une composante sentiment/macro. Mais la calibration confirme que le quant seul est optimal |
 | **Comment ML entraîne long/short ?** | LSTM 2 couches + Attention temporelle sur séquences de 20 jours. Features OHLCV + sentiment + contexte selector. Target = rendement forward binaire ou ternaire. Split chronologique avec purge |
-| **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt → `predicted_proba` inséré en DB |
+| **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt (binaire) ou Temperature Scaling (ternaire, 2026-06-25) → `predicted_proba` inséré en DB |
 | **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter (long+short depuis P1) 3) Score threshold 4) Concentration 5) Conviction = 0.70×quant + 0.30×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
 | **Backtest vs Live ?** | **Backtest** = rejoue l'historique depuis `stock_scores_history` (PIT), prédictions ML persistées, simulation in-memory. **Live** = recalcule tout en temps réel depuis `stock_bars_daily`, inférence ML live, vrais ordres Alpaca |
 

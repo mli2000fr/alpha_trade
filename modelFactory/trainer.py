@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
 
 from sqlalchemy.engine import Engine
 
-from modelFactory.calibration import PlattCalibrator, margin_from_logits
+from modelFactory.calibration import PlattCalibrator, TemperatureScaler, margin_from_logits
 from modelFactory.champion_selection import (
     build_challenger_ranking,
     persist_artifact_signature_manifest,
@@ -612,20 +612,33 @@ def _compute_metrics(
 def _fit_calibrator(
     outputs: dict[str, np.ndarray],
     cfg: TrainingConfig,
-) -> PlattCalibrator | None:
+) -> PlattCalibrator | TemperatureScaler | None:
+    from modelFactory.calibration import PlattCalibrator, TemperatureScaler
+
     if cfg.calibration.method != "platt":
         return None
-    if outputs.get("num_classes", 2) != 2:
-        LOGGER.info("calibration skipped reason=ternary_mode (Platt calibrator is binary-only)")
-        return None
     labels = outputs["labels"]
-    margins = outputs["margins"]
     if len(labels) < cfg.calibration.min_samples:
         LOGGER.info("calibration skipped reason=too_few_samples samples=%d", len(labels))
         return None
     if len(np.unique(labels)) < 2:
         LOGGER.info("calibration skipped reason=single_class samples=%d", len(labels))
         return None
+
+    num_classes = int(outputs.get("num_classes", 2))
+    if num_classes != 2:
+        # ── Temperature Scaling pour mode ternaire (2026-06-25) ──
+        LOGGER.info(
+            "calibration mode=temperature_scaling classes=%d samples=%d",
+            num_classes, len(labels),
+        )
+        logits = outputs["logits"]
+        # Les labels sont {-1, 0, 1} → shifter vers {0, 1, 2}
+        labels_shifted = labels + 1
+        scaler = TemperatureScaler(max_iter=cfg.calibration.max_iter)
+        return scaler.fit(logits, labels_shifted)
+
+    margins = outputs["margins"]
     calibrator = PlattCalibrator(max_iter=cfg.calibration.max_iter)
     return calibrator.fit(margins, labels)
 
@@ -640,7 +653,7 @@ def _evaluate_best_checkpoint(
     val_frame: "pd.DataFrame | None",
     test_frame: "pd.DataFrame | None",
     cfg: TrainingConfig,
- ) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | None, dict[str, Any], float]:
+ ) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | TemperatureScaler | None, dict[str, Any], float]:
     model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
     device = torch.device("cpu")
     val_outputs = _collect_outputs(
