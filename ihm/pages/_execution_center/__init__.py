@@ -123,6 +123,15 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_VXN,
     DEFAULT_ML_INCLUDE_MACRO_VIX3M,
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
+    DEFAULT_ML_ENABLE_LIGHTGBM,
+    DEFAULT_ML_ENABLE_CATBOOST,
+    DEFAULT_ML_ENABLE_GLOBAL_MODEL,
+    DEFAULT_ML_GLOBAL_MODEL_NAME,
+    DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
+    DEFAULT_ML_SELECT_CHAMPION,
+    DEFAULT_ML_CHAMPION_SELECTION_METRIC,
+    DEFAULT_ML_OPTIMIZE_THRESHOLDS,
+    DEFAULT_ML_OPTIMIZE_TARGET,
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
@@ -3224,6 +3233,18 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_short_score",
                 help="Ajoute `--include-short-score` pour intégrer le score baissier composite (trend+RSI+SMA) comme feature ML indépendante.",
             )
+            ml_enable_lightgbm = st.checkbox(
+                "Entraîner aussi LightGBM (challenger)",
+                value=_session_state_bool("pipeline_ml_enable_lightgbm", DEFAULT_ML_ENABLE_LIGHTGBM),
+                key="pipeline_ml_enable_lightgbm",
+                help="Ajoute `--compare-lightgbm`. LightGBM excelle sur données tabulaires peu profondes.",
+            )
+            ml_enable_catboost = st.checkbox(
+                "Entraîner aussi CatBoost (challenger)",
+                value=_session_state_bool("pipeline_ml_enable_catboost", DEFAULT_ML_ENABLE_CATBOOST),
+                key="pipeline_ml_enable_catboost",
+                help="Ajoute `--enable-catboost`. CatBoost gère bien les features catégorielles et le faible volume de données.",
+            )
         with ml_opt_col2:
             ml_include_macro_vix = st.checkbox(
                 "📊 VIX/VIX9D (volatilité S&P 500)",
@@ -4044,6 +4065,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_vxn=bool(ml_include_macro_vxn),
             ml_include_macro_vix3m=bool(ml_include_macro_vix3m),
             ml_include_macro_move=bool(ml_include_macro_move),
+            # ML challengers & advanced (widgets IHM câblés)
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),

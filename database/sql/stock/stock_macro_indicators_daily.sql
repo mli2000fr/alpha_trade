@@ -27,21 +27,3 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_macro_indicators_daily (
     INDEX idx_stock_macro_indicators_daily_rvx (rvx),
     INDEX idx_stock_macro_indicators_daily_ten_y (ten_y)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Historique quotidien des indicateurs macro et snapshots Régime Marché';
-
-
-
-
-
--- Ajout des 4 colonnes de volatilité implicite
-ALTER TABLE stock_macro_indicators_daily
-  ADD COLUMN vxn   DOUBLE DEFAULT NULL COMMENT 'Nasdaq-100 Volatility Index (CBOE VXN)',
-  ADD COLUMN vix3m DOUBLE DEFAULT NULL COMMENT 'VIX 3-Month (term structure, contango/backwardation)',
-  ADD COLUMN move  DOUBLE DEFAULT NULL COMMENT 'ICE BofA Bond Volatility Index (MOVE)',
-  ADD COLUMN rvx   DOUBLE DEFAULT NULL COMMENT 'Russell 2000 Volatility Index (CBOE RVX)';
-
--- Index pour les requêtes PIT (asof / strict_before)
-CREATE INDEX idx_stock_macro_indicators_daily_vxn   ON stock_macro_indicators_daily (vxn);
-CREATE INDEX idx_stock_macro_indicators_daily_vix3m ON stock_macro_indicators_daily (vix3m);
-CREATE INDEX idx_stock_macro_indicators_daily_move  ON stock_macro_indicators_daily (move);
-CREATE INDEX idx_stock_macro_indicators_daily_rvx   ON stock_macro_indicators_daily (rvx);
-
