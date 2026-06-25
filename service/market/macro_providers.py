@@ -46,6 +46,10 @@ _DEFAULT_STOOQ_SYMBOLS = {
 _DEFAULT_EODHD_SYMBOLS = {
     "vix": "VIX.INDX",
     "vix_short": "VIX9D.INDX",
+    "vxn": "VXN.INDX",         # Nasdaq-100 Volatility Index
+    "vix3m": "VIX3M.INDX",     # VIX 3-Month (term structure)
+    "move": "MOVE.INDX",       # ICE BofA Bond Volatility Index
+    "rvx": "RVX.INDX",         # Russell 2000 Volatility Index (Small Caps)
     "us10y": "US10Y.INDX",
 }
 _DEFAULT_FRED_SERIES = {
@@ -147,6 +151,14 @@ def _signal_key_for_method(method: str) -> str | None:
         return "vix"
     if method == "get_vix_short_term_close":
         return "vix_short"
+    if method == "get_vxn_close":
+        return "vxn"
+    if method == "get_vix3m_close":
+        return "vix3m"
+    if method == "get_move_close":
+        return "move"
+    if method == "get_rvx_close":
+        return "rvx"
     if method == "get_us10y_history":
         return "yield_10y"
     return None
@@ -198,7 +210,7 @@ def _log_successful_fetch(*, provider_name: str, key: str, symbol: str, trade_da
             last_close = parsed_close
     if last_date is None or last_close is None:
         return
-    level = logging.INFO if key in {"vix", "vix_short", "us10y"} else logging.DEBUG
+    level = logging.INFO if key in {"vix", "vix_short", "vxn", "vix3m", "move", "rvx", "us10y"} else logging.DEBUG
     LOGGER.log(
         level,
         "%s: fetch %s ok key=%s trade_date=%s rows=%d last_date=%s last_close=%.4f",
@@ -365,6 +377,23 @@ class StooqMacroProvider:
             self._last_source_by_signal.pop("yield_10y", None)
         return value
 
+    # Stooq ne couvre pas VXN, VIX3M, MOVE, RVX
+    def get_vxn_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("vxn", None)
+        return None
+
+    def get_vix3m_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("vix3m", None)
+        return None
+
+    def get_move_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("move", None)
+        return None
+
+    def get_rvx_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("rvx", None)
+        return None
+
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
 
@@ -478,6 +507,42 @@ class EodhdMacroProvider:
             self._last_source_by_signal.pop("yield_10y", None)
         return value
 
+    def get_vxn_close(self, trade_date: date) -> float | None:
+        bars = self._fetch("vxn", trade_date, _CLOSE_LOOKBACK_DAYS)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["vxn"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("vxn", None)
+        return value
+
+    def get_vix3m_close(self, trade_date: date) -> float | None:
+        bars = self._fetch("vix3m", trade_date, _CLOSE_LOOKBACK_DAYS)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["vix3m"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("vix3m", None)
+        return value
+
+    def get_move_close(self, trade_date: date) -> float | None:
+        bars = self._fetch("move", trade_date, _CLOSE_LOOKBACK_DAYS)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["move"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("move", None)
+        return value
+
+    def get_rvx_close(self, trade_date: date) -> float | None:
+        bars = self._fetch("rvx", trade_date, _CLOSE_LOOKBACK_DAYS)
+        value = _last_close(bars, trade_date)
+        if value is not None:
+            self._last_source_by_signal["rvx"] = self.source_name
+        else:
+            self._last_source_by_signal.pop("rvx", None)
+        return value
+
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
 
@@ -564,6 +629,23 @@ class FredMacroProvider:
 
     def get_vix_short_term_close(self, trade_date: date) -> float | None:
         self._last_source_by_signal.pop("vix_short", None)
+        return None
+
+    # FRED ne couvre pas VXN, VIX3M, MOVE, RVX
+    def get_vxn_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("vxn", None)
+        return None
+
+    def get_vix3m_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("vix3m", None)
+        return None
+
+    def get_move_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("move", None)
+        return None
+
+    def get_rvx_close(self, trade_date: date) -> float | None:
+        self._last_source_by_signal.pop("rvx", None)
         return None
 
     def get_us10y_history(self, trade_date: date, lookback_days: int) -> list[float] | None:
@@ -662,6 +744,55 @@ class RoutedMacroProvider:
             return None
         value = _extract_latest_10y_close(provider, trade_date)
         self._record_source("yield_10y", provider, value)
+        return value
+
+    # --- VXN / VIX3M / MOVE / RVX : routés vers le provider primaire ---
+    def get_vxn_close(self, trade_date: date) -> float | None:
+        provider = self._vix_provider
+        if provider is None:
+            self._last_source_by_signal.pop("vxn", None)
+            return None
+        try:
+            value = provider.get_vxn_close(trade_date)
+        except Exception:
+            value = None
+        self._record_source("vxn", provider, value)
+        return value
+
+    def get_vix3m_close(self, trade_date: date) -> float | None:
+        provider = self._vix_provider
+        if provider is None:
+            self._last_source_by_signal.pop("vix3m", None)
+            return None
+        try:
+            value = provider.get_vix3m_close(trade_date)
+        except Exception:
+            value = None
+        self._record_source("vix3m", provider, value)
+        return value
+
+    def get_move_close(self, trade_date: date) -> float | None:
+        provider = self._vix_provider
+        if provider is None:
+            self._last_source_by_signal.pop("move", None)
+            return None
+        try:
+            value = provider.get_move_close(trade_date)
+        except Exception:
+            value = None
+        self._record_source("move", provider, value)
+        return value
+
+    def get_rvx_close(self, trade_date: date) -> float | None:
+        provider = self._vix_provider
+        if provider is None:
+            self._last_source_by_signal.pop("rvx", None)
+            return None
+        try:
+            value = provider.get_rvx_close(trade_date)
+        except Exception:
+            value = None
+        self._record_source("rvx", provider, value)
         return value
 
     def get_macro_source_summary(self) -> dict[str, Any]:
@@ -827,6 +958,74 @@ class TableFirstMacroProvider:
         self._record_source("yield_10y", None)
         return None
 
+    # --- VXN / VIX3M / MOVE / RVX : cache DB + fallback réseau ---
+    def _get_cached_or_fallback(
+        self,
+        trade_date: date,
+        *,
+        db_column: str,
+        signal_key: str,
+        provider_method: str,
+        persist_value_key: str,
+    ) -> float | None:
+        """Pattern générique : lit la colonne DB, sinon fallback provider."""
+        row = self._load_cached_row(trade_date)
+        cached_value = _coerce_float(row.get(db_column)) if row else None
+        if cached_value is not None:
+            self._record_source(signal_key, self.source_name)
+            return cached_value
+        provider = self._provider
+        if provider is None:
+            self._record_source(signal_key, None)
+            return None
+        provider_trade_date = _resolve_provider_trade_date(trade_date, strict_before=self._strict_before)
+        try:
+            value = getattr(provider, provider_method)(provider_trade_date)
+        except Exception:
+            value = None
+        if value is not None:
+            self._persist_fallback_value(trade_date=provider_trade_date, value_key=persist_value_key, value=value)
+            self._record_source(signal_key, _resolve_signal_source(provider, signal_key))
+            return value
+        self._record_source(signal_key, None)
+        return None
+
+    def get_vxn_close(self, trade_date: date) -> float | None:
+        return self._get_cached_or_fallback(
+            trade_date,
+            db_column="vxn",
+            signal_key="vxn",
+            provider_method="get_vxn_close",
+            persist_value_key="vxn",
+        )
+
+    def get_vix3m_close(self, trade_date: date) -> float | None:
+        return self._get_cached_or_fallback(
+            trade_date,
+            db_column="vix3m",
+            signal_key="vix3m",
+            provider_method="get_vix3m_close",
+            persist_value_key="vix3m",
+        )
+
+    def get_move_close(self, trade_date: date) -> float | None:
+        return self._get_cached_or_fallback(
+            trade_date,
+            db_column="move",
+            signal_key="move",
+            provider_method="get_move_close",
+            persist_value_key="move",
+        )
+
+    def get_rvx_close(self, trade_date: date) -> float | None:
+        return self._get_cached_or_fallback(
+            trade_date,
+            db_column="rvx",
+            signal_key="rvx",
+            provider_method="get_rvx_close",
+            persist_value_key="rvx",
+        )
+
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
 
@@ -870,6 +1069,18 @@ class CompositeMacroProvider:
 
     def get_us10y_close(self, trade_date: date) -> float | None:
         return self._first_non_none("get_us10y_close", trade_date)
+
+    def get_vxn_close(self, trade_date: date) -> float | None:
+        return self._first_non_none("get_vxn_close", trade_date)
+
+    def get_vix3m_close(self, trade_date: date) -> float | None:
+        return self._first_non_none("get_vix3m_close", trade_date)
+
+    def get_move_close(self, trade_date: date) -> float | None:
+        return self._first_non_none("get_move_close", trade_date)
+
+    def get_rvx_close(self, trade_date: date) -> float | None:
+        return self._first_non_none("get_rvx_close", trade_date)
 
     def get_macro_source_summary(self) -> dict[str, Any]:
         return _build_source_summary(self._last_source_by_signal)
@@ -935,6 +1146,10 @@ def _build_network_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | N
 
     vix_sym = (cfg.get("vix") or {}).get("symbol")
     vix_short_sym = (cfg.get("vix") or {}).get("short_symbol")
+    vxn_sym = (cfg.get("vxn") or {}).get("symbol")
+    vix3m_sym = (cfg.get("vix3m") or {}).get("symbol")
+    move_sym = (cfg.get("move") or {}).get("symbol")
+    rvx_sym = (cfg.get("rvx") or {}).get("symbol")
     y10_sym = (cfg.get("yields") or {}).get("symbol_10y")
 
     stooq_overrides: dict[str, str] = {}
@@ -949,6 +1164,14 @@ def _build_network_macro_provider(yaml_cfg: Mapping[str, Any] | None) -> Any | N
             stooq_overrides["vix_short"] = str(vix_short_sym)
         else:
             eodhd_overrides["vix_short"] = str(vix_short_sym) if "." in str(vix_short_sym) else f"{vix_short_sym}.INDX"
+    if vxn_sym:
+        eodhd_overrides["vxn"] = str(vxn_sym) if "." in str(vxn_sym) else f"{vxn_sym}.INDX"
+    if vix3m_sym:
+        eodhd_overrides["vix3m"] = str(vix3m_sym) if "." in str(vix3m_sym) else f"{vix3m_sym}.INDX"
+    if move_sym:
+        eodhd_overrides["move"] = str(move_sym) if "." in str(move_sym) else f"{move_sym}.INDX"
+    if rvx_sym:
+        eodhd_overrides["rvx"] = str(rvx_sym) if "." in str(rvx_sym) else f"{rvx_sym}.INDX"
     if y10_sym:
         if str(y10_sym).startswith("^"):
             stooq_overrides["us10y"] = str(y10_sym)

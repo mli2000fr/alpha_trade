@@ -11,7 +11,7 @@ from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, MetaData
 from database.connection import get_sqlalchemy_engine
 
 LOGGER = logging.getLogger(__name__)
-_ALLOWED_MACRO_COLUMNS = {"vix", "vix9d", "ten_y"}
+_ALLOWED_MACRO_COLUMNS = {"vix", "vix9d", "ten_y", "vxn", "vix3m", "move", "rvx"}
 
 
 @lru_cache(maxsize=1)
@@ -23,6 +23,10 @@ def get_macro_indicators_daily_table() -> Table:
         Column("trade_date", Date, primary_key=True),
         Column("vix", Float, nullable=True),
         Column("vix9d", Float, nullable=True),
+        Column("vxn", Float, nullable=True),
+        Column("vix3m", Float, nullable=True),
+        Column("move", Float, nullable=True),
+        Column("rvx", Float, nullable=True),
         Column("ten_y", Float, nullable=True),
         Column("mode", String(32), nullable=True),
         Column("risk_multiplier", Float, nullable=True),
@@ -120,6 +124,10 @@ def persist_macro_indicator_daily(
     trade_date: Any,
     vix: Any = None,
     vix9d: Any = None,
+    vxn: Any = None,
+    vix3m: Any = None,
+    move: Any = None,
+    rvx: Any = None,
     ten_y: Any = None,
     mode: Any = None,
     risk_multiplier: Any = None,
@@ -140,6 +148,10 @@ def persist_macro_indicator_daily(
         "trade_date": resolved_trade_date,
         "vix": _coerce_float(vix),
         "vix9d": _coerce_float(vix9d),
+        "vxn": _coerce_float(vxn),
+        "vix3m": _coerce_float(vix3m),
+        "move": _coerce_float(move),
+        "rvx": _coerce_float(rvx),
         "ten_y": _coerce_float(ten_y),
         "mode": _coerce_str(mode),
         "risk_multiplier": _coerce_float(risk_multiplier),
@@ -202,6 +214,10 @@ def load_macro_indicator_daily_asof(
             table.c.trade_date,
             table.c.vix,
             table.c.vix9d,
+            table.c.vxn,
+            table.c.vix3m,
+            table.c.move,
+            table.c.rvx,
             table.c.ten_y,
             table.c.mode,
             table.c.risk_multiplier,
@@ -293,6 +309,10 @@ def persist_market_macro_snapshot_daily(
             trade_date=trade_date,
             vix=_value(("vix",), ("macro", "vix")),
             vix9d=_value(("vix9d",), ("vix_short",), ("macro", "vix_short")),
+            vxn=_value(("vxn",), ("macro", "vxn")),
+            vix3m=_value(("vix3m",), ("macro", "vix3m")),
+            move=_value(("move",), ("macro", "move")),
+            rvx=_value(("rvx",), ("macro", "rvx")),
             ten_y=_value(("ten_y",), ("yield_10y",), ("macro", "yield_10y")),
             mode=_value(("mode",)),
             risk_multiplier=_value(("risk_multiplier",)),
