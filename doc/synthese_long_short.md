@@ -252,7 +252,7 @@ Si le signal sentiment n'est **pas actif** (pas assez de news), on utilise **0.5
 - **Macro** : IC ≈ 0, t-stat ≈ 0 → **aucun pouvoir prédictif**
 - **Quant** : IC ≈ 0.03, t-stat ≈ 2.5 → **seul signal significatif**
 
-Donc **en production, le sentiment n'a pas d'impact par défaut**. Les poids sont laissés configurables pour exploration/calibration.
+Donc **en production, le sentiment et les features macro (VXN, VIX3M, MOVE, RVX) n'ont pas d'impact par défaut**. Les poids sont laissés configurables pour exploration/calibration. Les nouveaux indicateurs de volatilité (VXN, VIX3M, MOVE) sont disponibles comme features ML optionnelles depuis le Sprint 2026-06-25 (checkboxes IHM, désactivées par défaut).
 
 #### Fichiers clés :
 - `event_sentiment/signal_aggregator.py` — `SentimentSignalAggregator`, `SentimentBoostConfig`
@@ -261,6 +261,27 @@ Donc **en production, le sentiment n'a pas d'impact par défaut**. Les poids son
 ---
 
 ## 3. RÉGIME DE MARCHÉ — Impact sur les scores 🟢🔵 BOTH
+
+### 3.0 Indicateurs Macro de Volatilité (Sprint 2026-06-25)
+
+Depuis le 2026-06-25, le `RegimeManager` intègre **8 indicateurs macro** (contre 3 auparavant) :
+
+| Indicateur | Source | Seuil | Impact sur le régime |
+|-----------|--------|-------|---------------------|
+| **VIX** | `VIX.INDX` (CBOE) | ≥ 25 → capital_preservation | Volatilité S&P 500 |
+| **VIX9D** | `VIX9D.INDX` | Inversion courbe (VIX9D > VIX) | Stress court terme |
+| **VXN** | `VXN.INDX` (CBOE) | ≥ 23 → capital_preservation | Volatilité NASDAQ-100 |
+| **VIX3M** | `VIX3M.INDX` | Ratio VIX/VIX3M > 1 → backwardation | Term structure : panique court terme |
+| **MOVE** | `MOVE.INDX` (ICE BofA) | ≥ 120 → capital_preservation | Volatilité obligataire US |
+| **RVX** | `RVX.INDX` (CBOE) | ≥ 30 → capital_preservation | Volatilité Russell 2000 (Small Caps) |
+| **US10Y** | `US10Y.INDX` / FRED `DGS10` | Variation 5j anormale | Taux souverain US |
+| **Sentiment** | `ticker_daily_sentiment_features` | Score < −0.15 → warning | Circuit breaker sentiment |
+
+Ces indicateurs sont stockés dans **`stock_macro_indicators_daily`** — la source unique de vérité pour le LIVE et le BACKTEST. Le `TableFirstMacroProvider` lit d'abord la DB (cache), avec fallback EODHD en cas d'absence.
+
+**Backfill** : l'IHM `📊 Régime Marché` permet de réalimenter la table via `populate_macro_indicators_table()` sur une plage de dates.
+
+**ML** : les 4 nouveaux indicateurs (VXN, VIX3M, MOVE, RVX) sont disponibles comme features macro pour l'entraînement LSTM via des checkboxes dans l'IHM `Exécution → Model Factory`. Désactivés par défaut (`False`), activables individuellement.
 
 ### 3.1 Poids directionnels par régime (`selector/regime_scoring.py`)
 
@@ -1309,6 +1330,11 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 | `selector/short_score.py` | 🟢 LIVE | Score baissier dédié pour shorts |
 | `selector/factors.py` | 🟢 LIVE | Calcul facteurs techniques (trend, VCP, MA, ATR, beta) |
 | `selector/regime_scoring.py` | 🟢 LIVE | Ajustement des poids selon régime de marché |
+| `service/market/regime_manager.py` | 🟢🔵 BOTH | Construction du snapshot de régime (VIX/VXN/VIX3M/MOVE/RVX/Yields/Sentiment) |
+| `service/market/macro_providers.py` | 🟢🔵 BOTH | Providers macro (EODHD/Stooq/FRED/Composite/TableFirst) — 8 indicateurs |
+| `service/market/macro_signals.py` | 🟢🔵 BOTH | Protocol `MacroDataProvider`, `evaluate_vxn()`, `evaluate_vix_term_structure()` |
+| `service/market/config.py` | 🟢🔵 BOTH | Configuration `MarketRegimesConfig` (VxnConfig, Vix3mConfig, MoveConfig, RvxConfig) |
+| `database/macro_indicators.py` | 🟢🔵 BOTH | Schéma `stock_macro_indicators_daily` (+vxn/+vix3m/+move/+rvx) |
 | `core/conviction.py` | 🟢🔵 BOTH | Formule de fusion conviction (quant+ML+sentiment) |
 | `event_sentiment/signal_aggregator.py` | 🟢 LIVE | Fusion scores quant + sentiment → final_score_sentiment |
 | `event_sentiment/scoring.py` | 🟢 LIVE | FinBERT sentiment scoring |
@@ -1337,5 +1363,5 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 
 ---
 
-> **Dernière mise à jour** : 2026-06-25
+> **Dernière mise à jour** : 2026-06-25 (Sprint VXN/VIX3M/MOVE/RVX — 8 indicateurs macro, 30 tests)
 > **Prochaine mise à jour** : après discussion continue

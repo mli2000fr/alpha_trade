@@ -1,9 +1,12 @@
 # Plan d'Action Détaillé — Intégration VXN, VIX3M, MOVE, RVX dans Alpha Trade
 
 **Date :** 2026-06-25
-**Statut :** Plan validé, prêt pour implémentation
+**Statut :** ✅ **IMPLÉMENTÉ** — Toutes les étapes 1-8 sont terminées
 **Module principal :** `service/market/` (macro providers + regime manager)
 **Modules impactés :** `modelFactory/`, `ihm/`, `database/`
+
+> **Résumé d'exécution :** 30 tests unitaires, 16 fichiers modifiés, 3 fichiers créés.
+> Détail dans `/memories/session/progress_final.md`.
 
 ---
 
@@ -618,7 +621,22 @@ Entraîner 5 modèles et comparer les métriques :
 
 ---
 
-## 📊 Tableau récapitulatif des fichiers modifiés
+## ✅ Statut d'implémentation (2026-06-25)
+
+| Étape | Statut | Fichiers |
+|-------|--------|----------|
+| 1. Protocol + Providers | ✅ Terminé | `macro_signals.py`, `macro_providers.py` |
+| 2. Base de données | ✅ Terminé | `0043_*.py`, `macro_indicators.py`, SQL |
+| 3. Configuration | ✅ Terminé | `config.py`, `config.yaml` |
+| 4. Logique Régime | ✅ Terminé | `regime_manager.py` |
+| 5. Features ML | ✅ Terminé | `modelFactory/config.py`, `cli.py`, `features.py`, `dataset.py` |
+| 6. IHM Streamlit | ✅ Terminé | `_execution_center/__init__.py`, `market_regime.py`, `pipeline_runner.py`, `pipeline_ml_defaults.py` |
+| 7. Backfill | ✅ Terminé | `macro_providers.py` (row_payload), `market_regime.py` (IHM) |
+| 8. Tests | ✅ Terminé | `test_macro_signals.py` (nouveau, 10 tests), `test_macro_providers.py` (+10 tests), `test_regime_manager.py` (nouveau, 10 tests) |
+
+**Total : 30 tests, 16 fichiers modifiés, 3 créés.**
+
+---
 
 | Fichier | Modification | Effort |
 |---------|-------------|--------|

@@ -937,3 +937,224 @@ def test_recompute_macro_regime_table_threads_previous_state_between_sessions(mo
         engine.dispose()
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Sprint 2026-06-25 — Nouveaux indicateurs VXN / VIX3M / MOVE / RVX
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_eodhd_default_symbols_include_vxn_vix3m_move_rvx():
+    """Vérifie que les symboles par défaut incluent les 4 nouveaux indices."""
+    from service.market.macro_providers import EodhdMacroProvider
+    p = EodhdMacroProvider()
+    assert p._symbols["vxn"] == "VXN.INDX"
+    assert p._symbols["vix3m"] == "VIX3M.INDX"
+    assert p._symbols["move"] == "MOVE.INDX"
+    assert p._symbols["rvx"] == "RVX.INDX"
+
+
+def test_eodhd_get_vxn_close_returns_last_close(monkeypatch):
+    """Mock EODHD → get_vxn_close retourne la valeur correcte."""
+    payload = [
+        {"date": "2025-06-20", "close": 18.0},
+        {"date": "2025-06-23", "close": 22.5},
+        {"date": "2025-06-25", "close": 25.3},
+    ]
+
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        if symbol == "VXN.INDX":
+            return payload
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+    d = date(2025, 6, 25)
+    assert p.get_vxn_close(d) == pytest.approx(25.3)
+
+
+def test_eodhd_get_vix3m_close_returns_last_close(monkeypatch):
+    payload = [
+        {"date": "2025-06-23", "close": 20.1},
+        {"date": "2025-06-25", "close": 20.5},
+    ]
+
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        if symbol == "VIX3M.INDX":
+            return payload
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+    assert p.get_vix3m_close(date(2025, 6, 25)) == pytest.approx(20.5)
+
+
+def test_eodhd_get_move_close_returns_last_close(monkeypatch):
+    payload = [
+        {"date": "2025-06-24", "close": 105.0},
+        {"date": "2025-06-25", "close": 115.7},
+    ]
+
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        if symbol == "MOVE.INDX":
+            return payload
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+    assert p.get_move_close(date(2025, 6, 25)) == pytest.approx(115.7)
+
+
+def test_eodhd_get_rvx_close_returns_last_close(monkeypatch):
+    payload = [
+        {"date": "2025-06-25", "close": 28.5},
+    ]
+
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        if symbol == "RVX.INDX":
+            return payload
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+    assert p.get_rvx_close(date(2025, 6, 25)) == pytest.approx(28.5)
+
+
+def test_stooq_returns_none_for_all_new_indicators():
+    """Stooq ne supporte pas VXN/VIX3M/MOVE/RVX."""
+    p = StooqMacroProvider()
+    d = date(2025, 6, 25)
+    assert p.get_vxn_close(d) is None
+    assert p.get_vix3m_close(d) is None
+    assert p.get_move_close(d) is None
+    assert p.get_rvx_close(d) is None
+
+
+def test_fred_returns_none_for_all_new_indicators():
+    """FRED ne supporte pas VXN/VIX3M/MOVE/RVX."""
+    p = FredMacroProvider()
+    d = date(2025, 6, 25)
+    assert p.get_vxn_close(d) is None
+    assert p.get_vix3m_close(d) is None
+    assert p.get_move_close(d) is None
+    assert p.get_rvx_close(d) is None
+
+
+def test_composite_routes_new_indicators():
+    """CompositeMacroProvider route correctement VXN/VIX3M/MOVE/RVX."""
+    class P1:
+        def get_vxn_close(self, d): return None
+        def get_vix3m_close(self, d): return None
+        def get_move_close(self, d): return None
+        def get_rvx_close(self, d): return None
+
+    class P2:
+        def get_vxn_close(self, d): return 22.0
+        def get_vix3m_close(self, d): return 19.0
+        def get_move_close(self, d): return 110.0
+        def get_rvx_close(self, d): return 27.0
+
+    cp = CompositeMacroProvider([P1(), P2()])
+    d = date(2025, 6, 25)
+    assert cp.get_vxn_close(d) == pytest.approx(22.0)
+    assert cp.get_vix3m_close(d) == pytest.approx(19.0)
+    assert cp.get_move_close(d) == pytest.approx(110.0)
+    assert cp.get_rvx_close(d) == pytest.approx(27.0)
+
+
+def test_source_summary_includes_new_signals(monkeypatch):
+    """Verifie que get_macro_source_summary() inclut vxn/vix3m/move."""
+    payload_vxn = [{"date": "2025-06-25", "close": 22.0}]
+    payload_vix3m = [{"date": "2025-06-25", "close": 19.0}]
+
+    def fake_fetch(symbol, *, start=None, end=None, **kwargs):
+        if symbol == "VXN.INDX":
+            return payload_vxn
+        if symbol == "VIX3M.INDX":
+            return payload_vix3m
+        return []
+
+    monkeypatch.setattr("service.eodhd.clientEodhd.fetch_eod", fake_fetch)
+    p = EodhdMacroProvider()
+    d = date(2025, 6, 25)
+
+    assert p.get_vxn_close(d) == pytest.approx(22.0)
+    assert p.get_vix3m_close(d) == pytest.approx(19.0)
+    summary = p.get_macro_source_summary()
+    assert summary["source_by_signal"]["vxn"] == "eodhd"
+    assert summary["source_by_signal"]["vix3m"] == "eodhd"
+
+
+def test_factory_uses_config_symbols_for_new_indicators():
+    """build_default_macro_provider lit config.yaml pour les nouveaux symboles."""
+    p = build_default_macro_provider({
+        "market_regimes": {
+            "macro_provider": "eodhd",
+            "vix": {"symbol": "VIX.INDX"},
+            "vxn": {"symbol": "VXN.INDX"},
+            "vix3m": {"symbol": "VIX3M.INDX"},
+            "move": {"symbol": "MOVE.INDX"},
+            "rvx": {"symbol": "RVX.INDX"},
+        }
+    })
+    assert isinstance(p, TableFirstMacroProvider)
+    inner = p._provider
+    assert isinstance(inner, EodhdMacroProvider)
+    assert inner._symbols["vxn"] == "VXN.INDX"
+    assert inner._symbols["vix3m"] == "VIX3M.INDX"
+    assert inner._symbols["move"] == "MOVE.INDX"
+    assert inner._symbols["rvx"] == "RVX.INDX"
+
+
+def test_table_first_provider_fallback_persists_new_indicators() -> None:
+    """TableFirstMacroProvider persiste vxn/vix3m/move en fallback."""
+    from database.macro_indicators import (
+        get_macro_indicators_daily_table,
+        load_macro_indicator_daily_asof,
+    )
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        table = get_macro_indicators_daily_table()
+        table.metadata.create_all(engine)
+
+        class _FallbackProvider:
+            source_name = "eodhd"
+
+            def get_vix_close(self, trade_date):
+                return None
+
+            def get_vix_short_term_close(self, trade_date):
+                return None
+
+            def get_us10y_history(self, trade_date, lookback_days):
+                return None
+
+            def get_vxn_close(self, trade_date):
+                return 25.3
+
+            def get_vix3m_close(self, trade_date):
+                return 20.5
+
+            def get_move_close(self, trade_date):
+                return 115.7
+
+            def get_rvx_close(self, trade_date):
+                return None
+
+        provider = TableFirstMacroProvider(_FallbackProvider(), engine=engine)
+        d = date(2025, 6, 25)
+
+        assert provider.get_vxn_close(d) == pytest.approx(25.3)
+        assert provider.get_vix3m_close(d) == pytest.approx(20.5)
+        assert provider.get_move_close(d) == pytest.approx(115.7)
+        assert provider.get_rvx_close(d) is None
+
+        row = load_macro_indicator_daily_asof(trade_date=d, engine=engine)
+        assert row is not None
+        assert row["vxn"] == 25.3
+        assert row["vix3m"] == 20.5
+        assert row["move"] == 115.7
+        assert row.get("rvx") is None
+    finally:
+        engine.dispose()
+
+
