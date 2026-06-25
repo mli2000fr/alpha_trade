@@ -142,35 +142,24 @@ def _recompute_regime_table(start_date: _date, end_date: _date, equity: float | 
 
 
 def _format_macro_import_command(start_date: _date, end_date: _date) -> str:
-    return "\n".join([
-        "from datetime import date",
-        "",
-        "from common.config_loader import load_config",
-        "from service.market import populate_macro_indicators_table",
-        "",
-        "populate_macro_indicators_table(",
-        f"    start_date=date.fromisoformat('{start_date.isoformat()}'),",
-        f"    end_date=date.fromisoformat('{end_date.isoformat()}'),",
-        "    yaml_cfg=load_config() or {},",
-        ")",
+    import sys
+    return " ".join([
+        sys.executable, "-u", "-m", "service.market", "populate-macro",
+        "--start", start_date.isoformat(),
+        "--end", end_date.isoformat(),
     ])
 
 
 def _format_regime_recompute_command(start_date: _date, end_date: _date, equity: float | None) -> str:
-    equity_expr = "None" if not equity else repr(float(equity))
-    return "\n".join([
-        "from datetime import date",
-        "",
-        "from common.config_loader import load_config",
-        "from service.market import recompute_macro_regime_table",
-        "",
-        "recompute_macro_regime_table(",
-        f"    start_date=date.fromisoformat('{start_date.isoformat()}'),",
-        f"    end_date=date.fromisoformat('{end_date.isoformat()}'),",
-        "    yaml_cfg=load_config() or {},",
-        f"    equity={equity_expr},",
-        ")",
-    ])
+    import sys
+    parts = [
+        sys.executable, "-u", "-m", "service.market", "recompute-regime",
+        "--start", start_date.isoformat(),
+        "--end", end_date.isoformat(),
+    ]
+    if equity:
+        parts.extend(["--equity", str(equity)])
+    return " ".join(parts)
 
 
 def _format_macro_runtime_context(yaml_cfg: dict[str, Any]) -> str:
@@ -451,6 +440,11 @@ def render() -> None:
             with st.spinner("Alimentation de `stock_macro_indicators_daily`…"):
                 st.session_state["market_regime_macro_import_summary"] = _populate_macro_table(import_start, import_end)
 
+    st.code(
+        _format_macro_import_command(import_start, import_end),
+        language="powershell",
+    )
+
     import_summary = st.session_state.get("market_regime_macro_import_summary")
     if isinstance(import_summary, dict):
         if import_summary.get("error"):
@@ -492,6 +486,11 @@ def render() -> None:
                     import_end,
                     recalc_equity_value,
                 )
+
+    st.code(
+        _format_regime_recompute_command(import_start, import_end, recalc_equity_value),
+        language="powershell",
+    )
 
     recompute_summary = st.session_state.get("market_regime_macro_recompute_summary")
     if isinstance(recompute_summary, dict):
