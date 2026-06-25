@@ -37,7 +37,7 @@
 | **2. Utilisation du sentiment** | Pipeline FinBERT → agrégation → fusion ternaire → `final_score_sentiment`, poids par défaut (sentiment=0) | 🟢 LIVE |
 | **3. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs actifs (beta/spread/mcap/ATR), ✅ filtres `regime_filters.py` câblés (earnings/buyback/yield), asymétrie long/short, shorts boostés en bear (P2) | 🟢🔵 BOTH |
 | **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
-| **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
+| **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt/Temperature), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
 | **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, **long + short depuis P2 2026-06-25**), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE` | 🟣 HYBRIDE |
 | **8. Calibration des Poids** | 3 niveaux : Conviction ✅, Sentiment ✅, Kelly ✅. IHM : onglets `📰 Calibrate sentiment`, `🎯 Calibrate conviction` (+ Kelly), `🚶 Walk-forward`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` | 🟣 HYBRIDE |
@@ -312,8 +312,6 @@ $$rotation\_active = \mathbf{1}[\, return_{cumul\_4w} < -0.03 \,]$$
 ### 3.3 Filtres de régime (`selector/regime_filters.py`) — earnings, buyback, yield
 
 ✅ **Ces filtres sont désormais câblés en production ET en backtest depuis le 2026-06-25 (P0 #4).** Ils sont appelés via `apply_full_regime_to_candidates()` dans `portfolio_builder.py` (live) et `risk_bridge.py` (backtest), appliqués dans TOUS les régimes (pas seulement défensif).
-
-> **Distinction importante** : les filtres défensifs (beta ≤ 1.2, spread ≤ 15 bps, market cap ≥ $2B, ATR% ≤ 6%) sont dans `selector/regime_scoring.py` → `apply_regime_filters()`, appelé par `apply_regime_weights()`. **Ceux-là sont bien actifs** en production et en backtest (via `portfolio_builder.py` et `risk_bridge.py`). Les filtres ci-dessous (`selector/regime_filters.py`) sont une couche **supplémentaire** non activée.
 
 | Filtre | Comportement | Impact | Actif ? |
 |--------|-------------|--------|---------|
