@@ -1171,6 +1171,17 @@ class BacktestEngine:
             # Quick Win 3 — pullback entry (direction-aware)
             # Le pullback utilise le signal_price (open) comme référence, pas le prix d'exécution
             entry_price = exec_entry_price
+
+            # ── P1 (2026-06-25) : slippage model pour backtest réaliste ──
+            trade_spread_bps = self._get_spread_bps(
+                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
+            )
+            slippage_bps = 5.0 + trade_spread_bps / 2.0
+            if is_short_side(side):
+                entry_price = entry_price * (1.0 - slippage_bps / 10_000.0)
+            else:
+                entry_price = entry_price * (1.0 + slippage_bps / 10_000.0)
+
             if cfg.entry_limit_offset_pct > 0:
                 limit_price = compute_pullback_limit_price(side, signal_price, float(cfg.entry_limit_offset_pct))
                 if is_short_side(side):

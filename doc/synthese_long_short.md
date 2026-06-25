@@ -24,7 +24,7 @@
 | **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
 | **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
 | **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter exempté. Conviction = 0.40×(1-score) + 0.60×proba_ml_short |
-| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, fills parfaits en backtest, ML trop central (60/40) |
+| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ML trop central (60/40) |
 
 ---
 
@@ -967,7 +967,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 5 | ✅ **Short_score PIT CORRIGÉ (2026-06-25)** | ~~En backfill PIT, les facteurs SMA du short_score ne sont pas calculés (`close_df=None`)~~ → Fix : `_enrich_short_score_pit()` appelle `_enrich_with_sma()` (SQL) pour injecter SMA50/200/last_close avant le calcul. Les 4 facteurs sont désormais actifs en backtest |
 | 6 | **Short non affecté par le régime** | `apply_regime_weights()` modifie `final_score` mais pas `short_score` — les shorts sont insensibles à la rotation factorielle du régime |
 | 7 | **Breakout filter long-only** | Les shorts ne passent pas par le filtre de confirmation de breakout |
-| 8 | **Fills parfaits en backtest** | `fill_price = entry_price` — pas de slippage simulé en backtest |
+| 8 | ✅ **Fills avec slippage model (2026-06-25)** | ~~`fill_price = entry_price` — pas de slippage simulé en backtest~~ → Fix : slippage model ajouté dans `_try_open_entries()` : `entry_price × (1 ± (5 + spread_bps/2) / 10000)`. Longs = plus chers, shorts = moins chers (worse fill) |
 | 9 | **Concentration trackers non persistés en backtest** | Trackers frais par run → pas de mémoire cross-run des trades passés |
 | 10 | ⚠️ **Conviction : ML trop central (60% ML, 40% quant)** | Le LSTM sur actions individuelles a beaucoup de bruit, peu de signal stable, et change de régime. Risque d'apprendre la volatilité récente ou des patterns temporaires. Le ML devrait être un **filtre de qualité**, pas le moteur principal |
 | 11 | ⚠️ **LSTM par symbole = risque de données insuffisantes** | Chaque symbole a son propre modèle (AAPL→modèle, MSFT→modèle…). Un modèle individuel manque souvent de données d'entraînement. Une approche globale avec ticker embedding (secteur, market cap, beta) serait plus robuste |
@@ -984,7 +984,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 5 | ✅ **Short_score PIT CORRIGÉ** | ~~En backtest, le short_score est amputé de 45% de sa formule (SMA50 + SMA200 = 0.45 du poids). Le score short backtesté n'est pas le même que le score short live~~ → **RÉSOLU** : `_enrich_short_score_pit()` enrichit désormais avec `_enrich_with_sma()` avant le calcul. Backtest short fidèle au live | **Backtest fidèle** : ✅ fait — le backtest short reflète maintenant la réalité live avec les 4 facteurs |
 | 6 | **Short non affecté par le régime** | En marché baissier, les longs passent en mode défensif mais les shorts restent inchangés. Pourtant, shorter en bear market est plus facile — on pourrait être plus agressif | **Adaptation tactique** : en capital_preservation, on pourrait baisser le min_score_short (plus facile d'entrer) ou augmenter le max_positions_short (plus d'opportunités) |
 | 7 | **Breakout filter long-only** | Les shorts peuvent entrer sur un faux signal baissier d'un seul jour, sans confirmation de tendance. Les longs ont une protection anti-faux-départs que les shorts n'ont pas | **Qualité shorts** : réduire les entrées short sur des mouvements baissiers non confirmés → moins de whipsaws, meilleur hit_rate short |
-| 8 | **Fills parfaits en backtest** | Le backtest suppose un fill au prix d'ouverture J+1 sans slippage. En réalité, le slippage peut coûter 5-20 bps par trade, surtout sur les small caps | **Backtest réaliste** : intégrer un slippage model simple (ex: 5 bps + spread/2) rendrait les métriques backtest plus proches du live, éviterait les stratégies non rentables après coûts |
+| 8 | ✅ **Slippage model backtest** | ~~Le backtest suppose un fill au prix d'ouverture J+1 sans slippage. En réalité, le slippage peut coûter 5-20 bps par trade, surtout sur les small caps~~ → **RÉSOLU** : slippage = 5 + spread_bps/2 bps appliqué dans `_try_open_entries()`. Longs plus chers, shorts moins chers | **Backtest réaliste** : ✅ fait — les métriques backtest intègrent maintenant un coût de slippage réaliste, réduisant le Sharpe artificiellement gonflé |
 | 9 | **Concentration trackers non persistés** | Chaque run de backtest part d'une table rase. Impossible de détecter qu'un symbole a déjà été tradé 3x cette semaine — le backtest peut concentrer plus que le live | **Fidélité cross-run** : le backtest refléterait les limites de concentration réelles. Utile pour les walk-forward multi-folds où l'état des trackers devrait persister entre folds |
 | 10 | **ML trop central (60/40)** | Le ML apprend la volatilité récente, des patterns de marché temporaires, des artefacts de période. Sur des actions individuelles, le bruit domine le signal | **Robustesse** : passer à 70% quant / 30% ML, puis augmenter progressivement si l'OOS confirme. Le ML doit filtrer la qualité, pas piloter la décision |
 | 11 | **LSTM par symbole** | Chaque symbole a son modèle → AAPL, MSFT, NVDA… Mais un modèle individuel manque de données. Un GlobalModel avec ticker embedding capterait "les patterns momentum marchent différemment entre tech et utilities" | **Généralisation** : un modèle global avec embeddings (ticker, secteur, market cap, beta) apprend des relations cross-sectionnelles, pas juste l'historique d'un seul symbole |
@@ -996,7 +996,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 |----------|---|--------|--------|------|
 | ✅ FAIT | 5 | ~~Corriger le short_score PIT (SMA manquants)~~ | ~~Faible~~ — Corrigé le 2026-06-25 | ~~Fort~~ — backtest short désormais fidèle |
 | ✅ FAIT | 4 | ~~Câbler `earnings_shield` (le plus impactant des 3)~~ | ~~Moyen~~ — Câblé le 2026-06-25 | ~~Fort~~ — earnings shield actif en live + backtest |
-| 🟡 P1 | 8 | Ajouter slippage model en backtest | Faible — 5 bps + spread/2 | Moyen — backtest plus réaliste |
+| ✅ FAIT | 8 | ~~Ajouter slippage model en backtest~~ | ~~Faible~~ — Ajouté le 2026-06-25 | ~~Moyen~~ — slippage = 5 + spread_bps/2 bps |
 | 🟡 P1 | 7 | Étendre le breakout filter aux shorts | Faible — retirer l'exemption dans `portfolio_builder.py` | Moyen — meilleure qualité short |
 | 🟢 P2 | 6 | Adapter les paramètres short au régime | Moyen — ajouter logique dans `apply_regime_weights()` | Modéré — plus de shorts en bear |
 | 🟢 P2 | 9 | Persister les concentration trackers en backtest | Moyen — DB table pour trackers cross-run | Faible — surtout utile pour walk-forward |
@@ -1026,10 +1026,14 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 +       → Impact : protection contre les gaps overnight de -15% sur earnings surprise,
 +         en live ET en backtest
 
-+ TODO P1 — Ajouter un slippage model en backtest
-+       → Fichier : backtesting/execution_bridge.py → fill_price actuellement = entry_price
-+       → Solution : fill_price = entry_price × (1 + slippage_bps/10000) avec slippage_bps = 5 + spread_bps/2
-+       → Impact : backtest plus réaliste, évite les stratégies rentables seulement sans coûts
++ ✅ FAIT P1 — Ajouter un slippage model en backtest — IMPLÉMENTÉ le 2026-06-25
++       → Fichier modifié : backtesting/simulator.py → _try_open_entries()
++       → Formule : entry_price = exec_entry_price × (1 ± slippage_bps / 10000)
++         où slippage_bps = 5.0 + spread_bps / 2.0
++         - Long (buy)  : + slippage → entry plus cher
++         - Short (sell): − slippage → entry moins cher (worse fill)
++       → spread_bps vient de _get_spread_bps() (stock_quote_snapshots ou fallback 5 bps)
++       → Impact : backtest plus réaliste, Sharpe réduit, stratégies marginales filtrées
 
 + TODO P1 — Étendre le breakout filter aux shorts
 +       → Fichier : risk_management/portfolio_builder.py → étape 0bis
