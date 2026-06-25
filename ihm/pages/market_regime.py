@@ -147,6 +147,7 @@ def _format_macro_import_command(start_date: _date, end_date: _date) -> str:
         sys.executable, "-u", "-m", "service.market", "populate-macro",
         "--start", start_date.isoformat(),
         "--end", end_date.isoformat(),
+        "--progress",
     ])
 
 
@@ -156,6 +157,7 @@ def _format_regime_recompute_command(start_date: _date, end_date: _date, equity:
         sys.executable, "-u", "-m", "service.market", "recompute-regime",
         "--start", start_date.isoformat(),
         "--end", end_date.isoformat(),
+        "--progress",
     ]
     if equity:
         parts.extend(["--equity", str(equity)])
