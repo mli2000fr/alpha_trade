@@ -4,7 +4,7 @@ modelFactory/artifacts/models/
 artifacts/
 checkpoints/
 log/
-test/
+catboost_info/
 ./*.ckpt
 ./*.log
 ./*.txt
