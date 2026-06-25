@@ -587,10 +587,23 @@ def build_phase2_risk_result(
                 else "final_score" if "final_score" in day_scores.columns
                 else None
             )
+            # P2 (2026-06-25) : adapter les paramètres short au régime
+            # En capital_preservation, shorts plus agressifs :
+            #   - plus de positions autorisées (4 au lieu de 2)
+            #   - barrière d'entrée plus basse (0.20 au lieu de 0.30)
+            eff_max_short = int(getattr(risk_config, "short_max_positions", 2))
+            eff_min_short = float(getattr(risk_config, "short_min_score", 0.30))
+            if short_by_regime:
+                eff_max_short = max(eff_max_short, 4)
+                eff_min_short = min(eff_min_short, 0.20)
+                LOGGER.info(
+                    "Regime-adaptive shorts: max_positions=%d min_score=%.2f (capital_preservation boost)",
+                    eff_max_short, eff_min_short,
+                )
             day_scores = _tag_short_candidates(
                 day_scores,
-                max_short_positions=int(getattr(risk_config, "short_max_positions", 2)),
-                min_score_for_short=float(getattr(risk_config, "short_min_score", 0.30)),
+                max_short_positions=eff_max_short,
+                min_score_for_short=eff_min_short,
                 max_long_positions=int(getattr(risk_config, "max_positions", 3)),
                 all_shorts=False,
             )

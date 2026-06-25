@@ -1126,10 +1126,20 @@ def main(args: list[str] | None = None) -> None:
                     regime_snapshot is not None
                     and not bool(getattr(regime_snapshot, "allowed_long_entries", True))
                 )
+                # P2 (2026-06-25) : adapter les paramètres short au régime
+                eff_max_short = int(getattr(config, "short_max_positions", 2))
+                eff_min_short = float(getattr(config, "short_min_score", 0.0))
+                if short_by_regime:
+                    eff_max_short = max(eff_max_short, 4)
+                    eff_min_short = min(eff_min_short, 0.20)
+                    LOGGER.info(
+                        "Regime-adaptive shorts (live): max_positions=%d min_score=%.2f",
+                        eff_max_short, eff_min_short,
+                    )
                 candidates_df = _tag_short_candidates(
                     candidates_df,
-                    max_short_positions=int(getattr(config, "short_max_positions", 2)),
-                    min_score_for_short=float(getattr(config, "short_min_score", 0.0)),
+                    max_short_positions=eff_max_short,
+                    min_score_for_short=eff_min_short,
                     all_shorts=all_shorts_flag,
                 )
                 # Appliquer le side aux candidats

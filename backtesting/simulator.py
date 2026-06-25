@@ -324,6 +324,8 @@ class BacktestResult:
     trade_events_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     diagnostics: BacktestDiagnostics = field(default_factory=BacktestDiagnostics)
     drawdown_breaker_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # P2 (2026-06-25) : snapshot des trackers pour persistence cross-run
+    tracker_snapshot: dict[str, object] | None = None
     wrapper: SimpleNamespace = field(init=False)
     trades: _ReadableTradesAccessor = field(init=False)
 
@@ -390,6 +392,41 @@ class BacktestEngine:
         # Anti-faux-départs (Quick Win 1)
         self._breakout_tracker = BreakoutConfirmationTracker(
             min_breakout_days=config.min_breakout_days,
+        )
+
+    # ------------------------------------------------------------------
+    # P2 (2026-06-25) : persistence cross-run des trackers
+    # ------------------------------------------------------------------
+    @property
+    def tracker_snapshot(self) -> dict[str, object]:
+        """Snapshot sérialisable des 3 trackers pour persistence cross-run."""
+        return {
+            "symbol_trade_tracker": self._concentration_trade_tracker.to_dict(),
+            "consecutive_loss_tracker": self._concentration_loss_tracker.to_dict(),
+            "breakout_tracker": self._breakout_tracker.to_dict(),
+        }
+
+    def load_tracker_state(self, snapshot: dict[str, object]) -> None:
+        """Restaure l'état des trackers depuis un snapshot (P2 2026-06-25)."""
+        from risk_management.concentration import (
+            SymbolTradeTracker,
+            ConsecutiveLossTracker,
+            BreakoutConfirmationTracker,
+        )
+        trade_data = snapshot.get("symbol_trade_tracker")
+        if isinstance(trade_data, dict):
+            self._concentration_trade_tracker = SymbolTradeTracker.from_dict(trade_data)
+        loss_data = snapshot.get("consecutive_loss_tracker")
+        if isinstance(loss_data, dict):
+            self._concentration_loss_tracker = ConsecutiveLossTracker.from_dict(loss_data)
+        breakout_data = snapshot.get("breakout_tracker")
+        if isinstance(breakout_data, dict):
+            self._breakout_tracker = BreakoutConfirmationTracker.from_dict(breakout_data)
+        LOGGER.info(
+            "Tracker state loaded: trade=%s loss=%s breakout=%s",
+            self._concentration_trade_tracker.to_summary(),
+            self._concentration_loss_tracker.to_summary(),
+            self._breakout_tracker.to_summary(),
         )
 
     @staticmethod
@@ -938,6 +975,7 @@ class BacktestEngine:
             trade_events_df=trade_events_df,
             diagnostics=diagnostics,
             drawdown_breaker_df=breaker_df,
+            tracker_snapshot=self.tracker_snapshot,
         )
         LOGGER.info(
             "Backtest contraint terminé — valeur finale : %.2f — diagnostics=%s — événements=%d",

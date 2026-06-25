@@ -20,11 +20,11 @@
 | **Backtest vs Live ?** | **Backtest** = rejoue l'historique depuis `stock_scores_history` (PIT), prédictions ML persistées, simulation in-memory. **Live** = recalcule tout en temps réel depuis `stock_bars_daily`, inférence ML live, vrais ordres Alpaca |
 | **Qu'est-ce qui diffère entre long et short ?** | Short = score dédié indépendant du `final_score`, conviction inversée (`1-score`), proba ML distincte (`proba_short`), paramètres risk dédiés (max 2 positions, TP 8%, trailing 10%). Depuis P1 (2026-06-25) : breakout filter appliqué aussi aux shorts |
 | **Comment sont calibrés les poids ?** | Grid search backtest sur `stock_scores_history` : conviction (quant/ML), sentiment (quant/sentiment/macro), Kelly (fraction, payoff). Métriques : IC, hit_rate, Sharpe, log_growth |
-| **Comment le régime impacte les scores ?** | 2 jeux de poids : **NORMAL** (trend_vcp=0.50, total=0.30, rsi=0.20) vs **CAPITAL_PRESERVATION** (trend_vcp=0.25, total=0.15, rsi=0.10 + 0.50 défensif). Rotation forcée si perte > -3% sur 4 semaines. Shortscore non affecté |
+| **Comment le régime impacte les scores ?** | 2 jeux de poids : **NORMAL** (trend_vcp=0.50, total=0.30, rsi=0.20) vs **CAPITAL_PRESERVATION** (trend_vcp=0.25, total=0.15, rsi=0.10 + 0.50 défensif). Rotation forcée si perte > -3% sur 4 semaines. Shortscore non affecté, mais paramètres short boostés en bear (P2 2026-06-25) |
 | **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
 | **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
 | **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter actif (même min_breakout_days que longs). Conviction = 0.70×(1-score) + 0.30×proba_ml_short |
-| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30), ✅ breakout filter shorts |
+| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30), ✅ breakout filter shorts, ✅ shorts boostés en bear, ✅ trackers persistés |
 
 ---
 
@@ -35,7 +35,7 @@
 | **0. Architecture Backtest vs Live** | Préface : 2 modes (LIVE/BACKTEST), rôle de `stock_scores_history` (PIT), cycle hybride walk-forward | — |
 | **1. Calcul des scores Long/Short** | Formules `final_score` et `short_score`, facteurs techniques, neutralisation sectorielle, rank_and_select | 🟢 LIVE |
 | **2. Utilisation du sentiment** | Pipeline FinBERT → agrégation → fusion ternaire → `final_score_sentiment`, poids par défaut (sentiment=0) | 🟢 LIVE |
-| **3. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs actifs (beta/spread/mcap/ATR), filtres `regime_filters.py` non câblés (earnings/buyback/yield), asymétrie long/short | 🟢🔵 BOTH |
+| **3. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs actifs (beta/spread/mcap/ATR), ✅ filtres `regime_filters.py` câblés (earnings/buyback/yield), asymétrie long/short, shorts boostés en bear (P2) | 🟢🔵 BOTH |
 | **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
@@ -311,7 +311,7 @@ $$rotation\_active = \mathbf{1}[\, return_{cumul\_4w} < -0.03 \,]$$
 
 ### 3.3 Filtres de régime (`selector/regime_filters.py`) — earnings, buyback, yield
 
-⚠️ **Ces filtres ne sont utilisés NI en production, NI en backtest.** Ils sont codés, testés unitairement, mais **pas câblés** dans le pipeline. Ils sont disponibles pour intégration future.
+✅ **Ces filtres sont désormais câblés en production ET en backtest depuis le 2026-06-25 (P0 #4).** Ils sont appelés via `apply_full_regime_to_candidates()` dans `portfolio_builder.py` (live) et `risk_bridge.py` (backtest), appliqués dans TOUS les régimes (pas seulement défensif).
 
 > **Distinction importante** : les filtres défensifs (beta ≤ 1.2, spread ≤ 15 bps, market cap ≥ $2B, ATR% ≤ 6%) sont dans `selector/regime_scoring.py` → `apply_regime_filters()`, appelé par `apply_regime_weights()`. **Ceux-là sont bien actifs** en production et en backtest (via `portfolio_builder.py` et `risk_bridge.py`). Les filtres ci-dessous (`selector/regime_filters.py`) sont une couche **supplémentaire** non activée.
 
@@ -325,7 +325,7 @@ $$rotation\_active = \mathbf{1}[\, return_{cumul\_4w} < -0.03 \,]$$
 
 **Asymétrie importante** :
 - **Long** : le `final_score` est recalculé avec les poids du régime → impact direct sur le classement
-- **Short** : utilise `short_score` (colonne indépendante), **non affecté** par `apply_regime_weights()`. Les shorts sont immunisés contre la rotation factorielle du régime
+- **Short** : utilise `short_score` (colonne indépendante), **non affecté** par `apply_regime_weights()`. **Mais depuis P2 (2026-06-25)** : les paramètres de tagging short (`max_short_positions`, `min_score_for_short`) sont boostés en `capital_preservation` (4 positions, score min 0.20) pour plus d'agressivité en bear market
 - **Filtres défensifs** (beta, spread, market cap, ATR) : appliqués au DataFrame **avant** ranking → affectent **les deux** (long et short)
 
 ---
@@ -559,6 +559,7 @@ Candidats (CandidateScore)
   ├─ 0quat. Filtres de concentration
   │     → Max trades par symbole (fenêtre glissante)
   │     → Blacklist après N pertes consécutives
+  │     → ✅ Persistés cross-run depuis P2 (tracker_state.json)
   │
   ├─ 1. Enrichissement → conviction score
   │     → Fusion quant + ML (via core.conviction)
@@ -932,7 +933,7 @@ $$business\_score = precision\_long \times coverage + \max(avg\_return, 0) + 0.1
 | Aspect | Long | Short |
 |--------|------|-------|
 | **Score** | `final_score` (multi-factoriel) | `short_score` (baissier composite indépendant) |
-| **Regime weights** | Affecté par `apply_regime_weights()` | Non affecté (score indépendant) |
+| **Regime weights** | Affecté par `apply_regime_weights()` | Non affecté (score indépendant). **Mais** : paramètres short boostés en `capital_preservation` (P2 2026-06-25) |
 | **Breakout filter** | Soumis au filtre anti-faux-départs | ✅ **Soumis aussi (P1 2026-06-25)** — même min_breakout_days que les longs |
 | **Conviction** | `0.70×score + 0.30×proba_ml_long` | `0.70×(1-score) + 0.30×proba_ml_short` |
 | **Score threshold** | `min_score_threshold` | `min_score_threshold_short` (distinct) |
@@ -965,10 +966,10 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | 3 | ⚠️ **Target optimization désactivée par défaut** | Les paramètres de target (horizon, seuils) sont fixes, non optimisés automatiquement |
 | 4 | ✅ **Filtres de régime `regime_filters.py` CÂBLÉS (2026-06-25)** | ~~`earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés.~~ → Fix : appel à `apply_full_regime_to_candidates()` ajouté dans `portfolio_builder.py` (live) et `risk_bridge.py` (backtest), appliqué dans TOUS les régimes |
 | 5 | ✅ **Short_score PIT CORRIGÉ (2026-06-25)** | ~~En backfill PIT, les facteurs SMA du short_score ne sont pas calculés (`close_df=None`)~~ → Fix : `_enrich_short_score_pit()` appelle `_enrich_with_sma()` (SQL) pour injecter SMA50/200/last_close avant le calcul. Les 4 facteurs sont désormais actifs en backtest |
-| 6 | **Short non affecté par le régime** | `apply_regime_weights()` modifie `final_score` mais pas `short_score` — les shorts sont insensibles à la rotation factorielle du régime |
+| 6 | ✅ **Short × régime adaptatif (2026-06-25)** | ~~`apply_regime_weights()` modifie `final_score` mais pas `short_score` — les shorts sont insensibles à la rotation factorielle du régime~~ → Fix : en `capital_preservation`, shorts plus agressifs (4 positions max au lieu de 2, score min 0.20 au lieu de 0.30) |
 | 7 | ✅ **Breakout filter étendu aux shorts (2026-06-25)** | ~~Les shorts ne passent pas par le filtre de confirmation de breakout (exemptés)~~ → Fix : exemption retirée. Shorts doivent apparaître `min_breakout_days` jours consécutifs comme les longs |
 | 8 | ✅ **Fills avec slippage model (2026-06-25)** | ~~`fill_price = entry_price` — pas de slippage simulé en backtest~~ → Fix : slippage model ajouté dans `_try_open_entries()` : `entry_price × (1 ± (5 + spread_bps/2) / 10000)`. Longs = plus chers, shorts = moins chers (worse fill) |
-| 9 | **Concentration trackers non persistés en backtest** | Trackers frais par run → pas de mémoire cross-run des trades passés |
+| 9 | ✅ **Trackers persistés en backtest (2026-06-25)** | ~~Trackers frais par run → pas de mémoire cross-run des trades passés~~ → Fix : `to_dict()`/`from_dict()` ajoutés à `SymbolTradeTracker` et `ConsecutiveLossTracker`. Sauvegarde automatique dans `tracker_state.json` à la fin du run, chargement via `--tracker-state` ou `--load-tracker-state` |
 | 10 | ✅ **Conviction : ML réduit à 30% (70/30, 2026-06-25)** | ~~Le LSTM sur actions individuelles a beaucoup de bruit, peu de signal stable. Le ML était trop central (60%).~~ → Fix : `score_weight=0.70`, `prediction_weight=0.30` dans `ConvictionWeights` et `RiskConfig`. Le ML redevient un filtre de qualité |
 | 11 | ⚠️ **LSTM par symbole = risque de données insuffisantes** | Chaque symbole a son propre modèle (AAPL→modèle, MSFT→modèle…). Un modèle individuel manque souvent de données d'entraînement. Une approche globale avec ticker embedding (secteur, market cap, beta) serait plus robuste |
 | 12 | ✅ **Kelly sizing plafonné à 25% (2026-06-25)** | ~~Si le ML prédit `proba=0.65` mais que la vraie probabilité est `0.55`, le Kelly peut surdimensionner dangereusement.~~ → Fix : `max_kelly_fraction=0.25` dans `RiskConfig`, appliqué dans `KellySizer.compute()`, `PortfolioBuilder` (audit kf), et `weights_calibration.py` (backtesting) |
@@ -982,10 +983,10 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | 3 | **Target optimization off** | Horizon et seuils fixes (5j, +12%/-8%) pour tous les symboles, alors que certains peuvent avoir un edge sur 3j ou 10j, avec des seuils différents | **Edge spécifique** : un symbole peu volatil aura besoin d'un seuil plus serré, un symbole très volatil d'un horizon plus court. Optimiser par symbole maximise le signal/bruit |
 | 4 | ✅ **Filtres régime CÂBLÉS** | ~~Les trades passent sans tenir compte des earnings (risque de gap -15% overnight), des blackouts buyback, ou des secteurs sensibles aux taux. Les filtres sont codés mais non appelés~~ → **RÉSOLU** : `apply_full_regime_to_candidates()` appelé dans `_apply_regime_scoring_to_candidates()` (live) et `risk_bridge.py` (backtest), dans TOUS les régimes | **Protection événementielle** : ✅ fait — les candidats proches des earnings sont exclus (strict_block) ou pénalisés (negative_score), en live comme en backtest |
 | 5 | ✅ **Short_score PIT CORRIGÉ** | ~~En backtest, le short_score est amputé de 45% de sa formule (SMA50 + SMA200 = 0.45 du poids). Le score short backtesté n'est pas le même que le score short live~~ → **RÉSOLU** : `_enrich_short_score_pit()` enrichit désormais avec `_enrich_with_sma()` avant le calcul. Backtest short fidèle au live | **Backtest fidèle** : ✅ fait — le backtest short reflète maintenant la réalité live avec les 4 facteurs |
-| 6 | **Short non affecté par le régime** | En marché baissier, les longs passent en mode défensif mais les shorts restent inchangés. Pourtant, shorter en bear market est plus facile — on pourrait être plus agressif | **Adaptation tactique** : en capital_preservation, on pourrait baisser le min_score_short (plus facile d'entrer) ou augmenter le max_positions_short (plus d'opportunités) |
+| 6 | ✅ **Short × régime adaptatif** | ~~En marché baissier, les longs passent en mode défensif mais les shorts restent inchangés. Pourtant, shorter en bear market est plus facile — on pourrait être plus agressif~~ → **RÉSOLU** : en `capital_preservation`, `max_short_positions` passe à 4 (min) et `min_score_for_short` descend à 0.20 (max). Plus d'opportunités short en bear market | **Adaptation tactique** : ✅ fait — shorts plus agressifs quand le marché est baissier |
 | 7 | ✅ **Breakout filter shorts** | ~~Les shorts peuvent entrer sur un faux signal baissier d'un seul jour, sans confirmation de tendance. Les longs ont une protection anti-faux-départs que les shorts n'ont pas~~ → **RÉSOLU** : exemption retirée, shorts soumis au même `min_breakout_days` | **Qualité shorts** : ✅ fait — réduction des whipsaws short, meilleur hit_rate |
 | 8 | ✅ **Slippage model backtest** | ~~Le backtest suppose un fill au prix d'ouverture J+1 sans slippage. En réalité, le slippage peut coûter 5-20 bps par trade, surtout sur les small caps~~ → **RÉSOLU** : slippage = 5 + spread_bps/2 bps appliqué dans `_try_open_entries()`. Longs plus chers, shorts moins chers | **Backtest réaliste** : ✅ fait — les métriques backtest intègrent maintenant un coût de slippage réaliste, réduisant le Sharpe artificiellement gonflé |
-| 9 | **Concentration trackers non persistés** | Chaque run de backtest part d'une table rase. Impossible de détecter qu'un symbole a déjà été tradé 3x cette semaine — le backtest peut concentrer plus que le live | **Fidélité cross-run** : le backtest refléterait les limites de concentration réelles. Utile pour les walk-forward multi-folds où l'état des trackers devrait persister entre folds |
+| 9 | ✅ **Trackers persistés en backtest** | ~~Chaque run de backtest part d'une table rase. Impossible de détecter qu'un symbole a déjà été tradé 3x cette semaine — le backtest peut concentrer plus que le live~~ → **RÉSOLU** : `SymbolTradeTracker` et `ConsecutiveLossTracker` sérialisables, sauvegardés dans `tracker_state.json` en fin de run, chargeables au run suivant via `--tracker-state` ou `--load-tracker-state` | **Fidélité cross-run** : ✅ fait — le backtest reflète les limites de concentration réelles entre runs successifs |
 | 10 | ✅ **ML réduit à 30% (70/30)** | ~~Le ML apprend la volatilité récente, des patterns de marché temporaires, des artefacts de période. Sur des actions individuelles, le bruit domine le signal~~ → **RÉSOLU** : poids passés de 40/60 à 70/30. Phase 1 : valider OOS, puis augmenter progressivement vers 50/50 si confirmé | **Robustesse** : ✅ fait — le quantitatif redevient le moteur principal, le ML filtre la qualité |
 | 11 | **LSTM par symbole** | Chaque symbole a son modèle → AAPL, MSFT, NVDA… Mais un modèle individuel manque de données. Un GlobalModel avec ticker embedding capterait "les patterns momentum marchent différemment entre tech et utilities" | **Généralisation** : un modèle global avec embeddings (ticker, secteur, market cap, beta) apprend des relations cross-sectionnelles, pas juste l'historique d'un seul symbole |
 | 12 | ✅ **Kelly plafonné à 25%** | ~~Kelly est extrêmement sensible : ML dit `proba=0.65` mais vraie proba `0.55` → sizing dangereux. Sans calibration ternaire, les probas softmax brutes ne sont pas fiables~~ → **RÉSOLU** : `max_kelly_fraction=0.25` ajouté dans `RiskConfig`, cap appliqué dans `KellySizer`, `PortfolioBuilder`, et `weights_calibration` | **Sécurité** : ✅ fait — le Kelly ne peut plus dépasser 25% de l'equity par position, quelle que soit la confiance du ML |
@@ -998,8 +999,8 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | ✅ FAIT | 4 | ~~Câbler `earnings_shield` (le plus impactant des 3)~~ | ~~Moyen~~ — Câblé le 2026-06-25 | ~~Fort~~ — earnings shield actif en live + backtest |
 | ✅ FAIT | 8 | ~~Ajouter slippage model en backtest~~ | ~~Faible~~ — Ajouté le 2026-06-25 | ~~Moyen~~ — slippage = 5 + spread_bps/2 bps |
 | ✅ FAIT | 7 | ~~Étendre le breakout filter aux shorts~~ | ~~Faible~~ — Exemption retirée le 2026-06-25 | ~~Moyen~~ — shorts confirmés comme les longs |
-| 🟢 P2 | 6 | Adapter les paramètres short au régime | Moyen — ajouter logique dans `apply_regime_weights()` | Modéré — plus de shorts en bear |
-| 🟢 P2 | 9 | Persister les concentration trackers en backtest | Moyen — DB table pour trackers cross-run | Faible — surtout utile pour walk-forward |
+| ✅ FAIT | 6 | ~~Adapter les paramètres short au régime~~ | ~~Moyen~~ — Adapté le 2026-06-25 | ~~Modéré~~ — shorts boostés en bear |
+| ✅ FAIT | 9 | ~~Persister les concentration trackers en backtest~~ | ~~Moyen~~ — Implémenté le 2026-06-25 | ~~Faible~~ — trackers sauvegardés/chargeables |
 | ⚪ P3 | 1 | Activer sentiment/macro (recalibrer d'abord) | Élevé — besoin preuve IC robuste avant activation | Incertain — IC≈0 actuellement |
 | ⚪ P3 | 2 | Activer champion selection | Élevé — nécessite d'abord entraîner CatBoost/LightGBM | Modéré — seulement si challengers meilleurs |
 | ⚪ P3 | 3 | Activer target optimization | Faible techniquement, mais élevé en validation | Modéré — symbole par symbole, supervision requise |
@@ -1042,15 +1043,27 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 +         dans les candidats avant d'être tradables (comme les longs)
 +       → Impact : réduction des whipsaws short, meilleur hit_rate, filtrage des faux signaux baissiers
 
-+ TODO P2 — Adapter les paramètres short au régime de marché
-+       → Fichier : selector/regime_scoring.py → apply_regime_weights()
-+       → Solution : en capital_preservation, baisser min_score_short (0.20 au lieu de 0.30) et monter max_positions_short (4 au lieu de 2)
-+       → Impact : plus d'opportunités short en bear market
++ ✅ FAIT P2 — Adapter les paramètres short au régime de marché — IMPLÉMENTÉ le 2026-06-25
++       → Fichiers modifiés : backtesting/risk_bridge.py, risk_management/cli.py
++       → Changement : en régime capital_preservation (short_by_regime=True),
++         les paramètres short deviennent plus agressifs :
++         - max_short_positions = max(config, 4)  → 4 positions min en bear
++         - min_score_for_short  = min(config, 0.20) → barrière d'entrée plus basse
++       → En backtest (risk_bridge.py) et en live (cli.py), même logique
++       → Impact : plus d'opportunités short quand le marché est baissier,
++         meilleure exploitation des tendances baissières
 
-+ TODO P2 — Persister les concentration trackers en backtest
-+       → Fichier : risk_management/concentration.py → SymbolTradeTracker, ConsecutiveLossTracker
-+       → Solution : créer une table SQLite/DB pour sauvegarder l'état des trackers entre folds walk-forward
-+       → Impact : backtest multi-fold plus fidèle aux limites de concentration réelles
++ ✅ FAIT P2 — Persister les concentration trackers en backtest — IMPLÉMENTÉ le 2026-06-25
++       → Fichiers modifiés :
++         - risk_management/concentration.py → to_dict()/from_dict() ajoutés à
++           SymbolTradeTracker et ConsecutiveLossTracker
++         - backtesting/simulator.py → tracker_snapshot sur BacktestEngine + BacktestResult
++         - backtesting/cli/_impl.py → save/load tracker_state.json + flags CLI
++       → Sauvegarde : automatique dans <output_dir>/tracker_state.json en fin de run
++         (sauf si --no-save)
++       → Chargement : --tracker-state <path> ou --load-tracker-state (raccourci)
++       → Impact : backtests multi-runs reflètent les vraies limites de concentration,
++         utile pour walk-forward multi-folds et simulations réalistes
 
 + TODO P3 — Recalibrer et activer sentiment/macro
 +       → Prérequis : relancer un diagnostic IC sur données récentes (2023-2025)
@@ -1173,7 +1186,7 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | **Fill** | Prix réel du marché avec slippage | Prix `next_open` parfait (pas de slippage) |
 | **Stop/trailing** | Ordres OCO gérés par le broker | Simulés en mémoire (peak_high/trough_low tracking) |
 | **Protection logic** | `execution_engine` + `protection_watcher` | `simulator.py` avec `use_live_protection_logic=True` (mêmes règles, simulées) |
-| **Concentration** | Trackers persistés en DB (état cross-run) | Trackers frais par run (pas de persistance) |
+| **Concentration** | Trackers persistés en DB (état cross-run) | ✅ **Trackers persistés en fichier (P2 2026-06-25)** — `tracker_state.json` sauvegardé/chargeable entre runs |
 | **Dry-run** | Disponible (`--dry-run`) : calcule sans envoyer | N/A (toujours simulé) |
 
 ### 13.6 Walk-Forward — Cycle calibration → application
@@ -1199,6 +1212,8 @@ graph LR
 | Commande | Mode | Description |
 |----------|------|-------------|
 | `python -m backtesting run` | 🔵 BACKTEST | Backtest principal |
+| `python -m backtesting run --tracker-state <path>` | 🔵 BACKTEST | Backtest avec état des trackers chargé (P2) |
+| `python -m backtesting run --load-tracker-state` | 🔵 BACKTEST | Raccourci : charge `artifacts/backtesting/tracker_state.json` (P2) |
 | `python -m backtesting calibrate-sentiment-weights` | 🔵 BACKTEST | Calibration des poids sentiment |
 | `python -m backtesting walk-forward-sentiment` | 🔵 BACKTEST | Walk-forward calibration |
 | `python -m backtesting backfill-scores-history` | 🔵 BACKTEST | Remplit `stock_scores_history` pour PIT |

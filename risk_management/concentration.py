@@ -150,6 +150,36 @@ class SymbolTradeTracker:
             "total_entries": sum(len(v) for v in self._history.values()),
         }
 
+    def to_dict(self) -> dict[str, object]:
+        """Sérialise l'état complet pour persistence cross-run (P2 2026-06-25)."""
+        return {
+            "max_trades": self._max_trades,
+            "window_days": self._window_days,
+            "history": {
+                key: [d.isoformat() for d in dates]
+                for key, dates in self._history.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> SymbolTradeTracker:
+        """Reconstruit un tracker depuis un dictionnaire (P2 2026-06-25)."""
+        tracker = cls(
+            max_trades=int(data.get("max_trades", DEFAULT_MAX_TRADES_PER_SYMBOL)),
+            window_days=int(data.get("window_days", DEFAULT_CONCENTRATION_WINDOW_CALENDAR_DAYS)),
+        )
+        history_data = data.get("history")
+        if isinstance(history_data, dict):
+            tracker._history = {
+                str(key): [
+                    date.fromisoformat(d) for d in dates
+                    if isinstance(d, str)
+                ]
+                for key, dates in history_data.items()
+                if isinstance(dates, list)
+            }
+        return tracker
+
 
 # ---------------------------------------------------------------------------
 # ConsecutiveLossTracker
@@ -282,6 +312,37 @@ class ConsecutiveLossTracker:
             "active_blacklists": active_blacklists,
             "tracked_symbols": len(self._streak),
         }
+
+    def to_dict(self) -> dict[str, object]:
+        """Sérialise l'état complet pour persistence cross-run (P2 2026-06-25)."""
+        return {
+            "max_consecutive_losses": self._max_losses,
+            "blacklist_duration_days": self._blacklist_duration,
+            "streak": dict(self._streak),
+            "blacklist": {
+                key: d.isoformat()
+                for key, d in self._blacklist.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> ConsecutiveLossTracker:
+        """Reconstruit un tracker depuis un dictionnaire (P2 2026-06-25)."""
+        tracker = cls(
+            max_consecutive_losses=int(data.get("max_consecutive_losses", DEFAULT_MAX_CONSECUTIVE_LOSSES)),
+            blacklist_duration_days=int(data.get("blacklist_duration_days", 90)),
+        )
+        streak_data = data.get("streak")
+        if isinstance(streak_data, dict):
+            tracker._streak = {str(k): int(v) for k, v in streak_data.items()}
+        blacklist_data = data.get("blacklist")
+        if isinstance(blacklist_data, dict):
+            tracker._blacklist = {
+                str(key): date.fromisoformat(d)
+                for key, d in blacklist_data.items()
+                if isinstance(d, str)
+            }
+        return tracker
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ Usage :
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from dataclasses import replace
@@ -807,6 +808,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         default=None,
         help="Répertoire cible pour sauvegarder les artefacts et le rapport structurés du run",
+    )
+    # P2 (2026-06-25) : persistence cross-run des trackers de concentration
+    run_p.add_argument(
+        "--tracker-state",
+        default=None,
+        help="Chemin vers un fichier tracker_state.json à charger avant le run "
+        "(persistance cross-run des SymbolTradeTracker / ConsecutiveLossTracker / BreakoutConfirmationTracker).",
+    )
+    run_p.add_argument(
+        "--load-tracker-state",
+        action="store_true",
+        default=False,
+        help="Charge le tracker state depuis artifacts/backtesting/tracker_state.json (raccourci pour --tracker-state).",
     )
     run_p.add_argument(
         "--score-column",
@@ -2390,7 +2404,23 @@ def _run_backtest(args: argparse.Namespace) -> None:
         watcher_replay_mode=phase5_mode,
         exit_lifecycle_replay_mode=phase7_mode,
     )
-    bt_engine = BacktestEngine(bt_config)
+    # P2 (2026-06-25) : charger l'état des trackers si un fichier est fourni
+    _tracker_state_path: Path | None = None
+    if hasattr(args, "tracker_state") and args.tracker_state:
+        _tracker_state_path = Path(str(args.tracker_state))
+    elif hasattr(args, "load_tracker_state") and args.load_tracker_state:
+        _tracker_state_path = Path("artifacts/backtesting/tracker_state.json")
+    if _tracker_state_path is not None and _tracker_state_path.exists():
+        try:
+            _snapshot = json.loads(_tracker_state_path.read_text(encoding="utf-8"))
+            bt_engine = BacktestEngine(bt_config)
+            bt_engine.load_tracker_state(_snapshot)
+            _safe_print(f"📂 Tracker state chargé depuis {_tracker_state_path}")
+        except Exception as _exc:
+            LOGGER.warning("Tracker state load failed, using fresh trackers: %s", _exc)
+            bt_engine = BacktestEngine(bt_config)
+    else:
+        bt_engine = BacktestEngine(bt_config)
     pf = bt_engine.run(
         open=execution_pivoted["open"], close=execution_pivoted["close"], high=execution_pivoted["high"], low=execution_pivoted["low"],
         volume=execution_pivoted.get("volume"),
@@ -2398,6 +2428,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
         signals_df=signals_df,
     )
     diagnostics = extract_diagnostics(pf)
+
+    # P2 (2026-06-25) : sauvegarder l'état des trackers pour le prochain run
+    if pf.tracker_snapshot and args.output_dir and not getattr(args, "no_save", False):
+        try:
+            _save_path = Path(args.output_dir) / "tracker_state.json"
+            _save_path.parent.mkdir(parents=True, exist_ok=True)
+            _save_path.write_text(
+                json.dumps(pf.tracker_snapshot, indent=2, default=str),
+                encoding="utf-8",
+            )
+            _safe_print(f"💾 Tracker state saved to {_save_path}")
+        except Exception as _exc:
+            LOGGER.warning("Tracker state save failed: %s", _exc)
 
     # Phase 6.1.c — dividendes encaissés (best-effort, fallback 0.0 si DB indispo).
     dividends_received = load_dividends_received(start, end, engine=engine)
