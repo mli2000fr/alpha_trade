@@ -16,15 +16,15 @@
 | **Son impact ?** | Les poids calibrés servent pour les **deux modes** : en LIVE via `SentimentBoostConfig`, en BACKTEST via la colonne `final_score_walk_forward` dans `stock_scores_history` (cascade `COALESCE`). Mais la calibration confirme que le quant seul est optimal |
 | **Comment ML entraîne long/short ?** | LSTM 2 couches + Attention temporelle sur séquences de 20 jours. Features OHLCV + sentiment + contexte selector. Target = rendement forward binaire ou ternaire. Split chronologique avec purge |
 | **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt → `predicted_proba` inséré en DB |
-| **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter 3) Score threshold 4) Concentration 5) Conviction = 40%×quant + 60%×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
+| **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter (long+short depuis P1) 3) Score threshold 4) Concentration 5) Conviction = 0.70×quant + 0.30×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
 | **Backtest vs Live ?** | **Backtest** = rejoue l'historique depuis `stock_scores_history` (PIT), prédictions ML persistées, simulation in-memory. **Live** = recalcule tout en temps réel depuis `stock_bars_daily`, inférence ML live, vrais ordres Alpaca |
-| **Qu'est-ce qui diffère entre long et short ?** | Short = score dédié indépendant du `final_score`, conviction inversée (`1-score`), exempté du breakout filter, proba ML distincte (`proba_short`), paramètres risk dédiés (max 2 positions, TP 8%, trailing 10%) |
+| **Qu'est-ce qui diffère entre long et short ?** | Short = score dédié indépendant du `final_score`, conviction inversée (`1-score`), proba ML distincte (`proba_short`), paramètres risk dédiés (max 2 positions, TP 8%, trailing 10%). Depuis P1 (2026-06-25) : breakout filter appliqué aussi aux shorts |
 | **Comment sont calibrés les poids ?** | Grid search backtest sur `stock_scores_history` : conviction (quant/ML), sentiment (quant/sentiment/macro), Kelly (fraction, payoff). Métriques : IC, hit_rate, Sharpe, log_growth |
 | **Comment le régime impacte les scores ?** | 2 jeux de poids : **NORMAL** (trend_vcp=0.50, total=0.30, rsi=0.20) vs **CAPITAL_PRESERVATION** (trend_vcp=0.25, total=0.15, rsi=0.10 + 0.50 défensif). Rotation forcée si perte > -3% sur 4 semaines. Shortscore non affecté |
 | **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
 | **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
-| **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter exempté. Conviction = 0.70×(1-score) + 0.30×proba_ml_short |
-| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30) |
+| **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter actif (même min_breakout_days que longs). Conviction = 0.70×(1-score) + 0.30×proba_ml_short |
+| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30), ✅ breakout filter shorts |
 
 ---
 
@@ -317,9 +317,9 @@ $$rotation\_active = \mathbf{1}[\, return_{cumul\_4w} < -0.03 \,]$$
 
 | Filtre | Comportement | Impact | Actif ? |
 |--------|-------------|--------|---------|
-| `earnings_shield` | `strict_block` : exclut les symboles à J-2/J+2 des earnings. `negative_score` : applique un score négatif | Long + Short | <span style="color:red">**❌**</span> |
-| `buyback_blackout` | Multiplie le score par ~0.70 pour les symboles en période de blackout pré-earnings | Long + Short | <span style="color:red">**❌**</span> |
-| `yield_filter` | Exclut les secteurs sur liste noire (taux élevés) et les symboles bloqués | Long + Short | <span style="color:red">**❌**</span> |
+| `earnings_shield` | `strict_block` : exclut les symboles à J-2/J+2 des earnings. `negative_score` : applique un score négatif | Long + Short | <span style="color:green">**✅ câblé 2026-06-25**</span> |
+| `buyback_blackout` | Multiplie le score par ~0.70 pour les symboles en période de blackout pré-earnings | Long + Short | <span style="color:green">**✅ câblé 2026-06-25**</span> |
+| `yield_filter` | Exclut les secteurs sur liste noire (taux élevés) et les symboles bloqués | Long + Short | <span style="color:green">**✅ câblé 2026-06-25**</span> |
 
 ### 3.4 Impact Long vs Short
 
@@ -550,7 +550,7 @@ Candidats (CandidateScore)
   │     → Ajuste les poids selon le régime marché (normal / capital_preservation)
   │
   ├─ 0bis. Filtre anti-faux-départs (Breakout Confirmation)
-  │     → Exige min N jours de présence dans les candidats (shorts exemptés)
+  │     → Exige min N jours de présence dans les candidats (long+short depuis P1 2026-06-25)
   │
   ├─ 0ter. Seuil de score minimum
   │     → Long : score_used >= min_score_threshold
@@ -933,7 +933,7 @@ $$business\_score = precision\_long \times coverage + \max(avg\_return, 0) + 0.1
 |--------|------|-------|
 | **Score** | `final_score` (multi-factoriel) | `short_score` (baissier composite indépendant) |
 | **Regime weights** | Affecté par `apply_regime_weights()` | Non affecté (score indépendant) |
-| **Breakout filter** | Soumis au filtre anti-faux-départs | **Exempté** (shorts n'ont pas besoin de confirmation de breakout) |
+| **Breakout filter** | Soumis au filtre anti-faux-départs | ✅ **Soumis aussi (P1 2026-06-25)** — même min_breakout_days que les longs |
 | **Conviction** | `0.70×score + 0.30×proba_ml_long` | `0.70×(1-score) + 0.30×proba_ml_short` |
 | **Score threshold** | `min_score_threshold` | `min_score_threshold_short` (distinct) |
 | **Circuit breaker** | Bloqué si actif | Bloqué si actif (identique) |
@@ -966,7 +966,7 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | 4 | ✅ **Filtres de régime `regime_filters.py` CÂBLÉS (2026-06-25)** | ~~`earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés.~~ → Fix : appel à `apply_full_regime_to_candidates()` ajouté dans `portfolio_builder.py` (live) et `risk_bridge.py` (backtest), appliqué dans TOUS les régimes |
 | 5 | ✅ **Short_score PIT CORRIGÉ (2026-06-25)** | ~~En backfill PIT, les facteurs SMA du short_score ne sont pas calculés (`close_df=None`)~~ → Fix : `_enrich_short_score_pit()` appelle `_enrich_with_sma()` (SQL) pour injecter SMA50/200/last_close avant le calcul. Les 4 facteurs sont désormais actifs en backtest |
 | 6 | **Short non affecté par le régime** | `apply_regime_weights()` modifie `final_score` mais pas `short_score` — les shorts sont insensibles à la rotation factorielle du régime |
-| 7 | **Breakout filter long-only** | Les shorts ne passent pas par le filtre de confirmation de breakout |
+| 7 | ✅ **Breakout filter étendu aux shorts (2026-06-25)** | ~~Les shorts ne passent pas par le filtre de confirmation de breakout (exemptés)~~ → Fix : exemption retirée. Shorts doivent apparaître `min_breakout_days` jours consécutifs comme les longs |
 | 8 | ✅ **Fills avec slippage model (2026-06-25)** | ~~`fill_price = entry_price` — pas de slippage simulé en backtest~~ → Fix : slippage model ajouté dans `_try_open_entries()` : `entry_price × (1 ± (5 + spread_bps/2) / 10000)`. Longs = plus chers, shorts = moins chers (worse fill) |
 | 9 | **Concentration trackers non persistés en backtest** | Trackers frais par run → pas de mémoire cross-run des trades passés |
 | 10 | ✅ **Conviction : ML réduit à 30% (70/30, 2026-06-25)** | ~~Le LSTM sur actions individuelles a beaucoup de bruit, peu de signal stable. Le ML était trop central (60%).~~ → Fix : `score_weight=0.70`, `prediction_weight=0.30` dans `ConvictionWeights` et `RiskConfig`. Le ML redevient un filtre de qualité |
@@ -983,7 +983,7 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | 4 | ✅ **Filtres régime CÂBLÉS** | ~~Les trades passent sans tenir compte des earnings (risque de gap -15% overnight), des blackouts buyback, ou des secteurs sensibles aux taux. Les filtres sont codés mais non appelés~~ → **RÉSOLU** : `apply_full_regime_to_candidates()` appelé dans `_apply_regime_scoring_to_candidates()` (live) et `risk_bridge.py` (backtest), dans TOUS les régimes | **Protection événementielle** : ✅ fait — les candidats proches des earnings sont exclus (strict_block) ou pénalisés (negative_score), en live comme en backtest |
 | 5 | ✅ **Short_score PIT CORRIGÉ** | ~~En backtest, le short_score est amputé de 45% de sa formule (SMA50 + SMA200 = 0.45 du poids). Le score short backtesté n'est pas le même que le score short live~~ → **RÉSOLU** : `_enrich_short_score_pit()` enrichit désormais avec `_enrich_with_sma()` avant le calcul. Backtest short fidèle au live | **Backtest fidèle** : ✅ fait — le backtest short reflète maintenant la réalité live avec les 4 facteurs |
 | 6 | **Short non affecté par le régime** | En marché baissier, les longs passent en mode défensif mais les shorts restent inchangés. Pourtant, shorter en bear market est plus facile — on pourrait être plus agressif | **Adaptation tactique** : en capital_preservation, on pourrait baisser le min_score_short (plus facile d'entrer) ou augmenter le max_positions_short (plus d'opportunités) |
-| 7 | **Breakout filter long-only** | Les shorts peuvent entrer sur un faux signal baissier d'un seul jour, sans confirmation de tendance. Les longs ont une protection anti-faux-départs que les shorts n'ont pas | **Qualité shorts** : réduire les entrées short sur des mouvements baissiers non confirmés → moins de whipsaws, meilleur hit_rate short |
+| 7 | ✅ **Breakout filter shorts** | ~~Les shorts peuvent entrer sur un faux signal baissier d'un seul jour, sans confirmation de tendance. Les longs ont une protection anti-faux-départs que les shorts n'ont pas~~ → **RÉSOLU** : exemption retirée, shorts soumis au même `min_breakout_days` | **Qualité shorts** : ✅ fait — réduction des whipsaws short, meilleur hit_rate |
 | 8 | ✅ **Slippage model backtest** | ~~Le backtest suppose un fill au prix d'ouverture J+1 sans slippage. En réalité, le slippage peut coûter 5-20 bps par trade, surtout sur les small caps~~ → **RÉSOLU** : slippage = 5 + spread_bps/2 bps appliqué dans `_try_open_entries()`. Longs plus chers, shorts moins chers | **Backtest réaliste** : ✅ fait — les métriques backtest intègrent maintenant un coût de slippage réaliste, réduisant le Sharpe artificiellement gonflé |
 | 9 | **Concentration trackers non persistés** | Chaque run de backtest part d'une table rase. Impossible de détecter qu'un symbole a déjà été tradé 3x cette semaine — le backtest peut concentrer plus que le live | **Fidélité cross-run** : le backtest refléterait les limites de concentration réelles. Utile pour les walk-forward multi-folds où l'état des trackers devrait persister entre folds |
 | 10 | ✅ **ML réduit à 30% (70/30)** | ~~Le ML apprend la volatilité récente, des patterns de marché temporaires, des artefacts de période. Sur des actions individuelles, le bruit domine le signal~~ → **RÉSOLU** : poids passés de 40/60 à 70/30. Phase 1 : valider OOS, puis augmenter progressivement vers 50/50 si confirmé | **Robustesse** : ✅ fait — le quantitatif redevient le moteur principal, le ML filtre la qualité |
@@ -997,7 +997,7 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | ✅ FAIT | 5 | ~~Corriger le short_score PIT (SMA manquants)~~ | ~~Faible~~ — Corrigé le 2026-06-25 | ~~Fort~~ — backtest short désormais fidèle |
 | ✅ FAIT | 4 | ~~Câbler `earnings_shield` (le plus impactant des 3)~~ | ~~Moyen~~ — Câblé le 2026-06-25 | ~~Fort~~ — earnings shield actif en live + backtest |
 | ✅ FAIT | 8 | ~~Ajouter slippage model en backtest~~ | ~~Faible~~ — Ajouté le 2026-06-25 | ~~Moyen~~ — slippage = 5 + spread_bps/2 bps |
-| 🟡 P1 | 7 | Étendre le breakout filter aux shorts | Faible — retirer l'exemption dans `portfolio_builder.py` | Moyen — meilleure qualité short |
+| ✅ FAIT | 7 | ~~Étendre le breakout filter aux shorts~~ | ~~Faible~~ — Exemption retirée le 2026-06-25 | ~~Moyen~~ — shorts confirmés comme les longs |
 | 🟢 P2 | 6 | Adapter les paramètres short au régime | Moyen — ajouter logique dans `apply_regime_weights()` | Modéré — plus de shorts en bear |
 | 🟢 P2 | 9 | Persister les concentration trackers en backtest | Moyen — DB table pour trackers cross-run | Faible — surtout utile pour walk-forward |
 | ⚪ P3 | 1 | Activer sentiment/macro (recalibrer d'abord) | Élevé — besoin preuve IC robuste avant activation | Incertain — IC≈0 actuellement |
@@ -1035,11 +1035,12 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 +       → spread_bps vient de _get_spread_bps() (stock_quote_snapshots ou fallback 5 bps)
 +       → Impact : backtest plus réaliste, Sharpe réduit, stratégies marginales filtrées
 
-+ TODO P1 — Étendre le breakout filter aux shorts
-+       → Fichier : risk_management/portfolio_builder.py → étape 0bis
-+       → Solution : retirer l'exemption shorts du BreakoutConfirmationFilter
-+       → Paramètre : min_days_in_candidates_short (ex: 2 jours au lieu de 3 pour les longs)
-+       → Impact : réduire les whipsaws short, améliorer le hit_rate
++ ✅ FAIT P1 — Étendre le breakout filter aux shorts — IMPLÉMENTÉ le 2026-06-25
++       → Fichier modifié : risk_management/portfolio_builder.py → étape 0bis
++       → Changement : suppression de l'exemption `side == "sell"` dans le breakout filter
++       → Les shorts doivent désormais apparaître min_breakout_days jours consécutifs
++         dans les candidats avant d'être tradables (comme les longs)
++       → Impact : réduction des whipsaws short, meilleur hit_rate, filtrage des faux signaux baissiers
 
 + TODO P2 — Adapter les paramètres short au régime de marché
 +       → Fichier : selector/regime_scoring.py → apply_regime_weights()
@@ -1109,7 +1110,7 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | **Son impact ?** | Quand calibré et appliqué, ajuste le `final_score` en ajoutant une composante sentiment/macro. Mais la calibration confirme que le quant seul est optimal |
 | **Comment ML entraîne long/short ?** | LSTM 2 couches + Attention temporelle sur séquences de 20 jours. Features OHLCV + sentiment + contexte selector. Target = rendement forward binaire ou ternaire. Split chronologique avec purge |
 | **Comment ML prédit ?** | Charge champion model → compute features → inférence → softmax → calibration Platt → `predicted_proba` inséré en DB |
-| **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter 3) Score threshold 4) Concentration 5) Conviction = 40%×quant + 60%×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
+| **Comment le risque sélectionne ?** | 1) Regime scoring 2) Breakout filter (long+short depuis P1) 3) Score threshold 4) Concentration 5) Conviction = 0.70×quant + 0.30×ML 6) Corrélation filter 7) Factor constraints 8) Kelly/ATR sizing 9) Circuit breaker → Décision finale |
 | **Backtest vs Live ?** | **Backtest** = rejoue l'historique depuis `stock_scores_history` (PIT), prédictions ML persistées, simulation in-memory. **Live** = recalcule tout en temps réel depuis `stock_bars_daily`, inférence ML live, vrais ordres Alpaca |
 
 ---

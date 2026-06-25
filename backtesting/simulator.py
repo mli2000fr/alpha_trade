@@ -877,7 +877,7 @@ class BacktestEngine:
 
             # Quick Win 1 — anti-faux-départs : enregistrer les candidats
             # et filtrer ceux dont le breakout n'est pas confirmé.
-            # Sprint 2 — les shorts (side="sell") ne sont pas soumis au breakout.
+            # P1 (2026-06-25) : les shorts ne sont plus exemptés.
             if candidate_rows and self._breakout_tracker is not None:
                 trade_day_date = trade_day.date()
                 all_symbols = [str(row["symbol"]) for row in candidate_rows]
@@ -885,8 +885,7 @@ class BacktestEngine:
                 before = len(candidate_rows)
                 candidate_rows = [
                     row for row in candidate_rows
-                    if str(row.get("side", "buy") or "buy").strip().lower() == "sell"
-                    or self._breakout_tracker.allow_entry(str(row["symbol"]))
+                    if self._breakout_tracker.allow_entry(str(row["symbol"]))
                 ]
                 diagnostics.blocked_by_breakout += before - len(candidate_rows)
 
