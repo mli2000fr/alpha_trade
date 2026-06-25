@@ -24,7 +24,7 @@
 | **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
 | **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
 | **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter actif (même min_breakout_days que longs). Conviction = 0.70×(1-score) + 0.30×proba_ml_short |
-| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30), ✅ breakout filter shorts, ✅ shorts boostés en bear, ✅ trackers persistés |
+| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30), ✅ breakout filter shorts, ✅ shorts boostés en bear, ✅ trackers persistés, ✅ calibration walk-forward short |
 
 ---
 
@@ -39,7 +39,7 @@
 | **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
-| **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, **long-only** — pas de calibration short), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE` | 🟣 HYBRIDE |
+| **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, **long + short depuis P2 2026-06-25**), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE` | 🟣 HYBRIDE |
 | **8. Calibration des Poids** | 3 niveaux : Conviction, Sentiment, Kelly. IHM : onglets `📰 Calibrate sentiment`, `🚶 Walk-forward`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` pour consulter l'historique | 🟣 HYBRIDE |
 | **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
 | **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
@@ -487,7 +487,7 @@ insert_predictions(symbol, predicted_proba, prediction_date)
 > - ✅ **RÉSOLU (2026-06-25)** : le mode ternaire est désormais calibré via **Temperature Scaling**. Un seul paramètre T est optimisé sur le set de validation, puis appliqué à tous les logits avant softmax : `softmax(logits / T)`. La classe `TemperatureScaler` est dans `modelFactory/calibration.py`, intégrée au pipeline d'entraînement (`trainer.py:_fit_calibrator`) et d'inférence (`predictor.py:predict_symbol`). Les 3 probabilités (short, flat, long) sont calibrées conjointement.
 >
 > ```diff
-> - TODO : Implémenter la calibration pour le mode ternaire via Temperature Scaling
+> - Implémenter la calibration pour le mode ternaire via Temperature Scaling
 > + ✅ FAIT — Temperature Scaling implémenté le 2026-06-25
 > +       → Fichiers modifiés :
 > +         - modelFactory/calibration.py → classe TemperatureScaler (~60 lignes)
@@ -686,13 +686,24 @@ La calibration utilise le **même moteur de backtest que `backtesting run`** (`B
 
 $$score_{scénario} = w_{quant} \times final\_score + w_{sentiment} \times sentiment\_norm + w_{macro} \times macro\_norm$$
 
-> ⚠️ **Important — cette calibration est LONG-ONLY.** La formule ci-dessus fusionne le `final_score` (score long) avec le sentiment. Le `short_score` est présent dans le dataset mais **n'est pas utilisé** dans la calibration. Les poids optimaux trouvés ne s'appliquent donc qu'à la sélection long. Il n'existe pas de calibration walk-forward équivalente pour le côté short — le `short_score` reste un score composite fixe (30% trend + 25% RSI + 25% SMA50 + 20% SMA200) sans calibration de poids.
+> ⚠️ **Important — cette calibration est désormais LONG + SHORT (P2 2026-06-25).** La calibration long utilise le `final_score` avec top-N par `composite_score` décroissant. La calibration short utilise la même grille de scénarios mais sélectionne les **bottom-N** (pires longs = meilleurs shorts) et mesure le spread comme `universe - bottom`. Les deux calibrations produisent des poids indépendants, sauvegardés dans `latest_best_weights.json`. Le `short_score` brut reste le fallback si `short_score_walk_forward` n'est pas disponible.
 >
 > ```diff
-> + TODO : Ajouter une calibration walk-forward pour le côté short
-> +       → backtesting/sentiment_calibration.py : evaluate_scenarios() ne teste que top-N par composite_score
-> +       → Il faudrait tester bottom-N (short_score + sentiment) ou une formule short_score_sentiment
-> +       → Impact : aujourd'hui les poids sentiment/macro calibrés ne bénéficient qu'aux longs
+> - Ajouter une calibration walk-forward pour le côté short
+> + ✅ FAIT — Calibration walk-forward short implémentée le 2026-06-25
+> +       → Fichier modifié : backtesting/sentiment_calibration.py
+> +       → evaluate_scenarios() : nouveau paramètre direction="short"
+> +         - Sélectionne les bottom-N par composite_score au lieu de top-N
+> +         - Spread = universe_mean - bottom_mean (short = sous-performance)
+> +         - Même grille de scénarios (sentiment ∈ {0, 0.02, 0.05, 0.08, 0.10})
+> +       → walk_forward_backtest() : calibration short en parallèle du long
+> +         - Colonne short_score_walk_forward ajoutée au dataset OOS
+> +         - Poids short sauvegardés dans fold_df + latest_best_weights.json
+> +       → build_portfolio_signals_long_short() : préfère
+> +         short_score_walk_forward (calibré) si disponible, fallback short_score
+> +       → Impact : les shorts bénéficient désormais de la même calibration
+> +         walk-forward que les longs. Les poids sentiment/macro optimaux
+> +         peuvent différer entre long et short.
 > ```
 
 > ⚠️ **Important** : les décisions achat/vente ne sont **pas** basées uniquement sur le sentiment. Chaque scénario exécute un backtest complet avec le score fusionné en entrée, et toute la logique métier (stops, sizing, corrélation, circuit breaker) s'applique normalement. On mesure quel mix de poids produit les meilleurs résultats globaux.
@@ -730,10 +741,11 @@ Quand les poids walk-forward sont appliqués (via `SentimentBoostConfig`), le `f
 | Colonne | Signification |
 |---------|---------------|
 | `final_score_sentiment` | Score avec boost sentiment (poids par défaut ou configurés) |
-| `final_score_walk_forward` | Score avec poids walk-forward calibrés appliqués |
-| `walk_forward_sentiment_weight` | Poids sentiment calibré |
-| `walk_forward_macro_weight` | Poids macro calibré |
-| `walk_forward_quant_weight` | Poids quant calibré |
+| `final_score_walk_forward` | Score long avec poids walk-forward calibrés appliqués |
+| `short_score_walk_forward` | Score short avec poids walk-forward calibrés appliqués (P2 2026-06-25) |
+| `walk_forward_sentiment_weight` | Poids sentiment calibré (long) |
+| `walk_forward_macro_weight` | Poids macro calibré (long) |
+| `walk_forward_quant_weight` | Poids quant calibré (long) |
 
 ⚠️ **En pratique actuelle** : vu que les poids calibrés optimaux tendent vers `sentiment=0, macro=0, quant=1`, le walk-forward confirme que le signal quantitatif seul est le plus robuste.
 >
@@ -1139,7 +1151,7 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | `backtesting/execution_broker_like.py` | 🔵 BACKTEST | Frames synthétiques pour comparer backtest vs live |
 | `backtesting/fidelity.py` | 🟢🔵 BOTH | Traque la dégradation PIT, compare backtest↔live |
 | `backtesting/data_loader.py` | 🔵 BACKTEST | Charge `stock_scores_history` (PIT) ou fallback `stock_scores` ; `eodhd_eod` uniquement |
-| `backtesting/sentiment_calibration.py` | 🔵 BACKTEST | Grid search des poids → produit `best_weights.json` |
+| `backtesting/sentiment_calibration.py` | 🔵 BACKTEST | Grid search des poids → produit `best_weights.json` (long + short depuis P2) |
 | `backtesting/walk_forward.py` | 🟣 HYBRIDE | Charge les artefacts calibrés ; la calibration est backtest-only |
 | `risk_management/portfolio_builder.py` | 🟢🔵 BOTH | Même code ; les sources de données diffèrent (historique vs courant) |
 | `event_sentiment/signal_aggregator.py` | 🟢 LIVE | LIVE : calcule `final_score_sentiment` ; BACKTEST : le lit depuis `stock_scores_history` |
@@ -1250,7 +1262,7 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 | `backtesting/simulator.py` | 🔵 BACKTEST | Moteur de backtest (simule entrées/sorties in-memory) |
 | `backtesting/signal_replay.py` | 🔵 BACKTEST | Rejoue la fusion conviction sur scores historiques |
 | `backtesting/data_loader.py` | 🔵 BACKTEST | Chargement PIT : `stock_scores_history` + `model_predictions` |
-| `backtesting/sentiment_calibration.py` | 🔵 BACKTEST | Calibration walk-forward des poids sentiment |
+| `backtesting/sentiment_calibration.py` | 🔵 BACKTEST | Calibration walk-forward des poids sentiment (long + short depuis P2 2026-06-25) |
 | `backtesting/walk_forward.py` | 🟣 HYBRIDE | Résolution des poids walk-forward calibrés (charge + valide) |
 | `backtesting/fidelity.py` | 🟢🔵 BOTH | Comparaison backtest↔live, diagnostic PIT |
 | `backtesting/execution_bridge.py` | 🟢🔵 BOTH | Pont données entre risk et exécution (backtest + live) |

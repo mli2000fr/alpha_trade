@@ -604,18 +604,25 @@ class SentimentWeightCalibrator:
             long_symbols = set(long_selected["symbol"].tolist()) if n_long > 0 else set()
             short_candidates = day_df[~day_df["symbol"].isin(long_symbols)].copy()
 
-            if "short_score" in short_candidates.columns:
-                short_candidates["score"] = pd.to_numeric(short_candidates["short_score"], errors="coerce").fillna(0.0)
-                # Exclure les short_score nuls (pas de signal baissier)
-                short_candidates = short_candidates[short_candidates["score"] > 0.0]
-                short_candidates = short_candidates.sort_values("score", ascending=False)
-                n_short = min(max_positions_short, len(short_candidates))
-                short_selected = short_candidates.head(n_short).copy()
-                short_selected["trade_date"] = trade_date_ts
-                short_selected["rank"] = range(1, n_short + 1)
-                short_selected["selected"] = True
-                short_selected["side"] = "sell"
-                short_frames.append(short_selected)
+        # P2 (2026-06-25) : préférer short_score_walk_forward (calibré) si dispo
+        short_score_col = (
+            "short_score_walk_forward"
+            if "short_score_walk_forward" in short_candidates.columns
+            and short_candidates["short_score_walk_forward"].notna().any()
+            else "short_score"
+        )
+        if short_score_col in short_candidates.columns:
+            short_candidates["score"] = pd.to_numeric(short_candidates[short_score_col], errors="coerce").fillna(0.0)
+            # Exclure les scores nuls (pas de signal baissier)
+            short_candidates = short_candidates[short_candidates["score"] > 0.0]
+            short_candidates = short_candidates.sort_values("score", ascending=False)
+            n_short = min(max_positions_short, len(short_candidates))
+            short_selected = short_candidates.head(n_short).copy()
+            short_selected["trade_date"] = trade_date_ts
+            short_selected["rank"] = range(1, n_short + 1)
+            short_selected["selected"] = True
+            short_selected["side"] = "sell"
+            short_frames.append(short_selected)
 
         all_signals = pd.concat(long_frames + short_frames, ignore_index=True) if (long_frames or short_frames) else pd.DataFrame(
             columns=["trade_date", "symbol", "sector", "score", "rank", "selected", "side"]
@@ -648,10 +655,23 @@ class SentimentWeightCalibrator:
         scenarios: Iterable[SentimentCalibrationScenario],
         horizons: tuple[int, ...] = (5, 10, 20),
         top_n: int = 20,
+        *,
+        direction: str = "long",
     ) -> pd.DataFrame:
+        """Évalue les scénarios de calibration sur un dataset.
+
+        Parameters
+        ----------
+        direction : str
+            ``"long"`` (défaut) : sélectionne les top-N par ``composite_score``
+            décroissant (meilleurs longs). ``"short"`` : sélectionne les
+            bottom-N (pires longs = meilleurs shorts) et mesure le spread
+            comme ``universe - bottom`` (les shorts doivent sous-performer).
+        """
         if dataset.empty:
             return pd.DataFrame()
 
+        is_short = (direction == "short")
         results: list[dict[str, object]] = []
         for scenario in scenarios:
             working = self.score_dataset_for_scenario(dataset, scenario, score_column="composite_score")
@@ -663,6 +683,7 @@ class SentimentWeightCalibrator:
                 "quant_weight": scenario.quant_weight,
                 "rows_evaluated": int(len(working)),
                 "days_evaluated": int(working["snapshot_date"].nunique()),
+                "direction": direction,
             }
             per_horizon_scores: list[float] = []
             for horizon in horizons:
@@ -684,15 +705,20 @@ class SentimentWeightCalibrator:
                         rank_ic = score_rank.corr(return_rank)
                         if pd.notna(rank_ic):
                             ic_values.append(float(rank_ic))
-                    top_slice = valid.nlargest(effective_top_n, "composite_score")
-                    if not top_slice.empty:
-                        top_bucket_returns.append(float(top_slice[return_col].mean()))
+                    # P2 (2026-06-25) — direction "short" : bottom-N au lieu de top-N
+                    if is_short:
+                        bucket_slice = valid.nsmallest(effective_top_n, "composite_score")
+                    else:
+                        bucket_slice = valid.nlargest(effective_top_n, "composite_score")
+                    if not bucket_slice.empty:
+                        top_bucket_returns.append(float(bucket_slice[return_col].mean()))
                     universe_returns.append(float(valid[return_col].mean()))
 
                 mean_ic = sum(ic_values) / len(ic_values) if ic_values else 0.0
                 top_mean = sum(top_bucket_returns) / len(top_bucket_returns) if top_bucket_returns else 0.0
                 universe_mean = sum(universe_returns) / len(universe_returns) if universe_returns else 0.0
-                spread = top_mean - universe_mean
+                # Pour les shorts, le spread = universe - bottom (bon short = sous-performance)
+                spread = (universe_mean - top_mean) if is_short else (top_mean - universe_mean)
                 horizon_score = (0.65 * mean_ic) + (0.35 * spread)
                 metrics[f"ic_{horizon}d"] = mean_ic
                 metrics[f"top_return_{horizon}d"] = top_mean
@@ -748,6 +774,10 @@ class SentimentWeightCalibrator:
                 "fold_index", "train_start_date", "train_end_date", "test_start_date", "test_end_date",
                 "best_scenario_name", "sentiment_weight", "macro_weight", "quant_weight",
                 "best_train_overall_score", "out_of_sample_overall_score",
+                # P2 (2026-06-25) — calibration short
+                "best_short_scenario_name", "short_sentiment_weight",
+                "short_macro_weight", "short_quant_weight",
+                "best_short_train_overall_score",
             ] if column in fold_df.columns
         ]].copy() if not fold_df.empty else pd.DataFrame()
         selected_weights_df.to_csv(selected_weights_csv, index=False)
@@ -907,6 +937,22 @@ class SentimentWeightCalibrator:
             best_train_row = train_ranking.iloc[0].to_dict()
             best_scenario = self._scenario_from_row(best_train_row)
             scored_test = self.score_dataset_for_scenario(test_df, best_scenario, score_column="final_score_walk_forward")
+
+            # ── P2 (2026-06-25) : calibration short en parallèle ──────
+            # Même grille de scénarios, mais direction="short" → bottom-N
+            short_train_ranking = self.evaluate_scenarios(
+                train_df, scenario_list, horizons=horizons, top_n=top_n, direction="short",
+            )
+            best_short_row: dict[str, Any] = {}
+            if not short_train_ranking.empty:
+                best_short_row = short_train_ranking.iloc[0].to_dict()
+                best_short_scenario = self._scenario_from_row(best_short_row)
+                # Score le test set avec les poids short calibrés
+                scored_test_short = self.score_dataset_for_scenario(
+                    test_df, best_short_scenario, score_column="short_score_walk_forward",
+                )
+                # Fusionner la colonne short calibrée dans scored_test
+                scored_test["short_score_walk_forward"] = scored_test_short["short_score_walk_forward"].values
             scored_test["fold_index"] = int(window["fold_index"])
             scored_test["train_start_date"] = pd.Timestamp(window["train_start_date"])
             scored_test["train_end_date"] = pd.Timestamp(window["train_end_date"])
@@ -931,6 +977,12 @@ class SentimentWeightCalibrator:
                     "quant_weight": float(best_train_row.get("quant_weight") or 0.0),
                     "best_train_overall_score": float(best_train_row.get("overall_score") or 0.0),
                     "out_of_sample_overall_score": float(oos_eval.get("overall_score") or 0.0),
+                    # P2 (2026-06-25) — calibration short
+                    "best_short_scenario_name": str(best_short_row.get("scenario_name") or "none") if best_short_row else "none",
+                    "short_sentiment_weight": float(best_short_row.get("sentiment_weight") or 0.0) if best_short_row else 0.0,
+                    "short_macro_weight": float(best_short_row.get("macro_weight") or 0.0) if best_short_row else 0.0,
+                    "short_quant_weight": float(best_short_row.get("quant_weight") or 0.0) if best_short_row else 0.0,
+                    "best_short_train_overall_score": float(best_short_row.get("overall_score") or 0.0) if best_short_row else 0.0,
                     "rows_tested": int(len(test_df)),
                     "trading_days_tested": int(test_df["snapshot_date"].nunique()),
                 }
