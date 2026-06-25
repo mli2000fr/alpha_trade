@@ -291,6 +291,10 @@ class PipelineLaunchOptions:
     ml_include_sentiment: bool = True
     ml_include_selector_context: bool = DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT
     ml_include_short_score: bool = DEFAULT_ML_INCLUDE_SHORT_SCORE
+    ml_include_macro_vix: bool = False   # VIX/VIX9D — nécessite backfill stock_macro_indicators_daily
+    ml_include_macro_vxn: bool = False   # VXN — Nasdaq-100 volatility
+    ml_include_macro_vix3m: bool = False # VIX3M — term structure contango/backwardation
+    ml_include_macro_move: bool = False  # MOVE — bond volatility
     ml_enable_lightgbm: bool = True
     ml_enable_catboost: bool = True
     ml_enable_global_model: bool = False
@@ -2082,6 +2086,14 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-selector-context")
         if options.ml_include_short_score:
             command.append("--include-short-score")
+        if options.ml_include_macro_vix:
+            command.append("--include-macro-vix")
+        if options.ml_include_macro_vxn:
+            command.append("--include-macro-vxn")
+        if options.ml_include_macro_vix3m:
+            command.append("--include-macro-vix3m")
+        if options.ml_include_macro_move:
+            command.append("--include-macro-move")
         if options.ml_debug_train:
             command.append("--debug-train")
         if options.ml_enable_lightgbm:

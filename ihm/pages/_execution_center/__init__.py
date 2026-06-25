@@ -119,6 +119,10 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_HIDDEN_SIZE,
     DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT,
     DEFAULT_ML_INCLUDE_SHORT_SCORE,
+    DEFAULT_ML_INCLUDE_MACRO_VIX,
+    DEFAULT_ML_INCLUDE_MACRO_VXN,
+    DEFAULT_ML_INCLUDE_MACRO_VIX3M,
+    DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
@@ -3220,19 +3224,32 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_short_score",
                 help="Ajoute `--include-short-score` pour intégrer le score baissier composite (trend+RSI+SMA) comme feature ML indépendante.",
             )
-            ml_enable_lightgbm = st.checkbox(
-                "Comparer LightGBM local",
-                value=_session_state_bool("pipeline_ml_enable_lightgbm", True),
-                key="pipeline_ml_enable_lightgbm",
-                help="Ajoute `--compare-lightgbm`.",
-            )
-            ml_enable_catboost = st.checkbox(
-                "Comparer CatBoost local",
-                value=_session_state_bool("pipeline_ml_enable_catboost", True),
-                key="pipeline_ml_enable_catboost",
-                help="Ajoute `--enable-catboost`.",
-            )
         with ml_opt_col2:
+            ml_include_macro_vix = st.checkbox(
+                "📊 VIX/VIX9D (volatilité S&P 500)",
+                value=_session_state_bool("pipeline_ml_include_macro_vix", False),
+                key="pipeline_ml_include_macro_vix",
+                help="Ajoute `--include-macro-vix`. Nécessite un backfill préalable de `stock_macro_indicators_daily`.",
+            )
+            ml_include_macro_vxn = st.checkbox(
+                "📊 VXN (volatilité NASDAQ-100)",
+                value=_session_state_bool("pipeline_ml_include_macro_vxn", False),
+                key="pipeline_ml_include_macro_vxn",
+                help="Ajoute `--include-macro-vxn`. Utile pour les valeurs Tech.",
+            )
+            ml_include_macro_vix3m = st.checkbox(
+                "📊 VIX3M + ratio (term structure)",
+                value=_session_state_bool("pipeline_ml_include_macro_vix3m", False),
+                key="pipeline_ml_include_macro_vix3m",
+                help="Ajoute `--include-macro-vix3m`. Ratio VIX/VIX3M : détecte la backwardation (panique court terme).",
+            )
+            ml_include_macro_move = st.checkbox(
+                "📊 MOVE (volatilité obligataire)",
+                value=_session_state_bool("pipeline_ml_include_macro_move", False),
+                key="pipeline_ml_include_macro_move",
+                help="Ajoute `--include-macro-move`. Indice ICE BofA MOVE : volatilité des bons du Trésor US.",
+            )
+        with ml_opt_col3:
             ml_select_champion = st.checkbox(
                 "Activer la sélection automatique du champion",
                 value=_session_state_bool("pipeline_ml_select_champion", True),
@@ -4023,6 +4040,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_sentiment=bool(ml_include_sentiment),
             ml_include_selector_context=bool(ml_include_selector_context),
             ml_include_short_score=bool(ml_include_short_score),
+            ml_include_macro_vix=bool(ml_include_macro_vix),
+            ml_include_macro_vxn=bool(ml_include_macro_vxn),
+            ml_include_macro_vix3m=bool(ml_include_macro_vix3m),
+            ml_include_macro_move=bool(ml_include_macro_move),
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),

@@ -68,6 +68,9 @@ def _load_history_df(limit: int = 50) -> pd.DataFrame:
             "earnings_shield_n": len(data.get("earnings_shielded_symbols") or {}),
             "buyback_blackout_n": len(data.get("buyback_blackout_symbols") or {}),
             "vix": (data.get("macro") or {}).get("vix"),
+            "vxn": (data.get("macro") or {}).get("vxn"),
+            "vix3m": (data.get("macro") or {}).get("vix3m"),
+            "move": (data.get("macro") or {}).get("move"),
             "yield_10y_5d_pct": (data.get("macro") or {}).get("yield_10y_5d_pct"),
             "reasons": ", ".join(data.get("reasons") or []),
         })
@@ -174,6 +177,10 @@ def _format_macro_runtime_context(yaml_cfg: dict[str, Any]) -> str:
     mr_cfg = yaml_cfg.get("market_regimes") if isinstance(yaml_cfg, dict) else {}
     mr_cfg = mr_cfg if isinstance(mr_cfg, dict) else {}
     vix_cfg = mr_cfg.get("vix") if isinstance(mr_cfg.get("vix"), dict) else {}
+    vxn_cfg = mr_cfg.get("vxn") if isinstance(mr_cfg.get("vxn"), dict) else {}
+    vix3m_cfg = mr_cfg.get("vix3m") if isinstance(mr_cfg.get("vix3m"), dict) else {}
+    move_cfg = mr_cfg.get("move") if isinstance(mr_cfg.get("move"), dict) else {}
+    rvx_cfg = mr_cfg.get("rvx") if isinstance(mr_cfg.get("rvx"), dict) else {}
     yields_cfg = mr_cfg.get("yields") if isinstance(mr_cfg.get("yields"), dict) else {}
     fred_cfg = yaml_cfg.get("fred") if isinstance(yaml_cfg, dict) and isinstance(yaml_cfg.get("fred"), dict) else {}
     macro_provider = str(mr_cfg.get("macro_provider") or "composite")
@@ -184,12 +191,20 @@ def _format_macro_runtime_context(yaml_cfg: dict[str, Any]) -> str:
     )
     vix_symbol = str(vix_cfg.get("symbol") or "VIX.INDX")
     vix_short_symbol = str(vix_cfg.get("short_symbol") or "VIX9D.INDX")
+    vxn_symbol = str(vxn_cfg.get("symbol") or "VXN.INDX")
+    vix3m_symbol = str(vix3m_cfg.get("symbol") or "VIX3M.INDX")
+    move_symbol = str(move_cfg.get("symbol") or "MOVE.INDX")
+    rvx_symbol = str(rvx_cfg.get("symbol") or "RVX.INDX")
     return "\n".join([
         f"Config utilisée: {CONFIG_PATH}",
         f"macro_provider: {macro_provider}",
         f"fred_series_10y: {fred_series}",
         f"vix.symbol: {vix_symbol}",
         f"vix.short_symbol: {vix_short_symbol}",
+        f"vxn.symbol: {vxn_symbol}",
+        f"vix3m.symbol: {vix3m_symbol}",
+        f"move.symbol: {move_symbol}",
+        f"rvx.symbol: {rvx_symbol}",
     ])
 
 
@@ -299,6 +314,23 @@ def _render_summary(snap: dict[str, Any]) -> None:
         f"{float(macro.get('yield_10y_5d_pct')) * 100:.2f}%" if isinstance(macro.get("yield_10y_5d_pct"), (int, float)) else "n/a",
     )
 
+    col_vxn, col_rvx, col_vix3m, col_move = st.columns(4)
+    col_vxn.metric("VXN (Nasdaq vol)", f"{macro.get('vxn'):.2f}" if macro.get("vxn") is not None else "n/a")
+    col_rvx.metric("RVX (Russell 2000 vol)", f"{macro.get('rvx'):.2f}" if macro.get("rvx") is not None else "n/a")
+    vix3m_raw = macro.get("vix3m")
+    vix_raw = macro.get("vix")
+    if vix_raw is not None and vix3m_raw is not None and float(vix3m_raw) > 0:
+        ratio = float(vix_raw) / float(vix3m_raw)
+        ratio_str = f"{vix3m_raw:.2f}  (ratio VIX/VIX3M={ratio:.2f})"
+        if ratio > 1.0:
+            ratio_str += " ⚠️ backwardation"
+    elif vix3m_raw is not None:
+        ratio_str = f"{float(vix3m_raw):.2f}"
+    else:
+        ratio_str = "n/a"
+    col_vix3m.metric("VIX3M (term structure)", ratio_str)
+    col_move.metric("MOVE (bond vol)", f"{macro.get('move'):.2f}" if macro.get("move") is not None else "n/a")
+
     col8, col9, col10 = st.columns(3)
     col8.metric(
         "Sentiment score",
@@ -395,7 +427,9 @@ def render() -> None:
     st.markdown("---")
     st.subheader("🗃️ Alimenter `stock_macro_indicators_daily`")
     st.caption(
-        "Recharge manuellement la table macro sur une plage de séances NYSE en appelant les providers configurés (EODHD / FRED / Stooq selon `config.yaml`). Les lignes existantes sont écrasées par upsert."
+        "Recharge manuellement la table macro sur une plage de séances NYSE en appelant les providers configurés "
+        "(EODHD / FRED / Stooq selon `config.yaml`). Les 8 indicateurs (VIX, VIX9D, VXN, VIX3M, MOVE, RVX, 10Y) "
+        "sont persistés dans `stock_macro_indicators_daily`. Les lignes existantes sont écrasées par upsert."
     )
     import_col1, import_col2, import_col3 = st.columns([1, 1, 1])
     import_start = import_col1.date_input(
@@ -434,7 +468,7 @@ def render() -> None:
     st.markdown("### ♻️ Recalcul des colonnes de régime")
     st.info(
         "Cette action réutilise les valeurs déjà stockées dans `stock_macro_indicators_daily` "
-        "(`vix`, `vix9d`, `ten_y`) et recalcule uniquement les colonnes dérivées de régime "
+        "(`vix`, `vix9d`, `ten_y`, `vxn`, `vix3m`, `move`, `rvx`) et recalcule uniquement les colonnes dérivées de régime "
         "(`mode`, `risk_multiplier`, `effective_max_positions`, `allow_new_entries`, "
         "`vix_curve_inverted`, `yield_10y_5d_pct`, `sentiment_*`)."
     )
