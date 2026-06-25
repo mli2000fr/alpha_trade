@@ -24,7 +24,7 @@
 | **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
 | **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
 | **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter exempté. Conviction = 0.40×(1-score) + 0.60×proba_ml_short |
-| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, filtres régime non câblés, short_score PIT dégradé (SMA absents), fills parfaits en backtest |
+| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, fills parfaits en backtest, ML trop central (60/40) |
 
 ---
 
@@ -43,7 +43,7 @@
 | **8. Calibration des Poids** | 3 niveaux : Conviction, Sentiment, Kelly. IHM : onglets `📰 Calibrate sentiment`, `🚶 Walk-forward`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` pour consulter l'historique | 🟣 HYBRIDE |
 | **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
 | **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
-| **11. Caveats** | 9 points d'attention : fonctionnalités désactivées, PIT dégradé, asymétries long/short, limites backtest | — |
+| **11. Caveats** | 12 points d'attention : fonctionnalités désactivées, ✅ PIT corrigé, asymétries long/short, limites backtest, risques ML/Kelly | — |
 | **12. Résumé Synthétique** | Tableau récapitulatif (rappel en fin de document) | — |
 | **13. Backtest vs Live — Détail** | 8 sous-sections : sources, sentiment, ML, exécution, walk-forward, CLI, dégradation PIT par composant | — |
 | **14. Glossaire** | Tous les fichiers clés avec leur mode (LIVE / BACKTEST / BOTH / HYBRIDE) | — |
@@ -944,7 +944,7 @@ $$business\_score = precision\_long \times coverage + \max(avg\_return, 0) + 0.1
 
 1. `AlphaScanner.run()` → `_enrich_short_score()` ajoute la colonne `short_score` aux candidats
 2. `rank_and_select_short()` trie par `short_score` décroissant, exclut les symboles déjà longs, prend le top N
-3. En **backtest PIT** (`backfill_scores_history.py`) : `close_df=None` → les facteurs SMA (prix<SMA50, prix<SMA200) du `short_score` ne sont **pas calculés** (seuls trend_score et RSI contribuent)
+3. En **backtest PIT** (`backfill_scores_history.py`) : ✅ **corrigé le 2026-06-25** — `_enrich_short_score_pit()` appelle désormais `_enrich_with_sma()` (SQL sur `stock_bars_daily`) pour injecter `sma_50`, `sma_200`, `last_close` avant le calcul du `short_score`. Les 4 facteurs sont maintenant actifs en backtest comme en live.
 
 ### 10.4 Conviction Short (`core/conviction.py`)
 
@@ -963,8 +963,8 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 1 | ⚠️ **Sentiment/macro désactivés par défaut** | <span style="color:red">**`sentiment_weight=0`, `macro_weight=0`**</span> — le `final_score_sentiment` = `final_score` pur |
 | 2 | ⚠️ **Champion selection désactivée par défaut** | Le système utilise toujours `lstm_attention`, même si CatBoost/LightGBM sont meilleurs |
 | 3 | ⚠️ **Target optimization désactivée par défaut** | Les paramètres de target (horizon, seuils) sont fixes, non optimisés automatiquement |
-| 4 | **Filtres de régime `regime_filters.py` non câblés (ni live ni backtest)** | `earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés. Les filtres défensifs de `regime_scoring.py` sont eux bien actifs |
-| 5 | **Short_score PIT dégradé** | En backfill PIT, les facteurs SMA du short_score ne sont pas calculés (`close_df=None`) |
+| 4 | ✅ **Filtres de régime `regime_filters.py` CÂBLÉS (2026-06-25)** | ~~`earnings_shield`, `buyback_blackout`, `yield_filter` sont codés et testés mais pas appelés.~~ → Fix : appel à `apply_full_regime_to_candidates()` ajouté dans `portfolio_builder.py` (live) et `risk_bridge.py` (backtest), appliqué dans TOUS les régimes |
+| 5 | ✅ **Short_score PIT CORRIGÉ (2026-06-25)** | ~~En backfill PIT, les facteurs SMA du short_score ne sont pas calculés (`close_df=None`)~~ → Fix : `_enrich_short_score_pit()` appelle `_enrich_with_sma()` (SQL) pour injecter SMA50/200/last_close avant le calcul. Les 4 facteurs sont désormais actifs en backtest |
 | 6 | **Short non affecté par le régime** | `apply_regime_weights()` modifie `final_score` mais pas `short_score` — les shorts sont insensibles à la rotation factorielle du régime |
 | 7 | **Breakout filter long-only** | Les shorts ne passent pas par le filtre de confirmation de breakout |
 | 8 | **Fills parfaits en backtest** | `fill_price = entry_price` — pas de slippage simulé en backtest |
@@ -980,8 +980,8 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 1 | **Sentiment/macro désactivés** | Le `final_score` ignore complètement l'information news et macro-économique. Même si l'IC est faible aujourd'hui, un signal sentiment pourrait devenir significatif dans certains régimes (ex: forte volatilité, crise) | **Diversification alpha** : le sentiment capte un signal orthogonal au momentum technique. En période de news-driven market, cela pourrait améliorer le timing d'entrée/sortie |
 | 2 | **Champion selection off** | Le LSTM est toujours utilisé même si CatBoost ou LightGBM le surpassent sur un symbole donné. Pas d'adaptation automatique au meilleur modèle | **Performance ML** : chaque symbole pourrait bénéficier du modèle le plus adapté à ses données. CatBoost excelle sur les données tabulaires avec peu d'échantillons, LSTM sur les séquences longues |
 | 3 | **Target optimization off** | Horizon et seuils fixes (5j, +12%/-8%) pour tous les symboles, alors que certains peuvent avoir un edge sur 3j ou 10j, avec des seuils différents | **Edge spécifique** : un symbole peu volatil aura besoin d'un seuil plus serré, un symbole très volatil d'un horizon plus court. Optimiser par symbole maximise le signal/bruit |
-| 4 | **Filtres régime non câblés** | Les trades passent sans tenir compte des earnings (risque de gap -15% overnight), des blackouts buyback, ou des secteurs sensibles aux taux. Les filtres sont codés mais non appelés | **Protection événementielle** : éviter les trades autour des earnings réduit le risque idiosyncratique. En backtest, cela éviterait des pertes irréalistes qui faussent les métriques |
-| 5 | **Short_score PIT dégradé** | En backtest, le short_score est amputé de 45% de sa formule (SMA50 + SMA200 = 0.45 du poids). Le score short backtesté n'est pas le même que le score short live | **Backtest fidèle** : le backtest short refléterait la réalité live. Aujourd'hui, les shorts backtestés sont sous-évalués → fausse impression de sous-performance short |
+| 4 | ✅ **Filtres régime CÂBLÉS** | ~~Les trades passent sans tenir compte des earnings (risque de gap -15% overnight), des blackouts buyback, ou des secteurs sensibles aux taux. Les filtres sont codés mais non appelés~~ → **RÉSOLU** : `apply_full_regime_to_candidates()` appelé dans `_apply_regime_scoring_to_candidates()` (live) et `risk_bridge.py` (backtest), dans TOUS les régimes | **Protection événementielle** : ✅ fait — les candidats proches des earnings sont exclus (strict_block) ou pénalisés (negative_score), en live comme en backtest |
+| 5 | ✅ **Short_score PIT CORRIGÉ** | ~~En backtest, le short_score est amputé de 45% de sa formule (SMA50 + SMA200 = 0.45 du poids). Le score short backtesté n'est pas le même que le score short live~~ → **RÉSOLU** : `_enrich_short_score_pit()` enrichit désormais avec `_enrich_with_sma()` avant le calcul. Backtest short fidèle au live | **Backtest fidèle** : ✅ fait — le backtest short reflète maintenant la réalité live avec les 4 facteurs |
 | 6 | **Short non affecté par le régime** | En marché baissier, les longs passent en mode défensif mais les shorts restent inchangés. Pourtant, shorter en bear market est plus facile — on pourrait être plus agressif | **Adaptation tactique** : en capital_preservation, on pourrait baisser le min_score_short (plus facile d'entrer) ou augmenter le max_positions_short (plus d'opportunités) |
 | 7 | **Breakout filter long-only** | Les shorts peuvent entrer sur un faux signal baissier d'un seul jour, sans confirmation de tendance. Les longs ont une protection anti-faux-départs que les shorts n'ont pas | **Qualité shorts** : réduire les entrées short sur des mouvements baissiers non confirmés → moins de whipsaws, meilleur hit_rate short |
 | 8 | **Fills parfaits en backtest** | Le backtest suppose un fill au prix d'ouverture J+1 sans slippage. En réalité, le slippage peut coûter 5-20 bps par trade, surtout sur les small caps | **Backtest réaliste** : intégrer un slippage model simple (ex: 5 bps + spread/2) rendrait les métriques backtest plus proches du live, éviterait les stratégies non rentables après coûts |
@@ -994,8 +994,8 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 
 | Priorité | # | Action | Effort | Gain |
 |----------|---|--------|--------|------|
-| 🔴 P0 | 5 | Corriger le short_score PIT (SMA manquants) | Faible — utiliser `stock_bars_daily` comme fallback pour close_df | Fort — backtest short fidèle |
-| 🔴 P0 | 4 | Câbler `earnings_shield` (le plus impactant des 3) | Moyen — ajouter l'appel dans `alpha_scanner.py` | Fort — éviter gaps -15% |
+| ✅ FAIT | 5 | ~~Corriger le short_score PIT (SMA manquants)~~ | ~~Faible~~ — Corrigé le 2026-06-25 | ~~Fort~~ — backtest short désormais fidèle |
+| ✅ FAIT | 4 | ~~Câbler `earnings_shield` (le plus impactant des 3)~~ | ~~Moyen~~ — Câblé le 2026-06-25 | ~~Fort~~ — earnings shield actif en live + backtest |
 | 🟡 P1 | 8 | Ajouter slippage model en backtest | Faible — 5 bps + spread/2 | Moyen — backtest plus réaliste |
 | 🟡 P1 | 7 | Étendre le breakout filter aux shorts | Faible — retirer l'exemption dans `portfolio_builder.py` | Moyen — meilleure qualité short |
 | 🟢 P2 | 6 | Adapter les paramètres short au régime | Moyen — ajouter logique dans `apply_regime_weights()` | Modéré — plus de shorts en bear |
@@ -1008,17 +1008,23 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 🟢 P2 | 11 | Explorer GlobalModel avec ticker embeddings | Élevé — nouveau pipeline d'entraînement | Modéré — gain de généralisation cross-sectionnelle |
 
 ```diff
-+ TODO P0 — Corriger le short_score PIT (SMA manquants)
-+       → Fichier : selector/short_score.py → compute_short_score()
-+       → Problème : close_df=None dans backfill_scores_history.py → SMA50/SMA200 non calculés
-+       → Solution : dans backfill_scores_history.py, charger stock_bars_daily comme fallback pour close_df
-+       → Impact : 45% du poids du short_score est muet en backtest → scores shorts sous-évalués
++ ✅ FAIT P0 — Corriger le short_score PIT (SMA manquants) — IMPLÉMENTÉ le 2026-06-25
++       → Fichier modifié : backtesting/backfill_scores_history.py → _enrich_short_score_pit()
++       → Changement : supprimé @staticmethod, ajouté appel à self._enrich_with_sma()
++         qui interroge stock_bars_daily en SQL pour injecter sma_50, sma_200, last_close
++         avant d'appeler compute_short_score(). Les 4 facteurs sont désormais actifs en backtest.
++       → Impact : le short_score backtest est maintenant identique au short_score live
 
-+ TODO P0 — Câbler earnings_shield dans le pipeline
-+       → Fichier : selector/regime_filters.py (déjà codé et testé !)
-+       → Solution : ajouter l'appel à apply_regime_filters() dans alpha_scanner.py, après apply_regime_weights()
-+       → Config : earnings_shield_mode = "strict_block" (exclut J-2/J+2) ou "negative_score" (pénalise)
-+       → Impact : éviter les gaps overnight de -15% sur earnings surprise
++ ✅ FAIT P0 — Câbler earnings_shield dans le pipeline — IMPLÉMENTÉ le 2026-06-25
++       → Fichiers modifiés :
++         - risk_management/portfolio_builder.py → _apply_regime_scoring_to_candidates()
++         - backtesting/risk_bridge.py → boucle de backtest
++       → Changement : appel à apply_full_regime_to_candidates() (earnings_shield +
++         buyback_blackout + yield_filter) dans TOUS les régimes, avant apply_regime_weights()
++       → En mode strict_block : les candidats dans la fenêtre J-2/J+2 des earnings sont exclus
++       → En mode negative_score : leur score est pénalisé à -1.0
++       → Impact : protection contre les gaps overnight de -15% sur earnings surprise,
++         en live ET en backtest
 
 + TODO P1 — Ajouter un slippage model en backtest
 +       → Fichier : backtesting/execution_bridge.py → fill_price actuellement = entry_price

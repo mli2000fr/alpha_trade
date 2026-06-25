@@ -523,7 +523,17 @@ def build_phase2_risk_result(
         ]
         if snap is not None and not day_scores.empty:
             from selector.regime_scoring import apply_regime_weights
-            day_scores = apply_regime_weights(day_scores.copy(), snap, rotation_state=rotation_state)
+            from selector.regime_filters import apply_full_regime_to_candidates
+            # ── P0 FIX (2026-06-25) : earnings_shield / buyback_blackout / yield_filter ──
+            day_scores = apply_full_regime_to_candidates(
+                day_scores.copy(),
+                snap,
+                score_column="final_score",
+                sector_column="sector",
+                symbol_column="symbol",
+            )
+            if not day_scores.empty:
+                day_scores = apply_regime_weights(day_scores, snap, rotation_state=rotation_state)
 
         # ── 1bis. Alimenter le rotation factor avec le retour quotidien ──
         if equity_provider is not None and snap is not None:

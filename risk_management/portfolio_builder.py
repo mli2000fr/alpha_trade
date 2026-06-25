@@ -42,14 +42,15 @@ def _apply_regime_scoring_to_candidates(
     regime_snapshot: object,
     rotation_state: object | None = None,
 ) -> list[CandidateScore]:
-    """Applique les poids directionnels du régime aux scores des candidats.
+    """Applique les filtres de régime et les poids directionnels aux scores.
 
-    Convertit la liste de ``CandidateScore`` en DataFrame, applique
-    :func:`~selector.regime_scoring.apply_regime_weights`, puis reconstruit
-    la liste avec les ``score_used`` ajustés.
+    Applique systématiquement les filtres événementiels (earnings_shield,
+    buyback_blackout, yield_filter) dans **tous** les régimes, PUIS ajuste
+    les poids directionnels uniquement en mode ``capital_preservation`` ou
+    en cas de rotation forcée.
 
-    En régime ``normal`` (sans rotation forcée), la fonction est une non-op
-    (retourne la liste inchangée).
+    En régime ``normal`` sans rotation, seuls les filtres événementiels
+    sont appliqués (la fonction n'est plus une non-op stricte).
     """
     from selector.regime_scoring import MomentumRotationState
 
@@ -59,17 +60,84 @@ def _apply_regime_scoring_to_candidates(
         and rotation_state.is_ready()
         and rotation_state.should_rotate()
     )
-    if mode == "normal" and not rotated:
-        return candidates
 
     try:
         import pandas as pd
-        from selector.regime_scoring import apply_regime_weights
+        from selector.regime_filters import apply_full_regime_to_candidates
 
-        # Convertir les candidats en DataFrame minimal
+        # ── P0 FIX (2026-06-25) : earnings_shield / buyback_blackout / yield_filter ──
+        # Convertir en DataFrame pour appliquer les filtres événementiels
         rows: list[dict[str, object]] = []
         for c in candidates:
             rows.append({
+                "symbol": c.symbol,
+                "sector": c.sector,
+                "score_used": c.score_used,
+                "final_score": c.score_used,
+            })
+        df = pd.DataFrame(rows)
+
+        df = apply_full_regime_to_candidates(
+            df,
+            regime_snapshot,
+            score_column="final_score",
+            sector_column="sector",
+            symbol_column="symbol",
+        )
+        # Reconstruire la liste des candidats après filtrage événementiel
+        if df.empty:
+            return []
+        shielded_symbols = set(str(s).upper() for s in df["symbol"])
+        # Mettre à jour les scores pénalisés par le shield
+        score_map = dict(zip(
+            df["symbol"].astype(str).str.upper(),
+            df["final_score"].astype(float),
+        ))
+        shielded_candidates: list[CandidateScore] = []
+        for c in candidates:
+            sym = c.symbol.upper()
+            if sym not in shielded_symbols:
+                continue  # exclus par strict_block
+            new_score = score_map.get(sym, c.score_used)
+            if new_score != c.score_used:
+                shielded_candidates.append(CandidateScore(
+                    symbol=c.symbol,
+                    sector=c.sector,
+                    score_used=float(new_score),
+                    score_source=f"{c.score_source}_shielded",
+                    company_idio_score=c.company_idio_score,
+                    macro_regime_score=c.macro_regime_score,
+                    company_idio_signal_norm=c.company_idio_signal_norm,
+                    macro_regime_signal_norm=c.macro_regime_signal_norm,
+                    company_idio_component=c.company_idio_component,
+                    macro_regime_component=c.macro_regime_component,
+                    quant_component=c.quant_component,
+                    walk_forward_sentiment_weight=c.walk_forward_sentiment_weight,
+                    walk_forward_macro_weight=c.walk_forward_macro_weight,
+                    walk_forward_quant_weight=c.walk_forward_quant_weight,
+                    calibration_run_id=c.calibration_run_id,
+                    calibration_source=c.calibration_source,
+                    snapshot_date=c.snapshot_date,
+                    candidate_rank=c.candidate_rank,
+                    selector_signal_mode="shielded",
+                    selection_explanation=c.selection_explanation,
+                    selector_earnings_blackout=c.selector_earnings_blackout,
+                ))
+            else:
+                shielded_candidates.append(c)
+        candidates = shielded_candidates
+
+        # Si régime normal sans rotation → pas d'ajustement des poids directionnels
+        if mode == "normal" and not rotated:
+            return candidates
+
+        # ── Ajustement des poids directionnels (capital_preservation ou rotation) ──
+        from selector.regime_scoring import apply_regime_weights
+
+        # Reconstruire le DataFrame complet pour apply_regime_weights
+        rows_full: list[dict[str, object]] = []
+        for c in candidates:
+            rows_full.append({
                 "symbol": c.symbol,
                 "sector": c.sector,
                 "score_used": c.score_used,
@@ -84,20 +152,18 @@ def _apply_regime_scoring_to_candidates(
                 "atr_pct_20": None,
                 "spread_bps": None,
             })
-        df = pd.DataFrame(rows)
-
-        # Appliquer les poids du régime (avec rotation factor)
-        adjusted = apply_regime_weights(df, regime_snapshot, rotation_state=rotation_state)
+        df_full = pd.DataFrame(rows_full)
+        adjusted = apply_regime_weights(df_full, regime_snapshot, rotation_state=rotation_state)
 
         # Réinjecter les scores ajustés dans les candidats
         if "final_score" in adjusted.columns:
-            score_map = dict(zip(
+            score_map_adjusted = dict(zip(
                 adjusted["symbol"].astype(str).str.upper(),
                 adjusted["final_score"],
             ))
             updated: list[CandidateScore] = []
             for c in candidates:
-                new_score = score_map.get(c.symbol.upper(), c.score_used)
+                new_score = score_map_adjusted.get(c.symbol.upper(), c.score_used)
                 if new_score != c.score_used:
                     updated.append(CandidateScore(
                         symbol=c.symbol,
@@ -129,7 +195,7 @@ def _apply_regime_scoring_to_candidates(
         return candidates
     except Exception:
         LOGGER.warning(
-            "apply_regime_weights a échoué pour le live — candidats inchangés.",
+            "apply_regime_weights / earnings_shield a échoué — candidats inchangés.",
             exc_info=True,
         )
         return candidates
