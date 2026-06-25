@@ -789,8 +789,7 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 > | **Conviction uniquement** | ✅ **Câblé (P2 2026-06-25)** — onglet `🎯 Calibrate conviction` | Lance `calibrate-conviction-weights`. Calibre `score_weight`/`prediction_weight` + Kelly via walk-forward backtest. Produit les artefacts dans `artifacts/conviction_calibration/` |
 > | **Kelly uniquement** | ✅ **Intégré (P2 2026-06-25)** — checkbox « Inclure calibration Kelly » dans l'onglet `🎯 Calibrate conviction` | Cochée par défaut, lance la calibration conjointe conviction + Kelly. Décocher pour ne calibrer que les poids conviction |
 >
-> ```diff
-> - TODO : Câbler l'onglet IHM pour la calibration Conviction (quant/ML)
+> ```
 > + ✅ FAIT — Onglet IHM Conviction calibration câblé le 2026-06-25
 > +       → Fichiers modifiés : backtesting/cli/_impl.py, ihm/services/backtesting_runner.py,
 > +         ihm/pages/backtesting/__init__.py
