@@ -550,15 +550,25 @@ class BackfillScoresHistoryService:
             merged_candidates["candidate_rank"] = merged_candidates["symbol"].map(rank_map)
         return merged_candidates
 
-    @staticmethod
-    def _enrich_short_score_pit(merged_df: pd.DataFrame, as_of_date: date) -> None:
-        """Enrichit avec short_score dans le contexte PIT (backfill)."""
+    def _enrich_short_score_pit(self, merged_df: pd.DataFrame, as_of_date: date) -> None:
+        """Enrichit avec short_score dans le contexte PIT (backfill).
+
+        Avant la correction (2026-06-25), close_df=None → les facteurs SMA50/SMA200
+        (45% du poids du short_score) étaient ignorés en backtest.
+        On appelle désormais ``_enrich_with_sma()`` qui interroge ``stock_bars_daily``
+        en SQL pour obtenir des SMA PIT-correctes, puis ``compute_short_score()``
+        détecte les colonnes ``sma_50``/``sma_200``/``last_close`` et les utilise.
+        """
         try:
-            from selector.short_score import enrich_with_short_score
-            trade_day = pd.Timestamp(as_of_date)
-            enriched = enrich_with_short_score(merged_df, close_df=None, trade_day=trade_day)
-            if "short_score" in enriched.columns:
-                merged_df["short_score"] = enriched["short_score"]
+            from selector.short_score import compute_short_score
+            # ── P0 FIX : enrichir avec SMA PIT avant le short_score ──
+            enriched_sma = self._enrich_with_sma(merged_df, as_of_date)
+            # _enrich_with_sma retourne une copie → on injecte les colonnes SMA dans l'original
+            for col in ("sma_50", "sma_200", "last_close"):
+                if col in enriched_sma.columns:
+                    merged_df[col] = enriched_sma[col].values
+            # compute_short_score détecte sma_50/sma_200/last_close → facteurs 3 & 4 OK
+            merged_df["short_score"] = compute_short_score(merged_df)
         except Exception:
             LOGGER.debug("_enrich_short_score_pit: skipped", exc_info=True)
 
