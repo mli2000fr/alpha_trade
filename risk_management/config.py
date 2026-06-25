@@ -114,8 +114,9 @@ class RiskConfig:
     default_win_rate: float = 0.55
 
     # --- Conviction score V2 ---
-    score_weight: float = 0.40
-    prediction_weight: float = 0.60
+    # P1 (2026-06-25) : 70/30 au lieu de 40/60 — le ML est un filtre, pas le moteur
+    score_weight: float = 0.70
+    prediction_weight: float = 0.30
     prediction_confidence_weight: float = 0.60
     historical_win_rate_weight: float = 0.40
 

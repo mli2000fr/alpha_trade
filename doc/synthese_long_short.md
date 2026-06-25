@@ -23,8 +23,8 @@
 | **Comment le régime impacte les scores ?** | 2 jeux de poids : **NORMAL** (trend_vcp=0.50, total=0.30, rsi=0.20) vs **CAPITAL_PRESERVATION** (trend_vcp=0.25, total=0.15, rsi=0.10 + 0.50 défensif). Rotation forcée si perte > -3% sur 4 semaines. Shortscore non affecté |
 | **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
 | **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
-| **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter exempté. Conviction = 0.40×(1-score) + 0.60×proba_ml_short |
-| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ML trop central (60/40) |
+| **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter exempté. Conviction = 0.70×(1-score) + 0.30×proba_ml_short |
+| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30) |
 
 ---
 
@@ -585,17 +585,17 @@ C'est le **score clé** qui détermine tout. Défini dans `core/conviction.py` :
 
 #### Pour les LONGS :
 
-$$conviction\_long = 0.40 \times score\_quant + 0.60 \times proba\_ml\_long$$
+$$conviction\_long = 0.70 \times score\_quant + 0.30 \times proba\_ml\_long$$
 
 Clampé dans [0, 1].
 
 - `score_quant` = `final_score` du selector (ou `final_score_sentiment` si boost activé)
 - `proba_ml_long` = prédiction ML (probabilité que le rendement futur > seuil)
-- Poids par défaut : **40% quant, 60% ML**
+- Poids par défaut : **70% quant, 30% ML** (P1 2026-06-25, était 40/60)
 
 #### Pour les SHORTS (`compute_conviction_short()`) :
 
-$$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_short$$
+$$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_short$$
 
 - Le score quant est **inversé** (un bon long a un score élevé → mauvais short)
 - `proba_ml_short` = probabilité de baisse prédite par le ML (en mode ternaire)
@@ -651,7 +651,7 @@ graph TD
     B --> C[Breakout Filter]
     C --> D[Score Threshold]
     D --> E[Concentration Filters]
-    E --> F["Conviction Fusion: 40% quant + 60% ML"]
+    E --> F["Conviction Fusion: 70% quant + 30% ML"]
     F --> G[Correlation Filter]
     G --> H[Factor Constraints]
     H --> I[Kelly Sizing]
@@ -800,7 +800,7 @@ Calibre le mix quant vs ML dans la fusion conviction :
 
 $$conviction = w_{score} \times score\_quant + w_{prediction} \times proba\_ml$$
 
-- **Défaut** : `score_weight=0.40`, `prediction_weight=0.60`
+- **Défaut** : `score_weight=0.70`, `prediction_weight=0.30` (P1 2026-06-25, était 0.40/0.60)
 - **Grille** : pas de 0.05 sur [0, 1], somme = 1.0
 - **Métriques** : IC (Information Coefficient), hit_rate, Sharpe, log_growth
 
@@ -934,7 +934,7 @@ $$business\_score = precision\_long \times coverage + \max(avg\_return, 0) + 0.1
 | **Score** | `final_score` (multi-factoriel) | `short_score` (baissier composite indépendant) |
 | **Regime weights** | Affecté par `apply_regime_weights()` | Non affecté (score indépendant) |
 | **Breakout filter** | Soumis au filtre anti-faux-départs | **Exempté** (shorts n'ont pas besoin de confirmation de breakout) |
-| **Conviction** | `0.40×score + 0.60×proba_ml_long` | `0.40×(1-score) + 0.60×proba_ml_short` |
+| **Conviction** | `0.70×score + 0.30×proba_ml_long` | `0.70×(1-score) + 0.30×proba_ml_short` |
 | **Score threshold** | `min_score_threshold` | `min_score_threshold_short` (distinct) |
 | **Circuit breaker** | Bloqué si actif | Bloqué si actif (identique) |
 | **Sizing** | Kelly/ATR standard | Même logique, paramètres distincts |
@@ -948,7 +948,7 @@ $$business\_score = precision\_long \times coverage + \max(avg\_return, 0) + 0.1
 
 ### 10.4 Conviction Short (`core/conviction.py`)
 
-$$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_short$$
+$$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_short$$
 
 - Le score quant est **inversé** : un bon long (score élevé) → mauvais short
 - `proba_ml_short` = probabilité de baisse (classe 0 en mode ternaire, ou `1-proba_long` en mode binaire)
@@ -969,7 +969,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 7 | **Breakout filter long-only** | Les shorts ne passent pas par le filtre de confirmation de breakout |
 | 8 | ✅ **Fills avec slippage model (2026-06-25)** | ~~`fill_price = entry_price` — pas de slippage simulé en backtest~~ → Fix : slippage model ajouté dans `_try_open_entries()` : `entry_price × (1 ± (5 + spread_bps/2) / 10000)`. Longs = plus chers, shorts = moins chers (worse fill) |
 | 9 | **Concentration trackers non persistés en backtest** | Trackers frais par run → pas de mémoire cross-run des trades passés |
-| 10 | ⚠️ **Conviction : ML trop central (60% ML, 40% quant)** | Le LSTM sur actions individuelles a beaucoup de bruit, peu de signal stable, et change de régime. Risque d'apprendre la volatilité récente ou des patterns temporaires. Le ML devrait être un **filtre de qualité**, pas le moteur principal |
+| 10 | ✅ **Conviction : ML réduit à 30% (70/30, 2026-06-25)** | ~~Le LSTM sur actions individuelles a beaucoup de bruit, peu de signal stable. Le ML était trop central (60%).~~ → Fix : `score_weight=0.70`, `prediction_weight=0.30` dans `ConvictionWeights` et `RiskConfig`. Le ML redevient un filtre de qualité |
 | 11 | ⚠️ **LSTM par symbole = risque de données insuffisantes** | Chaque symbole a son propre modèle (AAPL→modèle, MSFT→modèle…). Un modèle individuel manque souvent de données d'entraînement. Une approche globale avec ticker embedding (secteur, market cap, beta) serait plus robuste |
 | 12 | ✅ **Kelly sizing plafonné à 25% (2026-06-25)** | ~~Si le ML prédit `proba=0.65` mais que la vraie probabilité est `0.55`, le Kelly peut surdimensionner dangereusement.~~ → Fix : `max_kelly_fraction=0.25` dans `RiskConfig`, appliqué dans `KellySizer.compute()`, `PortfolioBuilder` (audit kf), et `weights_calibration.py` (backtesting) |
 
@@ -986,7 +986,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | 7 | **Breakout filter long-only** | Les shorts peuvent entrer sur un faux signal baissier d'un seul jour, sans confirmation de tendance. Les longs ont une protection anti-faux-départs que les shorts n'ont pas | **Qualité shorts** : réduire les entrées short sur des mouvements baissiers non confirmés → moins de whipsaws, meilleur hit_rate short |
 | 8 | ✅ **Slippage model backtest** | ~~Le backtest suppose un fill au prix d'ouverture J+1 sans slippage. En réalité, le slippage peut coûter 5-20 bps par trade, surtout sur les small caps~~ → **RÉSOLU** : slippage = 5 + spread_bps/2 bps appliqué dans `_try_open_entries()`. Longs plus chers, shorts moins chers | **Backtest réaliste** : ✅ fait — les métriques backtest intègrent maintenant un coût de slippage réaliste, réduisant le Sharpe artificiellement gonflé |
 | 9 | **Concentration trackers non persistés** | Chaque run de backtest part d'une table rase. Impossible de détecter qu'un symbole a déjà été tradé 3x cette semaine — le backtest peut concentrer plus que le live | **Fidélité cross-run** : le backtest refléterait les limites de concentration réelles. Utile pour les walk-forward multi-folds où l'état des trackers devrait persister entre folds |
-| 10 | **ML trop central (60/40)** | Le ML apprend la volatilité récente, des patterns de marché temporaires, des artefacts de période. Sur des actions individuelles, le bruit domine le signal | **Robustesse** : passer à 70% quant / 30% ML, puis augmenter progressivement si l'OOS confirme. Le ML doit filtrer la qualité, pas piloter la décision |
+| 10 | ✅ **ML réduit à 30% (70/30)** | ~~Le ML apprend la volatilité récente, des patterns de marché temporaires, des artefacts de période. Sur des actions individuelles, le bruit domine le signal~~ → **RÉSOLU** : poids passés de 40/60 à 70/30. Phase 1 : valider OOS, puis augmenter progressivement vers 50/50 si confirmé | **Robustesse** : ✅ fait — le quantitatif redevient le moteur principal, le ML filtre la qualité |
 | 11 | **LSTM par symbole** | Chaque symbole a son modèle → AAPL, MSFT, NVDA… Mais un modèle individuel manque de données. Un GlobalModel avec ticker embedding capterait "les patterns momentum marchent différemment entre tech et utilities" | **Généralisation** : un modèle global avec embeddings (ticker, secteur, market cap, beta) apprend des relations cross-sectionnelles, pas juste l'historique d'un seul symbole |
 | 12 | ✅ **Kelly plafonné à 25%** | ~~Kelly est extrêmement sensible : ML dit `proba=0.65` mais vraie proba `0.55` → sizing dangereux. Sans calibration ternaire, les probas softmax brutes ne sont pas fiables~~ → **RÉSOLU** : `max_kelly_fraction=0.25` ajouté dans `RiskConfig`, cap appliqué dans `KellySizer`, `PortfolioBuilder`, et `weights_calibration` | **Sécurité** : ✅ fait — le Kelly ne peut plus dépasser 25% de l'equity par position, quelle que soit la confiance du ML |
 
@@ -1004,7 +1004,7 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 | ⚪ P3 | 2 | Activer champion selection | Élevé — nécessite d'abord entraîner CatBoost/LightGBM | Modéré — seulement si challengers meilleurs |
 | ⚪ P3 | 3 | Activer target optimization | Faible techniquement, mais élevé en validation | Modéré — symbole par symbole, supervision requise |
 | ✅ FAIT | 12 | ~~Plafonner le Kelly à 25% max par position~~ | ~~Faible~~ — Plafonné le 2026-06-25 | ~~Fort~~ — Kelly ne dépassera jamais 25% equity/position |
-| 🟡 P1 | 10 | Réduire poids ML dans conviction (70/30) | Faible — changer les défauts dans `core/conviction.py` | Moyen — réduire l'impact du bruit ML |
+| ✅ FAIT | 10 | ~~Réduire poids ML dans conviction (70/30)~~ | ~~Faible~~ — Changé le 2026-06-25 | ~~Moyen~~ — conviction = 0.70×quant + 0.30×ML |
 | 🟢 P2 | 11 | Explorer GlobalModel avec ticker embeddings | Élevé — nouveau pipeline d'entraînement | Modéré — gain de généralisation cross-sectionnelle |
 
 ```diff
@@ -1077,13 +1077,15 @@ $$conviction\_short = 0.40 \times (1 - score\_quant) + 0.60 \times proba\_ml\_sh
 +         c'est max_position_weight=0.10 qui est contraignant en pratique
 +       → Le cap à 25% protège si quelqu'un augmente max_position_weight un jour
 
-+ TODO P1 — Réduire le poids ML dans la conviction (70% quant / 30% ML)
-+       → Fichier : core/conviction.py → compute_conviction(), compute_conviction_short()
-+       → Solution : changer les défauts score_weight=0.70, prediction_weight=0.30
++ ✅ FAIT P1 — Réduire le poids ML dans la conviction (70% quant / 30% ML) — IMPLÉMENTÉ le 2026-06-25
++       → Fichiers modifiés :
++         - core/conviction.py → ConvictionWeights : score_weight=0.7, prediction_weight=0.3
++         - risk_management/config.py → RiskConfig : score_weight=0.70, prediction_weight=0.30
++       → Formules impactées :
++         - conviction_long  = 0.70 × score_quant + 0.30 × proba_ml_long
++         - conviction_short = 0.70 × (1−score_quant) + 0.30 × proba_ml_short
 +       → Phase 1 : 70/30 → valider OOS → si OK, augmenter progressivement vers 50/50
 +       → Jamais dépasser 40/60 sans calibration Platt/Temperature et walk-forward ML probant
-+       → Justification : le ML sur actions individuelles apprend surtout du bruit
-+         Le ML doit être un filtre de qualité, pas le moteur principal de la décision
 
 + TODO P2 — Explorer un GlobalModel avec ticker embeddings
 +       → Alternative au LSTM par symbole (qui manque de données)

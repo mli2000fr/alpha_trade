@@ -37,12 +37,13 @@ class ConvictionWeights:
     """Pondérations pour la fusion conviction.
 
     Convention historique projet (audit_risk_management §pondérations) :
-    ``score_weight=0.4``, ``prediction_weight=0.6``. À calibrer
-    empiriquement Phase 7 (audit_global Long terme).
+    ``score_weight=0.7``, ``prediction_weight=0.3``. P1 (2026-06-25) :
+    réduit pour limiter l'impact du bruit ML sur actions individuelles.
+    À recalibrer empiriquement Phase 7 (audit_global Long terme).
     """
 
-    score_weight: float = 0.4
-    prediction_weight: float = 0.6
+    score_weight: float = 0.7
+    prediction_weight: float = 0.3
 
     def __post_init__(self) -> None:
         if self.score_weight < 0 or self.prediction_weight < 0:
