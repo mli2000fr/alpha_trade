@@ -33,6 +33,7 @@ from ihm.services.backtesting_runner import (
     PROJECT_ROOT,
     BackfillScoresHistoryOptions,
     BacktestRunOptions,
+    CalibrateConvictionWeightsOptions,
     CalibrateSentimentWeightsOptions,
     DiagnoseScreenerOptions,
     RecommendScreenerOptions,
@@ -2172,6 +2173,78 @@ def _build_calibrate_sentiment_options() -> "CalibrateSentimentWeightsOptions":
     return options
 
 
+def _build_calibrate_conviction_options() -> "CalibrateConvictionWeightsOptions":
+    """Construit les options pour la calibration conviction (quant/ML) + Kelly (P2 2026-06-25)."""
+    from datetime import date, timedelta
+
+    st.subheader("🎯 Calibrate conviction (quant/ML) + Kelly")
+    st.caption(
+        "Calibre les poids de fusion conviction (`score_weight` / `prediction_weight`) "
+        "et les paramètres Kelly (`fraction_multiplier`, `payoff_ratio`, `min_probability`) "
+        "via walk-forward backtest. Lance `python -m backtesting calibrate-conviction-weights ...`."
+    )
+    today = date.today()
+    default_start = (today - timedelta(days=365 * 2)).isoformat()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        start = st.text_input(
+            "Date de début (YYYY-MM-DD)",
+            value=cast(str, st.session_state.get("bt_conv_start", default_start)),
+            key="bt_conv_start",
+        )
+    with col2:
+        end = st.text_input(
+            "Date de fin (YYYY-MM-DD)",
+            value=cast(str, st.session_state.get("bt_conv_end", today.isoformat())),
+            key="bt_conv_end",
+        )
+    with col3:
+        top_n = st.number_input(
+            "Top N (titres / jour)",
+            min_value=5,
+            max_value=200,
+            value=int(st.session_state.get("bt_conv_top_n", 20)),
+            step=5,
+            key="bt_conv_top_n",
+        )
+
+    col4, col5 = st.columns(2)
+    with col4:
+        horizons = st.text_input(
+            "Horizons forward (CSV)",
+            value=cast(str, st.session_state.get("bt_conv_horizons", "5,10,20")),
+            key="bt_conv_horizons",
+        )
+    with col5:
+        include_kelly = st.checkbox(
+            "Inclure calibration Kelly",
+            value=bool(st.session_state.get("bt_conv_include_kelly", True)),
+            key="bt_conv_include_kelly",
+            help="Active la calibration conjointe des paramètres Kelly "
+            "(fraction_multiplier, payoff_ratio, min_probability). "
+            "Désactiver pour ne calibrer que les poids conviction (score_weight / prediction_weight).",
+        )
+
+    scope = "all" if include_kelly else "conviction"
+
+    output_dir = "artifacts/conviction_calibration"
+
+    options = CalibrateConvictionWeightsOptions(
+        start=start.strip(),
+        end=end.strip(),
+        top_n=int(top_n),
+        horizons=horizons.strip() or "5,10,20",
+        output_dir=output_dir,
+        scope=scope,
+    )
+    st.code(
+        format_command_for_display(build_backtesting_command("calibrate-conviction-weights", options)),
+        language="powershell",
+    )
+    return options
+
+
 def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
     from datetime import date, timedelta
 
@@ -3945,15 +4018,17 @@ def render() -> None:
     active_diag_runs = list_active_backtesting_runs_by_kind("diagnose-screener")
     active_recommend_runs = list_active_backtesting_runs_by_kind("recommend-screener")
     active_calibrate_runs = list_active_backtesting_runs_by_kind("calibrate-sentiment-weights")
+    active_conviction_runs = list_active_backtesting_runs_by_kind("calibrate-conviction-weights")
     active_walkfwd_runs = list_active_backtesting_runs_by_kind("walk-forward-sentiment")
 
-    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, walkfwd_tab, quarterly_tab = st.tabs(
+    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, conviction_tab, walkfwd_tab, quarterly_tab = st.tabs(
         [
             "▶️ Backtest",
             "🧱 Backfill scores history",
             "🧪 Diagnose screener",
             "🎯 Recommend screener",
             "📰 Calibrate sentiment",
+            "🎯 Calibrate conviction",
             "🚶 Walk-forward sentiment",
             "🎛️ Calibration trimestrielle poids",
         ]
@@ -4094,6 +4169,33 @@ def render() -> None:
                 st.success(f"Calibration sentiment lancée : `{record.run_id}`")
                 st.rerun()
 
+    with conviction_tab:
+        conviction_options = _build_calibrate_conviction_options()
+        if active_conviction_runs:
+            active_run_id = str(active_conviction_runs[0].get("run_id", ""))
+            st.info(f"Une calibration conviction est déjà en cours (`{active_run_id}`).")
+        launch_conviction_clicked = st.button(
+            "🎯 Lancer calibrate-conviction-weights",
+            key="launch_calibrate_conviction_run",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_conviction_runs),
+        )
+        if launch_conviction_clicked:
+            try:
+                record = start_backtesting_run(
+                    "calibrate-conviction-weights",
+                    "Calibration conviction (quant/ML) + Kelly",
+                    conviction_options,
+                    db_config=db_config,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                st.success(f"Calibration conviction lancée : `{record.run_id}`")
+                st.rerun()
+
     with walkfwd_tab:
         walkfwd_options = _build_walk_forward_sentiment_options()
         if active_walkfwd_runs:
@@ -4138,6 +4240,7 @@ def render() -> None:
         active_diag_runs,
         active_recommend_runs,
         active_calibrate_runs,
+        active_conviction_runs,
         active_walkfwd_runs,
     )
     if has_any_active_runs and _is_runtime_center_auto_update_enabled():

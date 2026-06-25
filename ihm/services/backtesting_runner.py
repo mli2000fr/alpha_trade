@@ -14,6 +14,7 @@ BacktestingCommandKind = Literal[
     "diagnose-screener",
     "recommend-screener",
     "calibrate-sentiment-weights",
+    "calibrate-conviction-weights",
     "walk-forward-sentiment",
 ]
 
@@ -143,6 +144,18 @@ class CalibrateSentimentWeightsOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class CalibrateConvictionWeightsOptions:
+    """Options de `python -m backtesting calibrate-conviction-weights` (P2 2026-06-25)."""
+
+    start: str
+    end: str
+    top_n: int = 20
+    horizons: str = "5,10,20"
+    output_dir: str = "artifacts/conviction_calibration"
+    scope: str = "all"  # "conviction", "kelly", "all"
+
+
+@dataclass(frozen=True, slots=True)
 class WalkForwardSentimentOptions:
     """Options de `python -m backtesting walk-forward-sentiment` (Sprint S26)."""
 
@@ -171,6 +184,7 @@ def build_backtesting_command(
     | DiagnoseScreenerOptions
     | RecommendScreenerOptions
     | CalibrateSentimentWeightsOptions
+    | CalibrateConvictionWeightsOptions
     | WalkForwardSentimentOptions,
 ) -> list[str]:
     """Construit la commande subprocess correspondant au backtesting."""
@@ -361,6 +375,22 @@ def build_backtesting_command(
             command.extend(["--capital-preset-key", options.capital_preset_key])
         return command
 
+    if kind == "calibrate-conviction-weights":
+        if not isinstance(options, CalibrateConvictionWeightsOptions):
+            raise TypeError(
+                "options doit être une instance de CalibrateConvictionWeightsOptions "
+                "pour kind='calibrate-conviction-weights'."
+            )
+        command.extend([
+            "--start", options.start,
+            "--end", options.end,
+            "--top-n", str(options.top_n),
+            "--horizons", options.horizons,
+            "--output-dir", options.output_dir,
+            "--scope", options.scope,
+        ])
+        return command
+
     if kind == "walk-forward-sentiment":
         if not isinstance(options, WalkForwardSentimentOptions):
             raise TypeError(
@@ -405,6 +435,7 @@ __all__ = [
     "DiagnoseScreenerOptions",
     "RecommendScreenerOptions",
     "CalibrateSentimentWeightsOptions",
+    "CalibrateConvictionWeightsOptions",
     "WalkForwardSentimentOptions",
     "build_backtesting_command",
     "format_command_for_display",

@@ -1276,6 +1276,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Preset capital à utiliser pour filtrer stock_scores_history (ex: capital_0_2000). Si absent, tous les presets sont mélangés.",
     )
 
+    # P2 (2026-06-25) — calibration conviction (quant/ML) + Kelly
+    conv_cal_p = sub.add_parser(
+        "calibrate-conviction-weights",
+        help="Calibrer les poids de conviction (quant/ML) et les paramètres Kelly.",
+    )
+    conv_cal_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
+    conv_cal_p.add_argument("--end", required=True, help="Date de fin (YYYY-MM-DD)")
+    conv_cal_p.add_argument("--top-n", type=int, default=20, help="Nombre de symboles retenus par jour")
+    conv_cal_p.add_argument("--horizons", default="5,10,20", help="Horizons forward CSV à évaluer")
+    conv_cal_p.add_argument(
+        "--output-dir",
+        default="artifacts/conviction_calibration",
+        help="Répertoire cible pour les artefacts de calibration",
+    )
+    conv_cal_p.add_argument(
+        "--scope",
+        choices=["conviction", "kelly", "all"],
+        default="all",
+        help="Scope de calibration : conviction seule, Kelly seule, ou les deux (défaut: all)",
+    )
+
     walk_forward_p = sub.add_parser(
         "walk-forward-sentiment",
         help="Calibration walk-forward stricte des poids sentiment/macro avec backtest portefeuille hors échantillon.",
@@ -3418,6 +3439,61 @@ def _run_calibrate_sentiment_weights(args: argparse.Namespace) -> None:
         _safe_print()
 
 
+# P2 (2026-06-25) — calibration conviction (quant/ML) + Kelly
+def _run_calibrate_conviction_weights(args: argparse.Namespace) -> None:
+    from datetime import datetime
+
+    from backtesting.weights_calibration import (
+        EmpiricalRiskCalibrator,
+        persist_calibration_run,
+    )
+
+    start = datetime.strptime(args.start, "%Y-%m-%d").date()
+    end = datetime.strptime(args.end, "%Y-%m-%d").date()
+    horizons = tuple(int(token.strip()) for token in args.horizons.split(",") if token.strip())
+
+    _safe_print(f"\n🎯 Calibration conviction (quant/ML) + Kelly : {start} → {end}")
+    _safe_print(
+        f"   horizons={','.join(str(h) for h in horizons)} top_n={args.top_n} "
+        f"scope={args.scope} output_dir={args.output_dir}\n"
+    )
+
+    calibrator = EmpiricalRiskCalibrator()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for horizon in horizons:
+        _safe_print(f"── Horizon {horizon}j ──")
+        try:
+            run, fold_df, oos_df, signals_df, artifacts = calibrator.walk_forward_backtest(
+                start_date=start,
+                end_date=end,
+                output_dir=output_dir / f"horizon_{horizon}d",
+                top_n=args.top_n,
+                horizon_days=horizon,
+            )
+            _safe_print(f"   Folds évalués       : {run.folds_evaluated}")
+            _safe_print(f"   Meilleur scénario   : {run.latest_best_scenario_name}")
+            _safe_print(f"   Sharpe              : {run.sharpe_ratio:.3f}")
+            _safe_print(f"   Return total        : {run.total_return_pct:.1f}%")
+            if run.best_weights:
+                _safe_print(f"   Meilleurs poids     : {run.best_weights}")
+
+            # Persister en DB si disponible
+            try:
+                persist_calibration_run(
+                    run,
+                    engine=None,  # auto-detect
+                    run_summary=run,
+                )
+            except Exception:
+                pass
+        except Exception as exc:
+            _safe_print(f"   ⚠️ Échec horizon {horizon}j : {exc}")
+
+    _safe_print("\n✅ Calibration conviction terminée")
+
+
 def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
     from datetime import datetime
 
@@ -3517,6 +3593,8 @@ def main() -> None:
         _run_screener_recommendation(args)
     elif args.command == "calibrate-sentiment-weights":
         _run_calibrate_sentiment_weights(args)
+    elif args.command == "calibrate-conviction-weights":
+        _run_calibrate_conviction_weights(args)
     elif args.command == "walk-forward-sentiment":
         _run_walk_forward_sentiment(args)
     else:

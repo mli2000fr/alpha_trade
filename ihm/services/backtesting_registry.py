@@ -39,6 +39,7 @@ DB_REQUIRED_RUN_KINDS = frozenset({
     "backfill-scores-history",
     "diagnose-screener",
     "calibrate-sentiment-weights",
+    "calibrate-conviction-weights",
     "walk-forward-sentiment",
 })
 

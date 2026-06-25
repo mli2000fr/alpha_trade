@@ -40,7 +40,7 @@
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
 | **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, **long + short depuis P2 2026-06-25**), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE` | 🟣 HYBRIDE |
-| **8. Calibration des Poids** | 3 niveaux : Conviction, Sentiment, Kelly. IHM : onglets `📰 Calibrate sentiment`, `🚶 Walk-forward`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` pour consulter l'historique | 🟣 HYBRIDE |
+| **8. Calibration des Poids** | 3 niveaux : Conviction ✅, Sentiment ✅, Kelly ✅. IHM : onglets `📰 Calibrate sentiment`, `🎯 Calibrate conviction` (+ Kelly), `🚶 Walk-forward`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` | 🟣 HYBRIDE |
 | **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
 | **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
 | **11. Caveats** | 12 points d'attention : fonctionnalités désactivées, ✅ PIT corrigé, asymétries long/short, limites backtest, risques ML/Kelly | — |
@@ -786,21 +786,27 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 > | **Sentiment** (quant/sentiment/macro) | `📰 Calibrate sentiment` | Lance `calibrate-sentiment-weights`. Définir dates, top-N, horizons. Produit `sentiment_weight_calibration.csv` + `_best.json` dans `artifacts/sentiment_calibration/` |
 > | **Walk-Forward** (validation OOS) | `🚶 Walk-forward sentiment` | Lance `walk-forward-sentiment`. Backtest complet par folds glissants. Produit `latest_best_weights.json` dans `artifacts/sentiment_walk_forward/` |
 > | **Trimestrielle** (conviction + Kelly) | `🎛️ Calibration trimestrielle poids` | Lance `scripts/run_quarterly_weights_calibration.py`. Recalibre poids score (Sharpe/hit-ratio/IC) sur 4 trimestres |
-> | **Conviction uniquement** | ❌ Pas d'onglet IHM | ⚠️ `backtesting calibrate-weights` non câblé. En attendant, utiliser la calibration trimestrielle ou le CLI |
-> | **Kelly uniquement** | ❌ Pas d'onglet IHM | ⚠️ Même situation — inclus dans la calibration trimestrielle |
+> | **Conviction uniquement** | ✅ **Câblé (P2 2026-06-25)** — onglet `🎯 Calibrate conviction` | Lance `calibrate-conviction-weights`. Calibre `score_weight`/`prediction_weight` + Kelly via walk-forward backtest. Produit les artefacts dans `artifacts/conviction_calibration/` |
+> | **Kelly uniquement** | ✅ **Intégré (P2 2026-06-25)** — checkbox « Inclure calibration Kelly » dans l'onglet `🎯 Calibrate conviction` | Cochée par défaut, lance la calibration conjointe conviction + Kelly. Décocher pour ne calibrer que les poids conviction |
 >
 > ```diff
-> + TODO : Câbler l'onglet IHM pour la calibration Conviction (quant/ML)
-> +       → backtesting/weights_calibration.py ligne 16 : "à câbler ultérieurement"
-> +       → Créer un onglet dans ihm/pages/backtesting/__init__.py (ex: "🎯 Calibrate conviction")
-> +       → Commande CLI : python -m backtesting calibrate-weights --scope conviction
-> +       → Impact : aujourd'hui les poids 40/60 sont fixes, jamais recalibrés automatiquement
+> - TODO : Câbler l'onglet IHM pour la calibration Conviction (quant/ML)
+> + ✅ FAIT — Onglet IHM Conviction calibration câblé le 2026-06-25
+> +       → Fichiers modifiés : backtesting/cli/_impl.py, ihm/services/backtesting_runner.py,
+> +         ihm/pages/backtesting/__init__.py
+> +       → Onglet "🎯 Calibrate conviction" dans la page Backtesting
+> +       → Commande CLI : python -m backtesting calibrate-conviction-weights
+> +         --start 2024-01-01 --end 2025-12-31 --top-n 20 --horizons 5,10,20
+> +       → Impact : les poids conviction peuvent être recalibrés depuis l'IHM
 > +
-> + TODO : Câbler l'onglet IHM pour la calibration Kelly
-> +       → backtesting/weights_calibration.py : calibrate_conviction_kelly() existe déjà
-> +       → Créer un onglet ou l'intégrer dans "🎯 Calibrate conviction" avec checkbox "Inclure Kelly"
-> +       → Commande CLI : python -m backtesting calibrate-weights --scope kelly
-> +       → Impact : aujourd'hui le Kelly fraction/payoff/edge ne sont jamais recalibrés automatiquement
+> + ✅ FAIT — IHM calibration Kelly intégrée le 2026-06-25
+> +       → Intégré dans l'onglet "🎯 Calibrate conviction" via la checkbox
+> +         "Inclure calibration Kelly" (cochée par défaut)
+> +       → Scope = "all" (conviction + Kelly) quand cochée,
+> +         scope = "conviction" quand décochée
+> +       → La commande CLI --scope kelly reste disponible pour usage avancé
+> +       → Impact : fraction_multiplier, payoff_ratio, min_probability
+> +         sont recalibrés automatiquement avec les poids conviction
 > ```
 >
 > **Consultation des résultats** : page `📊 Weights Calibration Runs` → historique des runs dans `weights_calibration_runs` (DB), avec segments (régime × horizon), drifts, et best_weights.
@@ -1224,6 +1230,7 @@ graph LR
 | `python -m backtesting run` | 🔵 BACKTEST | Backtest principal |
 | `python -m backtesting run --tracker-state <path>` | 🔵 BACKTEST | Backtest avec état des trackers chargé (P2) |
 | `python -m backtesting run --load-tracker-state` | 🔵 BACKTEST | Raccourci : charge `artifacts/backtesting/tracker_state.json` (P2) |
+| `python -m backtesting calibrate-conviction-weights` | 🔵 BACKTEST | Calibration conviction (quant/ML) + Kelly (P2) |
 | `python -m backtesting calibrate-sentiment-weights` | 🔵 BACKTEST | Calibration des poids sentiment |
 | `python -m backtesting walk-forward-sentiment` | 🔵 BACKTEST | Walk-forward calibration |
 | `python -m backtesting backfill-scores-history` | 🔵 BACKTEST | Remplit `stock_scores_history` pour PIT |

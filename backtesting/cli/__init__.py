@@ -17,6 +17,7 @@ from backtesting.cli._impl import (
     _parse_csv_values,
     _run_backfill_scores_history,
     _run_backtest,
+    _run_calibrate_conviction_weights,
     _run_calibrate_sentiment_weights,
     _run_screener_diagnostics,
     _run_screener_recommendation,
@@ -35,6 +36,7 @@ __all__ = [
     "_run_backfill_scores_history",
     "_run_screener_diagnostics",
     "_run_screener_recommendation",
+    "_run_calibrate_conviction_weights",
     "_run_calibrate_sentiment_weights",
     "_run_walk_forward_sentiment",
 ]
