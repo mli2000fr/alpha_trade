@@ -843,7 +843,24 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 >    └─ Vérifie que les poids calibrés tiennent hors-échantillon
 >
 > 6. APPLICATION
->    └─ Mettre à jour config.yaml avec les poids trouvés
+>    ├─ 🟢 LIVE  → Appliquer les poids calibrés :
+>    │
+>    │   | Calibration | Poids à appliquer | Cible | Mécanisme |
+>    │   |-------------|-------------------|-------|-----------|
+>    │   | **Conviction** (quant/ML) | `score_weight`, `prediction_weight` | `weights_calibration_runs` (DB) | ✅ Auto via `empirical_calibration.fallback_levels` dans `config.yaml` > `risk_management` |
+>    │   | **Kelly** (sizing) | `kelly_fraction_multiplier`, `assumed_payoff_ratio`, `min_effective_probability` | `weights_calibration_runs` (DB) | ✅ Auto (même mécanisme) |
+>    │   | **Sentiment** (quant/sentiment/macro) | `quant_weight`, `sentiment_weight`, `macro_weight` | `config.yaml` > `conviction:` | ⚠️ Manuel : éditer les 3 valeurs dans le bloc `conviction:` |
+>    │   | **Short × régime** | `short_max_positions`, `short_min_score` | `config.yaml` > `risk_management:` | ⚠️ Manuel si changement souhaité |
+>    │
+>    │   Les calibrations Conviction et Kelly sont appliquées automatiquement en live
+>    │   via la table `weights_calibration_runs` (segments éligibles `eligible_for_live=1`).
+>    │   Seule la calibration Sentiment nécessite une édition manuelle de `config.yaml`.
+>    │
+>    └─ 🔵 BACKTEST → Automatique : les poids walk-forward sont déjà dans
+>                      stock_scores_history.final_score_walk_forward et
+>                      stock_scores_history.short_score_walk_forward,
+>                      consommés par la cascade COALESCE de data_loader.py.
+>                      Aucune mise à jour de config.yaml nécessaire.
 >    └─ Ou utiliser l'onglet 🎛️ Calibration trimestrielle (fait tout en une fois)
 > ```
 >
