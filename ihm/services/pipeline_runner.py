@@ -776,7 +776,7 @@ def resolve_step_display_name(step: PipelineStepDefinition) -> str:
 def get_pipeline_workflow_steps(
     *,
     start_step: WorkflowStartStep = "1",
-    include_ml_train: bool = True,
+    include_ml_train: bool = False,
     include_corporate_actions_sync: bool = False,
     include_corporate_actions_apply: bool = False,
     selected_step_keys: tuple[str, ...] | None = None,

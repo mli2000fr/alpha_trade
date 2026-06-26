@@ -612,7 +612,7 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
         )
         include_ml_train = st.checkbox(
             "Inclure l'étape 9 — ML Train (Model Factory)",
-            value=bool(st.session_state.get(WORKFLOW_INCLUDE_ML_TRAIN_KEY, True)),
+            value=bool(st.session_state.get(WORKFLOW_INCLUDE_ML_TRAIN_KEY, False)),
             key=WORKFLOW_INCLUDE_ML_TRAIN_KEY,
             disabled=bool(active_runs),
         )
@@ -739,10 +739,12 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
         selected_step_keys: list[str] = []
         for index, step in enumerate(selectable_steps):
             checkbox_key = _custom_workflow_checkbox_key(step.key)
+            # Étape 9 (ML Train) décochée par défaut (lourde, pas nécessaire au quotidien)
+            default_checked = False if step.key == "ml_train" else True
             with selection_columns[index % len(selection_columns)]:
                 is_selected = st.checkbox(
                     f"{step.num}. {step.name}",
-                    value=bool(st.session_state.get(checkbox_key, True)),
+                    value=bool(st.session_state.get(checkbox_key, default_checked)),
                     key=checkbox_key,
                     disabled=bool(active_runs),
                     help=step.desc,
