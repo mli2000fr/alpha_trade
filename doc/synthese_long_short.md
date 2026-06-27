@@ -819,30 +819,38 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 >    ⚠️ Indépendant du BACKFILL PIT : l'entraînement ML ne lit PAS stock_scores_history.
 >    Les étapes ① et ② peuvent être faites dans n'importe quel ordre, ou en parallèle.
 >
-> 2. BACKFILL PIT (prérequis pour les calibrations ③④⑤)
+> 2. BACKFILL PIT (prérequis pour les calibrations ④⑤⑥)
 >    └─ python -m backtesting backfill-scores-history
 >    └─ Remplit stock_scores_history avec short_score corrigé (P0#5)
 >    └─ À faire une fois (rafraîchir après chaque correction des scores)
 >
 >    ⚠️ Ne pas confondre : stock_scores_history (PIT, backtest) ≠ stock_scores (live, ML).
 >
-> 3. CALIBRATION CONVICTION (quant/ML)
+> 3. ML PREDICT (prérequis pour les calibrations ④⑤)
+>    └─ IHM → Page Pipeline → cocher ☑ 10. ML Predict → lancer
+>    └─ Remplit model_predictions avec les prédictions ML (predicted_proba)
+>    └─ Sans cette table, la calibration conviction est impossible
+>       (erreur : « dataset vide — model_predictions absent »)
+>
+>    ⚠️ Si les modèles n'ont jamais été entraînés : cocher aussi ☑ 9. ML Train avant.
+>
+> 4. CALIBRATION CONVICTION (quant/ML)
 >    └─ IHM → 🎯 Calibrate conviction (décocher "Inclure Kelly")
 >    └─ Ou CLI : python -m backtesting calibrate-conviction-weights --scope conviction
 >    └─ Trouve le meilleur mix score_weight / prediction_weight
 >    └─ Produit : artifacts/conviction_calibration/
 >
-> 4. CALIBRATION KELLY (sizing)
+> 5. CALIBRATION KELLY (sizing)
 >    └─ IHM → 🎯 Calibrate conviction (cocher "Inclure Kelly")
 >    └─ Ou CLI : python -m backtesting calibrate-conviction-weights --scope all
 >    └─ Trouve le meilleur fraction_multiplier / payoff_ratio / min_probability
 >    └─ Produit : mêmes artefacts, colonnes Kelly en plus
 >
-> 5. VALIDATION WALK-FORWARD (optionnel mais recommandé)
+> 6. VALIDATION WALK-FORWARD (optionnel mais recommandé)
 >    └─ IHM → 🚶 Walk-forward sentiment
 >    └─ Vérifie que les poids calibrés tiennent hors-échantillon
 >
-> 6. APPLICATION
+> 7. APPLICATION
 >    ├─ 🟢 LIVE  → Appliquer les poids calibrés :
 >    │
 >    │   **Conviction (quant/ML)** — `score_weight`, `prediction_weight`

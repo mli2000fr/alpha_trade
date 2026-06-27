@@ -801,6 +801,19 @@ class EmpiricalRiskCalibrator:
                 },
             )
         if scores.empty or predictions.empty or win_rates.empty or bars.empty:
+            missing = []
+            if scores.empty:
+                missing.append("stock_scores_history (scores)")
+            if predictions.empty:
+                missing.append("model_predictions (ML — lancer ML Train + Predict d'abord)")
+            if win_rates.empty:
+                missing.append("model_metrics (métriques ML)")
+            if bars.empty:
+                missing.append("stock_bars_daily (OHLCV)")
+            LOGGER.warning(
+                "EmpiricalRiskCalibrator.load_dataset : données insuffisantes — %s",
+                ", ".join(missing),
+            )
             return pd.DataFrame()
 
         scores = scores.copy()
