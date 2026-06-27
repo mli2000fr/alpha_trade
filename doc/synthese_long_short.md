@@ -1298,6 +1298,90 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 | **Drift** | Vérifié par `drift_monitor.py` → kill-switch si ALERT | Non vérifié (les prédictions historiques sont figées) |
 | **Fallback** | Si drift ALERT → ML désactivé, conviction = score quant uniquement | Si prédiction manquante → conviction = score quant uniquement |
 
+> **⚠️ Que se passe-t-il sans prédictions ML ?**
+>
+> Dans les deux modes, **le système ne bloque pas** — il fonctionne en mode « quantitatif pur » :
+>
+> ```
+> Pas de predicted_proba → proba_ml_long = None
+>   → conviction_long  = 1.00 × score_quant           (au lieu de 0.70×quant + 0.30×ML)
+>   → conviction_short = 1.00 × (1 − score_quant)     (idem)
+> ```
+>
+> Les poids 70/30 deviennent implicitement 100/0 pour les symboles sans prédiction.
+>
+> **Comment détecter le problème ?**
+>
+> | Mode | Indicateur | Où chercher |
+> |------|-----------|-------------|
+> | 🔵 BACKTEST | `ml_predictions_missing` | Rapport de fidélité (`fidelity.py`) ou logs : `"prediction missing, using quant score only"` |
+> | 🟢 LIVE | `ml_coverage_ratio` | Page IHM **Santé** — ratio symboles avec prédiction / total candidats |
+> | 🟢 LIVE | `ML gate | enabled=False` | Logs : kill-switch ML activé (drift ALERT) |
+> | SQL | Taux de couverture | `SELECT COUNT(DISTINCT symbol) FROM model_predictions WHERE prediction_date >= ...` |
+>
+> **Vérifications rapides :**
+>
+> ```sql
+> -- 1. La table est-elle vide ?
+> SELECT COUNT(*) AS total_predictions FROM model_predictions;
+>
+> -- 2. Combien de symboles ont des prédictions aujourd'hui ?
+> SELECT COUNT(DISTINCT symbol) AS symbols_with_ml
+> FROM model_predictions
+> WHERE prediction_date = CURDATE();
+>
+> -- 3. Taux de couverture vs candidats du jour
+> SELECT
+>     (SELECT COUNT(DISTINCT symbol) FROM model_predictions WHERE prediction_date = CURDATE()) AS with_ml,
+>     (SELECT COUNT(DISTINCT symbol) FROM stock_scores WHERE snapshot_date = CURDATE()) AS candidates,
+>     ROUND(100.0 * (SELECT COUNT(DISTINCT symbol) FROM model_predictions WHERE prediction_date = CURDATE()) /
+>           NULLIF((SELECT COUNT(DISTINCT symbol) FROM stock_scores WHERE snapshot_date = CURDATE()), 0), 1) AS coverage_pct;
+> ```
+>
+> ```powershell
+> # 4. Dans les logs backtest — chercher les fallbacks ML
+> Select-String -Path "logs.txt" -Pattern "prediction missing|no prediction" | Select-Object -First 10
+>
+> # 5. Vérifier l'état de la table après un reset
+> python -c "from database.connection import get_sqlalchemy_engine; import pandas as pd; print(pd.read_sql('SELECT COUNT(*) FROM model_predictions', get_sqlalchemy_engine()))"
+> ```
+>
+> **Si `model_predictions` est entièrement vide** (post-reset ML) : tout fonctionne, mais sans ML. Il faut lancer ML Train + ML Predict pour rétablir la composante ML.
+>
+> **Comment vérifier après un run ?**
+>
+> ```sql
+> -- 🔵 BACKTEST : combien de décisions ont utilisé le ML ?
+> SELECT
+>     COUNT(*) AS total_entries,
+>     SUM(CASE WHEN conviction_source = 'quant_ml' THEN 1 ELSE 0 END) AS with_ml,
+>     SUM(CASE WHEN conviction_source = 'quant_only' THEN 1 ELSE 0 END) AS quant_only
+> FROM portfolio_entries
+> WHERE trade_date BETWEEN '2024-01-01' AND '2026-06-27';
+> ```
+>
+> ```powershell
+> # 🔵 BACKTEST : regarder les premières lignes du rapport de fidélité
+> Get-Content "artifacts\backtest_cache\fidelity_manifest.json" -Head 30
+> # Chercher : "ml_predictions_missing": 0  → tout OK
+> #           "ml_predictions_missing": 45 → 45 symboles sans ML
+> ```
+>
+> ```powershell
+> # 🟢 LIVE : chercher dans les logs récents
+> Select-String -Path "logs.txt" -Pattern "ML gate|ml_coverage|prediction missing|predicted_proba" | Select-Object -Last 20
+> ```
+>
+> ```sql
+> -- 🟢 LIVE : vérifier les prédictions d'aujourd'hui
+> SELECT symbol, predicted_proba, calibration_method, selected_model
+> FROM model_predictions
+> WHERE prediction_date = CURDATE()
+> ORDER BY symbol
+> LIMIT 10;
+> -- Si 0 ligne → le ML n'a pas tourné aujourd'hui → mode quantitatif pur
+> ```
+
 ### 13.5 Exécution — Différence d'envoi d'ordres
 
 | Aspect | 🟢 LIVE | 🔵 BACKTEST |
