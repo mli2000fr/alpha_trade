@@ -74,6 +74,8 @@ class RiskConfig:
     short_time_stop_days: int = 20
     # ML Sprint 4 — seuil de score minimum pour les shorts (distinct des longs)
     min_score_threshold_short: float = 0.0
+    # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné
+    filter_candidates_without_ml: bool = False
 
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60

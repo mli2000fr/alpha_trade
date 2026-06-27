@@ -404,6 +404,25 @@ class PortfolioBuilder:
                 candidates, self._regime_snapshot, rotation_state=self._rotation_state
             )
 
+        # ── 0a. Filtre ML manquant (P2 2026-06-27) ─────────────────
+        if candidates and self._cfg.filter_candidates_without_ml:
+            before = len(candidates)
+            filtered: list[CandidateScore] = []
+            excluded_symbols: list[str] = []
+            for c in candidates:
+                sym = str(c.symbol).strip().upper()
+                if sym in predictions:
+                    filtered.append(c)
+                else:
+                    excluded_symbols.append(sym)
+            if excluded_symbols:
+                LOGGER.info(
+                    "ML filter: excluded %d candidates sans modèle ML entraîné : %s",
+                    len(excluded_symbols),
+                    ", ".join(sorted(excluded_symbols)),
+                )
+            candidates = filtered
+
         # ── 0bis. Filtre anti-faux-départs (Quick Win 1) ────────────
         # P1 (2026-06-25) : les shorts ne sont plus exemptés du breakout filter.
         # Ils doivent apparaître min_breakout_days jours consécutifs comme les longs.

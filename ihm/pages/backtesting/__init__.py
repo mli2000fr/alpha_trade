@@ -1431,6 +1431,15 @@ def _build_run_options() -> BacktestRunOptions:
             help="Si coché, le PNG d'equity curve et le CSV des trades ne seront pas écrits dans `artifacts/backtesting/`.",
         )
 
+    # ─── P2 (2026-06-27) filtre ML manquant ───
+    st.markdown("---")
+    filter_no_ml = st.checkbox(
+        "🚫 Filtrer les candidats sans modèle ML entraîné",
+        value=bool(st.session_state.get("bt_run_filter_no_ml", False)),
+        key="bt_run_filter_no_ml",
+        help="Exclut les candidats qui n'ont pas de prédictions dans model_predictions (pas encore entraînés). Les symboles filtrés sont loggués dans le backtest.",
+    )
+
     mode_col1, mode_col2, mode_col3, mode_col4, mode_col5, mode_col6, mode_col7, mode_col8 = st.columns(8)
     with mode_col1:
         engine_mode = cast(
@@ -1706,6 +1715,7 @@ def _build_run_options() -> BacktestRunOptions:
         allow_fractional_shares=bool(allow_fractional_shares),
         sentiment_lookback=int(sentiment_lookback),
         no_save=bool(no_save),
+        filter_no_ml=bool(filter_no_ml),
         ml_mode=cast(Any, ml_mode),
         sentiment_mode=cast(Any, sentiment_mode),
         engine_mode=cast(Any, engine_mode),

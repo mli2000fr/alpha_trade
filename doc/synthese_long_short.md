@@ -1382,6 +1382,38 @@ $$conviction\_short = 0.70 \times (1 - score\_quant) + 0.30 \times proba\_ml\_sh
 > -- Si 0 ligne → le ML n'a pas tourné aujourd'hui → mode quantitatif pur
 > ```
 
+> **🆕 Filtre « candidats sans modèle ML » (P2 2026-06-27)**
+>
+> Une checkbox **"Filtrer les candidats sans modèle ML entraîné"** est disponible :
+> - Page **Backtest** → onglet "▶️ Lancer un backtest"
+> - Page **Pipeline / Exécution** → section Risk → options avancées
+>
+> Quand la case est **cochée**, `PortfolioBuilder` exclut les candidats absents de `model_predictions` **avant** les filtres breakout/concentration/corrélation. Les symboles exclus sont loggués explicitement.
+>
+> **Comment vérifier dans les logs :**
+>
+> | Mode | Log à chercher | Fichier |
+> |------|---------------|---------|
+> | 🔵 **BACKTEST** | `ML filter: excluded N candidates sans modèle ML entraîné : SYM1, SYM2, ...` | Sortie standard du backtest (`logs.txt` ou sortie IHM) |
+> | 🟢 **LIVE** | Même format — `ML filter: excluded N candidates sans modèle ML entraîné : ...` | Sortie standard de `risk_management` (visible dans l'onglet "Logs" IHM) |
+>
+> ```powershell
+> # 🔵 BACKTEST : vérifier si le filtre a agi
+> Select-String -Path "logs.txt" -Pattern "ML filter:" | Select-Object -Last 5
+>
+> # 🔵 BACKTEST : compter les symboles exclus
+> Select-String -Path "logs.txt" -Pattern "ML filter:" | ForEach-Object { $_ -replace '.*excluded (\d+) .*', '$1' }
+>
+> # 🟢 LIVE : chercher dans les logs récents
+> Select-String -Path "logs.txt" -Pattern "ML filter:" | Select-Object -Last 10
+> ```
+>
+> **Si le log n'apparaît pas** alors que la case est cochée : tous les candidats du jour avaient un modèle ML → couverture 100%.
+>
+> **Si le log apparaît** : les symboles listés sont ceux **exclus** du portefeuille. Pour les inclure, il faut :
+> 1. Lancer **ML Train** puis **ML Predict** pour ces symboles
+> 2. Ou **décocher** la case (ils seront traités en mode quantitatif pur, cf. § ci-dessus)
+
 ### 13.5 Exécution — Différence d'envoi d'ordres
 
 | Aspect | 🟢 LIVE | 🔵 BACKTEST |

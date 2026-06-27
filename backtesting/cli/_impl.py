@@ -783,6 +783,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--sentiment-lookback", type=int, default=365, help="Lookback sentiment (jours)")
     run_p.add_argument("--no-save", action="store_true", help="Ne pas sauvegarder les artefacts")
     run_p.add_argument(
+        "--filter-no-ml",
+        action="store_true",
+        help="Exclure les candidats sans modèle ML entraîné (pas de predicted_proba dans model_predictions).",
+    )
+    run_p.add_argument(
         "--ml-mode",
         choices=["auto", "off", "rebuild-missing"],
         default="auto",
@@ -1900,6 +1905,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
         except Exception as _exc:
             LOGGER.debug("Short selling config not loaded: %s", _exc)
         phase2_risk_config = RiskConfig(**risk_kwargs)
+
+        # P2 (2026-06-27) -- flag CLI pour exclure les candidats sans ML
+        if getattr(args, "filter_no_ml", False):
+            # On doit contourner l'immuabilité de RiskConfig → on reconstruit
+            # avec object.__setattr__ car c'est un dataclass frozen
+            object.__setattr__(phase2_risk_config, "filter_candidates_without_ml", True)
+            LOGGER.info("filter-no-ml activé : exclusion des candidats sans modèle ML entraîné")
 
     if phase3_mode != "off" and phase2_mode != "risk_execution":
         _safe_print(

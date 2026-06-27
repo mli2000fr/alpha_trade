@@ -660,6 +660,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--correlation-lookback-days", type=int, default=60)
     p.add_argument("--correlation-min-overlap", type=int, default=40)
     p.add_argument("--enable-kelly-sizing", action="store_true", default=False)
+    # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné
+    p.add_argument("--filter-no-ml", action="store_true", default=False, help="Exclure les candidats sans modèle ML entraîné (absence dans model_predictions).")
     p.add_argument("--allow-fractional-shares", action="store_true", default=False)
     p.add_argument("--assumed-payoff-ratio", type=float, default=1.5)
     p.add_argument("--kelly-fraction-multiplier", type=float, default=0.25)
@@ -870,6 +872,7 @@ def main(args: list[str] | None = None) -> None:
         correlation_lookback_days=args.correlation_lookback_days,
         correlation_min_overlap=args.correlation_min_overlap,
         enable_kelly_sizing=args.enable_kelly_sizing,
+        filter_candidates_without_ml=args.filter_no_ml,
         allow_fractional_shares=args.allow_fractional_shares,
         assumed_payoff_ratio=args.assumed_payoff_ratio,
         kelly_fraction_multiplier=args.kelly_fraction_multiplier,

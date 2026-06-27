@@ -308,6 +308,7 @@ class PipelineLaunchOptions:
     ml_include_macro_vxn: bool = False   # VXN — Nasdaq-100 volatility
     ml_include_macro_vix3m: bool = False # VIX3M — term structure contango/backwardation
     ml_include_macro_move: bool = False  # MOVE — bond volatility
+    filter_candidates_without_ml: bool = False  # P2 (2026-06-27) exclure les candidats sans modèle ML
     ml_enable_lightgbm: bool = True
     ml_enable_catboost: bool = True
     ml_enable_global_model: bool = False
@@ -2251,6 +2252,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--allow-fractional-shares")
         if options.risk_enable_kelly:
             command.append("--enable-kelly-sizing")
+        # P2 (2026-06-27) — exclure les candidats sans modèle ML
+        if options.filter_candidates_without_ml:
+            command.append("--filter-no-ml")
         if options.risk_max_portfolio_drawdown_pct > 0:
             command.extend(["--max-portfolio-drawdown-pct", str(options.risk_max_portfolio_drawdown_pct)])
         if options.risk_max_daily_loss_pct > 0:

@@ -1620,6 +1620,14 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
             )
         )
 
+    # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné (visible hors expander)
+    risk_filter_candidates_without_ml = st.checkbox(
+        "🚫 Filtrer les candidats sans modèle ML entraîné",
+        value=_session_state_bool("pipeline_risk_filter_candidates_without_ml", False),
+        key="pipeline_risk_filter_candidates_without_ml",
+        help="Exclut les candidats qui n'ont pas de prédictions dans model_predictions (pas de modèle entraîné). Les symboles filtrés sont loggués dans la sortie risk_management.",
+    )
+
     with st.expander("Risk — Kelly sizing & options avancées", expanded=False):
         risk_adv_col1, risk_adv_col2, risk_adv_col3 = st.columns(3)
         with risk_adv_col1:
@@ -1811,6 +1819,7 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
         "risk_vol_target_lookback_days": risk_vol_target_lookback_days,
         "risk_min_ml_coverage_ratio": risk_min_ml_coverage_ratio,
         "risk_dry_run": risk_dry_run,
+        "risk_filter_candidates_without_ml": risk_filter_candidates_without_ml,
         "risk_payoff_ratio": risk_payoff_ratio,
         "risk_kelly_fraction_multiplier": risk_kelly_fraction_multiplier,
         "risk_correlation_min_overlap": risk_correlation_min_overlap,
@@ -3011,6 +3020,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         risk_vol_target_lookback_days = _risk_vars["risk_vol_target_lookback_days"]
         risk_min_ml_coverage_ratio = _risk_vars["risk_min_ml_coverage_ratio"]
         risk_dry_run = _risk_vars["risk_dry_run"]
+        risk_filter_candidates_without_ml = _risk_vars["risk_filter_candidates_without_ml"]
         risk_payoff_ratio = _risk_vars["risk_payoff_ratio"]
         risk_kelly_fraction_multiplier = _risk_vars["risk_kelly_fraction_multiplier"]
         risk_correlation_min_overlap = _risk_vars["risk_correlation_min_overlap"]
@@ -4148,6 +4158,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             risk_payoff_ratio=float(risk_payoff_ratio),
             risk_kelly_fraction_multiplier=float(risk_kelly_fraction_multiplier),
             risk_dry_run=bool(risk_dry_run),
+            filter_candidates_without_ml=bool(risk_filter_candidates_without_ml),
             risk_log_level=str(risk_log_level).upper(),
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
