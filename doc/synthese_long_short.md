@@ -456,6 +456,113 @@ Le trainer supporte aussi le **walk-forward ML** : on entraîne sur des fenêtre
 - `modelFactory/features.py` — `compute_features()`, `get_feature_columns()`
 - `modelFactory/dataset.py` — `SequenceDataset`, `chrono_split()`, `FeatureScaler`
 
+### 4.6 LSTM vs LightGBM vs CatBoost — quel modèle pour quel symbole ?
+
+Le système supporte **3 architectures** différentes. En pratique aujourd'hui (`champion_selection=off`), **LSTM est toujours utilisé**. Les deux autres sont des challengers optionnels qui pourraient être promus par symbole si la sélection champion était activée.
+
+| Architecture | Type | Apprentissage | Force | Faiblesse |
+|---|---|---|---|---|
+| **LSTM** (`lstm_attention`) | Deep Learning | Séquences de 20 jours, 2 couches LSTM + Attention temporelle | Capture les **patterns temporels** complexes : "3 jours de baisse + gap → rebond J+4" | Besoin de **beaucoup de données** (≥3 ans). Lent à entraîner. Overfit facilement |
+| **LightGBM** | Gradient boosting (arbres) | Tabulaire : une ligne = un jour, features OHLCV + contexte | **Robuste avec peu de données** (≥1 an). Rapide. Moins sensible au bruit. Excellent sur données tabulaires peu profondes | Pas de mémoire temporelle. Ne "voit" pas les séquences — chaque jour est indépendant |
+| **CatBoost** | Gradient boosting (arbres) | Idem LightGBM, mais gère mieux les features catégorielles | Mêmes avantages que LightGBM + **meilleure généralisation** par défaut (ordered boosting). Bon sur petits datasets | Pas de mémoire temporelle. Un peu plus lent que LightGBM |
+
+#### Différence conceptuelle
+
+```
+LSTM (deep learning)                   LightGBM / CatBoost (arbres)
+─────────────────────                   ──────────────────────────
+Apprend des PATTERNS TEMPORELS         Apprend des RÈGLES TABULAIRES
+"Après 3 jours de baisse               "Si RSI < 30 ET volume > moyenne
+ suivis d'un gap up,                   ET spread < 10bps → hausse
+ le jour 4 monte"                      probable"
+
+✅ Capture les dépendances             ✅ Robuste avec peu de données
+   séquentielles complexes             ✅ Plus rapide à entraîner
+❌ Besoin de beaucoup de données       ✅ Moins sensible au bruit
+❌ Lent à entraîner                    ❌ Pas de mémoire temporelle
+❌ Overfit facilement                   ❌ Features doivent être bien choisies
+```
+
+#### Quel modèle pour quel symbole ?
+
+| Profil du symbole | Modèle recommandé | Raison |
+|---|---|---|
+| **AAPL, MSFT, SPY** — 10+ ans d'historique, très liquide | **LSTM** | Beaucoup de séquences → le LSTM peut apprendre des patterns temporels fiables |
+| **Small cap, IPO récente** — 1-3 ans d'historique, volatil | **CatBoost** ou **LightGBM** | Peu de données → les arbres généralisent mieux, moins de risque d'overfit |
+| **Mid cap, secteur cyclique** — 5 ans, patterns saisonniers | **LSTM** (si assez de données) ou **CatBoost** | Mix : le LSTM peut capturer les cycles, CatBoost plus robuste si bruité |
+
+#### Comment ça fonctionne en pratique ?
+
+1. **Entraînement** : LSTM est **toujours** entraîné. LightGBM/CatBoost sont entraînés **seulement si** les checkboxes IHM sont cochées (`ml_enable_lightgbm`, `ml_enable_catboost` → flags `--compare-lightgbm`, `--enable-catboost`). Les checkboxes sont cochées par défaut dans l'IHM.
+
+2. **Sélection champion** : Si `ml_select_champion=True` (checkbox IHM, défaut `True`), le système choisit automatiquement le meilleur modèle pour chaque symbole après N runs (quarantaine). Si `False` ou si aucun challenger n'est éligible → fallback `lstm_attention`.
+
+   > ⚠️ **Faut-il activer la sélection champion ?**
+   >
+   > **Pour l'instant, garde `ml_select_champion` décoché (off).** Les raisons :
+   > - La sélection champion exige une **quarantaine** : un challenger (LightGBM, CatBoost) doit avoir été entraîné **au moins 3 fois** (3 runs distincts) avant d'être éligible comme champion. C'est une protection contre la chance : un modèle qui a eu un bon score sur un seul run n'est pas forcément meilleur.
+   > - Tant que tu n'as pas exécuté ML Train **3 fois ou plus** avec les challengers activés, aucun challenger n'est éligible → la sélection retourne toujours `lstm_attention` (le fallback)
+   > - Activer sans avoir accumulé assez de métriques revient à ne rien changer, mais avec un risque théorique de promouvoir un modèle sous-testé
+   >
+   > **Qu'est-ce qu'un « run » ?** Chaque fois que tu lances **ML Train** (étape 9 du pipeline, ou `python -m modelFactory train`), c'est **1 run**. Chaque run produit une ligne dans `model_metrics` par symbole et par architecture (lstm_attention, lightgbm, catboost). Exemple :
+   >
+   > ```
+   > Jour 1 : ML Train → run #1 → métriques AAPL (lstm ✅, lightgbm ✅, catboost ✅)
+   > Jour 2 : ML Train → run #2 → métriques AAPL (lstm ✅, lightgbm ✅, catboost ✅)
+   > Jour 5 : ML Train → run #3 → métriques AAPL (lstm ✅, lightgbm ✅, catboost ✅)
+   >                                          ↑ maintenant lightgbm et catboost ont 3 runs
+   >                                            → ils deviennent éligibles pour la sélection champion
+   > ```
+   >
+   > ⚠️ **Ne pas confondre les 3 opérations ML :**
+   >
+   > | Opération | IHM (étape) | Ce qu'elle fait | Table impactée | Compte comme un « run » ? |
+   > |---|---|---|---|---|
+   > | **ML Train** | Étape 9 | Entraîne/réentraîne les modèles (LSTM, LightGBM, CatBoost) → produit `.ckpt`, `.pkl` | `model_metrics`, `model_training_run` | ✅ **Oui** — c'est ça un run |
+   > | **ML Predict** | Étape 10 | Inférence : utilise les modèles déjà entraînés pour prédire → `predicted_proba` | `model_predictions` | ❌ Non — ne génère pas de métriques |
+   > | **Backtest** | Page Backtesting | Consomme `model_predictions` + `stock_scores_history` pour simuler le trading | `portfolio_entries`, etc. | ❌ Non — ne réentraîne pas |
+   >
+   > **Est-ce que chaque run écrase les modèles précédents ?** Oui. Chaque `ML Train` **écrase** les fichiers dans `artifacts/models/{symbol}/` — seul le dernier checkpoint survit sur disque. Mais ce n'est pas un problème pour la sélection champion, car elle ne compare **pas les checkpoints** : elle lit les **métriques accumulées dans `model_metrics`** (DB), où chaque run a son propre `run_id`. Exemple après 3 runs sur la même période 2020-2025 :
+   >
+   > ```
+   > artifacts/models/AAPL/lstm_attention.ckpt  ← écrasé à chaque run, seul le dernier survit
+   > artifacts/models/AAPL/lightgbm.txt          ← idem
+   > artifacts/models/AAPL/catboost.cbm          ← idem
+   >
+   > MAIS dans model_metrics (DB) :
+   > run_id    | symbol | model_type      | sharpe | accuracy
+   > abc123    | AAPL   | lstm_attention  | 0.72   | 0.58
+   > abc123    | AAPL   | lightgbm        | 0.68   | 0.56     ← run #1
+   > def456    | AAPL   | lstm_attention  | 0.75   | 0.59
+   > def456    | AAPL   | lightgbm        | 0.81   | 0.61     ← run #2 : LightGBM meilleur !
+   > ghi789    | AAPL   | lstm_attention  | 0.70   | 0.57
+   > ghi789    | AAPL   | lightgbm        | 0.79   | 0.62     ← run #3 : LightGBM confirme
+   >                                      ↑ 3 runs, LightGBM > LSTM 2 fois sur 3
+   >                                        → champion selection promeut LightGBM
+   >                                        → le checkpoint LightGBM utilisé = celui du run #3
+   > ```
+   >
+   > **En pratique pour ton usage actuel :** si tu entraînes une fois puis fais prédictions + backtests, tu n'as qu'**1 run** → laisse `ml_select_champion` décoché, il ne sert à rien de le cocher. La quarantaine (3 runs) est conçue pour un usage où tu **réentraînes régulièrement** (ex. chaque semaine avec des données fraîches), ce qui accumule des runs naturellement.
+   >
+   > **Quand l'activer** (futur) :
+   > 1. Garder `ml_enable_lightgbm=True` et `ml_enable_catboost=True` (déjà cochés par défaut)
+   > 2. Lancer ML Train au moins **3 fois** (3 jours différents, ou 3 configs différentes) pour accumuler des métriques comparatives
+   > 3. Puis cocher `ml_select_champion=True` — le système pourra alors promouvoir LightGBM pour AAPL et CatBoost pour TSLA si les métriques le justifient
+   > 4. Vérifier dans `model_metrics` qu'il y a bien ≥3 runs par challenger :
+   >    ```sql
+   >    SELECT symbol, model_type, COUNT(*) AS runs
+   >    FROM model_metrics
+   >    GROUP BY symbol, model_type
+   >    ORDER BY symbol, model_type;
+   >    ```
+   >
+   > **Où dans l'IHM ?** Page **Pipeline / Exécution** → section **Paramètres Model Factory** → colonne de droite :
+   > - ☑ `Entraîner aussi LightGBM (challenger)` → `ml_enable_lightgbm`
+   > - ☑ `Entraîner aussi CatBoost (challenger)` → `ml_enable_catboost`
+   > - ☑ `Activer la sélection automatique du champion` → `ml_select_champion`
+
+3. **Fallback** : Si le champion sélectionné est corrompu ou manquant → fallback automatique vers `lstm_attention`. Aucun risque de régression.
+
 ---
 
 ## 5. ML — PRÉDICTION LONG ET SHORT 🟢 LIVE

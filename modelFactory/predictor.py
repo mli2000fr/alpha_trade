@@ -870,6 +870,24 @@ def _predict_with_tabular_model(
             model_path=model_path,
             target_mode=data_cfg.target_mode,
         )
+        # ── Ternaire tabulaire (P2 2026-06-30) ──────────────────────
+        # Les challengers LightGBM / CatBoost entraînés en ternaire
+        # produisent 3 colonnes [short, flat, long] → on extrait les
+        # 3 probas pour les persister dans model_predictions.
+        proba_all = np.asarray(prediction_output, dtype=float)
+        is_ternary_tab = (
+            data_cfg.target_mode == "ternary"
+            and proba_all.ndim == 2
+            and proba_all.shape[1] >= 3
+        )
+        if is_ternary_tab:
+            proba_short_val: float | None = float(proba_all[0, 0])
+            proba_flat_val: float | None = float(proba_all[0, 1])
+            proba_long_val: float | None = float(proba_all[0, 2])
+        else:
+            proba_short_val = None
+            proba_flat_val = None
+            proba_long_val = None
     except ArtifactIntegrityError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -915,8 +933,23 @@ def _predict_with_tabular_model(
     threshold_value = decision_threshold if decision_threshold is not None else cfg_data.get("selected_decision_threshold", data_cfg.decision_threshold)
     effective_threshold = _numeric_threshold(threshold_value, float(data_cfg.decision_threshold or 0.5))
     pred_date = prediction_date or date.today()
-    pred_class = 1 if proba >= effective_threshold else 0
-    signal_label = "long" if pred_class == 1 else "no_trade"
+
+    # ── Ternaire tabulaire : side + signal (P2 2026-06-30) ─────────
+    if is_ternary_tab:
+        # Utiliser les probas calibrées si dispo, sinon les brutes
+        p_short = proba_short_val or 0.0
+        p_flat = proba_flat_val or 0.0
+        p_long = proba_long_val or 0.0
+        side_idx = int(np.argmax([p_short, p_flat, p_long]))
+        side_map = {0: "short", 1: "flat", 2: "long"}
+        predicted_side_val: str | None = side_map.get(side_idx, "flat")
+        pred_class = 1 if predicted_side_val == "long" else 0
+        signal_label = predicted_side_val
+        proba = p_long
+    else:
+        pred_class = 1 if proba >= effective_threshold else 0
+        signal_label = "long" if pred_class == 1 else "no_trade"
+        predicted_side_val = None
 
     result = _build_prediction_result(
         symbol=symbol,
@@ -929,6 +962,10 @@ def _predict_with_tabular_model(
         signal_label=signal_label,
         calibration_method=calibration_method,
         selected_model=selected_model,
+        predicted_side=predicted_side_val,
+        proba_long=proba_long_val,
+        proba_flat=proba_flat_val,
+        proba_short=proba_short_val,
     )
     update_runtime_status(
         last_prediction_symbol=symbol,

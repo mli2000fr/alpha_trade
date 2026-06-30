@@ -564,9 +564,29 @@ def _compute_metrics(
         f1_values = [v for k, v in f1_per_class.items() if v is not None]
         f1_macro = float(np.mean(f1_values)) if f1_values else 0.0
 
+        # ── Binarised precision / recall / AUC for "long" class (P2 2026-06-30)
+        # En ternaire, precision/recall/auc sont definis en one-vs-rest :
+        #   classe positive = long (idx 2), classe negative = short+flat (idx 0,1)
+        tp_long = int(((preds == 2) & (labels_shifted == 2)).sum())
+        fp_long = int(((preds == 2) & (labels_shifted != 2)).sum())
+        fn_long = int(((preds != 2) & (labels_shifted == 2)).sum())
+        bin_precision = float(tp_long / (tp_long + fp_long)) if (tp_long + fp_long) > 0 else 0.0
+        bin_recall = float(tp_long / (tp_long + fn_long)) if (tp_long + fn_long) > 0 else 0.0
+        # AUC binarisee : proba colonne 2 (long) vs label 1=long, 0=reste
+        bin_labels_long = (labels_shifted == 2).astype(np.int64)
+        bin_proba_long = probs[:, 2].astype(np.float64)
+        bin_auc = _binary_auc(bin_labels_long, bin_proba_long)
+        # Directional accuracy binarisee (compatible colonne DB existante)
+        bin_preds = (preds == 2).astype(np.int64)
+        bin_acc = float((bin_preds == bin_labels_long).mean())
+
         return {
             "loss": loss,
             "accuracy": accuracy,
+            "directional_accuracy": bin_acc,
+            "precision": bin_precision,
+            "recall": bin_recall,
+            "auc": bin_auc,
             "n_samples": int(len(labels)),
             "num_classes": 3,
             "f1_macro": f1_macro,
