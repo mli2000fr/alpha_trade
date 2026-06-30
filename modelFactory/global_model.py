@@ -349,12 +349,18 @@ def train_global_model(
         val_proba,
         val_df["future_return"].to_numpy(),
         selected_threshold,
+        raw_proba_all=raw_val_all if is_ternary else None,
+        target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
+        is_ternary=is_ternary,
     )
     test_metrics = compute_tabular_metrics(
         test_labels,
         test_proba,
         test_df["future_return"].to_numpy(),
         selected_threshold,
+        raw_proba_all=raw_test_all if is_ternary else None,
+        target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
+        is_ternary=is_ternary,
     )
 
     by_symbol = _compute_by_symbol_metrics(test_df, test_proba, decision_threshold=selected_threshold)

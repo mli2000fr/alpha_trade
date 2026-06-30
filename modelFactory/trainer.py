@@ -769,6 +769,11 @@ def _aggregate_walk_forward_metrics(split_metrics: list[dict[str, Any]]) -> dict
         "top_minus_bottom_bucket_return",
         "threshold_business_score",
         "decision_threshold",
+        # P2 (2026-07-01) — F1 ternaire pour le walk-forward
+        "f1_macro",
+        "f1_short",
+        "f1_flat",
+        "f1_long",
     ]
     mean_metrics: dict[str, float | None] = {}
     std_metrics: dict[str, float | None] = {}

@@ -77,6 +77,10 @@ def compute_tabular_metrics(
 	proba: np.ndarray,
 	future_returns: np.ndarray,
 	decision_threshold: float,
+	*,
+	raw_proba_all: np.ndarray | None = None,
+	target_raw: np.ndarray | None = None,
+	is_ternary: bool = False,
 ) -> dict[str, Any]:
 	labels = np.asarray(labels, dtype=np.int64)
 	proba = np.asarray(proba, dtype=np.float64)
@@ -88,7 +92,7 @@ def compute_tabular_metrics(
 		n_buckets=5,
 	)
 	pred = (proba >= decision_threshold).astype(np.int64)
-	return {
+	result: dict[str, Any] = {
 		"directional_accuracy": float((pred == labels).mean()),
 		"precision": float(threshold_metrics["precision_long"]),
 		"recall": float(threshold_metrics["recall_long"]),
@@ -98,6 +102,25 @@ def compute_tabular_metrics(
 		"action_rate": float(threshold_metrics["coverage_at_threshold"]),
 		**threshold_metrics,
 	}
+
+	# ── F1 ternaire pour challengers tabulaires (P2 2026-07-01) ──
+	if is_ternary and raw_proba_all is not None and target_raw is not None:
+		probs_all = np.asarray(raw_proba_all, dtype=np.float64)
+		targets = np.asarray(target_raw, dtype=np.int64)  # {-1, 0, 1}
+		if probs_all.ndim == 2 and probs_all.shape[1] >= 3 and len(targets) == probs_all.shape[0]:
+			preds_multi = np.argmax(probs_all, axis=1)  # {0, 1, 2}
+			labels_shifted = targets + 1  # {-1,0,1} -> {0,1,2}
+			for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+				tp = int(((preds_multi == cls_idx) & (labels_shifted == cls_idx)).sum())
+				fp = int(((preds_multi == cls_idx) & (labels_shifted != cls_idx)).sum())
+				fn = int(((preds_multi != cls_idx) & (labels_shifted == cls_idx)).sum())
+				prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+				rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+				result[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
+			f1_vals = [v for k, v in result.items() if k.startswith("f1_") and v is not None]
+			result["f1_macro"] = float(np.mean(f1_vals)) if f1_vals else 0.0
+
+	return result
 
 
 def fit_tabular_calibrator(
@@ -226,12 +249,18 @@ def run_tabular_baseline(
 		val_proba,
 		val_df["future_return"].to_numpy(),
 		selected_threshold,
+		raw_proba_all=raw_proba_all if is_ternary else None,
+		target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
+		is_ternary=is_ternary,
 	)
 	test_metrics = compute_tabular_metrics(
 		test_labels,
 		test_proba,
 		test_df["future_return"].to_numpy(),
 		selected_threshold,
+		raw_proba_all=test_raw_all if is_ternary else None,
+		target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
+		is_ternary=is_ternary,
 	)
 	selection_score = float(
 		test_metrics.get("threshold_business_score")
