@@ -423,6 +423,10 @@ def prepare_symbol_frame(
         selector_df=selector_df,
         include_selector_context=data_cfg.include_selector_context_features,
         include_short_score=data_cfg.include_short_score_features,
+        include_macro_vix=data_cfg.include_macro_vix_features,
+        include_macro_vxn=data_cfg.include_macro_vxn_features,
+        include_macro_vix3m=data_cfg.include_macro_vix3m_features,
+        include_macro_move=data_cfg.include_macro_move_features,
     )
     cross_sectional_diagnostics: dict[str, object] = {}
     if data_cfg.enable_cross_sectional_features:
@@ -450,6 +454,10 @@ def prepare_symbol_frame(
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_selector_context=data_cfg.include_selector_context_features,
         include_short_score=data_cfg.include_short_score_features,
+        include_macro_vix=data_cfg.include_macro_vix_features,
+        include_macro_vxn=data_cfg.include_macro_vxn_features,
+        include_macro_vix3m=data_cfg.include_macro_vix3m_features,
+        include_macro_move=data_cfg.include_macro_move_features,
     )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics

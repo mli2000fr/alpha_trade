@@ -411,6 +411,151 @@ def validate_feature_contract(
     return None
 
 
+def _merge_macro_features(
+    df: pd.DataFrame,
+    *,
+    include_vix: bool = False,
+    include_vxn: bool = False,
+    include_vix3m: bool = False,
+    include_move: bool = False,
+) -> pd.DataFrame:
+    """Charge les indicateurs macro depuis ``stock_macro_indicators_daily`` et les fusionne sur ``date``.
+
+    Les features dérivées :
+    - ``vix_close``, ``vix_momentum_5j`` (VIX)
+    - ``vxn_close``, ``vxn_spread_vix`` (VXN)
+    - ``vix3m_close``, ``vix_term_structure_ratio``, ``vix_backwardation`` (VIX3M)
+    - ``move_close`` (MOVE)
+
+    La table macro est chargée une fois, forward-filled, puis mergée left sur ``date``.
+    Les dates sans données macro reçoivent la dernière valeur connue (ffill).
+    """
+    if not {"date"}.issubset(df.columns):
+        return df
+
+    requested_columns: set[str] = set()
+    if include_vix:
+        requested_columns.update({"vix"})
+    if include_vxn:
+        requested_columns.update({"vxn"})
+    if include_vix3m:
+        requested_columns.update({"vix", "vix3m"})
+    if include_move:
+        requested_columns.update({"move"})
+    if not requested_columns:
+        return df
+
+    try:
+        from sqlalchemy import select as _sa_select
+        from database.connection import get_sqlalchemy_engine
+        from database.macro_indicators import get_macro_indicators_daily_table
+
+        engine = get_sqlalchemy_engine()
+        table = get_macro_indicators_daily_table()
+
+        date_min = pd.to_datetime(df["date"].min()) - pd.Timedelta(days=30)
+        date_max = pd.to_datetime(df["date"].max())
+
+        db_columns = [table.c.trade_date] + [
+            getattr(table.c, col) for col in sorted(requested_columns)
+        ]
+        query = (
+            _sa_select(*db_columns)
+            .where(table.c.trade_date >= date_min.date())
+            .where(table.c.trade_date <= date_max.date())
+            .order_by(table.c.trade_date.asc())
+        )
+        with engine.connect() as conn:
+            macro_rows = pd.read_sql_query(query, conn)
+
+        if macro_rows.empty:
+            LOGGER.warning("_merge_macro_features: no macro data in range %s → %s, filling 0", date_min, date_max)
+            _fill_macro_defaults(df, include_vix, include_vxn, include_vix3m, include_move)
+            return df
+
+        macro = macro_rows.rename(columns={"trade_date": "date"})
+        macro["date"] = pd.to_datetime(macro["date"])
+
+        # Construire une grille journalière complète et forward-fill
+        full_dates = pd.date_range(macro["date"].min(), macro["date"].max(), freq="D")
+        grid = pd.DataFrame({"date": full_dates})
+        macro = grid.merge(macro, on="date", how="left")
+        macro = macro.sort_values("date").ffill().reset_index(drop=True)
+
+        # Features dérivées VIX
+        if include_vix and "vix" in macro.columns:
+            macro["vix_close"] = macro["vix"].astype(float)
+            macro["vix_momentum_5j"] = macro["vix_close"].pct_change(5).fillna(0.0)
+
+        # Features dérivées VXN
+        if include_vxn and "vxn" in macro.columns:
+            macro["vxn_close"] = macro["vxn"].astype(float)
+            vix_series = macro["vix"].astype(float) if "vix" in macro.columns else macro["vxn_close"]
+            macro["vxn_spread_vix"] = macro["vxn_close"] - vix_series
+
+        # Features dérivées VIX3M
+        if include_vix3m and "vix3m" in macro.columns and "vix" in macro.columns:
+            macro["vix3m_close"] = macro["vix3m"].astype(float)
+            macro["vix_term_structure_ratio"] = (
+                macro["vix"].astype(float) / macro["vix3m"].astype(float).clip(lower=1e-8)
+            ).fillna(1.0)
+            macro["vix_backwardation"] = (
+                macro["vix"].astype(float) > macro["vix3m"].astype(float)
+            ).astype(float)
+
+        # Features dérivées MOVE
+        if include_move and "move" in macro.columns:
+            macro["move_close"] = macro["move"].astype(float)
+
+        # Merge sur date (left join → forward-fill les jours sans macro)
+        keep_cols = ["date"] + [
+            c for c in [
+                "vix_close", "vix_momentum_5j",
+                "vxn_close", "vxn_spread_vix",
+                "vix3m_close", "vix_term_structure_ratio", "vix_backwardation",
+                "move_close",
+            ] if c in macro.columns
+        ]
+        macro = macro[keep_cols]
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.merge(macro, on="date", how="left")
+        df = df.sort_values("date").reset_index(drop=True)
+
+        # Forward-fill les NaN macro (les weekends / jours fériés)
+        macro_cols = [c for c in keep_cols if c != "date" and c in df.columns]
+        df[macro_cols] = df[macro_cols].ffill().fillna(0.0)
+
+    except Exception:
+        LOGGER.warning("_merge_macro_features: failed to load macro data, filling 0", exc_info=True)
+        _fill_macro_defaults(df, include_vix, include_vxn, include_vix3m, include_move)
+
+    return df
+
+
+def _fill_macro_defaults(
+    df: pd.DataFrame,
+    include_vix: bool,
+    include_vxn: bool,
+    include_vix3m: bool,
+    include_move: bool,
+) -> None:
+    """Remplit les colonnes macro à 0.0 quand les données sont indisponibles."""
+    macro_defaults: dict[str, float] = {}
+    if include_vix:
+        macro_defaults.update({"vix_close": 0.0, "vix_momentum_5j": 0.0})
+    if include_vxn:
+        macro_defaults.update({"vxn_close": 0.0, "vxn_spread_vix": 0.0})
+    if include_vix3m:
+        macro_defaults.update({"vix3m_close": 0.0, "vix_term_structure_ratio": 1.0, "vix_backwardation": 0.0})
+    if include_move:
+        macro_defaults.update({"move_close": 0.0})
+    for col, default in macro_defaults.items():
+        if col not in df.columns:
+            df[col] = default
+        else:
+            df[col] = df[col].fillna(default).astype(float)
+
+
 def compute_features(
     df: pd.DataFrame,
     sentiment_df: pd.DataFrame | None = None,
@@ -420,6 +565,10 @@ def compute_features(
     selector_df: pd.DataFrame | None = None,
     include_selector_context: bool = False,
     include_short_score: bool = False,
+    include_macro_vix: bool = False,
+    include_macro_vxn: bool = False,
+    include_macro_vix3m: bool = False,
+    include_macro_move: bool = False,
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
@@ -599,12 +748,27 @@ def compute_features(
                 numeric_series = pd.Series(pd.to_numeric(df[col], errors="coerce"), index=df.index, dtype=float)
                 df[col] = numeric_series.fillna(default).astype(float)
 
+    # --- Macro features (optional, from stock_macro_indicators_daily) ---
+    any_macro = include_macro_vix or include_macro_vxn or include_macro_vix3m or include_macro_move
+    if any_macro:
+        df = _merge_macro_features(
+            df,
+            include_vix=include_macro_vix,
+            include_vxn=include_macro_vxn,
+            include_vix3m=include_macro_vix3m,
+            include_move=include_macro_move,
+        )
+
     # Determine active feature columns
     active_features = get_feature_columns(
         include_sentiment,
         feature_set=feature_set,
         include_selector_context=include_selector_context,
         include_short_score=include_short_score,
+        include_macro_vix=include_macro_vix,
+        include_macro_vxn=include_macro_vxn,
+        include_macro_vix3m=include_macro_vix3m,
+        include_macro_move=include_macro_move,
     )
 
     feature_matrix = df.loc[:, active_features].astype(np.float64)

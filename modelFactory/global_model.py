@@ -64,6 +64,10 @@ def _prepare_global_symbol_frame(
         selector_df=selector_df,
         include_selector_context=effective_data_cfg.include_selector_context_features,
         include_short_score=effective_data_cfg.include_short_score_features,
+        include_macro_vix=effective_data_cfg.include_macro_vix_features,
+        include_macro_vxn=effective_data_cfg.include_macro_vxn_features,
+        include_macro_vix3m=effective_data_cfg.include_macro_vix3m_features,
+        include_macro_move=effective_data_cfg.include_macro_move_features,
     )
     if effective_data_cfg.enable_cross_sectional_features:
         df = merge_cross_sectional_features(df, cross_sectional_df)
@@ -81,6 +85,10 @@ def _prepare_global_symbol_frame(
         include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
         include_selector_context=effective_data_cfg.include_selector_context_features,
         include_short_score=effective_data_cfg.include_short_score_features,
+        include_macro_vix=effective_data_cfg.include_macro_vix_features,
+        include_macro_vxn=effective_data_cfg.include_macro_vxn_features,
+        include_macro_vix3m=effective_data_cfg.include_macro_vix3m_features,
+        include_macro_move=effective_data_cfg.include_macro_move_features,
     )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df = df.loc[df["target"].notna() & df["future_return"].notna()].reset_index(drop=True)

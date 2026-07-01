@@ -10,8 +10,8 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 DEFAULT_ML_TARGET_MODE = "ternary"
 DEFAULT_ML_FORECAST_HORIZON = 5              # 5 jours = horizon swing typique
-DEFAULT_ML_TARGET_UP_THRESHOLD = 0.005       # +0.5 % cible long (P2 2026-07-01 : resserré pour équilibrer les classes ternaires)
-DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.005    # -0.5 % cible short (P2 2026-07-01 : resserré pour équilibrer les classes ternaires)
+DEFAULT_ML_TARGET_UP_THRESHOLD = 0.02        # +2.0 % cible long (P2 2026-07-01 : équilibre ~30% long / 40% flat / 30% short)
+DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.02     # -2.0 % cible short (P2 2026-07-01 : équilibre ~30% long / 40% flat / 30% short)
 DEFAULT_ML_DECISION_THRESHOLD = 0.55
 DEFAULT_ML_CALIBRATION_METHOD = "platt"
 DEFAULT_ML_FEATURE_SET = "expert"

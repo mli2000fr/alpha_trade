@@ -1053,6 +1053,19 @@ def train_symbol(
             reason = f"history_too_short rows={len(bars_df)} min={cfg.data.min_history_days}"
             return _skip_train_symbol(symbol=symbol, run_id=run_id, reason=reason, engine=engine)
 
+        # ── Log target configuration (P2 2026-07-01) ───────────────
+        LOGGER.info(
+            "ml_train symbol=%s run_id=%s target_mode=%s horizon=%dj up=%.4f down=%.4f decision_threshold=%.2f calibration=%s",
+            symbol,
+            run_id,
+            cfg.data.target_mode,
+            cfg.data.forecast_horizon,
+            cfg.data.target_up_threshold,
+            cfg.data.target_down_threshold,
+            cfg.data.decision_threshold,
+            cfg.calibration.method,
+        )
+
         effective_cfg = cfg
         target_optimization_summary: dict[str, Any] = {}
         if cfg.target_optimization.enabled:

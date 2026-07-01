@@ -563,6 +563,109 @@ Apprend des PATTERNS TEMPORELS         Apprend des RÈGLES TABULAIRES
 
 3. **Fallback** : Si le champion sélectionné est corrompu ou manquant → fallback automatique vers `lstm_attention`. Aucun risque de régression.
 
+### 4.7 Monitoring des métriques ML ternaires (`model_metrics`)
+
+Après chaque entraînement, les métriques par split (val / test / wf) sont persistées dans `model_metrics`. Voici comment les lire et les interpréter.
+
+#### 4.7.1 Requête de monitoring
+
+```sql
+SELECT mm.split_name,
+       COUNT(DISTINCT mm.symbol) AS nb_symbols,
+       ROUND(AVG(mm.f1_macro), 3) AS avg_f1m,
+       ROUND(AVG(mm.f1_short), 3) AS avg_f1s,
+       ROUND(AVG(mm.f1_flat), 3) AS avg_f1f,
+       ROUND(AVG(mm.f1_long), 3) AS avg_f1l,
+       SUM(CASE WHEN mm.f1_short > 0 THEN 1 ELSE 0 END) AS with_short,
+       SUM(CASE WHEN mm.f1_long > 0 THEN 1 ELSE 0 END) AS with_long,
+       SUM(CASE WHEN mm.f1_short > 0 AND mm.f1_long > 0 THEN 1 ELSE 0 END) AS with_both
+FROM model_metrics mm
+JOIN model_training_run mtr ON mm.run_id = mtr.run_id
+WHERE mtr.started_at >= (
+    SELECT MAX(started_at) FROM model_training_run WHERE status = 'completed'
+) - INTERVAL 10 MINUTE
+GROUP BY mm.split_name;
+```
+
+> ⚠️ **Ne pas utiliser `WHERE run_id = (SELECT MAX(run_id) FROM model_metrics)`** — chaque symbole a son propre `run_id`, donc `MAX(run_id)` ne donne qu'**un seul symbole**. La requête ci-dessus avec `JOIN model_training_run` sur `started_at` agrège **tous** les symboles du dernier batch d'entraînement.
+
+#### 4.7.2 Définition des colonnes
+
+| Colonne | Formule | Signification |
+|---------|---------|---------------|
+| `f1_macro` | `(f1_short + f1_flat + f1_long) / 3` | Moyenne équipondérée des 3 classes. **Pénalise toute classe ignorée** — si f1_flat=0.5 mais f1_long=f1_short=0, alors f1_macro=0.17 seulement |
+| `f1_short` | F1-score classe "short" (baisse) | Capacité à identifier les vraies baisses sans trop de faux signaux |
+| `f1_flat` | F1-score classe "flat" (neutre) | Capacité à identifier les stagnations. Si = 0 → le modèle ne prédit jamais "flat" |
+| `f1_long` | F1-score classe "long" (hausse) | Capacité à identifier les vraies hausses sans trop de faux signaux |
+| `with_short` | `COUNT(symboles où f1_short > 0)` | Nombre de symboles pour lesquels le modèle détecte au moins un short |
+| `with_long` | `COUNT(symboles où f1_long > 0)` | Nombre de symboles pour lesquels le modèle détecte au moins un long |
+| `with_both` | `COUNT(symboles où f1_short > 0 ET f1_long > 0)` | Symboles avec modèle vraiment "complet" (détecte les deux directions) |
+
+#### 4.7.3 Interprétation
+
+**🎯 Valeurs cibles (walk-forward)**
+
+| Métrique | Aléatoire | Minimum exploitable | Correct | Bon |
+|----------|-----------|---------------------|---------|-----|
+| `f1_macro` | ~0.33 | ≥ 0.35 | ≥ 0.40 | ≥ 0.50 |
+| `f1_short` | ~0.33 | ≥ 0.25 | ≥ 0.35 | ≥ 0.45 |
+| `f1_flat` | ~0.33 | ≥ 0.35 | ≥ 0.45 | ≥ 0.55 |
+| `f1_long` | ~0.33 | ≥ 0.20 | ≥ 0.30 | ≥ 0.40 |
+
+- **`f1_macro` ≥ 0.40** : signal exploitable en production. En dessous de 0.35, le modèle fait à peine mieux que le hasard.
+- **`f1_flat = 0`** : symptôme classique de seuils trop serrés (ex: ±0.5%) → plus aucun échantillon "flat" dans les données → le modèle ne l'apprend pas. Élargir les seuils.
+- **`f1_flat > 0.60`** : symptôme inverse, seuils trop larges (ex: ±12%) → 90% des échantillons sont "flat" → le modèle devient paresseux. Resserrer les seuils.
+- **`f1_long ≪ f1_short`** : asymétrie classique des marchés (les baisses sont plus brutales donc plus faciles à détecter). Acceptable tant que f1_long ≥ 0.20.
+- **`with_both ≪ nb_symbols`** : la plupart des modèles se spécialisent dans une seule direction. Si seulement 20/107 symboles ont les deux, envisager d'ajuster les seuils ou d'augmenter la diversité des features.
+
+#### 4.7.4 Relation avec les seuils de target (`target_up_threshold`, `target_down_threshold`)
+
+Les seuils définissent la proportion de chaque classe dans les données d'entraînement :
+
+| Seuils | Distribution typique (horizon 5j) | Classe dominante | Risque |
+|--------|-----------------------------------|------------------|--------|
+| ±0.5% | ~25% short / 10% flat / 65% long | Long | f1_flat = 0, pas de classe flat apprise |
+| **±1.5%** | ~28% short / 38% flat / 34% long | Équilibré | Bon compromis |
+| ±2.5% | ~25% short / 50% flat / 25% long | Flat | f1_long faible, biais flat |
+| ±12% (ancien) | ~5% short / 90% flat / 5% long | Flat écrasant | f1_short = f1_long = 0, modèle inutile |
+
+**Principe** : aucune classe ne doit tomber sous **~25%** des échantillons, et la classe flat ne doit pas dépasser **~45%**. Les seuils sont le levier le plus propre pour équilibrer — `class_weight` est déconseillé car il biaise les probabilités de sortie, les rendant inutilisables pour le Kelly sizing.
+
+#### 4.7.5 Exemple d'interprétation
+
+```
+split_name | nb_symbols | avg_f1m | avg_f1s | avg_f1f | avg_f1l | with_short | with_long | with_both
+test       | 107        | 0.262   | 0.201   | 0.485   | 0.091   | 48         | 31        | 20
+val        | 107        | 0.275   | 0.218   | 0.486   | 0.121   | 47         | 33        | 23
+wf         | 97         | 0.258   | 0.178   | 0.506   | 0.089   | 44         | 32        | 21
+```
+
+→ **Diagnostic** : f1_flat (~0.49) domine, f1_long (~0.09) très faible. Seuls 21/107 symboles ont les deux directions.
+→ **Action** : resserrer les seuils (ex: passer de ±2.5% à ±1.5%) pour réduire la proportion de flat et augmenter long.
+→ **Pas d'overfitting** : l'écart val↔wf est minime (0.275→0.258), le modèle généralise correctement.
+
+#### 4.7.6 Les 3 splits chronologiques (`val`, `test`, `wf`)
+
+L'entraînement ML découpe les données **dans l'ordre du temps** (pas de shuffle, pour respecter la causalité) :
+
+```
+|←━━━━━━━━━━━━ train (70%) ━━━━━━━━━━━━→|←━ val (15%) ━→|← test (15%) ━→|←━ wf (futur) ━→|
+2020 ─────────────────────────────────→ 2024-06 ──────→ 2025-03 ──────→ 2025-09 ──────→ 2026
+```
+
+| Split | Rôle | Le modèle voit ces données ? | Ce qu'il mesure |
+|-------|------|------------------------------|-----------------|
+| **`val`** (validation) | Calibration pendant l'entraînement | Indirectement (early stopping, choix d'hyperparams) | Guide l'entraînement, détecte l'overfitting précoce |
+| **`test`** (test) | Évaluation finale après entraînement | ❌ Jamais | Performance sur données "inconnues" mais contemporaines à la période d'entraînement |
+| **`wf`** (walk-forward) | Simulation temps réel | ❌ Jamais, et **chronologiquement après** test | **Le seul qui compte vraiment** — mesure la capacité à prédire le futur, pas juste à interpoler le passé |
+
+**🎯 Lequel regarder ?**
+
+- **`wf` est le juge de paix.** Si `f1_macro` val = 0.35 et wf = 0.26 → le modèle overfit, il ne généralise pas dans le futur. Si val = 0.28 et wf = 0.27 → bonne généralisation temporelle.
+- **`val`** sert à détecter l'overfitting : si `val ≫ test` (ex: val=0.40, test=0.25), le modèle a mémorisé au lieu d'apprendre.
+- **`test`** est un intermédiaire : meilleur indicateur que `val` mais moins réaliste que `wf` car les conditions de marché restent proches de la période d'entraînement.
+- **Règle empirique** : un écart `val − wf ≤ 0.05` est acceptable. Au-delà, le modèle est trop optimisé sur la période d'entraînement.
+
 ---
 
 ## 5. ML — PRÉDICTION LONG ET SHORT 🟢 LIVE

@@ -697,6 +697,10 @@ def _prepare_prediction_frame(
             selector_df=selector_df,
             include_selector_context=data_cfg.include_selector_context_features,
             include_short_score=data_cfg.include_short_score_features,
+            include_macro_vix=data_cfg.include_macro_vix_features,
+            include_macro_vxn=data_cfg.include_macro_vxn_features,
+            include_macro_vix3m=data_cfg.include_macro_vix3m_features,
+            include_macro_move=data_cfg.include_macro_move_features,
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)
@@ -729,6 +733,10 @@ def _prepare_prediction_frame(
             include_cross_sectional=True,
             include_selector_context=data_cfg.include_selector_context_features,
             include_short_score=data_cfg.include_short_score_features,
+            include_macro_vix=data_cfg.include_macro_vix_features,
+            include_macro_vxn=data_cfg.include_macro_vxn_features,
+            include_macro_vix3m=data_cfg.include_macro_vix3m_features,
+            include_macro_move=data_cfg.include_macro_move_features,
         )
         df = df.dropna(subset=active_features).reset_index(drop=True)
     return df
@@ -793,6 +801,10 @@ def _predict_with_tabular_model(
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_selector_context=data_cfg.include_selector_context_features,
         include_short_score=data_cfg.include_short_score_features,
+        include_macro_vix=data_cfg.include_macro_vix_features,
+        include_macro_vxn=data_cfg.include_macro_vxn_features,
+        include_macro_vix3m=data_cfg.include_macro_vix3m_features,
+        include_macro_move=data_cfg.include_macro_move_features,
     ))
     if df.empty or len(df) == 0:
         return None
