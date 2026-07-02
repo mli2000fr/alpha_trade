@@ -1904,4 +1904,43 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 
 ---
 
-> **Dernière mise à jour** : 2026-07-03 (Optimisation hyperparamètres ML — config directionnelle horizon=10j, batch=32)
+## 15. ÉCARTS CONNUS DOC vs RUNTIME
+
+> **Dernier audit** : 2026-07-03 — voir `prompt/plan_short_long.md` pour le détail complet.
+
+### 15.1 Source of truth par brique
+
+| Brique | Source de vérité | Mode | Fidélité | Note |
+|--------|-----------------|------|:---:|------|
+| Score long | `selector/ranking.py` → `merge_scores()` | 🟢 LIVE | ✅ | Colonnes réelles, appliqué en amont |
+| Score short | `selector/short_score.py` → `compute_short_score()` | 🟢 LIVE | ⚠️ | SMA50/200 absentes dans certains chemins (CLI, risk live). Cf. §3.3/P1 |
+| Tagging short | `selector/ranking.py` → `rank_and_select_short()` | 🟢 LIVE | ⚠️ | Multiples implémentations (scanner, risk_bridge, CLI) |
+| Conviction long | `core/conviction.py` → `fuse()` | 🟢🔵 BOTH | ✅ | 70/30 quant/ML, corrigé P0-1 |
+| Conviction short | `core/conviction.py` → `fuse_short()` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 (Kelly utilisait proba longue) |
+| Kelly sizing long | `risk_management/kelly.py` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 |
+| Kelly sizing short | `risk_management/kelly.py` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 — utilise `proba_short` |
+| Regime scoring | `selector/regime_scoring.py` → `apply_regime_weights()` | 🟢 LIVE | ✅ | Appliqué dans le selector avec vraies colonnes |
+| Regime filters | `selector/regime_filters.py` → `apply_full_regime_to_candidates()` | 🟢🔵 BOTH | ✅ | Câblé P0#4, earnings/buyback/yield OK |
+| Regime rescoring PortfolioBuilder | ~~`portfolio_builder.py` (bloc supprimé)~~ | — | ✅ | Corrigé P0-2 — rescoring factice retiré |
+| ML training | `modelFactory/trainer.py` | 🟢 LIVE | ✅ | Config lockée §4.8 |
+| ML inference | `modelFactory/predictor.py` | 🟢 LIVE | ✅ | Temperature Scaling ternaire OK |
+| Backtest PIT | `backtesting/data_loader.py` | 🔵 BACKTEST | ✅ | COALESCE walk_forward/sentiment/final_score OK |
+
+### 15.2 Corrections appliquées (2026-07-03)
+
+| # | Anomalie | Fichier | Correction |
+|---|----------|---------|------------|
+| P0-1 | Kelly short sizé avec proba longue | `risk_management/portfolio_builder.py` | `effective_proba` directionnelle : shorts utilisent `proba_short`, longs `predicted_proba` |
+| P0-2 | Rescoring régime avec colonnes factices (tous scores = 0.375) | `risk_management/portfolio_builder.py` | Suppression du bloc de rescoring (−60 lignes). Le selector le fait déjà en amont avec de vraies colonnes |
+
+### 15.3 Reste à faire (priorisé)
+
+| # | Item | Priorité | Effort |
+|---|------|:---:|:---:|
+| P1 | Unifier le calcul short (1 module canonique) | ⚪ | Élevé |
+| P1 | Réduire la dispersion des chemins de décision | ⚪ | Moyen |
+| P2 | Ajouter matrice live vs backtest vs calibration | ⚪ | Faible |
+
+---
+
+> **Dernière mise à jour** : 2026-07-03 (Audit P0 corrigé + optimisation hyperparamètres ML — config directionnelle horizon=10j, batch=32)

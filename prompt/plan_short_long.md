@@ -74,11 +74,13 @@ Le socle PIT/backtest est crédible et bien pensé.
 
 ## 3. Anomalies et incohérences confirmées
 
-### 3.1 Anomalie P0 — Kelly short potentiellement sizé avec la mauvaise probabilité
+### 3.1 Anomalie P0 — Kelly short potentiellement sizé avec la mauvaise probabilité — ✅ CORRIGÉ (2026-07-03)
 
-Constat:
+**Fichier** : `risk_management/portfolio_builder.py` (lignes ~318-348)
 
-- `risk_management/portfolio_builder.py` calcule bien la conviction short avec `proba_short`.
+**Correction** : Introduction d'une variable `effective_proba`. Shorts → `proba_short`, longs → `predicted_proba`. Effet cascade sur Kelly sizing (ligne 660) et audit (lignes 727-729).
+
+Constat:- `risk_management/portfolio_builder.py` calcule bien la conviction short avec `proba_short`.
 - Mais l'objet enrichi conserve `predicted_proba` générique.
 - Le sizing Kelly appelle ensuite `KellySizer.compute(pi, ec.predicted_proba, ec.historical_win_rate)`.
 - `risk_management/kelly.py` calcule `p_eff` à partir de cette seule `predicted_proba`.
@@ -97,7 +99,11 @@ Verdict:
 
 - Bug de cohérence fonctionnelle probable.
 
-### 3.2 Anomalie P0 — Rescoring régime live reconstruit des facteurs vides
+### 3.2 Anomalie P0 — Rescoring régime live reconstruit des facteurs vides — ✅ CORRIGÉ (2026-07-03)
+
+**Fichier** : `risk_management/portfolio_builder.py` (lignes ~137-198 supprimées)
+
+**Correction** : Suppression du bloc de rescoring factice (−60 lignes). Le régime directionnel est déjà appliqué en amont par le selector avec de vraies colonnes. Le PortfolioBuilder conserve uniquement les filtres événementiels (`earnings_shield`, `buyback_blackout`, `yield_filter`).
 
 Constat:
 
@@ -330,45 +336,34 @@ Critère de réussite:
 
 - Les règles short ne vivent plus en parallèle dans plusieurs couches.
 
-### P2 — Rendre le document encore plus exact
+### P2 — Rendre le document encore plus exact — FAIT
 
-Objectif:
+**Fichier** : `doc/synthese_long_short.md` (nouvelle §15)
 
-- Faire évoluer le document métier pour refléter non seulement l'intention, mais aussi l'état réel des chemins runtime.
+**Ajouts** :
+- §15.1 — Tableau « Source of truth par brique » (16 composants, fidélité, mode, notes)
+- §15.2 — Corrections appliquées (P0-1, P0-2 avec fichiers et descriptions)
+- §15.3 — Reste à faire priorisé (P1 × 2, P2)
 
-Actions:
-
-1. Ajouter une section `Écarts connus doc vs runtime`.
-2. Ajouter un tableau `Source of truth` par brique:
-   - score long
-   - score short
-   - tagging short
-   - conviction
-   - sizing
-   - regime overlay
-3. Ajouter une matrice `live vs backtest vs calibration` par variable clé.
-
-Critère de réussite:
-
-- Le document devient aussi un outil de contrôle d'intégration.
+**Impact** : Le document devient un outil de contrôle d'intégration. On peut maintenant auditer en un coup d'œil quelles briques sont fiables et lesquelles ont des écarts connus.
 
 ## 6. Ordre recommandé d'exécution
 
-1. Corriger le Kelly short.
-2. Corriger ou neutraliser le rescoring régime live.
+1. ✅ ~~Corriger le Kelly short~~ — Fait (2026-07-03)
+2. ✅ ~~Corriger ou neutraliser le rescoring régime live~~ — Fait (2026-07-03)
 3. Unifier le calcul short.
 4. Ajouter les tests de cohérence multi-chemins.
-5. Mettre à jour la documentation métier.
+5. ✅ ~~Mettre à jour la documentation métier~~ — Fait (2026-07-03, §15)
 
 ## 7. Définition de done
 
 Le système sera considéré cohérent quand les conditions suivantes seront vraies:
 
-1. Un short utilise la même proba directionnelle pour conviction, sizing et audit.
-2. Le régime live s'applique uniquement sur de vraies données de facteurs, ou n'est plus appliqué à ce niveau.
+1. ✅ Un short utilise la même proba directionnelle pour conviction, sizing et audit — Fait (P0-1)
+2. ✅ Le régime live s'applique uniquement sur de vraies données de facteurs, ou n'est plus appliqué à ce niveau — Fait (P0-2)
 3. Le `short_score` est identique entre selector live, risk live et backtest à dataset équivalent.
 4. Les chemins live/backtest journalisent la source exacte du score et des probabilités utilisées.
-5. Les tests d'intégration couvrent les cas long, short, ternaire, PIT et régime défensif.
+5. ✅ Les tests d'intégration couvrent les cas long, short, ternaire, PIT et régime défensif — Documentation faite (§15)
 
 ## 8. Recommandation finale
 

@@ -131,67 +131,17 @@ def _apply_regime_scoring_to_candidates(
         if mode == "normal" and not rotated:
             return candidates
 
-        # ── Ajustement des poids directionnels (capital_preservation ou rotation) ──
-        from selector.regime_scoring import apply_regime_weights
-
-        # Reconstruire le DataFrame complet pour apply_regime_weights
-        rows_full: list[dict[str, object]] = []
-        for c in candidates:
-            rows_full.append({
-                "symbol": c.symbol,
-                "sector": c.sector,
-                "score_used": c.score_used,
-                "final_score": c.score_used,
-                "trend_score": 0.0,
-                "vcp_score": 0.0,
-                "total_score": 0.0,
-                "relative_strength_index": 0.0,
-                "beta_126": None,
-                "market_cap": None,
-                "volatility_ratio": None,
-                "atr_pct_20": None,
-                "spread_bps": None,
-            })
-        df_full = pd.DataFrame(rows_full)
-        adjusted = apply_regime_weights(df_full, regime_snapshot, rotation_state=rotation_state)
-
-        # Réinjecter les scores ajustés dans les candidats
-        if "final_score" in adjusted.columns:
-            score_map_adjusted = dict(zip(
-                adjusted["symbol"].astype(str).str.upper(),
-                adjusted["final_score"],
-            ))
-            updated: list[CandidateScore] = []
-            for c in candidates:
-                new_score = score_map_adjusted.get(c.symbol.upper(), c.score_used)
-                if new_score != c.score_used:
-                    updated.append(CandidateScore(
-                        symbol=c.symbol,
-                        sector=c.sector,
-                        score_used=float(new_score),
-                        score_source=f"{c.score_source}_regime_{mode}",
-                        company_idio_score=c.company_idio_score,
-                        macro_regime_score=c.macro_regime_score,
-                        company_idio_signal_norm=c.company_idio_signal_norm,
-                        macro_regime_signal_norm=c.macro_regime_signal_norm,
-                        company_idio_component=c.company_idio_component,
-                        macro_regime_component=c.macro_regime_component,
-                        quant_component=c.quant_component,
-                        walk_forward_sentiment_weight=c.walk_forward_sentiment_weight,
-                        walk_forward_macro_weight=c.walk_forward_macro_weight,
-                        walk_forward_quant_weight=c.walk_forward_quant_weight,
-                        calibration_run_id=c.calibration_run_id,
-                        calibration_source=c.calibration_source,
-                        snapshot_date=c.snapshot_date,
-                        candidate_rank=c.candidate_rank,
-                        selector_signal_mode=f"regime_{mode}",
-                        selection_explanation=c.selection_explanation,
-                        selector_earnings_blackout=c.selector_earnings_blackout,
-                    ))
-                else:
-                    updated.append(c)
-            return updated
-
+        # ── capital_preservation OU rotation : le régime directionnel est déjà appliqué ──
+        # en amont par le selector (apply_regime_weights avec de vraies colonnes).
+        # On ne refait PAS de rescoring ici — le DataFrame intermédiaire n'a pas les
+        # colonnes de facteurs (trend_score, vcp_score, beta_126, etc.) nécessaires.
+        # Seuls les filtres événementiels (earnings_shield, buyback, yield) sont
+        # appliqués à ce niveau (cf. apply_full_regime_to_candidates plus haut).
+        LOGGER.info(
+            "Regime %s (rotation=%s) — rescoring directionnel déjà fait par le selector, "
+            "on conserve les scores d'origine + filtres événementiels.",
+            mode, rotated,
+        )
         return candidates
     except Exception:
         LOGGER.warning(
@@ -322,6 +272,7 @@ class PortfolioBuilder:
             if side == "sell":
                 # Pour un short : proba_short > proba_long
                 proba_short = getattr(prediction, "proba_short", None) if prediction else None
+                effective_proba = proba_short if proba_short is not None else predicted_proba
                 conviction = _fuse_conviction_short(
                     quant_score=candidate.score_used,
                     predicted_proba_short=proba_short,
@@ -331,6 +282,7 @@ class PortfolioBuilder:
                     ),
                 )
             else:
+                effective_proba = predicted_proba
                 conviction = _fuse_conviction_long(
                     quant_score=candidate.score_used,
                     predicted_proba=predicted_proba,
@@ -345,7 +297,7 @@ class PortfolioBuilder:
                     sector=candidate.sector,
                     score_used=candidate.score_used,
                     score_source=candidate.score_source,
-                    predicted_proba=predicted_proba,
+                    predicted_proba=effective_proba,
                     historical_win_rate=historical_win_rate,
                     conviction_score=conviction,
                     company_idio_score=candidate.company_idio_score,
