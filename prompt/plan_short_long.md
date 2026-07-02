@@ -161,7 +161,7 @@ Constat:
   - `selector/scanner.py`
   - `backtesting/risk_bridge.py`
   - `risk_management/cli.py`
-  - `_tag_short_candidates()` dans `backtesting/risk_bridge.py`
+  - ~~`_tag_short_candidates()` dans `backtesting/risk_bridge.py`~~ → ✅ DÉPLACÉ vers `selector/short_score.py:tag_short_candidates()` (2026-07-03)
 - Ces chemins n'ont pas exactement les mêmes inputs ni les mêmes enrichissements.
 
 Risque:
@@ -309,7 +309,7 @@ Critère de réussite:
 
 - Un seul comportement short observable pour une même entrée.
 
-### P1 — Réduire la dispersion des chemins de décision
+### P1 — Réduire la dispersion des chemins de décision  ✅ FAIT (2026-07-03)
 
 Objectif:
 
@@ -317,12 +317,41 @@ Objectif:
 
 Actions:
 
-1. Définir explicitement les responsabilités:
+1. ✅ Définir explicitement les responsabilités:
    - selector = score et ranking
    - risk = conviction, filtres, sizing
    - backtest = replay fidèle, pas logique alternative
-2. Déplacer `_tag_short_candidates()` vers un module canonique partagé.
-3. Éviter les logiques embarquées dans le CLI quand elles décident le comportement métier.
+2. ✅ Déplacer `_tag_short_candidates()` vers un module canonique partagé — FAIT (2026-07-03) : fonction renommée `tag_short_candidates()`, réside dans `selector/short_score.py`. Imports mis à jour dans `backtesting/risk_bridge.py` et `risk_management/cli.py`.
+3. ✅ Éviter les logiques embarquées dans le CLI quand elles décident le comportement métier — FAIT (2026-07-03) : tous les helpers de décision extraits dans `selector/short_score.py` :
+   - `ShortTrigger` (dataclass) + `resolve_short_trigger()` : détection unifiée des déclencheurs (régime, rotation, longs bloqués)
+   - `resolve_regime_adaptive_short_params()` : boost capital_preservation unifié (max→4, min→0.20)
+   - `inject_predicted_side()` : injection ML unifiée
+   - Suppression du `score_col` fallback mort dans `risk_bridge.py` (~7 lignes)
+   - `~70 lignes` de logique métier dupliquée retirées du CLI
+
+Architecture résultante :
+
+```
+selector/short_score.py  ←  module canonique UNIQUE
+├── ShortTrigger (dataclass)
+├── resolve_short_trigger()
+├── resolve_regime_adaptive_short_params()
+├── inject_predicted_side()
+├── compute_short_score()
+├── enrich_with_short_score()
+├── tag_short_candidates()
+├── compute_sma_column()
+└── _get_close()
+
+Appelants (tous passent par le même module) :
+├── selector/scanner.py         → enrich_with_short_score
+├── backtesting/risk_bridge.py  → resolve_short_trigger + resolve_regime_adaptive_short_params
+│                                  + inject_predicted_side + enrich + tag_short_candidates
+└── risk_management/cli.py      → resolve_short_trigger + resolve_regime_adaptive_short_params
+                                   + enrich + tag_short_candidates
+```
+
+⌛ Reste à faire (non bloquant) : remonter les defaults `MomentumRotationState(lookback_weeks=4, threshold=-0.03)` dans `RiskConfig` au lieu de les hardcoder dans les 2 appelants.
 
 Tests requis:
 
@@ -334,7 +363,8 @@ Tests requis:
 
 Critère de réussite:
 
-- Les règles short ne vivent plus en parallèle dans plusieurs couches.
+- ✅ Les règles short ne vivent plus en parallèle dans plusieurs couches.
+- ⚠️ Couverture de tests complète encore incomplète au moment de cette vérification. La correction code est présente, mais la non-régression 3-flux n'est pas encore totalement démontrée par tests d'intégration dédiés.
 
 ### P2 — Rendre le document encore plus exact — FAIT
 
@@ -363,7 +393,8 @@ Le système sera considéré cohérent quand les conditions suivantes seront vra
 2. ✅ Le régime live s'applique uniquement sur de vraies données de facteurs, ou n'est plus appliqué à ce niveau — Fait (P0-2)
 3. Le `short_score` est identique entre selector live, risk live et backtest à dataset équivalent.
 4. Les chemins live/backtest journalisent la source exacte du score et des probabilités utilisées.
-5. ✅ Les tests d'intégration couvrent les cas long, short, ternaire, PIT et régime défensif — Documentation faite (§15)
+5. Les tests d'intégration couvrent les cas long, short, ternaire, PIT et régime défensif.
+Statut au 2026-07-03 : couverture ciblée OK, couverture d'intégration complète encore partielle.
 
 ## 8. Recommandation finale
 

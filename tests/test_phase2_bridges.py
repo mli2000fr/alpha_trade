@@ -276,6 +276,141 @@ def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries
     ]
 
 
+def test_short_flow_selector_and_phase2_risk_bridge_keep_same_side_decisions(monkeypatch) -> None:
+    import service.market as market_service
+
+    from backtesting.risk_bridge import build_phase2_risk_result
+    from risk_management.config import RiskConfig
+    from risk_management.enums import Decision
+    from risk_management.models import PortfolioEntry
+    from selector.short_score import (
+        enrich_with_short_score,
+        inject_predicted_side,
+        resolve_regime_adaptive_short_params,
+        tag_short_candidates,
+    )
+    from service.market.config import MarketRegimesConfig
+    from service.market.models import MarketRegimeSnapshot
+
+    trade_dates = pd.date_range("2025-01-01", periods=60, freq="D")
+    snapshot_ts = trade_dates[-1]
+    close_df = pd.DataFrame(
+        {
+            "AAPL": [160.0 - idx for idx in range(len(trade_dates))],
+            "MSFT": [100.0 + idx for idx in range(len(trade_dates))],
+        },
+        index=trade_dates,
+    )
+    high_df = close_df + 1.0
+    low_df = close_df - 1.0
+    scores_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": [snapshot_ts, snapshot_ts],
+            "final_score": [0.20, 0.80],
+            "score": [0.20, 0.80],
+            "score_source": ["test", "test"],
+            "sector": ["Tech", "Tech"],
+            "trend_score": [0.10, 0.85],
+            "relative_strength_index": [25.0, 68.0],
+        }
+    )
+    predictions_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": [snapshot_ts, snapshot_ts],
+            "predicted_side": ["short", "long"],
+            "predicted_proba": [0.35, 0.70],
+            "predicted_class": [-1, 1],
+            "run_id": ["ml-run", "ml-run"],
+        }
+    )
+
+    selector_day = inject_predicted_side(scores_df.copy(), predictions_df, snapshot_ts)
+    selector_day = enrich_with_short_score(selector_day, close_df=close_df, trade_day=snapshot_ts)
+    eff_max_short, eff_min_short = resolve_regime_adaptive_short_params(
+        RiskConfig(short_selling_enabled=True, short_max_positions=2, short_min_score=0.30),
+        True,
+    )
+    selector_day = tag_short_candidates(
+        selector_day,
+        max_short_positions=eff_max_short,
+        min_score_for_short=eff_min_short,
+    )
+    selector_sides = dict(zip(selector_day["symbol"], selector_day["side"]))
+
+    def fake_build_snapshot(trade_date, *, config, equity=None, execution_context="backtest", **kwargs):
+        return MarketRegimeSnapshot(
+            trade_date=trade_date,
+            mode="capital_preservation",
+            allow_new_entries=True,
+            allowed_long_entries=True,
+            allowed_short_entries=True,
+            reasons=("test",),
+            data_quality={"macro": "ok"},
+        )
+
+    class _FakeBuilder:
+        def __init__(self, config, rotation_state=None, factor_exposures=None, factor_covariance=None):
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions=None, return_matrix=None):
+            return [
+                PortfolioEntry(
+                    symbol=candidate.symbol,
+                    sector=candidate.sector,
+                    entry_price=prices[candidate.symbol].last_close,
+                    score_used=candidate.score_used,
+                    score_source=candidate.score_source,
+                    atr_20=prices[candidate.symbol].atr_20,
+                    proposed_shares=1.0,
+                    approved_shares=1.0,
+                    target_notional=prices[candidate.symbol].last_close,
+                    target_weight=0.01,
+                    decision=Decision.ACCEPTED,
+                    decision_reason="OK",
+                    conviction_score=candidate.score_used,
+                    predicted_proba=(
+                        predictions[candidate.symbol].predicted_proba
+                        if predictions and candidate.symbol in predictions
+                        else None
+                    ),
+                    side=candidate.side,
+                )
+                for candidate in candidates
+            ]
+
+    monkeypatch.setattr(market_service, "build_snapshot", fake_build_snapshot)
+    monkeypatch.setattr("backtesting.risk_bridge.PortfolioBuilder", _FakeBuilder)
+
+    result = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=predictions_df,
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=RiskConfig(
+            account_equity=100_000.0,
+            max_positions=5,
+            max_position_weight=1.0,
+            max_sector_weight=1.0,
+            max_gross_exposure=1.0,
+            min_position_notional=1.0,
+            short_selling_enabled=True,
+            short_max_positions=2,
+            short_min_score=0.30,
+        ),
+        market_regimes_config=MarketRegimesConfig(enabled=True),
+    )
+
+    bridge_sides = {entry.symbol: entry.side for entry in result.entries}
+    signal_sides = result.signals_df.set_index("symbol")["side"].to_dict()
+
+    assert selector_sides == {"AAPL": "sell", "MSFT": "buy"}
+    assert bridge_sides == selector_sides
+    assert signal_sides == selector_sides
+
+
 def test_build_return_matrix_uses_explicit_no_fill_on_price_gaps() -> None:
     from backtesting.risk_bridge import _build_return_matrix
 

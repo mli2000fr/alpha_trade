@@ -1913,8 +1913,11 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 | Brique | Source de vérité | Mode | Fidélité | Note |
 |--------|-----------------|------|:---:|------|
 | Score long | `selector/ranking.py` → `merge_scores()` | 🟢 LIVE | ✅ | Colonnes réelles, appliqué en amont |
-| Score short | `selector/short_score.py` → `compute_short_score()` | 🟢 LIVE | ⚠️ | SMA50/200 absentes dans certains chemins (CLI, risk live). Cf. §3.3/P1 |
-| Tagging short | `selector/ranking.py` → `rank_and_select_short()` | 🟢 LIVE | ⚠️ | Multiples implémentations (scanner, risk_bridge, CLI) |
+| Score short | `selector/short_score.py` → `compute_short_score()` + `enrich_with_short_score()` | 🟢 LIVE | ✅ | Colonne `short_score_quality` ajoutée (audit). SMA50/200 optionnelles mais tracées |
+| Tagging short | `selector/short_score.py` → `tag_short_candidates()` | 🟢🔵 BOTH | ✅ | Module canonique P1 — code unifié, plus de duplication |
+| Short trigger | `selector/short_score.py` → `ShortTrigger` / `resolve_short_trigger()` | 🟢🔵 BOTH | ✅ | Logique de détection unifiée (régime + rotation + longs bloqués) |
+| Short params adaptatifs | `selector/short_score.py` → `resolve_regime_adaptive_short_params()` | 🟢🔵 BOTH | ✅ | Boost capital_preservation unifié (max→4, min→0.20) |
+| ML side injection | `selector/short_score.py` → `inject_predicted_side()` | 🟢🔵 BOTH | ✅ | Injection `predicted_side` unifiée depuis les prédictions ML |
 | Conviction long | `core/conviction.py` → `fuse()` | 🟢🔵 BOTH | ✅ | 70/30 quant/ML, corrigé P0-1 |
 | Conviction short | `core/conviction.py` → `fuse_short()` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 (Kelly utilisait proba longue) |
 | Kelly sizing long | `risk_management/kelly.py` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 |
@@ -1932,14 +1935,16 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 |---|----------|---------|------------|
 | P0-1 | Kelly short sizé avec proba longue | `risk_management/portfolio_builder.py` | `effective_proba` directionnelle : shorts utilisent `proba_short`, longs `predicted_proba` |
 | P0-2 | Rescoring régime avec colonnes factices (tous scores = 0.375) | `risk_management/portfolio_builder.py` | Suppression du bloc de rescoring (−60 lignes). Le selector le fait déjà en amont avec de vraies colonnes |
+| P1 | Duplication du code de tagging short | `selector/short_score.py`, `backtesting/risk_bridge.py`, `risk_management/cli.py` | `tag_short_candidates()` déplacé dans le module canonique `selector/short_score.py`. Les 3 appelants importent désormais depuis ce module unique. Ajout audit `short_score_quality` dans `enrich_with_short_score()`. |
+| P1 | Dispersion des chemins de décision short (triggers, params, filtres) | `selector/short_score.py`, `backtesting/risk_bridge.py`, `risk_management/cli.py` | Création des helpers unifiés : `ShortTrigger`, `resolve_short_trigger()`, `resolve_regime_adaptive_short_params()`, `inject_predicted_side()`. Suppression du `score_col` fallback mort dans `risk_bridge.py`. Les 2 appelants (backtest + live) passent par les mêmes fonctions canoniques. |
 
 ### 15.3 Reste à faire (priorisé)
 
 | # | Item | Priorité | Effort |
 |---|------|:---:|:---:|
-| P1 | Unifier le calcul short (1 module canonique) | ⚪ | Élevé |
-| P1 | Réduire la dispersion des chemins de décision | ⚪ | Moyen |
+| ⌛ | Compléter la non-régression par des tests d'intégration 3 flux (selector live, risk live, backtest) sur la logique short unifiée | 🟡 | Moyen |
 | P2 | Ajouter matrice live vs backtest vs calibration | ⚪ | Faible |
+| ⌛ | MomentumRotationState defaults (lookback_weeks=4, threshold=-0.03) hardcodés dans risk_bridge + cli → remonter dans RiskConfig | ⚪ | Faible |
 
 ---
 

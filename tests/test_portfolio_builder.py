@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from risk_management.config import RiskConfig
 from risk_management.models import CandidateScore, PredictionInfo, PriceInfo, WinRateInfo
@@ -131,8 +132,39 @@ def test_v2_conviction_score_in_entry() -> None:
         predictions=preds,
     )
     e = entries[0]
-    expected = 0.4 * 0.95 + 0.6 * 0.80
+    expected = 0.7 * 0.95 + 0.3 * 0.80
     assert abs(e.conviction_score - expected) < 1e-6
+
+
+def test_short_uses_proba_short_for_kelly_and_audit() -> None:
+    cfg = _cfg(enable_kelly_sizing=True)
+    builder = PortfolioBuilder(cfg)
+    preds = {
+        "AAPL": PredictionInfo(
+            "AAPL",
+            0.20,
+            0,
+            "run1",
+            predicted_side="short",
+            proba_long=0.20,
+            proba_flat=0.10,
+            proba_short=0.80,
+        )
+    }
+    wrs = {"AAPL": WinRateInfo("AAPL", 0.60, "test", "run1")}
+
+    entries = builder.build(
+        [CandidateScore("AAPL", "Tech", 0.20, side="sell")],
+        {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
+        predictions=preds,
+        win_rates=wrs,
+    )
+
+    entry = entries[0]
+    assert entry.predicted_proba == pytest.approx(0.80)
+    assert entry.conviction_score == pytest.approx(0.80)
+    expected_p_eff = cfg.prediction_confidence_weight * 0.80 + cfg.historical_win_rate_weight * 0.60
+    assert entry.effective_probability == pytest.approx(expected_p_eff)
 
 
 def test_builder_propagates_walk_forward_metadata() -> None:

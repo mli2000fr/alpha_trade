@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import date
 
 import pandas as pd
@@ -11,6 +12,11 @@ from risk_management import cli
 from risk_management.enums import Decision
 from risk_management.models import AccountRiskSnapshot, PortfolioEntry
 from service.market.models import MarketRegimeSnapshot
+
+
+class _BaseFakeRepo:
+    def load_equity_history(self, account_id, trade_date, lookback_days=25):
+        return []
 
 
 def test_cli_importable():
@@ -32,7 +38,7 @@ def test_cli_module_executes_main_with_help() -> None:
 def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -95,11 +101,132 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
     assert captured["summary"]["preflight_data_quality"]["checks"]["equity_snapshot"]["status"] == "fallback"
 
 
+def test_cli_main_live_short_path_tags_candidates_before_builder(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo(_BaseFakeRepo):
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {
+                "account_id": account_id or "default",
+                "trade_date": trade_date.isoformat(),
+                "cash": None,
+                "settled_cash": None,
+                "long_positions_value": None,
+                "short_positions_value": None,
+                "dividends_ledger": None,
+                "total": None,
+                "source": "missing",
+                "snapshot_at": None,
+            }
+
+        def load_candidates_asof(self, trade_date):
+            from risk_management.models import CandidateScore
+
+            return [
+                CandidateScore("AAPL", "Tech", 0.15),
+                CandidateScore("MSFT", "Tech", 0.20),
+            ]
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            from risk_management.models import PriceInfo
+
+            return {
+                symbol: PriceInfo(
+                    symbol=symbol,
+                    last_close=100.0,
+                    atr_20=5.0,
+                    price_asof_date=trade_date,
+                    atr_asof_date=trade_date,
+                )
+                for symbol in symbols
+            }
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_equity_history(self, account_id, trade_date, lookback_days=25):
+            return []
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame({symbol: [0.01, -0.01, 0.02] for symbol in symbols})
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            captured["candidate_sides"] = {candidate.symbol: candidate.side for candidate in candidates}
+            return [
+                PortfolioEntry(
+                    symbol=candidate.symbol,
+                    sector=candidate.sector,
+                    entry_price=prices[candidate.symbol].last_close,
+                    score_used=candidate.score_used,
+                    score_source=candidate.score_source,
+                    atr_20=prices[candidate.symbol].atr_20,
+                    proposed_shares=10,
+                    approved_shares=10,
+                    target_notional=1_000.0,
+                    target_weight=0.01,
+                    decision=Decision.ACCEPTED,
+                    decision_reason="OK",
+                    conviction_score=candidate.score_used,
+                    side=candidate.side,
+                )
+                for candidate in candidates
+            ]
+
+    import risk_management.regime_apply as regime_apply
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "persist_market_macro_snapshot_daily", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(
+        cli,
+        "_resolve_market_regime_snapshot",
+        lambda trade_date, effective_equity, repo: MarketRegimeSnapshot(
+            trade_date=trade_date,
+            mode="capital_preservation",
+            risk_multiplier=0.8,
+            allow_new_entries=True,
+            allowed_long_entries=False,
+            allowed_short_entries=True,
+            reasons=(),
+        ),
+    )
+    monkeypatch.setattr(
+        regime_apply,
+        "apply_structural_market_guards",
+        lambda config, market_regimes_config=None, equity=None: replace(
+            config,
+            short_selling_enabled=True,
+        ),
+    )
+
+    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+
+    assert captured["candidate_sides"] == {"AAPL": "sell", "MSFT": "sell"}
+    assert captured["summary"]["regime_snapshot_applied"] is True
+    assert captured["summary"]["regime_mode"] == "capital_preservation"
+
+
 def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch) -> None:
     """L'IHM transmet toujours `--account default` ; sans snapshot on doit fallback."""
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             captured["requested_account_id"] = account_id
             return None
@@ -163,7 +290,7 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
     """Switch sur un compte explicite (test1) sans snapshot doit fallback, pas crasher."""
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             captured["requested_account_id"] = account_id
             return None
@@ -232,7 +359,7 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
 def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -293,7 +420,7 @@ def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
 def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return AccountRiskSnapshot(
                 account_id=account_id or "default",
@@ -368,7 +495,7 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
 def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
     emitted_payloads: list[dict[str, object]] = []
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -444,7 +571,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
 def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -509,7 +636,7 @@ def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> Non
 def test_cli_main_persists_market_macro_snapshot(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -573,7 +700,7 @@ def test_cli_main_persists_market_macro_snapshot(monkeypatch) -> None:
 def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> None:
     captured: dict[str, object] = {"build_called": False}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -638,7 +765,7 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
 def test_cli_main_blocks_run_when_ml_coverage_is_below_threshold(monkeypatch) -> None:
     from risk_management.ml_gate import MlGateState
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -698,7 +825,7 @@ def test_cli_main_blocks_run_when_ml_coverage_is_below_threshold(monkeypatch) ->
 def test_cli_main_applies_vol_targeting_and_exposes_summary(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -761,7 +888,7 @@ def test_cli_main_applies_vol_targeting_and_exposes_summary(monkeypatch) -> None
 def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -858,7 +985,7 @@ def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -
 def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 
@@ -976,7 +1103,7 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
 def test_cli_main_does_not_apply_empirical_risk_calibration_when_blocked_by_governance(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class _FakeRepo:
+    class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
             return None
 

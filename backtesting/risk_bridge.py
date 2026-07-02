@@ -15,6 +15,7 @@ from risk_management.config import RiskConfig
 from risk_management.models import CandidateScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
 from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
+from selector.short_score import tag_short_candidates
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,118 +67,6 @@ def _resolve_float(row: pd.Series, column: str) -> float | None:
     if value is None or pd.isna(value):
         return None
     return float(value)
-
-
-def _tag_short_candidates(
-    day_df: pd.DataFrame,
-    *,
-    max_short_positions: int = 2,
-    min_score_for_short: float = 0.30,
-    max_long_positions: int = 3,
-    all_shorts: bool = False,
-) -> pd.DataFrame:
-    """Option C — tag les candidats comme ``side="sell"`` (short).
-
-    Deux modes :
-    - ``all_shorts=False`` (rotation momentum) : seuls les bottom-N (score le
-      plus bas, sous ``min_score_for_short``) sont tagués ``"sell"``.
-    - ``all_shorts=True`` (régime capital_preservation) : TOUS les candidats
-      sont tagués ``"sell"`` car les longs sont bloqués par le régime.
-
-    Parameters
-    ----------
-    day_df : pd.DataFrame
-        Candidats du jour (doit contenir une colonne ``score`` ou ``final_score``).
-    max_short_positions : int
-        Nombre maximum de shorts à taguer (mode rotation).
-    min_score_for_short : float
-        Score maximum pour être éligible short.
-    max_long_positions : int
-        Nombre maximum de longs à conserver (mode rotation).
-    all_shorts : bool
-        Si True, tous les candidats deviennent ``side="sell"``.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame avec colonne ``side`` ajoutée/mise à jour.
-    """
-    if day_df.empty:
-        return day_df
-
-    result = day_df.copy()
-
-    # ── ML Sprint 6 — si le ML prédit le side, priorité absolue ──
-    ml_side_col = None
-    if "predicted_side" in result.columns:
-        ml_side_col = "predicted_side"
-
-    # Initialiser tout à "buy"
-    result["side"] = "buy"
-
-    # Appliquer les prédictions ML si disponibles
-    if ml_side_col:
-        ml_shorts = result[ml_side_col] == "short"
-        result.loc[ml_shorts, "side"] = "sell"
-        # Limiter au max_short_positions
-        n_ml = int(ml_shorts.sum())
-        if n_ml > max_short_positions:
-            # Prendre les N premiers shorts ML
-            ml_indices = result.index[ml_shorts][max_short_positions:]
-            result.loc[ml_indices, "side"] = "buy"
-
-    # Si pas de ML, utiliser le scoring heuristique (Option B/C)
-    if not ml_side_col:
-        # Déterminer la colonne de score
-        # Option B (Sprint 5) : short_score dédié > final_score (Option C)
-        if "short_score" in result.columns:
-            score_col = "short_score"
-            ascending = False  # short_score élevé = plus baissier → prioritaire
-        elif "score" in result.columns:
-            score_col = "score"
-            ascending = True  # score faible = pire candidat long → short
-        elif "final_score_sentiment" in result.columns:
-            score_col = "final_score_sentiment"
-            ascending = True
-        elif "final_score" in result.columns:
-            score_col = "final_score"
-            ascending = True
-        else:
-            score_col = None
-            ascending = True
-
-        if all_shorts:
-            result["side"] = "sell"
-            return result
-
-        if score_col is None or score_col not in result.columns:
-            return result
-
-        # Trier par score : croissant pour final_score (bottom-N), décroissant pour short_score (top-N)
-        sorted_idx = result[score_col].argsort().values
-        if not ascending:
-            sorted_idx = sorted_idx[::-1]
-
-        # Marquer les bottom-N / top-N comme shorts.
-        # Si min_score_for_short <= 0, on prend les N sans condition de seuil.
-        short_count = 0
-        for pos in sorted_idx:
-            if short_count >= max_short_positions:
-                break
-            score_val = float(result.iloc[pos][score_col]) if pd.notna(result.iloc[pos][score_col]) else 0.0
-            # Pour short_score (ascending=False), on veut les scores ÉLEVÉS
-            # Pour final_score (ascending=True), on veut les scores FAIBLES
-            if min_score_for_short <= 0:
-                result.iloc[pos, result.columns.get_loc("side")] = "sell"
-                short_count += 1
-            elif ascending and score_val <= min_score_for_short:
-                result.iloc[pos, result.columns.get_loc("side")] = "sell"
-                short_count += 1
-            elif not ascending and score_val >= min_score_for_short:
-                result.iloc[pos, result.columns.get_loc("side")] = "sell"
-                short_count += 1
-
-    return result
 
 
 def _prepare_score_columns(scores_df: pd.DataFrame, *, preferred_score_column: str | None = None) -> pd.DataFrame:
@@ -549,27 +438,22 @@ def build_phase2_risk_result(
         # ── 1ter. Option C — short selling via MomentumRotationState ────
         # ML Sprint 6 — injecter predicted_side ML dans day_scores
         if not day_scores.empty and not predictions_df.empty:
-            pred_day = predictions_df[predictions_df["trade_date"] == pd.Timestamp(snapshot_date)]
-            if not pred_day.empty and "predicted_side" in pred_day.columns:
-                side_map = dict(zip(pred_day["symbol"], pred_day["predicted_side"]))
-                day_scores["predicted_side"] = day_scores["symbol"].map(side_map).fillna("")
-        # Deux déclencheurs possibles :
-        #   a) Régime capital_preservation → allowed_short_entries=True (Sprint 0)
-        #   b) Rotation momentum → should_rotate() (cumul < -3% sur 4 semaines)
-        short_enabled = bool(getattr(risk_config, "short_selling_enabled", False))
-        short_by_regime = (
-            short_enabled
-            and snap is not None
-            and bool(getattr(snap, "allowed_short_entries", False))
+            from selector.short_score import inject_predicted_side
+            day_scores = inject_predicted_side(day_scores, predictions_df, pd.Timestamp(snapshot_date))
+
+        from selector.short_score import (
+            ShortTrigger,
+            resolve_short_trigger,
+            resolve_regime_adaptive_short_params,
         )
-        short_by_rotation = (
-            short_enabled
-            and rotation_state.is_ready()
-            and rotation_state.should_rotate()
+        trigger = resolve_short_trigger(
+            snap,
+            rotation_state,
+            bool(getattr(risk_config, "short_selling_enabled", False)),
         )
-        if (short_by_regime or short_by_rotation) and not day_scores.empty:
+        if trigger.active and not day_scores.empty:
             n_before = len(day_scores)
-            # Sprint 5 / Option B — enrichir avec short_score dédié
+            # Sprint 5 / Option B — enrichir avec short_score dédié (full quality)
             try:
                 from selector.short_score import enrich_with_short_score
                 day_scores = enrich_with_short_score(day_scores, close_df=close_df, trade_day=pd.Timestamp(snapshot_date))
@@ -579,52 +463,39 @@ def build_phase2_risk_result(
                     LOGGER.debug("Option B short_score: not enriched (missing factor columns)")
             except Exception as _exc:
                 LOGGER.debug("Option B short_score: enrichment failed: %s", _exc)
-            # Score utilisé par _tag_short_candidates (après enrichissement)
-            score_col = (
-                "short_score" if "short_score" in day_scores.columns
-                else "score" if "score" in day_scores.columns
-                else "final_score_sentiment" if "final_score_sentiment" in day_scores.columns
-                else "final_score" if "final_score" in day_scores.columns
-                else None
+
+            eff_max_short, eff_min_short = resolve_regime_adaptive_short_params(
+                risk_config, trigger.short_by_regime,
             )
-            # P2 (2026-06-25) : adapter les paramètres short au régime
-            # En capital_preservation, shorts plus agressifs :
-            #   - plus de positions autorisées (4 au lieu de 2)
-            #   - barrière d'entrée plus basse (0.20 au lieu de 0.30)
-            eff_max_short = int(getattr(risk_config, "short_max_positions", 2))
-            eff_min_short = float(getattr(risk_config, "short_min_score", 0.30))
-            if short_by_regime:
-                eff_max_short = max(eff_max_short, 4)
-                eff_min_short = min(eff_min_short, 0.20)
+            if trigger.short_by_regime:
                 LOGGER.info(
                     "Regime-adaptive shorts: max_positions=%d min_score=%.2f (capital_preservation boost)",
                     eff_max_short, eff_min_short,
                 )
-            day_scores = _tag_short_candidates(
+            day_scores = tag_short_candidates(
                 day_scores,
                 max_short_positions=eff_max_short,
                 min_score_for_short=eff_min_short,
                 max_long_positions=int(getattr(risk_config, "max_positions", 3)),
-                all_shorts=False,
+                all_shorts=trigger.all_shorts,
             )
             n_tagged = int((day_scores["side"] == "sell").sum())
             # Si le régime bloque les longs, on ne garde que les shorts
-            if snap is not None and not bool(getattr(snap, "allowed_long_entries", True)):
+            if trigger.all_shorts:
                 day_scores = day_scores[day_scores["side"] == "sell"]
             n_after = len(day_scores)
             LOGGER.info(
                 "Option C short: date=%s regime=%s short_by_regime=%s short_by_rotation=%s "
-                "score_col=%s before=%d tagged=%d after=%d allow_long=%s allow_short=%s",
+                "before=%d tagged=%d after=%d allow_long=%s allow_short=%s",
                 snapshot_date,
                 getattr(snap, "mode", "?"),
-                short_by_regime,
-                short_by_rotation,
-                score_col,
+                trigger.short_by_regime,
+                trigger.short_by_rotation,
                 n_before,
                 n_tagged,
                 n_after,
-                getattr(snap, "allowed_long_entries", "?"),
-                getattr(snap, "allowed_short_entries", "?"),
+                not trigger.all_shorts,
+                trigger.short_by_regime or trigger.short_by_rotation,
             )
 
         candidates = _build_candidates_from_day(day_scores, snapshot_date)

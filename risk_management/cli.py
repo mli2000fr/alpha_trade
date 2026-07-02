@@ -1076,6 +1076,7 @@ def main(args: list[str] | None = None) -> None:
     LOGGER.info("Chargement des candidats…")
     candidates = repo.load_candidates_asof(trade_date)
     LOGGER.info("Candidats charges : %d", len(candidates))
+    predictions: dict[str, object] = {}
     _emit_live_progress(
         dict(progress_context, targeted_symbols=len(candidates)),
         current=2,
@@ -1090,19 +1091,20 @@ def main(args: list[str] | None = None) -> None:
         getattr(config, "short_selling_enabled", False)
         and candidates
     ):
-        short_by_regime = (
-            regime_snapshot is not None
-            and bool(getattr(regime_snapshot, "allowed_short_entries", False))
+        from selector.short_score import (
+            ShortTrigger,
+            resolve_short_trigger,
+            resolve_regime_adaptive_short_params,
         )
-        short_by_rotation = (
-            rotation_state.is_ready()
-            and rotation_state.should_rotate()
+        trigger = resolve_short_trigger(
+            regime_snapshot,
+            rotation_state,
+            bool(getattr(config, "short_selling_enabled", False)),
         )
-        if short_by_regime or short_by_rotation:
+        if trigger.active:
             # Convertir les candidats en DataFrame pour le tagging
             try:
                 import pandas as pd
-                # ML Sprint 6 — inclure les prédictions ML dans le DataFrame
                 rows = [
                     {
                         "symbol": c.symbol,
@@ -1118,46 +1120,47 @@ def main(args: list[str] | None = None) -> None:
                     for c in candidates
                 ]
                 candidates_df = pd.DataFrame(rows)
-                # Sprint 5 / Option B — enrichir avec short_score (dégradé si colonnes absentes)
+                # Sprint 5 / Option B — enrichir avec short_score
+                # En live, les SMA50/200 ne sont pas disponibles (pas de close_df
+                # en mémoire) → short_score_quality = "partial_missing_sma"
                 try:
-                    from selector.short_score import enrich_with_short_score
+                    from selector.short_score import enrich_with_short_score, tag_short_candidates
                     candidates_df = enrich_with_short_score(candidates_df)
                 except Exception:
                     pass
-                from backtesting.risk_bridge import _tag_short_candidates
-                all_shorts_flag = (
-                    regime_snapshot is not None
-                    and not bool(getattr(regime_snapshot, "allowed_long_entries", True))
+
+                eff_max_short, eff_min_short = resolve_regime_adaptive_short_params(
+                    config, trigger.short_by_regime,
                 )
-                # P2 (2026-06-25) : adapter les paramètres short au régime
-                eff_max_short = int(getattr(config, "short_max_positions", 2))
-                eff_min_short = float(getattr(config, "short_min_score", 0.0))
-                if short_by_regime:
-                    eff_max_short = max(eff_max_short, 4)
-                    eff_min_short = min(eff_min_short, 0.20)
+                if trigger.short_by_regime:
                     LOGGER.info(
                         "Regime-adaptive shorts (live): max_positions=%d min_score=%.2f",
                         eff_max_short, eff_min_short,
                     )
-                candidates_df = _tag_short_candidates(
+                candidates_df = tag_short_candidates(
                     candidates_df,
                     max_short_positions=eff_max_short,
                     min_score_for_short=eff_min_short,
-                    all_shorts=all_shorts_flag,
+                    all_shorts=trigger.all_shorts,
                 )
-                # Appliquer le side aux candidats
+                # Appliquer le side aux candidats immuables (CandidateScore est frozen)
                 side_map = dict(zip(candidates_df["symbol"], candidates_df["side"]))
+                updated_candidates = []
                 for c in candidates:
                     new_side = side_map.get(c.symbol, "buy")
                     if new_side == "sell":
-                        c.side = "sell"
+                        updated_candidates.append(replace(c, side="sell"))
+                    else:
+                        updated_candidates.append(c)
+                candidates = updated_candidates
                 n_sells = sum(1 for c in candidates if getattr(c, "side", "buy") == "sell")
                 LOGGER.info(
-                    "Option C live: date=%s candidates=%d shorts=%d short_by_regime=%s short_by_rotation=%s",
-                    trade_date, len(candidates), n_sells, short_by_regime, short_by_rotation,
+                    "Option C live: date=%s candidates=%d shorts=%d short_by_regime=%s short_by_rotation=%s all_shorts=%s",
+                    trade_date, len(candidates), n_sells,
+                    trigger.short_by_regime, trigger.short_by_rotation, trigger.all_shorts,
                 )
                 # Si le régime bloque les longs, ne garder que les shorts
-                if all_shorts_flag:
+                if trigger.all_shorts:
                     candidates = [c for c in candidates if getattr(c, "side", "buy") == "sell"]
                     LOGGER.info("Option C live: filtered to %d shorts (longs blocked by regime)", len(candidates))
             except Exception as _exc:
