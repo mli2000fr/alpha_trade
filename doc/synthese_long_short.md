@@ -283,6 +283,57 @@ Ces indicateurs sont stockés dans **`stock_macro_indicators_daily`** — la sou
 
 **ML** : les 4 nouveaux indicateurs (VXN, VIX3M, MOVE, RVX) sont disponibles comme features macro pour l'entraînement LSTM via des checkboxes dans l'IHM `Exécution → Model Factory`. Désactivés par défaut (`False`), activables individuellement.
 
+#### 3.0.1 Détail des 4 indicateurs macro utilisables comme features ML
+
+Ces indicateurs sont chargés depuis `stock_macro_indicators_daily` et injectés comme colonnes supplémentaires dans le DataFrame d'entraînement. Chaque feature dérivée est décrite ci-dessous.
+
+##### VIX — CBOE Volatility Index (S&P 500)
+
+| Feature ML | Formule | Signification |
+|-----------|---------|---------------|
+| `vix_close` | Valeur brute du VIX | Niveau de peur/stress sur le S&P 500. <20 = complaisance, 20-30 = volatilité normale, >30 = panique |
+| `vix_momentum_5j` | `vix / vix.shift(5) - 1` | Variation du VIX sur 5 jours. Une hausse rapide (>+20%) signale un **choc entrant** — les shorts deviennent plus probables |
+
+**Pourquoi c'est utile au ML** : le VIX est LE baromètre universel. Quand il monte, TOUS les symboles sont affectés — les corrélations explosent, les shorts deviennent plus rentables, les longs plus risqués. C'est la feature macro la plus impactante.
+
+**Résultat empirique (run 2026-07-02)** : l'ajout du VIX améliore `f1_flat` de +155% (0.16→0.32) mais réduit `f1_short` (-26%). Le modèle devient plus conservateur, il identifie mieux quand **ne pas trader**. Trade-off défensif.
+
+##### VXN — CBOE NASDAQ-100 Volatility Index
+
+| Feature ML | Formule | Signification |
+|-----------|---------|---------------|
+| `vxn_close` | Valeur brute du VXN | Volatilité implicite du NASDAQ-100 (tech-heavy). Plus élevé que le VIX car la tech est plus volatile |
+| `vxn_spread_vix` | `vxn - vix` | Écart VXN−VIX. S'élargit quand la tech est **spécifiquement** stressée (ex: correction sectorielle) vs stress général |
+
+**Pourquoi c'est utile au ML** : le spread VXN−VIX isole le **stress spécifique à la tech**. Si VXN monte mais VIX reste calme → les valeurs tech sont ciblées, pas le marché entier. Permet au ML de distinguer un sell-off sectoriel d'une panique générale.
+
+##### VIX3M — CBOE 3-Month VIX Futures Index
+
+| Feature ML | Formule | Signification |
+|-----------|---------|---------------|
+| `vix3m_close` | Valeur brute du VIX3M | Attente de volatilité à 3 mois. Normalement supérieur au VIX (contango) |
+| `vix_term_structure_ratio` | `vix / vix3m` | Ratio court/long terme. >1 = **backwardation** (panique), <1 = contango (normal) |
+| `vix_backwardation` | `1 si vix > vix3m, 0 sinon` | Flag binaire de backwardation. Signal de **stress extrême** — le marché anticipe un désastre immédiat |
+
+**Pourquoi c'est utile au ML** : la backwardation est l'un des **meilleurs signaux directionnels macro**. Quand le VIX dépasse le VIX3M (ratio >1), c'est que le marché anticipe une crise imminente — les shorts gagnent, les longs perdent. C'est un signal binaire puissant que le LSTM peut apprendre à exploiter. Contrairement au niveau absolu du VIX, la structure par terme a un **vrai pouvoir prédictif directionnel**.
+
+##### MOVE — ICE BofA MOVE Index
+
+| Feature ML | Formule | Signification |
+|-----------|---------|---------------|
+| `move_close` | Valeur brute du MOVE | Volatilité implicite du marché obligataire US (Treasuries). Équivalent du VIX pour les bonds |
+
+**Pourquoi c'est utile au ML** : le MOVE capture un **stress orthogonal aux actions** — les crises de dette, les paniques de taux, les chocs de duration. Quand le MOVE spike mais le VIX reste calme → le problème est sur les taux, pas les actions (ex: crise des banques régionales 2023, taper tantrum 2013). Utile pour prédire les rotations sectorielles (financials, utilities, REITs).
+
+#### 3.0.2 Stratégie d'activation recommandée
+
+| Ordre | Indicateur | Effet attendu | Priorité |
+|-------|-----------|---------------|----------|
+| 1️⃣ | **VIX** | Améliore la détection du "quand ne pas trader" (f1_flat ↑). Signal défensif, pas directionnel | ✅ Testé 2026-07-02 |
+| 2️⃣ | **VIX3M** | Signal directionnel via backwardation. Le plus prometteur pour f1_short/long | 🔄 Prochain test |
+| 3️⃣ | **VXN** | Stress spécifique tech. Utile si l'univers est tech-heavy | ⚪ P3 |
+| 4️⃣ | **MOVE** | Stress obligataire. Signal orthogonal, diversification alpha | ⚪ P3 |
+
 ### 3.1 Poids directionnels par régime (`selector/regime_scoring.py`)
 
 Le régime de marché modifie les poids de composition du `final_score`. Deux jeux de poids :
@@ -560,6 +611,50 @@ Apprend des PATTERNS TEMPORELS         Apprend des RÈGLES TABULAIRES
    > - ☑ `Entraîner aussi LightGBM (challenger)` → `ml_enable_lightgbm`
    > - ☑ `Entraîner aussi CatBoost (challenger)` → `ml_enable_catboost`
    > - ☑ `Activer la sélection automatique du champion` → `ml_select_champion`
+   >
+   > **⚠️ Protocole complet pour activer la sélection champion (4 runs) :**
+   >
+   > ```
+   > ┌─────────────────────────────────────────────────────────┐
+   > │ RUNS 1 À 3 : accumuler les métriques challengers        │
+   > │                                                         │
+   > │ IHM :                                                   │
+   > │   ☑ Entraîner aussi LightGBM (challenger)               │
+   > │   ☑ Entraîner aussi CatBoost (challenger)               │
+   > │   ☐ Activer la sélection automatique du champion ← OFF  │
+   > │                                                         │
+   > │ → Lancer ML Train 3 fois                                │
+   > │ → Vérifier avec :                                       │
+   > │   SELECT symbol, model_type, COUNT(*) AS runs           │
+   > │   FROM model_metrics                                    │
+   > │   GROUP BY symbol, model_type                           │
+   > │   HAVING model_type IN ('lightgbm','catboost');         │
+   > │ → Doit retourner ≥ 3 runs par symbole par challenger    │
+   > └─────────────────────────────────────────────────────────┘
+   >                          ↓
+   > ┌─────────────────────────────────────────────────────────┐
+   > │ RUN 4 : activer la sélection champion                   │
+   > │                                                         │
+   > │ IHM :                                                   │
+   > │   ☑ Entraîner aussi LightGBM (challenger)               │
+   > │   ☑ Entraîner aussi CatBoost (challenger)               │
+   > │   ☑ Activer la sélection automatique du champion ← ON   │
+   > │                                                         │
+   > │ → Lancer ML Train                                       │
+   > │ → Le système compare LSTM vs LightGBM vs CatBoost       │
+   > │   sur les métriques historiques (≥3 runs)               │
+   > │ → Promeut le meilleur modèle par symbole                │
+   > │ → Fallback lstm_attention si pas assez de données       │
+   > └─────────────────────────────────────────────────────────┘
+   > ```
+   >
+   > **Pourquoi 3 runs avant d'activer ?** La quarantaine (`champion_min_runs=3`) exige qu'un challenger ait été entraîné au moins 3 fois avant d'être éligible. Sans ça, cocher `ml_select_champion` n'a aucun effet — le système retombe toujours sur `lstm_attention`.
+   >
+   > **Pourquoi ne PAS cocher `ml_select_champion` pendant les runs 1-3 ?** Ça ne change rien (fallback de toute façon), mais ça évite toute confusion. Garde-le décoché jusqu'à ce que les 3 runs soient accumulés.
+   >
+   > **Faut-il aussi activer `GlobalModel` ?** Non. Le GlobalModel est un 4ème challenger qui nécessite le même processus de quarantaine. Active-le seulement si tu veux comparer 4 architectures au lieu de 3.
+   >
+   > **Faut-il activer `Optimiser le seuil de décision` ?** Non, surtout pas en mode ternaire. Cette option est conçue pour le mode **binaire** (un seuil unique "proba > X → long"), pas pour le mode ternaire où la décision se fait par `argmax` sur 3 probabilités. L'activer en ternaire produit des résultats non interprétables.
 
 3. **Fallback** : Si le champion sélectionné est corrompu ou manquant → fallback automatique vers `lstm_attention`. Aucun risque de régression.
 
@@ -665,6 +760,34 @@ L'entraînement ML découpe les données **dans l'ordre du temps** (pas de shuff
 - **`val`** sert à détecter l'overfitting : si `val ≫ test` (ex: val=0.40, test=0.25), le modèle a mémorisé au lieu d'apprendre.
 - **`test`** est un intermédiaire : meilleur indicateur que `val` mais moins réaliste que `wf` car les conditions de marché restent proches de la période d'entraînement.
 - **Règle empirique** : un écart `val − wf ≤ 0.05` est acceptable. Au-delà, le modèle est trop optimisé sur la période d'entraînement.
+
+### 4.8 Pistes d'amélioration (TODO)
+
+Config finale lockée au 2026-07-02 : `feature_set=expert, cross-sectional=✅, seq=20, hidden=256, epochs=100, target=ternary ±2%`. Pistes identifiées pour les prochains sprints :
+
+#### 🔧 Pistes techniques (effort modéré)
+
+| # | Piste | Action | Gain estimé |
+|---|-------|--------|:---:|
+| TODO-1 | **3 couches LSTM** | `--num-layers 3` (au lieu de 2) | +0.01-0.02 f1_macro |
+| TODO-2 | **Dropout plus élevé** | `--dropout 0.4` (au lieu de 0.3) | Anti-overfit |
+| TODO-3 | **Batch size réduit** | `--batch-size 32` (au lieu de 64). Gradients plus bruités = meilleure généralisation | +0.01 f1_macro |
+| TODO-4 | **Learning rate schedule** | Cosine annealing avec warmup (à coder dans `trainer.py`) | +0.01-0.03 f1_macro |
+| TODO-5 | **Horizon alternatif** | `--forecast-horizon 10`. Certains symboles ont un edge sur 10j plutôt que 5j | Variable par symbole |
+| TODO-6 | **Optimiser le nombre d'époques** | Grid search : `epochs ∈ {50, 100, 150, 200}`. Actuellement 100, EarlyStopping actif | Convergence optimale |
+
+> **Comment tester** : changer UN paramètre à la fois, relancer ML Train (2020-2025, même config sinon), comparer f1_macro(wf).
+
+#### 🧠 Pistes architecture (effort élevé)
+
+| # | Piste | Description | Gain estimé |
+|---|-------|-------------|:---:|
+| TODO-7 | **GlobalModel avec ticker embeddings** | Un seul modèle pour tous les symboles. Embedding par ticker + secteur + market_cap. Apprend les relations cross-sectionnelles : « les patterns momentum ne marchent pas pareil entre tech et utilities ». Point d'entrée : `--enable-global-model` | +0.05+ f1_macro |
+| TODO-8 | **Transformer au lieu de LSTM** | Attention multi-têtes sur séquences. Capture mieux les dépendances long-range (ex: événement il y a 15 jours → impact aujourd'hui). Nécessite plus de données | +0.02-0.05 |
+| TODO-9 | **Multi-horizon** | Prédire simultanément J+5, J+10, J+20. Le modèle apprend des patterns multi-échelles. La target devient une matrice 3D au lieu d'un vecteur | +0.03-0.05 |
+| TODO-10 | **Champion selection** | Protocole en 4 runs (cf. §4.6) : accumuler 3 runs avec LightGBM+CatBoost activés, puis activer `ml_select_champion` au 4ème. Chaque symbole utilise le meilleur modèle parmi LSTM/LightGBM/CatBoost | Variable par symbole |
+
+> ⚠️ **Avant d'investir sur TODO-7 à TODO-10** : faire un backtest complet avec la config actuelle pour valider que l'amélioration du f1_macro se traduit en amélioration du Sharpe. Si le ML n'améliore pas le P&L par rapport au quantitatif pur, aucune piste architecture ne changera cela.
 
 ---
 

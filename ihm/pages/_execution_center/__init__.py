@@ -3227,7 +3227,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_opt_col1:
             ml_include_sentiment = st.checkbox(
                 "Inclure les features sentiment",
-                value=_session_state_bool("pipeline_ml_include_sentiment", True),
+                value=_session_state_bool("pipeline_ml_include_sentiment", False),
                 key="pipeline_ml_include_sentiment",
                 help="Ajoute `--include-sentiment` à `ml_train`.",
             )
@@ -3283,7 +3283,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_opt_col3:
             ml_select_champion = st.checkbox(
                 "Activer la sélection automatique du champion",
-                value=_session_state_bool("pipeline_ml_select_champion", True),
+                value=_session_state_bool("pipeline_ml_select_champion", False),
                 key="pipeline_ml_select_champion",
                 help="Ajoute `--select-champion` et permet de servir automatiquement le meilleur modèle éligible.",
             )
@@ -3303,14 +3303,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
             ml_optimize_thresholds = st.checkbox(
                 "Optimiser le seuil de décision",
-                value=_session_state_bool("pipeline_ml_optimize_thresholds", True),
+                value=_session_state_bool("pipeline_ml_optimize_thresholds", False),
                 key="pipeline_ml_optimize_thresholds",
                 help="Ajoute `--optimize-thresholds` pour sélectionner le meilleur `decision_threshold` sur validation.",
             )
         with ml_opt_col3:
             ml_enable_global_model = st.checkbox(
                 "Entraîner aussi un modèle global multi-symboles",
-                value=_session_state_bool("pipeline_ml_enable_global_model", True),
+                value=_session_state_bool("pipeline_ml_enable_global_model", False),
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`.",
             )

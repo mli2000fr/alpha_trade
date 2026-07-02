@@ -16,7 +16,7 @@ DEFAULT_ML_DECISION_THRESHOLD = 0.55
 DEFAULT_ML_CALIBRATION_METHOD = "platt"
 DEFAULT_ML_FEATURE_SET = "expert"
 DEFAULT_ML_MAX_WORKERS = 4
-DEFAULT_ML_MAX_EPOCHS = 50
+DEFAULT_ML_MAX_EPOCHS = 100
 DEFAULT_ML_WALKFORWARD = True                # walk-forward activé par défaut en swing prod
 DEFAULT_ML_WF_MIN_TRAIN_SIZE = 504
 DEFAULT_ML_WF_VAL_SIZE = 126
@@ -66,17 +66,17 @@ DEFAULT_ML_MIN_PRECISION_LONG = 0.55         # plus exigeant que 0.52 backend
 # ---------------------------------------------------------------------------
 # Hyperparamètres avancés (alignés CLI modelFactory)
 # ---------------------------------------------------------------------------
-DEFAULT_ML_SEQUENCE_LENGTH = 60
+DEFAULT_ML_SEQUENCE_LENGTH = 20
 DEFAULT_ML_BATCH_SIZE = 64
-DEFAULT_ML_HIDDEN_SIZE = 128
+DEFAULT_ML_HIDDEN_SIZE = 256
 DEFAULT_ML_ARTIFACTS_DIR = "artifacts/models"
 DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
 DEFAULT_ML_MODE = "rebuild-missing"
 DEFAULT_ML_TRAINING_START_DATE = "2020-01-01"
 DEFAULT_ML_TRAINING_END_DATE = "2025-12-31"
-DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT = True
-DEFAULT_ML_INCLUDE_SHORT_SCORE = True
+DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT = False
+DEFAULT_ML_INCLUDE_SHORT_SCORE = False
 DEFAULT_ML_INCLUDE_MACRO_VIX = False          # VIX/VIX9D — macro vol S&P 500
 DEFAULT_ML_INCLUDE_MACRO_VXN = False          # VXN — macro vol NASDAQ-100
 DEFAULT_ML_INCLUDE_MACRO_VIX3M = False        # VIX3M — term structure vol
