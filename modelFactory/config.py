@@ -23,7 +23,7 @@ class DataConfig:
     """Paramètres de chargement et préparation des données."""
 
     sequence_length: int = 60
-    forecast_horizon: int = 5
+    forecast_horizon: int = 10
     min_history_days: int = 504
     train_ratio: float = 0.70
     val_ratio: float = 0.15
@@ -267,7 +267,7 @@ class ModelConfig:
     dropout: float = 0.3
     learning_rate: float = 1e-3
     weight_decay: float = 1e-5
-    batch_size: int = 64
+    batch_size: int = 32
     max_epochs: int = 50
     patience: int = 7
     num_classes: int = 2

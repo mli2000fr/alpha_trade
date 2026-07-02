@@ -155,7 +155,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--sequence-length", type=int, default=60)
-    p.add_argument("--forecast-horizon", type=int, default=5)
+    p.add_argument("--forecast-horizon", type=int, default=10)
     p.add_argument(
         "--training-start-date",
         type=_parse_iso_date_arg,

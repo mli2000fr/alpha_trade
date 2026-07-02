@@ -761,22 +761,42 @@ L'entraînement ML découpe les données **dans l'ordre du temps** (pas de shuff
 - **`test`** est un intermédiaire : meilleur indicateur que `val` mais moins réaliste que `wf` car les conditions de marché restent proches de la période d'entraînement.
 - **Règle empirique** : un écart `val − wf ≤ 0.05` est acceptable. Au-delà, le modèle est trop optimisé sur la période d'entraînement.
 
-### 4.8 Pistes d'amélioration (TODO)
+### 4.8 Optimisation hyperparamètres — Résultats (2026-07-02/03)
 
-Config finale lockée au 2026-07-02 : `feature_set=expert, cross-sectional=✅, seq=20, hidden=256, epochs=100, target=ternary ±2%`. Pistes identifiées pour les prochains sprints :
+Config finale lockée : `num_layers=2, dropout=0.3, batch_size=32, epochs=100, horizon=10j, target=ternary ±2%`.
 
-#### 🔧 Pistes techniques (effort modéré)
+#### 🔧 Tests techniques — Résumé
 
-| # | Piste | Action | Gain estimé |
-|---|-------|--------|:---:|
-| TODO-1 | **3 couches LSTM** | `--num-layers 3` (au lieu de 2) | +0.01-0.02 f1_macro |
-| TODO-2 | **Dropout plus élevé** | `--dropout 0.4` (au lieu de 0.3) | Anti-overfit |
-| TODO-3 | **Batch size réduit** | `--batch-size 32` (au lieu de 64). Gradients plus bruités = meilleure généralisation | +0.01 f1_macro |
-| TODO-4 | **Learning rate schedule** | Cosine annealing avec warmup (à coder dans `trainer.py`) | +0.01-0.03 f1_macro |
-| TODO-5 | **Horizon alternatif** | `--forecast-horizon 10`. Certains symboles ont un edge sur 10j plutôt que 5j | Variable par symbole |
-| TODO-6 | **Optimiser le nombre d'époques** | Grid search : `epochs ∈ {50, 100, 150, 200}`. Actuellement 100, EarlyStopping actif | Convergence optimale |
+| # | Piste | Verdict | f1_macro wf vs baseline | Détail |
+|---|-------|:---:|:---:|--------|
+| TODO-1 | 3 couches LSTM | ❌ | −4.6% (0.251) | Overfit : f1_flat −9%, modèle trop complexe |
+| TODO-2 | Dropout 0.4 | ❌ | 0% (0.263) | Aucun gain, f1_flat −5% |
+| TODO-3 | Batch size 32 | ✅ | +2.7% (0.270) | **Gardé**. f1_short +8%, with_both 72% vs 64% |
+| TODO-4 | LR schedule | ❌ | −3.8% (0.253) | AdamW constant suffit sur 50-100 epochs |
+| TODO-5 | Horizon 10j | ✅ | −1.5% (0.261) | **Gardé**. f1_short +29%, f1_long +29%, 78% bidirectionnel |
+| TODO-6 | Epochs 50-200 | ❌ | Tous ≤ 0.263 | **100 optimal**. 50/150/200 ne battent pas la baseline |
 
-> **Comment tester** : changer UN paramètre à la fois, relancer ML Train (2020-2025, même config sinon), comparer f1_macro(wf).
+#### 🎯 Config finale : directionnelle swing (horizon=10j, batch=32)
+
+Résultats wf sur 202 symboles (mêmes que baseline pour comparaison) :
+
+| Config | f1_macro | f1_short | f1_flat | f1_long | with_both/nb |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| Baseline (5j, batch=64) | 0.265 | 0.258 | 0.359 | 0.180 | 64.7% |
+| **Finale (10j, batch=32)** | **0.261** | **0.332** | 0.219 | **0.233** | **78.2%** |
+
+**Pourquoi ce choix** : f1_macro ne baisse que de 1.5% alors que f1_short (+29%), f1_long (+29%) et la couverture bidirectionnelle (78% vs 65%) explosent. Pour un swing trader, prédire la direction compte plus que prédire le statu quo.
+
+#### 📋 Fichiers modifiés (config directionnelle)
+
+| Fichier | Paramètre | Valeur |
+|---------|-----------|:---:|
+| `modelFactory/config.py` | `DataConfig.forecast_horizon` | 10 |
+| `modelFactory/config.py` | `ModelConfig.batch_size` | 32 |
+| `modelFactory/cli.py` | `--forecast-horizon` default | 10 |
+| `ihm/services/pipeline_ml_defaults.py` | `DEFAULT_ML_FORECAST_HORIZON` | 10 |
+| `ihm/services/pipeline_ml_defaults.py` | `DEFAULT_ML_BATCH_SIZE` | 32 |
+| `ihm/services/pipeline_ml_defaults.py` | `DEFAULT_ML_MAX_EPOCHS` | 100 |
 
 #### 🧠 Pistes architecture (effort élevé)
 
@@ -1884,5 +1904,4 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 
 ---
 
-> **Dernière mise à jour** : 2026-06-25 (Sprint VXN/VIX3M/MOVE/RVX — 8 indicateurs macro, 30 tests)
-> **Prochaine mise à jour** : après discussion continue
+> **Dernière mise à jour** : 2026-07-03 (Optimisation hyperparamètres ML — config directionnelle horizon=10j, batch=32)
