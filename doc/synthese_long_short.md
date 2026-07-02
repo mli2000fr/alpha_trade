@@ -789,6 +789,43 @@ Config finale lockée au 2026-07-02 : `feature_set=expert, cross-sectional=✅, 
 
 > ⚠️ **Avant d'investir sur TODO-7 à TODO-10** : faire un backtest complet avec la config actuelle pour valider que l'amélioration du f1_macro se traduit en amélioration du Sharpe. Si le ML n'améliore pas le P&L par rapport au quantitatif pur, aucune piste architecture ne changera cela.
 
+### 4.9 Table `model_governance` — suivi de la sélection champion
+
+La table `model_governance` trace **quel modèle est sélectionné comme champion** pour chaque symbole après chaque run d'entraînement. Elle est alimentée par `replace_model_governance()` dans `modelFactory/db_registry.py`.
+
+#### 4.9.1 Rôle
+
+```sql
+SELECT symbol, model_name, `rank`, is_selected_model, selection_mode, selection_metric
+FROM model_governance
+WHERE run_id = '<dernier_run>'
+ORDER BY symbol;
+```
+
+- `is_selected_model = 1` → c'est le modèle champion pour ce symbole (utilisé à l'inférence)
+- `model_name = 'lstm_attention'` → toujours LSTM tant que `ml_select_champion` est OFF
+- `rank = 1` pour LSTM, NULL pour les challengers non entraînés
+
+#### 4.9.2 Colonnes NULL — c'est normal
+
+Avec la configuration actuelle (`ml_select_champion=OFF`, mode ternaire), les colonnes suivantes sont légitimement NULL :
+
+| Colonne NULL | Pourquoi NULL | Fonctionnalité liée |
+|---|---|---|
+| `reason` | Pas de rejet → pas de raison | `ml_select_champion` OFF |
+| `backend_model_name` | Pas de backend spécifique | Architecture standard LSTM |
+| `artifact_symbol` | Pas d'artefact nommé | `--global-artifact-symbol` non utilisé (GlobalModel OFF) |
+| `val_threshold_business_score` | Pas de threshold optimization | `--optimize-thresholds` OFF (et incompatible ternaire) |
+| `test_threshold_business_score` | Idem | Idem |
+| `wf_threshold_business_score` | Idem | Idem |
+
+Ces colonnes ne se rempliront que lorsque :
+- **`reason`** : un challenger est rejeté (quarantaine insuffisante, artefacts manquants)
+- **`artifact_symbol`** : GlobalModel activé avec `--global-artifact-symbol`
+- **`*_threshold_business_score`** : mode **binaire** + `--optimize-thresholds` activé
+
+> ⚠️ `threshold_business_score` est conçu pour le mode **binaire** (seuil unique proba > X → long). En mode ternaire, la décision se fait par `argmax` → pas de seuil unique → ces colonnes restent NULL.
+
 ---
 
 ## 5. ML — PRÉDICTION LONG ET SHORT 🟢 LIVE
