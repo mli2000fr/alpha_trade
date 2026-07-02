@@ -3283,7 +3283,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_opt_col3:
             ml_select_champion = st.checkbox(
                 "Activer la sélection automatique du champion",
-                value=_session_state_bool("pipeline_ml_select_champion", False),
+                value=_session_state_bool("pipeline_ml_select_champion", True),
                 key="pipeline_ml_select_champion",
                 help="Ajoute `--select-champion` et permet de servir automatiquement le meilleur modèle éligible.",
             )
@@ -3302,7 +3302,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ),
             )
             ml_optimize_thresholds = st.checkbox(
-                "Optimiser le seuil de décision",
+                "Optimiser le seuil de décision (pour le mode binaire)",
                 value=_session_state_bool("pipeline_ml_optimize_thresholds", False),
                 key="pipeline_ml_optimize_thresholds",
                 help="Ajoute `--optimize-thresholds` pour sélectionner le meilleur `decision_threshold` sur validation.",
