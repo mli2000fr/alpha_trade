@@ -859,6 +859,130 @@ Même config, même entraînement, mais sur la totalité des symboles disponible
 
 > ⚠️ **Avant d'investir sur TODO-7 à TODO-10** : faire un backtest complet avec la config actuelle pour valider que l'amélioration du f1_macro se traduit en amélioration du Sharpe. Si le ML n'améliore pas le P&L par rapport au quantitatif pur, aucune piste architecture ne changera cela.
 
+#### 🎯 Lecture trading du run actuel
+
+**Verdict opérationnel : utilisable en conviction live, mais pas comme moteur principal autonome.**
+
+Pourquoi :
+
+- Le `wf` reste cohérent sur un grand univers (`5570` symboles) avec un écart `val → wf = -0.039`, donc pas de signal d'overfit majeur.
+- `f1_short = 0.312` et `f1_long = 0.242` sont suffisants pour une brique **directionnelle** qui ne pèse que `30%` dans la conviction.
+- `with_both = 4360 / 5570 = 78.3%` montre que le modèle reste bidirectionnel sur la grande majorité de l'univers, ce qui est plus important en trading que le seul `f1_macro`.
+- `f1_flat = 0.221` reste le point faible : le modèle sait mieux capter les mouvements que le statu quo.
+
+**Décision recommandée :**
+
+- ✅ **Oui pour l'utiliser dans la conviction live** avec le schéma actuel `70% quant / 30% ML`.
+- ⚠️ **Non pour augmenter fortement le poids ML** tant que le backtest complet n'a pas confirmé un uplift net de Sharpe / hit rate / drawdown vs quant pur.
+- 📌 **Statut recommandé** : production surveillée, pas expérimental pur, mais pas encore preuve suffisante pour laisser le ML piloter seul la décision.
+
+#### 🧭 Priorisation trading des TODO 7 → 10
+
+Classement orienté **impact P&L / robustesse opérationnelle**, pas uniquement amélioration de `f1_macro`.
+
+| Rang | TODO | Impact trading attendu | Risque | Coût | Avis |
+|------|------|------------------------|--------|------|------|
+| 1 | **TODO-10 Champion selection** | Moyen à élevé | Faible à moyen | Faible à moyen | **Meilleur ratio gain/effort**. Peut améliorer rapidement la qualité du signal sur les symboles où LSTM n'est pas le meilleur |
+| 2 | **TODO-7 GlobalModel avec ticker embeddings** | Élevé | Moyen | Élevé | **Meilleure piste structurelle long terme** sur grand univers. Potentiel fort sur robustesse et généralisation cross-sectionnelle |
+| 3 | **TODO-9 Multi-horizon** | Moyen à élevé | Moyen | Moyen à élevé | Très intéressant pour un usage trading réel : améliore la qualité du signal selon l'horizon du move, pas seulement la classe brute |
+| 4 | **TODO-8 Transformer** | Variable | Élevé | Élevé | Piste prometteuse mais la plus risquée en coût/tuning. À traiter après les optimisations plus pragmatiques |
+
+#### Détail par piste
+
+##### TODO-10 — Champion selection
+
+**Pourquoi prioritaire** :
+
+- Tu exploites mieux l'univers existant sans refondre tout le pipeline.
+- Sur un grand univers, certains symboles sont souvent mieux modélisés par LightGBM/CatBoost que par LSTM.
+- Le gain attendu est surtout une **meilleure robustesse par symbole**, donc un effet potentiellement rapide sur le P&L agrégé.
+
+**Ce qu'il faut surveiller** :
+
+- garder `ml_select_champion=OFF` tant que tu n'as pas accumulé les `3` runs requis ;
+- comparer ensuite l'uplift portfolio-level, pas seulement les métriques de classification.
+
+##### TODO-7 — GlobalModel avec ticker embeddings
+
+**Pourquoi très prometteur** :
+
+- Avec plusieurs milliers de symboles, un modèle global peut apprendre des régularités qu'un modèle par symbole ne voit pas bien ;
+- meilleure mutualisation statistique entre symboles, secteurs et régimes ;
+- fort potentiel pour améliorer la stabilité des probabilités et la couverture directionnelle.
+
+**Lecture trading** :
+
+- c'est probablement la meilleure piste pour franchir un vrai cap si tu veux faire du ML une brique plus centrale dans la conviction.
+
+##### TODO-9 — Multi-horizon
+
+**Pourquoi intéressant côté trading** :
+
+- un seul horizon `10j` est pratique, mais simplifie trop la réalité du swing ;
+- multi-horizon peut mieux distinguer un move tactique court d'un move plus lent ;
+- peut aider non seulement la conviction, mais aussi le sizing et la logique d'exit si tu exploites ensuite cette information.
+
+**Lecture trading** :
+
+- probablement plus utile en P&L réel qu'une simple hausse marginale de `f1_macro`, car tu améliores l'adéquation entre signal et horizon de détention.
+
+##### TODO-8 — Transformer
+
+**Pourquoi plus tard** :
+
+- upside théorique réel ;
+- mais coût d'implémentation, tuning, stabilité et monitoring plus élevés ;
+- risque de complexité supérieure au gain si les pistes plus simples n'ont pas encore été épuisées.
+
+**Lecture trading** :
+
+- à traiter une fois que champion selection, backtests portfolio-level, et éventuellement GlobalModel auront déjà clarifié le plafond de performance du pipeline actuel.
+
+#### ✅ Plan pragmatique recommandé
+
+1. Utiliser la config actuelle dans la conviction live au poids actuel `30%` ML.
+2. Faire le backtest complet pour mesurer l'uplift réel vs quant pur.
+3. Accumuler `2` runs supplémentaires et activer ensuite **TODO-10 Champion selection**.
+4. Si l'uplift reste limité, prioriser **TODO-7 GlobalModel**.
+5. Explorer ensuite **TODO-9 Multi-horizon**.
+6. Garder **TODO-8 Transformer** comme piste avancée, pas comme prochain chantier immédiat.
+
+#### 🚦 Tableau de décision go / no-go live
+
+Ce tableau sert à transformer les métriques ML en **décision opérationnelle**. L'idée n'est pas de juger le modèle comme un papier académique, mais de savoir s'il mérite d'alimenter la conviction live.
+
+| Statut | Critères typiques | Décision live | Interprétation trading |
+|--------|-------------------|---------------|------------------------|
+| **GO fort** | `wf_f1_short ≥ 0.35`, `wf_f1_long ≥ 0.28`, `with_both ≥ 75%`, `val - wf ≤ 0.03`, uplift backtest confirmé | Utiliser en live, possible hausse prudente du poids ML au-delà de 30% | Signal directionnel robuste, cohérent, déjà validé en P&L |
+| **GO surveillé** | `wf_f1_short ≥ 0.28`, `wf_f1_long ≥ 0.20`, `with_both ≥ 65%`, `val - wf ≤ 0.05` | Utiliser en live au poids actuel `30%` ML | ML utile comme composante de conviction, mais pas encore assez fort pour dominer la décision |
+| **WATCH / expérimental** | `wf_f1_short` ou `wf_f1_long` entre `0.15` et `0.20`, `with_both < 65%`, ou gap `val - wf > 0.05` | Garder pour recherche / shadow mode, éviter de lui donner un rôle important en live | Signal partiellement utile mais encore trop instable ou trop spécialisé |
+| **NO-GO** | `wf_f1_short < 0.15` et `wf_f1_long < 0.15`, `with_both` très faible, ou dégradation forte en backtest portfolio-level | Ne pas utiliser dans la conviction live | Le modèle n'apporte pas de signal directionnel fiable exploitable |
+
+**Position du run actuel dans cette grille :**
+
+- `wf_f1_short = 0.312`
+- `wf_f1_long = 0.242`
+- `with_both = 78.3%`
+- `val - wf = 0.039`
+
+➡️ **Classement : GO surveillé**
+
+Conclusion opérationnelle :
+
+- le run mérite d'être utilisé dans la conviction live ;
+- il ne justifie pas encore une forte hausse du poids ML ;
+- la prochaine étape décisive n'est plus la lecture des F1, mais la validation de l'uplift en backtest complet vs quant pur.
+
+**Quand passer de `GO surveillé` à `GO fort` ?**
+
+Trois conditions simples doivent idéalement être réunies :
+
+1. **Backtest complet validé** : le portefeuille avec ML améliore clairement le Sharpe net, ou réduit le drawdown, ou améliore le hit rate par rapport au quant pur sur une fenêtre OOS crédible.
+2. **Stabilité multi-runs** : au moins `2 à 3` runs consécutifs restent dans la zone `GO surveillé` ou mieux, sans effondrement des métriques `wf`.
+3. **Signal directionnel plus fort** : viser au minimum `wf_f1_short ≥ 0.35`, `wf_f1_long ≥ 0.28`, `with_both ≥ 75%`, et un écart `val - wf ≤ 0.03`.
+
+**Règle pratique** : tant que ces trois conditions ne sont pas réunies, garder le poids ML à `30%`. Quand elles le sont, une montée prudente vers `35-40%` peut être envisagée, avec surveillance renforcée du P&L et du drift.
+
 ### 4.9 Table `model_governance` — suivi de la sélection champion
 
 La table `model_governance` trace **quel modèle est sélectionné comme champion** pour chaque symbole après chaque run d'entraînement. Elle est alimentée par `replace_model_governance()` dans `modelFactory/db_registry.py`.
