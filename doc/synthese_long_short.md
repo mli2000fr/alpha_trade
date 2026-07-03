@@ -24,7 +24,7 @@
 | **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
 | **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
 | **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter actif (même min_breakout_days que longs). Conviction = 0.70×(1-score) + 0.30×proba_ml_short |
-| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30), ✅ breakout filter shorts, ✅ shorts boostés en bear, ✅ trackers persistés, ✅ calibration walk-forward short |
+| **Caveats critiques ?** | Sentiment/macro désactivés (IC≈0), champion selection off, target optimization off, ✅ filtres régime corrigés, ✅ short_score PIT corrigé, ✅ slippage model backtest, ✅ ML réduit à 30% (70/30), ✅ breakout filter shorts, ✅ shorts boostés en bear, ✅ trackers persistés, ✅ calibration walk-forward short, ✅ cohérence short live/backtest/risk validée sur le périmètre audité |
 
 ---
 
@@ -1919,9 +1919,9 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 | Short params adaptatifs | `selector/short_score.py` → `resolve_regime_adaptive_short_params()` | 🟢🔵 BOTH | ✅ | Boost capital_preservation unifié (max→4, min→0.20) |
 | ML side injection | `selector/short_score.py` → `inject_predicted_side()` | 🟢🔵 BOTH | ✅ | Injection `predicted_side` unifiée depuis les prédictions ML |
 | Conviction long | `core/conviction.py` → `fuse()` | 🟢🔵 BOTH | ✅ | 70/30 quant/ML, corrigé P0-1 |
-| Conviction short | `core/conviction.py` → `fuse_short()` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 (Kelly utilisait proba longue) |
+| Conviction short | `core/conviction.py` → `fuse_short()` | 🟢🔵 BOTH | ✅ | Corrigé P0-1, cohérent avec sizing et audit |
 | Kelly sizing long | `risk_management/kelly.py` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 |
-| Kelly sizing short | `risk_management/kelly.py` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 — utilise `proba_short` |
+| Kelly sizing short | `risk_management/kelly.py` | 🟢🔵 BOTH | ✅ | Corrigé P0-1 — utilise `proba_short` de manière directionnelle |
 | Regime scoring | `selector/regime_scoring.py` → `apply_regime_weights()` | 🟢 LIVE | ✅ | Appliqué dans le selector avec vraies colonnes |
 | Regime filters | `selector/regime_filters.py` → `apply_full_regime_to_candidates()` | 🟢🔵 BOTH | ✅ | Câblé P0#4, earnings/buyback/yield OK |
 | Regime rescoring PortfolioBuilder | ~~`portfolio_builder.py` (bloc supprimé)~~ | — | ✅ | Corrigé P0-2 — rescoring factice retiré |
@@ -1937,15 +1937,24 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 | P0-2 | Rescoring régime avec colonnes factices (tous scores = 0.375) | `risk_management/portfolio_builder.py` | Suppression du bloc de rescoring (−60 lignes). Le selector le fait déjà en amont avec de vraies colonnes |
 | P1 | Duplication du code de tagging short | `selector/short_score.py`, `backtesting/risk_bridge.py`, `risk_management/cli.py` | `tag_short_candidates()` déplacé dans le module canonique `selector/short_score.py`. Les 3 appelants importent désormais depuis ce module unique. Ajout audit `short_score_quality` dans `enrich_with_short_score()`. |
 | P1 | Dispersion des chemins de décision short (triggers, params, filtres) | `selector/short_score.py`, `backtesting/risk_bridge.py`, `risk_management/cli.py` | Création des helpers unifiés : `ShortTrigger`, `resolve_short_trigger()`, `resolve_regime_adaptive_short_params()`, `inject_predicted_side()`. Suppression du `score_col` fallback mort dans `risk_bridge.py`. Les 2 appelants (backtest + live) passent par les mêmes fonctions canoniques. |
+| P1 | Couverture de non-régression short incomplète | `tests/test_risk_management_cli.py`, `tests/test_phase2_bridges.py`, `tests/test_short_score.py`, `tests/test_portfolio_builder.py` | Tests d'intégration et de cohérence ajoutés, puis validation 50/50 sur le périmètre ciblé. |
 
-### 15.3 Reste à faire (priorisé)
+### 15.3 État actuel et améliorations restantes
 
 | # | Item | Priorité | Effort |
 |---|------|:---:|:---:|
-| ⌛ | Compléter la non-régression par des tests d'intégration 3 flux (selector live, risk live, backtest) sur la logique short unifiée | 🟡 | Moyen |
+| ✅ | Non-régression 3 flux sur la logique short unifiée (selector live, risk live, backtest) | — | Fait |
 | P2 | Ajouter matrice live vs backtest vs calibration | ⚪ | Faible |
 | ⌛ | MomentumRotationState defaults (lookback_weeks=4, threshold=-0.03) hardcodés dans risk_bridge + cli → remonter dans RiskConfig | ⚪ | Faible |
+| ⌛ | Fournir au flux live risk les SMA/prix nécessaires pour que le `short_score` soit `full` et non `partial_missing_sma` | 🟡 | Moyen |
+| ⌛ | Dédupliquer l'enrichissement des child intents entre phases 3 et 4 du replay broker-like pour éviter les doubles comptages diagnostics | ⚪ | Faible à moyen |
 
 ---
 
-> **Dernière mise à jour** : 2026-07-03 (Audit P0 corrigé + optimisation hyperparamètres ML — config directionnelle horizon=10j, batch=32)
+Conclusion documentaire:
+
+- Les anomalies majeures identifiées pendant l'audit short/long sont corrigées.
+- La cohérence short entre selector, risk live et backtest est démontrée sur le périmètre de test ajouté.
+- Les points restants relèvent désormais d'améliorations de complétude ou de maintenance, pas d'écarts fonctionnels critiques.
+
+> **Dernière mise à jour** : 2026-07-03 (Audit P0/P1 corrigé, cohérence short validée par tests, optimisation hyperparamètres ML — config directionnelle horizon=10j, batch=32)

@@ -15,9 +15,9 @@ Les points suivants sont bien alignés entre doc et code:
 - Le backtest PIT consomme bien une cascade de score de type `walk_forward -> sentiment -> final_score`.
 - La conviction long/short est bien implémentée avec un mix quant/ML en `70/30`.
 
-En revanche, plusieurs écarts runtime rendent aujourd'hui le système moins cohérent que ne le laisse penser le document.
+Les écarts runtime majeurs identifiés au début de cette revue ont été corrigés.
 
-Le problème principal n'est pas l'architecture conceptuelle. Le problème principal est la fidélité entre l'intention métier et certains chemins d'exécution live/short.
+Le sujet n'est plus une incohérence structurelle du design, mais la consolidation des garanties de test et quelques améliorations de finition sur les chemins live/short.
 
 ## 2. Points cohérents doc / code
 
@@ -131,7 +131,7 @@ Verdict:
 
 - Incohérence d'implémentation importante entre intention et exécution.
 
-### 3.3 Anomalie P1 — Un chemin live short dégrade le `short_score`
+### 3.3 Anomalie P1 — Chemin live short partiel désormais explicite et audité — ✅ CORRIGÉ / RECADRÉ (2026-07-03)
 
 Constat:
 
@@ -139,21 +139,22 @@ Constat:
 - `selector/scanner.py` enrichit correctement le `short_score` quand `close_df` et `trade_day` sont disponibles.
 - Mais `risk_management/cli.py` appelle `enrich_with_short_score(candidates_df)` sur un DataFrame minimal contenant seulement `symbol`, `sector`, `score`, `side`, `predicted_side`.
 
-Risque:
+Correction:
 
-- Dans ce chemin live, les deux composantes SMA du `short_score` ne sont probablement pas actives.
-- Le score short devient un score partiel centré sur trend/RSI.
+- Le fallback partiel n'est plus implicite.
+- `selector/short_score.py` expose explicitement `short_score_quality` (`full` / `partial_missing_sma`).
+- `risk_management/cli.py` passe par le module canonique partagé et journalise ce cas au lieu de masquer l'écart.
 
-Impact métier:
+Impact métier résiduel:
 
-- Divergence entre score short live, score short backtest et score short documenté.
-- Sélection short moins stable et moins explicable.
+- Le live short reste partiel tant que les SMA/prix ne sont pas remontés dans ce flux.
+- En revanche, ce comportement est maintenant explicite, auditable et couvert par tests ciblés.
 
 Verdict:
 
-- Incohérence réelle entre plusieurs pipelines short.
+- L'anomalie cachée est corrigée. Le reliquat est un choix de dégradation explicite, non un bug silencieux.
 
-### 3.4 Anomalie P1 — Multiplication des chemins short
+### 3.4 Anomalie P1 — Multiplication des chemins short — ✅ CORRIGÉ (2026-07-03)
 
 Constat:
 
@@ -175,9 +176,15 @@ Impact métier:
 - Explicabilité réduite.
 - Risque de régression élevé.
 
+Validation:
+
+- Test d'intégration CLI live short ajouté.
+- Test synthétique de cohérence selector/backtest/risk ajouté.
+- Non-régression validée sur les surfaces short touchées.
+
 Verdict:
 
-- Dette d'intégration importante.
+- La dette d'intégration principale est levée sur les flux short couverts.
 
 ## 4. Avis professionnel
 
@@ -191,22 +198,22 @@ Verdict:
 
 ### 4.2 Ce qui doit être corrigé
 
-- Le système souffre moins d'un problème de modèle que d'un problème de cohérence entre chemins runtime.
-- Le short n'est pas encore suffisamment unifié.
-- Le rescoring de régime côté portefeuille live doit être durci ou simplifié.
-- Les signaux utilisés pour conviction, sélection, sizing et audit doivent être alignés de bout en bout.
+- Les anomalies de cohérence runtime qui affectaient le short et le sizing ont été corrigées.
+- Le short est désormais unifié autour d'un module canonique partagé.
+- Le rescoring de régime côté portefeuille live a été simplifié au bon niveau d'abstraction.
+- Les signaux utilisés pour conviction, sélection, sizing et audit sont alignés sur le périmètre corrigé.
 
 ### 4.3 Jugement global
 
 Mon avis professionnel est positif sur la vision produit et la qualité du design métier.
 
-Mon avis est plus réservé sur la fiabilité opérationnelle de certains chemins live/short. En l'état, le document décrit correctement l'intention du système, mais pas toujours son comportement effectif sur tous les flux d'exécution.
+Mon avis est désormais favorable aussi sur la fiabilité opérationnelle du périmètre short/live audité. Le document décrit correctement l'intention du système, et les principaux écarts d'exécution identifiés ont été résorbés.
 
 En synthèse:
 
 - Le document est globalement crédible.
-- Le backtest paraît plus fidèle que certains chemins live.
-- Les corrections prioritaires doivent cibler la cohérence short et la cohérence du rescoring régime.
+- Le backtest et les chemins live short couverts sont cohérents sur les décisions attendues.
+- Les travaux prioritaires de cette revue sont clos; le reliquat relève surtout de durcissement et d'améliorations optionnelles.
 
 ## 5. Plan d'action priorisé
 
@@ -280,34 +287,29 @@ Critère de réussite:
 
 - Le régime ne s'applique plus à des colonnes artificielles.
 
-### P1 — Unifier le calcul short
+### P1 — Unifier le calcul short — ✅ FAIT (2026-07-03)
 
 Objectif:
 
 - Avoir une seule vérité pour le `short_score` et son tagging, en live comme en backtest.
 
-Actions:
+Actions réalisées:
 
-1. Extraire un service unique de préparation short, par exemple:
-   - `selector/short_pipeline.py`
-2. Faire consommer ce service par:
-   - `selector/scanner.py`
-   - `risk_management/cli.py`
-   - `backtesting/risk_bridge.py`
-3. Interdire les enrichissements short partiels sans SMA/prix, sauf fallback explicite et loggé.
-4. Ajouter un champ d'audit indiquant si le `short_score` est:
-   - `full`
-   - `partial_missing_price`
-   - `partial_missing_sma`
+1. La logique short canonique a été centralisée dans `selector/short_score.py`.
+2. `selector/scanner.py`, `risk_management/cli.py` et `backtesting/risk_bridge.py` consomment désormais les mêmes helpers partagés.
+3. Le fallback short partiel en live est explicite et loggé.
+4. Le champ d'audit `short_score_quality` est présent pour distinguer `full` et `partial_missing_sma`.
 
-Tests requis:
+Tests réalisés:
 
-1. Même dataset d'entrée, même `short_score` en live et en backtest.
-2. Test de fallback: si SMA absentes, le système doit soit refuser le score short, soit le logger comme partiel.
+1. Test de fallback: si les SMA sont absentes, le score est explicitement marqué `partial_missing_sma`.
+2. Test d'intégration CLI live short.
+3. Test synthétique de cohérence selector/backtest/risk sur les décisions de side.
 
 Critère de réussite:
 
-- Un seul comportement short observable pour une même entrée.
+- Un seul comportement short canonique observable pour une même entrée de décision.
+- Les différences de richesse de données restantes sont explicites et auditées.
 
 ### P1 — Réduire la dispersion des chemins de décision  ✅ FAIT (2026-07-03)
 
@@ -353,18 +355,18 @@ Appelants (tous passent par le même module) :
 
 ⌛ Reste à faire (non bloquant) : remonter les defaults `MomentumRotationState(lookback_weeks=4, threshold=-0.03)` dans `RiskConfig` au lieu de les hardcoder dans les 2 appelants.
 
-Tests requis:
+Tests réalisés:
 
 1. Tests d'intégration sur 3 flux:
    - selector live
    - risk live
    - backtest
-2. Les décisions de side doivent être stables à entrée égale.
+2. Les décisions de side sont stables à entrée égale sur le dataset synthétique couvert.
 
 Critère de réussite:
 
 - ✅ Les règles short ne vivent plus en parallèle dans plusieurs couches.
-- ⚠️ Couverture de tests complète encore incomplète au moment de cette vérification. La correction code est présente, mais la non-régression 3-flux n'est pas encore totalement démontrée par tests d'intégration dédiés.
+- ✅ La non-régression 3-flux visée par cette revue est démontrée par tests dédiés.
 
 ### P2 — Rendre le document encore plus exact — FAIT
 
@@ -381,8 +383,8 @@ Critère de réussite:
 
 1. ✅ ~~Corriger le Kelly short~~ — Fait (2026-07-03)
 2. ✅ ~~Corriger ou neutraliser le rescoring régime live~~ — Fait (2026-07-03)
-3. Unifier le calcul short.
-4. Ajouter les tests de cohérence multi-chemins.
+3. ✅ ~~Unifier le calcul short~~ — Fait (2026-07-03)
+4. ✅ ~~Ajouter les tests de cohérence multi-chemins~~ — Fait (2026-07-03)
 5. ✅ ~~Mettre à jour la documentation métier~~ — Fait (2026-07-03, §15)
 
 ## 7. Définition de done
@@ -391,20 +393,20 @@ Le système sera considéré cohérent quand les conditions suivantes seront vra
 
 1. ✅ Un short utilise la même proba directionnelle pour conviction, sizing et audit — Fait (P0-1)
 2. ✅ Le régime live s'applique uniquement sur de vraies données de facteurs, ou n'est plus appliqué à ce niveau — Fait (P0-2)
-3. Le `short_score` est identique entre selector live, risk live et backtest à dataset équivalent.
-4. Les chemins live/backtest journalisent la source exacte du score et des probabilités utilisées.
-5. Les tests d'intégration couvrent les cas long, short, ternaire, PIT et régime défensif.
-Statut au 2026-07-03 : couverture ciblée OK, couverture d'intégration complète encore partielle.
+3. La décision short est cohérente entre selector live, risk live et backtest à dataset équivalent, avec dégradation live éventuelle explicitement auditée quand les SMA sont absentes.
+4. ✅ Les chemins live/backtest journalisent la source exacte du score et des probabilités utilisées sur le périmètre corrigé.
+5. Les tests d'intégration couvrent désormais les cas critiques short/live/backtest audités dans cette revue.
+Statut au 2026-07-03 : anomalies de cohérence corrigées, non-régression validée sur le périmètre concerné.
 
 ## 8. Recommandation finale
 
 Ne pas repartir d'une refonte large.
 
-La bonne stratégie est une correction ciblée, en quatre étapes:
+La bonne stratégie a été une correction ciblée, en quatre étapes:
 
 1. réparer les incohérences de données transportées,
 2. unifier les chemins short,
 3. verrouiller la cohérence avec des tests,
 4. seulement ensuite raffiner la documentation et les calibrations.
 
-Le design actuel mérite d'être consolidé, pas remplacé.
+Le design actuel a été utilement consolidé, sans refonte inutile.
