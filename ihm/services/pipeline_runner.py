@@ -349,6 +349,7 @@ class PipelineLaunchOptions:
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
     ml_training_end_date: str = DEFAULT_ML_TRAINING_END_DATE
     ml_train_symbol_source: MLTrainSymbolSource = "candidates"
+    ml_train_start_symbol: str | None = None
     ml_predict_symbol_source: MLTrainSymbolSource = "candidates"
     ml_predict_use_historical_range: bool = False
     ml_selector_universe_signal_modes: tuple[str, ...] = DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES
@@ -1551,6 +1552,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         "candidates": "candidates",
         "stock_bars_daily": "stock-bars-daily",
     }.get(str(options.ml_train_symbol_source or "candidates"), "candidates")
+    ml_train_start_symbol = _normalize_optional_symbol(options.ml_train_start_symbol)
     ml_predict_symbol_source = {
         "stock_scores": "stock-scores",
         "stock_scores_history": "stock-scores-history",
@@ -2094,6 +2096,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--watchdog-timeout-seconds", str(int(options.ml_watchdog_timeout_seconds))])
         if ml_training_end_date:
             command.extend(["--training-end-date", ml_training_end_date])
+        if ml_train_start_symbol:
+            command.extend(["--start-symbol", ml_train_start_symbol])
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
         if options.ml_include_selector_context:

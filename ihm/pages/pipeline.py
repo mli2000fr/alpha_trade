@@ -745,6 +745,7 @@ def _render_ml_scope_block(
     button_label: str,
     label_prefix: str,
     source_attr: str,
+    start_symbol_attr: str | None = None,
     historical_range: bool = False,
 ) -> None:
     disabled = workflow_active or bool(active_for_step)
@@ -782,6 +783,23 @@ def _render_ml_scope_block(
         "`stock_scores_all` = union `stock_scores` + `stock_scores_history` ; `stock_scores` = snapshot courant ; "
         "`stock_scores_history` = historique PIT ; `candidates` = candidats du jour ; `stock_bars_daily` = univers large."
     )
+
+    # --- Start symbol (ML Train only) ---
+    normalized_start_symbol: str | None = None
+    start_symbol_session_key = f"{selectbox_key}_start_symbol"
+    if start_symbol_attr is not None:
+        raw_start_symbol = st.text_input(
+            "Commencer à partir du symbole (optionnel)",
+            value=str(st.session_state.get(start_symbol_session_key, getattr(options, start_symbol_attr, "") or "")),
+            key=start_symbol_session_key,
+            help=(
+                "Si renseigné, l'entraînement commencera au premier symbole alphabétiquement supérieur ou égal à cette valeur. "
+                "Exemple : `HGI` démarre à HGI et ignore les symboles précédents dans l'univers sélectionné."
+            ),
+        )
+        normalized_start_symbol = normalize_start_symbol(raw_start_symbol)
+        if normalized_start_symbol is not None:
+            st.caption(f"Filtre de démarrage appliqué : symboles `>= {normalized_start_symbol}`.")
 
     try:
         scope_preview = _resolve_ml_train_scope_preview(
@@ -838,6 +856,8 @@ def _render_ml_scope_block(
             st.caption(f"Fenêtre historique appliquée : `{start_date}` → `{end_date}`.")
 
     command_preview_overrides: dict[str, object] = {source_attr: cast(Any, selected_symbol_source)}
+    if start_symbol_attr is not None:
+        command_preview_overrides[start_symbol_attr] = normalized_start_symbol
     if step_key == "ml_predict":
         command_preview_overrides["ml_predict_use_historical_range"] = historical_range
     command_preview_options = replace(options, **command_preview_overrides)
@@ -854,6 +874,8 @@ def _render_ml_scope_block(
         disabled=disabled,
     ):
         overrides: dict[str, object] = {source_attr: cast(Any, selected_symbol_source)}
+        if start_symbol_attr is not None:
+            overrides[start_symbol_attr] = normalized_start_symbol
         if step_key == "ml_predict":
             overrides["ml_predict_use_historical_range"] = historical_range
         _launch_pipeline_step(
@@ -885,6 +907,7 @@ def _render_ml_train_scope_block(
         button_label="Entraîner l'univers sélectionné",
         label_prefix="9. ML Train (Model Factory)",
         source_attr="ml_train_symbol_source",
+        start_symbol_attr="ml_train_start_symbol",
         historical_range=True,
     )
 

@@ -39,6 +39,7 @@ from modelFactory.db_registry import (
 from modelFactory.global_model import train_global_model
 from modelFactory.runtime_status import update_runtime_status
 from modelFactory.trainer import TrainResult, train_symbol
+from database.selector_reference import filter_symbols_from_start, normalize_start_symbol
 
 LOGGER = logging.getLogger(__name__)
 SymbolSource = Literal[
@@ -374,6 +375,7 @@ def run_training_batch(
     *,
     mode: str = "rebuild-all",
     symbol_source: SymbolSource = "candidates",
+    start_symbol: str | None = None,
 ) -> list[TrainResult]:
     """Entraîne tous les symboles candidats en parallèle.
 
@@ -385,6 +387,8 @@ def run_training_batch(
             (skippe les symboles déjà entraînés au feature_fingerprint
             courant), ou ``refresh-stale``.
         symbol_source: Source par défaut si ``symbols`` n'est pas fourni.
+        start_symbol: Si renseigné, filtre les symboles pour ne garder que ceux
+            alphabétiquement >= à cette valeur. Exemple: ``HGI`` démarre à HGI.
 
     Returns:
         Liste de TrainResult.
@@ -397,6 +401,12 @@ def run_training_batch(
                 symbols = load_symbols_for_source(engine, symbol_source)
         else:
             symbols = load_symbols_for_source(engine, symbol_source)
+
+    if start_symbol is not None:
+        normalized_start = normalize_start_symbol(start_symbol)
+        if normalized_start:
+            symbols = filter_symbols_from_start(symbols, start_symbol=normalized_start)
+            LOGGER.info("run_training_batch start_symbol=%s symbols_filtered=%d", normalized_start, len(symbols))
 
     if symbols:
         symbols, selector_filter_summary = filter_symbols_by_selector_context(

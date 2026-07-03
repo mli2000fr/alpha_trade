@@ -152,6 +152,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "stock-scores | stock-scores-history | stock-scores-all"
         ),
     )
+    p.add_argument(
+        "--start-symbol",
+        type=str,
+        default=None,
+        help=(
+            "Si renseigné, l'entraînement commence au premier symbole alphabétiquement supérieur ou égal à cette valeur. "
+            "Exemple : HGI démarre à HGI et ignore les symboles précédents."
+        ),
+    )
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--sequence-length", type=int, default=60)
@@ -443,6 +452,7 @@ def main(args: list[str] | None = None) -> None:
                 symbols=opts.symbols,
                 mode=opts.ml_mode,
                 symbol_source=opts.symbol_source,
+                start_symbol=opts.start_symbol,
             )
         completed = sum(1 for r in results if r.status == "completed")
         skipped = sum(1 for r in results if r.status == "skipped")

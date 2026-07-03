@@ -2,3 +2,7 @@ quotes 01/01/2020 - 31/05/2026
 fillback 01/01/2020 - 31/05/2026
 
 ml 01/01/2020 - 31/12/2025
+
+
+
+2026-07-03 17:49:13,036 modelFactory.trainer INFO training_progress phase=final_train symbol=WKEY epoch=4/100 train_loss=1.0999 val_loss=0.9612 val_acc=0.3074 val_auc=n/a
