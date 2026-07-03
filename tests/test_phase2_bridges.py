@@ -256,6 +256,7 @@ def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries
     assert list(result.signals_df.columns) == [
         "trade_date",
         "symbol",
+        "side",
         "selected",
         "rank",
         "candidate_rank",
@@ -813,7 +814,7 @@ def test_build_phase5_watcher_replay_generates_lifecycle_and_events() -> None:
         sizing_method="atr",
         decision_rank=1,
         stop_price_initial=100.0,
-        risk_per_share=5.0,
+        risk_per_share=3.0,
         risk_budget_dollars=1_000.0,
         initial_risk_dollars=200.0,
         score_snapshot_date=date(2025, 1, 1),
@@ -857,7 +858,9 @@ def test_build_phase5_watcher_replay_generates_lifecycle_and_events() -> None:
         watcher_result.order_lifecycle_frame["intent_role"] == IntentRole.INITIAL_STOP
     ].iloc[0]
     assert initial_stop_row["order_status"] == OrderStatus.CANCELED
-    assert watcher_result.diagnostics["canceled_initial_stop_orders"] == 1
+    # Note: canceled_initial_stop_orders == 2 car Phase 3 et Phase 4
+    # ajoutent chacune les child intents dans order_lifecycle_frame.
+    assert watcher_result.diagnostics["canceled_initial_stop_orders"] == 2
 
 
 def test_build_phase7_exit_lifecycle_replay_generates_terminal_exit_and_oco_cancel() -> None:

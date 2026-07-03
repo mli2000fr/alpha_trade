@@ -1104,7 +1104,6 @@ def main(args: list[str] | None = None) -> None:
         if trigger.active:
             # Convertir les candidats en DataFrame pour le tagging
             try:
-                import pandas as pd
                 rows = [
                     {
                         "symbol": c.symbol,

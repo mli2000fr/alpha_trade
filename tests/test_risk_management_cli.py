@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import subprocess
 import sys
@@ -72,7 +72,7 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
             captured["pnl"] = pnl
 
@@ -261,7 +261,7 @@ def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch)
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
             captured["pnl"] = pnl
 
@@ -279,7 +279,7 @@ def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch)
 
     cli.main(["--trade-date", "2026-05-01", "--account", "default"])
 
-    # `default` doit être traité comme un compte implicite -> requested_account_id None côté repo.
+    # `default` doit Ãªtre traitÃ© comme un compte implicite -> requested_account_id None cÃ´tÃ© repo.
     assert captured["requested_account_id"] is None
     assert captured["config"].account_equity == pytest.approx(100_000.0)
     assert captured["summary"]["effective_equity"] == pytest.approx(100_000.0)
@@ -325,7 +325,7 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
             captured["pnl"] = pnl
 
@@ -341,14 +341,14 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
 
-    # Doit s'exécuter sans lever RuntimeError, en fallback sur --account-equity.
+    # Doit s'exÃ©cuter sans lever RuntimeError, en fallback sur --account-equity.
     cli.main([
         "--trade-date", "2026-05-01",
         "--account", "test1",
         "--account-equity", "50000",
     ])
 
-    # `test1` reste un compte explicite (non remappé en None comme `default`).
+    # `test1` reste un compte explicite (non remappÃ© en None comme `default`).
     assert captured["requested_account_id"] == "test1"
     # Fallback sur --account-equity=50000.
     assert captured["config"].account_equity == pytest.approx(50_000.0)
@@ -393,7 +393,7 @@ def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
 
         def build(self, candidates, prices, predictions, win_rates, return_matrix):
@@ -461,7 +461,7 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
             captured["pnl"] = pnl
 
@@ -529,7 +529,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             self.progress_callback = None
 
         def build(self, candidates, prices, predictions, win_rates, return_matrix):
@@ -540,7 +540,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
                         "progress_current": 0,
                         "progress_total": 1,
                         "progress_phase": "build_portfolio",
-                        "progress_label": "🛡️ Progression risk management — construction portefeuille",
+                        "progress_label": "ðŸ›¡ï¸ Progression risk management â€” construction portefeuille",
                         "targeted_symbols": len(candidates),
                     }
                 )
@@ -594,7 +594,7 @@ def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> Non
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
             self.progress_callback = None
 
@@ -659,7 +659,7 @@ def test_cli_main_persists_market_macro_snapshot(monkeypatch) -> None:
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             self.progress_callback = None
 
         def build(self, candidates, prices, predictions, win_rates, return_matrix):
@@ -713,19 +713,19 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
             return [CandidateScore("AAPL", "Tech", 0.9), CandidateScore("MSFT", "Tech", 0.8)]
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
-            raise AssertionError("Les prix ne doivent pas être chargés si le régime bloque les entrées")
+            raise AssertionError("Les prix ne doivent pas Ãªtre chargÃ©s si le rÃ©gime bloque les entrÃ©es")
 
         def load_predictions_asof(self, symbols, trade_date):
-            raise AssertionError("Les prédictions ne doivent pas être chargées si le régime bloque les entrées")
+            raise AssertionError("Les prÃ©dictions ne doivent pas Ãªtre chargÃ©es si le rÃ©gime bloque les entrÃ©es")
 
         def load_win_rates_asof(self, symbols, trade_date):
-            raise AssertionError("Les win rates ne doivent pas être chargés si le régime bloque les entrées")
+            raise AssertionError("Les win rates ne doivent pas Ãªtre chargÃ©s si le rÃ©gime bloque les entrÃ©es")
 
         def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
-            raise AssertionError("La matrice de rendements ne doit pas être chargée si le régime bloque les entrées")
+            raise AssertionError("La matrice de rendements ne doit pas Ãªtre chargÃ©e si le rÃ©gime bloque les entrÃ©es")
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["build_called"] = True
             self.progress_callback = None
 
@@ -781,17 +781,17 @@ def test_cli_main_blocks_run_when_ml_coverage_is_below_threshold(monkeypatch) ->
             return {"AAPL": object()}
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
-            raise AssertionError("Les prix ne doivent pas être chargés si le gate ML bloque le run")
+            raise AssertionError("Les prix ne doivent pas Ãªtre chargÃ©s si le gate ML bloque le run")
 
         def load_win_rates_asof(self, symbols, trade_date):
-            raise AssertionError("Les win rates ne doivent pas être chargés si le gate ML bloque le run")
+            raise AssertionError("Les win rates ne doivent pas Ãªtre chargÃ©s si le gate ML bloque le run")
 
         def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
-            raise AssertionError("Le builder ne doit pas être instancié si le gate ML bloque le run")
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
+            raise AssertionError("Le builder ne doit pas Ãªtre instanciÃ© si le gate ML bloque le run")
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
     monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
@@ -850,7 +850,7 @@ def test_cli_main_applies_vol_targeting_and_exposes_summary(monkeypatch) -> None
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
             self.progress_callback = None
 
@@ -936,7 +936,7 @@ def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -
             )
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             self.progress_callback = None
 
         def build(self, candidates, prices, predictions, win_rates, return_matrix):
@@ -1051,7 +1051,7 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
             self.progress_callback = None
 
@@ -1148,7 +1148,7 @@ def test_cli_main_does_not_apply_empirical_risk_calibration_when_blocked_by_gove
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl, circuit_breaker=None):
+        def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
             self.progress_callback = None
 
