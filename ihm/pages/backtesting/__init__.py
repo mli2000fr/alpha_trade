@@ -2238,6 +2238,16 @@ def _build_calibrate_conviction_options() -> "CalibrateConvictionWeightsOptions"
 
     scope = "all" if include_kelly else "conviction"
 
+    # Sprint 3 — backtest Kelly dans BacktestEngine
+    backtest_kelly = st.checkbox(
+        "Kelly via BacktestEngine (⚠️ coûteux, ~27 backtests/direction)",
+        value=bool(st.session_state.get("bt_conv_backtest_kelly", False)),
+        key="bt_conv_backtest_kelly",
+        help="Quand coché, les paramètres Kelly sont raffinés via BacktestEngine "
+        "(stops, corrélation, circuit breaker, slippage) au lieu du moteur simplifié. "
+        "Multiplie le temps de calibration par ~10-50.",
+    )
+
     output_dir = "artifacts/conviction_calibration"
 
     options = CalibrateConvictionWeightsOptions(
@@ -2247,6 +2257,7 @@ def _build_calibrate_conviction_options() -> "CalibrateConvictionWeightsOptions"
         horizons=horizons.strip() or "5,10,20",
         output_dir=output_dir,
         scope=scope,
+        backtest_kelly=backtest_kelly,
     )
     st.code(
         format_command_for_display(build_backtesting_command("calibrate-conviction-weights", options)),

@@ -154,6 +154,7 @@ class CalibrateConvictionWeightsOptions:
     horizons: str = "5,10,20"
     output_dir: str = "artifacts/conviction_calibration"
     scope: str = "all"  # "conviction", "kelly", "all"
+    backtest_kelly: bool = False  # Sprint 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,6 +394,8 @@ def build_backtesting_command(
             "--output-dir", options.output_dir,
             "--scope", options.scope,
         ])
+        if options.backtest_kelly:
+            command.append("--backtest-kelly")
         return command
 
     if kind == "walk-forward-sentiment":

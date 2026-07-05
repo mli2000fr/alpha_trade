@@ -125,7 +125,7 @@ rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_scor
 | **ML Predict** | 🟢 Long + Short (probas ternaires) | N/A (inférence) | N/A | N/A |
 | **④ Conviction** | � Long + Short | 🟡 Simplifié (top-N pondéré) | ❌ | ✅ Oui (Sprint 2) |
 | **⑤ Kelly** | � Long + Short (Sprint 3) | 🟢 BacktestEngine (opt-in `--backtest-kelly`) | ✅ Oui (Sprint 3) | ❌ |
-| **⑥ Walk-Forward** | 🟢 Long + Short | 🟢 BacktestEngine complet | ❌ (utilise RiskConfig) | ❌ (utilise RiskConfig) |
+| **⑥ Walk-Forward** | 🟢 Long + Short | 🟢 BacktestEngine complet | ✅ Oui (Sprint 4) | ✅ Oui (Sprint 2) |
 
 ---
 
@@ -139,15 +139,15 @@ rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_scor
 
 Les calibrations ④ et ⑤ utilisent `_weighted_daily_strategy_returns()` par défaut (rapide). Sprint 3 ajoute `--backtest-kelly` qui évalue les paramètres Kelly dans `BacktestEngine` complet (stops, corrélation, circuit breaker, slippage). Le moteur simplifié reste acceptable pour la calibration conviction ; pour le sizing, le backtest engine est recommandé.
 
-### C. Chaîne de paramètres cassée
+### C. Chaîne de paramètres — ✅ Résolue Sprint 4
 
 ```
-④ Conviction → produit score_weight, prediction_weight
-⑤ Kelly      → produit kelly_fraction_multiplier, payoff_ratio, min_probability
-⑥ WF         → consomme ces params (via RiskConfig) mais ne les recalibre pas
+④ Conviction → calibré par fold train dans walk_forward_optimize()
+⑤ Kelly      → calibré par fold train (moteur simplifié ou BacktestEngine)
+⑥ WF         → valide OOS dans BacktestEngine, métriques par jambe
 ```
 
-Si ④ et ⑤ produisent des paramètres sous-optimaux (car long-only + simplifié), ⑥ les valide OOS avec un moteur différent → les résultats OOS peuvent être **pires** que si on avait utilisé des paramètres par défaut conservateurs.
+Le walk-forward est maintenant la couche unique qui calibre (train) et valide (test).
 
 ### D. Payoff ratio unique pour deux directions
 
@@ -163,7 +163,7 @@ Le backfill fabrique un univers PIT d'environ **60 longs + 60 shorts**. Depuis S
 - les prédictions short existent,
 - ✅ la calibration conviction les utilise désormais (Sprint 2).
 
-**Restent à aligner** : Kelly (⑤) et walk-forward (⑥).
+**Restent à aligner** : ✅ conviction (Sprint 2), ✅ Kelly (Sprint 3), ✅ walk-forward (Sprint 4). L'architecture de calibration est maintenant cohérente de bout en bout.
 
 ---
 
@@ -179,8 +179,8 @@ Toutes les incohérences n'ont pas le même poids :
 2. **La calibration Conviction est maintenant bi-directionnelle (Sprint 2).**
    Elle couvre long et short avec des pipelines séparés via `fuse()` / `fuse_short()`. Le moteur d'évaluation reste simplifié (→ Sprint 3 pour le passage à `BacktestEngine`).
 
-3. **Le Walk-Forward est aujourd'hui la référence la plus crédible.**
-   C'est le seul maillon qui se rapproche du comportement réel du moteur. En cas de conflit entre une calibration simplifiée et le walk-forward / backtest complet, c'est le moteur complet qui doit arbitrer.
+3. **Le Walk-Forward est maintenant l'orchestrateur central (Sprint 4).**
+   Il calibre conviction + Kelly sur chaque fold train et valide OOS dans BacktestEngine avec métriques par jambe. C'est la source de vérité pour promouvoir une configuration long+short.
 
 4. **Le problème principal n'est pas `100 longs / 20 shorts` pris isolément (résolu : 60/60 est maintenant le standard).**
    Le vrai problème est que la chaîne aval n'est pas construite pour exploiter proprement cette asymétrie. Aujourd'hui, on produit un univers mixte, mais on ne le calibre pas comme un univers mixte.
@@ -210,7 +210,7 @@ Toutes les incohérences n'ont pas le même poids :
 - ✅ Univers PIT : `60/60` fait.
 - ✅ Calibration conviction : long+short fait (Sprint 2).
 - ❌ Calibration Kelly : moteur simplifié par défaut, BacktestEngine disponible (Sprint 3).
-- ❌ Walk-forward : pas encore orchestrateur bi-directionnel (→ Sprint 4).
+- ❌ Walk-forward : orchestrateur disponible (Sprint 4).
 
 ### Conclusion pratique
 
@@ -326,31 +326,44 @@ Toutes les incohérences n'ont pas le même poids :
 **Critère de sortie**
 - ✅ Kelly peut être calibré dans le même moteur que l'exécution cible. Les params sont directionnels.
 
-### Sprint 4 — Walk-forward orchestrateur central (sprint d'intégration)
+### Sprint 4 — Walk-forward orchestrateur central ✅ FAIT (2026-07-05)
 
-**Objectif** : faire du walk-forward la couche unique de calibration et de validation OOS. Ce sprint compose les sprints 1, 2 et 3 — **il ne peut démarrer qu'après leur validation individuelle**.
+**Objectif** : faire du walk-forward la couche unique de calibration et de validation OOS. Ce sprint compose les sprints 1, 2 et 3.
 
-**⚠️ Dépendance explicite** : Sprint 4 nécessite que Sprint 1 (univers `60/60`), Sprint 2 (conviction `20/20`) et Sprint 3 (Kelly directionnel) soient fonctionnels et testés indépendamment.
+**✅ Implémenté**
 
-**À implémenter**
-- Sur chaque fold train : sélectionner ou calibrer `60/60`, conviction `20/20`, Kelly directionnel.
-- Sur chaque fold test : exécuter la validation OOS dans le même `BacktestEngine`.
-- Comparer les variantes sur métriques portefeuille consolidées (pas uniquement sur moyenne de retours forward).
-- Produire un rapport par fold + résumé global avec train vs OOS par jambe.
-- Exposer clairement quel scénario est promu et pourquoi.
+**a) Méthode `walk_forward_optimize()`**
+- Nouvelle méthode dans `EmpiricalRiskCalibrator` qui orchestre la calibration par folds glissants.
+- Pour chaque fold **train** : calibration conviction long+short + Kelly (via `walk_forward_backtest()`).
+- Pour chaque fold **test** : validation OOS via `BacktestEngine` (via `evaluate_kelly_in_backtest()`) avec les poids calibrés sur le train.
+- Métriques OOS séparées par jambe : `oos_sharpe_long`, `oos_sharpe_short`, `oos_sharpe_combined`, `oos_return_long_pct`, `oos_return_short_pct`, `oos_drawdown_long_pct`, `oos_drawdown_short_pct`.
+- Rapport JSON complet sauvegardé : `walk_forward_optimize_report.json` avec config, résumé, folds détaillés, meilleur scénario.
 
-**Fichiers probables**
-- `backtesting/sentiment_calibration.py`
-- `backtesting/walk_forward.py`
-- `backtesting/cli/_impl.py`
+**b) CLI `walk-forward-conviction`**
+- Nouvelle commande : `python -m backtesting walk-forward-conviction --start ... --end ...`
+- Paramètres : `--top-n`, `--horizons`, `--min-train-days`, `--test-days`, `--step-days`, `--backtest-kelly`, `--output-dir`.
+- Affiche un tableau fold par fold avec Sharpe train/OOS long/OOS short/OOS combiné.
 
-**Validation**
-- Un run walk-forward compare plusieurs variantes long+short.
-- Le meilleur scénario est sélectionné sur métriques portefeuille.
-- Train vs OOS est lisible par jambe.
+**c) Résumé global**
+- Le rapport inclut `oos_sharpe_mean` et `oos_sharpe_std` sur tous les folds.
+- Le meilleur fold est identifié avec ses poids et son Sharpe OOS combiné.
+- Train vs OOS lisible par jambe pour chaque fold.
+
+**Fichiers modifiés**
+- `backtesting/weights_calibration.py` — `walk_forward_optimize()` (~200 lignes)
+- `backtesting/cli/_impl.py` — commande `walk-forward-conviction` + handler `_run_walk_forward_conviction`
+
+**Usage**
+```bash
+# Walk-forward conviction standard (moteur simplifié par fold)
+python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-31 --min-train-days 252 --test-days 63
+
+# Avec Kelly raffiné dans BacktestEngine sur chaque fold train
+python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-31 --min-train-days 252 --test-days 63 --backtest-kelly
+```
 
 **Critère de sortie**
-- Le walk-forward orchestre la calibration long+short de bout en bout et produit un verdict OOS fondé sur le vrai moteur.
+- ✅ Le walk-forward orchestre la calibration long+short de bout en bout et produit un verdict OOS fondé sur le vrai moteur.
 
 ### Sprint 5 — Architecture proche du market-neutral
 
@@ -409,5 +422,5 @@ Toutes les incohérences n'ont pas le même poids :
 | ML Predict (probas ternaires) | ✅ Cohérent | — |
 | Conviction (long-only, simplifié) | � Cohérent long+short (Sprint 2) | Moteur simplifié → Sprint 3 |
 | Kelly (long-only, simplifié) | � BacktestEngine disponible (Sprint 3) | Activer `--backtest-kelly` pour validation |
-| Walk-Forward (long+short, complet) | 🟢 Brique centrale | En faire l'orchestrateur de calibration OOS |
+| Walk-Forward (long+short, complet) | 🟢 Orchestrateur central (Sprint 4) | `walk-forward-conviction` |
 | Backtest complet | 🟢 Référence finale | Arbitrer toutes les variantes au niveau portefeuille |

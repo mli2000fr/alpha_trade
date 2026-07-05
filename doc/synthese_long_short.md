@@ -41,7 +41,7 @@
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt/Temperature), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
 | **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, **long + short depuis P2 2026-06-25**), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE` | 🟣 HYBRIDE |
-| **8. Calibration des Poids** | 3 niveaux : Conviction ✅, Sentiment ✅, Kelly ✅. IHM : onglets `📰 Calibrate sentiment`, `🎯 Calibrate conviction` (+ Kelly), `🚶 Walk-forward`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` | 🟣 HYBRIDE |
+| **8. Calibration des Poids** | 3 niveaux : Conviction ✅, Sentiment ✅, Kelly ✅. IHM : onglets `📰 Calibrate sentiment`, `🎯 Calibrate conviction` (+ Kelly + `--backtest-kelly`), `🔄 Walk-forward conviction` (Sprint 4), `🚶 Walk-forward sentiment`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` | 🟣 HYBRIDE |
 | **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
 | **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
 | **11. Caveats** | 12 points d'attention : fonctionnalités désactivées, ✅ PIT corrigé, asymétries long/short, limites backtest, risques ML/Kelly | — |
@@ -1547,10 +1547,21 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 >    └─ Ou CLI : python -m backtesting calibrate-conviction-weights --scope all
 >    └─ Trouve le meilleur fraction_multiplier / payoff_ratio / min_probability
 >    └─ Produit : mêmes artefacts, colonnes Kelly en plus
+>    └─ 🆕 Sprint 3 : cocher aussi ☑ "Kelly via BacktestEngine" pour raffiner
+>       les paramètres Kelly dans le vrai moteur (stops, corrélation, slippage).
+>       Flag CLI : --backtest-kelly.
 >
-> 6. VALIDATION WALK-FORWARD (optionnel mais recommandé)
+> 6. VALIDATION WALK-FORWARD CONVICTION (Sprint 4)
+>    └─ IHM → 🔄 Walk-forward conviction (nouvel onglet, Sprint 4)
+>    └─ Ou CLI : python -m backtesting walk-forward-conviction --start ... --end ...
+>    └─ Calibre conviction + Kelly par folds glissants (train/test)
+>    └─ Valide OOS dans BacktestEngine avec métriques par jambe
+>    └─ Supporte --backtest-kelly pour raffiner Kelly dans chaque fold
+>    └─ Produit : artifacts/walk_forward_conviction/walk_forward_optimize_report.json
+>
+> 7. VALIDATION WALK-FORWARD SENTIMENT (optionnel)
 >    └─ IHM → 🚶 Walk-forward sentiment
->    └─ Vérifie que les poids calibrés tiennent hors-échantillon
+>    └─ Vérifie que les poids sentiment calibrés tiennent hors-échantillon
 >
 > 7. APPLICATION
 >    ├─ 🟢 LIVE  → Appliquer les poids calibrés :
@@ -1591,10 +1602,10 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 > | Calibration | Onglet IHM | Action |
 > |-------------|-----------|--------|
 > | **Sentiment** (quant/sentiment/macro) | `📰 Calibrate sentiment` | Lance `calibrate-sentiment-weights`. Définir dates, top-N, horizons. Produit `sentiment_weight_calibration.csv` + `_best.json` dans `artifacts/sentiment_calibration/` |
-> | **Walk-Forward** (validation OOS) | `🚶 Walk-forward sentiment` | Lance `walk-forward-sentiment`. Backtest complet par folds glissants. Produit `latest_best_weights.json` dans `artifacts/sentiment_walk_forward/` |
+> | **Conviction + Kelly** (quant/ML) | `🎯 Calibrate conviction` | Lance `calibrate-conviction-weights`. Calibre `score_weight`/`prediction_weight` + Kelly. ☑ « Inclure Kelly » pour le sizing, ☑ « Kelly via BacktestEngine » (`--backtest-kelly`, Sprint 3) |
+> | **Walk-Forward Conviction** (Sprint 4) | `🔄 Walk-forward conviction` | Lance `walk-forward-conviction`. Calibre conviction + Kelly par folds glissants avec validation OOS BacktestEngine. Supporte `--backtest-kelly` |
+> | **Walk-Forward Sentiment** (validation OOS) | `🚶 Walk-forward sentiment` | Lance `walk-forward-sentiment`. Backtest complet par folds glissants. Produit `latest_best_weights.json` |
 > | **Trimestrielle** (conviction + Kelly) | `🎛️ Calibration trimestrielle poids` | Lance `scripts/run_quarterly_weights_calibration.py`. Recalibre poids score (Sharpe/hit-ratio/IC) sur 4 trimestres |
-> | **Conviction uniquement** | ✅ **Câblé (P2 2026-06-25)** — onglet `🎯 Calibrate conviction` | Lance `calibrate-conviction-weights`. Calibre `score_weight`/`prediction_weight` + Kelly via walk-forward backtest. Produit les artefacts dans `artifacts/conviction_calibration/` |
-> | **Kelly uniquement** | ✅ **Intégré (P2 2026-06-25)** — checkbox « Inclure calibration Kelly » dans l'onglet `🎯 Calibrate conviction` | Cochée par défaut, lance la calibration conjointe conviction + Kelly. Décocher pour ne calibrer que les poids conviction |
 >
 > ```
 > + ✅ FAIT — Onglet IHM Conviction calibration câblé le 2026-06-25
@@ -1613,6 +1624,21 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 > +       → La commande CLI --scope kelly reste disponible pour usage avancé
 > +       → Impact : fraction_multiplier, payoff_ratio, min_probability
 > +         sont recalibrés automatiquement avec les poids conviction
+> +
+> + 🆕 FAIT — Checkbox IHM « Kelly via BacktestEngine » (Sprint 3, 2026-07-05)
+> +       → Onglet "🎯 Calibrate conviction" → nouvelle checkbox
+> +         « Kelly via BacktestEngine (⚠️ coûteux) »
+> +       → Flag CLI : --backtest-kelly
+> +       → Impact : les paramètres Kelly sont raffinés dans BacktestEngine
+> +         (stops, corrélation, circuit breaker, slippage)
+> +
+> + 🆕 FAIT — Onglet IHM « 🔄 Walk-forward conviction » (Sprint 4, 2026-07-05)
+> +       → Page Backtesting → nouvel onglet
+> +       → Commande CLI : python -m backtesting walk-forward-conviction
+> +         --start 2022-01-01 --end 2025-12-31 --min-train-days 252 --test-days 63
+> +       → Supporte --backtest-kelly pour raffiner Kelly dans chaque fold
+> +       → Impact : calibration conviction + Kelly par folds glissants
+> +         avec validation OOS via BacktestEngine, métriques par jambe
 > ```
 >
 > **Consultation des résultats** : page `📊 Weights Calibration Runs` → historique des runs dans `weights_calibration_runs` (DB), avec segments (régime × horizon), drifts, et best_weights.
@@ -2152,9 +2178,10 @@ graph LR
 | `python -m backtesting run` | 🔵 BACKTEST | Backtest principal |
 | `python -m backtesting run --tracker-state <path>` | 🔵 BACKTEST | Backtest avec état des trackers chargé (P2) |
 | `python -m backtesting run --load-tracker-state` | 🔵 BACKTEST | Raccourci : charge `artifacts/backtesting/tracker_state.json` (P2) |
-| `python -m backtesting calibrate-conviction-weights` | 🔵 BACKTEST | Calibration conviction (quant/ML) + Kelly (P2) |
+| `python -m backtesting calibrate-conviction-weights` | 🔵 BACKTEST | Calibration conviction (quant/ML) + Kelly (P2). `--backtest-kelly` pour raffiner Kelly dans BacktestEngine (Sprint 3) |
+| `python -m backtesting walk-forward-conviction` | 🔵 BACKTEST | Walk-forward conviction + Kelly par folds OOS (Sprint 4). `--backtest-kelly` pour raffiner Kelly par fold |
 | `python -m backtesting calibrate-sentiment-weights` | 🔵 BACKTEST | Calibration des poids sentiment |
-| `python -m backtesting walk-forward-sentiment` | 🔵 BACKTEST | Walk-forward calibration |
+| `python -m backtesting walk-forward-sentiment` | 🔵 BACKTEST | Walk-forward calibration sentiment |
 | `python -m backtesting backfill-scores-history` | 🔵 BACKTEST | Remplit `stock_scores_history` pour PIT |
 | `python run_execution.py simulate` | 🟢 LIVE (dry-run) | Simulation sans ordre réel |
 | `python run_execution.py paper` | 🟢 LIVE (paper) | Paper trading Alpaca |

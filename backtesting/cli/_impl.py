@@ -1308,6 +1308,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Activer la calibration Kelly via BacktestEngine (coûteux, ~27 backtests complets par direction)",
     )
 
+    # Sprint 4 — walk-forward conviction orchestrateur
+    wf_conv_p = sub.add_parser(
+        "walk-forward-conviction",
+        help="Walk-forward complet conviction + Kelly + validation OOS par folds (Sprint 4).",
+    )
+    wf_conv_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
+    wf_conv_p.add_argument("--end", required=True, help="Date de fin (YYYY-MM-DD)")
+    wf_conv_p.add_argument("--top-n", type=int, default=20, help="Nombre de symboles retenus par jour")
+    wf_conv_p.add_argument("--horizons", default="5,10,20", help="Horizons forward CSV à évaluer")
+    wf_conv_p.add_argument("--min-train-days", type=int, default=252, help="Jours calendaires minimum d'entraînement par fold")
+    wf_conv_p.add_argument("--test-days", type=int, default=63, help="Jours calendaires hors échantillon par fold")
+    wf_conv_p.add_argument("--step-days", type=int, default=None, help="Décalage entre folds (défaut = test-days)")
+    wf_conv_p.add_argument(
+        "--output-dir",
+        default="artifacts/walk_forward_conviction",
+        help="Répertoire cible pour les artefacts",
+    )
+    wf_conv_p.add_argument(
+        "--backtest-kelly",
+        action="store_true",
+        default=False,
+        help="Activer la calibration Kelly via BacktestEngine dans chaque fold train",
+    )
+
     walk_forward_p = sub.add_parser(
         "walk-forward-sentiment",
         help="Calibration walk-forward stricte des poids sentiment/macro avec backtest portefeuille hors échantillon.",
@@ -3513,6 +3537,59 @@ def _run_calibrate_conviction_weights(args: argparse.Namespace) -> None:
     _safe_print("\n✅ Calibration conviction terminée")
 
 
+def _run_walk_forward_conviction(args: argparse.Namespace) -> None:
+    """Sprint 4 — walk-forward complet conviction + Kelly + validation OOS."""
+    from datetime import datetime
+
+    from backtesting.weights_calibration import EmpiricalRiskCalibrator
+
+    start = datetime.strptime(args.start, "%Y-%m-%d").date()
+    end = datetime.strptime(args.end, "%Y-%m-%d").date()
+    horizons = tuple(int(token.strip()) for token in args.horizons.split(",") if token.strip())
+    use_backtest_kelly = bool(getattr(args, "backtest_kelly", False))
+
+    _safe_print(f"\n🔄 Walk-forward conviction : {start} → {end}")
+    _safe_print(
+        f"   horizons={','.join(str(h) for h in horizons)} top_n={args.top_n} "
+        f"min_train_days={args.min_train_days} test_days={args.test_days} "
+        f"backtest_kelly={use_backtest_kelly} output_dir={args.output_dir}\n"
+    )
+
+    calibrator = EmpiricalRiskCalibrator()
+
+    for horizon in horizons:
+        _safe_print(f"── Horizon {horizon}j ──")
+        try:
+            report = calibrator.walk_forward_optimize(
+                start_date=start,
+                end_date=end,
+                output_dir=Path(args.output_dir) / f"horizon_{horizon}d",
+                top_n=args.top_n,
+                horizon_days=horizon,
+                min_train_days=args.min_train_days,
+                test_days=args.test_days,
+                step_days=args.step_days,
+                use_backtest_kelly=use_backtest_kelly,
+            )
+            summary = report.get("summary", {})
+            folds = report.get("folds", [])
+            best = report.get("best_overall_scenario", {})
+            _safe_print(f"   Folds évalués       : {summary.get('folds_evaluated', 0)}")
+            _safe_print(f"   Sharpe OOS moyen    : {summary.get('oos_sharpe_mean', 0):.4f} ± {summary.get('oos_sharpe_std', 0):.4f}")
+            if best:
+                _safe_print(f"   Meilleur fold       : {best.get('fold_index')} (Sharpe OOS: {best.get('oos_sharpe_combined', 0):.4f})")
+            for f in folds:
+                _safe_print(
+                    f"   Fold {f['fold_index']:02d} | train Sharpe={f['train_sharpe']:.3f} "
+                    f"| OOS long={f['oos_sharpe_long']:.3f} short={f['oos_sharpe_short']:.3f} "
+                    f"combined={f['oos_sharpe_combined']:.3f}"
+                )
+        except Exception as exc:
+            _safe_print(f"   ⚠️ Échec horizon {horizon}j : {exc}")
+
+    _safe_print("\n✅ Walk-forward conviction terminé")
+
+
 def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
     from datetime import datetime
 
@@ -3614,6 +3691,8 @@ def main() -> None:
         _run_calibrate_sentiment_weights(args)
     elif args.command == "calibrate-conviction-weights":
         _run_calibrate_conviction_weights(args)
+    elif args.command == "walk-forward-conviction":
+        _run_walk_forward_conviction(args)
     elif args.command == "walk-forward-sentiment":
         _run_walk_forward_sentiment(args)
     else:

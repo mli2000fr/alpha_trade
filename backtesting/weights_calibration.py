@@ -1264,6 +1264,240 @@ class EmpiricalRiskCalibrator:
             )
         return best_params
 
+    def walk_forward_optimize(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        output_dir: str | Path,
+        top_n: int = 20,
+        horizon_days: int = 5,
+        metric_name: str = "sharpe",
+        conviction_grid_step: float = 0.1,
+        kelly_fraction_multipliers: Sequence[float] = (0.10, 0.25, 0.50),
+        min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
+        assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
+        candidates_only: bool = True,
+        min_train_days: int = 252,
+        test_days: int = 63,
+        step_days: int | None = None,
+        initial_equity: float = 100_000.0,
+        use_backtest_kelly: bool = False,
+    ) -> dict[str, Any]:
+        """Walk-forward complet : calibration + validation OOS par folds.
+
+        Pour chaque fold :
+        1. Sur la fenêtre **train** : calibration conviction long+short + Kelly
+        2. Sur la fenêtre **test** : validation OOS via ``BacktestEngine``
+        3. Métriques portefeuille consolidées par jambe
+
+        Returns
+        -------
+        dict with keys ``folds``, ``summary``, ``best_overall_scenario``.
+
+        .. versionadded:: Sprint 4
+        """
+        from backtesting.sentiment_calibration import SentimentWeightCalibrator
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # Charger le dataset complet
+        dataset = self.load_dataset(
+            start_date=start_date,
+            end_date=end_date,
+            horizon_days=horizon_days,
+            candidates_only=candidates_only,
+        )
+        if dataset.empty:
+            raise ValueError("walk_forward_optimize : dataset vide, calibration impossible.")
+
+        # Construire les fenêtres walk-forward
+        windows = SentimentWeightCalibrator.build_walk_forward_windows(
+            dataset["snapshot_date"],
+            min_train_days=min_train_days,
+            test_days=test_days,
+            step_days=step_days,
+        )
+        if not windows:
+            LOGGER.warning("walk_forward_optimize: aucun fold généré (min_train_days=%s, test_days=%s)", min_train_days, test_days)
+            return {"folds": [], "summary": {"folds_evaluated": 0}, "best_overall_scenario": None}
+
+        dataset["snapshot_date"] = pd.to_datetime(dataset["snapshot_date"])
+
+        fold_results: list[dict[str, Any]] = []
+        best_overall_sharpe = -float("inf")
+        best_overall_scenario: dict[str, Any] | None = None
+
+        for window in windows:
+            fold_idx = int(window["fold_index"])
+            train_start = pd.Timestamp(window["train_start_date"]).date()
+            train_end = pd.Timestamp(window["train_end_date"]).date()
+            test_start = pd.Timestamp(window["test_start_date"]).date()
+            test_end = pd.Timestamp(window["test_end_date"]).date()
+
+            train_dataset = dataset[
+                dataset["snapshot_date"].between(
+                    pd.Timestamp(train_start), pd.Timestamp(train_end)
+                )
+            ].copy()
+            test_dataset = dataset[
+                dataset["snapshot_date"].between(
+                    pd.Timestamp(test_start), pd.Timestamp(test_end)
+                )
+            ].copy()
+
+            if train_dataset.empty or test_dataset.empty:
+                LOGGER.info("walk_forward_optimize fold=%s: train ou test vide, skip", fold_idx)
+                continue
+
+            fold_out = output_path / f"fold_{fold_idx:03d}"
+            fold_out.mkdir(parents=True, exist_ok=True)
+
+            # ── Train : calibration conviction + Kelly ──
+            try:
+                run, _, _, _, artifacts = self.walk_forward_backtest(
+                    start_date=train_start,
+                    end_date=train_end,
+                    output_dir=fold_out,
+                    top_n=top_n,
+                    horizon_days=horizon_days,
+                    metric_name=metric_name,
+                    conviction_grid_step=conviction_grid_step,
+                    kelly_fraction_multipliers=kelly_fraction_multipliers,
+                    min_effective_probabilities=min_effective_probabilities,
+                    assumed_payoff_ratios=assumed_payoff_ratios,
+                    candidates_only=candidates_only,
+                    dataset=train_dataset,
+                    use_backtest_kelly=use_backtest_kelly,
+                )
+            except Exception:
+                LOGGER.warning("walk_forward_optimize fold=%s: échec calibration train", fold_idx, exc_info=True)
+                continue
+
+            train_weights = run.best_weights
+            train_sharpe = float(run.sharpe_ratio)
+
+            # ── Test : validation OOS via BacktestEngine ──
+            oos_metrics_long = {"sharpe": 0.0, "total_return_pct": 0.0, "max_drawdown_pct": 0.0}
+            oos_metrics_short = {"sharpe": 0.0, "total_return_pct": 0.0, "max_drawdown_pct": 0.0}
+
+            # Long OOS
+            if "long_score_weight" in train_weights:
+                long_conv = ConvictionWeights(
+                    score_weight=float(train_weights["long_score_weight"]),
+                    prediction_weight=float(train_weights["long_prediction_weight"]),
+                )
+                long_kelly = {
+                    "kelly_fraction_multiplier": float(train_weights.get("long_kelly_fraction_multiplier", 0.25)),
+                    "min_effective_probability": float(train_weights.get("long_min_effective_probability", 0.52)),
+                    "assumed_payoff_ratio": float(train_weights.get("long_assumed_payoff_ratio", 1.5)),
+                }
+                oos_metrics_long = self.evaluate_kelly_in_backtest(
+                    dataset=test_dataset,
+                    conviction_weights=long_conv,
+                    kelly_params=long_kelly,
+                    top_n=top_n,
+                    start_date=test_start,
+                    end_date=test_end,
+                    initial_equity=initial_equity,
+                    direction="long",
+                )
+
+            # Short OOS
+            if "short_score_weight" in train_weights:
+                short_conv = ConvictionWeights(
+                    score_weight=float(train_weights["short_score_weight"]),
+                    prediction_weight=float(train_weights["short_prediction_weight"]),
+                )
+                short_kelly = {
+                    "kelly_fraction_multiplier": float(train_weights.get("short_kelly_fraction_multiplier", 0.25)),
+                    "min_effective_probability": float(train_weights.get("short_min_effective_probability", 0.52)),
+                    "assumed_payoff_ratio": float(train_weights.get("short_assumed_payoff_ratio", 1.5)),
+                }
+                oos_metrics_short = self.evaluate_kelly_in_backtest(
+                    dataset=test_dataset,
+                    conviction_weights=short_conv,
+                    kelly_params=short_kelly,
+                    top_n=top_n,
+                    start_date=test_start,
+                    end_date=test_end,
+                    initial_equity=initial_equity,
+                    direction="short",
+                )
+
+            # Métrique consolidée (moyenne long + short)
+            oos_sharpe = (
+                oos_metrics_long.get("sharpe", 0.0) + oos_metrics_short.get("sharpe", 0.0)
+            ) / 2.0 if (oos_metrics_long.get("sharpe") or oos_metrics_short.get("sharpe")) else 0.0
+
+            fold_result = {
+                "fold_index": fold_idx,
+                "train_start": train_start.isoformat(),
+                "train_end": train_end.isoformat(),
+                "test_start": test_start.isoformat(),
+                "test_end": test_end.isoformat(),
+                "train_sharpe": round(train_sharpe, 4),
+                "oos_sharpe_long": round(float(oos_metrics_long.get("sharpe", 0.0)), 4),
+                "oos_sharpe_short": round(float(oos_metrics_short.get("sharpe", 0.0)), 4),
+                "oos_sharpe_combined": round(oos_sharpe, 4),
+                "oos_return_long_pct": round(float(oos_metrics_long.get("total_return_pct", 0.0)), 2),
+                "oos_return_short_pct": round(float(oos_metrics_short.get("total_return_pct", 0.0)), 2),
+                "oos_drawdown_long_pct": round(float(oos_metrics_long.get("max_drawdown_pct", 0.0)), 2),
+                "oos_drawdown_short_pct": round(float(oos_metrics_short.get("max_drawdown_pct", 0.0)), 2),
+                "best_weights": train_weights,
+            }
+            fold_results.append(fold_result)
+
+            if oos_sharpe > best_overall_sharpe:
+                best_overall_sharpe = oos_sharpe
+                best_overall_scenario = {
+                    "fold_index": fold_idx,
+                    "best_weights": train_weights,
+                    "oos_sharpe_combined": round(oos_sharpe, 4),
+                }
+
+            LOGGER.info(
+                "walk_forward_optimize fold=%s train_sharpe=%.3f oos_sharpe_long=%.3f oos_sharpe_short=%.3f oos_combined=%.3f",
+                fold_idx,
+                train_sharpe,
+                oos_metrics_long.get("sharpe", 0.0),
+                oos_metrics_short.get("sharpe", 0.0),
+                oos_sharpe,
+            )
+
+        # ── Résumé global ──
+        oos_sharpes = [f["oos_sharpe_combined"] for f in fold_results if f.get("oos_sharpe_combined", 0) != 0]
+        summary = {
+            "folds_evaluated": len(fold_results),
+            "oos_sharpe_mean": round(float(np.mean(oos_sharpes)), 4) if oos_sharpes else 0.0,
+            "oos_sharpe_std": round(float(np.std(oos_sharpes)), 4) if oos_sharpes else 0.0,
+            "min_train_days": min_train_days,
+            "test_days": test_days,
+        }
+
+        # Sauvegarder le rapport
+        report_path = output_path / "walk_forward_optimize_report.json"
+        report_data = {
+            "config": {
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "top_n": top_n,
+                "horizon_days": horizon_days,
+                "min_train_days": min_train_days,
+                "test_days": test_days,
+                "use_backtest_kelly": use_backtest_kelly,
+            },
+            "summary": summary,
+            "folds": fold_results,
+            "best_overall_scenario": best_overall_scenario,
+        }
+        with open(report_path, "w", encoding="utf-8") as fh:
+            json.dump(report_data, fh, indent=2, default=str)
+        LOGGER.info("walk_forward_optimize: rapport sauvegardé → %s", report_path)
+
+        return report_data
+
     def walk_forward_backtest(
         self,
         *,
