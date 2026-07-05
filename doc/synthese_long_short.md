@@ -21,6 +21,7 @@
 | **Qu'est-ce qui diffère entre long et short ?** | Short = score dédié indépendant du `final_score`, conviction inversée (`1-score`), proba ML distincte (`proba_short`), paramètres risk dédiés (max 2 positions, TP 8%, trailing 10%). Depuis P1 (2026-06-25) : breakout filter appliqué aussi aux shorts |
 | **Comment sont calibrés les poids ?** | Grid search backtest sur `stock_scores_history` : conviction (quant/ML), sentiment (quant/sentiment/macro), Kelly (fraction, payoff). Métriques : IC, hit_rate, Sharpe, log_growth |
 | **Comment le régime impacte les scores ?** | 2 jeux de poids : **NORMAL** (trend_vcp=0.50, total=0.30, rsi=0.20) vs **CAPITAL_PRESERVATION** (trend_vcp=0.25, total=0.15, rsi=0.10 + 0.50 défensif). Rotation forcée si perte > -3% sur 4 semaines. Shortscore non affecté, mais paramètres short boostés en bear (P2 2026-06-25) |
+| **Pourquoi et comment les données macro ?** | Pipeline 5 étapes (§3.0.0) : `config.yaml` → `MacroDataProvider` → `build_snapshot()` chaque jour → mode de régime (normal/capital_preservation/close_only/cash_only) → `RiskConfig` → sélecteur. But = protection capital en période de stress. ⚠️ Si données manquantes → biais massif (cf. backtest `53bc6f10` : -43%) |
 | **Champion selection ML ?** | ⚠️ Désactivé par défaut → toujours `lstm_attention`. Si activé : choisit entre LSTM, CatBoost, LightGBM, GlobalModel sur métrique `selection_score` |
 | **Target optimization ?** | ⚠️ Désactivé par défaut. Grid search horizon×seuils UP×seuils DOWN. Score = trade_rate × class_balance × separation |
 | **Paramètres spécifiques shorts ?** | Max 2 positions, TP 8%, trailing 10%, time-stop 20j, score min 0.30. Breakout filter actif (même min_breakout_days que longs). Conviction = 0.70×(1-score) + 0.30×proba_ml_short |
@@ -35,7 +36,7 @@
 | **0. Architecture Backtest vs Live** | Préface : 2 modes (LIVE/BACKTEST), rôle de `stock_scores_history` (PIT), cycle hybride walk-forward | — |
 | **1. Calcul des scores Long/Short** | Formules `final_score` et `short_score`, facteurs techniques, neutralisation sectorielle, rank_and_select | 🟢 LIVE |
 | **2. Utilisation du sentiment** | Pipeline FinBERT → agrégation → fusion ternaire → `final_score_sentiment`, poids par défaut (sentiment=0) | 🟢 LIVE |
-| **3. Régime de Marché** | Poids NORMAL vs CAPITAL_PRESERVATION, MomentumRotationState (-3%/4sem), filtres défensifs actifs (beta/spread/mcap/ATR), ✅ filtres `regime_filters.py` câblés (earnings/buyback/yield), asymétrie long/short, shorts boostés en bear (P2) | 🟢🔵 BOTH |
+| **3. Régime de Marché** | **3.0.0 Flux complet des données macro** (pourquoi, à quelle étape, dans quel but, schéma), 3.0 Indicateurs (VIX/VXN/VIX3M/MOVE/RVX), 3.1 Poids NORMAL vs CAPITAL_PRESERVATION, 3.2 MomentumRotationState (-3%/4sem), 3.3 Filtres défensifs (beta/spread/mcap/ATR), 3.4 Filtres `regime_filters.py` câblés (earnings/buyback/yield), 3.5 Asymétrie long/short, shorts boostés en bear (P2) | 🟢🔵 BOTH |
 | **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt/Temperature), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
@@ -261,6 +262,199 @@ Donc **en production, le sentiment et les features macro (VXN, VIX3M, MOVE, RVX)
 ---
 
 ## 3. RÉGIME DE MARCHÉ — Impact sur les scores 🟢🔵 BOTH
+
+### 3.0.0 Flux complet des données macro : pourquoi, à quelle étape, dans quel but
+
+> **Ajouté le 2026-07-05** — cette section explique la chaîne complète, de `config.yaml` jusqu'à la décision de trading, et répond aux questions : pourquoi utiliser des données macro ? À quel moment précis sont-elles consommées ? Que se passe-t-il si elles sont manquantes ?
+
+#### 🎯 Objectif final : protection du capital en période de stress
+
+Les données macro (VIX, taux, volatilité obligataire...) n'interviennent **pas** dans le calcul du score des titres individuels. Elles servent à **piloter une couche défensive globale** qui, en période de stress marché, réduit automatiquement l'exposition, coupe les longs, et ne conserve que des shorts (ou ferme tout). C'est un **risk management macro** qui opère **avant** la sélection de titres.
+
+#### 📋 Les 5 étapes du pipeline macro
+
+##### Étape 1 — Configuration (`config.yaml`)
+
+```yaml
+market_regimes:
+  enabled: true
+  macro_provider: eodhd      # eodhd | stooq | composite | none
+  yields:
+    provider: fred           # default | stooq | eodhd | fred
+```
+
+C'est ici qu'on choisit **quelle source** fournira chaque indicateur macro. Le provider `eodhd` nécessite un token API valide (`EODHD_API_TOKEN`). Le provider `stooq` est gratuit et sans clé. Le provider `fred` utilise la clé `KEY_FRED` pour les taux US.
+
+##### Étape 2 — Construction du `MacroDataProvider` (avant la boucle de backtest)
+
+Dans `backtesting/cli/_impl.py` (~ligne 2198), **avant** de lancer la simulation jour par jour :
+
+1. Lecture de `config.yaml`
+2. Appel à `build_default_macro_provider()` (`service/market/macro_providers.py`)
+3. Cette factory instancie le(s) bon(s) provider(s) : `EodhdMacroProvider`, `StooqMacroProvider`, `FredMacroProvider`, ou un `CompositeMacroProvider` (fallback en cascade)
+4. Le provider est wrappé dans un `TableFirstMacroProvider` qui lit d'abord la table `stock_macro_indicators_daily` (cache DB), avec fallback réseau si absent
+5. Il est passé à `build_phase2_risk_result()` → `risk_bridge.py`
+
+##### Étape 3 — Pour chaque jour de trading : `build_snapshot()`
+
+Dans `backtesting/risk_bridge.py` (~ligne 388), **pour chaque séance** de la période de backtest :
+
+```python
+snap = build_snapshot(
+    trade_date,
+    config=market_regimes_config,
+    macro_provider=macro_provider,   # ← les données macro sont consommées ICI
+    ...
+)
+```
+
+Ce `build_snapshot()` (`service/market/regime_manager.py`) interroge le provider pour **7 indicateurs** :
+
+| Signal | Méthode appelée | Ce qu'il mesure | Si manquant |
+|--------|----------------|-----------------|-------------|
+| **VIX** | `get_vix_close()` | Volatilité S&P 500 — si ≥ 25 → alerte | `vix_high=False` |
+| **VIX9D** | `get_vix_short_term_close()` | VIX court terme vs spot → courbe inversée ? | `curve_inverted=False` |
+| **VXN** | `get_vxn_close()` | Volatilité Nasdaq-100 — si ≥ 23 → alerte | `vxn_high=False` |
+| **VIX3M** | `get_vix3m_close()` | Structure à terme VIX → ratio VIX/VIX3M > 1 = backwardation | `backwardation=False` |
+| **MOVE** | `get_move_close()` | Volatilité obligataire ICE BofA — si ≥ 120 → alerte | `move_high=False` |
+| **RVX** | `get_rvx_close()` | Volatilité Russell 2000 Small Caps — si ≥ 30 → alerte | `rvx_high=False` |
+| **US10Y** | `get_us10y_history()` | Variation du taux 10 ans US sur 5 jours → spike ? | `yield_spike=False` |
+
+Chaque indicateur est comparé à un seuil configurable. Si la valeur est **manquante** (API down, token invalide...), le signal est traité comme **non déclenché** (comportement `False` par défaut), et la qualité de donnée est marquée `missing`.
+
+##### Étape 4 — Le snapshot détermine le mode de régime
+
+Les signaux macro sont combinés pour produire un **mode de régime** parmi 4 niveaux de restriction croissante :
+
+```
+normal  →  capital_preservation  →  close_only  →  cash_only
+```
+
+| Mode | Nouvelles entrées | Longs | Shorts | Risk multiplier | Max positions |
+|------|-------------------|-------|--------|----------------|---------------|
+| `normal` | ✅ | ✅ | selon config | 1.00 | normal |
+| `capital_preservation` | ✅ | ❌ (`allow_long=False`) | ✅ boostés | 0.85 | réduit |
+| `close_only` | ❌ | ❌ | ❌ | 0.25 | 1 |
+| `cash_only` | ❌ | ❌ | ❌ | 0.00 | 0 |
+
+Le snapshot produit aussi des **caps défensifs** : `max_position_weight`, `max_sector_weight`, `max_gross_exposure`.
+
+Un mécanisme d'**hystérésis** (`service/market/regime_manager.py` → `_apply_hysteresis()`) empêche les oscillations rapides : il faut plusieurs jours consécutifs de signaux pour entrer/sortir d'un mode défensif, et un temps de maintien minimum avant de pouvoir en sortir.
+
+##### Étape 5 — Application au `RiskConfig` puis au sélecteur
+
+Le snapshot est appliqué via `risk_management/regime_apply.py` → `apply_snapshot()` :
+- Modifie le `RiskConfig` du jour (risk multiplier, max positions, caps)
+- Le sélecteur (`selector/regime_scoring.py`) adapte les poids de scoring selon le régime :
+  - **NORMAL** : 50% trend_vcp, 30% total_score, 20% RSI (momentum offensif)
+  - **CAPITAL_PRESERVATION** : 25% trend_vcp, 15% total_score, 10% RSI + 50% facteurs défensifs (low beta, large cap, low vol)
+- `selector/short_score.py` → `resolve_short_trigger()` décide si les shorts sont activés/boostés selon le régime
+
+#### 🔄 Schéma du flux complet
+
+```mermaid
+graph TD
+    subgraph "1. CONFIG"
+        A["config.yaml<br/>macro_provider: eodhd<br/>yields.provider: fred"]
+    end
+
+    subgraph "2. PROVIDERS (avant la boucle)"
+        B["build_default_macro_provider()<br/>macro_providers.py"]
+        C1["EodhdMacroProvider<br/>VIX,VIX9D,VXN,VIX3M,MOVE,RVX,US10Y"]
+        C2["FredMacroProvider<br/>US10Y (DGS10)"]
+        C3["StooqMacroProvider<br/>VIX,VIX9D,US10Y (gratuit)"]
+        C4["TableFirstMacroProvider<br/>cache DB → fallback réseau"]
+        A --> B
+        B --> C1
+        B --> C2
+        B --> C3
+        C1 --> C4
+        C2 --> C4
+        C3 --> C4
+    end
+
+    subgraph "3. SNAPSHOT (chaque jour)"
+        D["build_snapshot()<br/>regime_manager.py"]
+        E1["evaluate_vix()<br/>VIX ≥ 25 ?"]
+        E2["evaluate_vxn()<br/>VXN ≥ 23 ?"]
+        E3["evaluate_vix_term_structure()<br/>ratio VIX/VIX3M > 1 ?"]
+        E4["MOVE<br/>≥ 120 ?"]
+        E5["RVX<br/>≥ 30 ?"]
+        E6["evaluate_yield_10y()<br/>spike 5j ?"]
+        E7["Calendrier<br/>FOMC, OPEX, etc."]
+        E8["Sentiment<br/>score < −0.15 ?"]
+        C4 --> D
+        D --> E1
+        D --> E2
+        D --> E3
+        D --> E4
+        D --> E5
+        D --> E6
+        D --> E7
+        D --> E8
+    end
+
+    subgraph "4. RÉGIME (sortie snapshot)"
+        F{MODE DÉCISION}
+        F -->|"tout OK"| G1["NORMAL<br/>✅ longs + shorts<br/>risk×1.0"]
+        F -->|"VIX haut OU<br/>yield spike"| G2["CAPITAL_PRESERVATION<br/>❌ longs bloqués<br/>✅ shorts boostés<br/>risk×0.85"]
+        F -->|"choc dur OU<br/>sentiment critique"| G3["CLOSE_ONLY<br/>❌ aucune entrée<br/>risk×0.25"]
+        F -->|"krach"| G4["CASH_ONLY<br/>❌ tout fermé<br/>risk×0"]
+    end
+
+    subgraph "5. APPLICATION"
+        H["apply_snapshot()<br/>regime_apply.py"]
+        I["RiskConfig modifié<br/>(risk_multiplier, caps, max_positions)"]
+        J["Scoring directionnel<br/>regime_scoring.py<br/>(poids NORMAL vs CAPITAL_PRESERVATION)"]
+        K["Short trigger<br/>short_score.py<br/>(allow_long=False ? shorts boostés ?)"]
+        G1 --> H
+        G2 --> H
+        G3 --> H
+        G4 --> H
+        H --> I
+        I --> J
+        I --> K
+    end
+
+    J --> L["DÉCISION FINALE<br/>positions acceptées/rejetées"]
+    K --> L
+
+    style A fill:#1a1a2e,stroke:#e94560,color:#eee
+    style C1 fill:#16213e,stroke:#e94560,color:#eee
+    style C2 fill:#16213e,stroke:#0f3460,color:#eee
+    style C3 fill:#16213e,stroke:#53a8b6,color:#eee
+    style G1 fill:#1b4332,stroke:#52b788,color:#eee
+    style G2 fill:#5c4d00,stroke:#ffb703,color:#eee
+    style G3 fill:#6a040f,stroke:#e63946,color:#eee
+    style G4 fill:#3a0ca3,stroke:#7209b7,color:#eee
+    style L fill:#1a1a2e,stroke:#f72585,color:#eee
+```
+
+#### ⚠️ Que se passe-t-il quand les données macro sont manquantes ?
+
+C'est le **piège le plus dangereux** du système. Quand un indicateur est `missing` (ex: token EODHD invalide) :
+
+1. Le signal correspondant est traité comme **non déclenché** (`vix_high=False`, etc.)
+2. Cela donne l'illusion que « tout va bien » sur cet indicateur
+3. Si **tous** les indicateurs de volatilité sont `missing` sauf l'US10Y (qui vient de FRED), le régime ne voit que les signaux de taux
+4. Résultat : le moindre mouvement de taux déclenche `capital_preservation` → **longs bloqués**, seuls les shorts sont permis
+5. Si le marché est haussier (ex: reprise post-COVID mai-sept 2020), **tous les shorts perdent**
+
+**Cas réel documenté** (backtest `20260703_150341_53bc6f10`) :
+- Token EODHD invalide → VIX/VXN/VIX3M/MOVE/RVX = `missing` sur **1487/1487 jours**
+- US10Y via FRED = OK → spikes de taux détectés
+- Régime : `capital_preservation` → `allow_long=False`
+- Résultat : **98 shorts, 0 longs, 0% win rate, -43% de perte**
+
+**Solutions** :
+| Approche | Action | Coût |
+|----------|--------|------|
+| Changer de provider | `config.yaml` → `macro_provider: stooq` | Gratuit, sans token |
+| Renouveler le token | Mettre à jour `EODHD_API_TOKEN` | Abonnement EODHD |
+| Flag de contournement | `--allow-neutral-fallback-on-missing-macro-data` | Backtest dégradé (`data_quality=missing`) |
+| Désactiver la couche | `macro_provider: none` | Plus de protection macro |
+
+---
 
 ### 3.0 Indicateurs Macro de Volatilité (Sprint 2026-06-25)
 

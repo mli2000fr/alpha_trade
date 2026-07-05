@@ -589,6 +589,7 @@ def main(args: list[str] | None = None) -> None:
                         as_of_date=prediction_date,
                         persist=False,
                         accelerator=opts.accelerator,
+                        max_workers=opts.max_workers,
                     )
                     if not part.empty:
                         prediction_parts.append(part)
@@ -627,6 +628,7 @@ def main(args: list[str] | None = None) -> None:
                         as_of_date=prediction_date,
                         persist=False,
                         accelerator=opts.accelerator,
+                        max_workers=opts.max_workers,
                     )
                     if not part.empty:
                         prediction_parts.append(part)

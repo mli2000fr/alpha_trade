@@ -1417,11 +1417,17 @@ def predict_batch(
     as_of_date: Optional[date] = None,
     persist: bool = True,
     accelerator: str = "auto",
+    max_workers: int = 1,
 ) -> pd.DataFrame:
-    """Exécute les prédictions pour une liste de symboles."""
-    all_preds = []
-    completed = 0
-    skipped = 0
+    """Exécute les prédictions pour une liste de symboles.
+
+    Parameters
+    ----------
+    max_workers : int
+        Nombre de workers parallèles (ThreadPoolExecutor). 1 = séquentiel.
+        Au-dessus de 1, les updates runtime par symbole sont désactivées
+        (non thread-safe) et seul un résumé final est émis.
+    """
     total = len(symbols)
     update_runtime_status(
         current_phase="predict_batch_start",
@@ -1436,13 +1442,67 @@ def predict_batch(
         symbols_skipped=0,
         symbols_failed=0,
     )
-    for index, sym in enumerate(symbols, start=1):
+
+    if max_workers <= 1:
+        # ── Chemin séquentiel (comportement historique) ──────────
+        all_preds: list[pd.DataFrame] = []
+        completed = 0
+        skipped = 0
+        for index, sym in enumerate(symbols, start=1):
+            update_runtime_status(
+                current_phase="predict_symbol_start",
+                current_symbol=sym,
+                current_symbol_index=index,
+                progress_item=sym,
+            )
+            pred = predict_symbol(
+                sym,
+                artifacts_dir,
+                engine,
+                prediction_date,
+                as_of_date=as_of_date,
+                persist=persist,
+                accelerator=accelerator,
+            )
+            if pred is not None:
+                all_preds.append(pred)
+                completed += 1
+                phase = "predict_symbol_completed"
+            else:
+                skipped += 1
+                phase = "predict_symbol_skipped"
+            update_runtime_status(
+                current_phase=phase,
+                current_symbol=sym,
+                current_symbol_index=index,
+                progress_current=completed + skipped,
+                symbols_completed=completed,
+                symbols_skipped=skipped,
+                symbols_failed=0,
+                progress_item=sym,
+            )
         update_runtime_status(
-            current_phase="predict_symbol_start",
-            current_symbol=sym,
-            current_symbol_index=index,
-            progress_item=sym,
+            current_phase="predict_batch_completed",
+            progress_current=completed + skipped,
+            symbols_completed=completed,
+            symbols_skipped=skipped,
+            symbols_failed=0,
+            progress_item=None,
         )
+        if all_preds:
+            return pd.concat(all_preds, ignore_index=True)
+        return pd.DataFrame(columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"])
+
+    # ── Chemin parallèle (ThreadPoolExecutor) ─────────────────────
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    LOGGER.info("predict_batch parallel start symbols=%d workers=%d", total, max_workers)
+    all_preds: list[pd.DataFrame] = []
+    completed = 0
+    skipped = 0
+
+    def _predict_one(sym: str) -> tuple[str, pd.DataFrame | None]:
+        """Wrapper thread-safe : chaque thread utilise sa propre connexion DB."""
         pred = predict_symbol(
             sym,
             artifacts_dir,
@@ -1452,23 +1512,23 @@ def predict_batch(
             persist=persist,
             accelerator=accelerator,
         )
-        if pred is not None:
-            all_preds.append(pred)
-            completed += 1
-            phase = "predict_symbol_completed"
-        else:
-            skipped += 1
-            phase = "predict_symbol_skipped"
-        update_runtime_status(
-            current_phase=phase,
-            current_symbol=sym,
-            current_symbol_index=index,
-            progress_current=completed + skipped,
-            symbols_completed=completed,
-            symbols_skipped=skipped,
-            symbols_failed=0,
-            progress_item=sym,
-        )
+        return sym, pred
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {executor.submit(_predict_one, sym): sym for sym in symbols}
+        for future in as_completed(future_map):
+            sym = future_map[future]
+            try:
+                _, pred = future.result()
+                if pred is not None:
+                    all_preds.append(pred)
+                    completed += 1
+                else:
+                    skipped += 1
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("predict_batch worker failed symbol=%s error=%s", sym, exc)
+                skipped += 1
+
     update_runtime_status(
         current_phase="predict_batch_completed",
         progress_current=completed + skipped,
@@ -1476,6 +1536,11 @@ def predict_batch(
         symbols_skipped=skipped,
         symbols_failed=0,
         progress_item=None,
+        phase_detail=f"parallel workers={max_workers}",
+    )
+    LOGGER.info(
+        "predict_batch parallel done symbols=%d completed=%d skipped=%d workers=%d",
+        total, completed, skipped, max_workers,
     )
     if all_preds:
         return pd.concat(all_preds, ignore_index=True)

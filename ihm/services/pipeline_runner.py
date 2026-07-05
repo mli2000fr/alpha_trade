@@ -2194,6 +2194,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ml_artifacts_dir,
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
+            "--max-workers",
+            str(options.ml_max_workers),
         ]
         if options.ml_predict_use_historical_range:
             command.extend([
