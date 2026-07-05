@@ -22,6 +22,7 @@ from ihm.services.backtesting_runner import (
     DiagnoseScreenerOptions,
     PROJECT_ROOT,
     RecommendScreenerOptions,
+    WalkForwardConvictionOptions,
     WalkForwardSentimentOptions,
     build_backtesting_command,
     build_subprocess_env,
@@ -41,6 +42,7 @@ DB_REQUIRED_RUN_KINDS = frozenset({
     "calibrate-sentiment-weights",
     "calibrate-conviction-weights",
     "walk-forward-sentiment",
+    "walk-forward-conviction",
 })
 
 
@@ -433,7 +435,8 @@ def start_backtesting_run(
     | DiagnoseScreenerOptions
     | RecommendScreenerOptions
     | CalibrateSentimentWeightsOptions
-    | WalkForwardSentimentOptions,
+    | WalkForwardSentimentOptions
+    | WalkForwardConvictionOptions,
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,

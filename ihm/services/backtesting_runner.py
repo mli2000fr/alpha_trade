@@ -16,6 +16,7 @@ BacktestingCommandKind = Literal[
     "calibrate-sentiment-weights",
     "calibrate-conviction-weights",
     "walk-forward-sentiment",
+    "walk-forward-conviction",
 ]
 
 
@@ -155,6 +156,21 @@ class CalibrateConvictionWeightsOptions:
     output_dir: str = "artifacts/conviction_calibration"
     scope: str = "all"  # "conviction", "kelly", "all"
     backtest_kelly: bool = False  # Sprint 3
+
+
+@dataclass(frozen=True, slots=True)
+class WalkForwardConvictionOptions:
+    """Options de `python -m backtesting walk-forward-conviction` (Sprint 4)."""
+
+    start: str
+    end: str
+    top_n: int = 20
+    horizons: str = "5,10,20"
+    min_train_days: int = 252
+    test_days: int = 63
+    step_days: int | None = None
+    output_dir: str = "artifacts/walk_forward_conviction"
+    backtest_kelly: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,6 +442,27 @@ def build_backtesting_command(
             command.extend(["--capital-preset-key", options.capital_preset_key])
         return command
 
+    if kind == "walk-forward-conviction":
+        if not isinstance(options, WalkForwardConvictionOptions):
+            raise TypeError(
+                "options doit être une instance de WalkForwardConvictionOptions "
+                "pour kind='walk-forward-conviction'."
+            )
+        command.extend([
+            "--start", options.start,
+            "--end", options.end,
+            "--top-n", str(options.top_n),
+            "--horizons", options.horizons,
+            "--min-train-days", str(options.min_train_days),
+            "--test-days", str(options.test_days),
+            "--output-dir", options.output_dir,
+        ])
+        if options.step_days is not None:
+            command.extend(["--step-days", str(options.step_days)])
+        if options.backtest_kelly:
+            command.append("--backtest-kelly")
+        return command
+
     raise KeyError(f"Commande backtesting inconnue : {kind}")
 
 
@@ -444,6 +481,7 @@ __all__ = [
     "CalibrateSentimentWeightsOptions",
     "CalibrateConvictionWeightsOptions",
     "WalkForwardSentimentOptions",
+    "WalkForwardConvictionOptions",
     "build_backtesting_command",
     "format_command_for_display",
 ]

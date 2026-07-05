@@ -37,6 +37,7 @@ from ihm.services.backtesting_runner import (
     CalibrateSentimentWeightsOptions,
     DiagnoseScreenerOptions,
     RecommendScreenerOptions,
+    WalkForwardConvictionOptions,
     WalkForwardSentimentOptions,
     build_backtesting_command,
     format_command_for_display,
@@ -2266,6 +2267,108 @@ def _build_calibrate_conviction_options() -> "CalibrateConvictionWeightsOptions"
     return options
 
 
+def _build_walk_forward_conviction_options() -> "WalkForwardConvictionOptions":
+    """Construit les options walk-forward conviction (Sprint 4)."""
+    from datetime import date, timedelta
+
+    st.subheader("🔄 Walk-forward conviction")
+    st.caption(
+        "Calibration walk-forward des scores conviction + Kelly via BacktestEngine. "
+        "Chaque fold : calibration train → validation OOS avec BacktestEngine. "
+        "Lance `python -m backtesting walk-forward-conviction ...`."
+    )
+    today = date.today()
+    default_start = (today - timedelta(days=365 * 3)).isoformat()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        start = st.text_input(
+            "Date de début (YYYY-MM-DD)",
+            value=cast(str, st.session_state.get("bt_wfc_start", default_start)),
+            key="bt_wfc_start",
+        )
+    with col2:
+        end = st.text_input(
+            "Date de fin (YYYY-MM-DD)",
+            value=cast(str, st.session_state.get("bt_wfc_end", today.isoformat())),
+            key="bt_wfc_end",
+        )
+    with col3:
+        top_n = st.number_input(
+            "Top N",
+            min_value=5,
+            max_value=200,
+            value=int(st.session_state.get("bt_wfc_top_n", 20)),
+            step=5,
+            key="bt_wfc_top_n",
+        )
+
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        horizons = st.text_input(
+            "Horizons (CSV)",
+            value=cast(str, st.session_state.get("bt_wfc_horizons", "5,10,20")),
+            key="bt_wfc_horizons",
+        )
+    with col5:
+        min_train_days = st.number_input(
+            "Min train days / fold",
+            min_value=63,
+            max_value=2000,
+            value=int(st.session_state.get("bt_wfc_min_train_days", 252)),
+            step=21,
+            key="bt_wfc_min_train_days",
+        )
+    with col6:
+        test_days = st.number_input(
+            "Test days / fold",
+            min_value=21,
+            max_value=504,
+            value=int(st.session_state.get("bt_wfc_test_days", 63)),
+            step=21,
+            key="bt_wfc_test_days",
+        )
+
+    col7, col8 = st.columns(2)
+    with col7:
+        step_days = st.number_input(
+            "Step days (0=auto)",
+            min_value=0,
+            max_value=504,
+            value=int(st.session_state.get("bt_wfc_step_days", 0)),
+            step=21,
+            key="bt_wfc_step_days",
+            help="Décalage entre folds. 0 = auto (utilise test_days).",
+        )
+    with col8:
+        backtest_kelly = st.checkbox(
+            "Kelly via BacktestEngine (⚠️ coûteux)",
+            value=bool(st.session_state.get("bt_wfc_backtest_kelly", False)),
+            key="bt_wfc_backtest_kelly",
+            help="Quand coché, les paramètres Kelly sont raffinés via BacktestEngine "
+            "(stops, corrélation, circuit breaker, slippage). Multiplie le temps par ~10-50.",
+        )
+
+    output_dir = "artifacts/walk_forward_conviction"
+
+    options = WalkForwardConvictionOptions(
+        start=start.strip(),
+        end=end.strip(),
+        top_n=int(top_n),
+        horizons=horizons.strip() or "5,10,20",
+        min_train_days=int(min_train_days),
+        test_days=int(test_days),
+        step_days=int(step_days) if int(step_days) > 0 else None,
+        output_dir=output_dir,
+        backtest_kelly=backtest_kelly,
+    )
+    st.code(
+        format_command_for_display(build_backtesting_command("walk-forward-conviction", options)),
+        language="powershell",
+    )
+    return options
+
+
 def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
     from datetime import date, timedelta
 
@@ -4041,8 +4144,9 @@ def render() -> None:
     active_calibrate_runs = list_active_backtesting_runs_by_kind("calibrate-sentiment-weights")
     active_conviction_runs = list_active_backtesting_runs_by_kind("calibrate-conviction-weights")
     active_walkfwd_runs = list_active_backtesting_runs_by_kind("walk-forward-sentiment")
+    active_wfc_runs = list_active_backtesting_runs_by_kind("walk-forward-conviction")
 
-    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, conviction_tab, walkfwd_tab, quarterly_tab = st.tabs(
+    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, conviction_tab, walkfwd_tab, walkforward_conviction_tab, quarterly_tab = st.tabs(
         [
             "▶️ Backtest",
             "🧱 Backfill scores history",
@@ -4051,6 +4155,7 @@ def render() -> None:
             "📰 Calibrate sentiment",
             "🎯 Calibrate conviction",
             "🚶 Walk-forward sentiment",
+            "🔄 Walk-forward conviction",
             "🎛️ Calibration trimestrielle poids",
         ]
     )
@@ -4244,6 +4349,33 @@ def render() -> None:
                 st.success(f"Walk-forward sentiment lancé : `{record.run_id}`")
                 st.rerun()
 
+    with walkforward_conviction_tab:
+        wfc_options = _build_walk_forward_conviction_options()
+        if active_wfc_runs:
+            active_run_id = str(active_wfc_runs[0].get("run_id", ""))
+            st.info(f"Un walk-forward conviction est déjà en cours (`{active_run_id}`).")
+        launch_wfc_clicked = st.button(
+            "🔄 Lancer walk-forward-conviction",
+            key="launch_walk_forward_conviction_run",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_wfc_runs),
+        )
+        if launch_wfc_clicked:
+            try:
+                record = start_backtesting_run(
+                    "walk-forward-conviction",
+                    "Walk-forward conviction",
+                    wfc_options,
+                    db_config=db_config,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                st.success(f"Walk-forward conviction lancé : `{record.run_id}`")
+                st.rerun()
+
     with quarterly_tab:
         # Sprint S26 (gap P3) — script ops `run_quarterly_weights_calibration.py`.
         from ihm.components.ops_command_panel import render_ops_command_panel
@@ -4263,6 +4395,7 @@ def render() -> None:
         active_calibrate_runs,
         active_conviction_runs,
         active_walkfwd_runs,
+        active_wfc_runs,
     )
     if has_any_active_runs and _is_runtime_center_auto_update_enabled():
         _render_runtime_center_live()
