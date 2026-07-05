@@ -428,3 +428,54 @@ def test_backfill_options_defaults_to_optimized_chunk_and_workers():
 	assert options.screener_workers == 4
 
 
+def test_build_calibrate_conviction_command_includes_directional_top_n():
+	from ihm.services.backtesting_runner import CalibrateConvictionWeightsOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"calibrate-conviction-weights",
+		CalibrateConvictionWeightsOptions(
+			start="2025-01-01",
+			end="2025-03-31",
+			top_n=20,
+			top_n_long=30,
+			top_n_short=15,
+			backtest_kelly=True,
+		),
+	)
+
+	assert "--backtest-kelly" in command
+	assert "--top-n-long" in command
+	assert command[command.index("--top-n-long") + 1] == "30"
+	assert "--top-n-short" in command
+	assert command[command.index("--top-n-short") + 1] == "15"
+
+
+def test_build_walk_forward_conviction_command_includes_market_neutral_flags():
+	from ihm.services.backtesting_runner import WalkForwardConvictionOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"walk-forward-conviction",
+		WalkForwardConvictionOptions(
+			start="2025-01-01",
+			end="2025-03-31",
+			top_n=20,
+			symmetric_grid="80/80",
+			top_n_long=80,
+			top_n_short=80,
+			enforce_net_exposure=True,
+			net_exposure_target=0.0,
+			backtest_kelly=True,
+		),
+	)
+
+	assert "--symmetric-grid" in command
+	assert command[command.index("--symmetric-grid") + 1] == "80/80"
+	assert "--top-n-long" in command
+	assert command[command.index("--top-n-long") + 1] == "80"
+	assert "--top-n-short" in command
+	assert command[command.index("--top-n-short") + 1] == "80"
+	assert "--enforce-net-exposure" in command
+	assert "--net-exposure-target" in command
+	assert command[command.index("--net-exposure-target") + 1] == "0.0"
+
+

@@ -3524,8 +3524,11 @@ def _run_calibrate_conviction_weights(args: argparse.Namespace) -> None:
     horizons = tuple(int(token.strip()) for token in args.horizons.split(",") if token.strip())
 
     _safe_print(f"\n🎯 Calibration conviction (quant/ML) + Kelly : {start} → {end}")
+    top_n_long = getattr(args, "top_n_long", None)
+    top_n_short = getattr(args, "top_n_short", None)
     _safe_print(
         f"   horizons={','.join(str(h) for h in horizons)} top_n={args.top_n} "
+        f"top_n_long={top_n_long or args.top_n} top_n_short={top_n_short or args.top_n} "
         f"scope={args.scope} output_dir={args.output_dir}\n"
     )
 
@@ -3541,6 +3544,8 @@ def _run_calibrate_conviction_weights(args: argparse.Namespace) -> None:
                 end_date=end,
                 output_dir=output_dir / f"horizon_{horizon}d",
                 top_n=args.top_n,
+                top_n_long=top_n_long,
+                top_n_short=top_n_short,
                 horizon_days=horizon,
                 use_backtest_kelly=bool(getattr(args, "backtest_kelly", False)),
             )

@@ -1,6 +1,6 @@
 # Synthèse : Calcul des scores Long/Short, Sentiment, ML et Risk
 
-> **Document généré le 2026-06-24** — à mettre à jour au fur et à mesure de la discussion.
+> **Document généré le 2026-07-05** — à mettre à jour au fur et à mesure de la discussion.
 > Projet Alpha Trade — `f:\projets`
 
 ---
@@ -1612,7 +1612,7 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 > | Calibration | Onglet IHM | Action |
 > |-------------|-----------|--------|
 > | **Sentiment** (quant/sentiment/macro) | `📰 Calibrate sentiment` | Lance `calibrate-sentiment-weights`. Définir dates, top-N, horizons. Produit `sentiment_weight_calibration.csv` + `_best.json` dans `artifacts/sentiment_calibration/` |
-> | **Conviction + Kelly** (quant/ML) | `🎯 Calibrate conviction` | Lance `calibrate-conviction-weights`. Calibre `score_weight`/`prediction_weight` + Kelly. ☑ « Inclure Kelly » pour le sizing, ☑ « Kelly via BacktestEngine » (`--backtest-kelly`, Sprint 3) |
+> | **Conviction + Kelly** (quant/ML) | `🎯 Calibrate conviction` | Lance `calibrate-conviction-weights`. Calibre `score_weight`/`prediction_weight` + Kelly. ☑ « Inclure Kelly » pour le sizing, ☑ « Kelly via BacktestEngine » (`--backtest-kelly`, Sprint 3), et surcharge directionnelle optionnelle via `--top-n-long` / `--top-n-short` (Sprint 6) |
 > | **Walk-Forward Conviction** (Sprint 4) | `🔄 Walk-forward conviction` | Lance `walk-forward-conviction`. Calibre conviction + Kelly par folds glissants avec validation OOS BacktestEngine. Supporte `--backtest-kelly` |
 > | **Market-Neutral / Grilles** (Sprint 5) | `🔄 Walk-forward conviction` | Options `--symmetric-grid` (60/60, 80/80, 100/100...), `--enforce-net-exposure`, `--net-exposure-target`. Teste la neutralite nette et compare les grilles symetriques |
 > | **Walk-Forward Sentiment** (validation OOS) | `🚶 Walk-forward sentiment` | Lance `walk-forward-sentiment`. Backtest complet par folds glissants. Produit `latest_best_weights.json` |
@@ -2208,7 +2208,7 @@ graph LR
 | `python -m backtesting run` | 🔵 BACKTEST | Backtest principal |
 | `python -m backtesting run --tracker-state <path>` | 🔵 BACKTEST | Backtest avec état des trackers chargé (P2) |
 | `python -m backtesting run --load-tracker-state` | 🔵 BACKTEST | Raccourci : charge `artifacts/backtesting/tracker_state.json` (P2) |
-| `python -m backtesting calibrate-conviction-weights` | 🔵 BACKTEST | Calibration conviction (quant/ML) + Kelly (P2). `--backtest-kelly` pour raffiner Kelly dans BacktestEngine (Sprint 3) |
+| `python -m backtesting calibrate-conviction-weights` | 🔵 BACKTEST | Calibration conviction (quant/ML) + Kelly (P2). `--backtest-kelly` pour raffiner Kelly dans BacktestEngine (Sprint 3). `--top-n-long` / `--top-n-short` pour des tops asymétriques (Sprint 6) |
 | `python -m backtesting walk-forward-conviction` | 🔵 BACKTEST | Walk-forward conviction + Kelly par folds OOS (Sprint 4). `--backtest-kelly` pour raffiner Kelly par fold. `--symmetric-grid 80/80 --enforce-net-exposure` pour market-neutral (Sprint 5) |
 | `python -m backtesting calibrate-sentiment-weights` | 🔵 BACKTEST | Calibration des poids sentiment |
 | `python -m backtesting walk-forward-sentiment` | 🔵 BACKTEST | Walk-forward calibration sentiment |

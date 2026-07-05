@@ -1125,6 +1125,9 @@ class EmpiricalRiskCalibrator:
         *,
         initial_equity: float = 100_000.0,
         direction: str = "long",
+        enforce_net_exposure: bool = False,
+        net_exposure_target: float | None = None,
+        net_exposure_tolerance: float = 0.10,
     ) -> dict[str, float]:
         """Évalue un jeu de paramètres Kelly via ``BacktestEngine``.
 
@@ -1158,6 +1161,9 @@ class EmpiricalRiskCalibrator:
             max_kelly_fraction=0.25,
             score_weight=conviction_weights.score_weight,
             prediction_weight=conviction_weights.prediction_weight,
+            enforce_net_exposure=enforce_net_exposure,
+            net_exposure_target=float(net_exposure_target) if net_exposure_target is not None else 0.0,
+            net_exposure_tolerance=net_exposure_tolerance,
         )
 
         # Exécution backtest
@@ -1200,6 +1206,9 @@ class EmpiricalRiskCalibrator:
         initial_equity: float = 100_000.0,
         direction: str = "long",
         metric_name: str = "sharpe",
+        enforce_net_exposure: bool = False,
+        net_exposure_target: float | None = None,
+        net_exposure_tolerance: float = 0.10,
     ) -> dict[str, float] | None:
         """Grid search Kelly via ``BacktestEngine`` pour une jambe.
 
@@ -1241,6 +1250,9 @@ class EmpiricalRiskCalibrator:
                 end_date=end_date,
                 initial_equity=initial_equity,
                 direction=direction,
+                enforce_net_exposure=enforce_net_exposure,
+                net_exposure_target=net_exposure_target,
+                net_exposure_tolerance=net_exposure_tolerance,
             )
             current = float(metrics.get(metric_name, 0.0))
             if current > best_metric:
@@ -1309,6 +1321,8 @@ class EmpiricalRiskCalibrator:
 
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+        resolved_top_n_long = top_n_long or top_n
+        resolved_top_n_short = top_n_short or top_n
 
         # Charger le dataset complet
         dataset = self.load_dataset(
@@ -1378,6 +1392,10 @@ class EmpiricalRiskCalibrator:
                     candidates_only=candidates_only,
                     dataset=train_dataset,
                     use_backtest_kelly=use_backtest_kelly,
+                    top_n_long=resolved_top_n_long,
+                    top_n_short=resolved_top_n_short,
+                    enforce_net_exposure=enforce_net_exposure,
+                    net_exposure_target=net_exposure_target,
                 )
             except Exception:
                 LOGGER.warning("walk_forward_optimize fold=%s: échec calibration train", fold_idx, exc_info=True)
@@ -1405,11 +1423,13 @@ class EmpiricalRiskCalibrator:
                     dataset=test_dataset,
                     conviction_weights=long_conv,
                     kelly_params=long_kelly,
-                    top_n=top_n,
+                    top_n=resolved_top_n_long,
                     start_date=test_start,
                     end_date=test_end,
                     initial_equity=initial_equity,
                     direction="long",
+                    enforce_net_exposure=enforce_net_exposure,
+                    net_exposure_target=net_exposure_target,
                 )
 
             # Short OOS
@@ -1427,11 +1447,13 @@ class EmpiricalRiskCalibrator:
                     dataset=test_dataset,
                     conviction_weights=short_conv,
                     kelly_params=short_kelly,
-                    top_n=top_n,
+                    top_n=resolved_top_n_short,
                     start_date=test_start,
                     end_date=test_end,
                     initial_equity=initial_equity,
                     direction="short",
+                    enforce_net_exposure=enforce_net_exposure,
+                    net_exposure_target=net_exposure_target,
                 )
 
             # Métrique consolidée (moyenne long + short)
@@ -1491,10 +1513,14 @@ class EmpiricalRiskCalibrator:
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "top_n": top_n,
+                "top_n_long": resolved_top_n_long,
+                "top_n_short": resolved_top_n_short,
                 "horizon_days": horizon_days,
                 "min_train_days": min_train_days,
                 "test_days": test_days,
                 "use_backtest_kelly": use_backtest_kelly,
+                "enforce_net_exposure": enforce_net_exposure,
+                "net_exposure_target": net_exposure_target,
             },
             "summary": summary,
             "folds": fold_results,
@@ -1528,10 +1554,17 @@ class EmpiricalRiskCalibrator:
         min_live_snapshot_days: int = 20,
         min_live_symbols: int = 10,
         use_backtest_kelly: bool = False,
+        top_n_long: int | None = None,
+        top_n_short: int | None = None,
+        enforce_net_exposure: bool = False,
+        net_exposure_target: float | None = None,
+        net_exposure_tolerance: float = 0.10,
     ) -> tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         resolved_market_regime_mode = normalize_market_regime_mode(market_regime_mode)
+        resolved_top_n_long = top_n_long or top_n
+        resolved_top_n_short = top_n_short or top_n
         work_dataset = dataset.copy() if dataset is not None else self.load_dataset(
             start_date=start_date,
             end_date=end_date,
@@ -1575,7 +1608,7 @@ class EmpiricalRiskCalibrator:
             kelly_fraction_multipliers=kelly_fraction_multipliers,
             min_effective_probabilities=min_effective_probabilities,
             assumed_payoff_ratios=assumed_payoff_ratios,
-            top_n=top_n,
+            top_n=resolved_top_n_long,
             window=(start_date, end_date),
             market_regime_mode=resolved_market_regime_mode,
         )
@@ -1607,7 +1640,7 @@ class EmpiricalRiskCalibrator:
             fused_long,
             kelly_long,
             long_dataset["forward_return"].to_numpy(dtype=float),
-            top_n=int(best_weights_long.get("top_n", top_n)),
+            top_n=int(best_weights_long.get("top_n", resolved_top_n_long)),
         )
 
         # ── Calibration SHORT (si données disponibles) ──
@@ -1623,7 +1656,7 @@ class EmpiricalRiskCalibrator:
                 kelly_fraction_multipliers=kelly_fraction_multipliers,
                 min_effective_probabilities=min_effective_probabilities,
                 assumed_payoff_ratios=assumed_payoff_ratios,
-                top_n=top_n,
+                top_n=resolved_top_n_short,
                 window=(start_date, end_date),
                 market_regime_mode=resolved_market_regime_mode,
             )
@@ -1654,7 +1687,7 @@ class EmpiricalRiskCalibrator:
                 fused_short,
                 kelly_short,
                 (-short_dataset["forward_return"]).to_numpy(dtype=float),
-                top_n=int(best_weights_short.get("top_n", top_n)),
+                top_n=int(best_weights_short.get("top_n", resolved_top_n_short)),
             )
             # Combiner long + short
             if daily_returns_long.size > 0 and daily_returns_short.size > 0:
@@ -1701,11 +1734,14 @@ class EmpiricalRiskCalibrator:
                     score_weight=float(best_weights_long["score_weight"]),
                     prediction_weight=float(best_weights_long["prediction_weight"]),
                 ),
-                top_n=top_n,
+                top_n=resolved_top_n_long,
                 start_date=start_date,
                 end_date=end_date,
                 direction="long",
                 metric_name=metric_name,
+                enforce_net_exposure=enforce_net_exposure,
+                net_exposure_target=net_exposure_target,
+                net_exposure_tolerance=net_exposure_tolerance,
             )
             if kelly_long_refined:
                 for k, v in kelly_long_refined.items():
@@ -1720,11 +1756,14 @@ class EmpiricalRiskCalibrator:
                         score_weight=float(best_weights_short["score_weight"]),
                         prediction_weight=float(best_weights_short["prediction_weight"]),
                     ),
-                    top_n=top_n,
+                    top_n=resolved_top_n_short,
                     start_date=start_date,
                     end_date=end_date,
                     direction="short",
                     metric_name=metric_name,
+                    enforce_net_exposure=enforce_net_exposure,
+                    net_exposure_target=net_exposure_target,
+                    net_exposure_tolerance=net_exposure_tolerance,
                 )
                 if kelly_short_refined:
                     for k, v in kelly_short_refined.items():

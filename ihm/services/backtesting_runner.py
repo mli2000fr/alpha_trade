@@ -156,6 +156,8 @@ class CalibrateConvictionWeightsOptions:
     output_dir: str = "artifacts/conviction_calibration"
     scope: str = "all"  # "conviction", "kelly", "all"
     backtest_kelly: bool = False  # Sprint 3
+    top_n_long: int | None = None
+    top_n_short: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +211,7 @@ def build_backtesting_command(
     | RecommendScreenerOptions
     | CalibrateSentimentWeightsOptions
     | CalibrateConvictionWeightsOptions
+    | WalkForwardConvictionOptions
     | WalkForwardSentimentOptions,
 ) -> list[str]:
     """Construit la commande subprocess correspondant au backtesting."""
@@ -418,6 +421,10 @@ def build_backtesting_command(
         ])
         if options.backtest_kelly:
             command.append("--backtest-kelly")
+        if options.top_n_long is not None:
+            command.extend(["--top-n-long", str(options.top_n_long)])
+        if options.top_n_short is not None:
+            command.extend(["--top-n-short", str(options.top_n_short)])
         return command
 
     if kind == "walk-forward-sentiment":

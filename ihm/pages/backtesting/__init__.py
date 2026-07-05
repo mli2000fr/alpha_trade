@@ -2239,6 +2239,28 @@ def _build_calibrate_conviction_options() -> "CalibrateConvictionWeightsOptions"
 
     scope = "all" if include_kelly else "conviction"
 
+    col6, col7 = st.columns(2)
+    with col6:
+        top_n_long = st.number_input(
+            "Top N longs (0=Top N)",
+            min_value=0,
+            max_value=200,
+            value=int(st.session_state.get("bt_conv_top_n_long", 0)),
+            step=5,
+            key="bt_conv_top_n_long",
+            help="Permet de surcharger le Top N global pour la jambe long.",
+        )
+    with col7:
+        top_n_short = st.number_input(
+            "Top N shorts (0=Top N)",
+            min_value=0,
+            max_value=200,
+            value=int(st.session_state.get("bt_conv_top_n_short", 0)),
+            step=5,
+            key="bt_conv_top_n_short",
+            help="Permet de surcharger le Top N global pour la jambe short.",
+        )
+
     # Sprint 3 — backtest Kelly dans BacktestEngine
     backtest_kelly = st.checkbox(
         "Kelly via BacktestEngine (⚠️ coûteux, ~27 backtests/direction)",
@@ -2259,6 +2281,8 @@ def _build_calibrate_conviction_options() -> "CalibrateConvictionWeightsOptions"
         output_dir=output_dir,
         scope=scope,
         backtest_kelly=backtest_kelly,
+        top_n_long=int(top_n_long) if int(top_n_long) > 0 else None,
+        top_n_short=int(top_n_short) if int(top_n_short) > 0 else None,
     )
     st.code(
         format_command_for_display(build_backtesting_command("calibrate-conviction-weights", options)),
