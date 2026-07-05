@@ -60,10 +60,10 @@ rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_scor
 ### Verdict
 | Aspect | Statut |
 |---|---|
-| Direction | 🔴 **Long-only** — les shorts sont ignorés |
-| Moteur d'évaluation | 🟡 **Simplifié** — top-N pondéré, pas de risk management |
-| Score utilisé | ✅ Correct pour les longs (`final_score` + `predicted_proba`) |
-| Shorts | ❌ Absents — les ~60 shorts/jour du backfill sont chargés (is_candidate=1) mais leur `final_score` bas les exclut naturellement du top-20 |
+| Direction | � **Long + Short** — corrigé Sprint 2 |
+| Moteur d'évaluation | 🟡 **Simplifié** — top-N pondéré, pas de risk management (→ Sprint 3) |
+| Score utilisé | ✅ Correct pour les deux directions |
+| Shorts | ✅ Présents — calibrés via `fuse_short()` + `proba_short` (Sprint 2) |
 
 ---
 
@@ -123,7 +123,7 @@ rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_scor
 |---|---|---|---|---|
 | **Backfill** | 🟢 Long + Short | N/A (stockage) | N/A | N/A |
 | **ML Predict** | 🟢 Long + Short (probas ternaires) | N/A (inférence) | N/A | N/A |
-| **④ Conviction** | 🔴 Long-only | 🟡 Simplifié (top-N pondéré) | ❌ | ✅ Oui |
+| **④ Conviction** | � Long + Short | 🟡 Simplifié (top-N pondéré) | ❌ | ✅ Oui (Sprint 2) |
 | **⑤ Kelly** | 🔴 Long-only | 🟡 Simplifié (top-N pondéré) | ✅ Oui | ❌ |
 | **⑥ Walk-Forward** | 🟢 Long + Short | 🟢 BacktestEngine complet | ❌ (utilise RiskConfig) | ❌ (utilise RiskConfig) |
 
@@ -158,12 +158,12 @@ Le Kelly calibration utilise un seul `assumed_payoff_ratio` pour tous les trades
 
 ### E. Désalignement des quotas entre l'amont et l'aval
 
-Le backfill fabrique un univers PIT d'environ **60 longs + 60 shorts**, mais les calibrations ④ et ⑤ ne consomment ensuite qu'un **top-20 long-only**. En pratique :
+Le backfill fabrique un univers PIT d'environ **60 longs + 60 shorts**. Depuis Sprint 2, la calibration conviction ④ exploite les deux jambes. En pratique :
 - les 60 shorts sont bien reconstruits et stockés,
 - les prédictions short existent,
-- mais la calibration actuelle ne transforme jamais ce stock short en signal calibré exploité.
+- ✅ la calibration conviction les utilise désormais (Sprint 2).
 
-Autrement dit, l'amont est déjà **bi-directionnel**, alors que l'aval de calibration reste **mono-directionnel**. Ce n'est pas un bug de données ; c'est un désalignement de design.
+**Restent à aligner** : Kelly (⑤) et walk-forward (⑥).
 
 ---
 
@@ -176,8 +176,8 @@ Toutes les incohérences n'ont pas le même poids :
 1. **La calibration Kelly est la vraie incohérence bloquante.**
    Elle est à la fois long-only **et** évaluée avec un moteur simplifié, alors que son rôle est de piloter le sizing réel. C'est la combinaison la plus risquée, car elle peut pousser des paramètres trop agressifs ou simplement non transférables au vrai moteur.
 
-2. **La calibration Conviction est imparfaite, mais exploitable comme calibration partielle long-side.**
-   Elle n'est pas cohérente avec une stratégie long+short complète, mais elle peut encore donner une information utile sur le compromis `final_score` / `predicted_proba` pour la poche long. Il faut simplement la documenter comme telle, et non comme une calibration globale du portefeuille.
+2. **La calibration Conviction est maintenant bi-directionnelle (Sprint 2).**
+   Elle couvre long et short avec des pipelines séparés via `fuse()` / `fuse_short()`. Le moteur d'évaluation reste simplifié (→ Sprint 3 pour le passage à `BacktestEngine`).
 
 3. **Le Walk-Forward est aujourd'hui la référence la plus crédible.**
    C'est le seul maillon qui se rapproche du comportement réel du moteur. En cas de conflit entre une calibration simplifiée et le walk-forward / backtest complet, c'est le moteur complet qui doit arbitrer.
@@ -208,7 +208,7 @@ Toutes les incohérences n'ont pas le même poids :
 ### Ce qu'il reste à aligner
 
 - ✅ Univers PIT : `60/60` fait.
-- ❌ Calibration conviction : encore long-only (→ Sprint 2).
+- ✅ Calibration conviction : long+short fait (Sprint 2).
 - ❌ Calibration Kelly : encore long-only + moteur simplifié (→ Sprint 3).
 - ❌ Walk-forward : pas encore orchestrateur bi-directionnel (→ Sprint 4).
 
@@ -256,39 +256,35 @@ Toutes les incohérences n'ont pas le même poids :
 **Critère de sortie**
 - ✅ L'univers PIT est symétrique par défaut. Prêt pour les sprints de calibration bi-directionnelle.
 
-### Sprint 2 — Loader bi-directionnel + Conviction `20L / 20S`
+### Sprint 2 — Loader bi-directionnel + Conviction `20L / 20S` ✅ FAIT (2026-07-05)
 
 **Objectif** : sortir de la calibration long-only. Cette étape inclut le refactoring du loader de données, prérequis indispensable avant toute calibration bi-directionnelle.
 
-**À implémenter**
+**✅ Implémenté**
 
-**a) Refactoring du loader (prérequis)**
-- Modifier `EmpiricalRiskCalibrator.load_dataset()` pour charger **les deux directions** :
-  - `quant_score_long` = `COALESCE(final_score_walk_forward, final_score_sentiment, final_score)`
-  - `quant_score_short` = `short_score` (ou `short_score_walk_forward` si disponible)
-  - `predicted_proba` (long) et `proba_short` (short)
-- Retourner un dataset contenant les colonnes nécessaires aux deux jambes, ou deux datasets distincts.
-- Les lignes sans prédiction ML continuent d'être écartées (`dropna`).
+**a) Refactoring du loader**
+- `load_dataset()` charge désormais `short_score` (ou `short_score_walk_forward`) et `selector_signal_mode` depuis `stock_scores_history`, ainsi que `proba_short` depuis `model_predictions`.
+- Le dataset retourné contient `quant_score_short`, `proba_short` et `selector_signal_mode` en plus des colonnes long existantes.
+- Fallback automatique si les colonnes short sont absentes (comportement long-only conservé).
 
 **b) Calibration conviction bi-directionnelle**
-- Implémenter deux pipelines séparés mais symétriques :
-  - `conviction_long = fuse(final_score_*, predicted_proba)`
-  - `conviction_short = fuse_short(short_score_*, proba_short)`
-- Définir `top_n_long = 20` et `top_n_short = 20`.
-- Produire des scores, métriques et artefacts distincts par jambe.
-- Consolider les deux jambes pour l'évaluation portefeuille finale.
+- Nouvelle fonction `calibrate_conviction_kelly_short()` — miroir de la version long, utilisant `fuse_short()` et inversant les rendements forward (`-forward_return`).
+- `walk_forward_backtest()` sépare le dataset en jambes long/short via `selector_signal_mode`, exécute les deux calibrations, puis combine les rendements quotidiens (moyenne long+short).
+- Les poids sont consolidés avec préfixes `long_*` / `short_*` dans les artefacts.
+- Le nom du scénario reflète les deux jambes : `L:0.70/0.30_S:0.65/0.35`.
 
-**Fichiers probables**
-- `backtesting/weights_calibration.py` (loader + calibration)
-- `core/conviction.py`
+**Fichiers modifiés**
+- `backtesting/weights_calibration.py` — loader bi-directionnel, `calibrate_conviction_kelly_short()`, consolidation long+short dans `walk_forward_backtest()`, import de `fuse_short`
+- `core/conviction.py` — déjà prêt (`fuse_short` existant)
 
 **Validation**
 - La calibration conviction fonctionne en mode `20L + 20S`.
-- Les artefacts contiennent `best_weights_long`, `best_weights_short`, métriques par jambe, métrique consolidée.
-- Les shorts sont un objet calibré, pas seulement des lignes stockées puis ignorées.
+- Les artefacts contiennent `long_score_weight`, `short_score_weight`, etc.
+- Les shorts sont un objet calibré, plus seulement des lignes ignorées.
+- Fallback long-only si les colonnes short sont absentes (rétrocompatibilité).
 
 **Critère de sortie**
-- Le loader alimente les deux directions ; la calibration conviction bi-directionnelle tourne de bout en bout.
+- ✅ Le loader alimente les deux directions ; la calibration conviction bi-directionnelle tourne de bout en bout.
 
 ### Sprint 3 — Kelly directionnel dans `BacktestEngine`
 
@@ -401,7 +397,7 @@ Toutes les incohérences n'ont pas le même poids :
 |---|---|---|
 | Backfill (60L + 60S) | ✅ Cohérent pour la génération PIT | Standard par défaut |
 | ML Predict (probas ternaires) | ✅ Cohérent | — |
-| Conviction (long-only, simplifié) | 🔴 Insuffisant pour la cible long+short | Remplacer par calibration `20L + 20S` |
+| Conviction (long-only, simplifié) | � Cohérent long+short (Sprint 2) | Moteur simplifié → Sprint 3 |
 | Kelly (long-only, simplifié) | 🔴 Non fiable | Sortir du moteur simplifié, recalibrer dans BacktestEngine |
 | Walk-Forward (long+short, complet) | 🟢 Brique centrale | En faire l'orchestrateur de calibration OOS |
 | Backtest complet | 🟢 Référence finale | Arbitrer toutes les variantes au niveau portefeuille |

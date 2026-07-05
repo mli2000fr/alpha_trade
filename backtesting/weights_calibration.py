@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from core.conviction import ConvictionWeights, SentimentFusionWeights, fuse, fuse_sentiment
+from core.conviction import ConvictionWeights, SentimentFusionWeights, fuse, fuse_short, fuse_sentiment
 
 LOGGER = logging.getLogger(__name__)
 
@@ -667,6 +667,112 @@ def calibrate_conviction_kelly(
     )
 
 
+def calibrate_conviction_kelly_short(
+    *,
+    snapshot_dates: Sequence[date | datetime | str],
+    quant_scores: Sequence[float],
+    predicted_proba_short: Sequence[float | None],
+    historical_win_rate: Sequence[float | None],
+    forward_returns: Sequence[float],
+    metric_name: str = "sharpe",
+    conviction_grid_step: float = 0.05,
+    kelly_fraction_multipliers: Sequence[float] = (0.10, 0.25, 0.50),
+    min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
+    assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
+    top_n: int = 20,
+    max_position_weight: float = 0.10,
+    window: tuple[date, date] | None = None,
+    market_regime_mode: str = MARKET_REGIME_ALL,
+) -> CalibrationResult:
+    """Calibre les poids conviction et Kelly pour la jambe **short**.
+
+    Même structure que ``calibrate_conviction_kelly``, mais utilise
+    ``fuse_short()`` pour la conviction et inverse les rendements forward
+    (un short gagne quand le prix baisse → ``-forward_return``).
+
+    .. versionadded:: Sprint 2
+    """
+    if metric_name not in RISK_METRICS:
+        raise ValueError(f"Métrique risque inconnue : {metric_name!r} (attendu: {list(RISK_METRICS)}).")
+    metric_fn = RISK_METRICS[metric_name]
+    quant = np.asarray(quant_scores, dtype=float)
+    proba_s = np.asarray([p if p is not None else np.nan for p in predicted_proba_short], dtype=float)
+    hist_wr = np.asarray([p if p is not None else np.nan for p in historical_win_rate], dtype=float)
+    fwd = np.asarray(forward_returns, dtype=float)
+    if len({len(snapshot_dates), len(quant), len(proba_s), len(hist_wr), len(fwd)}) != 1:
+        raise ValueError("calibrate_conviction_kelly_short : longueurs incohérentes.")
+    mask = ~(np.isnan(quant) | np.isnan(proba_s) | np.isnan(hist_wr) | np.isnan(fwd))
+    if int(mask.sum()) < 10:
+        raise ValueError("calibrate_conviction_kelly_short : moins de 10 observations valides.")
+
+    filtered_dates = list(pd.to_datetime(pd.Series(snapshot_dates), errors="coerce")[mask])
+    quant_v = quant[mask]
+    proba_s_v = proba_s[mask]
+    hist_wr_v = hist_wr[mask]
+    fwd_v = fwd[mask]
+    # Sprint 2 — pour les shorts, un rendement forward négatif (prix baisse) est bon
+    fwd_short = -fwd_v
+
+    candidates: list[CalibrationCandidate] = []
+    best: CalibrationCandidate | None = None
+    for conviction_weights in _conviction_grid(conviction_grid_step):
+        fused = np.asarray(
+            [
+                fuse_short(quant_score=float(q), predicted_proba_short=float(p), weights=conviction_weights)
+                for q, p in zip(quant_v, proba_s_v, strict=False)
+            ],
+            dtype=float,
+        )
+        for kelly_params in _kelly_grid(
+            kelly_fraction_multipliers=kelly_fraction_multipliers,
+            min_effective_probabilities=min_effective_probabilities,
+            assumed_payoff_ratios=assumed_payoff_ratios,
+        ):
+            kelly_fraction = _compute_kelly_fraction(
+                proba_s_v,
+                hist_wr_v,
+                kelly_fraction_multiplier=kelly_params["kelly_fraction_multiplier"],
+                min_effective_probability=kelly_params["min_effective_probability"],
+                assumed_payoff_ratio=kelly_params["assumed_payoff_ratio"],
+                max_position_weight=max_position_weight,
+            )
+            strategy_returns = _weighted_daily_strategy_returns(
+                filtered_dates,
+                fused,
+                kelly_fraction,
+                fwd_short,  # rendement inversé pour shorts
+                top_n=top_n,
+            )
+            metric_value = metric_fn(strategy_returns)
+            if not np.isfinite(metric_value):
+                continue
+            candidate_weights = {
+                "score_weight": float(conviction_weights.score_weight),
+                "prediction_weight": float(conviction_weights.prediction_weight),
+                "kelly_fraction_multiplier": float(kelly_params["kelly_fraction_multiplier"]),
+                "min_effective_probability": float(kelly_params["min_effective_probability"]),
+                "assumed_payoff_ratio": float(kelly_params["assumed_payoff_ratio"]),
+                "top_n": float(top_n),
+            }
+            candidate = CalibrationCandidate(weights=candidate_weights, metric_value=float(metric_value))
+            candidates.append(candidate)
+            if best is None or candidate.metric_value > best.metric_value:
+                best = candidate
+    if best is None:
+        raise RuntimeError("calibrate_conviction_kelly_short : aucun candidat évaluable.")
+    start, end = (window if window else (None, None))
+    return CalibrationResult(
+        scope="risk_short",
+        metric_name=metric_name,
+        best_weights=best.weights,
+        metric_value=best.metric_value,
+        market_regime_mode=normalize_market_regime_mode(market_regime_mode),
+        candidates=candidates,
+        window_start=start,
+        window_end=end,
+    )
+
+
 class EmpiricalRiskCalibrator:
     """Calibrateur batch conviction/Kelly à partir de la base PIT."""
 
@@ -753,10 +859,19 @@ class EmpiricalRiskCalibrator:
             if "final_score_walk_forward" in score_columns
             else "COALESCE(final_score_sentiment, final_score)"
         )
+        # Sprint 2 — chargement du score short pour calibration bi-directionnelle
+        short_score_expr = (
+            "COALESCE(short_score_walk_forward, short_score)"
+            if "short_score_walk_forward" in score_columns
+            else "short_score"
+        ) if "short_score" in score_columns else "NULL"
+        signal_mode_col = "selector_signal_mode" if "selector_signal_mode" in score_columns else "'long'"
         candidate_clause = "AND is_candidate = 1" if candidates_only else ""
         scores_query = text(
             f"""
-            SELECT snapshot_date, symbol, {score_expr} AS quant_score
+            SELECT snapshot_date, symbol, {score_expr} AS quant_score,
+                   {short_score_expr} AS quant_score_short,
+                   {signal_mode_col} AS selector_signal_mode
             FROM stock_scores_history
             WHERE snapshot_date BETWEEN :start_date AND :end_date
               {candidate_clause}
@@ -766,7 +881,7 @@ class EmpiricalRiskCalibrator:
         )
         predictions_query = text(
             """
-            SELECT symbol, prediction_date, predicted_proba, created_at
+            SELECT symbol, prediction_date, predicted_proba, proba_short, created_at
             FROM model_predictions
             WHERE prediction_date <= :end_date
               AND predicted_proba IS NOT NULL
@@ -841,7 +956,7 @@ class EmpiricalRiskCalibrator:
 
         enriched = pd.merge_asof(
             scores,
-            predictions[["symbol", "prediction_date", "predicted_proba"]],
+            predictions[["symbol", "prediction_date", "predicted_proba", "proba_short"]],
             by="symbol",
             left_on="snapshot_date",
             right_on="prediction_date",
@@ -862,14 +977,21 @@ class EmpiricalRiskCalibrator:
             how="left",
         )
         dataset = dataset.rename(columns={"directional_accuracy": "historical_win_rate"})
-        dataset = dataset[[
+        # Sprint 2 — colonnes bi-directionnelles
+        keep_cols = [
             "snapshot_date",
             "symbol",
             "quant_score",
             "predicted_proba",
+            "proba_short",
+            "quant_score_short",
+            "selector_signal_mode",
             "historical_win_rate",
             "forward_return",
-        ]].dropna()
+        ]
+        dataset = dataset[[c for c in keep_cols if c in dataset.columns]].dropna(
+            subset=["quant_score", "predicted_proba", "historical_win_rate", "forward_return"]
+        )
         dataset = dataset.reset_index(drop=True)
         dataset["market_regime_mode"] = MARKET_REGIME_ALL
         if include_market_regime and not dataset.empty:
@@ -980,12 +1102,28 @@ class EmpiricalRiskCalibrator:
                 f" pour le segment régime `{resolved_market_regime_mode}`."
             )
 
-        calibration = calibrate_conviction_kelly(
-            snapshot_dates=work_dataset["snapshot_date"].tolist(),
-            quant_scores=work_dataset["quant_score"].tolist(),
-            predicted_proba=work_dataset["predicted_proba"].tolist(),
-            historical_win_rate=work_dataset["historical_win_rate"].tolist(),
-            forward_returns=work_dataset["forward_return"].tolist(),
+        # ── Sprint 2 — calibration bi-directionnelle long + short ──
+        has_short_data = (
+            "quant_score_short" in work_dataset.columns
+            and "proba_short" in work_dataset.columns
+            and work_dataset["quant_score_short"].notna().any()
+            and work_dataset["proba_short"].notna().any()
+        )
+        # Séparer les jambes si le signal_mode est disponible
+        if "selector_signal_mode" in work_dataset.columns:
+            long_dataset = work_dataset[work_dataset["selector_signal_mode"] != "short"].copy()
+            short_dataset = work_dataset[work_dataset["selector_signal_mode"] == "short"].copy()
+        else:
+            long_dataset = work_dataset.copy()
+            short_dataset = pd.DataFrame(columns=work_dataset.columns)
+
+        # ── Calibration LONG ──
+        calibration_long = calibrate_conviction_kelly(
+            snapshot_dates=long_dataset["snapshot_date"].tolist(),
+            quant_scores=long_dataset["quant_score"].tolist(),
+            predicted_proba=long_dataset["predicted_proba"].tolist(),
+            historical_win_rate=long_dataset["historical_win_rate"].tolist(),
+            forward_returns=long_dataset["forward_return"].tolist(),
             metric_name=metric_name,
             conviction_grid_step=conviction_grid_step,
             kelly_fraction_multipliers=kelly_fraction_multipliers,
@@ -996,37 +1134,119 @@ class EmpiricalRiskCalibrator:
             market_regime_mode=resolved_market_regime_mode,
         )
 
-        best_weights = calibration.best_weights
-        fused = np.asarray(
+        best_weights_long = calibration_long.best_weights
+        fused_long = np.asarray(
             [
                 fuse(
                     quant_score=float(row.quant_score),
                     predicted_proba=float(row.predicted_proba),
                     weights=ConvictionWeights(
-                        score_weight=float(best_weights["score_weight"]),
-                        prediction_weight=float(best_weights["prediction_weight"]),
+                        score_weight=float(best_weights_long["score_weight"]),
+                        prediction_weight=float(best_weights_long["prediction_weight"]),
                     ),
                 )
-                for row in work_dataset.itertuples(index=False)
+                for row in long_dataset.itertuples(index=False)
             ],
             dtype=float,
         )
-        kelly_fraction = _compute_kelly_fraction(
-            work_dataset["predicted_proba"].to_numpy(dtype=float),
-            work_dataset["historical_win_rate"].to_numpy(dtype=float),
-            kelly_fraction_multiplier=float(best_weights["kelly_fraction_multiplier"]),
-            min_effective_probability=float(best_weights["min_effective_probability"]),
-            assumed_payoff_ratio=float(best_weights["assumed_payoff_ratio"]),
+        kelly_long = _compute_kelly_fraction(
+            long_dataset["predicted_proba"].to_numpy(dtype=float),
+            long_dataset["historical_win_rate"].to_numpy(dtype=float),
+            kelly_fraction_multiplier=float(best_weights_long["kelly_fraction_multiplier"]),
+            min_effective_probability=float(best_weights_long["min_effective_probability"]),
+            assumed_payoff_ratio=float(best_weights_long["assumed_payoff_ratio"]),
         )
-        daily_returns = _weighted_daily_strategy_returns(
-            work_dataset["snapshot_date"].tolist(),
-            fused,
-            kelly_fraction,
-            work_dataset["forward_return"].to_numpy(dtype=float),
-            top_n=int(best_weights.get("top_n", top_n)),
+        daily_returns_long = _weighted_daily_strategy_returns(
+            long_dataset["snapshot_date"].tolist(),
+            fused_long,
+            kelly_long,
+            long_dataset["forward_return"].to_numpy(dtype=float),
+            top_n=int(best_weights_long.get("top_n", top_n)),
         )
+
+        # ── Calibration SHORT (si données disponibles) ──
+        if has_short_data and not short_dataset.empty:
+            calibration_short = calibrate_conviction_kelly_short(
+                snapshot_dates=short_dataset["snapshot_date"].tolist(),
+                quant_scores=short_dataset["quant_score_short"].tolist(),
+                predicted_proba_short=short_dataset["proba_short"].tolist(),
+                historical_win_rate=short_dataset["historical_win_rate"].tolist(),
+                forward_returns=short_dataset["forward_return"].tolist(),
+                metric_name=metric_name,
+                conviction_grid_step=conviction_grid_step,
+                kelly_fraction_multipliers=kelly_fraction_multipliers,
+                min_effective_probabilities=min_effective_probabilities,
+                assumed_payoff_ratios=assumed_payoff_ratios,
+                top_n=top_n,
+                window=(start_date, end_date),
+                market_regime_mode=resolved_market_regime_mode,
+            )
+            best_weights_short = calibration_short.best_weights
+            fused_short = np.asarray(
+                [
+                    fuse_short(
+                        quant_score=float(row.quant_score_short),
+                        predicted_proba_short=float(row.proba_short),
+                        weights=ConvictionWeights(
+                            score_weight=float(best_weights_short["score_weight"]),
+                            prediction_weight=float(best_weights_short["prediction_weight"]),
+                        ),
+                    )
+                    for row in short_dataset.itertuples(index=False)
+                ],
+                dtype=float,
+            )
+            kelly_short = _compute_kelly_fraction(
+                short_dataset["proba_short"].to_numpy(dtype=float),
+                short_dataset["historical_win_rate"].to_numpy(dtype=float),
+                kelly_fraction_multiplier=float(best_weights_short["kelly_fraction_multiplier"]),
+                min_effective_probability=float(best_weights_short["min_effective_probability"]),
+                assumed_payoff_ratio=float(best_weights_short["assumed_payoff_ratio"]),
+            )
+            daily_returns_short = _weighted_daily_strategy_returns(
+                short_dataset["snapshot_date"].tolist(),
+                fused_short,
+                kelly_short,
+                (-short_dataset["forward_return"]).to_numpy(dtype=float),
+                top_n=int(best_weights_short.get("top_n", top_n)),
+            )
+            # Combiner long + short
+            if daily_returns_long.size > 0 and daily_returns_short.size > 0:
+                min_len = min(len(daily_returns_long), len(daily_returns_short))
+                daily_returns = (daily_returns_long[:min_len] + daily_returns_short[:min_len]) / 2.0
+            elif daily_returns_long.size > 0:
+                daily_returns = daily_returns_long
+            else:
+                daily_returns = daily_returns_short
+            # Consolider les poids
+            best_weights = {
+                **{f"long_{k}": v for k, v in best_weights_long.items()},
+                **{f"short_{k}": v for k, v in best_weights_short.items()},
+            }
+            scenario_name = (
+                f"L:{best_weights_long['score_weight']:.2f}/{best_weights_long['prediction_weight']:.2f}"
+                f"_S:{best_weights_short['score_weight']:.2f}/{best_weights_short['prediction_weight']:.2f}"
+            )
+            combined_candidates = calibration_long.candidates + calibration_short.candidates
+            combined_metric = (
+                calibration_long.metric_value + calibration_short.metric_value
+            ) / 2.0 if calibration_long.metric_value and calibration_short.metric_value else calibration_long.metric_value
+        else:
+            # Fallback long-only (court terme ou données short indisponibles)
+            daily_returns = daily_returns_long
+            best_weights = best_weights_long
+            scenario_name = (
+                f"score_{best_weights_long['score_weight']:.2f}_pred_{best_weights_long['prediction_weight']:.2f}"
+                f"__kelly_{best_weights_long['kelly_fraction_multiplier']:.2f}"
+                f"__minp_{best_weights_long['min_effective_probability']:.2f}"
+                f"__payoff_{best_weights_long['assumed_payoff_ratio']:.2f}"
+            )
+            combined_candidates = calibration_long.candidates
+            combined_metric = calibration_long.metric_value
+            LOGGER.info("walk_forward_backtest: short data unavailable, falling back to long-only calibration")
+
         run_summary = self._build_run_summary(
-            calibration=calibration,
+            calibration=calibration_long,
             dataset=work_dataset,
             daily_returns=daily_returns,
             best_weights=best_weights,
@@ -1038,19 +1258,34 @@ class EmpiricalRiskCalibrator:
             min_live_snapshot_days=min_live_snapshot_days,
             min_live_symbols=min_live_symbols,
         )
-        calibration_run_id = persist_calibration_run(calibration, engine=self.engine, run_summary=run_summary)
+        # Surcharger les champs consolidés après _build_run_summary
+        run_summary = EmpiricalRiskCalibrationRun(
+            **{
+                **run_summary.__dict__,
+                "latest_best_scenario_name": scenario_name,
+                "metric_value": float(combined_metric) if combined_metric else run_summary.metric_value,
+                "scenarios_evaluated": len(combined_candidates),
+            }
+        )
+        calibration_run_id = persist_calibration_run(calibration_long, engine=self.engine, run_summary=run_summary)
         daily_returns_df = pd.DataFrame(
             {
                 "snapshot_date": sorted(pd.to_datetime(pd.Series(work_dataset["snapshot_date"]).dropna().unique())),
                 "strategy_return": daily_returns,
             }
         )
+        # Sprint 2 — candidates agrégés long + short
+        all_candidate_keys = sorted({
+            key
+            for candidate in combined_candidates
+            for key in candidate.weights
+        })
         candidates_df = pd.DataFrame(
             {
-                "metric_value": [candidate.metric_value for candidate in calibration.candidates],
+                "metric_value": [candidate.metric_value for candidate in combined_candidates],
                 **{
-                    key: [candidate.weights.get(key) for candidate in calibration.candidates]
-                    for key in calibration.best_weights
+                    key: [candidate.weights.get(key) for candidate in combined_candidates]
+                    for key in all_candidate_keys
                 },
             }
         )
