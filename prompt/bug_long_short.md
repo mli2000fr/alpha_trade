@@ -30,10 +30,11 @@ rank_and_select_short()  →  ~20 shorts (short_selection_size=20, par short_sco
 
 - Lit `stock_scores_history` (ou `stock_scores` en live) pour savoir quels symboles prédire
 - Produit `model_predictions` : `predicted_proba` (long) + `proba_short` (short, via softmax ternaire classe 0)
-- Les prédictions couvrent **tous** les symboles entraînés, pas seulement les candidats du jour
-- **Les prédictions ne limitent pas le top-N.** Elles sont produites indépendamment de la sélection des candidats. La jointure candidat↔prédiction se fait après coup (`merge_asof` dans `load_dataset()`). Un candidat sans prédiction est soit écarté de la calibration (`.dropna()`), soit traité en mode « quant only » en live.
+- En runtime standard, **les prédictions portent par défaut sur les candidats** (`symbol_source="candidates"`) : on ne prédit donc pas tout l’univers entraîné, mais l’univers candidat courant
+- En backfill historique PIT, le code peut même reconstruire un scope **date par date** pour ne prédire que les symboles effectivement candidats à cette date
+- **Les prédictions ne limitent pas le top-N.** Le top-N est décidé par les scores candidats puis par la calibration ; la prédiction ne fait qu'enrichir ces candidats après sélection. La jointure candidat↔prédiction se fait ensuite (`merge_asof` dans `load_dataset()`). Un candidat sans prédiction est soit écarté de la calibration (`.dropna()`), soit traité en mode « quant only » en live.
 
-✅ **Cohérent** : les prédictions ML sont disponibles pour les deux directions. Le modèle ternaire produit 3 probas (short/flat/long) → `proba_short` et `predicted_proba` (long) sont tous deux utilisables. La prédiction est un **enrichissement** des candidats, pas un filtre d'entrée dans le top-N.
+✅ **Cohérent** : les prédictions ML sont disponibles pour les deux directions sur l’univers candidat traité. Le modèle ternaire produit 3 probas (short/flat/long) → `proba_short` et `predicted_proba` (long) sont tous deux utilisables. La prédiction est un **enrichissement** des candidats, pas un filtre d'entrée dans le top-N.
 
 ---
 
