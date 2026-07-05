@@ -855,6 +855,78 @@ Même config, même entraînement, univers maximal. **Test de généralisation d
 
 > ⚠️ **Avant d'investir sur TODO-7 à TODO-10** : faire un backtest complet avec la config actuelle pour valider que l'amélioration du f1_macro se traduit en amélioration du Sharpe. Si le ML n'améliore pas le P&L par rapport au quantitatif pur, aucune piste architecture ne changera cela.
 
+#### 🎯 Avis stratégique sur les TODO 7 → 10
+
+Cette priorisation correspond à un **avis de feuille de route**. Elle ne dépend pas d'une micro-variation entre deux runs, mais du rapport entre :
+
+- gain trading potentiel ;
+- robustesse attendue ;
+- coût d'implémentation ;
+- délai avant de pouvoir valider un effet réel en backtest portefeuille.
+
+#### 🧭 Priorisation recommandée
+
+Classement orienté **impact P&L / robustesse opérationnelle**, pas uniquement amélioration de `f1_macro`.
+
+| Rang | TODO | Impact trading attendu | Risque | Coût | Avis |
+|------|------|------------------------|--------|------|------|
+| 1 | **TODO-10 Champion selection** | Moyen à élevé | Faible à moyen | Faible à moyen | **Meilleur ratio gain / délai / preuve**. C'est la première piste à activer si l'objectif est d'améliorer vite le signal sans refondre l'architecture |
+| 2 | **TODO-7 GlobalModel avec ticker embeddings** | Élevé | Moyen | Élevé | **Meilleure piste structurelle de fond**. C'est le vrai chantier de montée en gamme si tu veux un ML plus cohérent sur grand univers |
+| 3 | **TODO-9 Multi-horizon** | Moyen à élevé | Moyen | Moyen à élevé | Pertinent surtout si tu veux que le ML informe aussi l'horizon de détention, pas seulement le sens du trade |
+| 4 | **TODO-8 Transformer** | Variable | Élevé | Élevé | À garder comme pari technique avancé, pas comme prochain chantier prioritaire |
+
+#### Détail par piste
+
+##### TODO-10 — Champion selection
+
+**Pourquoi je le mets en premier** :
+
+- Tu exploites mieux l'univers existant sans refondre tout le pipeline.
+- Sur un grand univers, certains symboles sont souvent mieux modélisés par LightGBM/CatBoost que par LSTM.
+- Le gain attendu est surtout une **meilleure robustesse par symbole**, donc un effet potentiellement rapide sur le P&L agrégé.
+- C'est la piste la plus simple à invalider ou valider proprement en backtest, donc la plus pragmatique en premier.
+
+##### TODO-7 — GlobalModel avec ticker embeddings
+
+**Pourquoi je le mets en deuxième mais très haut** :
+
+- Avec plusieurs milliers de symboles, un modèle global peut apprendre des régularités qu'un modèle par symbole ne voit pas bien.
+- Meilleure mutualisation statistique entre symboles, secteurs et régimes.
+- Fort potentiel pour améliorer la stabilité des probabilités et la couverture directionnelle.
+- C'est probablement la meilleure option si tu veux une amélioration profonde de la généralisabilité, mais le coût de migration et de validation est nettement supérieur à TODO-10.
+
+##### TODO-9 — Multi-horizon
+
+**Pourquoi je le mets en troisième** :
+
+- Un seul horizon `10j` est pratique, mais simplifie trop la réalité du swing.
+- Le multi-horizon peut mieux distinguer un move tactique court d'un move plus lent.
+- Peut aider non seulement la conviction, mais aussi le sizing et la logique d'exit si cette information est ensuite exploitée.
+- Son intérêt est réel, mais il apporte plus de valeur une fois la base de prédiction principale déjà stabilisée.
+
+##### TODO-8 — Transformer
+
+**Pourquoi je le mets en dernier** :
+
+- Upside théorique réel.
+- Mais coût d'implémentation, tuning, stabilité et monitoring plus élevés.
+- Risque de complexité supérieure au gain si les pistes plus simples n'ont pas encore été épuisées.
+- Tant que TODO-10 et TODO-7 n'ont pas été testés sérieusement, lancer TODO-8 revient à augmenter le risque de R&D sans certitude de gain métier.
+
+#### ✅ Plan pragmatique recommandé
+
+1. Garder la configuration actuelle comme base de référence tant qu'un backtest portefeuille complet n'a pas infirmé sa valeur métier.
+2. Lancer **TODO-10 Champion selection** en premier, car c'est la meilleure étape pour obtenir une preuve rapide avec un coût contenu.
+3. Si le gain reste partiel ou trop hétérogène selon les symboles, engager **TODO-7 GlobalModel** comme chantier structurel principal.
+4. Traiter **TODO-9 Multi-horizon** après cela, si l'objectif est d'améliorer aussi l'exploitation temporelle du signal.
+5. Conserver **TODO-8 Transformer** comme piste de R&D avancée, à activer seulement après les validations des options plus pragmatiques.
+
+#### ✅ Synthèse d'avis
+
+Si je dois résumer mon avis professionnel sur `TODO-7 → TODO-10` en une phrase :
+
+**je ne commencerais ni par le Transformer, ni par une refonte trop large ; je commencerais par `TODO-10`, puis j'irais vers `TODO-7`, parce que c'est le meilleur compromis entre preuve rapide, risque maîtrisé et potentiel d'amélioration réel.**
+
 ### 4.9 Table `model_governance` — suivi de la sélection champion
 
 La table `model_governance` trace **quel modèle est sélectionné comme champion** pour chaque symbole après chaque run d'entraînement. Elle est alimentée par `replace_model_governance()` dans `modelFactory/db_registry.py`.
