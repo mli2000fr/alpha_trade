@@ -1542,6 +1542,16 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 >    └─ Trouve le meilleur mix score_weight / prediction_weight
 >    └─ Produit : artifacts/conviction_calibration/
 >
+>    ⚠️ **Pourquoi décocher "Inclure Kelly" ?** Les deux calibrations
+>    (conviction et Kelly) sont découplées pour éviter qu'elles ne se
+>    contaminent mutuellement. Si Kelly est inclus dans le même grid search
+>    (scope=all), un mauvais paramètre Kelly peut faire rejeter un bon mix
+>    conviction, ou inversement — l'optimum trouvé sera un « compromis »
+>    qui n'est optimal ni pour le scoring ni pour le sizing. En séparant :
+>    étape ④ = trouver les meilleurs poids quant/ML indépendamment du sizing,
+>    étape ⑤ = une fois ces poids fixés, trouver les meilleurs paramètres
+>    Kelly. Chaque niveau est ainsi calibré sur des bases saines.
+>
 > 5. CALIBRATION KELLY (sizing)
 >    └─ IHM → 🎯 Calibrate conviction (cocher "Inclure Kelly")
 >    └─ Ou CLI : python -m backtesting calibrate-conviction-weights --scope all
