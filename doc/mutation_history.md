@@ -56,3 +56,4 @@ Sont exclus du périmètre mutation testing :
 | 2026-06-14 | 2026-06-14 | None | None | None |
 | 2026-06-21 | 2026-06-21 | None | None | None |
 | 2026-06-28 | 2026-06-28 | None | None | None |
+| 2026-07-05 | 2026-07-05 | None | None | None |
