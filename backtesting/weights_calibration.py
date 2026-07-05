@@ -34,6 +34,10 @@ from core.conviction import ConvictionWeights, SentimentFusionWeights, fuse, fus
 
 LOGGER = logging.getLogger(__name__)
 
+# Sprint 0 — calibration mode labels
+CALIBRATION_MODE_BASELINE = "baseline"
+CALIBRATION_MODE_TARGET = "target"
+
 ScoreMetric = Callable[[np.ndarray, np.ndarray], float]
 CALIBRATION_SCHEMA_VERSION = 2
 SEGMENT_DRIFT_SCHEMA_VERSION = 1

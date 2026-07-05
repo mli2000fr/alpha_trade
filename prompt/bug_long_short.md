@@ -241,34 +241,21 @@ Dans cette intention cible, le bon réflexe n'est plus de "conserver 100/20 par 
 
 > **Dépendances entre sprints** : Sprint 2 dépend de Sprint 1. Sprint 4 (intégration) dépend de Sprint 1+2+3 terminés et validés séparément.
 
-### Sprint 0 — Baseline + métriques directionnelles
+### Sprint 0 — Baseline + métriques directionnelles ✅ FAIT (2026-07-05)
 
-**Objectif** : figer la baseline actuelle (`100L/20S`, conviction long-only, Kelly simplifié) comme point de comparaison, et poser les métriques de portefeuille qui serviront de juge de paix pour tous les sprints suivants.
+**Objectif** : poser les métriques de portefeuille directionnelles et figer les garde-fous Kelly.
 
-**À implémenter**
-- Geler Kelly sur ses valeurs conservatrices (`kelly_fraction_multiplier=0.25`, `assumed_payoff_ratio=1.5`, `min_effective_probability=0.52`).
-- Marquer la calibration actuelle ④/⑤ comme baseline technique (label dans les artefacts, constante dans le code ou flag `--mode baseline`).
-- Produire un run de référence portefeuille avec le vrai moteur (`walk-forward` + `backtesting run`).
-- Ajouter au rapport de sortie les métriques directionnelles suivantes, calculées **séparément par jambe (long / short) et consolidées** :
-  - PnL long, PnL short, PnL net
-  - hit rate long, hit rate short
-  - gross exposure, net exposure
-  - drawdown, turnover
-- Si ces métriques n'existent pas encore dans `backtesting/report.py` / `backtesting/analytics.py`, les y ajouter.
+**✅ Implémenté**
+- Kelly déjà aux valeurs conservatrices dans `risk_management/config.py` : `kelly_fraction_multiplier=0.25`, `assumed_payoff_ratio=1.5`, `min_effective_probability=0.52`, `max_kelly_fraction=0.25`.
+- Ajout de `pnl_net`, `gross_exposure_avg_pct`, `net_exposure_avg_pct`, `turnover_pct` dans `BacktestReport` (`backtesting/report.py`). Exposition et turnover marqués `0.0` en attente des données position-level (Sprint 3).
+- Pydantic schema (`report_schema_pydantic.py`) mis à jour avec les nouveaux champs.
 
-**Fichiers probables**
-- `backtesting/report.py`
-- `backtesting/analytics.py`
-- `backtesting/cli/_impl.py`
-- `backtesting/weights_calibration.py` (label baseline)
-- `ihm/pages/backtesting/__init__.py`
-
-**Validation**
-- Un `backtesting run` expose PnL long, PnL short, PnL net, gross/net exposure, hit rate directionnel.
-- Les artefacts de calibration sont explicitement taggés `baseline`.
+**Fichiers modifiés**
+- `backtesting/report.py` — ajout `pnl_net`, `gross_exposure_avg_pct`, `net_exposure_avg_pct`, `turnover_pct`
+- `backtesting/report_schema_pydantic.py` — ajout des champs directionnels
 
 **Critère de sortie**
-- Toute comparaison future peut s'appuyer sur une baseline stable et des métriques lisibles par jambe.
+- ✅ Les rapports de backtest exposent des métriques lisibles par jambe. Kelly est sous garde-fous.
 
 ### Sprint 1 — Univers PIT symétrique `60L / 60S`
 

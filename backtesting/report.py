@@ -408,10 +408,15 @@ class BacktestReport:
     short_win_rate_pct: float = 0.0
     long_pnl_total: float = 0.0
     short_pnl_total: float = 0.0
+    pnl_net: float = 0.0
     force_close_exits: int = 0
     # Sprint 5 — force-close par side (ML)
     force_close_exits_long: int = 0
     force_close_exits_short: int = 0
+    # Sprint 0 — exposition et turnover
+    gross_exposure_avg_pct: float = 0.0
+    net_exposure_avg_pct: float = 0.0
+    turnover_pct: float = 0.0
 
     def to_serializable_dict(self) -> dict[str, float | int | str]:
         # Phase A.7 — conserver +inf comme sentinel JSON-friendly ("inf").
@@ -447,6 +452,10 @@ class BacktestReport:
             "short_win_rate_pct": float(self.short_win_rate_pct),
             "long_pnl_total": float(self.long_pnl_total),
             "short_pnl_total": float(self.short_pnl_total),
+            "pnl_net": float(self.pnl_net),
+            "gross_exposure_avg_pct": float(self.gross_exposure_avg_pct),
+            "net_exposure_avg_pct": float(self.net_exposure_avg_pct),
+            "turnover_pct": float(self.turnover_pct),
             "force_close_exits": int(self.force_close_exits),
             "force_close_exits_long": int(self.force_close_exits_long),
             "force_close_exits_short": int(self.force_close_exits_short),
@@ -475,6 +484,10 @@ class BacktestReport:
             # Sprint 4 — split directionnel
             "Trades Long": f"{self.long_trades} (WR: {self.long_win_rate_pct:.1f}%, PnL: ${self.long_pnl_total:,.2f})",
             "Trades Short": f"{self.short_trades} (WR: {self.short_win_rate_pct:.1f}%, PnL: ${self.short_pnl_total:,.2f})",
+            "PnL Net": f"${self.pnl_net:,.2f}",
+            "Exposition brute moy.": f"{self.gross_exposure_avg_pct:.1f}%",
+            "Exposition nette moy.": f"{self.net_exposure_avg_pct:.1f}%",
+            "Turnover": f"{self.turnover_pct:.1f}%",
             "Force-close (total)": self.force_close_exits,
             "Force-close Long": self.force_close_exits_long,
             "Force-close Short": self.force_close_exits_short,
@@ -679,6 +692,11 @@ def generate_report(
             # Sprint 5 — force-close par side
             force_close_exits_long=fc_long,
             force_close_exits_short=fc_short,
+            # Sprint 0 — exposition et turnover
+            pnl_net=long_pnl_total + short_pnl_total,
+            gross_exposure_avg_pct=0.0,   # nécessite donnée position-level → Sprint 3
+            net_exposure_avg_pct=0.0,     # nécessite donnée position-level → Sprint 3
+            turnover_pct=0.0,             # nécessite donnée position-level → Sprint 3
         )
 
     final_val = _as_float(pf.final_value())
@@ -726,6 +744,20 @@ def generate_report(
         calmar_ratio=calmar,
         ulcer_index=ulcer,
         risk_free_rate=float(risk_free_rate),
+        # Sprint 4/5/0 — directionnelles, exposition, turnover (fallback vbt)
+        long_trades=0,
+        short_trades=0,
+        long_win_rate_pct=0.0,
+        short_win_rate_pct=0.0,
+        long_pnl_total=0.0,
+        short_pnl_total=0.0,
+        force_close_exits=0,
+        force_close_exits_long=0,
+        force_close_exits_short=0,
+        pnl_net=0.0,
+        gross_exposure_avg_pct=0.0,
+        net_exposure_avg_pct=0.0,
+        turnover_pct=0.0,
     )
 
 
