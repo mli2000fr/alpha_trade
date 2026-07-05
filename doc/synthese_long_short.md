@@ -41,7 +41,7 @@
 | **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt/Temperature), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
 | **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
 | **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, **long + short depuis P2 2026-06-25**), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE` | 🟣 HYBRIDE |
-| **8. Calibration des Poids** | 3 niveaux : Conviction ✅, Sentiment ✅, Kelly ✅. IHM : onglets `📰 Calibrate sentiment`, `🎯 Calibrate conviction` (+ Kelly + `--backtest-kelly`), `🔄 Walk-forward conviction` (Sprint 4), `🚶 Walk-forward sentiment`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` | 🟣 HYBRIDE |
+| **8. Calibration des Poids** | 3 niveaux : Conviction ✅, Sentiment ✅, Kelly ✅. IHM : onglets `📰 Calibrate sentiment`, `🎯 Calibrate conviction` (+ Kelly + `--backtest-kelly`), `🔄 Walk-forward conviction` (Sprint 4), `� Market-neutral` (Sprint 5), `�🚶 Walk-forward sentiment`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` | 🟣 HYBRIDE |
 | **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
 | **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
 | **11. Caveats** | 12 points d'attention : fonctionnalités désactivées, ✅ PIT corrigé, asymétries long/short, limites backtest, risques ML/Kelly | — |
@@ -1614,6 +1614,7 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 > | **Sentiment** (quant/sentiment/macro) | `📰 Calibrate sentiment` | Lance `calibrate-sentiment-weights`. Définir dates, top-N, horizons. Produit `sentiment_weight_calibration.csv` + `_best.json` dans `artifacts/sentiment_calibration/` |
 > | **Conviction + Kelly** (quant/ML) | `🎯 Calibrate conviction` | Lance `calibrate-conviction-weights`. Calibre `score_weight`/`prediction_weight` + Kelly. ☑ « Inclure Kelly » pour le sizing, ☑ « Kelly via BacktestEngine » (`--backtest-kelly`, Sprint 3) |
 > | **Walk-Forward Conviction** (Sprint 4) | `🔄 Walk-forward conviction` | Lance `walk-forward-conviction`. Calibre conviction + Kelly par folds glissants avec validation OOS BacktestEngine. Supporte `--backtest-kelly` |
+> | **Market-Neutral / Grilles** (Sprint 5) | `🔄 Walk-forward conviction` | Options `--symmetric-grid` (60/60, 80/80, 100/100...), `--enforce-net-exposure`, `--net-exposure-target`. Teste la neutralite nette et compare les grilles symetriques |
 > | **Walk-Forward Sentiment** (validation OOS) | `🚶 Walk-forward sentiment` | Lance `walk-forward-sentiment`. Backtest complet par folds glissants. Produit `latest_best_weights.json` |
 > | **Trimestrielle** (conviction + Kelly) | `🎛️ Calibration trimestrielle poids` | Lance `scripts/run_quarterly_weights_calibration.py`. Recalibre poids score (Sharpe/hit-ratio/IC) sur 4 trimestres |
 >
@@ -2208,7 +2209,7 @@ graph LR
 | `python -m backtesting run --tracker-state <path>` | 🔵 BACKTEST | Backtest avec état des trackers chargé (P2) |
 | `python -m backtesting run --load-tracker-state` | 🔵 BACKTEST | Raccourci : charge `artifacts/backtesting/tracker_state.json` (P2) |
 | `python -m backtesting calibrate-conviction-weights` | 🔵 BACKTEST | Calibration conviction (quant/ML) + Kelly (P2). `--backtest-kelly` pour raffiner Kelly dans BacktestEngine (Sprint 3) |
-| `python -m backtesting walk-forward-conviction` | 🔵 BACKTEST | Walk-forward conviction + Kelly par folds OOS (Sprint 4). `--backtest-kelly` pour raffiner Kelly par fold |
+| `python -m backtesting walk-forward-conviction` | 🔵 BACKTEST | Walk-forward conviction + Kelly par folds OOS (Sprint 4). `--backtest-kelly` pour raffiner Kelly par fold. `--symmetric-grid 80/80 --enforce-net-exposure` pour market-neutral (Sprint 5) |
 | `python -m backtesting calibrate-sentiment-weights` | 🔵 BACKTEST | Calibration des poids sentiment |
 | `python -m backtesting walk-forward-sentiment` | 🔵 BACKTEST | Walk-forward calibration sentiment |
 | `python -m backtesting backfill-scores-history` | 🔵 BACKTEST | Remplit `stock_scores_history` pour PIT |
