@@ -262,7 +262,7 @@ class ModelConfig:
     """Hyper-paramètres du modèle LSTM + attention."""
 
     input_size: int = 0  # set dynamically after feature engineering
-    hidden_size: int = 128
+    hidden_size: int = 256
     num_layers: int = 2
     dropout: float = 0.3
     learning_rate: float = 1e-3

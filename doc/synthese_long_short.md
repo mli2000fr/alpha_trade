@@ -782,7 +782,7 @@ L'entraînement ML découpe les données **dans l'ordre du temps** (pas de shuff
 
 ### 4.8 Optimisation hyperparamètres — Résultats (2026-07-02/03)
 
-Config finale lockée : `num_layers=2, dropout=0.3, batch_size=32, epochs=100, horizon=10j, target=ternary ±2%`.
+Config finale lockée : `num_layers=2, dropout=0.3, hidden_size=256, batch_size=32, epochs=100, horizon=10j, target=ternary ±2%`.
 
 #### 🔧 Tests techniques — Résumé
 
@@ -831,7 +831,7 @@ Même config, même entraînement, univers maximal. **Test de généralisation d
 - `val − wf = 0.039` constant → généralisation temporelle stable
 - 5975/7584 symboles (78.8%) ont les deux directions — le modèle est **complet** sur > ¾ de l'univers
 
-**✅ Verdict final** : la config `horizon=10j, batch=32, dropout=0.3, 2 couches, epochs=100` est **validée sur 7584 symboles walk-forward**. Les métriques sont stables cross-run, le modèle généralise sans overfitting. Prêt pour backtest complet.
+**✅ Verdict final** : la config `horizon=10j, batch=32, hidden=256, dropout=0.3, 2 couches, epochs=100` est **validée sur 7584 symboles walk-forward**. Les métriques sont stables cross-run, le modèle généralise sans overfitting. Prêt pour backtest complet.
 
 #### 📋 Fichiers modifiés (config directionnelle)
 
