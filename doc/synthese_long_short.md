@@ -1649,6 +1649,25 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 > +       → Supporte --backtest-kelly pour raffiner Kelly dans chaque fold
 > +       → Impact : calibration conviction + Kelly par folds glissants
 > +         avec validation OOS via BacktestEngine, métriques par jambe
+>
+> + 🆕 FAIT — Architecture market-neutral + grilles symétriques (Sprint 5, 2026-07-05)
+> +       → Contrainte de neutralité nette dans RiskConfig + PortfolioBuilder.
+> +         Réduction proportionnelle du côté surpondéré si exposition nette hors
+> +         corridor [cible ± tolérance].
+> +       → Grilles symétriques prédéfinies : 60/60, 80/80, 100/100, 40/40, 20/20
+> +         via --symmetric-grid ou --top-n-long/--top-n-short.
+> +       → Corrélation inter-jambes long/short dans BacktestReport.
+> +       → Usage CLI :
+> +         python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-31 \
+> +             --symmetric-grid 80/80 --enforce-net-exposure --net-exposure-target 0.0 --backtest-kelly
+> +       → Comparaison de grilles :
+> +         for grid in "60/60" "80/80" "100/100"; do
+> +             python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-31 \
+> +                 --symmetric-grid "$grid" --min-train-days 252 --test-days 63
+> +         done
+> +       → Fichiers : risk_management/config.py, risk_management/portfolio_builder.py,
+> +         backtesting/report.py, selector/config.py, backtesting/cli/_impl.py,
+> +         backtesting/weights_calibration.py
 > ```
 >
 > **Consultation des résultats** : page `📊 Weights Calibration Runs` → historique des runs dans `weights_calibration_runs` (DB), avec segments (régime × horizon), drifts, et best_weights.

@@ -1331,6 +1331,27 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Activer la calibration Kelly via BacktestEngine dans chaque fold train",
     )
+    # Sprint 5 — grilles symétriques market-neutral
+    wf_conv_p.add_argument(
+        "--symmetric-grid",
+        default=None,
+        choices=["60/60", "80/80", "100/100", "40/40", "20/20"],
+        help="Grille symétrique long/short prédéfinie. Surcharge --top-n-long/--top-n-short.",
+    )
+    wf_conv_p.add_argument("--top-n-long", type=int, default=None, help="Top-N longs (défaut = top-n)")
+    wf_conv_p.add_argument("--top-n-short", type=int, default=None, help="Top-N shorts (défaut = top-n)")
+    wf_conv_p.add_argument(
+        "--enforce-net-exposure",
+        action="store_true",
+        default=False,
+        help="Active la contrainte de neutralité nette dans le backtest de validation OOS",
+    )
+    wf_conv_p.add_argument(
+        "--net-exposure-target",
+        type=float,
+        default=0.0,
+        help="Exposition nette cible (0.0 = market-neutral, 0.30 = biais long 30%%)",
+    )
 
     walk_forward_p = sub.add_parser(
         "walk-forward-sentiment",
@@ -3542,17 +3563,33 @@ def _run_walk_forward_conviction(args: argparse.Namespace) -> None:
     from datetime import datetime
 
     from backtesting.weights_calibration import EmpiricalRiskCalibrator
+    from selector.config import resolve_symmetric_grid
 
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
     horizons = tuple(int(token.strip()) for token in args.horizons.split(",") if token.strip())
     use_backtest_kelly = bool(getattr(args, "backtest_kelly", False))
 
+    # Sprint 5 — résolution des grilles symétriques
+    symmetric_grid = getattr(args, "symmetric_grid", None)
+    top_n_long = getattr(args, "top_n_long", None)
+    top_n_short = getattr(args, "top_n_short", None)
+    enforce_net_exposure = bool(getattr(args, "enforce_net_exposure", False))
+    net_exposure_target = float(getattr(args, "net_exposure_target", 0.0))
+
+    if symmetric_grid:
+        selection_size, short_selection_size = resolve_symmetric_grid(symmetric_grid)
+        _safe_print(f"   Grille symétrique   : {symmetric_grid} → {selection_size}L / {short_selection_size}S")
+    else:
+        selection_size = top_n_long or args.top_n
+        short_selection_size = top_n_short or args.top_n
+
     _safe_print(f"\n🔄 Walk-forward conviction : {start} → {end}")
     _safe_print(
-        f"   horizons={','.join(str(h) for h in horizons)} top_n={args.top_n} "
+        f"   horizons={','.join(str(h) for h in horizons)} top_n_long={selection_size} top_n_short={short_selection_size} "
         f"min_train_days={args.min_train_days} test_days={args.test_days} "
-        f"backtest_kelly={use_backtest_kelly} output_dir={args.output_dir}\n"
+        f"backtest_kelly={use_backtest_kelly} net_exposure={'enforced' if enforce_net_exposure else 'free'} "
+        f"output_dir={args.output_dir}\n"
     )
 
     calibrator = EmpiricalRiskCalibrator()
@@ -3570,6 +3607,11 @@ def _run_walk_forward_conviction(args: argparse.Namespace) -> None:
                 test_days=args.test_days,
                 step_days=args.step_days,
                 use_backtest_kelly=use_backtest_kelly,
+                # Sprint 5 — market-neutral params
+                top_n_long=selection_size if selection_size != args.top_n else None,
+                top_n_short=short_selection_size if short_selection_size != args.top_n else None,
+                enforce_net_exposure=enforce_net_exposure,
+                net_exposure_target=net_exposure_target if enforce_net_exposure else None,
             )
             summary = report.get("summary", {})
             folds = report.get("folds", [])

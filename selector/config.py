@@ -451,6 +451,32 @@ class AlphaScannerConfig:
             raise ValueError("winsor_lower_pct et winsor_upper_pct doivent respecter 0 ≤ lower < upper ≤ 1.")
 
 
+# ── Sprint 5 — Grilles symétriques market-neutral ──────────────────────
+
+SYMMETRIC_GRIDS: dict[str, tuple[int, int]] = {
+    "60/60": (60, 60),
+    "80/80": (80, 80),
+    "100/100": (100, 100),
+    "40/40": (40, 40),
+    "20/20": (20, 20),
+}
+"""Grilles symétriques prédéfinies pour tester la neutralité nette.
+Clé = label, valeur = (selection_size, short_selection_size)."""
+
+
+def resolve_symmetric_grid(label: str) -> tuple[int, int]:
+    """Résout un label de grille symétrique (ex: \"60/60\", \"80/80\").
+    Retourne (selection_size, short_selection_size).
+    Lève KeyError si le label est inconnu.
+    """
+    if label not in SYMMETRIC_GRIDS:
+        raise KeyError(
+            f"Grille symétrique inconnue : {label!r}. "
+            f"Grilles disponibles : {', '.join(sorted(SYMMETRIC_GRIDS))}"
+        )
+    return SYMMETRIC_GRIDS[label]
+
+
 __all__ = [
     "ABLATION_MODE_OFF",
     "ABLATION_MODE_SHADOW",
@@ -473,5 +499,7 @@ __all__ = [
     "get_ablation_filter_config_overrides",
     "is_filter_effectively_enabled",
     "load_selector_ablation_plan_from_file",
+    "SYMMETRIC_GRIDS",
+    "resolve_symmetric_grid",
 ]
 

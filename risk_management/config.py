@@ -140,6 +140,22 @@ class RiskConfig:
     # Ex: 0.01 = une position ne peut pas dépasser 1% du volume quotidien.
     max_position_pct_of_adv: float | None = None
 
+    # --- Market-neutral constraints (Sprint 5, 2026-07-05) ---
+    # Active la contrainte de neutralité nette. Quand activé, le portefeuille
+    # est rééquilibré pour maintenir l'exposition nette dans le corridor
+    # [target - tolerance, target + tolerance]. Les positions du côté
+    # surpondéré sont réduites proportionnellement.
+    enforce_net_exposure: bool = False
+    # Exposition nette cible en fraction de l'equity.
+    # 0.0 = market-neutral parfait, 0.30 = biais long 30%.
+    net_exposure_target: float = 0.0
+    # Tolérance autour de la cible (±). Ex: target=0.0, tolerance=0.10
+    # → net_exposure autorisée ∈ [-0.10, +0.10].
+    net_exposure_tolerance: float = 0.10
+    # Corrélation inter-jambes long/short max avant déclenchement d'une
+    # réduction de levier. None = pas de contrainte.
+    max_long_short_correlation: float | None = None
+
     def __post_init__(self) -> None:
         if self.account_equity <= 0:
             raise ValueError("account_equity doit être > 0.")
@@ -198,6 +214,14 @@ class RiskConfig:
             raise ValueError("factor_ewma_half_life doit être >= 2.")
         if self.factor_lookback_days < 20:
             raise ValueError("factor_lookback_days doit être >= 20.")
+        # Sprint 5 — market-neutral
+        if self.enforce_net_exposure:
+            if self.net_exposure_target < -1.0 or self.net_exposure_target > 1.0:
+                raise ValueError("net_exposure_target doit être dans [-1.0, 1.0].")
+            if self.net_exposure_tolerance <= 0:
+                raise ValueError("net_exposure_tolerance doit être > 0.")
+            if self.max_long_short_correlation is not None and not (0 < self.max_long_short_correlation <= 1):
+                raise ValueError("max_long_short_correlation doit être dans ]0, 1] quand renseigné.")
 
     @property
     def effective_min_notional(self) -> float:

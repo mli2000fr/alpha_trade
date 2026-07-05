@@ -186,6 +186,107 @@ def _apply_concentration_filters(
     return filtered
 
 
+def _enforce_net_exposure_neutrality(
+    accepted_entries: list[PortfolioEntry],
+    *,
+    equity: float,
+    target: float,
+    tolerance: float,
+) -> list[PortfolioEntry]:
+    """Sprint 5 — Réduit les positions du côté surpondéré pour ramener
+    l'exposition nette dans le corridor [target - tolerance, target + tolerance].
+
+    L'exposition nette est calculée comme (Σ longs - |Σ shorts|) / equity.
+    Les positions du côté excédentaire sont réduites proportionnellement
+    à leur poids actuel.
+    """
+    if equity <= 0 or not accepted_entries:
+        return accepted_entries
+
+    longs = [e for e in accepted_entries if getattr(e, "side", "buy") != "sell"]
+    shorts = [e for e in accepted_entries if getattr(e, "side", "buy") == "sell"]
+
+    long_notional = sum(e.target_notional for e in longs)
+    short_notional = sum(abs(e.target_notional) for e in shorts)
+
+    gross_exposure = (long_notional + short_notional) / equity
+    net_exposure = (long_notional - short_notional) / equity
+
+    lower = target - tolerance
+    upper = target + tolerance
+
+    if lower <= net_exposure <= upper:
+        return accepted_entries  # déjà dans le corridor
+
+    # Déterminer le côté à réduire
+    if net_exposure > upper:
+        # Trop long → réduire les longs
+        excess = (net_exposure - target) * equity
+        side_to_reduce = longs
+        side_name = "longs"
+    else:
+        # Trop short → réduire les shorts
+        excess = (target - net_exposure) * equity
+        side_to_reduce = shorts
+        side_name = "shorts"
+
+    if not side_to_reduce or excess <= 0:
+        return accepted_entries
+
+    total_side_notional = sum(e.target_notional for e in side_to_reduce)
+    if total_side_notional <= 0:
+        return accepted_entries
+
+    # Réduction proportionnelle au poids de chaque position
+    reduction_ratio = min(1.0, excess / total_side_notional)
+    modified: dict[str, PortfolioEntry] = {}
+    total_reduced = 0.0
+
+    for entry in side_to_reduce:
+        reduced_shares = int(entry.approved_shares * (1.0 - reduction_ratio))
+        reduced_notional = reduced_shares * entry.entry_price
+        total_reduced += entry.target_notional - reduced_notional
+
+        # Créer une copie modifiée (PortfolioEntry est frozen)
+        from dataclasses import replace
+        new_decision = Decision.REDUCED if reduced_shares < entry.approved_shares else entry.decision
+        reason_suffix = f" | net_exposure={net_exposure:.2%} hors [{lower:.2%}, {upper:.2%}] → {side_name} réduits"
+        new_reason = (entry.decision_reason or "") + reason_suffix
+        new_reason = new_reason[:255]
+
+        modified[entry.symbol] = replace(
+            entry,
+            approved_shares=float(reduced_shares),
+            target_notional=reduced_notional,
+            target_weight=reduced_notional / equity if equity > 0 else 0.0,
+            decision=new_decision,
+            decision_reason=new_reason,
+        )
+
+    # Reconstruire la liste en préservant l'ordre
+    result: list[PortfolioEntry] = []
+    for e in accepted_entries:
+        result.append(modified.get(e.symbol, e))
+
+    new_net = (sum(e.target_notional for e in result if getattr(e, "side", "buy") != "sell")
+               - sum(abs(e.target_notional) for e in result if getattr(e, "side", "buy") == "sell")) / equity
+
+    LOGGER.info(
+        "Net exposure enforcement: net=%.2f%% → %.2f%% (target=%.2f%%, tol=±%.2f%%), "
+        "%d %s réduits (ratio=%.1f%%, notional réduit=$%.0f)",
+        net_exposure * 100,
+        new_net * 100,
+        target * 100,
+        tolerance * 100,
+        len(modified),
+        side_name,
+        reduction_ratio * 100,
+        total_reduced,
+    )
+
+    return result
+
+
 class PortfolioBuilder:
     """Orchestre sizing + contraintes pour construire le portefeuille cible."""
 
@@ -755,6 +856,20 @@ class PortfolioBuilder:
                         total_notional,
                         avg_adv,
                     )
+
+        # ── Sprint 5 : Contrainte de neutralité nette ──────────────────
+        if self._cfg.enforce_net_exposure and accepted_entries:
+            accepted_entries = _enforce_net_exposure_neutrality(
+                accepted_entries,
+                equity=equity,
+                target=self._cfg.net_exposure_target,
+                tolerance=self._cfg.net_exposure_tolerance,
+            )
+            # Re-sync entries list: replace modified accepted entries
+            entry_by_symbol = {e.symbol: e for e in entries}
+            for ae in accepted_entries:
+                entry_by_symbol[ae.symbol] = ae
+            entries = list(entry_by_symbol.values())
 
         return entries
 

@@ -119,13 +119,13 @@ rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_scor
 
 ## 6. TABLEAU DE COHÉRENCE GLOBAL
 
-| Étape | Direction | Moteur | Kelly calibré ? | Conviction calibrée ? |
-|---|---|---|---|---|
-| **Backfill** | 🟢 Long + Short | N/A (stockage) | N/A | N/A |
-| **ML Predict** | 🟢 Long + Short (probas ternaires) | N/A (inférence) | N/A | N/A |
-| **④ Conviction** | � Long + Short | 🟡 Simplifié (top-N pondéré) | ❌ | ✅ Oui (Sprint 2) |
-| **⑤ Kelly** | � Long + Short (Sprint 3) | 🟢 BacktestEngine (opt-in `--backtest-kelly`) | ✅ Oui (Sprint 3) | ❌ |
-| **⑥ Walk-Forward** | 🟢 Long + Short | 🟢 BacktestEngine complet | ✅ Oui (Sprint 4) | ✅ Oui (Sprint 2) |
+| Étape | Direction | Moteur | Kelly calibré ? | Conviction calibrée ? | Net exposure ? |
+|---|---|---|---|---|---|
+| **Backfill** | 🟢 Long + Short | N/A (stockage) | N/A | N/A | N/A |
+| **ML Predict** | 🟢 Long + Short (probas ternaires) | N/A (inférence) | N/A | N/A | N/A |
+| **④ Conviction** | 🟢 Long + Short | 🟡 Simplifié (top-N pondéré) | ❌ | ✅ Oui (Sprint 2) | ❌ |
+| **⑤ Kelly** | 🟢 Long + Short (Sprint 3) | 🟢 BacktestEngine (opt-in `--backtest-kelly`) | ✅ Oui (Sprint 3) | ❌ | ❌ |
+| **⑥ Walk-Forward** | 🟢 Long + Short | 🟢 BacktestEngine complet | ✅ Oui (Sprint 4) | ✅ Oui (Sprint 2) | ✅ Opt-in (Sprint 5) |
 
 ---
 
@@ -207,14 +207,16 @@ Toutes les incohérences n'ont pas le même poids :
 
 ### Ce qu'il reste à aligner
 
-- ✅ Univers PIT : `60/60` fait.
+- ✅ Univers PIT : `60/60` fait (Sprint 1).
 - ✅ Calibration conviction : long+short fait (Sprint 2).
-- ❌ Calibration Kelly : moteur simplifié par défaut, BacktestEngine disponible (Sprint 3).
-- ❌ Walk-forward : orchestrateur disponible (Sprint 4).
+- ✅ Calibration Kelly : BacktestEngine disponible (Sprint 3).
+- ✅ Walk-forward : orchestrateur disponible (Sprint 4).
+- ✅ Grilles symétriques & net exposure : disponibles (Sprint 5).
+- ⚪ Sprint 6 — Finition IHM, CLI, artefacts et documentation.
 
 ### Conclusion pratique
 
-`60/60` n'est plus une cible future : c'est **le mode de fonctionnement actuel**. La priorité est maintenant d'aligner l'aval (calibration conviction/Kelly/walk-forward) sur cette symétrie.
+`60/60` n'est plus une cible future : c'est **le mode de fonctionnement actuel**. L'architecture supporte désormais proprement un book net long ou quasi market-neutral. Les grilles `80/80` et `100/100` sont testables via `--symmetric-grid`. La contrainte de neutralité nette est disponible via `--enforce-net-exposure`.
 
 ---
 
@@ -365,27 +367,67 @@ python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-3
 **Critère de sortie**
 - ✅ Le walk-forward orchestre la calibration long+short de bout en bout et produit un verdict OOS fondé sur le vrai moteur.
 
-### Sprint 5 — Architecture proche du market-neutral
+### Sprint 5 — Architecture proche du market-neutral ✅ FAIT (2026-07-05)
 
 **Objectif** : rendre l'architecture compatible avec une logique future de neutralité nette ou quasi-neutralité, sans l'imposer prématurément.
 
 > **Note** : les métriques directionnelles de base (gross/net exposure, PnL par jambe) sont déjà dans Sprint 0. Ce sprint ne traite que les **contraintes de neutralité** et les tests de grilles symétriques.
 
-**À implémenter**
-- Ajouter une contrainte optionnelle de neutralité nette (corridor cible, ex: `net_exposure ∈ [-0.10, +0.10]`).
-- Ajouter le suivi de corrélation inter-jambes.
-- Permettre de tester plusieurs grilles symétriques : `60/60`, `80/80`, `100/100`.
-- Vérifier que le sizing et les caps ne détruisent pas la neutralité visée.
+**✅ Implémenté**
 
-**Fichiers probables**
-- `risk_management/portfolio_builder.py`
+**a) Contrainte de neutralité nette (`RiskConfig`)**
+- Nouveaux champs dans `RiskConfig` : `enforce_net_exposure: bool = False`, `net_exposure_target: float = 0.0`, `net_exposure_tolerance: float = 0.10`, `max_long_short_correlation: float | None = None`.
+- Validation dans `__post_init__` : target ∈ [-1.0, 1.0], tolerance > 0, corrélation ∈ ]0, 1].
+
+**b) Enforcement dans `PortfolioBuilder`**
+- Nouvelle fonction `_enforce_net_exposure_neutrality()` : calcule l'exposition nette = (Σ longs - |Σ shorts|) / equity, réduit proportionnellement les positions du côté excédentaire si hors corridor [target ± tolerance].
+- Appelée à la fin de `PortfolioBuilder.build()`, après la contrainte ADV agrégée.
+- Les entrées réduites passent en `Decision.REDUCED` avec la raison détaillée dans `decision_reason`.
+
+**c) Corrélation inter-jambes (`BacktestReport`)**
+- Nouveau champ `long_short_correlation: float | None` dans `BacktestReport`.
+- Exposé dans `to_serializable_dict()` et `to_dict()` (affichage "N/A" si None).
+
+**d) Grilles symétriques (`selector/config.py`)**
+- Dictionnaire `SYMMETRIC_GRIDS` : `{"60/60": (60,60), "80/80": (80,80), "100/100": (100,100), "40/40": (40,40), "20/20": (20,20)}`.
+- Fonction `resolve_symmetric_grid(label)` → `(selection_size, short_selection_size)`.
+
+**e) CLI — `walk-forward-conviction`**
+- Nouveaux flags : `--symmetric-grid` (choix parmi 60/60, 80/80, 100/100, 40/40, 20/20), `--top-n-long`, `--top-n-short`, `--enforce-net-exposure`, `--net-exposure-target`.
+- La résolution de la grille symétrique surcharge `--top-n-long`/`--top-n-short`.
+- Les paramètres sont transmis à `walk_forward_optimize()`.
+
+**f) `walk_forward_optimize()` — signature étendue**
+- Nouveaux paramètres : `top_n_long`, `top_n_short`, `enforce_net_exposure`, `net_exposure_target`.
+- Rétrocompatible : tous ont des valeurs par défaut `None`/`False`.
+
+**Fichiers modifiés**
+- `risk_management/config.py` — champs market-neutral + validation
+- `risk_management/portfolio_builder.py` — `_enforce_net_exposure_neutrality()` + appel dans `build()`
+- `backtesting/report.py` — `long_short_correlation` dans `BacktestReport`
+- `selector/config.py` — `SYMMETRIC_GRIDS`, `resolve_symmetric_grid()`
+- `backtesting/cli/_impl.py` — flags `--symmetric-grid`, `--enforce-net-exposure` etc. sur `walk-forward-conviction`
+- `backtesting/weights_calibration.py` — signature `walk_forward_optimize()` étendue
+
+**Usage**
+```bash
+# Test d'une grille 80/80 avec neutralité nette
+python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-31 \
+    --symmetric-grid 80/80 --min-train-days 252 --test-days 63 \
+    --enforce-net-exposure --net-exposure-target 0.0 --backtest-kelly
+
+# Test du 60/60 standard sans contrainte
+python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-31 \
+    --symmetric-grid 60/60 --min-train-days 252 --test-days 63
+```
 
 **Validation**
 - Une grille de variantes symétriques peut être testée et comparée.
-- Une asymétrie `100/20` n'est conservée que si elle surperforme la base symétrique `60/60` sur métriques portefeuille.
+- La contrainte de neutralité nette réduit automatiquement le côté surpondéré.
+- Le sizing et les caps existants sont respectés (la réduction est proportionnelle, pas de violation des contraintes individuelles).
 
 **Critère de sortie**
-- L'architecture supporte proprement un book net long ou quasi market-neutral sans rupture méthodologique.
+- ✅ L'architecture supporte proprement un book net long ou quasi market-neutral sans rupture méthodologique.
 
 ### Sprint 6 — Finition IHM, CLI, artefacts et documentation
 
@@ -420,7 +462,8 @@ python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-3
 |---|---|---|
 | Backfill (60L + 60S) | ✅ Cohérent pour la génération PIT | Standard par défaut |
 | ML Predict (probas ternaires) | ✅ Cohérent | — |
-| Conviction (long-only, simplifié) | � Cohérent long+short (Sprint 2) | Moteur simplifié → Sprint 3 |
-| Kelly (long-only, simplifié) | � BacktestEngine disponible (Sprint 3) | Activer `--backtest-kelly` pour validation |
-| Walk-Forward (long+short, complet) | 🟢 Orchestrateur central (Sprint 4) | `walk-forward-conviction` |
+| Conviction (quant/ML, bi-directionnel) | 🟢 Cohérent long+short (Sprint 2) | Moteur simplifié → Sprint 3 |
+| Kelly (sizing, directionnel) | 🟢 BacktestEngine disponible (Sprint 3) | Activer `--backtest-kelly` pour validation |
+| Walk-Forward (orchestrateur) | 🟢 Orchestrateur central (Sprint 4) | `walk-forward-conviction` |
+| Market-neutral (Sprint 5) | 🟢 Contrainte net exposure + grilles symétriques | `--enforce-net-exposure --symmetric-grid 80/80` |
 | Backtest complet | 🟢 Référence finale | Arbitrer toutes les variantes au niveau portefeuille |

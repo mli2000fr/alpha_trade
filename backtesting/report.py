@@ -417,6 +417,8 @@ class BacktestReport:
     gross_exposure_avg_pct: float = 0.0
     net_exposure_avg_pct: float = 0.0
     turnover_pct: float = 0.0
+    # Sprint 5 — corrélation inter-jambes long/short
+    long_short_correlation: float | None = None
 
     def to_serializable_dict(self) -> dict[str, float | int | str]:
         # Phase A.7 — conserver +inf comme sentinel JSON-friendly ("inf").
@@ -456,6 +458,7 @@ class BacktestReport:
             "gross_exposure_avg_pct": float(self.gross_exposure_avg_pct),
             "net_exposure_avg_pct": float(self.net_exposure_avg_pct),
             "turnover_pct": float(self.turnover_pct),
+            "long_short_correlation": float(self.long_short_correlation) if self.long_short_correlation is not None else None,
             "force_close_exits": int(self.force_close_exits),
             "force_close_exits_long": int(self.force_close_exits_long),
             "force_close_exits_short": int(self.force_close_exits_short),
@@ -488,6 +491,7 @@ class BacktestReport:
             "Exposition brute moy.": f"{self.gross_exposure_avg_pct:.1f}%",
             "Exposition nette moy.": f"{self.net_exposure_avg_pct:.1f}%",
             "Turnover": f"{self.turnover_pct:.1f}%",
+            "Corrélation L/S": f"{self.long_short_correlation:.3f}" if self.long_short_correlation is not None else "N/A",
             "Force-close (total)": self.force_close_exits,
             "Force-close Long": self.force_close_exits_long,
             "Force-close Short": self.force_close_exits_short,

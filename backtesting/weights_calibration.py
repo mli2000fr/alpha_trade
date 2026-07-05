@@ -1283,6 +1283,11 @@ class EmpiricalRiskCalibrator:
         step_days: int | None = None,
         initial_equity: float = 100_000.0,
         use_backtest_kelly: bool = False,
+        # Sprint 5 — market-neutral
+        top_n_long: int | None = None,
+        top_n_short: int | None = None,
+        enforce_net_exposure: bool = False,
+        net_exposure_target: float | None = None,
     ) -> dict[str, Any]:
         """Walk-forward complet : calibration + validation OOS par folds.
 
@@ -1296,6 +1301,9 @@ class EmpiricalRiskCalibrator:
         dict with keys ``folds``, ``summary``, ``best_overall_scenario``.
 
         .. versionadded:: Sprint 4
+        .. versionchanged:: Sprint 5
+            Added ``top_n_long``, ``top_n_short``, ``enforce_net_exposure``,
+            ``net_exposure_target`` for market-neutral architecture validation.
         """
         from backtesting.sentiment_calibration import SentimentWeightCalibrator
 
