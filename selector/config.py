@@ -283,8 +283,8 @@ class AlphaScannerConfig:
     price_table: str = "stock_bars_daily"
     score_table: str = "stock_scores"
     chunk_size: int = 500
-    selection_size: int = 100
-    short_selection_size: int = 20  # Plan v2 Sprint 5 — candidats short paralleles
+    selection_size: int = 60
+    short_selection_size: int = 60
     min_history_days: int = 252
     liquidity_threshold: float = 20_000_000.0
     min_close: float = 5.0

@@ -1152,7 +1152,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill_p.add_argument("--overwrite-existing", action="store_true", help="Recalculer aussi les dates déjà historisées")
     backfill_p.add_argument("--limit-days", type=int, default=None, help="Limiter à N séances (test progressif)")
     backfill_p.add_argument("--chunk-size", type=int, default=1000, help="Taille des chunks symboles screener/scanner")
-    backfill_p.add_argument("--selection-size", type=int, default=100, help="Nombre final de candidats selector par séance")
+    backfill_p.add_argument("--selection-size", type=int, default=60, help="Nombre final de candidats selector par séance")
     backfill_p.add_argument("--screener-workers", type=int, default=4, help="Nombre de workers ProcessPool pour le screener PIT")
 
     # --- diagnose-screener ---

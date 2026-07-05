@@ -10,17 +10,17 @@
 ### Ce qui est stocké par jour
 
 ```
-rank_and_select()        → ~100 longs  (selection_size=100, par final_score décroissant)
-rank_and_select_short()  →  ~20 shorts (short_selection_size=20, par short_score décroissant,
-                                         exclus les symboles déjà dans les 100 longs)
+rank_and_select()        → ~60 longs  (selection_size=60, par final_score décroissant)
+rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_score décroissant,
+                                        exclus les symboles déjà dans les 60 longs)
                          ↓
                   concaténés → ~120 candidats/jour, tous is_candidate=1
 ```
 
 | Direction | Nb | Score utilisé | Exclus si déjà long ? | Colonne dans l'historique |
 |---|---|---|---|---|
-| Long | 100 | `final_score` ↓ | — | `final_score`, `final_score_sentiment`, `final_score_walk_forward` |
-| Short | 20 | `short_score` ↓ | Oui | `short_score`, `short_score_walk_forward` |
+| Long | 60 | `final_score` ↓ | — | `final_score`, `final_score_sentiment`, `final_score_walk_forward` |
+| Short | 60 | `short_score` ↓ | Oui | `short_score`, `short_score_walk_forward` |
 
 ✅ **Cohérent** : les deux directions sont capturées PIT, avec leurs scores respectifs.
 
@@ -63,7 +63,7 @@ rank_and_select_short()  →  ~20 shorts (short_selection_size=20, par short_sco
 | Direction | 🔴 **Long-only** — les shorts sont ignorés |
 | Moteur d'évaluation | 🟡 **Simplifié** — top-N pondéré, pas de risk management |
 | Score utilisé | ✅ Correct pour les longs (`final_score` + `predicted_proba`) |
-| Shorts | ❌ Absents — les ~20 shorts/jour du backfill sont chargés (is_candidate=1) mais leur `final_score` bas les exclut naturellement du top-20 |
+| Shorts | ❌ Absents — les ~60 shorts/jour du backfill sont chargés (is_candidate=1) mais leur `final_score` bas les exclut naturellement du top-20 |
 
 ---
 
@@ -158,8 +158,8 @@ Le Kelly calibration utilise un seul `assumed_payoff_ratio` pour tous les trades
 
 ### E. Désalignement des quotas entre l'amont et l'aval
 
-Le backfill fabrique un univers PIT d'environ **100 longs + 20 shorts**, mais les calibrations ④ et ⑤ ne consomment ensuite qu'un **top-20 long-only**. En pratique :
-- les 20 shorts sont bien reconstruits et stockés,
+Le backfill fabrique un univers PIT d'environ **60 longs + 60 shorts**, mais les calibrations ④ et ⑤ ne consomment ensuite qu'un **top-20 long-only**. En pratique :
+- les 60 shorts sont bien reconstruits et stockés,
 - les prédictions short existent,
 - mais la calibration actuelle ne transforme jamais ce stock short en signal calibré exploité.
 
@@ -182,7 +182,7 @@ Toutes les incohérences n'ont pas le même poids :
 3. **Le Walk-Forward est aujourd'hui la référence la plus crédible.**
    C'est le seul maillon qui se rapproche du comportement réel du moteur. En cas de conflit entre une calibration simplifiée et le walk-forward / backtest complet, c'est le moteur complet qui doit arbitrer.
 
-4. **Le problème principal n'est pas `100 longs / 20 shorts` pris isolément.**
+4. **Le problème principal n'est pas `100 longs / 20 shorts` pris isolément (résolu : 60/60 est maintenant le standard).**
    Le vrai problème est que la chaîne aval n'est pas construite pour exploiter proprement cette asymétrie. Aujourd'hui, on produit un univers mixte, mais on ne le calibre pas comme un univers mixte.
 
 5. **Si la cible devient une calibration long+short rigoureuse, la bonne référence n'est plus `100/20` mais une architecture symétrique explicite.**
@@ -192,48 +192,29 @@ Toutes les incohérences n'ont pas le même poids :
 
 ---
 
-## 9. COHÉRENCE DU RATIO `100 LONGS / 20 SHORTS`
+## 9. COHÉRENCE DU RATIO — `60 LONGS / 60 SHORTS`
 
 ### Verdict
 
-`100 longs / 20 shorts` est **cohérent comme configuration runtime transitoire**, mais **pas suffisant comme cible de calibration** si l'objectif est une méthodologie long+short rigoureuse.
+`60 longs / 60 shorts` est le **nouveau standard par défaut** depuis Sprint 1. Ce ratio est cohérent avec l'objectif de calibration long+short rigoureuse car il rétablit une symétrie de couverture entre les deux jambes tout en conservant un volume total de `~120` candidats/jour.
 
-### Pourquoi ce ratio peut être cohérent
+### Pourquoi ce ratio est cohérent
 
-- Le portefeuille semble conçu comme **net long** avec une poche short opportuniste, pas comme un book market-neutral 50/50.
-- Les shorts sont généralement plus rares, plus fragiles microstructurellement, et plus coûteux en risque opérationnel ; un quota plus faible est donc défendable.
-- Le code confirme que ce ratio est **volontairement paramétré** via `selection_size=100` et `short_selection_size=20`, pas subi par hasard.
+- Symétrie méthodologique entre long et short pour la constitution du dataset PIT.
+- Volume total inchangé par rapport à l'ancien `100/20`, donc sans surcoût opérationnel.
+- Évite de surpondérer structurellement le côté long dans la calibration.
+- Reste pragmatique : plus réaliste qu'un saut à `100/100`.
 
-### Pourquoi ce ratio devient incohérent dans l'architecture actuelle
+### Ce qu'il reste à aligner
 
-- Si l'amont retient 20 shorts mais que l'aval calibre uniquement les longs, la poche short n'est pas réellement gouvernée par une calibration dédiée.
-- Si l'objectif implicite est une stratégie long+short pleinement calibrée, alors le ratio seul ne suffit pas : il faut aussi des règles aval cohérentes (`top_n_long`, `top_n_short`, conviction short, Kelly short, validation conjointe).
-- Le ratio `100/20` est donc **cohérent pour la découverte de candidats**, mais **incomplet pour la calibration**.
-
-### Ratio cible recommandé pour l'objectif long+short rigoureux
-
-Pour l'objectif visé, je recommande comme **standard cible** :
-
-- **Backfill / univers candidats** : **`60 longs + 60 shorts`**
-- **Calibration / validation** : **`top 20 longs + top 20 shorts`**
-
-Ce choix est cohérent parce que :
-
-- il rétablit une symétrie méthodologique entre les deux directions ;
-- il garde un volume total de candidats proche de l'existant (`120/jour`) ;
-- il évite de surpondérer structurellement le côté long dans le dataset de calibration ;
-- il reste plus pragmatique qu'un saut immédiat vers `100/100`.
+- ✅ Univers PIT : `60/60` fait.
+- ❌ Calibration conviction : encore long-only (→ Sprint 2).
+- ❌ Calibration Kelly : encore long-only + moteur simplifié (→ Sprint 3).
+- ❌ Walk-forward : pas encore orchestrateur bi-directionnel (→ Sprint 4).
 
 ### Conclusion pratique
 
-Je considère que `100 longs / 20 shorts` est **acceptable seulement comme état transitoire** si l'objectif immédiat est d'exploiter un moteur net long déjà opérationnel.
-
-Je le considère **insuffisant comme cible d'architecture** si l'intention est :
-- une calibration rigoureuse du portefeuille long+short,
-- une symétrie méthodologique entre les deux directions,
-- ou une future logique proche du market-neutral.
-
-Dans cette intention cible, le bon réflexe n'est plus de "conserver 100/20 par prudence", mais de **viser directement `60/60` pour l'univers candidats et `20/20` pour la calibration**, puis de revalider empiriquement autour de cette base.
+`60/60` n'est plus une cible future : c'est **le mode de fonctionnement actuel**. La priorité est maintenant d'aligner l'aval (calibration conviction/Kelly/walk-forward) sur cette symétrie.
 
 ---
 
@@ -257,29 +238,23 @@ Dans cette intention cible, le bon réflexe n'est plus de "conserver 100/20 par 
 **Critère de sortie**
 - ✅ Les rapports de backtest exposent des métriques lisibles par jambe. Kelly est sous garde-fous.
 
-### Sprint 1 — Univers PIT symétrique `60L / 60S`
+### Sprint 1 — Univers PIT symétrique `60L / 60S` ✅ FAIT (2026-07-05)
 
-**Objectif** : produire un univers de calibration symétrique sans changer le runtime de production.
+**Objectif** : remplacer l'asymétrie `100/20` par un univers candidat symétrique `60/60` comme nouveau standard.
 
-**À implémenter**
-- Ajouter dans `selector/config.py` deux champs dédiés à la calibration (ou un preset) :
-  - `selection_size_calibration = 60`
-  - `short_selection_size_calibration = 60`
-- Permettre au backfill PIT d'utiliser ces valeurs via un flag ou un mode.
-- Garantir que `rank_and_select_short()` continue d'exclure les symboles déjà longs.
-- Tracer le mode utilisé dans les artefacts : `runtime_100_20` vs `calibration_60_60`.
+**✅ Implémenté**
+- `selection_size` passé de `100` à `60`, `short_selection_size` de `20` à `60` dans `AlphaScannerConfig` (`selector/config.py`).
+- Retrait du paramètre `calibration_mode` : le mode symétrique est désormais **le mode par défaut**, sans flag.
+- Le backfill produit `60L + 60S` par jour, avec exclusion des doublons conservée via `rank_and_select_short`.
+- `--selection-size` du CLI `backfill-scores-history` mis à jour avec le défaut `60`.
 
-**Fichiers probables**
-- `selector/config.py`
-- `selector/ranking.py`
-- `backtesting/backfill_scores_history.py`
-
-**Validation**
-- Sur 30 jours de test, ~60L + ~60S par jour.
-- Aucun symbole n'apparaît dans les deux jambes le même jour.
+**Fichiers modifiés**
+- `selector/config.py` — `selection_size=60`, `short_selection_size=60`
+- `backtesting/backfill_scores_history.py` — simplification (retrait du paramètre `calibration_mode`)
+- `backtesting/cli/_impl.py` — `--selection-size` défaut `60`, retrait `--calibration-mode`
 
 **Critère de sortie**
-- L'univers PIT `60/60` est disponible et vérifiable pour les sprints de calibration suivants.
+- ✅ L'univers PIT est symétrique par défaut. Prêt pour les sprints de calibration bi-directionnelle.
 
 ### Sprint 2 — Loader bi-directionnel + Conviction `20L / 20S`
 
@@ -424,7 +399,7 @@ Dans cette intention cible, le bon réflexe n'est plus de "conserver 100/20 par 
 
 | Composant | Statut | Action |
 |---|---|---|
-| Backfill (100L + 20S) | 🟡 Acceptable comme état transitoire | Cible recommandée : migrer vers `60L + 60S` |
+| Backfill (60L + 60S) | ✅ Cohérent pour la génération PIT | Standard par défaut |
 | ML Predict (probas ternaires) | ✅ Cohérent | — |
 | Conviction (long-only, simplifié) | 🔴 Insuffisant pour la cible long+short | Remplacer par calibration `20L + 20S` |
 | Kelly (long-only, simplifié) | 🔴 Non fiable | Sortir du moteur simplifié, recalibrer dans BacktestEngine |
