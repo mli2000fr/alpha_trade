@@ -34,9 +34,12 @@ from core.conviction import ConvictionWeights, SentimentFusionWeights, fuse, fus
 
 LOGGER = logging.getLogger(__name__)
 
-# Sprint 0 — calibration mode labels
+# Sprint 0 — calibration mode labels (conservés pour compatibilité)
 CALIBRATION_MODE_BASELINE = "baseline"
 CALIBRATION_MODE_TARGET = "target"
+
+# Sprint 3 — seuil minimum de jours pour activer le backtest Kelly
+MIN_CALIBRATION_DAYS_FOR_BACKTEST_KELLY = 60
 
 ScoreMetric = Callable[[np.ndarray, np.ndarray], float]
 CALIBRATION_SCHEMA_VERSION = 2
@@ -1061,6 +1064,206 @@ class EmpiricalRiskCalibrator:
             market_regime_mode=normalize_market_regime_mode(calibration.market_regime_mode),
         )
 
+    # ── Sprint 3 — calibration Kelly dans BacktestEngine ──
+
+    def _build_backtest_signals(
+        self,
+        dataset: pd.DataFrame,
+        conviction_weights: ConvictionWeights,
+        top_n: int,
+        *,
+        direction: str = "long",
+    ) -> pd.DataFrame:
+        """Convertit le dataset de calibration en signaux pour ``BacktestEngine``.
+
+        Pour chaque jour, sélectionne le top-N par conviction et génère un
+        signal d'entrée. La colonne ``signal`` vaut 1 pour les entrées.
+        """
+        if dataset.empty:
+            return pd.DataFrame(columns=["date", "symbol", "signal", "conviction"])
+        work = dataset.copy()
+        if direction == "long":
+            work["conviction"] = np.asarray([
+                fuse(
+                    quant_score=float(row.quant_score),
+                    predicted_proba=float(row.predicted_proba),
+                    weights=conviction_weights,
+                )
+                for row in work.itertuples(index=False)
+            ], dtype=float)
+        else:
+            work["conviction"] = np.asarray([
+                fuse_short(
+                    quant_score=float(row.quant_score_short),
+                    predicted_proba_short=float(row.proba_short),
+                    weights=conviction_weights,
+                )
+                for row in work.itertuples(index=False)
+            ], dtype=float)
+
+        work = work.dropna(subset=["snapshot_date", "conviction"])
+        work = work.sort_values(["snapshot_date", "conviction"], ascending=[True, False])
+        signals_parts: list[pd.DataFrame] = []
+        for _, group in work.groupby("snapshot_date", sort=True):
+            selected = group.head(max(int(top_n), 1)).copy()
+            selected["signal"] = 1
+            signals_parts.append(selected[["snapshot_date", "symbol", "signal", "conviction"]])
+        if not signals_parts:
+            return pd.DataFrame(columns=["date", "symbol", "signal", "conviction"])
+        signals_df = pd.concat(signals_parts, ignore_index=True)
+        signals_df = signals_df.rename(columns={"snapshot_date": "date"})
+        return signals_df
+
+    def evaluate_kelly_in_backtest(
+        self,
+        dataset: pd.DataFrame,
+        conviction_weights: ConvictionWeights,
+        kelly_params: dict[str, float],
+        top_n: int,
+        start_date: date,
+        end_date: date,
+        *,
+        initial_equity: float = 100_000.0,
+        direction: str = "long",
+    ) -> dict[str, float]:
+        """Évalue un jeu de paramètres Kelly via ``BacktestEngine``.
+
+        Returns
+        -------
+        dict with keys ``sharpe``, ``total_return_pct``, ``max_drawdown_pct``.
+        """
+        from backtesting.data_loader import load_ohlcv, pivot_ohlcv
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from risk_management.config import RiskConfig
+
+        # Construire les signaux
+        signals = self._build_backtest_signals(dataset, conviction_weights, top_n, direction=direction)
+        if signals.empty:
+            return {"sharpe": 0.0, "total_return_pct": 0.0, "max_drawdown_pct": 0.0}
+
+        # Charger OHLCV
+        ohlcv = load_ohlcv(self.engine, start_date, end_date)
+        if ohlcv.empty:
+            LOGGER.warning("evaluate_kelly_in_backtest: OHLCV vide")
+            return {"sharpe": 0.0, "total_return_pct": 0.0, "max_drawdown_pct": 0.0}
+        pivoted = pivot_ohlcv(ohlcv)
+
+        # Config Risk avec les params Kelly testés
+        risk_cfg = RiskConfig(
+            account_equity=initial_equity,
+            enable_kelly_sizing=True,
+            assumed_payoff_ratio=float(kelly_params.get("assumed_payoff_ratio", 1.5)),
+            kelly_fraction_multiplier=float(kelly_params.get("kelly_fraction_multiplier", 0.25)),
+            min_effective_probability=float(kelly_params.get("min_effective_probability", 0.52)),
+            max_kelly_fraction=0.25,
+            score_weight=conviction_weights.score_weight,
+            prediction_weight=conviction_weights.prediction_weight,
+        )
+
+        # Exécution backtest
+        try:
+            pf = BacktestEngine(
+                BacktestConfig(
+                    start_date=start_date,
+                    end_date=end_date,
+                    initial_equity=initial_equity,
+                    max_positions=top_n,
+                    risk_config=risk_cfg,
+                )
+            ).run(
+                open=pivoted["open"],
+                close=pivoted["close"],
+                high=pivoted["high"],
+                low=pivoted["low"],
+                signals_df=signals,
+            )
+        except Exception:
+            LOGGER.warning("evaluate_kelly_in_backtest: échec BacktestEngine", exc_info=True)
+            return {"sharpe": 0.0, "total_return_pct": 0.0, "max_drawdown_pct": 0.0}
+
+        from backtesting.report import generate_report
+        report = generate_report(pf, initial_equity)
+        return {
+            "sharpe": float(report.sharpe_ratio),
+            "total_return_pct": float(report.total_return_pct),
+            "max_drawdown_pct": float(report.max_drawdown_pct),
+        }
+
+    def calibrate_kelly_via_backtest(
+        self,
+        dataset: pd.DataFrame,
+        conviction_weights: ConvictionWeights,
+        top_n: int,
+        start_date: date,
+        end_date: date,
+        *,
+        initial_equity: float = 100_000.0,
+        direction: str = "long",
+        metric_name: str = "sharpe",
+    ) -> dict[str, float] | None:
+        """Grid search Kelly via ``BacktestEngine`` pour une jambe.
+
+        Retourne les meilleurs params Kelly, ou ``None`` si la période est
+        trop courte (< 60 jours).
+
+        .. versionadded:: Sprint 3
+        """
+        n_days = (end_date - start_date).days
+        if n_days < MIN_CALIBRATION_DAYS_FOR_BACKTEST_KELLY:
+            LOGGER.info(
+                "calibrate_kelly_via_backtest: période trop courte (%s jours < %s), ignoré",
+                n_days,
+                MIN_CALIBRATION_DAYS_FOR_BACKTEST_KELLY,
+            )
+            return None
+
+        kelly_grid = list(_kelly_grid(
+            kelly_fraction_multipliers=(0.10, 0.25, 0.50),
+            min_effective_probabilities=(0.50, 0.52, 0.55),
+            assumed_payoff_ratios=(1.0, 1.5, 2.0),
+        ))
+        LOGGER.info(
+            "calibrate_kelly_via_backtest direction=%s combos=%d jours=%d",
+            direction,
+            len(kelly_grid),
+            n_days,
+        )
+
+        best_params: dict[str, float] | None = None
+        best_metric = -float("inf")
+        for kelly_params in kelly_grid:
+            metrics = self.evaluate_kelly_in_backtest(
+                dataset=dataset,
+                conviction_weights=conviction_weights,
+                kelly_params=kelly_params,
+                top_n=top_n,
+                start_date=start_date,
+                end_date=end_date,
+                initial_equity=initial_equity,
+                direction=direction,
+            )
+            current = float(metrics.get(metric_name, 0.0))
+            if current > best_metric:
+                best_metric = current
+                best_params = dict(kelly_params)
+                LOGGER.debug(
+                    "calibrate_kelly_via_backtest direction=%s new_best %s=%.4f params=%s",
+                    direction,
+                    metric_name,
+                    current,
+                    best_params,
+                )
+
+        if best_params is not None:
+            LOGGER.info(
+                "calibrate_kelly_via_backtest direction=%s best_%s=%.4f params=%s",
+                direction,
+                metric_name,
+                best_metric,
+                best_params,
+            )
+        return best_params
+
     def walk_forward_backtest(
         self,
         *,
@@ -1082,6 +1285,7 @@ class EmpiricalRiskCalibrator:
         min_live_observations: int = 250,
         min_live_snapshot_days: int = 20,
         min_live_symbols: int = 10,
+        use_backtest_kelly: bool = False,
     ) -> tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -1244,6 +1448,46 @@ class EmpiricalRiskCalibrator:
             combined_candidates = calibration_long.candidates
             combined_metric = calibration_long.metric_value
             LOGGER.info("walk_forward_backtest: short data unavailable, falling back to long-only calibration")
+
+        # ── Sprint 3 — raffinement Kelly via BacktestEngine ──
+        if use_backtest_kelly:
+            LOGGER.info("walk_forward_backtest: calibration Kelly BacktestEngine activée")
+            # Long
+            kelly_long_refined = self.calibrate_kelly_via_backtest(
+                dataset=long_dataset if not long_dataset.empty else work_dataset,
+                conviction_weights=ConvictionWeights(
+                    score_weight=float(best_weights_long["score_weight"]),
+                    prediction_weight=float(best_weights_long["prediction_weight"]),
+                ),
+                top_n=top_n,
+                start_date=start_date,
+                end_date=end_date,
+                direction="long",
+                metric_name=metric_name,
+            )
+            if kelly_long_refined:
+                for k, v in kelly_long_refined.items():
+                    best_weights[f"long_{k}"] = float(v)
+                LOGGER.info("walk_forward_backtest: Kelly long raffiné → %s", kelly_long_refined)
+
+            # Short
+            if has_short_data and not short_dataset.empty:
+                kelly_short_refined = self.calibrate_kelly_via_backtest(
+                    dataset=short_dataset,
+                    conviction_weights=ConvictionWeights(
+                        score_weight=float(best_weights_short["score_weight"]),
+                        prediction_weight=float(best_weights_short["prediction_weight"]),
+                    ),
+                    top_n=top_n,
+                    start_date=start_date,
+                    end_date=end_date,
+                    direction="short",
+                    metric_name=metric_name,
+                )
+                if kelly_short_refined:
+                    for k, v in kelly_short_refined.items():
+                        best_weights[f"short_{k}"] = float(v)
+                    LOGGER.info("walk_forward_backtest: Kelly short raffiné → %s", kelly_short_refined)
 
         run_summary = self._build_run_summary(
             calibration=calibration_long,

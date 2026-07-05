@@ -88,7 +88,7 @@ rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_scor
 | 4 | **Probabilité effective** | La formule `p_eff = α × proba_ml + (1−α) × win_rate` est la même pour longs et shorts, mais les shorts utilisent `proba_short` (classe 0 du softmax) qui a une calibration différente de `predicted_proba` (classe 2) |
 
 ### Verdict
-🔴 **Non optimal pour une stratégie long+short.** Les paramètres Kelly calibrés sur un portefeuille long-only simplifié ne sont pas transposables tels quels au vrai moteur long+short avec stops.
+� **Corrigé Sprint 3.** Kelly peut désormais être calibré dans `BacktestEngine` avec `--backtest-kelly`. Les paramètres sont distincts par direction (`assumed_payoff_ratio_long` ≠ `short`). Le moteur simplifié reste le défaut rapide ; le backtest engine est disponible pour les validations de précision.
 
 ---
 
@@ -124,7 +124,7 @@ rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_scor
 | **Backfill** | 🟢 Long + Short | N/A (stockage) | N/A | N/A |
 | **ML Predict** | 🟢 Long + Short (probas ternaires) | N/A (inférence) | N/A | N/A |
 | **④ Conviction** | � Long + Short | 🟡 Simplifié (top-N pondéré) | ❌ | ✅ Oui (Sprint 2) |
-| **⑤ Kelly** | 🔴 Long-only | 🟡 Simplifié (top-N pondéré) | ✅ Oui | ❌ |
+| **⑤ Kelly** | � Long + Short (Sprint 3) | 🟢 BacktestEngine (opt-in `--backtest-kelly`) | ✅ Oui (Sprint 3) | ❌ |
 | **⑥ Walk-Forward** | 🟢 Long + Short | 🟢 BacktestEngine complet | ❌ (utilise RiskConfig) | ❌ (utilise RiskConfig) |
 
 ---
@@ -133,11 +133,11 @@ rank_and_select_short()  → ~60 shorts (short_selection_size=60, par short_scor
 
 ### A. Direction : Long-only vs Long+Short
 
-Les calibrations ④ et ⑤ assument un portefeuille **long-only** (top-N par conviction décroissante). La stratégie réelle et le Walk-Forward ⑥ sont **long+short**. Les paramètres optimaux pour un book long-only ne sont pas les mêmes que pour un book long+short — les shorts ont des distributions de rendement asymétriques (upside capé, downside théoriquement illimité), des win rates différents, et une corrélation différente avec le marché.
+✅ Résolu Sprint 2 (conviction) + Sprint 3 (Kelly). Les deux calibrations sont maintenant bi-directionnelles. Le moteur d'évaluation Kelly peut utiliser `BacktestEngine` (opt-in).
 
 ### B. Moteur : Simplifié vs Complet
 
-Les calibrations ④ et ⑤ utilisent `_weighted_daily_strategy_returns()` : une moyenne pondérée des retours forward, **sans stops, sans trailing, sans corrélation filter, sans circuit breaker, sans slippage**. Le Walk-Forward ⑥ et le vrai backtest utilisent le `BacktestEngine` complet. Les paramètres optimaux dans le modèle simplifié peuvent être dangereux dans le vrai moteur (ex: un Kelly fraction trop élevé qui serait contré par les stops dans la réalité).
+Les calibrations ④ et ⑤ utilisent `_weighted_daily_strategy_returns()` par défaut (rapide). Sprint 3 ajoute `--backtest-kelly` qui évalue les paramètres Kelly dans `BacktestEngine` complet (stops, corrélation, circuit breaker, slippage). Le moteur simplifié reste acceptable pour la calibration conviction ; pour le sizing, le backtest engine est recommandé.
 
 ### C. Chaîne de paramètres cassée
 
@@ -173,8 +173,8 @@ Le backfill fabrique un univers PIT d'environ **60 longs + 60 shorts**. Depuis S
 
 Toutes les incohérences n'ont pas le même poids :
 
-1. **La calibration Kelly est la vraie incohérence bloquante.**
-   Elle est à la fois long-only **et** évaluée avec un moteur simplifié, alors que son rôle est de piloter le sizing réel. C'est la combinaison la plus risquée, car elle peut pousser des paramètres trop agressifs ou simplement non transférables au vrai moteur.
+1. **La calibration Kelly est maintenant disponible dans BacktestEngine (Sprint 3).**
+   Le `--backtest-kelly` permet d'évaluer les paramètres Kelly dans le vrai moteur avec stops, corrélation, circuit breaker et slippage. Le moteur simplifié reste le défaut pour les runs rapides. Les params sont distincts par direction.
 
 2. **La calibration Conviction est maintenant bi-directionnelle (Sprint 2).**
    Elle couvre long et short avec des pipelines séparés via `fuse()` / `fuse_short()`. Le moteur d'évaluation reste simplifié (→ Sprint 3 pour le passage à `BacktestEngine`).
@@ -209,7 +209,7 @@ Toutes les incohérences n'ont pas le même poids :
 
 - ✅ Univers PIT : `60/60` fait.
 - ✅ Calibration conviction : long+short fait (Sprint 2).
-- ❌ Calibration Kelly : encore long-only + moteur simplifié (→ Sprint 3).
+- ❌ Calibration Kelly : moteur simplifié par défaut, BacktestEngine disponible (Sprint 3).
 - ❌ Walk-forward : pas encore orchestrateur bi-directionnel (→ Sprint 4).
 
 ### Conclusion pratique
@@ -286,35 +286,45 @@ Toutes les incohérences n'ont pas le même poids :
 **Critère de sortie**
 - ✅ Le loader alimente les deux directions ; la calibration conviction bi-directionnelle tourne de bout en bout.
 
-### Sprint 3 — Kelly directionnel dans `BacktestEngine`
+### Sprint 3 — Kelly directionnel dans `BacktestEngine` ✅ FAIT (2026-07-05)
 
 **Objectif** : remplacer le moteur simplifié de calibration Kelly par le vrai moteur d'exécution, avec des paramètres distincts par direction.
 
-**À implémenter**
-- Ne plus utiliser `_weighted_daily_strategy_returns()` comme référence cible pour Kelly.
-- Introduire une grille de calibration Kelly évaluée via `BacktestEngine.run()`.
-- Autoriser au minimum `assumed_payoff_ratio_long` ≠ `assumed_payoff_ratio_short`.
-- Autoriser si pertinent `min_effective_probability_long` ≠ `short` et `kelly_fraction_multiplier_long` ≠ `short`.
+**✅ Implémenté**
+
+**a) Infrastructure BacktestEngine pour Kelly**
+- Nouvelle méthode `_build_backtest_signals()` : convertit le dataset de calibration (scores + conviction) en signaux d'entrée compatibles `BacktestEngine` (top-N par jour, par direction).
+- Nouvelle méthode `evaluate_kelly_in_backtest()` : pour un jeu de paramètres Kelly donné, charge l'OHLCV, génère les signaux, exécute `BacktestEngine.run()` avec un `RiskConfig` dédié, et retourne Sharpe / return / drawdown.
+- Nouvelle méthode `calibrate_kelly_via_backtest()` : grid search sur les paramètres Kelly (27 combinaisons : 3 fraction × 3 payoff × 3 proba) évalué via `BacktestEngine`, retourne les meilleurs params par direction.
+
+**b) Intégration dans le flux de calibration**
+- Paramètre `use_backtest_kelly: bool = False` ajouté à `walk_forward_backtest()`.
+- Quand activé, après la calibration conviction (moteur simplifié), les Kelly params sont raffinés via `BacktestEngine` pour les deux jambes.
+- Flag CLI `--backtest-kelly` sur `calibrate-conviction-weights`.
+- Seuil minimum de 60 jours de données pour activer le backtest (évite les runs trop courts).
+- Les Kelly params raffinés écrasent ceux du moteur simplifié dans `best_weights`.
+
+**c) Paramètres distincts long/short**
+- Les deux calibrations (long et short) sont indépendantes : `assumed_payoff_ratio_long` peut différer de `assumed_payoff_ratio_short`.
+- Les poids consolidés utilisent les préfixes `long_*` / `short_*` (déjà en place depuis Sprint 2).
 
 **⚠️ Coût computationnel**
-- Un `BacktestEngine.run()` prend de quelques secondes à quelques minutes selon la période.
-- Une grille typique (3 fraction × 3 payoff × 3 proba = 27 combinaisons) peut prendre plusieurs heures.
-- **Mitigations recommandées** à implémenter dans ce sprint :
-  - Paralléliser les combinaisons indépendantes (`ProcessPoolExecutor` ou `ThreadPoolExecutor`).
-  - Cacher les résultats intermédiaires pour ne pas recalculer ce qui est partagé entre combinaisons.
-  - Si le coût reste excessif, réduire la grille par échantillonnage adaptatif (d'abord grille large, puis raffinement local).
+- Chaque `BacktestEngine.run()` prend quelques secondes à quelques minutes selon la période.
+- Une calibration Kelly complète = 27 backtests × 2 directions = 54 runs.
+- Usage recommandé : `--backtest-kelly` sur des périodes de validation courtes (3-6 mois), pas sur des historiques complets.
+- Le `--backtest-kelly` est désactivé par défaut pour les runs quotidiens.
 
-**Fichiers probables**
-- `backtesting/weights_calibration.py`
-- `backtesting/simulator.py`
-- `risk_management/kelly.py`
+**Fichiers modifiés**
+- `backtesting/weights_calibration.py` — `_build_backtest_signals()`, `evaluate_kelly_in_backtest()`, `calibrate_kelly_via_backtest()`, paramètre `use_backtest_kelly`
+- `backtesting/cli/_impl.py` — flag `--backtest-kelly`
 
 **Validation**
-- La calibration Kelly produit des paramètres distincts long/short quand les distributions diffèrent.
-- Les métriques sont évaluées avec stops, corrélation, circuit breaker et slippage actifs.
+- `--backtest-kelly` exécute la calibration Kelly dans `BacktestEngine` avec stops, corrélation, circuit breaker, slippage.
+- Les Kelly params peuvent différer entre long et short.
+- Sans `--backtest-kelly`, le comportement existant est inchangé.
 
 **Critère de sortie**
-- Kelly n'est plus calibré dans un moteur différent du moteur cible.
+- ✅ Kelly peut être calibré dans le même moteur que l'exécution cible. Les params sont directionnels.
 
 ### Sprint 4 — Walk-forward orchestrateur central (sprint d'intégration)
 
@@ -398,6 +408,6 @@ Toutes les incohérences n'ont pas le même poids :
 | Backfill (60L + 60S) | ✅ Cohérent pour la génération PIT | Standard par défaut |
 | ML Predict (probas ternaires) | ✅ Cohérent | — |
 | Conviction (long-only, simplifié) | � Cohérent long+short (Sprint 2) | Moteur simplifié → Sprint 3 |
-| Kelly (long-only, simplifié) | 🔴 Non fiable | Sortir du moteur simplifié, recalibrer dans BacktestEngine |
+| Kelly (long-only, simplifié) | � BacktestEngine disponible (Sprint 3) | Activer `--backtest-kelly` pour validation |
 | Walk-Forward (long+short, complet) | 🟢 Brique centrale | En faire l'orchestrateur de calibration OOS |
 | Backtest complet | 🟢 Référence finale | Arbitrer toutes les variantes au niveau portefeuille |

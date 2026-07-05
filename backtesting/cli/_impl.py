@@ -1301,6 +1301,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="all",
         help="Scope de calibration : conviction seule, Kelly seule, ou les deux (défaut: all)",
     )
+    conv_cal_p.add_argument(
+        "--backtest-kelly",
+        action="store_true",
+        default=False,
+        help="Activer la calibration Kelly via BacktestEngine (coûteux, ~27 backtests complets par direction)",
+    )
 
     walk_forward_p = sub.add_parser(
         "walk-forward-sentiment",
@@ -3483,6 +3489,7 @@ def _run_calibrate_conviction_weights(args: argparse.Namespace) -> None:
                 output_dir=output_dir / f"horizon_{horizon}d",
                 top_n=args.top_n,
                 horizon_days=horizon,
+                use_backtest_kelly=bool(getattr(args, "backtest_kelly", False)),
             )
             _safe_print(f"   Folds évalués       : {run.folds_evaluated}")
             _safe_print(f"   Meilleur scénario   : {run.latest_best_scenario_name}")
