@@ -29,73 +29,202 @@
 
 ---
 
-## SOMMAIRE DES SECTIONS
+## 10. PLAN D'ACTION RECOMMANDÉ
 
-| Section | Contenu | Mode |
-|---------|---------|------|
-| **0. Architecture Backtest vs Live** | Préface : 2 modes (LIVE/BACKTEST), rôle de `stock_scores_history` (PIT), cycle hybride walk-forward | — |
-| **1. Calcul des scores Long/Short** | Formules `final_score` et `short_score`, facteurs techniques, neutralisation sectorielle, rank_and_select | 🟢 LIVE |
-| **2. Utilisation du sentiment** | Pipeline FinBERT → agrégation → fusion ternaire → `final_score_sentiment`, poids par défaut (sentiment=0) | 🟢 LIVE |
-| **3. Régime de Marché** | **3.0.0 Flux complet des données macro** (pourquoi, à quelle étape, dans quel but, schéma), 3.0 Indicateurs (VIX/VXN/VIX3M/MOVE/RVX), 3.1 Poids NORMAL vs CAPITAL_PRESERVATION, 3.2 MomentumRotationState (-3%/4sem), 3.3 Filtres défensifs (beta/spread/mcap/ATR), 3.4 Filtres `regime_filters.py` câblés (earnings/buyback/yield), 3.5 Asymétrie long/short, shorts boostés en bear (P2) | 🟢🔵 BOTH |
-| **4. ML — Entraînement** | LSTM 2 couches + Attention temporelle, features V1/Expert/Sentiment/Selector/Cross-sectional, target binaire/ternaire | 🟢 LIVE |
-| **5. ML — Prédiction** | Inférence (chargement artefacts → compute features → softmax → Platt/Temperature), drift monitoring (KS+PSI), kill-switch | 🟢 LIVE |
-| **6. Module Risque** | Pipeline 9 étapes : regime scoring → breakout → threshold → concentration → conviction → corrélation → factor → Kelly/ATR → circuit breaker | 🟢🔵 BOTH |
-| **7. Walk-Forward Sentiment** | Calibration OOS par folds (backtest complet par scénario, **long + short depuis P2 2026-06-25**), `latest_best_weights.json`, application LIVE + BACKTEST, cascade `COALESCE` | 🟣 HYBRIDE |
-| **8. Calibration des Poids** | 3 niveaux : Conviction ✅, Sentiment ✅, Kelly ✅. IHM : onglets `📰 Calibrate sentiment`, `🎯 Calibrate conviction` (+ Kelly), `🚶 Walk-forward`, `🎛️ Trimestrielle`. Page `📊 Weights Calibration Runs` | 🟣 HYBRIDE |
-| **9. ML — Détails avancés** | Champion selection (⚠️ off), target optimization (⚠️ off), business_score vs selection_score, threshold optimization | 🟢 LIVE |
-| **10. Short — Spécificités** | Paramètres risk dédiés, tableau comparatif long/short, consommation du `short_score`, conviction short inversée | 🟢 LIVE |
-| **11. Caveats** | 12 points d'attention : fonctionnalités désactivées, ✅ PIT corrigé, asymétries long/short, limites backtest, risques ML/Kelly | — |
-| **12. Résumé Synthétique** | Tableau récapitulatif (rappel en fin de document) | — |
-| **13. Backtest vs Live — Détail** | 8 sous-sections : sources, sentiment, ML, exécution, walk-forward, CLI, dégradation PIT par composant | — |
-| **14. Glossaire** | Tous les fichiers clés avec leur mode (LIVE / BACKTEST / BOTH / HYBRIDE) | — |
+### Sprint 0 — Cadrage et baseline mesurable
 
----
+**Objectif** : figer la baseline actuelle (`100L/20S`, conviction long-only, Kelly simplifié) comme point de comparaison, sans la traiter comme cible produit.
 
-## 0. ARCHITECTURE BACKTEST vs LIVE
+**À implémenter**
+- Documenter dans le code et/ou les artefacts de run que la calibration actuelle ④/⑤ est une **baseline technique historique**.
+- Geler provisoirement Kelly sur les valeurs conservatrices actuelles :
+  - `kelly_fraction_multiplier = 0.25`
+  - `assumed_payoff_ratio = 1.5`
+  - `min_effective_probability = 0.52`
+- Produire un run de référence portefeuille avec le vrai moteur (`walk-forward` + `backtesting run`).
+- Exporter au minimum les métriques suivantes : PnL long, PnL short, hit rate long, hit rate short, gross exposure, net exposure, drawdown, turnover.
 
-Le système fonctionne selon **deux modes** radicalement différents qu'il faut bien distinguer.
+**Fichiers / zones probables**
+- `backtesting/weights_calibration.py`
+- `backtesting/cli/_impl.py`
+- `ihm/pages/backtesting/__init__.py`
+- `artifacts/conviction_calibration/`
+- `artifacts/sentiment_walk_forward/`
 
-### 🟢 Mode LIVE (production)
+**Validation attendue**
+- Un run baseline est exécutable depuis CLI et IHM.
+- Les artefacts distinguent clairement baseline actuelle vs cible future.
+- Le rapport de sortie permet une lecture séparée des jambes long et short.
 
-Le pipeline **calcule tout en temps réel** :
+**Critère de sortie**
+- On dispose d'une baseline portefeuille stable et comparable pour tous les sprints suivants.
 
-```
-EODHD/API → stock_bars_daily → Screener → stock_scores
-                                          → Selector → stock_scores (final_score)
-News API  → FinBERT → ticker_daily_sentiment_features
-                     → Signal Aggregator → stock_scores (final_score_sentiment)
-                                          → ModelFactory → model_predictions
-                                          → PortfolioBuilder → portfolio_targets
-                                          → Execution Engine → Ordres Alpaca
-```
+### Sprint 1 — Univers symétrique de candidats `60L / 60S`
 
-- **Source de données** : `stock_bars_daily` (OHLCV temps réel), `stock_scores` (snapshot courant)
-- **Sentiment** : calculé LIVE par `SentimentSignalAggregator.merge()` → persiste dans `stock_scores`
-- **ML** : inférence LIVE par `predictor.py` → persiste dans `model_predictions`
-- **Exécution** : vrais ordres Bracket OCO chez Alpaca (paper ou live)
+**Objectif** : remplacer, pour la calibration cible, l'asymétrie structurelle `100/20` par un univers candidat symétrique `60/60` tout en gardant le volume total proche de `120` lignes/jour.
 
-### 🔵 Mode BACKTEST (recherche/calibration)
+**À implémenter**
+- Ajouter une configuration de calibration cible distincte du runtime courant :
+  - `selection_size_calibration_target = 60`
+  - `short_selection_size_calibration_target = 60`
+- Permettre au backfill PIT ou à un mode de backfill dédié de produire cet univers symétrique pour la calibration.
+- Garantir l'exclusion des doublons long/short comme aujourd'hui.
+- Tracer dans l'historique ou les artefacts quel mode a été utilisé : `runtime_100_20` vs `calibration_60_60`.
 
-Le backtest **ne recalcule rien**, il **rejoue l'historique** à partir de snapshots PIT (Point-In-Time) :
+**Fichiers / zones probables**
+- `selector/config.py`
+- `selector/ranking.py`
+- `backtesting/backfill_scores_history.py`
+- éventuels presets / config YAML
 
-```
-stock_scores_history (PIT)  ──→  signal_replay.py (rejoue la fusion conviction)
-model_predictions (DB)      ──→  simulator.py (simule les entrées/sorties in-memory)
-stock_bars_daily (EODHD)    ──→  data_loader.py (charge l'OHLCV historique)
-```
+**Validation attendue**
+- Sur une plage de dates test, le backfill calibration produit environ `60L + 60S` par jour.
+- Aucun symbole n'est à la fois long et short le même jour.
+- Les colonnes `is_candidate`, `candidate_rank`, `selector_signal_mode` restent cohérentes.
 
-- **Source de données** : `stock_scores_history` (snapshots PIT quotidiens), `stock_bars_daily` avec `source='eodhd_eod'` uniquement
-- **Sentiment** : déjà pré-calculé dans `stock_scores_history.final_score_sentiment` (pas de recalcul)
-- **ML** : lit les prédictions déjà persistées dans `model_predictions` (pas d'inférence live)
-- **Exécution** : simulation synthétique in-memory (fills parfaits au prix d'ouverture J+1, bracket stops simulés)
+**Critère de sortie**
+- L'univers PIT de calibration symétrique est disponible et vérifiable en base ou dans les artefacts.
 
-### 🔄 Table de snapshot PIT : `stock_scores_history`
+### Sprint 2 — Calibration conviction bi-directionnelle `20L / 20S`
 
-C'est la **pierre angulaire** du backtest. Cette table est remplie par `backfill_scores_history.py` qui capture **chaque jour** l'état exact de `stock_scores` (scores, sentiment, walk-forward weights). Sans cette table, le backtest n'est pas strictement PIT et utilise un fallback dégradé.
+**Objectif** : sortir de la calibration long-only et calibrer explicitement les deux jambes avec la même méthodologie.
 
-### 🟣 Mode HYBRIDE : Walk-Forward Sentiment
+**À implémenter**
+- Séparer les deux pipelines de conviction :
+  - `conviction_long = fuse(final_score_*, predicted_proba)`
+  - `conviction_short = fuse_short(short_score_*, proba_short)`
+- Définir une cible de sélection symétrique :
+  - `top_n_long = 20`
+  - `top_n_short = 20`
+- Produire des scores, métriques et artefacts distincts par jambe.
+- Ajouter une consolidation portefeuille qui combine les deux jambes pour l'évaluation finale.
 
-La calibration des poids sentiment/macro/quant est un **méta-backtest** :
+**Fichiers / zones probables**
+- `backtesting/weights_calibration.py`
+- `core/conviction.py`
+- `risk_management/cli.py`
+- `ihm/pages/backtesting/__init__.py`
+
+**Validation attendue**
+- La commande de calibration conviction peut tourner en mode long+short explicite.
+- Les artefacts contiennent au minimum : meilleurs poids long, meilleurs poids short, métriques par jambe, métrique portefeuille consolidée.
+- Les shorts ne sont plus seulement “chargés puis ignorés”.
+
+**Critère de sortie**
+- Une calibration conviction `20L + 20S` fonctionne de bout en bout et produit des résultats auditables.
+
+### Sprint 3 — Kelly directionnel dans le vrai moteur
+
+**Objectif** : supprimer la dépendance au moteur simplifié pour le sizing et calibrer Kelly dans le même moteur que celui utilisé pour la validation portefeuille.
+
+**À implémenter**
+- Ne plus utiliser `_weighted_daily_strategy_returns()` comme référence cible pour Kelly.
+- Introduire une boucle de calibration Kelly fondée sur `BacktestEngine`.
+- Autoriser des paramètres distincts au minimum sur :
+  - `assumed_payoff_ratio_long`
+  - `assumed_payoff_ratio_short`
+  - éventuellement `min_effective_probability_long` / `short`
+  - éventuellement `kelly_fraction_multiplier_long` / `short`
+- Exporter des métriques de sizing par jambe et consolidées au niveau portefeuille.
+
+**Fichiers / zones probables**
+- `backtesting/weights_calibration.py`
+- `backtesting/sentiment_calibration.py`
+- `backtesting/simulator.py`
+- `risk_management/kelly.py`
+
+**Validation attendue**
+- La calibration Kelly produit des paramètres directionnels distincts.
+- Les résultats diffèrent réellement entre long et short lorsque les distributions le justifient.
+- Les métriques sont évaluées avec stops, corrélation, circuit breaker et slippage actifs.
+
+**Critère de sortie**
+- Kelly n'est plus calibré dans un moteur conceptuellement différent du moteur cible d'exécution.
+
+### Sprint 4 — Walk-forward orchestrateur central
+
+**Objectif** : faire du walk-forward la couche d'orchestration unique qui sélectionne, calibre et valide l'ensemble de la chaîne long+short.
+
+**À implémenter**
+- Sur chaque fold train :
+  - calibrer ou sélectionner `60/60` si plusieurs univers sont testés,
+  - calibrer conviction `20/20`,
+  - calibrer Kelly directionnel,
+  - éventuellement calibrer les poids sentiment/macro si encore utilisés.
+- Sur chaque fold test :
+  - exécuter la validation OOS dans le même moteur,
+  - comparer les variantes sur métriques portefeuille, pas uniquement sur moyenne de retours forward.
+- Produire un rapport consolidé par fold et un résumé global.
+
+**Fichiers / zones probables**
+- `backtesting/sentiment_calibration.py`
+- `backtesting/walk_forward.py`
+- `backtesting/cli/_impl.py`
+- `ihm/services/backtesting_runner.py`
+
+**Validation attendue**
+- Un run walk-forward peut comparer plusieurs variantes de calibration long+short.
+- Le meilleur scénario est choisi sur base portefeuille globale.
+- Les sorties exposent clairement train vs OOS par jambe et au niveau consolidé.
+
+**Critère de sortie**
+- Le walk-forward devient la source de vérité pour promouvoir une configuration long+short.
+
+### Sprint 5 — Architecture proche du market-neutral
+
+**Objectif** : rendre l'architecture compatible avec une logique future de neutralité nette ou quasi-neutralité, sans l'imposer prématurément.
+
+**À implémenter**
+- Ajouter des métriques et contraintes explicites :
+  - `gross_exposure`
+  - `net_exposure`
+  - contribution PnL long / short
+  - corrélation inter-jambes
+- Permettre de tester plusieurs grilles symétriques : `60/60`, `80/80`, `100/100`.
+- Ajouter, si besoin, un corridor cible de neutralité nette.
+- Vérifier que le sizing et les caps ne détruisent pas la neutralité visée.
+
+**Fichiers / zones probables**
+- `risk_management/portfolio_builder.py`
+- `backtesting/report.py`
+- `backtesting/report_schema.py`
+- `backtesting/analytics.py`
+
+**Validation attendue**
+- Les rapports de backtest exposent la neutralité nette et la contribution par jambe.
+- Les variantes symétriques peuvent être comparées proprement.
+- Une asymétrie type `100/20` n'est conservée que si elle surperforme clairement la base symétrique.
+
+**Critère de sortie**
+- L'architecture supporte proprement un book net long ou quasi market-neutral sans rupture méthodologique.
+
+### Sprint 6 — Finition IHM, CLI, artefacts et documentation
+
+**Objectif** : rendre la nouvelle chaîne exploitable par un opérateur ou une autre IA sans ambiguïté.
+
+**À implémenter**
+- Ajouter dans CLI/IHM des options explicites pour :
+  - univers candidats `long_candidates` / `short_candidates`
+  - `top_n_long` / `top_n_short`
+  - Kelly directionnel
+  - mode baseline vs mode calibration cible
+- Mettre à jour les pages IHM et les exports d'artefacts.
+- Documenter la procédure de run par sprint et les prérequis de données.
+
+**Fichiers / zones probables**
+- `backtesting/cli/_impl.py`
+- `ihm/pages/backtesting/__init__.py`
+- `ihm/services/backtesting_runner.py`
+- `doc/synthese_long_short.md`
+- `prompt/bug_long_short.md`
+
+**Validation attendue**
+- Un utilisateur peut lancer chaque étape sans deviner des paramètres cachés.
+- Les artefacts et rapports utilisent un vocabulaire cohérent (`60/60`, `20/20`, baseline, cible).
+- La documentation permet à une autre IA de reprendre chaque sprint indépendamment.
+
+**Critère de sortie**
+- La chaîne complète est industrialisable et documentée de façon non ambiguë.
 1. On exécute des **backtests complets** (moteur `BacktestEngine` normal : stops, sizing, corrélation, etc.) avec différentes combinaisons de poids — les décisions **ne sont pas basées sur le sentiment seul** mais sur le score fusionné `w_quant×score + w_sentiment×sentiment_norm + w_macro×macro_norm`
 2. On évalue les performances OOS (Out-Of-Sample) par folds glissants
 3. On sélectionne les meilleurs poids → sauvegardés dans `latest_best_weights.json`
