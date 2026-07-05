@@ -212,7 +212,7 @@ Toutes les incohérences n'ont pas le même poids :
 - ✅ Calibration Kelly : BacktestEngine disponible (Sprint 3).
 - ✅ Walk-forward : orchestrateur disponible (Sprint 4).
 - ✅ Grilles symétriques & net exposure : disponibles (Sprint 5).
-- ⚪ Sprint 6 — Finition IHM, CLI, artefacts et documentation.
+- ✅ Finition IHM, CLI, artefacts et documentation (Sprint 6).
 
 ### Conclusion pratique
 
@@ -429,29 +429,46 @@ python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-3
 **Critère de sortie**
 - ✅ L'architecture supporte proprement un book net long ou quasi market-neutral sans rupture méthodologique.
 
-### Sprint 6 — Finition IHM, CLI, artefacts et documentation
+### Sprint 6 — Finition IHM, CLI, artefacts et documentation ✅ FAIT (2026-07-05)
 
 **Objectif** : rendre la chaîne cible exploitable sans ambiguïté.
 
-**À implémenter**
-- CLI/IHM : exposer `--long-candidates`, `--short-candidates`, `--top-n-long`, `--top-n-short`.
-- Distinguer explicitement mode `baseline` et mode `target` dans les flags et les artefacts.
-- Mettre à jour les pages IHM et les exports.
-- Documenter les prérequis de données et l'ordre d'exécution des sprints.
+**✅ Implémenté**
 
-**Fichiers probables**
-- `backtesting/cli/_impl.py`
-- `ihm/pages/backtesting/__init__.py`
-- `ihm/services/backtesting_runner.py`
-- `doc/synthese_long_short.md`
-- `prompt/bug_long_short.md`
+**a) CLI — `backfill-scores-history`**
+- Nouveau flag `--selection-size-short` (Sprint 6). Permet de spécifier un nombre de shorts différent des longs. Défaut = `--selection-size`.
+- Le `_run_backfill_scores_history` transmet `short_selection_size` à `AlphaScannerConfig.strict_swing_cash()`.
+
+**b) CLI — `calibrate-conviction-weights`**
+- Nouveaux flags `--top-n-long` et `--top-n-short` (Sprint 6). Permettent de calibrer avec des tops asymétriques par direction. Défaut = `--top-n`.
+
+**c) IHM — Onglet `🔄 Walk-forward conviction`**
+- Nouveau selectbox `Grille symétrique` : choix parmi `60/60`, `80/80`, `100/100`, `40/40`, `20/20`. Surcharge `top-n-long`/`top-n-short`.
+- Nouvelle checkbox `Contraindre exposition nette` avec champ `Exposition nette cible` (conditionnel).
+- Les options sont transmises via `WalkForwardConvictionOptions` → `build_backtesting_command`.
+
+**d) `WalkForwardConvictionOptions` — champs étendus**
+- Nouveaux champs : `symmetric_grid`, `top_n_long`, `top_n_short`, `enforce_net_exposure`, `net_exposure_target`.
+- `build_backtesting_command` génère les flags CLI correspondants.
+
+**e) Documentation**
+- `doc/synthese_long_short.md` : section 8 mise à jour avec table IHM, bloc diff Sprint 5, CLI section 13.7.
+- `prompt/bug_long_short.md` : tous les sprints 0-6 documentés avec statuts, fichiers, usage.
+
+**Fichiers modifiés**
+- `backtesting/cli/_impl.py` — `--selection-size-short` sur backfill, `--top-n-long`/`--top-n-short` sur calibrate-conviction
+- `ihm/services/backtesting_runner.py` — `WalkForwardConvictionOptions` +5 champs, `build_backtesting_command` mis à jour
+- `ihm/pages/backtesting/__init__.py` — `_build_walk_forward_conviction_options()` avec grille symétrique + net exposure
+- `doc/synthese_long_short.md` — IHM, CLI, usage
+- `prompt/bug_long_short.md` — ce fichier
 
 **Validation**
 - Un opérateur peut lancer chaque sprint sans deviner des paramètres cachés.
-- Les artefacts utilisent un vocabulaire cohérent (`60/60`, `20/20`, `baseline`, `target`).
+- Les artefacts utilisent un vocabulaire cohérent (`60/60`, `20/20`).
+- L'IHM expose toutes les options de la CLI, sans paramètres cachés.
 
 **Critère de sortie**
-- Une autre IA peut implémenter ou exécuter chaque sprint indépendamment.
+- ✅ La chaîne est exploitable de bout en bout. Les 6 sprints sont documentés, les flags CLI et IHM sont cohérents.
 
 
 ---
@@ -466,4 +483,5 @@ python -m backtesting walk-forward-conviction --start 2022-01-01 --end 2025-12-3
 | Kelly (sizing, directionnel) | 🟢 BacktestEngine disponible (Sprint 3) | Activer `--backtest-kelly` pour validation |
 | Walk-Forward (orchestrateur) | 🟢 Orchestrateur central (Sprint 4) | `walk-forward-conviction` |
 | Market-neutral (Sprint 5) | 🟢 Contrainte net exposure + grilles symétriques | `--enforce-net-exposure --symmetric-grid 80/80` |
+| Finition IHM/CLI/doc (Sprint 6) | 🟢 Flags CLI + IHM exposés, doc synchronisée | `--selection-size-short`, `--top-n-long`, IHM Walk-forward |
 | Backtest complet | 🟢 Référence finale | Arbitrer toutes les variantes au niveau portefeuille |

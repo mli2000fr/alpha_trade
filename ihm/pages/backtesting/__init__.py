@@ -2349,6 +2349,43 @@ def _build_walk_forward_conviction_options() -> "WalkForwardConvictionOptions":
             "(stops, corrélation, circuit breaker, slippage). Multiplie le temps par ~10-50.",
         )
 
+    # ── Sprint 5/6 — Grilles symétriques & market-neutral ──────────
+    st.markdown("---")
+    st.caption("⚖️ **Market-neutral (Sprint 5/6)** — contraintes de neutralité nette et grilles symétriques.")
+
+    col_grid, col_enforce = st.columns(2)
+    with col_grid:
+        symmetric_grid = st.selectbox(
+            "Grille symétrique (optionnel)",
+            options=["", "60/60", "80/80", "100/100", "40/40", "20/20"],
+            index=0,
+            key="bt_wfc_symmetric_grid",
+            help="Surcharge top-n-long/top-n-short avec une grille prédéfinie. Laisser vide pour utiliser Top N.",
+        )
+    with col_enforce:
+        enforce_net_exposure = st.checkbox(
+            "Contraindre exposition nette",
+            value=bool(st.session_state.get("bt_wfc_enforce_net", False)),
+            key="bt_wfc_enforce_net",
+            help="Active la réduction proportionnelle du côté surpondéré pour maintenir l'exposition nette dans le corridor.",
+        )
+
+    if enforce_net_exposure:
+        col_target, col_tol = st.columns(2)
+        with col_target:
+            net_exposure_target = st.number_input(
+                "Exposition nette cible",
+                min_value=-1.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_wfc_net_target", 0.0)),
+                step=0.05,
+                format="%.2f",
+                key="bt_wfc_net_target",
+                help="0.0 = market-neutral, 0.30 = biais long 30%.",
+            )
+    else:
+        net_exposure_target = 0.0
+
     output_dir = "artifacts/walk_forward_conviction"
 
     options = WalkForwardConvictionOptions(
@@ -2361,6 +2398,9 @@ def _build_walk_forward_conviction_options() -> "WalkForwardConvictionOptions":
         step_days=int(step_days) if int(step_days) > 0 else None,
         output_dir=output_dir,
         backtest_kelly=backtest_kelly,
+        symmetric_grid=symmetric_grid.strip() if symmetric_grid and symmetric_grid.strip() else None,
+        enforce_net_exposure=enforce_net_exposure,
+        net_exposure_target=float(net_exposure_target) if enforce_net_exposure else 0.0,
     )
     st.code(
         format_command_for_display(build_backtesting_command("walk-forward-conviction", options)),

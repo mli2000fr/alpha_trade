@@ -171,6 +171,12 @@ class WalkForwardConvictionOptions:
     step_days: int | None = None
     output_dir: str = "artifacts/walk_forward_conviction"
     backtest_kelly: bool = False
+    # Sprint 5/6 — market-neutral + grilles symétriques
+    symmetric_grid: str | None = None
+    top_n_long: int | None = None
+    top_n_short: int | None = None
+    enforce_net_exposure: bool = False
+    net_exposure_target: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -461,6 +467,16 @@ def build_backtesting_command(
             command.extend(["--step-days", str(options.step_days)])
         if options.backtest_kelly:
             command.append("--backtest-kelly")
+        # Sprint 5/6 — market-neutral + grilles
+        if options.symmetric_grid:
+            command.extend(["--symmetric-grid", options.symmetric_grid])
+        if options.top_n_long is not None:
+            command.extend(["--top-n-long", str(options.top_n_long)])
+        if options.top_n_short is not None:
+            command.extend(["--top-n-short", str(options.top_n_short)])
+        if options.enforce_net_exposure:
+            command.append("--enforce-net-exposure")
+            command.extend(["--net-exposure-target", str(options.net_exposure_target)])
         return command
 
     raise KeyError(f"Commande backtesting inconnue : {kind}")

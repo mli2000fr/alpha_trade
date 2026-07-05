@@ -1153,6 +1153,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill_p.add_argument("--limit-days", type=int, default=None, help="Limiter à N séances (test progressif)")
     backfill_p.add_argument("--chunk-size", type=int, default=1000, help="Taille des chunks symboles screener/scanner")
     backfill_p.add_argument("--selection-size", type=int, default=60, help="Nombre final de candidats selector par séance")
+    backfill_p.add_argument("--selection-size-short", type=int, default=None, help="Nombre de shorts par séance (défaut = selection-size). Sprint 6.")
     backfill_p.add_argument("--screener-workers", type=int, default=4, help="Nombre de workers ProcessPool pour le screener PIT")
 
     # --- diagnose-screener ---
@@ -1307,6 +1308,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Activer la calibration Kelly via BacktestEngine (coûteux, ~27 backtests complets par direction)",
     )
+    # Sprint 6 — top-N directionnel
+    conv_cal_p.add_argument("--top-n-long", type=int, default=None, help="Top-N longs pour la calibration (défaut = top-n)")
+    conv_cal_p.add_argument("--top-n-short", type=int, default=None, help="Top-N shorts pour la calibration (défaut = top-n)")
 
     # Sprint 4 — walk-forward conviction orchestrateur
     wf_conv_p = sub.add_parser(
@@ -2855,12 +2859,15 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
     selector_kwargs = build_selector_config_kwargs_from_preset(effective_preset)
     preset_selection_size = int(selector_kwargs.pop("selection_size"))
     effective_selection_size = int(args.selection_size) if "selection_size" in explicit_flags else preset_selection_size
+    # Sprint 6 — short selection size override
+    short_size_arg = getattr(args, "selection_size_short", None)
+    effective_short_size = int(short_size_arg) if short_size_arg is not None else effective_selection_size
     preset_fingerprint = capital_preset_fingerprint(effective_preset)
 
     _safe_print(f"\n🧱 Backfill stock_scores_history : start={start} end={end or 'auto'}")
     _safe_print(
         f"   overwrite={args.overwrite_existing} limit_days={args.limit_days or 'all'} "
-        f"chunk_size={args.chunk_size} selection_size={args.selection_size}\n"
+        f"chunk_size={args.chunk_size} selection_size={args.selection_size} short_size={effective_short_size}\n"
     )
     _safe_print(
         f"   preset_capital={effective_preset.key} ({preset_source}) selection_size_effective={effective_selection_size} fingerprint={preset_fingerprint}\n"
@@ -2871,6 +2878,7 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
         scanner_config=AlphaScannerConfig.strict_swing_cash(
             chunk_size=args.chunk_size,
             selection_size=effective_selection_size,
+            short_selection_size=effective_short_size,
             **selector_kwargs,
         ),
         sentiment_config=SentimentBoostConfig(),
