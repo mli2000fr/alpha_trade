@@ -1644,6 +1644,61 @@ Grid search sur :
 - `min_effective_probability` : probabilité edge minimum
 - `assumed_payoff_ratio` : ratio gain/perte supposé
 
+### 8.4 Cible recommandée pour une calibration long+short rigoureuse
+
+Si l'objectif devient explicitement :
+- une **calibration rigoureuse du portefeuille long+short**,
+- une **symétrie méthodologique** entre les deux directions,
+- ou une architecture future **proche du market-neutral**,
+
+alors la recommandation cible n'est **pas** de conserver la dissymétrie actuelle `100 longs / 20 shorts` comme standard de calibration.
+
+#### Recommandation chiffrée
+
+Je recommande comme **point de départ cohérent** :
+
+- **Univers candidats PIT / backfill** : **60 longs + 60 shorts**
+- **Top de calibration / validation** : **20 longs + 20 shorts**
+
+#### Pourquoi `60 / 60` pour l'univers candidats
+
+- Cela conserve un volume total proche de l'existant (`120` candidats/jour), donc sans explosion immédiate du coût opérationnel.
+- Cela rétablit une **symétrie de couverture** entre les deux jambes au moment où l'on constitue le dataset PIT.
+- Cela évite de biaiser la calibration en donnant structurellement 5 fois plus de profondeur au côté long qu'au côté short.
+- Cela reste plus réaliste qu'un passage brutal à `100 / 100`, qui doublerait l'univers quotidien sans preuve que la qualité short suit.
+
+#### Pourquoi `20 / 20` pour le top de calibration
+
+- `20` est déjà le niveau de granularité présent dans les outils actuels (`top_n=20`) ; le rendre **symétrique par direction** est l'ajustement minimal le plus cohérent.
+- Cela permet de comparer long et short sur une base identique en taille de book.
+- Cela est compatible avec une future consolidation portefeuille où l'on veut raisonner en exposition nette et brute, pas seulement en score directionnel isolé.
+
+#### Ce que cela implique concrètement
+
+La cible méthodologique devient :
+
+```text
+Backfill PIT          : 60L + 60S
+ML Predict            : prédictions sur cet univers candidat
+Conviction calibration: top 20L + top 20S
+Kelly calibration     : sizing long et short dans le vrai moteur
+Walk-forward          : validation OOS sur portefeuille consolidé long+short
+```
+
+#### Statut de l'architecture actuelle
+
+- **Runtime actuel** : `selection_size=100`, `short_selection_size=20`
+- **Recommandation cible** : migrer vers une architecture **symétrique** `60 / 60` pour la calibration
+- **Interprétation** : `100 / 20` peut rester une configuration transitoire d'exploitation, mais **pas** la bonne cible si l'on veut une calibration long+short rigoureuse
+
+#### Si l'objectif devient encore plus market-neutral
+
+Le pas suivant logique est de garder la même philosophie et de tester empiriquement des grilles du type :
+
+- `60 / 60` comme premier standard robuste
+- `80 / 80` si la profondeur short observée est suffisante
+- puis seulement après, des contraintes explicites de neutralité nette au niveau portefeuille
+
 ---
 
 ## 9. ML — DÉTAILS AVANCÉS

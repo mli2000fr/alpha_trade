@@ -185,13 +185,18 @@ Toutes les incohérences n'ont pas le même poids :
 4. **Le problème principal n'est pas `100 longs / 20 shorts` pris isolément.**
    Le vrai problème est que la chaîne aval n'est pas construite pour exploiter proprement cette asymétrie. Aujourd'hui, on produit un univers mixte, mais on ne le calibre pas comme un univers mixte.
 
+5. **Si la cible devient une calibration long+short rigoureuse, la bonne référence n'est plus `100/20` mais une architecture symétrique explicite.**
+   Dans ce cadre, la cible recommandée est :
+   - **univers candidats PIT / backfill : `60 longs + 60 shorts`**
+   - **top de calibration / validation : `20 longs + 20 shorts`**
+
 ---
 
 ## 9. COHÉRENCE DU RATIO `100 LONGS / 20 SHORTS`
 
 ### Verdict
 
-`100 longs / 20 shorts` est **cohérent comme choix de génération de candidats**, mais **pas suffisant comme preuve de cohérence de la chaîne complète**.
+`100 longs / 20 shorts` est **cohérent comme configuration runtime transitoire**, mais **pas suffisant comme cible de calibration** si l'objectif est une méthodologie long+short rigoureuse.
 
 ### Pourquoi ce ratio peut être cohérent
 
@@ -205,64 +210,100 @@ Toutes les incohérences n'ont pas le même poids :
 - Si l'objectif implicite est une stratégie long+short pleinement calibrée, alors le ratio seul ne suffit pas : il faut aussi des règles aval cohérentes (`top_n_long`, `top_n_short`, conviction short, Kelly short, validation conjointe).
 - Le ratio `100/20` est donc **cohérent pour la découverte de candidats**, mais **incomplet pour la calibration**.
 
+### Ratio cible recommandé pour l'objectif long+short rigoureux
+
+Pour l'objectif visé, je recommande comme **standard cible** :
+
+- **Backfill / univers candidats** : **`60 longs + 60 shorts`**
+- **Calibration / validation** : **`top 20 longs + top 20 shorts`**
+
+Ce choix est cohérent parce que :
+
+- il rétablit une symétrie méthodologique entre les deux directions ;
+- il garde un volume total de candidats proche de l'existant (`120/jour`) ;
+- il évite de surpondérer structurellement le côté long dans le dataset de calibration ;
+- il reste plus pragmatique qu'un saut immédiat vers `100/100`.
+
 ### Conclusion pratique
 
-Je considère que `100 longs / 20 shorts` est **acceptable aujourd'hui** si l'intention métier est :
-- un moteur principalement long,
-- avec une poche short secondaire,
-- et une validation finale confiée au backtest/walk-forward complet.
+Je considère que `100 longs / 20 shorts` est **acceptable seulement comme état transitoire** si l'objectif immédiat est d'exploiter un moteur net long déjà opérationnel.
 
-Je le considère **non suffisant** si l'intention est :
+Je le considère **insuffisant comme cible d'architecture** si l'intention est :
 - une calibration rigoureuse du portefeuille long+short,
 - une symétrie méthodologique entre les deux directions,
 - ou une future logique proche du market-neutral.
+
+Dans cette intention cible, le bon réflexe n'est plus de "conserver 100/20 par prudence", mais de **viser directement `60/60` pour l'univers candidats et `20/20` pour la calibration**, puis de revalider empiriquement autour de cette base.
 
 ---
 
 ## 10. PLAN D'ACTION RECOMMANDÉ
 
-### Phase 1 — Court terme (cette semaine)
+### Phase 1 — Rebaseliner l'architecture de calibration
 
-1. **Ne pas exécuter la calibration Kelly (⑤)** en l'état. Utiliser des paramètres Kelly conservateurs par défaut :
+1. **Déclassifier la calibration actuelle ④/⑤ comme baseline technique, pas comme calibration cible.**
+   - Conserver les runs actuels seulement comme point de comparaison historique
+   - Ne plus interpréter `--scope conviction` ni `--scope all` comme calibration valide du portefeuille long+short
+
+2. **Geler Kelly en défaut conservateur tant qu'il n'existe pas de calibration bi-directionnelle dans le vrai moteur.**
    - `kelly_fraction_multiplier = 0.25`
    - `assumed_payoff_ratio = 1.5`
    - `min_effective_probability = 0.52`
-   - Ces valeurs sont déjà les défauts dans `RiskConfig` et sont protégées par `max_kelly_fraction=0.25`.
+   - Considérer ces valeurs comme garde-fous transitoires, pas comme optimum
 
-2. **Exécuter la calibration Conviction (④) avec `--scope conviction`** (décocher "Inclure Kelly"). Interpréter le résultat comme une **calibration prioritairement long-side**, utile comme point de départ pour `score_weight` / `prediction_weight`, mais pas comme une vérité calibrée sur toute la poche short.
+3. **Définir explicitement une cible de calibration symétrique.**
+   - Même structure méthodologique long/short
+   - Même moteur d'évaluation long/short
+   - Paramètres distincts autorisés par direction si les distributions diffèrent
+   - Validation finale conjointe au niveau portefeuille, pas seulement par jambe isolée
+   - **Cible chiffrée de départ : `60 candidats longs + 60 candidats shorts`, puis `top 20 longs + top 20 shorts`**
 
-3. **Exécuter le Walk-Forward (⑥)** avec les paramètres par défaut ou avec la conviction calibrée, pour valider la robustesse OOS de l'ensemble dans le vrai moteur.
+4. **Établir une baseline portefeuille de référence avec le vrai moteur** (`walk-forward` + `backtesting run`).
+   - Mesurer séparément contribution long, contribution short, net exposure, gross exposure, hit rate, drawdown, turnover
+   - Cette baseline servira de juge de paix pour toute future calibration symétrique
 
-4. **Lancer un backtest complet** (`backtesting run`) avec les paramètres calibrés (conviction) + défauts (Kelly) pour établir une baseline de performance.
+### Phase 2 — Construire une calibration vraiment long+short
 
-5. **Conserver provisoirement `100 longs / 20 shorts`** tant qu'aucune analyse empirique ne montre que la poche short est sous-alimentée ou sur-diluée. Le ratio n'est pas la priorité à corriger avant la calibration Kelly.
+5. **Séparer explicitement la calibration conviction par direction.**
+   - `conviction_long = fuse(final_score_*, predicted_proba)`
+   - `conviction_short = fuse_short(short_score_*, proba_short)`
+   - Définir `top_n_long = 20` et `top_n_short = 20` comme première cible cohérente
+   - Produire des résultats lisibles par jambe puis consolidés au niveau portefeuille
 
-### Phase 2 — Moyen terme (P3)
+6. **Sortir Kelly du moteur simplifié et l'évaluer dans le vrai moteur d'exécution.**
+   - Supprimer l'idée d'un unique `_weighted_daily_strategy_returns()` comme base de sizing cible
+   - Rechercher Kelly dans `BacktestEngine` avec stops, corrélation, circuit breaker, slippage
+   - Autoriser des paramètres Kelly distincts pour long et short
+   - Autoriser au minimum `assumed_payoff_ratio_long != assumed_payoff_ratio_short`
 
-6. **Ajouter une calibration conviction short** dans `weights_calibration.py` :
-   - Nouvelle fonction `calibrate_conviction_short()` utilisant `short_score` + `proba_short` + `fuse_short()`
-   - Tri par conviction short décroissant, top-N shorts
-   - Évaluer avec les retours forward (inversés pour les shorts : `-forward_return`)
+7. **Faire de la validation walk-forward la couche d'orchestration centrale.**
+   - Entraîner/calibrer sur train
+   - Sélectionner `top_n_long`, `top_n_short`, poids conviction et paramètres Kelly sur train
+   - Valider OOS dans le même moteur
+   - Comparer les variantes sur métriques portefeuille, pas seulement sur moyenne de retours forward
 
-7. **Intégrer la calibration Kelly dans le Walk-Forward** :
-   - Ajouter un grid search Kelly dans `walk_forward_backtest()` ou une fonction dédiée
-   - Utiliser le vrai `BacktestEngine` (avec stops, corrélation, etc.) pour évaluer les paramètres Kelly
-   - Produire des paramètres Kelly distincts pour longs et shorts
+8. **Introduire une consolidation portefeuille explicite proche du market-neutral si souhaité.**
+   - Suivre `gross_exposure`, `net_exposure`, contribution PnL long/short, corrélation inter-jambes
+   - Définir une règle métier claire : net long structurel, net exposure cible, ou corridor proche de zéro
+   - Empêcher qu'une calibration par jambe détériore la cohérence portefeuille globale
 
-8. **Ou, alternative plus simple** : remplacer la calibration Kelly par une calibration dans le backtest complet :
-   - Lancer `backtesting run` avec différents paramètres Kelly
-   - Sélectionner les meilleurs paramètres sur la période d'entraînement
-   - Valider OOS sur la période de test
+### Phase 3 — Recalibrer le ratio de sélection dans cette nouvelle architecture
 
-9. **Si besoin, tester empiriquement le ratio `100/20`** :
-   - comparer `100/20` vs `100/30` vs `80/20`,
-   - mesurer fill rate short, turnover, contribution PnL short, drawdown, et stabilité OOS,
-   - ne changer le ratio que sur base de ces métriques, pas par symétrie théorique.
+9. **Ne plus considérer `100/20` comme défaut implicite intangible.**
+   - **Promouvoir `60/60` comme premier standard cible**
+   - Tester ensuite `60/60`, `80/80`, `100/100` ou d'autres grilles symétriques si la profondeur short le permet
+   - Mesurer fill rate par jambe, stabilité OOS, diversification, drawdown, usage du capital et exposition nette
+   - Ne conserver une asymétrie type `100/20` que si elle est démontrée empiriquement supérieure malgré l'objectif de symétrie
 
-### Phase 3 — Documentation
+10. **Si la cible devient proche du market-neutral, introduire des quotas et contraintes symétriques dès le design.**
+   - `top_n_long` et `top_n_short` définis conjointement
+   - éventuelle contrainte de neutralité nette ou corridor de neutralité
+   - règles de sizing et caps cohérents avec cette neutralité cible
 
-10. **Mettre à jour `synthese_long_short.md` §8** pour documenter ces limitations
-11. **Ajouter un cadre d'audit** dans `prompt/bug_long_short.md` pour tracer les résolutions
+### Phase 4 — Documentation
+
+11. **Mettre à jour `synthese_long_short.md` §8** pour documenter cette cible bi-directionnelle et la différence entre baseline actuelle et architecture cible
+12. **Ajouter un cadre d'audit** dans `prompt/bug_long_short.md` pour tracer les résolutions
 
 ---
 
@@ -270,9 +311,9 @@ Je le considère **non suffisant** si l'intention est :
 
 | Composant | Statut | Action |
 |---|---|---|
-| Backfill (100L + 20S) | ✅ Cohérent pour la génération PIT | Conserver provisoirement |
+| Backfill (100L + 20S) | 🟡 Acceptable comme état transitoire | Cible recommandée : migrer vers `60L + 60S` |
 | ML Predict (probas ternaires) | ✅ Cohérent | — |
-| Conviction (long-only, simplifié) | 🟡 Utilisable comme calibration long-side partielle | Lancer avec --scope conviction |
-| Kelly (long-only, simplifié) | 🔴 Non fiable | **Ne pas lancer.** Utiliser les défauts. |
-| Walk-Forward (long+short, complet) | ✅ Cohérent | Lancer pour validation OOS |
-| Backtest complet | ✅ Cohérent | Lancer avec conviction calibrée + Kelly défauts |
+| Conviction (long-only, simplifié) | 🔴 Insuffisant pour la cible long+short | Remplacer par calibration `20L + 20S` |
+| Kelly (long-only, simplifié) | 🔴 Non fiable | Sortir du moteur simplifié, recalibrer dans BacktestEngine |
+| Walk-Forward (long+short, complet) | 🟢 Brique centrale | En faire l'orchestrateur de calibration OOS |
+| Backtest complet | 🟢 Référence finale | Arbitrer toutes les variantes au niveau portefeuille |
