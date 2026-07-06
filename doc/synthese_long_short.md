@@ -628,20 +628,20 @@ Distances aux SMA/EMA, momentum, force relative vs marché, régimes bull/risk-o
 
 > **Activation IHM** : dans l'onglet « Exécution » → bloc « ML — Hyperparams », dropdown **`ML — feature set`** → choisir `expert`. **C'est le défaut** (`DEFAULT_ML_FEATURE_SET = "expert"` dans `ihm/services/pipeline_ml_defaults.py`). Le flag CLI correspondant est `--feature-set expert`.
 
-#### Features Sentiment (4 colonnes) — si `include_sentiment=True`
+#### Features Sentiment (4 colonnes) — si `include_sentiment_features=True`
 `sentiment_net_mean_1d, sentiment_confidence_mean_1d, news_count_log, major_event_flag`
 
-> **Activation IHM** : case à cocher **`Inclure les features sentiment`** (défaut : ✅ `True`). CLI : `--include-sentiment`.
+> **Activation IHM** : case à cocher **`Inclure les features sentiment`** (défaut : ❌ `False`). CLI : `--include-sentiment`.
 
-#### Features Contexte Selector (23 colonnes) — si `include_selector_context=True`
+#### Features Contexte Selector (23 colonnes) — si `include_selector_context_features=True`
 `trend_score, vcp_score, final_score, short_score, market_cap, beta_126, spread_bps, days_to_earnings`, etc.
 
-> **Activation IHM** : case à cocher **`Inclure les features contexte selector`** (défaut : ✅ `True`, `DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT`). CLI : `--include-selector-context`.
+> **Activation IHM** : case à cocher **`Inclure les features contexte selector`** (défaut : ❌ `False`, `DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT`). CLI : `--include-selector-context`.
 
 #### Features Cross-Sectionnelles — si `enable_cross_sectional=True`
 Rangs cross-sectionnels dans l'univers (ret_20_rank, relative_strength_rank, volatility_rank, dollar_volume_rank)
 
-> **Récapitulatif des défauts IHM** : `feature_set=expert` ✅, `include_sentiment=True` ✅, `include_selector_context=True` ✅, `include_short_score=True` ✅. Soit **~58 colonnes** au total (13 V1 + 18 expert + 4 sentiment + 23 selector) par défaut.
+> **Récapitulatif des défauts IHM** : `feature_set=expert` ✅, `include_sentiment=False`, `include_selector_context=False`, `include_short_score=False`. Soit **~31 colonnes** au total (13 V1 + 18 expert) par défaut, +4 sentiment / +23 selector / +1 short_score si activés.
 
 ### 4.3 Target (étiquette à prédire)
 
@@ -1173,7 +1173,7 @@ calibrator = pickle.load(open(f"artifacts/models/{symbol}/calibrator.pkl", "rb")
 
 # 2. Charger les dernières barres + features
 bars = load_symbol_bars(symbol, lookback=252)
-features = compute_features(bars, include_sentiment=True, include_selector_context=True)
+features = compute_features(bars, include_sentiment=False, include_selector_context=False)
 
 # 3. Construire la séquence d'entrée (derniers seq_len jours)
 sequence = features.tail(seq_len)  # 20 jours

@@ -301,7 +301,7 @@ class PipelineLaunchOptions:
     execution_protection_transition_poll_interval_seconds: float = DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS
     execution_debug: bool = DEFAULT_EXEC_DEBUG
     ml_accelerator: MLAccelerator = "auto"
-    ml_include_sentiment: bool = True
+    ml_include_sentiment: bool = False
     ml_include_selector_context: bool = DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT
     ml_include_short_score: bool = DEFAULT_ML_INCLUDE_SHORT_SCORE
     ml_include_macro_vix: bool = False   # VIX/VIX9D — nécessite backfill stock_macro_indicators_daily
