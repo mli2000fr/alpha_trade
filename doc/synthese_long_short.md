@@ -859,7 +859,8 @@ Après chaque entraînement, les métriques par split (val / test / wf) sont per
 #### 4.7.1 Requête de monitoring
 
 ```sql
-SELECT mm.split_name,
+SELECT mm.model_name,
+       mm.split_name,
        COUNT(DISTINCT mm.symbol) AS nb_symbols,
        ROUND(AVG(mm.f1_macro), 3) AS avg_f1m,
        ROUND(AVG(mm.f1_short), 3) AS avg_f1s,
@@ -872,16 +873,21 @@ FROM model_metrics mm
 JOIN model_training_run mtr ON mm.run_id = mtr.run_id
 WHERE mtr.started_at >= (
     SELECT MAX(started_at) FROM model_training_run WHERE status = 'completed'
-) - INTERVAL 10 MINUTE
-GROUP BY mm.split_name;
+) - INTERVAL 300 MINUTE
+GROUP BY mm.model_name, mm.split_name
+ORDER BY mm.model_name, FIELD(mm.split_name, 'val', 'test', 'wf');
 ```
 
 > ⚠️ **Ne pas utiliser `WHERE run_id = (SELECT MAX(run_id) FROM model_metrics)`** — chaque symbole a son propre `run_id`, donc `MAX(run_id)` ne donne qu'**un seul symbole**. La requête ci-dessus avec `JOIN model_training_run` sur `started_at` agrège **tous** les symboles du dernier batch d'entraînement.
+>
+> **Colonne `model_name`** : depuis le 2026-07-07, `model_metrics` inclut une colonne `model_name` (`lstm_attention`, `lightgbm`, `catboost`). Les métriques des 3 challengers sont persistées (val + test uniquement pour les tabulaires, val + test + wf pour le LSTM). Le `GROUP BY model_name, split_name` permet de comparer les performances par architecture.
 
 #### 4.7.2 Définition des colonnes
 
 | Colonne | Formule | Signification |
 |---------|---------|---------------|
+| `model_name` | `lstm_attention`, `lightgbm`, `catboost`, `global_model` | Architecture du modèle. Permet de comparer les métriques par type de modèle |
+| `split_name` | `val`, `test`, `wf` | Split d'évaluation. `wf` (walk-forward) est le plus important — il mesure la capacité à prédire le futur |
 | `f1_macro` | `(f1_short + f1_flat + f1_long) / 3` | Moyenne équipondérée des 3 classes. **Pénalise toute classe ignorée** — si f1_flat=0.5 mais f1_long=f1_short=0, alors f1_macro=0.17 seulement |
 | `f1_short` | F1-score classe "short" (baisse) | Capacité à identifier les vraies baisses sans trop de faux signaux |
 | `f1_flat` | F1-score classe "flat" (neutre) | Capacité à identifier les stagnations. Si = 0 → le modèle ne prédit jamais "flat" |

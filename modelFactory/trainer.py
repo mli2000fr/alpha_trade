@@ -315,12 +315,34 @@ def _run_training_registry_writes(
         scaler_path=str(scaler_path),
         config_path=str(config_path),
     )
-    insert_metrics(engine, run_id, symbol, "val", val_metrics)
+    # ── LSTM metrics ──
+    insert_metrics(engine, run_id, symbol, "val", val_metrics, model_name="lstm_attention")
     if test_metrics:
-        insert_metrics(engine, run_id, symbol, "test", test_metrics)
+        insert_metrics(engine, run_id, symbol, "test", test_metrics, model_name="lstm_attention")
     wf_mean = walk_forward_metrics.get("mean") if walk_forward_metrics else None
     if wf_mean:
-        insert_metrics(engine, run_id, symbol, "wf", wf_mean)
+        insert_metrics(engine, run_id, symbol, "wf", wf_mean, model_name="lstm_attention")
+
+    # ── LightGBM challenger metrics ──
+    lgbm_metrics = challengers.get("lightgbm") if isinstance(challengers, dict) else None
+    if isinstance(lgbm_metrics, dict) and lgbm_metrics.get("status") == "completed":
+        lgbm_val = lgbm_metrics.get("val")
+        if isinstance(lgbm_val, dict):
+            insert_metrics(engine, run_id, symbol, "val", lgbm_val, model_name="lightgbm")
+        lgbm_test = lgbm_metrics.get("test")
+        if isinstance(lgbm_test, dict):
+            insert_metrics(engine, run_id, symbol, "test", lgbm_test, model_name="lightgbm")
+
+    # ── CatBoost challenger metrics ──
+    cb_metrics = challengers.get("catboost") if isinstance(challengers, dict) else None
+    if isinstance(cb_metrics, dict) and cb_metrics.get("status") == "completed":
+        cb_val = cb_metrics.get("val")
+        if isinstance(cb_val, dict):
+            insert_metrics(engine, run_id, symbol, "val", cb_val, model_name="catboost")
+        cb_test = cb_metrics.get("test")
+        if isinstance(cb_test, dict):
+            insert_metrics(engine, run_id, symbol, "test", cb_test, model_name="catboost")
+
     upsert_metrics_full(engine, run_id=run_id, symbol=symbol, metrics=all_metrics)
     replace_model_governance(
         engine,
