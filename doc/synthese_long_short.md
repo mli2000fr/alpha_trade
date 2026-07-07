@@ -856,7 +856,11 @@ Apprend des PATTERNS TEMPORELS         Apprend des RÈGLES TABULAIRES
 
 Après chaque entraînement, les métriques par split (val / test / wf) sont persistées dans `model_metrics`. Voici comment les lire et les interpréter.
 
-#### 4.7.1 Requête de monitoring
+#### 4.7.1 Requêtes de monitoring
+
+**Requête A — Tous les modèles (comparaison des architectures)**
+
+Compare les métriques de LSTM, LightGBM et CatBoost côte à côte sur tout l'univers. Utile pour identifier quelle architecture performe le mieux globalement, quel que soit le champion élu.
 
 ```sql
 SELECT mm.model_name,
@@ -878,7 +882,40 @@ GROUP BY mm.model_name, mm.split_name
 ORDER BY mm.model_name, FIELD(mm.split_name, 'val', 'test', 'wf');
 ```
 
-> ⚠️ **Ne pas utiliser `WHERE run_id = (SELECT MAX(run_id) FROM model_metrics)`** — chaque symbole a son propre `run_id`, donc `MAX(run_id)` ne donne qu'**un seul symbole**. La requête ci-dessus avec `JOIN model_training_run` sur `started_at` agrège **tous** les symboles du dernier batch d'entraînement.
+**Requête B — Champions uniquement (qualité du modèle servi en inférence)**
+
+Ne garde que les métriques du modèle élu champion pour chaque symbole (via `model_governance.is_selected_model = 1`). C'est la requête qui répond à la question : « quelle est la qualité réelle des prédictions qui seront utilisées en production ? »
+
+```sql
+SELECT mm.model_name,
+       mm.split_name,
+       COUNT(DISTINCT mm.symbol) AS nb_symbols,
+       ROUND(AVG(mm.f1_macro), 3) AS avg_f1m,
+       ROUND(AVG(mm.f1_short), 3) AS avg_f1s,
+       ROUND(AVG(mm.f1_flat), 3) AS avg_f1f,
+       ROUND(AVG(mm.f1_long), 3) AS avg_f1l,
+       SUM(CASE WHEN mm.f1_short > 0 THEN 1 ELSE 0 END) AS with_short,
+       SUM(CASE WHEN mm.f1_long > 0 THEN 1 ELSE 0 END) AS with_long,
+       SUM(CASE WHEN mm.f1_short > 0 AND mm.f1_long > 0 THEN 1 ELSE 0 END) AS with_both
+FROM model_metrics mm
+JOIN model_training_run mtr ON mm.run_id = mtr.run_id
+JOIN model_governance mg ON mg.run_id = mm.run_id AND mg.symbol = mm.symbol AND mg.model_name = mm.model_name
+WHERE mtr.started_at >= (
+    SELECT MAX(started_at) FROM model_training_run WHERE status = 'completed'
+) - INTERVAL 300 MINUTE
+  AND mg.is_selected_model = 1
+GROUP BY mm.model_name, mm.split_name
+ORDER BY mm.model_name, FIELD(mm.split_name, 'val', 'test', 'wf');
+```
+
+> **Quelle requête utiliser ?**
+>
+> | Requête | Usage | Quand |
+> |---------|-------|-------|
+> | **A — Tous** | Comparer LSTM vs LightGBM vs CatBoost sur tout l'univers | Après chaque run, pour voir si une architecture surpasse les autres |
+> | **B — Champions** | Mesurer la qualité du modèle qui sera **effectivement** utilisé en inférence | Avant de lancer ML Predict, pour valider que les champions sont de bonne qualité |
+>
+> ⚠️ **Ne pas utiliser `WHERE run_id = (SELECT MAX(run_id) FROM model_metrics)`** — chaque symbole a son propre `run_id`, donc `MAX(run_id)` ne donne qu'**un seul symbole**. Les requêtes ci-dessus avec `JOIN model_training_run` sur `started_at` agrègent **tous** les symboles du dernier batch d'entraînement.
 >
 > **Colonne `model_name`** : depuis le 2026-07-07, `model_metrics` inclut une colonne `model_name` (`lstm_attention`, `lightgbm`, `catboost`). Les métriques des 3 challengers sont persistées (val + test uniquement pour les tabulaires, val + test + wf pour le LSTM). Le `GROUP BY model_name, split_name` permet de comparer les performances par architecture.
 
