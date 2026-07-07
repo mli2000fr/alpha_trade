@@ -3293,9 +3293,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Métrique de sélection du champion",
                     options=["selection_score", "business_score", "auc"],
                     index=["selection_score", "business_score", "auc"].index(
-                        cast(str, st.session_state.get("pipeline_ml_champion_selection_metric", "selection_score"))
-                        if st.session_state.get("pipeline_ml_champion_selection_metric", "selection_score") in {"selection_score", "business_score", "auc"}
-                        else "selection_score"
+                        cast(str, st.session_state.get("pipeline_ml_champion_selection_metric", "auc"))
+                        if st.session_state.get("pipeline_ml_champion_selection_metric", "auc") in {"selection_score", "business_score", "auc"}
+                        else "auc"
                     ),
                     key="pipeline_ml_champion_selection_metric",
                     disabled=not ml_select_champion,

@@ -1010,22 +1010,23 @@ Même config, même entraînement, univers maximal. **Test de généralisation d
 | val | 8742 | 0.297 | 0.333 | 0.247 | 0.308 | 6302 | 6498 | 5289 | 60.5% |
 | **wf** | **7584** | **0.258** | **0.314** | **0.216** | **0.244** | 6525 | 6381 | **5975** | **78.8%** |
 
-#### 🔁 Stabilité cross-run (f1_macro wf verrouillé à 0.258)
+#### 🔁 Stabilité cross-run (f1_macro wf ∈ [0.258, 0.264])
 
-| Run | Date | Symboles wf | f1_macro | f1_short | f1_flat | f1_long | with_both % |
-|-----|------|:---:|:---:|:---:|:---:|:---:|:---:|
-| Baseline | 2026-07-02 | 202 | 0.261 | 0.332 | 0.219 | 0.233 | 78.2% |
-| Run 0 | 2026-07-03 | 5570 | 0.258 | 0.312 | 0.221 | 0.242 | 78.3% |
-| **Run 1** | **2026-07-05** | **7584** | **0.258** | **0.314** | **0.216** | **0.244** | **78.8%** |
+| Run | Date | Symboles wf | f1_macro | f1_short | f1_flat | f1_long | with_both % | Features |
+|-----|------|:---:|:---:|:---:|:---:|:---:|:---:|---|
+| Baseline | 2026-07-02 | 202 | 0.261 | 0.332 | 0.219 | 0.233 | 78.2% | 58 (V1+expert+sentiment+selector+short) |
+| Run 0 | 2026-07-03 | 5570 | 0.258 | 0.312 | 0.221 | 0.242 | 78.3% | 58 |
+| Run 1 | 2026-07-05 | 7584 | 0.258 | 0.314 | 0.216 | 0.244 | 78.8% | 58 |
+| **Run 2** | **2026-07-07** | **7189** | **0.264** | **0.282** | **0.185** | **0.325** | **80.3%** | **31 (V1+expert uniquement)** |
 
-**📊 Stabilité remarquable** :
-- f1_macro wf = 0.258 sur les 3 runs — **écart-type ≈ 0.001**
-- f1_short ∈ [0.312, 0.332], f1_long ∈ [0.233, 0.244]
-- Couverture bidirectionnelle ∈ [78.2%, 78.8%]
-- `val − wf = 0.039` constant → généralisation temporelle stable
-- 5975/7584 symboles (78.8%) ont les deux directions — le modèle est **complet** sur > ¾ de l'univers
+**📊 Analyse cross-run** :
+- f1_macro wf ∈ [0.258, 0.264] sur les 4 runs — **écart-type ≈ 0.003**
+- f1_short ∈ [0.282, 0.332], f1_long ∈ [0.233, 0.325]
+- Couverture bidirectionnelle ∈ [78.2%, 80.3%] — **record à 80.3% sur Run 2**
+- `val − wf` ∈ [0.029, 0.039] — généralisation temporelle stable
+- **Run 2 (31 features)** : f1_long +33% vs Run 1, f1_macro +2.3%, val−wf réduit à 0.029. Trade-off : f1_short −10% (retrait des features baissières).
 
-**✅ Verdict final** : la config `horizon=10j, batch=32, hidden=256, dropout=0.3, 2 couches, epochs=100` est **validée sur 7584 symboles walk-forward**. Les métriques sont stables cross-run, le modèle généralise sans overfitting. Prêt pour backtest complet.
+**✅ Verdict final** : la config `horizon=10j, batch=32, hidden=256, dropout=0.3, 2 couches, epochs=100, features=V1+expert (31 colonnes)` est **validée sur 7189 symboles walk-forward**. Le retrait des features sentiment/selector/short_score améliore f1_macro et f1_long, au prix d'un f1_short plus faible — compensable par le score baissier quantitatif. Prêt pour backtest complet.
 
 #### 📋 Fichiers modifiés (config directionnelle)
 

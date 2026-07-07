@@ -315,7 +315,7 @@ class PipelineLaunchOptions:
     ml_global_model_name: MLGlobalModelName = "catboost"
     ml_enable_cross_sectional: bool = False
     ml_select_champion: bool = True
-    ml_champion_selection_metric: MLChampionMetric = "selection_score"
+    ml_champion_selection_metric: MLChampionMetric = "auc"
     ml_optimize_thresholds: bool = True
     ml_optimize_target: bool = False
     # ML — cible swing cash + horizon + walk-forward (P1)

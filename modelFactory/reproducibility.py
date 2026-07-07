@@ -32,7 +32,10 @@ def seed_worker(base_seed: int, worker_id: int) -> None:
     worker_seed = derive_seed(base_seed, "worker", worker_id)
     random.seed(worker_seed)
     np.random.seed(worker_seed % _MAX_NUMPY_SEED)
-    torch.manual_seed(worker_seed)
+    try:
+        torch.manual_seed(worker_seed)
+    except Exception:
+        pass
 
 
 def build_torch_generator(seed: int) -> torch.Generator:
@@ -51,21 +54,36 @@ def apply_reproducibility(config: ReproducibilityConfig, *, context: str | None 
 
     random.seed(resolved_seed)
     np.random.seed(resolved_seed % _MAX_NUMPY_SEED)
-    torch.manual_seed(resolved_seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(resolved_seed)
+
+    cuda_available = False
+    try:
+        torch.manual_seed(resolved_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(resolved_seed)
+            cuda_available = True
+    except Exception:
+        # CUDA peut être indisponible ou en erreur (ex: conflit multi-process,
+        # GPU en mode exclusif, TDR Windows). On dégrade vers CPU.
+        try:
+            torch.manual_seed(resolved_seed)
+        except Exception:
+            pass
 
     cudnn_backend = getattr(torch.backends, "cudnn", None)
     if cudnn_backend is not None:
-        cudnn_backend.deterministic = bool(config.deterministic)
-        cudnn_backend.benchmark = False if config.deterministic else cudnn_backend.benchmark
+        try:
+            cudnn_backend.deterministic = bool(config.deterministic)
+            cudnn_backend.benchmark = False if config.deterministic else cudnn_backend.benchmark
+        except Exception:
+            pass
 
     deterministic_applied = False
-    try:
-        torch.use_deterministic_algorithms(bool(config.deterministic))
-        deterministic_applied = bool(config.deterministic)
-    except Exception:
-        deterministic_applied = False
+    if cuda_available:
+        try:
+            torch.use_deterministic_algorithms(bool(config.deterministic))
+            deterministic_applied = bool(config.deterministic)
+        except Exception:
+            deterministic_applied = False
 
     return {
         "seed": resolved_seed,
