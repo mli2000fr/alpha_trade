@@ -1,8 +1,18 @@
-quotes 01/01/2020 - 31/05/2026
-fillback 01/01/2020 - 31/05/2026
+macro indicateur 01/01/2018 - 30/06/2026
+new 01/01/2018 - 30/06/2026
 
-ml 2015–01–01 - 2025–06–30
+-- news --
+python -u -m event_sentiment.importe_news --start-date 2026-06-18 --end-date 2026-07-01 --news-provider eodhd --symbol-source stock_bars_daily --resume-checkpoints
 
+python -u -m event_sentiment.relevance_backfill --news-provider eodhd --batch-size 500 --start-date 2026-06-18 --end-date 2026-07-01 --symbol-source stock_bars_daily
 
+python -u -m event_sentiment --skip-ingestion --skip-features --scoring-mode standard_only --news-provider eodhd --sentiment-pending-limit 20000 --sentiment-pending-max-batches 0 --finbert-batch-size 64 --start-utc 2026-06-18T00:00:00Z --end-utc 2026-07-01T23:59:59Z --symbol-source stock_bars_daily
 
-2026-07-03 17:49:13,036 modelFactory.trainer INFO training_progress phase=final_train symbol=WKEY epoch=4/100 train_loss=1.0999 val_loss=0.9612 val_acc=0.3074 val_auc=n/a
+python -u -m event_sentiment --skip-ingestion --skip-features --scoring-mode contextual_only --news-provider eodhd --enable-contextual-scoring --contextual-min-relevance 0.3 --contextual-max-pairs 50000 --sentiment-pending-limit 20000 --sentiment-pending-max-batches 0 --finbert-batch-size 64 --start-utc 2026-06-18T00:00:00Z --end-utc 2026-07-01T23:59:59Z --symbol-source stock_bars_daily
+
+python -u -m event_sentiment.history_backfill --start-date 2026-06-18 --end-date 2026-07-01 --ingestion-source eodhd --ticker-symbol-source stock_bars_daily
+
+-- bars --
+python -u -m dataIntegrityEngine.import_eodhd_bar --write --commit-every-symbols 100 --no-stooq-cross-check     (stock_bars, stock_bars_daily)
+python -u -m dataIntegrityEngine.data_sanitizer_daily    (stock_bars_daily, cleaning_audit_latest, cleaning_audit_runs)
+
