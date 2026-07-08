@@ -1202,6 +1202,49 @@ Ces colonnes ne se rempliront que lorsque :
 
 > ⚠️ `threshold_business_score` est conçu pour le mode **binaire** (seuil unique proba > X → long). En mode ternaire, la décision se fait par `argmax` → pas de seuil unique → ces colonnes restent NULL.
 
+#### 4.9.3 Requête Champions — métriques par architecture
+
+Une fois la sélection champion activée (`ml_select_champion=ON`), cette requête donne les métriques agrégées **par modèle champion** (LSTM, CatBoost, LightGBM) sur le dernier batch d'entraînement. Elle permet de mesurer la qualité réelle des prédictions qui seront utilisées en inférence.
+
+```sql
+SELECT mm.model_name,
+       mm.split_name,
+       COUNT(DISTINCT mm.symbol) AS nb_symbols,
+       ROUND(AVG(mm.f1_macro), 3) AS avg_f1m,
+       ROUND(AVG(mm.f1_short), 3) AS avg_f1s,
+       ROUND(AVG(mm.f1_flat), 3) AS avg_f1f,
+       ROUND(AVG(mm.f1_long), 3) AS avg_f1l,
+       SUM(CASE WHEN mm.f1_short > 0 THEN 1 ELSE 0 END) AS with_short,
+       SUM(CASE WHEN mm.f1_long > 0 THEN 1 ELSE 0 END) AS with_long,
+       SUM(CASE WHEN mm.f1_short > 0 AND mm.f1_long > 0 THEN 1 ELSE 0 END) AS with_both
+FROM model_metrics mm
+JOIN model_training_run mtr ON mm.run_id = mtr.run_id
+JOIN model_governance mg ON mg.run_id = mm.run_id 
+    AND mg.symbol = mm.symbol 
+    AND mg.model_name = mm.model_name
+WHERE mtr.started_at >= (
+    SELECT MAX(started_at) FROM model_training_run WHERE status = 'completed'
+) - INTERVAL 300 MINUTE
+  AND mg.is_selected_model = 1
+GROUP BY mm.model_name, mm.split_name
+ORDER BY mm.model_name, FIELD(mm.split_name, 'val', 'test', 'wf');
+```
+
+**Requête complémentaire — distribution des champions :**
+
+```sql
+SELECT mg.model_name AS champion,
+       COUNT(DISTINCT mg.symbol) AS nb_symbols,
+       ROUND(100.0 * COUNT(DISTINCT mg.symbol) / 
+           (SELECT COUNT(DISTINCT symbol) FROM model_governance WHERE is_selected_model = 1), 1) AS pct
+FROM model_governance mg
+WHERE mg.is_selected_model = 1
+GROUP BY mg.model_name
+ORDER BY nb_symbols DESC;
+```
+
+> ⚠️ **Note** : les modèles tabulaires (CatBoost, LightGBM) n'ont pas de split `wf` — seules les colonnes `val` et `test` sont renseignées. Le LSTM est le seul à fournir les 3 splits. Pour évaluer la performance forward-looking des champions tabulaires, un backtest complet est nécessaire.
+
 ---
 
 ## 5. ML — PRÉDICTION LONG ET SHORT 🟢 LIVE
