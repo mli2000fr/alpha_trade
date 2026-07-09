@@ -176,7 +176,7 @@ market_regimes:
 
   # Russell 2000 Volatility Index (CBOE RVX) — Small Caps
   rvx:
-    enabled: true
+    enabled: false
     symbol: "RVX.INDX"
     high_threshold: 30.0
 
