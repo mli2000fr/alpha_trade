@@ -499,28 +499,31 @@ class PortfolioBuilder:
         # ── 0ter. Score threshold (Quick Win 2) ────────────────────
         # Sprint 2 — shorts ignorés par le seuil long. ML Sprint 4 — seuil
         # distinct pour les shorts via min_score_threshold_short.
+        # Note : les shorts sont déjà filtrés par tag_short_candidates() dans
+        # le risk_bridge (selector/short_score.py) qui applique correctement
+        # le sens du score (low score = bearish = bon short). Le check
+        # ci-dessous est redondant pour les shorts et contre-productif car
+        # il compare score_used (score standard) au seuil sans inverser.
         if candidates:
             before = len(candidates)
-            short_threshold = float(getattr(self._cfg, "min_score_threshold_short", 0.0) or 0.0)
             long_threshold = float(self._cfg.min_score_threshold)
             filtered: list[CandidateScore] = []
             for c in candidates:
                 side = getattr(c, "side", "buy") or "buy"
                 if side == "sell":
-                    if short_threshold > 0 and c.score_used < short_threshold:
-                        continue
+                    # Déjà filtré par tag_short_candidates — on laisse passer.
+                    filtered.append(c)
                 else:
                     if long_threshold > 0 and c.score_used < long_threshold:
                         continue
-                filtered.append(c)
+                    filtered.append(c)
             candidates = filtered
             blocked_score = before - len(candidates)
             if blocked_score:
                 LOGGER.info(
-                    "Score threshold: blocked %d candidates (long < %.2f, short < %.2f)",
+                    "Score threshold: blocked %d candidates (long < %.2f)",
                     blocked_score,
                     long_threshold,
-                    short_threshold,
                 )
 
         # ── 0quat. Filtres de concentration (Priorité 4) ─────────────

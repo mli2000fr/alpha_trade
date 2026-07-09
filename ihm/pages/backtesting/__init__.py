@@ -11,6 +11,7 @@ import streamlit as st
 from common.capital_presets import (
     CapitalPreset,
     DEFAULT_CAPITAL_PRESET_KEY,
+    capital_preset_fingerprint,
     get_capital_preset_by_key,
     load_capital_presets,
     resolve_capital_preset_for_equity,
@@ -243,16 +244,15 @@ def _ensure_capital_preset_session_key(session_key: str, equity: float | None) -
 
 
 def _apply_run_capital_preset(selected_preset_key: str, equity: float) -> CapitalPreset | None:
-    signature = f"{selected_preset_key}|{equity:.2f}"
+    preset = get_capital_preset_by_key(selected_preset_key) if selected_preset_key != CAPITAL_PRESET_CUSTOM else None
+    # Inclure le fingerprint dans la signature pour détecter les changements du YAML
+    fp = capital_preset_fingerprint(preset) if preset is not None else "custom"
+    signature = f"{selected_preset_key}|{equity:.2f}|{fp}"
     if str(st.session_state.get(BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY, "") or "") == signature:
-        return get_capital_preset_by_key(selected_preset_key) if selected_preset_key != CAPITAL_PRESET_CUSTOM else None
-    if selected_preset_key == CAPITAL_PRESET_CUSTOM:
+        return preset
+    if selected_preset_key == CAPITAL_PRESET_CUSTOM or preset is None:
         st.session_state[BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY] = signature
-        return None
-    preset = get_capital_preset_by_key(selected_preset_key)
-    if preset is None:
-        st.session_state[BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY] = signature
-        return None
+        return preset
     values = preset.values
     current_account_type = str(st.session_state.get("bt_run_account_type", "margin") or "margin").strip().lower()
     if current_account_type not in {"margin", "cash"}:
@@ -262,6 +262,15 @@ def _apply_run_capital_preset(selected_preset_key: str, equity: float) -> Capita
     st.session_state["bt_run_max_positions"] = _to_int(
         values.get("risk_max_positions", st.session_state.get("bt_run_max_positions", 20)),
         20,
+    )
+    # Appliquer aussi le DD breaker et les paramètres de recovery du preset
+    st.session_state["bt_run_max_portfolio_dd_pct"] = _to_float(
+        values.get("backtesting_max_portfolio_dd_pct", values.get("risk_max_drawdown_pct", 0.12)),
+        0.12,
+    )
+    st.session_state["bt_run_dd_recovery_pct"] = _to_float(
+        values.get("backtesting_dd_recovery_pct", values.get("risk_dd_recovery_pct", 0.92)),
+        0.92,
     )
     st.session_state[BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY] = signature
     return preset

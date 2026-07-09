@@ -152,7 +152,7 @@ market_regimes:
     symbol: "VIX.INDX"
     short_symbol: "VIX9D.INDX"
     high_threshold: 30.0
-    inverted_curve_mode: close_only
+    inverted_curve_mode: capital_preservation
     inverted_curve_min_spread: 1.5
     inverted_curve_min_ratio: 1.03
 

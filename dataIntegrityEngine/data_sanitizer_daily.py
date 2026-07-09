@@ -52,6 +52,7 @@ EMPTY_BAR_FRAME = pl.DataFrame(
         "adj_close": [],
         "vwap": [],
         "is_filled": [],
+        "data_source": [],
     }
 )
 
@@ -184,6 +185,7 @@ class DataSanitizer:
                 'adj_close': [bar['c'] for bar in bars],  # = close car adjustment=split
                 'vwap': [bar.get('vw') for bar in bars],
                 'is_filled': [False] * len(bars),
+                'data_source': [bar.get('ds') for bar in bars],
             }
         ).sort('date').unique(subset=['date'], keep='last')
 
@@ -374,9 +376,12 @@ class DataSanitizer:
         missing_flags = [bool(flag) for flag in base['orig_missing'].to_list()]
         fill_streaks = self._compute_fill_streaks(missing_flags)
 
-        tmp = base.with_columns([
-            pl.col('close').forward_fill().alias('close')
-        ])
+        _ff_cols = [
+            pl.col('close').forward_fill().alias('close'),
+        ]
+        if 'data_source' in base.columns:
+            _ff_cols.append(pl.col('data_source').forward_fill().alias('data_source'))
+        tmp = base.with_columns(_ff_cols)
         tmp = tmp.with_columns([
             pl.when(pl.col('open').is_null()).then(pl.col('close')).otherwise(pl.col('open')).alias('open'),
             pl.when(pl.col('high').is_null()).then(pl.col('close')).otherwise(pl.col('high')).alias('high'),

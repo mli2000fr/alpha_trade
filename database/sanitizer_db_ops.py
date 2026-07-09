@@ -30,7 +30,7 @@ def _build_stock_bars_daily_records(
         ('raw' | 'split' | 'dividend' | 'all'). Persisté pour traçabilité (versioning).
     """
     ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    return df.select([
+    _select_exprs = [
         pl.lit(symbol).alias('symbol'),
         pl.col('date'),
         pl.col('open'),
@@ -44,7 +44,10 @@ def _build_stock_bars_daily_records(
         pl.col('is_filled'),
         pl.lit(ingested_at).alias('ingested_at'),
         pl.lit(data_adjustment).alias('data_adjustment'),
-    ]).to_dicts()
+    ]
+    if 'data_source' in df.columns:
+        _select_exprs.append(pl.col('data_source'))
+    return df.select(_select_exprs).to_dicts()
 
 
 def _normalize_mysql_scalar(value):
@@ -97,17 +100,21 @@ def get_stock_bars(
 ) -> list[dict]:
     """Retourne les bars `stock_bars` triés par timestamp au format attendu par le pipeline."""
     start_ts = _coerce_start_timestamp(start)
+    _has_ds_col = 'data_source' in stock_bars.c
+    _select_cols = [
+        stock_bars.c.timestamp.label('t'),
+        stock_bars.c.open_price.label('o'),
+        stock_bars.c.high_price.label('h'),
+        stock_bars.c.low_price.label('l'),
+        stock_bars.c.close_price.label('c'),
+        stock_bars.c.volume.label('v'),
+        stock_bars.c.trade_count.label('n'),
+        stock_bars.c.vwa_price.label('vw'),
+    ]
+    if _has_ds_col:
+        _select_cols.append(stock_bars.c.data_source.label('ds'))
     q = (
-        select(
-            stock_bars.c.timestamp.label('t'),
-            stock_bars.c.open_price.label('o'),
-            stock_bars.c.high_price.label('h'),
-            stock_bars.c.low_price.label('l'),
-            stock_bars.c.close_price.label('c'),
-            stock_bars.c.volume.label('v'),
-            stock_bars.c.trade_count.label('n'),
-            stock_bars.c.vwa_price.label('vw'),
-        )
+        select(*_select_cols)
         .where(
             and_(
                 stock_bars.c.symbol == symbol,
@@ -130,6 +137,7 @@ def get_stock_bars(
             'v': int(row['v']),
             'n': int(row['n']) if row['n'] is not None else 0,
             'vw': float(row['vw']) if row['vw'] is not None else None,
+            **({'ds': row['ds']} if _has_ds_col else {}),
         }
         for row in rows
     ]
