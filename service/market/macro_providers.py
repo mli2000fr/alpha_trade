@@ -20,11 +20,15 @@ Cf. ``prompt/parttern/plan.md`` axe A — branchement effectif du
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence, cast
+
+from sqlalchemy import select
 
 from common.market_calendar import getLastDateMarche, nyse_session_dates
 from database.macro_indicators import (
+    _resolve_engine,
+    get_macro_indicators_daily_table,
     load_macro_indicator_daily_asof,
     load_macro_indicator_history_asof,
     persist_macro_indicator_daily,
@@ -850,9 +854,30 @@ class TableFirstMacroProvider:
     def _persist_fallback_value(self, *, trade_date: date, value_key: str, value: Any) -> None:
         if not self._persist_fallback_hits or value is None:
             return
-        kwargs = {"trade_date": trade_date, value_key: value, "engine": self._engine}
         try:
-            persist_macro_indicator_daily(**kwargs)
+            engine = _resolve_engine(self._engine)
+            table = get_macro_indicators_daily_table()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            coerced = float(value)
+            with engine.begin() as conn:
+                exists = conn.execute(
+                    select(table.c.trade_date).where(table.c.trade_date == trade_date).limit(1)
+                ).scalar_one_or_none()
+                if exists is None:
+                    conn.execute(
+                        table.insert().values(
+                            trade_date=trade_date,
+                            **{value_key: coerced},
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                else:
+                    conn.execute(
+                        table.update()
+                        .where(table.c.trade_date == trade_date)
+                        .values(**{value_key: coerced}, updated_at=now)
+                    )
         except Exception:
             LOGGER.debug("TableFirstMacroProvider: write-back macro cache impossible.", exc_info=True)
 
