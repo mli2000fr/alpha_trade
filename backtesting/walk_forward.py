@@ -28,9 +28,9 @@ LOGGER = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Borne inférieure inclusive sur chaque poids individuel.
-WEIGHT_MIN: float = 0.05
+WEIGHT_MIN: float = 0.0
 #: Borne supérieure inclusive sur chaque poids individuel.
-WEIGHT_MAX: float = 0.40
+WEIGHT_MAX: float = 0.95
 
 _WEIGHT_FILENAMES = (
     "latest_best_weights.json",
@@ -152,6 +152,24 @@ def validate_walk_forward_weights(
             )
         for msg in violations:
             LOGGER.warning("A-027 bornes walk-forward — %s (clippage appliqué)", msg)
+
+    # Renormalisation pour que la somme des poids = 1.0 après clippage.
+    # Uniquement lorsque le clippage a effectivement modifié au moins un poids.
+    _clipping_occurred = (
+        abs(clipped_sentiment - weights.sentiment_weight) > 1e-12
+        or abs(clipped_macro - weights.macro_weight) > 1e-12
+        or abs(clipped_quant - weights.quant_weight) > 1e-12
+    )
+    if _clipping_occurred:
+        total = clipped_sentiment + clipped_macro + clipped_quant
+        if total > 0 and abs(total - 1.0) > 1e-9:
+            clipped_sentiment = clipped_sentiment / total
+            clipped_macro = clipped_macro / total
+            clipped_quant = clipped_quant / total
+            LOGGER.info(
+                "A-027 poids walk-forward renormalisés à somme=1.0 : sentiment=%.4f macro=%.4f quant=%.4f",
+                clipped_sentiment, clipped_macro, clipped_quant,
+            )
 
     if clipped_sentiment == weights.sentiment_weight and clipped_macro == weights.macro_weight and clipped_quant == weights.quant_weight:
         return weights

@@ -819,9 +819,11 @@ class TestResilience:
             walk_forward_artifacts_dir=tmp_path,
         )
 
-        # A-027 : quant_weight=0.70 est clippé à WEIGHT_MAX=0.40 → score clippé.
-        assert result.iloc[0]["final_score_walk_forward"] == pytest.approx(0.53, abs=1e-6)
-        assert result.iloc[0]["walk_forward_quant_weight"] == pytest.approx(0.40, abs=1e-6)
+        # A-027 : poids (0.20, 0.10, 0.70) dans les bornes [0.0, 0.95] → aucun clippage.
+        # company_idio = 0.20 * norm(1.0) = 0.20, macro = 0.10 * norm(0.0) = 0.05,
+        # quant = 0.70 * 0.70 = 0.49 → total = 0.74
+        assert result.iloc[0]["final_score_walk_forward"] == pytest.approx(0.74, abs=1e-6)
+        assert result.iloc[0]["walk_forward_quant_weight"] == pytest.approx(0.70, abs=1e-6)
         assert result.iloc[0]["score_source"] == "final_score_walk_forward"
         assert result.iloc[0]["calibration_run_id"] == "wf-123"
 

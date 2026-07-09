@@ -73,7 +73,9 @@ def _prepare_score_columns(scores_df: pd.DataFrame, *, preferred_score_column: s
     prepared = _normalize_trade_dates(scores_df)
     score_series, source_series = _pick_score_column(prepared, preferred=preferred_score_column)
     prepared["score"] = score_series.values
-    if "score_source" in prepared.columns:
+    # Lorsqu'une colonne de score explicite est demandée, la source résolue
+    # prend priorité sur un éventuel score_source préexistant.
+    if "score_source" in prepared.columns and preferred_score_column is None:
         prepared["score_source"] = prepared["score_source"].where(prepared["score_source"].notna(), source_series.values)
     else:
         prepared["score_source"] = source_series.values

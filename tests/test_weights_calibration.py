@@ -290,26 +290,36 @@ def test_calibrate_sentiment_grid_normalisation() -> None:
 # ---------------------------------------------------------------------------
 
 def test_validate_walk_forward_weights_clips_above_max() -> None:
-    """Poids au-dessus de WEIGHT_MAX doit être clippé avec warning."""
+    """Poids au-dessus de WEIGHT_MAX doit être clippé puis renormalisé."""
     from backtesting.walk_forward import WEIGHT_MAX, WalkForwardWeights, validate_walk_forward_weights
-    w = WalkForwardWeights(sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.80)
+    # quant=0.99 > WEIGHT_MAX=0.95 → clippé à 0.95 puis renormalisé
+    w = WalkForwardWeights(sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.99)
     validated = validate_walk_forward_weights(w, strict=False)
-    assert validated.quant_weight == pytest.approx(WEIGHT_MAX)
-    assert validated.sentiment_weight == pytest.approx(0.20)
+    # Après clippage: (0.20, 0.10, 0.95), somme=1.25
+    # Après renormalisation: (0.16, 0.08, 0.76)
+    assert validated.quant_weight == pytest.approx(0.95 / 1.25)
+    assert validated.sentiment_weight == pytest.approx(0.20 / 1.25)
+    assert validated.macro_weight == pytest.approx(0.10 / 1.25)
 
 
 def test_validate_walk_forward_weights_clips_below_min() -> None:
-    """Poids en dessous de WEIGHT_MIN doit être clippé."""
+    """Poids en dessous de WEIGHT_MIN doit être clippé puis renormalisé."""
     from backtesting.walk_forward import WEIGHT_MIN, WalkForwardWeights, validate_walk_forward_weights
-    w = WalkForwardWeights(sentiment_weight=0.01, macro_weight=0.10, quant_weight=0.40)
+    # sentiment=-0.05 < WEIGHT_MIN=0.0 → clippé à 0.0 puis renormalisé
+    w = WalkForwardWeights(sentiment_weight=-0.05, macro_weight=0.10, quant_weight=0.40)
     validated = validate_walk_forward_weights(w, strict=False)
-    assert validated.sentiment_weight == pytest.approx(WEIGHT_MIN)
+    # Après clippage: (0.0, 0.10, 0.40), somme=0.50
+    # Après renormalisation: (0.0, 0.20, 0.80)
+    assert validated.sentiment_weight == pytest.approx(0.0)
+    assert validated.macro_weight == pytest.approx(0.10 / 0.50)
+    assert validated.quant_weight == pytest.approx(0.40 / 0.50)
 
 
 def test_validate_walk_forward_weights_strict_raises() -> None:
     """strict=True doit lever ValueError sur tout dépassement."""
     from backtesting.walk_forward import WalkForwardWeights, validate_walk_forward_weights
-    w = WalkForwardWeights(sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.80)
+    # quant=0.99 > WEIGHT_MAX=0.95 → violation
+    w = WalkForwardWeights(sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.99)
     with pytest.raises(ValueError, match="hors bornes"):
         validate_walk_forward_weights(w, strict=True)
 

@@ -377,6 +377,7 @@ def _build_backtest_common_params(
         "equity": args.equity,
         "tp": args.tp,
         "ts": args.ts,
+        "atr_ts": float(getattr(args, "atr_ts", 0.0) or 0.0),
         "max_positions": args.max_positions,
         "commission_bps": float(args.commission_bps),
         "slippage_bps": float(args.slippage_bps),
@@ -718,6 +719,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--tp", type=float, default=0.12, help="Take-profit %% (défaut 0.12)")
     run_p.add_argument("--ts", type=float, default=0.07, help="Trailing stop %% (défaut 0.07)")
+    run_p.add_argument(
+        "--atr-ts", type=float, default=0.0,
+        help="Multiplicateur ATR pour trailing stop adaptatif (0 = désactivé, utilise --ts fixe). "
+             "Ex: 2.0 → stop = peak − 2×ATR_20. Le stop le plus large des deux (fixe vs ATR) est utilisé.",
+    )
     run_p.add_argument(
         "--use-live-protection-logic",
         dest="use_live_protection_logic",
@@ -2476,6 +2482,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         ),
         profit_taker_pct=args.tp,
         trailing_stop_pct=args.ts,
+        atr_trailing_stop_multiplier=float(getattr(args, "atr_ts", 0.0) or 0.0),
         use_live_protection_logic=bool(getattr(args, "use_live_protection_logic", True)),
         max_positions=args.max_positions,
         fees_pct=fees_pct,

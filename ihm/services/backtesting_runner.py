@@ -30,6 +30,7 @@ class BacktestRunOptions:
     capital_preset_key: str | None = None
     tp: float = 0.08
     ts: float = 0.05
+    atr_ts: float = 0.0
     use_live_protection_logic: bool = True
     max_positions: int = 20
     fees: float | None = None
@@ -58,6 +59,7 @@ class BacktestRunOptions:
     artifacts_dir: str = "artifacts/models"
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
+    disable_walk_forward: bool = False
     output_dir: str | None = None
     # Phase A (refactor) — reproductibilité + risk-free rate
     risk_free_rate: float = 0.0
@@ -250,6 +252,9 @@ def build_backtesting_command(
                 "--tp", str(options.tp),
                 "--ts", str(options.ts),
             ])
+        # P1 — ATR trailing stop (indépendant du mode de protection)
+        if options.atr_ts and float(options.atr_ts) > 0:
+            command.extend(["--atr-ts", str(options.atr_ts)])
         if options.allow_fractional_shares:
             command.append("--allow-fractional-shares")
         if options.commission_bps is not None:
@@ -264,7 +269,11 @@ def build_backtesting_command(
             command.append("--fail-on-missing-macro-data")
         if options.capital_preset_key:
             command.extend(["--capital-preset-key", options.capital_preset_key])
-        if options.walk_forward_artifacts_dir:
+        if options.disable_walk_forward:
+            # Passe un répertoire inexistant pour empêcher l'auto-découverte
+            # dans resilience._apply_walk_forward_overlay.
+            command.extend(["--walk-forward-artifacts-dir", "__none__/skip_walk_forward"])
+        elif options.walk_forward_artifacts_dir:
             command.extend(["--walk-forward-artifacts-dir", options.walk_forward_artifacts_dir])
         if options.fidelity_baseline_id:
             command.extend(["--fidelity-baseline-id", options.fidelity_baseline_id])

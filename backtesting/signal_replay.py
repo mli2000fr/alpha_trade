@@ -122,7 +122,10 @@ def replay_signals(
     df = scores_df[keep_columns].copy()
     score, source = _pick_score_column(df, preferred=score_column)
     df["score"] = score.values
-    if "score_source" in df.columns:
+    # Lorsqu'une colonne de score explicite est demandée (--score-column),
+    # la source résolue prend priorité sur un éventuel score_source préexistant
+    # (ex. label "final_score_walk_forward" posé par l'overlay walk-forward).
+    if "score_source" in df.columns and score_column is None:
         existing_source = df["score_source"]
         df["score_source"] = existing_source.where(existing_source.notna(), source.values)
     else:

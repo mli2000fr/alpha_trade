@@ -1287,6 +1287,7 @@ def _build_run_options() -> BacktestRunOptions:
 
     tp = float(st.session_state.get("bt_run_tp", 0.08))
     ts = float(st.session_state.get("bt_run_ts", 0.05))
+    atr_ts = float(st.session_state.get("bt_run_atr_ts", 0.0))
     col4, col5, col6, col7 = st.columns(4)
     with col4:
         if use_live_protection_logic:
@@ -1342,6 +1343,31 @@ def _build_run_options() -> BacktestRunOptions:
             key="bt_run_commission_bps",
             help="Coût fixe explicite par trade. En mode pipeline, 15 bps est un défaut réaliste recommandé.",
         )
+
+    # ── P1 — ATR trailing stop + disable walk-forward ──
+    col4b, col5b, col6b, col7b = st.columns(4)
+    with col4b:
+        atr_ts = st.number_input(
+            "ATR trailing stop (multiplicateur)",
+            min_value=0.0,
+            max_value=10.0,
+            value=float(st.session_state.get("bt_run_atr_ts", 2.5)),
+            step=0.5,
+            format="%.1f",
+            key="bt_run_atr_ts",
+            help="0 = désactivé (utilise TS fixe). Ex: 2.0 → stop = peak − 2×ATR_20. Le stop le plus large des deux (fixe vs ATR) est utilisé.",
+        )
+    with col5b:
+        disable_walk_forward = st.checkbox(
+            "Désactiver l'overlay walk-forward",
+            value=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
+            key="bt_run_disable_walk_forward",
+            help="Si coché, le --walk-forward-artifacts-dir n'est PAS passé → le score brut (final_score ou autre) est utilisé sans overlay.",
+        )
+    with col6b:
+        st.caption("")  # espace réservé
+    with col7b:
+        st.caption("")  # espace réservé
 
     col8, col9, col10, col11 = st.columns(4)
     with col8:
@@ -1706,6 +1732,7 @@ def _build_run_options() -> BacktestRunOptions:
         capital_preset_key=None if selected_run_preset_key == CAPITAL_PRESET_CUSTOM else selected_run_preset_key,
         tp=float(tp),
         ts=float(ts),
+        atr_ts=float(st.session_state.get("bt_run_atr_ts", 0.0) or 0.0),
         use_live_protection_logic=bool(use_live_protection_logic),
         max_positions=int(max_positions),
         fees=None,
@@ -1734,6 +1761,7 @@ def _build_run_options() -> BacktestRunOptions:
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
+        disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
         **_build_overlay_options(
             engine_mode=engine_mode,
             selected_run_preset_key=selected_run_preset_key,
