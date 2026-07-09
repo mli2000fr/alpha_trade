@@ -437,6 +437,7 @@ _RISK_CONFIG_PRESET_MAPPING: tuple[tuple[str, str, type], ...] = (
     ("risk_score_weight", "score_weight", float),
     ("risk_prediction_weight", "prediction_weight", float),
     ("risk_min_score_threshold", "min_score_threshold", float),
+    ("risk_min_score_threshold_short", "min_score_threshold_short", float),
     ("risk_min_breakout_days", "min_breakout_days", int),
     # Liquidité dynamique (P1) — None = désactivé
     ("risk_max_position_pct_of_adv", "max_position_pct_of_adv", float),
