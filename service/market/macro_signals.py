@@ -147,6 +147,10 @@ def evaluate_vix_term_structure(
         dq.setdefault("vix", "missing")
     if vix3m_value is None:
         dq.setdefault("vix3m", "missing")
+    if vix_value is not None:
+        dq.setdefault("vix", "ok")
+    if vix3m_value is not None:
+        dq.setdefault("vix3m", "ok")
     if not dq:
         dq["vix_term_structure"] = "ok"
     if vix_value is None or vix3m_value is None or vix3m_value <= 0:
