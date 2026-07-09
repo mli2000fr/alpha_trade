@@ -1770,6 +1770,7 @@ class BacktestEngine:
                     trailing_stop_price=trailing_stop_price,
                     initial_stop_price=active_initial_stop,
                     priority=micro.intrabar_priority,
+                    side=side,
                     rng=rng,
                 )
                 if not resolution.triggered:

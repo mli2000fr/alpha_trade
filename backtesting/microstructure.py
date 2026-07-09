@@ -184,23 +184,40 @@ def resolve_intrabar_exit(
     trailing_stop_price: float,
     initial_stop_price: float | None,
     priority: IntraBarPriority,
+    side: str = "buy",
     rng: np.random.Generator | None = None,
 ) -> IntraBarResolution:
     """B.2/B.4 — résout la sortie quand plusieurs niveaux sont touchés.
+
+    Direction-aware : inverse les checks pour les shorts (TP en-dessous,
+    TS/stop au-dessus de l'entrée).
 
     Ordre d'évaluation :
     1. ``initial_stop_price`` (si fourni) : strict, si touché on sort.
     2. TP / TS : selon ``priority``.
     """
-    hit_initial_stop = initial_stop_price is not None and day_low <= initial_stop_price
-    hit_tp = day_high >= take_profit_price
-    hit_ts = day_low <= trailing_stop_price
+    short = side.strip().lower() == "sell"
 
-    # Initial stop dur prioritaire sur tout le reste — protège un trade bull.
-    if hit_initial_stop and (hit_ts or initial_stop_price >= trailing_stop_price):
-        # Si ts et initial_stop sont tous deux touchés, prend le plus haut (perte
-        # plus faible mais quand même une protection contre l'aléa intraday).
-        chosen = max(trailing_stop_price, float(initial_stop_price))
+    if short:
+        # Short : TP en-dessous, TS et initial_stop au-dessus
+        hit_initial_stop = initial_stop_price is not None and day_high >= initial_stop_price
+        hit_tp = day_low <= take_profit_price
+        hit_ts = day_high >= trailing_stop_price
+    else:
+        # Long : TP au-dessus, TS et initial_stop en-dessous
+        hit_initial_stop = initial_stop_price is not None and day_low <= initial_stop_price
+        hit_tp = day_high >= take_profit_price
+        hit_ts = day_low <= trailing_stop_price
+
+    # Initial stop dur prioritaire sur tout le reste.
+    if hit_initial_stop and (hit_ts or (
+        initial_stop_price >= trailing_stop_price if not short else initial_stop_price <= trailing_stop_price
+    )):
+        # Prend le prix le plus favorable (perte plus faible).
+        chosen = (
+            min(trailing_stop_price, float(initial_stop_price)) if short
+            else max(trailing_stop_price, float(initial_stop_price))
+        )
         return IntraBarResolution(True, chosen, "initial_stop")
 
     if not hit_tp and not hit_ts:

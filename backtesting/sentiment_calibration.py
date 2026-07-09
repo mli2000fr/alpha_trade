@@ -10,6 +10,7 @@ from typing import Any, Iterable
 from uuid import uuid4
 
 import pandas as pd
+import numpy as np
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 

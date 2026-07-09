@@ -333,7 +333,11 @@ risk_management:
 
   # Sprint 0 short — feature flag global (cf. plan_v2.md §C8)
   # Active le pipeline long+short. false = long-only (comportement actuel)
-  short_selling_enabled: true
+  # ⚠️ Désactivé car la stratégie short (Option C rotation) n'est pas prête :
+  #    0% win rate, -6.5% systématique en day-trade. À réactiver quand :
+  #    1. Un short_score ML dédié sera disponible
+  #    2. Le trailing stop short sera calibré (actuellement 10% trop serré)
+  short_selling_enabled: false
 
   # Sprint 2 — Option C : short via MomentumRotationState
   short_max_positions: 2            # nombre max de shorts simultanés

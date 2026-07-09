@@ -3486,7 +3486,7 @@ def _run_calibrate_sentiment_weights(args: argparse.Namespace) -> None:
         top_n=args.top_n,
         candidates_only=not args.all_symbols,
         output_dir=Path(args.output_dir),
-        capital_preset_key=args.capital_preset_key,
+        capital_preset_keys=args.capital_preset_key,
     )
 
     _safe_print("✅ Calibration terminée")

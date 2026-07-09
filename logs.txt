@@ -16,3 +16,9 @@ python -u -m event_sentiment.history_backfill --start-date 2015-01-01 --end-date
 python -u -m dataIntegrityEngine.import_eodhd_bar --write --commit-every-symbols 100 --no-stooq-cross-check     (stock_bars, stock_bars_daily)
 python -u -m dataIntegrityEngine.data_sanitizer_daily    (stock_bars_daily, cleaning_audit_latest, cleaning_audit_runs)
 
+
+
+
+python -u -m backtesting walk-forward-sentiment --start 2018-01-01 --end 2019-12-31 --top-n 30 --horizons 5,10,20 --min-train-days 252 --test-days 63 --max-positions 20 --equity 100000.0 --tp 0.08 --ts 0.05 --atr-ts 2.0 --fees 0.001 --output-dir artifacts/sentiment_walk_forward
+
+python -u -m backtesting walk-forward-conviction --start 2018-01-01 --end 2019-12-31 --top-n 30 --horizons 5,10,20 --min-train-days 252 --test-days 63 --output-dir artifacts/walk_forward_conviction --backtest-kelly
