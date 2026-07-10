@@ -1949,22 +1949,16 @@ def _run_backtest(args: argparse.Namespace) -> None:
         # ``apply_backtest_defaults_from_preset`` ; on conserve la valeur CLI/preset
         # finale ici pour rester source unique de vérité côté simulateur.
         risk_kwargs["max_positions"] = int(args.max_positions)
-        # Sprint 2 — short selling (Option C) : lire le flag depuis config.yaml
-        try:
-            from common.config_loader import load_config as _load_raw_cfg
-            _raw = _load_raw_cfg()
-            _rm = _raw.get("risk_management", {}) if isinstance(_raw, dict) else {}
-            if isinstance(_rm, dict):
-                risk_kwargs.setdefault("short_selling_enabled", bool(_rm.get("short_selling_enabled", False)))
-                risk_kwargs.setdefault("short_max_positions", int(_rm.get("short_max_positions", 2)))
-                risk_kwargs.setdefault("short_min_score", float(_rm.get("short_min_score", 0.30)))
-                risk_kwargs.setdefault("short_rotation_required", bool(_rm.get("short_rotation_required", True)))
-                LOGGER.info("Short selling config loaded: enabled=%s max_short=%s min_score=%s",
-                            risk_kwargs.get("short_selling_enabled"),
-                            risk_kwargs.get("short_max_positions"),
-                            risk_kwargs.get("short_min_score"))
-        except Exception as _exc:
-            LOGGER.debug("Short selling config not loaded: %s", _exc)
+        # Sprint 2 — short selling (Option C) : activé si le preset a un seuil short.
+        # Contourne config.yaml (potentiellement overridé par le vault).
+        _preset_has_short_threshold = (
+            float(effective_preset.values.get("risk_min_score_threshold_short", -1) or -1) >= 0
+        )
+        risk_kwargs["short_selling_enabled"] = _preset_has_short_threshold
+        risk_kwargs["short_max_positions"] = 2
+        risk_kwargs["short_min_score"] = 0.0
+        risk_kwargs["short_rotation_required"] = True
+        _safe_print(f"   short_selling_enabled={_preset_has_short_threshold} (preset={effective_preset.key})")
         phase2_risk_config = RiskConfig(**risk_kwargs)
 
         # P2 (2026-06-27) -- flag CLI pour exclure les candidats sans ML
