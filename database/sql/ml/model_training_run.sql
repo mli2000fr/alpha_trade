@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_run (
     skip_reason     VARCHAR(200)    DEFAULT NULL,
     started_at      DATETIME        DEFAULT NULL,
     finished_at     DATETIME        DEFAULT NULL,
+    train_start_date DATE           DEFAULT NULL  COMMENT 'Première date des données d entraînement',
+    train_end_date   DATE           DEFAULT NULL  COMMENT 'Dernière date des données d entraînement',
     epochs_run      INT UNSIGNED    DEFAULT 0,
     best_epoch      INT UNSIGNED    DEFAULT NULL,
     checkpoint_path VARCHAR(500)    DEFAULT NULL,

@@ -7,7 +7,7 @@ import pickle
 import inspect
 import uuid
 from dataclasses import asdict, replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any, Optional
@@ -1055,7 +1055,18 @@ def train_symbol(
     if engine is not None:
         try:
             registry_id = ensure_registry_entry(engine, symbol)
-            insert_training_run(engine, run_id, registry_id, symbol, status="running")
+            # Extraire les bornes des données d'entraînement pour le calibrateur
+            _train_start: date | None = None
+            _train_end: date | None = None
+            if not bars_df.empty and "date" in bars_df.columns:
+                _min_raw = bars_df["date"].min()
+                _max_raw = bars_df["date"].max()
+                _train_start = _min_raw.date() if hasattr(_min_raw, "date") else None
+                _train_end = _max_raw.date() if hasattr(_max_raw, "date") else None
+            insert_training_run(
+                engine, run_id, registry_id, symbol, status="running",
+                train_start_date=_train_start, train_end_date=_train_end,
+            )
         except Exception as exc:  # noqa: BLE001
             _record_training_db_issue(symbol, run_id, operation="insert_training_run", exc=exc)
             engine = None

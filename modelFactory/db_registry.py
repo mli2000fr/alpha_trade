@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pandas as pd
@@ -329,14 +329,27 @@ def ensure_registry_entry(engine: Engine, symbol: str, architecture: str = "lstm
 # Training run
 # ---------------------------------------------------------------------------
 
-def insert_training_run(engine: Engine, run_id: str, registry_id: int, symbol: str, status: str = "pending") -> None:
+def insert_training_run(
+    engine: Engine,
+    run_id: str,
+    registry_id: int,
+    symbol: str,
+    status: str = "pending",
+    train_start_date: date | None = None,
+    train_end_date: date | None = None,
+) -> None:
     with engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO model_training_run (run_id, registry_id, symbol, status, started_at) "
-                "VALUES (:rid, :reg, :sym, :st, :now)"
+                "INSERT INTO model_training_run "
+                "(run_id, registry_id, symbol, status, started_at, train_start_date, train_end_date) "
+                "VALUES (:rid, :reg, :sym, :st, :now, :tsd, :ted)"
             ),
-            {"rid": run_id, "reg": registry_id, "sym": symbol, "st": status, "now": datetime.now(UTC)},
+            {
+                "rid": run_id, "reg": registry_id, "sym": symbol, "st": status,
+                "now": datetime.now(UTC),
+                "tsd": train_start_date, "ted": train_end_date,
+            },
         )
 
 

@@ -2407,10 +2407,50 @@ Ces indicateurs traquent la qualité du backtest par rapport au live :
 
 ---
 
+## TODO — Look-ahead dans la calibration conviction (weights_calibration.py)
+
+> **Date** : 2026-07-10 — **Statut** : ⚠️ Contournement temporaire, à corriger proprement.
+
+### Problème
+
+Le calibrateur de conviction (`EmpiricalRiskCalibrator.load_dataset()`) lit `model_metrics` joint à `model_training_run` pour obtenir la `directional_accuracy` par symbole. Historiquement, le filtre était :
+
+```sql
+WHERE DATE(t.finished_at) <= :end_date
+```
+
+`finished_at` = date d'exécution de l'entraînement (ex: 2026-07-01), PAS la date de fin des données d'entraînement. Résultat :
+- Tous les modèles entraînés en 2025-2026 échouent le filtre `finished_at <= 2019-12-31`
+- Dataset vide → calibration impossible
+
+### Contournement actuel (2026-07-10)
+
+Le filtre de date a été **supprimé** de la requête. Tous les `model_metrics` sont chargés sans condition de date → léger **look-ahead** : le calibrateur utilise la `directional_accuracy` de modèles entraînés en 2026 pour calibrer des poids sur 2018-2019.
+
+### Solution propre (à implémenter)
+
+1. ✅ Colonnes `train_start_date` / `train_end_date` ajoutées à `model_training_run` (migration `0045`)
+2. ✅ `train_symbol()` dans `modelFactory/trainer.py` extrait `bars_df["date"].min()/.max()` et les passe à `insert_training_run()`
+3. ⬜ Une fois que les nouveaux entraînements ML auront rempli ces colonnes, rétablir le filtre :
+
+```sql
+WHERE t.train_end_date IS NOT NULL
+  AND t.train_end_date <= :start_date   -- pas de look-ahead : modèle entraîné avant le début du backtest
+```
+
+**Prérequis** : ré-entraîner les modèles ML pour que `train_start_date`/`train_end_date` soient peuplés avec les vraies dates. Pour les modèles existants, laisser `NULL` (ils seront ignorés par le filtre strict, ou utilisés via fallback `finished_at`).
+
+### Impact
+
+- **Backtest** : aucun (les prédictions ML chargées dans le backtest utilisent `model_predictions`, pas `model_metrics`)
+- **Calibration** : les poids `score_weight`/`prediction_weight` calibrés seront légèrement différents une fois le filtre rétabli. L'impact est faible car le quant domine déjà (poids ~0.70)
+
+---
+
 Conclusion documentaire:
 
 - Les anomalies majeures identifiées pendant l'audit short/long sont corrigées.
 - La cohérence short entre selector, risk live et backtest est démontrée sur le périmètre de test ajouté.
 - Les points restants relèvent désormais d'améliorations de complétude ou de maintenance, pas d'écarts fonctionnels critiques.
 
-> **Dernière mise à jour** : 2026-07-05 (Run 1 — 8742 symboles, f1_macro wf=0.258 stable sur 3 runs, 78.8% bidirectionnel. Config verrouillée.)
+> **Dernière mise à jour** : 2026-07-10 (Ajout TODO calibration look-ahead + colonnes train_start/end_date sur model_training_run)

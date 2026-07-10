@@ -600,7 +600,12 @@ def calibrate_conviction_kelly(
     fwd = np.asarray(forward_returns, dtype=float)
     if len({len(snapshot_dates), len(quant), len(proba), len(hist_wr), len(fwd)}) != 1:
         raise ValueError("calibrate_conviction_kelly : longueurs incohérentes.")
-    mask = ~(np.isnan(quant) | np.isnan(proba) | np.isnan(hist_wr) | np.isnan(fwd))
+    mask = ~(np.isnan(quant) | np.isnan(proba) | np.isnan(fwd))
+    # historical_win_rate peut être NaN si model_metrics est vide pour la période.
+    # Dans ce cas, on ne l'inclut pas dans le masque et on le remplit à 0.5 (neutre).
+    hist_wr_is_all_nan = bool(np.all(np.isnan(hist_wr)))
+    if not hist_wr_is_all_nan:
+        mask = mask & ~np.isnan(hist_wr)
     if int(mask.sum()) < 10:
         raise ValueError("calibrate_conviction_kelly : moins de 10 observations valides.")
 
@@ -704,7 +709,10 @@ def calibrate_conviction_kelly_short(
     fwd = np.asarray(forward_returns, dtype=float)
     if len({len(snapshot_dates), len(quant), len(proba_s), len(hist_wr), len(fwd)}) != 1:
         raise ValueError("calibrate_conviction_kelly_short : longueurs incohérentes.")
-    mask = ~(np.isnan(quant) | np.isnan(proba_s) | np.isnan(hist_wr) | np.isnan(fwd))
+    mask = ~(np.isnan(quant) | np.isnan(proba_s) | np.isnan(fwd))
+    hist_wr_is_all_nan = bool(np.all(np.isnan(hist_wr)))
+    if not hist_wr_is_all_nan:
+        mask = mask & ~np.isnan(hist_wr)
     if int(mask.sum()) < 10:
         raise ValueError("calibrate_conviction_kelly_short : moins de 10 observations valides.")
 
@@ -898,7 +906,10 @@ class EmpiricalRiskCalibrator:
             JOIN model_training_run t ON m.run_id = t.run_id
             WHERE t.status = 'completed'
               AND m.directional_accuracy IS NOT NULL
-              AND DATE(t.finished_at) <= :end_date
+              AND (
+                  (t.train_end_date IS NOT NULL AND t.train_end_date <= :end_date)
+                  OR (t.train_end_date IS NULL AND DATE(t.finished_at) <= :end_date)
+              )
             ORDER BY m.symbol ASC, t.finished_at ASC, m.run_id ASC
             """
         )
@@ -922,21 +933,29 @@ class EmpiricalRiskCalibrator:
                     "end_date_plus_buffer": end_date + pd.Timedelta(days=max(int(horizon_days) * 4, 20)),
                 },
             )
-        if scores.empty or predictions.empty or win_rates.empty or bars.empty:
+        if scores.empty or bars.empty:
             missing = []
             if scores.empty:
                 missing.append("stock_scores_history (scores)")
-            if predictions.empty:
-                missing.append("model_predictions (ML — lancer ML Train + Predict d'abord)")
-            if win_rates.empty:
-                missing.append("model_metrics (métriques ML)")
             if bars.empty:
                 missing.append("stock_bars_daily (OHLCV)")
+            if predictions.empty:
+                missing.append("model_predictions (ML)")
+            if win_rates.empty:
+                missing.append("model_metrics (métriques ML)")
             LOGGER.warning(
                 "EmpiricalRiskCalibrator.load_dataset : données insuffisantes — %s",
                 ", ".join(missing),
             )
             return pd.DataFrame()
+        # predictions et win_rates vides ne sont pas bloquants :
+        # on les remplace par des DataFrames vides avec les bonnes colonnes.
+        if predictions.empty:
+            LOGGER.warning("load_dataset : model_predictions vide, calibration sans ML.")
+            predictions = pd.DataFrame(columns=["symbol", "prediction_date", "predicted_proba", "proba_short", "created_at"])
+        if win_rates.empty:
+            LOGGER.warning("load_dataset : model_metrics vide, calibration sans win_rate historique.")
+            win_rates = pd.DataFrame(columns=["symbol", "asof_date", "directional_accuracy"])
 
         scores = scores.copy()
         scores["snapshot_date"] = pd.to_datetime(scores["snapshot_date"])
@@ -951,28 +970,57 @@ class EmpiricalRiskCalibrator:
         bars["forward_return"] = (bars["future_close_price"] / bars["close_price"]) - 1.0
         bars = bars[["symbol", "bar_date", "forward_return"]].dropna(subset=["forward_return"])
 
-        predictions = predictions.sort_values(["symbol", "prediction_date", "created_at"]).reset_index(drop=True)
-        predictions = predictions.groupby(["symbol", "prediction_date"], as_index=False).last()
-        win_rates = win_rates.sort_values(["symbol", "asof_date"]).reset_index(drop=True)
-        win_rates = win_rates.groupby(["symbol", "asof_date"], as_index=False).last()
+        scores = scores.dropna(subset=["symbol", "snapshot_date"]).drop_duplicates(subset=["symbol", "snapshot_date"])
         scores = scores.sort_values(["symbol", "snapshot_date"]).reset_index(drop=True)
+        predictions = predictions.dropna(subset=["symbol", "prediction_date"])
+        predictions = predictions.sort_values(["symbol", "prediction_date", "created_at"]).reset_index(drop=True)
+        predictions = predictions.drop_duplicates(subset=["symbol", "prediction_date"], keep="last")
+        predictions = predictions.sort_values(["symbol", "prediction_date"]).reset_index(drop=True)
+        win_rates = win_rates.dropna(subset=["symbol", "asof_date"])
+        win_rates = win_rates.sort_values(["symbol", "asof_date"]).reset_index(drop=True)
+        win_rates = win_rates.drop_duplicates(subset=["symbol", "asof_date"], keep="last")
+        win_rates = win_rates.sort_values(["symbol", "asof_date"]).reset_index(drop=True)
 
-        enriched = pd.merge_asof(
-            scores,
-            predictions[["symbol", "prediction_date", "predicted_proba", "proba_short"]],
-            by="symbol",
-            left_on="snapshot_date",
-            right_on="prediction_date",
-            direction="backward",
-        )
-        enriched = pd.merge_asof(
-            enriched.sort_values(["symbol", "snapshot_date"]),
-            win_rates[["symbol", "asof_date", "directional_accuracy"]],
-            by="symbol",
-            left_on="snapshot_date",
-            right_on="asof_date",
-            direction="backward",
-        )
+        # pandas 2.3.3 + Python 3.14 : merge_asof avec by= est cassé
+        # (ValueError: left keys must be sorted). Contournement : boucle par symbole.
+        enriched_parts: list[pd.DataFrame] = []
+        for sym, grp in scores.groupby("symbol", sort=False):
+            grp_sorted = grp.sort_values("snapshot_date")
+            pred_sym = predictions[predictions["symbol"] == sym]
+            if pred_sym.empty:
+                grp_sorted["predicted_proba"] = np.nan
+                grp_sorted["proba_short"] = np.nan
+                enriched_parts.append(grp_sorted)
+                continue
+            pred_sorted = pred_sym.sort_values("prediction_date")
+            merged = pd.merge_asof(
+                grp_sorted,
+                pred_sorted[["prediction_date", "predicted_proba", "proba_short"]],
+                left_on="snapshot_date",
+                right_on="prediction_date",
+                direction="backward",
+            )
+            enriched_parts.append(merged)
+        enriched = pd.concat(enriched_parts, ignore_index=True)
+
+        enriched_parts2: list[pd.DataFrame] = []
+        for sym, grp in enriched.groupby("symbol", sort=False):
+            grp_sorted = grp.sort_values("snapshot_date")
+            wr_sym = win_rates[win_rates["symbol"] == sym]
+            if wr_sym.empty:
+                grp_sorted["directional_accuracy"] = np.nan
+                enriched_parts2.append(grp_sorted)
+                continue
+            wr_sorted = wr_sym.sort_values("asof_date")
+            merged = pd.merge_asof(
+                grp_sorted,
+                wr_sorted[["asof_date", "directional_accuracy"]],
+                left_on="snapshot_date",
+                right_on="asof_date",
+                direction="backward",
+            )
+            enriched_parts2.append(merged)
+        enriched = pd.concat(enriched_parts2, ignore_index=True)
         dataset = enriched.merge(
             bars,
             left_on=["symbol", "snapshot_date"],
@@ -992,9 +1040,11 @@ class EmpiricalRiskCalibrator:
             "historical_win_rate",
             "forward_return",
         ]
-        dataset = dataset[[c for c in keep_cols if c in dataset.columns]].dropna(
-            subset=["quant_score", "predicted_proba", "historical_win_rate", "forward_return"]
-        )
+        # Dropna : seuls quant_score et forward_return sont obligatoires.
+        # predicted_proba et historical_win_rate peuvent être NaN si les tables
+        # model_predictions / model_metrics sont vides pour la période.
+        required_cols = ["quant_score", "forward_return"]
+        dataset = dataset[[c for c in keep_cols if c in dataset.columns]].dropna(subset=required_cols)
         dataset = dataset.reset_index(drop=True)
         dataset["market_regime_mode"] = MARKET_REGIME_ALL
         if include_market_regime and not dataset.empty:
@@ -1080,7 +1130,7 @@ class EmpiricalRiskCalibrator:
         signal d'entrée. La colonne ``signal`` vaut 1 pour les entrées.
         """
         if dataset.empty:
-            return pd.DataFrame(columns=["date", "symbol", "signal", "conviction"])
+            return pd.DataFrame(columns=["trade_date", "symbol", "selected", "conviction"])
         work = dataset.copy()
         if direction == "long":
             work["conviction"] = np.asarray([
@@ -1107,11 +1157,12 @@ class EmpiricalRiskCalibrator:
         for _, group in work.groupby("snapshot_date", sort=True):
             selected = group.head(max(int(top_n), 1)).copy()
             selected["signal"] = 1
-            signals_parts.append(selected[["snapshot_date", "symbol", "signal", "conviction"]])
+            selected["score"] = selected["conviction"]  # requis par le simulateur
+            signals_parts.append(selected[["snapshot_date", "symbol", "signal", "conviction", "score"]])
         if not signals_parts:
-            return pd.DataFrame(columns=["date", "symbol", "signal", "conviction"])
+            return pd.DataFrame(columns=["trade_date", "symbol", "selected", "conviction", "score"])
         signals_df = pd.concat(signals_parts, ignore_index=True)
-        signals_df = signals_df.rename(columns={"snapshot_date": "date"})
+        signals_df = signals_df.rename(columns={"snapshot_date": "trade_date", "signal": "selected"})
         return signals_df
 
     def evaluate_kelly_in_backtest(
