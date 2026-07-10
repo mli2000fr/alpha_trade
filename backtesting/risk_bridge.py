@@ -400,6 +400,27 @@ def build_phase2_risk_result(
                 macro_missing_dates.append(snapshot_date.isoformat())
             regime_snapshots_dump[snapshot_date] = snap.to_summary_dict()
             cfg_for_day = apply_snapshot(structural_cfg, snap)
+            # ── Recovery gate : si SPY repasse au-dessus de sa SMA50, le marché
+            #     rebondit → sortir du mode défensif → réautoriser les entrées.
+            if (
+                getattr(snap, "mode", "normal") == "capital_preservation"
+                and bool(getattr(risk_config, "short_require_bearish_benchmark", False))
+                and "SPY" in close_df.columns
+            ):
+                # Filtrer jusqu'à la date du snapshot pour éviter le look-ahead
+                snap_ts = pd.Timestamp(snapshot_date)
+                spy_hist = close_df["SPY"].loc[close_df.index <= snap_ts].dropna()
+                if len(spy_hist) >= 50:
+                    spy_sma50 = float(spy_hist.iloc[-50:].mean())
+                    spy_close = float(spy_hist.iloc[-1])
+                    if spy_close > spy_sma50:
+                        # Le marché rebondit → on réautorise les entrées (longs et shorts)
+                        object.__setattr__(snap, "allowed_long_entries", True)
+                        object.__setattr__(snap, "allow_new_entries", True)
+                        LOGGER.info(
+                            "Recovery gate: longs re-allowed — SPY close=%.2f > SMA50=%.2f (date=%s)",
+                            spy_close, spy_sma50, snapshot_date,
+                        )
             if not snap.allow_new_entries:
                 entries_blocked_by_regime += len(_build_candidates(normalized_scores, snapshot_date))
                 continue
@@ -453,6 +474,30 @@ def build_phase2_risk_result(
             rotation_state,
             bool(getattr(risk_config, "short_selling_enabled", False)),
         )
+        # ── SMA50 gate : ne shorter que si le marché est encore en baisse ──
+        if (
+            trigger.active
+            and trigger.short_by_regime
+            and bool(getattr(risk_config, "short_require_bearish_benchmark", False))
+            and "SPY" in close_df.columns
+        ):
+            snap_ts = pd.Timestamp(snapshot_date)
+            spy_hist = close_df["SPY"].loc[close_df.index <= snap_ts].dropna()
+            if len(spy_hist) >= 50:
+                spy_sma50 = float(spy_hist.iloc[-50:].mean())
+                spy_close = float(spy_hist.iloc[-1])
+                if spy_close > spy_sma50:
+                    # Marché en tendance haussière (ex: V-shaped recovery) → pas de shorts
+                    trigger = ShortTrigger(
+                        short_by_regime=False,
+                        short_by_rotation=trigger.short_by_rotation,
+                        all_shorts=False,
+                        enabled=trigger.enabled,
+                    )
+                    LOGGER.info(
+                        "SMA50 gate: shorts blocked — SPY close=%.2f > SMA50=%.2f (date=%s)",
+                        spy_close, spy_sma50, snapshot_date,
+                    )
         if trigger.active and not day_scores.empty:
             n_before = len(day_scores)
             # Sprint 5 / Option B — enrichir avec short_score dédié (full quality)

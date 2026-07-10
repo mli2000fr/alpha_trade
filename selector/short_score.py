@@ -140,7 +140,11 @@ def resolve_regime_adaptive_short_params(
     eff_min = float(getattr(risk_config, "short_min_score", 0.30))
     if short_by_regime:
         eff_max = max(eff_max, 4)
-        eff_min = min(eff_min, 0.20)
+        # En capital_preservation, on ne bloque pas les shorts par score
+        # si le ML domine (min_score=0). Le all_shorts fix dans tag_short_candidates
+        # limite déjà au top-N par short_score.
+        if eff_min > 0:
+            eff_min = max(eff_min, 0.20)
     return eff_max, eff_min
 
 
@@ -409,7 +413,35 @@ def tag_short_candidates(
     result = day_df.copy()
 
     if all_shorts:
-        result["side"] = "sell"
+        # Même en capital_preservation, on filtre par score minimum
+        # pour éviter d'ouvrir des shorts sur des candidats sans qualité.
+        # On garde le top-N par short_score (ou score standard).
+        if "short_score" in result.columns:
+            score_col = "short_score"
+            ascending = False  # haut = baissier
+        elif "score" in result.columns:
+            score_col = "score"
+            ascending = True   # bas = baissier
+        else:
+            score_col = None
+        if score_col is not None and score_col in result.columns:
+            result["side"] = "buy"
+            sorted_idx = result[score_col].argsort().values
+            if not ascending:
+                sorted_idx = sorted_idx[::-1]
+            short_count = 0
+            for pos in sorted_idx:
+                if short_count >= max_short_positions:
+                    break
+                score_val = float(result.iloc[pos][score_col]) if pd.notna(result.iloc[pos][score_col]) else 0.0
+                if min_score_for_short <= 0:
+                    pass  # pas de seuil → on prend le top-N
+                elif ascending and score_val > min_score_for_short:
+                    continue  # score trop haut = pas assez baissier
+                elif not ascending and score_val < min_score_for_short:
+                    continue  # short_score trop bas = pas assez baissier
+                result.iloc[pos, result.columns.get_loc("side")] = "sell"
+                short_count += 1
         return result
 
     # ── ML Sprint 6 — si le ML prédit le side, priorité absolue ──

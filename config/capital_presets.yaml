@@ -69,9 +69,9 @@ presets:
     execution_limit_price_buffer_bps: -100
     backtesting_commission_bps_stress: 15.0
     backtesting_slippage_bps_stress: 25.0
-    # P2 — microstructure slippage volume-aware activé par défaut (micro-compte)
-    backtesting_slippage_base_bps: 5.0
-    backtesting_slippage_impact_coef: 5.0
+    # P2 — microstructure slippage volume-aware (Alpaca = pas de surcoût retail)
+    backtesting_slippage_base_bps: 0.0
+    backtesting_slippage_impact_coef: 0.0
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
@@ -175,9 +175,9 @@ presets:
     execution_limit_price_buffer_bps: -100
     backtesting_commission_bps_stress: 12.0
     backtesting_slippage_bps_stress: 20.0
-    # P2 — microstructure slippage volume-aware (small account)
-    backtesting_slippage_base_bps: 4.0
-    backtesting_slippage_impact_coef: 4.0
+    # P2 — microstructure slippage volume-aware (Alpaca = pas de surcoût retail)
+    backtesting_slippage_base_bps: 0.0
+    backtesting_slippage_impact_coef: 0.0
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
@@ -204,7 +204,7 @@ presets:
     selector_min_high_52w_proximity: 0.65
     selector_min_weekly_trend_score: 0.75
     selector_min_atr_pct_20: 0.01
-    selector_max_atr_pct_20: 0.08
+    selector_max_atr_pct_20: 0.05
     selector_min_market_cap: 1000000000.0
     selector_min_beta_126: 0.7
     selector_max_spread_bps: 60.0
@@ -279,8 +279,8 @@ presets:
     backtesting_commission_bps_stress: 10.0
     backtesting_slippage_bps_stress: 18.0
     # P2 — microstructure slippage volume-aware (petit/moyen compte)
-    backtesting_slippage_base_bps: 3.0
-    backtesting_slippage_impact_coef: 3.5
+    backtesting_slippage_base_bps: 0.0
+    backtesting_slippage_impact_coef: 0.0
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
@@ -373,8 +373,8 @@ presets:
     backtesting_commission_bps_stress: 8.0
     backtesting_slippage_bps_stress: 15.0
     # P2 — microstructure slippage volume-aware (compte intermédiaire)
-    backtesting_slippage_base_bps: 2.5
-    backtesting_slippage_impact_coef: 3.0
+    backtesting_slippage_base_bps: 0.0
+    backtesting_slippage_impact_coef: 0.0
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
@@ -466,8 +466,8 @@ presets:
     backtesting_commission_bps_stress: 6.0
     backtesting_slippage_bps_stress: 12.0
     # P2 — microstructure slippage volume-aware (compte diversifié)
-    backtesting_slippage_base_bps: 2.0
-    backtesting_slippage_impact_coef: 2.5
+    backtesting_slippage_base_bps: 0.0
+    backtesting_slippage_impact_coef: 0.0
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
@@ -552,8 +552,8 @@ presets:
     backtesting_commission_bps_stress: 5.0
     backtesting_slippage_bps_stress: 10.0
     # P2 — microstructure slippage volume-aware (compte standard/large)
-    backtesting_slippage_base_bps: 1.5
-    backtesting_slippage_impact_coef: 2.0
+    backtesting_slippage_base_bps: 0.0
+    backtesting_slippage_impact_coef: 0.0
     backtesting_max_portfolio_dd_pct: 0.15
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92

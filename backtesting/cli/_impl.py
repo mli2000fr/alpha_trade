@@ -1674,13 +1674,14 @@ def _apply_pipeline_defensive_defaults_from_preset(
             default=5.0,
         )
 
-    # P3 — commission tiercée activée par défaut en mode pipeline
+    # P3 — commission tiercée : désactivée par défaut (Alpaca = commission-free).
+    # L'utilisateur peut l'activer explicitement avec --use-tiered-commission.
     if (
         "use_tiered_commission" not in explicit_flags
         and not getattr(args, "use_tiered_commission", False)
     ):
-        args.use_tiered_commission = True
-        LOGGER.info("P3 tiered commission activée par défaut (mode pipeline).")
+        # Ne plus forcer l'activation auto : Alpaca n'a pas de commission.
+        pass
 
     if (
         "max_portfolio_dd_pct" not in explicit_flags

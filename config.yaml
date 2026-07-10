@@ -200,8 +200,8 @@ market_regimes:
     hard_relative_spike_threshold: 0.10
     hard_block_sectors: ["Technology", "Tech", "Growth", "Real Estate", "Consumer Cyclical", "Financial Services"]
     hard_risk_mult: 0.30
-    hard_mode_live: close_only
-    hard_mode_backtest: close_only
+    hard_mode_live: capital_preservation
+    hard_mode_backtest: capital_preservation
     hard_requires_vix_high: true
     hard_requires_sentiment_warning: false
     hard_max_positions: 1
@@ -215,8 +215,8 @@ market_regimes:
     warning_threshold: -0.20
     critical_threshold: -0.40
     warning_max_positions: 3
-    critical_mode_live: close_only
-    critical_mode_backtest: close_only
+    critical_mode_live: capital_preservation
+    critical_mode_backtest: capital_preservation
 
   sector_limits:
     enabled: false
@@ -333,15 +333,11 @@ risk_management:
 
   # Sprint 0 short — feature flag global (cf. plan_v2.md §C8)
   # Active le pipeline long+short. false = long-only (comportement actuel)
-  # ⚠️ Désactivé car la stratégie short (Option C rotation) n'est pas prête :
-  #    0% win rate, -6.5% systématique en day-trade. À réactiver quand :
-  #    1. Un short_score ML dédié sera disponible
-  #    2. Le trailing stop short sera calibré (actuellement 10% trop serré)
-  short_selling_enabled: false
+  short_selling_enabled: true
 
   # Sprint 2 — Option C : short via MomentumRotationState
   short_max_positions: 2            # nombre max de shorts simultanés
-  short_min_score: 0                # 0 = bottom-N absolu (pas de seuil de score)
+  short_min_score: 0                # 0 = laisser ML dominer la sélection short
   short_rotation_required: true     # exiger rotation_state.should_rotate()
   short_tp_pct: 0.08                # TP short (8% de baisse)
   short_trailing_pct: 0.10          # trailing stop short (10% de hausse)

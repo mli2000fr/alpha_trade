@@ -450,7 +450,7 @@ class BacktestEngine:
             return normalized
         return float(int(normalized))
 
-    def _resolve_daily_leverage_state(self, current_equity: float) -> _DailyLeverageState:
+    def _resolve_daily_leverage_state(self, current_equity: float, *, drawdown_scale: float = 1.0) -> _DailyLeverageState:
         exec_cfg = self.config.exec_config
         if exec_cfg is None:
             return _DailyLeverageState(
@@ -504,27 +504,37 @@ class BacktestEngine:
                 configured_max=configured_max,
                 reason="capital_preservation",
             )
+
+        # ── Levier dynamique : réduit progressivement en période de drawdown ──
+        # drawdown_scale = 1.0 → levier max normal
+        # drawdown_scale = 0.0 → levier = 1.0x (pas d'emprunt)
+        base_leverage = min(
+            max(float(exec_cfg.simulated_margin_buying_power_multiplier), 1.0),
+            float(leverage_cfg.dry_run_simulated_leverage),
+            configured_max,
+        )
+        dd_scale = max(0.0, min(1.0, float(drawdown_scale)))
+        dynamic_leverage = 1.0 + (base_leverage - 1.0) * dd_scale
         return _DailyLeverageState(
             feature_enabled=feature_enabled,
             active=True,
-            effective_leverage=min(
-                max(float(exec_cfg.simulated_margin_buying_power_multiplier), 1.0),
-                float(leverage_cfg.dry_run_simulated_leverage),
-                configured_max,
-            ),
+            effective_leverage=float(dynamic_leverage),
             configured_max=configured_max,
-            reason=None,
+            reason=f"drawdown_scale={dd_scale:.2f}" if dd_scale < 0.99 else None,
         )
 
-    def _resolve_margin_buying_power_multiplier(self, current_equity: float) -> float:
+    def _resolve_margin_buying_power_multiplier(self, current_equity: float, *, drawdown_scale: float = 1.0) -> float:
         """Résout le multiplicateur de buying power/gross exposure en backtest.
 
         En backtest, le simple fait d'être sur un compte ``margin`` ne suffit pas
         à autoriser une exposition > 100 % : il faut que la politique explicite
         ``leverage`` soit active et passe ses garde-fous runtime. Sinon on reste
         volontairement à 1.0x.
+
+        Le paramètre ``drawdown_scale`` (0.0–1.0) réduit dynamiquement le levier
+        en période de drawdown : 1.0 = levier max, 0.0 = pas de levier.
         """
-        return float(self._resolve_daily_leverage_state(current_equity).effective_leverage)
+        return float(self._resolve_daily_leverage_state(current_equity, drawdown_scale=drawdown_scale).effective_leverage)
 
     def _resolve_available_entry_budget(
         self,
@@ -875,7 +885,7 @@ class BacktestEngine:
                 cfg.benchmark_close, trade_day,
             )
             current_gross_notional = self._compute_gross_notional(state.positions, mtm_close, trade_day)
-            leverage_state = self._resolve_daily_leverage_state(float(current_equity))
+            leverage_state = self._resolve_daily_leverage_state(float(current_equity), drawdown_scale=drawdown_allocation_scale)
             self._record_trade_event(
                 state,
                 "daily_leverage_snapshot",
@@ -925,6 +935,55 @@ class BacktestEngine:
                     if self._breakout_tracker.allow_entry(str(row["symbol"]))
                 ]
                 diagnostics.blocked_by_breakout += before - len(candidate_rows)
+
+            # ── Force-close longs en régime défensif ──
+            # Quand le régime passe en capital_preservation, les nouveaux longs
+            # sont bloqués et des shorts sont ouverts. Les longs existants
+            # doivent être liquidés pour éviter de porter les deux directions.
+            if (
+                getattr(cfg, "risk_config", None) is not None
+                and getattr(cfg.risk_config, "close_longs_on_defensive_regime", False)
+                and day_signals is not None
+                and "side" in day_signals.columns
+            ):
+                n_sells = int((day_signals["side"] == "sell").sum())
+                n_buys = int((day_signals["side"] == "buy").sum())
+                # Régime défensif : shorts présents, pas de nouveaux longs
+                if n_sells > 0 and n_buys == 0 and state.positions:
+                    to_close = [
+                        (sym, pos) for sym, pos in state.positions.items()
+                        if getattr(pos, "side", "buy") == "buy"
+                    ]
+                    for symbol, position in to_close:
+                        close_price = float(close.at[trade_day, symbol]) if symbol in close.columns else position.entry_price
+                        if not (np.isfinite(close_price) and close_price > 0):
+                            continue
+                        abs_qty = abs(position.quantity)
+                        pnl = compute_realized_pnl("buy", abs_qty, position.entry_price, close_price)
+                        return_pct = compute_return_pct("buy", position.entry_price, close_price)
+                        state.settled_cash += abs_qty * close_price
+                        state.closed_trades.append({
+                            "symbol": symbol,
+                            "side": "buy",
+                            "quantity": position.quantity,
+                            "entry_date": position.entry_date,
+                            "entry_price": position.entry_price,
+                            "exit_date": trade_day,
+                            "exit_price": close_price,
+                            "pnl": pnl,
+                            "return_pct": return_pct,
+                            "holding_days": (trade_day - position.entry_date).days,
+                            "exit_reason": "force_close_defensive_regime",
+                            "sector": getattr(position, "sector", "Unknown"),
+                        })
+                        del state.positions[symbol]
+                        LOGGER.info(
+                            "BT force-close long (defensive regime): date=%s symbol=%s exit_price=%.2f pnl=%.2f",
+                            trade_day.date(), symbol, close_price, pnl,
+                        )
+                    if to_close:
+                        current_market_value = self._mark_to_market(state.positions, mtm_close, trade_day)
+                        current_equity = state.settled_cash + state.unsettled_cash + current_market_value
 
             self._try_open_entries(
                 state=state,
@@ -1319,7 +1378,7 @@ class BacktestEngine:
             if drawdown_allocation_scale < 1.0:
                 target_weight_pct = float(np.clip(target_weight_pct * drawdown_allocation_scale, 0.0, 1.0))
             if quantity_override is None:
-                target_weight_pct *= self._resolve_margin_buying_power_multiplier(float(current_equity))
+                target_weight_pct *= self._resolve_margin_buying_power_multiplier(float(current_equity), drawdown_scale=drawdown_allocation_scale)
 
             sector = (
                 str(row["sector"])
@@ -1948,7 +2007,7 @@ class BacktestEngine:
         trade_day: pd.Timestamp,
         symbol: str,
         *,
-        fallback_bps: float = 5.0,
+        fallback_bps: float = 1.0,  # Alpaca : spread réel ~1-2 bps pour actions liquides
     ) -> float:
         """Lookup du spread bid-ask réel en bps pour un ticker/jour donné.
 

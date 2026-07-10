@@ -108,7 +108,11 @@ class TieredCommissionConfig:
 
 
 # Presets de commission par tranche de capital (Sprint S11)
+# Alpaca Markets : commission zéro sur actions US. Seuls les frais
+# réglementaires SEC (~0.023 bps) et TAF (~$0.000119/share) s'appliquent,
+# négligeables pour le retail. Le preset "alpaca" reflète cette réalité.
 COMMISSION_PRESETS: dict[str, TieredCommissionConfig] = {
+    "alpaca": TieredCommissionConfig(fixed_per_trade_usd=0.00, bps_rate=0.0, min_ticket_usd=0.0),
     "micro": TieredCommissionConfig(fixed_per_trade_usd=0.50, bps_rate=15.0, min_ticket_usd=100.0),
     "small": TieredCommissionConfig(fixed_per_trade_usd=0.35, bps_rate=10.0, min_ticket_usd=150.0),
     "standard": TieredCommissionConfig(fixed_per_trade_usd=0.00, bps_rate=6.0, min_ticket_usd=300.0),
@@ -117,13 +121,11 @@ COMMISSION_PRESETS: dict[str, TieredCommissionConfig] = {
 
 
 def resolve_commission_preset(equity: float) -> TieredCommissionConfig:
-    """Sélectionne le preset de commission adapté au capital."""
-    if equity <= 2_000:
-        return COMMISSION_PRESETS["micro"]
-    if equity <= 10_000:
-        return COMMISSION_PRESETS["small"]
-    if equity <= 50_000:
-        return COMMISSION_PRESETS["standard"]
-    return COMMISSION_PRESETS["large"]
+    """Sélectionne le preset de commission adapté au capital.
+
+    Pour les utilisateurs Alpaca (commission zéro), retourne le preset "alpaca"
+    quel que soit le capital."""
+    # Alpaca = commission-free pour tous les comptes
+    return COMMISSION_PRESETS["alpaca"]
 
 

@@ -76,6 +76,12 @@ class RiskConfig:
     min_score_threshold_short: float = 0.0
     # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné
     filter_candidates_without_ml: bool = False
+    # Si True, liquide les longs existants quand le régime passe en mode défensif
+    # (capital_preservation). Libère le capital pour les shorts.
+    close_longs_on_defensive_regime: bool = True
+    # Si True, ne permet les shorts que si le benchmark (SPY) est sous sa SMA50.
+    # Évite de shorter dans un marché qui rebondit (ex: V-shaped recovery).
+    short_require_bearish_benchmark: bool = True
 
     target_annual_vol: float | None = None
     vol_target_lookback_days: int = 60

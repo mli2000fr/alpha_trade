@@ -1218,7 +1218,7 @@ def _build_run_options() -> BacktestRunOptions:
         equity = st.number_input(
             "Capital initial ($)",
             min_value=1_000.0,
-            value=float(st.session_state.get("bt_run_equity", 2_000.0)),
+            value=float(st.session_state.get("bt_run_equity", 4_000.0)),
             step=1_000.0,
             key="bt_run_equity",
             help="Capital de départ simulé du portefeuille.",
@@ -1344,13 +1344,13 @@ def _build_run_options() -> BacktestRunOptions:
             value=float(
                 st.session_state.get(
                     "bt_run_commission_bps",
-                    15.0 if current_engine_mode == "pipeline" else 5.0,
+                    1.0,
                 )
             ),
-            step=1.0,
+            step=0.5,
             format="%.1f",
             key="bt_run_commission_bps",
-            help="Coût fixe explicite par trade. En mode pipeline, 15 bps est un défaut réaliste recommandé.",
+            help="Coût fixe explicite par trade. 1 bps = réaliste Alpaca.",
         )
 
     # ── P1 — ATR trailing stop + disable walk-forward ──
@@ -1387,13 +1387,13 @@ def _build_run_options() -> BacktestRunOptions:
             value=float(
                 st.session_state.get(
                     "bt_run_slippage_bps",
-                    15.0 if current_engine_mode == "pipeline" else 5.0,
+                    2.0,
                 )
             ),
-            step=1.0,
+            step=0.5,
             format="%.1f",
             key="bt_run_slippage_bps",
-            help="Slippage fixe explicite, appliqué en plus du modèle microstructure si activé.",
+            help="Slippage fixe explicite. 2 bps = réaliste pour small/mid caps liquides.",
         )
     with col9:
         account_type = cast(
@@ -1435,8 +1435,8 @@ def _build_run_options() -> BacktestRunOptions:
                 "Mode ML",
                 options=["auto", "off", "rebuild-missing"],
                 index=["auto", "off", "rebuild-missing"].index(
-                    cast(str, st.session_state.get("bt_run_ml_mode", "off"))
-                    if st.session_state.get("bt_run_ml_mode", "off") in {"auto", "off", "rebuild-missing"}
+                    cast(str, st.session_state.get("bt_run_ml_mode", "auto"))
+                    if st.session_state.get("bt_run_ml_mode", "auto") in {"auto", "off", "rebuild-missing"}
                     else "off"
                 ),
                 key="bt_run_ml_mode",
