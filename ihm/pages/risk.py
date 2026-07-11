@@ -184,7 +184,7 @@ def render() -> None:
                 st.dataframe(reason_counts.sort_values(["decision", "count"], ascending=[True, False]), use_container_width=True)
 
         cols_show = [c for c in [
-            "candidate_rank", "decision_rank", "symbol", "decision", "decision_reason", "sector",
+            "selection_rank", "decision_rank", "symbol", "decision", "decision_reason", "sector",
             "selector_signal_mode", "selector_earnings_blackout", "selection_explanation",
             "entry_price", "atr_20", "approved_shares", "target_notional", "target_weight",
             "risk_per_share", "risk_budget_dollars", "initial_risk_dollars",
@@ -207,7 +207,7 @@ def render() -> None:
     targets = get_portfolio_targets(selected_run)
     if not targets.empty:
         cols_show = [c for c in [
-            "candidate_rank", "decision_rank", "symbol", "selector_signal_mode", "selector_earnings_blackout",
+            "selection_rank", "decision_rank", "symbol", "selector_signal_mode", "selector_earnings_blackout",
             "selection_explanation", "shares", "entry_price", "stop_price_initial", "atr_20",
             "risk_per_share", "initial_risk_dollars", "risk_budget_dollars", "target_notional",
             "target_weight", "sector", "price_asof_date", "atr_asof_date",

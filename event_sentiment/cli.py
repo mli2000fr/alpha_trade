@@ -118,7 +118,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbol-source",
         type=str,
-        choices=("tradable-universe", "stock_scores", "stock_scores_history", "stock_scores_all", "candidates", "stock_bars_daily"),
+        choices=("tradable-universe", "stock_scores", "stock_scores_history", "stock_scores_all", "stock_bars_daily"),
         default=None,
         help=(
             "Source optionnelle des symboles quand --symbols est absent. "
@@ -302,7 +302,7 @@ def main() -> None:
     if args.symbols or args.symbol_source:
         symbols, _effective_symbol_source = resolve_symbols_from_inputs(
             symbols_csv=args.symbols,
-            symbol_source=str(args.symbol_source or "candidates"),
+            symbol_source=str(args.symbol_source or "tradable-universe"),
             repository=repository,
             logger=logging.getLogger(__name__),
         )

@@ -3,7 +3,7 @@ backtesting/data_loader.py
 ===========================
 Charge les données historiques depuis la base MySQL pour le backtest :
   - OHLCV (stock_bars_daily) : jusqu'à 10 ans
-  - Scores quantitatifs (stock_scores) : is_candidate, score, secteur
+    - Scores quantitatifs (stock_scores) : score, secteur, rang de sélection
   - Sentiment ticker (ticker_daily_sentiment_features) : 365 jours de lookback
   - Prédictions ML (model_predictions)
 """

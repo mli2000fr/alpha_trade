@@ -110,7 +110,7 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
         lambda exec_run_id: pd.DataFrame(
             {
                 "symbol": ["AAPL"],
-                "candidate_rank": [4],
+                "selection_rank": [4],
                 "selector_signal_mode": ["strict"],
                 "selection_explanation": ["mode=strict; rank=4"],
                 "selector_earnings_blackout": [0],
@@ -192,7 +192,7 @@ def test_render_execution_snapshot_displays_selector_columns_when_available(monk
     ]
     assert target_tables
     snapshot_df = target_tables[0]
-    assert "candidate_rank" in snapshot_df.columns
+    assert "selection_rank" in snapshot_df.columns
     assert "selector_signal_mode" in snapshot_df.columns
     assert "selection_explanation" in snapshot_df.columns
     assert "selector_earnings_blackout" in snapshot_df.columns

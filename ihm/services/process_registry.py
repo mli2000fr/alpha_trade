@@ -1598,14 +1598,14 @@ def start_pipeline_run(
 
     # Si l'option "Forcer trade_date sur le snapshot le plus récent" est cochée
     # (défaut IHM), on remplace trade_date par le MAX(snapshot_date) <= trade_date
-    # avec is_candidate=1 dans stock_scores_history. Permet de continuer un
+    # avec une sélection classée dans stock_scores_history. Permet de continuer un
     # workflow démarré la veille même après réouverture de la session Streamlit
     # (qui a réinitialisé trade_date à date.today()).
     if getattr(options, "force_trade_date_to_latest_snapshot", False) and (options.trade_date or "").strip():
         try:
-            from ihm.services.queries import resolve_latest_candidate_snapshot_date
+            from ihm.services.queries import resolve_latest_selection_snapshot_date
 
-            resolved = resolve_latest_candidate_snapshot_date(options.trade_date)
+            resolved = resolve_latest_selection_snapshot_date(options.trade_date)
             if resolved is not None and resolved.isoformat() != options.trade_date:
                 LOGGER.info(
                     "start_pipeline_run | trade_date forcé sur snapshot le plus récent : %s -> %s (step=%s)",

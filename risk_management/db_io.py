@@ -17,7 +17,7 @@ from common.tradable_universe import UniverseResolution, resolve_universe_asof
 from database.connection import get_sqlalchemy_engine
 from risk_management.config import RiskConfig
 from risk_management.ml_gate import resolve_ml_gate_state
-from risk_management.models import AccountRiskSnapshot, CandidateScore, PredictionInfo, PriceInfo, WinRateInfo
+from risk_management.models import AccountRiskSnapshot, SelectionScore, PredictionInfo, PriceInfo, WinRateInfo
 
 LOGGER = logging.getLogger(__name__)
 
@@ -134,11 +134,11 @@ class RiskRepository:
             tradable_only=tradable_only,
         )
 
-    def load_candidates(self, config: RiskConfig, trade_date: date | None = None) -> list[CandidateScore]:
+    def load_selection_inputs(self, config: RiskConfig, trade_date: date | None = None) -> list[SelectionScore]:
         """Compatibilité API : charge les candidats PIT à la date demandée."""
-        return self.load_candidates_asof(trade_date or date.today())
+        return self.load_selection_inputs_asof(trade_date or date.today())
 
-    def load_candidates_asof(self, trade_date: date) -> list[CandidateScore]:
+    def load_selection_inputs_asof(self, trade_date: date) -> list[SelectionScore]:
         """Charge les candidats depuis stock_scores_history avec sémantique PIT.
 
         On cherche d'abord les candidats du `trade_date` exact ; si la date n'a
@@ -230,26 +230,26 @@ class RiskRepository:
             resolved_snapshot_date = self._coerce_date(resolved_row["snapshot_date"]) if resolved_row else None
             if resolved_snapshot_date is None:
                 LOGGER.warning(
-                    "load_candidates_asof | aucun snapshot de scores exploitable trouve pour trade_date<=%s.",
+                    "load_selection_inputs_asof | aucun snapshot de scores exploitable trouve pour trade_date<=%s.",
                     trade_date,
                 )
                 return []
             if resolved_snapshot_date != trade_date:
                 LOGGER.info(
-                    "load_candidates_asof | snapshot_date=%s utilise (PIT as-of) pour trade_date=%s. "
+                    "load_selection_inputs_asof | snapshot_date=%s utilise (PIT as-of) pour trade_date=%s. "
                     "Comportement attendu : sémantique point-in-time, le snapshot le plus récent <= trade_date est sélectionné.",
                     resolved_snapshot_date,
                     trade_date,
                 )
             else:
                 LOGGER.info(
-                    "load_candidates_asof | snapshot_date=%s exact pour trade_date=%s.",
+                    "load_selection_inputs_asof | snapshot_date=%s exact pour trade_date=%s.",
                     resolved_snapshot_date,
                     trade_date,
                 )
             rows = conn.execute(query, {"snapshot_date": resolved_snapshot_date, **preset_params}).mappings().all()
         return [
-            CandidateScore(
+            SelectionScore(
                 symbol=str(r["symbol"]).strip().upper(),
                 sector=str(r["sector"]),
                 score_used=float(r["score_used"]),
@@ -279,8 +279,8 @@ class RiskRepository:
         self,
         symbols: list[str],
         trade_date: date,
-    ) -> list[CandidateScore]:
-        """Charge le contexte score PIT pour un scope explicite, sans `is_candidate`."""
+    ) -> list[SelectionScore]:
+        """Charge le contexte score PIT pour un scope explicite."""
         normalized_symbols = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
         if not normalized_symbols:
             return []
@@ -334,7 +334,7 @@ class RiskRepository:
                 {**params, "snapshot_date": snapshot_date},
             ).mappings().all()
         return [
-            CandidateScore(
+            SelectionScore(
                 symbol=str(row["symbol"]).strip().upper(),
                 sector=str(row["sector"]),
                 score_used=float(row["score_used"]),
@@ -657,14 +657,12 @@ class RiskRepository:
             FROM stock_scores_history
             WHERE snapshot_date <= :trade_date
               AND symbol IN ({placeholders})
-              AND is_candidate = 1
         """)
         query = text(f"""
             SELECT {', '.join(select_cols)}
             FROM stock_scores_history s
             WHERE s.snapshot_date = :snapshot_date
               AND s.symbol IN ({placeholders})
-              AND s.is_candidate = 1
         """)
 
         try:

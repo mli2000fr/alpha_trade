@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from risk_management.config import RiskConfig
-from risk_management.models import CandidateScore, PredictionInfo, PriceInfo, WinRateInfo
+from risk_management.models import SelectionScore, PredictionInfo, PriceInfo, WinRateInfo
 from risk_management.portfolio_builder import PortfolioBuilder
 
 
@@ -25,12 +25,12 @@ def _cfg(**overrides) -> RiskConfig:  # type: ignore[no-untyped-def]
     return RiskConfig(**defaults)
 
 
-def _candidates() -> list[CandidateScore]:
+def _candidates() -> list[SelectionScore]:
     return [
-        CandidateScore("AAPL", "Tech", 0.95),
-        CandidateScore("MSFT", "Tech", 0.90),
-        CandidateScore("XOM", "Energy", 0.85),
-        CandidateScore("LOW", "Retail", 0.80),
+        SelectionScore("AAPL", "Tech", 0.95),
+        SelectionScore("MSFT", "Tech", 0.90),
+        SelectionScore("XOM", "Energy", 0.85),
+        SelectionScore("LOW", "Retail", 0.80),
     ]
 
 
@@ -62,7 +62,7 @@ def test_build_respects_max_positions() -> None:
 
 def test_missing_price_rejected() -> None:
     builder = PortfolioBuilder(_cfg())
-    cands = [CandidateScore("NOPE", "Tech", 0.99)]
+    cands = [SelectionScore("NOPE", "Tech", 0.99)]
     entries = builder.build(cands, {}, predictions=_long_predictions(["NOPE"]))
     assert entries[0].decision == "REJECTED"
     assert "prix" in entries[0].decision_reason
@@ -72,7 +72,7 @@ def test_missing_price_rejected() -> None:
 def test_missing_atr_rejected() -> None:
     builder = PortfolioBuilder(_cfg())
     entries = builder.build(
-        [CandidateScore("AAPL", "Tech", 0.95)],
+        [SelectionScore("AAPL", "Tech", 0.95)],
         {"AAPL": PriceInfo("AAPL", 150.0, None)},
         predictions=_long_predictions(["AAPL"]),
     )
@@ -120,7 +120,7 @@ def test_v2_kelly_sizing_used_when_enabled() -> None:
     preds = _long_predictions(["AAPL"])
     wrs = {"AAPL": WinRateInfo("AAPL", 0.60, "test", "run1")}
     entries = builder.build(
-        [CandidateScore("AAPL", "Tech", 0.95)],
+        [SelectionScore("AAPL", "Tech", 0.95)],
         {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
         predictions=preds, win_rates=wrs,
     )
@@ -140,8 +140,8 @@ def test_post_prediction_score_vetoes_do_not_change_ml_selection_authority() -> 
         _cfg(min_score_veto_long=0.70, max_score_veto_short=0.20)
     )
     candidates = [
-        CandidateScore("AAPL", "Tech", 0.60),
-        CandidateScore("MSFT", "Tech", 0.40),
+        SelectionScore("AAPL", "Tech", 0.60),
+        SelectionScore("MSFT", "Tech", 0.40),
     ]
     predictions = {
         "AAPL": PredictionInfo("AAPL", 0.95, 1, "run1", "long", 0.95, 0.03, 0.02),
@@ -155,7 +155,7 @@ def test_v2_conviction_score_in_entry() -> None:
     preds = _long_predictions(["AAPL"])
     builder = PortfolioBuilder(_cfg())
     entries = builder.build(
-        [CandidateScore("AAPL", "Tech", 0.95)],
+        [SelectionScore("AAPL", "Tech", 0.95)],
         {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
         predictions=preds,
     )
@@ -181,7 +181,7 @@ def test_short_uses_proba_short_for_kelly_and_audit() -> None:
     wrs = {"AAPL": WinRateInfo("AAPL", 0.60, "test", "run1")}
 
     entries = builder.build(
-        [CandidateScore("AAPL", "Tech", 0.20, side="sell")],
+        [SelectionScore("AAPL", "Tech", 0.20, side="sell")],
         {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
         predictions=preds,
         win_rates=wrs,
@@ -198,7 +198,7 @@ def test_builder_propagates_walk_forward_metadata() -> None:
     builder = PortfolioBuilder(_cfg())
     entries = builder.build(
         [
-            CandidateScore(
+            SelectionScore(
                 "AAPL",
                 "Tech",
                 0.91,
@@ -226,11 +226,11 @@ def test_builder_preserves_selector_rank_and_metadata() -> None:
     builder = PortfolioBuilder(_cfg())
     entries = builder.build(
         [
-            CandidateScore(
+            SelectionScore(
                 "AAPL",
                 "Tech",
                 0.91,
-                candidate_rank=5,
+                    selection_rank=5,
                 selector_signal_mode="sector_neutralized",
                 selection_explanation="mode=sector_neutralized; rank=5",
                 selector_earnings_blackout=0,
@@ -241,7 +241,7 @@ def test_builder_preserves_selector_rank_and_metadata() -> None:
     )
 
     entry = entries[0]
-    assert entry.candidate_rank == 5
+    assert entry.selection_rank == 5
     assert entry.selector_signal_mode == "sector_neutralized"
     assert entry.selection_explanation == "mode=sector_neutralized; rank=5"
     assert entry.selector_earnings_blackout == 0
@@ -261,7 +261,7 @@ def test_builder_supports_fractional_entries_when_enabled() -> None:
     builder = PortfolioBuilder(cfg)
 
     entries = builder.build(
-        [CandidateScore("AAPL", "Tech", 0.95)],
+        [SelectionScore("AAPL", "Tech", 0.95)],
         {"AAPL": PriceInfo("AAPL", 500.0, 10.0)},
             predictions=_long_predictions(["AAPL"]),
     )

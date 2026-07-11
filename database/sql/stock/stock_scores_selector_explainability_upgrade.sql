@@ -3,8 +3,8 @@
 -- Si votre version ne supporte pas IF NOT EXISTS, retirez la clause sur les colonnes deja absentes.
 
 ALTER TABLE alpha_trade.stock_scores
-    ADD COLUMN IF NOT EXISTS candidate_rank INT DEFAULT NULL AFTER earnings_blackout,
-    ADD COLUMN IF NOT EXISTS raw_final_score DOUBLE DEFAULT NULL AFTER candidate_rank,
+    ADD COLUMN IF NOT EXISTS selection_rank INT DEFAULT NULL AFTER earnings_blackout,
+    ADD COLUMN IF NOT EXISTS raw_final_score DOUBLE DEFAULT NULL AFTER selection_rank,
     ADD COLUMN IF NOT EXISTS normalized_total_score DOUBLE DEFAULT NULL AFTER raw_final_score,
     ADD COLUMN IF NOT EXISTS normalized_rsi DOUBLE DEFAULT NULL AFTER normalized_total_score,
     ADD COLUMN IF NOT EXISTS total_score_neutralized DOUBLE DEFAULT NULL AFTER normalized_rsi,
@@ -20,8 +20,8 @@ ALTER TABLE alpha_trade.stock_scores
     ADD COLUMN IF NOT EXISTS selection_explanation VARCHAR(255) DEFAULT NULL AFTER selector_signal_mode;
 
 ALTER TABLE alpha_trade.stock_scores_history
-    ADD COLUMN IF NOT EXISTS candidate_rank INT DEFAULT NULL AFTER earnings_blackout,
-    ADD COLUMN IF NOT EXISTS raw_final_score DOUBLE DEFAULT NULL AFTER candidate_rank,
+    ADD COLUMN IF NOT EXISTS selection_rank INT DEFAULT NULL AFTER earnings_blackout,
+    ADD COLUMN IF NOT EXISTS raw_final_score DOUBLE DEFAULT NULL AFTER selection_rank,
     ADD COLUMN IF NOT EXISTS normalized_total_score DOUBLE DEFAULT NULL AFTER raw_final_score,
     ADD COLUMN IF NOT EXISTS normalized_rsi DOUBLE DEFAULT NULL AFTER normalized_total_score,
     ADD COLUMN IF NOT EXISTS total_score_neutralized DOUBLE DEFAULT NULL AFTER normalized_rsi,
@@ -42,7 +42,7 @@ FROM information_schema.COLUMNS
 WHERE TABLE_SCHEMA = 'alpha_trade'
   AND TABLE_NAME IN ('stock_scores', 'stock_scores_history')
   AND COLUMN_NAME IN (
-      'candidate_rank',
+    'selection_rank',
       'raw_final_score',
       'normalized_total_score',
       'normalized_rsi',

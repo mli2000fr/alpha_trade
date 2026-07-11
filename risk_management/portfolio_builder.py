@@ -19,8 +19,8 @@ from risk_management.correlation_filter import filter_correlated
 from risk_management.enums import Decision, DecisionReasonCode, SizingMethod
 from risk_management.kelly import KellySizer
 from risk_management.models import (
-    CandidateScore,
-    EnrichedCandidate,
+    SelectionScore,
+    EnrichedSelection,
     PortfolioEntry,
     PredictionInfo,
     PriceInfo,
@@ -38,10 +38,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _apply_regime_scoring_to_candidates(
-    candidates: list[CandidateScore],
+    candidates: list[SelectionScore],
     regime_snapshot: object,
     rotation_state: object | None = None,
-) -> list[CandidateScore]:
+) -> list[SelectionScore]:
     """Applique les filtres de régime et les poids directionnels aux scores.
 
     Applique systématiquement les filtres événementiels (earnings_shield,
@@ -93,14 +93,14 @@ def _apply_regime_scoring_to_candidates(
             df["symbol"].astype(str).str.upper(),
             df["final_score"].astype(float),
         ))
-        shielded_candidates: list[CandidateScore] = []
+        shielded_candidates: list[SelectionScore] = []
         for c in candidates:
             sym = c.symbol.upper()
             if sym not in shielded_symbols:
                 continue  # exclus par strict_block
             new_score = score_map.get(sym, c.score_used)
             if new_score != c.score_used:
-                shielded_candidates.append(CandidateScore(
+                shielded_candidates.append(SelectionScore(
                     symbol=c.symbol,
                     sector=c.sector,
                     score_used=float(new_score),
@@ -152,18 +152,18 @@ def _apply_regime_scoring_to_candidates(
 
 
 def _apply_concentration_filters(
-    candidates: list[CandidateScore],
+    candidates: list[SelectionScore],
     *,
     trade_tracker: object,
     loss_tracker: object,
     trade_date: date,
-) -> list[CandidateScore]:
+) -> list[SelectionScore]:
     """Filtre les candidats selon les règles de concentration (Priorité 4).
 
     - Bloque si le symbole a déjà atteint le max de trades dans la fenêtre
     - Bloque si le symbole est blacklisté (pertes consécutives)
     """
-    filtered: list[CandidateScore] = []
+    filtered: list[SelectionScore] = []
     blocked_trade_count = 0
     blocked_blacklist = 0
     for c in candidates:
@@ -358,11 +358,11 @@ class PortfolioBuilder:
 
     def _build_enriched_candidates(
         self,
-        candidates: list[CandidateScore],
+        candidates: list[SelectionScore],
         predictions: dict[str, PredictionInfo],
         win_rates: dict[str, WinRateInfo],
-    ) -> list[EnrichedCandidate]:
-        enriched: list[EnrichedCandidate] = []
+    ) -> list[EnrichedSelection]:
+        enriched: list[EnrichedSelection] = []
         for candidate in candidates:
             prediction = predictions.get(candidate.symbol)
             win_rate = win_rates.get(candidate.symbol)
@@ -387,7 +387,7 @@ class PortfolioBuilder:
                 continue
             historical_win_rate = win_rate.directional_accuracy if win_rate else None
             enriched.append(
-                EnrichedCandidate(
+                EnrichedSelection(
                     symbol=candidate.symbol,
                     sector=candidate.sector,
                     score_used=candidate.score_used,
@@ -427,7 +427,7 @@ class PortfolioBuilder:
 
     def build(
         self,
-        candidates: list[CandidateScore],
+        candidates: list[SelectionScore],
         prices: dict[str, PriceInfo],
         predictions: dict[str, PredictionInfo] | None = None,
         win_rates: dict[str, WinRateInfo] | None = None,
@@ -455,7 +455,7 @@ class PortfolioBuilder:
         # ni le score ni le tagging short amont ne peuvent le faire.
         if candidates:
             before = len(candidates)
-            filtered: list[CandidateScore] = []
+            filtered: list[SelectionScore] = []
             excluded_symbols: list[str] = []
             for c in candidates:
                 sym = str(c.symbol).strip().upper()
@@ -502,7 +502,7 @@ class PortfolioBuilder:
             before = len(candidates)
             long_score_veto = float(self._cfg.min_score_veto_long or self._cfg.min_score_threshold)
             short_score_veto = float(self._cfg.max_score_veto_short)
-            filtered: list[CandidateScore] = []
+            filtered: list[SelectionScore] = []
             for c in candidates:
                 side = getattr(c, "side", "buy") or "buy"
                 prediction = predictions[str(c.symbol).strip().upper()]
@@ -879,7 +879,7 @@ class PortfolioBuilder:
 
     @staticmethod
     def _make_entry_v2(
-        ec: EnrichedCandidate,
+        ec: EnrichedSelection,
         pi: PriceInfo | None,
         proposed: float,
         approved: float,

@@ -33,7 +33,7 @@ from risk_management.factor_model import (
     filter_by_factor_correlation,
     format_risk_decomposition,
 )
-from risk_management.models import EnrichedCandidate, FactorExposures
+from risk_management.models import EnrichedSelection, FactorExposures
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +134,10 @@ def sample_factor_cov() -> FactorCovariance:
 @pytest.fixture
 def sample_enriched_candidates(
     sample_symbols, sample_exposures,
-) -> list[EnrichedCandidate]:
+) -> list[EnrichedSelection]:
     candidates = []
     for i, sym in enumerate(sample_symbols):
-        candidates.append(EnrichedCandidate(
+        candidates.append(EnrichedSelection(
             symbol=sym,
             sector="Technology" if sym in ("AAPL", "NVDA") else (
                 "Financial" if sym == "JPM" else (
@@ -576,7 +576,7 @@ class TestFullFactorPipeline:
 
         # Phase D
         candidates = [
-            EnrichedCandidate(
+            EnrichedSelection(
                 symbol=sym, sector="Various", score_used=0.8,
                 score_source="test", predicted_proba=None,
                 historical_win_rate=None, conviction_score=0.7,

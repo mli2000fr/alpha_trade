@@ -43,7 +43,7 @@ Usage :
   # Horizon 10 jours au lieu de 5
   python validate_score_predictiveness.py --source ml --horizon 10
 
-  # Inclure tous les scores (pas seulement is_candidate=1)
+    # Inclure tous les scores (pas seulement les sélections classées)
   python validate_score_predictiveness.py --source screener --no-candidates-only
 
 Critères de succès :
@@ -107,7 +107,7 @@ def load_scores(
     start_date: str,
     end_date: str,
     score_col: str,
-    candidates_only: bool = True,
+    selected_only: bool = True,
 ) -> pd.DataFrame:
     """Charge les scores PIT depuis ``stock_scores_history``.
 
@@ -118,8 +118,8 @@ def load_scores(
         score_col: Colonne de score à analyser.
             Valeurs possibles : final_score, final_score_sentiment,
             final_score_walk_forward, raw_final_score.
-        candidates_only: Si True, ne garde que les lignes is_candidate = 1
-            (celles que le screener a effectivement retenues).
+        selected_only: Si True, ne garde que les lignes dont le rang de
+            sélection est disponible.
 
     Returns:
         DataFrame avec colonnes [snapshot_date, symbol, score].
@@ -134,13 +134,13 @@ def load_scores(
             f"Colonnes connues : {sorted(valid_cols)}{RESET}"
         )
 
-    candidate_clause = "AND is_candidate = 1" if candidates_only else ""
+    selection_clause = "AND selection_rank IS NOT NULL" if selected_only else ""
     query = text(
         f"""
         SELECT snapshot_date, symbol, {score_col} AS score
         FROM stock_scores_history
         WHERE snapshot_date BETWEEN :start_date AND :end_date
-          {candidate_clause}
+          {selection_clause}
           AND {score_col} IS NOT NULL
         ORDER BY snapshot_date ASC, symbol ASC
         """
@@ -584,7 +584,7 @@ Exemples :
     )
     parser.add_argument(
         "--no-candidates-only", action="store_true",
-        help="Inclut TOUS les scores (pas seulement is_candidate=1). Utilisé uniquement avec --source screener.",
+        help="Inclut TOUS les scores (pas seulement les sélections classées). Utilisé uniquement avec --source screener.",
     )
     parser.add_argument(
         "--no-annual", action="store_true",

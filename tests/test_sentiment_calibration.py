@@ -22,7 +22,8 @@ def test_build_forward_return_frame_computes_forward_returns() -> None:
             "sentiment_net_agg": [0.2] * 4,
             "sector_impact_agg": [0.1] * 4,
             "final_score_sentiment": [0.82] * 4,
-            "is_candidate": [1] * 4,
+            "selection_rank": [1] * 4,
+            "short_score": [None] * 4,
             "bar_date": pd.to_datetime(["2026-01-02", "2026-01-03", "2026-01-04", "2026-01-05"]),
             "close_price": [100.0, 110.0, 120.0, 130.0],
         }
@@ -47,7 +48,7 @@ def test_evaluate_scenarios_prefers_sentiment_when_forward_returns_follow_signal
             "sentiment_net_agg": [1.0, 0.0, -1.0, 1.0, 0.0, -1.0],
             "sector_impact_agg": [0.0] * 6,
             "final_score_sentiment": [None] * 6,
-            "is_candidate": [1] * 6,
+            "selection_rank": [1] * 6,
             "forward_return_5d": [0.08, 0.01, -0.04, 0.07, 0.00, -0.03],
         }
     )
@@ -74,12 +75,16 @@ def test_calibrate_uses_custom_dataset_and_exports(tmp_path, monkeypatch) -> Non
             "sentiment_net_agg": [0.8, 0.1, -0.4],
             "sector_impact_agg": [0.2, 0.1, -0.1],
             "final_score_sentiment": [None, None, None],
-            "is_candidate": [1, 1, 1],
+            "selection_rank": [1, 2, 3],
             "forward_return_5d": [0.06, 0.01, -0.02],
         }
     )
 
-    monkeypatch.setattr(calibrator, "load_dataset", lambda start_date, end_date, horizons=(5, 10, 20), candidates_only=True: dataset.copy())
+    monkeypatch.setattr(
+        calibrator,
+        "load_dataset",
+        lambda start_date, end_date, horizons=(5, 10, 20), selected_only=True, capital_preset_keys=None: dataset.copy(),
+    )
 
     result, ranking_df, artifacts = calibrator.calibrate(
         start_date=date(2026, 1, 2),
@@ -120,7 +125,7 @@ def test_load_dataset_filters_stock_bars_daily_on_eodhd_source(monkeypatch) -> N
         return pd.DataFrame(columns=[
             "snapshot_date", "symbol", "sector", "final_score",
             "sentiment_net_agg", "sector_impact_agg", "final_score_sentiment",
-            "is_candidate", "bar_date", "close_price",
+            "selection_rank", "short_score", "bar_date", "close_price",
         ])
 
     monkeypatch.setattr(
@@ -131,6 +136,7 @@ def test_load_dataset_filters_stock_bars_daily_on_eodhd_source(monkeypatch) -> N
         ),
     )
     monkeypatch.setattr(pd, "read_sql_query", _fake_read_sql_query)
+    monkeypatch.setattr(calibrator, "_list_symbols", lambda **kwargs: ["AAA"])
 
     result = calibrator.load_dataset(date(2026, 1, 1), date(2026, 1, 31))
 

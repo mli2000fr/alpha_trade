@@ -392,13 +392,13 @@ def get_alpha_scanner_dependency_diagnostic(*, today: date | None = None) -> dic
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_candidates_count() -> int:
-    v = safe_scalar("SELECT COUNT(*) FROM stock_scores WHERE is_candidate = 1")
+def get_selection_count() -> int:
+    v = safe_scalar("SELECT COUNT(*) FROM stock_scores WHERE selection_rank IS NOT NULL")
     return int(v) if v is not None else 0
 
 
-def resolve_latest_candidate_snapshot_date(trade_date: str | date | None) -> date | None:
-    """Retourne le snapshot_date le plus récent <= trade_date avec is_candidate=1.
+def resolve_latest_selection_snapshot_date(trade_date: str | date | None) -> date | None:
+    """Retourne le snapshot_date le plus récent <= trade_date avec une sélection.
 
     Utilisé par ``start_pipeline_run`` quand ``force_trade_date_to_latest_snapshot``
     est activé : permet de continuer un workflow démarré la veille même après
@@ -406,7 +406,7 @@ def resolve_latest_candidate_snapshot_date(trade_date: str | date | None) -> dat
     ``date.today()``).
 
     Retourne ``None`` si la table est vide, si trade_date est invalide, ou si
-    aucun snapshot is_candidate=1 n'existe <= trade_date.
+    aucun snapshot sélectionné n'existe <= trade_date.
     """
     if trade_date is None:
         return None
@@ -420,7 +420,7 @@ def resolve_latest_candidate_snapshot_date(trade_date: str | date | None) -> dat
             return None
     raw = safe_scalar(
         "SELECT MAX(snapshot_date) FROM stock_scores_history "
-        "WHERE snapshot_date <= :trade_date AND is_candidate = 1",
+        "WHERE snapshot_date <= :trade_date AND selection_rank IS NOT NULL",
         {"trade_date": trade_date},
     )
     if raw is None:
@@ -467,7 +467,7 @@ def get_backtesting_pit_history_diagnostic(
     preset_column_present_raw, preset_column_error = _safe_scalar_with_error(preset_column_query)
     has_capital_preset_key = bool(preset_column_present_raw) and preset_column_error is None
 
-    filters = ["snapshot_date BETWEEN :start AND :end", "is_candidate = 1"]
+    filters = ["snapshot_date BETWEEN :start AND :end", "selection_rank IS NOT NULL"]
     params: dict[str, object] = {"start": start_date.isoformat(), "end": end_date.isoformat()}
     if has_capital_preset_key and capital_preset_key:
         filters.append("capital_preset_key = :capital_preset_key")
@@ -974,11 +974,11 @@ def get_stock_bars_daily_symbol_count() -> int:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_top_candidates(n: int = 10) -> pd.DataFrame:
+def get_top_selected_symbols(n: int = 10) -> pd.DataFrame:
     return safe_query(f"""
-        SELECT symbol, sector, final_score_sentiment, final_score, total_score, is_candidate
+        SELECT symbol, sector, final_score_sentiment, final_score, total_score, selection_rank
         FROM stock_scores
-        WHERE is_candidate = 1 AND final_score_sentiment IS NOT NULL
+        WHERE selection_rank IS NOT NULL AND final_score_sentiment IS NOT NULL
         ORDER BY final_score_sentiment DESC
         LIMIT {n}
     """)
@@ -1026,9 +1026,9 @@ def get_risk_decisions(run_id: str | None = None) -> pd.DataFrame:
         return safe_query("""
             SELECT * FROM risk_decisions
             WHERE run_id = :run_id
-            ORDER BY COALESCE(candidate_rank, 999999), created_at DESC
+            ORDER BY COALESCE(selection_rank, 999999), created_at DESC
         """, {"run_id": run_id})
-    return safe_query("SELECT * FROM risk_decisions ORDER BY COALESCE(candidate_rank, 999999), created_at DESC LIMIT 200")
+    return safe_query("SELECT * FROM risk_decisions ORDER BY COALESCE(selection_rank, 999999), created_at DESC LIMIT 200")
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -1585,8 +1585,8 @@ def get_execution_targets_snapshot(exec_run_id: str) -> pd.DataFrame:
         "trade_date",
         "symbol",
         *(
-            ["candidate_rank"]
-            if "candidate_rank" in available_columns
+            ["selection_rank"]
+            if "selection_rank" in available_columns
             else []
         ),
         "decision_rank",

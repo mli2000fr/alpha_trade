@@ -1837,7 +1837,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     import pandas as pd
 
     from backtesting.fidelity import (
-        build_candidate_target_parity_summary,
+        build_selection_target_parity_summary,
         build_fidelity_baseline_comparison,
         build_fidelity_baseline_snapshot,
         PitHistoryRequiredError,
@@ -1845,7 +1845,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         build_fidelity_symbol_matrix,
         PitMlStrategyUnsupportedError,
         build_fidelity_manifest,
-        save_candidate_target_parity_summary,
+        save_selection_target_parity_summary,
         save_fidelity_baseline_comparison,
         save_fidelity_baseline_snapshot,
         save_fidelity_symbol_matrix,
@@ -2141,7 +2141,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print("❌ Aucun score candidat trouvé sur la période demandée.")
         _safe_print("   Vérifie d'abord :")
         _safe_print("   - que `stock_scores_history` contient des snapshots historiques ;")
-        _safe_print("   - ou, à défaut, que `stock_scores` contient un snapshot récent avec `is_candidate = 1`.")
+        _safe_print("   - ou, à défaut, que `stock_scores` contient un snapshot récent exploitable.")
         _safe_print("   Pour un vrai backtest 10 ans, il faut historiser les snapshots dans `stock_scores_history`.")
         sys.exit(1)
 
@@ -2632,8 +2632,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
         signals_df=signals_df if isinstance(signals_df, pd.DataFrame) else None,
         fidelity_manifest=fidelity_manifest,
     )
-    candidate_target_parity_summary = (
-        build_candidate_target_parity_summary(
+    selection_target_parity_summary = (
+        build_selection_target_parity_summary(
             research_signals_df=research_signals_df,
             risk_entries=phase2_risk_result.entries,
             phase2_mode=phase2_mode,
@@ -2704,13 +2704,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
         artifact_paths.update({key: str(path) for key, path in symbol_matrix_paths.items()})
         replay_diagnostic_paths = save_replay_diagnostic_summary(replay_diagnostic_summary, output_dir)
         artifact_paths.update({key: str(path) for key, path in replay_diagnostic_paths.items()})
-        candidate_target_parity_paths: dict[str, str] = {}
-        if candidate_target_parity_summary is not None:
-            candidate_target_parity_paths = {
+        selection_target_parity_paths: dict[str, str] = {}
+        if selection_target_parity_summary is not None:
+            selection_target_parity_paths = {
                 key: str(path)
-                for key, path in save_candidate_target_parity_summary(candidate_target_parity_summary, output_dir).items()
+                for key, path in save_selection_target_parity_summary(selection_target_parity_summary, output_dir).items()
             }
-            artifact_paths.update(candidate_target_parity_paths)
+            artifact_paths.update(selection_target_parity_paths)
         compare_to_live_paths, compare_to_live_summary = _build_compare_to_live_artifacts(
             engine=engine,
             output_dir=output_dir,
@@ -2766,7 +2766,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         fidelity_baseline_snapshot = build_fidelity_baseline_snapshot(
             fidelity_manifest=fidelity_manifest,
             replay_diagnostic_summary=replay_diagnostic_summary,
-            candidate_target_parity_summary=candidate_target_parity_summary,
+            selection_target_parity_summary=selection_target_parity_summary,
             compare_to_live_summary=compare_to_live_summary,
             execution_broker_like_summary=execution_broker_like_summary,
             baseline_id=str(getattr(args, "fidelity_baseline_id", "") or "").strip() or None,
@@ -2819,7 +2819,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print(f"   → {fidelity_baseline_snapshot_path}")
         for path in replay_diagnostic_paths.values():
             _safe_print(f"   → {path}")
-        for path in candidate_target_parity_paths.values():
+        for path in selection_target_parity_paths.values():
             _safe_print(f"   → {path}")
         if fidelity_baseline_catalog_path is not None:
             for path in fidelity_baseline_paths.values():

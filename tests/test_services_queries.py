@@ -249,8 +249,7 @@ def test_get_stock_scores_builds_schema_aware_query_and_attaches_explainability_
                     "Field": [
                         "symbol",
                         "sector",
-                        "is_candidate",
-                        "candidate_rank",
+                        "selection_rank",
                         "total_score",
                         "final_score",
                         "final_score_sentiment",
@@ -270,8 +269,7 @@ def test_get_stock_scores_builds_schema_aware_query_and_attaches_explainability_
                 {
                     "symbol": "AAPL",
                     "sector": "Technology",
-                    "is_candidate": 1,
-                    "candidate_rank": 1,
+                    "selection_rank": 1,
                     "total_score": 91.0,
                     "final_score": 0.88,
                     "final_score_sentiment": 0.55,
@@ -292,11 +290,11 @@ def test_get_stock_scores_builds_schema_aware_query_and_attaches_explainability_
     df = queries.get_stock_scores()
 
     assert len(calls) == 2
-    assert "candidate_rank" in calls[1]
+    assert "selection_rank" in calls[1]
     assert "selector_signal_mode" in calls[1]
     payload = df.iloc[0]["candidate_explainability_payload"]
     assert payload["identity"]["symbol"] == "AAPL"
-    assert payload["identity"]["candidate_rank"] == 1
+    assert payload["identity"]["selection_rank"] == 1
     assert payload["score_components"]["trend_vcp_component"] == 0.41
     assert payload["selection_context"]["selector_signal_mode"] == "sector_neutralized"
 
@@ -1180,7 +1178,7 @@ def test_get_execution_targets_snapshot_scopes_exec_run(monkeypatch):
             "risk_run_id",
             "trade_date",
             "symbol",
-            "candidate_rank",
+                "selection_rank",
             "decision_rank",
             "selector_signal_mode",
             "selection_explanation",
@@ -1210,7 +1208,7 @@ def test_get_execution_targets_snapshot_scopes_exec_run(monkeypatch):
     queries.get_execution_targets_snapshot("exec-42")
 
     assert "FROM execution_targets_snapshot" in captured["query"]
-    assert "candidate_rank" in captured["query"]
+    assert "selection_rank" in captured["query"]
     assert "selector_signal_mode" in captured["query"]
     assert "selection_explanation" in captured["query"]
     assert "selector_earnings_blackout" in captured["query"]

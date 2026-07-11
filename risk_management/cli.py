@@ -32,7 +32,7 @@ from risk_management.live_pipeline_guards import (
     evaluate_ml_coverage_gate,
     evaluate_vol_target,
 )
-from risk_management.models import CandidateScore, PortfolioEntry
+from risk_management.models import SelectionScore, PortfolioEntry
 from risk_management.portfolio_builder import PortfolioBuilder
 
 LOGGER = logging.getLogger(__name__)
@@ -1083,7 +1083,7 @@ def main(args: list[str] | None = None) -> None:
         )
     score_context = {entry.symbol: entry for entry in repo.load_score_context_asof(universe.symbols, trade_date)}
     candidates = [
-        score_context.get(symbol, CandidateScore(symbol=symbol, sector="UNKNOWN", score_used=float("nan"), score_source="unavailable"))
+        score_context.get(symbol, SelectionScore(symbol=symbol, sector="UNKNOWN", score_used=float("nan"), score_source="unavailable"))
         for symbol in universe.symbols
     ]
     LOGGER.info("Univers tradable ML-first chargé: run=%s symbols=%d", universe.universe_run_id, len(candidates))
@@ -1153,7 +1153,7 @@ def main(args: list[str] | None = None) -> None:
                     min_score_for_short=eff_min_short,
                     all_shorts=trigger.all_shorts,
                 )
-                # Appliquer le side aux candidats immuables (CandidateScore est frozen)
+                # Appliquer le side aux sélections immuables (SelectionScore est frozen)
                 side_map = dict(zip(candidates_df["symbol"], candidates_df["side"]))
                 updated_candidates = []
                 for c in candidates:

@@ -24,7 +24,7 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
-from risk_management.models import EnrichedCandidate, FactorExposures
+from risk_management.models import EnrichedSelection, FactorExposures
 
 LOGGER = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class FactorConstraintResult:
     """
 
     violations: list[str]
-    filtered_candidates: list[EnrichedCandidate]
+    filtered_candidates: list[EnrichedSelection]
     decomposition: PortfolioRiskDecomposition | None = None
 
     @property
@@ -704,7 +704,7 @@ def _compute_factor_implied_correlation(
 
 
 def check_factor_constraints(
-    candidates: list[EnrichedCandidate],
+    candidates: list[EnrichedSelection],
     exposures: dict[str, FactorExposures],
     factor_cov: FactorCovariance,
     *,
@@ -744,7 +744,7 @@ def check_factor_constraints(
         _constraints.update(constraints)
 
     violations: list[str] = []
-    filtered: list[EnrichedCandidate] = []
+    filtered: list[EnrichedSelection] = []
 
     # Construire un portefeuille équipondéré pour évaluer les expositions
     candidate_symbols = [c.symbol for c in candidates if c.symbol in exposures]
@@ -814,11 +814,11 @@ def check_factor_constraints(
 
 
 def _filter_worst_offenders(
-    candidates: list[EnrichedCandidate],
+    candidates: list[EnrichedSelection],
     exposures: dict[str, FactorExposures],
     factor_cov: FactorCovariance,
     constraints: dict[str, float],
-) -> list[EnrichedCandidate]:
+) -> list[EnrichedSelection]:
     """Filtre greedy : retire les candidats qui aggravent le plus les violations."""
     if len(candidates) <= 2:
         return list(candidates)
@@ -853,12 +853,12 @@ def _filter_worst_offenders(
 
 
 def filter_by_factor_correlation(
-    candidates: list[EnrichedCandidate],
+    candidates: list[EnrichedSelection],
     exposures: dict[str, FactorExposures],
     factor_cov: FactorCovariance,
     *,
     max_factor_correlation: float = DEFAULT_MAX_FACTOR_CORRELATION,
-) -> tuple[list[EnrichedCandidate], list[FactorCorrelationRejection]]:
+) -> tuple[list[EnrichedSelection], list[FactorCorrelationRejection]]:
     """Filtre les candidats en utilisant la corrélation IMPLIÉE par le modèle
     factoriel (plutôt que la corrélation historique des prix).
 
@@ -886,7 +886,7 @@ def filter_by_factor_correlation(
     tuple[list[EnrichedCandidate], list[FactorCorrelationRejection]]
         (candidats retenus, rejets).
     """
-    retained: list[EnrichedCandidate] = []
+    retained: list[EnrichedSelection] = []
     rejections: list[FactorCorrelationRejection] = []
 
     for candidate in candidates:

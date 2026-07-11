@@ -953,22 +953,27 @@ les parcours risk/exécution. Le nettoyage physique du schéma reste le Sprint 7
 
 ### Statut d'implémentation (en cours)
 
-La migration de schéma finale est préparée :
+La migration de schéma finale et les consommateurs runtime sont maintenant
+alignés :
 
 - `0048_drop_candidate_columns_from_score_snapshots` ajoute
   `selection_rank` à `stock_scores` et `stock_scores_history`, reprend les
   valeurs disponibles de `candidate_rank`, supprime les index candidats puis
   retire `is_candidate` et `candidate_rank` ;
-- les DDL de création des deux tables portent désormais `selection_rank` et les
-  index `idx_history_selection_rank` / `idx_history_preset_selection_rank` ;
-- le selector, le screener, le loader risk et le loader backtest ont commencé à
-  migrer leurs écritures et lectures vers le rang de sélection et un scope de
-  scores non nul.
+- les DDL de création, les scripts SQL d'exploitation et les procédures
+  d'explicabilité utilisent `selection_rank` et les index de sélection ;
+- le selector, le screener, les backfills PIT, les calibrations, les diagnostics,
+  Event Sentiment, Model Factory, risk/exécution et les pages IHM secondaires ne
+  lisent plus les deux colonnes supprimées ;
+- les validations ciblées ont passé : `37 passed` (calibration/diagnostics/ML),
+  `16 passed` (score table/screener), `60 passed` (IHM), `10 passed`
+  (Execution IHM), `8 passed` (features ML) et `21 passed` (persistence PIT).
 
-Le sprint n'est pas encore clos: les backfills, certains diagnostics/IHM et les
-fixtures de persistence doivent être basculés vers `selection_rank`, puis les
-tests de migration Alembic et les suites selector/risk/backtest doivent passer
-sur un schéma effectivement dépourvu des deux colonnes legacy.
+Le sprint n'est pas encore clos : la suite de backfill conserve un échec hors
+colonnes legacy sur la détection d'un snapshot incomplet (`18 passed, 1 failed`),
+et le test Alembic local est ignoré car le package Alembic n'est pas chargeable.
+Les fixtures selector/backtest/exécution encore basées sur les noms legacy et le
+drill MySQL de migration restent à traiter avant la clôture.
 
 ### Tâches
 

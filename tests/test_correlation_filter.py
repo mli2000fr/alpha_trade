@@ -11,11 +11,11 @@ from risk_management.correlation_filter import (
     build_return_matrix,
     filter_correlated,
 )
-from risk_management.models import EnrichedCandidate
+from risk_management.models import EnrichedSelection
 
 
-def _ec(symbol: str, conviction: float) -> EnrichedCandidate:
-    return EnrichedCandidate(
+def _ec(symbol: str, conviction: float) -> EnrichedSelection:
+    return EnrichedSelection(
         symbol=symbol, sector="Tech", score_used=conviction,
         score_source="conviction_score",
         predicted_proba=None, historical_win_rate=None, conviction_score=conviction,

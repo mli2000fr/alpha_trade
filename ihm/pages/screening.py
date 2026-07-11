@@ -141,8 +141,7 @@ def _build_screening_display_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     preferred_columns = [
         "symbol",
         "sector",
-        "is_candidate",
-        "candidate_rank",
+        "selection_rank",
         "selector_signal_mode",
         "final_score",
         "total_score",
@@ -305,11 +304,11 @@ def render() -> None:
 
     # --- KPI ---
     total = len(df)
-    candidates = int(df["is_candidate"].sum()) if "is_candidate" in df.columns else 0
+    selected_symbols = int(df["selection_rank"].notna().sum()) if "selection_rank" in df.columns else 0
     sectors = df["sector"].nunique() if "sector" in df.columns else 0
     metric_row([
         ("Total symboles", total, None),
-        ("Candidats", candidates, None),
+        ("Sélections", selected_symbols, None),
         ("Secteurs", sectors, None),
     ])
 
@@ -371,7 +370,7 @@ def render() -> None:
             sector_list = ["Tous"] + sorted(df["sector"].dropna().unique().tolist()) if "sector" in df.columns else ["Tous"]
             sector_filter = st.selectbox("Secteur", sector_list)
         with col3:
-            candidates_only = st.checkbox("Candidats uniquement", value=False)
+            selected_only = st.checkbox("Sélections uniquement", value=False)
 
         col4, col5 = st.columns(2)
         with col4:
@@ -385,8 +384,8 @@ def render() -> None:
         filtered = filtered[filtered["symbol"].str.contains(symbol_filter, case=False, na=False)]
     if sector_filter != "Tous":
         filtered = filtered[filtered["sector"] == sector_filter]
-    if candidates_only:
-        filtered = filtered[filtered["is_candidate"] == 1]
+    if selected_only and "selection_rank" in filtered.columns:
+        filtered = filtered[filtered["selection_rank"].notna()]
     if min_score > 0 and "total_score" in filtered.columns:
         filtered = filtered[filtered["total_score"] >= min_score]
     if sentiment_only and "signal_active" in filtered.columns:

@@ -419,7 +419,7 @@ def render() -> None:
         st.subheader("🎯 Snapshot des cibles consommées")
         target_columns = [
             column for column in [
-                "symbol", "candidate_rank", "decision_rank", "selector_signal_mode",
+                "symbol", "selection_rank", "decision_rank", "selector_signal_mode",
                 "selector_earnings_blackout", "selection_explanation", "target_shares", "entry_price",
                 "target_weight", "stop_price_initial", "risk_per_share", "risk_budget_dollars",
                 "initial_risk_dollars", "target_notional", "price_asof_date", "atr_asof_date",

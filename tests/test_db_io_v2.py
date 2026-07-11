@@ -19,11 +19,10 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
                 final_score DOUBLE,
                 final_score_sentiment DOUBLE,
                 final_score_walk_forward DOUBLE,
-                candidate_rank INT,
+                selection_rank INT,
                 earnings_blackout INT,
                 selector_signal_mode VARCHAR(32),
                 selection_explanation VARCHAR(255),
-                is_candidate INT,
                 walk_forward_sentiment_weight DOUBLE,
                 walk_forward_macro_weight DOUBLE,
                 walk_forward_quant_weight DOUBLE,
@@ -66,7 +65,8 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
                 "date" DATE,
                 "close" DOUBLE,
                 "high" DOUBLE,
-                "low" DOUBLE
+                "low" DOUBLE,
+                volume DOUBLE
             )
         """))
         conn.execute(text("""
@@ -98,7 +98,7 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
             CREATE TABLE IF NOT EXISTS risk_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id VARCHAR(32), account_id VARCHAR(32), trade_date DATE, symbol VARCHAR(20),
-                candidate_rank INT, decision_rank INT,
+                selection_rank INT, decision_rank INT,
                 selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
                 decision VARCHAR(20), reason VARCHAR(255), score_used DOUBLE,
                 score_source VARCHAR(40), score_snapshot_date DATE,
@@ -121,7 +121,7 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
             CREATE TABLE IF NOT EXISTS portfolio_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id VARCHAR(32), account_id VARCHAR(32), trade_date DATE, symbol VARCHAR(20),
-                candidate_rank INT, decision_rank INT,
+                selection_rank INT, decision_rank INT,
                 selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
                 side VARCHAR(10),
                 shares INT, entry_price DOUBLE, atr_20 DOUBLE, price_asof_date DATE,
@@ -224,7 +224,7 @@ def test_load_candidates_asof_uses_history_snapshot() -> None:
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO stock_scores_history (
-                snapshot_date, symbol, sector, final_score_sentiment, final_score_walk_forward, is_candidate,
+                snapshot_date, symbol, sector, final_score_sentiment, final_score_walk_forward, selection_rank,
                 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
                 calibration_run_id, calibration_source
             )
@@ -233,7 +233,7 @@ def test_load_candidates_asof_uses_history_snapshot() -> None:
                 ('2026-04-19', 'AAPL', 'Tech', 0.10, 0.11, 1, 0.2, 0.1, 0.7, 'wf-002', 'walk_forward')
         """))
     repo = RiskRepository(engine=engine)
-    candidates = repo.load_candidates_asof(date(2026, 4, 18))
+    candidates = repo.load_selection_inputs_asof(date(2026, 4, 18))
     assert len(candidates) == 1
     assert candidates[0].score_used == 0.92
 
@@ -486,18 +486,18 @@ def test_load_candidates_asof_propagates_selector_metadata() -> None:
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO stock_scores_history (
-                snapshot_date, symbol, sector, final_score_sentiment, final_score_walk_forward, candidate_rank,
-                earnings_blackout, selector_signal_mode, selection_explanation, is_candidate
+                snapshot_date, symbol, sector, final_score_sentiment, final_score_walk_forward, selection_rank,
+                earnings_blackout, selector_signal_mode, selection_explanation
             )
             VALUES
-                ('2026-04-18', 'AAPL', 'Tech', 0.81, 0.92, 7, 1, 'sector_neutralized', 'mode=sector_neutralized; rank=7', 1)
+                ('2026-04-18', 'AAPL', 'Tech', 0.81, 0.92, 7, 1, 'sector_neutralized', 'mode=sector_neutralized; rank=7')
         """))
     repo = RiskRepository(engine=engine)
 
-    candidates = repo.load_candidates_asof(date(2026, 4, 18))
+    candidates = repo.load_selection_inputs_asof(date(2026, 4, 18))
 
     assert len(candidates) == 1
-    assert candidates[0].candidate_rank == 7
+    assert candidates[0].selection_rank == 7
     assert candidates[0].selector_signal_mode == "sector_neutralized"
     assert candidates[0].selection_explanation == "mode=sector_neutralized; rank=7"
     assert candidates[0].selector_earnings_blackout == 1
@@ -514,20 +514,20 @@ def test_load_candidates_asof_falls_back_to_latest_snapshot_before_trade_date(ca
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO stock_scores_history (
-                snapshot_date, symbol, sector, final_score_sentiment, final_score_walk_forward, is_candidate,
+                snapshot_date, symbol, sector, final_score_sentiment, final_score_walk_forward, selection_rank,
                 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
                 calibration_run_id, calibration_source
             )
             VALUES
                 ('2026-04-30', 'AAPL', 'Tech', 0.81, 0.92, 1, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward'),
-                ('2026-04-30', 'MSFT', 'Tech', 0.55, 0.60, 1, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward'),
-                ('2026-04-30', 'IBM',  'Tech', 0.10, 0.20, 0, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward')
+                ('2026-04-30', 'MSFT', 'Tech', 0.55, 0.60, 2, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward'),
+                ('2026-04-30', 'IBM',  'Tech', 0.10, 0.20, NULL, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward')
         """))
     repo = RiskRepository(engine=engine)
     with caplog.at_level(logging.INFO, logger="risk_management.db_io"):
-        candidates = repo.load_candidates_asof(date(2026, 5, 1))
+        candidates = repo.load_selection_inputs_asof(date(2026, 5, 1))
 
-    assert [c.symbol for c in candidates] == ["AAPL", "MSFT"]
+    assert [c.symbol for c in candidates] == ["AAPL", "MSFT", "IBM"]
     assert candidates[0].snapshot_date == date(2026, 4, 30)
     assert any("PIT as-of" in rec.message for rec in caplog.records)
 
@@ -540,9 +540,9 @@ def test_load_candidates_asof_returns_empty_when_no_history_at_all(caplog) -> No
     _create_tables(engine)
     repo = RiskRepository(engine=engine)
     with caplog.at_level(logging.WARNING, logger="risk_management.db_io"):
-        candidates = repo.load_candidates_asof(date(2026, 5, 1))
+        candidates = repo.load_selection_inputs_asof(date(2026, 5, 1))
     assert candidates == []
-    assert any("aucun snapshot stock_scores_history" in rec.message for rec in caplog.records)
+    assert any("aucun snapshot de scores exploitable" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.unit
@@ -699,7 +699,7 @@ def test_write_risk_decisions_persists_walk_forward_metadata() -> None:
             "walk_forward_quant_weight": 0.7,
             "calibration_run_id": "wf-001",
             "calibration_source": "walk_forward",
-            "candidate_rank": 1,
+            "selection_rank": 1,
             "selector_signal_mode": "strict",
             "selection_explanation": "mode=strict; rank=1",
             "selector_earnings_blackout": 0,
@@ -767,7 +767,7 @@ def test_write_portfolio_targets_persists_walk_forward_metadata() -> None:
             "walk_forward_quant_weight": 0.7,
             "calibration_run_id": "wf-001",
             "calibration_source": "walk_forward",
-            "candidate_rank": 3,
+            "selection_rank": 3,
             "selector_signal_mode": "sector_neutralized",
             "selection_explanation": "mode=sector_neutralized; rank=3",
             "selector_earnings_blackout": 0,
@@ -791,7 +791,7 @@ def test_write_portfolio_targets_persists_walk_forward_metadata() -> None:
     assert row["quant_component"] == 0.67
     assert row["calibration_source"] == "walk_forward"
     assert row["account_id"] == "paper"
-    assert row["candidate_rank"] == 3
+    assert row["selection_rank"] == 3
     assert row["selector_signal_mode"] == "sector_neutralized"
     assert row["selection_explanation"] == "mode=sector_neutralized; rank=3"
     assert row["selector_earnings_blackout"] == 0

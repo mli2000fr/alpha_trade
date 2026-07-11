@@ -725,7 +725,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         "Ces réglages alimentent désormais l'étape 7 canonique à scope mixte : import news large sur "
         "`stock_scores_all`, scoring FinBERT standard / `relevance_score` / contextuel sur les candidats, "
         "reconstruction des features ticker sur les candidats et des features secteur sur le scope large importé. "
-        "Si le CSV est laissé vide, les sous-étapes ciblées retombent automatiquement sur `stock_scores.is_candidate=1` ; "
+        "Si le CSV est laissé vide, les sous-étapes ciblées utilisent la sélection classée de `stock_scores` ; "
         "pour un import ou un backfill manuel d'un autre univers, utilisez le panneau `7.bis` ci-dessous."
     )
 
@@ -2630,7 +2630,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_force_trade_date_to_latest_snapshot",
                 help=(
                     "Si coché (défaut), au lancement, trade_date est remplacé par MAX(snapshot_date) "
-                    "<= trade_date avec is_candidate=1 dans stock_scores_history. Permet de continuer un "
+                    "<= trade_date avec une sélection classée dans stock_scores_history. Permet de continuer un "
                     "workflow démarré la veille même après réouverture de la session Streamlit (qui "
                     "réinitialise trade_date à la date du jour). Décochez pour utiliser strictement la "
                     "date saisie."

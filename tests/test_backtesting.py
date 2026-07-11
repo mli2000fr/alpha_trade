@@ -3487,8 +3487,8 @@ class TestCLI:
         assert report_payload["params"]["phase2"]["execution_bridge"] is None
         artifacts = cast(dict[str, str], report_payload["artifacts"])
         assert artifacts["phase2_risk_summary_json"].endswith("phase2_risk_summary.json")
-        assert artifacts["candidate_target_parity_summary_json"].endswith("candidate_target_parity_summary.json")
-        assert artifacts["candidate_target_parity_sessions_csv"].endswith("candidate_target_parity_sessions.csv")
+        assert artifacts["selection_target_parity_summary_json"].endswith("selection_target_parity_summary.json")
+        assert artifacts["selection_target_parity_sessions_csv"].endswith("selection_target_parity_sessions.csv")
 
     def test_run_backtest_phase2_risk_execution_adds_execution_artifacts(self, monkeypatch, tmp_path):
         import argparse

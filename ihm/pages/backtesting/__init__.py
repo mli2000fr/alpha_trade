@@ -3183,19 +3183,19 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         with st.expander("Payload brut fidelity_symbol_matrix.json", expanded=False):
             st.json(fidelity_symbol_matrix_payload)
 
-    candidate_target_payload = _load_json_artifact_from_paths(artifacts, "candidate_target_parity_summary_json")
-    if candidate_target_payload:
-        st.markdown("**🎯 Parité candidate → target**")
+    selection_target_payload = _load_json_artifact_from_paths(artifacts, "selection_target_parity_summary_json")
+    if selection_target_payload:
+        st.markdown("**🎯 Parité sélection → target**")
         parity_col1, parity_col2, parity_col3 = st.columns(3)
-        parity_col1.metric("Séances comparées", _to_int(candidate_target_payload.get("session_count")))
-        parity_col2.metric("Séances divergentes", _to_int(candidate_target_payload.get("diverged_session_count")))
-        parity_col3.metric("Mode Phase 2", _coerce_metric_text(candidate_target_payload.get("phase2_mode")))
-        parity_rows = _build_candidate_target_parity_rows(candidate_target_payload)
+        parity_col1.metric("Séances comparées", _to_int(selection_target_payload.get("session_count")))
+        parity_col2.metric("Séances divergentes", _to_int(selection_target_payload.get("diverged_session_count")))
+        parity_col3.metric("Mode Phase 2", _coerce_metric_text(selection_target_payload.get("phase2_mode")))
+        parity_rows = _build_selection_target_parity_rows(selection_target_payload)
         if not parity_rows.empty:
-            with st.expander("Aperçu candidate → target", expanded=False):
+            with st.expander("Aperçu sélection → target", expanded=False):
                 st.dataframe(parity_rows, use_container_width=True, hide_index=True)
-        with st.expander("Payload brut candidate_target_parity_summary.json", expanded=False):
-            st.json(candidate_target_payload)
+        with st.expander("Payload brut selection_target_parity_summary.json", expanded=False):
+            st.json(selection_target_payload)
 
     compare_to_live_payload = _load_json_artifact_from_paths(artifacts, "compare_to_live_summary_json")
     if compare_to_live_payload:
@@ -3597,7 +3597,7 @@ def _build_replay_diagnostic_session_rows(payload: dict[str, object]) -> pd.Data
     return pd.DataFrame(rows)
 
 
-def _build_candidate_target_parity_rows(payload: dict[str, object]) -> pd.DataFrame:
+def _build_selection_target_parity_rows(payload: dict[str, object]) -> pd.DataFrame:
     sessions = payload.get("sessions", [])
     if not isinstance(sessions, list) or not sessions:
         return pd.DataFrame()

@@ -157,7 +157,7 @@ class SentimentWeightCalibrator:
         start_date: date,
         end_date: date,
         horizons: tuple[int, ...] = (5, 10, 20),
-        candidates_only: bool = True,
+        selected_only: bool = True,
         capital_preset_keys: str | list[str] | None = None,
     ) -> pd.DataFrame:
         """Charge le dataset scores + forward returns.
@@ -172,7 +172,7 @@ class SentimentWeightCalibrator:
         symbols = self._list_symbols(
             start_date=start_date,
             end_date=end_date,
-            candidates_only=candidates_only,
+            selected_only=selected_only,
             capital_preset_keys=capital_preset_keys,
         )
         if not symbols:
@@ -196,7 +196,7 @@ class SentimentWeightCalibrator:
                 start_date=start_date,
                 end_date=end_date,
                 end_date_plus_buffer=end_date_plus_buffer,
-                candidates_only=candidates_only,
+                selected_only=selected_only,
                 capital_preset_keys=capital_preset_keys,
             )
             if batch_raw.empty:
@@ -238,7 +238,7 @@ class SentimentWeightCalibrator:
         self,
         start_date: date,
         end_date: date,
-        candidates_only: bool = True,
+        selected_only: bool = True,
         capital_preset_keys: str | list[str] | None = None,
     ) -> list[str]:
         """Retourne la liste des symboles distincts sur la période."""
@@ -246,7 +246,7 @@ class SentimentWeightCalibrator:
         params: dict[str, object] = {
             "start_date": start_date,
             "end_date": end_date,
-            "candidates_only": 1 if candidates_only else 0,
+            "selected_only": 1 if selected_only else 0,
         }
         keys = _normalize_preset_keys(capital_preset_keys)
         if keys is not None:
@@ -257,7 +257,7 @@ class SentimentWeightCalibrator:
             SELECT DISTINCT h.symbol
             FROM stock_scores_history h
             WHERE h.snapshot_date BETWEEN :start_date AND :end_date
-              AND (:candidates_only = 0 OR h.selection_rank IS NOT NULL)
+              AND (:selected_only = 0 OR h.selection_rank IS NOT NULL)
               {preset_clause}
             ORDER BY h.symbol
             """
@@ -272,7 +272,7 @@ class SentimentWeightCalibrator:
         start_date: date,
         end_date: date,
         end_date_plus_buffer: date,
-        candidates_only: bool = True,
+        selected_only: bool = True,
         capital_preset_keys: str | list[str] | None = None,
     ) -> pd.DataFrame:
         """Range-JOIN SQL pour un batch de symboles.
@@ -292,7 +292,7 @@ class SentimentWeightCalibrator:
             "start_date": start_date,
             "end_date": end_date,
             "end_date_plus_buffer": end_date_plus_buffer,
-            "candidates_only": 1 if candidates_only else 0,
+            "selected_only": 1 if selected_only else 0,
             **source_filter_params,
         }
         keys = _normalize_preset_keys(capital_preset_keys)
@@ -322,7 +322,7 @@ class SentimentWeightCalibrator:
              {source_filter_sql}
             WHERE h.symbol IN ({escaped})
               AND h.snapshot_date BETWEEN :start_date AND :end_date
-              AND (:candidates_only = 0 OR h.selection_rank IS NOT NULL)
+              AND (:selected_only = 0 OR h.selection_rank IS NOT NULL)
               {preset_clause}
             ORDER BY h.snapshot_date, h.symbol, b.date
             """
@@ -345,7 +345,7 @@ class SentimentWeightCalibrator:
             "sector_impact_agg",
             "final_score_sentiment",
             "short_score",
-            "is_candidate",
+            "selection_rank",
         ]
         snapshot_df = raw[base_columns].drop_duplicates(subset=["snapshot_date", "symbol"], keep="first").copy()
         price_df = raw[["snapshot_date", "symbol", "bar_date", "close_price"]].copy()
@@ -824,12 +824,12 @@ class SentimentWeightCalibrator:
         scenarios: Iterable[SentimentCalibrationScenario] | None = None,
         horizons: tuple[int, ...] = (5, 10, 20),
         top_n: int = 20,
-        candidates_only: bool = True,
+        selected_only: bool = True,
         output_dir: Path | None = None,
         capital_preset_keys: str | list[str] | None = None,
     ) -> tuple[SentimentCalibrationResult, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
-        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_keys=capital_preset_keys)
+        dataset = self.load_dataset(start_date, end_date, horizons=horizons, selected_only=selected_only, capital_preset_keys=capital_preset_keys)
         result_df = self.evaluate_scenarios(dataset, scenario_list, horizons=horizons, top_n=top_n)
         artifacts: dict[str, str] = {}
         if output_dir is not None:
@@ -863,7 +863,7 @@ class SentimentWeightCalibrator:
         scenarios: Iterable[SentimentCalibrationScenario] | None = None,
         horizons: tuple[int, ...] = (5, 10, 20),
         top_n: int = 20,
-        candidates_only: bool = True,
+        selected_only: bool = True,
         min_train_days: int = 252,
         test_days: int = 63,
         step_days: int | None = None,
@@ -877,7 +877,7 @@ class SentimentWeightCalibrator:
         atr_trailing_stop_multiplier: float = 0.0,
     ) -> tuple[WalkForwardCalibrationResult, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
-        dataset = self.load_dataset(start_date, end_date, horizons=horizons, candidates_only=candidates_only, capital_preset_keys=capital_preset_keys)
+        dataset = self.load_dataset(start_date, end_date, horizons=horizons, selected_only=selected_only, capital_preset_keys=capital_preset_keys)
         windows = self.build_walk_forward_windows(
             dataset.get("snapshot_date", pd.Series(dtype="datetime64[ns]")),
             min_train_days=min_train_days,
@@ -1071,7 +1071,7 @@ class SentimentWeightCalibrator:
                     "end": end_date.isoformat(),
                     "horizons": list(horizons),
                     "top_n": top_n,
-                    "candidates_only": candidates_only,
+                    "selected_only": selected_only,
                     "min_train_days": min_train_days,
                     "test_days": test_days,
                     "step_days": step_days,
@@ -1161,7 +1161,7 @@ def main(argv: list[str] | None = None) -> int:
             end_date=end_date,
             horizons=horizons,
             top_n=args.top_n,
-            candidates_only=not args.all_symbols,
+            selected_only=not args.all_symbols,
             min_train_days=args.min_train_days,
             test_days=args.test_days,
             step_days=args.step_days,
@@ -1179,7 +1179,7 @@ def main(argv: list[str] | None = None) -> int:
             end_date=end_date,
             horizons=horizons,
             top_n=args.top_n,
-            candidates_only=not args.all_symbols,
+            selected_only=not args.all_symbols,
             output_dir=Path(args.output_dir),
         )
         extra_summary = {}

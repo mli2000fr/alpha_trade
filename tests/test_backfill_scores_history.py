@@ -140,7 +140,7 @@ def test_to_history_snapshot_normalizes_required_columns() -> None:
             "trend_score": [0.8],
             "vcp_score": [0.6],
             "final_score": [0.7],
-            "is_candidate": [1],
+            "selection_rank": [1],
             "sentiment_net_agg": [0.1],
             "sector_impact_agg": [0.0],
             "final_score_sentiment": [0.68],
@@ -151,7 +151,7 @@ def test_to_history_snapshot_normalizes_required_columns() -> None:
     history = service._to_history_snapshot(df, date(2026, 4, 17))
     assert history.iloc[0]["snapshot_date"] == date(2026, 4, 17)
     assert history.iloc[0]["symbol"] == "AAPL"
-    assert history.iloc[0]["is_candidate"] == 1
+    assert history.iloc[0]["selection_rank"] == 1
     assert history.iloc[0]["signal_active"] == 1
     assert history.iloc[0]["anomaly_count"] == 0
     assert history.iloc[0]["missing_days_count"] == 0
@@ -177,7 +177,7 @@ def test_backfill_orchestrates_dates_and_persistence(monkeypatch) -> None:
             "trend_score": [1.0],
             "vcp_score": [1.0],
             "final_score": [1.0],
-            "is_candidate": [1],
+            "selection_rank": [1],
             "sentiment_net_agg": [0.0],
             "sector_impact_agg": [0.0],
             "final_score_sentiment": [1.0],
@@ -225,7 +225,7 @@ def test_backfill_persists_completed_days_before_later_interruption(monkeypatch)
                 "trend_score": [1.0],
                 "vcp_score": [1.0],
                 "final_score": [1.0],
-                "is_candidate": [1],
+                "selection_rank": [1],
                 "sentiment_net_agg": [0.0],
                 "sector_impact_agg": [0.0],
                 "final_score_sentiment": [1.0],
@@ -421,6 +421,9 @@ def test_compute_selector_snapshot_logs_aggregated_pit_summary(monkeypatch, capl
         def rank_and_select(self, df: pd.DataFrame) -> pd.DataFrame:
             return df
 
+        def rank_and_select_short(self, df: pd.DataFrame, selected: pd.DataFrame) -> pd.DataFrame:
+            return pd.DataFrame()
+
     screener_df = pd.DataFrame({"symbol": ["AAA", "BBB"]})
     monkeypatch.setattr(
         service,
@@ -487,7 +490,12 @@ def test_compute_selector_snapshot_disables_spread_filter_when_quote_coverage_is
             return df
 
         def rank_and_select(self, df: pd.DataFrame) -> pd.DataFrame:
-            return df.head(1)
+            selected = df.head(1).copy()
+            selected["selection_rank"] = 1
+            return selected
+
+        def rank_and_select_short(self, df: pd.DataFrame, selected: pd.DataFrame) -> pd.DataFrame:
+            return pd.DataFrame()
 
     strict_scanner = _FakeScanner(max_spread_bps=40.0)
     relaxed_scanner = _FakeScanner(max_spread_bps=None)
@@ -505,7 +513,7 @@ def test_compute_selector_snapshot_disables_spread_filter_when_quote_coverage_is
         result = service._compute_selector_snapshot(screener_df, date(2026, 4, 17))
 
     assert len(result) == 3
-    assert int(result["is_candidate"].sum()) == 1
+    assert int(result["selection_rank"].notna().sum()) == 1
     assert "couverture quotes PIT insuffisante pour filtre spread" in caplog.text
     assert "spread_filter_active=False" in caplog.text
 
@@ -568,6 +576,9 @@ def test_compute_selector_snapshot_prefetches_metadata_and_overlays_once_per_day
 
         def rank_and_select(self, df: pd.DataFrame) -> pd.DataFrame:
             return df.head(2)
+
+        def rank_and_select_short(self, df: pd.DataFrame, selected: pd.DataFrame) -> pd.DataFrame:
+            return pd.DataFrame()
 
     screener_df = pd.DataFrame(
         {

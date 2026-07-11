@@ -43,7 +43,7 @@ Vérifier que les données existent sur la période cible :
     -- 1) Plage des candidats dans stock_scores_history
     SELECT MIN(snapshot_date), MAX(snapshot_date), COUNT(*)
     FROM stock_scores_history
-    WHERE is_candidate = 1
+    WHERE selection_rank IS NOT NULL
       AND capital_preset_key = 'capital_2001_5000';
 
     -- 2) Plage des prix dans stock_bars_daily
@@ -73,7 +73,7 @@ Mesurer la corrélation signal ↔ forward return (Pearson manuel, MySQL < 8.0) 
             AND b5.date = DATE_ADD(b.date, INTERVAL 10 DAY)
         WHERE b.date BETWEEN '2018-01-02' AND '2023-09-14'
     ) fwd ON fwd.symbol = s.symbol AND fwd.date = s.snapshot_date
-    WHERE s.is_candidate = 1
+    WHERE s.selection_rank IS NOT NULL
       AND s.capital_preset_key = 'capital_2001_5000'
       AND s.snapshot_date BETWEEN '2018-01-02' AND '2023-09-14';
 
@@ -178,16 +178,16 @@ def _load_candidates(
             scores_hist.c.sector,
             scores_hist.c.final_score,
             scores_hist.c.short_score,
-            scores_hist.c.candidate_rank,
+            scores_hist.c.selection_rank,
         )
         .where(
             and_(
                 scores_hist.c.snapshot_date.between(start, end),
                 scores_hist.c.capital_preset_key == capital_preset_key,
-                scores_hist.c.is_candidate == 1,
+                scores_hist.c.selection_rank.is_not(None),
             )
         )
-        .order_by(scores_hist.c.snapshot_date, scores_hist.c.candidate_rank)
+        .order_by(scores_hist.c.snapshot_date, scores_hist.c.selection_rank)
     )
     rows = session.execute(q).mappings().all()
     df = pd.DataFrame(rows)

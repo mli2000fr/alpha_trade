@@ -128,7 +128,7 @@ def _default_replay_loader(trade_date: date, account_id: str) -> pd.DataFrame:
     Le module ``backtesting/parity_replay.py`` (replay backtest réel via
     ``signal_replay`` + ``risk_bridge``) est laissé en TODO post-S9 :
     nécessite de figer une API stable au-dessus de
-    ``RiskRepository.load_candidates_asof`` + ``PortfolioBuilder``.
+    ``RiskRepository.load_selection_inputs_asof`` + ``PortfolioBuilder``.
     """
     try:
         from backtesting.parity_replay import replay_decisions_for_date  # type: ignore[import-not-found]

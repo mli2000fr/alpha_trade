@@ -42,12 +42,12 @@ START_DATE = "2020-01-01"
 END_DATE = "2026-06-21"
 CAPITAL_PRESET_KEY = "capital_2001_5000"
 HORIZONS = (5, 10, 20)
-CANDIDATES_ONLY = True
+SELECTED_ONLY = True
 
 
-def fetch_raw_dataset(engine, start_date: str, end_date: str, capital_preset_key: str, candidates_only: bool) -> pd.DataFrame:
+def fetch_raw_dataset(engine, start_date: str, end_date: str, capital_preset_key: str, selected_only: bool) -> pd.DataFrame:
     """Charge les données brutes depuis stock_scores_history."""
-    candidates_clause = "AND h.is_candidate = 1" if candidates_only else ""
+    selection_clause = "AND h.selection_rank IS NOT NULL" if selected_only else ""
 
     query = text(f"""
         SELECT
@@ -67,12 +67,12 @@ def fetch_raw_dataset(engine, start_date: str, end_date: str, capital_preset_key
             h.macro_regime_component,
             h.quant_component,
             h.signal_active,
-            h.is_candidate,
+            h.selection_rank,
             h.capital_preset_key
         FROM stock_scores_history h
         WHERE h.snapshot_date BETWEEN :start_date AND :end_date
           AND h.capital_preset_key = :capital_preset_key
-          {candidates_clause}
+          {selection_clause}
         ORDER BY h.snapshot_date, h.symbol
     """)
 
@@ -296,14 +296,14 @@ def main() -> None:
     print(f"Période         : {START_DATE} → {END_DATE}")
     print(f"Capital preset  : {CAPITAL_PRESET_KEY}")
     print(f"Horizons        : {HORIZONS}")
-    print(f"Candidats only  : {CANDIDATES_ONLY}")
+    print(f"Sélections only : {SELECTED_ONLY}")
     print()
 
     # -----------------------------------------------------------------------
     # 1. Chargement des données
     # -----------------------------------------------------------------------
     print("📥 [1/6] Chargement des données brutes depuis stock_scores_history...")
-    raw = fetch_raw_dataset(engine, START_DATE, END_DATE, CAPITAL_PRESET_KEY, CANDIDATES_ONLY)
+    raw = fetch_raw_dataset(engine, START_DATE, END_DATE, CAPITAL_PRESET_KEY, SELECTED_ONLY)
 
     if raw.empty:
         print("❌ Aucune donnée trouvée. Vérifiez les paramètres.")

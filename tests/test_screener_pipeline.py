@@ -49,7 +49,7 @@ def test_compute_scores_filters_illiquid_symbols_and_sorts_descending() -> None:
     assert list(scores["total_score"]) == sorted(scores["total_score"], reverse=True)
     assert scores["total_score"].between(0.0, 100.0).all()
     assert scores.iloc[0]["symbol"] == "AAA"
-    assert set(scores["is_candidate"]) == {0}
+    assert "is_candidate" not in scores.columns
     assert scores["sector"].isna().all()
     assert scores["last_updated_score"].notna().all()
     assert scores["last_updated_scan"].notna().all()

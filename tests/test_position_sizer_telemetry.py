@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from risk_management import cli as risk_cli
 from risk_management.config import RiskConfig
 from risk_management.models import (
-    CandidateScore,
+    SelectionScore,
     PriceInfo,
 )
 from risk_management.position_sizer import PositionSizer
@@ -82,7 +82,7 @@ def stub_repo_with_rejects(monkeypatch):
     """Repo qui livre 8 candidats dont 4 sans ATR, 4 avec notional insuffisant."""
 
     candidates = [
-        CandidateScore(symbol=f"S{i}", sector="Tech", score_used=0.9, score_source="x")
+        SelectionScore(symbol=f"S{i}", sector="Tech", score_used=0.9, score_source="x")
         for i in range(8)
     ]
     # 4 premiers : ATR None  → rejected_atr_missing

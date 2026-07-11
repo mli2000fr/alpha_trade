@@ -146,7 +146,7 @@ def test_analyze_period_computes_survival_and_forward_metrics(monkeypatch) -> No
         {
             "symbol": ["AAA", "BBB", "CCC"],
             "sector": ["Tech", "Energy", "Health"],
-            "is_candidate": [1, 1, 0],
+                "selection_rank": [1, 2, None],
             "final_score": [0.80, 0.70, 0.55],
             "final_score_sentiment": [0.82, 0.72, 0.55],
             "total_score": [95.0, 90.0, 80.0],

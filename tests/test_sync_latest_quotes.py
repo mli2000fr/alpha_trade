@@ -539,13 +539,13 @@ def test_sync_latest_quotes_emits_latest_batch_progress_logs(monkeypatch, caplog
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
 
     with caplog.at_level(logging.INFO):
-        summary = sync_latest_quotes.sync_latest_quotes(batch_size=2, symbol_source="candidates")
+        summary = sync_latest_quotes.sync_latest_quotes(batch_size=2, symbol_source="active-tradable")
 
     assert summary == {"symbols": 3, "rows_upserted": 3}
     messages = "\n".join(record.getMessage() for record in caplog.records)
-    assert "Sync latest quotes start | mode=latest symbol_source=candidates symbols=3" in messages
+    assert "Sync latest quotes start | mode=latest symbol_source=active-tradable symbols=3" in messages
     assert "batch=1/2" in messages
     assert "rows_in_batch=2" in messages
-    assert "Sync latest quotes completed | mode=latest symbol_source=candidates symbols=3 rows_upserted=3" in messages
+    assert "Sync latest quotes completed | mode=latest symbol_source=active-tradable symbols=3 rows_upserted=3" in messages
 
 

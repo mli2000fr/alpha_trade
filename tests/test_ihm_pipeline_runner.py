@@ -590,7 +590,7 @@ def test_build_pipeline_command_rebuild_daily_sentiment_features_only_reuses_man
         PipelineLaunchOptions(
             news_import_start_date="2022-01-01",
             news_import_end_date="2022-01-31",
-            news_import_symbol_source="candidates",
+            news_import_symbol_source="tradable-universe",
             news_import_max_symbols=25,
             sentiment_news_provider="eodhd",
         ),
@@ -608,7 +608,7 @@ def test_build_pipeline_command_rebuild_daily_sentiment_features_only_reuses_man
         "--ingestion-source",
         "eodhd",
         "--ticker-symbol-source",
-        "candidates",
+        "tradable-universe",
         "--ticker-max-symbols",
         "25",
     ]
@@ -728,7 +728,7 @@ def test_build_pipeline_command_sync_latest_quotes_accepts_historical_period() -
     command = build_pipeline_command(
         "sync_latest_quotes",
         PipelineLaunchOptions(
-            data_integrity_quotes_symbol_source="candidates",
+            data_integrity_quotes_symbol_source="active_tradable",
             data_integrity_quotes_from_date="2026-04-01",
             data_integrity_quotes_to_date="2026-04-30",
             data_integrity_quotes_start_symbol=" aag ",
@@ -745,7 +745,7 @@ def test_build_pipeline_command_sync_latest_quotes_accepts_historical_period() -
         "--batch-size",
         "60",
         "--symbol-source",
-        "candidates",
+        "active-tradable",
         "--from-date",
         "2026-04-01",
         "--to-date",
@@ -1267,13 +1267,13 @@ def test_build_pipeline_command_import_news_pending_loop_exposes_symbol_scope_op
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",
         news_import_end_date="2026-04-15",
-        news_import_symbol_source="candidates",
+        news_import_symbol_source="tradable-universe",
         news_import_max_symbols=500,
     )
 
     command = build_pipeline_command("import_news_pending_loop", options)
 
-    assert command[command.index("-SymbolSource") + 1] == "candidates"
+    assert command[command.index("-SymbolSource") + 1] == "tradable-universe"
     assert command[command.index("-MaxSymbols") + 1] == "500"
     assert "-Symbols" not in command
 

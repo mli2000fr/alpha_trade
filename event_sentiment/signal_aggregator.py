@@ -71,7 +71,7 @@ def _resolve_lock_dir() -> Path:
 
 
 def _lock_path(trade_date: date, all_symbols: bool) -> Path:
-    scope = "all" if all_symbols else "candidates"
+    scope = "all" if all_symbols else "scored"
     return _resolve_lock_dir() / f"{trade_date.isoformat()}_{scope}.lock"
 
 
@@ -1576,7 +1576,7 @@ def main(argv: list[str] | None = None) -> int:
             "(verrou=%s). Re-lancement refuse pour eviter une double fusion "
             "sentiment. Utiliser --allow-rerun pour forcer.",
             ref_date,
-            "all" if args.all_symbols else "candidates",
+            "all" if args.all_symbols else "scored",
             _lock_path(ref_date, bool(args.all_symbols)),
         )
         _emit_run_summary(

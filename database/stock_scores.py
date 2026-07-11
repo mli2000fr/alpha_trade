@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import pandas as pd
-from sqlalchemy import Boolean, Column, Float, Integer, MetaData, String, Table, select
+from sqlalchemy import Column, Float, Integer, MetaData, String, Table, select
 
 from database.connection import get_sqlalchemy_engine
 
@@ -39,7 +39,6 @@ def get_stock_scores_table(*, engine=None) -> Table:
         "stock_scores",
         MetaData(),
         Column("symbol", String(20), primary_key=True),
-        Column("is_candidate", Boolean),
         Column("total_score", Float),
         Column("final_score_sentiment", Float),
         Column("anomaly_count", Integer),
@@ -88,9 +87,6 @@ def load_score_context(
         if column in resolved_table.c:
             selected_columns.append(column)
             selected_expressions.append(resolved_table.c[column])
-        elif column == "selection_rank" and "candidate_rank" in resolved_table.c:
-            selected_columns.append(column)
-            selected_expressions.append(resolved_table.c.candidate_rank.label(column))
 
     stmt = select(*selected_expressions).where(
         resolved_table.c.symbol.is_not(None)

@@ -769,13 +769,13 @@ def _portfolio_entries_to_parity_frame(entries: Sequence[object]) -> pd.DataFram
     return frame
 
 
-def build_candidate_target_parity_summary(
+def build_selection_target_parity_summary(
     *,
     research_signals_df: pd.DataFrame,
     risk_entries: Sequence[object],
     phase2_mode: str,
 ) -> dict[str, Any]:
-    """Construit un comparatif candidat research -> target risk par séance."""
+    """Construit un comparatif sélection research -> target risk par séance."""
     normalized_research = _normalize_research_selected_rows(research_signals_df)
     risk_frame = _portfolio_entries_to_parity_frame(risk_entries)
     session_dates = _sorted_session_dates_from_frames(normalized_research, risk_frame)
@@ -800,7 +800,7 @@ def build_candidate_target_parity_summary(
 
         divergence_reasons: list[str] = []
         if research_only_symbols:
-            divergence_reasons.append("research_only_candidates")
+            divergence_reasons.append("research_only_selections")
         if risk_only_symbols:
             divergence_reasons.append("risk_only_targets")
         if not rejected_risk_day.empty:
@@ -874,11 +874,11 @@ def build_candidate_target_parity_summary(
     }
 
 
-def save_candidate_target_parity_summary(summary: Mapping[str, Any], output_dir: Path) -> dict[str, Path]:
-    """Sauvegarde le comparatif candidate->target au format JSON + CSV."""
+def save_selection_target_parity_summary(summary: Mapping[str, Any], output_dir: Path) -> dict[str, Path]:
+    """Sauvegarde le comparatif sélection research -> target au format JSON + CSV."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / "candidate_target_parity_summary.json"
-    csv_path = output_dir / "candidate_target_parity_sessions.csv"
+    json_path = output_dir / "selection_target_parity_summary.json"
+    csv_path = output_dir / "selection_target_parity_sessions.csv"
     json_path.write_text(json.dumps(dict(summary), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     sessions = summary.get("sessions", []) if isinstance(summary, Mapping) else []
     rows: list[dict[str, object]] = []
@@ -903,8 +903,8 @@ def save_candidate_target_parity_summary(summary: Mapping[str, Any], output_dir:
             )
     pd.DataFrame(rows).to_csv(csv_path, index=False)
     return {
-        "candidate_target_parity_summary_json": json_path,
-        "candidate_target_parity_sessions_csv": csv_path,
+        "selection_target_parity_summary_json": json_path,
+        "selection_target_parity_sessions_csv": csv_path,
     }
 
 
@@ -1968,7 +1968,7 @@ def build_fidelity_baseline_snapshot(
     *,
     fidelity_manifest: Mapping[str, Any],
     replay_diagnostic_summary: Mapping[str, Any] | None = None,
-    candidate_target_parity_summary: Mapping[str, Any] | None = None,
+    selection_target_parity_summary: Mapping[str, Any] | None = None,
     compare_to_live_summary: Mapping[str, Any] | None = None,
     execution_broker_like_summary: Mapping[str, Any] | None = None,
     baseline_id: str | None = None,
@@ -1992,7 +1992,7 @@ def build_fidelity_baseline_snapshot(
     available_sections = {
         "fidelity_manifest": True,
         "replay_diagnostic_summary": isinstance(replay_diagnostic_summary, Mapping) and bool(replay_diagnostic_summary),
-        "candidate_target_parity_summary": isinstance(candidate_target_parity_summary, Mapping) and bool(candidate_target_parity_summary),
+        "selection_target_parity_summary": isinstance(selection_target_parity_summary, Mapping) and bool(selection_target_parity_summary),
         "compare_to_live_summary": isinstance(compare_to_live_summary, Mapping) and bool(compare_to_live_summary),
         "execution_broker_like_summary": isinstance(execution_broker_like_summary, Mapping) and bool(execution_broker_like_summary),
     }
@@ -2013,10 +2013,10 @@ def build_fidelity_baseline_snapshot(
             replay_diagnostic_summary.get("degraded_session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0,
             replay_diagnostic_summary.get("session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0,
         ),
-        "parity_session_count": float(_safe_int(candidate_target_parity_summary.get("session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0)),
+        "parity_session_count": float(_safe_int(selection_target_parity_summary.get("session_count", 0) if isinstance(selection_target_parity_summary, Mapping) else 0)),
         "parity_diverged_session_ratio": _safe_ratio(
-            candidate_target_parity_summary.get("diverged_session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0,
-            candidate_target_parity_summary.get("session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0,
+            selection_target_parity_summary.get("diverged_session_count", 0) if isinstance(selection_target_parity_summary, Mapping) else 0,
+            selection_target_parity_summary.get("session_count", 0) if isinstance(selection_target_parity_summary, Mapping) else 0,
         ),
         "compare_live_session_count": float(_safe_int(compare_to_live_summary.get("session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0)),
         "compare_live_live_session_count": float(_safe_int(compare_to_live_summary.get("live_session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0)),
@@ -2063,9 +2063,9 @@ def build_fidelity_baseline_snapshot(
                 "session_count": _safe_int(replay_diagnostic_summary.get("session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0),
                 "degraded_session_count": _safe_int(replay_diagnostic_summary.get("degraded_session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0),
             },
-            "candidate_target_parity_summary": {
-                "session_count": _safe_int(candidate_target_parity_summary.get("session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0),
-                "diverged_session_count": _safe_int(candidate_target_parity_summary.get("diverged_session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0),
+            "selection_target_parity_summary": {
+                "session_count": _safe_int(selection_target_parity_summary.get("session_count", 0) if isinstance(selection_target_parity_summary, Mapping) else 0),
+                "diverged_session_count": _safe_int(selection_target_parity_summary.get("diverged_session_count", 0) if isinstance(selection_target_parity_summary, Mapping) else 0),
             },
             "compare_to_live_summary": {
                 "session_count": _safe_int(compare_to_live_summary.get("session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0),
@@ -2226,9 +2226,9 @@ def promote_fidelity_baseline_from_report(
         "replay_diagnostic_summary_json",
         artifacts_dir=artifacts_dir,
     )
-    candidate_target_parity_summary = _load_json_artifact_from_report(
+    selection_target_parity_summary = _load_json_artifact_from_report(
         artifacts_mapping,
-        "candidate_target_parity_summary_json",
+        "selection_target_parity_summary_json",
         artifacts_dir=artifacts_dir,
     )
     compare_to_live_summary = _load_json_artifact_from_report(
@@ -2244,7 +2244,7 @@ def promote_fidelity_baseline_from_report(
     snapshot = build_fidelity_baseline_snapshot(
         fidelity_manifest=fidelity_manifest,
         replay_diagnostic_summary=replay_diagnostic_summary,
-        candidate_target_parity_summary=candidate_target_parity_summary,
+        selection_target_parity_summary=selection_target_parity_summary,
         compare_to_live_summary=compare_to_live_summary,
         execution_broker_like_summary=execution_broker_like_summary,
         baseline_id=normalized_baseline_id,
@@ -3245,7 +3245,7 @@ __all__ = [
     "MlPreparationDiagnostics",
     "PreparedPredictionsResult",
     "REASON_TAXONOMY",
-    "build_candidate_target_parity_summary",
+    "build_selection_target_parity_summary",
     "build_compare_to_live_summary",
     "build_fidelity_baseline_comparison",
     "build_fidelity_baseline_snapshot",
@@ -3258,7 +3258,7 @@ __all__ = [
     "save_fidelity_baseline_snapshot",
     "save_fidelity_manifest",
     "save_fidelity_symbol_matrix",
-    "save_candidate_target_parity_summary",
+    "save_selection_target_parity_summary",
     "save_compare_to_live_summary",
     "save_coverage_summary",
     "save_replay_diagnostic_summary",

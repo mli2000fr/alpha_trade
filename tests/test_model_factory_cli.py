@@ -298,7 +298,7 @@ def test_load_historical_prediction_scopes_from_scores_history_groups_symbols_by
     monkeypatch.setattr(
         data_loader,
         "_get_table_columns",
-        lambda engine, table_name: {"snapshot_date", "symbol", "is_candidate", "selector_signal_mode", "candidate_rank", "earnings_blackout"},
+        lambda engine, table_name: {"snapshot_date", "symbol", "selector_signal_mode", "selection_rank", "earnings_blackout"},
     )
 
     scopes = data_loader.load_historical_prediction_scopes_from_scores_history(
@@ -306,7 +306,7 @@ def test_load_historical_prediction_scopes_from_scores_history_groups_symbols_by
         start_date=date(2022, 1, 1),
         end_date=date(2022, 1, 4),
         signal_modes=("strict",),
-        max_candidate_rank=20,
+        max_selection_rank=20,
         exclude_earnings_blackout=True,
     )
 
@@ -316,9 +316,9 @@ def test_load_historical_prediction_scopes_from_scores_history_groups_symbols_by
     }
     assert "FROM stock_scores_history" in captured["sql"]
     assert "snapshot_date BETWEEN :start_date AND :end_date" in captured["sql"]
-    assert "candidate_rank <= :max_candidate_rank" in captured["sql"]
+    assert "selection_rank <= :max_selection_rank" in captured["sql"]
     assert "COALESCE(earnings_blackout, 0) = 0" in captured["sql"]
-    assert captured["params"]["max_candidate_rank"] == 20
+    assert captured["params"]["max_selection_rank"] == 20
     assert captured["params"]["signal_mode_0"] == "strict"
 
 

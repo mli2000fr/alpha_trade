@@ -557,8 +557,8 @@ def test_build_replay_diagnostic_session_rows_formats_expected_columns() -> None
     assert rows.iloc[0]["Dégradée"] == "oui"
 
 
-def test_build_candidate_target_parity_rows_formats_expected_columns() -> None:
-    rows = backtesting._build_candidate_target_parity_rows(
+def test_build_selection_target_parity_rows_formats_expected_columns() -> None:
+    rows = backtesting._build_selection_target_parity_rows(
         {
             "sessions": [
                 {
@@ -569,7 +569,7 @@ def test_build_candidate_target_parity_rows_formats_expected_columns() -> None:
                     "risk_rejected_count": 1,
                     "research_only_symbols": ["BBB"],
                     "risk_only_symbols": [],
-                    "divergence_reasons": ["research_only_candidates", "risk_rejections"],
+                        "divergence_reasons": ["research_only_selections", "risk_rejections"],
                 }
             ]
         }

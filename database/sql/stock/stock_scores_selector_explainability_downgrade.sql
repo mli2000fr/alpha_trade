@@ -16,7 +16,7 @@ ALTER TABLE alpha_trade.stock_scores_history
     DROP COLUMN normalized_rsi,
     DROP COLUMN normalized_total_score,
     DROP COLUMN raw_final_score,
-    DROP COLUMN candidate_rank;
+    DROP COLUMN selection_rank;
 
 ALTER TABLE alpha_trade.stock_scores
     DROP COLUMN selection_explanation,
@@ -33,5 +33,5 @@ ALTER TABLE alpha_trade.stock_scores
     DROP COLUMN normalized_rsi,
     DROP COLUMN normalized_total_score,
     DROP COLUMN raw_final_score,
-    DROP COLUMN candidate_rank;
+    DROP COLUMN selection_rank;
 

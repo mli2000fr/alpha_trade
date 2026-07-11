@@ -20,7 +20,7 @@ def normalize_symbol_source(symbol_source: str | None) -> str:
         "stock-scores": "stock-scores",
         "stock-scores-history": "stock-scores-history",
         "stock-scores-all": "stock-scores-all",
-        "candidates": "candidates",
+        "candidates": "active-tradable",
         "stock-bars-daily": "stock-bars-daily",
     }.get(normalized, normalized)
 

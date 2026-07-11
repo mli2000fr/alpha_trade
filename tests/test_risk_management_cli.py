@@ -123,11 +123,11 @@ def test_cli_main_live_short_path_tags_candidates_before_builder(monkeypatch) ->
             }
 
         def load_candidates_asof(self, trade_date):
-            from risk_management.models import CandidateScore
+            from risk_management.models import SelectionScore
 
             return [
-                CandidateScore("AAPL", "Tech", 0.15),
-                CandidateScore("MSFT", "Tech", 0.20),
+                SelectionScore("AAPL", "Tech", 0.15),
+                SelectionScore("MSFT", "Tech", 0.20),
             ]
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -708,9 +708,9 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
             return {}
 
         def load_candidates_asof(self, trade_date):
-            from risk_management.models import CandidateScore
+            from risk_management.models import SelectionScore
 
-            return [CandidateScore("AAPL", "Tech", 0.9), CandidateScore("MSFT", "Tech", 0.8)]
+            return [SelectionScore("AAPL", "Tech", 0.9), SelectionScore("MSFT", "Tech", 0.8)]
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             raise AssertionError("Les prix ne doivent pas Ãªtre chargÃ©s si le rÃ©gime bloque les entrÃ©es")
@@ -773,9 +773,9 @@ def test_cli_main_blocks_run_when_ml_coverage_is_below_threshold(monkeypatch) ->
             return {}
 
         def load_candidates_asof(self, trade_date):
-            from risk_management.models import CandidateScore
+            from risk_management.models import SelectionScore
 
-            return [CandidateScore("AAPL", "Tech", 0.9), CandidateScore("MSFT", "Tech", 0.8)]
+            return [SelectionScore("AAPL", "Tech", 0.9), SelectionScore("MSFT", "Tech", 0.8)]
 
         def load_predictions_asof(self, symbols, trade_date):
             return {"AAPL": object()}
@@ -896,10 +896,10 @@ def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -
             return {}
 
         def load_candidates_asof(self, trade_date):
-            from risk_management.models import CandidateScore
+            from risk_management.models import SelectionScore
 
             return [
-                CandidateScore(
+                SelectionScore(
                     "AAPL",
                     "Tech",
                     0.9,

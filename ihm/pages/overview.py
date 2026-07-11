@@ -30,11 +30,11 @@ from ihm.services.run_summary import (
 from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import (
     get_alpha_scanner_dependency_diagnostic,
-    get_candidates_count,
+    get_selection_count,
     get_daily_pnl_data,
     get_latest_exec_run,
     get_latest_risk_run_id,
-    get_top_candidates,
+    get_top_selected_symbols,
 )
 
 SCREENER_ARTIFACT_SELECTBOX_KEY = "overview_screener_artifacts_dir_select"
@@ -263,11 +263,11 @@ def render() -> None:
     _render_pnl_widget(get_daily_pnl_data())
 
     # --- KPI ---
-    candidates = get_candidates_count()
+    selected_symbols = get_selection_count()
     risk_run = get_latest_risk_run_id()
     exec_df = get_latest_exec_run()
 
-    if get_last_query_error() and exec_df.empty and not risk_run and candidates == 0:
+    if get_last_query_error() and exec_df.empty and not risk_run and selected_symbols == 0:
         st.warning(get_last_query_error())
         st.caption("La connexion DB existe, mais certaines tables attendues par la vue d'ensemble semblent absentes ou incompatibles.")
 
@@ -276,12 +276,12 @@ def render() -> None:
     exec_status = str(latest_exec["status"]) if latest_exec is not None else None
     total_filled = _coerce_int(cast(Any, latest_exec["total_filled"])) if latest_exec is not None else 0
 
-    candidates_value = int(candidates)
+    selected_symbols_value = int(selected_symbols)
     risk_run_value = risk_run or "—"
     metrics = cast(
         list[tuple[str, str | int | float, str | None]],
         [
-            ("Candidats", candidates_value, None),
+            ("Sélections score", selected_symbols_value, None),
             ("Dernier risk_run_id", risk_run_value, None),
             ("Dernier exec_run_id", exec_run_id, None),
             ("Fills dernier run", total_filled, None),
@@ -290,8 +290,8 @@ def render() -> None:
     metric_row(metrics)
 
     alerts: list[str] = []
-    if candidates == 0:
-        alerts.append("⚠️ Aucun candidat (`is_candidate=1`) dans `stock_scores`.")
+    if selected_symbols == 0:
+        alerts.append("⚠️ Aucune sélection score dans `stock_scores`.")
     if exec_status and exec_status.upper() not in ("COMPLETED", "SUCCESS"):
         alerts.append(f"⚠️ Dernière exécution : {run_status_badge(exec_status)}")
     for alert in alerts:
@@ -344,13 +344,13 @@ def render() -> None:
             show_dataframe(screener_objective_rows, height=220)
 
     with st.container(border=True):
-        st.subheader("4. Top candidats")
+        st.subheader("4. Top sélections")
         st.caption("Vue courte des meilleurs scores sentiment déjà passés par le flux amont.")
         render_symbol_table(
-            get_top_candidates(10),
-            key="overview_top_candidates",
+            get_top_selected_symbols(10),
+            key="overview_top_selected_symbols",
             symbol_col="symbol",
-            title="Top 10 candidats par score sentiment",
+            title="Top 10 sélections par score sentiment",
             height=320,
         )
 

@@ -647,11 +647,11 @@ class TestFidelityManifestSprint1:
         }
         assert first_session["provenance_refs"]["scores_snapshot_id"] == "2025-01-02|stock_scores_history|capital_50001_100000|present"
 
-    def test_build_candidate_target_parity_summary_exposes_rejections_and_divergences(self):
+    def test_build_selection_target_parity_summary_exposes_rejections_and_divergences(self):
         from datetime import date
         from types import SimpleNamespace
 
-        from backtesting.fidelity import build_candidate_target_parity_summary
+        from backtesting.fidelity import build_selection_target_parity_summary
 
         research_signals_df = pd.DataFrame(
             {
@@ -668,7 +668,7 @@ class TestFidelityManifestSprint1:
         risk_entries = [
             SimpleNamespace(
                 symbol="AAA",
-                candidate_rank=1,
+                selection_rank=1,
                 decision_rank=1,
                 score_used=0.9,
                 score_source="final_score_walk_forward",
@@ -684,7 +684,7 @@ class TestFidelityManifestSprint1:
             ),
             SimpleNamespace(
                 symbol="BBB",
-                candidate_rank=2,
+                selection_rank=2,
                 decision_rank=None,
                 score_used=0.8,
                 score_source="final_score_sentiment",
@@ -700,7 +700,7 @@ class TestFidelityManifestSprint1:
             ),
         ]
 
-        payload = build_candidate_target_parity_summary(
+        payload = build_selection_target_parity_summary(
             research_signals_df=research_signals_df,
             risk_entries=risk_entries,
             phase2_mode="risk",
@@ -712,7 +712,7 @@ class TestFidelityManifestSprint1:
         assert session["research_only_symbols"] == ["BBB"]
         assert session["risk_rejected_symbols"] == ["BBB"]
         assert session["rejection_reason_counts"] == {"constraint_max_positions": 1}
-        assert session["divergence_reasons"] == ["research_only_candidates", "risk_rejections"]
+        assert session["divergence_reasons"] == ["research_only_selections", "risk_rejections"]
         assert session["common_rows"][0]["research_conviction_source"] == "core.conviction:score_only"
         assert session["rejected_rows"][0]["decision_reason_code"] == "constraint_max_positions"
 
@@ -909,7 +909,7 @@ class TestFidelityManifestSprint1:
                 },
             },
             replay_diagnostic_summary={"session_count": 2, "degraded_session_count": 1},
-            candidate_target_parity_summary={"session_count": 2, "diverged_session_count": 1},
+            selection_target_parity_summary={"session_count": 2, "diverged_session_count": 1},
             compare_to_live_summary={
                 "session_count": 2,
                 "live_session_count": 2,

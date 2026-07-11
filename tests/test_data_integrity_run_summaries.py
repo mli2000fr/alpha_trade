@@ -93,7 +93,7 @@ def test_sync_latest_quotes_main_emits_failed_summary_when_sync_raises(monkeypat
                 "parse_args": lambda self: argparse.Namespace(
                     from_date="2026-04-01",
                     to_date="2026-04-15",
-                    symbol_source="candidates",
+                    symbol_source="active-tradable",
                     limit=5,
                     batch_size=10,
                     start_symbol=" msft ",
@@ -113,7 +113,7 @@ def test_sync_latest_quotes_main_emits_failed_summary_when_sync_raises(monkeypat
     payload = _payload_from_stdout(capsys.readouterr().out.strip(), sync_latest_quotes.RUN_SUMMARY_PREFIX)
     assert payload["audit_status"] == "failed"
     assert payload["error_message"] == "RuntimeError('boom')"
-    assert payload["symbol_source"] == "candidates"
+    assert payload["symbol_source"] == "active-tradable"
     assert payload["start_symbol"] == "MSFT"
     assert payload["symbols"] == 0
     assert payload["rows_upserted"] == 0
@@ -175,7 +175,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
                 "parse_args": lambda self: argparse.Namespace(
                     from_date="2026-04-01",
                     to_date="2026-04-15",
-                    symbol_source="candidates",
+                    symbol_source="active-tradable",
                     limit=22,
                     sleep_seconds=1.4,
                     log_every=7,
@@ -196,7 +196,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
     payload = _payload_from_stdout(capsys.readouterr().out.strip(), sync_earnings_calendar.RUN_SUMMARY_PREFIX)
     assert payload["from_date"] == "2026-04-01"
     assert payload["to_date"] == "2026-04-15"
-    assert payload["symbol_source"] == "candidates"
+    assert payload["symbol_source"] == "active-tradable"
     assert payload["requested_limit"] == 22
     assert payload["sleep_seconds"] == 1.4
     assert payload["log_every"] == 7

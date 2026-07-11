@@ -159,7 +159,7 @@ def test_compute_features_merges_selector_context_pit_safely() -> None:
             "symbol": ["AAPL", "AAPL"],
             "date": [dates[-2], dates[-1]],
             "trend_score": [0.74, 0.82],
-            "candidate_rank": [7, 3],
+            "selection_rank": [7, 3],
             "earnings_blackout": [0, 1],
             "selector_signal_mode": ["strict", "sector_neutralized"],
         }
@@ -174,7 +174,7 @@ def test_compute_features_merges_selector_context_pit_safely() -> None:
     assert not result.empty
     last_row = result.iloc[-1]
     assert last_row["selector_trend_score"] == 0.82
-    assert last_row["selector_candidate_rank"] == 3.0
+    assert last_row["selector_selection_rank"] == 3.0
     assert last_row["selector_earnings_blackout"] == 1.0
     assert last_row["selector_mode_sector_neutralized"] == 1.0
 

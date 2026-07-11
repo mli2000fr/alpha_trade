@@ -89,7 +89,7 @@ def test_load_score_context_exposes_available_score_columns() -> None:
         "stock_scores",
         metadata,
         Column("symbol", String(20), primary_key=True),
-        Column("candidate_rank", Integer),
+        Column("selection_rank", Integer),
         Column("total_score", Float),
         Column("trend_score", Float),
         Column("selector_signal_mode", String(32)),

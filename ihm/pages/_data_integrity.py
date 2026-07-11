@@ -37,10 +37,10 @@ __all__ = ["_render_import_news_panel"]
 
 
 NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS = (
+    "tradable-universe",
     "stock_scores",
     "stock_scores_history",
     "stock_scores_all",
-    "candidates",
     "stock_bars_daily",
 )
 
@@ -508,15 +508,15 @@ def _render_import_news_panel(
                     index=NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS.index(current_symbol_source),
                     key="pipeline_import_news_symbol_source",
                     help=(
-                        "`stock_scores_all` (défaut) cible l'union dédupliquée des symboles présents dans `stock_scores` ou `stock_scores_history` ; "
+                        "`tradable-universe` cible l'univers PIT canonique ; `stock_scores_all` cible l'union dédupliquée des symboles présents dans `stock_scores` ou `stock_scores_history` ; "
                         "`stock_scores` limite l'import aux symboles du snapshot courant `stock_scores` ; "
                         "`stock_scores_history` cible les symboles déjà présents dans `stock_scores_history` ; "
-                        "`candidates` limite aux seuls candidats ; `stock_bars_daily` réactive l'ancien comportement large."
+                        "`stock_bars_daily` réactive l'ancien comportement large."
                     ),
                 )
             )
             st.caption(
-                "Aide rapide : `stock_scores_all` = union `stock_scores` + `stock_scores_history` ; "
+                "Aide rapide : `tradable-universe` = univers PIT canonique ; `stock_scores_all` = union `stock_scores` + `stock_scores_history` ; "
                 "`stock_scores` = snapshot screener courant ; "
                 "`stock_scores_history` = historique PIT ; "
                 "un symbole présent dans l'une ou l'autre table est retenu avec `stock_scores_all`."
@@ -638,8 +638,8 @@ def _render_import_news_panel(
                     "stock_scores",
                     "stock_scores_history",
                     "stock_scores_all",
-                    "candidates",
                     "stock_bars_daily",
+                    "tradable-universe",
                 ],
                 news_import_symbol_source,
             ),

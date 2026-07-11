@@ -32,8 +32,8 @@ class FactorExposures:
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateScore:
-    """Candidat lu depuis stock_scores (is_candidate=1)."""
+class SelectionScore:
+    """Score exploitable lu depuis un snapshot de scores."""
     symbol: str
     sector: str
     score_used: float
@@ -171,7 +171,7 @@ class CorrelationRejection:
 
 
 @dataclass(frozen=True, slots=True)
-class EnrichedCandidate:
+class EnrichedSelection:
     """Candidat enrichi avec toutes les données V2 avant sizing."""
     symbol: str
     sector: str

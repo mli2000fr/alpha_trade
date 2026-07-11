@@ -231,10 +231,10 @@ MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
 MLTrainSymbolSource = Literal[
+    "tradable-universe",
     "stock_scores",
     "stock_scores_history",
     "stock_scores_all",
-    "candidates",
     "stock_bars_daily",
 ]
 DataIntegritySymbolSource = Literal[
@@ -242,14 +242,13 @@ DataIntegritySymbolSource = Literal[
     "stock_scores",
     "stock_scores_history",
     "stock_scores_all",
-    "candidates",
     "stock_bars_daily",
 ]
 NewsImportSymbolSource = Literal[
+    "tradable-universe",
     "stock_scores",
     "stock_scores_history",
     "stock_scores_all",
-    "candidates",
     "stock_bars_daily",
 ]
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
@@ -268,7 +267,7 @@ class PipelineLaunchOptions:
     trade_date: str | None = None
     # Si True, écrase ``trade_date`` au lancement par le snapshot_date le plus
     # récent <= trade_date présent dans ``stock_scores_history`` (avec
-    # is_candidate=1). Permet de continuer un workflow démarré la veille même
+    # sélection classée). Permet de continuer un workflow démarré la veille même
     # après réouverture de la session Streamlit (qui ré-initialise trade_date à
     # date.today()). Décochez pour forcer la date du jour.
     force_trade_date_to_latest_snapshot: bool = True
@@ -1503,10 +1502,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     news_import_symbol_source = (
         options.news_import_symbol_source
         if options.news_import_symbol_source in {
+            "tradable-universe",
             "stock_scores",
             "stock_scores_history",
             "stock_scores_all",
-            "candidates",
             "stock_bars_daily",
         }
         else "stock_scores_all"
@@ -1529,7 +1528,6 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         "stock_scores": "stock-scores",
         "stock_scores_history": "stock-scores-history",
         "stock_scores_all": "stock-scores-all",
-        "candidates": "candidates",
         "stock_bars_daily": "stock-bars-daily",
     }.get(str(options.data_integrity_quotes_symbol_source or "").strip().lower(), None)
     earnings_symbol_source = {
@@ -1537,7 +1535,6 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         "stock_scores": "stock-scores",
         "stock_scores_history": "stock-scores-history",
         "stock_scores_all": "stock-scores-all",
-        "candidates": "candidates",
         "stock_bars_daily": "stock-bars-daily",
     }.get(str(options.data_integrity_earnings_symbol_source or "").strip().lower(), None)
     screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None

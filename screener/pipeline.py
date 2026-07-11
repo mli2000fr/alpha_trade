@@ -15,7 +15,6 @@ RESULT_COLUMNS = [
     "historical_range_score",
     "total_score",
     "last_updated_score",
-    "is_candidate",
     "sector",
     "last_updated_scan",
 ]
@@ -305,7 +304,6 @@ def finalize_scores_with_historical_range(
     ) / weight_sum
     calculated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     scored["last_updated_score"] = calculated_at
-    scored["is_candidate"] = 0
     scored["sector"] = None
     scored["last_updated_scan"] = calculated_at
 

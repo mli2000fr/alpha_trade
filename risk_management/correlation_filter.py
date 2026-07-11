@@ -6,7 +6,7 @@ import math
 
 import pandas as pd
 
-from risk_management.models import CorrelationRejection, EnrichedCandidate
+from risk_management.models import CorrelationRejection, EnrichedSelection
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,16 +46,16 @@ def build_return_matrix(
 
 
 def filter_correlated(
-    candidates: list[EnrichedCandidate],
+    candidates: list[EnrichedSelection],
     return_matrix: pd.DataFrame,
     threshold: float,
     min_overlap: int,
-) -> tuple[list[EnrichedCandidate], list[CorrelationRejection]]:
+) -> tuple[list[EnrichedSelection], list[CorrelationRejection]]:
     """Filtre greedy déterministe.
 
     Les candidats DOIVENT être triés par conviction_score DESC avant l'appel.
     """
-    retained: list[EnrichedCandidate] = []
+    retained: list[EnrichedSelection] = []
     rejections: list[CorrelationRejection] = []
 
     matrix_cols = set(return_matrix.columns) if not return_matrix.empty else set()

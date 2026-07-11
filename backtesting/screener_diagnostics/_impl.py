@@ -19,7 +19,7 @@ from backtesting.data_loader import get_required_bars_source_filter
 from database.connection import get_sqlalchemy_engine
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from risk_management.config import RiskConfig
-from risk_management.models import CandidateScore, PortfolioEntry, PriceInfo
+from risk_management.models import SelectionScore, PortfolioEntry, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
 from screener.models import ScreenerConfig
 from selector.alpha_scanner import AlphaScannerConfig
@@ -89,7 +89,7 @@ _SELECTOR_SENTIMENT_COLUMNS: dict[str, Any] = {
     "historical_range_score": np.nan,
     "anomaly_count": 0,
     "missing_days_count": 0,
-    "is_candidate": 0,
+    "selection_rank": pd.NA,
 }
 
 
@@ -1617,9 +1617,9 @@ class ScreenerDiagnosticsService:
 
     @staticmethod
     def _extract_selector_candidates(history_df: pd.DataFrame) -> pd.DataFrame:
-        if history_df.empty or "is_candidate" not in history_df.columns:
+        if history_df.empty or "selection_rank" not in history_df.columns:
             return pd.DataFrame()
-        candidates = history_df[pd.to_numeric(history_df["is_candidate"], errors="coerce").fillna(0).astype(int) == 1].copy()
+        candidates = history_df[pd.to_numeric(history_df["selection_rank"], errors="coerce").notna()].copy()
         if candidates.empty:
             return candidates
         def _as_series(col_name: str) -> pd.Series:
@@ -1651,7 +1651,7 @@ class ScreenerDiagnosticsService:
         if selector_candidates.empty:
             return []
         candidates = [
-            CandidateScore(
+            SelectionScore(
                 symbol=str(row["symbol"]),
                 sector=str(row.get("sector") or "UNKNOWN"),
                 score_used=float(row["score_for_portfolio"]),
@@ -1668,6 +1668,7 @@ class ScreenerDiagnosticsService:
                 walk_forward_quant_weight=float(row["walk_forward_quant_weight"]) if row.get("walk_forward_quant_weight") is not None else None,
                 calibration_run_id=str(row["calibration_run_id"]) if row.get("calibration_run_id") is not None else None,
                 calibration_source=str(row["calibration_source"]) if row.get("calibration_source") is not None else None,
+                selection_rank=int(row["selection_rank"]) if row.get("selection_rank") is not None and not pd.isna(row.get("selection_rank")) else None,
             )
             for row in selector_candidates.to_dict(orient="records")
         ]

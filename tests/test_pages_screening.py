@@ -164,8 +164,7 @@ def test_build_screening_display_dataframe_keeps_operator_columns() -> None:
             {
                 "symbol": "AAPL",
                 "sector": "Technology",
-                "is_candidate": 1,
-                "candidate_rank": 1,
+                "selection_rank": 1,
                 "selector_signal_mode": "sector_neutralized",
                 "final_score": 0.88,
                 "total_score": 91.0,
@@ -178,7 +177,7 @@ def test_build_screening_display_dataframe_keeps_operator_columns() -> None:
     out = screening._build_screening_display_dataframe(df)
 
     assert "symbol" in out.columns
-    assert "candidate_rank" in out.columns
+    assert "selection_rank" in out.columns
     assert "selection_explanation" in out.columns
     assert "candidate_explainability_payload" not in out.columns
 

@@ -12,7 +12,7 @@ import pandas as pd
 from backtesting.signal_replay import _pick_score_column
 from common.quantity_utils import normalize_share_quantity
 from risk_management.config import RiskConfig
-from risk_management.models import CandidateScore, PortfolioEntry, PredictionInfo, PriceInfo
+from risk_management.models import SelectionScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
 from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
 from selector.short_score import tag_short_candidates
@@ -82,7 +82,7 @@ def _prepare_score_columns(scores_df: pd.DataFrame, *, preferred_score_column: s
     return prepared
 
 
-def _build_candidates(scores_df: pd.DataFrame, snapshot_date: date) -> list[CandidateScore]:
+def _build_candidates(scores_df: pd.DataFrame, snapshot_date: date) -> list[SelectionScore]:
     day_df = _normalize_trade_dates(scores_df)
     day_df = day_df.loc[day_df["trade_date"] == pd.Timestamp(snapshot_date)]
     if day_df.empty:
@@ -90,7 +90,7 @@ def _build_candidates(scores_df: pd.DataFrame, snapshot_date: date) -> list[Cand
     return _build_candidates_from_day(day_df, snapshot_date)
 
 
-def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> list[CandidateScore]:
+def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> list[SelectionScore]:
     """Construit les ``CandidateScore`` depuis un DataFrame déjà filtré sur le jour.
 
     Parameters
@@ -104,7 +104,7 @@ def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> lis
     if day_df.empty:
         return []
 
-    candidates: list[CandidateScore] = []
+    candidates: list[SelectionScore] = []
     for _, row in day_df.iterrows():
         # Sprint 2 — lire le side depuis le DataFrame si présent (Option C short)
         side = str(row.get("side") or "buy").strip().lower()
@@ -112,7 +112,7 @@ def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> lis
             side = "buy"
 
         candidates.append(
-            CandidateScore(
+            SelectionScore(
                 symbol=str(row.get("symbol") or ""),
                 sector=str(row.get("sector") or "Unknown"),
                 score_used=float(row.get("score") if row.get("score") is not None and not pd.isna(row.get("score")) else row.get("final_score_sentiment", row.get("final_score", 0.0))),
