@@ -192,7 +192,7 @@ class RiskRepository:
             "walk_forward_macro_weight",
             "walk_forward_quant_weight",
         ]
-        optional_int_columns = ["candidate_rank", "earnings_blackout"]
+        optional_int_columns = ["selection_rank", "earnings_blackout"]
         optional_text_columns = [
             "calibration_run_id",
             "calibration_source",
@@ -268,7 +268,7 @@ class RiskRepository:
                 calibration_run_id=str(r["calibration_run_id"]) if r.get("calibration_run_id") is not None else None,
                 calibration_source=str(r["calibration_source"]) if r.get("calibration_source") is not None else None,
                 snapshot_date=self._coerce_date(r.get("snapshot_date")),
-                candidate_rank=_optional_int(r.get("candidate_rank")),
+                selection_rank=_optional_int(r.get("selection_rank")),
                 selector_signal_mode=_optional_text(r.get("selector_signal_mode")),
                 selection_explanation=_optional_text(r.get("selection_explanation")),
                 selector_earnings_blackout=_optional_int(r.get("earnings_blackout")),
@@ -1461,7 +1461,7 @@ class RiskRepository:
                    score_used, score_source, sector, account_id, entry_price
             FROM risk_decisions
             WHERE run_id = :run_id{account_clause}
-            ORDER BY COALESCE(candidate_rank, 999999), created_at DESC, symbol ASC
+            ORDER BY COALESCE(selection_rank, 999999), created_at DESC, symbol ASC
             """
         )
         try:
@@ -1488,7 +1488,7 @@ class RiskRepository:
             "company_idio_signal_norm", "macro_regime_signal_norm",
             "company_idio_component", "macro_regime_component", "quant_component",
             "walk_forward_sentiment_weight", "walk_forward_macro_weight", "walk_forward_quant_weight",
-            "calibration_run_id", "calibration_source", "account_id", "candidate_rank",
+            "calibration_run_id", "calibration_source", "account_id", "selection_rank",
             "selector_signal_mode", "selection_explanation", "selector_earnings_blackout",
             "decision_rank", "target_notional", "stop_price_initial", "risk_per_share",
             "risk_budget_dollars", "initial_risk_dollars", "score_snapshot_date",
@@ -1524,7 +1524,7 @@ class RiskRepository:
             "company_idio_signal_norm", "macro_regime_signal_norm",
             "company_idio_component", "macro_regime_component", "quant_component",
             "walk_forward_sentiment_weight", "walk_forward_macro_weight", "walk_forward_quant_weight",
-            "calibration_run_id", "calibration_source", "account_id", "candidate_rank",
+            "calibration_run_id", "calibration_source", "account_id", "selection_rank",
             "selector_signal_mode", "selection_explanation", "selector_earnings_blackout", "decision_rank",
             "target_notional", "stop_price_initial", "risk_per_share", "risk_budget_dollars",
             "initial_risk_dollars", "price_asof_date", "atr_asof_date",

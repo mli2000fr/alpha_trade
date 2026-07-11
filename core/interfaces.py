@@ -273,8 +273,8 @@ class BarsRepository(Protocol):
 class ScoresRepository(Protocol):
     """Persistance et lecture de `stock_scores` (snapshot screener / selector)."""
 
-    def list_candidates(self, *, limit: int | None = None) -> list[str]:
-        """Liste de symboles candidats issus du dernier snapshot."""
+    def list_symbols(self, *, limit: int | None = None) -> list[str]:
+        """Liste les symboles présents dans le dernier snapshot de scores."""
         ...
 
     def upsert_scores(self, scores: pd.DataFrame) -> int:

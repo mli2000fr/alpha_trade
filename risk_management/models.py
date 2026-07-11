@@ -51,7 +51,7 @@ class CandidateScore:
     calibration_run_id: str | None = None
     calibration_source: str | None = None
     snapshot_date: date | None = None
-    candidate_rank: int | None = None
+    selection_rank: int | None = None
     selector_signal_mode: str | None = None
     selection_explanation: str | None = None
     selector_earnings_blackout: int | None = None
@@ -118,7 +118,7 @@ class PortfolioEntry:
     walk_forward_quant_weight: float | None = None
     calibration_run_id: str | None = None
     calibration_source: str | None = None
-    candidate_rank: int | None = None
+    selection_rank: int | None = None
     decision_rank: int | None = None
     stop_price_initial: float | None = None
     risk_per_share: float | None = None
@@ -195,7 +195,7 @@ class EnrichedCandidate:
     snapshot_date: date | None = None
     prediction_asof_date: date | None = None
     ml_metrics_asof_date: date | None = None
-    candidate_rank: int | None = None
+    selection_rank: int | None = None
     selector_signal_mode: str | None = None
     selection_explanation: str | None = None
     selector_earnings_blackout: int | None = None

@@ -12,7 +12,7 @@ import event_sentiment.importe_news as importe_news
 
 
 class _FakeRepository:
-    def load_candidate_symbols(self) -> list[str]:
+    def load_tradable_universe_symbols(self) -> list[str]:
         return ["MSFT", "AAPL", "MSFT"]
 
     def get_checkpoints(self, source_name: str, symbols: list[str]) -> dict[str, dict[str, object]]:
@@ -52,7 +52,7 @@ def test_importe_news_main_propagates_provider_and_relevance_options(monkeypatch
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(importe_news, "configure_root_logging", lambda **kwargs: None)
-    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["AAPL", "MSFT"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_tradable_universe", lambda: ["AAPL", "MSFT"])
     monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["ZZZZ"])
     monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_bars_daily", lambda: ["ZZZZ"])
     monkeypatch.setattr(importe_news, "EventSentimentRepository", lambda: object())
@@ -206,7 +206,7 @@ def test_importe_news_main_accepts_scoring_flags_but_warns_they_are_ignored(monk
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(importe_news, "configure_root_logging", lambda **kwargs: None)
-    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["AAPL", "MSFT"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_tradable_universe", lambda: ["AAPL", "MSFT"])
     monkeypatch.setattr(importe_news, "EventSentimentRepository", lambda: object())
 
     def _fake_service_factory(repository, config):  # type: ignore[no-untyped-def]
@@ -248,7 +248,7 @@ def test_importe_news_main_accepts_scoring_flags_but_warns_they_are_ignored(monk
 def test_importe_news_main_blocks_when_max_symbols_is_exceeded(monkeypatch) -> None:
     monkeypatch.setattr(importe_news, "configure_root_logging", lambda **kwargs: None)
     monkeypatch.setattr(importe_news, "EventSentimentRepository", lambda: object())
-    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["AAPL", "MSFT", "NVDA"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_tradable_universe", lambda: ["AAPL", "MSFT", "NVDA"])
 
     monkeypatch.setattr(
         sys,
@@ -309,7 +309,7 @@ def test_importe_news_main_can_resume_from_checkpoints(monkeypatch) -> None:
             }
 
     monkeypatch.setattr(importe_news, "configure_root_logging", lambda **kwargs: None)
-    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["AAPL", "MSFT"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_tradable_universe", lambda: ["AAPL", "MSFT"])
     monkeypatch.setattr(importe_news, "EventSentimentRepository", lambda: _RepoWithCheckpoints())
 
     def _fake_service_factory(repository, config):  # type: ignore[no-untyped-def]
@@ -355,17 +355,16 @@ def test_resolve_symbols_from_inputs_uses_explicit_csv_first() -> None:
     assert symbols == ["MSFT", "AAPL", "NVDA"]
 
 
-def test_resolve_symbols_from_inputs_uses_candidates_repository(monkeypatch) -> None:
-    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["ZZZZ"])
-    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_bars_daily", lambda: ["YYYY"])
+def test_resolve_symbols_from_inputs_uses_tradable_universe_source(monkeypatch) -> None:
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_tradable_universe", lambda: ["MSFT", "AAPL", "MSFT"])
 
     symbols, source = importe_news.resolve_symbols_from_inputs(
         symbols_csv=None,
-        symbol_source="candidates",
+        symbol_source="tradable-universe",
         repository=cast(EventSentimentRepository, cast(object, _FakeRepository())),
     )
 
-    assert source == "candidates"
+    assert source == "tradable-universe"
     assert symbols == ["MSFT", "AAPL"]
 
 

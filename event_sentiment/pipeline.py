@@ -67,15 +67,15 @@ class EventSentimentPipeline:
         if symbols is not None:
             return _normalize(symbols)
 
-        candidates = self.repository.load_candidate_symbols()
-        normalized_candidates = _normalize(candidates)
-        if not normalized_candidates:
+        universe_symbols = self.repository.load_tradable_universe_symbols()
+        normalized_universe_symbols = _normalize(universe_symbols)
+        if not normalized_universe_symbols:
             LOGGER.warning(
-                "Aucun symbole candidat dans stock_scores (is_candidate=1) ; ingestion news ignorée pour ce run."
+                "Aucun symbole dans l'univers tradable PIT ; ingestion news ignorée pour ce run."
             )
             return []
-        LOGGER.info("Symboles candidats chargés depuis stock_scores | count=%s", len(normalized_candidates))
-        return normalized_candidates
+        LOGGER.info("Symboles chargés depuis l'univers tradable PIT | count=%s", len(normalized_universe_symbols))
+        return normalized_universe_symbols
 
     def _resolve_time_window(
         self,
@@ -470,7 +470,7 @@ class EventSentimentPipeline:
             "start_utc": aggregation_start.isoformat(),
             "end_utc": end_utc.isoformat(),
             "scoring_mode": self._resolve_scoring_mode(),
-            "symbol_source": "explicit" if symbols is not None else "candidates",
+            "symbol_source": "explicit" if symbols is not None else "tradable-universe",
             "resume_from_checkpoints": start_utc is None,
             "ingestion_skipped": bool(skip_ingestion),
             "feature_flush_every_n_pending_batches": int(

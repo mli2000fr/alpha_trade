@@ -15,8 +15,8 @@ class ScoresRepository(Repository):
     screener migrera vers cette façade.
     """
 
-    def list_candidates(self, *, limit: int | None = None) -> list[str]:
-        return _legacy.list_candidate_symbols(engine=self.engine, limit=limit)
+    def list_symbols(self, *, limit: int | None = None) -> list[str]:
+        return _legacy.list_scored_symbols(engine=self.engine, limit=limit)
 
     def upsert_scores(self, scores: pd.DataFrame) -> int:  # pragma: no cover - Phase 3.2
         raise NotImplementedError(

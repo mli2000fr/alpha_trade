@@ -351,7 +351,7 @@ class BacktestEngine:
         ("predicted_proba", "predicted_proba"),
         ("conviction", "conviction"),
         ("rank", "rank"),
-        ("candidate_rank", "candidate_rank"),
+        ("selection_rank", "selection_rank"),
         ("sector", "signal_sector"),
         ("selector_signal_mode", "selector_signal_mode"),
         ("selection_explanation", "selection_explanation"),

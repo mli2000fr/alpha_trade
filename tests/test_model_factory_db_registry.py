@@ -123,7 +123,7 @@ def test_insert_predictions_uses_current_schema_columns_only():
     assert params["signal_label"] == "long"
 
 
-def test_load_candidate_selector_context_delegates_to_stock_scores(monkeypatch) -> None:
+def test_load_score_context_delegates_to_stock_scores(monkeypatch) -> None:
     expected = pd.DataFrame(
         [
             {
@@ -137,48 +137,48 @@ def test_load_candidate_selector_context_delegates_to_stock_scores(monkeypatch) 
 
     monkeypatch.setattr(
         db_registry,
-        "load_candidate_stock_score_context",
+        "load_stock_score_context",
         lambda engine, limit=None: expected,
     )
 
-    result = db_registry.load_candidate_selector_context(cast(Engine, object()), limit=5)
+    result = db_registry.load_score_context(cast(Engine, object()), limit=5)
 
     assert result.equals(expected)
 
 
-def test_filter_symbols_by_selector_context_applies_all_supported_filters(monkeypatch) -> None:
+def test_filter_symbols_by_score_context_applies_all_supported_filters(monkeypatch) -> None:
     monkeypatch.setattr(
         db_registry,
-        "load_candidate_selector_context",
+        "load_score_context",
         lambda engine: pd.DataFrame(
             [
                 {
                     "symbol": "AAPL",
                     "selector_signal_mode": "strict",
-                    "candidate_rank": 4,
+                    "selection_rank": 4,
                     "earnings_blackout": False,
                 },
                 {
                     "symbol": "MSFT",
                     "selector_signal_mode": "sector_neutralized",
-                    "candidate_rank": 11,
+                    "selection_rank": 11,
                     "earnings_blackout": False,
                 },
                 {
                     "symbol": "NVDA",
                     "selector_signal_mode": "strict",
-                    "candidate_rank": 2,
+                    "selection_rank": 2,
                     "earnings_blackout": True,
                 },
             ]
         ),
     )
 
-    filtered, summary = db_registry.filter_symbols_by_selector_context(
+    filtered, summary = db_registry.filter_symbols_by_score_context(
         cast(Engine, object()),
         ["AAPL", "MSFT", "NVDA"],
         signal_modes=("strict",),
-        max_candidate_rank=5,
+        max_selection_rank=5,
         exclude_earnings_blackout=True,
     )
 
@@ -188,14 +188,14 @@ def test_filter_symbols_by_selector_context_applies_all_supported_filters(monkey
     assert summary["output_symbol_count"] == 1
 
 
-def test_filter_symbols_by_selector_context_fails_open_when_required_columns_are_missing(monkeypatch) -> None:
+def test_filter_symbols_by_score_context_fails_open_when_required_columns_are_missing(monkeypatch) -> None:
     monkeypatch.setattr(
         db_registry,
-        "load_candidate_selector_context",
+        "load_score_context",
         lambda engine: pd.DataFrame([{"symbol": "AAPL"}, {"symbol": "MSFT"}]),
     )
 
-    filtered, summary = db_registry.filter_symbols_by_selector_context(
+    filtered, summary = db_registry.filter_symbols_by_score_context(
         cast(Engine, object()),
         ["AAPL", "MSFT"],
         signal_modes=("strict",),
@@ -204,7 +204,7 @@ def test_filter_symbols_by_selector_context_fails_open_when_required_columns_are
     assert filtered == ["AAPL", "MSFT"]
     assert summary["enabled"] is True
     assert summary["applied"] is False
-    assert "selector_context_missing_columns" in str(summary["reason"])
+    assert "score_context_missing_columns" in str(summary["reason"])
 
 
 def test_load_symbols_for_source_rejects_legacy_sources() -> None:

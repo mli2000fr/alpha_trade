@@ -42,7 +42,7 @@ def portfolio_entries_to_execution_targets(
 				risk_run_id=risk_run_id,
 				trade_date=trade_date,
 				symbol=entry.symbol,
-				candidate_rank=entry.candidate_rank,
+				selection_rank=entry.selection_rank,
 					target_shares=normalize_share_quantity(entry.approved_shares),
 				entry_price=float(entry.entry_price),
 				target_weight=float(entry.target_weight),

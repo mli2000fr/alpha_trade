@@ -122,9 +122,6 @@ def resolve_symbols_from_inputs(
     if symbols_csv:
         return _normalize_symbols(symbols_csv.split(",")), "explicit"
 
-    if symbol_source == "candidates":
-        return _normalize_symbols(repository.load_candidate_symbols()), "candidates"
-
     if symbol_source == "stock_bars_daily":
         return _normalize_symbols(get_all_symbols_from_stock_bars_daily()), "stock_bars_daily"
 
@@ -170,7 +167,7 @@ def _apply_symbol_guardrails(
     if symbol_source == "stock_bars_daily" and symbol_count > STOCK_BARS_DAILY_WARNING_THRESHOLD:
         logger.warning(
             "Univers d'import très large détecté | source=%s symbol_count=%s threshold=%s. "
-            "Préférez --symbol-source stock_scores / candidates, une shortlist --symbols ou un cap --max-symbols.",
+            "Préférez --symbol-source tradable-universe, une shortlist --symbols ou un cap --max-symbols.",
             symbol_source,
             symbol_count,
             STOCK_BARS_DAILY_WARNING_THRESHOLD,
@@ -287,13 +284,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbol-source",
         type=str,
-        choices=("stock_scores", "stock_scores_history", "stock_scores_all", "candidates", "stock_bars_daily"),
-        default="stock_scores_all",
+        choices=("tradable-universe", "stock_scores", "stock_scores_history", "stock_scores_all", "stock_bars_daily"),
+        default="tradable-universe",
         help=(
-            "Source des symboles à importer. 'stock_scores_all' (défaut) cible l'union dédupliquée des symboles présents "
-            "dans stock_scores ou stock_scores_history ; 'stock_scores' limite l'univers aux symboles suivis par le screener ; "
+            "Source des symboles à importer. 'tradable-universe' (défaut) cible le dernier univers PIT canonique complet ; "
+            "'stock_scores_all' cible l'union dédupliquée des symboles présents dans stock_scores ou stock_scores_history ; "
+            "'stock_scores' limite l'univers aux symboles suivis par le screener ; "
             "'stock_scores_history' cible les symboles déjà présents dans l'historique PIT ; "
-            "'candidates' limite à stock_scores.is_candidate=1 ; 'stock_bars_daily' conserve l'ancien comportement large."
+            "'stock_bars_daily' conserve l'ancien comportement large."
         ),
     )
     parser.add_argument(

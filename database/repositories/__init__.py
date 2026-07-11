@@ -17,7 +17,7 @@ Usage :
     )
 
     repo = ScoresRepository()
-    candidates = repo.list_candidates(limit=200)
+    symbols = repo.list_symbols(limit=200)
 """
 from __future__ import annotations
 

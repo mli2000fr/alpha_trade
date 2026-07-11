@@ -525,7 +525,7 @@ class ProductionExecutor:
                 )
             )
             metrics["selector_rank_available"] = sum(
-                1 for target in targets if getattr(target, "candidate_rank", None) is not None
+                1 for target in targets if getattr(target, "selection_rank", None) is not None
             )
             metrics["selector_rank_coverage_pct"] = round(
                 (float(metrics["selector_rank_available"]) / float(len(targets))) * 100.0,

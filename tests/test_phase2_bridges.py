@@ -125,7 +125,7 @@ def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
             "score": [0.82],
             "score_source": ["final_score_sentiment"],
             "sector": ["Tech"],
-            "candidate_rank": [6],
+            "selection_rank": [6],
             "selector_signal_mode": ["sector_neutralized"],
             "selection_explanation": ["mode=sector_neutralized; rank=6"],
             "earnings_blackout": [1],
@@ -175,7 +175,7 @@ def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
     signal = result.signals_df.iloc[0]
     assert signal["symbol"] == "AAPL"
     assert bool(signal["selected"]) is True
-    assert int(signal["candidate_rank"]) == 6
+    assert int(signal["selection_rank"]) == 6
     assert signal["selector_signal_mode"] == "sector_neutralized"
     assert signal["selection_explanation"] == "mode=sector_neutralized; rank=6"
     assert int(signal["selector_earnings_blackout"]) == 1
@@ -268,7 +268,7 @@ def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries
         "side",
         "selected",
         "rank",
-        "candidate_rank",
+        "selection_rank",
         "score",
         "score_source",
         "conviction_score",
@@ -473,7 +473,7 @@ def test_simulate_phase2_execution_generates_targets_intents_and_fills() -> None
         conviction_score=0.83,
         sizing_method="atr",
         kelly_fraction=0.10,
-        candidate_rank=2,
+        selection_rank=2,
         decision_rank=1,
         selector_signal_mode="strict",
         selection_explanation="mode=strict; rank=2",
@@ -511,7 +511,7 @@ def test_simulate_phase2_execution_generates_targets_intents_and_fills() -> None
     assert len(result.child_intents) >= 2
     assert len(result.fills) == 1
     assert result.targets[0].symbol == "AAPL"
-    assert result.targets[0].candidate_rank == 2
+    assert result.targets[0].selection_rank == 2
     assert result.targets[0].selector_signal_mode == "strict"
     assert result.targets[0].selection_explanation == "mode=strict; rank=2"
     assert result.targets[0].selector_earnings_blackout == 0
@@ -545,7 +545,7 @@ def test_simulate_phase3_execution_replay_generates_replay_signals() -> None:
         decision_reason="OK",
         conviction_score=0.83,
         sizing_method="atr",
-        candidate_rank=9,
+        selection_rank=9,
         decision_rank=1,
         selector_signal_mode="sector_neutralized",
         selection_explanation="mode=sector_neutralized; rank=9",
@@ -584,7 +584,7 @@ def test_simulate_phase3_execution_replay_generates_replay_signals() -> None:
     assert signal["trade_date"] == pd.Timestamp("2025-01-01")
     assert signal["execution_date"] == pd.Timestamp("2025-01-02")
     assert signal["symbol"] == "AAPL"
-    assert int(signal["candidate_rank"]) == 9
+    assert int(signal["selection_rank"]) == 9
     assert signal["selector_signal_mode"] == "sector_neutralized"
     assert signal["selection_explanation"] == "mode=sector_neutralized; rank=9"
     assert int(signal["selector_earnings_blackout"]) == 1

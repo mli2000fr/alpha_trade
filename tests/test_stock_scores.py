@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Float, MetaData, String, Table
+from sqlalchemy import Column, Float, Integer, MetaData, String, Table
 
 from database import stock_scores
 
@@ -51,18 +51,17 @@ class _FakeEngine:
         return _FakeConnectContext(self._connection)
 
 
-def test_list_candidate_symbols_filters_candidates_and_orders_by_score() -> None:
+def test_list_scored_symbols_orders_by_score() -> None:
     metadata = MetaData()
     table = Table(
         "stock_scores",
         metadata,
         Column("symbol", String(20), primary_key=True),
-        Column("is_candidate", Boolean),
         Column("total_score", Float),
     )
     fake_connection = _FakeConnection([" msft ", "AAPL"])
 
-    symbols = stock_scores.list_candidate_symbols(
+    symbols = stock_scores.list_scored_symbols(
         engine=_FakeEngine(fake_connection),
         stock_scores=table,
         limit=5,
@@ -70,27 +69,27 @@ def test_list_candidate_symbols_filters_candidates_and_orders_by_score() -> None
 
     assert symbols == ["MSFT", "AAPL"]
     statement_sql = str(fake_connection.statement).lower()
-    assert "is_candidate" in statement_sql
+    assert "is_candidate" not in statement_sql
     assert "total_score" in statement_sql
     assert "limit" in statement_sql
 
 
-def test_list_candidate_symbols_rejects_invalid_limit() -> None:
+def test_list_scored_symbols_rejects_invalid_limit() -> None:
     try:
-        stock_scores.list_candidate_symbols(limit=0, engine=object(), stock_scores=Table("stock_scores", MetaData()))
+        stock_scores.list_scored_symbols(limit=0, engine=object(), stock_scores=Table("stock_scores", MetaData()))
     except ValueError as exc:
         assert "limit" in str(exc)
     else:
         raise AssertionError("ValueError attendu")
 
 
-def test_load_candidate_selector_context_exposes_available_selector_columns() -> None:
+def test_load_score_context_exposes_available_score_columns() -> None:
     metadata = MetaData()
     table = Table(
         "stock_scores",
         metadata,
         Column("symbol", String(20), primary_key=True),
-        Column("is_candidate", Boolean),
+        Column("candidate_rank", Integer),
         Column("total_score", Float),
         Column("trend_score", Float),
         Column("selector_signal_mode", String(32)),
@@ -102,6 +101,7 @@ def test_load_candidate_selector_context_exposes_available_selector_columns() ->
             {
                 "symbol": " msft ",
                 "trend_score": 0.88,
+                    "selection_rank": 2,
                 "selector_signal_mode": "strict",
                 "selection_explanation": "breakout propre",
                 "atr_pct_20": 0.032,
@@ -109,6 +109,7 @@ def test_load_candidate_selector_context_exposes_available_selector_columns() ->
             {
                 "symbol": "AAPL",
                 "trend_score": 0.83,
+                    "selection_rank": 1,
                 "selector_signal_mode": "strict",
                 "selection_explanation": "leader sectoriel",
                 "atr_pct_20": 0.028,
@@ -116,7 +117,7 @@ def test_load_candidate_selector_context_exposes_available_selector_columns() ->
         ]
     )
 
-    frame = stock_scores.load_candidate_selector_context(
+    frame = stock_scores.load_score_context(
         engine=_FakeEngine(fake_connection),
         stock_scores=table,
         limit=10,
@@ -126,6 +127,7 @@ def test_load_candidate_selector_context_exposes_available_selector_columns() ->
         {
             "symbol": "MSFT",
             "trend_score": 0.88,
+            "selection_rank": 2,
             "selector_signal_mode": "strict",
             "selection_explanation": "breakout propre",
             "atr_pct_20": 0.032,
@@ -133,13 +135,14 @@ def test_load_candidate_selector_context_exposes_available_selector_columns() ->
         {
             "symbol": "AAPL",
             "trend_score": 0.83,
+            "selection_rank": 1,
             "selector_signal_mode": "strict",
             "selection_explanation": "leader sectoriel",
             "atr_pct_20": 0.028,
         },
     ]
     statement_sql = str(fake_connection.statement).lower()
-    assert "is_candidate" in statement_sql
+    assert "is_candidate" not in statement_sql
     assert "selection_explanation" in statement_sql
     assert "selector_signal_mode" in statement_sql
 

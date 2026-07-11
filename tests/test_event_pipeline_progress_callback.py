@@ -56,7 +56,7 @@ class _CapturingIngestionService:
 
 
 class _Repo:
-    def load_candidate_symbols(self):
+    def load_tradable_universe_symbols(self):
         return ["AAPL"]
 
     def get_checkpoints(self, source, symbols):

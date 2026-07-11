@@ -103,7 +103,7 @@ class ExecutionTarget:
     conviction_score: float | None
     sizing_method: str | None
     kelly_fraction: float | None
-    candidate_rank: int | None = None
+    selection_rank: int | None = None
     decision_rank: int | None = None
     selector_signal_mode: str | None = None
     selection_explanation: str | None = None

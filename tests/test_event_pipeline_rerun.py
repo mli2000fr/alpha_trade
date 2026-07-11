@@ -9,7 +9,7 @@ from event_sentiment.pipeline import EventSentimentPipeline
 
 class _InMemoryRepository:
     def __init__(self) -> None:
-        self.candidates = ["AAPL"]
+        self.universe_symbols = ["AAPL"]
         self.checkpoints: dict[str, dict] = {}
         self.news_raw: dict[str, dict] = {}
         self.news_ticker_map: dict[tuple[str, str], dict] = {}
@@ -26,8 +26,8 @@ class _InMemoryRepository:
     def get_checkpoints(self, source_name: str, symbols: list[str]):
         return {symbol: self.checkpoints[symbol] for symbol in symbols if symbol in self.checkpoints}
 
-    def load_candidate_symbols(self) -> list[str]:
-        return list(self.candidates)
+    def load_tradable_universe_symbols(self) -> list[str]:
+        return list(self.universe_symbols)
 
     def upsert_news_raw(self, records):
         for record in records:

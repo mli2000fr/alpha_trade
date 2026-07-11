@@ -739,7 +739,7 @@ def _portfolio_entries_to_parity_frame(entries: Sequence[object]) -> pd.DataFram
             {
                 "trade_date": trade_date,
                 "symbol": symbol,
-                "candidate_rank": getattr(entry, "candidate_rank", None),
+                "selection_rank": getattr(entry, "selection_rank", None),
                 "decision_rank": getattr(entry, "decision_rank", None),
                 "score_used": getattr(entry, "score_used", None),
                 "score_source": getattr(entry, "score_source", None),
@@ -818,7 +818,7 @@ def build_candidate_target_parity_summary(
                     "research_score_source": research_row.get("score_source"),
                     "research_conviction": float(research_row.get("conviction")) if pd.notna(research_row.get("conviction")) else None,
                     "research_conviction_source": research_row.get("conviction_source"),
-                    "risk_candidate_rank": int(risk_row.get("candidate_rank")) if pd.notna(risk_row.get("candidate_rank")) else None,
+                    "risk_selection_rank": int(risk_row.get("selection_rank")) if pd.notna(risk_row.get("selection_rank")) else None,
                     "risk_decision_rank": int(risk_row.get("decision_rank")) if pd.notna(risk_row.get("decision_rank")) else None,
                     "risk_score_used": float(risk_row.get("score_used")) if pd.notna(risk_row.get("score_used")) else None,
                     "risk_score_source": risk_row.get("score_source"),
@@ -834,7 +834,7 @@ def build_candidate_target_parity_summary(
             rejected_rows.append(
                 {
                     "symbol": row.get("symbol"),
-                    "candidate_rank": int(row.get("candidate_rank")) if pd.notna(row.get("candidate_rank")) else None,
+                    "selection_rank": int(row.get("selection_rank")) if pd.notna(row.get("selection_rank")) else None,
                     "score_used": float(row.get("score_used")) if pd.notna(row.get("score_used")) else None,
                     "score_source": row.get("score_source"),
                     "conviction_score": float(row.get("conviction_score")) if pd.notna(row.get("conviction_score")) else None,

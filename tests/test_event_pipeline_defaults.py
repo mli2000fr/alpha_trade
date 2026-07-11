@@ -6,9 +6,9 @@ from event_sentiment.pipeline import EventSentimentPipeline
 
 
 class _FakeRepository:
-    def __init__(self, checkpoints=None, candidates=None) -> None:
+    def __init__(self, checkpoints=None, universe_symbols=None, candidates=None) -> None:
         self.checkpoints = checkpoints or {}
-        self.candidates = candidates or []
+        self.universe_symbols = universe_symbols if universe_symbols is not None else (candidates or [])
         self.ingestion_rows = []
         self.sentiment_rows = []
         self.macro_rows = []
@@ -22,8 +22,11 @@ class _FakeRepository:
     def get_checkpoints(self, source_name: str, symbols: list[str]):
         return {symbol: self.checkpoints[symbol] for symbol in symbols if symbol in self.checkpoints}
 
-    def load_candidate_symbols(self) -> list[str]:
-        return list(self.candidates)
+    def load_tradable_universe_symbols(self) -> list[str]:
+        return list(self.universe_symbols)
+
+    def list_ticker_map_symbols(self, **_kwargs) -> list[str]:
+        return []
 
     def load_pending_articles(
         self,
@@ -109,8 +112,8 @@ class _FakeMacroRuleEngine:
         return []
 
 
-def test_pipeline_uses_candidate_symbols_when_symbols_none(monkeypatch) -> None:
-    repository = _FakeRepository(candidates=["msft", "AAPL", "MSFT"])
+def test_pipeline_uses_tradable_universe_symbols_when_symbols_none(monkeypatch) -> None:
+    repository = _FakeRepository(universe_symbols=["msft", "AAPL", "MSFT"])
     fake_ingestion = _FakeIngestionService(repository, EventSentimentConfig())
 
     monkeypatch.setattr("event_sentiment.pipeline.NewsIngestionService", lambda repository, config: fake_ingestion)
@@ -125,7 +128,7 @@ def test_pipeline_uses_candidate_symbols_when_symbols_none(monkeypatch) -> None:
 
 def test_pipeline_uses_checkpoint_watermark_as_time_fallback(monkeypatch) -> None:
     watermark = datetime(2026, 1, 10, 15, 0, 0)
-    repository = _FakeRepository(checkpoints={"AAPL": {"watermark_published_at_utc": watermark}}, candidates=["AAPL"])
+    repository = _FakeRepository(checkpoints={"AAPL": {"watermark_published_at_utc": watermark}}, universe_symbols=["AAPL"])
     config = EventSentimentConfig(checkpoint_overlap_minutes=60)
     fake_ingestion = _FakeIngestionService(repository, config)
 
@@ -210,8 +213,8 @@ def test_pipeline_keeps_overlap_resume_when_absence_within_threshold(monkeypatch
     assert fake_ingestion.calls[0]["symbol_resume_overrides"] == {"AAPL": True}
 
 
-def test_pipeline_skips_ingestion_when_no_candidate_symbols(monkeypatch) -> None:
-    repository = _FakeRepository(candidates=[])
+def test_pipeline_skips_ingestion_when_tradable_universe_is_empty(monkeypatch) -> None:
+    repository = _FakeRepository(universe_symbols=[])
     fake_ingestion = _FakeIngestionService(repository, EventSentimentConfig())
 
     monkeypatch.setattr("event_sentiment.pipeline.NewsIngestionService", lambda repository, config: fake_ingestion)
@@ -226,7 +229,7 @@ def test_pipeline_skips_ingestion_when_no_candidate_symbols(monkeypatch) -> None
 
 
 def test_pipeline_logs_resolved_run_window_and_symbol_count(monkeypatch, caplog) -> None:
-    repository = _FakeRepository(candidates=["AAPL", "MSFT"])
+    repository = _FakeRepository(universe_symbols=["AAPL", "MSFT"])
     fake_ingestion = _FakeIngestionService(repository, EventSentimentConfig())
 
     monkeypatch.setattr("event_sentiment.pipeline.NewsIngestionService", lambda repository, config: fake_ingestion)

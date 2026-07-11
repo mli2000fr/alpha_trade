@@ -137,7 +137,7 @@ class ExecutionRepository:
             "sizing_method", "kelly_fraction",
         ]
         optional_columns = [
-            "candidate_rank",
+            "selection_rank",
             "selector_signal_mode",
             "selection_explanation",
             "selector_earnings_blackout",
@@ -191,7 +191,7 @@ class ExecutionRepository:
             "initial_risk_dollars", "target_notional",
         ]
         optional_columns = [
-            "candidate_rank",
+            "selection_rank",
             "selector_signal_mode",
             "selection_explanation",
             "selector_earnings_blackout",
@@ -350,7 +350,7 @@ class ExecutionRepository:
                 conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
                 sizing_method=str(r["sizing_method"]) if r.get("sizing_method") else None,
                 kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
-                candidate_rank=self._optional_int(r.get("candidate_rank")),
+                selection_rank=self._optional_int(r.get("selection_rank")),
                 decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
                 selector_signal_mode=self._optional_text(r.get("selector_signal_mode")),
                 selection_explanation=self._optional_text(r.get("selection_explanation")),
@@ -501,7 +501,7 @@ class ExecutionRepository:
                 conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
                 sizing_method=str(r["sizing_method"]) if r.get("sizing_method") is not None else None,
                 kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
-                candidate_rank=self._optional_int(r.get("candidate_rank")),
+                selection_rank=self._optional_int(r.get("selection_rank")),
                 decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
                 selector_signal_mode=self._optional_text(r.get("selector_signal_mode")),
                 selection_explanation=self._optional_text(r.get("selection_explanation")),
@@ -1473,7 +1473,7 @@ class ExecutionRepository:
         resolved_account_id = account_id or "default"
         available_columns = self._get_table_columns("execution_targets_snapshot")
         canonical_columns = [
-            "exec_run_id", "account_id", "risk_run_id", "trade_date", "symbol", "candidate_rank", "decision_rank",
+            "exec_run_id", "account_id", "risk_run_id", "trade_date", "symbol", "selection_rank", "decision_rank",
             "selector_signal_mode", "selection_explanation", "selector_earnings_blackout", "side",
             "target_shares", "entry_price", "target_weight", "sector", "conviction_score",
             "sizing_method", "kelly_fraction", "atr_20", "price_asof_date", "atr_asof_date",
@@ -1496,7 +1496,7 @@ class ExecutionRepository:
                 "risk_run_id": target.risk_run_id,
                 "trade_date": target.trade_date,
                 "symbol": target.symbol,
-                "candidate_rank": target.candidate_rank,
+                "selection_rank": target.selection_rank,
                 "decision_rank": target.decision_rank,
                 "selector_signal_mode": target.selector_signal_mode,
                 "selection_explanation": target.selection_explanation,

@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS execution_targets_snapshot (
     risk_run_id           VARCHAR(32) NOT NULL,
     trade_date            DATE NOT NULL,
     symbol                VARCHAR(20) NOT NULL,
-    candidate_rank        INT NULL,
+    selection_rank        INT NULL,
     decision_rank         INT NULL,
     selector_signal_mode  VARCHAR(32) NULL,
     selection_explanation VARCHAR(255) NULL,

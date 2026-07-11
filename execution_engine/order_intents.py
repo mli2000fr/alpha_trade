@@ -237,7 +237,7 @@ def apply_live_leverage_to_targets(
                 conviction_score=getattr(target, "conviction_score", None),
                 sizing_method=getattr(target, "sizing_method", None),
                 kelly_fraction=getattr(target, "kelly_fraction", None),
-                candidate_rank=getattr(target, "candidate_rank", None),
+                selection_rank=getattr(target, "selection_rank", None),
                 decision_rank=getattr(target, "decision_rank", None),
                 selector_signal_mode=getattr(target, "selector_signal_mode", None),
                 selection_explanation=getattr(target, "selection_explanation", None),
@@ -276,10 +276,10 @@ def apply_live_leverage_to_targets(
 
 def _target_priority_key(target: ExecutionTarget) -> tuple[int, int, str]:
     decision_rank = getattr(target, "decision_rank", None)
-    candidate_rank = getattr(target, "candidate_rank", None)
+    selection_rank = getattr(target, "selection_rank", None)
     return (
         int(cast(int, decision_rank)) if decision_rank is not None else 10**9,
-        int(cast(int, candidate_rank)) if candidate_rank is not None else 10**9,
+        int(cast(int, selection_rank)) if selection_rank is not None else 10**9,
         str(target.symbol).strip().upper(),
     )
 
@@ -436,7 +436,7 @@ def filter_targets_by_live_regime_guards(
                     "symbol": target.symbol,
                     "sector": target.sector,
                     "target_weight": float(getattr(target, "target_weight", 0.0) or 0.0),
-                    "rank": int(getattr(target, "decision_rank", None) or getattr(target, "candidate_rank", None) or 0),
+                    "rank": int(getattr(target, "decision_rank", None) or getattr(target, "selection_rank", None) or 0),
                     "limit": max_positions_limit,
                     "reason": "regime_max_positions",
                 }

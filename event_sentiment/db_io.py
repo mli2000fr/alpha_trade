@@ -11,7 +11,6 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.exc import OperationalError
 
 from database.connection import get_sqlalchemy_engine
-from database.stock_scores import list_candidate_symbols
 
 LOGGER = logging.getLogger(__name__)
 UPSERT_BATCH_SIZE_ENV = "EVENT_SENTIMENT_UPSERT_BATCH_SIZE"
@@ -328,8 +327,35 @@ class EventSentimentRepository:
             for row in rows
         }
 
-    def load_candidate_symbols(self) -> list[str]:
-        return list_candidate_symbols(engine=self.engine)
+    def load_tradable_universe_symbols(self) -> list[str]:
+        """Charge le dernier univers PIT canonique complet disponible."""
+        run_stmt = text(
+            """
+            SELECT universe_run_id
+            FROM tradable_universe_runs
+            WHERE status = 'completed'
+              AND is_canonical = 1
+              AND rows_written = rows_expected
+              AND data_quality_grade = 'full'
+            ORDER BY snapshot_date DESC, finished_at DESC
+            LIMIT 1
+            """
+        )
+        symbols_stmt = text(
+            """
+            SELECT symbol
+            FROM tradable_universe_history
+            WHERE universe_run_id = :universe_run_id
+              AND is_tradable = 1
+            ORDER BY symbol ASC
+            """
+        )
+        with self.engine.connect() as conn:
+            universe_run_id = conn.execute(run_stmt).scalar_one_or_none()
+            if universe_run_id is None:
+                raise RuntimeError("Aucun univers tradable PIT canonique complet disponible pour le sentiment.")
+            symbols = conn.execute(symbols_stmt, {"universe_run_id": universe_run_id}).scalars().all()
+        return [self._normalize_symbol(symbol) for symbol in symbols if str(symbol).strip()]
 
     def list_scored_trade_dates(
         self,

@@ -5,7 +5,7 @@ from sqlalchemy import Boolean, Column, Float, Integer, MetaData, String, Table,
 
 from database.connection import get_sqlalchemy_engine
 
-SELECTOR_CONTEXT_COLUMNS = (
+SCORE_CONTEXT_COLUMNS = (
     "trend_score",
     "vcp_score",
     "final_score",
@@ -15,7 +15,7 @@ SELECTOR_CONTEXT_COLUMNS = (
     "earnings_date",
     "days_to_earnings",
     "earnings_blackout",
-    "candidate_rank",
+    "selection_rank",
     "raw_final_score",
     "normalized_total_score",
     "normalized_rsi",
@@ -48,7 +48,7 @@ def get_stock_scores_table(*, engine=None) -> Table:
     )
 
 
-def list_candidate_symbols(
+def list_scored_symbols(
     *,
     engine=None,
     stock_scores: Table | None = None,
@@ -59,10 +59,7 @@ def list_candidate_symbols(
 
     resolved_engine = engine or get_sqlalchemy_engine()
     resolved_table = stock_scores if stock_scores is not None else get_stock_scores_table(engine=resolved_engine)
-    if "is_candidate" not in resolved_table.c:
-        raise RuntimeError("La colonne stock_scores.is_candidate est absente du schéma SQL courant.")
-
-    stmt = select(resolved_table.c.symbol).where(resolved_table.c.is_candidate == 1)
+    stmt = select(resolved_table.c.symbol).where(resolved_table.c.symbol.is_not(None))
     if "total_score" in resolved_table.c:
         stmt = stmt.order_by(resolved_table.c.total_score.desc())
     stmt = stmt.order_by(resolved_table.c.symbol.asc())
@@ -74,7 +71,7 @@ def list_candidate_symbols(
     return [str(symbol).strip().upper() for symbol in rows if str(symbol).strip()]
 
 
-def load_candidate_selector_context(
+def load_score_context(
     *,
     engine=None,
     stock_scores: Table | None = None,
@@ -85,15 +82,18 @@ def load_candidate_selector_context(
 
     resolved_engine = engine or get_sqlalchemy_engine()
     resolved_table = stock_scores if stock_scores is not None else get_stock_scores_table(engine=resolved_engine)
-    if "is_candidate" not in resolved_table.c:
-        raise RuntimeError("La colonne stock_scores.is_candidate est absente du schéma SQL courant.")
+    selected_columns = ["symbol"]
+    selected_expressions = [resolved_table.c.symbol]
+    for column in SCORE_CONTEXT_COLUMNS:
+        if column in resolved_table.c:
+            selected_columns.append(column)
+            selected_expressions.append(resolved_table.c[column])
+        elif column == "selection_rank" and "candidate_rank" in resolved_table.c:
+            selected_columns.append(column)
+            selected_expressions.append(resolved_table.c.candidate_rank.label(column))
 
-    selected_columns = [
-        "symbol",
-        *[column for column in SELECTOR_CONTEXT_COLUMNS if column in resolved_table.c],
-    ]
-    stmt = select(*(resolved_table.c[column] for column in selected_columns)).where(
-        resolved_table.c.is_candidate == 1
+    stmt = select(*selected_expressions).where(
+        resolved_table.c.symbol.is_not(None)
     )
     if "total_score" in resolved_table.c:
         stmt = stmt.order_by(resolved_table.c.total_score.desc())

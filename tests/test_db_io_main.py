@@ -20,10 +20,15 @@ def test_normalize_mysql_records():
     assert norm[1]["a"] == 2 and norm[1]["b"] is None
 
 
-def test_load_candidate_symbols_delegates_to_shared_helper(monkeypatch):
-    repo = db_io.EventSentimentRepository.__new__(db_io.EventSentimentRepository)
-    repo.engine = object()
-    monkeypatch.setattr(db_io, "list_candidate_symbols", lambda engine: ["AAPL", "MSFT"])
+def test_repository_exposes_tradable_universe_loader():
+    loader = getattr(db_io.EventSentimentRepository, "load_tradable_universe_symbols", None)
 
-    assert repo.load_candidate_symbols() == ["AAPL", "MSFT"]
+    assert callable(loader)
+    assert loader.__name__ == "load_tradable_universe_symbols"
+    assert loader.__doc__ is not None
+
+
+
+
+
 

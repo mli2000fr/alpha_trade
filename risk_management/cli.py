@@ -1489,7 +1489,7 @@ def main(args: list[str] | None = None) -> None:
             for entry in retained_entries
         )
     )
-    selector_rank_available = sum(1 for candidate in candidates if getattr(candidate, "candidate_rank", None) is not None)
+    selection_rank_available = sum(1 for candidate in candidates if getattr(candidate, "selection_rank", None) is not None)
     selector_earnings_blackout_candidates = sum(
         1
         for candidate in candidates
@@ -1551,8 +1551,8 @@ def main(args: list[str] | None = None) -> None:
         "sizing_method_counts": sizing_method_counts,
         "selector_signal_mode_counts": selector_signal_mode_counts,
         "retained_selector_signal_mode_counts": retained_selector_signal_mode_counts,
-        "selector_rank_available": selector_rank_available,
-        "selector_rank_coverage_pct": round((selector_rank_available / len(candidates)), 4) if candidates else 0.0,
+        "selection_rank_available": selection_rank_available,
+        "selection_rank_coverage_pct": round((selection_rank_available / len(candidates)), 4) if candidates else 0.0,
         "selector_earnings_blackout_candidates": selector_earnings_blackout_candidates,
         # Sprint S3 / A-011 — visibilité des seuils circuit breaker effectifs.
         "circuit_breaker_thresholds": {

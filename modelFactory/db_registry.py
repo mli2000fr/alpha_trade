@@ -12,12 +12,8 @@ from sqlalchemy.engine import Engine
 
 from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from common.tradable_universe import resolve_universe_asof
-from database.stock_scores import (
-    list_candidate_symbols as list_candidate_stock_score_symbols,
-)
-from database.stock_scores import (
-    load_candidate_selector_context as load_candidate_stock_score_context,
-)
+from database.stock_scores import list_scored_symbols as list_stock_score_symbols
+from database.stock_scores import load_score_context as load_stock_score_context
 
 LOGGER = logging.getLogger(__name__)
 
@@ -95,28 +91,28 @@ def _load_distinct_symbols(engine: Engine, query: str) -> list[str]:
     return _normalize_symbols([str(symbol) for symbol in rows if symbol])
 
 
-def has_selector_universe_filter(
+def has_score_context_filter(
     *,
     signal_modes: tuple[str, ...] | list[str] | None = None,
-    max_candidate_rank: int | None = None,
+    max_selection_rank: int | None = None,
     exclude_earnings_blackout: bool = False,
 ) -> bool:
-    return bool(_normalize_signal_modes(signal_modes) or max_candidate_rank is not None or exclude_earnings_blackout)
+    return bool(_normalize_signal_modes(signal_modes) or max_selection_rank is not None or exclude_earnings_blackout)
 
 
-def filter_symbols_by_selector_context(
+def filter_symbols_by_score_context(
     engine: Engine,
     symbols: list[str],
     *,
     signal_modes: tuple[str, ...] | list[str] | None = None,
-    max_candidate_rank: int | None = None,
+    max_selection_rank: int | None = None,
     exclude_earnings_blackout: bool = False,
 ) -> tuple[list[str], dict[str, Any]]:
     normalized_symbols = _normalize_symbols(symbols)
     normalized_signal_modes = _normalize_signal_modes(signal_modes)
-    criteria_enabled = has_selector_universe_filter(
+    criteria_enabled = has_score_context_filter(
         signal_modes=normalized_signal_modes,
-        max_candidate_rank=max_candidate_rank,
+        max_selection_rank=max_selection_rank,
         exclude_earnings_blackout=exclude_earnings_blackout,
     )
     summary: dict[str, Any] = {
@@ -125,7 +121,7 @@ def filter_symbols_by_selector_context(
         "input_symbol_count": len(normalized_symbols),
         "output_symbol_count": len(normalized_symbols),
         "signal_modes": list(normalized_signal_modes),
-        "max_candidate_rank": max_candidate_rank,
+        "max_selection_rank": max_selection_rank,
         "exclude_earnings_blackout": bool(exclude_earnings_blackout),
         "reason": None,
     }
@@ -133,33 +129,33 @@ def filter_symbols_by_selector_context(
         return normalized_symbols, summary
 
     try:
-        context_df = load_candidate_selector_context(engine)
+        context_df = load_score_context(engine)
     except Exception as exc:  # noqa: BLE001
-        summary["reason"] = f"selector_context_unavailable:{type(exc).__name__}"
+        summary["reason"] = f"score_context_unavailable:{type(exc).__name__}"
         LOGGER.warning(
-            "filter_symbols_by_selector_context unavailable symbols=%d reason=%s",
+            "filter_symbols_by_score_context unavailable symbols=%d reason=%s",
             len(normalized_symbols),
             summary["reason"],
         )
         return normalized_symbols, summary
 
     if context_df.empty or "symbol" not in context_df.columns:
-        summary["reason"] = "selector_context_empty"
-        LOGGER.warning("filter_symbols_by_selector_context empty_context symbols=%d", len(normalized_symbols))
+        summary["reason"] = "score_context_empty"
+        LOGGER.warning("filter_symbols_by_score_context empty_context symbols=%d", len(normalized_symbols))
         return normalized_symbols, summary
 
     required_columns: list[str] = []
     if normalized_signal_modes:
         required_columns.append("selector_signal_mode")
-    if max_candidate_rank is not None:
-        required_columns.append("candidate_rank")
+    if max_selection_rank is not None:
+        required_columns.append("selection_rank")
     if exclude_earnings_blackout:
         required_columns.append("earnings_blackout")
     missing_columns = [column for column in required_columns if column not in context_df.columns]
     if missing_columns:
-        summary["reason"] = f"selector_context_missing_columns:{','.join(sorted(missing_columns))}"
+        summary["reason"] = f"score_context_missing_columns:{','.join(sorted(missing_columns))}"
         LOGGER.warning(
-            "filter_symbols_by_selector_context missing_columns=%s symbols=%d",
+            "filter_symbols_by_score_context missing_columns=%s symbols=%d",
             ",".join(sorted(missing_columns)),
             len(normalized_symbols),
         )
@@ -171,16 +167,16 @@ def filter_symbols_by_selector_context(
     if working_df.empty:
         summary["applied"] = True
         summary["output_symbol_count"] = 0
-        summary["reason"] = "selector_context_no_overlap"
+        summary["reason"] = "score_context_no_overlap"
         return [], summary
 
     if normalized_signal_modes:
         working_df = working_df[
             working_df["selector_signal_mode"].astype(str).str.strip().str.lower().isin(normalized_signal_modes)
         ]
-    if max_candidate_rank is not None:
-        candidate_rank = pd.Series(pd.to_numeric(working_df["candidate_rank"], errors="coerce"), index=working_df.index)
-        working_df = working_df[candidate_rank.notna() & (candidate_rank <= float(max_candidate_rank))]
+    if max_selection_rank is not None:
+        selection_rank = pd.Series(pd.to_numeric(working_df["selection_rank"], errors="coerce"), index=working_df.index)
+        working_df = working_df[selection_rank.notna() & (selection_rank <= float(max_selection_rank))]
     if exclude_earnings_blackout:
         earnings_blackout = working_df["earnings_blackout"].fillna(False)
         blackout_mask = earnings_blackout.astype(str).str.strip().str.lower().isin({"1", "true", "yes"})
@@ -195,15 +191,15 @@ def filter_symbols_by_selector_context(
             "output_symbol_count": len(filtered_symbols),
             "excluded_symbol_count": max(0, len(normalized_symbols) - len(filtered_symbols)),
             "matched_context_rows": int(len(working_df)),
-            "reason": "selector_context_filtered",
+            "reason": "score_context_filtered",
         }
     )
     LOGGER.info(
-        "filter_symbols_by_selector_context symbols_in=%d symbols_out=%d signal_modes=%s max_candidate_rank=%s exclude_earnings_blackout=%s",
+        "filter_symbols_by_score_context symbols_in=%d symbols_out=%d signal_modes=%s max_selection_rank=%s exclude_earnings_blackout=%s",
         len(normalized_symbols),
         len(filtered_symbols),
         list(normalized_signal_modes),
-        max_candidate_rank,
+        max_selection_rank,
         exclude_earnings_blackout,
     )
     return filtered_symbols, summary
@@ -625,17 +621,17 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
 # Universe
 # ---------------------------------------------------------------------------
 
-def load_candidate_symbols(engine: Engine) -> list[str]:
-    """Charge les symboles avec is_candidate=1 depuis stock_scores."""
-    symbols = list_candidate_stock_score_symbols(engine=engine)
-    LOGGER.info("load_candidate_symbols count=%d", len(symbols))
+def load_score_symbols(engine: Engine) -> list[str]:
+    """Charge les symboles présents dans le snapshot courant de scores."""
+    symbols = list_stock_score_symbols(engine=engine)
+    LOGGER.info("load_score_symbols count=%d", len(symbols))
     return symbols
 
 
-def load_candidate_selector_context(engine: Engine, *, limit: int | None = None) -> pd.DataFrame:
-    """Charge le contexte selector disponible pour l'univers candidat courant."""
-    frame = load_candidate_stock_score_context(engine=engine, limit=limit)
-    LOGGER.info("load_candidate_selector_context rows=%d cols=%d", len(frame), len(frame.columns))
+def load_score_context(engine: Engine, *, limit: int | None = None) -> pd.DataFrame:
+    """Charge le contexte de score disponible pour le snapshot courant."""
+    frame = load_stock_score_context(engine=engine, limit=limit)
+    LOGGER.info("load_score_context rows=%d cols=%d", len(frame), len(frame.columns))
     return frame
 
 

@@ -861,6 +861,54 @@ Un utilisateur IHM ne doit plus voir ni devoir comprendre le concept `candidate`
 
 **Objectif :** retirer les dépendances applicatives restantes à `is_candidate` et au vocabulaire candidat.
 
+### Statut d'implémentation (en cours)
+
+La tranche Event Sentiment est migrée et validée :
+
+- `EventSentimentRepository.load_tradable_universe_symbols()` charge le dernier
+  snapshot PIT canonique, complet et de grade `full`; aucun fallback
+  `is_candidate` n'est conservé dans le flux nominal ;
+- `EventSentimentPipeline` utilise cet univers lorsque les symboles ne sont pas
+  explicitement fournis, et expose `symbol_source=tradable-universe` dans ses
+  statistiques ;
+- `event_sentiment/importe_news.py` ne propose plus la source CLI `candidates`
+  et utilise `tradable-universe` par défaut ;
+- les doubles de test Event Sentiment ont été migrés vers le contrat
+  `load_tradable_universe_symbols()` ;
+- validations ciblées : `8 passed` pour les defaults de pipeline, `14 passed`
+  pour l'import de news, et `13 passed` pour repository, callback et rerun.
+
+La migration des APIs de score est également implémentée :
+
+- `database.stock_scores` expose désormais `list_scored_symbols()` et
+  `load_score_context()`; elles ne filtrent plus `is_candidate` ;
+- `ScoresRepository` et son Protocol exposent `list_symbols()`;
+- les wrappers Model Factory sont renommés `load_score_symbols()` et
+  `load_score_context()`; le filtre de contexte devient
+  `filter_symbols_by_score_context()` et expose `selection_rank`;
+- le loader de contexte traduit temporairement la colonne historique
+  `candidate_rank` en `selection_rank` tant que le nettoyage physique du
+  schéma n'est pas livré au Sprint 7;
+- validation ciblée : `13 passed` pour `test_stock_scores.py` et
+  `test_model_factory_db_registry.py`.
+
+La migration additive du rang risk/exécution est engagée :
+
+- la migration Alembic `0047_add_selection_rank_to_risk_execution` ajoute
+  `selection_rank` à `risk_decisions`, `portfolio_targets` et
+  `execution_targets_snapshot`, puis reprend les valeurs historiques ;
+- les dataclasses, bridges, intents, snapshots et audits utilisent désormais
+  `selection_rank`, tandis que `decision_rank` reste le rang post-contraintes.
+
+Cette dernière tranche doit encore être stabilisée: la suite ciblée
+`test_phase2_bridges.py` a six échecs sur le chemin de filtre régime du bridge
+risk, et les payloads/IHM/fidelity historiques restant à renommer sont encore
+à migrer. Le Sprint 6 ne doit donc pas être déclaré terminé à ce stade.
+
+Restent à traiter dans ce sprint les payloads satellites/IHM/fidelity et la
+stabilisation complète de la migration `candidate_rank -> selection_rank` sur
+les parcours risk/exécution. Le nettoyage physique du schéma reste le Sprint 7.
+
 ### Tâches structurantes
 
 1. `database/stock_scores.py`
