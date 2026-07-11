@@ -185,7 +185,7 @@ class TestAbstentionPolicySensible:
 class TestAbstentionPolicyStrict:
     def test_no_go_stale_data(self, candidate_stale, good_edge) -> None:
         policy = AbstentionPolicy.strict()
-        decision = policy.evaluate(candidate_stale, good_edge)
+        decision = policy.evaluate(candidate_stale, good_edge, as_of_date=date.today())
         assert decision.go is False
         assert "anciennes" in decision.reason
 
@@ -219,8 +219,14 @@ class TestAbstentionPolicyStrict:
             max_data_age_days=1,
             require_data_availability=True,
         )
-        decision = policy.evaluate(candidate, good_edge)
+        decision = policy.evaluate(candidate, good_edge, as_of_date=date.today())
         assert decision.go is True
+
+    def test_rejects_freshness_check_without_explicit_as_of_date(self, candidate_stale, good_edge) -> None:
+        decision = AbstentionPolicy(max_data_age_days=1).evaluate(candidate_stale, good_edge)
+
+        assert decision.go is False
+        assert "as-of" in decision.reason
 
 
 # ── evaluate_abstention_veto ────────────────────────────────────────────────

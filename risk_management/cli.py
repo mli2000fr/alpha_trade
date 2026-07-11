@@ -1158,6 +1158,9 @@ def main(args: list[str] | None = None) -> None:
         LOGGER.info("Chargement des win rates…")
         win_rates = repo.load_win_rates_asof(symbols, trade_date)
         LOGGER.info("Win rates charges pour %d symboles.", len(win_rates))
+        directional_loader = getattr(repo, "load_directional_win_rates_asof", None)
+        directional_win_rates = directional_loader(symbols, trade_date) if callable(directional_loader) else {}
+        LOGGER.info("Métriques OOS directionnelles chargées pour %d symboles/sides.", len(directional_win_rates))
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), win_rate_symbols=len(win_rates)),
             current=5,
@@ -1250,6 +1253,9 @@ def main(args: list[str] | None = None) -> None:
                     "Factor model setup failed for live pipeline",
                     exc_info=True,
                 )
+        set_directional_win_rates = getattr(builder, "set_directional_win_rates", None)
+        if callable(set_directional_win_rates):
+            set_directional_win_rates(directional_win_rates)
         builder.progress_callback = emit_run_summary
         entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
         _emit_live_progress(

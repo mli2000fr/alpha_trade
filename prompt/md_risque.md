@@ -2256,6 +2256,18 @@ python -m pytest tests/test_backtest_live_parity.py --no-cov -q
 - Une probabilité effective faible peut retomber sur un sizing ATR au lieu de rejeter.
 - Le sizing ne représente pas encore explicitement edge net, gap overnight et Expected Shortfall.
 
+### Implémentation vérifiée (audit runtime 2026-07-02)
+
+- `PortfolioBuilder` appelle désormais `EdgeCalculator` puis `AbstentionPolicy` avant tout sizing Kelly.
+- Un edge net non positif, une confiance insuffisante ou une incertitude excessive rejettent la position avec le code `abstention_gate`.
+- Kelly exige des `DirectionalWinRateInfo` cohérents avec le side; leur absence produit un rejet `missing_directional_edge`. `WinRateInfo.directional_accuracy` reste un champ d'audit et ne sert pas à fabriquer un payoff.
+- La freshness policy d'abstention exige une date as-of explicite quand elle est activée; elle n'utilise plus l'horloge machine.
+- Les validations ciblées `test_portfolio_builder.py`, `test_kelly_sizer.py`, `test_risk_abstention.py`, `test_phase2_bridges.py` et `test_risk_management_cli.py` passent.
+
+### Gate restant NO-GO
+
+La persistance live/backtest ne fournit pas encore de hit rate, payoff, tail loss et nombre de trades OOS séparés par side. `model_metrics_full` ne garantit actuellement qu'un `payoff_ratio` agrégé. Le Kelly directionnel est donc fail-closed tant qu'une migration et un loader PIT de ces statistiques n'existent pas; ne pas convertir l'accuracy ou le payoff agrégé en proxy directionnel.
+
 ### Modifications précises
 
 1. Définir un objet `DirectionalEdgeEstimate` avec side, expected gross return, coûts, net edge, uncertainty et sample size.
@@ -2405,6 +2417,12 @@ python -m pytest tests/test_short_borrow_gate.py --no-cov -q
 
 ## Fiche Sprint 11 — Optimisation portefeuille complet
 
+### Implémentation vérifiée (audit runtime 2026-07-12)
+
+- `PortfolioOptimizer` respecte désormais l'exposition nette signée et ne double-compte plus un holding remplacé par une nouvelle cible sur le même symbole.
+- Les tests couvrent les deux invariants dans `tests/test_risk_portfolio_optimizer.py`.
+- **Gate runtime restant NO-GO :** `PortfolioBuilder` conserve son contrôleur incrémental. Ne pas substituer l'optimizer tant que les snapshots de holdings, ordres ouverts et la réconciliation post-arrondi ne sont pas fournis par les entrypoints live/backtest.
+
 ### Existant vérifié
 
 | Fichier | Symboles / responsabilité |
@@ -2457,6 +2475,12 @@ python -m pytest tests/test_portfolio_optimizer.py --no-cov -q
 ---
 
 ## Fiche Sprint 12 — Parité et protections
+
+### Implémentation vérifiée (audit runtime 2026-07-12)
+
+- `backtesting/risk_bridge.py` produit un `DecisionAuditLog` déterministe par date, avec fingerprint de décision et fingerprint de position.
+- `save_phase2_risk_artifacts()` exporte `phase2_risk_decision_audit.json`; l'artefact permet de comparer un replay, paper ou live avec les mêmes inputs de décision.
+- **Gate runtime restant NO-GO :** ce journal est un artefact backtest; il n'est pas encore persisté transactionnellement au moment d'une décision live, ni consommé par le watcher de protection.
 
 ### Existant vérifié
 
@@ -2780,3 +2804,98 @@ Ces 23 fichiers n'existent pas dans le dépôt au 2026-07-11. Ils sont des livra
 - `tests/test_progressive_go_live.py`
 
 Lorsqu'un test existant couvre déjà entièrement le comportement au moment d'implémenter le sprint, l'IA peut étendre ce fichier au lieu d'en créer un nouveau. Elle doit alors documenter cette substitution dans le compte rendu du sprint et conserver les mêmes invariants.
+
+---
+
+## 16. Plan d'exécution concret des Sprints 8 à 15
+
+Cette section ordonne les actions restantes d'après les dépendances runtime réellement vérifiées. Un module unitaire existant ne rend pas un sprint terminé : son entrée, son consommateur runtime et son test d'intégration doivent exister.
+
+### 1. Créer les adaptateurs de données opérationnelles
+
+- Adapter holdings, ordres ouverts, fills, cash et buying power depuis le broker vers les contrats risque.
+- Ajouter les snapshots de borrow, spread et quote horodatée, avec source et disponibilité.
+- Exposer les mêmes contrats au CLI live et au bridge de backtest; le backtest doit employer des snapshots historiques, jamais futurs.
+
+**Implémenté le 2026-07-12 :** `risk_management/operational_data.py` fournit `LiveBrokerOperationalDataAdapter` et `BacktestOperationalDataAdapter`. Ils produisent un `OperationalDataSnapshot` immuable normalisant compte, positions, holdings, ordres ouverts et `ExecutionFill` injectés. Les snapshots account/position/order invalides ou indisponibles échouent fermé via `OperationalDataUnavailable`. Les fills restent fournis par `BrokerStateSynchronizer` ou par le backtest : aucun fill n'est déduit artificiellement d'une position broker.
+
+**Reste à raccorder :** transmettre ce snapshot aux consommateurs `TransitionHandler`, `PortfolioOptimizer` et `DailyReconciliation`, et ajouter la source PIT de borrow/spread/quote.
+
+**Gate :** sans ces adaptateurs, les modules de transition, liquidité, optimizer, protection et réconciliation restent `NO-GO` pour le live.
+
+### 2. Persister les métriques OOS directionnelles PIT
+
+- Ajouter une migration pour `symbol`, `side`, `run_id`, `split_name`, `as_of_date`, `hit_rate`, `payoff`, `tail_loss`, `trade_count` et les composantes de coûts.
+- Produire ces métriques depuis les folds OOS par side/régime/horizon; ne jamais les déduire de l'accuracy globale ou du holdout final.
+- Ajouter `load_directional_win_rates_asof()` à `risk_management/db_io.py` et passer ces statistiques à `PortfolioBuilder` dans le CLI et le bridge.
+
+**Implémenté le 2026-07-12 :** migration `0048_add_model_directional_oos_metrics` et table `model_directional_oos_metrics`, avec clé `(run_id, symbol, side, split_name)` et index PIT. Le trainer calcule `hit_rate`, `payoff`, `tail_loss` et `trade_count` uniquement pour les trades long/short retenus par `decide_ternary_side_batch`, à partir des rendements OOS observés de `val` et `test`; il emploie les probabilités calibrées quand un `TemperatureScaler` est disponible. Un side sans gains et pertes observés n'est pas persisté. `RiskRepository.load_directional_win_rates_asof()` sélectionne le dernier résultat `test` puis `val` admissible par `(symbol, side)`, avec `as_of_date` et `finished_at` antérieurs ou égaux à la date de trade. Le CLI live injecte ces données dans `PortfolioBuilder`, qui préfère la clé `(symbol, side)`.
+
+**Reste à raccorder :** le bridge de backtest ne transporte pas encore de métriques directionnelles historiques par date; il ne doit pas les synthétiser depuis les métriques agrégées et le Kelly y reste donc fail-closed. Les statistiques par régime/horizon et les composantes de coûts exigent encore des folds OOS et des données de coûts réellement persistées.
+
+**Gate :** le Kelly directionnel reste fail-closed pour tout side ou toute date sans source PIT complète; aucun fallback vers l'accuracy globale n'est autorisé.
+
+### 3. Raccorder le Sprint 9 : régime et transitions
+
+- Construire un `RegimeTransition` à partir du snapshot marché et de l'état précédent persistant.
+- Appliquer uniquement permissions long/short, budgets et blocage des nouvelles entrées; le régime ne modifie jamais le rank ou le side ML.
+- Adapter positions et ordres ouverts vers `TransitionHandler`, puis transmettre le plan à l'executor : annulation des ordres, réduction ou liquidation dans cet ordre.
+
+**Test d'intégration :** un changement de régime modifie permissions/budgets sans reranker les candidats ML, et traite explicitement un ordre partiellement rempli.
+
+### 4. Raccorder le Sprint 10 : liquidité, borrow et capacité
+
+- Appeler `LiquidityGate.evaluate()` avant toute entrée avec ADV, quote fraîche et spread.
+- Pour un short, exiger un `BorrowSnapshot` frais, shortable, avec quantité disponible et locate valide si HTB.
+- Réévaluer quote et borrow juste avant soumission broker; estimer slippage/impact et intégrer le coût du borrow dans l'edge.
+
+**Gate :** borrow, ADV ou quote manquants/stale impliquent un rejet; aucun fallback optimiste n'est autorisé.
+
+### 5. Raccorder le Sprint 11 : optimizer et contraintes globales
+
+- Fournir holdings, ordres ouverts et covariance PIT à `PortfolioOptimizer` après le sizing individuel.
+- Appliquer les cibles optimisées, arrondir les quantités puis vérifier de nouveau toutes les expositions et contraintes.
+- Garder le contrôleur incrémental actuel comme fallback conservateur tant que snapshot broker ou covariance sont indisponibles.
+
+**Gate :** la sortie optimise des poids signés sans violation brute, nette, sectorielle ou de position après arrondi.
+
+### 6. Achever le Sprint 12 : parité, stops et protections
+
+- Persister le journal de décision déjà produit par le bridge au moment de chaque décision live.
+- Utiliser `StopCalculator` pour générer stop, take-profit et trailing dans les intents d'exécution.
+- Recalculer les protections à chaque fill sur le prix et la quantité réels, puis faire vérifier/réparer l'état par `ProtectionContract` et le watcher.
+
+**Gate :** la quantité protégée est égale à la quantité filled, le stop est du bon côté et un replay avec les mêmes inputs reproduit la décision.
+
+### 7. Raccorder le Sprint 13 : registry, fraîcheur, drift et rollback
+
+- Exécuter `FreshnessGate`, compatibilité modèle/calibrateur/policy et état registry avant de publier des targets.
+- En staleness critique ou drift sévère, activer `block_new_entries` ou `reduce_only`; ne jamais basculer vers un selector-only implicite.
+- Déclencher et auditer un rollback atomique vers un champion compatible.
+
+**Gate :** une donnée prix ou un modèle stale interdit toute nouvelle entrée, tout en laissant sorties et protections fonctionnelles.
+
+### 8. Créer les entrypoints Sprint 14 : shadow et paper
+
+- Introduire des modes typés `shadow`, `paper` et `live`.
+- Interdire structurellement toute soumission broker en shadow; en paper, refuser endpoint ou credentials live.
+- Comparer décisions, fills, coûts, protections et divergences avec le journal de décision; produire le rapport quotidien de campagne.
+
+**Gate :** quatre semaines de shadow puis huit à douze semaines de paper, modèle et policy gelés hors rollback de sécurité.
+
+### 9. Créer les entrypoints Sprint 15 : opérations et go-live progressif
+
+- Lancer `OperationalControls.run_smoke_tests()` avant chaque session et bloquer les entrées si un contrôle critique échoue.
+- Lancer `DailyReconciliation.reconcile()` après chaque session avec ordres, fills, positions, protections, PnL et cash.
+- Persister le journal immuable, les anomalies, les approbations et l'historique des paliers de ramp-up.
+
+**Gate :** une divergence broker, une protection absente, un snapshot critique stale ou un breaker actif bloque les entrées, mais autorise cancel, reduce-only et protection.
+
+### Ordre de réalisation obligatoire
+
+1. Adaptateurs de données et migrations PIT.
+2. Edge directionnel, régime, liquidité et optimizer.
+3. Journal live, protections et gates MLOps.
+4. Shadow/paper, réconciliation, ramp-up et go-live.
+
+Chaque étape doit ajouter un test d'intégration sur le chemin runtime concerné avant de déclarer le gate associé satisfait.

@@ -6,7 +6,13 @@ import pandas as pd
 import pytest
 
 from risk_management.config import RiskConfig
-from risk_management.models import SelectionScore, PredictionInfo, PriceInfo, WinRateInfo
+from risk_management.models import (
+    DirectionalWinRateInfo,
+    PredictionInfo,
+    PriceInfo,
+    SelectionScore,
+    WinRateInfo,
+)
 from risk_management.portfolio_builder import PortfolioBuilder
 
 
@@ -51,6 +57,17 @@ def _long_predictions(symbols: list[str]) -> dict[str, PredictionInfo]:
         )
         for symbol in symbols
     }
+
+
+def _directional_stats(symbol: str, side: str = "long") -> DirectionalWinRateInfo:
+    return DirectionalWinRateInfo(
+        symbol=symbol,
+        side=side,
+        hit_rate=0.60,
+        payoff=1.5,
+        trade_count=100,
+        run_id="run1",
+    )
 
 
 def test_build_respects_max_positions() -> None:
@@ -123,6 +140,7 @@ def test_v2_kelly_sizing_used_when_enabled() -> None:
         [SelectionScore("AAPL", "Tech", 0.95)],
         {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
         predictions=preds, win_rates=wrs,
+        directional_win_rates={"AAPL": _directional_stats("AAPL")},
     )
     accepted = [e for e in entries if e.approved_shares > 0]
     assert len(accepted) == 1
@@ -185,6 +203,7 @@ def test_short_uses_proba_short_for_kelly_and_audit() -> None:
         {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
         predictions=preds,
         win_rates=wrs,
+        directional_win_rates={"AAPL": _directional_stats("AAPL", "short")},
     )
 
     entry = entries[0]
@@ -192,6 +211,29 @@ def test_short_uses_proba_short_for_kelly_and_audit() -> None:
     assert entry.conviction_score == pytest.approx(0.80)
     expected_p_eff = cfg.prediction_confidence_weight * 0.80 + cfg.historical_win_rate_weight * 0.60
     assert entry.effective_probability == pytest.approx(expected_p_eff)
+
+
+def test_kelly_rejects_negative_directional_edge() -> None:
+    builder = PortfolioBuilder(_cfg(enable_kelly_sizing=True))
+    predictions = _long_predictions(["AAPL"])
+    directional_stats = DirectionalWinRateInfo(
+        symbol="AAPL",
+        side="long",
+        hit_rate=0.45,
+        payoff=0.8,
+        trade_count=100,
+        run_id="run1",
+    )
+
+    entries = builder.build(
+        [SelectionScore("AAPL", "Tech", 0.95)],
+        {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
+        predictions=predictions,
+        directional_win_rates={"AAPL": directional_stats},
+    )
+
+    assert entries[0].approved_shares == 0
+    assert entries[0].decision_reason_code == "abstention_gate"
 
 
 def test_builder_enforces_short_cap_and_places_stop_above_entry() -> None:

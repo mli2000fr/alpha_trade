@@ -60,6 +60,14 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
             )
         """))
         conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS model_directional_oos_metrics (
+                run_id VARCHAR(50), symbol VARCHAR(20), side VARCHAR(10),
+                split_name VARCHAR(10), as_of_date DATE, hit_rate DOUBLE,
+                payoff DOUBLE, tail_loss DOUBLE, trade_count INT,
+                policy_version INT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS stock_bars_daily (
                 symbol VARCHAR(20),
                 "date" DATE,
@@ -565,6 +573,35 @@ def test_load_win_rates() -> None:
     assert "AAPL" in wr
     assert wr["AAPL"].directional_accuracy == 0.62
     assert wr["AAPL"].asof_date == date(2026, 4, 15)
+
+
+@pytest.mark.unit
+def test_load_directional_win_rates_asof_is_side_specific_and_pit() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO model_training_run (run_id, status, finished_at)
+            VALUES ('run1', 'completed', '2026-04-15 10:00:00'),
+                   ('run2', 'completed', '2026-04-21 10:00:00')
+        """))
+        conn.execute(text("""
+            INSERT INTO model_directional_oos_metrics (
+                run_id, symbol, side, split_name, as_of_date, hit_rate, payoff,
+                tail_loss, trade_count, policy_version
+            ) VALUES
+                ('run1', 'AAPL', 'long',  'val',  '2026-04-15', 0.55, 1.2, 0.04, 10, 1),
+                ('run1', 'AAPL', 'long',  'test', '2026-04-15', 0.65, 1.8, 0.03, 12, 1),
+                ('run1', 'AAPL', 'short', 'test', '2026-04-15', 0.60, 1.4, 0.05, 11, 1),
+                ('run2', 'AAPL', 'long',  'test', '2026-04-21', 0.99, 9.9, 0.01, 99, 1)
+        """))
+    metrics = RiskRepository(engine=engine).load_directional_win_rates_asof(
+        ["AAPL"], date(2026, 4, 18),
+    )
+    assert set(metrics) == {("AAPL", "long"), ("AAPL", "short")}
+    assert metrics[("AAPL", "long")].payoff == 1.8
+    assert metrics[("AAPL", "short")].hit_rate == 0.60
+    assert metrics[("AAPL", "long")].asof_date == date(2026, 4, 15)
 
 
 @pytest.mark.unit

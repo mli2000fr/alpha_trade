@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import cast
 import json
 
+import numpy as np
 import pandas as pd
+import pytest
 import torch
 from sqlalchemy.engine import Engine
 
@@ -19,6 +21,27 @@ def _training_config(tmp_path: Path, *, min_history_days: int = 10) -> TrainingC
         artifacts_dir=tmp_path,
         accelerator="cpu",
     )
+
+
+def test_compute_metrics_persists_ternary_directional_oos_statistics() -> None:
+    outputs = {
+        "labels": np.array([-1, 1, -1]),
+        "logits": np.array([[3.0, 0.0, -1.0], [-1.0, 0.0, 3.0], [3.0, 0.0, -1.0]]),
+        "raw_proba": np.array([[0.8, 0.1, 0.1], [0.1, 0.1, 0.8], [0.8, 0.1, 0.1]]),
+        "margins": np.zeros(3),
+        "num_classes": 3,
+    }
+
+    metrics = trainer._compute_metrics(
+        outputs,
+        decision_threshold=0.5,
+        future_returns=np.array([-0.03, 0.04, 0.02]),
+    )
+
+    directional = metrics["directional_oos_metrics"]
+    assert directional["long"]["trade_count"] == 1
+    assert directional["short"]["trade_count"] == 2
+    assert directional["short"]["payoff"] == pytest.approx(1.5)
 
 
 def test_train_symbol_skips_when_history_too_short(monkeypatch, tmp_path: Path) -> None:

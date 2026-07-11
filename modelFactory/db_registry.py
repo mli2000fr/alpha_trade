@@ -486,6 +486,65 @@ def upsert_metrics_full(
         LOGGER.warning("upsert_metrics_full failed run_id=%s sym=%s err=%s", run_id, symbol, exc)
 
 
+def upsert_directional_oos_metrics(
+    engine: Engine,
+    *,
+    run_id: str,
+    symbol: str,
+    as_of_date: date,
+    metrics_by_split: dict[str, dict[str, dict[str, float | int | None]]],
+    policy_version: int = 1,
+) -> None:
+    """Remplace les statistiques directionnelles OOS sélectionnées par policy.
+
+    Un side sans gains et pertes observés n'a pas de payoff empirique. Il est
+    volontairement omis afin que les consommateurs Kelly restent fail-closed.
+    """
+    rows: list[dict[str, Any]] = []
+    for split_name, metrics_by_side in metrics_by_split.items():
+        for side, metrics in metrics_by_side.items():
+            trade_count = int(metrics.get("trade_count") or 0)
+            payoff = float(metrics.get("payoff") or 0.0)
+            tail_loss = metrics.get("tail_loss")
+            if side not in {"long", "short"} or trade_count <= 0 or payoff <= 0.0 or tail_loss is None:
+                continue
+            rows.append({
+                "rid": run_id,
+                "sym": symbol,
+                "side": side,
+                "split": split_name,
+                "asof": as_of_date,
+                "hit": float(metrics["hit_rate"]),
+                "payoff": payoff,
+                "tail": float(tail_loss),
+                "trades": trade_count,
+                "policy_version": policy_version,
+            })
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "DELETE FROM model_directional_oos_metrics "
+                    "WHERE run_id = :rid AND symbol = :sym"
+                ),
+                {"rid": run_id, "sym": symbol},
+            )
+            if rows:
+                conn.execute(
+                    text(
+                        "INSERT INTO model_directional_oos_metrics ("
+                        "run_id, symbol, side, split_name, as_of_date, hit_rate, payoff, "
+                        "tail_loss, trade_count, policy_version, created_at"
+                        ") VALUES ("
+                        ":rid, :sym, :side, :split, :asof, :hit, :payoff, "
+                        ":tail, :trades, :policy_version, CURRENT_TIMESTAMP)"
+                    ),
+                    rows,
+                )
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("upsert_directional_oos_metrics failed run_id=%s sym=%s err=%s", run_id, symbol, exc)
+
+
 def replace_model_governance(
     engine: Engine,
     *,

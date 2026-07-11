@@ -501,6 +501,12 @@ class PortfolioOptimizer:
             proposed_notional = proposed_qty * price
             sign = 1.0 if side == "long" else -1.0
             proposed_weight = sign * proposed_notional / account_equity if account_equity > 0 else 0.0
+            existing_target = portfolio.get(symbol)
+            existing_notional = float(existing_target["notional"]) if existing_target is not None else 0.0
+            existing_sign = 1.0 if existing_target is None or existing_target["side"] == "long" else -1.0
+
+            gross_without_symbol = total_gross - existing_notional
+            net_without_symbol = total_net - existing_sign * existing_notional
 
             # ── Vérifier les contraintes ────────────────────────────────
             # Max positions
@@ -514,10 +520,10 @@ class PortfolioOptimizer:
                     continue
 
             # Max gross exposure
-            new_gross = total_gross + proposed_notional
+            new_gross = gross_without_symbol + proposed_notional
             if new_gross > self.max_gross_exposure * account_equity:
                 # Réduire le candidat pour fitter
-                max_allowed_notional = (self.max_gross_exposure * account_equity) - total_gross
+                max_allowed_notional = (self.max_gross_exposure * account_equity) - gross_without_symbol
                 if max_allowed_notional <= 0:
                     # Essayer de réduire le pire candidat existant
                     removed = self._reduce_worst_candidate(portfolio, audit)
@@ -551,6 +557,26 @@ class PortfolioOptimizer:
                 proposed_qty = float(reduced_qty)
                 proposed_notional = proposed_qty * price
 
+            # Max net exposure signed. A replacement removes the old target
+            # before testing the proposed side and quantity.
+            max_net_notional = self.max_net_exposure * account_equity
+            new_net = net_without_symbol + sign * proposed_notional
+            if abs(new_net) > max_net_notional:
+                allowed_notional = max_net_notional - sign * net_without_symbol
+                if allowed_notional <= 0:
+                    rejected[symbol] = "max_net_exposure_atteint"
+                    audit.append(f"reject:{symbol} net_exposure={new_net/account_equity:.1%}")
+                    continue
+                reduced_qty = math.floor(allowed_notional / price)
+                if reduced_qty < 1:
+                    rejected[symbol] = "max_net_exposure_atteint"
+                    continue
+                reduced[symbol] = (float(reduced_qty), "max_net_exposure")
+                proposed_qty = float(reduced_qty)
+                proposed_notional = proposed_qty * price
+                proposed_weight = sign * proposed_notional / account_equity if account_equity > 0 else 0.0
+                audit.append(f"reduce:{symbol} net_exposure: {candidate.get('proposed_quantity')}→{reduced_qty}")
+
             # ── No-trade band ───────────────────────────────────────────
             if symbol in portfolio:
                 current_qty = portfolio[symbol]["quantity"]
@@ -576,8 +602,8 @@ class PortfolioOptimizer:
                 "sector": sector,
                 "has_open_order": False,
             }
-            total_gross += proposed_notional
-            total_net += sign * proposed_notional
+            total_gross = gross_without_symbol + proposed_notional
+            total_net = net_without_symbol + sign * proposed_notional
             audit.append(f"accept:{symbol} side={side} qty={proposed_qty} edge={edge:.4f}")
 
         # ── 5. Calculer les trades ──────────────────────────────────────

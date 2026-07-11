@@ -13,6 +13,34 @@ def test_db_registry_importable():
     assert hasattr(db_registry, "__doc__")
 
 
+def test_upsert_directional_oos_metrics_keeps_only_complete_empirical_sides() -> None:
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.begin.return_value.__enter__.return_value = mock_conn
+    mock_engine.begin.return_value.__exit__.return_value = False
+
+    db_registry.upsert_directional_oos_metrics(
+        mock_engine,
+        run_id="run-1",
+        symbol="AAPL",
+        as_of_date=date(2026, 4, 15),
+        metrics_by_split={
+            "test": {
+                "long": {"hit_rate": 0.6, "payoff": 1.5, "tail_loss": 0.04, "trade_count": 12},
+                "short": {"hit_rate": 1.0, "payoff": 0.0, "tail_loss": None, "trade_count": 5},
+            },
+        },
+    )
+
+    assert mock_conn.execute.call_count == 2
+    _, inserted_rows = mock_conn.execute.call_args.args
+    assert inserted_rows == [{
+        "rid": "run-1", "sym": "AAPL", "side": "long", "split": "test",
+        "asof": date(2026, 4, 15), "hit": 0.6, "payoff": 1.5,
+        "tail": 0.04, "trades": 12, "policy_version": 1,
+    }]
+
+
 def test_build_governance_rows_extracts_ranking_routes_and_metrics():
     rows = db_registry.build_governance_rows(
         run_id="run-1",

@@ -12,6 +12,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from core.ternary_decision_policy import TernaryDecisionPolicy, decide_ternary_side_batch
+
 
 # ── Sprint Maître 1 : métriques multiclasses ─────────────────────────────────
 
@@ -235,6 +237,46 @@ def compute_multiclass_metrics(
     if n_classes == 3:
         result["action_rate"] = float((y_pred != 1).mean())
 
+    return result
+
+
+def compute_directional_oos_metrics(
+    probabilities: np.ndarray,
+    future_returns: np.ndarray,
+    *,
+    policy: TernaryDecisionPolicy | None = None,
+) -> dict[str, dict[str, float | int | None]]:
+    """Calculate realized OOS statistics for policy-selected long and short trades.
+
+    ``future_returns`` are realized long returns for the labelled horizon.
+    The return of a selected short is therefore the negated long return. Flat
+    policy decisions are deliberately excluded from directional trade stats.
+    """
+    proba = np.asarray(probabilities, dtype=np.float64)
+    realized_long_returns = np.asarray(future_returns, dtype=np.float64).reshape(-1)
+    if proba.ndim != 2 or proba.shape[1] != 3:
+        raise ValueError(f"probabilities doit être de forme (N, 3), reçu {proba.shape}")
+    if len(proba) != len(realized_long_returns):
+        raise ValueError("probabilities et future_returns doivent avoir la même longueur")
+
+    decisions = decide_ternary_side_batch(proba, policy=policy)
+    result: dict[str, dict[str, float | int | None]] = {}
+    for side, class_index, side_returns in (
+        ("short", 0, -realized_long_returns),
+        ("long", 2, realized_long_returns),
+    ):
+        returns = side_returns[(decisions == class_index) & np.isfinite(side_returns)]
+        trade_count = int(len(returns))
+        wins = returns[returns > 0.0]
+        losses = returns[returns < 0.0]
+        average_gain = float(np.mean(wins)) if len(wins) else 0.0
+        average_loss = float(np.mean(np.abs(losses))) if len(losses) else 0.0
+        result[side] = {
+            "hit_rate": float(len(wins) / trade_count) if trade_count else 0.0,
+            "payoff": average_gain / average_loss if average_gain > 0.0 and average_loss > 0.0 else 0.0,
+            "tail_loss": float(np.max(np.abs(losses))) if len(losses) else None,
+            "trade_count": trade_count,
+        }
     return result
 
 

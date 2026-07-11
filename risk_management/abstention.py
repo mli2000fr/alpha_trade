@@ -23,6 +23,7 @@ Usage ::
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
 
 from risk_management.edge import DirectionalEdgeEstimate
 from risk_management.selection_contract import MLRankedCandidate
@@ -89,6 +90,8 @@ class AbstentionPolicy:
         self,
         candidate: MLRankedCandidate,
         edge: DirectionalEdgeEstimate | None = None,
+        *,
+        as_of_date: date | None = None,
     ) -> AbstentionDecision:
         """Évalue toutes les gates d'abstention.
 
@@ -117,19 +120,21 @@ class AbstentionPolicy:
 
         # ── Gate 2 : Data staleness ────────────────────────────────────
         if self.max_data_age_days is not None and candidate.feature_cutoff is not None:
-            from datetime import date, datetime, timedelta
-            now = date.today()
             fc_date = (
                 candidate.feature_cutoff.date()
                 if isinstance(candidate.feature_cutoff, datetime)
                 else candidate.feature_cutoff
             )
-            age = (now - fc_date).days
-            if age > self.max_data_age_days:
+            if as_of_date is None:
                 gate_results["data_freshness"] = False
-                reasons.append(f"données trop anciennes ({age}j > {self.max_data_age_days}j)")
+                reasons.append("date as-of manquante pour la fraîcheur des données")
             else:
-                gate_results["data_freshness"] = True
+                age = (as_of_date - fc_date).days
+                if age > self.max_data_age_days:
+                    gate_results["data_freshness"] = False
+                    reasons.append(f"données trop anciennes ({age}j > {self.max_data_age_days}j)")
+                else:
+                    gate_results["data_freshness"] = True
 
         # ── Gate 3 : Confiance ML (p_side) ─────────────────────────────
         if self.min_p_side is not None:

@@ -48,9 +48,15 @@ from modelFactory.db_registry import (
     insert_training_run,
     replace_model_governance,
     update_training_run,
+    upsert_directional_oos_metrics,
     upsert_metrics_full,
 )
-from modelFactory.evaluation import align_sequence_rows, compute_threshold_metrics, optimize_decision_threshold
+from modelFactory.evaluation import (
+    align_sequence_rows,
+    compute_directional_oos_metrics,
+    compute_threshold_metrics,
+    optimize_decision_threshold,
+)
 from modelFactory.features import build_feature_contract, get_feature_columns
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.catboost_baseline import run_catboost_baseline
@@ -305,10 +311,11 @@ def _run_training_registry_writes(
     challenger_ranking: list[dict[str, Any]],
 ) -> None:
     best_epoch = _extract_best_epoch(best_ckpt) if best_ckpt.exists() else None
+    completed_at = datetime.now(timezone.utc)
     update_training_run(
         engine, run_id,
         status="completed",
-        finished_at=datetime.now(timezone.utc),
+        finished_at=completed_at,
         epochs_run=trainer.current_epoch,
         best_epoch=best_epoch or 0,
         checkpoint_path=str(best_ckpt),
@@ -322,6 +329,20 @@ def _run_training_registry_writes(
     wf_mean = walk_forward_metrics.get("mean") if walk_forward_metrics else None
     if wf_mean:
         insert_metrics(engine, run_id, symbol, "wf", wf_mean, model_name="lstm_attention")
+
+    directional_metrics_by_split = {
+        split_name: metrics["directional_oos_metrics"]
+        for split_name, metrics in (("val", val_metrics), ("test", test_metrics))
+        if isinstance(metrics.get("directional_oos_metrics"), dict)
+    }
+    if directional_metrics_by_split:
+        upsert_directional_oos_metrics(
+            engine,
+            run_id=run_id,
+            symbol=symbol,
+            as_of_date=completed_at.date(),
+            metrics_by_split=directional_metrics_by_split,
+        )
 
     # ── LightGBM challenger metrics ──
     lgbm_metrics = challengers.get("lightgbm") if isinstance(challengers, dict) else None
@@ -539,7 +560,7 @@ def _compute_metrics(
     outputs: dict[str, np.ndarray],
     *,
     decision_threshold: float,
-    calibrator: PlattCalibrator | None = None,
+    calibrator: PlattCalibrator | TemperatureScaler | None = None,
     future_returns: np.ndarray | None = None,
 ) -> dict[str, Any]:
     labels = outputs["labels"]
@@ -550,7 +571,11 @@ def _compute_metrics(
 
     if num_classes == 3:
         # ── Ternary metrics ──────────────────────────────────────
-        probs = outputs["raw_proba"]  # [N, 3]
+        probs = (
+            calibrator.predict_proba(logits)
+            if isinstance(calibrator, TemperatureScaler) and calibrator.fitted
+            else outputs["raw_proba"]
+        )
         preds = np.argmax(probs, axis=1)  # {0, 1, 2}
         # Décale labels {-1, 0, 1} → {0, 1, 2}
         labels_shifted = labels + 1
@@ -602,7 +627,7 @@ def _compute_metrics(
         bin_preds = (preds == 2).astype(np.int64)
         bin_acc = float((bin_preds == bin_labels_long).mean())
 
-        return {
+        metrics = {
             "loss": loss,
             "accuracy": accuracy,
             "directional_accuracy": bin_acc,
@@ -616,6 +641,12 @@ def _compute_metrics(
             **pred_dist,
             **label_dist,
         }
+        if future_returns is not None:
+            metrics["directional_oos_metrics"] = compute_directional_oos_metrics(
+                probs,
+                future_returns,
+            )
+        return metrics
 
     # ── Binary metrics (comportement existant) ──────────────────
     raw_proba = outputs["raw_proba"]

@@ -17,7 +17,14 @@ from common.tradable_universe import UniverseResolution, resolve_universe_asof
 from database.connection import get_sqlalchemy_engine
 from risk_management.config import RiskConfig
 from risk_management.ml_gate import resolve_ml_gate_state
-from risk_management.models import AccountRiskSnapshot, SelectionScore, PredictionInfo, PriceInfo, WinRateInfo
+from risk_management.models import (
+    AccountRiskSnapshot,
+    DirectionalWinRateInfo,
+    SelectionScore,
+    PredictionInfo,
+    PriceInfo,
+    WinRateInfo,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -606,6 +613,62 @@ class RiskRepository:
                 asof_date=self._coerce_date(r.get("finished_at")),
             )
             for r in rows
+        }
+
+    def load_directional_win_rates_asof(
+        self,
+        symbols: list[str],
+        trade_date: date,
+    ) -> dict[tuple[str, str], DirectionalWinRateInfo]:
+        """Charge la dernière statistique OOS PIT pour chaque ``(symbole, side)``."""
+        if not symbols:
+            return {}
+        placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))
+        params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
+        params["trade_date"] = trade_date
+        query = text(f"""
+            SELECT symbol, side, hit_rate, payoff, tail_loss, trade_count,
+                   split_name, run_id, as_of_date
+            FROM (
+                SELECT d.symbol, d.side, d.hit_rate, d.payoff, d.tail_loss,
+                       d.trade_count, d.split_name, d.run_id, d.as_of_date,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY d.symbol, d.side
+                           ORDER BY CASE d.split_name WHEN 'test' THEN 0 WHEN 'val' THEN 1 ELSE 2 END,
+                                    d.as_of_date DESC,
+                                    d.run_id DESC
+                       ) AS rn
+                FROM model_directional_oos_metrics d
+                JOIN model_training_run t ON d.run_id = t.run_id
+                WHERE t.status = 'completed'
+                  AND d.symbol IN ({placeholders})
+                  AND d.side IN ('long', 'short')
+                  AND d.trade_count > 0
+                  AND d.payoff > 0
+                  AND d.as_of_date <= :trade_date
+                  AND DATE(t.finished_at) <= :trade_date
+            ) ranked
+            WHERE rn = 1
+        """)
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(query, params).mappings().all()
+        except Exception:
+            LOGGER.warning("Impossible de charger model_directional_oos_metrics — table absente ?")
+            return {}
+        return {
+            (str(row["symbol"]).strip().upper(), str(row["side"])): DirectionalWinRateInfo(
+                symbol=str(row["symbol"]).strip().upper(),
+                side=str(row["side"]),
+                hit_rate=float(row["hit_rate"]),
+                payoff=float(row["payoff"]),
+                tail_loss=float(row["tail_loss"]) if row["tail_loss"] is not None else None,
+                trade_count=int(row["trade_count"]),
+                split_name=str(row["split_name"]),
+                run_id=str(row["run_id"]),
+                asof_date=self._coerce_date(row["as_of_date"]),
+            )
+            for row in rows
         }
 
     def load_factor_columns_asof(

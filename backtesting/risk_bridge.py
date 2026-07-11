@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, time
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
@@ -12,6 +13,12 @@ import pandas as pd
 from backtesting.signal_replay import _pick_score_column
 from common.quantity_utils import normalize_share_quantity
 from risk_management.config import RiskConfig
+from risk_management.decision_fingerprint import (
+    AuditLogEntry,
+    DecisionAuditLog,
+    build_decision_fingerprint,
+    build_position_fingerprint,
+)
 from risk_management.models import SelectionScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
 from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
@@ -53,6 +60,7 @@ class RiskBridgeResult:
     signals_df: pd.DataFrame
     diagnostics: dict[str, object]
     regime_snapshots: dict[date, dict] = field(default_factory=dict)
+    decision_audit_logs: dict[date, DecisionAuditLog] = field(default_factory=dict)
 
 
 def _normalize_trade_dates(df: pd.DataFrame) -> pd.DataFrame:
@@ -405,6 +413,7 @@ def build_phase2_risk_result(
     all_entries: list[PortfolioEntry] = []
     signal_frames: list[pd.DataFrame] = []
     regime_snapshots_dump: dict[date, dict] = {}
+    decision_audit_logs: dict[date, DecisionAuditLog] = {}
 
     lookback = int(correlation_lookback_days or risk_config.correlation_lookback_days)
 
@@ -602,6 +611,55 @@ def build_phase2_risk_result(
             factor_covariance=factor_covariance,
         )
         entries = builder.build(selection_inputs, prices, predictions=predictions, return_matrix=return_matrix)
+        model_run_ids = sorted({prediction.run_id for prediction in predictions.values() if prediction.run_id})
+        model_run_id = "|".join(model_run_ids)
+        regime_mode = str(getattr(snap, "mode", "normal") or "normal")
+        universe_fingerprint = ",".join(sorted(candidate.symbol for candidate in selection_inputs))
+        decision_fingerprint = build_decision_fingerprint(
+            snapshot_date,
+            f"backtest-{snapshot_date.isoformat()}",
+            config_fingerprint=cfg_for_day.fingerprint,
+            model_run_id=model_run_id,
+            universe_fingerprint=universe_fingerprint,
+            regime_mode=regime_mode,
+            candidate_count=len(selection_inputs),
+        )
+        audit_log = DecisionAuditLog(
+            trade_date=snapshot_date,
+            run_id=decision_fingerprint.run_id,
+            decision_fingerprint=decision_fingerprint,
+        )
+        decision_timestamp = datetime.combine(snapshot_date, time.min)
+        for entry in entries:
+            position_fingerprint = build_position_fingerprint(
+                entry.symbol,
+                "short" if entry.side == "sell" else "long",
+                decision_fingerprint.fingerprint,
+                predicted_proba=float(entry.predicted_proba or 0.0),
+                p_side=float(entry.predicted_proba or 0.0),
+                price=entry.entry_price,
+                atr=entry.atr_20,
+                config_fingerprint=cfg_for_day.fingerprint,
+            )
+            audit_log.add_entry(AuditLogEntry(
+                trade_date=snapshot_date,
+                timestamp=decision_timestamp,
+                run_id=decision_fingerprint.run_id,
+                symbol=entry.symbol,
+                side="short" if entry.side == "sell" else "long",
+                decision=str(entry.decision),
+                reason=entry.decision_reason,
+                proposed_shares=entry.proposed_shares,
+                approved_shares=entry.approved_shares,
+                entry_price=entry.entry_price,
+                stop_price=entry.stop_price_initial,
+                fingerprint=position_fingerprint.fingerprint,
+                predicted_proba=entry.predicted_proba,
+                atr=entry.atr_20,
+                config_fingerprint=cfg_for_day.fingerprint,
+                model_run_id=model_run_id,
+            ))
+        decision_audit_logs[snapshot_date] = audit_log
         n_entry_sells = sum(1 for e in entries if getattr(e, "side", "buy") == "sell")
         n_accepted_sells = sum(1 for e in entries if getattr(e, "side", "buy") == "sell" and e.approved_shares > 0)
         if n_sells > 0:
@@ -649,12 +707,14 @@ def build_phase2_risk_result(
         "rotation_data_points": len(rotation_state._daily_returns),
         "factor_model_enabled": bool(risk_config.enable_factor_model),
         "factor_correlation_filter": bool(risk_config.use_factor_correlation_filter),
+        "decision_audit_logs": len(decision_audit_logs),
     }
     return RiskBridgeResult(
         entries=all_entries,
         signals_df=signals_df,
         diagnostics=diagnostics,
         regime_snapshots=regime_snapshots_dump,
+        decision_audit_logs=decision_audit_logs,
     )
 
 
@@ -708,6 +768,16 @@ def save_phase2_risk_artifacts(result: RiskBridgeResult, output_dir: Path) -> di
         entries_path = output_dir / "phase2_risk_entries.csv"
         entries_df.to_csv(entries_path, index=False)
         artifact_paths["phase2_risk_entries_csv"] = str(entries_path)
+    if result.decision_audit_logs:
+        audit_logs_path = output_dir / "phase2_risk_decision_audit.json"
+        audit_logs_path.write_text(
+            pd.Series({
+                trade_date.isoformat(): audit_log.to_dict()
+                for trade_date, audit_log in result.decision_audit_logs.items()
+            }).to_json(force_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        artifact_paths["phase2_risk_decision_audit_json"] = str(audit_logs_path)
     if not signals_df.empty:
         signals_path = output_dir / "phase2_risk_signals.csv"
         signals_df.to_csv(signals_path, index=False)

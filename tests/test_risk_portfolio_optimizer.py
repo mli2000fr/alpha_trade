@@ -251,6 +251,34 @@ class TestPortfolioOptimizer:
         # Trade = 100 - 50 = +50
         assert result.trades.get("AAPL") == 50.0
 
+    def test_replacing_holding_does_not_double_count_gross_exposure(self) -> None:
+        opt = PortfolioOptimizer(max_gross_exposure=0.20, max_position_weight=0.20)
+        holdings = [HoldingSnapshot("AAPL", side="long", quantity=100, current_price=100.0)]
+
+        result = opt.optimize(
+            [self._make_candidate("AAPL", edge=0.08, qty=150, price=100.0)],
+            holdings,
+            account_equity=100_000,
+        )
+
+        assert result.target_quantities["AAPL"] == 150.0
+        assert "AAPL" not in result.rejected_symbols
+
+    def test_signed_net_exposure_limit_reduces_same_side_candidate(self) -> None:
+        opt = PortfolioOptimizer(
+            max_gross_exposure=1.0,
+            max_net_exposure=0.10,
+            max_position_weight=0.50,
+        )
+
+        result = opt.optimize(
+            [self._make_candidate("AAPL", edge=0.08, qty=200, price=100.0)],
+            account_equity=100_000,
+        )
+
+        assert result.target_quantities["AAPL"] == 100.0
+        assert result.reduced_symbols["AAPL"][1] == "max_net_exposure"
+
     def test_no_trade_band_skips(self) -> None:
         opt = PortfolioOptimizer(max_position_weight=0.20)
         opt.no_trade_band = NoTradeBand(lower_pct=0.20, upper_pct=0.20)

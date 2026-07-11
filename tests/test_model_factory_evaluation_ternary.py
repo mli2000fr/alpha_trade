@@ -7,6 +7,7 @@ import pytest
 
 from modelFactory.evaluation import (
     check_model_collapse,
+    compute_directional_oos_metrics,
     compute_multiclass_metrics,
     multiclass_auc_one_vs_rest,
     multiclass_balanced_accuracy,
@@ -156,6 +157,29 @@ def test_compute_multiclass_metrics_rejects_invalid() -> None:
     result = compute_multiclass_metrics(y_true, y_proba)
     assert result["proba_valid"] is False
     assert "proba_error" in result
+
+
+def test_directional_oos_metrics_use_policy_and_signed_returns() -> None:
+    probabilities = np.array([
+        [0.70, 0.20, 0.10],  # selected short: -5% long return -> +5% short return
+        [0.10, 0.20, 0.70],  # selected long: +4%
+        [0.50, 0.43, 0.07],  # selected short: +2% long return -> -2% short return
+        [0.40, 0.35, 0.25],  # flat by threshold: ignored
+    ])
+    future_returns = np.array([-0.05, 0.04, 0.02, 0.10])
+
+    metrics = compute_directional_oos_metrics(probabilities, future_returns)
+
+    assert metrics["long"] == {
+        "hit_rate": 1.0,
+        "payoff": 0.0,
+        "tail_loss": None,
+        "trade_count": 1,
+    }
+    assert metrics["short"]["trade_count"] == 2
+    assert metrics["short"]["hit_rate"] == 0.5
+    assert metrics["short"]["payoff"] == pytest.approx(2.5)
+    assert metrics["short"]["tail_loss"] == pytest.approx(0.02)
 
 
 # ── Collapse detection ──────────────────────────────────────────────────────

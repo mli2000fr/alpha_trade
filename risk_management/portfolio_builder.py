@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import date
 
@@ -14,12 +14,15 @@ from core.conviction import fuse_short as _fuse_conviction_short
 from core.direction import compute_initial_stop_price
 from core.run_summary import attach_live_progress
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
+from risk_management.abstention import AbstentionPolicy
 from risk_management.config import RiskConfig
 from risk_management.constraints import PortfolioState
 from risk_management.correlation_filter import filter_correlated_signed
+from risk_management.edge import EdgeCalculator
 from risk_management.enums import Decision, DecisionReasonCode, SizingMethod
 from risk_management.kelly import KellySizer
 from risk_management.models import (
+    DirectionalWinRateInfo,
     SelectionScore,
     EnrichedSelection,
     PortfolioEntry,
@@ -29,6 +32,7 @@ from risk_management.models import (
 )
 from risk_management.position_sizer import PositionSizer
 from risk_management.risk_checker import RiskCheckerImpl
+from risk_management.selection_contract import MLRankedCandidate
 from risk_management.concentration import (
     BreakoutConfirmationTracker,
     ConsecutiveLossTracker,
@@ -330,7 +334,15 @@ class PortfolioBuilder:
             self._breakout_tracker = BreakoutConfirmationTracker(
                 min_breakout_days=config.min_breakout_days,
             )
+        self._directional_win_rates: Mapping[str | tuple[str, str], DirectionalWinRateInfo] = {}
         self.progress_callback: Callable[[dict[str, object]], None] | None = None
+
+    def set_directional_win_rates(
+        self,
+        directional_win_rates: Mapping[str | tuple[str, str], DirectionalWinRateInfo],
+    ) -> None:
+        """Injecte les métriques OOS PIT utilisées par le sizing Kelly."""
+        self._directional_win_rates = directional_win_rates
 
     def _emit_progress(
         self,
@@ -434,6 +446,7 @@ class PortfolioBuilder:
         win_rates: dict[str, WinRateInfo] | None = None,
         return_matrix: DataFrame | None = None,
         trade_date: date | None = None,
+        directional_win_rates: Mapping[str | tuple[str, str], DirectionalWinRateInfo] | None = None,
     ) -> list[PortfolioEntry]:
         """Construit la liste des PortfolioEntry.
 
@@ -444,6 +457,7 @@ class PortfolioBuilder:
         """
         predictions = predictions or {}
         win_rates = win_rates or {}
+        directional_win_rates = directional_win_rates or self._directional_win_rates
 
         # ── 0. Scoring directionnel (regime-aware + rotation factor) ──
         if self._regime_snapshot is not None and candidates:
@@ -676,6 +690,9 @@ class PortfolioBuilder:
         equity = self._cfg.account_equity
         accepted_rank = 0
         minimum_viable_shares = QUANTITY_EPSILON if self._cfg.allow_fractional_shares else 1.0
+        decision_date = trade_date or date.today()
+        edge_calculator = EdgeCalculator()
+        abstention_policy = AbstentionPolicy.sensible_defaults()
 
         for ec in retained:
             pi = prices.get(ec.symbol)
@@ -709,7 +726,62 @@ class PortfolioBuilder:
 
             # Sizing
             if self._kelly_sizer is not None:
-                sizing = self._kelly_sizer.compute(pi, ec.predicted_proba, ec.historical_win_rate)
+                side = "short" if ec.side == "sell" else "long"
+                directional_stats = directional_win_rates.get((ec.symbol, side)) or directional_win_rates.get(ec.symbol)
+                if directional_stats is None or directional_stats.side != side:
+                    entries.append(self._make_entry_v2(
+                        ec, pi, 0, 0, Decision.REJECTED,
+                        "statistiques directionnelles OOS manquantes",
+                        decision_reason_code=DecisionReasonCode.MISSING_DIRECTIONAL_EDGE,
+                    ))
+                    processed_candidates += 1
+                    continue
+
+                prediction = predictions.get(ec.symbol)
+                if prediction is None:
+                    entries.append(self._make_entry_v2(
+                        ec, pi, 0, 0, Decision.REJECTED, "prédiction ML manquante",
+                        decision_reason_code=DecisionReasonCode.UNKNOWN,
+                    ))
+                    processed_candidates += 1
+                    continue
+
+                edge = edge_calculator.estimate(
+                    side=side,
+                    hit_rate=directional_stats.hit_rate,
+                    payoff=directional_stats.payoff,
+                    n_trades=directional_stats.trade_count,
+                    tail_loss=directional_stats.tail_loss,
+                )
+                decision_input = MLRankedCandidate(
+                    symbol=ec.symbol,
+                    trade_date=decision_date,
+                    side=side,
+                    p_long=float(prediction.proba_long or 0.0),
+                    p_flat=float(prediction.proba_flat or 0.0),
+                    p_short=float(prediction.proba_short or 0.0),
+                    p_side=float(ec.predicted_proba or 0.0),
+                    model_run_id=prediction.run_id,
+                )
+                abstention = abstention_policy.evaluate(
+                    decision_input,
+                    edge,
+                    as_of_date=decision_date,
+                )
+                if abstention.is_blocked:
+                    entries.append(self._make_entry_v2(
+                        ec, pi, 0, 0, Decision.REJECTED, abstention.reason,
+                        decision_reason_code=DecisionReasonCode.ABSTENTION_GATE,
+                    ))
+                    processed_candidates += 1
+                    continue
+
+                sizing = self._kelly_sizer.compute(
+                    pi,
+                    ec.predicted_proba,
+                    ec.historical_win_rate,
+                    directional_stats=directional_stats,
+                )
             else:
                 sizing = self._sizer.compute(pi)
 
