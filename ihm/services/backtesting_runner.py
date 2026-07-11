@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
+from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
 from ihm.services.pipeline_runner import PROJECT_ROOT, build_subprocess_env
 
 BacktestingCommandKind = Literal[
@@ -83,6 +84,17 @@ class BacktestRunOptions:
     dd_recovery_pct: float = 0.92
     target_annual_vol: float | None = None
     min_ml_coverage_ratio: float | None = None
+
+    @property
+    def ml_first_selection_contract(self) -> MLFirstSelectionContract:
+        """Contrat cible partagé, sans modifier encore la commande CLI."""
+        return MLFirstSelectionContract(
+            capacity=SelectionCapacity(
+                max_positions=self.max_positions,
+                max_long_positions=self.max_positions,
+                max_short_positions=min(2, self.max_positions),
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)

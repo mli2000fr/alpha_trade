@@ -127,7 +127,7 @@ def resolve_regime_adaptive_short_params(
     Parameters
     ----------
     risk_config : object
-        Doit exposer short_max_positions (int) et short_min_score (float).
+        Doit exposer max_short_positions (int) et short_min_score (float).
     short_by_regime : bool
         True si le régime est capital_preservation.
 
@@ -136,7 +136,7 @@ def resolve_regime_adaptive_short_params(
     tuple[int, float]
         (max_short_positions, min_score_for_short)
     """
-    eff_max = int(getattr(risk_config, "short_max_positions", 2))
+    eff_max = int(getattr(risk_config, "max_short_positions", 2))
     eff_min = float(getattr(risk_config, "short_min_score", 0.30))
     if short_by_regime:
         eff_max = max(eff_max, 4)
@@ -144,7 +144,7 @@ def resolve_regime_adaptive_short_params(
         # si le ML domine (min_score=0). Le all_shorts fix dans tag_short_candidates
         # limite déjà au top-N par short_score.
         if eff_min > 0:
-            eff_min = max(eff_min, 0.20)
+            eff_min = min(eff_min, 0.20)
     return eff_max, eff_min
 
 

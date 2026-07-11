@@ -1,6 +1,6 @@
 # Refactor ML-First — Suppression du chemin critique `candidate -> ML`
 
-**Statut :** Plan détaillé audité sur le code  
+**Statut :** Plan détaillé audité sur le code — Sprint 0 terminé  
 **Date :** 2026-07-11  
 **Auteur :** Session Copilot  
 **Fichier :** `prompt/refactor_ml.md`
@@ -276,6 +276,39 @@ Ils doivent tous être migrés dans le même cutover fonctionnel :
 
 **Objectif :** valider le nouveau flux ML-first hors production, puis remplacer l'ancien flux sans option de retour runtime.
 
+### État d'implémentation au 2026-07-11
+
+Implémenté :
+
+1. `core/ml_selection_contract.py` définit le contrat immutable partagé :
+  - univers nominal `tradable-universe`;
+  - cible ML ternaire obligatoire;
+  - score limité au rôle `feature_veto`;
+  - feature engineering sur tout l'univers tradable avant l'inférence, sans gate;
+  - vetos uniquement après le ranking ML;
+  - workflow training séparé du live quotidien;
+  - séquence live canonique figée à 12 étapes;
+  - prédiction obligatoire;
+  - rankings long/short séparés;
+  - capacité totale et plafonds par côté via `SelectionCapacity`.
+2. `RiskConfig` expose désormais `max_positions`, `max_long_positions`, `max_short_positions` et une propriété `selection_capacity` résolue après overlays.
+3. L'ancien nom actif `short_max_positions` a été remplacé par `max_short_positions` dans le runtime, `config.yaml`, les tests et la documentation courante.
+4. `PipelineLaunchOptions` et `BacktestRunOptions` exposent `ml_first_selection_contract`; cette intégration fige le contrat cible sans activer encore le cutover runtime.
+5. Les tests de contrat interdisent explicitement les variantes legacy : univers `candidates`, cible binaire, score utilisé comme ranking, feature scope tronqué, veto pré-prédiction, training dans le live quotidien, prédiction optionnelle, ranking non directionnel ou workflow live différent des 12 étapes canoniques.
+6. Une incohérence locale découverte pendant la validation a été corrigée dans `selector/short_score.py` : le régime `capital_preservation` abaisse bien le seuil short avec `min(..., 0.20)`.
+
+Validé :
+
+1. `tests/test_ml_selection_contract.py` : 18 tests passés;
+2. `tests/test_short_score.py` : 3 tests passés;
+3. `tests/test_phase2_bridges.py` et `tests/test_ihm_backtesting_runner.py` : tests passés dans la validation ciblée;
+4. chargement YAML validé par `test_config_yaml_loads`;
+5. aucun diagnostic éditeur sur les fichiers Python modifiés.
+
+Sprint 0 est clos au niveau contrat et préparation. Le contrat n'est volontairement pas activé dans le runtime avant les fondations PIT du Sprint 1.
+
+Écart de test externe observé : `tests/test_config_yaml_schema.py::test_market_data_section_has_only_known_keys` échoue sur `quotes_provider_live` et `quotes_provider_live_second`, clés sans lien avec ce sprint.
+
 ### Tâches
 
 1. Figer une nomenclature cible :
@@ -285,6 +318,52 @@ Ils doivent tous être migrés dans le même cutover fonctionnel :
 2. Définir le contrat unique partagé par train, predict, live et backtest : univers PIT complet, prédiction ML obligatoire pour toute ligne sélectionnable, ranking long/short séparé, puis vetos score/événement/risque.
 3. Préparer la validation pré-déploiement : migrations Alembic, backfill requis, tests unitaires/intégration/IHM et backtests de référence.
 4. Le déploiement remplace l'ancien flux. Aucune option `ml_first_enabled`, `selection_source`, `score_legacy` ou `candidates` ne subsiste dans les commandes nominales.
+
+### Workflow canonique figé
+
+Le workflow live quotidien cible comporte 12 étapes visibles dans l'IHM :
+
+1. `Import Market Data`;
+2. `Data Integrity`;
+3. `Universe Metrics`;
+4. `Sync Latest Quotes`;
+5. `Sync Earnings`;
+6. `Publish Tradable Universe`;
+7. `Feature Engineering PIT` sur tous les tradables, sans filtrage par score;
+8. `ML Predict` ternaire sur tout l'univers publié;
+9. `ML Ranking` long/short;
+10. `Post-Prediction Vetos` techniques, événements et exécution;
+11. `Risk Management`;
+12. `Execution`.
+
+`Feature Engineering PIT` regroupe les calculs technique, sentiment, macro et leur agrégation. Ces données sont calculées avant l'inférence lorsqu'elles sont des features, mais elles ne peuvent supprimer aucun symbole du scope ML. Les mêmes valeurs peuvent ensuite être réutilisées à l'étape 10 comme vetos, sans recalcul ni changement de date PIT.
+
+`ML Train` ne fait pas partie du workflow live quotidien. Il devient un workflow séparé : univers historique PIT, construction du dataset, entraînement ternaire, validation, sélection du champion et publication du modèle servi. `ML Predict` refuse de démarrer sans champion ternaire compatible publié.
+
+### Matrice go/no-go du cutover
+
+| Contrôle | Seuil GO | Artefact attendu |
+|---|---:|---|
+| Tests du contrat partagé | 100% passés | rapport pytest `test_ml_selection_contract.py` |
+| Snapshot d'univers publié | `status=completed` et `rows_written=rows_expected` | `universe_run_id` + audit DB |
+| Fuite PIT | 0 date source postérieure à la date servie | rapport tests PIT |
+| Couverture ternaire du scope live | 100% des tradables avant ouverture du risk | rapport de couverture par `universe_run_id` / `model_run_id` |
+| Colonnes ternaires | `predicted_side`, `proba_long`, `proba_flat`, `proba_short` complètes et cohérentes | audit `model_predictions` |
+| Parité de sélection live/backtest | 100% sur fixtures déterministes | rapport fidelity ML-first |
+| Capacité portefeuille | 0 dépassement total, long ou short | tests risk + backtest |
+| Options candidate nominales | 0 option acceptée ou affichée | tests CLI/IHM |
+| Predictivité ML | verdict PASS de `validate_score_predictiveness.py --source ml` et meilleure structure que le score brut | artefact de validation 2024-2025 |
+| Backtests de référence | aucun écart inexpliqué; décision GO documentée pour 2021+ | rapports backtest versionnés |
+
+Un contrôle non satisfait bloque le cutover. Il ne réactive jamais l'ancien chemin candidate-first.
+
+### Inventaire des commandes à verrouiller au cutover
+
+1. `modelFactory/cli.py` : train/predict refusent `symbol_source=candidates` et les filtres `selector_universe_*`;
+2. `ihm/services/pipeline_runner.py` : suppression des defaults candidats et de `include_ml_train` dans le workflow live;
+3. `ihm/services/backtesting_runner.py` et `backtesting/cli/_impl.py` : suppression de `filter_no_ml` / `filter_candidates_without_ml` et des formulations candidate;
+4. `risk_management/cli.py` : aucune entrée `load_candidates_asof()`;
+5. pages IHM execution/backtesting : aucune option ou aide candidate-first.
 
 ### Fichiers concernés
 
@@ -383,10 +462,13 @@ Pour une date donnée, le système peut lister de façon rejouable tous les symb
 
 0. Imposer le même ordre de chargement dans les deux runtimes :
   1. univers tradable PIT complet;
-  2. prédictions ternaires correspondant au scope;
-  3. scores techniques et sentiment comme contexte/veto;
-  4. ranking long/short;
-  5. risk, sizing et exécution.
+  2. features techniques, sentiment et macro PIT calculées ou chargées pour tout le scope, sans gate;
+  3. prédictions ternaires correspondant exactement au scope;
+  4. ranking long/short piloté uniquement par le ML;
+  5. vetos post-prédiction fondés sur le contexte déjà chargé;
+  6. risk, sizing et exécution.
+
+  Lorsque les prédictions sont déjà persistées, elles restent la table primaire de `signal_replay`. Lorsque `rebuild-missing` doit lancer une inférence, les features de l'étape 2 sont construites avant cette inférence, toujours sur l'univers complet. Cette différence technique ne change pas l'autorité métier : ni les scores ni le sentiment ne définissent le scope ou le ranking.
 
 1. `backtesting/resilience.py`
   - remplacer `_expected_symbol_dates(scores_df)` par `resolve_expected_prediction_scope(...)` fondé sur le snapshot `tradable_universe_history`;
@@ -398,7 +480,8 @@ Pour une date donnée, le système peut lister de façon rejouable tous les symb
   - merger le snapshot d'univers puis les scores disponibles comme contexte/veto;
   - utiliser exclusivement `predicted_side`, `proba_long` et `proba_short`;
   - exclure `flat`, les prédictions non ternaires et les lignes sans prédiction;
-  - classer séparément longs et shorts avec les plafonds par côté, puis respecter `max_positions` total.
+  - classer séparément longs et shorts avec les plafonds par côté;
+  - appliquer ensuite les vetos score/événement sans reclasser par score, puis respecter `max_positions` total.
 
 3. `backtesting/cli/_impl.py`
   - charger l'univers PIT puis les prédictions;
@@ -449,9 +532,10 @@ Backtest et live peuvent sélectionner des positions à partir de prédictions c
   - `stock_screener` collecte/calcul les métriques larges sans sélectionner un Top-N;
   - `sync_latest_quotes` et `sync_earnings_calendar` alimentent les contraintes objectives;
   - une étape explicite `publish_tradable_universe` publie atomiquement le snapshot complet;
-  - `alpha_scanner` devient une étape de calcul de contexte score sur tous les tradables, sans sélection;
-  - sentiment et signal aggregator travaillent sur l'univers tradable, pas sur les candidats;
-  - `ml_train` / `ml_predict` consomment ensuite ce même `universe_run_id`;
+  - `alpha_scanner`, sentiment et signal aggregator deviennent les sous-étapes de `Feature Engineering PIT` sur tous les tradables, sans sélection;
+  - `ml_predict` consomme ce `universe_run_id`, les features PIT et un champion ternaire déjà publié;
+  - le ranking ML et les vetos post-prédiction deviennent deux étapes métier distinctes;
+  - `ml_train` est retiré du workflow live quotidien et exposé dans un workflow training séparé;
   - `risk_management` refuse de démarrer si l'univers ou la couverture ML du run courant est incomplet.
 
 1. `ihm/services/pipeline_runner.py`
@@ -460,6 +544,8 @@ Backtest et live peuvent sélectionner des positions à partir de prédictions c
     - `ml_predict_symbol_source`
   - la seule source nominale est `tradable-universe`.
   - `stock-bars-daily` reste une source d'administration / diagnostic, pas l'univers nominal, car elle ne porte pas les règles PIT de tradabilité.
+  - le workflow live par défaut contient les 12 étapes figées au Sprint 0 et n'expose plus `include_ml_train`;
+  - le workflow training conserve une commande explicite train + validation + publication du champion.
 
 2. `modelFactory/cli.py`
   - revoir la valeur par défaut de `symbol_source`,
@@ -569,6 +655,8 @@ Aujourd'hui, l'IHM expose encore un modèle mental "selector universe -> ML". Ta
     - `ml_include_selector_context` devient `ml_include_score_context`,
     - supprimer `ml_selector_universe_*`,
     - remplacer `filter_candidates_without_ml` par la politique de couverture ML de l'univers tradable.
+  - afficher séparément `Workflow Live ML-First` et `Workflow ML Training`;
+  - montrer `universe_run_id`, couverture ML et champion servi dans les diagnostics du workflow live.
 
 2. `ihm/services/backtesting_runner.py`
   - retirer toute option candidate-first,

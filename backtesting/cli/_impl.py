@@ -1956,7 +1956,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             float(effective_preset.values.get("risk_min_score_threshold_short", -1) or -1) >= 0
         )
         risk_kwargs["short_selling_enabled"] = _preset_has_short_threshold
-        risk_kwargs["short_max_positions"] = 2
+        risk_kwargs["max_short_positions"] = 2
         risk_kwargs["short_min_score"] = 0.0
         risk_kwargs["short_rotation_required"] = True
         _safe_print(f"   short_selling_enabled={_preset_has_short_threshold} (preset={effective_preset.key})")

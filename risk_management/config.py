@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from core.ml_selection_contract import SelectionCapacity
+
 if TYPE_CHECKING:
     from core.conviction import ConvictionWeights
 
@@ -18,6 +20,8 @@ class RiskConfig:
     atr_stop_multiple: float = 2.0
 
     max_positions: int = 20
+    max_long_positions: int | None = None
+    max_short_positions: int = 2
     max_position_weight: float = 0.10
     max_sector_weight: float = 0.30
     max_gross_exposure: float = 1.0
@@ -66,7 +70,6 @@ class RiskConfig:
 
     # Sprint 2 — short selling (Option C : MomentumRotationState)
     short_selling_enabled: bool = False
-    short_max_positions: int = 2
     short_min_score: float = 0.30
     short_rotation_required: bool = True
     short_tp_pct: float = 0.08
@@ -177,6 +180,16 @@ class RiskConfig:
             raise ValueError("vol_target_lookback_days doit être >= 2.")
         if self.max_positions < 1:
             raise ValueError("max_positions doit être >= 1.")
+        resolved_max_long_positions = (
+            self.max_positions
+            if self.max_long_positions is None
+            else self.max_long_positions
+        )
+        SelectionCapacity(
+            max_positions=self.max_positions,
+            max_long_positions=resolved_max_long_positions,
+            max_short_positions=self.max_short_positions,
+        )
         # --- V2 validations ---
         if not (0 < self.correlation_threshold <= 1):
             raise ValueError("correlation_threshold doit être dans ]0, 1].")
@@ -242,6 +255,21 @@ class RiskConfig:
         if self.effective_max_positions_override is not None:
             return max(0, int(self.effective_max_positions_override))
         return int(self.max_positions)
+
+    @property
+    def selection_capacity(self) -> SelectionCapacity:
+        """Contrat de capacité nominal partagé par les moteurs de sélection."""
+        effective_total = self.effective_max_positions
+        resolved_max_long_positions = (
+            self.max_positions
+            if self.max_long_positions is None
+            else self.max_long_positions
+        )
+        return SelectionCapacity(
+            max_positions=effective_total,
+            max_long_positions=min(resolved_max_long_positions, effective_total),
+            max_short_positions=min(self.max_short_positions, effective_total),
+        )
 
     def to_conviction_weights(self) -> ConvictionWeights:
         """Phase 5.1.b — Adapte les pondérations risk vers ``core.conviction.ConvictionWeights``.

@@ -46,7 +46,7 @@ def test_enrich_with_short_score_marks_full_when_sma_inputs_available() -> None:
 
 def test_resolve_regime_adaptive_short_params_boosts_capital_preservation() -> None:
     class _Cfg:
-        short_max_positions = 2
+        max_short_positions = 2
         short_min_score = 0.30
 
     boosted_max, boosted_min = resolve_regime_adaptive_short_params(_Cfg(), True)

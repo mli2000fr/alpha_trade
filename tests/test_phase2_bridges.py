@@ -330,7 +330,7 @@ def test_short_flow_selector_and_phase2_risk_bridge_keep_same_side_decisions(mon
     selector_day = inject_predicted_side(scores_df.copy(), predictions_df, snapshot_ts)
     selector_day = enrich_with_short_score(selector_day, close_df=close_df, trade_day=snapshot_ts)
     eff_max_short, eff_min_short = resolve_regime_adaptive_short_params(
-        RiskConfig(short_selling_enabled=True, short_max_positions=2, short_min_score=0.30),
+        RiskConfig(short_selling_enabled=True, max_short_positions=2, short_min_score=0.30),
         True,
     )
     selector_day = tag_short_candidates(
@@ -398,7 +398,7 @@ def test_short_flow_selector_and_phase2_risk_bridge_keep_same_side_decisions(mon
             max_gross_exposure=1.0,
             min_position_notional=1.0,
             short_selling_enabled=True,
-            short_max_positions=2,
+            max_short_positions=2,
             short_min_score=0.30,
         ),
         market_regimes_config=MarketRegimesConfig(enabled=True),

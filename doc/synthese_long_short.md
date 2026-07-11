@@ -1675,7 +1675,7 @@ Le système possède **3 niveaux de calibration** indépendants, tous effectués
 >    │     → Cible : `config.yaml` → bloc `conviction:`
 >    │     → ⚠️ Manuel : éditer les 3 valeurs
 >    │
->    │   **Short × régime** — `short_max_positions`, `short_min_score`
+>    │   **Short × régime** — `max_short_positions`, `short_min_score`
 >    │     → Cible : `config.yaml` → bloc `risk_management:`
 >    │     → ⚠️ Manuel si changement souhaité
 >    │
@@ -1885,7 +1885,7 @@ $$business\_score = precision\_long \times coverage + \max(avg\_return, 0) + 0.1
 | Paramètre | Défaut | Description |
 |-----------|--------|-------------|
 | `short_selling_enabled` | `False` | Active/désactive les ventes à découvert |
-| `short_max_positions` | `2` | Nombre max de positions short simultanées |
+| `max_short_positions` | `2` | Nombre max de positions short simultanées |
 | `short_min_score` | `0.30` | Score minimum pour entrer en short |
 | `short_rotation_required` | `True` | Exige une rotation sectorielle pour shorter |
 | `short_tp_pct` | `0.08` (8%) | Take-profit |

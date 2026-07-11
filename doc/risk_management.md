@@ -168,7 +168,7 @@ Le CLI :
 6. log la décomposition du risque factoriel (Phase C) si activé ;
 7. applique les trackers de concentration (`SymbolTradeTracker` + `ConsecutiveLossTracker`), **side-aware** ;
 8. applique le sizing ATR ou Kelly, direction-aware (le sizing short utilise la même logique ATR mais avec `risk_per_share` inversé) ;
-9. vérifie les contraintes (dont `short_max_positions`, `short_min_score`) ;
+9. vérifie les contraintes (dont `max_short_positions`, `short_min_score`) ;
 10. produit des `PortfolioEntry` avec statut `ACCEPTED`, `REDUCED` ou `REJECTED`.
 
 ### 4.2.bis Modèle de risque factoriel CWMS (Priorité 3 — nouveau juin 2026)
@@ -204,7 +204,7 @@ Le module supporte désormais les **positions short** en complément des positio
 - **Option B** : `short_score` dédié calculé par `selector/short_score.py` (trend 30%, RSI 25%, SMA50 25%, SMA200 20%). Les shorts sont taggés si le `short_score` dépasse `min_score_threshold_short`.
 - **Option C** : injection directe du `predicted_side` (ternaire long/flat/short) issu de `model_predictions`. Prioritaire sur l'Option B si disponible.
 - **min_score_threshold_short** (défaut `0.0`) : seuil minimal de score pour qu'un candidat soit éligible short. Relevable pour restreindre les shorts aux signaux les plus forts.
-- **short_max_positions** (défaut `2`) : limite le nombre de positions short simultanées.
+- **max_short_positions** (défaut `2`) : limite le nombre de positions short simultanées.
 - **Capital preservation** : en régime de préservation du capital, les shorts sont automatiquement désactivés (sauf configuration contraire).
 
 La colonne `side` est portée par `CandidateScore` et propagée dans `risk_decisions` et `portfolio_targets`.

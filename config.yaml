@@ -336,7 +336,7 @@ risk_management:
   short_selling_enabled: true
 
   # Sprint 2 — Option C : short via MomentumRotationState
-  short_max_positions: 2            # nombre max de shorts simultanés
+  max_short_positions: 2            # nombre max de shorts simultanés
   short_min_score: 0                # 0 = laisser ML dominer la sélection short
   short_rotation_required: true     # exiger rotation_state.should_rotate()
   short_tp_pct: 0.08                # TP short (8% de baisse)

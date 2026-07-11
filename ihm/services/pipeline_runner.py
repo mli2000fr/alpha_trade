@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
+
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
@@ -375,6 +377,17 @@ class PipelineLaunchOptions:
     # Risk management — P1 sizing + P2 conviction/correlation/kelly
     risk_per_trade_pct: float = DEFAULT_RISK_PER_TRADE_PCT
     risk_max_positions: int = DEFAULT_RISK_MAX_POSITIONS
+
+    @property
+    def ml_first_selection_contract(self) -> MLFirstSelectionContract:
+        """Contrat cible partagé, sans activer le cutover dans ce sprint."""
+        return MLFirstSelectionContract(
+            capacity=SelectionCapacity(
+                max_positions=self.risk_max_positions,
+                max_long_positions=self.risk_max_positions,
+                max_short_positions=min(2, self.risk_max_positions),
+            )
+        )
     risk_max_position_weight: float = DEFAULT_RISK_MAX_POSITION_WEIGHT
     risk_max_sector_weight: float = DEFAULT_RISK_MAX_SECTOR_WEIGHT
     risk_min_position_notional: float = DEFAULT_RISK_MIN_POSITION_NOTIONAL
