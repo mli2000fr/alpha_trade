@@ -745,6 +745,71 @@ Construire le socle risque long/short qui sera utilisé par la validation financ
 - fingerprint différent pour toute différence effective ;
 - moteur minimal suffisamment stable pour le walk-forward financier.
 
+### ✅ Ce qui a été implémenté (2026-07-11)
+
+#### Fichiers modifiés
+
+| Fichier | Changements |
+|---|---|
+| `risk_management/constraints.py` | **`PortfolioState`** : ajout de `long_count`, `short_count`, `long_notional`, `short_notional` + propriétés `gross_notional`, `net_notional`, `total_notional_signed` + méthode `add_position(side=)` pour enregistrement directionnel. **`ConstraintChecker.check()`** : ajout du paramètre `side` ("long"/"short"), caps directionnels `max_long_positions` et `max_short_positions` appliqués AVANT `max_positions` total, contrainte ADV rendue fail-closed (`adv_usd` absent ou ≤ 0 → rejet "adv_unavailable"), utilisation de `state.gross_notional` au lieu de `state.total_notional` pour le calcul d'exposition brute. |
+| `risk_management/correlation_filter.py` | **`filter_correlated_signed()`** : nouveau filtre de corrélation PnL signée. Rendements × (+1 pour long, -1 pour short). Même side : rejet si `corr > threshold`. Sides opposés : corrélation positive = hedge (OK), corrélation négative = concentration (rejet si `|corr| > threshold`). |
+| `risk_management/config.py` | **`RiskConfig.fingerprint`** : propriété SHA256/16 du contenu effectif (deux configs identiques → même fingerprint). **`RiskConfig.to_dict()`** : sérialisation avec option `exclude_defaults`. **`RiskConfig.from_dict()`** : désérialisation avec rejet des clés inconnues (fail-fast). **`RiskConfig.with_overrides()`** : application d'overrides avec validation des clés. |
+
+#### Nouveaux fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `tests/test_risk_config_parity.py` | 20 tests : PortfolioState directionnel (défauts, add long/short/mixed), contraintes directionnelles (max_long_positions, max_short_positions, indépendance des caps), ADV fail-closed (missing, zero, not-configured), stop directionnel (long sous entrée, short au-dessus), gross/net, RiskConfig fingerprint (stable, change avec param), to_dict/from_dict roundtrip, rejet clés inconnues, with_overrides (application + rejet inconnues). |
+
+#### Décisions d'architecture
+
+- **`PortfolioState` directionnel** : chaque appel à `add_position()` enregistre le side et met à jour les compteurs long/short séparément. `gross_notional = long + short`, `net_notional = long - short`. Le `total_notional` legacy est maintenu (mis à jour comme `gross_notional`).
+- **Caps directionnels appliqués en premier** : `max_short_positions` et `max_long_positions` sont vérifiés AVANT `max_positions` total. Un long n'est jamais bloqué par le cap short et vice-versa.
+- **ADV fail-closed** : si `max_position_pct_of_adv` est configuré (non-None), `adv_usd` devient OBLIGATOIRE. Absent ou ≤ 0 → rejet avec raison `"adv_unavailable"`. Si non configuré, `adv_usd` absent est ignoré (rétrocompatibilité).
+- **Corrélation PnL signée** : `filter_correlated_signed()` utilise les rendements signés. La corrélation positive entre long et short est reconnue comme HEDGE (PnL qui se compensent) et n'est PAS rejetée. La corrélation négative entre sides opposés est reconnue comme CONCENTRATION et rejetée.
+- **Fingerprint déterministe** : SHA256/16 du JSON canonique (trié) de tous les champs. Deux configs avec le même fingerprint sont mathématiquement identiques pour toutes les décisions de risque.
+- **Rejet des clés inconnues** : `from_dict()` et `with_overrides()` lèvent `ValueError` avec la liste des clés invalides et la liste des clés valides. Aucun paramètre décoratif ne peut passer inaperçu.
+
+#### Commandes exécutées et résultats
+
+```powershell
+python -m pytest tests/test_constraints.py tests/test_portfolio_builder.py tests/test_correlation_filter.py --no-cov -q
+# 27 passed (existants, 0 régression)
+
+python -m pytest tests/test_risk_config_parity.py --no-cov -q
+# 20 passed (nouveaux tests Sprint 6)
+
+python -m pytest [suite complete Sprint 0-6] --no-cov -q
+# 227 passed
+```
+
+#### Artefacts produits
+
+- `tests/test_risk_config_parity.py` — 20 tests
+- Fonctions modifiées : `PortfolioState`, `ConstraintChecker.check()`, `filter_correlated_signed()`, `RiskConfig.fingerprint`, `RiskConfig.to_dict()`, `RiskConfig.from_dict()`, `RiskConfig.with_overrides()`
+
+#### Risques résiduels
+
+- **`PortfolioBuilder` non encore migré** : utilise encore `state.total_notional` au lieu de `state.gross_notional` et n'appelle pas `state.add_position()` avec `side`. L'adaptation sera faite au Sprint 7 (walk-forward) quand le bridge sera refondu.
+- **`risk_bridge.py` non encore migré** : `tag_short_candidates` toujours appelé, `ConstraintChecker.check()` appelé sans `side`. L'intégration sera faite au Sprint 7.
+- **Snapshot broker non encore exigé** : le contrat est posé dans la config mais pas encore enforce au runtime. Sera fait au Sprint 10 (liquidité).
+- **Corrélation signée non intégrée dans `PortfolioBuilder`** : `filter_correlated_signed` est disponible mais `PortfolioBuilder` utilise encore `filter_correlated`. Migration au Sprint 7.
+
+#### Rollback
+
+- Restaurer `risk_management/constraints.py` (retirer les champs directionnels, remettre ADV fail-open).
+- Restaurer `risk_management/correlation_filter.py` (retirer `filter_correlated_signed`).
+- Restaurer `risk_management/config.py` (retirer fingerprint, to_dict, from_dict, with_overrides).
+- Supprimer `tests/test_risk_config_parity.py`.
+
+#### Gate GO/NO-GO : ✅ GO
+
+- Zéro dépassement directionnel : caps `max_long_positions` et `max_short_positions` appliqués avant `max_positions`.
+- Zéro paramètre décoratif : `from_dict()` et `with_overrides()` rejettent les clés inconnues.
+- Fingerprint différent pour toute différence effective : SHA256/16 du JSON canonique.
+- Moteur minimal stable : `PortfolioState` directionnel, ADV fail-closed, corrélation signée, config fingerprintée.
+- 20 nouveaux tests, 227 total, 0 régression.
+
 ---
 
 ## Sprint maître 7 — Walk-forward financier intégré

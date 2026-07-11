@@ -293,3 +293,78 @@ class RiskConfig:
             prediction_weight=self.prediction_weight,
         )
 
+    # ── Sprint Maître 6 : fingerprint et sérialisation ──────────────────
+
+    @property
+    def fingerprint(self) -> str:
+        """SHA256/16 du contenu effectif de la configuration.
+
+        Deux configs avec le même fingerprint sont garanties identiques
+        pour tous les champs influençant les décisions de risque.
+        """
+        import hashlib
+        import json
+
+        payload = self.to_dict(exclude_defaults=False)
+        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+    def to_dict(self, *, exclude_defaults: bool = True) -> dict[str, object]:
+        """Sérialise la config en dictionnaire.
+
+        Parameters
+        ----------
+        exclude_defaults : bool
+            Si True, exclut les champs inchangés depuis les défauts.
+        """
+        import dataclasses
+
+        default = RiskConfig() if exclude_defaults else None
+        result: dict[str, object] = {}
+        for f in dataclasses.fields(self):
+            value = getattr(self, f.name)
+            if exclude_defaults and default is not None:
+                default_val = getattr(default, f.name)
+                if value == default_val:
+                    continue
+            result[f.name] = value
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "RiskConfig":
+        """Construit une RiskConfig depuis un dictionnaire.
+
+        Les clés inconnues sont rejetées (fail-fast).
+        """
+        import dataclasses
+
+        valid_fields = {f.name for f in dataclasses.fields(cls)}
+        unknown = set(data.keys()) - valid_fields
+        if unknown:
+            raise ValueError(
+                f"Clés inconnues dans RiskConfig: {sorted(unknown)}. "
+                f"Clés valides: {sorted(valid_fields)}"
+            )
+
+        # Filtrer les clés valides
+        filtered = {k: v for k, v in data.items() if k in valid_fields}
+        return cls(**filtered)  # type: ignore[arg-type]
+
+    def with_overrides(self, **overrides: object) -> "RiskConfig":
+        """Retourne une nouvelle config avec les overrides appliqués.
+
+        Les clés inconnues sont rejetées.
+        """
+        import dataclasses
+
+        current = self.to_dict(exclude_defaults=False)
+        valid_fields = {f.name for f in dataclasses.fields(self)}
+        unknown = set(overrides.keys()) - valid_fields
+        if unknown:
+            raise ValueError(
+                f"Overrides inconnus: {sorted(unknown)}. "
+                f"Clés valides: {sorted(valid_fields)}"
+            )
+        current.update(overrides)
+        return RiskConfig.from_dict(current)
+
