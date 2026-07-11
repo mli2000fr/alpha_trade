@@ -51,9 +51,17 @@ class DecisionReasonCode(StrEnum):
     CONSTRAINT_MAX_POSITION_PCT_OF_ADV = "constraint_max_position_pct_of_adv"
 
 
+class KellyFallback(StrEnum):
+    """Stratégie de fallback quand Kelly ne peut pas produire un sizing valide."""
+    REJECT = "reject"
+    MINIMAL_PROBE = "minimal_probe"
+    ATR_FALLBACK = "atr_fallback"
+
+
 __all__ = [
     "Decision",
     "DecisionReasonCode",
+    "KellyFallback",
     "SizingMethod",
 ]
 

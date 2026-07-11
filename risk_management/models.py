@@ -162,6 +162,54 @@ class WinRateInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class DirectionalWinRateInfo:
+    """Statistiques directionnelles OOS (Sprint Maître 8).
+
+    Remplace ``WinRateInfo`` pour le sizing Kelly directionnel.
+    Permet un Kelly asymétrique long/short avec payoff réel,
+    tail loss calibré et shrinkage bayésien.
+
+    Attributes
+    ----------
+    symbol : str
+    side : str
+        ``"long"`` ou ``"short"``.
+    hit_rate : float
+        Taux de trades gagnants OOS (0-1).
+    payoff : float
+        Ratio gain moyen / perte moyenne.
+    tail_loss : float | None
+        Pire perte observée en % (positive, ex: 0.15 = 15%).
+    trade_count : int
+        Nombre de trades OOS pour ce side.
+    split_name : str
+        Nom du split OOS utilisé.
+    run_id : str
+        Identifiant du run modèle.
+    asof_date : date | None
+        Date de calibration des statistiques.
+    """
+
+    symbol: str
+    side: str
+    hit_rate: float
+    payoff: float
+    tail_loss: float | None = None
+    trade_count: int = 0
+    split_name: str = ""
+    run_id: str = ""
+    asof_date: date | None = None
+
+    def __post_init__(self) -> None:
+        if self.side not in ("long", "short"):
+            raise ValueError(f"side invalide: {self.side!r}")
+        if not (0.0 <= self.hit_rate <= 1.0):
+            raise ValueError(f"hit_rate hors bornes: {self.hit_rate}")
+        if self.payoff < 0:
+            raise ValueError(f"payoff doit être >= 0: {self.payoff}")
+
+
+@dataclass(frozen=True, slots=True)
 class CorrelationRejection:
     """Résultat d'un rejet par filtre de corrélation."""
     rejected_symbol: str

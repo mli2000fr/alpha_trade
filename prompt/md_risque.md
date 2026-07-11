@@ -937,6 +937,77 @@ Transformer ensemble probabilité, incertitude, coûts et risque en décision de
 - courbe performance/couverture archivée ;
 - somme du risque initial sous budget portefeuille.
 
+### Ce qui a été implémenté (Sprint Maître 8)
+
+**Date :** 2026-07-20  
+**Gate :** GO PARTIEL  
+**Tests :** 96 (tous passent, 0 échec)
+
+#### Fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/edge.py` | `DirectionalEdgeEstimate` (DTO immutable frozen+slots), `EdgeCalculator` (estimation directionnelle avec shrinkage bayésien), `compute_edge_from_trades()` (helper numpy) |
+| `risk_management/abstention.py` | `AbstentionPolicy` (6 gates empilables : data availability, freshness, p_side, top-2 margin, uncertainty, positive edge), `AbstentionDecision` (GO/NO-GO), `evaluate_abstention_veto()` |
+| `tests/test_risk_edge.py` | 30 tests : construction valide, rejet side/hit_rate/payoff invalides, `is_tradable`, `to_dict`, estimate long/short, borrow fee, edge brut positif net négatif, coût croissant → net décroissant, shrinkage petit vs grand échantillon, seuil exact, `compute_edge_from_trades` (vide, all wins, all losses, mixte, tail loss), payoff long/short distinct, incertitude |
+| `tests/test_risk_abstention.py` | 20 tests : permissive/sensible/strict, GO/NO-GO, p_side bas, top-2 margin, incertitude, edge négatif, données stales, gate_results, edge absent |
+| `tests/test_execution_risk_reconciliation.py` | 14 tests : pipeline complet edge→abstention→Kelly, edge net négatif bloque tout, faible confiance bloque, Kelly négatif rejette, coût croissant → net décroissant, shrinkage intégration, risque post-fill ≤ budget, gap/ES réduit taille, payoff long/short distincts |
+
+#### Fichiers modifiés
+
+| Fichier | Changement |
+|---|---|
+| `risk_management/kelly.py` | **V2→V3** : `compute()` accepte `directional_stats: DirectionalWinRateInfo`, `fallback: KellyFallback` (REJECT par défaut, plus d'ATR automatique), shrinkage bayésien intégré (`_apply_shrinkage`), `_min_trades_for_full_kelly=30`, `_handle_fallback()` avec REJECT/MINIMAL_PROBE/ATR_FALLBACK. Deux helpers purs ajoutés : `compute_kelly_fraction()` et `compute_kelly_shares()` |
+| `risk_management/models.py` | Ajout de `DirectionalWinRateInfo` (DTO frozen+slots avec side, hit_rate, payoff, tail_loss, trade_count, split_name, run_id, asof_date). Remplace `WinRateInfo` pour le sizing directionnel |
+| `risk_management/enums.py` | Ajout de `KellyFallback` (REJECT, MINIMAL_PROBE, ATR_FALLBACK) |
+| `tests/test_kelly_sizer.py` | Migré V2→V3 : fallback REJECT par défaut, tests ATR explicite, MINIMAL_PROBE, nouveaux tests V3 : `DirectionalWinRateInfo`, shrinkage petit échantillon, Kelly négatif rejet, payoff long/short distincts, ATR cap, risque post-fill, `compute_kelly_fraction`, `compute_kelly_shares` |
+
+#### Décisions architecturales
+
+1. **`DirectionalEdgeEstimate`** — DTO immutable (frozen+slots) avec validation `__post_init__`. `payoff >= 0` (0 autorisé seulement si `sample_size=0`). `is_tradable` = `net_edge > 0` (strict).
+
+2. **`EdgeCalculator`** — Paramétrable (spread/commission/slippage/borrow fee). Le shrinkage bayésien est appliqué quand `n_trades < min_sample_size` (30 par défaut). Prior non informatif : `hit_rate=0.50`, `payoff=1.0`, `prior_strength=5`. La formule d'edge brut : `hit_rate * payoff - (1-hit_rate)`. Coûts = 2×(spread+comm+slippage) + borrow_fee×(holding_days/252) pour les shorts.
+
+3. **`AbstentionPolicy`** — Design empilable : 6 gates indépendantes, un seul NO-GO suffit. Trois presets : `permissive()` (edge>0 uniquement), `sensible_defaults()` (p_side≥0.45, top2≥0.05, uncertainty≤0.20, edge>0), `strict()` (toutes les gates + data freshness ≤1j). Chaque gate retourne un booléen dans `gate_results` pour audit.
+
+4. **`KellySizer` V3** — Changement de contrat : `fallback=KellyFallback.REJECT` par défaut (V2 faisait fallback ATR implicite). Le payoff n'est plus un paramètre global `assumed_payoff_ratio` mais vient des statistiques OOS directionnelles. La signature `compute()` est rétrocompatible (les anciens appels positionnels fonctionnent). Le shrinkage est appliqué automatiquement dans `compute()` quand `directional_stats.trade_count < 30`.
+
+5. **`DirectionalWinRateInfo`** — Nouveau type remplaçant `WinRateInfo`. Contient le side, hit_rate, payoff, tail_loss et trade_count. `WinRateInfo` est conservé pour rétrocompatibilité DB.
+
+6. **Séparation des responsabilités** :
+   - `edge.py` → estimation mathématique pure (pas d'I/O)
+   - `abstention.py` → décision GO/NO-GO (pas de sizing)
+   - `kelly.py` → sizing fractionnel avec cap ATR
+   - Le pipeline est : ML → EdgeCalculator → AbstentionPolicy → KellySizer → PositionSizer (ATR fallback)
+
+#### Résultats des tests
+
+- **test_risk_edge.py** : 30/30 ✓
+- **test_risk_abstention.py** : 20/20 ✓
+- **test_kelly_sizer.py** : 32/32 ✓ (8 existants migrés + 24 nouveaux V3)
+- **test_execution_risk_reconciliation.py** : 14/14 ✓
+- **Régression** : Aucune sur les modules modifiés (kelly.py, models.py, enums.py). Le test `test_kelly_negative_fallback_atr` a été renommé `test_kelly_negative_fallback_reject` et un nouveau test `test_kelly_negative_fallback_atr_explicit` vérifie le fallback ATR explicite.
+
+#### Risques résiduels
+
+1. **`WinRateInfo` toujours utilisé par `db_io.py`** — La migration complète vers `DirectionalWinRateInfo` nécessite un changement de schéma DB (ajout colonnes `side`, `payoff`, `tail_loss`, `trade_count` dans `model_metrics`). Le `KellySizer` accepte les deux types.
+2. **Pas de courbe performance/couverture archivée** — Gate de sortie non satisfaite (nécessite intégration avec le backtesting/walk-forward).
+3. **`AbstentionPolicy` non intégrée au pipeline live** — Les gates sont définies mais pas encore branchées dans `portfolio_builder.py` ou le flow d'exécution.
+
+#### Plan de rollback
+
+- Restaurer `kelly.py` depuis git (le V2 est taggé)
+- Supprimer `edge.py`, `abstention.py` (nouveaux fichiers sans dépendances inverses)
+- `models.py` : supprimer `DirectionalWinRateInfo` (aucun code ne l'utilise encore en production)
+- `enums.py` : supprimer `KellyFallback` (idem)
+
+#### Prochaines étapes (Sprint 9)
+
+- Intégrer `AbstentionPolicy` dans le pipeline de décision live
+- Brancher `DirectionalWinRateInfo` dans `db_io.py` (nouvelle requête SQL avec side/payoff)
+- Archiver courbe performance/couverture par side/régime
+- Supprimer tout rescoring selector du risque (prérequis Sprint 9)
+
 ---
 
 ## Sprint maître 9 — Régime et événements
