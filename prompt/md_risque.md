@@ -887,3 +887,1027 @@ Un seul gate bloquant en échec impose `NO-GO` ou retour au palier précédent.
 - [ ] rollback testé ;
 - [ ] décision GO/NO-GO enregistrée ;
 - [ ] document maître mis à jour avant le sprint suivant.
+
+---
+
+## 10. Mode d'emploi pour l'IA d'implémentation
+
+Cette section transforme la roadmap en cahier d'implémentation. Elle doit être lue avant de modifier le code.
+
+### Convention de fiabilité
+
+- **Existant vérifié** : fichier ou symbole observé dans le dépôt au 2026-07-11.
+- **À créer** : proposition de nouveau module ou type ; le nom peut être adapté aux conventions du dépôt.
+- **Migration éventuelle** : ne créer une migration qu'après inspection du head Alembic et du schéma réel.
+- **Point de vigilance** : défaut actuel confirmé ou contrat à ne pas casser.
+
+### Règles de travail obligatoires
+
+1. Commencer chaque sprint par un test rouge ciblé reproduisant le défaut principal.
+2. Modifier le propriétaire du comportement, pas seulement le CLI ou l'IHM qui l'appelle.
+3. Ne pas maintenir deux chemins nominaux, l'un legacy et l'autre ML-first.
+4. Conserver la compatibilité temporaire uniquement derrière un adaptateur explicitement déprécié.
+5. Ne jamais lire le holdout final pour choisir modèle, seuil, sizing ou politique risque.
+6. Ne jamais utiliser `date.today()` dans un calcul PIT ; passer `trade_date` explicitement.
+7. Ne jamais faire de fallback vers un signal quant/selector lorsqu'une prédiction ML obligatoire manque.
+8. Après chaque modification : test ciblé, tests du module, puis suite transversale concernée.
+9. Mettre à jour dans ce document le statut, les fichiers réellement modifiés et les résultats de validation.
+
+### Format de compte rendu attendu après chaque sprint
+
+```text
+Sprint maître N — TERMINÉ / BLOQUÉ
+Fichiers modifiés :
+Migrations :
+Contrat avant/après :
+Tests ajoutés :
+Commandes exécutées et résultats :
+Artefacts produits :
+Risques résiduels :
+Rollback :
+Gate GO/NO-GO :
+```
+
+---
+
+## 11. Fiches d'implémentation détaillées
+
+## Fiche Sprint 0 — Baseline et décision ternaire
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `core/ml_selection_contract.py` | `SelectionCapacity`, `MLFirstSelectionContract`, `LIVE_WORKFLOW_STAGES` |
+| `core/direction.py` | helpers directionnels, stops, TP, PnL et expositions |
+| `modelFactory/config.py` | `DataConfig`, configuration du mode ternaire |
+| `modelFactory/evaluation.py` | `compute_business_score()`, `compute_threshold_metrics()` |
+| `modelFactory/predictor.py` | `predict_symbol()` et politique d'inférence actuelle |
+| `backtesting/signal_replay.py` | reconstruction des signaux backtest |
+| `ihm/services/pipeline_runner.py` | orchestration du pipeline IHM |
+
+### Modifications précises
+
+1. Extraire la décision ternaire dans une fonction pure commune, par exemple `decide_ternary_side(probabilities, policy)`.
+2. Faire porter à la policy : `threshold_long`, `threshold_short`, marge top-2, tie-break, gestion non-finite et version.
+3. Remplacer les décisions inline dans `modelFactory/evaluation.py`, `modelFactory/predictor.py` et `backtesting/signal_replay.py` par cette fonction.
+4. Étendre `MLFirstSelectionContract` avec l'identifiant de version de policy et le timing `decision_cutoff -> next_tradable_entry` si ces champs n'existent pas.
+5. Faire vérifier le contrat par `pipeline_runner.py` avant prédiction et avant transmission au risque.
+6. Ajouter un statut d'artefact `research_only` dans les métadonnées de modèle et le bloquer dans les entrypoints paper/live.
+7. Produire un artefact baseline contenant période, univers, seed, code SHA, data fingerprint, config fingerprint et métriques par side.
+
+### À créer
+
+- `core/ternary_decision_policy.py` ou module équivalent si aucune policy partagée n'existe.
+- `tests/test_ml_ternary_decision_policy.py`.
+- `tests/test_ml_timing_contract.py`.
+- Fixture `tests/fixtures/ml_ternary_policy_cases.*` si les cas dépassent une petite table en code.
+
+### Base de données / artefacts
+
+- Pas de table nécessaire si la policy versionnée est incluse dans les métadonnées existantes.
+- Sinon ajouter `decision_policy_version` et `research_only` au registry/gouvernance via une migration unique et rétrocompatible.
+- Ne jamais modifier en place un artefact déjà servi ; créer une nouvelle version.
+
+### Tests à ajouter ou étendre
+
+- mêmes probabilités => même side en train, évaluation, replay et prédiction ;
+- égalité long/short => résultat déterministe ;
+- NaN, infini, somme invalide => rejet explicite ;
+- flat => aucune cible risque ;
+- feature cutoff J => ordre au plus tôt J+1 ;
+- `research_only=true` => paper/live refusé.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_ml_selection_contract.py tests/test_model_factory_predictor.py --no-cov -q
+python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_contract.py --no-cov -q
+```
+
+### Ne pas faire
+
+- Ne pas copier la policy dans trois modules.
+- Ne pas laisser `predicted_class`, `predicted_side` et l'argmax diverger.
+- Ne pas commencer l'entraînement de référence avant d'avoir figé policy et timing.
+
+---
+
+## Fiche Sprint 1 — Métriques, calibration et champion
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `modelFactory/evaluation.py` | `compute_business_score()`, `compute_threshold_metrics()` |
+| `modelFactory/tabular_baseline.py` | `compute_tabular_metrics()` |
+| `modelFactory/calibration.py` | `PlattCalibrator` actuellement orienté calibration binaire |
+| `modelFactory/champion_selection.py` | `evaluate_selection_eligibility()`, `select_champion()`, `selection_score_from_result()` |
+| `modelFactory/trainer.py` | calcul/persistance des résultats challengers |
+| `modelFactory/db_registry.py` | registry et persistance des métriques/prédictions |
+| `tests/test_model_factory_champion_selection.py` | tests de sélection existants |
+
+### Défauts à traiter explicitement
+
+- `selection_score_from_result()` contient des fallbacks vers des métriques `test` ; le holdout peut influencer la sélection.
+- `PlattCalibrator` ne constitue pas à lui seul une calibration multiclasses symétrique.
+- Les métriques binaires ne doivent jamais recevoir directement des labels ternaires.
+
+### Modifications précises
+
+1. Introduire un résultat typé séparant strictement `train`, `validation`, `walk_forward_oos` et `final_holdout`.
+2. Interdire à `selection_score_from_result()` d'accéder à `result["test"]` ou au holdout final.
+3. Faire échouer `select_champion()` si la métrique de sélection demandée n'existe pas dans la partition autorisée.
+4. Calculer macro-F1, weighted-F1, balanced accuracy, log-loss multiclasses, Brier multiclasses et métriques one-vs-rest.
+5. Pour l'AUC one-vs-rest, binariser explicitement chaque classe ; vérifier chaque résultat dans `[0,1]`.
+6. Remplacer ou compléter `PlattCalibrator` par une calibration multiclasses validée : temperature scaling sur logits ou calibrateurs par classe suivis d'une renormalisation justifiée.
+7. Appliquer les probabilités calibrées avant la policy du Sprint 0.
+8. Ajouter gates : probabilités finies, somme à 1, action rate, distribution des classes, minimum d'observations et absence de collapse.
+9. Marquer les artefacts issus des anciennes métriques comme inéligibles, sans les supprimer avant sauvegarde.
+
+### À créer
+
+- Type `EvaluationPartitions` ou équivalent empêchant les accès ambigus.
+- `tests/test_model_factory_evaluation_ternary.py`.
+- `tests/test_model_factory_multiclass_calibration.py`.
+- Migration éventuelle pour `num_classes`, `calibration_method`, `calibration_run_id`, `selection_partition`.
+
+### Tests à ajouter ou étendre
+
+- changement du holdout sans changement validation => champion inchangé ;
+- absence de métrique validation => `NO-GO`, pas fallback test ;
+- probabilités calibrées utilisées par `predict_symbol()` ;
+- AUC de chaque classe bornée ;
+- métriques identiques pour mêmes labels/probabilités quel que soit le backend ;
+- modèle collapsed => `selection_eligible=false` avec raison codifiée.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_model_factory_champion_selection.py tests/test_model_factory_predictor.py --no-cov -q
+python -m pytest tests/test_model_factory_evaluation_ternary.py tests/test_model_factory_multiclass_calibration.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 2 — Données PIT et univers historique
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `common/tradable_universe.py` | repository/résolution de l'univers as-of |
+| `common/publish_tradable_universe.py` | publication du snapshot canonique |
+| `alembic/versions/0046_add_tradable_universe_history.py` | tables d'historique d'univers |
+| `database/sql/stock/tradable_universe_history.sql` | schéma SQL de référence |
+| `backtesting/data_loader.py` | chargement des données historiques |
+| `modelFactory/data_loader.py` | données d'entraînement |
+| `modelFactory/features.py` | calcul des features et target actuelle |
+| `tests/test_tradable_universe.py` | résolution d'univers canonique par date |
+
+### Modifications précises
+
+1. Définir un contrat commun `event_time`, `available_at`, `source`, `source_revision`, `ingested_at`, `timezone`.
+2. Faire résoudre l'univers par `snapshot_date` et `decision_cutoff`, jamais avec l'état courant.
+3. Remplacer dans `backtesting/data_loader.py` tout scope dérivé d'un `is_candidate` actuel par l'univers canonique as-of.
+4. Faire consommer le même `universe_run_id` par entraînement, prédiction, backtest et risque.
+5. Lier les lignes de score/features à l'univers qui les a produites, directement ou via un run lineage.
+6. Conserver delistings, changements de ticker, symboles temporairement non tradables et raisons d'exclusion.
+7. Séparer prix ajustés de recherche et prix non ajustés/exécutables ; persister la convention.
+8. Vérifier que sentiment, macro, earnings et corporate actions sont filtrés par `available_at`.
+9. Ajouter un quality gate quotidien : doublons, trous, staleness, non-finite, couverture, universe count et changements anormaux.
+
+### À créer
+
+- `common/data_availability.py` pour le contrat de disponibilité si aucun module canonique n'existe.
+- `tests/test_feature_availability_pit.py`.
+- `tests/test_historical_universe_survivorship.py`.
+- Migration éventuelle ajoutant lineage d'univers/availability aux tables qui ne peuvent pas le référencer actuellement.
+
+### Tests à ajouter ou étendre
+
+- observation disponible après cutoff exclue même si `event_time` est antérieur ;
+- symbole délisté présent avant sa date de sortie ;
+- résolution quotidienne utilisant le bon run canonique ;
+- rank cross-sectionnel identique avec même universe fingerprint ;
+- split/dividende ne modifiant pas artificiellement le fill ;
+- absence de snapshot canonique => blocage, pas univers courant.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_tradable_universe.py tests/test_feature_availability_pit.py --no-cov -q
+python -m pytest tests/test_historical_universe_survivorship.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 3 — Labels swing réellement tradables
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `modelFactory/features.py` | `compute_future_return()`, `build_target()` |
+| `modelFactory/target_optimization.py` | `TargetCandidateResult`, `score_target_candidate()`, `optimize_target_parameters()`, `optimize_target_horizon()` |
+| `modelFactory/config.py` | `DataConfig`, `TargetOptimizationConfig` |
+| `backtesting/microstructure.py` | coûts/microstructure backtest |
+| `backtesting/simulator.py` | fills et lifecycle simulés |
+| `tests/test_model_factory_target_optimization.py` | tests de l'optimiseur existant |
+
+### Défaut confirmé
+
+Dans `score_target_candidate()`, `neg_mask = active_target == 0` traite la classe `0` comme négative alors que le contrat ternaire attendu est short/flat/long. La séparation et le class balance restent essentiellement binaires.
+
+### Modifications précises
+
+1. Créer un labeler triple-barrier pur prenant OHLC, entrée J+1, ATR/volatilité, stop, TP, horizon et coûts.
+2. Définir explicitement les IDs de classes (`short=-1`, `flat=0`, `long=1` ou mapping canonique unique).
+3. Déterminer le premier barrier touché ; documenter le traitement si high et low touchent les deux barriers le même jour.
+4. Pour un gap, utiliser l'open/premier prix disponible, pas le niveau du barrier.
+5. Déduire spread, commission, slippage, impact et borrow côté short.
+6. Retourner label, net return, holding sessions, MAE, MFE, exit reason et données de qualité.
+7. Refaire `score_target_candidate()` en multiclasses ; calculer distribution des trois classes, edge net et stabilité.
+8. Exécuter `optimize_target_parameters()` à l'intérieur de chaque fold train uniquement.
+9. Réutiliser les mêmes fonctions de coûts que le simulateur pour éviter deux oracles.
+
+### À créer
+
+- `modelFactory/labeling.py` avec `TripleBarrierConfig` et `build_triple_barrier_labels()`.
+- `tests/test_model_factory_labeling.py`.
+- Fixtures OHLC déterministes avec gap, double-touch, halt et trous de données.
+
+### Tests à ajouter ou étendre
+
+- long TP, long stop, short TP, short stop, time exit ;
+- gap au-delà du stop ;
+- double-touch selon convention configurée ;
+- coût transformant un gain brut en flat/perte ;
+- aucune lecture après fin de fold ;
+- série inversée donnant un résultat long/short symétrique hors coûts asymétriques.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_model_factory_target_optimization.py tests/test_model_factory_labeling.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 4 — Benchmark modèles et anti-collapse
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `modelFactory/model.py` | `LSTMAttentionModule` |
+| `modelFactory/lightgbm_baseline.py` | baseline LightGBM |
+| `modelFactory/catboost_baseline.py` | baseline CatBoost |
+| `modelFactory/tabular_baseline.py` | métriques tabulaires |
+| `modelFactory/global_model.py` | modèle global |
+| `modelFactory/trainer.py` | boucle d'entraînement et persistance |
+| `backtesting/fuzz_runner.py` | robustesse/fuzz du pipeline de backtest |
+
+### Modifications précises
+
+1. Construire un runner unique imposant mêmes folds, features, labels, coûts et seeds à tous les modèles.
+2. Ajouter always-flat, règles momentum/mean-reversion et logistique régularisée.
+3. Calculer class weights sur le train du fold uniquement.
+4. Rapporter distribution réelle/prédite, recall par classe, action rate et matrice de confusion.
+5. Définir un gate collapse configurable mais bloquant : classe prédite quasi absente, entropie trop faible ou action rate invalide.
+6. Comparer au moins 3 seeds et persister moyenne, dispersion et pire fold.
+7. Ajouter coût de complexité/latence au rapport, sans le mélanger de manière opaque au PnL.
+8. Régulariser le LSTM et le retirer si son gain OOS net n'est pas démontré.
+
+### À créer
+
+- `modelFactory/model_benchmark.py` si aucun orchestrateur partagé n'existe.
+- `tests/test_model_factory_model_benchmark.py`.
+- `tests/test_model_factory_reproducibility.py`.
+
+### Tests à ajouter ou étendre
+
+- mêmes indices de folds pour tous les challengers ;
+- class weights indépendants de val/test ;
+- modèle collapsed inéligible ;
+- même seed => mêmes prédictions dans la tolérance backend ;
+- modèle plus complexe non promu sans gain minimal.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_model_factory_model.py tests/test_model_factory_trainer.py --no-cov -q
+python -m pytest tests/test_model_factory_model_benchmark.py tests/test_model_factory_reproducibility.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 5 — Contrat ML vers risque
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `core/ml_selection_contract.py` | contrat ML-first et capacités |
+| `modelFactory/predictor.py` | `predict_symbol()` |
+| `modelFactory/run_predict.py` | orchestration batch |
+| `modelFactory/db_registry.py` | `insert_predictions()` |
+| `risk_management/db_io.py` | méthode `load_predictions_asof()` |
+| `risk_management/models.py` | `SelectionScore`, `PredictionInfo`, `PortfolioEntry` |
+| `risk_management/portfolio_builder.py` | `PortfolioBuilder` |
+| `backtesting/risk_bridge.py` | `_build_predictions()`, `_build_selection_inputs_from_day()`, `build_phase2_risk_result()` |
+| `alembic/versions/0038_add_model_predictions_ternary.py` | colonnes ternaires de prédiction |
+
+### Modifications précises
+
+1. Définir un DTO immuable `MLRankedCandidate` séparé de `SelectionScore`.
+2. Champs minimum : symbol, trade_date, side, `p_long`, `p_flat`, `p_short`, `p_side`, side_rank, expected edge, model run, policy version, universe run, feature cutoff.
+3. Définir `SelectorVetoContext` séparé : secteur, qualité, événements, explication et score disponible optionnel.
+4. Construire les rankings long/short immédiatement après policy et conserver le rank initial.
+5. Faire consommer ces objets par `PortfolioBuilder`, avec adaptateur temporaire pour `SelectionScore` si nécessaire.
+6. Retirer du bridge `tag_short_candidates()` et toute réassignation du side par selector.
+7. Rendre les prédictions persistées append-only/idempotentes par clé métier.
+8. Si prédiction absente/incomplète : rejet `missing_ml_prediction`, jamais fallback quant-only.
+9. Vérifier cohérence : `predicted_side=long` implique `p_side=p_long` ; probabilités finies et normalisées.
+
+### À créer
+
+- `risk_management/selection_contract.py`.
+- `tests/test_risk_ml_first_contract.py`.
+- Migration éventuelle pour policy/universe/feature cutoff si `model_predictions` ne les porte pas déjà via run lineage.
+
+### Tests à ajouter ou étendre
+
+- selector ne peut modifier ni side ni side_rank ;
+- rankings long/short indépendants ;
+- flat rejeté avant sizing ;
+- prédiction incomplète rejetée ;
+- round-trip DB conservant toutes les probabilités et lineage ;
+- bridge et live produisant le même contrat.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_ml_selection_contract.py tests/test_model_factory_predictor.py --no-cov -q
+python -m pytest tests/test_risk_ml_first_contract.py tests/test_phase2_bridges.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 6 — Contraintes directionnelles et configuration
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `risk_management/config.py` | `RiskConfig` et `selection_capacity` |
+| `risk_management/constraints.py` | `PortfolioState`, `ConstraintChecker.check()` |
+| `risk_management/portfolio_builder.py` | construction et mise à jour du state |
+| `risk_management/correlation_filter.py` | `filter_correlated()` |
+| `risk_management/cli.py` | construction actuelle de la config live |
+| `backtesting/risk_bridge.py` | construction de la config quotidienne |
+| `core/direction.py` | `compute_initial_stop_price()` et expositions signées |
+| `config.yaml` | sections `risk_management` et `market_regimes` |
+
+### Défauts confirmés
+
+- `PortfolioState` ne contient que `total_notional` et `position_count`.
+- `ConstraintChecker.check()` ne reçoit pas le side et ne peut donc pas appliquer les caps long/short.
+- La contrainte ADV ne s'applique que si `adv_usd` est présent ; l'absence est fail-open.
+- Le CLI live ne charge pas uniformément toute la section YAML risque.
+
+### Modifications précises
+
+1. Ajouter au state : long/short count, long/short notional, gross, net et éventuellement poids signés par symbole.
+2. Ajouter `side` à `ConstraintChecker.check()` et des raisons codifiées `max_long_positions`, `max_short_positions`.
+3. Utiliser `RiskConfig.selection_capacity` comme source unique des caps.
+4. Calculer secteur en gross notional et net séparément si nécessaire.
+5. Rendre `filter_correlated()` conscient du side ou lui fournir des rendements PnL signés.
+6. Utiliser `compute_initial_stop_price()` partout plutôt qu'une soustraction inline.
+7. Après toute réduction, arrondi ou neutralisation, reconstruire le state et relancer les contraintes.
+8. Créer un loader typé unique ; supprimer les lectures YAML ponctuelles dans les CLI.
+9. Rejeter les clés inconnues et produire un dump/fingerprint de config effective.
+10. Rendre le snapshot broker frais obligatoire en paper/live ; conserver equity statique pour dry-run/backtest seulement.
+
+### À créer
+
+- `risk_management/config_loader.py` si aucun loader canonique ne couvre toute la configuration.
+- `tests/test_risk_config_parity.py`.
+- Nouveaux tests dans `tests/test_constraints.py`, `tests/test_portfolio_builder.py`, `tests/test_correlation_filter.py`.
+
+### Tests à ajouter ou étendre
+
+- caps total, long et short ;
+- long/short notionals et gross/net exacts ;
+- corrélation positive long/short reconnue comme hedge PnL ;
+- corrélation négative long/short reconnue comme concentration PnL ;
+- stop short au-dessus de l'entrée ;
+- réduction sous minimum notionnel rejetée ;
+- config YAML, CLI et backtest identiques ;
+- clé inconnue refusée.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_constraints.py tests/test_portfolio_builder.py tests/test_correlation_filter.py --no-cov -q
+python -m pytest tests/test_config_yaml_schema.py tests/test_risk_config_parity.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 7 — Walk-forward financier intégré
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `backtesting/walk_forward.py` | moteur walk-forward |
+| `backtesting/risk_bridge.py` | `build_phase2_risk_result()` et usage du vrai builder |
+| `backtesting/simulator.py` | simulation et lifecycle |
+| `backtesting/statistical_validation.py` | validation statistique |
+| `backtesting/report.py` | rapport financier |
+| `backtesting/weights_calibration.py` | calibration segmentée |
+| `backtesting/sentiment_calibration.py` | calibration sentiment legacy |
+| `backtesting/cli/_impl.py` | orchestration CLI |
+
+### Modifications précises
+
+1. Définir un `WalkForwardPlan` avec bornes train/inner-val/outer-test, purge et embargo.
+2. Faire entraîner target, features, calibration, seuils et hyperparamètres uniquement dans le train interne.
+3. Utiliser `build_phase2_risk_result()` avec le contrat du Sprint 5 et la config du Sprint 6.
+4. Supprimer du chemin nominal les adaptations legacy de side et de score selector.
+5. Propager à chaque fold model/data/universe/config/policy IDs.
+6. Calculer métriques financières sur fills nets de tous coûts et par side/régime.
+7. Ajouter block bootstrap, Deflated Sharpe, intervalle de drawdown et correction des essais multiples.
+8. Produire un rapport machine-readable avec gate détaillé et causes de `NO-GO`.
+9. Réparer les fixtures de `tests/test_phase2_bridges.py` pour fournir le contrat ternaire complet.
+
+### À créer
+
+- `tests/test_model_walk_forward_nested.py` si les tests actuels ne couvrent pas l'imbrication.
+- `tests/test_risk_backtest_live_parity.py` ou extension du test de parité existant.
+- Schéma Pydantic du rapport si aucun schéma n'impose les champs de gate.
+
+### Tests à ajouter ou étendre
+
+- fold externe jamais utilisé dans l'optimisation ;
+- purge >= horizon label et embargo correct ;
+- mêmes entrées pour bridge et risk live sur fixture ;
+- résultats long, short et combiné réconciliés ;
+- coûts appliqués une seule fois ;
+- suite `tests/test_phase2_bridges.py` entièrement verte.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_phase2_bridges.py tests/test_model_walk_forward.py tests/test_weights_calibration.py --no-cov -q
+python -m pytest tests/test_backtest_live_parity.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 8 — Edge net, abstention et sizing
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `risk_management/position_sizer.py` | `PositionSizer` |
+| `risk_management/kelly.py` | `KellySizer` |
+| `risk_management/portfolio_builder.py` | `PortfolioBuilder` et choix du sizing |
+| `risk_management/db_io.py` | `load_win_rates_asof()` utilise actuellement `directional_accuracy` |
+| `risk_management/models.py` | `WinRateInfo`, `PredictionInfo`, `PriceInfo`, `PortfolioEntry` |
+| `modelFactory/calibration.py` | calibration des probabilités |
+| `modelFactory/evaluation.py` | métriques de confiance/edge à étendre |
+| `tests/property/test_position_sizer_properties.py` | invariants de taille |
+
+### Défauts confirmés
+
+- Kelly utilise une accuracy non directionnelle et un payoff commun.
+- Une probabilité effective faible peut retomber sur un sizing ATR au lieu de rejeter.
+- Le sizing ne représente pas encore explicitement edge net, gap overnight et Expected Shortfall.
+
+### Modifications précises
+
+1. Définir un objet `DirectionalEdgeEstimate` avec side, expected gross return, coûts, net edge, uncertainty et sample size.
+2. Produire des statistiques OOS par side/régime/horizon, jamais depuis le holdout final.
+3. Remplacer `WinRateInfo` par un type contenant hit rate, payoff, tail loss, calibration, nombre de trades et as-of.
+4. Déduire commission, spread, slippage, impact, borrow et taxes applicables.
+5. Implémenter une policy d'abstention unique : qualité, confidence, top-2 margin, uncertainty et edge minimum.
+6. Modifier `KellySizer` pour utiliser hit rate + payoff directionnels et shrinkage sur faible échantillon.
+7. Remplacer le fallback automatique par une enum `reject|minimal_probe|atr_fallback`, avec `reject` en nominal.
+8. Capper la taille par ATR, gap stress, ES, liquidité, poids et budget portefeuille.
+9. Réconcilier quantité/stop après fill et réduire la quantité si le risque réel dépasse le budget.
+
+### À créer
+
+- `risk_management/edge.py`.
+- `risk_management/abstention.py` ou policy dans le contrat de sélection.
+- `tests/test_kelly.py` pour la policy de fallback, les statistiques directionnelles et le shrinkage.
+- `tests/test_risk_edge.py`.
+- `tests/test_execution_risk_reconciliation.py`.
+- Migration éventuelle pour métriques OOS directionnelles et composantes de coûts.
+
+### Tests à ajouter ou étendre
+
+- edge brut positif mais edge net négatif => rejet ;
+- coût croissant => taille non croissante ;
+- faible confiance/forte entropie => abstention ;
+- payoff long/short distinct ;
+- faible échantillon => shrinkage ;
+- Kelly <= 0 => rejet nominal ;
+- gap stress ou ES plus élevé => taille plus faible ;
+- risque post-fill <= budget.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_kelly.py tests/property/test_position_sizer_properties.py --no-cov -q
+python -m pytest tests/test_risk_edge.py tests/test_execution_risk_reconciliation.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 9 — Régime et événements
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `service/market/models.py` | `MarketRegimeState`, `MarketRegimeSnapshot` |
+| `service/market/regime_manager.py` | `build_snapshot()` |
+| `risk_management/regime_apply.py` | `apply_snapshot()` |
+| `selector/regime_filters.py` | `apply_full_regime_to_candidates()` et filtres événements |
+| `selector/regime_scoring.py` | `MomentumRotationState` et rescoring actuel |
+| `backtesting/risk_bridge.py` | reconstruction de snapshot et mutations legacy |
+| `config.yaml` | seuils/hystérésis de `market_regimes` |
+| `tests/test_market_regime.py` | scénarios régime existants |
+
+### Modifications précises
+
+1. Définir transitions pures `(previous_state, inputs, config) -> (snapshot, next_state, actions)`.
+2. Ne plus muter un snapshot après création ; reconstruire un nouvel état si une recovery rule s'applique.
+3. Porter séparément `allowed_long_entries`, `allowed_short_entries`, budgets et caps par side.
+4. Définir les actions sur nouvelles entrées, holdings et ordres ouverts.
+5. Ajouter qualité/fraîcheur à chaque input macro/événement.
+6. Classifier chaque source : critique fail-closed ou overlay fail-degraded conservateur.
+7. Pour earnings, utiliser date/heure de publication et fenêtre avant/après avec cutoff PIT.
+8. Faire des filtres `negative_score` un veto ou risk multiplier explicite ; ne pas modifier un score ignoré par le ranking.
+9. Supprimer `apply_regime_weights()` du chemin nominal si cette fonction rerank le selector après ML.
+10. Persister snapshot, previous state, transition, actions et raisons.
+
+### À créer
+
+- `risk_management/regime_state_machine.py` si `regime_manager.py` ne peut porter proprement les actions risque.
+- `tests/test_risk_regime_state_machine.py`.
+- Migration éventuelle pour actions/qualité/freshness du snapshot.
+
+### Tests à ajouter ou étendre
+
+- indépendance des autorisations long/short ;
+- ranking ML inchangé ;
+- hystérésis et min hold ;
+- macro manquante => mode conservateur déterministe ;
+- earnings inconnu => blocage selon policy ;
+- transition avec partial fill et ordre en vol ;
+- backtest/live produisent le même snapshot et les mêmes actions.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_market_regime.py tests/test_risk_regime_sizing_constraints.py --no-cov -q
+python -m pytest tests/test_risk_regime_state_machine.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 10 — Liquidité, borrow et capacité
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `risk_management/constraints.py` | contrainte ADV dans `ConstraintChecker.check()` |
+| `risk_management/models.py` | `PriceInfo.adv_usd` |
+| `risk_management/db_io.py` | chargement prix/ADV |
+| `backtesting/data_loader.py` | données OHLCV/volume historiques |
+| `common/tradable_universe.py` | filtres de tradabilité |
+| `execution_engine/broker_adapter.py` | accès broker à étendre pour shortability/borrow |
+| `config.yaml` | `max_position_pct_of_adv`, actuellement nullable |
+
+### Modifications précises
+
+1. Rendre ADV, spread, quote timestamp et source obligatoires pour une nouvelle entrée.
+2. Définir une freshness policy distincte EOD/pre-open/intraday.
+3. Calculer cap d'entrée et cap de liquidation stressée, avec horizon de liquidation maximum.
+4. Ajouter `BorrowSnapshot` : symbol, as-of, shortable, ETB/HTB, available qty, fee annualisée, locate ID/expiry, recall status et source.
+5. Charger le borrow au moment de la décision et le revérifier immédiatement avant soumission.
+6. Bloquer short si snapshot absent/stale, quantité insuffisante ou locate requis non confirmé.
+7. Déduire borrow fee attendue sur durée de détention et coût de locate de l'edge.
+8. Modéliser slippage/impact par participation ADV, spread et volatilité.
+9. Simuler partial fills, ordre non exécuté, gap et liquidation multi-jours dans backtest.
+10. Produire capacité maximale par symbole, secteur et stratégie.
+
+### À créer
+
+- `risk_management/borrow.py`.
+- `risk_management/liquidity.py` si les règles dépassent `ConstraintChecker`.
+- `tests/test_short_borrow_gate.py`.
+- `tests/test_risk_liquidity_gate.py`.
+- Migration pour snapshots borrow et diagnostics de capacité, après vérification du head Alembic.
+
+### Tests à ajouter ou étendre
+
+- ADV/spread/quote absent ou stale => rejet ;
+- max participation et liquidation horizon respectés ;
+- short non disponible/HTB sans locate => rejet ;
+- borrow fee rendant edge négatif => rejet ;
+- locate expiré entre risque et exécution => ordre bloqué ;
+- backtest n'utilisant jamais un borrow snapshot futur.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_capital_preset_risk_overrides.py tests/test_risk_liquidity_gate.py --no-cov -q
+python -m pytest tests/test_short_borrow_gate.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 11 — Optimisation portefeuille complet
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `risk_management/portfolio_builder.py` | `PortfolioBuilder` |
+| `risk_management/constraints.py` | `PortfolioState`, `ConstraintChecker` |
+| `risk_management/correlation_filter.py` | `filter_correlated()` greedy |
+| `risk_management/factor_model.py` | expositions, covariance et décomposition factorielle |
+| `risk_management/db_io.py` | snapshots/cibles/état disponible |
+| `risk_management/cli.py` | orchestration et chargement broker |
+| `tests/test_factor_model.py` | tests factoriels existants |
+
+### Modifications précises
+
+1. Définir un `PortfolioSnapshot` incluant holdings, cash, buying power, ordres ouverts, fills partiels et protections.
+2. Transformer chaque position/candidat en poids signé.
+3. Définir une objective explicite : edge net attendu moins pénalités risque, coût et turnover.
+4. Contraindre total/side count, gross/net, secteur, facteur, beta, corrélation PnL, ADV, borrow et risque initial.
+5. Calculer covariance avec shrinkage et version/as-of ; refuser covariance future ou trop stale.
+6. Remplacer progressivement le greedy par un solveur déterministe ; garder un fallback conservateur testé.
+7. Ajouter no-trade bands pour éviter les petits rebalancements.
+8. Réconcilier solution continue, shares arrondies, minimum notionnel et fractional shares.
+9. Recalculer toutes les expositions après arrondi.
+10. Produire raisons de contrainte et marginal contribution to risk par position.
+
+### À créer
+
+- `risk_management/portfolio_optimizer.py`.
+- `risk_management/portfolio_snapshot.py` si le modèle ne tient pas dans `models.py`.
+- `tests/test_portfolio_optimizer.py`.
+- Artefact quotidien de covariance et diagnostic optimizer ; migration seulement si la persistance DB est retenue.
+
+### Tests à ajouter ou étendre
+
+- holdings existants inclus ;
+- couverture des ordres ouverts sans double comptage ;
+- zéro violation signée avant/après arrondi ;
+- optimiser avec mêmes inputs => même sortie ;
+- turnover penalty réduisant le churn ;
+- fallback plus conservateur que solveur ;
+- covariance stale/manquante => policy explicite.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_factor_model.py tests/test_correlation_filter.py --no-cov -q
+python -m pytest tests/test_portfolio_optimizer.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 12 — Parité et protections
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `backtesting/parity.py` | comparaisons de parité |
+| `backtesting/fidelity.py` | `build_replay_diagnostic_summary()` et diagnostics |
+| `backtesting/risk_bridge.py` | bridge des décisions risque |
+| `execution_engine/models.py` | `ExecutionTarget` |
+| `execution_engine/order_intents.py` | `build_take_profit_intent()`, `build_initial_stop_intent()`, `build_trailing_stop_intent()` |
+| `execution_engine/children_submission.py` | soumission des protections enfants |
+| `execution_engine/protection_transition.py` | transition stop vers trailing |
+| `execution_engine/protection_watcher.py` | surveillance/réparation |
+| `execution_engine/db_io.py` | persistance/réconciliation des ordres |
+| `tests/test_backtest_live_parity.py` | tests de parité existants |
+
+### Modifications précises
+
+1. Définir un payload canonique de décision sérialisable utilisé par replay, paper et live.
+2. Comparer à chaque étape : univers, prediction, rank, veto, regime, edge, size, constraint, target, intent et fill.
+3. Ajouter des codes de divergence stables et un diff machine-readable.
+4. Rendre prédiction, risk run et execution run idempotents par clés métier.
+5. Refuser artefact/config/policy incompatible avant de produire une cible.
+6. Utiliser les helpers directionnels de `core/direction.py` pour stop/TP/PnL.
+7. Recalculer protection après fill réel et protéger uniquement la quantité remplie.
+8. Garantir OCO ou compensation logique entre stop, TP et trailing.
+9. Réparer automatiquement une position broker non protégée dans un SLA mesuré.
+10. Gérer split, halt, gap, partial fill, reject, timeout et reconnexion.
+11. Réconcilier force-close avec annulation des enfants pour éviter un retournement accidentel.
+
+### À créer
+
+- `tests/test_execution_directional_protection.py`.
+- `tests/test_risk_backtest_live_parity.py` si le fichier existant ne couvre pas tout le payload.
+- Golden fixtures versionnées avec attentes discrètes et tolérances numériques.
+
+### Tests à ajouter ou étendre
+
+- payload identique => décision identique ;
+- stop long/short du bon côté ;
+- quantité protégée égale à quantité filled ;
+- gap through stop au prix exécutable ;
+- watcher réparant une position nue ;
+- force-close sans ordre enfant résiduel ;
+- replay identique au run audité.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_backtest_live_parity.py tests/test_backtesting_refactor.py --no-cov -q
+python -m pytest tests/test_execution_directional_protection.py tests/test_phase2_bridges.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 13 — MLOps, drift et rollback
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `modelFactory/drift_monitor.py` | `compute_drift()` |
+| `modelFactory/drift_policy.py` | `evaluate_drift_gate()` et décision de gate |
+| `modelFactory/auto_rollback.py` | rollback champion |
+| `risk_management/ml_gate.py` | `MlGateState`, `resolve_ml_gate_state()`, `apply_ml_gate_to_risk_config()` |
+| `core/feature_flags.py` | désactivation manuelle ML |
+| `alembic/versions/0021_ml_drift_runs.py` | table de runs drift |
+| `tests/test_ml_drift_policy_gate.py` | tests du gate |
+
+### Défaut confirmé
+
+`apply_ml_gate_to_risk_config()` force actuellement `score_weight=1.0` et `prediction_weight=0.0`, donc un fallback quant-only. Dans une architecture ML-first stricte, fermeture du gate ML doit bloquer les nouvelles entrées ML, pas promouvoir silencieusement le selector.
+
+### Modifications précises
+
+1. Remplacer le fallback quant-only par un état explicite `block_new_entries` ou `reduce_only` selon contexte.
+2. Faire consommer `MlGateState` directement par le pipeline risque avant chargement/sizing des candidats.
+3. Définir seuils et fenêtres pour drift features, probabilités, calibration, action rate, PnL et coûts.
+4. Segmenter les alertes par side, régime, secteur et modèle.
+5. Persister décision, inputs, seuils, model ID, previous champion et action.
+6. Rendre le rollback atomique et empêcher les ordres pendant la transition.
+7. Vérifier compatibilité feature schema/calibrateur/policy avant activation du champion restauré.
+8. Ajouter canary avec budget explicitement limité.
+9. Tester sauvegarde/restauration sur environnement propre.
+10. Exposer un dashboard opérateur et alertes avec cause/action.
+
+### À créer
+
+- Tests dans `tests/test_ml_auto_rollback_champion.py` et `tests/test_ml_artifacts_backup.py` si absents/incomplets.
+- `tests/test_risk_ml_gate.py` pour prouver l'absence de fallback quant-only.
+- Migration éventuelle pour état de registry/canary si les colonnes existantes ne suffisent pas.
+
+### Tests à ajouter ou étendre
+
+- gate fermé => zéro nouvelle entrée ;
+- holdings toujours gérables en reduce-only ;
+- rollback atomique et réversible ;
+- artefact restauré reproduisant la prédiction ;
+- modèle stale/incompatible non servi ;
+- canary ne dépassant jamais son budget.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_ml_drift_policy_gate.py tests/test_risk_ml_gate.py --no-cov -q
+python -m pytest tests/test_ml_auto_rollback_champion.py tests/test_ml_artifacts_backup.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 14 — Shadow et paper trading
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `risk_management/shadow_compare.py` | comparaison shadow |
+| `backtesting/execution_replay.py` | replay d'exécution |
+| `backtesting/fidelity.py` | diagnostics de fidélité |
+| `risk_management/cli.py` | orchestration des décisions |
+| `execution_engine/cli.py` | entrypoint d'exécution |
+| `execution_engine/executor.py` | exécution et métriques |
+| `alembic/versions/0022_shadow_drift_runs.py` | persistance shadow |
+| `tests/test_parity_backtest_live.py` | tests shadow/parité existants |
+
+### Modifications précises
+
+1. Définir des modes typés `dry_run`, `shadow`, `paper`, `live`, sans booléens ambigus.
+2. En shadow, interdire au niveau de l'adapter broker toute soumission, même si le CLI est mal configuré.
+3. En paper, vérifier account endpoint/ID et refuser toute credential live.
+4. Exécuter le même snapshot et la même config que le chemin live, seule la destination d'ordre change.
+5. Persister tous les niveaux de divergence et leurs causes codifiées.
+6. Construire la golden parity de bout en bout et corriger tous les tests bridge.
+7. Mesurer expected vs observed price, fill rate, partial fills, protection latency et slippage.
+8. Organiser une période shadow minimale de 4 semaines puis paper de 8 à 12 semaines.
+9. Geler modèle/policy pendant chaque fenêtre, sauf rollback sécurité.
+10. Produire rapport quotidien et revue hebdomadaire des extrêmes/abstentions.
+11. Exécuter chaos tests DB, données, registry, macro, borrow, broker et watcher.
+
+### À créer
+
+- `execution_engine/execution_mode.py` si le mode n'est pas déjà centralisé.
+- E2E `tests/test_shadow_paper_workflow.py`.
+- Rapport JSON/Pydantic de campagne avec gates cumulés.
+
+### Tests à ajouter ou étendre
+
+- shadow ne touche jamais le broker ;
+- paper refuse endpoint live ;
+- mêmes décisions entre shadow/paper à inputs identiques ;
+- divergences expliquées ;
+- protections et réconciliation paper complètes ;
+- rollback/kill switch pendant incident.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_parity_backtest_live.py tests/test_shadow_paper_workflow.py --no-cov -q
+python -m pytest tests/test_phase2_bridges.py tests/test_backtest_live_parity.py --no-cov -q
+```
+
+---
+
+## Fiche Sprint 15 — Go-live progressif
+
+### Existant vérifié
+
+| Fichier | Symboles / responsabilité |
+|---|---|
+| `risk_management/cli.py` | `main()` et orchestration live |
+| `risk_management/circuit_breaker.py` | `CircuitBreaker`, `CircuitBreakerStatus` |
+| `execution_engine/cli.py` | `main()` |
+| `execution_engine/executor.py` | soumission et force-close |
+| `execution_engine/broker_state_sync.py` | synchronisation broker |
+| `execution_engine/reconcile_statement.py` | réconciliation |
+| `execution_engine/models.py` | `ExecutionTarget` |
+| `ihm/pages/_execution_center/__init__.py` | centre opérateur |
+| `config.yaml` | limites risque, force-close et presets capital |
+| `tests/test_broker_snapshot_hardening.py` | robustesse snapshot broker |
+
+### Modifications précises
+
+1. Définir `DeploymentStage` avec pourcentage de budget, univers autorisé, durée minimale et approbation.
+2. Bloquer toute transition de palier sans gates du Sprint 14 et approbation persistée.
+3. Appliquer le pourcentage au budget de risque, pas seulement au nombre de positions.
+4. Charger equity, buying power, positions et ordres depuis un snapshot broker frais.
+5. Définir kill switch manuel accessible CLI/IHM avec audit immuable et double confirmation adaptée.
+6. Faire déclencher le breaker automatique sur drawdown, perte journalière, staleness critique, divergence broker et absence de protection.
+7. En halt, bloquer nouvelles entrées mais continuer cancel, reduce-only et protection.
+8. Réconcilier broker/DB/risk targets avant et après chaque cycle.
+9. Ajouter alertes sur ordres, rejets, divergence, breaker, protection et rollback.
+10. Archiver chaque revue de palier avec métriques, incidents et sign-off.
+11. Tester retour immédiat au palier précédent et rollback champion indépendamment.
+
+### À créer
+
+- `risk_management/deployment_stage.py`.
+- `tests/test_progressive_go_live.py`.
+- Migration pour historique des paliers/approbations/overrides si aucune table d'audit existante ne convient.
+
+### Tests à ajouter ou étendre
+
+- budget de chaque palier respecté ;
+- transition sans approbation refusée ;
+- snapshot broker stale => halt ;
+- breaker => aucune nouvelle entrée ;
+- reduce-only/protections toujours fonctionnels pendant halt ;
+- réconciliation détectant position inconnue ;
+- rollback de palier ne dépassant jamais l'ancien budget.
+
+### Commandes ciblées
+
+```powershell
+python -m pytest tests/test_entrypoints_and_market_calendar.py tests/test_broker_snapshot_hardening.py --no-cov -q
+python -m pytest tests/test_progressive_go_live.py --no-cov -q
+```
+
+---
+
+## 12. Carte des migrations et tables à vérifier
+
+Avant toute migration, exécuter `alembic heads`, inspecter les branches éventuelles et vérifier le schéma réel. Les migrations existantes ci-dessous sont des ancres, pas une autorisation de recréer les tables.
+
+| Domaine | Migration/table existante vérifiée | Besoin probable |
+|---|---|---|
+| Prédictions ternaires | `0038_add_model_predictions_ternary.py`, `model_predictions` | policy version, cutoff et lineage si absents |
+| Univers PIT | `0046_add_tradable_universe_history.py`, `tradable_universe_runs/history` | lien de lineage vers features/scores |
+| Drift ML | `0021_ml_drift_runs.py`, `ml_drift_runs` | registry state/canary si absents |
+| Shadow | `0022_shadow_drift_runs.py`, `shadow_drift_runs` | payload de divergence complet si absent |
+| Décisions risque | `risk_decisions`, `portfolio_targets` | edge/cost components et signed exposures |
+| Régime | snapshots marché existants | actions, qualité et transition si absentes |
+| Borrow | aucune implémentation runtime trouvée | nouvelle table snapshot PIT probable |
+| Déploiement | tables execution/audit existantes | historique de paliers et approbations si absent |
+
+### Règles de migration
+
+1. Toute colonne nouvelle est nullable ou backfillée avant contrainte `NOT NULL`.
+2. Toute donnée PIT porte `as_of`/`available_at` et source.
+3. Toute FK de lineage est indexée.
+4. Les décisions historiques restent lisibles après évolution du schéma.
+5. Les migrations doivent avoir tests upgrade et, si possible, downgrade.
+
+---
+
+## 13. Ordre de validation pour chaque sprint
+
+```powershell
+# 1. Test rouge du défaut ciblé
+python -m pytest <test_ciblé> --no-cov -q
+
+# 2. Tests du ou des modules modifiés
+python -m pytest <tests_module> --no-cov -q
+
+# 3. Qualité statique ciblée, si configurée dans le dépôt
+python -m ruff check <dossiers_modifiés>
+python -m mypy <dossiers_modifiés>
+
+# 4. Suite transversale ML-first / risque / parité
+python -m pytest tests -k "ml_first or ternary or risk or parity" --no-cov -q
+
+# 5. Suite globale avec la couverture configurée par le dépôt
+python -m pytest
+
+# 6. Vérification des migrations si le sprint en contient
+alembic heads
+alembic upgrade head
+```
+
+Si la suite globale contient un échec antérieur non lié, l'IA doit fournir : commande, test, message, preuve que le défaut préexistait et impact sur le gate. Elle ne doit ni masquer ni corriger un défaut hors périmètre sans accord.
+
+---
+
+## 14. Definition of Ready du sprint suivant
+
+Le sprint suivant ne démarre que si :
+
+- tous les tests et gates du sprint courant sont verts ;
+- les schémas et contrats publics sont documentés ;
+- les adaptateurs legacy restants ont une date de retrait ;
+- les artefacts produits sont reproductibles ;
+- le rapport de sprint contient les fichiers réellement modifiés ;
+- aucune divergence backtest/live nouvelle n'est ouverte ;
+- le rollback a été testé lorsque le comportement peut atteindre paper/live.
+
+---
+
+## 15. Inventaire consolidé des tests à créer
+
+Ces 23 fichiers n'existent pas dans le dépôt au 2026-07-11. Ils sont des livrables proposés par cette roadmap, pas des tests à rechercher dans l'existant.
+
+### Contrats ML et données
+
+- `tests/test_ml_ternary_decision_policy.py`
+- `tests/test_ml_timing_contract.py`
+- `tests/test_model_factory_evaluation_ternary.py`
+- `tests/test_model_factory_multiclass_calibration.py`
+- `tests/test_feature_availability_pit.py`
+- `tests/test_historical_universe_survivorship.py`
+- `tests/test_model_factory_labeling.py`
+- `tests/test_model_factory_model_benchmark.py`
+- `tests/test_model_walk_forward_nested.py`
+
+### Contrat et moteur de risque
+
+- `tests/test_risk_ml_first_contract.py`
+- `tests/test_risk_config_parity.py`
+- `tests/test_kelly.py`
+- `tests/test_risk_edge.py`
+- `tests/test_execution_risk_reconciliation.py`
+- `tests/test_risk_regime_state_machine.py`
+- `tests/test_risk_liquidity_gate.py`
+- `tests/test_short_borrow_gate.py`
+- `tests/test_portfolio_optimizer.py`
+
+### Parité, exploitation et production
+
+- `tests/test_risk_backtest_live_parity.py`
+- `tests/test_execution_directional_protection.py`
+- `tests/test_risk_ml_gate.py`
+- `tests/test_shadow_paper_workflow.py`
+- `tests/test_progressive_go_live.py`
+
+Lorsqu'un test existant couvre déjà entièrement le comportement au moment d'implémenter le sprint, l'IA peut étendre ce fichier au lieu d'en créer un nouveau. Elle doit alors documenter cette substitution dans le compte rendu du sprint et conserver les mêmes invariants.
