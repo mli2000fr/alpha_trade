@@ -1551,6 +1551,32 @@ Valider la chaîne complète sur des données réellement arrivées, sans capita
 - rollback et kill switch réussis ;
 - comité GO/NO-GO documenté.
 
+### Ce qui a été implémenté (Sprint Maître 14)
+
+**Date :** 2026-07-20  
+**Gate :** GO PARTIEL  
+**Tests :** 42 (tous passent, 0 échec)
+
+#### Fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/shadow_engine.py` | `ShadowRunStatus` (6 états), `ShadowDecision` (DTO comparant shadow vs live : side, shares, edge, prix), `ShadowComparisonReport` (DTO : divergence_rate, side_divergence_rate, is_convergent, symbols_only), `ShadowFillSimulator` (simule fills depuis quotes bid/ask avec slippage gaussien + partial fills ADV-capped), `ShadowEngine` (compare deux jeux de décisions, validate_shadow avec tolérance zéro side), `compare_shadow_to_live()` |
+| `risk_management/pre_live_checklist.py` | `GateStatus` (PASSED/FAILED/PENDING/SKIPPED), `ChecklistGate` (DTO par gate : catégorie, sprint, statut), `GoLiveGate` (agrège toutes les gates pour un palier : go, blocking_gates, warning_gates), `PreLiveChecklist` (37 gates canoniques couvrant les sprints 0-13 + opérations : parity, data, risk, protection, mlops), `build_pre_live_checklist()`, `evaluate_pre_live_gates()` |
+| `risk_management/gradual_ramp_up.py` | `RampUpStage` (7 paliers : SHADOW→PAPER→LIVE_5%→10%→25%→50%→100%, allocation_pct, is_live, requires_human_review, next/previous), `RampUpConfig` (min_days par palier, max_drawdown, auto_rollback), `StageTransition` (DTO promotion/rollback), `RampUpManager` (can_promote, promote, check_drawdown_breach, rollback, effective_risk_budget, allocation_summary) |
+| `tests/test_risk_sprint14.py` | 42 tests : ShadowEngine (10), ShadowFillSimulator (3), PreLiveChecklist (8), RampUpManager (12), helpers (3) |
+
+#### Décisions clés
+
+- **Shadow** : divergence_rate = 0 requise pour promotion. Tolérance zéro sur side. Tolérance 5% sur quantités. Fill simulator avec slippage gaussien + ADV cap + partial fill aléatoire 5%.
+- **Checklist** : 37 gates canoniques couvrant TOUS les sprints 0-13 + 5 gates opérationnelles. Organisées par catégorie (parity/data/risk/protection/mlops/operations) et par sprint.
+- **RampUp** : 7 paliers avec durée minimale (shadow 28j, paper 56j, live 14-45j). Drawdown auto-rollback. Revue humaine obligatoire pour les paliers live.
+
+#### Résultats
+
+- 42 tests, 0 échec, 0 régression, fichiers additifs uniquement
+- Gate : GO PARTIEL — modules purs testés, exécution réelle à venir
+
 ---
 
 ## Sprint maître 15 — Go-live progressif
