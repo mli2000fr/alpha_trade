@@ -127,7 +127,7 @@ def _build_preflight_data_quality(
     effective_equity: float,
     requested_equity: float,
     equity_breakdown: dict[str, object],
-    candidates: list[object],
+    selections: list[object],
     prices: dict[str, object] | None,
     return_matrix: object | None,
     regime_allow_new_entries: bool,
@@ -162,34 +162,34 @@ def _build_preflight_data_quality(
         "breakdown_source": equity_breakdown.get("source"),
     }
 
-    candidate_dates = sorted(
+    selection_dates = sorted(
         {
             snapshot_date
-            for candidate in candidates
-            if (snapshot_date := getattr(candidate, "snapshot_date", None)) is not None
+            for selection in selections
+            if (snapshot_date := getattr(selection, "snapshot_date", None)) is not None
         }
     )
-    candidate_snapshot_date = candidate_dates[-1] if candidate_dates else None
-    candidate_freshness_days = (
-        max((trade_date - candidate_snapshot_date).days, 0)
-        if candidate_snapshot_date is not None
+    selection_snapshot_date = selection_dates[-1] if selection_dates else None
+    selection_freshness_days = (
+        max((trade_date - selection_snapshot_date).days, 0)
+        if selection_snapshot_date is not None
         else None
     )
-    candidate_status = "ok"
-    if not candidates:
-        candidate_status = "empty"
-    elif candidate_snapshot_date is None:
-        candidate_status = "missing"
-        warnings.append("Fraîcheur PIT des candidats indisponible.")
-    elif candidate_freshness_days and candidate_freshness_days > 0:
-        candidate_status = "stale"
-        warnings.append(f"Snapshot candidats daté de J-{candidate_freshness_days}.")
-    checks["candidate_snapshot"] = {
-        "status": candidate_status,
-        "loaded_candidates": len(candidates),
-        "snapshot_date": candidate_snapshot_date.isoformat() if candidate_snapshot_date is not None else None,
-        "freshness_days": candidate_freshness_days,
-        "distinct_snapshot_dates": [item.isoformat() for item in candidate_dates],
+    selection_status = "ok"
+    if not selections:
+        selection_status = "empty"
+    elif selection_snapshot_date is None:
+        selection_status = "missing"
+        warnings.append("Fraîcheur PIT des sélections indisponible.")
+    elif selection_freshness_days and selection_freshness_days > 0:
+        selection_status = "stale"
+        warnings.append(f"Snapshot sélections daté de J-{selection_freshness_days}.")
+    checks["selection_snapshot"] = {
+        "status": selection_status,
+        "loaded_selections": len(selections),
+        "snapshot_date": selection_snapshot_date.isoformat() if selection_snapshot_date is not None else None,
+        "freshness_days": selection_freshness_days,
+        "distinct_snapshot_dates": [item.isoformat() for item in selection_dates],
     }
 
     if not regime_allow_new_entries:
@@ -203,9 +203,9 @@ def _build_preflight_data_quality(
             for price_info in resolved_prices.values()
             if getattr(price_info, "atr_20", None) is not None and float(getattr(price_info, "atr_20", 0) or 0) > 0
         )
-        atr_coverage_pct = (atr_available / len(candidates)) if candidates else None
+        atr_coverage_pct = (atr_available / len(selections)) if selections else None
         atr_status = "ok"
-        if not candidates:
+        if not selections:
             atr_status = "empty"
         elif atr_coverage_pct == 0:
             atr_status = "missing"
@@ -229,7 +229,7 @@ def _build_preflight_data_quality(
         matrix = return_matrix
         matrix_empty = bool(getattr(matrix, "empty", True))
         matrix_columns = set(getattr(matrix, "columns", [])) if not matrix_empty else set()
-        candidate_symbols = [str(getattr(candidate, "symbol", "")).strip().upper() for candidate in candidates]
+        candidate_symbols = [str(getattr(candidate, "symbol", "")).strip().upper() for candidate in selections]
         matched_symbols = sum(1 for symbol in candidate_symbols if symbol in matrix_columns)
         corr_rows = int(getattr(matrix, "shape", (0, 0))[0]) if not matrix_empty else 0
         corr_columns = int(getattr(matrix, "shape", (0, 0))[1]) if not matrix_empty else 0
@@ -661,7 +661,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--correlation-min-overlap", type=int, default=40)
     p.add_argument("--enable-kelly-sizing", action="store_true", default=False)
     # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné
-    p.add_argument("--filter-no-ml", action="store_true", default=False, help="Exclure les candidats sans modèle ML entraîné (absence dans model_predictions).")
+    p.add_argument("--filter-no-ml", action="store_true", default=False, help="Exclure les sélections sans modèle ML entraîné (absence dans model_predictions).")
     p.add_argument("--allow-fractional-shares", action="store_true", default=False)
     p.add_argument("--assumed-payoff-ratio", type=float, default=1.5)
     p.add_argument("--kelly-fraction-multiplier", type=float, default=0.25)
@@ -872,7 +872,7 @@ def main(args: list[str] | None = None) -> None:
         correlation_lookback_days=args.correlation_lookback_days,
         correlation_min_overlap=args.correlation_min_overlap,
         enable_kelly_sizing=args.enable_kelly_sizing,
-        filter_candidates_without_ml=args.filter_no_ml,
+        filter_unmodeled_selections=args.filter_no_ml,
         allow_fractional_shares=args.allow_fractional_shares,
         assumed_payoff_ratio=args.assumed_payoff_ratio,
         kelly_fraction_multiplier=args.kelly_fraction_multiplier,
@@ -1207,7 +1207,7 @@ def main(args: list[str] | None = None) -> None:
                 "ML coverage gate bloquant | coverage=%.4f threshold=%.4f candidates=%d predictions=%d reason=%s",
                 float(ml_coverage_gate.coverage_ratio or 0.0),
                 float(ml_coverage_gate.required_ratio or 0.0),
-                int(ml_coverage_gate.candidate_count),
+                int(ml_coverage_gate.selection_count),
                 int(ml_coverage_gate.prediction_count),
                 ml_coverage_gate.reason,
             )
@@ -1401,7 +1401,7 @@ def main(args: list[str] | None = None) -> None:
         effective_equity=effective_equity,
         requested_equity=requested_equity,
         equity_breakdown=equity_breakdown,
-        candidates=candidates,
+        selections=candidates,
         prices=prices,
         return_matrix=return_matrix,
         regime_allow_new_entries=regime_allow_new_entries,

@@ -81,8 +81,8 @@ class RiskConfig:
     short_time_stop_days: int = 20
     # Ancien alias short, conservé pour les presets non migrés.
     min_score_threshold_short: float = 0.0
-    # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné
-    filter_candidates_without_ml: bool = False
+    # Exclure les sélections sans modèle ML entraîné.
+    filter_unmodeled_selections: bool = False
     # Si True, liquide les longs existants quand le régime passe en mode défensif
     # (capital_preservation). Libère le capital pour les shorts.
     close_longs_on_defensive_regime: bool = True

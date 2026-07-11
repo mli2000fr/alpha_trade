@@ -118,7 +118,7 @@ class FactorConstraintResult:
     ----------
     violations : list[str]
         Liste des violations détectées.
-    filtered_candidates : list[EnrichedCandidate]
+    filtered_selections : list[EnrichedSelection]
         Candidats après filtrage factoriel (ceux qui n'aggravent pas les violations).
     decomposition : PortfolioRiskDecomposition | None
         Décomposition du risque après filtrage.
@@ -715,7 +715,7 @@ def check_factor_constraints(
 
     Parameters
     ----------
-    candidates : list[EnrichedCandidate]
+    selections : list[EnrichedSelection]
         Candidats triés par conviction_score DESC.
     exposures : dict[str, FactorExposures]
         Expositions factorielles par symbole.
@@ -872,7 +872,7 @@ def filter_by_factor_correlation(
 
     Parameters
     ----------
-    candidates : list[EnrichedCandidate]
+    selections : list[EnrichedSelection]
         Candidats triés par conviction_score DESC.
     exposures : dict[str, FactorExposures]
         Expositions factorielles par symbole.
@@ -883,7 +883,7 @@ def filter_by_factor_correlation(
 
     Returns
     -------
-    tuple[list[EnrichedCandidate], list[FactorCorrelationRejection]]
+    tuple[list[EnrichedSelection], list[FactorCorrelationRejection]]
         (candidats retenus, rejets).
     """
     retained: list[EnrichedSelection] = []

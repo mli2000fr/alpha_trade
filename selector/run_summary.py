@@ -18,7 +18,7 @@ from core.filter_profiles import STRICT_SWING_CASH_FILTERS
 from core.run_summary import attach_schema_version
 from database.run_business_summaries import persist_run_business_summary
 from selector.config import RUN_SUMMARY_PREFIX
-from selector.explainability import build_candidate_explainability_payload
+from selector.explainability import build_selection_explainability_payload
 
 if TYPE_CHECKING:
     from selector.config import AlphaScannerConfig
@@ -57,12 +57,12 @@ def _emit_run_summary(summary: dict[str, object]) -> None:
     )
 
 
-def _build_top_candidate_explanations(result: pd.DataFrame, *, limit: int = 5) -> list[dict[str, object]]:
+def _build_top_selection_explanations(result: pd.DataFrame, *, limit: int = 5) -> list[dict[str, object]]:
     if result.empty or "symbol" not in result.columns:
         return []
     rows: list[dict[str, object]] = []
     for _, row in result.head(limit).iterrows():
-        explainability_payload = build_candidate_explainability_payload(row.to_dict())
+        explainability_payload = build_selection_explainability_payload(row.to_dict())
         rows.append(
             {
                 "rank": int(row["rank"]) if "rank" in result.columns and pd.notna(row.get("rank")) else None,
@@ -84,7 +84,7 @@ def _build_top_candidate_explanations(result: pd.DataFrame, *, limit: int = 5) -
                 "selection_explanation": None
                 if pd.isna(row.get("selection_explanation"))
                 else str(row.get("selection_explanation")),
-                "candidate_explainability_payload": explainability_payload,
+                "selection_explainability_payload": explainability_payload,
             }
         )
     return rows
@@ -135,7 +135,7 @@ def _build_cli_run_summary(
         for sector, count in sector_breakdown.items()
         if int(count) < 3
     }
-    top_candidate_explanations = _build_top_candidate_explanations(result)
+    top_selection_explanations = _build_top_selection_explanations(result)
 
     return attach_schema_version({
         "run_id": _build_run_id("alpha-scanner"),
@@ -179,7 +179,7 @@ def _build_cli_run_summary(
             else []
         ),
         "small_selected_sectors": small_selected_sectors,
-        "top_candidate_explanations": top_candidate_explanations,
+        "top_selection_explanations": top_selection_explanations,
         "preselection_rejections": preselection_rejections,
         "ablation": ablation,
         "data_quality_gate": data_quality_gate,

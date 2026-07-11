@@ -169,7 +169,7 @@ def test_build_screening_display_dataframe_keeps_operator_columns() -> None:
                 "final_score": 0.88,
                 "total_score": 91.0,
                 "selection_explanation": "mode=sector_neutralized",
-                "candidate_explainability_payload": {"identity": {"symbol": "AAPL"}},
+                "selection_explainability_payload": {"identity": {"symbol": "AAPL"}},
             }
         ]
     )
@@ -179,7 +179,7 @@ def test_build_screening_display_dataframe_keeps_operator_columns() -> None:
     assert "symbol" in out.columns
     assert "selection_rank" in out.columns
     assert "selection_explanation" in out.columns
-    assert "candidate_explainability_payload" not in out.columns
+    assert "selection_explainability_payload" not in out.columns
 
 
 def test_format_csv_preview_option_includes_label_lines_and_size() -> None:
@@ -281,7 +281,7 @@ def test_render_screening_no_warning_when_market_cap_fresh(monkeypatch) -> None:
     assert not any("market_cap" in w.lower() and "20" in w for w in warnings_emitted)
 
 
-def test_render_screening_exposes_candidate_explainability_payload(monkeypatch) -> None:
+def test_render_screening_exposes_selection_explainability_payload(monkeypatch) -> None:
     import pandas as pd
 
     selected_payloads: list[dict[str, object]] = []
@@ -294,8 +294,7 @@ def test_render_screening_exposes_candidate_explainability_payload(monkeypatch) 
             {
                 "symbol": ["AAPL"],
                 "sector": ["Technology"],
-                "is_candidate": [1],
-                "candidate_rank": [1],
+                "selection_rank": [1],
                 "total_score": [91.0],
                 "final_score": [0.88],
                 "trend_score": [0.82],
@@ -305,9 +304,9 @@ def test_render_screening_exposes_candidate_explainability_payload(monkeypatch) 
                 "rsi_component": [0.18],
                 "selector_signal_mode": ["sector_neutralized"],
                 "selection_explanation": ["mode=sector_neutralized; trend_vcp=0.4100; total=0.2900; rsi=0.1800; final=0.8800"],
-                "candidate_explainability_payload": [
+                "selection_explainability_payload": [
                     {
-                        "identity": {"symbol": "AAPL", "candidate_rank": 1},
+                        "identity": {"symbol": "AAPL", "selection_rank": 1},
                         "score_components": {
                             "trend_vcp_component": 0.41,
                             "total_score_component": 0.29,

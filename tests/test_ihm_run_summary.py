@@ -412,7 +412,7 @@ def test_build_run_summary_caption_uses_alpha_scanner_metrics_mapping() -> None:
     assert "fill=0.36" in caption
 
 
-def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_candidate_explainability() -> None:
+def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_selection_explainability() -> None:
     lines = get_run_summary_detail_lines(
         {
             "step_key": "alpha_scanner",
@@ -453,7 +453,7 @@ def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_candidate_explai
                         }
                     ],
                 },
-                "top_candidate_explanations": [
+                "top_selection_explanations": [
                     {
                         "rank": 1,
                         "symbol": "AAPL",
@@ -463,7 +463,7 @@ def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_candidate_explai
                         "rsi_component": 0.18,
                         "selector_signal_mode": "sector_neutralized",
                         "selection_explanation": "mode=sector_neutralized; trend_vcp=0.4100; total=0.2900; rsi=0.1800; final=0.8800",
-                        "candidate_explainability_payload": {
+                        "selection_explainability_payload": {
                             "identity": {"rank": 1, "symbol": "AAPL"},
                             "score_components": {
                                 "trend_vcp_component": 0.41,

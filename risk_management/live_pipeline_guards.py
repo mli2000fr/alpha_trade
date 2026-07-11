@@ -16,7 +16,7 @@ class MlCoverageGateDecision:
     allowed: bool
     required_ratio: float | None = None
     coverage_ratio: float | None = None
-    candidate_count: int = 0
+    selection_count: int = 0
     prediction_count: int = 0
     reason: str = "disabled"
 
@@ -26,7 +26,7 @@ class MlCoverageGateDecision:
             "allowed": bool(self.allowed),
             "required_ratio": float(self.required_ratio) if self.required_ratio is not None else None,
             "coverage_ratio": float(self.coverage_ratio) if self.coverage_ratio is not None else None,
-            "candidate_count": int(self.candidate_count),
+            "candidate_count": int(self.selection_count),
             "prediction_count": int(self.prediction_count),
             "reason": self.reason,
         }
@@ -84,7 +84,7 @@ def evaluate_ml_coverage_gate(
             allowed=True,
             required_ratio=required_ratio,
             coverage_ratio=1.0,
-            candidate_count=0,
+            selection_count=0,
             prediction_count=normalized_predictions,
             reason="no_candidates",
         )
@@ -101,7 +101,7 @@ def evaluate_ml_coverage_gate(
         allowed=coverage_ratio >= required_ratio,
         required_ratio=required_ratio,
         coverage_ratio=coverage_ratio,
-        candidate_count=normalized_candidates,
+        selection_count=normalized_candidates,
         prediction_count=normalized_predictions,
         reason=reason,
     )

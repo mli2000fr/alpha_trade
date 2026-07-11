@@ -245,24 +245,24 @@ def _get_screener_chunk_error_samples(summary: Mapping[str, object]) -> list[Map
     return [sample for sample in raw_samples if isinstance(sample, Mapping)]
 
 
-def _format_alpha_scanner_candidate_detail_line(candidate: Mapping[str, object]) -> str | None:
-    explainability = candidate.get("candidate_explainability_payload")
+def _format_alpha_scanner_selection_detail_line(selection: Mapping[str, object]) -> str | None:
+    explainability = selection.get("selection_explainability_payload")
     payload = dict(cast(Mapping[str, object], explainability)) if isinstance(explainability, Mapping) else {}
     identity = payload.get("identity") if isinstance(payload.get("identity"), Mapping) else {}
-    selection = payload.get("selection_context") if isinstance(payload.get("selection_context"), Mapping) else {}
+    selection_context = payload.get("selection_context") if isinstance(payload.get("selection_context"), Mapping) else {}
     components = payload.get("score_components") if isinstance(payload.get("score_components"), Mapping) else {}
     outputs = payload.get("score_outputs") if isinstance(payload.get("score_outputs"), Mapping) else {}
 
-    rank = _to_int(identity.get("rank") or candidate.get("rank"))
-    symbol = str(identity.get("symbol") or candidate.get("symbol") or "").strip()
+    rank = _to_int(identity.get("rank") or selection.get("rank"))
+    symbol = str(identity.get("symbol") or selection.get("symbol") or "").strip()
     if not symbol:
         return None
-    mode = str(selection.get("selector_signal_mode") or candidate.get("selector_signal_mode") or "").strip()
-    final_score = _to_float(outputs.get("final_score") or candidate.get("final_score"))
-    trend_component = _to_float(components.get("trend_vcp_component") or candidate.get("trend_vcp_component"))
-    total_component = _to_float(components.get("total_score_component") or candidate.get("total_score_component"))
-    rsi_component = _to_float(components.get("rsi_component") or candidate.get("rsi_component"))
-    explanation = str(selection.get("selection_explanation") or candidate.get("selection_explanation") or "").strip()
+    mode = str(selection_context.get("selector_signal_mode") or selection.get("selector_signal_mode") or "").strip()
+    final_score = _to_float(outputs.get("final_score") or selection.get("final_score"))
+    trend_component = _to_float(components.get("trend_vcp_component") or selection.get("trend_vcp_component"))
+    total_component = _to_float(components.get("total_score_component") or selection.get("total_score_component"))
+    rsi_component = _to_float(components.get("rsi_component") or selection.get("rsi_component"))
+    explanation = str(selection_context.get("selection_explanation") or selection.get("selection_explanation") or "").strip()
 
     parts = [f"Top #{rank or '—'} {symbol}"]
     if mode:
@@ -891,12 +891,12 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         if preselection_line:
             lines.append(preselection_line)
         lines.extend(_format_alpha_scanner_ablation_detail_lines(summary))
-        top_candidates = summary.get("top_candidate_explanations")
-        if isinstance(top_candidates, list):
-            for candidate in top_candidates[:3]:
-                if not isinstance(candidate, Mapping):
+        top_selections = summary.get("top_selection_explanations")
+        if isinstance(top_selections, list):
+            for selection in top_selections[:3]:
+                if not isinstance(selection, Mapping):
                     continue
-                detail_line = _format_alpha_scanner_candidate_detail_line(candidate)
+                detail_line = _format_alpha_scanner_selection_detail_line(selection)
                 if detail_line:
                     lines.append(detail_line)
 

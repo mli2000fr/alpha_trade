@@ -221,9 +221,9 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
     assert payload["ablation"]["variant_count"] == 1
     assert payload["ablation"]["variants"][0]["variant_id"] == "no_spread"
     assert payload["ablation"]["variants"][0]["selection_diff"]["added_symbols"] == ["AMD"]
-    assert payload["top_candidate_explanations"][0]["symbol"] == "AAPL"
-    assert payload["top_candidate_explanations"][0]["selector_signal_mode"] == "sector_neutralized"
-    explainability_payload = payload["top_candidate_explanations"][0]["candidate_explainability_payload"]
+    assert payload["top_selection_explanations"][0]["symbol"] == "AAPL"
+    assert payload["top_selection_explanations"][0]["selector_signal_mode"] == "sector_neutralized"
+    explainability_payload = payload["top_selection_explanations"][0]["selection_explainability_payload"]
     assert explainability_payload["identity"]["symbol"] == "AAPL"
     assert explainability_payload["identity"]["rank"] == 1
     assert explainability_payload["score_components"]["trend_vcp_component"] == 0.41

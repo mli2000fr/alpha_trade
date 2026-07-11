@@ -14,7 +14,7 @@ from ihm.services.alpha_scanner_threshold_presets import DEFAULT_ALPHA_SCANNER_D
 from ihm.services.db import get_last_query_error, safe_query, safe_scalar
 from ihm.services.run_summary import build_run_summary_caption
 from ihm.services.screener_preferences import load_persisted_alpha_scanner_dependency_thresholds
-from selector.explainability import build_candidate_explainability_payload
+from selector.explainability import build_selection_explainability_payload
 
 ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL = """
     SELECT COUNT(DISTINCT sm.symbol)
@@ -161,12 +161,12 @@ def _build_stock_scores_query(available_columns: set[str]) -> str:
     )
 
 
-def _attach_candidate_explainability_payloads(df: pd.DataFrame) -> pd.DataFrame:
+def _attach_selection_explainability_payloads(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     enriched = df.copy()
-    enriched["candidate_explainability_payload"] = enriched.apply(
-        lambda row: build_candidate_explainability_payload(row.to_dict()),
+    enriched["selection_explainability_payload"] = enriched.apply(
+        lambda row: build_selection_explainability_payload(row.to_dict()),
         axis=1,
     )
     return enriched
@@ -1007,7 +1007,7 @@ def get_latest_exec_run() -> pd.DataFrame:
 def get_stock_scores() -> pd.DataFrame:
     available_columns = _get_table_columns("stock_scores")
     query = _build_stock_scores_query(available_columns)
-    return _attach_candidate_explainability_payloads(safe_query(query))
+    return _attach_selection_explainability_payloads(safe_query(query))
 
 
 # ---------------------------------------------------------------------------

@@ -292,7 +292,7 @@ def test_get_stock_scores_builds_schema_aware_query_and_attaches_explainability_
     assert len(calls) == 2
     assert "selection_rank" in calls[1]
     assert "selector_signal_mode" in calls[1]
-    payload = df.iloc[0]["candidate_explainability_payload"]
+    payload = df.iloc[0]["selection_explainability_payload"]
     assert payload["identity"]["symbol"] == "AAPL"
     assert payload["identity"]["selection_rank"] == 1
     assert payload["score_components"]["trend_vcp_component"] == 0.41
@@ -338,7 +338,7 @@ def test_get_stock_scores_avoids_selecting_missing_explainability_columns(monkey
     df = queries.get_stock_scores()
 
     assert "trend_vcp_component" not in calls[1]
-    payload = df.iloc[0]["candidate_explainability_payload"]
+    payload = df.iloc[0]["selection_explainability_payload"]
     assert payload["identity"]["symbol"] == "MSFT"
     assert payload["score_components"]["trend_vcp_component"] is None
 

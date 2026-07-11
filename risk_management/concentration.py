@@ -378,7 +378,7 @@ class BreakoutConfirmationTracker:
         return self._min_days
 
     # ------------------------------------------------------------------
-    def record_candidates(self, symbols: list[str], trade_date: date) -> None:
+    def record_selections(self, symbols: list[str], trade_date: date) -> None:
         """Enregistre les symboles présents dans la liste des candidats du jour.
 
         Les symboles absents voient leur streak réinitialisé à 0.

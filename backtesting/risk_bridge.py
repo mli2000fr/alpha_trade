@@ -82,16 +82,16 @@ def _prepare_score_columns(scores_df: pd.DataFrame, *, preferred_score_column: s
     return prepared
 
 
-def _build_candidates(scores_df: pd.DataFrame, snapshot_date: date) -> list[SelectionScore]:
+def _build_selection_inputs(scores_df: pd.DataFrame, snapshot_date: date) -> list[SelectionScore]:
     day_df = _normalize_trade_dates(scores_df)
     day_df = day_df.loc[day_df["trade_date"] == pd.Timestamp(snapshot_date)]
     if day_df.empty:
         return []
-    return _build_candidates_from_day(day_df, snapshot_date)
+    return _build_selection_inputs_from_day(day_df, snapshot_date)
 
 
-def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> list[SelectionScore]:
-    """Construit les ``CandidateScore`` depuis un DataFrame déjà filtré sur le jour.
+def _build_selection_inputs_from_day(day_df: pd.DataFrame, snapshot_date: date) -> list[SelectionScore]:
+    """Construit les ``SelectionScore`` depuis un DataFrame déjà filtré sur le jour.
 
     Parameters
     ----------
@@ -99,19 +99,19 @@ def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> lis
         DataFrame contenant UNIQUEMENT les lignes du ``snapshot_date``
         (peut avoir déjà subi un ajustement régime via :func:`apply_regime_weights`).
     snapshot_date : date
-        Date de snapshot pour le champ ``snapshot_date`` des candidats.
+        Date de snapshot pour le champ ``snapshot_date`` des sélections.
     """
     if day_df.empty:
         return []
 
-    candidates: list[SelectionScore] = []
+    selection_inputs: list[SelectionScore] = []
     for _, row in day_df.iterrows():
         # Sprint 2 — lire le side depuis le DataFrame si présent (Option C short)
         side = str(row.get("side") or "buy").strip().lower()
         if side not in ("buy", "sell"):
             side = "buy"
 
-        candidates.append(
+        selection_inputs.append(
             SelectionScore(
                 symbol=str(row.get("symbol") or ""),
                 sector=str(row.get("sector") or "Unknown"),
@@ -139,7 +139,7 @@ def _build_candidates_from_day(day_df: pd.DataFrame, snapshot_date: date) -> lis
                 side=side,
             )
         )
-    return candidates
+    return selection_inputs
 
 
 def _compute_atr_20(high_series: pd.Series, low_series: pd.Series, close_series: pd.Series) -> float | None:
@@ -372,7 +372,7 @@ def build_phase2_risk_result(
     snapshot_dates = _resolve_regime_snapshot_dates(close_df, execution_dates) if use_regime else execution_dates
     previous_regime_state = None
     for snapshot_date in snapshot_dates:
-        # ── 0. Régime snapshot (doit être résolu avant les candidats pour le
+        # ── 0. Régime snapshot (doit être résolu avant les sélections pour le
         #     scoring directionnel) ──────────────────────────────────────────
         cfg_for_day = structural_cfg
         snap = None
@@ -422,12 +422,12 @@ def build_phase2_risk_result(
                             spy_close, spy_sma50, snapshot_date,
                         )
             if not snap.allow_new_entries:
-                entries_blocked_by_regime += len(_build_candidates(normalized_scores, snapshot_date))
+                entries_blocked_by_regime += len(_build_selection_inputs(normalized_scores, snapshot_date))
                 continue
-            # Compteur "ordres trop petits évités" : candidats > effective_max_positions
-            day_candidates_pre = _build_candidates(normalized_scores, snapshot_date)
-            if cfg_for_day.effective_max_positions < len(day_candidates_pre):
-                slots_rejected_avoided += max(0, len(day_candidates_pre) - cfg_for_day.effective_max_positions)
+            # Compteur "ordres trop petits évités" : sélections > effective_max_positions
+            day_selection_inputs_pre = _build_selection_inputs(normalized_scores, snapshot_date)
+            if cfg_for_day.effective_max_positions < len(day_selection_inputs_pre):
+                slots_rejected_avoided += max(0, len(day_selection_inputs_pre) - cfg_for_day.effective_max_positions)
 
         # ── 1. Scoring directionnel (regime-aware + rotation factor) ────
         day_scores = normalized_scores.loc[
@@ -545,21 +545,21 @@ def build_phase2_risk_result(
                 trigger.short_by_regime or trigger.short_by_rotation,
             )
 
-        candidates = _build_candidates_from_day(day_scores, snapshot_date)
-        n_sells = sum(1 for c in candidates if c.side == "sell")
+        selection_inputs = _build_selection_inputs_from_day(day_scores, snapshot_date)
+        n_sells = sum(1 for selection in selection_inputs if selection.side == "sell")
         if n_sells > 0:
             LOGGER.info(
-                "Option C candidates: date=%s total=%d shorts=%d symbols=%s",
+                "Option C selections: date=%s total=%d shorts=%d symbols=%s",
                 snapshot_date,
-                len(candidates),
+                len(selection_inputs),
                 n_sells,
-                [c.symbol for c in candidates if c.side == "sell"][:5],
+                [selection.symbol for selection in selection_inputs if selection.side == "sell"][:5],
             )
-        symbols = [candidate.symbol for candidate in candidates]
+        symbols = [selection.symbol for selection in selection_inputs]
         prices: dict[str, PriceInfo] = {}
         predictions: dict[str, PredictionInfo] = {}
         return_matrix = None
-        if candidates:
+        if selection_inputs:
             prices = _build_prices(
                 close_df=close_df,
                 high_df=high_df,
@@ -571,7 +571,7 @@ def build_phase2_risk_result(
             predictions = _build_predictions(predictions_df, snapshot_date)
             return_matrix = _build_return_matrix(close_df, snapshot_date, symbols, lookback)
 
-        if not candidates:
+        if not selection_inputs:
             continue
 
         # ── Factor risk model (Priorité 3) : construire les exposures ──
@@ -625,7 +625,7 @@ def build_phase2_risk_result(
             factor_exposures=factor_exposures if factor_exposures else None,
             factor_covariance=factor_covariance,
         )
-        entries = builder.build(candidates, prices, predictions=predictions, return_matrix=return_matrix)
+        entries = builder.build(selection_inputs, prices, predictions=predictions, return_matrix=return_matrix)
         n_entry_sells = sum(1 for e in entries if getattr(e, "side", "buy") == "sell")
         n_accepted_sells = sum(1 for e in entries if getattr(e, "side", "buy") == "sell" and e.approved_shares > 0)
         if n_sells > 0:

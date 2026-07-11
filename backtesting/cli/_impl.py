@@ -1968,12 +1968,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print(f"   short_selling_enabled={_preset_has_short_threshold} (preset={effective_preset.key})")
         phase2_risk_config = RiskConfig(**risk_kwargs)
 
-        # P2 (2026-06-27) -- flag CLI pour exclure les candidats sans ML
+        # Flag CLI pour exclure les sélections sans ML.
         if getattr(args, "filter_no_ml", False):
             # On doit contourner l'immuabilité de RiskConfig → on reconstruit
             # avec object.__setattr__ car c'est un dataclass frozen
-            object.__setattr__(phase2_risk_config, "filter_candidates_without_ml", True)
-            LOGGER.info("filter-no-ml activé : exclusion des candidats sans modèle ML entraîné")
+            object.__setattr__(phase2_risk_config, "filter_unmodeled_selections", True)
+            LOGGER.info("filter-no-ml activé : exclusion des sélections sans modèle ML entraîné")
 
     if phase3_mode != "off" and phase2_mode != "risk_execution":
         _safe_print(

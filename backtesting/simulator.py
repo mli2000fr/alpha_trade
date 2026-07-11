@@ -928,7 +928,7 @@ class BacktestEngine:
             if candidate_rows and self._breakout_tracker is not None:
                 trade_day_date = trade_day.date()
                 all_symbols = [str(row["symbol"]) for row in candidate_rows]
-                self._breakout_tracker.record_candidates(all_symbols, trade_day_date)
+                self._breakout_tracker.record_selections(all_symbols, trade_day_date)
                 before = len(candidate_rows)
                 candidate_rows = [
                     row for row in candidate_rows

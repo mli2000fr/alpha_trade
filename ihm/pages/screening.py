@@ -31,7 +31,7 @@ from ihm.services.screener_recommendations import (
     load_screener_csv_preview,
     load_screener_recommendation_report,
 )
-from selector.explainability import build_candidate_explainability_payload
+from selector.explainability import build_selection_explainability_payload
 
 SCREENER_ARTIFACT_SELECTBOX_KEY = "screening_screener_artifacts_dir_select"
 SCREENER_CSV_PREVIEW_SELECTBOX_KEY = "screening_screener_csv_preview_select"
@@ -159,11 +159,11 @@ def _build_screening_display_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[:, available_columns].copy() if available_columns else df.copy()
 
 
-def _resolve_candidate_explainability_payload(row: pd.Series) -> dict[str, object]:
-    raw_payload = row.get("candidate_explainability_payload")
+def _resolve_selection_explainability_payload(row: pd.Series) -> dict[str, object]:
+    raw_payload = row.get("selection_explainability_payload")
     if isinstance(raw_payload, dict):
         return raw_payload
-    return build_candidate_explainability_payload(cast(dict[str, object], row.to_dict()))
+    return build_selection_explainability_payload(cast(dict[str, object], row.to_dict()))
 
 
 def _render_screener_csv_preview(artifacts_dir: str, selected_entry: dict[str, object]) -> None:
@@ -416,7 +416,7 @@ def render() -> None:
             st.info("Impossible de retrouver le symbole sélectionné dans le DataFrame filtré courant.")
             return
         selected_row = selected_rows.iloc[0]
-        payload = _resolve_candidate_explainability_payload(selected_row)
+        payload = _resolve_selection_explainability_payload(selected_row)
         selection_context = payload.get("selection_context") if isinstance(payload.get("selection_context"), dict) else {}
         explanation = str(selection_context.get("selection_explanation") or "").strip()
         if explanation:

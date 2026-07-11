@@ -303,7 +303,7 @@ class AlphaScanner:
             self.engine, self.config, self._get_stock_metadata_columns()
         )
 
-    def _scan_primary_candidates(self) -> tuple[pd.DataFrame, dict[str, int]]:
+    def _scan_primary_selections(self) -> tuple[pd.DataFrame, dict[str, int]]:
         all_frames: list[pd.DataFrame] = []
         workers = self._resolve_worker_count()
         max_in_flight = max(2, workers * 2)
@@ -442,7 +442,7 @@ class AlphaScanner:
                     counter[key] += int(value)
         return completed
 
-    def _scan_ablation_candidates(
+    def _scan_ablation_selections(
         self,
         runtime_variants: Sequence[RuntimeSelectorVariant],
     ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, int]], dict[str, int]]:
@@ -556,7 +556,7 @@ class AlphaScanner:
             self._reset_selector_outputs()
 
             if len(runtime_variants) == 1:
-                merged_candidates, scan_meta = self._scan_primary_candidates()
+                merged_candidates, scan_meta = self._scan_primary_selections()
                 merged_candidates = self._apply_factor_neutralization(merged_candidates)
                 # Plan v2 Sprint 5 — enrichir avec short_score avant selection
                 self._enrich_short_score(merged_candidates)
@@ -568,7 +568,7 @@ class AlphaScanner:
                     selected = selected.drop_duplicates(subset=["symbol"], keep="first")
                 scored_for_persistence = merged_candidates.copy()
             else:
-                merged_candidates_by_variant, stats_by_variant, scan_meta = self._scan_ablation_candidates(runtime_variants)
+                merged_candidates_by_variant, stats_by_variant, scan_meta = self._scan_ablation_selections(runtime_variants)
                 primary_variant = runtime_variants[0]
                 primary_stats = stats_by_variant.get(primary_variant.variant_id, {})
                 with self._filter_stats_lock:

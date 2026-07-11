@@ -483,7 +483,7 @@ class PortfolioBuilder:
         if candidates and self._breakout_tracker is not None:
             trade_date_resolved = trade_date if trade_date is not None else date.today()
             candidate_symbols = [str(c.symbol).strip().upper() for c in candidates]
-            self._breakout_tracker.record_candidates(candidate_symbols, trade_date_resolved)
+            self._breakout_tracker.record_selections(candidate_symbols, trade_date_resolved)
             before = len(candidates)
             candidates = [
                 c for c in candidates

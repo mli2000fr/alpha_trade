@@ -59,7 +59,7 @@ def _clean_date(value: object) -> str | None:
     return timestamp.date().isoformat()
 
 
-def build_candidate_explainability_payload(row: Mapping[str, object]) -> dict[str, object]:
+def build_selection_explainability_payload(row: Mapping[str, object]) -> dict[str, object]:
     """Construit un payload canonique d'explicabilité pour une sélection score."""
     return {
         "identity": {
@@ -119,5 +119,5 @@ def build_candidate_explainability_payload(row: Mapping[str, object]) -> dict[st
     }
 
 
-__all__ = ["build_candidate_explainability_payload"]
+__all__ = ["build_selection_explainability_payload"]
 

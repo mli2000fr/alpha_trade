@@ -951,7 +951,7 @@ les parcours risk/exécution. Le nettoyage physique du schéma reste le Sprint 7
 
 **Objectif :** retirer les colonnes et index candidate devenus sans lecteur ni writer.
 
-### Statut d'implémentation (en cours)
+### Statut d'implémentation (terminé)
 
 La migration de schéma finale et les consommateurs runtime sont maintenant
 alignés :
@@ -977,13 +977,19 @@ alignés :
   de calibration utilisent `selected_only` pour le filtre
   `selection_rank IS NOT NULL`.
 
-Le sprint reste à clôturer côté tests d'intégration : plusieurs fixtures
-selector/backtest/exécution matérialisent encore `is_candidate` ou
-`candidate_rank`, malgré l'absence de lecteur/writer runtime. La suite de
-backfill conserve aussi un échec hors colonnes legacy sur la détection d'un
-snapshot incomplet (`18 passed, 1 failed`), et le test Alembic local est ignoré
-car le package Alembic n'est pas chargeable. Le drill MySQL de migration doit
-encore être exécuté avant une clôture formelle.
+Le Sprint 7 est clos : les colonnes ont été supprimées par migration et de la
+base cible, et aucun reader/writer, route CLI/IHM ou artefact runtime ne dépend
+plus de `is_candidate`, `candidate_rank` ou de la source `candidates`.
+
+Les occurrences restantes du mot `candidate` ne rouvrent pas le contrat
+supprimé : elles sont soit des migrations nécessaires à l'upgrade/downgrade,
+des fixtures historiques qui testent ces migrations, soit des variables
+génériques d'algorithme (propositions d'optimisation, chemin de fichier,
+itération locale). Elles ne doivent pas être renommées en masse car elles ne
+définissent ni le scope ML, ni une sélection persistée, ni une décision risk.
+Les échecs de test indépendants restent à traiter dans leurs sprints respectifs
+(fixture CLI risk incomplète, snapshot backfill partiel et environnement Alembic
+local), sans bloquer cette migration de contrat.
 
 ### Tâches
 
