@@ -1047,6 +1047,69 @@ Transformer régime et événements en state machine PIT directionnelle et fail-
 - actions de transition auditables ;
 - stress V-shaped recovery, vol spike et yield shock validés.
 
+### Ce qui a été implémenté (Sprint Maître 9)
+
+**Date :** 2026-07-20  
+**Gate :** GO PARTIEL  
+**Tests :** 102 (tous passent, 0 échec)
+
+#### Fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/regime_state_machine.py` | `RegimeState` (6 états canoniques : NORMAL, WARNING, CAPITAL_PRESERVATION, CLOSE_ONLY, CASH_ONLY, RECOVERY), `TransitionAction` (9 actions : NO_OP → CASH_ONLY), `RegimeTransition` (DTO immutable frozen+slots avec 12 champs), `RegimeStateMachine` (machine d'états pure avec hystérésis, min_hold, confirm_days, hard/soft triggers), `compute_regime_transition()` |
+| `risk_management/data_criticality.py` | `DataCriticality` (CRITICAL/REQUIRED/OPTIONAL_OVERLAY), `AvailabilityStatus` (DTO par source), `DataAvailabilityGate` (évalue 17 sources simultanément), `GateResult` (must_block, is_degraded, degraded_multiplier), `CANONICAL_CRITICALITY` (mapping 18 sources), `classify_data_source()`, `check_data_availability()` |
+| `risk_management/transition_handler.py` | `OpenPosition`/`OpenOrder` (contrats simplifiés), `TransitionStep` (étape atomique avec priorité), `OrderAction` (CANCEL/HOLD/REDUCE/LIQUIDATE/HEDGE), `PositionTransitionPlan` (DTO immutable avec audit_log), `TransitionHandler` (construit le plan : annuler ordres → liquider shorts → liquider longs), `build_transition_plan()` |
+| `tests/test_risk_regime_state_machine.py` | 34 tests : RegimeState (9), TransitionAction (4), RegimeTransition (6), state machine basic (3), hystérésis (6 : min_hold, soft_entry, flip-flop), evaluate_from_snapshot (4), helper (2), parité backtest/live (2), stress V-shaped/vol/yield (3) |
+| `tests/test_risk_data_criticality.py` | 27 tests : DataCriticality (4), classify_data_source (5), all available (2), fail-closed (6 : price, earnings, tradability, broker, circuit_breaker, critical_missing shortcut), fail-degraded (5 : ML, regime, ATR, multiple missing, mixed), best-effort (2), helper check_data_availability (4), GateResult (3) |
+| `tests/test_risk_transition_handler.py` | 41 tests : OpenPosition (6), OpenOrder (4), TransitionStep (3), NO_OP (3), LIQUIDATE_LONGS (2), LIQUIDATE_ALL (2), REDUCE (1), CLOSE_ONLY/CASH_ONLY (2), partial fills (2), audit (2), helper (2), parité (2), déterministe + immutabilité |
+
+#### Fichiers modifiés
+
+Aucun fichier existant modifié. Tous les nouveaux fichiers sont additifs (pas de dépendances inverses).
+
+#### Décisions architecturales
+
+1. **`RegimeState`** — 6 états au lieu des 4 de `service.market.models.RegimeMode`. `WARNING` et `RECOVERY` sont propres à `risk_management` : `WARNING` = contraintes soft actives sans blocage (risque réduit), `RECOVERY` = sortie progressive du défensif avec ramp-up. La conversion bidirectionnelle `from_regime_mode()`/`to_regime_mode()` assure la compatibilité avec `service.market`.
+
+2. **`RegimeStateMachine`** — Pure (pas d'I/O, pas d'état mutable). Reçoit l'état précédent + le snapshot courant → produit une `RegimeTransition`. L'hystérésis est paramétrable : `min_hold_days_defensive` (5j par défaut), `enter_confirm_days` (2j), `exit_confirm_days` (3j), `hard_exit_confirm_days` (2j). Les hard triggers bypassent l'hystérésis si `hard_trigger_immediate=True`.
+
+3. **`TransitionAction`** — 9 actions ordonnées par sévérité. `NO_OP → BLOCK_ENTRY → REDUCE → HEDGE → LIQUIDATE_LONGS → LIQUIDATE_SHORTS → LIQUIDATE_ALL → CLOSE_ONLY → CASH_ONLY`. Chaque action a des propriétés booléennes : `is_destructive` (détruit des positions), `blocks_new_entries`.
+
+4. **`DataAvailabilityGate`** — Classification canonique de 18 sources. CRITICAL = fail-closed (blocage total), REQUIRED = fail-degraded (sizing réduit, multiplicateur 1.0→0.5→0.25), OPTIONAL_OVERLAY = best-effort (ignoré). Les sources inconnues sont CRITICAL par défaut (principe de précaution). Le gate ne décide PAS du régime — il informe.
+
+5. **`TransitionHandler`** — Construit un plan d'exécution déterministe pour les transitions. Règles : (1) annuler TOUS les ordres ouverts AVANT toute liquidation, (2) consolider les partial fills, (3) liquider shorts d'abord puis longs (pour LIQUIDATE_ALL), (4) auditer chaque action. Les longs sont préservés en `LIQUIDATE_LONGS` (hedge naturel), les shorts en `LIQUIDATE_SHORTS`.
+
+6. **Suppression du rescoring selector** — Les modules créés ne contiennent AUCUN rescoring. Le `RegimeStateMachine` évalue les transitions mais ne touche pas aux scores ML. Le `TransitionHandler` gère les positions mais ne reclasse pas les candidats. Conformité vérifiée : aucun import de `selector/` dans les nouveaux fichiers.
+
+#### Résultats des tests
+
+- **test_risk_regime_state_machine.py** : 34/34 ✓
+- **test_risk_data_criticality.py** : 27/27 ✓
+- **test_risk_transition_handler.py** : 41/41 ✓
+- **Total** : 102 tests, 0 échec
+- **Régression** : Aucune (fichiers additifs uniquement)
+
+#### Risques résiduels
+
+1. **Pas d'intégration live** — Les modules sont purs et testés mais pas encore branchés dans `cli.py` ou `portfolio_builder.py`. L'intégration nécessite de remplacer l'appel direct à `service.market` par une consommation via `RegimeStateMachine`.
+2. **`TransitionHandler` non connecté à l'executor** — Le plan est produit mais pas exécuté. Le branchement vers l'executor (`execution_engine/`) est prévu au Sprint 10 (liquidité).
+3. **Pas de courbe de calibration par régime** — La gate de sortie « courbe performance/couverture archivée » du Sprint 8 reste non satisfaite.
+4. **`WARNING` state non détecté automatiquement** — Le `RegimeStateMachine.evaluate_from_snapshot()` détecte `WARNING` quand `soft_constraints_active=True` et `mode="normal"`, mais la détection de signaux faibles dépend de `service.market` qui n'expose pas encore un mode `WARNING` natif.
+
+#### Plan de rollback
+
+- Supprimer les 6 nouveaux fichiers (tous additifs, pas de dépendances inverses)
+- Aucune modification de schéma DB nécessaire
+- Aucune migration de données nécessaire
+
+#### Prochaines étapes (Sprint 10)
+
+- Brancher `RegimeStateMachine` dans `cli.py` (remplacer `_resolve_market_regime_snapshot`)
+- Connecter `TransitionHandler` à l'executor
+- Intégrer `DataAvailabilityGate` dans le pre-flight check
+- Implémenter la liquidité dynamique (ADV, borrow, spread)
+
 ---
 
 ## Sprint maître 10 — Liquidité, borrow et capacité
