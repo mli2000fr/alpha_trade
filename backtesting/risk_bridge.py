@@ -15,7 +15,7 @@ from risk_management.config import RiskConfig
 from risk_management.models import SelectionScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
 from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
-from selector.short_score import tag_short_candidates
+from risk_management.selection_contract import build_candidate_from_prediction, build_rankings
 
 LOGGER = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ def _build_predictions(predictions_df: pd.DataFrame, snapshot_date: date) -> dic
     day_df = normalized.loc[normalized["trade_date"] == pd.Timestamp(snapshot_date)]
     result: dict[str, PredictionInfo] = {}
     for _, row in day_df.iterrows():
-        symbol = str(row.get("symbol") or "")
+        symbol = str(row.get("symbol") or "").strip().upper()
         if not symbol:
             continue
         pred_class = int(row.get("predicted_class", 0) or 0)
@@ -235,6 +235,73 @@ def _build_predictions(predictions_df: pd.DataFrame, snapshot_date: date) -> dic
             proba_short=float(row.get("proba_short")) if row.get("proba_short") and pd.notna(row.get("proba_short")) else None,
         )
     return result
+
+
+def _build_ml_selection_inputs_from_day(
+    day_scores: pd.DataFrame,
+    predictions: dict[str, PredictionInfo],
+    snapshot_date: date,
+) -> list[SelectionScore]:
+    """Adapt complete ternary ML predictions for the legacy builder boundary.
+
+    Nominal score, side and rank are derived solely from the ML prediction.
+    Selector columns are retained only as informational veto context.
+    """
+    candidates_by_symbol = {}
+    rows_by_symbol: dict[str, pd.Series] = {}
+    for _, row in day_scores.iterrows():
+        symbol = str(row.get("symbol") or "").strip().upper()
+        prediction = predictions.get(symbol)
+        if not symbol or prediction is None:
+            continue
+        if (
+            prediction.proba_long is None
+            or prediction.proba_flat is None
+            or prediction.proba_short is None
+            or not prediction.run_id
+        ):
+            LOGGER.warning("ML_FIRST_REJECT missing_ml_prediction symbol=%s date=%s", symbol, snapshot_date)
+            continue
+        try:
+            candidate = build_candidate_from_prediction(
+                symbol=symbol,
+                trade_date=snapshot_date,
+                predicted_side=prediction.predicted_side,
+                proba_long=prediction.proba_long,
+                proba_flat=prediction.proba_flat,
+                proba_short=prediction.proba_short,
+                proba=prediction.predicted_proba,
+                model_run_id=prediction.run_id,
+            )
+        except (TypeError, ValueError) as exc:
+            LOGGER.warning("ML_FIRST_REJECT invalid_ml_prediction symbol=%s error=%s", symbol, exc)
+            continue
+        if candidate.is_actionable():
+            candidates_by_symbol[symbol] = candidate
+            rows_by_symbol[symbol] = row
+
+    long_ranked, short_ranked = build_rankings(list(candidates_by_symbol.values()))
+    inputs: list[SelectionScore] = []
+    for candidate in [*long_ranked, *short_ranked]:
+        row = rows_by_symbol[candidate.symbol]
+        if bool(row.get("selector_earnings_blackout") or row.get("earnings_blackout")):
+            LOGGER.info("ML_FIRST_VETO earnings_blackout symbol=%s", candidate.symbol)
+            continue
+        inputs.append(
+            SelectionScore(
+                symbol=candidate.symbol,
+                sector=str(row.get("sector") or "Unknown"),
+                score_used=candidate.p_side,
+                score_source="ml_p_side",
+                snapshot_date=snapshot_date,
+                selection_rank=candidate.side_rank,
+                selector_signal_mode=str(row.get("selector_signal_mode") or "ml_first"),
+                selection_explanation=str(row.get("selection_explanation") or "ML-ranked candidate"),
+                selector_earnings_blackout=0,
+                side="sell" if candidate.side == "short" else "buy",
+            )
+        )
+    return inputs
 
 
 def _build_return_matrix(close_df: pd.DataFrame, snapshot_date: date, symbols: list[str], lookback_days: int) -> pd.DataFrame | None:
@@ -429,12 +496,11 @@ def build_phase2_risk_result(
             if cfg_for_day.effective_max_positions < len(day_selection_inputs_pre):
                 slots_rejected_avoided += max(0, len(day_selection_inputs_pre) - cfg_for_day.effective_max_positions)
 
-        # ── 1. Scoring directionnel (regime-aware + rotation factor) ────
+        # ── 1. Vetos selector/régime postérieurs au ranking ML ─────────
         day_scores = normalized_scores.loc[
             normalized_scores["trade_date"] == pd.Timestamp(snapshot_date)
         ]
         if snap is not None and not day_scores.empty:
-            from selector.regime_scoring import apply_regime_weights
             from selector.regime_filters import apply_full_regime_to_candidates
             # ── P0 FIX (2026-06-25) : earnings_shield / buyback_blackout / yield_filter ──
             day_scores = apply_full_regime_to_candidates(
@@ -444,8 +510,6 @@ def build_phase2_risk_result(
                 sector_column="sector",
                 symbol_column="symbol",
             )
-            if not day_scores.empty:
-                day_scores = apply_regime_weights(day_scores, snap, rotation_state=rotation_state)
 
         # ── 1bis. Alimenter le rotation factor avec le retour quotidien ──
         if equity_provider is not None and snap is not None:
@@ -458,94 +522,8 @@ def build_phase2_risk_result(
             except Exception:
                 pass
 
-        # ── 1ter. Option C — short selling via MomentumRotationState ────
-        # ML Sprint 6 — injecter predicted_side ML dans day_scores
-        if not day_scores.empty and not predictions_df.empty:
-            from selector.short_score import inject_predicted_side
-            day_scores = inject_predicted_side(day_scores, predictions_df, pd.Timestamp(snapshot_date))
-
-        from selector.short_score import (
-            ShortTrigger,
-            resolve_short_trigger,
-            resolve_regime_adaptive_short_params,
-        )
-        trigger = resolve_short_trigger(
-            snap,
-            rotation_state,
-            bool(getattr(risk_config, "short_selling_enabled", False)),
-        )
-        # ── SMA50 gate : ne shorter que si le marché est encore en baisse ──
-        if (
-            trigger.active
-            and trigger.short_by_regime
-            and bool(getattr(risk_config, "short_require_bearish_benchmark", False))
-            and "SPY" in close_df.columns
-        ):
-            snap_ts = pd.Timestamp(snapshot_date)
-            spy_hist = close_df["SPY"].loc[close_df.index <= snap_ts].dropna()
-            if len(spy_hist) >= 50:
-                spy_sma50 = float(spy_hist.iloc[-50:].mean())
-                spy_close = float(spy_hist.iloc[-1])
-                if spy_close > spy_sma50:
-                    # Marché en tendance haussière (ex: V-shaped recovery) → pas de shorts
-                    trigger = ShortTrigger(
-                        short_by_regime=False,
-                        short_by_rotation=trigger.short_by_rotation,
-                        all_shorts=False,
-                        enabled=trigger.enabled,
-                    )
-                    LOGGER.info(
-                        "SMA50 gate: shorts blocked — SPY close=%.2f > SMA50=%.2f (date=%s)",
-                        spy_close, spy_sma50, snapshot_date,
-                    )
-        if trigger.active and not day_scores.empty:
-            n_before = len(day_scores)
-            # Sprint 5 / Option B — enrichir avec short_score dédié (full quality)
-            try:
-                from selector.short_score import enrich_with_short_score
-                day_scores = enrich_with_short_score(day_scores, close_df=close_df, trade_day=pd.Timestamp(snapshot_date))
-                if "short_score" in day_scores.columns:
-                    LOGGER.info("Option B short_score: date=%s enriched=%d rows", snapshot_date, len(day_scores))
-                else:
-                    LOGGER.debug("Option B short_score: not enriched (missing factor columns)")
-            except Exception as _exc:
-                LOGGER.debug("Option B short_score: enrichment failed: %s", _exc)
-
-            eff_max_short, eff_min_short = resolve_regime_adaptive_short_params(
-                risk_config, trigger.short_by_regime,
-            )
-            if trigger.short_by_regime:
-                LOGGER.info(
-                    "Regime-adaptive shorts: max_positions=%d min_score=%.2f (capital_preservation boost)",
-                    eff_max_short, eff_min_short,
-                )
-            day_scores = tag_short_candidates(
-                day_scores,
-                max_short_positions=eff_max_short,
-                min_score_for_short=eff_min_short,
-                max_long_positions=int(getattr(risk_config, "max_positions", 3)),
-                all_shorts=trigger.all_shorts,
-            )
-            n_tagged = int((day_scores["side"] == "sell").sum())
-            # Si le régime bloque les longs, on ne garde que les shorts
-            if trigger.all_shorts:
-                day_scores = day_scores[day_scores["side"] == "sell"]
-            n_after = len(day_scores)
-            LOGGER.info(
-                "Option C short: date=%s regime=%s short_by_regime=%s short_by_rotation=%s "
-                "before=%d tagged=%d after=%d allow_long=%s allow_short=%s",
-                snapshot_date,
-                getattr(snap, "mode", "?"),
-                trigger.short_by_regime,
-                trigger.short_by_rotation,
-                n_before,
-                n_tagged,
-                n_after,
-                not trigger.all_shorts,
-                trigger.short_by_regime or trigger.short_by_rotation,
-            )
-
-        selection_inputs = _build_selection_inputs_from_day(day_scores, snapshot_date)
+        predictions = _build_predictions(predictions_df, snapshot_date)
+        selection_inputs = _build_ml_selection_inputs_from_day(day_scores, predictions, snapshot_date)
         n_sells = sum(1 for selection in selection_inputs if selection.side == "sell")
         if n_sells > 0:
             LOGGER.info(
@@ -557,7 +535,6 @@ def build_phase2_risk_result(
             )
         symbols = [selection.symbol for selection in selection_inputs]
         prices: dict[str, PriceInfo] = {}
-        predictions: dict[str, PredictionInfo] = {}
         return_matrix = None
         if selection_inputs:
             prices = _build_prices(
@@ -568,7 +545,6 @@ def build_phase2_risk_result(
                 snapshot_date=snapshot_date,
                 symbols=symbols,
             )
-            predictions = _build_predictions(predictions_df, snapshot_date)
             return_matrix = _build_return_matrix(close_df, snapshot_date, symbols, lookback)
 
         if not selection_inputs:

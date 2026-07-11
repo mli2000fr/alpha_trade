@@ -206,37 +206,28 @@ def selection_score_from_result(result: dict[str, Any], metric: str = "selection
     # ── Partitions autorisées pour la sélection (Sprint Maître 1) ──
     val = result.get("val") if isinstance(result.get("val"), dict) else {}
     wf_oos = result.get("walk_forward_oos") if isinstance(result.get("walk_forward_oos"), dict) else {}
-    # Le champ top-level "selection_score" reste autorisé (backcompat)
-    top_level_selection = result.get("selection_score")
-
-    # Métriques interdites : toute clé venant de "test" ou "final_holdout"
-    # n'est plus utilisée comme fallback.
-
     if metric == "business_score":
-        return float(
-            top_level_selection
-            or val.get("threshold_business_score")
-            or wf_oos.get("threshold_business_score")
-            or 0.0
-        )
+        values = (val.get("threshold_business_score"), wf_oos.get("threshold_business_score"))
     if metric == "auc":
-        return float(
-            val.get("auc")
-            or wf_oos.get("auc")
-            or val.get("auc_macro")
-            or wf_oos.get("auc_macro")
-            or top_level_selection
-            or 0.0
+        values = (val.get("auc"), wf_oos.get("auc"), val.get("auc_macro"), wf_oos.get("auc_macro"))
+    elif metric not in {"business_score", "auc"}:
+        values = (
+            val.get("selection_score"),
+            wf_oos.get("selection_score"),
+            val.get("threshold_business_score"),
+            wf_oos.get("threshold_business_score"),
+            val.get("auc"),
+            wf_oos.get("auc"),
         )
-    # métrique par défaut : "selection_score"
-    return float(
-        top_level_selection
-        or val.get("threshold_business_score")
-        or wf_oos.get("threshold_business_score")
-        or val.get("auc")
-        or wf_oos.get("auc")
-        or 0.0
-    )
+
+    for value in values:
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float("-inf")
+    return float("-inf")
 
 
 def evaluate_selection_eligibility(
@@ -379,6 +370,13 @@ def select_champion(
     symbol: str | None = None,
 ) -> dict[str, Any]:
     annotated = annotate_challengers(challengers, artifact_routes_models)
+    if champion_cfg.require_benchmark_report:
+        for result in annotated.values():
+            benchmark = result.get("benchmark_report")
+            valid_benchmark = isinstance(benchmark, dict) and benchmark.get("status") == "completed"
+            if result.get("selection_eligible") and not valid_benchmark:
+                result["selection_eligible"] = False
+                result["eligibility_reason"] = "missing_valid_benchmark_report"
     default_model = champion_cfg.default_champion
     default_exists = default_model in annotated
 

@@ -256,7 +256,8 @@ Garantir que les métriques sont valides, représentent la policy servie et ne c
 | Fichier | Changements |
 |---|---|
 | `modelFactory/evaluation.py` | **Ajout de 6 nouvelles fonctions** : `_validate_proba_array()` (validation finie/bornes/somme=1), `multiclass_auc_one_vs_rest()` (AUC par classe + macro), `multiclass_brier_score()`, `multiclass_log_loss()`, `multiclass_balanced_accuracy()`, `compute_multiclass_metrics()` (métriques complètes par classe + macro/weighted F1 + accuracy + action_rate + distribution), `check_model_collapse()` (détection multi-critères : classe dominante ≥99%, classe quasi absente <0.5%, action_rate <1%, échantillons <10, probas non-finies). |
-| `modelFactory/champion_selection.py` | **`selection_score_from_result()`** : suppression totale des fallbacks `result["test"]`. Lit uniquement `val`, `walk_forward_oos` et `selection_score` top-level. Si métrique absente → `-inf`. **`evaluate_selection_eligibility()`** : ajout de `_validate_metric_gates()` qui vérifie probas valides, AUC bornées, collapse, action_rate nul, legacy_metrics, observations insuffisantes. Import de `check_model_collapse`. |
+| `modelFactory/champion_selection.py` | **`selection_score_from_result()`** : accepte exclusivement les partitions `val` et `walk_forward_oos`; les champs top-level et `test` ne peuvent plus sélectionner un champion. Si métrique absente → `-inf`. **`evaluate_selection_eligibility()`** : ajout de `_validate_metric_gates()` qui vérifie probas valides, AUC bornées, collapse, action_rate nul, legacy_metrics, observations insuffisantes. Import de `check_model_collapse`. |
+| `modelFactory/predictor.py` | Les inférences tabulaires ternaires appliquent désormais `TemperatureScaler` aux trois probabilités avant `decide_ternary_side`, comme le chemin LSTM. |
 | `modelFactory/tabular_baseline.py` | **Calibration** : `fit_tabular_calibrator()` route vers `TemperatureScaler` en ternaire (via `_fit_ternary_calibrator()`), `PlattCalibrator` en binaire. `apply_tabular_calibration()` gère les deux types. **Métriques** : `compute_tabular_metrics()` inclut `compute_multiclass_metrics()` + `check_model_collapse()` + `n_observations`. **`run_tabular_baseline()`** : calibration ternaire sur les 3 colonnes, `selection_score` depuis `val` uniquement (plus de `test`). |
 
 #### Décisions d'architecture
@@ -273,8 +274,8 @@ Garantir que les métriques sont valides, représentent la policy servie et ne c
 python -m pytest tests/test_model_factory_evaluation_ternary.py tests/test_model_factory_multiclass_calibration.py --no-cov -q
 # 32 passed (nouveaux tests Sprint 1)
 
-python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_contract.py tests/test_ml_selection_contract.py tests/test_model_factory_champion_selection.py tests/test_model_factory_evaluation.py tests/test_model_factory_evaluation_ternary.py tests/test_model_factory_multiclass_calibration.py tests/test_model_factory_config.py --no-cov -q
-# 115 passed (Sprint 0 + Sprint 1)
+python -m pytest tests/test_model_factory_champion_selection.py tests/test_model_factory_evaluation_ternary.py tests/test_model_factory_multiclass_calibration.py tests/test_model_factory_predictor.py --no-cov -q
+# 66 passed
 ```
 
 #### Artefacts produits
@@ -297,10 +298,10 @@ python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_c
 - Restaurer `modelFactory/evaluation.py` (supprimer les fonctions multiclasses).
 - Supprimer `tests/test_model_factory_evaluation_ternary.py`, `tests/test_model_factory_multiclass_calibration.py`.
 
-#### Gate GO/NO-GO : ⚠️ PARTIEL — métriques et gates disponibles, isolation non démontrée de bout en bout
+#### Gate GO/NO-GO : ⚠️ PARTIEL — contrôles runtime intégrés, validation opérationnelle restante
 
-- Les métriques et le gate de collapse sont testés, mais les probabilités ternaires calibrées ne sont pas consommées uniformément par tous les chemins d'inférence.
-- `selection_score_from_result()` n'accède plus directement à `result["test"]`; le `selection_score` top-level reste toutefois accepté sans provenance typée vérifiable.
+- La calibration et la policy sont maintenant appliquées dans les chemins LSTM et tabulaire; une exécution réelle de benchmark reste nécessaire pour démontrer les gates de promotion.
+- `selection_score_from_result()` exclut les valeurs top-level et `test`; il reste à produire les métriques de validation/OOS réelles pour chaque artefact.
 - Les artefacts legacy ne sont pas automatiquement invalidés.
 
 ---
@@ -354,7 +355,8 @@ python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_c
 
 | Fichier | Changements |
 |---|---|
-| `modelFactory/predictor.py` | **Imports** : `DataAvailabilityInfo`, `QualityState`, `make_availability_from_bar_date`, `validate_availability`. **Nouvelles fonctions** : `_pit_validate_bars()` (détecte les barres postérieures au cutoff, logge `PIT_VIOLATION`, incrémente le compteur `pit_future_data_count`), `_pit_build_availability()` (construit le `DataAvailabilityInfo` depuis les barres). **`_prepare_prediction_frame()`** : appelle `_pit_validate_bars()` après chargement. **`_build_prediction_result()`** : nouveaux champs `data_availability` et `data_quality` (source, `available_at`, qualité). **`_predict_with_tabular_model()`** : propage l'info de disponibilité dans le résultat. |
+| `modelFactory/data_loader.py` | `load_symbol_bars()` enrichit chaque barre avec `event_time`, `available_at` (clôture EOD à 21:00 UTC) et `data_source`, rendant le contrat PIT exploitable dans le chemin de prédiction. |
+| `modelFactory/predictor.py` | **Imports** : `DataAvailabilityInfo`, `QualityState`, `FutureDataError`, `make_availability_from_bar_date`, `validate_availability`. **Nouvelles fonctions** : `_pit_validate_bars()` bloque désormais les dates futures et les `available_at` postérieurs au cutoff; `_pit_build_availability()` propage la métadonnée chargée. **`_prepare_prediction_frame()`** appelle ce gate après chargement. **`_build_prediction_result()`** porte `data_availability` et `data_quality`. |
 
 #### Décisions d'architecture
 
@@ -368,8 +370,8 @@ python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_c
 #### Commandes exécutées et résultats
 
 ```powershell
-python -m pytest tests/test_feature_availability_pit.py tests/test_historical_universe_survivorship.py --no-cov -q
-# 28 passed (nouveaux tests Sprint 2)
+python -m pytest tests/test_feature_availability_pit.py tests/test_historical_universe_survivorship.py tests/test_model_factory_predictor.py --no-cov -q
+# 53 passed
 
 python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_contract.py tests/test_ml_selection_contract.py tests/test_model_factory_champion_selection.py tests/test_model_factory_evaluation.py tests/test_model_factory_evaluation_ternary.py tests/test_model_factory_multiclass_calibration.py tests/test_model_factory_config.py tests/test_feature_availability_pit.py tests/test_historical_universe_survivorship.py --no-cov -q
 # 143 passed (Sprint 0 + 1 + 2)
@@ -394,9 +396,9 @@ python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_c
 - Restaurer `modelFactory/predictor.py` (retirer `_pit_validate_bars`, `_pit_build_availability`, imports PIT).
 - Supprimer `tests/test_feature_availability_pit.py`, `tests/test_historical_universe_survivorship.py`.
 
-#### Gate GO/NO-GO : ⚠️ PARTIEL — contrat PIT disponible, ingestion PIT non intégrée
+#### Gate GO/NO-GO : ⚠️ PARTIEL — barres PIT intégrées, autres sources à intégrer
 
-- Le predictor ne vérifie que la date de barre; les loaders ne peuplent pas `available_at` pour les données réelles ni pour les sources sentiment/événements.
+- Les barres de prix ont un `available_at` explicite et le predictor bloque les disponibilités post-cutoff; sentiment, événements et données externes doivent encore fournir leur propre métadonnée PIT.
 - Le rapport de qualité n'est pas planifié et l'univers PIT n'est pas propagé avec un `universe_run_id` dans tout le pipeline.
 - Les tests unitaires du contrat passent, mais le gate "zéro donnée future" n'est donc pas démontré sur le workflow de données réel.
 
@@ -451,6 +453,9 @@ Aligner les labels sur un trade swing réellement exécutable.
 
 | Fichier | Changements |
 |---|---|
+| `modelFactory/config.py` | Ajoute `label_method` (`fixed_horizon` / `triple_barrier`) et les paramètres ATR/horizon; valide que le triple-barrier est utilisé exclusivement avec une target ternaire. |
+| `modelFactory/dataset.py` | `prepare_symbol_frame()` sélectionne `build_triple_barrier_targets()` lorsque configuré, et conserve le mode fixed-horizon par défaut. |
+| `modelFactory/labeling.py` | Ajoute `build_triple_barrier_targets()`, qui choisit par date le trade long ou short net favorable pour produire la target `-1/0/+1`. |
 | `modelFactory/target_optimization.py` | **`score_target_candidate()`** : correction du défaut `neg_mask = active_target == 0` en mode ternaire. En ternaire, sépare désormais short=-1, flat=0, long=1 avec class balance sur 3 classes (1.0 = équilibré, 0.0 = tout dans une classe). Ajout des champs `mean_short_return`, `long_pct`, `flat_pct`, `short_pct` dans `TargetCandidateResult`. Import de `modelFactory.labeling`. |
 
 #### Décisions d'architecture
@@ -466,14 +471,8 @@ Aligner les labels sur un trade swing réellement exécutable.
 #### Commandes exécutées et résultats
 
 ```powershell
-python -m pytest tests/test_model_factory_labeling.py --no-cov -q
-# 19 passed
-
-python -m pytest tests/test_model_factory_labeling.py tests/test_model_factory_target_optimization.py --no-cov -q
-# 23 passed
-
-python -m pytest [suite complete Sprint 0-3] --no-cov -q
-# 166 passed
+python -m pytest tests/test_model_factory_labeling.py tests/test_model_factory_dataset.py tests/test_model_factory_config.py --no-cov -q
+# 55 passed
 ```
 
 #### Artefacts produits
@@ -493,10 +492,10 @@ python -m pytest [suite complete Sprint 0-3] --no-cov -q
 - Restaurer `modelFactory/target_optimization.py` (remettre le `neg_mask = active_target == 0` legacy).
 - Supprimer `tests/test_model_factory_labeling.py`.
 
-#### Gate GO/NO-GO : ❌ NO-GO — labeler isolé du workflow d'entraînement et du simulateur
+#### Gate GO/NO-GO : ⚠️ PARTIEL — labeler connecté au training, parité simulateur différée
 
-- Le labeler triple-barrier et la correction ternaire de l'optimiseur sont testés isolément.
-- Aucun chemin de training ne sélectionne encore ce labeler et `backtesting/simulator.py` ne l'utilise pas; les coûts ne sont pas réellement partagés.
+- Le chemin de préparation des datasets sélectionne maintenant le labeler triple-barrier par configuration, avec une target ternaire testée.
+- `backtesting/simulator.py` ne l'utilise pas encore; la parité label/backtest et le partage complet des coûts restent explicitement au Sprint 12.
 - La parité label/backtest et l'isolation fold ne peuvent pas être validées avant cette intégration.
 
 ---
@@ -548,7 +547,11 @@ Retenir l'architecture la plus simple qui généralise sans collapse.
 
 #### Fichiers modifiés
 
-*Aucun fichier existant modifié — le module benchmark est autonome et s'appuie sur les APIs existantes (`tabular_baseline`, `lightgbm_baseline`, `catboost_baseline`).*
+| Fichier | Changements |
+|---|---|
+| `modelFactory/config.py` | Ajoute `ChampionSelectionConfig.require_benchmark_report`, désactivé par défaut pour préserver le comportement existant. |
+| `modelFactory/champion_selection.py` | Lorsque le flag est activé, écarte de la sélection automatique tout challenger sans `benchmark_report` de statut `completed`, avec la raison traçable `missing_valid_benchmark_report`. |
+| `tests/test_model_factory_champion_selection.py` | Couvre le refus d’un challenger par ailleurs éligible lorsqu’il manque le rapport de benchmark requis. |
 
 #### Décisions d'architecture
 
@@ -563,11 +566,8 @@ Retenir l'architecture la plus simple qui généralise sans collapse.
 #### Commandes exécutées et résultats
 
 ```powershell
-python -m pytest tests/test_model_factory_model_benchmark.py tests/test_model_factory_reproducibility.py --no-cov -q
-# 21 passed (nouveaux tests Sprint 4)
-
-python -m pytest [suite complete Sprint 0-4] --no-cov -q
-# 187 passed
+python -m pytest tests/test_model_factory_champion_selection.py tests/test_model_factory_model_benchmark.py tests/test_model_factory_config.py --no-cov -q
+# 44 passed
 ```
 
 #### Artefacts produits
@@ -589,8 +589,9 @@ python -m pytest [suite complete Sprint 0-4] --no-cov -q
 - Supprimer `tests/test_model_factory_model_benchmark.py`.
 - Restaurer `tests/test_model_factory_reproducibility.py` (retirer les 9 tests ajoutés).
 
-#### Gate GO/NO-GO : ⚠️ PARTIEL — benchmark fonctionnel, couverture des architectures incomplète
+#### Gate GO/NO-GO : ⚠️ PARTIEL — promotion conditionnable au benchmark, couverture des architectures incomplète
 
+- Le mécanisme de sélection peut exiger un rapport de benchmark achevé avant toute promotion automatique.
 - LightGBM et CatBoost sont exécutés avec des baselines et plusieurs seeds.
 - LSTM et modèle global ne sont pas benchmarkés; le rapport ne fournit pas encore une mesure exploitable de complexité ni une évaluation financière nette.
 
@@ -642,7 +643,11 @@ Figer la frontière entre alpha ML, contexte selector et autorité risque avant 
 
 #### Fichiers modifiés
 
-*Aucun fichier existant modifié — le module est autonome. L'intégration dans `risk_bridge.py` et `portfolio_builder.py` suivra dans les sprints suivants (Sprint 6 pour les contraintes directionnelles).*
+| Fichier | Changements |
+|---|---|
+| `backtesting/risk_bridge.py` | Le bridge construit les candidats nominaux depuis les probabilités ternaires ML complètes. Le side, le score nominal (`p_side`) et les ranks long/short proviennent de `MLRankedCandidate`; les prédictions absentes ou incomplètes sont rejetées `missing_ml_prediction`. `tag_short_candidates()` et le rescoring directionnel selector ont été retirés du chemin nominal. |
+| `risk_management/portfolio_builder.py` | Les vetos post-prédiction n'utilisent plus les seuils de score selector. Ils vérifient la probabilité ML directionnelle et les vetos explicites (earnings blackout). |
+| `tests/test_phase2_bridges.py` | Fixtures migrées vers le contrat ternaire complet; couvre le rejet sans prédiction complète et vérifie que le score/rank effectif est ML-first. |
 
 #### Décisions d'architecture
 
@@ -656,11 +661,8 @@ Figer la frontière entre alpha ML, contexte selector et autorité risque avant 
 #### Commandes exécutées et résultats
 
 ```powershell
-python -m pytest tests/test_risk_ml_first_contract.py --no-cov -q
-# 20 passed (nouveaux tests Sprint 5)
-
-python -m pytest [suite complete Sprint 0-5] --no-cov -q
-# 207 passed
+python -m pytest tests/test_phase2_bridges.py tests/test_risk_ml_first_contract.py tests/test_portfolio_builder.py --no-cov -q
+# 52 passed
 ```
 
 #### Artefacts produits
@@ -679,11 +681,11 @@ python -m pytest [suite complete Sprint 0-5] --no-cov -q
 - Supprimer `risk_management/selection_contract.py`.
 - Supprimer `tests/test_risk_ml_first_contract.py`.
 
-#### Gate GO/NO-GO : ❌ NO-GO — contrat défini mais non consommé par les moteurs actifs
+#### Gate GO/NO-GO : ⚠️ PARTIEL — contrat consommé par le bridge backtest, live et lineage restants
 
-- `MLRankedCandidate` et ses tests existent, mais `PortfolioBuilder` et `risk_bridge` consomment toujours `SelectionScore` / `PredictionInfo`.
-- `risk_bridge.py` appelle toujours `tag_short_candidates()`: le selector reste donc dans la détermination du chemin short nominal.
-- Il n'existe pas de test bridge/live consommant le nouveau contrat.
+- Le bridge actif dérive maintenant side, score nominal et ranks séparés des prédictions ternaires ML; un adaptateur `SelectionScore` subsiste temporairement à l'interface historique de `PortfolioBuilder`.
+- Le selector ne détermine plus le side ni le ranking nominal; ses données sont conservées comme contexte/veto explicite.
+- Le contrat live, la persistance append-only des prédictions et le lineage complet `account/universe/config` doivent encore être intégrés avant le GO.
 
 ---
 

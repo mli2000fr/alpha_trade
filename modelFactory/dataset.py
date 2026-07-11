@@ -228,13 +228,27 @@ def build_sequences(features: np.ndarray, targets: np.ndarray, seq_len: int) -> 
     Exclut les séquences dont le target est NaN.
     """
     X_list, y_list = [], []
-    for i in range(seq_len, len(features)):
-        t = targets[i]
-        if np.isnan(t):
-            continue
-        X_list.append(features[i - seq_len: i])
-        y_list.append(t)
-    if not X_list:
+    if data_cfg.label_method == "triple_barrier":
+        from modelFactory.labeling import TripleBarrierConfig, build_triple_barrier_targets
+
+        targets = build_triple_barrier_targets(
+            df,
+            TripleBarrierConfig(
+                stop_atr_mult=data_cfg.triple_barrier_stop_atr_mult,
+                tp_atr_mult=data_cfg.triple_barrier_tp_atr_mult,
+                max_sessions=data_cfg.triple_barrier_max_sessions,
+            ),
+        )
+        df["target"] = targets["target"]
+        df["future_return"] = targets["future_return"]
+    else:
+        df["target"] = build_target(
+            df,
+            horizon=data_cfg.forecast_horizon,
+            mode=data_cfg.target_mode,
+            positive_threshold=data_cfg.target_up_threshold,
+            negative_threshold=data_cfg.target_down_threshold,
+        )
         return np.empty((0, seq_len, features.shape[1])), np.empty(0)
     return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.float32)
 

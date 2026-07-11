@@ -20,6 +20,7 @@ from modelFactory.cross_sectional import build_cross_sectional_features, merge_c
 from core.ternary_decision_policy import decide_ternary_side, TernaryDecisionPolicy
 from common.data_availability import (
     DataAvailabilityInfo,
+    FutureDataError,
     QualityState,
     make_availability_from_bar_date,
     validate_availability,
@@ -391,6 +392,26 @@ def _pit_validate_bars(
             last_prediction_symbol=symbol,
             last_pit_violation=f"future_bars:{future_dates[:3]}",
         )
+        raise FutureDataError(
+            make_availability_from_bar_date(str(future_dates[0])),
+            pd.Timestamp(cutoff_date, tz="UTC").to_pydatetime(),
+        )
+
+    if "available_at" not in bars.columns:
+        return
+    available_at = pd.to_datetime(bars["available_at"], errors="coerce", utc=True)
+    cutoff_timestamp = pd.Timestamp(cutoff_date, tz="UTC") + pd.Timedelta(days=1)
+    unavailable_mask = available_at.isna() | (available_at > cutoff_timestamp)
+    if unavailable_mask.any():
+        increment_runtime_counter("pit_unavailable_data_count", int(unavailable_mask.sum()))
+        update_runtime_status(
+            last_prediction_symbol=symbol,
+            last_pit_violation="unavailable_bars",
+        )
+        raise FutureDataError(
+            make_availability_from_bar_date(str(bar_dates[unavailable_mask].iloc[0])),
+            cutoff_timestamp.to_pydatetime(),
+        )
 
 
 def _pit_build_availability(
@@ -407,6 +428,14 @@ def _pit_build_availability(
         latest_date = pd.Timestamp(bars["date"].iloc[-1]).date()
     except Exception:
         return None
+    if "available_at" in bars.columns:
+        latest_available_at = pd.to_datetime(bars["available_at"].iloc[-1], errors="coerce", utc=True)
+        if not pd.isna(latest_available_at):
+            return DataAvailabilityInfo(
+                event_time=pd.Timestamp(bars["date"].iloc[-1], tz="UTC").to_pydatetime(),
+                available_at=latest_available_at.to_pydatetime(),
+                source=str(bars.get("data_source", pd.Series([source])).iloc[-1] or source),
+            )
     return make_availability_from_bar_date(str(latest_date), source=source)
 
 
@@ -1026,7 +1055,27 @@ def _predict_with_tabular_model(
 
     # ── Ternaire tabulaire : side + signal via policy partagée (Sprint Maître 0) ─
     if is_ternary_tab:
-        # Utiliser les probas calibrées si dispo, sinon les brutes
+        if (
+            calibrator is not None
+            and getattr(calibrator, "method", None) == "temperature"
+            and getattr(calibrator, "fitted", False)
+        ):
+            try:
+                logits = np.log(np.clip(proba_all[:, :3], eps, 1.0))
+                calibrated = calibrator.predict(logits)
+                proba_short_val = float(calibrated[0, 0])
+                proba_flat_val = float(calibrated[0, 1])
+                proba_long_val = float(calibrated[0, 2])
+                calibration_method = "temperature"
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "predict_symbol ternary_temperature_fallback symbol=%s selected_model=%s error=%s",
+                    symbol,
+                    selected_model,
+                    exc,
+                )
+                calibration_method = "none"
+
         p_short = proba_short_val or 0.0
         p_flat = proba_flat_val or 0.0
         p_long = proba_long_val or 0.0
@@ -1451,18 +1500,28 @@ def predict_symbol(
 
     pred_date = prediction_date or date.today()
     if is_ternary and num_classes >= 3:
-        # Ternaire : predicted_side via argmax sur probas calibrées si dispo
+        # Le chemin LSTM consomme la même policy que les backends tabulaires.
         cal_short = calibrated_ternary_probs.get("proba_short", 0.0) or 0.0
         cal_flat = calibrated_ternary_probs.get("proba_flat", 0.0) or 0.0
         cal_long = calibrated_ternary_probs.get("proba_long", 0.0) or 0.0
-        cal_probs_tensor = torch.tensor([cal_short, cal_flat, cal_long])
-        side_idx = int(torch.argmax(cal_probs_tensor).item())
-        side_map = {0: "short", 1: "flat", 2: "long"}
-        predicted_side_val = side_map.get(side_idx, "flat")
+        try:
+            ternary_decision = decide_ternary_side(
+                proba_short=cal_short,
+                proba_flat=cal_flat,
+                proba_long=cal_long,
+            )
+        except ValueError as exc:
+            LOGGER.warning(
+                "predict_symbol ternary_decision_invalid symbol=%s selected_model=%s error=%s",
+                symbol,
+                selected_architecture,
+                exc,
+            )
+            return None
+        predicted_side_val = ternary_decision.side
         pred_class = 1 if predicted_side_val == "long" else 0
         signal_label = predicted_side_val
-        # P0 (2026-06-25) : ne plus écraser proba avec raw — utiliser la valeur calibrée
-        proba = cal_long
+        proba = ternary_decision.p_side
         proba_long_val = cal_long
         proba_flat_val = cal_flat
         proba_short_val = cal_short

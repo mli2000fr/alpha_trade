@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
+import pandas as pd
 import pytest
 
 from common.data_availability import (
@@ -17,6 +18,7 @@ from common.data_availability import (
     validate_availability,
     validate_availability_or_degraded,
 )
+from modelFactory import predictor
 
 
 # ── DataAvailabilityInfo ─────────────────────────────────────────────────────
@@ -237,3 +239,15 @@ def test_quality_state_values() -> None:
     assert QualityState.NOT_YET_AVAILABLE.value == "not_yet_available"
     assert QualityState.DELISTED.value == "delisted"
     assert QualityState.HALTED.value == "halted"
+
+
+def test_pit_validator_rejects_bar_available_after_cutoff() -> None:
+    bars = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-07-10")],
+            "available_at": [pd.Timestamp("2026-07-12T21:00:00Z")],
+        }
+    )
+
+    with pytest.raises(FutureDataError):
+        predictor._pit_validate_bars(bars, symbol="AAPL", cutoff_date=date(2026, 7, 10))

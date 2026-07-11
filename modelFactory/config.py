@@ -28,8 +28,12 @@ class DataConfig:
     feature_set: str = "v1"  # v1 | expert
     benchmark_symbol: str = "SPY"
     target_mode: str = "binary"  # binary | swing_cash | ternary
+    label_method: str = "fixed_horizon"  # fixed_horizon | triple_barrier
     target_up_threshold: float = 0.0
     target_down_threshold: float = 0.0
+    triple_barrier_stop_atr_mult: float = 2.0
+    triple_barrier_tp_atr_mult: float = 3.0
+    triple_barrier_max_sessions: int = 20
     decision_threshold: float = 0.5
     training_start_date: date | None = date(2020, 1, 1)
     training_end_date: date | None = None
@@ -53,6 +57,14 @@ class DataConfig:
             raise ValueError("cross_sectional_min_universe doit être >= 2.")
         if self.target_mode not in {"binary", "swing_cash", "ternary"}:
             raise ValueError("target_mode doit être 'binary', 'swing_cash' ou 'ternary'.")
+        if self.label_method not in {"fixed_horizon", "triple_barrier"}:
+            raise ValueError("label_method doit être 'fixed_horizon' ou 'triple_barrier'.")
+        if self.label_method == "triple_barrier" and self.target_mode != "ternary":
+            raise ValueError("triple_barrier requiert target_mode='ternary'.")
+        if self.triple_barrier_stop_atr_mult <= 0 or self.triple_barrier_tp_atr_mult <= 0:
+            raise ValueError("Les multiples triple_barrier doivent être > 0.")
+        if self.triple_barrier_max_sessions < 1:
+            raise ValueError("triple_barrier_max_sessions doit être >= 1.")
         if not (0.0 < self.decision_threshold < 1.0):
             raise ValueError("decision_threshold doit être dans ]0, 1[.")
         if self.target_down_threshold > self.target_up_threshold:
@@ -220,6 +232,7 @@ class ChampionSelectionConfig:
     allow_auto_selection: bool = False
     default_champion: str = "lstm_attention"
     selection_metric: str = "selection_score"  # selection_score | business_score | auc
+    require_benchmark_report: bool = False
     # Phase 4.2.e — Quarantaine d'un nouveau champion :
     # tant qu'il n'a pas atteint `min_runs` runs walk-forward complétés OU
     # `min_days` jours d'observation depuis sa première complétion, il est

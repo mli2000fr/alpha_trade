@@ -500,6 +500,33 @@ def build_triple_barrier_labels(
     return result_df
 
 
+def build_triple_barrier_targets(
+    df_ohlc: pd.DataFrame,
+    cfg: TripleBarrierConfig,
+) -> pd.DataFrame:
+    """Construit une target ternaire avec le trade net le plus favorable par date."""
+    long_labels = build_triple_barrier_labels(df_ohlc, cfg, side="long")
+    short_labels = build_triple_barrier_labels(df_ohlc, cfg, side="short")
+    long_returns = pd.to_numeric(long_labels["net_return_pct"], errors="coerce")
+    short_returns = pd.to_numeric(short_labels["net_return_pct"], errors="coerce")
+    valid = long_returns.notna() & short_returns.notna()
+    target = pd.Series(pd.NA, index=df_ohlc.index, dtype="Int64")
+    long_selected = valid & (long_returns > 0) & (long_returns >= short_returns)
+    short_selected = valid & (short_returns > 0) & (short_returns > long_returns)
+    target.loc[valid] = 0
+    target.loc[long_selected] = 1
+    target.loc[short_selected] = -1
+    return pd.DataFrame(
+        {
+            "target": target,
+            "future_return": np.where(long_selected, long_returns, np.where(short_selected, short_returns, 0.0)),
+            "long_net_return": long_returns,
+            "short_net_return": short_returns,
+        },
+        index=df_ohlc.index,
+    )
+
+
 # ── Fonction de comparaison (ablation) ──────────────────────────────────────
 
 def compare_label_methods(

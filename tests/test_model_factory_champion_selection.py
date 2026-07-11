@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from modelFactory.champion_selection import is_under_quarantine, select_champion
+from modelFactory.champion_selection import is_under_quarantine, select_champion, selection_score_from_result
 from modelFactory.config import ChampionSelectionConfig
 
 
@@ -131,5 +131,49 @@ def test_select_champion_marks_zero_eligible_models_explicitly() -> None:
     assert result["selection_mode"] == "fallback_default_champion"
     assert result["selection_reason"] == "zero_eligible_models"
     assert result["selected_model_eligible"] is False
+
+
+def test_selection_score_ignores_ambiguous_top_level_value() -> None:
+    result = {
+        "status": "completed",
+        "selection_score": 0.99,
+        "test": {"selection_score": 0.98},
+        "val": {"selection_score": 0.61},
+    }
+
+    assert selection_score_from_result(result) == pytest.approx(0.61)
+
+
+def test_selection_score_without_authorized_partition_is_ineligible() -> None:
+    result = {"status": "completed", "selection_score": 0.99, "test": {"selection_score": 0.98}}
+
+    assert selection_score_from_result(result) == float("-inf")
+
+
+def test_select_champion_requires_valid_benchmark_report_when_enabled() -> None:
+    challengers = {
+        "catboost": {
+            "status": "completed",
+            "val": {"selection_score": 0.8},
+        },
+    }
+    routes = {
+        "catboost": {
+            "inference_backend": "catboost_tabular",
+            "config_path": "config.json",
+            "model_path": "catboost.pkl",
+        },
+    }
+    cfg = ChampionSelectionConfig(
+        enabled=True,
+        allow_auto_selection=True,
+        default_champion="catboost",
+        require_benchmark_report=True,
+    )
+
+    result = select_champion(challengers, routes, cfg)
+
+    assert result["selection_mode"] == "fallback_default_champion"
+    assert result["annotated_challengers"]["catboost"]["eligibility_reason"] == "missing_valid_benchmark_report"
 
 

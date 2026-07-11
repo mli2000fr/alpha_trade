@@ -501,29 +501,25 @@ class PortfolioBuilder:
         # ── 0ter. Vetos post-prédiction ─────────────────────────────
         if candidates:
             before = len(candidates)
-            long_score_veto = float(self._cfg.min_score_veto_long or self._cfg.min_score_threshold)
-            short_score_veto = float(self._cfg.max_score_veto_short)
             filtered: list[SelectionScore] = []
             for c in candidates:
                 side = getattr(c, "side", "buy") or "buy"
                 prediction = predictions[str(c.symbol).strip().upper()]
+                if c.selector_earnings_blackout:
+                    continue
                 if side == "sell":
                     if prediction.proba_short is None or prediction.proba_short < self._cfg.min_proba_short:
                         continue
-                    if c.score_used > short_score_veto:
-                        continue
                 else:
                     if prediction.proba_long is None or prediction.proba_long < self._cfg.min_proba_long:
-                        continue
-                    if long_score_veto > 0 and c.score_used < long_score_veto:
                         continue
                 filtered.append(c)
             candidates = filtered
             blocked_score = before - len(candidates)
             if blocked_score:
                 LOGGER.info(
-                    "Post-prediction vetoes blocked %d ML-ranked symbols (long_score>=%.2f short_score<=%.2f)",
-                    blocked_score, long_score_veto, short_score_veto,
+                    "Post-prediction vetoes blocked %d ML-ranked symbols by probability or explicit veto",
+                    blocked_score,
                 )
 
         # ── 0quat. Filtres de concentration (Priorité 4) ─────────────

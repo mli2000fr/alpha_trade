@@ -11,6 +11,7 @@ from modelFactory.labeling import (
     TripleBarrierLabel,
     build_triple_barrier_label,
     build_triple_barrier_labels,
+    build_triple_barrier_targets,
     compare_label_methods,
     _compute_atr,
     _deduct_costs,
@@ -250,6 +251,13 @@ def test_build_labels_short(ohlc_df) -> None:
     # Distribution short/flat
     labels = result["label"].dropna().astype(int)
     assert set(labels.unique()).issubset({-1, 0})
+
+
+def test_build_triple_barrier_targets_returns_ternary_target(ohlc_df) -> None:
+    result = build_triple_barrier_targets(ohlc_df, TripleBarrierConfig(max_sessions=5))
+
+    assert {"target", "future_return", "long_net_return", "short_net_return"}.issubset(result.columns)
+    assert set(result["target"].dropna().astype(int).unique()).issubset({-1, 0, 1})
 
 
 # ── Symétrie long/short ─────────────────────────────────────────────────────

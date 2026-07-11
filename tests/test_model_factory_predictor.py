@@ -58,6 +58,8 @@ def _feature_frame_stub(frame: pd.DataFrame):
         feature_set="v1",
         selector_df=None,
         include_selector_context=False,
+        include_short_score=False,
+        **_kwargs,
     ):
         return frame.copy()
 
@@ -70,6 +72,8 @@ def _feature_columns_stub(columns: list[str]):
         feature_set="v1",
         include_cross_sectional=False,
         include_selector_context=False,
+        include_short_score=False,
+        **_kwargs,
     ):
         return list(columns)
 
@@ -458,7 +462,7 @@ def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_pat
         symbol,
         artifacts_dir=tmp_path,
         engine=cast(Engine, object()),
-        prediction_date=date(2026, 4, 21),
+        prediction_date=date(2024, 3, 2),
         persist=False,
     )
 
@@ -549,7 +553,7 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
         symbol,
         artifacts_dir=tmp_path,
         engine=cast(Engine, object()),
-        prediction_date=date(2026, 4, 21),
+        prediction_date=date(2024, 3, 2),
         persist=False,
     )
 
@@ -635,12 +639,12 @@ def test_predict_symbol_loads_selector_context_when_enabled(tmp_path: Path, monk
         symbol,
         artifacts_dir=tmp_path,
         engine=cast(Engine, object()),
-        prediction_date=date(2026, 4, 21),
+        prediction_date=date(2024, 3, 2),
         persist=False,
     )
 
     assert result is not None
-    assert captured == {"symbol": "AAPL", "end_date": date(2026, 4, 21)}
+    assert captured == {"symbol": "AAPL", "end_date": date(2024, 3, 2)}
 
 
 @pytest.mark.parametrize(
@@ -713,7 +717,7 @@ def test_predict_symbol_can_route_to_local_tabular_model(
         symbol,
         artifacts_dir=tmp_path,
         engine=cast(Engine, object()),
-        prediction_date=date(2026, 4, 21),
+        prediction_date=date(2024, 3, 2),
         persist=False,
     )
 
@@ -796,7 +800,7 @@ def test_predict_symbol_can_route_to_global_model(tmp_path: Path, monkeypatch) -
         symbol,
         artifacts_dir=tmp_path,
         engine=cast(Engine, object()),
-        prediction_date=date(2026, 4, 21),
+        prediction_date=date(2024, 3, 2),
         persist=False,
     )
 

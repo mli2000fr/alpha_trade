@@ -314,6 +314,11 @@ def load_symbol_bars(
     )
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params=params, parse_dates=["date"])
+    if not df.empty:
+        event_time = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize("UTC")
+        df["event_time"] = event_time
+        df["available_at"] = event_time + pd.Timedelta(hours=21)
+        df["data_source"] = "stock_bars_daily"
     LOGGER.info("load_symbol_bars symbol=%s start_date=%s end_date=%s rows=%d", symbol, start_date, end_date, len(df))
     return df
 
