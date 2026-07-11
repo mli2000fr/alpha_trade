@@ -169,6 +169,45 @@ Champs minimaux :
 
 Le selector conserve `final_score` / `short_score` comme contexte et veto. Il ne décide plus si un symbole existe dans l'univers de sélection.
 
+### 3.4 Séparer tradabilité et signal technique
+
+Le code actuel mélange des contraintes objectives et des signaux de stratégie dans le screener. Cette séparation doit devenir explicite :
+
+**Tradabilité objective** : statut actif, asset class US equity, barres disponibles, historique minimum, prix, ADV, spread, market cap, blackout earnings, anomalies et qualité des données.
+
+**Signal technique** : force relative, position dans le range historique, trend, VCP, RSI, proximité du plus haut 52 semaines, `final_score` et `short_score`.
+
+Un mauvais signal technique ne rend pas un titre non tradable. Le nouveau pipeline doit donc :
+
+1. construire l'univers PIT avec les contraintes objectives uniquement;
+2. calculer les scores techniques pour **tous les symboles tradables**, pas seulement un Top-N;
+3. utiliser ces scores comme features ML, vetos ou diagnostics après la prédiction.
+
+### 3.5 Contrat directionnel ML
+
+Le cutover cible le modèle ternaire déjà supporté par `model_predictions` :
+
+1. `predicted_side` détermine `long`, `short` ou `flat`;
+2. `proba_long` classe les longs;
+3. `proba_short` classe les shorts;
+4. `flat` n'est jamais sélectionnable;
+5. `short_score` ne détermine plus le côté, il peut seulement agir comme veto technique short;
+6. une prédiction binaire ou incomplète n'est pas transformée silencieusement en signal : les artefacts doivent être réentraînés en ternaire avant le cutover.
+
+Il n'existe plus de fallback `score-only` lorsqu'une prédiction manque. La ligne est non sélectionnable et contribue au diagnostic de couverture ML.
+
+### 3.6 Contrat de capacité portefeuille
+
+Le code actuel combine `max_positions` total et `short_max_positions`. Le refactor doit conserver une limite totale unique et ajouter des plafonds par côté :
+
+1. `max_positions` reste le plafond dur total long + short;
+2. `max_long_positions` borne les positions longues;
+3. `max_short_positions` borne les positions short;
+4. le ranking ML est séparé par côté, mais le `PortfolioBuilder` arrête les ouvertures dès que `max_positions` est atteint;
+5. les overlays régime peuvent réduire dynamiquement chacun de ces plafonds, jamais augmenter le plafond total.
+
+Pour `capital_2001_5000`, le preset doit donc définir explicitement la répartition compatible avec quatre positions totales; il ne faut pas interpréter `max_positions=4` comme 4 longs + 4 shorts.
+
 ---
 
 ## 4. Corrections au plan initial
@@ -267,13 +306,17 @@ La sécurité vient de la validation pré-déploiement; le runtime ne maintient 
 ### Tâches structurantes
 
 1. Ajouter une migration Alembic et le DDL d'une table dédiée, recommandée sous le nom `tradable_universe_history`.
-  - clé : `(snapshot_date, capital_preset_key, symbol)`;
-  - conserver `config_fingerprint` et la date de création;
-  - stocker `is_tradable`, un ou plusieurs motifs de rejet, et les métriques utilisées pour la décision.
+  - clé primaire des lignes : `(universe_run_id, symbol)`;
+  - `tradable_universe_runs` porte `universe_run_id`, `snapshot_date`, `capital_preset_key`, `config_fingerprint`, statut `running|completed|failed`, nombres attendus/écrits et dates de début/fin;
+  - `tradable_universe_history` porte `is_tradable`, un motif principal, les motifs détaillés de rejet, `created_at` et les métriques utilisées pour la décision;
+  - indexer les résolutions nominales sur `(capital_preset_key, snapshot_date, status)` côté runs et `(universe_run_id, is_tradable, symbol)` côté lignes;
+  - conserver les reruns comme runs distincts; un seul run `completed` est désigné comme publication canonique d'un couple `(snapshot_date, capital_preset_key)`;
+  - un loader ne peut servir que les lignes d'un run `completed`; un snapshot partiel ne doit jamais devenir le "dernier snapshot" live.
 
 2. Modifier le chemin screener qui part de `iter_symbol_chunks()`.
   - il doit produire une ligne PIT pour chaque symbole évalué, y compris les titres rejetés avant `final_scores`;
-  - le selector continue à enrichir les survivants avec les scores techniques, sans faire disparaître les lignes non retenues du nouvel univers;
+  - les critères force relative / range historique sont retirés de la décision `is_tradable`;
+  - le selector calcule les scores techniques pour tous les tradables, sans sélection Top-N et sans écrire `is_candidate` / `candidate_rank`;
   - ne pas dériver l'univers depuis `stock_scores`, car `upsert_scores_snapshot()` y purge les symboles absents.
 
 3. Créer un module ou repository unique de résolution d'univers.
@@ -281,6 +324,20 @@ La sécurité vient de la validation pré-déploiement; le runtime ne maintient 
   - backtest : dernier snapshot `<= trade_date`;
   - train/predict historique : snapshots dans la fenêtre demandée;
   - les règles de data source, historique minimum et asset class y sont centralisées.
+
+   Contrat recommandé :
+
+   ```python
+   resolve_universe_asof(
+       engine,
+       trade_date,
+       capital_preset_key,
+       *,
+       tradable_only=True,
+   ) -> UniverseResolution
+   ```
+
+   `UniverseResolution` contient le DataFrame, `universe_run_id`, la date réellement servie, la complétude et les diagnostics de dégradation.
 
 4. Ajouter les loaders explicites nécessaires.
   - `risk_management/db_io.py` : `load_tradable_universe_asof(...)`;
@@ -291,6 +348,10 @@ La sécurité vient de la validation pré-déploiement; le runtime ne maintient 
   - un titre non-candidat doit apparaître dans le snapshot;
   - un titre non tradable doit rester observable avec son motif;
   - aucun snapshot futur ne doit être utilisé pour une date de backtest.
+  - un run partiel ou `failed` ne doit jamais être servi;
+  - la promotion d'un run vers `completed` et canonique doit être transactionnelle et refuser `rows_written != rows_expected`;
+  - un rerun ne doit jamais modifier les lignes d'un run précédemment publié;
+  - deux presets capital doivent produire des scopes indépendants.
 
 6. Décider la stratégie de reprise historique avant de lancer le développement.
   - les anciens `stock_scores_history` ne contiennent pas les titres rejetés et ne permettent donc pas de reconstruire seuls l'univers complet;
@@ -320,6 +381,13 @@ Pour une date donnée, le système peut lister de façon rejouable tous les symb
 
 ### Tâches structurantes
 
+0. Imposer le même ordre de chargement dans les deux runtimes :
+  1. univers tradable PIT complet;
+  2. prédictions ternaires correspondant au scope;
+  3. scores techniques et sentiment comme contexte/veto;
+  4. ranking long/short;
+  5. risk, sizing et exécution.
+
 1. `backtesting/resilience.py`
   - remplacer `_expected_symbol_dates(scores_df)` par `resolve_expected_prediction_scope(...)` fondé sur le snapshot `tradable_universe_history`;
   - le rebuild ML manquant reçoit ce scope, pas la liste de scores.
@@ -328,7 +396,9 @@ Pour une date donnée, le système peut lister de façon rejouable tous les symb
   - ajouter un chemin predictions-first;
   - `predictions_df` devient la table primaire;
   - merger le snapshot d'univers puis les scores disponibles comme contexte/veto;
-  - classer séparément longs et shorts avec `top_n_long` et `top_n_short`.
+  - utiliser exclusivement `predicted_side`, `proba_long` et `proba_short`;
+  - exclure `flat`, les prédictions non ternaires et les lignes sans prédiction;
+  - classer séparément longs et shorts avec les plafonds par côté, puis respecter `max_positions` total.
 
 3. `backtesting/cli/_impl.py`
   - charger l'univers PIT puis les prédictions;
@@ -337,12 +407,20 @@ Pour une date donnée, le système peut lister de façon rejouable tous les symb
 
 4. `risk_management/cli.py` et `risk_management/db_io.py`
   - remplacer le point d'entrée live `repo.load_candidates_asof(trade_date)` par l'univers tradable;
-  - joindre les prédictions puis construire le ranking ML avant `portfolio_builder`;
+  - charger les prédictions pour l'univers complet avant tout tagging long/short;
+  - supprimer l'actuel tagging short préalable au chargement des prédictions;
+  - construire le ranking ML ternaire avant `portfolio_builder`;
   - supprimer les filtres `is_candidate = 1` des requêtes auxiliaires utilisées par le chemin live, notamment `load_factor_columns_asof()`.
 
 5. `backtesting/risk_bridge.py` et `risk_management/models.py`
   - faire accepter au bridge les résultats de sélection ML;
   - remplacer `CandidateScore` / `EnrichedCandidate` / `candidate_rank` par une représentation métier neutre (`SelectionInput`, `EnrichedSelection`, `selection_rank` ou équivalent).
+
+6. `risk_management/portfolio_builder.py`
+  - supprimer `filter_candidates_without_ml`: une sélection sans ML n'existe plus;
+  - remplacer le tri score/conviction actuel par l'ordre ML directionnel déjà calculé;
+  - supprimer le fallback de probabilité et le tie-break sur `candidate_rank`;
+  - appliquer `max_positions`, `max_long_positions` et `max_short_positions` de manière déterministe.
 
 ### Fichiers concernés
 
@@ -366,6 +444,15 @@ Backtest et live peuvent sélectionner des positions à partir de prédictions c
 **Objectif :** éviter de garder un gate implicite côté ML après avoir corrigé le backtest.
 
 ### Tâches structurantes
+
+0. Réordonner les étapes de `ihm/services/pipeline_runner.py`.
+  - `stock_screener` collecte/calcul les métriques larges sans sélectionner un Top-N;
+  - `sync_latest_quotes` et `sync_earnings_calendar` alimentent les contraintes objectives;
+  - une étape explicite `publish_tradable_universe` publie atomiquement le snapshot complet;
+  - `alpha_scanner` devient une étape de calcul de contexte score sur tous les tradables, sans sélection;
+  - sentiment et signal aggregator travaillent sur l'univers tradable, pas sur les candidats;
+  - `ml_train` / `ml_predict` consomment ensuite ce même `universe_run_id`;
+  - `risk_management` refuse de démarrer si l'univers ou la couverture ML du run courant est incomplet.
 
 1. `ihm/services/pipeline_runner.py`
   - changer les defaults :
@@ -393,6 +480,11 @@ Backtest et live peuvent sélectionner des positions à partir de prédictions c
   - supprimer `selector_universe_*`,
   - renommer `include_selector_context_features` en `include_score_context_features` si les scores restent des features ML.
 
+6. Définir la sélection déterministe des prédictions en DB.
+  - pour chaque `(symbol, prediction_date)`, choisir le run ML publié/servi, jamais une ligne arbitraire parmi plusieurs `run_id`;
+  - rattacher les diagnostics et la sélection au `model_run_id` et au `universe_run_id` effectivement utilisés;
+  - vérifier que les dates de training et de prédiction respectent le PIT avant de servir le run.
+
 ### Fichiers concernés
 
 - `ihm/services/pipeline_runner.py`
@@ -414,17 +506,17 @@ Une exécution train/predict depuis l'IHM ne peut utiliser que l'univers tradabl
 ### Tâches structurantes
 
 1. `core/conviction.py`
-  - introduire explicitement un mode `ml_primary` ou équivalent,
-  - distinguer :
-    - fusion pondérée normale,
-    - veto score,
-    - fallback score-only si ML manquant.
+  - remplacer la fusion binaire score + `predicted_proba` par une conviction directionnelle fondée sur `proba_long` ou `proba_short`;
+  - appliquer ensuite le score comme veto ou modulateur calibré;
+  - supprimer tout fallback score-only si ML ou les probabilités ternaires manquent.
 
 2. `config/capital_presets.yaml`
   - remplacer la sémantique "min score pour être candidat" par :
     - seuil veto long,
     - seuil veto short,
-    - seuil minimum ML si nécessaire.
+    - seuil minimum `proba_long`,
+    - seuil minimum `proba_short`,
+    - `max_positions`, `max_long_positions`, `max_short_positions` cohérents.
 
 3. `selector/` et `screener/`
   - laisser le calcul des scores en place,
@@ -437,6 +529,11 @@ Une exécution train/predict depuis l'IHM ne peut utiliser que l'univers tradabl
     - veto score,
     - modulation sentiment optionnelle,
     - sélection finale.
+
+5. `selector/short_score.py` et les appels live/backtest
+  - retirer `tag_short_candidates()` du chemin de décision;
+  - conserver uniquement les calculs nécessaires au `short_score` si celui-ci reste une feature ou un veto;
+  - le côté short vient exclusivement de `predicted_side=short`.
 
 ### Remarque importante
 
@@ -455,6 +552,7 @@ La bonne séquence est :
 - `selector/**/*.py`
 - `screener/**/*.py`
 - `backtesting/signal_replay.py`
+- `selector/short_score.py`
 
 ---
 
@@ -525,7 +623,12 @@ Un utilisateur IHM ne doit plus voir ni devoir comprendre le concept `candidate`
 4. services / diagnostics / fidélité
   - remplacer les payloads nommés `candidate_*` par `selection_*` ou `universe_*`.
 
-5. documentation et glossaires
+5. risk et execution
+  - remplacer `candidate_rank` par `selection_rank` dans `risk_decisions`, `portfolio_targets` et `execution_targets_snapshot`;
+  - mettre à jour `execution_engine/models.py`, `execution_engine/db_io.py`, `execution_engine/order_intents.py`, `backtesting/execution_bridge.py`, `backtesting/execution_replay.py` et les exports fidelity;
+  - préserver `decision_rank` s'il représente toujours le rang après contraintes risk, en documentant clairement la différence avec `selection_rank`.
+
+6. documentation et glossaires
   - supprimer le concept opérationnel `candidate`.
 
 ### Fichiers concernés
@@ -534,6 +637,12 @@ Un utilisateur IHM ne doit plus voir ni devoir comprendre le concept `candidate`
 - `database/repositories/scores.py`
 - `event_sentiment/db_io.py`
 - `backtesting/fidelity.py`
+- `risk_management/models.py`
+- `execution_engine/models.py`
+- `execution_engine/db_io.py`
+- `execution_engine/order_intents.py`
+- `backtesting/execution_bridge.py`
+- `backtesting/execution_replay.py`
 - `doc/**/*.md`
 
 ---
@@ -546,8 +655,9 @@ Un utilisateur IHM ne doit plus voir ni devoir comprendre le concept `candidate`
 
 1. Supprimer les colonnes `is_candidate` et `candidate_rank` de `stock_scores` et `stock_scores_history` après migration des données nécessaire à l'audit.
 2. Supprimer les index SQL `idx_history_candidate` et `idx_history_preset_candidate`.
-3. Supprimer ou réécrire les migrations, DDL downgrade et scripts de backfill spécifiques aux candidats.
-4. Ne pas ajouter `ml_rank` / `predicted_rank` tant qu'un besoin concret d'audit matérialisé n'existe pas.
+3. Remplacer les colonnes `candidate_rank` downstream par `selection_rank` dans les tables risk/execution et leurs migrations Alembic.
+4. Supprimer ou réécrire les DDL, scripts de backfill et diagnostics spécifiques aux candidats.
+5. Ne pas ajouter `ml_rank` / `predicted_rank` tant qu'un besoin concret d'audit matérialisé n'existe pas.
 
 ---
 
@@ -635,9 +745,11 @@ Le refactor ne sera considéré réussi que si les validations suivantes passent
 
 1. Un backtest ML-first tourne sans dépendre d'un univers `is_candidate=1`.
 2. Un train/predict depuis l'IHM n'expose ni n'accepte la source `candidates`.
-3. Le ranking long/short est bien séparé.
-4. Le score technique peut exclure un signal, mais ne définit plus seul l'univers.
-5. Un run live `risk_management` utilise le même contrat d'univers que le backtest.
+3. Le ranking long/short est séparé et fondé sur les probabilités ternaires; `flat` ne génère aucun ordre.
+4. Une ligne sans prédiction ternaire reste non sélectionnable, sans fallback score-only.
+5. `max_long_positions` et `max_short_positions` sont respectés sans jamais dépasser `max_positions` total.
+6. Le score technique peut exclure un signal, mais ne définit plus seul l'univers ou le côté.
+7. Un run live `risk_management` utilise le même contrat d'univers que le backtest.
 
 ### Validation data / audit
 
@@ -645,11 +757,14 @@ Le refactor ne sera considéré réussi que si les validations suivantes passent
 2. Les diagnostics de missing ML sont exprimés relativement à l'univers tradable.
 3. Le scope cross-sectionnel est cohérent entre train, predict et backtest.
 4. Chaque sélection peut être reliée au snapshot d'univers, à la prédiction utilisée et au motif de rejet éventuel.
+5. Un snapshot `running`, `failed` ou incomplet n'est jamais servi; un rerun publié ne modifie aucun run antérieur.
+6. `selection_rank` traverse risk et execution, tandis que `candidate_rank` n'existe plus dans les schémas actifs.
 
 ### Validation performance
 
 1. `validate_score_predictiveness.py --source ml` sur 2024-2025 doit montrer une structure de buckets meilleure que le score technique brut.
 2. Les backtests 2021+ doivent être rejoués avant toute suppression SQL de `is_candidate`.
+3. Les résultats live/backtest doivent identifier `universe_run_id` et `model_run_id` pour permettre une comparaison reproductible.
 
 ---
 
