@@ -441,6 +441,70 @@ Aligner les labels sur un trade swing réellement exécutable.
 - target sans fuite inter-fold ;
 - rapport d'ablation archivé.
 
+### ✅ Ce qui a été implémenté (2026-07-11)
+
+#### Nouveaux fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `modelFactory/labeling.py` | Module canonique de triple-barrier labeling. Contient `TripleBarrierConfig` (stop/TP en multiples d'ATR, horizon max, coûts), `TripleBarrierLabel` (side, net_return, holding_sessions, MAE, MFE, exit_reason, entry/exit_price, label ternaire), `build_triple_barrier_label()` (label unitaire pur), `build_triple_barrier_labels()` (vectorisé sur DataFrame OHLC), `compare_label_methods()` (rapport d'ablation target fixe vs triple-barrier), `_resolve_exit()` (résolution intraday conservative : stop prioritaire si les deux barrières touchées le même jour), `_compute_atr()` (ATR Wilder), `_deduct_costs()` (spread+commission+slippage+borrow). |
+| `tests/test_model_factory_labeling.py` | 19 tests : config, ATR, long TP/stop/time-exit, short TP/stop, gap handling, coûts transforment gain en perte, coûts monotones, vectorisé long/short, symétrie long/short, pas de lookahead, compare_label_methods, insufficient data → flat. |
+
+#### Fichiers modifiés
+
+| Fichier | Changements |
+|---|---|
+| `modelFactory/target_optimization.py` | **`score_target_candidate()`** : correction du défaut `neg_mask = active_target == 0` en mode ternaire. En ternaire, sépare désormais short=-1, flat=0, long=1 avec class balance sur 3 classes (1.0 = équilibré, 0.0 = tout dans une classe). Ajout des champs `mean_short_return`, `long_pct`, `flat_pct`, `short_pct` dans `TargetCandidateResult`. Import de `modelFactory.labeling`. |
+
+#### Décisions d'architecture
+
+- **Triple-barrier pur** : le labeler prend OHLC + config, pas de dépendance à la DB ou au simulateur. Les mêmes fonctions de coûts (`_deduct_costs`) sont conçues pour être partagées avec le simulateur backtest (parité label/backtest).
+- **Entrée au next open tradable (J+1)** : `entry_delay_sessions=1` par défaut. Le prix d'entrée est l'open à J+1, jamais le close théorique.
+- **Gaps exécutés au prix disponible** : si l'open traverse un barrier (stop ou TP), le trade est exécuté à l'open, pas au niveau théorique du barrier. Codes `gap_stop` et `gap_tp`.
+- **Résolution intraday conservative** : si high et low touchent les deux barrières le même jour, le stop est prioritaire (pire cas). Convention documentée et configurable.
+- **Coûts complets** : spread + commission + slippage + borrow fee short (annualisé, proportionnel à la durée). Les coûts peuvent transformer un gain brut en perte nette → label flat.
+- **Correction multiclasses de `score_target_candidate`** : en mode ternaire, le class balance est calculé sur 3 classes (distance à l'équilibre ⅓-⅓-⅓), le separation score utilise `mean_long - mean_short`, les moyennes par classe sont rapportées individuellement.
+- **Label ternaire** : +1 = long rentable net, -1 = short rentable net, 0 = flat (non rentable net ou pas d'entrée).
+
+#### Commandes exécutées et résultats
+
+```powershell
+python -m pytest tests/test_model_factory_labeling.py --no-cov -q
+# 19 passed
+
+python -m pytest tests/test_model_factory_labeling.py tests/test_model_factory_target_optimization.py --no-cov -q
+# 23 passed
+
+python -m pytest [suite complete Sprint 0-3] --no-cov -q
+# 166 passed
+```
+
+#### Artefacts produits
+
+- `modelFactory/labeling.py` — module canonique de triple-barrier
+- `tests/test_model_factory_labeling.py` — 19 tests
+
+#### Risques résiduels
+
+- **Parité label/backtest non encore testée automatiquement** : le contrat est que les mêmes fonctions de coûts sont utilisées, mais aucun test E2E ne vérifie que `build_triple_barrier_label` et le simulateur produisent les mêmes prix de sortie. Sera fait au Sprint 12 (Parité).
+- **Optimisation des paramètres dans le fold train** : l'infrastructure `optimize_target_parameters` existe mais n'intègre pas encore le triple-barrier comme méthode candidate. La comparaison `compare_label_methods` produit le rapport d'ablation.
+- **Borrow fee intégré mais non testé avec données réelles** : la formule est en place, les tests couvrent le cas borrow_fee_annual=0.
+
+#### Rollback
+
+- Supprimer `modelFactory/labeling.py`.
+- Restaurer `modelFactory/target_optimization.py` (remettre le `neg_mask = active_target == 0` legacy).
+- Supprimer `tests/test_model_factory_labeling.py`.
+
+#### Gate GO/NO-GO : ✅ GO
+
+- Premier barrier correctement sélectionné : `_resolve_exit` avec priorité conservative testée.
+- Gap à travers stop exécuté au prix disponible : `gap_stop` / `gap_tp` avec prix open.
+- Coûts capables de transformer un gain brut en non-trade/perte : testé (`test_costs_turn_gain_into_flat`).
+- Aucun label ne traverse la frontière du fold : le labeler est une fonction pure sans état, l'optimisation reste dans `optimize_target_parameters` (fold train).
+- Symétrie long/short sur série inversée : testée (`test_long_short_symmetry`).
+- 19 nouveaux tests, 166 total, 0 régression.
+
 ---
 
 ## Sprint maître 4 — Benchmark modèles et anti-collapse
