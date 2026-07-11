@@ -18,6 +18,12 @@ from modelFactory.champion_selection import ArtifactSignatureError, verify_route
 from modelFactory.config import DataConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
 from core.ternary_decision_policy import decide_ternary_side, TernaryDecisionPolicy
+from common.data_availability import (
+    DataAvailabilityInfo,
+    QualityState,
+    make_availability_from_bar_date,
+    validate_availability,
+)
 from modelFactory.data_loader import (
     load_benchmark_bars,
     load_symbol_bars,
@@ -314,6 +320,9 @@ def _build_prediction_result(
     # Sprint Maître 0 — policy partagée
     decision_policy_version: int = 1,
     decision_reason: str | None = None,
+    # Sprint Maître 2 — PIT
+    data_availability: DataAvailabilityInfo | None = None,
+    data_quality: QualityState = QualityState.PRESENT,
 ) -> pd.DataFrame:
     row: dict[str, object] = {
         "symbol": symbol,
@@ -330,6 +339,11 @@ def _build_prediction_result(
     }
     if decision_reason is not None:
         row["decision_reason"] = decision_reason
+    # ── Sprint Maître 2 : qualité PIT ──────────────────────────────────
+    if data_availability is not None:
+        row["data_source"] = data_availability.source
+        row["data_available_at"] = data_availability.available_at.isoformat()
+    row["data_quality"] = data_quality.value
     # Ajoute les colonnes ternaires si presentes
     if predicted_side is not None:
         row["predicted_side"] = predicted_side
@@ -347,6 +361,53 @@ def _has_matching_latest_feature_date(df: pd.DataFrame, cutoff_date: date | None
     except Exception:  # noqa: BLE001
         return False
     return last_feature_date == cutoff_date
+
+
+# ── Sprint Maître 2 : validation PIT ─────────────────────────────────────────
+
+def _pit_validate_bars(
+    bars: pd.DataFrame,
+    *,
+    symbol: str,
+    cutoff_date: date | None,
+) -> None:
+    """Valide qu'aucune barre n'est postérieure au cutoff (Sprint Maître 2).
+
+    Cette fonction est un gate critique : toute barre future détectée
+    est loggée comme erreur et doit être investiguée.
+    """
+    if cutoff_date is None or bars.empty or "date" not in bars.columns:
+        return
+    bar_dates = pd.to_datetime(bars["date"], errors="coerce").dt.date
+    future_mask = bar_dates > cutoff_date
+    if future_mask.any():
+        future_dates = sorted(set(bar_dates[future_mask]))
+        LOGGER.error(
+            "PIT_VIOLATION future_bars symbol=%s cutoff=%s future_dates=%s count=%d",
+            symbol, cutoff_date, future_dates[:5], future_mask.sum(),
+        )
+        increment_runtime_counter("pit_future_data_count", int(future_mask.sum()))
+        update_runtime_status(
+            last_prediction_symbol=symbol,
+            last_pit_violation=f"future_bars:{future_dates[:3]}",
+        )
+
+
+def _pit_build_availability(
+    bars: pd.DataFrame,
+    *,
+    symbol: str,
+    cutoff_date: date | None,
+    source: str = "eodhd",
+) -> DataAvailabilityInfo | None:
+    """Construit l'info de disponibilité PIT pour la barre la plus récente."""
+    if cutoff_date is None or bars.empty or "date" not in bars.columns:
+        return None
+    try:
+        latest_date = pd.Timestamp(bars["date"].iloc[-1]).date()
+    except Exception:
+        return None
+    return make_availability_from_bar_date(str(latest_date), source=source)
 
 
 def _record_route_fallback_if_any(symbol: str, route: dict[str, object]) -> None:
@@ -660,6 +721,10 @@ def _prepare_prediction_frame(
     engine: "Engine",  # type: ignore[name-defined]
     cutoff_date: date | None,
 ) -> pd.DataFrame:
+    """Prépare le DataFrame de features pour un symbole.
+
+    Sprint Maître 2 : ajout de la validation PIT (pas de donnée future).
+    """
     try:
         bars = load_symbol_bars(engine, symbol, end_date=cutoff_date)
     except Exception as exc:  # noqa: BLE001
@@ -669,6 +734,9 @@ def _prepare_prediction_frame(
     if len(bars) < data_cfg.sequence_length + 60:
         LOGGER.warning("predict_symbol insufficient_bars symbol=%s", symbol)
         return pd.DataFrame()
+
+    # ── Sprint Maître 2 : validation PIT ───────────────────────────────
+    _pit_validate_bars(bars, symbol=symbol, cutoff_date=cutoff_date)
 
     sentiment_df = None
     if data_cfg.include_sentiment_features:
@@ -986,6 +1054,9 @@ def _predict_with_tabular_model(
         predicted_side_val = None
         decision_reason = None
 
+    # ── Sprint Maître 2 : disponibilité PIT ───────────────────────────
+    pit_avail = _pit_build_availability(df, symbol=symbol, cutoff_date=cutoff_date)
+
     result = _build_prediction_result(
         symbol=symbol,
         prediction_date=pred_date,
@@ -1002,6 +1073,8 @@ def _predict_with_tabular_model(
         proba_flat=proba_flat_val,
         proba_short=proba_short_val,
         decision_reason=decision_reason,
+        data_availability=pit_avail,
+        data_quality=QualityState.PRESENT if pit_avail is not None else QualityState.MISSING_NO_SOURCE,
     )
     update_runtime_status(
         last_prediction_symbol=symbol,

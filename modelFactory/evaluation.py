@@ -1,10 +1,299 @@
-"""modelFactory/evaluation.py — Évaluation avancée et analyses business."""
+"""modelFactory/evaluation.py — Évaluation avancée et analyses business.
+
+Sprint Maître 1 — ajouts :
+- Métriques multiclasses : one-vs-rest AUC, Brier multiclasse, log-loss,
+  balanced accuracy, macro-F1, weighted-F1.
+- Validation des probabilités (finies, somme = 1, bornes).
+"""
 from __future__ import annotations
 
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+
+# ── Sprint Maître 1 : métriques multiclasses ─────────────────────────────────
+
+def _validate_proba_array(proba: np.ndarray, *, tol: float = 1e-6) -> str | None:
+    """Valide un tableau de probabilités [N, C]. Retourne None si OK."""
+    if proba.ndim != 2:
+        return f"expected_2d_got_{proba.ndim}d"
+    if not np.isfinite(proba).all():
+        return "non_finite_values"
+    if (proba < 0).any() or (proba > 1).any():
+        return "out_of_bounds"
+    sums = proba.sum(axis=1)
+    if (np.abs(sums - 1.0) > tol).any():
+        return f"sum_not_one_max_dev={float(np.abs(sums - 1.0).max()):.8f}"
+    return None
+
+
+def multiclass_auc_one_vs_rest(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+) -> dict[str, float | None]:
+    """Calcule l'AUC one-vs-rest pour chaque classe.
+
+    Parameters
+    ----------
+    y_true : np.ndarray [N]
+        Labels entiers (0, 1, 2, ...).
+    y_proba : np.ndarray [N, C]
+        Probabilités par classe.
+
+    Returns
+    -------
+    dict avec clés ``auc_class_0``, ``auc_class_1``, ..., ``auc_macro``.
+    Chaque AUC est bornée dans [0, 1] ; None si classe absente.
+    """
+    from modelFactory.tabular_baseline import binary_auc
+
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_proba = np.asarray(y_proba, dtype=np.float64)
+    error = _validate_proba_array(y_proba)
+    if error is not None:
+        return {"auc_macro": None, "error": error}
+
+    n_classes = y_proba.shape[1]
+    aucs: dict[str, float | None] = {}
+    valid_aucs: list[float] = []
+    for c in range(n_classes):
+        binary_labels = (y_true == c).astype(np.int64)
+        if binary_labels.sum() == 0 or (binary_labels == 1).sum() == len(binary_labels):
+            aucs[f"auc_class_{c}"] = None
+            continue
+        auc_val = binary_auc(binary_labels, y_proba[:, c])
+        if auc_val is not None:
+            if auc_val < 0.0 or auc_val > 1.0:
+                auc_val = None  # AUC hors bornes → invalide
+            else:
+                valid_aucs.append(auc_val)
+        aucs[f"auc_class_{c}"] = auc_val
+    aucs["auc_macro"] = float(np.mean(valid_aucs)) if valid_aucs else None
+    return aucs
+
+
+def multiclass_brier_score(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+) -> float | None:
+    """Brier score multiclasses : moyenne sur les classes du Brier one-vs-rest.
+
+    .. math::
+        BS = \\frac{1}{C} \\sum_{c=1}^{C} \\frac{1}{N} \\sum_{i=1}^{N} (p_{ic} - y_{ic})^2
+    """
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_proba = np.asarray(y_proba, dtype=np.float64)
+    error = _validate_proba_array(y_proba)
+    if error is not None:
+        return None
+    n_classes = y_proba.shape[1]
+    briers: list[float] = []
+    for c in range(n_classes):
+        binary_labels = (y_true == c).astype(np.float64)
+        briers.append(float(np.mean((y_proba[:, c] - binary_labels) ** 2)))
+    return float(np.mean(briers)) if briers else None
+
+
+def multiclass_log_loss(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    *, eps: float = 1e-15,
+) -> float | None:
+    """Log-loss multiclasses.
+
+    .. math::
+        LL = -\\frac{1}{N} \\sum_{i=1}^{N} \\log(p_{i, y_i})
+    """
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_proba = np.asarray(y_proba, dtype=np.float64)
+    error = _validate_proba_array(y_proba)
+    if error is not None:
+        return None
+    n_samples = len(y_true)
+    if n_samples == 0:
+        return None
+    clipped = np.clip(y_proba, eps, 1 - eps)
+    # Normaliser après clipping
+    clipped = clipped / clipped.sum(axis=1, keepdims=True)
+    log_probs = np.log(clipped[np.arange(n_samples), y_true])
+    return float(-np.mean(log_probs))
+
+
+def multiclass_balanced_accuracy(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> float | None:
+    """Balanced accuracy multiclasses : moyenne des recalls par classe."""
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_pred = np.asarray(y_pred, dtype=np.int64)
+    classes = np.unique(np.concatenate([y_true, y_pred]))
+    if len(classes) < 2:
+        return None
+    recalls: list[float] = []
+    for c in classes:
+        mask_true = y_true == c
+        if mask_true.sum() == 0:
+            continue
+        tp = int((y_pred[mask_true] == c).sum())
+        recalls.append(tp / int(mask_true.sum()))
+    return float(np.mean(recalls)) if recalls else None
+
+
+def compute_multiclass_metrics(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    *,
+    class_names: tuple[str, ...] = ("short", "flat", "long"),
+) -> dict[str, Any]:
+    """Calcule l'ensemble complet des métriques multiclasses.
+
+    Parameters
+    ----------
+    y_true : np.ndarray [N]
+        Labels entiers (0 = short, 1 = flat, 2 = long par défaut).
+    y_proba : np.ndarray [N, C]
+        Probabilités calibrées par classe.
+    class_names : tuple[str, ...]
+        Noms des classes dans l'ordre.
+
+    Returns
+    -------
+    dict avec métriques par classe + agrégées.
+    """
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_proba = np.asarray(y_proba, dtype=np.float64)
+
+    result: dict[str, Any] = {}
+
+    # Validation
+    error = _validate_proba_array(y_proba)
+    result["proba_valid"] = error is None
+    if error is not None:
+        result["proba_error"] = error
+        return result
+
+    n_classes = y_proba.shape[1]
+    if len(class_names) != n_classes:
+        class_names = tuple(f"class_{i}" for i in range(n_classes))
+
+    # Prédictions (via argmax — la policy du Sprint 0 s'applique via decide_ternary_side_batch)
+    y_pred = np.argmax(y_proba, axis=1).astype(np.int64)
+
+    # AUC one-vs-rest
+    auc_results = multiclass_auc_one_vs_rest(y_true, y_proba)
+    result.update(auc_results)
+
+    # Brier multiclasse
+    result["brier_multiclass"] = multiclass_brier_score(y_true, y_proba)
+
+    # Log-loss
+    result["log_loss"] = multiclass_log_loss(y_true, y_proba)
+
+    # Balanced accuracy
+    result["balanced_accuracy"] = multiclass_balanced_accuracy(y_true, y_pred)
+
+    # Per-class metrics
+    for c in range(n_classes):
+        name = class_names[c] if c < len(class_names) else f"class_{c}"
+        mask_true = y_true == c
+        mask_pred = y_pred == c
+        tp = int((mask_true & mask_pred).sum())
+        fp = int(((~mask_true) & mask_pred).sum())
+        fn = int((mask_true & (~mask_pred)).sum())
+        tn = int(((~mask_true) & (~mask_pred)).sum())
+
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+
+        result[f"precision_{name}"] = float(prec)
+        result[f"recall_{name}"] = float(rec)
+        result[f"f1_{name}"] = float(f1)
+        result[f"support_{name}"] = int(mask_true.sum())
+
+    # Macro / weighted F1
+    f1_vals = [result[f"f1_{name}"] for name in class_names[:n_classes]]
+    supports = [result[f"support_{name}"] for name in class_names[:n_classes]]
+    result["f1_macro"] = float(np.mean(f1_vals)) if f1_vals else 0.0
+    total_support = sum(supports)
+    result["f1_weighted"] = (
+        float(sum(f1 * s for f1, s in zip(f1_vals, supports)) / total_support)
+        if total_support > 0 else 0.0
+    )
+
+    # Accuracy globale
+    result["accuracy"] = float((y_true == y_pred).mean())
+
+    # Distribution des classes prédites (pour détection de collapse)
+    for c in range(n_classes):
+        name = class_names[c] if c < len(class_names) else f"class_{c}"
+        result[f"pred_fraction_{name}"] = float(mask_pred.mean())
+
+    # Action rate (non-flat si flat est la classe 1)
+    if n_classes == 3:
+        result["action_rate"] = float((y_pred != 1).mean())
+
+    return result
+
+
+def check_model_collapse(
+    y_proba: np.ndarray,
+    *,
+    min_action_rate: float = 0.01,
+    min_class_fraction: float = 0.005,
+    max_single_class_fraction: float = 0.99,
+) -> tuple[bool, str | None]:
+    """Détecte si un modèle est collapsed (prédit quasi toujours la même classe).
+
+    Parameters
+    ----------
+    y_proba : np.ndarray [N, C]
+        Probabilités.
+    min_action_rate : float
+        Taux d'action minimum (non-flat) pour les modèles ternaires.
+    min_class_fraction : float
+        Fraction minimum de prédictions pour chaque classe.
+    max_single_class_fraction : float
+        Fraction maximum acceptable pour une seule classe.
+
+    Returns
+    -------
+    (is_collapsed, reason)
+    """
+    y_proba = np.asarray(y_proba, dtype=np.float64)
+    if y_proba.ndim != 2 or y_proba.shape[1] < 2:
+        return True, "invalid_proba_shape"
+    if not np.isfinite(y_proba).all():
+        return True, "non_finite_proba"
+
+    y_pred = np.argmax(y_proba, axis=1)
+    n = len(y_pred)
+    if n < 10:
+        return True, f"insufficient_samples_{n}"
+
+    n_classes = y_proba.shape[1]
+    class_counts = np.bincount(y_pred, minlength=n_classes)
+    class_fractions = class_counts / n
+
+    # Une classe domine trop
+    if class_fractions.max() >= max_single_class_fraction:
+        dominant = int(np.argmax(class_fractions))
+        return True, f"single_class_dominant_{dominant}_{class_fractions[dominant]:.3f}"
+
+    # Une classe quasi absente
+    for c in range(n_classes):
+        if class_fractions[c] < min_class_fraction:
+            return True, f"class_{c}_near_absent_{class_fractions[c]:.4f}"
+
+    # Pour ternaire : vérifier action_rate
+    if n_classes == 3:
+        action_rate = float((y_pred != 1).mean())
+        if action_rate < min_action_rate:
+            return True, f"action_rate_too_low_{action_rate:.4f}"
+
+    return False, None
 
 
 def compute_business_score(

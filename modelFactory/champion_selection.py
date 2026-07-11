@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from modelFactory.config import ChampionSelectionConfig
+from modelFactory.evaluation import check_model_collapse
 
 
 # Phase 4.2.e — quarantaine champion.
@@ -190,29 +191,50 @@ def is_under_quarantine(
 
 
 def selection_score_from_result(result: dict[str, Any], metric: str = "selection_score") -> float:
+    """Calcule le score de sélection SANS lire le holdout final (Sprint Maître 1).
+
+    RÈGLE STRICTE : les partitions autorisées pour la sélection sont
+    ``val`` et ``walk_forward_oos``. La partition ``test`` / ``final_holdout``
+    ne doit JAMAIS influencer le choix du champion.
+
+    Si la métrique demandée est absente des partitions autorisées,
+    retourne ``-inf`` (ne sélectionne jamais ce modèle).
+    """
     if not result or result.get("status") != "completed":
         return float("-inf")
+
+    # ── Partitions autorisées pour la sélection (Sprint Maître 1) ──
+    val = result.get("val") if isinstance(result.get("val"), dict) else {}
+    wf_oos = result.get("walk_forward_oos") if isinstance(result.get("walk_forward_oos"), dict) else {}
+    # Le champ top-level "selection_score" reste autorisé (backcompat)
+    top_level_selection = result.get("selection_score")
+
+    # Métriques interdites : toute clé venant de "test" ou "final_holdout"
+    # n'est plus utilisée comme fallback.
+
     if metric == "business_score":
         return float(
-            result.get("selection_score")
-            or result.get("test", {}).get("threshold_business_score")
-            or result.get("val", {}).get("threshold_business_score")
-            or result.get("test", {}).get("auc")
+            top_level_selection
+            or val.get("threshold_business_score")
+            or wf_oos.get("threshold_business_score")
             or 0.0
         )
     if metric == "auc":
         return float(
-            result.get("test", {}).get("auc")
-            or result.get("val", {}).get("auc")
-            or result.get("selection_score")
+            val.get("auc")
+            or wf_oos.get("auc")
+            or val.get("auc_macro")
+            or wf_oos.get("auc_macro")
+            or top_level_selection
             or 0.0
         )
+    # métrique par défaut : "selection_score"
     return float(
-        result.get("selection_score")
-        or result.get("test", {}).get("threshold_business_score")
-        or result.get("test", {}).get("auc")
-        or result.get("val", {}).get("threshold_business_score")
-        or result.get("val", {}).get("auc")
+        top_level_selection
+        or val.get("threshold_business_score")
+        or wf_oos.get("threshold_business_score")
+        or val.get("auc")
+        or wf_oos.get("auc")
         or 0.0
     )
 
@@ -222,8 +244,23 @@ def evaluate_selection_eligibility(
     result: dict[str, Any],
     artifact_route: dict[str, Any] | None,
 ) -> tuple[bool, str | None]:
+    """Évalue l'éligibilité d'un modèle avec les gates du Sprint Maître 1.
+
+    Gates ajoutés (Sprint Maître 1) :
+    - Probabilités invalides → inéligible.
+    - AUC hors [0, 1] → inéligible.
+    - Modèle collapsed → inéligible.
+    - Action rate nul en ternaire → inéligible.
+    - Artefacts issus d'anciennes métriques → inéligible.
+    """
     if not result or result.get("status") != "completed":
         return False, "status_not_completed"
+
+    # ── Sprint Maître 1 : gates de métriques ──────────────────────────
+    metric_gate_reason = _validate_metric_gates(result)
+    if metric_gate_reason is not None:
+        return False, metric_gate_reason
+
     route = artifact_route or {}
     backend = route.get("inference_backend")
     if model_name == "lstm_attention":
@@ -251,6 +288,70 @@ def evaluate_selection_eligibility(
             return False, "artifact_path_missing"
         return True, None
     return False, "inference_not_supported"
+
+
+def _validate_metric_gates(result: dict[str, Any]) -> str | None:
+    """Valide les gates de métriques sur un résultat (Sprint Maître 1).
+
+    Returns
+    -------
+    str | None
+        Raison d'inéligibilité, ou None si OK.
+    """
+    # 1. Probabilités invalides
+    if result.get("proba_valid") is False:
+        return f"invalid_probabilities:{result.get('proba_error', 'unknown')}"
+
+    # 2. AUC hors bornes (valider val ET walk_forward_oos)
+    for partition_name in ("val", "walk_forward_oos"):
+        partition = result.get(partition_name)
+        if not isinstance(partition, dict):
+            continue
+        for key, value in partition.items():
+            if key.startswith("auc_class_") and value is not None:
+                try:
+                    v = float(value)
+                    if v < 0.0 or v > 1.0:
+                        return f"auc_out_of_bounds_{partition_name}:{key}={v}"
+                except (TypeError, ValueError):
+                    return f"auc_non_numeric_{partition_name}:{key}={value}"
+        # Vérifier aussi auc_macro
+        auc_macro = partition.get("auc_macro")
+        if auc_macro is not None:
+            try:
+                v = float(auc_macro)
+                if v < 0.0 or v > 1.0:
+                    return f"auc_macro_out_of_bounds_{partition_name}:{v}"
+            except (TypeError, ValueError):
+                return f"auc_macro_non_numeric_{partition_name}:{auc_macro}"
+
+    # 3. Modèle collapsed
+    if result.get("collapsed") is True:
+        return f"model_collapsed:{result.get('collapse_reason', 'unknown')}"
+
+    # 4. Action rate nul en ternaire (vérifier val et wf_oos)
+    for partition_name in ("val", "walk_forward_oos"):
+        partition = result.get(partition_name)
+        if not isinstance(partition, dict):
+            continue
+        action_rate = partition.get("action_rate")
+        if action_rate is not None and float(action_rate) <= 0.0:
+            return f"zero_action_rate_{partition_name}"
+
+    # 5. Artefacts legacy (anciennes métriques)
+    if result.get("legacy_metrics") is True:
+        return "legacy_metrics_artifacts"
+
+    # 6. Observations insuffisantes
+    for partition_name in ("val", "walk_forward_oos"):
+        partition = result.get(partition_name)
+        if not isinstance(partition, dict):
+            continue
+        n = partition.get("n_observations", partition.get("support_total"))
+        if n is not None and int(n) < 50:
+            return f"insufficient_observations_{partition_name}:{n}"
+
+    return None
 
 
 def annotate_challengers(

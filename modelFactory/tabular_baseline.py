@@ -8,10 +8,15 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
-from modelFactory.calibration import PlattCalibrator
+from modelFactory.calibration import PlattCalibrator, TemperatureScaler
 from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.dataset import chrono_split
-from modelFactory.evaluation import compute_threshold_metrics, optimize_decision_threshold
+from modelFactory.evaluation import (
+    check_model_collapse,
+    compute_multiclass_metrics,
+    compute_threshold_metrics,
+    optimize_decision_threshold,
+)
 from modelFactory.features import build_feature_contract
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import get_feature_columns
@@ -83,6 +88,7 @@ def compute_tabular_metrics(
 	target_raw: np.ndarray | None = None,
 	is_ternary: bool = False,
 ) -> dict[str, Any]:
+	"""Métriques tabulaires complètes (Sprint Maître 1 : multiclasses ajouté)."""
 	labels = np.asarray(labels, dtype=np.int64)
 	proba = np.asarray(proba, dtype=np.float64)
 	threshold_metrics = compute_threshold_metrics(
@@ -101,17 +107,29 @@ def compute_tabular_metrics(
 		"brier_score": float(np.mean((proba - labels) ** 2)),
 		"ece": expected_calibration_error(labels, proba),
 		"action_rate": float(threshold_metrics["coverage_at_threshold"]),
+		"n_observations": len(labels),
 		**threshold_metrics,
 	}
 
-	# ── F1 ternaire pour challengers tabulaires (Sprint Maître 0 : policy partagée) ──
+	# ── F1 ternaire + métriques multiclasses (Sprint Maître 1) ──
 	if is_ternary and raw_proba_all is not None and target_raw is not None:
 		probs_all = np.asarray(raw_proba_all, dtype=np.float64)
 		targets = np.asarray(target_raw, dtype=np.int64)  # {-1, 0, 1}
+
 		if probs_all.ndim == 2 and probs_all.shape[1] >= 3 and len(targets) == probs_all.shape[0]:
 			# ── Sprint Maître 0 : décision via la policy partagée ─
 			preds_multi = decide_ternary_side_batch(probs_all[:, :3])  # {0=short, 1=flat, 2=long}
 			labels_shifted = targets + 1  # {-1,0,1} -> {0,1,2}
+
+			# ── Sprint Maître 1 : métriques multiclasses complètes ─
+			multiclass_metrics = compute_multiclass_metrics(
+				y_true=labels_shifted,
+				y_proba=probs_all[:, :3],
+				class_names=("short", "flat", "long"),
+			)
+			result.update(multiclass_metrics)
+
+			# Per-class F1 (legacy + redondance sécurisée)
 			for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
 				tp = int(((preds_multi == cls_idx) & (labels_shifted == cls_idx)).sum())
 				fp = int(((preds_multi == cls_idx) & (labels_shifted != cls_idx)).sum())
@@ -122,6 +140,11 @@ def compute_tabular_metrics(
 			f1_vals = [v for k, v in result.items() if k.startswith("f1_") and v is not None]
 			result["f1_macro"] = float(np.mean(f1_vals)) if f1_vals else 0.0
 
+			# ── Sprint Maître 1 : détection de collapse ─
+			collapsed, collapse_reason = check_model_collapse(probs_all[:, :3])
+			result["collapsed"] = collapsed
+			result["collapse_reason"] = collapse_reason
+
 	return result
 
 
@@ -129,7 +152,20 @@ def fit_tabular_calibrator(
 	val_raw_proba: np.ndarray,
 	labels: np.ndarray,
 	cfg: TrainingConfig,
-) -> PlattCalibrator | None:
+	*,
+	target_mode: str = "binary",
+) -> PlattCalibrator | TemperatureScaler | None:
+	"""Fit un calibrateur selon le mode cible.
+
+	Sprint Maître 1 :
+	- ``binary`` → :class:`PlattCalibrator` (binaire).
+	- ``ternary`` → :class:`TemperatureScaler` (multiclasse).
+	"""
+	if cfg.calibration.method == "none":
+		return None
+	if target_mode == "ternary":
+		return _fit_ternary_calibrator(val_raw_proba, labels, cfg)
+	# Binaire : Platt
 	if cfg.calibration.method != "platt":
 		return None
 	labels = np.asarray(labels, dtype=np.int64)
@@ -142,12 +178,53 @@ def fit_tabular_calibrator(
 	return PlattCalibrator(max_iter=cfg.calibration.max_iter).fit(margins, labels)
 
 
-def apply_tabular_calibration(raw_proba: np.ndarray, calibrator: PlattCalibrator | None) -> np.ndarray:
+def _fit_ternary_calibrator(
+	raw_proba_all: np.ndarray,
+	labels: np.ndarray,
+	cfg: TrainingConfig,
+) -> TemperatureScaler | None:
+	"""Fit un TemperatureScaler pour la calibration ternaire (Sprint Maître 1).
+
+	Le TemperatureScaler opère sur les logits. On utilise les probabilités
+	brutes comme pseudo-logits via inverse-softmax (log).
+	"""
+	labels = np.asarray(labels, dtype=np.int64)
+	proba = np.asarray(raw_proba_all, dtype=np.float64)
+	if proba.ndim != 2 or proba.shape[1] < 3:
+		return None
+	if len(labels) < cfg.calibration.min_samples:
+		return None
+	if len(np.unique(labels)) < 2:
+		return None
+	# Convertir probas en pseudo-logits pour TemperatureScaler
+	eps = 1e-8
+	clipped = np.clip(proba, eps, 1 - eps)
+	# Normaliser
+	clipped = clipped / clipped.sum(axis=1, keepdims=True)
+	logits = np.log(clipped)
+	return TemperatureScaler(max_iter=cfg.calibration.max_iter).fit(logits, labels)
+
+
+def apply_tabular_calibration(
+	raw_proba: np.ndarray,
+	calibrator: PlattCalibrator | TemperatureScaler | None,
+	*,
+	target_mode: str = "binary",
+) -> np.ndarray:
+	"""Applique le calibrateur selon le mode cible (Sprint Maître 1)."""
 	if calibrator is None or not calibrator.fitted:
 		return np.asarray(raw_proba, dtype=np.float64)
-	eps = 1e-6
-	margins = np.log(np.clip(raw_proba, eps, 1 - eps) / np.clip(1 - raw_proba, eps, 1 - eps))
-	return calibrator.predict_proba(margins)
+	if target_mode == "ternary" and isinstance(calibrator, TemperatureScaler):
+		return calibrator.predict_proba(raw_proba)
+	if isinstance(calibrator, PlattCalibrator):
+		eps = 1e-6
+		raw = np.asarray(raw_proba, dtype=np.float64)
+		if raw.ndim == 2 and raw.shape[1] >= 2:
+			raw = raw[:, 1] if raw.shape[1] == 2 else raw[:, 2]
+		raw = raw.reshape(-1)
+		margins = np.log(np.clip(raw, eps, 1 - eps) / np.clip(1 - raw, eps, 1 - eps))
+		return calibrator.predict_proba(margins)
+	return np.asarray(raw_proba, dtype=np.float64)
 
 
 def run_tabular_baseline(
@@ -208,13 +285,27 @@ def run_tabular_baseline(
 		long_col = num_proba_cols - 1  # fallback: last column
 
 	val_raw = raw_proba_all[:, long_col]
-	# Pour la calibration, on binarise la target : 1 si long (+1), 0 sinon
-	# Pour la calibration et les metriques, on binarise : 1 si long, 0 sinon.
-	# En ternaire (apres shift), long = 2. En binaire, long = 1.
-	long_class = 2 if is_ternary else 1
+	target_mode = cfg.data.target_mode
+
+	# ── Sprint Maître 1 : calibration multiclasse ─────────────────────
+	# Toujours calculer cal_labels (binarisé long=1) pour le threshold optimizer
 	cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
-	calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg)
-	val_proba = apply_tabular_calibration(val_raw, calibrator)
+
+	if is_ternary and num_proba_cols >= 3:
+		# Ternaire : TemperatureScaler sur les 3 probas
+		val_labels_ternary = (val_df["target"].astype(int) + 1).to_numpy()  # shift -1,0,1 -> 0,1,2
+		calibrator = fit_tabular_calibrator(
+			raw_proba_all[:, :3], val_labels_ternary, cfg, target_mode="ternary",
+		)
+		# Appliquer calibration ternaire
+		calibrated_all = apply_tabular_calibration(
+			raw_proba_all[:, :3], calibrator, target_mode="ternary",
+		)
+		val_proba = calibrated_all[:, 2]  # p_long calibrée
+	else:
+		# Binaire : Platt
+		calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg, target_mode="binary")
+		val_proba = apply_tabular_calibration(val_raw, calibrator, target_mode="binary")
 
 	if cfg.threshold_optimization.enabled:
 		threshold_summary = optimize_decision_threshold(
@@ -242,10 +333,20 @@ def run_tabular_baseline(
 	num_test_cols = test_raw_all.shape[1]
 	test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
 	test_raw = test_raw_all[:, test_long_col]
-	test_proba = apply_tabular_calibration(test_raw, calibrator)
-	# Pour les metriques, on binarise aussi la target test
+
+	# ── Sprint Maître 1 : calibration test ────────────────────────────
+	if is_ternary and num_test_cols >= 3:
+		calibrated_test_all = apply_tabular_calibration(
+			test_raw_all[:, :3], calibrator, target_mode="ternary",
+		)
+		test_proba = calibrated_test_all[:, 2]
+	else:
+		test_proba = apply_tabular_calibration(test_raw, calibrator, target_mode="binary")
+
+	# Pour les métriques, on binarise aussi la target test
 	test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
-	val_labels = cal_labels
+	val_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
+
 	val_metrics = compute_tabular_metrics(
 		val_labels,
 		val_proba,
@@ -264,10 +365,11 @@ def run_tabular_baseline(
 		target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
 		is_ternary=is_ternary,
 	)
+	# ── Sprint Maître 1 : selection_score depuis val uniquement ──────
 	selection_score = float(
-		test_metrics.get("threshold_business_score")
-		or test_metrics.get("auc")
-		or val_metrics.get("threshold_business_score")
+		val_metrics.get("threshold_business_score")
+		or val_metrics.get("auc")
+		or val_metrics.get("auc_macro")
 		or 0.0
 	)
 	feature_contract = build_feature_contract(

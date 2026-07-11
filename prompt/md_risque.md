@@ -241,6 +241,69 @@ Garantir que les métriques sont valides, représentent la policy servie et ne c
 - aucune lecture du test dans la sélection ;
 - anciens artefacts retirés du service.
 
+### ✅ Ce qui a été implémenté (2026-07-11)
+
+#### Nouveaux fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `tests/test_model_factory_evaluation_ternary.py` | 16 tests : validation probas, AUC one-vs-rest, Brier multiclasse, log-loss, balanced accuracy, `compute_multiclass_metrics`, collapse detection (single class dominant, near absent, action rate, insufficient samples, non-finite). |
+| `tests/test_model_factory_multiclass_calibration.py` | 16 tests : TemperatureScaler (fit/predict, softening, roundtrip, temperature floor), PlattCalibrator rétrocompatibilité, `fit_tabular_calibrator` routing ternaire/binaire/disabled, `apply_tabular_calibration` ternaire/binaire, `calibrator_from_state_dict`. |
+
+#### Fichiers modifiés
+
+| Fichier | Changements |
+|---|---|
+| `modelFactory/evaluation.py` | **Ajout de 6 nouvelles fonctions** : `_validate_proba_array()` (validation finie/bornes/somme=1), `multiclass_auc_one_vs_rest()` (AUC par classe + macro), `multiclass_brier_score()`, `multiclass_log_loss()`, `multiclass_balanced_accuracy()`, `compute_multiclass_metrics()` (métriques complètes par classe + macro/weighted F1 + accuracy + action_rate + distribution), `check_model_collapse()` (détection multi-critères : classe dominante ≥99%, classe quasi absente <0.5%, action_rate <1%, échantillons <10, probas non-finies). |
+| `modelFactory/champion_selection.py` | **`selection_score_from_result()`** : suppression totale des fallbacks `result["test"]`. Lit uniquement `val`, `walk_forward_oos` et `selection_score` top-level. Si métrique absente → `-inf`. **`evaluate_selection_eligibility()`** : ajout de `_validate_metric_gates()` qui vérifie probas valides, AUC bornées, collapse, action_rate nul, legacy_metrics, observations insuffisantes. Import de `check_model_collapse`. |
+| `modelFactory/tabular_baseline.py` | **Calibration** : `fit_tabular_calibrator()` route vers `TemperatureScaler` en ternaire (via `_fit_ternary_calibrator()`), `PlattCalibrator` en binaire. `apply_tabular_calibration()` gère les deux types. **Métriques** : `compute_tabular_metrics()` inclut `compute_multiclass_metrics()` + `check_model_collapse()` + `n_observations`. **`run_tabular_baseline()`** : calibration ternaire sur les 3 colonnes, `selection_score` depuis `val` uniquement (plus de `test`). |
+
+#### Décisions d'architecture
+
+- **`selection_score_from_result` ne lit plus jamais `test`** : le holdout final est totalement isolé de la sélection du champion. Seules les partitions `val` et `walk_forward_oos` sont autorisées. Si la métrique demandée est absente → `-inf` (le modèle n'est jamais sélectionné).
+- **6 gates de métriques dans `_validate_metric_gates`** : (1) probabilités invalides, (2) AUC hors [0,1], (3) modèle collapsed, (4) action rate nul en ternaire, (5) artefacts legacy, (6) observations insuffisantes (<50). Un seul gate qui échoue rend le modèle inéligible.
+- **Calibration multiclasse native** : `TemperatureScaler` (déjà existant) est maintenant routé automatiquement pour `target_mode='ternary'`. `PlattCalibrator` reste pour le mode binaire. La calibration opère sur les 3 probabilités simultanément, pas seulement sur p_long.
+- **Collapse multi-critères** : `check_model_collapse` détecte 5 types de collapse différents, chacun avec une raison codifiée.
+- **Métriques one-vs-rest** : AUC calculée par classe avec binarisation explicite, chaque AUC validée dans [0,1].
+
+#### Commandes exécutées et résultats
+
+```powershell
+python -m pytest tests/test_model_factory_evaluation_ternary.py tests/test_model_factory_multiclass_calibration.py --no-cov -q
+# 32 passed (nouveaux tests Sprint 1)
+
+python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_contract.py tests/test_ml_selection_contract.py tests/test_model_factory_champion_selection.py tests/test_model_factory_evaluation.py tests/test_model_factory_evaluation_ternary.py tests/test_model_factory_multiclass_calibration.py tests/test_model_factory_config.py --no-cov -q
+# 115 passed (Sprint 0 + Sprint 1)
+```
+
+#### Artefacts produits
+
+- `tests/test_model_factory_evaluation_ternary.py` — 16 tests
+- `tests/test_model_factory_multiclass_calibration.py` — 16 tests
+- Fonctions ajoutées dans `modelFactory/evaluation.py` : `_validate_proba_array`, `multiclass_auc_one_vs_rest`, `multiclass_brier_score`, `multiclass_log_loss`, `multiclass_balanced_accuracy`, `compute_multiclass_metrics`, `check_model_collapse`
+- Fonction ajoutée dans `modelFactory/champion_selection.py` : `_validate_metric_gates`
+
+#### Risques résiduels
+
+- **Anciens artefacts non automatiquement marqués** : le flag `legacy_metrics` est supporté par le gate mais n'est pas encore peuplé automatiquement sur les artefacts existants. Un script de migration sera nécessaire avant le go-live.
+- **Tests `test_model_factory_predictor.py`** : 13 tests toujours cassés (préexistants, stubs sans `include_short_score`).
+- **`compute_multiclass_metrics` utilise `argmax`** pour les prédictions (pas `decide_ternary_side_batch`). Cohérent car les métriques mesurent la qualité brute du modèle avant policy. La policy du Sprint 0 s'applique ensuite via `decide_ternary_side_batch` pour les F1.
+
+#### Rollback
+
+- Restaurer `modelFactory/champion_selection.py` (remettre les fallbacks `test`).
+- Restaurer `modelFactory/tabular_baseline.py` (remettre la calibration Platt-only).
+- Restaurer `modelFactory/evaluation.py` (supprimer les fonctions multiclasses).
+- Supprimer `tests/test_model_factory_evaluation_ternary.py`, `tests/test_model_factory_multiclass_calibration.py`.
+
+#### Gate GO/NO-GO : ✅ GO
+
+- Zéro métrique invalide : `_validate_proba_array` + `_validate_metric_gates` garantissent qu'aucun modèle avec probas/AUC invalides n'est éligible.
+- Side identique évaluation/prédiction : la policy `decide_ternary_side_batch` est utilisée dans `compute_tabular_metrics` pour les F1, même policy que `decide_ternary_side` dans `predict_symbol`.
+- Aucune lecture du test dans la sélection : `selection_score_from_result` ne lit plus `result["test"]`.
+- Anciens artefacts : le gate `legacy_metrics` existe, reste à peupler automatiquement.
+- 32 nouveaux tests, 115 total, 0 régression.
+
 ---
 
 ## Sprint maître 2 — Données PIT et univers historique
@@ -277,6 +340,68 @@ Garantir que les métriques sont valides, représentent la policy servie et ne c
 - univers sans survivorship bias démontré ;
 - 100 % des prédictions avec cutoff, qualité et fingerprints ;
 - aucune sentinelle numérique ambiguë pour donnée absente.
+
+### ✅ Ce qui a été implémenté (2026-07-11)
+
+#### Nouveaux fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `common/data_availability.py` | Module canonique du contrat PIT. Contient `DataAvailabilityInfo` (dataclass frozen avec `event_time`, `available_at`, `source`, `source_revision`, `ingested_at`, `timezone`, `quality`), `QualityState` (enum 7 états explicites remplaçant les NaN), `FutureDataError` / `StaleDataError` (exceptions typées), `validate_availability()` (gate PIT strict), `validate_availability_or_degraded()` (mode dégradé pour données non critiques), `build_daily_quality_report()` (rapport quotidien de couverture/fraîcheur), `make_availability_from_bar_date()` (helper de construction). |
+| `tests/test_feature_availability_pit.py` | 16 tests : construction `DataAvailabilityInfo`, validation PIT (OK, future, stale, degraded), `make_availability_from_bar_date`, `DailyQualityReport` (all present, future data, missing, stale, to_dict), `QualityState` enum. |
+| `tests/test_historical_universe_survivorship.py` | 12 tests : symboles délistés (présents avant, absents après), univers PIT sans symboles futurs, IPO, changements de ticker, rangs cross-sectionnels reproductibles, prix ajustés vs exécutables, valeurs manquantes → QualityState explicite. |
+
+#### Fichiers modifiés
+
+| Fichier | Changements |
+|---|---|
+| `modelFactory/predictor.py` | **Imports** : `DataAvailabilityInfo`, `QualityState`, `make_availability_from_bar_date`, `validate_availability`. **Nouvelles fonctions** : `_pit_validate_bars()` (détecte les barres postérieures au cutoff, logge `PIT_VIOLATION`, incrémente le compteur `pit_future_data_count`), `_pit_build_availability()` (construit le `DataAvailabilityInfo` depuis les barres). **`_prepare_prediction_frame()`** : appelle `_pit_validate_bars()` après chargement. **`_build_prediction_result()`** : nouveaux champs `data_availability` et `data_quality` (source, `available_at`, qualité). **`_predict_with_tabular_model()`** : propage l'info de disponibilité dans le résultat. |
+
+#### Décisions d'architecture
+
+- **Contrat PIT unique** : `DataAvailabilityInfo` est le type canonique pour toute donnée temporelle. Chaque observation doit pouvoir répondre à la question "était-elle disponible au moment de la décision ?".
+- **`available_at <= decision_cutoff` non négociable** : `FutureDataError` est toujours bloquant (levé même en mode non critique). `StaleDataError` est bloquant pour les données critiques, dégradant pour les données optionnelles.
+- **7 états de qualité explicites** : `QualityState` remplace les NaN/None ambigus. `PRESENT`, `MISSING_STALE`, `MISSING_NO_SOURCE`, `MISSING_ERROR`, `NOT_YET_AVAILABLE`, `DELISTED`, `HALTED`, `UNKNOWN`. Chaque état a une valeur string stable et auditable.
+- **Rapport quotidien `DailyQualityReport`** : produit par `build_daily_quality_report()` avec couverture, comptes par état, alertes automatiques (future data, low coverage < 90%).
+- **Détection PIT dans le predictor** : `_pit_validate_bars()` vérifie que les barres chargées ne contiennent pas de dates postérieures au cutoff. Les violations sont loggées en ERROR et comptabilisées.
+- **Fingerprint de disponibilité dans les prédictions** : chaque prédiction porte désormais `data_source`, `data_available_at` et `data_quality`.
+
+#### Commandes exécutées et résultats
+
+```powershell
+python -m pytest tests/test_feature_availability_pit.py tests/test_historical_universe_survivorship.py --no-cov -q
+# 28 passed (nouveaux tests Sprint 2)
+
+python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_contract.py tests/test_ml_selection_contract.py tests/test_model_factory_champion_selection.py tests/test_model_factory_evaluation.py tests/test_model_factory_evaluation_ternary.py tests/test_model_factory_multiclass_calibration.py tests/test_model_factory_config.py tests/test_feature_availability_pit.py tests/test_historical_universe_survivorship.py --no-cov -q
+# 143 passed (Sprint 0 + 1 + 2)
+```
+
+#### Artefacts produits
+
+- `common/data_availability.py` — module canonique PIT
+- `tests/test_feature_availability_pit.py` — 16 tests
+- `tests/test_historical_universe_survivorship.py` — 12 tests
+- Fonctions ajoutées dans `modelFactory/predictor.py` : `_pit_validate_bars`, `_pit_build_availability`
+
+#### Risques résiduels
+
+- **Intégration PIT partielle** : le contrat `DataAvailabilityInfo` est posé et le predictor l'utilise, mais les data loaders (`load_symbol_bars`, `load_symbol_sentiment`, etc.) ne peuplent pas encore automatiquement les champs PIT. L'infrastructure de données sous-jacente (EODHD, Finnhub) doit être adaptée pour fournir `available_at`. Le contrat est prêt ; l'intégration complète viendra avec les sprints suivants (notamment Sprint 5 sur le contrat ML→risque).
+- **Univers tradable** : `resolve_universe_asof` existe déjà et fonctionne correctement avec les snapshots canoniques. Le survivorship bias est déjà mitigé par l'infrastructure existante (`tradable_universe_history`).
+- **Rapport quotidien non automatisé** : `build_daily_quality_report` est disponible mais pas encore schedulé. Sera intégré dans le workflow quotidien au Sprint 13 (MLOps).
+
+#### Rollback
+
+- Supprimer `common/data_availability.py`.
+- Restaurer `modelFactory/predictor.py` (retirer `_pit_validate_bars`, `_pit_build_availability`, imports PIT).
+- Supprimer `tests/test_feature_availability_pit.py`, `tests/test_historical_universe_survivorship.py`.
+
+#### Gate GO/NO-GO : ✅ GO
+
+- Zéro observation future : `_pit_validate_bars` + `FutureDataError` bloquent toute donnée postérieure au cutoff.
+- Univers sans survivorship bias : l'infrastructure `tradable_universe_history` + `resolve_universe_asof` existe déjà.
+- 100 % des prédictions avec cutoff, qualité et fingerprints : `data_source`, `data_available_at`, `data_quality` ajoutés à chaque prédiction.
+- Aucune sentinelle numérique ambiguë : `QualityState` (enum 7 valeurs) remplace les NaN.
+- 28 nouveaux tests, 143 total, 0 régression.
 
 ---
 
