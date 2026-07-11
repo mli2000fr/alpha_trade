@@ -106,7 +106,7 @@ Un rang ML 1 peut être rejeté ; le rang ML 2 peut devenir `decision_rank=1` sa
 Le système observe les symboles tradables à la date, construit des informations PIT, demande au ML s'il faut envisager long, flat ou short, classe séparément les directions, laisse des gardes-fous rejeter les choix, dimensionne les survivants, puis exécute et protège uniquement les quantités remplies.
 
 ```mermaid
-flowchart LR
+flowchart TD
     D[Données connues] --> U[Univers PIT full]
     U --> F[Features et contexte]
     F --> M[ML ternaire]

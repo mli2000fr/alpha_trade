@@ -1,6 +1,6 @@
 # Alpha Trade — Documentation Fonctionnelle
 
-> *Version : 0.5.0 — Dernière mise à jour : 2026-06-22 (Système d'Alerting & Monitoring S12)*
+> *Version : 0.5.0 — Dernière mise à jour : 2026-07-11 (cutover ML-first long/short)*
 
 <!-- primary_provider: eodhd -->
 
@@ -46,18 +46,20 @@
 - **S11** *(juin 2026)* : **Liquidité Dynamique P1/P3/P4** — contrainte position/ADV, warning agrégé portefeuille, seuil ADV adaptatif. ✅ Livré.
 - **S12** *(juin 2026)* : **Système d'Alerting & Monitoring** — 6 canaux (Slack, Email, Log, Telegram, Discord, SMS), 14 événements critiques branchés, cash ledger guard, 9 métriques Prometheus, anti-doublon global. ✅ Livré.
 
-### Plans en cours (v2)
+### Cutover ML-first long/short
 
 | Plan | Statut | Description |
 |---|---|---|
-| **Plan v2 — Short Selling** (Sprint 0-5) | 🔄 En cours | `core/direction.py`, `selector/short_score.py`, `risk_management/concentration.py`, `backtesting/simulator.py` |
-| **Plan ML v2 — Ternaire long/flat/short** (Sprint 1-7) | 🔄 En cours | `modelFactory/features.py` (`target_mode="ternary"`), `model.py` (CrossEntropyLoss 3 classes), `db_registry.py` (colonnes `predicted_side`, `proba_long/flat/short`) |
+| **ML-first ternaire + long/short** (Sprints 1-7) | ✅ Livré | Univers PIT `full`, train/predict sur `tradable-universe`, `predicted_side`, probabilités ternaires, rankings long/short séparés et rangs avant/après risk |
 | **Priorité 3 — Modèle de risque factoriel CWMS** | ✅ Livré (juin 2026) | `risk_management/factor_model.py` — Expositions factorielles, covariance EWMA, décomposition risque, contraintes, filtre corrélation factoriel. Intégré live + backtest. 33 tests. |
 | **Impact Marché P1-P4** | ✅ Livré (juin 2026) | P1 : spread réel ticker via `stock_quote_snapshots`. P2 : slippage volume-aware activé par défaut par tranche de capital. P3 : commission tiercée (`TieredCommissionConfig`). P4 : modèle d'exécution intraday (`arrival_price`/`twap`/`vwap`). |
 | **Liquidité Dynamique P1/P3/P4** | ✅ Livré (juin 2026) | P1 : contrainte `max_position_pct_of_adv` dans le `ConstraintChecker`. P3 : warning ADV agrégé portefeuille. P4 : `adaptive_min_adv()` + `with_adaptive_adv()`. Voir `prompt/todo/LiquiditeDynamique.md`. |
 | **Système d'Alerting & Monitoring (S12)** | ✅ Livré (juin 2026) | 6 canaux de notification, 14 événements couverts, cash ledger guard, 9 métriques Prometheus, anti-doublon SHA256. Voir `doc/service.md` §10-12. |
 
-> ⚠️ Les plans v2 ne sont pas encore validés en production. Le comportement par défaut reste **long-only** avec cible binaire. Les fonctionnalités short/ternaire sont opt-in.
+> Le contrat nominal est désormais ML-first. Le scanner, le selector, le sentiment
+> et le macro produisent du contexte, des diagnostics ou des vetos post-ML ; ils
+> ne choisissent ni le côté ni le rang principal. Le guide métier et opérateur
+> détaillé se trouve dans [`synthese_long_short.md`](synthese_long_short.md).
 
 ---
 
@@ -79,21 +81,26 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 
 1. **Ingestion** des barres OHLCV journalières depuis **EODHD** (provider primaire par défaut, `market_data.bars_provider=eodhd`) ou Alpaca IEX (mode rétrocompatibilité, `bars_provider=alpaca`). Voir `config.yaml › market_data.bars_provider`.
 2. **Nettoyage** des données (sanitizer, détection d'anomalies)
-3. **Screening** multi-facteurs pour identifier les meilleurs candidats
+3. **Screener large** pour calculer les contrôles objectifs et préparer le scope
 4. **Sync Latest Quotes** — snapshot des dernières quotes Alpaca pour alimenter le filtre de spread
 5. **Sync Earnings Calendar** — synchronisation du calendrier earnings Finnhub pour alimenter le blackout résultats
-6. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
-7. **Analyse de sentiment** des news via FinBERT — import news brut sur l'univers élargi `stock_scores_all`, scoring article/ticker sur les candidats, features ticker ciblées candidats et features secteur sur l'univers élargi importé
-8. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
-9. **ML Train** — entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux `LightGBM` / `CatBoost`, modèle global optionnel et sélection éventuelle du champion servi (périodique)
-10. **ML Predict** — inférence quotidienne sur le **champion sélectionné** par symbole (`lstm_attention`, `lightgbm`, `catboost` ou `global_model` selon les artefacts disponibles)
-11. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
+6. **Publication de l'univers tradable** — promotion atomique du run exact en univers PIT immuable de qualité `full`
+7. **Alpha Scanner** — calcul de features Minervini/VCP et diagnostics, sans présélection du scope ML
+8. **Analyse de sentiment** des news via FinBERT sur le scope publié
+9. **Signal Aggregator** — features/contexte quant, sentiment et macro
+10. **ML Predict** — inférence quotidienne du champion publié ; sortie `predicted_side` et `proba_long|flat|short`
+11. **Gestion du risque** : rankings long/short séparés, vetos post-ML, sizing ATR/Kelly et contraintes de portefeuille
 12. **Exécution** automatisée des ordres sur Alpaca via une chaîne canonique `targets snapshot → order requests → broker orders → broker fills → positions/lots → réconciliation`, avec protections broker-side initiales
 12.bis **Watcher post-exécution** — supervision secondaire des protections broker-side après `Execution`, utile pour promouvoir certains stops initiaux vers un trailing stop dynamique si ce mode est activé ; ce watcher n'est pas une étape métier supplémentaire du pipeline 1→14, mais un runtime post-exécution lancé juste après l'étape 12
 13. **Corporate actions sync** — récupère dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour)
 14. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
 
 L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
+
+`ML Train` est un workflow offline périodique, séparé de la chaîne quotidienne.
+Il entraîne et évalue les modèles sur la source `tradable-universe`, puis publie
+un champion que l'étape 10 consomme. Un échec ou une absence de prédiction ne
+déclenche jamais de fallback vers les scores du selector.
 
 > **Doctrine opérateur execution** : `run_execution.py` est le launcher
 > canonique du flux `run` (`simulate | paper | live | check`).
@@ -139,7 +146,7 @@ Cette API composable permet d'évaluer une stratégie avec **2 000 $** ou un aut
 
 Cette logique n'est plus limitée au backtest : le module `execution_engine` applique aussi ces contraintes au moment de la soumission des ordres et de l'armement des sorties.
 
-Depuis l'ajout du **levier optionnel long-only**, le même moteur d'exécution sait
+Depuis l'ajout du **levier optionnel**, le même moteur d'exécution sait
 aussi augmenter le budget notionnel **uniquement** si les préconditions métier
 sont réunies : compte `margin`, `equity >= 2 000 $`, régime d'entrée normal et
 pouvoir d'achat broker suffisant. Le levier effectif est plafonné à **2.0x max**
@@ -202,7 +209,7 @@ Ils sont désormais centralisés dans un **profil partagé** (`core/filter_profi
 - le backfill point-in-time de `stock_scores_history`,
 - les reruns backtest stricts.
 
-Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : le lancement standard de l'étape 6 applique déjà ce profil strict implicite, après exécution automatique des synchronisations `Sync Latest Quotes` et `Sync Earnings Calendar` dans le workflow complet.
+Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : le lancement standard applique ce profil strict implicite après publication de l'univers `full`. Ses sorties enrichissent le contexte mais ne réduisent pas le scope d'inférence ML.
 
 #### Screener de liquidité
 - Pipeline en 3 passes : liquidité (volume × close sur 30j), force relative vs SPY (6 mois), position dans le range 10 ans
@@ -210,12 +217,12 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 
 #### Analyse de sentiment (FinBERT)
 - Ingestion des news EODHD par défaut (providers `alpaca` et `finnhub` disponibles via `--news-provider`), scoring via le modèle pré-entraîné `ProsusAI/finbert`
-- Dans l'IHM, le step `7. Sentiment Pipeline` applique désormais un **scope mixte canonique** : import brut sur `stock_scores_all`, scoring standard / `relevance_score` / contextual sur les **candidats** (ou override CSV), `ticker_daily_sentiment_features` sur les **candidats** et `sector_daily_sentiment_features` sur l'**univers élargi importé**
+- Dans l'IHM, le pipeline sentiment consomme le scope de l'univers tradable publié : import brut large, scoring standard/contextuel et agrégats ticker/secteur PIT
 - Mapping article → ticker en 3 modes : `provider_default` (hérité), `strict` (ticker principal seul) et `scored` (score de pertinence `relevance_score` par couple `(article, symbole)`)
 - La migration Alembic `0027_news_ticker_map_relevance` ajoute `news_ticker_map.relevance_score` et `relevance_components` pour filtrer/pondérer les articles trop bruités sans casser l'historique (`NULL` reste accepté)
 - Le Niveau 4 optionnel produit un score FinBERT contextualisé par couple `(article, symbole)` dans `news_ticker_sentiment` ; la migration `0028_news_ticker_sentiment` l'ajoute sans modifier `news_sentiment`
 - En consommation downstream, le pipeline reste rétro-compatible : poids de pertinence par défaut à `1.0` et fallback `COALESCE(news_ticker_sentiment.*, news_sentiment.*)` tant que le re-scoring contextuel n'est pas activé
-- Fusion : `75% quant + 15% sentiment ticker + 10% macro sectoriel` (poids configurables)
+- L'agrégat quant/sentiment/macro est une feature ou un veto post-ML, jamais l'autorité du ranking principal
 - Fenêtre glissante de 5 jours, pondérée par le nombre d'articles
 
 #### Model Factory — gouvernance multi-modèles
@@ -225,17 +232,20 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 - Calibration possible des probabilités (`none` ou `platt`)
 - Optimisation possible du seuil de décision et de la target swing
 - Sélection automatique du **champion réellement inférable** parmi les modèles éligibles
-- Inférence quotidienne sur le backend sélectionné, avec sortie `predicted_proba` / `predicted_class`
+- Entraînement offline et inférence quotidienne sur la source canonique `tradable-universe`
+- Sortie ternaire `predicted_side`, `proba_long`, `proba_flat`, `proba_short`
 - Traçabilité de gouvernance persistée dans `model_predictions` : `selected_model`, `decision_threshold`, `signal_label`, `calibration_method`
 - Garde-fou de non-régression côté persistance : une prédiction sans ces champs de gouvernance est rejetée explicitement
 
 ### 2.4 Gestion du portefeuille
 
-- **Construction du portefeuille cible** par le module `risk_management` à partir des candidats scorés
+- **Construction du portefeuille cible** par le module `risk_management` à partir des prédictions ternaires complètes
 - **Sizing ATR** : budget de risque par trade (1% du capital) / (ATR(20) × multiplicateur stop)
 - **Sizing Kelly** (optionnel) : fraction Kelly pondérée par probabilité prédite et win rate historique
-- **Score de conviction** : combinaison score quantitatif (40%) + probabilité prédiction ML (60%)
-- Tri des candidats par conviction décroissante
+- **Conviction directionnelle** : `proba_long` pour un long, `proba_short` pour un short
+- Classement indépendant des longs et des shorts par probabilité directionnelle décroissante
+- `selection_rank` conserve l'ordre ML avant contraintes ; `decision_rank` ordonne les positions acceptées après vetos et risk
+- `flat`, une prédiction absente/incomplète ou un côté non ternaire ne peut pas créer de position
 - **Contrainte de liquidité** (nouveau) : chaque position est plafonnée à `max_position_pct_of_adv` × ADV 20j du ticker. Exemple : `0.01` = max 1% du volume quotidien. Activé par configuration, rétrocompatible (désactivé par défaut).
 
 ### 2.5 Gestion du risque
@@ -563,10 +573,10 @@ Le compromis fonctionnel est donc :
      │ 3.  stock_screener           │ → stock_scores                               │
      │ 4.  sync_latest_quotes       │ → stock_quote_snapshots                      │
      │ 5.  sync_earnings_calendar   │ → stock_earnings_calendar                    │
-     │ 6.  alpha_scanner            │ → stock_scores (update)                      │
-     │ 7.  sentiment_pipeline       │ → ticker/sector feats                        │
-     │ 8.  signal_aggregator        │ → final_score_sentiment                      │
-     │ 9.  ml_train (périodique)    │ → artefacts Model Factory + champion servi   │
+    │ 6.  publish universe full    │ → tradable_universe_runs/members             │
+    │ 7.  alpha_scanner            │ → features / diagnostics                     │
+    │ 8.  sentiment_pipeline       │ → ticker/sector features                     │
+    │ 9.  signal_aggregator        │ → contexte quant/sentiment/macro             │
      │ 10. ml_predict (quotidien)   │ → model_predictions                          │
      │ 11. run_risk                 │ → portfolio_targets                          │
      │ 12. run_execution            │ → targets snapshot / requests / ordres / fills / positions / réconciliation │
@@ -586,10 +596,10 @@ En parallèle de ce pipeline live, le projet dispose d'une **boucle de recherche
 
 ### 3.2 Cycle d'un trade
 
-1. **Sélection** : le symbole est identifié comme candidat (`is_candidate=1` dans `stock_scores`)
-2. **Risk check** : sizing ATR/Kelly, vérification contraintes (poids, secteur, corrélation, circuit breaker)
+1. **Prédiction** : sur l'univers PIT `full`, le champion produit un côté `long`, `flat` ou `short` et trois probabilités
+2. **Ranking et risk check** : classement directionnel, vetos post-ML, sizing ATR/Kelly et contraintes (poids, secteur, corrélation, circuit breaker)
 3. **Portfolio target** : si accepté, le symbole est ajouté à `portfolio_targets` avec nombre de parts et prix d'entrée
-4. **Soumission** : l'executor lit les targets et soumet un ordre market/limit d'achat
+4. **Soumission** : l'executor lit les targets et soumet l'ordre d'entrée directionnel approprié
 5. **Fill** : polling du broker jusqu'au fill ou timeout (120s défaut)
 6. **Protections broker-side initiales** : après fill, soumission d'un stop initial et d'un take-profit via des requests distinctes, avec traçabilité canonique en base
 7. **Watcher post-exécution** : supervision secondaire des protections en attente et promotion éventuelle du stop initial vers un trailing stop dynamique quand les conditions sont remplies
@@ -599,13 +609,13 @@ En parallèle de ce pipeline live, le projet dispose d'une **boucle de recherche
 
 ### 3.3 Détection des signaux
 
-Les signaux sont le résultat de la fusion multi-sources :
+La décision combine deux niveaux dont les responsabilités ne se mélangent pas :
 
-- **Quantitatif** (75%) : trend Minervini + VCP + screener (liquidité, RSI relatif, range historique)
-- **Sentiment** (15%) : score FinBERT agrégé sur fenêtre glissante 5j
-- **Macro sectoriel** (10%) : impact macro par secteur (événements macro-économiques)
+- **ML ternaire** : détermine exclusivement `long`, `flat` ou `short` et le ranking par probabilité directionnelle
+- **Contexte quantitatif, sentiment et macro** : features du modèle, diagnostics ou vetos appliqués après la prédiction
 
-Le `final_score_sentiment` résultant détermine le classement final des candidats.
+Il n'existe aucun fallback score-only. `flat` et toute prédiction non exploitable
+sont non ouvrants.
 
 ---
 
@@ -615,7 +625,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 
 | Paramètre | Défaut | Description |
 |---|---|---|
-| `selection_size` | 100 | Nombre max de candidats retenus |
+| `selection_size` | 100 | Limite de restitution/diagnostic du scanner, sans réduction du scope ML |
 | `min_history_days` | 252 | Historique minimum requis (1 an) |
 | `liquidity_threshold` | 20 M$ | Dollar volume moyen 20j minimum |
 | `min_close` | 5.00 $ | Prix de clôture minimum |
@@ -694,14 +704,14 @@ $env:ALPHA_TRADE_PROMETHEUS_FILE = "artifacts/metrics/alpha_trade.prom"
 
 1. **Seules les actions US equity** actives, tradables, avec données disponibles sont éligibles (exclusion ETF, crypto, fonds)
 2. **Les ETF sont filtrés** par nom de société (patterns : "etf", "ishares", "spdr", "vanguard", etc.)
-3. **Un candidat doit avoir ≥ 252 jours d'historique** (1 an)
+3. **Un symbole doit avoir l'historique requis** par les contrôles objectifs et les features ML
 4. **Les scores quantitatifs sont neutralisés par secteur** (z-score intra-secteur) pour éviter le biais sectoriel
 5. **Le circuit breaker suspend le trading** si drawdown ≥ 15% ou perte daily ≥ 5%
-6. **La corrélation > 0.80 entre deux positions** entraîne le rejet du candidat le moins bien classé
+6. **La corrélation > 0.80 entre deux positions** entraîne le rejet de la sélection la moins bien classée
 7. **L'idempotence est garantie** par une clé SHA-256, un même portefeuille cible ne génère pas de doublons
 8. **Les ordres 4xx du broker ne sont PAS retentés** (erreurs permanentes) ; seuls les 5xx/timeout/réseau sont retentés
 9. **Les positions broker hors cible** (action "investigate") ne sont pas soldées automatiquement pour éviter les erreurs
-10. **Le score de conviction combine** score quantitatif (40%) et probabilité prédite par le backend `modelFactory` effectivement servi (60%)
+10. **La conviction et le rang principal sont ML-only** : probabilité de la direction prédite ; les scores non-ML ne peuvent agir qu'en feature, diagnostic ou veto post-ML
 11. **En backtest, l'option `swing_only` peut interdire toute revente le jour même**
 12. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
 13. **En exécution, un compte cash ne peut pas soumettre d'achats au-delà du cash settled disponible**
@@ -716,13 +726,13 @@ $env:ALPHA_TRADE_PROMETHEUS_FILE = "artifacts/metrics/alpha_trade.prom"
 |---|---|---|
 | **Marché fermé** (week-end, fériés) | Aucun ordre soumis, run avorté | Élevée si exécution non planifiée |
 | **Pas de news pour un symbole** | Boost sentiment neutre (0.5), signal quant seul | Moyenne |
-| **Aucun backend `modelFactory` servi disponible** | Pas de prediction_proba exploitable, conviction dégradée | Moyenne |
+| **Aucun champion ou prédiction ternaire exploitable** | Nouvelle entrée bloquée, sans fallback score-only | Moyenne |
 | **Latence Alpaca API** | Fill timeout, ordres children non soumis | Faible |
 | **Circuit breaker déclenché** | Aucune allocation possible | Faible (sauf crash marché) |
-| **Corrélation élevée entre candidats** | Portefeuille réduit (moins de positions) | Moyenne |
+| **Corrélation élevée entre sélections** | Portefeuille réduit (moins de positions) | Moyenne |
 | **Corrélations cachées par facteurs de style** (small-cap, high-beta, momentum) | Tous les titres chutent simultanément en crash → circuit breaker | ⚠️ Atténué par le modèle factoriel CWMS (Priorité 3) |
 | **Pas de gestion multi-devises** | Uniquement USD / actions US | Limitation de design |
-| **Pas de short selling** | Uniquement des positions long | Limitation de design |
+| **Parité intrabar des sorties short en replay** | La fidélité exacte live/backtest doit encore être prouvée par des tests dédiés | Risque de validation |
 | **Pas de streaming temps réel** | Polling périodique (2s) pour les fills | Limitation de design |
 | **Alerting externe complet** | ✅ 6 canaux, 14 événements, anti-doublon, cash ledger guard, Prometheus (Sprint S12) | Très faible |
 
@@ -746,7 +756,7 @@ Concernant l'exécution réelle/paper :
 1. ~~**Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run~~ → ✅ **Implémenté (Sprint S12)** : 6 canaux (Slack, Email, Telegram, Discord, SMS, Log), 14 événements critiques couverts, anti-doublon SHA256, cash ledger guard, 9 métriques Prometheus. Voir §2.6 et `doc/service.md` §10-12.
 2. ~~**Dashboard temps réel**~~ → ✅ **Implémenté** : IHM Streamlit opérateur (`ihm/app.py`)
 3. ~~**Backtesting intégré**~~ → ✅ **Implémenté** : module `backtesting/` research/pipeline avec replay PIT, contraintes compte (`cash settled` / `margin` / `swing_only`), phases de fidélité 2/3/4/5/7, diagnostics screener et reporting structuré (`report.json`, `fidelity_manifest.json`)
-4. **Support short selling** : étendre la stratégie aux positions short
+4. **Parité short intrabar** : compléter les preuves dédiées de fidélité des sorties live/backtest
 5. **Streaming WebSocket** : remplacer le polling des fills par un stream Alpaca pour réduire la latence
 6. **Scheduler automatisé** : cron/Airflow/Prefect pour automatiser l'exécution quotidienne du pipeline
 7. ~~**Multi-comptes** : supporter plusieurs comptes broker en parallèle~~ → ✅ **Implémenté** : registre multi-comptes (`service/alpaca/accounts.py`), colonne `account_id` sur 6 tables, `--account` CLI sur tous les modules
@@ -838,63 +848,28 @@ Trois points d'entree IHM exposent la couche Market-Aware :
 
 ---
 
-## Short Selling (Plan v2 — juin 2026)
+## Contrat ML-first long/short
 
-Le systeme supporte desormais les positions **short** (vente a decouvert) en
-complement des positions long. Points cles :
+Le système supporte les positions **long** et **short**. Le modèle ternaire est
+la seule autorité qui choisit le côté :
 
-- **Score short** : calcule par `selector/short_score.py` (tendance, RSI, SMA50, SMA200)
-- **Mode ternaire ML** : le modele predit long / flat / short en une seule passe
-- **Protections direction-aware** : TP, SL et trailing stop adaptes automatiquement
-  au sens de la position (long ou short)
-- **Concentration side-aware** : limites de trades et blacklist comptabilisees
-  separement pour les longs et les shorts
-- **Capital preservation** : shorts automatiquement desactives en regime de
-  preservation du capital
+- **Prédiction ternaire** : `predicted_side ∈ {long, flat, short}` et probabilités associées
+- **Rankings séparés** : `proba_long` pour les longs, `proba_short` pour les shorts
+- **Neutralité** : `flat` n'ouvre aucune position
+- **Protections direction-aware** : TP, SL et trailing stop adaptés au côté
+- **Concentration side-aware** : limites comptabilisées séparément pour longs et shorts
 
-Voir `doc/calcul_tp_tl.md` pour les formules exactes de TP/SL directionnels.
+Les scores short historiques ou `selector_signal_mode` peuvent subsister comme
+features et explications, mais ne sont jamais interprétés comme une décision de
+côté. Après le ranking ML, les régimes `close_only`, `cash_only` et
+`capital_preservation`, les seuils de probabilité et les contraintes de risque
+peuvent bloquer ou réduire une entrée. Ils ne peuvent pas convertir une
+prédiction `flat` ou inverser `long` en `short`.
 
-### Valeurs de `selector_signal_mode` (colonne `stock_scores` / `stock_scores_history`)
+Le backtest de parité doit utiliser l'univers PIT et les prédictions persistées
+avec `engine_mode=pipeline` et `ml_pit_strategy=use-persisted`. L'ordre complet
+de préparation et de lancement est documenté dans
+[`synthese_long_short.md`](synthese_long_short.md#82-ordre-obligatoire-pour-préparer-et-lancer-un-backtest).
 
-La colonne `selector_signal_mode` (`VARCHAR(32)`, migration `0029`) identifie le
-mode de signal ayant conduit a la selection d'un candidat. Les valeurs possibles
-sont enumerees ci-dessous, par ordre de priorite dans le pipeline selector :
-
-| Valeur | Direction | Origine | Signification |
-|---|---|---|---|
-| `NULL` | — | Non-candidat | Symbole non selectionne par le scanner |
-| `"factor_only"` | **Long** | `selector/ranking.py` (defaut) | Score facteurs purs, aucun signal auxiliaire (sentiment/macro) |
-| `"multi_factor"` | **Long** | `selector/ranking.py` | Scoring multi-factoriel standard (chemin sans neutralisation) |
-| `"sector_neutralized"` | **Long** | `selector/ranking.py` | Scoring avec neutralisation sectorielle (chemin nominal) |
-| `"regime_normal"` | **Long** | `selector/regime_scoring.py` | Rotation regime : normal (comportement nominal) |
-| `"regime_capital_preservation"` | **Long** | `selector/regime_scoring.py` | Rotation regime : preservation du capital (shorts desactives) |
-| `"short"` | **Short** | `selector/ranking.py` → `rank_and_select_short()` | Candidat short (top N par `short_score`) |
-| `"regime_close_only"` | ❌ Bloqué | `selector/regime_scoring.py` | Rotation regime : plus d'entrees, sorties uniquement (live) |
-| `"regime_cash_only"` | ❌ Bloqué | `selector/regime_scoring.py` | Rotation regime : plus d'entrees du tout (backtest / risk) |
-
-**Ordre de priorite dans le pipeline :**
-
-1. `_apply_selection_explainability` → `"factor_only"` (defaut) ou `"multi_factor"` / `"sector_neutralized"`
-2. `rank_and_select_short` → `"short"` (pour les candidats short, exclut les longs deja selectionnes)
-3. `regime_scoring` → `"regime_{mode}"` (ecrase si le score final a ete modifie par la rotation regime)
-
-**Role de chaque mode :**
-
-| Mode | Poids appliques | Filtres | Comportement |
-|---|---|---|---|
-| `"factor_only"` | Trend/VCP 50% + Total 30% + RSI 20% | Standards | Fallback : aucun signal auxiliaire (sentiment/macro) disponible |
-| `"multi_factor"` | Trend/VCP 50% + Total 30% + RSI 20% | Standards | Scoring standard sans neutralisation sectorielle |
-| `"sector_neutralized"` | Trend/VCP 50% + Total 30% + RSI 20% | Standards | **Chemin nominal** : z-score intra-secteur elimine le biais sectoriel |
-| `"regime_normal"` | Identique standard (50/30/20) | Standards | Regime normal actif, pas de rotation defensive |
-| `"regime_capital_preservation"` | Trend/VCP 25% + Total 15% + RSI 10% + Beta 22% + Size 13% + LowVol 15% | Renforces : beta ≤ 1.2, spread ≤ 15 bps, market cap ≥ 2 Md$, ATR ≤ 6% | Rotation 50% defensif : preserve le capital, reduit la volatilite, shorts desactives |
-| `"short"` | Short score (trend 30%, RSI 25%, SMA50 25%, SMA200 20%) | Standards | Selection baissiere : top N par short_score, exclusions des longs deja retenus |
-| `"regime_close_only"` | — | — | Marche stresse : **plus d'entrees** (ni long ni short), sorties et gestion d'urgence actives |
-| `"regime_cash_only"` | — | — | Crise : **liquidations uniquement**, toutes les entrees sont bloquees |
-
-**Consommation aval :**
-
-- `risk_management/portfolio_builder.py` filtre les candidats par `selector_signal_mode` pour
-  distinguer longs (`"sector_neutralized"`, `"multi_factor"`) et shorts (`"short"`)
-- `execution_engine/order_intents.py` propage le mode dans les intentions d'ordre
-- Les regimes `"close_only"` et `"cash_only"` bloquent les entrees (long et short)
-- Les shorts sont automatiquement desactives en regime `"capital_preservation"`
+Voir également [`calcul_tp_tl.md`](calcul_tp_tl.md) pour les formules de
+protections directionnelles.

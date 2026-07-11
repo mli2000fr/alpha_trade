@@ -1,6 +1,6 @@
 # Alpha Trade
 
-Plateforme Python de **trading algorithmique swing US** orientée production, construite autour d'un pipeline modulaire : ingestion marché, nettoyage, screening, sélection alpha, sentiment news, gestion du risque, exécution et suivi post-trade.
+Plateforme Python de **trading algorithmique swing US long/short** orientée production. Le chemin nominal est **ML-first** : univers tradable PIT complet, features techniques/sentiment/macro, prédiction ternaire `long|flat|short`, ranking directionnel séparé, gestion du risque, exécution et suivi post-trade.
 
 Le projet s'appuie principalement sur **Python 3.12**, **MySQL**, **SQLAlchemy**, **Alpaca**, **Finnhub**, **PyTorch/Lightning** et une **IHM Streamlit** pour la supervision opérateur.
 
@@ -34,6 +34,13 @@ Le projet s'appuie principalement sur **Python 3.12**, **MySQL**, **SQLAlchemy**
 >     d'environnement ; les valeurs sentinelles `pass`, `user`, `changeme`
 >     sont rejetées au démarrage. `config.yaml` n'utilise que des
 >     placeholders `${VAR}` (voir `core.secrets`).
+>
+> - **Contrat ML-first** : la seule source nominale du train/predict est
+>   `tradable-universe`. Le ML ternaire détermine le côté et la probabilité
+>   directionnelle détermine le rang. Les scores scanner/selector restent des
+>   features, diagnostics ou vetos post-ML. Sans prédiction ternaire complète,
+>   aucune nouvelle position n'est ouverte et aucun fallback score-only n'est
+>   autorisé. Voir [`doc/synthese_long_short.md`](doc/synthese_long_short.md).
 
 ---
 
@@ -41,11 +48,13 @@ Le projet s'appuie principalement sur **Python 3.12**, **MySQL**, **SQLAlchemy**
 
 Le pipeline couvre les besoins suivants :
 
-- ingestion des actifs et barres de marché depuis Alpaca ;
+- ingestion des actifs et barres de marché depuis EODHD ou Alpaca ;
 - synchronisation et application des **corporate actions** ;
 - nettoyage et alignement des données daily ;
-- screening quantitatif et sélection multi-facteurs ;
+- publication d'un univers tradable PIT immuable de qualité `full` ;
+- calcul de features et scores multi-facteurs sans présélection du scope ML ;
 - enrichissement par **sentiment news** via FinBERT ;
+- prédiction ML ternaire et rankings long/short séparés ;
 - construction du portefeuille cible avec contraintes de risque ;
 - exécution des ordres en modes simulation, paper ou live ;
 - supervision via une IHM Streamlit.
@@ -57,14 +66,15 @@ Le pipeline couvre les besoins suivants :
 | Module | Rôle |
 |---|---|
 | `dataIntegrityEngine/` | Import Alpaca, nettoyage daily, enrichissements de données |
-| `screener/` | Screening initial liquidité / force relative / range historique |
-| `selector/` | `AlphaScanner` multi-facteurs et sélection finale |
+| `screener/` | Scope large, contrôles objectifs initiaux et scores de contexte |
+| `common/` | Publication/résolution de l'univers tradable PIT `full` |
+| `selector/` | `AlphaScanner` multi-facteurs : features, diagnostics et vetos post-ML |
 | `event_sentiment/` | Pipeline news, FinBERT, agrégations ticker / secteur |
-| `risk_management/` | Sizing, contraintes, circuit breaker, portefeuille cible |
+| `modelFactory/` | Train ternaire offline et predict quotidien sur `tradable-universe` |
+| `risk_management/` | Validation ternaire, vetos post-ML, sizing, contraintes, rangs et portefeuille cible |
 | `execution_engine/` | Exécution canonique : snapshot des targets, requests, ordres broker, fills observés, positions/lots, réconciliation, TCA ; watcher post-run secondaire |
 | `backtesting/` | Backtest PIT, backfill, calibration, **coûts granulaires** (spread réel, slippage volume-aware, commission tiercée, exécution intraday P4) |
 | `corporate_actions/` | Sync des événements et application sur les positions |
-| `modelFactory/` | Entraînement et prédiction LSTM par symbole |
 | `ihm/` | IHM Streamlit de supervision et de consultation |
 
 ---
@@ -180,24 +190,25 @@ python -m dataIntegrityEngine.sync_latest_quotes
 # 5. Sync earnings calendar pour le blackout résultats aval
 python -m dataIntegrityEngine.sync_earnings_calendar
 
-# 6. Scoring avancé Minervini/VCP + neutralisation sectorielle
+# 6. Publication atomique de l'univers PIT full
+python -m common.publish_tradable_universe
+
+# 7. Features/scoring Minervini/VCP + neutralisation sectorielle
+#    (contexte uniquement : ne définit ni scope ML, ni côté, ni rang principal)
 python -m selector.alpha_scanner
 
-# 7. Pipeline news FinBERT + agrégats ticker/secteur
+# 8. Pipeline news FinBERT + agrégats ticker/secteur
 #    Ordre canonique interne : import news large -> relevance backfill ->
 #    scoring standard -> scoring contextuel -> agrégation journalière
 python -m event_sentiment
 
-# 8. Fusion quant + sentiment + macro → score final
+# 9. Fusion quant + sentiment + macro → features/contexte
 python -m event_sentiment.signal_aggregator
 
-# 9. Entraînement LSTM (périodique — hebdomadaire recommandé)
-python -m modelFactory --mode train
-
-# 10. Prédiction LSTM → predicted_proba (quotidien)
+# 10. Prédiction ternaire quotidienne avec le champion déjà publié
 python -m modelFactory --mode predict
 
-# 11. Calcul du portefeuille cible (sizing, contraintes, circuit breaker)
+# 11. Ranking ML long/short, vetos, sizing et contraintes
 python -m risk_management.run_risk --account-equity 100000
 
 # 12. Exécution canonique des ordres (simulate | paper | live)
@@ -223,15 +234,29 @@ python -m corporate_actions apply
 | 3 | `stock_screener` | Scores liquidité / force relative / range |
 | 4 | `sync_latest_quotes` | Snapshot bid/ask pour le filtre de spread aval |
 | 5 | `sync_earnings_calendar` | Calendrier earnings pour blackout résultats |
-| 6 | `alpha_scanner` | Ranking Minervini/VCP, neutralisation sectorielle |
-| 7 | `event_sentiment` | News → relevance → FinBERT standard → FinBERT contextuel → features sentiment |
-| 8 | `signal_aggregator` | Fusion quant (75%) + sentiment (15%) + macro (10%) |
-| 9 | `modelFactory --mode train` | Entraînement LSTM+Attention *(périodique)* |
-| 10 | `modelFactory --mode predict` | Inférence → `predicted_proba` *(quotidien)* |
-| 11 | `run_risk` | Portefeuille cible, sizing ATR/Kelly, conviction ML+quant |
+| 6 | `publish_tradable_universe` | Nouveau run PIT immuable `full`, canonique et complet |
+| 7 | `alpha_scanner` | Features/scoring Minervini/VCP, neutralisation et diagnostics |
+| 8 | `event_sentiment` | News → relevance → FinBERT → features sentiment |
+| 9 | `signal_aggregator` | Contexte quant/sentiment/macro, sans autorité de ranking |
+| 10 | `modelFactory --mode predict` | Inférence ternaire du champion publié sur l'univers `full` |
+| 11 | `run_risk` | Ranking ML séparé, vetos, sizing ATR/Kelly et contraintes |
 | 12 | `run_execution.py` | Snapshot des targets, requests, ordres broker, fills observés, reconstruction positions/lots, réconciliation |
 | 13 | `corporate_actions sync --portfolio-only` | Sync CA uniquement pour les positions détenues |
 | 14 | `corporate_actions apply` | Crédit dividendes + ajustement qty/cost basis splits |
+
+### Entraînement ML offline
+
+`ML Train` n'est pas une dépendance du workflow quotidien. Il est lancé
+périodiquement dans un workflow offline, puis le champion validé est publié :
+
+```powershell
+python -m modelFactory --mode train --symbol-source tradable-universe
+```
+
+Le predict quotidien consomme ce champion. Il persiste `predicted_side`,
+`proba_long`, `proba_flat` et `proba_short`. Le risk classe les longs par
+`proba_long` et les shorts par `proba_short`; `selection_rank` représente
+l'ordre avant contraintes et `decision_rank` l'ordre des positions acceptées.
 
 > **Pourquoi le sync CA vient-il après l’exécution et non au début ?**  
 > `sync --portfolio-only` lit la liste des positions depuis `broker_positions_snapshots`, table qui n'est alimentée qu'après `run_execution` (étape 12). Le placer avant rendrait le périmètre de sync inexact (positions d'hier) ou vide (premier run).

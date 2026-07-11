@@ -1,6 +1,6 @@
 ﻿# Alpha Trade — Documentation Technique
 
-> *Version : 0.5.0 — Python ≥ 3.12 — Dernière mise à jour : 2026-06-22 (Priorité 3 — Modèle factoriel CWMS)*
+> *Version : 0.5.0 — Python ≥ 3.12 — Dernière mise à jour : 2026-07-11 (cutover ML-first long/short)*
 
 <!-- primary_provider: eodhd -->
 
@@ -21,6 +21,9 @@
 
 > 📚 **Références transverses S7** : `doc/CONVENTIONS.md` (conventions
 > canoniques), `doc/CHANGELOG.md` (journal documentaire).
+>
+> Le contrat détaillé du pipeline ML-first, des côtés long/short et du backtest
+> PIT est décrit dans [`synthese_long_short.md`](synthese_long_short.md).
 
 ---
 
@@ -40,15 +43,13 @@
 - **S9** *(juin 2026)* : bandeaux avertissement IHM si `swing_only=True` (obsolète), infobulles FINRA 2026-06-04. ✅ Livré.
 - **S10** *(juin 2026)* : **Impact Marché P1-P4** — spread réel comme coût (P1), slippage volume-aware activé par défaut par tranche de capital (P2), commission tiercée câblée dans le simulateur (P3), modèle d'exécution intraday configurable `arrival_price`/`twap`/`vwap` (P4). ✅ Livré.
 
-### Plan v2 -- Short Selling (Sprint 0-5, juin 2026) — 🔄 EN COURS
+### Short Selling et ML ternaire — ✅ LIVRÉ
 
-- **Sp0** : `core/direction.py` -- 18 helpers purs pour logique directionnelle (long/short) — ✅ Livré
-- **Sp1-2** : `risk_management/models.py` -- `CandidateScore.side`, `PredictionInfo` (+4 champs ternaires) — 🔄 En cours
-- **Sp2** : `backtesting/simulator.py` -- `_OpenPosition.side`, PnL/TP/TS direction-aware, force-close par side — 🔄 En cours
-- **Sp3** : `execution_engine/order_intents.py` -- TP/SL/trailing direction-aware, buy-to-cover pour shorts — 🔜 Planifié
-- **Sp4** : `backtesting/report.py` -- metriques split long/short/force-close — 🔜 Planifié
-- **Sp5** : `selector/short_score.py` (Option B), `risk_management/concentration.py` (trackers side-aware) — 🔄 En cours
-- **Option C** : injection directe du `predicted_side` ML ternaire dans le pipeline live — 🔜 Planifié
+- `predicted_side` ML est l'unique autorité de côté dans le live et le replay PIT.
+- Les probabilités `proba_long`, `proba_flat`, `proba_short` sont persistées et auditées.
+- Le ranking long et le ranking short sont indépendants ; les scores selector ne sont plus une présélection.
+- Le sizing, les intentions, les protections, la concentration et le P&L sont direction-aware.
+- Réserve de validation : la parité exacte des sorties intrabar short live/backtest nécessite encore des tests dédiés.
 
 ### Priorité 3 — Modèle de risque factoriel CWMS (juin 2026) — ✅ LIVRÉ
 
@@ -59,15 +60,14 @@
 - **Phase E** : `filter_by_factor_correlation()` — corrélation implicite (modèle factoriel) en替代 du Pearson
 - **Fichiers** : `risk_management/factor_model.py` (coeur, 12 fonctions + 6 dataclasses), `risk_management/portfolio_builder.py` (intégration), `backtesting/risk_bridge.py` (backtest), `risk_management/cli.py` (live), `risk_management/db_io.py` (`load_factor_columns_asof()`), `tests/test_factor_model.py` (33 tests)
 
-### Plan ML v2 -- Ternaire long/flat/short (Sprint 1-7, juin 2026) — 🔄 EN COURS
+### Cutover ML-first (Sprints 1-7) — ✅ LIVRÉ
 
-- **ML1** : `modelFactory/features.py` -- `build_target(mode="ternary")` labels {-1,0,+1} — ✅ Livré
-- **ML2** : `modelFactory/model.py` -- `LSTMAttentionModule(num_classes=3)`, loss CrossEntropyLoss, label shift {-1,0,1}->{0,1,2} — ✅ Livré
-- **ML3** : `modelFactory/db_registry.py` + migration 0038 -- `predicted_side`, `proba_long/flat/short` — 🔄 En cours
-- **ML4-5** : `risk_management/config.py` -- `min_score_threshold_short` — 🔜 Planifié
-- **ML6** : `risk_management/cli.py` -- Option C live injection, `predicted_side` dans le DF candidats — 🔜 Planifié
-- **ML7** : migration 0039 -- `model_governance` + `model_metrics` colonnes F1 ternaire — 🔜 Planifié
-- **IHM** : defauts ML ternaire (target_mode=ternary, up=0.12, down=-0.08, global_model=ON, cross_sectional=ON) — 🔄 En cours
+- univers source canonique : run PIT immuable de qualité `full` dans `tradable_universe_runs/history` ;
+- train offline et predict quotidien résolvent `--symbol-source tradable-universe` ;
+- modèle ternaire `LSTMAttentionModule(num_classes=3)` avec `CrossEntropyLoss` ;
+- absence, incomplétude ou valeur `flat` : aucune nouvelle position ;
+- migrations `0046`, `0047`, `0048` : univers complet, `selection_rank`, puis suppression des colonnes du contrat retiré ;
+- aucun fallback score-only dans le live ou le mode backtest de parité.
 
 
 
@@ -215,6 +215,10 @@ alpha_trade/
 
 **`AlphaScanner`** (`selector/alpha_scanner.py`) — Scanner multi-facteurs en chunks parallèles (ThreadPoolExecutor) : `fetch_market_data()` → `compute_factors()` → `merge_scores()` → enrichissement instrument / quotes / earnings → `apply_filters()` → neutralisation sectorielle cross-sectorielle sur univers complet → `rank_and_select()`.
 
+Dans le chemin nominal ML-first, son ranking est une restitution diagnostique :
+il ne réduit pas le scope de train/predict, ne fixe pas `predicted_side` et ne
+remplace jamais la probabilité directionnelle.
+
 Points d'implémentation importants :
 
 - les filtres `min_close` et `liquidity_threshold` existent à la fois en présélection SQL et en filet de sécurité pandas ;
@@ -228,7 +232,9 @@ Points d'implémentation importants :
   biais potentiel des quotes Alpaca/IEX par rapport au close consolidé
   `stock_bars_daily.close` sur la même séance.
 
-**`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction portefeuille : enrichir candidats (conviction score) → trier par conviction DESC → filtre corrélation (Pearson ou factoriel) → contraintes factorielles (Phase D) → sizing ATR/Kelly → check contraintes → ACCEPTED / REDUCED / REJECTED.
+**`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction ML-first : rejeter les prédictions absentes/incomplètes/`flat` → séparer `long` et `short` → trier par `proba_long` ou `proba_short` → affecter `selection_rank` → appliquer vetos post-ML, corrélation et contraintes → sizing ATR/Kelly → persister `decision_rank` pour les entrées acceptées. Les scores non-ML ne peuvent ni créer un côté ni remplacer le ranking ML.
+
+**`publish_full_tradable_universe()`** (`common/publish_tradable_universe.py`) — Charge le run screener exact et son contexte objectif, vérifie les tables requises puis publie atomiquement un nouveau run PIT immuable de qualité `full`. Les étapes feature, predict et risk échouent fermement si cette source canonique n'est pas disponible.
 
 **Modèle de risque factoriel CWMS** (`risk_management/factor_model.py`, nouveau juin 2026) — Modèle à 4 facteurs (Market, Size, Momentum, Value) avec estimation EWMA de la covariance factorielle. Les dataclasses clés sont `FactorExposures` (dans `models.py`), `FactorCovariance`, `PortfolioRiskDecomposition`, `FactorConstraintResult`. Le modèle est intégré à la fois au pipeline live (`cli.py`) et au backtest (`risk_bridge.py`). Activé via `RiskConfig.enable_factor_model`.
 
@@ -252,9 +258,9 @@ graph TD
 
 > 🔴 = Nouvelles étapes (Priorité 3). $\\Sigma_{port} = \\mathbf{B} \\cdot \\mathbf{F} \\cdot \\mathbf{B}^T + \\mathbf{S}$
 
-**`SentimentSignalAggregator`** (`event_sentiment/signal_aggregator.py`) — Fusion `75% quant + 15% sentiment ticker + 10% macro sectoriel` → `final_score_sentiment`.
+**`SentimentSignalAggregator`** (`event_sentiment/signal_aggregator.py`) — Produit un agrégat quant/sentiment/macro exploitable comme feature, diagnostic ou veto post-ML. `final_score_sentiment` n'est pas une autorité de côté ou de ranking.
 
-**`LSTMAttentionModule`** (`modelFactory/model.py`) — LightningModule : LSTM multi-couche + Temporal Attention (soft-attention axe temporel) + classification binaire (CrossEntropyLoss). Métriques : BinaryAccuracy, BinaryPrecision, BinaryRecall, BinaryAUROC.
+**`LSTMAttentionModule`** (`modelFactory/model.py`) — LightningModule : LSTM multi-couche + Temporal Attention (soft-attention axe temporel) + classification ternaire `long|flat|short` (`num_classes=3`, `CrossEntropyLoss`, labels décalés vers `0|1|2`).
 
 **`train_symbol()` / `predict_symbol()`** (`modelFactory/trainer.py`, `modelFactory/predictor.py`) — services d'entraînement et d'inférence par symbole. Ils ne se limitent plus au LSTM : `train_symbol()` peut désormais produire un manifeste d'artefacts multi-backends (`lstm_attention`, `lightgbm`, `catboost`, `global_model`) et `predict_symbol()` route vers le backend réellement sélectionné. Les deux chemins supportent `accelerator=auto|cpu|gpu` :
 
@@ -344,7 +350,7 @@ Points d'intégration techniques :
 
 **`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting. Les surfaces opérateur actives se concentrent désormais sur `account_type` (`margin|cash`) et `swing_only` (`bool`), avec settlement simplifié `T+1` pour les cash accounts.
 
-**`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores PIT, avec cascade de fallback factorisée `final_score_walk_forward -> final_score_sentiment -> final_score`, fusion vectorisée des probabilités ML et ranking top-N quotidien.
+**`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour à partir de l'univers et des prédictions PIT persistées. En mode de parité (`engine_mode=pipeline`, `ml_pit_strategy=use-persisted`), la fonction applique le côté ML et les rankings directionnels séparés ; les scores PIT restent du contexte et aucun fallback score-only n'est autorisé.
 
 **`BacktestReport`** (`backtesting/report.py`) — Dataclass de résumé : rendement total, dividendes, CAGR, Sharpe, Sortino, Calmar, Ulcer Index, max drawdown, win rate, profit factor. Le module exporte `report.json`, `equity_curve.csv/png`, `trades.csv` et sérialise les sentinels comme `"inf"` pour rester JSON-friendly.
 
@@ -371,7 +377,7 @@ Points d'intégration techniques :
 | `reconcile_targets_vs_broker()` | `reconciliation` | Compare cibles vs positions → ReconcileDiff[] |
 | `compute_slippage_bps()` | `tca` | Slippage en basis points |
 | `map_alpaca_status()` | `state_machine` | Mapping statuts Alpaca → statuts internes |
-| `compute_conviction()` | `conviction` | score × 40% + prediction × 60% |
+| `compute_conviction()` | `conviction` | Probabilité directionnelle ML (`proba_long` ou `proba_short`) ; paramètres score historiques conservés uniquement pour compatibilité |
 | `filter_correlated()` | `correlation_filter` | Filtre par matrice de corrélation (seuil 0.80) |
 | `_idempotency_key()` | `order_intents` | SHA-256 tronqué pour déduplication |
 | `process_dividend()` | `corporate_actions.processors` | Calcul dividende cash : qty × amount → crédit cash ledger |
@@ -385,7 +391,9 @@ Points d'intégration techniques :
 - `BrokerOrder` : ordre soumis au broker (broker_order_id, status, filled_qty, avg_fill_price)
 - `ExecutionFill` : fill reçu (slippage_bps, implementation_shortfall)
 - `ExecutionEvent` : événement auditable (type, message, payload JSON)
-- `CandidateScore` / `EnrichedCandidate` / `PortfolioEntry` : pipeline risk management
+- `SelectionScore` / `EnrichedSelection` / `PortfolioEntry` : pipeline risk management ML-first
+- `PredictionInfo` : `predicted_side`, probabilités ternaires et métadonnées de serving
+- `tradable_universe_runs` / `tradable_universe_history` : run PIT immuable et membres évalués par les règles objectives
 - `CorporateActionEvent` : événement CA ingéré (provider, symbol, ca_type, ex_date, amount/ratio, idempotency_key)
 - `CorporateActionApplication` : trace immuable d'un ajustement appliqué (qty before/after, cost basis, cash impact)
 - `CashLedgerEntry` : entrée ledger cash (dividend_credit, cash_in_lieu)
@@ -586,7 +594,9 @@ propagée :
 
 #### Entraînement (`python -m modelFactory --mode train`)
 
-1. résolution de l'univers depuis `--symbols` ou `stock_scores.is_candidate=1` ;
+Ce workflow est **offline et périodique** ; il n'est pas une dépendance du run quotidien.
+
+1. résolution du run PIT `full` depuis `--symbol-source tradable-universe` ;
 2. chargement des bars, benchmark, sentiment et univers selon les options activées, borné en amont par `--training-start-date` pour le training ;
 3. entraînement du `LSTMAttentionModule` ;
 4. calibration / optimisation de seuil côté LSTM ;
@@ -599,12 +609,12 @@ propagée :
 
 #### Inférence (`python -m modelFactory --mode predict`)
 
-1. résolution `config.json` / artefacts ;
+1. résolution du même univers `tradable-universe` et du champion publié ;
 2. lecture de `artifact_routes.selected_model` ;
 3. routage du backend effectivement servi ;
 4. rechargement PIT-safe des données jusqu'à `prediction_date` / `as_of_date` ;
 5. génération des features ;
-6. calcul de `predicted_proba` et `predicted_class` ;
+6. calcul de `predicted_side`, `proba_long`, `proba_flat`, `proba_short` ;
 7. insertion dans `model_predictions` si `persist=True`.
 
 #### Gouvernance DB actuelle (`model_predictions`)
@@ -616,6 +626,8 @@ de gouvernance de serving en plus des sorties de prédiction :
 - `decision_threshold`
 - `signal_label`
 - `calibration_method`
+- `predicted_side`
+- `proba_long`, `proba_flat`, `proba_short`
 
 Sprint 7 ajoute un garde-fou applicatif dans `modelFactory/db_registry.py` :
 
@@ -821,15 +833,18 @@ python -m dataIntegrityEngine.data_sanitizer_daily        # 2.  sanitize bars
 python -m screener.stock_screener                         # 3.  screener
 python -m dataIntegrityEngine.sync_latest_quotes          # 4.  snapshot quotes pour filtre de spread
 python -m dataIntegrityEngine.sync_earnings_calendar      # 5.  earnings blackout
-python -m selector.alpha_scanner                          # 6.  alpha scanner
-python -m event_sentiment                                 # 7.  sentiment pipeline
-python -m event_sentiment.signal_aggregator               # 8.  signal aggregator
-python -m modelFactory --mode train --include-sentiment --compare-lightgbm --enable-catboost --select-champion --optimize-thresholds --accelerator gpu --max-workers 1  # 9.  ML train périodique
+python -m common.publish_tradable_universe                 # 6.  univers PIT immuable full
+python -m selector.alpha_scanner                          # 7.  features / diagnostics
+python -m event_sentiment                                 # 8.  features sentiment
+python -m event_sentiment.signal_aggregator               # 9.  contexte quant/sentiment/macro
 python -m modelFactory --mode predict --accelerator gpu   # 10. ML predict quotidien
 python -m risk_management.run_risk --account-equity 100000  # 11. risk management
 python run_execution.py simulate                          # 12. execution (ou paper / live)
 python -m corporate_actions sync --portfolio-only         # 13. sync CA sur positions détenues
 python -m corporate_actions apply                         # 14. appliquer CA sur positions
+
+# Offline / périodique — hors workflow quotidien : entraîner, valider puis publier le champion
+python -m modelFactory --mode train --symbol-source tradable-universe --include-sentiment --compare-lightgbm --enable-catboost --select-champion --optimize-thresholds --accelerator gpu --max-workers 1
 
 # Pour cibler un compte spécifique (multi-comptes) :
 python -m risk_management.run_risk --account-equity 100000 --account live1
@@ -862,7 +877,7 @@ l'endpoint `/metrics` (bind local `127.0.0.1` par défaut).
 
 La page `ihm/pages/pipeline.py` expose désormais :
 
-- un **workflow quotidien complet 1 → 14** ;
+- un **workflow quotidien complet 1 → 14**, incluant `publish_tradable_universe` avant les features et l'inférence ;
 - une zone **Bootstrap / maintenance Data Integrity** hors workflow avec :
   - `B1. Import univers Alpaca` → `python -m dataIntegrityEngine.import_alpaca_assets`
   - `B2. Mise à jour fondamentaux` → `python -m dataIntegrityEngine.update_sector ...`
@@ -874,7 +889,7 @@ Elle expose aussi un switch persistant **fractionnaire** côté opérateur, impl
 - `python -m risk_management ... --allow-fractional-shares` ;
 - `python run_execution.py ... --allow-fractional-shares`.
 
-Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent aussi un sous-ensemble cohérent des options `modelFactory` :
+Depuis la page `ihm/pages/pipeline.py`, la tâche offline `ML Train` et l'étape quotidienne `ML Predict` exposent aussi un sous-ensemble cohérent des options `modelFactory` :
 
 - **Accélérateur ML** (`auto | cpu | gpu`) ;
 - inclusion du **sentiment** ;
@@ -895,7 +910,7 @@ Le bloc de paramètres Pipeline expose en plus les options `Data Integrity` rée
 
 `ML Predict` n'expose plus de choix de backend manuel : il réutilise le `selected_model` trouvé dans les artefacts du symbole.
 
-Le workflow complet IHM insère `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`.
+Le workflow complet IHM insère les sync quotes/earnings puis `python -m common.publish_tradable_universe` avant `Alpha Scanner`. Les étapes feature dépendent du run `full`; le predict quotidien utilise le champion déjà publié.
 
 L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
 
@@ -940,12 +955,13 @@ python -m backtesting walk-forward-sentiment --start 2024-01-01 --end 2025-12-31
 
 Notes :
 
-- `--engine-mode pipeline` exige un historique PIT valide dans `stock_scores_history` ;
+- `--engine-mode pipeline --ml-pit-strategy use-persisted` exige un univers PIT `full` et des prédictions ternaires persistées couvrant la période ;
 - `--allow-fractional-shares` alimente `RiskConfig.allow_fractional_shares` et, si les phases de fidélité d'exécution sont activées, le replay `ExecutionConfig.allow_fractional_shares` ;
 - `--phase3-mode` dépend de `phase2_mode=risk_execution`, `--phase4-mode` dépend de `phase3-mode`, `--phase5-mode` dépend de `phase4-mode`, `--phase7-mode` dépend de `phase5-mode` ;
 - `report.json` inclut `summary`, `params`, `diagnostics`, `run_metadata` et `fidelity` ;
 - `fidelity_manifest.json` documente les dégradations PIT éventuelles ;
 - les modules `analytics.py`, `cache.py` et `statistical_validation.py` fournissent des briques complémentaires non branchées automatiquement à la commande `run` standard.
+- la parité des sorties intrabar short reste un point de preuve dédié, et ne doit pas être déduite de la seule réussite du replay global.
 
 La page `ihm/pages/backtesting/__init__.py` expose le même réglage sous forme de switch persistant, stocké dans `artifacts/ihm_preferences/fractional_trading.json`, puis propagé à `BacktestRunOptions.allow_fractional_shares` et au launcher `python -m backtesting run`.
 
