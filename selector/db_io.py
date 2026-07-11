@@ -963,8 +963,6 @@ def reset_selector_outputs(engine: Engine, config: AlphaScannerConfig) -> None:
     assignments.extend(f"{column} = NULL" for column in RESET_NULL_COLUMNS if column in available_columns)
     if "earnings_blackout" in available_columns:
         assignments.append("earnings_blackout = 0")
-    if "is_candidate" in available_columns:
-        assignments.append("is_candidate = 0")
     if not assignments:
         LOGGER.info("Reset selector saute | table=%s aucune colonne applicable", config.score_table)
         return
@@ -1023,20 +1021,13 @@ def update_database(
     progress: Callable[..., None] | None = None,
     snapshot_date_override: date | None = None,
 ) -> int:
-    """Persiste scores + flag is_candidate + archive stock_scores_history."""
-    selected_symbols = (
-        selected_df["symbol"].astype(str).dropna().tolist() if not selected_df.empty else []
-    )
+    """Persiste les scores techniques et archive leur snapshot PIT."""
+    selected_symbols = selected_df["symbol"].astype(str).dropna().tolist() if not selected_df.empty else []
     scores_snapshot = prepare_scores_snapshot(scored_df)
     available_columns = get_table_columns(
         engine,
         config.score_table,
         fallback_columns=DEFAULT_SELECTOR_SCORE_TABLE_COLUMNS,
-    )
-    reset_stmt = (
-        text(f"UPDATE {config.score_table} SET is_candidate = 0")
-        if "is_candidate" in available_columns
-        else None
     )
     persisted_update_columns = [
         column for column in PERSISTED_SELECTOR_SCORE_COLUMNS
@@ -1052,17 +1043,6 @@ def update_database(
         if set_clauses
         else None
     )
-    mark_stmt = (
-        text(
-            f"""
-            UPDATE {config.score_table}
-            SET is_candidate = 1
-            WHERE symbol IN :symbols
-            """
-        ).bindparams(bindparam("symbols", expanding=True))
-        if "is_candidate" in available_columns
-        else None
-    )
     updated_at = datetime.now(UTC).replace(tzinfo=None)
 
     LOGGER.info(
@@ -1076,10 +1056,7 @@ def update_database(
     total_score_batches = max(
         (len(scores_snapshot) + config.update_batch_size - 1) // config.update_batch_size, 0
     ) if score_stmt is not None else 0
-    total_candidate_batches = max(
-        (len(selected_symbols) + config.update_batch_size - 1) // config.update_batch_size, 0
-    ) if mark_stmt is not None else 0
-    total_db_batches = total_score_batches + total_candidate_batches
+    total_db_batches = total_score_batches
     completed_db_batches = 0
 
     def _emit(label: str = "🎯 Progression Alpha Scanner — persistance DB") -> None:
@@ -1092,7 +1069,7 @@ def update_database(
             phase="persist_db",
             extra_summary={
                 "eligible_symbols": len(scores_snapshot),
-                "selected_candidates": len(selected_symbols),
+                "scored_selection_rows": len(selected_symbols),
                 "db_batches_total": total_db_batches,
                 "db_batches_completed": completed_db_batches,
             },
@@ -1123,32 +1100,13 @@ def update_database(
                 )
                 completed_db_batches += 1
                 _emit()
-            if reset_stmt is not None:
-                conn.execute(reset_stmt)
-                LOGGER.info("Mise a jour DB | reset is_candidate=0 effectue")
-            for start in range(0, len(selected_symbols), config.update_batch_size):
-                if mark_stmt is None:
-                    break
-                batch = selected_symbols[start:start + config.update_batch_size]
-                if not batch:
-                    continue
-                conn.execute(mark_stmt, {"updated_at": updated_at, "symbols": batch})
-                LOGGER.info(
-                    "Mise a jour DB | batch=%s-%s taille=%s",
-                    start + 1,
-                    start + len(batch),
-                    len(batch),
-                )
-                completed_db_batches += 1
-                _emit()
     except SQLAlchemyError as exc:
         LOGGER.exception("Echec de mise a jour transactionnelle de %s.", config.score_table)
-        raise RuntimeError("Impossible de mettre à jour les candidats en base.") from exc
+        raise RuntimeError("Impossible de mettre à jour les scores techniques en base.") from exc
 
-    LOGGER.info("Mise a jour DB terminee | candidats_mis_a_jour=%s", len(selected_symbols))
+    LOGGER.info("Mise a jour DB terminee | lignes_selection=%s", len(selected_symbols))
 
-    # Re-archive stock_scores -> stock_scores_history pour propager
-    # is_candidate=1 dans l'historique PIT.
+    # Archive le contexte score PIT; il n'encode plus une sélection candidate.
     try:
         from screener.db_io import archive_scores_snapshot
 
@@ -1162,7 +1120,7 @@ def update_database(
     except Exception:
         LOGGER.warning(
             "Archivage stock_scores_history apres alpha_scanner echoue ; "
-            "risk_management pourrait ne pas voir les nouveaux is_candidate=1.",
+            "les diagnostics PIT de score ne pourront pas être rafraîchis.",
             exc_info=True,
         )
 

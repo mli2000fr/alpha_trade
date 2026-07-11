@@ -664,7 +664,7 @@ def _build_ml_coverage_status_message(diagnostic: dict[str, object]) -> tuple[st
     end = str(diagnostic.get("end", "?") or "?")
     preset_key = str(diagnostic.get("capital_preset_key", "") or "auto")
     coverage_pct = _to_float(diagnostic.get("coverage_pct"))
-    expected_pairs = _to_int(diagnostic.get("expected_candidate_symbol_dates"))
+    expected_pairs = _to_int(diagnostic.get("expected_universe_symbol_dates"))
     covered_pairs = _to_int(diagnostic.get("covered_prediction_symbol_dates"))
     missing_pairs = _to_int(diagnostic.get("missing_prediction_symbol_dates"))
     effective_strategy = str(diagnostic.get("effective_strategy", "auto") or "auto")
@@ -717,7 +717,7 @@ def _build_ml_coverage_status_message(diagnostic: dict[str, object]) -> tuple[st
     if status == "missing_expected_history":
         return (
             "error",
-            "Préflight ML inexploitable : aucun candidat PIT attendu n'a été trouvé dans `stock_scores_history` sur la plage demandée.",
+            "Préflight ML inexploitable : aucun univers tradable PIT canonique attendu n'a été trouvé sur la plage demandée.",
         )
     if status == "disabled":
         return (
@@ -798,7 +798,7 @@ def _render_ml_coverage_preflight(
 
     metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
     with metric_col1:
-        st.metric("Attendus", _to_int(diagnostic.get("expected_candidate_symbol_dates")))
+        st.metric("Univers attendu", _to_int(diagnostic.get("expected_universe_symbol_dates")))
     with metric_col2:
         st.metric("Déjà couverts", _to_int(diagnostic.get("covered_prediction_symbol_dates")))
     with metric_col3:
@@ -1467,15 +1467,6 @@ def _build_run_options() -> BacktestRunOptions:
             help="Si coché, le PNG d'equity curve et le CSV des trades ne seront pas écrits dans `artifacts/backtesting/`.",
         )
 
-    # ─── P2 (2026-06-27) filtre ML manquant ───
-    st.markdown("---")
-    filter_no_ml = st.checkbox(
-        "🚫 Filtrer les candidats sans modèle ML entraîné",
-        value=bool(st.session_state.get("bt_run_filter_no_ml", False)),
-        key="bt_run_filter_no_ml",
-        help="Exclut les candidats qui n'ont pas de prédictions dans model_predictions (pas encore entraînés). Les symboles filtrés sont loggués dans le backtest.",
-    )
-
     mode_col1, mode_col2, mode_col3, mode_col4, mode_col5, mode_col6, mode_col7, mode_col8 = st.columns(8)
     with mode_col1:
         engine_mode = cast(
@@ -1752,7 +1743,6 @@ def _build_run_options() -> BacktestRunOptions:
         allow_fractional_shares=bool(allow_fractional_shares),
         sentiment_lookback=int(sentiment_lookback),
         no_save=bool(no_save),
-        filter_no_ml=bool(filter_no_ml),
         ml_mode=cast(Any, ml_mode),
         sentiment_mode=cast(Any, sentiment_mode),
         engine_mode=cast(Any, engine_mode),
@@ -3580,7 +3570,7 @@ def _build_replay_diagnostic_session_rows(payload: dict[str, object]) -> pd.Data
         rows.append(
             {
                 "Séance": _coerce_metric_text(session.get("trade_date")),
-                "Candidats": _to_int(session.get("candidate_rows")),
+                "Lignes score": _to_int(session.get("scoring_rows")),
                 "Sources score": _coerce_metric_text(session.get("score_source_counts")),
                 "Prédictions": _to_int(session.get("predictions_rows")),
                 "Manquants sentiment": _to_int(session.get("missing_sentiment_rows")),

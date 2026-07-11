@@ -73,7 +73,7 @@ def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
     assert keys == ["import_alpaca_assets", "update_sector", "eodhd_backfill_history"]
 
 
-def test_get_pipeline_workflow_steps_defaults_to_1_to_12_with_ml_train() -> None:
+def test_get_pipeline_workflow_steps_defaults_to_live_ml_first_without_training() -> None:
     keys = [step.key for step in get_pipeline_workflow_steps()]
 
     assert keys == [
@@ -82,10 +82,8 @@ def test_get_pipeline_workflow_steps_defaults_to_1_to_12_with_ml_train() -> None
         "stock_screener",
         "sync_latest_quotes",
         "sync_earnings_calendar",
-        "alpha_scanner",
         "sentiment_pipeline",
         "signal_aggregator",
-        "ml_train",
         "ml_predict",
         "risk_management",
         "execution",
@@ -107,7 +105,6 @@ def test_get_pipeline_workflow_steps_can_start_at_3_and_append_corporate_actions
         "stock_screener",
         "sync_latest_quotes",
         "sync_earnings_calendar",
-        "alpha_scanner",
         "sentiment_pipeline",
         "signal_aggregator",
         "ml_predict",
@@ -165,6 +162,7 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert risk_command[risk_command.index("--min-position-notional") + 1] == "150.0"
     assert "--max-sector-weight" in risk_command
     assert risk_command[risk_command.index("--max-sector-weight") + 1] == "0.27"
+    assert "--filter-no-ml" not in risk_command
 
     assert execution_command[:3] == [execution_command[0], "-u", str(PROJECT_ROOT / "run_execution.py")]
     assert execution_command[3] == "paper"
@@ -473,8 +471,7 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
     assert command[0] == "powershell.exe", f"Step 7 doit lancer via powershell.exe, got {command[0]}"
     ps_script = command[-1]
     # Les 5 étapes chaînées doivent être présentes dans le script PS
-    assert "importe_news.py" in ps_script
-    assert "event_sentiment" in ps_script
+    assert "event_sentiment.importe_news" in ps_script
     assert "--news-provider" in ps_script
     assert "eodhd" in ps_script
     assert "event_sentiment.relevance_backfill" in ps_script
@@ -483,13 +480,13 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
     assert "--scoring-mode contextual_only" in ps_script
     assert "--skip-ingestion" in ps_script
     assert "--symbol-source stock_scores_all" in ps_script
-    assert "--symbol-source candidates" in ps_script
-    assert "--ticker-symbol-source candidates" in ps_script
-    assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
-        "Scoring FinBERT standard (scope candidats / override CSV)"
+    assert "--symbol-source tradable-universe" in ps_script
+    assert "--ticker-symbol-source tradable-universe" in ps_script
+    assert ps_script.index("Calcul relevance_score (scope univers tradable / override CSV)") < ps_script.index(
+        "Scoring FinBERT standard (scope univers tradable / override CSV)"
     )
-    assert ps_script.index("Scoring FinBERT contextuel (scope candidats / override CSV)") < ps_script.index(
-        "Agregation features : ticker=candidats, secteur=scope large importe"
+    assert ps_script.index("Scoring FinBERT contextuel (scope univers tradable / override CSV)") < ps_script.index(
+        "Agregation features : ticker=univers tradable, secteur=scope large importe"
     )
 
 
@@ -542,11 +539,11 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
     assert "event_sentiment.relevance_backfill" in ps_script
     assert "event_sentiment.history_backfill" in ps_script
     assert "--scoring-mode contextual_only" in ps_script
-    assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
-        "Scoring FinBERT standard (scope candidats / override CSV)"
+    assert ps_script.index("Calcul relevance_score (scope univers tradable / override CSV)") < ps_script.index(
+        "Scoring FinBERT standard (scope univers tradable / override CSV)"
     )
-    assert ps_script.index("Scoring FinBERT contextuel (scope candidats / override CSV)") < ps_script.index(
-        "Agregation features : ticker=candidats, secteur=scope large importe"
+    assert ps_script.index("Scoring FinBERT contextuel (scope univers tradable / override CSV)") < ps_script.index(
+        "Agregation features : ticker=univers tradable, secteur=scope large importe"
     )
 
 
@@ -579,11 +576,11 @@ def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_wit
     assert "event_sentiment.history_backfill" in ps_script
     assert "AAPL" in ps_script
     assert "--ticker-symbols AAPL" in ps_script
-    assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
-        "Scoring FinBERT standard (scope candidats / override CSV)"
+    assert ps_script.index("Calcul relevance_score (scope univers tradable / override CSV)") < ps_script.index(
+        "Scoring FinBERT standard (scope univers tradable / override CSV)"
     )
-    assert ps_script.index("Scoring FinBERT contextuel (scope candidats / override CSV)") < ps_script.index(
-        "Agregation features : ticker=candidats, secteur=scope large importe"
+    assert ps_script.index("Scoring FinBERT contextuel (scope univers tradable / override CSV)") < ps_script.index(
+        "Agregation features : ticker=univers tradable, secteur=scope large importe"
     )
 
 
@@ -892,7 +889,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "gpu"
     assert train_cmd[train_cmd.index("--ml-mode") + 1] == pipeline_runner.DEFAULT_ML_MODE
     assert train_cmd[train_cmd.index("--training-start-date") + 1] == pipeline_runner.DEFAULT_ML_TRAINING_START_DATE
-    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "candidates"
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "tradable-universe"
 
     # Drapeaux booléens activés par défaut (swing prod)
     for flag in (
@@ -937,7 +934,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     # Predict
     assert predict_cmd[:6] == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
     assert predict_cmd[predict_cmd.index("--accelerator") + 1] == "gpu"
-    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == "candidates"
+    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == "tradable-universe"
     assert "--artifacts-dir" in predict_cmd
 
 
@@ -1011,7 +1008,7 @@ def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:
     assert command[command.index("--training-end-date") + 1] == "2021-12-31"
 
 
-def test_build_pipeline_command_ml_predict_scoped_historical_uses_period_and_selected_universe() -> None:
+def test_build_pipeline_command_ml_predict_scoped_historical_uses_period_and_tradable_universe() -> None:
     command = build_pipeline_command(
         "ml_predict",
         PipelineLaunchOptions(
@@ -1020,56 +1017,47 @@ def test_build_pipeline_command_ml_predict_scoped_historical_uses_period_and_sel
             ml_predict_use_historical_range=True,
             ml_training_start_date="2022-01-01",
             ml_training_end_date="2022-02-15",
-            ml_selector_universe_signal_modes=("strict",),
-            ml_selector_universe_max_candidate_rank=20,
-            ml_selector_universe_exclude_earnings_blackout=True,
         ),
     )
 
     assert command[:6] == [command[0], "-u", "-m", "modelFactory", "--mode", "predict"]
-    assert command[command.index("--symbol-source") + 1] == "stock-scores-history"
+    assert command[command.index("--symbol-source") + 1] == "tradable-universe"
     assert command[command.index("--training-start-date") + 1] == "2022-01-01"
     assert command[command.index("--training-end-date") + 1] == "2022-02-15"
-    assert "--selector-universe-signal-modes" in command
-    assert command[command.index("--selector-universe-signal-modes") + 1] == "strict"
-    assert command[command.index("--selector-universe-max-candidate-rank") + 1] == "20"
-    assert "--selector-universe-exclude-earnings-blackout" in command
+    assert "--selector-universe-signal-modes" not in command
+    assert "--selector-universe-max-candidate-rank" not in command
+    assert "--selector-universe-exclude-earnings-blackout" not in command
 
 
-def test_build_pipeline_command_ml_train_can_target_all_stock_bars_daily_symbols() -> None:
+def test_build_pipeline_command_ml_train_forces_tradable_universe_over_legacy_source() -> None:
     options = PipelineLaunchOptions(ml_train_symbol_source="stock_bars_daily")
 
     train_cmd = build_pipeline_command("ml_train", options)
 
-    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "stock-bars-daily"
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "tradable-universe"
 
 
-def test_build_pipeline_command_ml_train_can_target_stock_scores_all_universe() -> None:
+def test_build_pipeline_command_ml_train_rejects_legacy_score_scope_by_forcing_tradable_universe() -> None:
     options = PipelineLaunchOptions(ml_train_symbol_source="stock_scores_all")
 
     train_cmd = build_pipeline_command("ml_train", options)
 
-    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "stock-scores-all"
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "tradable-universe"
 
 
-def test_build_pipeline_command_ml_train_exposes_selector_context_and_universe_filters() -> None:
+def test_build_pipeline_command_ml_train_exposes_score_context_without_selector_filters() -> None:
     command = build_pipeline_command(
         "ml_train",
         PipelineLaunchOptions(
-            ml_include_selector_context=True,
-            ml_selector_universe_signal_modes=("strict", "sector_neutralized"),
-            ml_selector_universe_max_candidate_rank=25,
-            ml_selector_universe_exclude_earnings_blackout=True,
+            ml_include_score_context=True,
         ),
     )
 
-    assert "--include-selector-context" in command
-    assert "--selector-universe-signal-modes" in command
-    signal_mode_index = command.index("--selector-universe-signal-modes")
-    assert command[signal_mode_index + 1 : signal_mode_index + 3] == ["strict", "sector_neutralized"]
-    assert "--selector-universe-max-candidate-rank" in command
-    assert command[command.index("--selector-universe-max-candidate-rank") + 1] == "25"
-    assert "--selector-universe-exclude-earnings-blackout" in command
+    assert "--include-score-context" in command
+    assert "--include-selector-context" not in command
+    assert "--selector-universe-signal-modes" not in command
+    assert "--selector-universe-max-candidate-rank" not in command
+    assert "--selector-universe-exclude-earnings-blackout" not in command
 
 
 def test_build_pipeline_command_import_news() -> None:

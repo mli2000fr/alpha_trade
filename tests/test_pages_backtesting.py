@@ -247,7 +247,7 @@ def test_build_ml_coverage_status_message_warns_when_coverage_is_partial() -> No
             "capital_preset_key": "capital_50001_100000",
             "capital_preset_filtered": True,
             "effective_strategy": "use-persisted",
-            "expected_candidate_symbol_dates": 10,
+            "expected_universe_symbol_dates": 10,
             "covered_prediction_symbol_dates": 7,
             "missing_prediction_symbol_dates": 3,
             "coverage_pct": 70.0,
@@ -319,7 +319,7 @@ def test_render_ml_coverage_preflight_renders_metrics_and_samples(monkeypatch) -
             "capital_preset_key": "capital_50001_100000",
             "capital_preset_filtered": True,
             "effective_strategy": "use-persisted",
-            "expected_candidate_symbol_dates": 10,
+            "expected_universe_symbol_dates": 10,
             "covered_prediction_symbol_dates": 7,
             "missing_prediction_symbol_dates": 3,
             "missing_snapshot_days": 2,
@@ -353,7 +353,7 @@ def test_render_ml_coverage_preflight_renders_metrics_and_samples(monkeypatch) -
     assert len(warning_messages) == 1
     assert "7/10" in warning_messages[0]
     assert metric_calls == [
-        ("Attendus", 10),
+        ("Univers attendu", 10),
         ("Déjà couverts", 7),
         ("Taux de couverture", "70.0%"),
         ("Manquants", 3),
@@ -524,7 +524,7 @@ def test_build_replay_diagnostic_session_rows_formats_expected_columns() -> None
             "sessions": [
                 {
                     "trade_date": "2025-01-02",
-                    "candidate_rows": 5,
+                    "scoring_rows": 5,
                     "score_source_counts": {"final_score_sentiment": 3, "final_score": 2},
                     "predictions_rows": 4,
                     "missing_sentiment_rows": 1,
@@ -541,7 +541,7 @@ def test_build_replay_diagnostic_session_rows_formats_expected_columns() -> None
 
     assert list(rows.columns) == [
         "Séance",
-        "Candidats",
+        "Lignes score",
         "Sources score",
         "Prédictions",
         "Manquants sentiment",

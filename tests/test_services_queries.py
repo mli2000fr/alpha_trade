@@ -428,11 +428,11 @@ def test_get_backtesting_ml_coverage_diagnostic_reports_partial_coverage(monkeyp
 
     def fake_safe_query(query, params=None):
         safe_query_calls.append((query, params))
-        if "expected_candidate_symbol_dates" in query:
+        if "expected_universe_symbol_dates" in query:
             return pd.DataFrame(
                 [
                     {
-                        "expected_candidate_symbol_dates": 4,
+                        "expected_universe_symbol_dates": 4,
                         "expected_snapshot_days": 2,
                         "expected_symbols": 3,
                         "covered_prediction_symbol_dates": 2,
@@ -475,7 +475,7 @@ def test_get_backtesting_ml_coverage_diagnostic_reports_partial_coverage(monkeyp
     assert payload["capital_preset_filtered"] is True
     assert payload["effective_strategy"] == "use-persisted"
     assert payload["persist_enabled"] is False
-    assert payload["expected_candidate_symbol_dates"] == 4
+    assert payload["expected_universe_symbol_dates"] == 4
     assert payload["covered_prediction_symbol_dates"] == 2
     assert payload["missing_prediction_symbol_dates"] == 2
     assert payload["coverage_pct"] == 50.0
@@ -505,11 +505,11 @@ def test_get_backtesting_ml_coverage_diagnostic_reports_complete_coverage(monkey
     monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
 
     def fake_safe_query(query, params=None):
-        if "expected_candidate_symbol_dates" in query:
+        if "expected_universe_symbol_dates" in query:
             return pd.DataFrame(
                 [
                     {
-                        "expected_candidate_symbol_dates": 3,
+                        "expected_universe_symbol_dates": 3,
                         "expected_snapshot_days": 2,
                         "expected_symbols": 2,
                         "covered_prediction_symbol_dates": 3,
@@ -541,7 +541,7 @@ def test_get_backtesting_ml_coverage_diagnostic_reports_complete_coverage(monkey
     )
 
     assert payload["status"] == "complete"
-    assert payload["capital_preset_filtered"] is False
+    assert payload["capital_preset_filtered"] is True
     assert payload["coverage_pct"] == 100.0
     assert payload["persist_enabled"] is True
     assert payload["missing_rows_sample"] == []
@@ -563,11 +563,11 @@ def test_get_backtesting_ml_coverage_diagnostic_reports_missing_expected_history
     monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
 
     def fake_safe_query(query, params=None):
-        if "expected_candidate_symbol_dates" in query:
+        if "expected_universe_symbol_dates" in query:
             return pd.DataFrame(
                 [
                     {
-                        "expected_candidate_symbol_dates": 0,
+                        "expected_universe_symbol_dates": 0,
                         "expected_snapshot_days": 0,
                         "expected_symbols": 0,
                         "covered_prediction_symbol_dates": 0,
@@ -596,7 +596,7 @@ def test_get_backtesting_ml_coverage_diagnostic_reports_missing_expected_history
     )
 
     assert payload["status"] == "missing_expected_history"
-    assert payload["reason"].startswith("Aucun candidat PIT attendu")
+    assert payload["reason"].startswith("Aucun univers tradable PIT canonique attendu")
     assert payload["coverage_pct"] == 0.0
 
 
@@ -647,7 +647,7 @@ def test_get_backtesting_ml_coverage_diagnostic_rejects_invalid_dates(monkeypatc
     )
 
     assert payload["status"] == "invalid_input"
-    assert payload["expected_candidate_symbol_dates"] == 0
+    assert payload["expected_universe_symbol_dates"] == 0
     assert payload["missing_rows_sample"] == []
 
 
@@ -670,11 +670,11 @@ def test_get_backtesting_ml_coverage_diagnostic_reports_unavailable_when_missing
 
     def fake_safe_query(query, params=None):
         calls.append(query)
-        if "expected_candidate_symbol_dates" in query:
+        if "expected_universe_symbol_dates" in query:
             return pd.DataFrame(
                 [
                     {
-                        "expected_candidate_symbol_dates": 4,
+                        "expected_universe_symbol_dates": 4,
                         "expected_snapshot_days": 2,
                         "expected_symbols": 3,
                         "covered_prediction_symbol_dates": 2,

@@ -42,7 +42,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_FORECAST_HORIZON,
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
-    DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT,
+    DEFAULT_ML_INCLUDE_SCORE_CONTEXT,
     DEFAULT_ML_INCLUDE_SHORT_SCORE,
     DEFAULT_ML_INCLUDE_MACRO_VIX,
     DEFAULT_ML_INCLUDE_MACRO_VIX3M,
@@ -69,9 +69,6 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_MIN_TRADES_FRACTION,
     DEFAULT_ML_MODE,
     DEFAULT_ML_SEQUENCE_LENGTH,
-    DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT,
-    DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK,
-    DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES,
     DEFAULT_ML_TARGET_DOWN_THRESHOLD,
     DEFAULT_ML_TARGET_MODE,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
@@ -304,13 +301,12 @@ class PipelineLaunchOptions:
     execution_debug: bool = DEFAULT_EXEC_DEBUG
     ml_accelerator: MLAccelerator = "auto"
     ml_include_sentiment: bool = False
-    ml_include_selector_context: bool = DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT
+    ml_include_score_context: bool = DEFAULT_ML_INCLUDE_SCORE_CONTEXT
     ml_include_short_score: bool = DEFAULT_ML_INCLUDE_SHORT_SCORE
     ml_include_macro_vix: bool = False   # VIX/VIX9D — nécessite backfill stock_macro_indicators_daily
     ml_include_macro_vxn: bool = False   # VXN — Nasdaq-100 volatility
     ml_include_macro_vix3m: bool = False # VIX3M — term structure contango/backwardation
     ml_include_macro_move: bool = False  # MOVE — bond volatility
-    filter_candidates_without_ml: bool = False  # P2 (2026-06-27) exclure les candidats sans modèle ML
     ml_enable_lightgbm: bool = True
     ml_enable_catboost: bool = True
     ml_enable_global_model: bool = False
@@ -350,13 +346,10 @@ class PipelineLaunchOptions:
     ml_mode: MLMode = DEFAULT_ML_MODE
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
     ml_training_end_date: str = DEFAULT_ML_TRAINING_END_DATE
-    ml_train_symbol_source: MLTrainSymbolSource = "candidates"
+    ml_train_symbol_source: MLTrainSymbolSource = "tradable-universe"
     ml_train_start_symbol: str | None = None
-    ml_predict_symbol_source: MLTrainSymbolSource = "candidates"
+    ml_predict_symbol_source: MLTrainSymbolSource = "tradable-universe"
     ml_predict_use_historical_range: bool = False
-    ml_selector_universe_signal_modes: tuple[str, ...] = DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES
-    ml_selector_universe_max_candidate_rank: int | None = DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK
-    ml_selector_universe_exclude_earnings_blackout: bool = DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
     ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
@@ -666,16 +659,15 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         name="Sentiment Pipeline",
         desc=(
             "Import news brut sur `stock_scores_all` → scoring FinBERT standard + `relevance_score` + "
-            "scoring contextuel sur les candidats (ou override CSV) → reconstruction des features journalières "
-            "avec `ticker_daily_sentiment_features` filtré candidats et `sector_daily_sentiment_features` "
-            "sur le scope large importé."
+            "scoring contextuel sur l'univers tradable (ou override CSV) → reconstruction des features journalières "
+            "avec `ticker_daily_sentiment_features` et `sector_daily_sentiment_features` sur le scope importé."
         ),
         tables=(
             "news_raw, news_ticker_map, news_sentiment, news_ticker_sentiment, "
             "macro_event_audit, ticker_daily_sentiment_features, sector_daily_sentiment_features, "
             "news_ingestion_checkpoint"
         ),
-        deps="alpha_scanner",
+        deps="sync_earnings_calendar",
     ),
     PipelineStepDefinition(
         key="signal_aggregator",
@@ -689,9 +681,9 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="ml_train",
         num="9",
         name="ML Train (Model Factory)",
-        desc="Entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux LightGBM/CatBoost, modèle global optionnel et sélection éventuelle du champion servi.",
+        desc="Entraînement `modelFactory` sur l'univers tradable PIT : LSTM+Attention, challengers locaux LightGBM/CatBoost, modèle global optionnel et sélection éventuelle du champion servi.",
         tables="model_registry, model_training_run, model_metrics, model_governance",
-        deps="signal_aggregator (is_candidate=1)",
+        deps="signal_aggregator",
     ),
     PipelineStepDefinition(
         key="ml_predict",
@@ -705,7 +697,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="risk_management",
         num="11",
         name="Risk Management",
-        desc="Sizing ATR/Kelly, contraintes portefeuille, circuit breaker → portefeuille cible. Utilise les prédictions ML pour le score de conviction.",
+        desc="Sizing ATR/Kelly, contraintes portefeuille et circuit breaker → portefeuille cible. La sélection s'appuie sur les prédictions ML de l'univers tradable; les scores techniques restent des vetos ou diagnostics.",
         tables="risk_decisions, portfolio_targets",
         deps="ml_predict, signal_aggregator",
         account_usage="alpaca",
@@ -814,6 +806,8 @@ def get_pipeline_workflow_steps(
                 continue
         else:
             if step_num is None or step_num < int(normalized_start):
+                continue
+            if step.key == "alpha_scanner":
                 continue
             if step.key == "ml_train" and not include_ml_train:
                 continue
@@ -1558,27 +1552,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
     ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
     ml_training_end_date = _normalize_optional_date(options.ml_training_end_date)
-    ml_train_symbol_source = {
-        "stock_scores": "stock-scores",
-        "stock_scores_history": "stock-scores-history",
-        "stock_scores_all": "stock-scores-all",
-        "candidates": "candidates",
-        "stock_bars_daily": "stock-bars-daily",
-    }.get(str(options.ml_train_symbol_source or "candidates"), "candidates")
+    ml_train_symbol_source = "tradable-universe"
     ml_train_start_symbol = _normalize_optional_symbol(options.ml_train_start_symbol)
-    ml_predict_symbol_source = {
-        "stock_scores": "stock-scores",
-        "stock_scores_history": "stock-scores-history",
-        "stock_scores_all": "stock-scores-all",
-        "candidates": "candidates",
-        "stock_bars_daily": "stock-bars-daily",
-    }.get(str(options.ml_predict_symbol_source or "candidates"), "candidates")
-    ml_selector_signal_modes = [
-        str(value).strip().lower()
-        for value in (options.ml_selector_universe_signal_modes or ())
-        if str(value).strip()
-    ]
-
+    ml_predict_symbol_source = "tradable-universe"
     if step_key == "import_alpaca_assets":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 
@@ -1787,8 +1763,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "sentiment_pipeline":
-        candidate_scope_symbols = sentiment_symbols
-        candidate_scope_symbol_source = None if candidate_scope_symbols else "candidates"
+        sentiment_scope_symbols = sentiment_symbols
+        sentiment_scope_symbol_source = None if sentiment_scope_symbols else "tradable-universe"
         import_start_date = str(sentiment_start_utc)[:10] if sentiment_start_utc else None
         import_end_date = str(sentiment_end_utc)[:10] if sentiment_end_utc else None
         cmd0 = _build_import_news_command(
@@ -1805,39 +1781,39 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             options,
             sentiment_start_utc=sentiment_start_utc,
             sentiment_end_utc=sentiment_end_utc,
-            sentiment_symbols=candidate_scope_symbols,
-            sentiment_symbol_source=candidate_scope_symbol_source,
+            sentiment_symbols=sentiment_scope_symbols,
+            sentiment_symbol_source=sentiment_scope_symbol_source,
             skip_ingestion=True,
         )
         cmd2 = _build_sentiment_relevance_backfill_command(
             options,
             sentiment_start_utc=sentiment_start_utc,
             sentiment_end_utc=sentiment_end_utc,
-            sentiment_symbols=candidate_scope_symbols,
-            sentiment_symbol_source=candidate_scope_symbol_source,
+            sentiment_symbols=sentiment_scope_symbols,
+            sentiment_symbol_source=sentiment_scope_symbol_source,
         )
         cmd3 = _build_sentiment_history_backfill_command(
             sentiment_start_utc=sentiment_start_utc,
             sentiment_end_utc=sentiment_end_utc,
-            ticker_symbols=candidate_scope_symbols,
-            ticker_symbol_source=candidate_scope_symbol_source,
+            ticker_symbols=sentiment_scope_symbols,
+            ticker_symbol_source=sentiment_scope_symbol_source,
             ingestion_source=options.sentiment_news_provider,
         )
         cmd4 = _build_sentiment_contextual_command(
             options,
             sentiment_start_utc=sentiment_start_utc,
             sentiment_end_utc=sentiment_end_utc,
-            sentiment_symbols=candidate_scope_symbols,
-            sentiment_symbol_source=candidate_scope_symbol_source,
+            sentiment_symbols=sentiment_scope_symbols,
+            sentiment_symbol_source=sentiment_scope_symbol_source,
         )
 
         return _build_chained_ps_commands(
             [
                 ("Import news brut (scope large stock_scores_all)", cmd0),
-                ("Calcul relevance_score (scope candidats / override CSV)", cmd2),
-                ("Scoring FinBERT standard (scope candidats / override CSV)", cmd1),
-                ("Scoring FinBERT contextuel (scope candidats / override CSV)", cmd4),
-                ("Agregation features : ticker=candidats, secteur=scope large importe", cmd3),
+                ("Calcul relevance_score (scope univers tradable / override CSV)", cmd2),
+                ("Scoring FinBERT standard (scope univers tradable / override CSV)", cmd1),
+                ("Scoring FinBERT contextuel (scope univers tradable / override CSV)", cmd4),
+                ("Agregation features : ticker=univers tradable, secteur=scope large importe", cmd3),
             ],
             title="ETAPE 7 — Sentiment Pipeline",
         )
@@ -2113,8 +2089,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--start-symbol", ml_train_start_symbol])
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
-        if options.ml_include_selector_context:
-            command.append("--include-selector-context")
+        if options.ml_include_score_context:
+            command.append("--include-score-context")
         if options.ml_include_short_score:
             command.append("--include-short-score")
         if options.ml_include_macro_vix:
@@ -2133,19 +2109,6 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--enable-catboost")
         if options.ml_enable_global_model:
             command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
-        if ml_selector_signal_modes:
-            command.append("--selector-universe-signal-modes")
-            command.extend(ml_selector_signal_modes)
-        if (
-            options.ml_selector_universe_max_candidate_rank is not None
-            and int(options.ml_selector_universe_max_candidate_rank) > 0
-        ):
-            command.extend([
-                "--selector-universe-max-candidate-rank",
-                str(int(options.ml_selector_universe_max_candidate_rank)),
-            ])
-        if options.ml_selector_universe_exclude_earnings_blackout:
-            command.append("--selector-universe-exclude-earnings-blackout")
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")
         if options.ml_select_champion:
@@ -2217,19 +2180,6 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
             if ml_training_end_date:
                 command.extend(["--training-end-date", ml_training_end_date])
-        if ml_selector_signal_modes:
-            command.append("--selector-universe-signal-modes")
-            command.extend(ml_selector_signal_modes)
-        if (
-            options.ml_selector_universe_max_candidate_rank is not None
-            and int(options.ml_selector_universe_max_candidate_rank) > 0
-        ):
-            command.extend([
-                "--selector-universe-max-candidate-rank",
-                str(int(options.ml_selector_universe_max_candidate_rank)),
-            ])
-        if options.ml_selector_universe_exclude_earnings_blackout:
-            command.append("--selector-universe-exclude-earnings-blackout")
         return command
 
     if step_key == "risk_management":
@@ -2271,9 +2221,6 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--allow-fractional-shares")
         if options.risk_enable_kelly:
             command.append("--enable-kelly-sizing")
-        # P2 (2026-06-27) — exclure les candidats sans modèle ML
-        if options.filter_candidates_without_ml:
-            command.append("--filter-no-ml")
         if options.risk_max_portfolio_drawdown_pct > 0:
             command.extend(["--max-portfolio-drawdown-pct", str(options.risk_max_portfolio_drawdown_pct)])
         if options.risk_max_daily_loss_pct > 0:

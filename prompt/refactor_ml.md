@@ -679,7 +679,7 @@ Une exécution train/predict depuis l'IHM ne peut utiliser que l'univers tradabl
 
 **Objectif :** faire du score technique un garde-fou et non un driver principal.
 
-### Statut d'implémentation (partiel)
+### Statut d'implémentation (terminé)
 
 Implémenté et validé sur le noyau de conviction et le replay backtest :
 
@@ -767,6 +767,48 @@ La bonne séquence est :
 ## Sprint 5 — Adapter l'IHM et les contrats d'options
 
 **Objectif :** supprimer le mensonge fonctionnel dans l'IHM.
+
+### Statut d'implémentation (terminé)
+
+Implémenté et validé sur les contrats de lancement ML et backtesting :
+
+- `PipelineLaunchOptions` utilise `tradable-universe` comme unique source
+  nominale pour `ml_train` et `ml_predict`, y compris lorsqu'un ancien payload
+  IHM fournit une source selector/score historique ;
+- l'execution center ne propose plus de filtres `selector_universe_*`; les
+  commandes IHM n'émettent plus `--selector-universe-signal-modes`,
+  `--selector-universe-max-candidate-rank` ni
+  `--selector-universe-exclude-earnings-blackout` ;
+- le libellé et le flag de feature sont requalifiés de contexte selector vers
+  contexte score (`--include-score-context`), accepté par le CLI Model Factory
+  tout en conservant l'ancien flag comme alias de compatibilité ; l'option IHM
+  interne est désormais `ml_include_score_context` ;
+- le workflow live par défaut ne comprend pas `ml_train`; le training reste un
+  lancement explicite séparé, n'inclut plus `alpha_scanner`, et son formulaire
+  n'expose plus les paramètres Selector ;
+- le runner backtesting, le lancement live `risk_management` et leurs écrans ne
+  proposent plus `filter_no_ml` / `--filter-no-ml`, car la couverture ML se
+  mesure sur l'univers tradable ;
+- les diagnostics de replay utilisent `scoring_rows` / `scoring_symbols` et
+  affichent des lignes score plutôt que des candidats ;
+- le préflight de couverture ML du backtesting compare les prédictions au
+  `tradable_universe_history` associé aux runs canoniques complets, et expose
+  `expected_universe_symbol_dates` au lieu d'un scope `is_candidate` ;
+- la page Pipeline historique force elle aussi `ml_train` et `ml_predict` vers
+  `tradable-universe`, sans sélecteur de sources scores/candidates ni filtre
+  Selector ;
+- le pipeline sentiment utilise l'univers tradable pour ses sous-étapes, et
+  l'Alpha Scanner persiste seulement le contexte score sans écrire
+  `is_candidate` ;
+- l'Execution Center affiche le dernier `universe_run_id` PIT canonique, son
+  grade, la couverture de prédictions et le champion de gouvernance servi.
+- validations ciblées : `24 passed` pour `test_ihm_backtesting_runner.py` et
+  `6 passed` pour les contrats ML du pipeline runner, `16 passed` pour le CLI
+  Model Factory.
+
+Le nettoyage des colonnes et noms de schéma historiques (`is_candidate`,
+`candidate_rank`) reste le Sprint 6 : ils ne définissent plus le scope ni la
+sélection nominale des parcours IHM/live.
 
 Aujourd'hui, l'IHM expose encore un modèle mental "selector universe -> ML". Tant que cela reste visible, l'utilisateur pilotera le nouveau backend avec de mauvaises attentes.
 

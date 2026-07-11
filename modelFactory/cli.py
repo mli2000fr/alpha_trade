@@ -183,8 +183,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
-    p.add_argument("--include-selector-context", action="store_true", default=False,
-                   help="Inclure un contexte selector PIT-safe issu de stock_scores_history dans les features ML")
+    p.add_argument("--include-score-context", "--include-selector-context",
+                   dest="include_selector_context", action="store_true", default=False,
+                   help="Inclure le contexte score PIT-safe issu de stock_scores_history dans les features ML")
     p.add_argument("--include-short-score", action="store_true", default=False,
                    help="Inclure le score baissier composite (short_score) comme feature ML independante")
     p.add_argument("--include-macro-vix", action="store_true", default=False,

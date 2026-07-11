@@ -1045,11 +1045,7 @@ def test_render_ml_train_scope_block_launches_selected_symbol_source(monkeypatch
     )
 
     pipeline._render_ml_train_scope_block(
-        pipeline.PipelineLaunchOptions(
-            ml_selector_universe_signal_modes=("strict",),
-            ml_selector_universe_max_candidate_rank=25,
-            ml_selector_universe_exclude_earnings_blackout=True,
-        ),
+        pipeline.PipelineLaunchOptions(),
         workflow_active=False,
         active_for_step=[],
         db_config={},
@@ -1059,8 +1055,8 @@ def test_render_ml_train_scope_block_launches_selected_symbol_source(monkeypatch
     assert len(launch_calls) == 1
     step_key, step_label, options = launch_calls[0]
     assert step_key == "ml_train"
-    assert "Union stock_scores + stock_scores_history" in step_label
-    assert options.ml_train_symbol_source == "stock_scores_all"
+    assert "Univers tradable PIT canonique" in step_label
+    assert options.ml_train_symbol_source == "tradable-universe"
 
 
 def test_render_ml_train_scope_block_displays_historical_window_caption(monkeypatch) -> None:
@@ -1152,12 +1148,12 @@ def test_render_ml_train_scope_block_uses_latest_widget_session_state_for_previe
         all_runs=[],
     )
 
-    assert any("ml_train stock_scores_all" in value for value in codes)
+    assert any("ml_train tradable-universe" in value for value in codes)
     assert len(launch_calls) == 1
     step_key, step_label, options = launch_calls[0]
     assert step_key == "ml_train"
-    assert "Union stock_scores + stock_scores_history" in step_label
-    assert options.ml_train_symbol_source == "stock_scores_all"
+    assert "Univers tradable PIT canonique" in step_label
+    assert options.ml_train_symbol_source == "tradable-universe"
 
 
 def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_historical_range(monkeypatch) -> None:
@@ -1211,8 +1207,8 @@ def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_hist
     assert len(launch_calls) == 1
     step_key, step_label, options = launch_calls[0]
     assert step_key == "ml_predict"
-    assert "Historique PIT stock_scores_history" in step_label
-    assert options.ml_predict_symbol_source == "stock_scores_history"
+    assert "Univers tradable PIT canonique" in step_label
+    assert options.ml_predict_symbol_source == "tradable-universe"
     assert options.ml_predict_use_historical_range is True
 
 
@@ -1272,12 +1268,12 @@ def test_render_ml_predict_scope_block_uses_latest_widget_session_state_for_prev
         all_runs=[],
     )
 
-    assert any("ml_predict stock_scores_history True" in value for value in codes)
+    assert any("ml_predict tradable-universe True" in value for value in codes)
     assert len(launch_calls) == 1
     step_key, step_label, options = launch_calls[0]
     assert step_key == "ml_predict"
-    assert "Historique PIT stock_scores_history" in step_label
-    assert options.ml_predict_symbol_source == "stock_scores_history"
+    assert "Univers tradable PIT canonique" in step_label
+    assert options.ml_predict_symbol_source == "tradable-universe"
     assert options.ml_predict_use_historical_range is True
 
 
@@ -1331,7 +1327,7 @@ def test_render_ml_predict_scope_block_displays_manual_command_preview(monkeypat
         all_runs=[],
     )
 
-    assert any("ml_predict stock_scores_history True 2022-01-01 2022-01-31" in value for value in codes)
+    assert any("ml_predict tradable-universe True 2022-01-01 2022-01-31" in value for value in codes)
 
 
 def test_render_period_sync_block_launches_quotes_history_with_selected_window(monkeypatch) -> None:

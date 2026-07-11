@@ -42,7 +42,6 @@ class BacktestRunOptions:
     allow_fractional_shares: bool = True
     sentiment_lookback: int = 365
     no_save: bool = False
-    filter_no_ml: bool = False  # P2 (2026-06-27) exclure les candidats sans modèle ML
     ml_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     sentiment_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     engine_mode: Literal["research", "pipeline"] = "research"
@@ -297,9 +296,6 @@ def build_backtesting_command(
             command.extend(["--output-dir", options.output_dir])
         if options.no_save:
             command.append("--no-save")
-        # P2 (2026-06-27) -- exclure les candidats sans modèle ML
-        if options.filter_no_ml:
-            command.append("--filter-no-ml")
         # Phase A (refactor) — reproductibilité + risk-free rate.
         if options.risk_free_rate:
             command.extend(["--risk-free-rate", str(options.risk_free_rate)])

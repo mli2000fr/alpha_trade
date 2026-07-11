@@ -117,7 +117,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_FORECAST_HORIZON,
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
-    DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT,
+    DEFAULT_ML_INCLUDE_SCORE_CONTEXT,
     DEFAULT_ML_INCLUDE_SHORT_SCORE,
     DEFAULT_ML_INCLUDE_MACRO_VIX,
     DEFAULT_ML_INCLUDE_MACRO_VXN,
@@ -145,9 +145,6 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_MIN_ACTION_RATE,
     DEFAULT_ML_MIN_PRECISION_LONG,
     DEFAULT_ML_MIN_TRADES_FRACTION,
-    DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT,
-    DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK,
-    DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES,
     DEFAULT_ML_ARTIFACTS_DIR,
     DEFAULT_ML_BATCH_SIZE,
     DEFAULT_ML_BENCHMARK_SYMBOL,
@@ -244,6 +241,7 @@ from ihm.services.pipeline_runner import (
     RECOMMENDED_ML_PROD_SWING_WATCHDOG_TIMEOUT_SECONDS,
 )
 from ihm.services.ml_artifacts import list_ml_artifact_symbols  # noqa: F401  # re-export legacy
+from ihm.services.queries import get_live_ml_first_diagnostic
 
 __all__ = [
     "_apply_execution_prefills",
@@ -1620,14 +1618,6 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
             )
         )
 
-    # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné (visible hors expander)
-    risk_filter_candidates_without_ml = st.checkbox(
-        "🚫 Filtrer les candidats sans modèle ML entraîné",
-        value=_session_state_bool("pipeline_risk_filter_candidates_without_ml", False),
-        key="pipeline_risk_filter_candidates_without_ml",
-        help="Exclut les candidats qui n'ont pas de prédictions dans model_predictions (pas de modèle entraîné). Les symboles filtrés sont loggués dans la sortie risk_management.",
-    )
-
     with st.expander("Risk — Kelly sizing & options avancées", expanded=False):
         risk_adv_col1, risk_adv_col2, risk_adv_col3 = st.columns(3)
         with risk_adv_col1:
@@ -1819,7 +1809,6 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
         "risk_vol_target_lookback_days": risk_vol_target_lookback_days,
         "risk_min_ml_coverage_ratio": risk_min_ml_coverage_ratio,
         "risk_dry_run": risk_dry_run,
-        "risk_filter_candidates_without_ml": risk_filter_candidates_without_ml,
         "risk_payoff_ratio": risk_payoff_ratio,
         "risk_kelly_fraction_multiplier": risk_kelly_fraction_multiplier,
         "risk_correlation_min_overlap": risk_correlation_min_overlap,
@@ -2527,6 +2516,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         st.session_state[PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY] = bool(fractional_prefs.pipeline_live_enabled)
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=False):
+        live_ml_diagnostic = get_live_ml_first_diagnostic()
+        if live_ml_diagnostic.get("status") == "available":
+            diagnostic_col1, diagnostic_col2, diagnostic_col3, diagnostic_col4 = st.columns(4)
+            diagnostic_col1.metric("Univers PIT", str(live_ml_diagnostic.get("universe_run_id") or "—"))
+            diagnostic_col2.metric("Couverture ML", f"{_to_float(live_ml_diagnostic.get('coverage_pct')):.1f}%")
+            diagnostic_col3.metric("Champion servi", str(live_ml_diagnostic.get("served_champion") or "—"))
+            diagnostic_col4.metric("Grade univers", str(live_ml_diagnostic.get("data_quality_grade") or "unknown"))
+        else:
+            st.warning(str(live_ml_diagnostic.get("reason") or "Diagnostic live ML-first indisponible."))
         # === BLOCK 1/9 : Execution (capital preset, dates, equity, mode, RTH, account/swing, fenêtre + trailing + debug) — inline (extraction prévue S6.1) ===
         st.caption(
             "Les pipelines sont lancés en arrière-plan depuis l'IHM. Ils héritent de la configuration DB active et, "
@@ -3020,7 +3018,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         risk_vol_target_lookback_days = _risk_vars["risk_vol_target_lookback_days"]
         risk_min_ml_coverage_ratio = _risk_vars["risk_min_ml_coverage_ratio"]
         risk_dry_run = _risk_vars["risk_dry_run"]
-        risk_filter_candidates_without_ml = _risk_vars["risk_filter_candidates_without_ml"]
         risk_payoff_ratio = _risk_vars["risk_payoff_ratio"]
         risk_kelly_fraction_multiplier = _risk_vars["risk_kelly_fraction_multiplier"]
         risk_correlation_min_overlap = _risk_vars["risk_correlation_min_overlap"]
@@ -3143,86 +3140,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "Rappel modes ML : `rebuild-all` = tout reconstruire ; `rebuild-missing` = seulement les symboles sans modèle ; "
             "`refresh-stale` = reconstruire si le modèle est absent, obsolète ou hors contrat de features / date de début d'historique."
         )
-        ml_train_symbol_source = str(
-            st.session_state.get("pipeline_ml_train_symbol_source", "candidates") or "candidates"
-        ).strip().lower()
-        if ml_train_symbol_source not in {
-            "stock_scores",
-            "stock_scores_history",
-            "stock_scores_all",
-            "candidates",
-            "stock_bars_daily",
-        }:
-            ml_train_symbol_source = "candidates"
-        ml_predict_symbol_source = str(
-            st.session_state.get("pipeline_ml_predict_symbol_source", "candidates") or "candidates"
-        ).strip().lower()
-        if ml_predict_symbol_source not in {
-            "stock_scores",
-            "stock_scores_history",
-            "stock_scores_all",
-            "candidates",
-            "stock_bars_daily",
-        }:
-            ml_predict_symbol_source = "candidates"
-
-        with st.expander("ML — Filtrage d'univers optionnel via le contexte selector", expanded=False):
-            st.caption(
-                "Ce filtre borne l'univers courant avant `ml_train` et `ml_predict` en s'appuyant sur le snapshot courant `stock_scores`. "
-                "Tu peux ne garder que certains `selector_signal_mode`, imposer un `candidate_rank` max ou exclure les lignes en `earnings_blackout`."
-            )
-            ml_selector_filter_col1, ml_selector_filter_col2, ml_selector_filter_col3 = st.columns(3)
-            with ml_selector_filter_col1:
-                ml_selector_universe_signal_modes_selection = cast(
-                    list[str],
-                    st.multiselect(
-                        "selector_signal_mode autorisés",
-                        options=["strict", "sector_neutralized"],
-                        default=list(
-                            st.session_state.get(
-                                "pipeline_ml_selector_universe_signal_modes",
-                                list(DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES),
-                            )
-                        ),
-                        key="pipeline_ml_selector_universe_signal_modes",
-                        help="Vide = pas de filtre sur `selector_signal_mode`.",
-                    ),
-                )
-            with ml_selector_filter_col2:
-                ml_selector_universe_max_candidate_rank_raw = int(
-                    st.number_input(
-                        "candidate_rank max",
-                        min_value=0,
-                        max_value=10_000,
-                        value=_coerce_int(
-                            st.session_state.get(
-                                "pipeline_ml_selector_universe_max_candidate_rank",
-                                DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK or 0,
-                            )
-                            or 0,
-                            default=0,
-                        ),
-                        step=1,
-                        key="pipeline_ml_selector_universe_max_candidate_rank",
-                        help="0 = désactivé. Exemple : 25 pour conserver uniquement le top 25 selector courant.",
-                    )
-                )
-                ml_selector_universe_max_candidate_rank = (
-                    int(ml_selector_universe_max_candidate_rank_raw)
-                    if int(ml_selector_universe_max_candidate_rank_raw) > 0
-                    else None
-                )
-            with ml_selector_filter_col3:
-                ml_selector_universe_exclude_earnings_blackout = st.checkbox(
-                    "Exclure earnings_blackout",
-                    value=_session_state_bool(
-                        "pipeline_ml_selector_universe_exclude_earnings_blackout",
-                        DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT,
-                    ),
-                    key="pipeline_ml_selector_universe_exclude_earnings_blackout",
-                    help="Filtre dur sur `stock_scores.earnings_blackout = 0`.",
-                )
-
+        ml_train_symbol_source = "tradable-universe"
+        ml_predict_symbol_source = "tradable-universe"
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:
             ml_include_sentiment = st.checkbox(
@@ -3231,11 +3150,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_sentiment",
                 help="Ajoute `--include-sentiment` à `ml_train`.",
             )
-            ml_include_selector_context = st.checkbox(
-                "Inclure les features contexte selector",
-                value=_session_state_bool("pipeline_ml_include_selector_context", DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT),
-                key="pipeline_ml_include_selector_context",
-                help="Ajoute `--include-selector-context` pour enrichir le dataset ML avec un contexte PIT-safe issu de `stock_scores_history`.",
+            ml_include_score_context = st.checkbox(
+                "Inclure les features contexte score",
+                value=_session_state_bool("pipeline_ml_include_score_context", DEFAULT_ML_INCLUDE_SCORE_CONTEXT),
+                key="pipeline_ml_include_score_context",
+                help="Ajoute `--include-score-context` pour enrichir le dataset ML avec le contexte PIT-safe des scores techniques.",
             )
             ml_include_short_score = st.checkbox(
                 "Inclure le short_score dédié (score baissier)",
@@ -3939,30 +3858,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ),
                 )
 
-        # === BLOCK 4/9 : Selector / Alpha Scanner (extrait — _render_selector_block) ===
-        _selector_vars = _render_selector_block()
-        selector_chunk_size = _selector_vars["selector_chunk_size"]
-        selector_selection_size = _selector_vars["selector_selection_size"]
-        selector_short_selection_size = _selector_vars["selector_short_selection_size"]
-        selector_max_workers = _selector_vars["selector_max_workers"]
-        selector_log_level = _selector_vars["selector_log_level"]
-        selector_liquidity_threshold = _selector_vars["selector_liquidity_threshold"]
-        selector_min_close = _selector_vars["selector_min_close"]
-        selector_max_volatility_ratio = _selector_vars["selector_max_volatility_ratio"]
-        selector_min_relative_strength_index = _selector_vars["selector_min_relative_strength_index"]
-        selector_min_high_52w_proximity = _selector_vars["selector_min_high_52w_proximity"]
-        selector_min_weekly_trend_score = _selector_vars["selector_min_weekly_trend_score"]
-        selector_min_atr_pct_20 = _selector_vars["selector_min_atr_pct_20"]
-        selector_max_atr_pct_20 = _selector_vars["selector_max_atr_pct_20"]
-        selector_min_market_cap = _selector_vars["selector_min_market_cap"]
-        selector_min_beta_126 = _selector_vars["selector_min_beta_126"]
-        selector_max_spread_bps = _selector_vars["selector_max_spread_bps"]
-        selector_earnings_blackout_days = _selector_vars["selector_earnings_blackout_days"]
-        selector_max_anomaly_count = _selector_vars["selector_max_anomaly_count"]
-        selector_require_above_ma200 = _selector_vars["selector_require_above_ma200"]
-        selector_sector_cap_ratio = _selector_vars["selector_sector_cap_ratio"]
-
-        # === BLOCK 5/9 : Event Sentiment (extrait — _render_event_sentiment_block) ===
+        # === BLOCK 4/8 : Event Sentiment (extrait — _render_event_sentiment_block) ===
         _sentiment_vars = _render_event_sentiment_block()
         sentiment_start_utc = _sentiment_vars["sentiment_start_utc"]
         sentiment_end_utc = _sentiment_vars["sentiment_end_utc"]
@@ -4069,7 +3965,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_debug=bool(execution_debug),
             ml_accelerator=cast(Any, ml_accelerator),
             ml_include_sentiment=bool(ml_include_sentiment),
-            ml_include_selector_context=bool(ml_include_selector_context),
+            ml_include_score_context=bool(ml_include_score_context),
             ml_include_short_score=bool(ml_include_short_score),
             ml_include_macro_vix=bool(ml_include_macro_vix),
             ml_include_macro_vxn=bool(ml_include_macro_vxn),
@@ -4115,13 +4011,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_training_end_date=ml_training_end_date.isoformat(),
             ml_train_symbol_source=cast(Any, ml_train_symbol_source),
             ml_predict_symbol_source=cast(Any, ml_predict_symbol_source),
-            ml_selector_universe_signal_modes=tuple(
-                str(value).strip().lower()
-                for value in ml_selector_universe_signal_modes_selection
-                if str(value).strip()
-            ),
-            ml_selector_universe_max_candidate_rank=ml_selector_universe_max_candidate_rank,
-            ml_selector_universe_exclude_earnings_blackout=bool(ml_selector_universe_exclude_earnings_blackout),
             ml_artifacts_dir=str(ml_artifacts_dir or DEFAULT_ML_ARTIFACTS_DIR).strip() or DEFAULT_ML_ARTIFACTS_DIR,
             ml_benchmark_symbol=str(ml_benchmark_symbol or DEFAULT_ML_BENCHMARK_SYMBOL).strip().upper() or DEFAULT_ML_BENCHMARK_SYMBOL,
             ml_default_champion=cast(Any, ml_default_champion),
@@ -4158,7 +4047,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             risk_payoff_ratio=float(risk_payoff_ratio),
             risk_kelly_fraction_multiplier=float(risk_kelly_fraction_multiplier),
             risk_dry_run=bool(risk_dry_run),
-            filter_candidates_without_ml=bool(risk_filter_candidates_without_ml),
             risk_log_level=str(risk_log_level).upper(),
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
@@ -4216,26 +4104,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 if sentiment_contextual_max_pairs
                 else None
             ),
-            selector_chunk_size=int(selector_chunk_size),
-            selector_selection_size=int(selector_selection_size),
-            selector_short_selection_size=int(selector_short_selection_size),
-            selector_max_workers=_to_optional_positive_int(selector_max_workers),
-            selector_liquidity_threshold=float(selector_liquidity_threshold),
-            selector_min_close=float(selector_min_close),
-            selector_max_volatility_ratio=float(selector_max_volatility_ratio),
-            selector_min_relative_strength_index=float(selector_min_relative_strength_index),
-            selector_min_high_52w_proximity=float(selector_min_high_52w_proximity),
-            selector_min_weekly_trend_score=float(selector_min_weekly_trend_score),
-            selector_min_atr_pct_20=float(selector_min_atr_pct_20),
-            selector_max_atr_pct_20=float(selector_max_atr_pct_20),
-            selector_min_market_cap=float(selector_min_market_cap),
-            selector_min_beta_126=float(selector_min_beta_126),
-            selector_max_spread_bps=float(selector_max_spread_bps),
-            selector_earnings_blackout_days=int(selector_earnings_blackout_days),
-            selector_max_anomaly_count=int(selector_max_anomaly_count),
-            selector_sector_cap_ratio=float(selector_sector_cap_ratio),
-            selector_log_level=str(selector_log_level).upper(),
-            selector_require_above_ma200=bool(selector_require_above_ma200),
             signal_aggregator_all_symbols=bool(signal_aggregator_all_symbols),
             signal_aggregator_sentiment_weight=float(signal_aggregator_sentiment_weight),
             signal_aggregator_macro_weight=float(signal_aggregator_macro_weight),

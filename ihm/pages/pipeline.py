@@ -16,7 +16,7 @@ import streamlit as st
 from dataIntegrityEngine.sync_latest_quotes import estimate_sync_latest_quotes_cost
 from database.connection import get_sqlalchemy_engine
 from database.selector_reference import list_symbols_for_source, normalize_start_symbol
-from modelFactory.db_registry import filter_symbols_by_selector_context, load_symbols_for_source
+from modelFactory.db_registry import load_symbols_for_source
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
 from ihm.pages import run_page_if_standalone
@@ -104,28 +104,14 @@ from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
 from ihm.services.queries import get_execution_live_guard
 
 
-ML_TRAIN_SYMBOL_SOURCE_OPTIONS = (
-    "stock_scores",
-    "stock_scores_history",
-    "stock_scores_all",
-    "candidates",
-    "stock_bars_daily",
-)
+ML_TRAIN_SYMBOL_SOURCE_OPTIONS = ("tradable-universe",)
 
 ML_TRAIN_SYMBOL_SOURCE_LABELS = {
-    "stock_scores": "Snapshot courant stock_scores",
-    "stock_scores_history": "Historique PIT stock_scores_history",
-    "stock_scores_all": "Union stock_scores + stock_scores_history",
-    "candidates": "Candidats du jour",
-    "stock_bars_daily": "Univers large stock_bars_daily",
+    "tradable-universe": "Univers tradable PIT canonique",
 }
 
 ML_TRAIN_SYMBOL_SOURCE_TO_CLI = {
-    "stock_scores": "stock-scores",
-    "stock_scores_history": "stock-scores-history",
-    "stock_scores_all": "stock-scores-all",
-    "candidates": "candidates",
-    "stock_bars_daily": "stock-bars-daily",
+    "tradable-universe": "tradable-universe",
 }
 
 DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS = (
@@ -700,35 +686,14 @@ def _render_ml_inspection_link(step_key: str) -> None:
 @st.cache_data(ttl=60, show_spinner=False)
 def _resolve_ml_train_scope_preview(
     symbol_source: str,
-    selector_signal_modes: tuple[str, ...],
-    selector_max_candidate_rank: int | None,
-    selector_exclude_earnings_blackout: bool,
 ) -> dict[str, object]:
     engine = get_sqlalchemy_engine()
-    cli_symbol_source = ML_TRAIN_SYMBOL_SOURCE_TO_CLI.get(symbol_source, "candidates")
+    cli_symbol_source = ML_TRAIN_SYMBOL_SOURCE_TO_CLI.get(symbol_source, "tradable-universe")
     resolved_symbols = load_symbols_for_source(engine, cli_symbol_source)
-    filtered_symbols = resolved_symbols
-    selector_summary: dict[str, object] = {
-        "enabled": False,
-        "applied": False,
-        "input_symbol_count": len(resolved_symbols),
-        "output_symbol_count": len(resolved_symbols),
-    }
-    if resolved_symbols:
-        candidate_filtered_symbols, selector_summary = filter_symbols_by_selector_context(
-            engine,
-            resolved_symbols,
-            signal_modes=selector_signal_modes,
-            max_candidate_rank=selector_max_candidate_rank,
-            exclude_earnings_blackout=selector_exclude_earnings_blackout,
-        )
-        if selector_summary.get("enabled") and selector_summary.get("applied"):
-            filtered_symbols = candidate_filtered_symbols
     return {
-        "symbol_count": len(filtered_symbols),
+        "symbol_count": len(resolved_symbols),
         "raw_symbol_count": len(resolved_symbols),
-        "sample_symbols": filtered_symbols[:10],
-        "selector_summary": selector_summary,
+        "sample_symbols": resolved_symbols[:10],
     }
 
 
@@ -754,34 +719,9 @@ def _render_ml_scope_block(
     elif active_for_step:
         st.caption(f"Un run `{label_prefix}` est déjà actif : le lancement ML ciblé attend la fin de ce run.")
 
-    current_symbol_source = str(
-        st.session_state.get(selectbox_key, getattr(options, source_attr, "candidates"))
-    ).strip().lower()
-    if current_symbol_source not in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
-        current_symbol_source = "candidates"
-
-    selected_symbol_source_widget_value = str(
-        st.selectbox(
-            "Univers de symboles à prédire" if step_key == "ml_predict" else "Univers de symboles à entraîner",
-            options=ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
-            index=ML_TRAIN_SYMBOL_SOURCE_OPTIONS.index(current_symbol_source),
-            key=selectbox_key,
-            format_func=lambda value: ML_TRAIN_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
-            help=(
-                "Choisissez le même type de périmètre que pour l'import news : snapshot courant, historique PIT, union large, "
-                "candidats du jour ou univers complet `stock_bars_daily`."
-            ),
-        )
-    )
-    selected_symbol_source = _resolve_latest_selectbox_value(
-        selectbox_key,
-        selected_symbol_source_widget_value,
-        default="candidates",
-        allowed_values=ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
-    )
+    selected_symbol_source = "tradable-universe"
     st.caption(
-        "`stock_scores_all` = union `stock_scores` + `stock_scores_history` ; `stock_scores` = snapshot courant ; "
-        "`stock_scores_history` = historique PIT ; `candidates` = candidats du jour ; `stock_bars_daily` = univers large."
+        "Le scope ML est l'univers tradable PIT canonique. Les scores techniques enrichissent les features ou servent de veto; ils ne déterminent pas les symboles entraînés ou prédits."
     )
 
     # --- Start symbol (ML Train only) ---
@@ -802,12 +742,7 @@ def _render_ml_scope_block(
             st.caption(f"Filtre de démarrage appliqué : symboles `>= {normalized_start_symbol}`.")
 
     try:
-        scope_preview = _resolve_ml_train_scope_preview(
-            selected_symbol_source,
-            tuple(str(value).strip().lower() for value in (options.ml_selector_universe_signal_modes or ()) if str(value).strip()),
-            options.ml_selector_universe_max_candidate_rank,
-            bool(options.ml_selector_universe_exclude_earnings_blackout),
-        )
+        scope_preview = _resolve_ml_train_scope_preview(selected_symbol_source)
     except Exception as exc:
         st.warning(f"Impossible de prévisualiser l'univers ML : {exc}")
         scope_preview = None
@@ -823,24 +758,11 @@ def _render_ml_scope_block(
             for value in (sample_symbols_values if isinstance(sample_symbols_values, (list, tuple)) else [])
             if str(value).strip()
         ]
-        selector_summary = scope_preview.get("selector_summary") if isinstance(scope_preview.get("selector_summary"), dict) else {}
-
         metric_col1, metric_col2 = st.columns(2)
         with metric_col1:
             st.metric("Symboles résolus", raw_symbol_count)
         with metric_col2:
             st.metric("Symboles entraînés", symbol_count)
-
-        if selector_summary.get("enabled") and selector_summary.get("applied"):
-            st.caption(
-                "Filtre selector appliqué : "
-                f"{selector_summary.get('input_symbol_count', raw_symbol_count)} → {selector_summary.get('output_symbol_count', symbol_count)} symboles."
-            )
-        elif selector_summary.get("enabled"):
-            st.caption(
-                "Filtre selector configuré mais non appliqué en prévisualisation "
-                f"({selector_summary.get('reason', 'raison indisponible')})."
-            )
 
         if symbol_count == 0:
             st.warning("Aucun symbole ne serait entraîné avec les paramètres ML actuels.")

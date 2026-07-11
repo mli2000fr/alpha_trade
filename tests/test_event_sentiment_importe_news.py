@@ -411,6 +411,19 @@ def test_resolve_symbols_from_inputs_uses_stock_scores_all_source(monkeypatch) -
     assert symbols == ["NVDA", "AAPL"]
 
 
+def test_resolve_symbols_from_inputs_uses_tradable_universe_source(monkeypatch) -> None:
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_tradable_universe", lambda: ["nvda", "AAPL", "NVDA"])
+
+    symbols, source = importe_news.resolve_symbols_from_inputs(
+        symbols_csv=None,
+        symbol_source="tradable-universe",
+        repository=cast(EventSentimentRepository, cast(object, _FakeRepository())),
+    )
+
+    assert source == "tradable-universe"
+    assert symbols == ["NVDA", "AAPL"]
+
+
 def test_get_all_symbols_from_stock_scores_all_uses_union_query(monkeypatch) -> None:
     captured: dict[str, str] = {}
 

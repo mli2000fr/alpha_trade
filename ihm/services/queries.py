@@ -556,6 +556,67 @@ def _serialize_backtesting_ml_missing_days(df: pd.DataFrame) -> list[dict[str, o
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def get_live_ml_first_diagnostic() -> dict[str, object]:
+    """Résume le dernier scope live ML-first publié pour l'Execution Center."""
+    universe_df = safe_query(
+        """
+        SELECT universe_run_id, snapshot_date, capital_preset_key, data_quality_grade, tradable_rows
+        FROM tradable_universe_runs
+        WHERE status = 'completed'
+          AND is_canonical = 1
+          AND rows_written = rows_expected
+        ORDER BY snapshot_date DESC, finished_at DESC
+        LIMIT 1
+        """
+    )
+    if universe_df.empty:
+        return {"status": "missing", "reason": "Aucun univers tradable PIT canonique complet publié."}
+    universe = universe_df.iloc[0].to_dict()
+    snapshot_date = _coerce_date(universe.get("snapshot_date"))
+    if snapshot_date is None:
+        return {"status": "unavailable", "reason": "Snapshot date invalide pour le dernier univers tradable."}
+    coverage_df = safe_query(
+        """
+        SELECT COUNT(DISTINCT history.symbol) AS universe_symbols,
+               COUNT(DISTINCT predictions.symbol) AS prediction_symbols
+        FROM tradable_universe_history history
+        LEFT JOIN model_predictions predictions
+          ON predictions.symbol = history.symbol
+         AND predictions.prediction_date = :snapshot_date
+        WHERE history.universe_run_id = :universe_run_id
+          AND history.is_tradable = 1
+        """,
+        {"universe_run_id": universe["universe_run_id"], "snapshot_date": snapshot_date.isoformat()},
+    )
+    coverage = coverage_df.iloc[0].to_dict() if not coverage_df.empty else {}
+    champions_df = safe_query(
+        """
+        SELECT model_name, COUNT(*) AS symbols
+        FROM model_governance
+        WHERE is_selected_model = 1
+        GROUP BY model_name
+        ORDER BY symbols DESC, model_name ASC
+        LIMIT 1
+        """
+    )
+    champion = champions_df.iloc[0].to_dict() if not champions_df.empty else {}
+    universe_symbols = _coerce_int(coverage.get("universe_symbols"))
+    prediction_symbols = _coerce_int(coverage.get("prediction_symbols"))
+    return {
+        "status": "available",
+        "universe_run_id": str(universe.get("universe_run_id") or ""),
+        "snapshot_date": snapshot_date.isoformat(),
+        "capital_preset_key": str(universe.get("capital_preset_key") or ""),
+        "data_quality_grade": str(universe.get("data_quality_grade") or "unknown"),
+        "universe_symbols": universe_symbols,
+        "prediction_symbols": prediction_symbols,
+        "coverage_pct": _coverage_pct(prediction_symbols, universe_symbols),
+        "served_champion": str(champion.get("model_name") or "indisponible"),
+        "champion_symbols": _coerce_int(champion.get("symbols")),
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def get_backtesting_ml_coverage_diagnostic(
     *,
     start: str | date | None,
@@ -569,8 +630,8 @@ def get_backtesting_ml_coverage_diagnostic(
 ) -> dict[str, object]:
     """Diagnostique la couverture PIT de `model_predictions` pour un backtest.
 
-    L'univers attendu est dérivé de `stock_scores_history` (candidats PIT) sur la
-    plage demandée, puis comparé aux prédictions persistées dans
+    L'univers attendu est dérivé des snapshots PIT canoniques de l'univers
+    tradable sur la plage demandée, puis comparé aux prédictions persistées dans
     `model_predictions` au niveau `(symbol, prediction_date)`.
     """
     start_date = _coerce_date(start)
@@ -598,7 +659,7 @@ def get_backtesting_ml_coverage_diagnostic(
             "requested_strategy": normalized_requested_strategy,
             "effective_strategy": effective_strategy,
             "persist_enabled": persist_enabled,
-            "expected_candidate_symbol_dates": 0,
+            "expected_universe_symbol_dates": 0,
             "expected_snapshot_days": 0,
             "expected_symbols": 0,
             "covered_prediction_symbol_dates": 0,
@@ -643,7 +704,7 @@ def get_backtesting_ml_coverage_diagnostic(
             "requested_strategy": normalized_requested_strategy,
             "effective_strategy": effective_strategy,
             "persist_enabled": persist_enabled,
-            "expected_candidate_symbol_dates": 0,
+            "expected_universe_symbol_dates": 0,
             "expected_snapshot_days": 0,
             "expected_symbols": 0,
             "covered_prediction_symbol_dates": 0,
@@ -675,23 +736,24 @@ def get_backtesting_ml_coverage_diagnostic(
             "query_error": None,
         }
 
-    preset_column_query = "SHOW COLUMNS FROM stock_scores_history LIKE 'capital_preset_key'"
-    preset_column_present_raw, preset_column_error = _safe_scalar_with_error(preset_column_query)
-    has_capital_preset_key = bool(preset_column_present_raw) and preset_column_error is None
-
     expected_filters = [
-        "snapshot_date BETWEEN :start AND :end",
-        "COALESCE(is_candidate, 0) = 1",
-        "COALESCE(TRIM(symbol), '') <> ''",
+        "runs.snapshot_date BETWEEN :start AND :end",
+        "runs.status = 'completed'",
+        "runs.is_canonical = 1",
+        "runs.rows_written = runs.rows_expected",
+        "history.is_tradable = 1",
+        "COALESCE(TRIM(history.symbol), '') <> ''",
     ]
     params: dict[str, object] = {"start": start_date.isoformat(), "end": end_date.isoformat()}
-    if has_capital_preset_key and capital_preset_key:
-        expected_filters.append("capital_preset_key = :capital_preset_key")
+    if capital_preset_key:
+        expected_filters.append("runs.capital_preset_key = :capital_preset_key")
         params["capital_preset_key"] = capital_preset_key
 
     expected_subquery = (
-        "SELECT DISTINCT snapshot_date, UPPER(TRIM(symbol)) AS symbol "
-        "FROM stock_scores_history "
+        "SELECT DISTINCT runs.snapshot_date, UPPER(TRIM(history.symbol)) AS symbol "
+        "FROM tradable_universe_runs runs "
+        "JOIN tradable_universe_history history "
+        "  ON history.universe_run_id = runs.universe_run_id "
         f"WHERE {' AND '.join(expected_filters)}"
     )
     predictions_subquery = (
@@ -703,7 +765,7 @@ def get_backtesting_ml_coverage_diagnostic(
 
     counts_df = safe_query(
         f"""
-        SELECT COUNT(*) AS expected_candidate_symbol_dates,
+        SELECT COUNT(*) AS expected_universe_symbol_dates,
                COUNT(DISTINCT expected.snapshot_date) AS expected_snapshot_days,
                COUNT(DISTINCT expected.symbol) AS expected_symbols,
                COUNT(CASE WHEN preds.symbol IS NOT NULL THEN 1 END) AS covered_prediction_symbol_dates,
@@ -725,7 +787,7 @@ def get_backtesting_ml_coverage_diagnostic(
 
     missing_rows_sample: list[dict[str, object]] = []
     missing_days_sample: list[dict[str, object]] = []
-    query_error = preset_column_error or counts_error
+    query_error = counts_error
 
     if query_error is None:
         missing_params: dict[str, object] = dict(params)
@@ -782,13 +844,13 @@ def get_backtesting_ml_coverage_diagnostic(
             "start": start_date.isoformat(),
             "end": end_date.isoformat(),
             "capital_preset_key": capital_preset_key,
-            "capital_preset_filtered": bool(has_capital_preset_key and capital_preset_key),
+            "capital_preset_filtered": bool(capital_preset_key),
             "engine_mode": normalized_engine_mode,
             "ml_mode": normalized_ml_mode,
             "requested_strategy": normalized_requested_strategy,
             "effective_strategy": effective_strategy,
             "persist_enabled": persist_enabled,
-            "expected_candidate_symbol_dates": 0,
+            "expected_universe_symbol_dates": 0,
             "expected_snapshot_days": 0,
             "expected_symbols": 0,
             "covered_prediction_symbol_dates": 0,
@@ -821,7 +883,7 @@ def get_backtesting_ml_coverage_diagnostic(
         }
 
     row = counts_df.iloc[0].to_dict() if not counts_df.empty else {}
-    expected_candidate_symbol_dates = _coerce_int(row.get("expected_candidate_symbol_dates"))
+    expected_universe_symbol_dates = _coerce_int(row.get("expected_universe_symbol_dates"))
     expected_snapshot_days = _coerce_int(row.get("expected_snapshot_days"))
     expected_symbols = _coerce_int(row.get("expected_symbols"))
     covered_prediction_symbol_dates = _coerce_int(row.get("covered_prediction_symbol_dates"))
@@ -832,11 +894,11 @@ def get_backtesting_ml_coverage_diagnostic(
     missing_symbols = _coerce_int(row.get("missing_symbols"))
     first_snapshot_date = _coerce_date(row.get("first_snapshot_date"))
     last_snapshot_date = _coerce_date(row.get("last_snapshot_date"))
-    coverage_pct = _coverage_pct(covered_prediction_symbol_dates, expected_candidate_symbol_dates)
+    coverage_pct = _coverage_pct(covered_prediction_symbol_dates, expected_universe_symbol_dates)
 
-    if expected_candidate_symbol_dates <= 0:
+    if expected_universe_symbol_dates <= 0:
         status = "missing_expected_history"
-        reason = "Aucun candidat PIT attendu n'a été détecté dans stock_scores_history sur la plage demandée."
+        reason = "Aucun univers tradable PIT canonique attendu n'a été détecté sur la plage demandée."
     elif missing_prediction_symbol_dates <= 0:
         status = "complete"
         reason = "Couverture ML PIT complète : toutes les paires symbole×date attendues sont déjà persistées."
@@ -848,7 +910,7 @@ def get_backtesting_ml_coverage_diagnostic(
         reason = "Couverture ML PIT partielle : une partie des prédictions attendues manque encore."
 
     fast_mode_summary = (
-        f"Mode rapide (`use-persisted`) : {covered_prediction_symbol_dates}/{expected_candidate_symbol_dates} "
+        f"Mode rapide (`use-persisted`) : {covered_prediction_symbol_dates}/{expected_universe_symbol_dates} "
         f"paire(s) symbole×date déjà couvertes ({coverage_pct:.1f}%) ; "
         f"{missing_prediction_symbol_dates} resteraient sans ML."
     )
@@ -880,13 +942,13 @@ def get_backtesting_ml_coverage_diagnostic(
         "start": start_date.isoformat(),
         "end": end_date.isoformat(),
         "capital_preset_key": capital_preset_key,
-        "capital_preset_filtered": bool(has_capital_preset_key and capital_preset_key),
+        "capital_preset_filtered": bool(capital_preset_key),
         "engine_mode": normalized_engine_mode,
         "ml_mode": normalized_ml_mode,
         "requested_strategy": normalized_requested_strategy,
         "effective_strategy": effective_strategy,
         "persist_enabled": persist_enabled,
-        "expected_candidate_symbol_dates": expected_candidate_symbol_dates,
+        "expected_universe_symbol_dates": expected_universe_symbol_dates,
         "expected_snapshot_days": expected_snapshot_days,
         "expected_symbols": expected_symbols,
         "covered_prediction_symbol_dates": covered_prediction_symbol_dates,

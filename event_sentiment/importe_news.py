@@ -1,6 +1,6 @@
 import argparse
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import text
 from common.utils import configure_root_logging
@@ -75,6 +75,43 @@ def get_all_symbols_from_stock_scores_all() -> list[str]:
     )
 
 
+def get_all_symbols_from_tradable_universe() -> list[str]:
+    """Charge le dernier univers tradable PIT canonique et complet."""
+    engine = get_sqlalchemy_engine()
+    with engine.connect() as conn:
+        run = conn.execute(
+            text(
+                """
+                SELECT universe_run_id
+                FROM tradable_universe_runs
+                WHERE snapshot_date <= :trade_date
+                  AND status = 'completed'
+                  AND is_canonical = 1
+                  AND rows_written = rows_expected
+                  AND data_quality_grade = 'full'
+                ORDER BY snapshot_date DESC, finished_at DESC
+                LIMIT 1
+                """
+            ),
+            {"trade_date": date.today()},
+        ).scalar_one_or_none()
+        if run is None:
+            raise RuntimeError("Aucun univers tradable PIT canonique complet disponible pour le sentiment.")
+        rows = conn.execute(
+            text(
+                """
+                SELECT symbol
+                FROM tradable_universe_history
+                WHERE universe_run_id = :universe_run_id
+                  AND is_tradable = 1
+                ORDER BY symbol ASC
+                """
+            ),
+            {"universe_run_id": run},
+        ).fetchall()
+    return _normalize_symbols([row[0] for row in rows])
+
+
 def resolve_symbols_from_inputs(
     *,
     symbols_csv: str | None,
@@ -99,6 +136,9 @@ def resolve_symbols_from_inputs(
 
     if symbol_source == "stock_scores_all":
         return _normalize_symbols(get_all_symbols_from_stock_scores_all()), "stock_scores_all"
+
+    if symbol_source == "tradable-universe":
+        return _normalize_symbols(get_all_symbols_from_tradable_universe()), "tradable-universe"
 
     if symbol_source != "stock_scores_all" and logger is not None:
         logger.warning("Source de symboles inconnue '%s' ; fallback stock_scores_all.", symbol_source)

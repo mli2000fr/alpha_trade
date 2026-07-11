@@ -505,7 +505,7 @@ def test_apply_sector_neutrality_does_not_cap_unknown_sector() -> None:
     assert (selected["sector"] == "Unknown").sum() > 6
 
 
-def test_update_database_resets_then_marks_selected_symbols() -> None:
+def test_update_database_does_not_write_candidate_selection_flags() -> None:
     engine = _create_shared_sqlite_engine()
     with engine.begin() as conn:
         conn.execute(
@@ -541,7 +541,7 @@ def test_update_database_resets_then_marks_selected_symbols() -> None:
         rows = conn.execute(text("SELECT symbol, is_candidate FROM stock_scores ORDER BY symbol")).fetchall()
 
     assert updated_count == 2
-    assert rows == [("AAA", 1), ("BBB", 0), ("CCC", 1)]
+    assert rows == [("AAA", 0), ("BBB", 1), ("CCC", 0)]
 
 
 def test_update_database_persists_selector_scores() -> None:
@@ -649,7 +649,7 @@ def test_update_database_persists_selector_scores() -> None:
 
     assert updated_count == 1
     assert rows == [
-        ("AAA", 0.8, 0.6, 1.1, 5_000_000_000.0, 1.15, 12.0, 8, 0, 1, 1, 0.028, 0.91, 0.88, 0.54, 0.35, 0.42, 0.33, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.3500; total=0.4200; rsi=0.3300; final=1.1000"),
+            ("AAA", 0.8, 0.6, 1.1, 5_000_000_000.0, 1.15, 12.0, 8, 0, 0, 1, 0.028, 0.91, 0.88, 0.54, 0.35, 0.42, 0.33, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.3500; total=0.4200; rsi=0.3300; final=1.1000"),
         ("BBB", 0.55, 0.4, 0.82, 3_000_000_000.0, 0.95, 30.0, 2, 1, 0, None, 0.019, 0.73, 0.76, 0.62, 0.24, 0.34, 0.24, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.2400; total=0.3400; rsi=0.2400; final=0.8200"),
     ]
 

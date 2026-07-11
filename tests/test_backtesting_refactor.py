@@ -634,7 +634,7 @@ class TestFidelityManifestSprint1:
         assert payload["degraded_session_count"] == 2
         first_session = payload["sessions"][0]
         assert first_session["trade_date"] == "2025-01-02"
-        assert first_session["candidate_rows"] == 2
+        assert first_session["scoring_rows"] == 2
         assert first_session["selected_count"] == 1
         assert first_session["missing_ml_symbols"] == ["BBB"]
         assert first_session["degraded_components"] == ["sentiment", "ml"]

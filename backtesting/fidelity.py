@@ -631,9 +631,9 @@ def build_replay_diagnostic_summary(
 
         session_payload = {
             "trade_date": pd.Timestamp(trade_date).date().isoformat(),
-            "candidate_rows": int(len(scores_day)),
-            "candidate_symbols": candidate_symbols,
-            "candidate_symbol_count": len(candidate_symbols),
+            "scoring_rows": int(len(scores_day)),
+            "scoring_symbols": candidate_symbols,
+            "scoring_symbol_count": len(candidate_symbols),
             "score_source_counts": score_source_counts,
             "predictions_rows": int(len(preds_day)),
             "prediction_symbol_count": len(prediction_symbols),
@@ -681,8 +681,8 @@ def save_replay_diagnostic_summary(summary: Mapping[str, Any], output_dir: Path)
             rows.append(
                 {
                     "trade_date": session.get("trade_date"),
-                    "candidate_rows": session.get("candidate_rows", 0),
-                    "candidate_symbol_count": session.get("candidate_symbol_count", 0),
+                    "scoring_rows": session.get("scoring_rows", 0),
+                    "scoring_symbol_count": session.get("scoring_symbol_count", 0),
                     "score_source_counts": json.dumps(session.get("score_source_counts", {}), ensure_ascii=False, sort_keys=True),
                     "predictions_rows": session.get("predictions_rows", 0),
                     "prediction_symbol_count": session.get("prediction_symbol_count", 0),

@@ -59,6 +59,7 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert "--walk-forward-artifacts-dir" not in command
 	assert "--fail-on-missing-macro-data" in command
 	assert "--allow-neutral-fallback-on-missing-macro-data" not in command
+	assert "--filter-no-ml" not in command
 
 
 def test_build_backtesting_run_command_includes_capital_preset_key():
