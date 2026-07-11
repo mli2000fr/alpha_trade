@@ -1,0 +1,322 @@
+"""risk_management/operational_controls.py — Contrôles opérationnels permanents (Sprint Maître 15).
+
+Contrôles quotidiens/hebdomadaires/mensuels/trimestriels :
+- Smoke test avant session
+- Fraîcheur et intégrité quotidiennes
+- Parité backtest/live quotidienne
+- Réconciliation quotidienne
+- Rollback drill mensuel
+- Restauration complète trimestrielle
+
+Usage ::
+
+    from risk_management.operational_controls import (
+        OperationalControls, SmokeTest, ControlSchedule, ControlResult,
+    )
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from enum import StrEnum
+
+
+# ── ControlFrequency ────────────────────────────────────────────────────────
+
+
+class ControlFrequency(StrEnum):
+    """Fréquence d'un contrôle opérationnel (Sprint Maître 15)."""
+
+    PRE_SESSION = "pre_session"     # Avant chaque session de trading
+    DAILY = "daily"                 # Quotidien (post-session)
+    WEEKLY = "weekly"               # Hebdomadaire
+    MONTHLY = "monthly"             # Mensuel
+    QUARTERLY = "quarterly"         # Trimestriel
+
+
+# ── ControlStatus ───────────────────────────────────────────────────────────
+
+
+class ControlStatus(StrEnum):
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    PENDING = "pending"
+
+
+# ── SmokeTest ───────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class SmokeTest:
+    """Un smoke test pré-session (Sprint Maître 15)."""
+
+    test_id: str
+    name: str
+    description: str = ""
+    status: ControlStatus = ControlStatus.PENDING
+    duration_ms: float = 0.0
+    detail: str = ""
+    checked_at: datetime | None = None
+
+    @property
+    def is_blocking(self) -> bool:
+        """True si ce test bloquant doit empêcher le trading."""
+        return self.status == ControlStatus.FAILED
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "test_id": self.test_id,
+            "name": self.name,
+            "status": self.status.value,
+            "duration_ms": round(self.duration_ms, 1),
+            "detail": self.detail,
+        }
+
+
+# ── ControlResult ───────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class ControlResult:
+    """Résultat d'un contrôle opérationnel (Sprint Maître 15)."""
+
+    control_id: str
+    name: str
+    frequency: ControlFrequency
+    status: ControlStatus = ControlStatus.PENDING
+    detail: str = ""
+    checked_at: datetime | None = None
+    requires_escalation: bool = False
+
+    @property
+    def is_blocking(self) -> bool:
+        return self.status == ControlStatus.FAILED
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "control_id": self.control_id,
+            "name": self.name,
+            "frequency": self.frequency.value,
+            "status": self.status.value,
+            "detail": self.detail,
+            "requires_escalation": self.requires_escalation,
+        }
+
+
+# ── ControlSchedule ─────────────────────────────────────────────────────────
+
+
+@dataclass
+class ControlSchedule:
+    """Planning des contrôles opérationnels (Sprint Maître 15).
+
+    Définit les contrôles à exécuter par fréquence.
+    """
+
+    # ── Pré-session (smoke tests) ──────────────────────────────────────
+    PRE_SESSION_TESTS: tuple[SmokeTest, ...] = (
+        SmokeTest("SMOKE_CONNECTIVITY", "Connectivité broker", "Vérifier que l'API broker répond"),
+        SmokeTest("SMOKE_DATA_FRESH", "Fraîcheur données", "Vérifier prix/ADV/earnings < seuil"),
+        SmokeTest("SMOKE_KILL_SWITCH", "Kill switch inactif", "Vérifier qu'aucun kill switch n'est actif"),
+        SmokeTest("SMOKE_CIRCUIT_BREAKER", "Circuit breaker OK", "Vérifier que le breaker n'est pas trippé"),
+        SmokeTest("SMOKE_ML_READY", "Modèle ML prêt", "Vérifier que le champion est chargé et non drifté"),
+        SmokeTest("SMOKE_CASH", "Cash disponible", "Vérifier buying power > 0"),
+        SmokeTest("SMOKE_WATCHER", "Watcher actif", "Vérifier que le protection watcher tourne"),
+    )
+
+    # ── Quotidiens ─────────────────────────────────────────────────────
+    DAILY_CONTROLS: tuple[str, ...] = (
+        "reconciliation",              # Réconciliation ordres/positions/protections/PnL/cash
+        "freshness_check",             # Fraîcheur données/modèle/calibration/régime/borrow
+        "parity_check",                # Parité backtest/live
+        "integrity_check",             # Intégrité audit chain
+        "drift_check",                 # Drift features/probas/sides/calibration/PnL/coûts
+    )
+
+    # ── Hebdomadaires ──────────────────────────────────────────────────
+    WEEKLY_CONTROLS: tuple[str, ...] = (
+        "attribution_review",          # Revue d'attribution par régime/secteur
+        "cost_review",                 # Revue des coûts (slippage, commission, borrow)
+        "capacity_review",             # Revue de capacité par stratégie
+        "concentration_review",        # Revue de concentration
+    )
+
+    # ── Mensuels ───────────────────────────────────────────────────────
+    MONTHLY_CONTROLS: tuple[str, ...] = (
+        "rollback_drill",              # Test de rollback atomique
+        "shadow_validation",           # Validation du modèle shadow
+        "calibration_review",          # Revue de calibration par cohorte
+        "incident_review",             # Revue des incidents du mois
+    )
+
+    # ── Trimestriels ───────────────────────────────────────────────────
+    QUARTERLY_CONTROLS: tuple[str, ...] = (
+        "full_restore_drill",          # Restauration complète depuis backup
+        "independent_review",          # Revue indépendante trimestrielle
+        "disaster_recovery_test",      # Test de disaster recovery
+        "champion_challenger_review",  # Revue champion/challenger
+    )
+
+    def get_controls(self, frequency: ControlFrequency) -> tuple[str, ...]:
+        mapping = {
+            ControlFrequency.DAILY: self.DAILY_CONTROLS,
+            ControlFrequency.WEEKLY: self.WEEKLY_CONTROLS,
+            ControlFrequency.MONTHLY: self.MONTHLY_CONTROLS,
+            ControlFrequency.QUARTERLY: self.QUARTERLY_CONTROLS,
+        }
+        return mapping.get(frequency, ())
+
+    def get_smoke_tests(self) -> tuple[SmokeTest, ...]:
+        return self.PRE_SESSION_TESTS
+
+
+# ── OperationalControls ─────────────────────────────────────────────────────
+
+
+@dataclass
+class OperationalControls:
+    """Gestionnaire des contrôles opérationnels (Sprint Maître 15).
+
+    Exécute et trace les contrôles par fréquence.
+    """
+
+    schedule: ControlSchedule = field(default_factory=ControlSchedule)
+    smoke_results: list[SmokeTest] = field(default_factory=list)
+    control_results: list[ControlResult] = field(default_factory=list)
+
+    def run_smoke_tests(
+        self,
+        *,
+        connectivity_ok: bool = True,
+        data_fresh_ok: bool = True,
+        kill_switch_ok: bool = True,
+        circuit_breaker_ok: bool = True,
+        ml_ready: bool = True,
+        cash_ok: bool = True,
+        watcher_ok: bool = True,
+    ) -> tuple[bool, list[SmokeTest]]:
+        """Exécute les smoke tests pré-session.
+
+        Returns
+        -------
+        (all_passed, results)
+        """
+        results_map = {
+            "SMOKE_CONNECTIVITY": connectivity_ok,
+            "SMOKE_DATA_FRESH": data_fresh_ok,
+            "SMOKE_KILL_SWITCH": kill_switch_ok,
+            "SMOKE_CIRCUIT_BREAKER": circuit_breaker_ok,
+            "SMOKE_ML_READY": ml_ready,
+            "SMOKE_CASH": cash_ok,
+            "SMOKE_WATCHER": watcher_ok,
+        }
+
+        results: list[SmokeTest] = []
+        now = datetime.now()
+
+        for test in self.schedule.get_smoke_tests():
+            ok = results_map.get(test.test_id, True)
+            results.append(SmokeTest(
+                test_id=test.test_id,
+                name=test.name,
+                description=test.description,
+                status=ControlStatus.PASSED if ok else ControlStatus.FAILED,
+                detail="OK" if ok else "ÉCHEC — action requise",
+                checked_at=now,
+            ))
+
+        self.smoke_results = results
+        all_passed = all(r.status == ControlStatus.PASSED for r in results)
+        return all_passed, results
+
+    def record_control(
+        self,
+        control_id: str,
+        name: str,
+        frequency: ControlFrequency,
+        passed: bool,
+        detail: str = "",
+    ) -> ControlResult:
+        """Enregistre le résultat d'un contrôle."""
+        result = ControlResult(
+            control_id=control_id,
+            name=name,
+            frequency=frequency,
+            status=ControlStatus.PASSED if passed else ControlStatus.FAILED,
+            detail=detail,
+            checked_at=datetime.now(),
+            requires_escalation=not passed,
+        )
+        self.control_results.append(result)
+        return result
+
+    def daily_checks_passed(self, date_check: date | None = None) -> tuple[bool, list[ControlResult]]:
+        """Vérifie si tous les contrôles quotidiens sont passés."""
+        daily = [r for r in self.control_results if r.frequency == ControlFrequency.DAILY]
+        all_ok = all(r.status == ControlStatus.PASSED for r in daily)
+        return all_ok, daily
+
+    def is_ready_to_trade(self) -> tuple[bool, str]:
+        """Détermine si le système est prêt à trader.
+
+        Vérifie :
+        1. Smoke tests tous passés
+        2. Pas de kill switch actif
+        3. Circuit breaker non trippé
+
+        Returns
+        -------
+        (ready, reason)
+        """
+        if not self.smoke_results:
+            return False, "Smoke tests non exécutés"
+
+        failed_smokes = [s for s in self.smoke_results if s.is_blocking]
+        if failed_smokes:
+            names = ", ".join(s.name for s in failed_smokes)
+            return False, f"Smoke tests échoués: {names}"
+
+        return True, "Système prêt à trader"
+
+    def summary(self) -> dict[str, object]:
+        """Résumé de l'état des contrôles."""
+        all_results = self.smoke_results + [  # type: ignore[operator]
+            r for r in self.control_results
+        ]
+        passed = sum(1 for r in all_results if hasattr(r, 'status') and r.status == ControlStatus.PASSED)
+        failed = sum(1 for r in all_results if hasattr(r, 'status') and r.status == ControlStatus.FAILED)
+        return {
+            "total_checks": len(all_results),
+            "passed": passed,
+            "failed": failed,
+            "smoke_tests_passed": all(r.status == ControlStatus.PASSED for r in self.smoke_results),
+            "ready_to_trade": self.is_ready_to_trade()[0],
+        }
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def run_pre_session_smoke_tests(
+    *,
+    connectivity_ok: bool = True,
+    data_fresh_ok: bool = True,
+    kill_switch_ok: bool = True,
+    circuit_breaker_ok: bool = True,
+    ml_ready: bool = True,
+    cash_ok: bool = True,
+    watcher_ok: bool = True,
+) -> tuple[bool, list[SmokeTest]]:
+    """Exécute les smoke tests pré-session (fonction pure)."""
+    ctrls = OperationalControls()
+    return ctrls.run_smoke_tests(
+        connectivity_ok=connectivity_ok,
+        data_fresh_ok=data_fresh_ok,
+        kill_switch_ok=kill_switch_ok,
+        circuit_breaker_ok=circuit_breaker_ok,
+        ml_ready=ml_ready,
+        cash_ok=cash_ok,
+        watcher_ok=watcher_ok,
+    )

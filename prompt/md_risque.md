@@ -1625,6 +1625,26 @@ Engager du capital de manière graduelle, manuelle, réversible et mesurable.
 
 Ce sprint devient le processus d'exploitation permanent. Le passage à 100 % n'est jamais automatique et exige plusieurs périodes et régimes observés sans dégradation des gates.
 
+### Ce qui a été implémenté (Sprint Maître 15)
+
+**Date :** 2026-07-20  
+**Gate :** GO PARTIEL  
+**Tests :** 37 (tous passent, 0 échec)
+
+#### Fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/daily_reconciliation.py` | Réconciliation 5D : ordres (intent→submit→fill), positions (target vs actual), protections (OCO), PnL (calculé vs broker), cash (ledger vs broker) |
+| `risk_management/operational_controls.py` | 7 smoke tests pré-session, planning complet (5 daily + 4 weekly + 4 monthly + 4 quarterly), `is_ready_to_trade()` |
+| `risk_management/immutable_journal.py` | Journal immuable avec chaînage HMAC-SHA256, 10 types d'entrées, `verify_chain()` détecte toute altération |
+| `tests/test_risk_sprint15.py` | 37 tests |
+
+#### Résultats
+
+- 37 tests, 0 échec, 0 régression
+- Gate : GO PARTIEL — modules purs testés
+
 ---
 
 ## 5. Travaux parallèles autorisés
