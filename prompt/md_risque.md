@@ -1466,6 +1466,33 @@ Rendre l'ensemble observable, révocable et récupérable.
 - dashboard et rapport quotidien disponibles ;
 - restauration validée sur environnement propre.
 
+### Ce qui a été implémenté (Sprint Maître 13)
+
+**Date :** 2026-07-20  
+**Gate :** GO PARTIEL  
+**Tests :** 55 (tous passent, 0 échec)
+
+#### Fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/model_registry.py` | `ModelStatus` (6 états : CANDIDATE → SHADOW → PAPER → CHAMPION → DEGRADED → RETIRED), `ModelRegistryEntry` (DTO immuable), `ModelRegistry` (register, promote, degrade, retire, rollback atomique, get_champion, count_by_status) |
+| `risk_management/freshness_gate.py` | `FreshnessDimension` (8 dims), `FreshnessConfig` (seuils en secondes), `FreshnessGate` (CRITICAL fail-closed vs REQUIRED fail-degraded), `check_freshness()` |
+| `risk_management/drift_monitor.py` | `DriftDimension` (7 dims : features, probas, sides, calibration, PnL, costs, exposure), `DriftMonitor` (seuils WARN/ALERT par dimension, must_kill_switch, must_degrade), `check_drift()` |
+| `tests/test_risk_model_registry.py` | 18 tests : ModelStatus (7), ModelRegistryEntry (5), ModelRegistry (10 : register→promote→degrade→retire→rollback) |
+| `tests/test_risk_freshness_drift.py` | 37 tests : FreshnessGate (8 + 3 helper), DriftMonitor (13 + 2 helper) |
+
+#### Décisions clés
+
+- **Cycle de vie** : CANDIDATE→SHADOW→PAPER→CHAMPION (promotion), CHAMPION→DEGRADED→RETIRED (dégradation). Un seul champion par symbole. Rollback restaure le précédent (même DEGRADED, sauf RETIRED).
+- **Freshness** : 8 dimensions, CRITICAL=price_data+ml_model (fail-closed), REQUIRED=volume_adv+calibration+regime (fail-degraded)
+- **Drift** : 7 dimensions avec métriques spécifiques (PSI, KS, Brier, drawdown%, cost%, exposure change). ALERT→kill_switch, WARN→degrade
+
+#### Résultats
+
+- 55 tests, 0 échec, 0 régression, fichiers additifs uniquement
+- Gate : GO PARTIEL — modules purs testés, intégration données réelles à venir
+
 ---
 
 ## Sprint maître 14 — Shadow et paper trading
