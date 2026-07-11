@@ -428,8 +428,13 @@ def score_distribution_analysis(df: pd.DataFrame) -> None:
         print(f"  {GREEN}✅ Bonne discrimination{RESET}")
 
 
-def print_verdict(result: dict, df: pd.DataFrame) -> int:
-    """Affiche le verdict final et retourne le code de sortie (0 = OK, 1 = FAIL)."""
+def print_verdict(result: dict, df: pd.DataFrame, *, source: str = "screener") -> int:
+    """Affiche le verdict final et retourne le code de sortie (0 = OK, 1 = FAIL).
+
+    Les messages sont adaptés selon la source :
+    - screener → le score technique du selector n'est pas prédictif
+    - ml → le modèle ML n'est pas prédictif
+    """
     checks = []
 
     # Check 1 : monotonicité
@@ -476,7 +481,7 @@ def print_verdict(result: dict, df: pd.DataFrame) -> int:
         )
 
     print(f"\n{BOLD}{'═' * 60}{RESET}")
-    print(f"{BOLD}  VERDICT{RESET}")
+    print(f"{BOLD}  VERDICT — {'Score screener' if source == 'screener' else 'Prédictions ML'}{RESET}")
     print(f"{BOLD}{'═' * 60}{RESET}")
     all_pass = True
     for passed, label, icon in checks:
@@ -499,17 +504,30 @@ def print_verdict(result: dict, df: pd.DataFrame) -> int:
             f"Le score n'est pas suffisamment prédictif.{RESET}"
         )
         print()
-        print(f"  {YELLOW}👉 Causes possibles :{RESET}")
-        print(f"     1. Le modèle a été entraîné sur une période trop différente du test")
-        print(f"     2. Les features utilisées ne capturent pas le régime de marché actuel")
-        print(f"     3. Le score est mal calibré (trop de scores dans 0.7-0.8)")
-        print(f"     4. La période de test est trop courte ou contient un choc (ex: COVID)")
-        print()
-        print(f"  {YELLOW}👉 Actions recommandées :{RESET}")
-        print(f"     - Réentraîner avec des données plus récentes")
-        print(f"     - Vérifier les features les plus importantes (SHAP)")
-        print(f"     - Activer la calibration Platt dans modelFactory/calibration.py")
-        print(f"     - Tester sur une période plus longue (ex: 2018-2025)")
+        if source == "ml":
+            print(f"  {YELLOW}👉 Causes possibles (ML) :{RESET}")
+            print(f"     1. Le modèle a été entraîné sur une période trop différente du test")
+            print(f"     2. Les features utilisées ne capturent pas le régime de marché actuel")
+            print(f"     3. La calibration Platt est mal réglée ou absente")
+            print(f"     4. Les prédictions n'ont pas été générées pour la bonne période")
+            print()
+            print(f"  {YELLOW}👉 Actions recommandées :{RESET}")
+            print(f"     - Réentraîner avec des données plus récentes (ex: 2015-2023)")
+            print(f"     - Activer plus de features (macro VIX, sentiment, selector context)")
+            print(f"     - Activer la calibration Platt (calibration.method = 'platt')")
+            print(f"     - Activer le Global Model + features cross-sectionnelles")
+        else:
+            print(f"  {YELLOW}👉 Causes possibles (score screener) :{RESET}")
+            print(f"     1. Les composantes du score (trend, VCP, RSI) ne sont pas pondérées optimalement")
+            print(f"     2. Le marché 2024-2025 est trop différent du design du score")
+            print(f"     3. Le score est conçu pour classer des candidats, pas prédire le retour")
+            print(f"     4. La période de test est trop courte ou contient un choc")
+            print()
+            print(f"  {YELLOW}👉 Actions recommandées :{RESET}")
+            print(f"     - Tester le score walk-forward (--score-col final_score_walk_forward)")
+            print(f"     - Tester le score sentiment (--score-col final_score_sentiment)")
+            print(f"     - Calibrer les poids trend/VCP/RSI (backtesting/weights_calibration.py)")
+            print(f"     - Passer au score ML avec un modèle entraîné (--source ml)")
         return 1
 
 
@@ -522,7 +540,7 @@ Exemples :
   # Score technique du screener (pas besoin d'entraînement ML)
   python validate_score_predictiveness.py --source screener
 
-  # Prédictions ML (après entraînement)
+  # Prédictions ML (après entraînement + inférence)
   python validate_score_predictiveness.py --source ml
 
   # Comparer les deux sources
@@ -712,7 +730,7 @@ Exemples :
     # ------------------------------------------------------------------
     # 7. Verdict
     # ------------------------------------------------------------------
-    return print_verdict(result, merged)
+    return print_verdict(result, merged, source=args.source)
 
 
 if __name__ == "__main__":

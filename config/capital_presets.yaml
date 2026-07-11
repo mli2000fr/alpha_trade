@@ -54,8 +54,8 @@ presets:
     risk_correlation_lookback_days: 40
     risk_correlation_min_overlap: 25
     risk_enable_kelly: false
-    risk_score_weight: 0.55
-    risk_prediction_weight: 0.45
+    risk_score_weight: 0.4
+    risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_score_threshold_short: 0.2
     risk_min_breakout_days: 1
@@ -160,8 +160,8 @@ presets:
     risk_correlation_lookback_days: 40
     risk_correlation_min_overlap: 25
     risk_enable_kelly: false
-    risk_score_weight: 0.55
-    risk_prediction_weight: 0.45
+    risk_score_weight: 0.4
+    risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.4
     risk_min_score_threshold_short: 0.15
     risk_min_breakout_days: 1
@@ -263,8 +263,8 @@ presets:
     risk_correlation_lookback_days: 45
     risk_correlation_min_overlap: 30
     risk_enable_kelly: false
-    risk_score_weight: 0.55
-    risk_prediction_weight: 0.45
+    risk_score_weight: 0.4
+    risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_score_threshold_short: 0.2
     risk_min_breakout_days: 1
