@@ -1361,6 +1361,72 @@ Garantir la même décision de bout en bout et une protection directionnelle per
 - risque post-fill réconcilié ;
 - aucun chemin paper/live en fallback silencieux.
 
+### Ce qui a été implémenté (Sprint Maître 12)
+
+**Date :** 2026-07-20  
+**Gate :** GO PARTIEL  
+**Tests :** 85 (tous passent, 0 échec)
+
+#### Fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/decision_fingerprint.py` | `DecisionFingerprint` (SHA256/16 combinant trade_date, config, model, policy, universe, regime, candidates), `PositionDecisionFingerprint` (SHA256/16 par symbole : proba, edge, prix, ATR, ADV), `AuditLogEntry` (DTO complet pour rejeu : 16 champs + roundtrip JSON), `DecisionAuditLog` (journal d'audit complet : add_entry, to_dict/from_dict), `ReplayVerifier` (compare deux logs : décisions, shares, side, fingerprint — produit `ReplayVerificationResult` avec parity_pct), `IdempotencyGate` (détecte décisions dupliquées par fingerprint, clear/reset), `build_decision_fingerprint()`, `build_position_fingerprint()` |
+| `risk_management/stop_calculator.py` | `StopLevels` (DTO directionnel : stop_price, stop_distance_pct, TP, trailing activation, break-even, risk_per_share, risk_total, time_stop_sessions — validation is_valid/is_tp_valid + recalculate_after_fill), `StopCalculator` (calcule stops par side : ATR-based, clamp min/max, régime défensif ×0.7, TP optionnel), `compute_initial_stop_price()`, `compute_stop_distance_pct()`, `is_stop_valid()` |
+| `risk_management/protection_contract.py` | `ProtectionStatus` (7 états : PROTECTED → CLOSED, propriétés is_safe/requires_action), `ProtectionSLA` (timeouts : arm 30s, repair 60s, force_close 120s, reconciliation 5min), `OCOGroup` (DTO OCO : parent, stop, TP, trailing, quantity match, orphan detection), `ProtectionState` (état complet : stop, TP, MAE, MFE, R-multiple, status, force_close_reason), `ProtectionContract` (check_state 5 vérifications, should_force_close, resolve_conflicts), `check_protection_state()`, `build_oco_group()` |
+| `tests/test_risk_decision_fingerprint.py` | 24 tests : DecisionFingerprint (5), PositionDecisionFingerprint (2), AuditLogEntry roundtrip (2), DecisionAuditLog (3), ReplayVerifier (5 : identique, décision différente, symbole manquant, shares différentes, to_dict), IdempotencyGate (4 : première, dupliqué, différent, clear), helpers (2) |
+| `tests/test_risk_stop_calculator.py` | 29 tests : StopLevels (10 : long/short valid/invalid, TP valid/invalid, recalculate après fill long/short, risk_total, to_dict, invalid side), StopCalculator (9 : long, short, défensif, min/max clamp, no ATR, quantity, TP enabled/disabled), compute_initial_stop_price (3), compute_stop_distance_pct (2), is_stop_valid (5) |
+| `tests/test_risk_protection_contract.py` | 32 tests : ProtectionStatus (3), ProtectionSLA (2), OCOGroup (4 : complete, incomplete, orphan, to_dict), ProtectionState (3), check_state (6 : valid, stop wrong side long/short, unprotected, OCO mismatch, SLA breach), should_force_close (3), resolve_conflicts (2), helpers (2) |
+
+#### Fichiers modifiés
+
+Aucun fichier existant modifié. Tous les nouveaux fichiers sont additifs.
+
+#### Décisions architecturales
+
+1. **`DecisionFingerprint`** — Combine TOUS les inputs qui influencent une décision de risque en un hash SHA256/16 unique. Deux décisions avec le même fingerprint sont garanties identiques. Inclut : trade_date, config, modèle, policy, univers, régime, nombre de candidats. Le fingerprint est calculé automatiquement au `__post_init__` si non fourni.
+
+2. **`PositionDecisionFingerprint`** — Fingerprint par symbole capturant : predicted_proba, p_side, edge, prix, ATR, ADV. Permet de tracer exactement quels inputs ont changé entre deux runs pour un symbole donné.
+
+3. **`AuditLogEntry`** — DTO immuable avec 16 champs. Contient TOUT ce qui est nécessaire pour rejouer une décision. Sérialisable/désérialisable via `to_dict()`/`from_dict()` pour persistance JSON.
+
+4. **`ReplayVerifier`** — Compare deux `DecisionAuditLog` (original vs replay) et détecte les divergences : nombre d'entrées, symboles manquants/ajoutés, décision différente, shares différentes, side différent, fingerprint différent. Produit un `ReplayVerificationResult` avec `parity_pct`.
+
+5. **`IdempotencyGate`** — Détecte les décisions dupliquées par fingerprint. Une décision est idempotente : mêmes inputs → même fingerprint → détection de doublon. Le gate est réinitialisable (`clear()`).
+
+6. **`StopCalculator`** — Calcule les stops directionnels : long → stop sous l'entrée, short → stop au-dessus. Utilise l'ATR × multiple (défaut 2.0). Clamp entre min (0.5%) et max (15%). Régime défensif → stops 30% plus serrés. TP optionnel (ATR × 3.0). `recalculate_after_fill()` recentre le stop sur le prix de fill réel et recalcule le risque total avec la quantité réelle.
+
+7. **`ProtectionContract`** — Contrat pur (pas d'I/O) qui vérifie 5 conditions : stop du bon côté, position non protégée, quantités OCO, SLA, orphan stop. `should_force_close()` détermine si une liquidation est nécessaire (timeout > 120s ou stop invalide). `resolve_conflicts()` identifie les ordres à annuler avant force-close.
+
+8. **`OCOGroup`** — Modélise le groupe OCO : stop + TP liés, quantités protégées = quantités filled. Détecte les orphelins (stop sans parent) et les mismatches de quantité.
+
+#### Résultats des tests
+
+- **test_risk_decision_fingerprint.py** : 24/24 ✓
+- **test_risk_stop_calculator.py** : 29/29 ✓
+- **test_risk_protection_contract.py** : 32/32 ✓
+- **Total** : 85 tests, 0 échec
+- **Régression** : Aucune (fichiers additifs uniquement)
+
+#### Risques résiduels
+
+1. **Intégration avec `execution_engine/order_intents.py`** — Les fingerprints de décision ne sont pas encore liés aux `idempotency_key` des `OrderIntent`. Le pont entre risque et exécution doit être fait au niveau du bridge.
+2. **`DecisionAuditLog` non persisté automatiquement** — Le log est produit mais pas sauvegardé en base. La persistance nécessite une table `risk_decision_audit_log`.
+3. **`ReplayVerifier` non intégré au workflow backtest** — La vérification de parité n'est pas encore appelée après un replay backtest.
+4. **`StopCalculator` non connecté au `ProtectionContract`** — Les deux modules sont indépendants. L'intégration (stop calculé → vérifié par le contrat) doit être faite dans le pipeline live.
+
+#### Plan de rollback
+
+- Supprimer les 6 nouveaux fichiers (tous additifs, pas de dépendances inverses)
+- Aucune modification de schéma DB nécessaire
+
+#### Prochaines étapes (Sprint 13)
+
+- Persister `DecisionAuditLog` en base
+- Intégrer `ReplayVerifier` dans le workflow backtest
+- Connecter `StopCalculator` → `ProtectionContract` → `execution_engine`
+- MLOps : registry, drift monitoring, rollback
+
 ---
 
 ## Sprint maître 13 — MLOps, drift et rollback
