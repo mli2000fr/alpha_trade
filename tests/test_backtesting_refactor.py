@@ -863,11 +863,11 @@ class TestFidelityManifestSprint1:
 
         assert payload["session_count"] == 1
         assert payload["live_session_count"] == 1
-        assert payload["compare_sections"] == ["candidates", "risk_decisions", "portfolio_targets", "execution_targets", "fills", "exits", "pnl"]
+        assert payload["compare_sections"] == ["selections", "risk_decisions", "portfolio_targets", "execution_targets", "fills", "exits", "pnl"]
         session = payload["sessions"][0]
-        assert session["candidate_compare"]["status"] == "diverged"
-        assert session["candidate_compare"]["research_only_symbols"] == ["BBB"]
-        assert session["candidate_compare"]["live_only_symbols"] == ["CCC"]
+        assert session["selection_compare"]["status"] == "diverged"
+        assert session["selection_compare"]["research_only_symbols"] == ["BBB"]
+        assert session["selection_compare"]["live_only_symbols"] == ["CCC"]
         assert session["fills_compare"]["status"] == "aligned"
         assert session["exits_compare"]["status"] == "aligned"
         assert session["pnl_compare"]["status"] == "aligned"

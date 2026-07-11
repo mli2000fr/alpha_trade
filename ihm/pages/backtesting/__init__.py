@@ -3645,8 +3645,8 @@ def _build_compare_to_live_rows(payload: dict[str, object]) -> pd.DataFrame:
                 "Séance": _coerce_metric_text(session.get("trade_date")),
                 "Score fidélité": f"{_to_float(session.get('fidelity_score')):.3f}",
                 "Candidats": _coerce_metric_text(
-                    session.get("candidate_compare", {}).get("status")
-                    if isinstance(session.get("candidate_compare"), dict)
+                    session.get("selection_compare", {}).get("status")
+                    if isinstance(session.get("selection_compare"), dict)
                     else None
                 ),
                 "Risk live": _coerce_metric_text(

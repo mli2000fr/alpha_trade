@@ -28,6 +28,6 @@ premières semaines.
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/backtesting.md](../backtesting.md) + sous-section
+- Doc technique : [doc/backtesting.md](../backup/backtesting.md) + sous-section
   parité.
 

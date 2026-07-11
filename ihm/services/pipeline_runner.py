@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
+from common.capital_presets import resolve_capital_preset_for_equity
 
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
@@ -645,16 +646,24 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         deps="sync_latest_quotes",
     ),
     PipelineStepDefinition(
-        key="alpha_scanner",
+        key="publish_tradable_universe",
         num="6",
-        name="Alpha Scanner",
-        desc="Scoring avancé Minervini/VCP + neutralisation sectorielle + sélection Top N.",
-        tables="stock_scores (update)",
+        name="Publish Tradable Universe",
+        desc="Publication atomique du snapshot PIT full après contrôles barres, ADV, quotes/spread, market cap et blackout earnings.",
+        tables="tradable_universe_runs, tradable_universe_history",
         deps="sync_earnings_calendar",
     ),
     PipelineStepDefinition(
-        key="sentiment_pipeline",
+        key="alpha_scanner",
         num="7",
+        name="Alpha Scanner",
+        desc="Scoring avancé Minervini/VCP + neutralisation sectorielle + sélection Top N.",
+        tables="stock_scores (update)",
+        deps="publish_tradable_universe",
+    ),
+    PipelineStepDefinition(
+        key="sentiment_pipeline",
+        num="8",
         name="Sentiment Pipeline",
         desc=(
             "Import news brut sur `stock_scores_all` → scoring FinBERT standard + `relevance_score` + "
@@ -666,11 +675,11 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
             "macro_event_audit, ticker_daily_sentiment_features, sector_daily_sentiment_features, "
             "news_ingestion_checkpoint"
         ),
-        deps="sync_earnings_calendar",
+        deps="publish_tradable_universe",
     ),
     PipelineStepDefinition(
         key="signal_aggregator",
-        num="8",
+        num="9",
         name="Signal Aggregator",
         desc="Fusion quant (75%) + sentiment ticker (15%) + macro sectoriel (10%) → final_score_sentiment.",
         tables="stock_scores (update final_score_sentiment)",
@@ -678,9 +687,9 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="ml_train",
-        num="9",
-        name="ML Train (Model Factory)",
-        desc="Entraînement `modelFactory` sur l'univers tradable PIT : LSTM+Attention, challengers locaux LightGBM/CatBoost, modèle global optionnel et sélection éventuelle du champion servi.",
+        num="T1",
+        name="ML Train (hors pipeline quotidien)",
+        desc="Entraînement optionnel `modelFactory` sur l'univers tradable PIT. Exclu du workflow quotidien par défaut; publie le champion utilisé par les inférences suivantes.",
         tables="model_registry, model_training_run, model_metrics, model_governance",
         deps="signal_aggregator",
     ),
@@ -690,7 +699,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         name="ML Predict",
         desc="Inférence `modelFactory` sur le champion sélectionné par symbole (LSTM, LightGBM, CatBoost ou global_model selon les artefacts disponibles). Quotidien, alimente le score de conviction du risk.",
         tables="model_predictions",
-        deps="ml_train (modèle entraîné requis)",
+        deps="signal_aggregator, champion ML déjà publié",
     ),
     PipelineStepDefinition(
         key="risk_management",
@@ -1706,6 +1715,22 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if earnings_limit is not None:
             command.extend(["--limit", str(earnings_limit)])
         command.append("--resume" if options.data_integrity_earnings_resume else "--no-resume")
+        return command
+
+    if step_key == "publish_tradable_universe":
+        preset = resolve_capital_preset_for_equity(float(options.risk_account_equity))
+        if preset is None:
+            raise ValueError("Aucun preset capital ne correspond à l'equity du pipeline.")
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "common.publish_tradable_universe",
+            "--capital-preset-key",
+            preset.key,
+        ]
+        if trade_date:
+            command.extend(["--trade-date", trade_date])
         return command
 
     if step_key == "alpha_scanner":

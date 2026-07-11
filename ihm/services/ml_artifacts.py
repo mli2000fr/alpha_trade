@@ -62,24 +62,6 @@ def _path_exists(value: Any) -> bool:
     return bool(path is not None and path.exists())
 
 
-def _build_selector_universe_filter_summary(config_data: dict[str, Any]) -> dict[str, Any]:
-    data_cfg = config_data.get("data") if isinstance(config_data.get("data"), dict) else {}
-    signal_modes = data_cfg.get("selector_universe_signal_modes")
-    normalized_modes = [
-        str(value).strip().lower()
-        for value in (signal_modes if isinstance(signal_modes, list | tuple) else [])
-        if str(value).strip()
-    ]
-    return {
-        "include_selector_context_features": bool(data_cfg.get("include_selector_context_features", False)),
-        "selector_universe_signal_modes": normalized_modes,
-        "selector_universe_max_candidate_rank": data_cfg.get("selector_universe_max_candidate_rank"),
-        "selector_universe_exclude_earnings_blackout": bool(
-            data_cfg.get("selector_universe_exclude_earnings_blackout", False)
-        ),
-    }
-
-
 def _route_health(model_name: str, route: dict[str, Any]) -> tuple[str, list[str], dict[str, bool]]:
     expected_keys = {
         "lstm_attention": ("checkpoint_path", "scaler_path", "config_path"),
@@ -247,7 +229,6 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
     else:
         manifest_health = "healthy"
     degraded_reasons = [str(item) for item in [*errors, *selected_route_errors] if str(item).strip()]
-    selector_universe_filter = _build_selector_universe_filter_summary(config_data)
     governance_thresholds = _build_governance_thresholds_summary(config_data, metrics_data)
     attribution_summary = _load_optional_artifact_json(attribution_summary_path) if attribution_summary_path.exists() else {}
     attribution_results_df = pd.DataFrame(attribution_summary.get("results") or []) if attribution_summary else pd.DataFrame()
@@ -281,7 +262,6 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
         "selected_route_errors": selected_route_errors,
         "degraded_reasons": degraded_reasons,
         "governance_thresholds": governance_thresholds,
-        "selector_universe_filter": selector_universe_filter,
         "attribution_summary_path": attribution_summary_path,
         "attribution_summary": attribution_summary,
         "attribution_results_df": attribution_results_df,

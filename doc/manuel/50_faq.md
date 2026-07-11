@@ -127,7 +127,7 @@ préférez un ETF MSCI World en DCA.
 
 Oui via les paramètres (page Settings) et le code Python. Mais cela
 demande une bonne compréhension. Lisez d'abord
-[doc/selector.md](../selector.md) et [doc/risk_management.md](../risk_management.md).
+[doc/selector.md](../backup/selector.md) et [doc/risk_management.md](../backup/risk_management.md).
 
 ## Questions opérateur (session mai 2026)
 

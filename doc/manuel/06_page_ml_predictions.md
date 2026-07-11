@@ -99,6 +99,6 @@ tester. Voir [20_gestion_petit_capital_2000eur.md](20_gestion_petit_capital_2000
 
 ## Pour aller plus loin
 
-- Détails techniques : [doc/modelFactory.md](../modelFactory.md).
+- Détails techniques : [doc/modelFactory.md](../backup/modelFactory.md).
 - Backtester avec/sans ML : [10_page_backtesting.md](10_page_backtesting.md).
 

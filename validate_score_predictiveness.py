@@ -44,7 +44,7 @@ Usage :
   python validate_score_predictiveness.py --source ml --horizon 10
 
     # Inclure tous les scores (pas seulement les sélections classées)
-  python validate_score_predictiveness.py --source screener --no-candidates-only
+    python validate_score_predictiveness.py --source screener --all-scores
 
 Critères de succès :
   - monotonic_hit_rate      = True   (le WR monte avec le score)
@@ -583,7 +583,7 @@ Exemples :
         help=f"Nombre de buckets (défaut: {DEFAULT_N_BUCKETS})",
     )
     parser.add_argument(
-        "--no-candidates-only", action="store_true",
+        "--all-scores", action="store_true",
         help="Inclut TOUS les scores (pas seulement les sélections classées). Utilisé uniquement avec --source screener.",
     )
     parser.add_argument(
@@ -621,7 +621,7 @@ Exemples :
             start_date=args.start,
             end_date=args.end,
             score_col=args.score_col,
-            candidates_only=not args.no_candidates_only,
+            selected_only=not args.all_scores,
         )
         if scores_df.empty:
             print(

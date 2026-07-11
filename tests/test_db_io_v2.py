@@ -218,7 +218,7 @@ def test_load_predictions_empty_symbols() -> None:
 
 
 @pytest.mark.unit
-def test_load_candidates_asof_uses_history_snapshot() -> None:
+def test_load_selection_inputs_asof_uses_history_snapshot() -> None:
     engine = create_engine("sqlite:///:memory:")
     _create_tables(engine)
     with engine.begin() as conn:
@@ -480,7 +480,7 @@ def test_load_latest_empirical_risk_calibration_honors_yaml_fallback_policy_orde
 
 
 @pytest.mark.unit
-def test_load_candidates_asof_propagates_selector_metadata() -> None:
+def test_load_selection_inputs_asof_propagates_score_metadata() -> None:
     engine = create_engine("sqlite:///:memory:")
     _create_tables(engine)
     with engine.begin() as conn:
@@ -504,7 +504,7 @@ def test_load_candidates_asof_propagates_selector_metadata() -> None:
 
 
 @pytest.mark.unit
-def test_load_candidates_asof_falls_back_to_latest_snapshot_before_trade_date(caplog) -> None:
+def test_load_selection_inputs_asof_falls_back_to_latest_snapshot_before_trade_date(caplog) -> None:
     """Si stock_scores_history n'a pas encore de ligne pour trade_date, on doit
     retomber sur le dernier snapshot_date <= trade_date contenant des candidats."""
     import logging
@@ -533,7 +533,7 @@ def test_load_candidates_asof_falls_back_to_latest_snapshot_before_trade_date(ca
 
 
 @pytest.mark.unit
-def test_load_candidates_asof_returns_empty_when_no_history_at_all(caplog) -> None:
+def test_load_selection_inputs_asof_returns_empty_when_no_history_at_all(caplog) -> None:
     import logging
 
     engine = create_engine("sqlite:///:memory:")

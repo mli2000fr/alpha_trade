@@ -325,7 +325,7 @@ class AlphaScanner:
                     "chunks_submitted": submitted_chunks,
                     "chunks_completed": completed_chunks,
                     "chunks_total": total_chunks,
-                    "selected_candidates": sum(len(frame) for frame in all_frames),
+                    "selected_selections": sum(len(frame) for frame in all_frames),
                 },
             )
 
@@ -471,7 +471,7 @@ class AlphaScanner:
                     "chunks_submitted": submitted_chunks,
                     "chunks_completed": completed_chunks,
                     "chunks_total": total_chunks,
-                    "selected_candidates": sum(len(frame) for frame in primary_frames),
+                    "selected_selections": sum(len(frame) for frame in primary_frames),
                     "ablation_variants": len(runtime_variants) - 1,
                 },
             )
@@ -627,7 +627,7 @@ class AlphaScanner:
                     "chunks_submitted": scan_meta["chunks_submitted"],
                     "chunks_completed": scan_meta["chunks_completed"],
                     "chunks_total": scan_meta["chunks_total"],
-                    "selected_candidates": int(len(selected)),
+                    "selected_selections": int(len(selected)),
                     "ablation_variants": len(runtime_variants) - 1,
                 },
             )

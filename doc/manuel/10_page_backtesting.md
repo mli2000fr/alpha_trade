@@ -91,6 +91,6 @@ exploratoire rapide.
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/backtesting.md](../backtesting.md).
+- Doc technique : [doc/backtesting.md](../backup/backtesting.md).
 - Parité backtest ↔ live : [11_page_parity.md](11_page_parity.md).
 

@@ -1,6 +1,6 @@
 # Refactor ML-First — Suppression du chemin critique `candidate -> ML`
 
-**Statut :** Plan détaillé audité sur le code — Sprints 0 et 1 terminés; Sprints 2 et 3 en cours
+**Statut :** Cutover ML-first audité sur le code — Sprints 0 à 7 terminés
 **Date :** 2026-07-11  
 **Auteur :** Session Copilot  
 **Fichier :** `prompt/refactor_ml.md`
@@ -384,9 +384,9 @@ La sécurité vient de la validation pré-déploiement; le runtime ne maintient 
 
 **Objectif :** produire et lire le même univers historique complet pour le train, le predict, le backtest et le live.
 
-### État d'implémentation au 2026-07-11
+### État d'implémentation au 2026-07-11 (terminé)
 
-**Sprint 1 terminé au niveau fondation PIT.** Le runtime de sélection reste volontairement candidate-first jusqu'au Sprint 2; le nouvel univers ne sert donc pas encore à ouvrir des positions live ou backtest.
+**Sprint 1 terminé.** Le runtime live, le backtest, Event Sentiment et Model Factory résolvent le même univers PIT canonique. Toute ouverture live exige un snapshot de qualité `full`.
 
 Implémenté :
 
@@ -409,10 +409,11 @@ Implémenté :
   - Les motifs objectifs actuels couvrent disponibilité des barres, historique, prix et ADV;
   - force relative et range ne déterminent plus `is_tradable` dans ce nouveau snapshot;
   - aucune publication canonique n'a lieu sur run partiel ou lorsque le schéma n'est pas migré.
-5. La qualité des snapshots produits par le screener courant est explicitement `degraded`.
-  - quotes/spread, earnings blackout et market-cap ne sont pas encore intégrés à cette publication;
-  - le grade est restitué par `UniverseResolution` pour que les Sprints 2-3 puissent refuser tout snapshot non `full` avant un usage runtime;
-  - il ne s'agit pas d'un contournement du contrat live final.
+5. Le screener publie d'abord un run immuable `degraded` couvrant les contrôles barres/historique/prix/ADV.
+  - après synchronisation des quotes et du calendrier earnings, `common.publish_tradable_universe` évalue spread, market cap et blackout pour chaque membre du scope exact;
+  - il publie un nouveau run canonique `full`, sans muter le run source, avec un motif explicite pour chaque rejet;
+  - `ihm/services/pipeline_runner.py` exécute cette publication avant les features, le predict et le risk;
+  - les consommateurs live refusent explicitement tout grade autre que `full`.
 
 Validé :
 
@@ -422,12 +423,7 @@ Validé :
 4. `tests/test_alembic_rollback.py` valide la révision `0046`;
 5. la suite ciblée PIT/screener/registry/Alembic est passée sans échec et les diagnostics éditeur sont nuls.
 
-Reste hors Sprint 1 :
-
-1. enrichir le snapshot avec quotes, earnings et market-cap afin d'autoriser le grade `full`;
-2. basculer réellement live/backtest sur ces loaders au Sprint 2;
-3. relier l'univers au workflow IHM quotidien et au predict ML au Sprint 3;
-4. exécuter le backfill historique complet avant le cutover.
+Le backfill historique reste une opération de déploiement, pas une lacune du contrat runtime.
 
 ### Tâches structurantes
 
@@ -567,7 +563,7 @@ Pour une date donnée, le système peut lister de façon rejouable tous les symb
 
 Backtest et live peuvent sélectionner des positions à partir de prédictions couvrant l'univers tradable, même si un titre n'a jamais été `is_candidate=1`.
 
-### État d'implémentation (2026-07-11, en cours)
+### État d'implémentation (2026-07-11, terminé)
 
 Les fondations backtest du Sprint 2 sont implémentées et validées :
 
@@ -586,7 +582,7 @@ tests/test_phase2_bridges.py::test_signal_replay_and_risk_bridge_keep_same_score
 tests/test_db_io_v2.py::{test_load_predictions_returns_latest,test_load_predictions_empty_symbols}
 ```
 
-Le Sprint 2 n'est pas encore terminé. Restent le basculement de `risk_management/cli.py` vers l'univers PIT `full`, la représentation neutre de sélection et le remplacement du ranking/fusion score-first dans `PortfolioBuilder` et `backtesting/risk_bridge.py`. Le snapshot d'univers actuellement publié avec le grade `degraded` ne doit pas être activé pour la sélection live.
+Le cutover live est terminé : `risk_management/cli.py` exige l'univers PIT `full`; `PortfolioBuilder` exclut toute prédiction ternaire incomplète, dérive le côté uniquement de `predicted_side`, applique les seuils de score comme vetos post-prédiction, puis conserve `selection_rank` avant risque et `decision_rank` après contraintes. L'ancien tagging short pré-ML a été retiré du CLI.
 
 ---
 
@@ -594,7 +590,7 @@ Le Sprint 2 n'est pas encore terminé. Restent le basculement de `risk_managemen
 
 **Objectif :** éviter de garder un gate implicite côté ML après avoir corrigé le backtest.
 
-### État d'implémentation (2026-07-11, en cours)
+### État d'implémentation (2026-07-11, terminé)
 
 La migration du chemin nominal `modelFactory` est implémentée :
 
@@ -614,7 +610,7 @@ tests/test_model_factory_db_registry.py,
 tests/test_model_factory_orchestrator.py
 ```
 
-Le Sprint 3 reste en cours : l'IHM `pipeline_runner`, les options et libellés IHM, ainsi que la publication d'un univers de grade `full` ne sont pas encore basculés. La suite large `tests/test_model_factory_predictor.py` contient en outre des fixtures existantes dont le stub `get_feature_columns` ne supporte pas l'argument actuel `include_short_score`; elle n'a pas été utilisée comme validation de ce changement ciblé.
+Le pipeline IHM publie désormais l'univers `full` après quotes/earnings. Le workflow quotidien exclut `ml_train` par défaut et `ml_predict` dépend d'un champion déjà publié, pas d'un réentraînement quotidien. Train et predict n'acceptent que la source nominale `tradable-universe`.
 
 ### Tâches structurantes
 
@@ -861,7 +857,7 @@ Un utilisateur IHM ne doit plus voir ni devoir comprendre le concept `candidate`
 
 **Objectif :** retirer les dépendances applicatives restantes à `is_candidate` et au vocabulaire candidat.
 
-### Statut d'implémentation (runtime terminé, fixtures legacy à migrer)
+### Statut d'implémentation (terminé)
 
 La tranche Event Sentiment est migrée et validée :
 
@@ -900,14 +896,10 @@ La migration additive du rang risk/exécution est engagée :
 - les dataclasses, bridges, intents, snapshots et audits utilisent désormais
   `selection_rank`, tandis que `decision_rank` reste le rang post-contraintes.
 
-Cette dernière tranche doit encore être stabilisée: la suite ciblée
-`test_phase2_bridges.py` a six échecs sur le chemin de filtre régime du bridge
-risk, et les payloads/IHM/fidelity historiques restant à renommer sont encore
-à migrer. Le Sprint 6 ne doit donc pas être déclaré terminé à ce stade.
-
-Restent à traiter dans ce sprint les payloads satellites/IHM/fidelity et la
-stabilisation complète de la migration `candidate_rank -> selection_rank` sur
-les parcours risk/exécution. Le nettoyage physique du schéma reste le Sprint 7.
+Les payloads d'explicabilité, les vues IHM, les artefacts fidelity et les APIs
+de calibration utilisent désormais `selection`. Les parcours risk/exécution
+propagent `selection_rank`; `decision_rank` reste le rang post-risque. Le
+nettoyage physique de `candidate_rank` et `is_candidate` est livré au Sprint 7.
 
 ### Tâches structurantes
 

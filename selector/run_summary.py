@@ -149,7 +149,7 @@ def _build_cli_run_summary(
         "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
         "chunk_size": config.chunk_size,
         "requested_selection_size": config.selection_size,
-        "selected_candidates": int(len(result)),
+        "selected_selections": int(len(result)),
         "selection_fill_ratio": round((len(result) / config.selection_size), 4)
         if config.selection_size > 0
         else 0.0,

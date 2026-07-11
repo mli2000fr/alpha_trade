@@ -26,7 +26,7 @@ class MlCoverageGateDecision:
             "allowed": bool(self.allowed),
             "required_ratio": float(self.required_ratio) if self.required_ratio is not None else None,
             "coverage_ratio": float(self.coverage_ratio) if self.coverage_ratio is not None else None,
-            "candidate_count": int(self.selection_count),
+            "selection_count": int(self.selection_count),
             "prediction_count": int(self.prediction_count),
             "reason": self.reason,
         }
@@ -58,7 +58,7 @@ class VolTargetDecision:
 
 def evaluate_ml_coverage_gate(
     *,
-    candidate_count: int,
+    selection_count: int,
     prediction_count: int,
     min_coverage_ratio: float | None,
     regime_allows_new_entries: bool = True,
@@ -76,9 +76,9 @@ def evaluate_ml_coverage_gate(
             reason="skipped_by_regime",
         )
 
-    normalized_candidates = max(int(candidate_count), 0)
+    normalized_selections = max(int(selection_count), 0)
     normalized_predictions = max(int(prediction_count), 0)
-    if normalized_candidates == 0:
+    if normalized_selections == 0:
         return MlCoverageGateDecision(
             enabled=True,
             allowed=True,
@@ -86,10 +86,10 @@ def evaluate_ml_coverage_gate(
             coverage_ratio=1.0,
             selection_count=0,
             prediction_count=normalized_predictions,
-            reason="no_candidates",
+            reason="no_selections",
         )
 
-    coverage_ratio = normalized_predictions / normalized_candidates
+    coverage_ratio = normalized_predictions / normalized_selections
     reason = "ok"
     if not ml_gate_enabled and normalized_predictions == 0:
         reason = "ml_gate_disabled"
@@ -101,7 +101,7 @@ def evaluate_ml_coverage_gate(
         allowed=coverage_ratio >= required_ratio,
         required_ratio=required_ratio,
         coverage_ratio=coverage_ratio,
-        selection_count=normalized_candidates,
+        selection_count=normalized_selections,
         prediction_count=normalized_predictions,
         reason=reason,
     )

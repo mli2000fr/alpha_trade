@@ -93,17 +93,17 @@ def _render_metrics_panel() -> None:
 
         with col2:
             with st.container(border=True):
-                st.markdown("**`alpha_candidates_count`**")
+                st.markdown("**`alpha_selections_count`**")
                 st.caption("Gauge — candidats sélectionnés après AlphaScanner")
-                st.code("candidates_count.set(42)", language="python")
+                st.code("selections_count.set(42)", language="python")
                 if available:
                     try:
                         from prometheus_client import REGISTRY  # type: ignore[import-not-found]
                         val = None
                         for metric in REGISTRY.collect():
-                            if metric.name == "alpha_candidates_count":
+                            if metric.name == "alpha_selections_count":
                                 for s in metric.samples:
-                                    if s.name == "alpha_candidates_count":
+                                    if s.name == "alpha_selections_count":
                                         val = int(s.value)
                                         break
                                 break
@@ -194,13 +194,13 @@ def _render_metrics_panel() -> None:
         st.markdown("""
 **Dans vos scripts ou modules Python :**
 ```python
-from common.metrics import pipeline_steps_total, candidates_count, record_pipeline_step
+from common.metrics import pipeline_steps_total, selections_count, record_pipeline_step
 
 # Incrémenter un counter manuellement
 pipeline_steps_total.labels(step="screener", status="OK").inc()
 
 # Modifier une jauge
-candidates_count.set(42)
+selections_count.set(42)
 
 # Context-manager automatique (mesure durée + status)
 with record_pipeline_step("import_bars"):

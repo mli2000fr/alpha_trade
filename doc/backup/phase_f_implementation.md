@@ -11,27 +11,27 @@
 
 | # | Livrable | Fichier(s) |
 |---|---|---|
-| S22.1 | `--cov-branch` activé + `coverage.json` produit ; gate à 60 (montée 60→75→85→90 par paliers documentés inline) | [`pytest.ini`](../pytest.ini) |
-| S22.2 | Vérifie branches > 95 % sur 3 modules critiques | [`scripts/check_branch_coverage_critical.py`](../scripts/check_branch_coverage_critical.py) |
-| S22.3 | Workflow mutation matrix sur 3 modules + threshold paramétrable (cible 70) | [`.github/workflows/mutation_weekly.yml`](../.github/workflows/mutation_weekly.yml) |
-| S22.3 | Extracteur de mutants survivants | [`scripts/list_mutation_survivors.py`](../scripts/list_mutation_survivors.py) |
+| S22.1 | `--cov-branch` activé + `coverage.json` produit ; gate à 60 (montée 60→75→85→90 par paliers documentés inline) | [`pytest.ini`](../../pytest.ini) |
+| S22.2 | Vérifie branches > 95 % sur 3 modules critiques | [`scripts/check_branch_coverage_critical.py`](../../scripts/check_branch_coverage_critical.py) |
+| S22.3 | Workflow mutation matrix sur 3 modules + threshold paramétrable (cible 70) | [`.github/workflows/mutation_weekly.yml`](../../.github/workflows/mutation_weekly.yml) |
+| S22.3 | Extracteur de mutants survivants | [`scripts/list_mutation_survivors.py`](../../scripts/list_mutation_survivors.py) |
 | S22.3 | Tableau de bord historique | [`doc/mutation_history.md`](mutation_history.md) |
-| S22.4 | Property tests OCO synthetic bracket (4 invariants, hypothesis) | [`tests/property/test_synthetic_bracket_properties.py`](../tests/property/test_synthetic_bracket_properties.py) |
+| S22.4 | Property tests OCO synthetic bracket (4 invariants, hypothesis) | [`tests/property/test_synthetic_bracket_properties.py`](../../tests/property/test_synthetic_bracket_properties.py) |
 
 ### S23 — Performance + scale
 
 | # | Livrable | Fichier(s) |
 |---|---|---|
-| S23.1 | Suites pytest-benchmark (selector, screener, executor) | [`tests/benchmarks/`](../tests/benchmarks) |
-| S23.1 | Comparateur baseline ↔ current avec garde-fou +20 % | [`scripts/compare_benchmarks.py`](../scripts/compare_benchmarks.py) |
-| S23.1 | Baseline placeholder (à populer au 1er run main) | [`artifacts/benchmarks/baseline.json`](../artifacts/benchmarks/baseline.json) |
-| S23.2 | Profiler cProfile + snakeviz/gprof2dot | [`scripts/profile_hotspot.py`](../scripts/profile_hotspot.py) |
+| S23.1 | Suites pytest-benchmark (selector, screener, executor) | [`tests/benchmarks/`](../../tests/benchmarks) |
+| S23.1 | Comparateur baseline ↔ current avec garde-fou +20 % | [`scripts/compare_benchmarks.py`](../../scripts/compare_benchmarks.py) |
+| S23.1 | Baseline placeholder (à populer au 1er run main) | [`artifacts/benchmarks/baseline.json`](../../artifacts/benchmarks/baseline.json) |
+| S23.2 | Profiler cProfile + snakeviz/gprof2dot | [`scripts/profile_hotspot.py`](../../scripts/profile_hotspot.py) |
 | S23.2 | Doc avant/après (à remplir après mesures) | [`doc/perf_hotspots.md`](perf_hotspots.md) |
-| S23.3 | POC async DB (factory + 3 loaders read-only, opt-in env var) | [`database/async_engine.py`](../database/async_engine.py), [`database/async_loaders.py`](../database/async_loaders.py) |
-| S23.3 | Tests parité sync ↔ async | [`tests/test_async_loaders.py`](../tests/test_async_loaders.py) |
+| S23.3 | POC async DB (factory + 3 loaders read-only, opt-in env var) | [`database/async_engine.py`](../../database/async_engine.py), [`database/async_loaders.py`](../../database/async_loaders.py) |
+| S23.3 | Tests parité sync ↔ async | [`tests/test_async_loaders.py`](../../tests/test_async_loaders.py) |
 | S23.3 | Doc POC | [`doc/async_db_poc.md`](async_db_poc.md) |
-| S23.4 | Bench pipeline 5 000 symboles (cible < 180 s) | [`scripts/bench_full_pipeline.py`](../scripts/bench_full_pipeline.py), [`doc/perf_pipeline.md`](perf_pipeline.md) |
-| S23.5 | Scaffold découpage executor (PhaseContext + 4 phases stubs) | [`execution_engine/executor_phases.py`](../execution_engine/executor_phases.py) |
+| S23.4 | Bench pipeline 5 000 symboles (cible < 180 s) | [`scripts/bench_full_pipeline.py`](../../scripts/bench_full_pipeline.py), [`doc/perf_pipeline.md`](perf_pipeline.md) |
+| S23.5 | Scaffold découpage executor (PhaseContext + 4 phases stubs) | [`execution_engine/executor_phases.py`](../../execution_engine/executor_phases.py) |
 
 ## Procédure d'exécution (ordre recommandé)
 

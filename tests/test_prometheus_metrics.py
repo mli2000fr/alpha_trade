@@ -10,7 +10,7 @@ def test_common_metrics_importable() -> None:
     """Le module doit être importable et exposer les métriques attendues."""
     assert hasattr(cm, "pipeline_steps_total")
     assert hasattr(cm, "pipeline_duration_seconds")
-    assert hasattr(cm, "candidates_count")
+    assert hasattr(cm, "selections_count")
     assert hasattr(cm, "ml_train_duration_seconds")
     assert hasattr(cm, "db_backup_total")
     assert hasattr(cm, "ml_backup_total")
@@ -21,7 +21,7 @@ def test_metrics_are_not_none() -> None:
     """Chaque métrique est non-None (objet no-op ou prometheus réel)."""
     assert cm.pipeline_steps_total is not None
     assert cm.pipeline_duration_seconds is not None
-    assert cm.candidates_count is not None
+    assert cm.selections_count is not None
     assert cm.ml_train_duration_seconds is not None
     assert cm.db_backup_total is not None
     assert cm.ml_backup_total is not None
@@ -37,8 +37,8 @@ def test_pipeline_duration_seconds_observe_never_raises() -> None:
     cm.pipeline_duration_seconds.labels(step="screener").observe(12.5)
 
 
-def test_candidates_count_set_never_raises() -> None:
-    cm.candidates_count.set(42)
+def test_selections_count_set_never_raises() -> None:
+    cm.selections_count.set(42)
 
 
 def test_ml_train_duration_seconds_observe_never_raises() -> None:

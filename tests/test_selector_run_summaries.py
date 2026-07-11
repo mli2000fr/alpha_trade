@@ -119,14 +119,14 @@ class _FakeScanner:
             "artifact_path": "F:/projets/artifacts/selector/ablation/demo.json",
             "primary": {
                 "variant_id": "primary",
-                "selected_candidates": 3,
+                "selected_selections": 3,
                 "top_symbols": ["AAPL", "NVDA", "JPM"],
             },
             "variants": [
                 {
                     "variant_id": "no_spread",
                     "disabled_filters": ["spread"],
-                    "selected_candidates": 4,
+                    "selected_selections": 4,
                     "top_symbols": ["AAPL", "NVDA", "JPM", "AMD"],
                     "overlap_with_primary": {"count": 3, "ratio_vs_primary": 1.0},
                     "selection_diff": {"added_symbols": ["AMD"], "removed_symbols": []},
@@ -190,7 +190,7 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
     assert payload["requested_selection_size"] == 80
     assert payload["preset_profile"] == "strict_swing_cash"
     assert payload["preset_profile_version"] == "v1"
-    assert payload["selected_candidates"] == 3
+    assert payload["selected_selections"] == 3
     assert payload["selected_sectors"] == 2
     assert payload["workers"] == 6
     assert payload["sector_cap_ratio"] == 0.25

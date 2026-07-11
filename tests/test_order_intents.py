@@ -115,25 +115,25 @@ class TestBuildEntryIntents:
                 risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="AAPL",
                 target_shares=100, entry_price=150.0, target_weight=0.20,
                 sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
-                candidate_rank=1,
+                selection_rank=1,
             ),
             ExecutionTarget(
                 risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="MSFT",
                 target_shares=90, entry_price=140.0, target_weight=0.15,
                 sector="Tech", conviction_score=0.7, sizing_method="atr", kelly_fraction=0.1,
-                candidate_rank=2,
+                selection_rank=2,
             ),
             ExecutionTarget(
                 risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="JPM",
                 target_shares=80, entry_price=120.0, target_weight=0.12,
                 sector="Financials", conviction_score=0.75, sizing_method="atr", kelly_fraction=0.1,
-                candidate_rank=3,
+                selection_rank=3,
             ),
             ExecutionTarget(
                 risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="XOM",
                 target_shares=70, entry_price=100.0, target_weight=0.10,
                 sector="Energy", conviction_score=0.65, sizing_method="atr", kelly_fraction=0.1,
-                candidate_rank=4,
+                selection_rank=4,
             ),
         ]
 
@@ -151,13 +151,13 @@ class TestBuildEntryIntents:
                 risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="AAPL",
                 target_shares=100, entry_price=150.0, target_weight=0.20,
                 sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
-                candidate_rank=1,
+                selection_rank=1,
             ),
             ExecutionTarget(
                 risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="MSFT",
                 target_shares=90, entry_price=140.0, target_weight=0.15,
                 sector="Tech", conviction_score=0.7, sizing_method="atr", kelly_fraction=0.1,
-                candidate_rank=2,
+                selection_rank=2,
             ),
         ]
 

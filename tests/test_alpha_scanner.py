@@ -65,7 +65,7 @@ def _make_market_frame(
         "sector": sector,
         "anomaly_count": 0,
         "missing_days_count": 0,
-        "is_candidate": 0,
+        "selection_rank": None,
         "last_updated_scan": datetime.now(UTC).replace(tzinfo=None),
     }
     return market, score_row
@@ -109,7 +109,7 @@ def _seed_selector_run_universe(engine) -> None:
                     anomaly_count INTEGER,
                     missing_days_count INTEGER,
                     sanitizer_status TEXT DEFAULT 'success',
-                    is_candidate INTEGER NOT NULL DEFAULT 0,
+                    selection_rank INTEGER,
                     last_updated_scan DATETIME
                 )
                 """
@@ -505,7 +505,7 @@ def test_apply_sector_neutrality_does_not_cap_unknown_sector() -> None:
     assert (selected["sector"] == "Unknown").sum() > 6
 
 
-def test_update_database_does_not_write_candidate_selection_flags() -> None:
+def test_update_database_does_not_require_selection_flag_columns() -> None:
     engine = _create_shared_sqlite_engine()
     with engine.begin() as conn:
         conn.execute(
@@ -519,7 +519,6 @@ def test_update_database_does_not_write_candidate_selection_flags() -> None:
                     earnings_date DATE,
                     days_to_earnings INTEGER,
                     earnings_blackout INTEGER DEFAULT 0,
-                    is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )
                 """
@@ -527,8 +526,8 @@ def test_update_database_does_not_write_candidate_selection_flags() -> None:
         )
         conn.execute(
             text(
-                "INSERT INTO stock_scores(symbol, is_candidate, last_updated_scan) VALUES "
-                "('AAA', 0, NULL), ('BBB', 1, NULL), ('CCC', 0, NULL)"
+                "INSERT INTO stock_scores(symbol, last_updated_scan) VALUES "
+                "('AAA', NULL), ('BBB', NULL), ('CCC', NULL)"
             )
         )
 
@@ -538,10 +537,10 @@ def test_update_database_does_not_write_candidate_selection_flags() -> None:
     updated_count = scanner.update_database(selected)
 
     with engine.connect() as conn:
-        rows = conn.execute(text("SELECT symbol, is_candidate FROM stock_scores ORDER BY symbol")).fetchall()
+        rows = conn.execute(text("SELECT symbol, last_updated_scan FROM stock_scores ORDER BY symbol")).fetchall()
 
     assert updated_count == 2
-    assert rows == [("AAA", 0), ("BBB", 1), ("CCC", 0)]
+    assert [row[0] for row in rows] == ["AAA", "BBB", "CCC"]
 
 
 def test_update_database_persists_selector_scores() -> None:
@@ -561,7 +560,7 @@ def test_update_database_persists_selector_scores() -> None:
                     earnings_date DATE,
                     days_to_earnings INTEGER,
                     earnings_blackout INTEGER DEFAULT 0,
-                    candidate_rank INTEGER,
+                    selection_rank INTEGER,
                     raw_final_score REAL,
                     normalized_total_score REAL,
                     normalized_rsi REAL,
@@ -576,7 +575,6 @@ def test_update_database_persists_selector_scores() -> None:
                     volatility_ratio REAL,
                     selector_signal_mode TEXT,
                     selection_explanation TEXT,
-                    is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )
                 """
@@ -584,8 +582,8 @@ def test_update_database_persists_selector_scores() -> None:
         )
         conn.execute(
             text(
-                "INSERT INTO stock_scores(symbol, trend_score, vcp_score, final_score, is_candidate, last_updated_scan) VALUES "
-                "('AAA', NULL, NULL, NULL, 0, NULL), ('BBB', NULL, NULL, NULL, 0, NULL)"
+                "INSERT INTO stock_scores(symbol, trend_score, vcp_score, final_score, last_updated_scan) VALUES "
+                "('AAA', NULL, NULL, NULL, NULL), ('BBB', NULL, NULL, NULL, NULL)"
             )
         )
 
@@ -597,7 +595,7 @@ def test_update_database_persists_selector_scores() -> None:
                 "symbol": "AAA", "trend_score": 0.80, "vcp_score": 0.60, "final_score": 1.10,
                 "market_cap": 5_000_000_000.0, "beta_126": 1.15, "spread_bps": 12.0,
                 "earnings_date": date(2026, 4, 30), "days_to_earnings": 8, "earnings_blackout": 0,
-                "candidate_rank": 1,
+                "selection_rank": 1,
                 "raw_final_score": 1.10,
                 "normalized_total_score": 0.72,
                 "normalized_rsi": 0.66,
@@ -617,7 +615,7 @@ def test_update_database_persists_selector_scores() -> None:
                 "symbol": "BBB", "trend_score": 0.55, "vcp_score": 0.40, "final_score": 0.82,
                 "market_cap": 3_000_000_000.0, "beta_126": 0.95, "spread_bps": 30.0,
                 "earnings_date": date(2026, 4, 24), "days_to_earnings": 2, "earnings_blackout": 1,
-                "candidate_rank": None,
+                "selection_rank": None,
                 "raw_final_score": 0.82,
                 "normalized_total_score": 0.44,
                 "normalized_rsi": 0.31,
@@ -641,16 +639,16 @@ def test_update_database_persists_selector_scores() -> None:
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT symbol, trend_score, vcp_score, final_score, market_cap, beta_126, spread_bps, days_to_earnings, earnings_blackout, is_candidate "
-                ", candidate_rank, atr_pct_20, weekly_trend_score, high_52w_proximity, volatility_ratio, trend_vcp_component, total_score_component, rsi_component, selector_signal_mode, selection_explanation "
+                    "SELECT symbol, trend_score, vcp_score, final_score, market_cap, beta_126, spread_bps, days_to_earnings, earnings_blackout, "
+                    "selection_rank, atr_pct_20, weekly_trend_score, high_52w_proximity, volatility_ratio, trend_vcp_component, total_score_component, rsi_component, selector_signal_mode, selection_explanation "
                 "FROM stock_scores ORDER BY symbol"
             )
         ).fetchall()
 
     assert updated_count == 1
     assert rows == [
-            ("AAA", 0.8, 0.6, 1.1, 5_000_000_000.0, 1.15, 12.0, 8, 0, 0, 1, 0.028, 0.91, 0.88, 0.54, 0.35, 0.42, 0.33, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.3500; total=0.4200; rsi=0.3300; final=1.1000"),
-        ("BBB", 0.55, 0.4, 0.82, 3_000_000_000.0, 0.95, 30.0, 2, 1, 0, None, 0.019, 0.73, 0.76, 0.62, 0.24, 0.34, 0.24, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.2400; total=0.3400; rsi=0.2400; final=0.8200"),
+            ("AAA", 0.8, 0.6, 1.1, 5_000_000_000.0, 1.15, 12.0, 8, 0, 1, 0.028, 0.91, 0.88, 0.54, 0.35, 0.42, 0.33, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.3500; total=0.4200; rsi=0.3300; final=1.1000"),
+            ("BBB", 0.55, 0.4, 0.82, 3_000_000_000.0, 0.95, 30.0, 2, 1, None, 0.019, 0.73, 0.76, 0.62, 0.24, 0.34, 0.24, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.2400; total=0.3400; rsi=0.2400; final=0.8200"),
     ]
 
 
@@ -1136,7 +1134,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                     anomaly_count INTEGER,
                     missing_days_count INTEGER,
                     sanitizer_status TEXT DEFAULT 'success',
-                    is_candidate INTEGER NOT NULL DEFAULT 0,
+                    selection_rank INTEGER,
                     last_updated_scan DATETIME
                 )
                 """
@@ -1217,7 +1215,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                 "sector": "Legacy",
                 "anomaly_count": 0,
                 "missing_days_count": 0,
-                "is_candidate": 1,
+                "selection_rank": 99,
                 "last_updated_scan": datetime.now(UTC).replace(tzinfo=None),
             }
         )
@@ -1240,8 +1238,8 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
     assert "ETF1" not in set(result["symbol"])
 
     with engine.connect() as conn:
-        candidate_rows = conn.execute(
-            text("SELECT symbol FROM stock_scores WHERE is_candidate = 1 ORDER BY symbol")
+        selection_rows = conn.execute(
+            text("SELECT symbol FROM stock_scores WHERE selection_rank IS NOT NULL ORDER BY symbol")
         ).fetchall()
         persisted_rows = conn.execute(
             text(
@@ -1251,13 +1249,13 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
         ).fetchall()
         legacy_row = conn.execute(
             text(
-                "SELECT symbol, trend_score, vcp_score, final_score, is_candidate "
+                "SELECT symbol, trend_score, vcp_score, final_score, selection_rank "
                 "FROM stock_scores WHERE symbol = 'ZZZ'"
             )
         ).fetchone()
 
-    assert len(candidate_rows) == 4
-    assert {row[0] for row in candidate_rows} == set(result["symbol"])
+    assert len(selection_rows) == 4
+    assert {row[0] for row in selection_rows} == set(result["symbol"])
     assert all(row[1] is not None and row[2] is not None and row[3] is not None for row in persisted_rows)
     assert legacy_row == ("ZZZ", None, None, None, 0)
 
@@ -1377,7 +1375,7 @@ def test_run_supports_strict_swing_preset_filters() -> None:
                     anomaly_count INTEGER,
                     missing_days_count INTEGER,
                     sanitizer_status TEXT DEFAULT 'success',
-                    is_candidate INTEGER NOT NULL DEFAULT 0,
+                    selection_rank INTEGER,
                     last_updated_scan DATETIME
                 )
                 """

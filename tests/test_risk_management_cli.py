@@ -4,6 +4,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -17,6 +18,22 @@ from service.market.models import MarketRegimeSnapshot
 class _BaseFakeRepo:
     def load_equity_history(self, account_id, trade_date, lookback_days=25):
         return []
+
+    def load_tradable_universe_asof(self, trade_date, capital_preset_key):
+        selections = self.load_selection_inputs_asof(trade_date)
+        return SimpleNamespace(
+            symbols=tuple(selection.symbol for selection in selections),
+            data_quality_grade="full",
+            universe_run_id="test-universe-run",
+        )
+
+    def load_score_context_asof(self, symbols, trade_date):
+        allowed = set(symbols)
+        return [
+            selection
+            for selection in self.load_selection_inputs_asof(trade_date)
+            if selection.symbol in allowed
+        ]
 
 
 def test_cli_importable():
@@ -56,7 +73,7 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
                 "snapshot_at": None,
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -101,7 +118,7 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
     assert captured["summary"]["preflight_data_quality"]["checks"]["equity_snapshot"]["status"] == "fallback"
 
 
-def test_cli_main_live_short_path_tags_candidates_before_builder(monkeypatch) -> None:
+def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class _FakeRepo(_BaseFakeRepo):
@@ -122,7 +139,7 @@ def test_cli_main_live_short_path_tags_candidates_before_builder(monkeypatch) ->
                 "snapshot_at": None,
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             from risk_management.models import SelectionScore
 
             return [
@@ -145,7 +162,22 @@ def test_cli_main_live_short_path_tags_candidates_before_builder(monkeypatch) ->
             }
 
         def load_predictions_asof(self, symbols, trade_date):
-            return {}
+            from risk_management.models import PredictionInfo
+
+            return {
+                symbol: PredictionInfo(
+                    symbol=symbol,
+                    predicted_proba=0.80,
+                    predicted_class=0,
+                    run_id="test-run",
+                    prediction_date=trade_date,
+                    predicted_side="short",
+                    proba_long=0.10,
+                    proba_flat=0.10,
+                    proba_short=0.80,
+                )
+                for symbol in symbols
+            }
 
         def load_win_rates_asof(self, symbols, trade_date):
             return {}
@@ -161,7 +193,10 @@ def test_cli_main_live_short_path_tags_candidates_before_builder(monkeypatch) ->
             self.progress_callback = None
 
         def build(self, candidates, prices, predictions, win_rates, return_matrix):
-            captured["candidate_sides"] = {candidate.symbol: candidate.side for candidate in candidates}
+            captured["selection_sides"] = {selection.symbol: selection.side for selection in candidates}
+            captured["prediction_sides"] = {
+                symbol: prediction.predicted_side for symbol, prediction in predictions.items()
+            }
             return [
                 PortfolioEntry(
                     symbol=candidate.symbol,
@@ -217,7 +252,8 @@ def test_cli_main_live_short_path_tags_candidates_before_builder(monkeypatch) ->
 
     cli.main(["--trade-date", "2026-05-01", "--dry-run"])
 
-    assert captured["candidate_sides"] == {"AAPL": "sell", "MSFT": "sell"}
+    assert captured["selection_sides"] == {"AAPL": "buy", "MSFT": "buy"}
+    assert captured["prediction_sides"] == {"AAPL": "short", "MSFT": "short"}
     assert captured["summary"]["regime_snapshot_applied"] is True
     assert captured["summary"]["regime_mode"] == "capital_preservation"
 
@@ -245,7 +281,7 @@ def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch)
                 "snapshot_at": None,
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -309,7 +345,7 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
                 "snapshot_at": None,
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -377,7 +413,7 @@ def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
                 "snapshot_at": None,
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -445,7 +481,7 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
                 "snapshot_at": None,
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -513,7 +549,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
                 "snapshot_at": None,
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -578,7 +614,7 @@ def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> Non
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -643,7 +679,7 @@ def test_cli_main_persists_market_macro_snapshot(monkeypatch) -> None:
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -707,7 +743,7 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             from risk_management.models import SelectionScore
 
             return [SelectionScore("AAPL", "Tech", 0.9), SelectionScore("MSFT", "Tech", 0.8)]
@@ -772,7 +808,7 @@ def test_cli_main_blocks_run_when_ml_coverage_is_below_threshold(monkeypatch) ->
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             from risk_management.models import SelectionScore
 
             return [SelectionScore("AAPL", "Tech", 0.9), SelectionScore("MSFT", "Tech", 0.8)]
@@ -832,7 +868,7 @@ def test_cli_main_applies_vol_targeting_and_exposes_summary(monkeypatch) -> None
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -895,7 +931,7 @@ def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             from risk_management.models import SelectionScore
 
             return [
@@ -1035,7 +1071,7 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
                 },
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -1132,7 +1168,7 @@ def test_cli_main_does_not_apply_empirical_risk_calibration_when_blocked_by_gove
                 },
             }
 
-        def load_candidates_asof(self, trade_date):
+        def load_selection_inputs_asof(self, trade_date):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):

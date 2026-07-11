@@ -12,9 +12,9 @@
 
 | Fichier | Rôle |
 |---|---|
-| [`database/async_engine.py`](../database/async_engine.py) | Factory `make_async_engine()` (asyncpg pour Postgres, aiosqlite pour SQLite). |
-| [`database/async_loaders.py`](../database/async_loaders.py) | Versions async des 3 loaders read-only chauds. |
-| [`tests/test_async_loaders.py`](../tests/test_async_loaders.py) | Parité résultat sync ↔ async (skipif aiosqlite absent). |
+| [`database/async_engine.py`](../../database/async_engine.py) | Factory `make_async_engine()` (asyncpg pour Postgres, aiosqlite pour SQLite). |
+| [`database/async_loaders.py`](../../database/async_loaders.py) | Versions async des 3 loaders read-only chauds. |
+| [`tests/test_async_loaders.py`](../../tests/test_async_loaders.py) | Parité résultat sync ↔ async (skipif aiosqlite absent). |
 
 ## Loaders async livrés (POC)
 

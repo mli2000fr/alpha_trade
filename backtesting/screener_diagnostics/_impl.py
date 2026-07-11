@@ -817,7 +817,7 @@ def recommend_screener_scenarios(
         },
         {
             "label": "portfolio_target_count",
-            "candidates": ["portfolio_target_count_mean", "selector_candidate_count_mean"],
+            "candidates": ["portfolio_target_count_mean", "selector_selection_count_mean"],
             "higher_is_better": True,
             "pillar": "survival",
             "weight": 0.20,
@@ -1508,8 +1508,8 @@ class ScreenerDiagnosticsService:
 
         try:
             screener_df, selector_df, history_df = self._build_pit_frames(snapshot_service, as_of_date)
-            selector_candidates = self._extract_selector_candidates(history_df)
-            portfolio_entries = self._build_portfolio_entries(selector_candidates, as_of_date)
+            selector_selections = self._extract_selector_selections(history_df)
+            portfolio_entries = self._build_portfolio_entries(selector_selections, as_of_date)
             target_entries = [entry for entry in portfolio_entries if entry.approved_shares > 0]
             accepted_entries = [entry for entry in target_entries if str(entry.decision).upper() == "ACCEPTED"]
             reduced_entries = [entry for entry in target_entries if str(entry.decision).upper() == "REDUCED"]
@@ -1517,29 +1517,29 @@ class ScreenerDiagnosticsService:
 
             screener_count = len(screener_df)
             selector_filtered_count = len(history_df)
-            selector_candidate_count = len(selector_candidates)
+            selector_selection_count = len(selector_selections)
             portfolio_target_count = len(target_entries)
 
             row.update(
                 {
                     "screener_count": screener_count,
                     "selector_filtered_count": selector_filtered_count,
-                    "selector_candidate_count": selector_candidate_count,
+                    "selector_selection_count": selector_selection_count,
                     "portfolio_target_count": portfolio_target_count,
                     "portfolio_accepted_count": len(accepted_entries),
                     "portfolio_reduced_count": len(reduced_entries),
                     "portfolio_rejected_count": len(rejected_entries),
-                    "selector_survival_ratio": _safe_divide(selector_candidate_count, screener_count),
+                    "selector_survival_ratio": _safe_divide(selector_selection_count, screener_count),
                     "portfolio_survival_ratio": _safe_divide(portfolio_target_count, screener_count),
-                    "selector_to_portfolio_survival_ratio": _safe_divide(portfolio_target_count, selector_candidate_count),
-                    "selector_selection_ratio": _safe_divide(selector_candidate_count, selector_filtered_count),
+                    "selector_to_portfolio_survival_ratio": _safe_divide(portfolio_target_count, selector_selection_count),
+                    "selector_selection_ratio": _safe_divide(selector_selection_count, selector_filtered_count),
                     "screener_mean_total_score": _safe_numeric_mean(screener_df, "total_score"),
                     "screener_mean_relative_strength_index": _safe_numeric_mean(screener_df, "relative_strength_index"),
                     "screener_mean_historical_range_score": _safe_numeric_mean(screener_df, "historical_range_score"),
                     "selector_mean_final_score": _safe_numeric_mean(history_df, "final_score"),
                     "selector_mean_final_score_sentiment": _safe_numeric_mean(history_df, "final_score_sentiment"),
                     "selector_mean_total_score": _safe_numeric_mean(history_df, "total_score"),
-                    "selector_mean_score": _safe_numeric_mean(selector_candidates, "final_score_sentiment"),
+                    "selector_mean_score": _safe_numeric_mean(selector_selections, "final_score_sentiment"),
                     "portfolio_mean_score": self._mean_entry_score(target_entries),
                 }
             )
@@ -1547,7 +1547,7 @@ class ScreenerDiagnosticsService:
             benchmark_returns = self._compute_benchmark_forward_returns(as_of_date)
             row.update(benchmark_returns)
             row.update(self._compute_symbol_set_forward_metrics(
-                selector_candidates["symbol"].astype(str).tolist(),
+                selector_selections["symbol"].astype(str).tolist(),
                 weights=None,
                 as_of_date=as_of_date,
                 benchmark_returns=benchmark_returns,
@@ -1572,7 +1572,7 @@ class ScreenerDiagnosticsService:
                     "error_message": str(exc),
                     "screener_count": 0,
                     "selector_filtered_count": 0,
-                    "selector_candidate_count": 0,
+                    "selector_selection_count": 0,
                     "portfolio_target_count": 0,
                     "portfolio_accepted_count": 0,
                     "portfolio_reduced_count": 0,
@@ -1616,7 +1616,7 @@ class ScreenerDiagnosticsService:
         return screener_df, selector_df, history_df
 
     @staticmethod
-    def _extract_selector_candidates(history_df: pd.DataFrame) -> pd.DataFrame:
+    def _extract_selector_selections(history_df: pd.DataFrame) -> pd.DataFrame:
         if history_df.empty or "selection_rank" not in history_df.columns:
             return pd.DataFrame()
         candidates = history_df[pd.to_numeric(history_df["selection_rank"], errors="coerce").notna()].copy()
@@ -1647,8 +1647,8 @@ class ScreenerDiagnosticsService:
         candidates = candidates[candidates["score_for_portfolio"].notna()].copy()
         return candidates
 
-    def _build_portfolio_entries(self, selector_candidates: pd.DataFrame, as_of_date: date) -> list[PortfolioEntry]:
-        if selector_candidates.empty:
+    def _build_portfolio_entries(self, selector_selections: pd.DataFrame, as_of_date: date) -> list[PortfolioEntry]:
+        if selector_selections.empty:
             return []
         candidates = [
             SelectionScore(
@@ -1670,7 +1670,7 @@ class ScreenerDiagnosticsService:
                 calibration_source=str(row["calibration_source"]) if row.get("calibration_source") is not None else None,
                 selection_rank=int(row["selection_rank"]) if row.get("selection_rank") is not None and not pd.isna(row.get("selection_rank")) else None,
             )
-            for row in selector_candidates.to_dict(orient="records")
+            for row in selector_selections.to_dict(orient="records")
         ]
         symbols = [candidate.symbol for candidate in candidates]
         prices = self._load_pit_prices(symbols, as_of_date=as_of_date, atr_window=self.risk_config.atr_window)

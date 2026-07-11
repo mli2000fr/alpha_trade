@@ -383,7 +383,7 @@ class TestDataLoader:
                     "final_score": [0.8],
                     "final_score_sentiment": [0.82],
                     "sector": ["Tech"],
-                    "is_candidate": [1],
+                    "selection_rank": [1],
                 }
             )
 
@@ -409,7 +409,7 @@ class TestDataLoader:
 
         def fake_get_table_columns(_engine, table_name):
             if table_name == "stock_scores_history":
-                return {"symbol", "snapshot_date", "final_score", "final_score_sentiment", "sector", "is_candidate", "capital_preset_key"}
+                return {"symbol", "snapshot_date", "final_score", "final_score_sentiment", "sector", "selection_rank", "capital_preset_key"}
             return set()
 
         def fake_read_sql(query, conn, params=None, parse_dates=None):
@@ -422,7 +422,7 @@ class TestDataLoader:
                     "final_score": [0.8],
                     "final_score_sentiment": [0.82],
                     "sector": ["Tech"],
-                    "is_candidate": [1],
+                    "selection_rank": [1],
                 }
             )
 
@@ -456,7 +456,7 @@ class TestDataLoader:
             sql = str(query)
             calls.append(sql)
             if "FROM stock_scores_history" in sql:
-                return pd.DataFrame(columns=["symbol", "trade_date", "final_score", "final_score_sentiment", "sector", "is_candidate"])
+                return pd.DataFrame(columns=["symbol", "trade_date", "final_score", "final_score_sentiment", "sector", "selection_rank"])
             return pd.DataFrame(
                 {
                     "symbol": ["MSFT"],
@@ -464,7 +464,7 @@ class TestDataLoader:
                     "final_score": [0.7],
                     "final_score_sentiment": [0.75],
                     "sector": ["Tech"],
-                    "is_candidate": [1],
+                    "selection_rank": [1],
                 }
             )
 
@@ -504,7 +504,7 @@ class TestDataLoader:
                 return table_name == "stock_scores_history"
 
         def fake_read_sql(query, conn, params=None, parse_dates=None):
-            return pd.DataFrame(columns=["symbol", "trade_date", "final_score", "final_score_sentiment", "sector", "is_candidate"])
+            return pd.DataFrame(columns=["symbol", "trade_date", "final_score", "final_score_sentiment", "sector", "selection_rank"])
 
         monkeypatch.setattr(data_loader, "inspect", lambda _engine: FakeInspector())
         monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
@@ -530,7 +530,7 @@ class TestDataLoader:
         def fake_get_table_columns(_engine, table_name, *, required=False):
             if table_name == "stock_scores_history":
                 return {
-                    "symbol", "snapshot_date", "final_score", "final_score_sentiment", "sector", "is_candidate",
+                    "symbol", "snapshot_date", "final_score", "final_score_sentiment", "sector", "selection_rank",
                     "capital_preset_key", "config_fingerprint",
                 }
             if table_name == "stock_bars_daily":
@@ -550,7 +550,7 @@ class TestDataLoader:
                     "final_score": [0.8],
                     "final_score_sentiment": [0.82],
                     "sector": ["Tech"],
-                    "is_candidate": [1],
+                    "selection_rank": [1],
                     "score_source": ["final_score_sentiment"],
                 }
             )
@@ -2646,7 +2646,7 @@ class TestCLI:
                 "final_score": [0.7],
                 "final_score_sentiment": [0.75],
                 "sector": ["Tech"],
-                "is_candidate": [1],
+                "selection_rank": [1],
             }
         )
         phase2_signals_df = pd.DataFrame(
@@ -2775,7 +2775,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
 
         class FakePF:
@@ -2891,7 +2891,7 @@ class TestCLI:
             "trade_date": pd.to_datetime(["2025-01-01"]),
             "final_score": [0.7],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
 
         class FakePF:
@@ -3172,7 +3172,7 @@ class TestCLI:
                 "sentiment_net_agg": [-1.0, 1.0],
                 "sector_impact_agg": [0.0, 0.0],
                 "sector": ["Tech", "Tech"],
-                "is_candidate": [1, 1],
+                "selection_rank": [1, 2],
             }
         )
         captured: dict[str, object] = {}
@@ -3334,7 +3334,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
         phase2_signals_df = pd.DataFrame({
             "trade_date": pd.to_datetime(["2025-01-01"]),
@@ -3413,7 +3413,7 @@ class TestCLI:
                 entries=[
                     SimpleNamespace(
                         symbol="AAPL",
-                        candidate_rank=1,
+                        selection_rank=1,
                         decision_rank=1,
                         score_used=0.75,
                         score_source="final_score_sentiment",
@@ -3515,7 +3515,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
         phase2_signals_df = pd.DataFrame({
             "trade_date": pd.to_datetime(["2025-01-01"]),
@@ -3688,7 +3688,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
         research_signals_df = pd.DataFrame({
             "trade_date": pd.to_datetime(["2025-01-01"]),
@@ -3789,7 +3789,7 @@ class TestCLI:
                 entries=[
                     SimpleNamespace(
                         symbol="AAPL",
-                        candidate_rank=1,
+                        selection_rank=1,
                         decision_rank=1,
                         score_used=0.75,
                         score_source="final_score_sentiment",
@@ -3982,7 +3982,7 @@ class TestCLI:
         compare_payload = json.loads((output_dir / "compare_to_live_summary.json").read_text(encoding="utf-8"))
         assert compare_payload["session_count"] == 1
         assert compare_payload["live_session_count"] == 1
-        assert compare_payload["sessions"][0]["candidate_compare"]["status"] == "aligned"
+        assert compare_payload["sessions"][0]["selection_compare"]["status"] == "aligned"
         assert compare_payload["sessions"][0]["risk_compare"]["status"] == "aligned"
         assert compare_payload["sessions"][0]["portfolio_compare"]["status"] == "aligned"
         assert compare_payload["sessions"][0]["execution_compare"]["divergence_kind_counts"] == {"qty_mismatch": 1}
@@ -4023,7 +4023,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
         phase3_signals_df = pd.DataFrame({
             "trade_date": pd.to_datetime(["2025-01-01"]),
@@ -4199,7 +4199,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
         phase4_signals_df = pd.DataFrame({
             "trade_date": pd.to_datetime(["2025-01-01"]),
@@ -4369,7 +4369,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
         phase5_signals_df = pd.DataFrame({
             "trade_date": pd.to_datetime(["2025-01-01"]),
@@ -4511,7 +4511,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
         phase7_signals_df = pd.DataFrame({
             "trade_date": pd.to_datetime(["2025-01-01"]),
@@ -4655,7 +4655,7 @@ class TestCLI:
             "final_score": [0.7],
             "final_score_sentiment": [0.75],
             "sector": ["Tech"],
-            "is_candidate": [1],
+            "selection_rank": [1],
         })
         signals_df = pd.DataFrame({
             "trade_date": pd.to_datetime(["2025-01-01"]),

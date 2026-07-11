@@ -313,7 +313,7 @@ def test_get_stock_scores_avoids_selecting_missing_explainability_columns(monkey
                     "Field": [
                         "symbol",
                         "sector",
-                        "is_candidate",
+                        "selection_rank",
                         "total_score",
                         "final_score",
                         "final_score_sentiment",
@@ -325,7 +325,7 @@ def test_get_stock_scores_avoids_selecting_missing_explainability_columns(monkey
                 {
                     "symbol": "MSFT",
                     "sector": "Technology",
-                    "is_candidate": 0,
+                    "selection_rank": None,
                     "total_score": 88.0,
                     "final_score": 0.73,
                     "final_score_sentiment": 0.44,

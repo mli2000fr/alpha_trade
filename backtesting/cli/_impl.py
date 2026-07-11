@@ -3161,7 +3161,7 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
                 "scenario_name",
                 "days_evaluated",
                 "days_failed",
-                "selector_candidate_count_mean",
+                "selector_selection_count_mean",
                 "portfolio_target_count_mean",
                 "portfolio_survival_ratio_mean",
                 "selector_forward_return_20d_mean",

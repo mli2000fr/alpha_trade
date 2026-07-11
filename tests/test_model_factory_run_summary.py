@@ -37,9 +37,6 @@ def _make_cfg() -> TrainingConfig:
         data=DataConfig(
             training_start_date=date(2020, 1, 1),
             training_end_date=date(2020, 12, 31),
-            selector_universe_signal_modes=("strict",),
-            selector_universe_max_candidate_rank=25,
-            selector_universe_exclude_earnings_blackout=True,
         ),
         model=ModelConfig(),
         calibration=CalibrationConfig(method="none"),
@@ -73,9 +70,6 @@ def test_build_run_summary_contains_required_fields() -> None:
     assert summary["ml_mode"] == "rebuild-all"
     assert summary["training_start_date"] == "2020-01-01"
     assert summary["training_end_date"] == "2020-12-31"
-    assert summary["selector_universe_signal_modes"] == ["strict"]
-    assert summary["selector_universe_max_candidate_rank"] == 25
-    assert summary["selector_universe_exclude_earnings_blackout"] is True
     assert "feature_fingerprint" in summary
     assert summary["reproducibility_seed"] == 42
     assert summary["reproducibility_deterministic"] is True

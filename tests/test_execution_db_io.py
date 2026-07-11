@@ -32,7 +32,7 @@ def engine():
             CREATE TABLE portfolio_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id VARCHAR(32), account_id VARCHAR(64) DEFAULT 'default', trade_date DATE, symbol VARCHAR(20),
-                    candidate_rank INT, decision_rank INT,
+                    selection_rank INT, decision_rank INT,
                     selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
                     side VARCHAR(10),
                     shares DOUBLE, entry_price DOUBLE, atr_20 DOUBLE,
@@ -67,7 +67,7 @@ def engine():
             CREATE TABLE execution_targets_snapshot (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 exec_run_id VARCHAR(32), account_id VARCHAR(64), risk_run_id VARCHAR(32),
-                trade_date DATE, symbol VARCHAR(20), candidate_rank INT, decision_rank INT,
+                trade_date DATE, symbol VARCHAR(20), selection_rank INT, decision_rank INT,
                 selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
                 side VARCHAR(10),
                 target_shares DOUBLE, entry_price DOUBLE, target_weight DOUBLE, sector VARCHAR(60),
@@ -336,7 +336,7 @@ class TestExecutionDbIo:
     def test_load_portfolio_targets(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""
-                INSERT INTO portfolio_targets (run_id, trade_date, symbol, candidate_rank, decision_rank, selector_signal_mode,
+                INSERT INTO portfolio_targets (run_id, trade_date, symbol, selection_rank, decision_rank, selector_signal_mode,
                     selection_explanation, selector_earnings_blackout, side, shares, entry_price,
                     account_id, atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
                     risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
@@ -352,7 +352,7 @@ class TestExecutionDbIo:
         assert len(targets) == 1
         assert targets[0].symbol == "AAPL"
         assert targets[0].target_shares == pytest.approx(100.5)
-        assert targets[0].candidate_rank == 7
+        assert targets[0].selection_rank == 7
         assert targets[0].decision_rank == 1
         assert targets[0].selector_signal_mode == "sector_neutralized"
         assert targets[0].selection_explanation == "mode=sector_neutralized; rank=7"
@@ -663,7 +663,7 @@ class TestExecutionDbIo:
     def test_snapshot_execution_targets(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""
-                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, candidate_rank, decision_rank, selector_signal_mode,
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, selection_rank, decision_rank, selector_signal_mode,
                     selection_explanation, selector_earnings_blackout, side, shares, entry_price,
                     atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
                     risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
@@ -680,12 +680,12 @@ class TestExecutionDbIo:
 
         assert inserted == 1
         with repo.engine.connect() as conn:
-            row = conn.execute(text("SELECT exec_run_id, account_id, symbol, candidate_rank, selector_signal_mode, selection_explanation, selector_earnings_blackout FROM execution_targets_snapshot WHERE exec_run_id = 'e-snap'"))\
+            row = conn.execute(text("SELECT exec_run_id, account_id, symbol, selection_rank, selector_signal_mode, selection_explanation, selector_earnings_blackout FROM execution_targets_snapshot WHERE exec_run_id = 'e-snap'"))\
                 .mappings().first()
         assert row is not None
         assert row["account_id"] == "default"
         assert row["symbol"] == "AAPL"
-        assert row["candidate_rank"] == 3
+        assert row["selection_rank"] == 3
         assert row["selector_signal_mode"] == "strict"
         assert row["selection_explanation"] == "mode=strict; rank=3"
         assert row["selector_earnings_blackout"] == 0
@@ -953,7 +953,7 @@ class TestExecutionDbIo:
         with repo.engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO execution_targets_snapshot (
-                    exec_run_id, account_id, risk_run_id, trade_date, symbol, candidate_rank, decision_rank,
+                    exec_run_id, account_id, risk_run_id, trade_date, symbol, selection_rank, decision_rank,
                     selector_signal_mode, selection_explanation, selector_earnings_blackout, side,
                     target_shares, entry_price, target_weight, sector, conviction_score, sizing_method,
                     kelly_fraction, atr_20, price_asof_date, atr_asof_date, stop_price_initial,
@@ -971,7 +971,7 @@ class TestExecutionDbIo:
 
         assert len(targets) == 1
         assert targets[0].symbol == "AAPL"
-        assert targets[0].candidate_rank == 4
+        assert targets[0].selection_rank == 4
         assert targets[0].selector_signal_mode == "strict"
         assert targets[0].selection_explanation == "mode=strict; rank=4"
         assert targets[0].selector_earnings_blackout == 1

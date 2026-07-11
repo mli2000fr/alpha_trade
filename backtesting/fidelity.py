@@ -1395,14 +1395,14 @@ def _summarize_pnl_section(
     return payload
 
 
-def _build_candidate_live_compare_section(
+def _build_selection_live_compare_section(
     *,
     research_selected_symbols: Sequence[str],
-    live_candidate_symbols: Sequence[str],
+    live_selected_symbols: Sequence[str],
     live_available: bool,
 ) -> dict[str, object]:
     research_set = {str(symbol).strip().upper() for symbol in research_selected_symbols if str(symbol or "").strip()}
-    live_set = {str(symbol).strip().upper() for symbol in live_candidate_symbols if str(symbol or "").strip()}
+    live_set = {str(symbol).strip().upper() for symbol in live_selected_symbols if str(symbol or "").strip()}
     union = sorted(research_set | live_set)
     intersection = sorted(research_set & live_set)
     research_only = sorted(research_set - live_set)
@@ -1413,25 +1413,25 @@ def _build_candidate_live_compare_section(
         status = "aligned" if not research_only and not live_only else "diverged"
     top_divergences = [
         {
-            "component": "candidates",
+            "component": "selections",
             "symbol": symbol,
-            "divergence_kind": "missing_live_candidate",
+            "divergence_kind": "missing_live_selection",
         }
         for symbol in research_only[:5]
     ] + [
         {
-            "component": "candidates",
+            "component": "selections",
             "symbol": symbol,
-            "divergence_kind": "unexpected_live_candidate",
+            "divergence_kind": "unexpected_live_selection",
         }
         for symbol in live_only[:5]
     ]
     return {
-        "component": "candidates",
+        "component": "selections",
         "status": status,
         "live_available": bool(live_available),
         "research_selected_count": len(research_set),
-        "live_candidate_count": len(live_set),
+        "live_selection_count": len(live_set),
         "intersection_count": len(intersection),
         "alignment_score": round(float(alignment_score), 6),
         "research_only_symbols": research_only,
@@ -1545,7 +1545,7 @@ def _build_compare_to_live_markdown(summary: Mapping[str, Any]) -> str:
         "## Scores par niveau",
     ]
     for key in (
-        "candidate_alignment_score",
+        "selection_alignment_score",
         "risk_alignment_score",
         "portfolio_alignment_score",
         "execution_alignment_score",
@@ -1627,7 +1627,7 @@ def build_compare_to_live_summary(
     sessions: list[dict[str, Any]] = []
     all_top_divergences: list[dict[str, object]] = []
     score_accumulator: dict[str, list[float]] = {
-        "candidates": [],
+        "selections": [],
         "risk": [],
         "portfolio": [],
         "execution": [],
@@ -1650,7 +1650,7 @@ def build_compare_to_live_summary(
         live_position_lots_day = normalized_live_position_lots.get(trade_date_key, pd.DataFrame())
 
         research_selected_symbols = _research_selected_symbols_for_date(research_signals_df, trade_date)
-        live_candidate_symbols = _normalize_live_buy_symbol_set(live_risk_day)
+        live_selected_symbols = _normalize_live_buy_symbol_set(live_risk_day)
         risk_day = _portfolio_entries_to_compare_frame(
             [entry for entry in risk_entries if _normalize_timestamp_value(getattr(entry, "score_snapshot_date", pd.NaT)) == trade_date],
             run_id="backtest_risk",
@@ -1683,9 +1683,9 @@ def build_compare_to_live_summary(
             run_id="backtest_portfolio",
         )
 
-        candidate_section = _build_candidate_live_compare_section(
+        selection_section = _build_selection_live_compare_section(
             research_selected_symbols=research_selected_symbols,
-            live_candidate_symbols=live_candidate_symbols,
+            live_selected_symbols=live_selected_symbols,
             live_available=bool(not live_risk_day.empty),
         )
         risk_section = _summarize_parity_section(
@@ -1737,7 +1737,7 @@ def build_compare_to_live_summary(
         )
 
         session_scores = [
-            float(candidate_section.get("alignment_score", 0.0)) if bool(candidate_section.get("live_available", False)) else None,
+            float(selection_section.get("alignment_score", 0.0)) if bool(selection_section.get("live_available", False)) else None,
             float(risk_section.get("alignment_score", 0.0)) if bool(risk_section.get("live_available", False)) else None,
             float(portfolio_section.get("alignment_score", 0.0)) if bool(portfolio_section.get("live_available", False)) else None,
             float(execution_section.get("alignment_score", 0.0)) if bool(execution_section.get("live_available", False)) else None,
@@ -1749,7 +1749,7 @@ def build_compare_to_live_summary(
         fidelity_score = (sum(comparable_scores) / len(comparable_scores)) if comparable_scores else 0.0
 
         session_top_divergences: list[dict[str, object]] = []
-        for section in (candidate_section, risk_section, portfolio_section, execution_section, fills_section, exits_section, pnl_section):
+        for section in (selection_section, risk_section, portfolio_section, execution_section, fills_section, exits_section, pnl_section):
             top_items = section.get("top_divergences", [])
             if not isinstance(top_items, Sequence) or isinstance(top_items, (str, bytes)):
                 continue
@@ -1760,8 +1760,8 @@ def build_compare_to_live_summary(
                 session_top_divergences.append(enriched)
                 all_top_divergences.append(enriched)
 
-        if bool(candidate_section.get("live_available", False)):
-            score_accumulator["candidates"].append(float(candidate_section.get("alignment_score", 0.0)))
+        if bool(selection_section.get("live_available", False)):
+            score_accumulator["selections"].append(float(selection_section.get("alignment_score", 0.0)))
         if bool(risk_section.get("live_available", False)):
             score_accumulator["risk"].append(float(risk_section.get("alignment_score", 0.0)))
         if bool(portfolio_section.get("live_available", False)):
@@ -1789,7 +1789,7 @@ def build_compare_to_live_summary(
                 },
                 "counts": {
                     "research_selected": len(research_selected_symbols),
-                    "live_candidates": len(live_candidate_symbols),
+                    "live_selections": len(live_selected_symbols),
                     "backtest_risk_rows": len(risk_day),
                     "live_risk_rows": len(live_risk_day),
                     "backtest_portfolio_rows": int(portfolio_section.get("n_symbols_replay", 0)),
@@ -1803,7 +1803,7 @@ def build_compare_to_live_summary(
                     "backtest_pnl_rows": int(pnl_section.get("n_symbols_replay", 0)),
                     "live_pnl_rows": int(pnl_section.get("n_symbols_live", 0)),
                 },
-                "candidate_compare": candidate_section,
+                "selection_compare": selection_section,
                 "risk_compare": risk_section,
                 "portfolio_compare": portfolio_section,
                 "execution_compare": execution_section,
@@ -1815,7 +1815,7 @@ def build_compare_to_live_summary(
             }
         )
 
-    candidate_scores = score_accumulator["candidates"]
+    selection_scores = score_accumulator["selections"]
     risk_scores = score_accumulator["risk"]
     portfolio_scores = score_accumulator["portfolio"]
     execution_scores = score_accumulator["execution"]
@@ -1823,9 +1823,9 @@ def build_compare_to_live_summary(
     exits_scores = score_accumulator["exits"]
     pnl_scores = score_accumulator["pnl"]
     # Score de fidélité global pondéré par proximité au fill réel :
-    # pnl=4, fills=4, exits=3, execution=3, portfolio=2, risk=2, candidates=1
+    # pnl=4, fills=4, exits=3, execution=3, portfolio=2, risk=2, selections=1
     _SECTION_WEIGHTS: dict[str, int] = {
-        "candidates": 1,
+        "selections": 1,
         "risk": 2,
         "portfolio": 2,
         "execution": 3,
@@ -1849,7 +1849,7 @@ def build_compare_to_live_summary(
         return round(total_weighted / total_weight, 6) if total_weight > 0 else 0.0
 
     _per_section: dict[str, list[float]] = {
-        "candidates": candidate_scores,
+        "selections": selection_scores,
         "risk": risk_scores,
         "portfolio": portfolio_scores,
         "execution": execution_scores,
@@ -1858,7 +1858,7 @@ def build_compare_to_live_summary(
         "pnl": pnl_scores,
     }
     global_scores = {
-        "candidate_alignment_score": _avg(candidate_scores) if candidate_scores else 0.0,
+        "selection_alignment_score": _avg(selection_scores) if selection_scores else 0.0,
         "risk_alignment_score": _avg(risk_scores) if risk_scores else 0.0,
         "portfolio_alignment_score": _avg(portfolio_scores) if portfolio_scores else 0.0,
         "execution_alignment_score": _avg(execution_scores) if execution_scores else 0.0,
@@ -1883,7 +1883,7 @@ def build_compare_to_live_summary(
         "engine_mode": fidelity_manifest.get("engine_mode"),
         "phase2_mode": phase2_mode,
         "requested_window": dict(fidelity_manifest.get("requested_window", {})) if isinstance(fidelity_manifest.get("requested_window", {}), Mapping) else {},
-        "compare_sections": ["candidates", "risk_decisions", "portfolio_targets", "execution_targets", "fills", "exits", "pnl"],
+        "compare_sections": ["selections", "risk_decisions", "portfolio_targets", "execution_targets", "fills", "exits", "pnl"],
         "session_count": len(sessions),
         "live_session_count": live_session_count,
         "global_scores": global_scores,
@@ -1910,8 +1910,8 @@ def save_compare_to_live_summary(summary: Mapping[str, Any], output_dir: Path) -
                 {
                     "trade_date": session.get("trade_date"),
                     "fidelity_score": session.get("fidelity_score", 0.0),
-                    "candidate_status": session.get("candidate_compare", {}).get("status") if isinstance(session.get("candidate_compare"), Mapping) else None,
-                    "candidate_alignment_score": session.get("candidate_compare", {}).get("alignment_score") if isinstance(session.get("candidate_compare"), Mapping) else None,
+                    "selection_status": session.get("selection_compare", {}).get("status") if isinstance(session.get("selection_compare"), Mapping) else None,
+                    "selection_alignment_score": session.get("selection_compare", {}).get("alignment_score") if isinstance(session.get("selection_compare"), Mapping) else None,
                     "risk_status": session.get("risk_compare", {}).get("status") if isinstance(session.get("risk_compare"), Mapping) else None,
                     "risk_divergence_score": session.get("risk_compare", {}).get("divergence_score") if isinstance(session.get("risk_compare"), Mapping) else None,
                     "portfolio_status": session.get("portfolio_compare", {}).get("status") if isinstance(session.get("portfolio_compare"), Mapping) else None,
@@ -2021,7 +2021,7 @@ def build_fidelity_baseline_snapshot(
         "compare_live_session_count": float(_safe_int(compare_to_live_summary.get("session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0)),
         "compare_live_live_session_count": float(_safe_int(compare_to_live_summary.get("live_session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0)),
         "compare_live_fidelity_score": float(compare_global_scores.get("fidelity_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
-        "compare_live_candidate_alignment_score": float(compare_global_scores.get("candidate_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "compare_live_selection_alignment_score": float(compare_global_scores.get("selection_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
         "compare_live_risk_alignment_score": float(compare_global_scores.get("risk_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
         "compare_live_portfolio_alignment_score": float(compare_global_scores.get("portfolio_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
         "compare_live_execution_alignment_score": float(compare_global_scores.get("execution_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
@@ -2333,7 +2333,7 @@ def _default_baseline_metric_thresholds() -> dict[str, dict[str, object]]:
         "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0},
         "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.0},
         "compare_live_fidelity_score": {"comparison": "min", "abs": 0.02},
-        "compare_live_candidate_alignment_score": {"comparison": "min", "abs": 0.02},
+        "compare_live_selection_alignment_score": {"comparison": "min", "abs": 0.02},
         "compare_live_risk_alignment_score": {"comparison": "min", "abs": 0.02},
         "compare_live_portfolio_alignment_score": {"comparison": "min", "abs": 0.02},
         "compare_live_execution_alignment_score": {"comparison": "min", "abs": 0.02},

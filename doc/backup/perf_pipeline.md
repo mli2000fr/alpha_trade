@@ -5,7 +5,7 @@
 
 ## Outil
 
-[`scripts/bench_full_pipeline.py`](../scripts/bench_full_pipeline.py) :
+[`scripts/bench_full_pipeline.py`](../../scripts/bench_full_pipeline.py) :
 
 ```powershell
 python scripts/bench_full_pipeline.py --symbols 5000 --output artifacts/benchmarks

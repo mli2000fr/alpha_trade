@@ -8,7 +8,7 @@ Métriques exposées :
 
 * ``alpha_pipeline_steps_total``      — Counter par (step, status)
 * ``alpha_pipeline_duration_seconds`` — Histogram par step
-* ``alpha_candidates_count``          — Gauge (nombre de candidats AlphaScanner)
+* ``alpha_selections_count``          — Gauge (nombre de sélections AlphaScanner)
 * ``alpha_ml_train_duration_seconds`` — Histogram par symbol
 * ``alpha_db_backup_total``           — Counter par status
 * ``alpha_ml_backup_total``           — Counter par status
@@ -84,9 +84,9 @@ pipeline_duration_seconds = Histogram(
     buckets=(0.1, 0.5, 1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0),
 )
 
-candidates_count = Gauge(
-    "alpha_candidates_count",
-    "Nombre de candidats sélectionnés après AlphaScanner.",
+selections_count = Gauge(
+    "alpha_selections_count",
+    "Nombre de sélections produites après AlphaScanner.",
 )
 
 ml_train_duration_seconds = Histogram(
@@ -144,7 +144,7 @@ def record_pipeline_step(step: str) -> Generator[None, None, None]:
 __all__ = [
     "pipeline_steps_total",
     "pipeline_duration_seconds",
-    "candidates_count",
+    "selections_count",
     "ml_train_duration_seconds",
     "db_backup_total",
     "ml_backup_total",

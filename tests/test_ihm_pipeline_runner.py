@@ -27,6 +27,7 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
         "stock_screener",
         "sync_latest_quotes",
         "sync_earnings_calendar",
+        "publish_tradable_universe",
         "alpha_scanner",
         "sentiment_pipeline",
         "signal_aggregator",
@@ -42,6 +43,16 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
 def test_execution_step_depends_on_risk_management_contract_name() -> None:
     execution_step = next(step for step in get_pipeline_steps() if step.key == "execution")
     assert execution_step.deps == "risk_management"
+
+
+def test_publish_tradable_universe_command_uses_trade_date_and_equity_preset() -> None:
+    options = PipelineLaunchOptions(risk_account_equity=100_000.0, trade_date="2026-07-10")
+    command = build_pipeline_command("publish_tradable_universe", options)
+    preset = pipeline_runner.resolve_capital_preset_for_equity(options.risk_account_equity)
+
+    assert command[:4] == [command[0], "-u", "-m", "common.publish_tradable_universe"]
+    assert command[command.index("--trade-date") + 1] == "2026-07-10"
+    assert command[command.index("--capital-preset-key") + 1] == preset.key
 
 
 def test_pipeline_step_number_helpers_handle_main_suffixes_and_auxiliary_prefixes() -> None:
@@ -82,6 +93,7 @@ def test_get_pipeline_workflow_steps_defaults_to_live_ml_first_without_training(
         "stock_screener",
         "sync_latest_quotes",
         "sync_earnings_calendar",
+        "publish_tradable_universe",
         "sentiment_pipeline",
         "signal_aggregator",
         "ml_predict",
@@ -105,6 +117,7 @@ def test_get_pipeline_workflow_steps_can_start_at_3_and_append_corporate_actions
         "stock_screener",
         "sync_latest_quotes",
         "sync_earnings_calendar",
+        "publish_tradable_universe",
         "sentiment_pipeline",
         "signal_aggregator",
         "ml_predict",

@@ -70,7 +70,7 @@ def test_summarize_screener_diagnostics_adds_baseline_deltas() -> None:
                 "status": "ok",
                 "portfolio_survival_ratio": 0.20,
                 "portfolio_forward_return_20d": 0.05,
-                "selector_candidate_count": 12,
+                "selector_selection_count": 12,
             },
             {
                 "trade_date": date(2026, 4, 2),
@@ -83,7 +83,7 @@ def test_summarize_screener_diagnostics_adds_baseline_deltas() -> None:
                 "status": "ok",
                 "portfolio_survival_ratio": 0.30,
                 "portfolio_forward_return_20d": 0.01,
-                "selector_candidate_count": 8,
+                "selector_selection_count": 8,
             },
             {
                 "trade_date": date(2026, 4, 1),
@@ -96,7 +96,7 @@ def test_summarize_screener_diagnostics_adds_baseline_deltas() -> None:
                 "status": "ok",
                 "portfolio_survival_ratio": 0.35,
                 "portfolio_forward_return_20d": 0.07,
-                "selector_candidate_count": 10,
+                "selector_selection_count": 10,
             },
             {
                 "trade_date": date(2026, 4, 2),
@@ -109,7 +109,7 @@ def test_summarize_screener_diagnostics_adds_baseline_deltas() -> None:
                 "status": "error",
                 "portfolio_survival_ratio": 0.25,
                 "portfolio_forward_return_20d": 0.03,
-                "selector_candidate_count": 6,
+                "selector_selection_count": 6,
             },
         ]
     )
@@ -242,7 +242,7 @@ def test_analyze_period_computes_survival_and_forward_metrics(monkeypatch) -> No
 
     assert daily_row["screener_count"] == 4
     assert daily_row["selector_filtered_count"] == 3
-    assert daily_row["selector_candidate_count"] == 2
+    assert daily_row["selector_selection_count"] == 2
     assert daily_row["portfolio_target_count"] == 1
     assert daily_row["selector_survival_ratio"] == 0.5
     assert daily_row["portfolio_survival_ratio"] == 0.25
@@ -854,7 +854,7 @@ def test_analyze_period_merges_market_regime_and_builds_summary_by_regime(monkey
     screener_df = pd.DataFrame({"symbol": ["AAA"], "total_score": [90.0], "relative_strength_index": [110.0], "historical_range_score": [80.0]})
     selector_df = pd.DataFrame({"symbol": ["AAA"]})
     history_df = pd.DataFrame(
-        {"symbol": ["AAA"], "sector": ["Tech"], "is_candidate": [1], "final_score": [0.8], "final_score_sentiment": [0.82], "total_score": [90.0]}
+        {"symbol": ["AAA"], "sector": ["Tech"], "selection_rank": [1], "final_score": [0.8], "final_score_sentiment": [0.82], "total_score": [90.0]}
     )
 
     monkeypatch.setattr(service, "list_trading_dates", lambda start_date, end_date: [as_of_date])

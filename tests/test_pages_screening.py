@@ -35,7 +35,7 @@ def test_build_quality_summary_rows_exposes_recent_pipeline_context() -> None:
             "run_kind": "step",
             "step_key": "alpha_scanner",
             "status": "completed",
-            "run_summary": {"requested_selection_size": 50, "selected_candidates": 2},
+            "run_summary": {"requested_selection_size": 50, "selected_selections": 2},
         },
         {
             "run_id": "sent-1",
@@ -207,7 +207,7 @@ def test_render_screening_warning_on_stale_market_cap(monkeypatch) -> None:
     monkeypatch.setattr(screening, "db_available", lambda: True)
     monkeypatch.setattr(screening, "get_stock_scores", lambda: pd.DataFrame({
         "symbol": ["AAPL"],
-        "is_candidate": [1],
+        "selection_rank": [1],
         "sector": ["Technology"],
         "total_score": [0.7],
     }))
@@ -248,7 +248,7 @@ def test_render_screening_no_warning_when_market_cap_fresh(monkeypatch) -> None:
     monkeypatch.setattr(screening, "db_available", lambda: True)
     monkeypatch.setattr(screening, "get_stock_scores", lambda: pd.DataFrame({
         "symbol": ["AAPL"],
-        "is_candidate": [1],
+        "selection_rank": [1],
         "sector": ["Technology"],
         "total_score": [0.7],
     }))

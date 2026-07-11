@@ -100,8 +100,8 @@ pendant 12 mois.
 
 ## 6. Liens
 
-- [`scripts/restore_from_backup.py`](../scripts/restore_from_backup.py)
-- [`.github/workflows/dr_drill.yml`](../.github/workflows/dr_drill.yml)
-- [`scripts/verify_audit_chain.py`](../scripts/verify_audit_chain.py)
-- [`database/audit_chain.py`](../database/audit_chain.py)
+- [`scripts/restore_from_backup.py`](../../scripts/restore_from_backup.py)
+- [`.github/workflows/dr_drill.yml`](../../.github/workflows/dr_drill.yml)
+- [`scripts/verify_audit_chain.py`](../../scripts/verify_audit_chain.py)
+- [`database/audit_chain.py`](../../database/audit_chain.py)
 

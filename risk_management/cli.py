@@ -520,14 +520,14 @@ def _build_postmortem_artifacts(
         sector = str(getattr(candidate, "sector", "UNKNOWN") or "UNKNOWN")
         bucket = sector_rollup.setdefault(
             sector,
-            {"sector": sector, "candidates": 0, "retained": 0, "rejected": 0, "target_notional": 0.0, "target_weight": 0.0},
+            {"sector": sector, "selections": 0, "retained": 0, "rejected": 0, "target_notional": 0.0, "target_weight": 0.0},
         )
-        bucket["candidates"] = int(bucket["candidates"]) + 1
+        bucket["selections"] = int(bucket["selections"]) + 1
     for entry in entries:
         sector = str(entry.sector or "UNKNOWN")
         bucket = sector_rollup.setdefault(
             sector,
-            {"sector": sector, "candidates": 0, "retained": 0, "rejected": 0, "target_notional": 0.0, "target_weight": 0.0},
+            {"sector": sector, "selections": 0, "retained": 0, "rejected": 0, "target_notional": 0.0, "target_weight": 0.0},
         )
         if float(entry.approved_shares or 0.0) > 0.0:
             bucket["retained"] = int(bucket["retained"]) + 1
@@ -545,7 +545,7 @@ def _build_postmortem_artifacts(
         "top_reduction_reason_codes": _top_count_items(reduction_reason_code_counts),
         "sector_breakdown": sector_breakdown,
         "external_source_coverage": {
-            "candidate_count": len(candidates),
+            "selection_count": len(candidates),
             "price_symbols": len(prices),
             "prediction_symbols": len(predictions),
             "win_rate_symbols": len(win_rates),
@@ -1087,7 +1087,6 @@ def main(args: list[str] | None = None) -> None:
         for symbol in universe.symbols
     ]
     LOGGER.info("Univers tradable ML-first chargé: run=%s symbols=%d", universe.universe_run_id, len(candidates))
-    predictions: dict[str, object] = {}
     _emit_live_progress(
         dict(progress_context, targeted_symbols=len(candidates)),
         current=2,
@@ -1096,85 +1095,6 @@ def main(args: list[str] | None = None) -> None:
         phase="load_candidates",
         unit="étapes",
     )
-
-    # ── Sprint 3 — Option C short selling live ──────────────────────
-    if (
-        getattr(config, "short_selling_enabled", False)
-        and candidates
-    ):
-        from selector.short_score import (
-            ShortTrigger,
-            resolve_short_trigger,
-            resolve_regime_adaptive_short_params,
-        )
-        trigger = resolve_short_trigger(
-            regime_snapshot,
-            rotation_state,
-            bool(getattr(config, "short_selling_enabled", False)),
-        )
-        if trigger.active:
-            # Convertir les candidats en DataFrame pour le tagging
-            try:
-                rows = [
-                    {
-                        "symbol": c.symbol,
-                        "sector": c.sector,
-                        "score": c.score_used,
-                        "side": getattr(c, "side", "buy") or "buy",
-                        "predicted_side": (
-                            predictions.get(c.symbol).predicted_side
-                            if c.symbol in predictions and getattr(predictions.get(c.symbol), "predicted_side", None)
-                            else None
-                        ),
-                    }
-                    for c in candidates
-                ]
-                candidates_df = pd.DataFrame(rows)
-                # Sprint 5 / Option B — enrichir avec short_score
-                # En live, les SMA50/200 ne sont pas disponibles (pas de close_df
-                # en mémoire) → short_score_quality = "partial_missing_sma"
-                try:
-                    from selector.short_score import enrich_with_short_score, tag_short_candidates
-                    candidates_df = enrich_with_short_score(candidates_df)
-                except Exception:
-                    pass
-
-                eff_max_short, eff_min_short = resolve_regime_adaptive_short_params(
-                    config, trigger.short_by_regime,
-                )
-                if trigger.short_by_regime:
-                    LOGGER.info(
-                        "Regime-adaptive shorts (live): max_positions=%d min_score=%.2f",
-                        eff_max_short, eff_min_short,
-                    )
-                candidates_df = tag_short_candidates(
-                    candidates_df,
-                    max_short_positions=eff_max_short,
-                    min_score_for_short=eff_min_short,
-                    all_shorts=trigger.all_shorts,
-                )
-                # Appliquer le side aux sélections immuables (SelectionScore est frozen)
-                side_map = dict(zip(candidates_df["symbol"], candidates_df["side"]))
-                updated_candidates = []
-                for c in candidates:
-                    new_side = side_map.get(c.symbol, "buy")
-                    if new_side == "sell":
-                        updated_candidates.append(replace(c, side="sell"))
-                    else:
-                        updated_candidates.append(c)
-                candidates = updated_candidates
-                n_sells = sum(1 for c in candidates if getattr(c, "side", "buy") == "sell")
-                LOGGER.info(
-                    "Option C live: date=%s candidates=%d shorts=%d short_by_regime=%s short_by_rotation=%s all_shorts=%s",
-                    trade_date, len(candidates), n_sells,
-                    trigger.short_by_regime, trigger.short_by_rotation, trigger.all_shorts,
-                )
-                # Si le régime bloque les longs, ne garder que les shorts
-                if trigger.all_shorts:
-                    candidates = [c for c in candidates if getattr(c, "side", "buy") == "sell"]
-                    LOGGER.info("Option C live: filtered to %d shorts (longs blocked by regime)", len(candidates))
-            except Exception as _exc:
-                LOGGER.warning("Option C live tagging failed: %s", _exc)
 
     from risk_management.ml_gate import apply_ml_gate_to_risk_config, resolve_ml_gate_state
 
@@ -1196,7 +1116,7 @@ def main(args: list[str] | None = None) -> None:
         predictions = repo.load_predictions_asof(symbols, trade_date) if ml_gate_state.enabled else {}
         LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
         ml_coverage_gate = evaluate_ml_coverage_gate(
-            candidate_count=len(candidates),
+            selection_count=len(candidates),
             prediction_count=len(predictions),
             min_coverage_ratio=args.min_ml_coverage_ratio,
             regime_allows_new_entries=regime_allow_new_entries,
@@ -1347,7 +1267,7 @@ def main(args: list[str] | None = None) -> None:
         return_matrix = pd.DataFrame()
         entries = []
         ml_coverage_gate = evaluate_ml_coverage_gate(
-            candidate_count=len(candidates),
+            selection_count=len(candidates),
             prediction_count=0,
             min_coverage_ratio=args.min_ml_coverage_ratio,
             regime_allows_new_entries=regime_allow_new_entries,
@@ -1490,7 +1410,7 @@ def main(args: list[str] | None = None) -> None:
         )
     )
     selection_rank_available = sum(1 for candidate in candidates if getattr(candidate, "selection_rank", None) is not None)
-    selector_earnings_blackout_candidates = sum(
+    selection_earnings_blackout_count = sum(
         1
         for candidate in candidates
         if int(getattr(candidate, "selector_earnings_blackout", 0) or 0) > 0
@@ -1553,7 +1473,7 @@ def main(args: list[str] | None = None) -> None:
         "retained_selector_signal_mode_counts": retained_selector_signal_mode_counts,
         "selection_rank_available": selection_rank_available,
         "selection_rank_coverage_pct": round((selection_rank_available / len(candidates)), 4) if candidates else 0.0,
-        "selector_earnings_blackout_candidates": selector_earnings_blackout_candidates,
+        "selection_earnings_blackout_count": selection_earnings_blackout_count,
         # Sprint S3 / A-011 — visibilité des seuils circuit breaker effectifs.
         "circuit_breaker_thresholds": {
             "max_portfolio_drawdown_pct": float(config.max_portfolio_drawdown_pct),

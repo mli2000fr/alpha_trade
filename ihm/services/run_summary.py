@@ -78,7 +78,7 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
     ],
     "alpha_scanner": [
         ("Demandé", "requested_selection_size"),
-        ("Retenus", "selected_candidates"),
+        ("Retenus", "selected_selections"),
         ("Secteurs", "selected_sectors"),
         ("Fill", "selection_fill_ratio"),
         ("Workers", "workers"),
@@ -118,7 +118,7 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Rejetés", "rejected_symbols"),
         ("Ranks selector", "selector_rank_available"),
         ("Couverture selector", "selector_rank_coverage_pct"),
-        ("Blackout selector", "selector_earnings_blackout_candidates"),
+        ("Blackout sélection", "selection_earnings_blackout_count"),
         ("Expo brute", "gross_exposure_pct"),
         ("Poids max", "max_target_weight"),
         ("Risque init.", "total_initial_risk_dollars"),
@@ -340,7 +340,7 @@ def _format_alpha_scanner_ablation_detail_lines(summary: Mapping[str, object]) -
         if not isinstance(variant, Mapping):
             continue
         variant_id = str(variant.get("variant_id") or "").strip()
-        selected_candidates = _to_int(variant.get("selected_candidates"))
+        selected_selections = _to_int(variant.get("selected_selections"))
         disabled_filters_raw = variant.get("disabled_filters")
         disabled_filters = (
             [str(value).strip() for value in disabled_filters_raw if str(value).strip()]
@@ -363,7 +363,7 @@ def _format_alpha_scanner_ablation_detail_lines(summary: Mapping[str, object]) -
             if isinstance(removed_symbols, SequenceABC) and not isinstance(removed_symbols, (str, bytes))
             else ""
         )
-        line = f"Variante `{variant_id}` : retenus={selected_candidates}"
+        line = f"Variante `{variant_id}` : retenus={selected_selections}"
         if disabled_filters:
             line += f", filtres désactivés={', '.join(disabled_filters)}"
         if overlap_count > 0:
@@ -580,7 +580,7 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         snapshot_freshness_days = _to_int(summary.get("snapshot_freshness_days"))
         selector_rank_available = _to_int(summary.get("selector_rank_available"))
         selector_rank_coverage_pct = _to_float(summary.get("selector_rank_coverage_pct"))
-        selector_blackout = _to_int(summary.get("selector_earnings_blackout_candidates"))
+        selector_blackout = _to_int(summary.get("selection_earnings_blackout_count"))
         preflight_payload = summary.get("preflight_data_quality") if isinstance(summary.get("preflight_data_quality"), Mapping) else {}
         rejection_reason_code_counts = summary.get("rejection_reason_code_counts")
         reduction_reason_code_counts = summary.get("reduction_reason_code_counts")

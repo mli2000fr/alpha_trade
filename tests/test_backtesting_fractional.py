@@ -33,7 +33,7 @@ def _entry(*, approved_shares: float = 0.5, target_notional: float = 75.0) -> Po
         decision=Decision.ACCEPTED,
         decision_reason="OK",
         conviction_score=0.9,
-        candidate_rank=1,
+        selection_rank=1,
         decision_rank=1,
     )
 

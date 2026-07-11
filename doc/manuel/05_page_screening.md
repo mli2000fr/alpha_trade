@@ -73,5 +73,5 @@ Si le tableau est vide :
 ## Pour aller plus loin
 
 - Modifier les filtres : page **⚙️ Paramètres / Santé** → onglet « Selector ».
-- Comprendre le score : [doc technique selector](../selector.md).
+- Comprendre le score : [doc technique selector](../backup/selector.md).
 

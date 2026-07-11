@@ -23,6 +23,22 @@ from service.market.config import (
 )
 
 
+def _long_predictions(trade_date: date, symbols: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "trade_date": [trade_date] * len(symbols),
+            "symbol": symbols,
+            "predicted_class": [2] * len(symbols),
+            "predicted_proba": [0.90] * len(symbols),
+            "predicted_side": ["long"] * len(symbols),
+            "proba_long": [0.90] * len(symbols),
+            "proba_flat": [0.05] * len(symbols),
+            "proba_short": [0.05] * len(symbols),
+            "run_id": ["test-run"] * len(symbols),
+        }
+    )
+
+
 def _make_inputs(trade_date: date):
     scores_df = pd.DataFrame({
         "trade_date": [trade_date, trade_date],
@@ -32,7 +48,7 @@ def _make_inputs(trade_date: date):
         "score": [1.5, 1.2],
         "score_source": ["test", "test"],
     })
-    predictions_df = pd.DataFrame()
+    predictions_df = _long_predictions(trade_date, ["AAPL", "MSFT"])
     idx = pd.DatetimeIndex([pd.Timestamp(trade_date) - pd.Timedelta(days=i) for i in range(30)][::-1])
     close_df = pd.DataFrame({"AAPL": [100.0] * 30, "MSFT": [200.0] * 30}, index=idx)
     high_df = close_df + 2
@@ -49,7 +65,7 @@ def test_concat_signal_frames_ignores_empty_frames_without_futurewarning() -> No
                 "symbol": "AAPL",
                 "selected": True,
                 "rank": 1.0,
-                "candidate_rank": 1,
+                "selection_rank": 1,
                 "score": 1.5,
                 "score_source": "test",
                 "conviction_score": 1.5,
@@ -108,7 +124,7 @@ def test_risk_bridge_regime_off_keeps_structural_small_account_guard():
         "score": [float(100 - i) for i in range(len(symbols))],
         "score_source": ["test"] * len(symbols),
     })
-    predictions_df = pd.DataFrame()
+    predictions_df = _long_predictions(trade_date, symbols)
     idx = pd.DatetimeIndex([pd.Timestamp(trade_date) - pd.Timedelta(days=i) for i in range(30)][::-1])
     close_df = pd.DataFrame({symbol: [100.0] * 30 for symbol in symbols}, index=idx)
     high_df = close_df + 2
@@ -143,7 +159,7 @@ def test_risk_bridge_q2_ablation_structural_guard_prevents_zero_signal_collapse(
         "score": [3.0, 2.0, 1.0],
         "score_source": ["test"] * len(symbols),
     })
-    predictions_df = pd.DataFrame()
+    predictions_df = _long_predictions(trade_date, symbols)
     idx = pd.DatetimeIndex([pd.Timestamp(trade_date) - pd.Timedelta(days=i) for i in range(30)][::-1])
     close_df = pd.DataFrame({symbol: [100.0] * 30 for symbol in symbols}, index=idx)
     high_df = close_df + 2

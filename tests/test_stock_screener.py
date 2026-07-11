@@ -92,7 +92,6 @@ def test_run_screener_with_report_aggregates_two_pass_metrics(monkeypatch) -> No
                 "historical_range_score": 80.0,
                 "total_score": 95.0,
                 "last_updated_score": pd.Timestamp("2026-04-24 00:00:00"),
-                "is_candidate": 0,
                 "sector": None,
                 "last_updated_scan": pd.Timestamp("2026-04-24 00:00:00"),
             }
@@ -166,7 +165,6 @@ def test_run_screener_publishes_complete_objective_universe(monkeypatch) -> None
                 "historical_range_score": 80.0,
                 "total_score": 95.0,
                 "last_updated_score": pd.Timestamp("2026-04-24 00:00:00"),
-                "is_candidate": 0,
                 "sector": None,
                 "last_updated_scan": pd.Timestamp("2026-04-24 00:00:00"),
             }
@@ -226,7 +224,6 @@ def test_run_screener_with_report_preserves_previous_snapshot_when_chunk_failure
                 "historical_range_score": 80.0,
                 "total_score": 95.0,
                 "last_updated_score": pd.Timestamp("2026-04-24 00:00:00"),
-                "is_candidate": 0,
                 "sector": None,
                 "last_updated_scan": pd.Timestamp("2026-04-24 00:00:00"),
             }
@@ -294,7 +291,6 @@ def test_run_screener_with_report_logs_enriched_partial_run_context(monkeypatch,
                 "historical_range_score": 80.0,
                 "total_score": 95.0,
                 "last_updated_score": pd.Timestamp("2026-04-24 00:00:00"),
-                "is_candidate": 0,
                 "sector": None,
                 "last_updated_scan": pd.Timestamp("2026-04-24 00:00:00"),
             }

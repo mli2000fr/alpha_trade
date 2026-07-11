@@ -96,6 +96,6 @@ Voir [20_gestion_petit_capital_2000eur.md](20_gestion_petit_capital_2000eur.md).
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/risk_management.md](../risk_management.md).
+- Doc technique : [doc/risk_management.md](../backup/risk_management.md).
 - Glossaire : [30_glossaire_financier.md](30_glossaire_financier.md).
 

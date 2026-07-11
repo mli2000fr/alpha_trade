@@ -596,7 +596,7 @@ def test_build_compare_to_live_rows_formats_expected_columns() -> None:
                 {
                     "trade_date": "2025-01-02",
                     "fidelity_score": 0.625,
-                    "candidate_compare": {"status": "diverged"},
+                    "selection_compare": {"status": "diverged"},
                     "risk_compare": {"status": "aligned"},
                     "portfolio_compare": {"status": "missing_live"},
                     "execution_compare": {"status": "diverged"},
@@ -604,7 +604,7 @@ def test_build_compare_to_live_rows_formats_expected_columns() -> None:
                     "exits_compare": {"status": "missing_replay"},
                     "pnl_compare": {"status": "aligned"},
                     "top_divergences": [
-                        {"component": "candidates", "symbol": "BBB", "divergence_kind": "missing_live_candidate"},
+                        {"component": "selections", "symbol": "BBB", "divergence_kind": "missing_live_selection"},
                         {"component": "execution_targets", "symbol": "AAA", "divergence_kind": "qty_mismatch"},
                     ],
                 }
@@ -628,7 +628,7 @@ def test_build_compare_to_live_rows_formats_expected_columns() -> None:
     assert rows.iloc[0]["Score fidélité"] == "0.625"
     assert rows.iloc[0]["Candidats"] == "diverged"
     assert rows.iloc[0]["Fills live"] == "aligned"
-    assert "candidates:BBB:missing_live_candidate" in rows.iloc[0]["Divergences clés"]
+    assert "selections:BBB:missing_live_selection" in rows.iloc[0]["Divergences clés"]
 
 
 def test_build_execution_broker_like_session_rows_formats_expected_columns() -> None:

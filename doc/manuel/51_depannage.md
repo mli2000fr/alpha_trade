@@ -157,8 +157,8 @@ Si rien ne marche :
 2. Notez le **step concerné**.
 3. Rassemblez les logs des 5 dernières minutes.
 4. Consultez la documentation technique :
-   - [doc/runbook_24_7.md](../runbook_24_7.md)
-   - [doc/runbook_provider_incident.md](../runbook_provider_incident.md)
+   - [doc/runbook_24_7.md](../backup/runbook_24_7.md)
+   - [doc/runbook_provider_incident.md](../backup/runbook_provider_incident.md)
 5. En dernier recours : ouvrez une issue sur le dépôt en joignant logs +
    contexte.
 

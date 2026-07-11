@@ -6,7 +6,7 @@
 > runs critiques (modèles ML champion, backtests référence).
 > **Scope** : tous les sous-dossiers de `artifacts/`. Tout nouveau
 > sous-dossier doit être ajouté ici **et** dans
-> [`scripts/prune_artifacts.py`](../scripts/prune_artifacts.py)
+> [`scripts/prune_artifacts.py`](../../scripts/prune_artifacts.py)
 > (single source of truth dans le code).
 
 ---
@@ -59,7 +59,7 @@ en dry-run d'abord, puis avec `--apply` après revue du rapport.
 Tout nouveau sous-dossier `artifacts/` doit :
 
 1. Être ajouté dans `RETENTION_RULES` de
-   [`scripts/prune_artifacts.py`](../scripts/prune_artifacts.py).
+   [`scripts/prune_artifacts.py`](../../scripts/prune_artifacts.py).
 2. Apparaître dans le tableau §1 de ce document.
 3. Avoir sa criticité documentée (P1 / P2 / P3).
 

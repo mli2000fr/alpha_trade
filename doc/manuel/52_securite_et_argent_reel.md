@@ -144,7 +144,7 @@ Cela peut sembler ridicule. Ça ne l'est pas.
 
 ## Pour aller plus loin
 
-- [doc/pre_live_checklist.md](../pre_live_checklist.md) — checklist
+- [doc/pre_live_checklist.md](../backup/pre_live_checklist.md) — checklist
   technique complète (audience opérateur expert).
-- [doc/runbook_24_7.md](../runbook_24_7.md).
+- [doc/runbook_24_7.md](../backup/runbook_24_7.md).
 

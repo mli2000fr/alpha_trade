@@ -13,7 +13,7 @@ from risk_management.live_pipeline_guards import (
 
 def test_evaluate_ml_coverage_gate_blocks_when_threshold_is_not_met() -> None:
     decision = evaluate_ml_coverage_gate(
-        candidate_count=10,
+        selection_count=10,
         prediction_count=7,
         min_coverage_ratio=0.80,
         regime_allows_new_entries=True,
@@ -30,7 +30,7 @@ def test_evaluate_ml_coverage_gate_blocks_when_threshold_is_not_met() -> None:
 
 def test_evaluate_ml_coverage_gate_is_skipped_when_regime_blocks_entries() -> None:
     decision = evaluate_ml_coverage_gate(
-        candidate_count=10,
+        selection_count=10,
         prediction_count=0,
         min_coverage_ratio=0.80,
         regime_allows_new_entries=False,

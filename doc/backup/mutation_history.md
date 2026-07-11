@@ -2,7 +2,7 @@
 
 > Cible Phase F : score mutmut **≥ 70 %** sur les 3 modules critiques
 > (`corporate_actions/`, `risk_management/`, `execution_engine/`).
-> Workflow CI : [`.github/workflows/mutation_weekly.yml`](../.github/workflows/mutation_weekly.yml)
+> Workflow CI : [`.github/workflows/mutation_weekly.yml`](../../.github/workflows/mutation_weekly.yml)
 > (cron dimanche 06:00 UTC).
 
 ## Méthodologie

@@ -7,48 +7,48 @@ le moteur ou le modifier.
 
 - [doc/DOC_FONCTIONNELLE.md](../DOC_FONCTIONNELLE.md) — vision métier complète
 - [doc/DOC_TECHNIQUE.md](../DOC_TECHNIQUE.md) — architecture technique
-- [doc/ihm.md](../ihm.md) — guide opérateur IHM complet
-- [doc/onboarding_operator.md](../onboarding_operator.md) — onboarding opérateur
+- [doc/ihm.md](../backup/ihm.md) — guide opérateur IHM complet
+- [doc/onboarding_operator.md](../backup/onboarding_operator.md) — onboarding opérateur
 
 ## Modules métier
 
 | Module | Doc |
 |---|---|
-| Screener | [doc/screener.md](../screener.md) |
-| Selector | [doc/selector.md](../selector.md) |
-| Event Sentiment | [doc/event_sentiment.md](../event_sentiment.md) |
-| ModelFactory (ML) | [doc/modelFactory.md](../modelFactory.md) |
-| Risk Management | [doc/risk_management.md](../risk_management.md) |
-| Execution Engine | [doc/execution_engine.md](../execution_engine.md) |
-| Corporate Actions | [doc/corporate_actions.md](../corporate_actions.md) |
-| Backtesting | [doc/backtesting.md](../backtesting.md) |
-| Data Integrity | [doc/dataIntegrityEngine.md](../dataIntegrityEngine.md) |
-| Watcher | [doc/watcher.md](../watcher.md) |
+| Screener | [doc/screener.md](../backup/screener.md) |
+| Selector | [doc/selector.md](../backup/selector.md) |
+| Event Sentiment | [doc/event_sentiment.md](../backup/event_sentiment.md) |
+| ModelFactory (ML) | [doc/modelFactory.md](../backup/modelFactory.md) |
+| Risk Management | [doc/risk_management.md](../backup/risk_management.md) |
+| Execution Engine | [doc/execution_engine.md](../backup/execution_engine.md) |
+| Corporate Actions | [doc/corporate_actions.md](../backup/corporate_actions.md) |
+| Backtesting | [doc/backtesting.md](../backup/backtesting.md) |
+| Data Integrity | [doc/dataIntegrityEngine.md](../backup/dataIntegrityEngine.md) |
+| Watcher | [doc/watcher.md](../backup/watcher.md) |
 
 ## Architecture & qualité
 
 - [doc/architecture/](../architecture/) — diagrammes
-- [doc/database.md](../database.md) — schéma DB
-- [doc/data_lineage_matrix.md](../data_lineage_matrix.md)
-- [doc/observability.md](../observability.md)
-- [doc/perf_pipeline.md](../perf_pipeline.md)
-- [doc/perf_hotspots.md](../perf_hotspots.md)
+- [doc/database.md](../backup/database.md) — schéma DB
+- [doc/data_lineage_matrix.md](../backup/data_lineage_matrix.md)
+- [doc/observability.md](../backup/observability.md)
+- [doc/perf_pipeline.md](../backup/perf_pipeline.md)
+- [doc/perf_hotspots.md](../backup/perf_hotspots.md)
 
 ## Runbooks ops
 
-- [doc/runbook_24_7.md](../runbook_24_7.md)
-- [doc/runbook_provider_incident.md](../runbook_provider_incident.md)
-- [doc/runbook_reconciliation.md](../runbook_reconciliation.md)
-- [doc/sandbox_health_runbook.md](../sandbox_health_runbook.md)
-- [doc/disaster_recovery.md](../disaster_recovery.md)
+- [doc/runbook_24_7.md](../backup/runbook_24_7.md)
+- [doc/runbook_provider_incident.md](../backup/runbook_provider_incident.md)
+- [doc/runbook_reconciliation.md](../backup/runbook_reconciliation.md)
+- [doc/sandbox_health_runbook.md](../backup/sandbox_health_runbook.md)
+- [doc/disaster_recovery.md](../backup/disaster_recovery.md)
 
 ## Conformité & audit
 
-- [doc/external_audit_checklist.md](../external_audit_checklist.md)
-- [doc/external_audit_engagement.md](../external_audit_engagement.md)
-- [doc/pre_audit_findings.md](../pre_audit_findings.md)
-- [doc/pre_live_checklist.md](../pre_live_checklist.md)
-- [doc/artifacts_retention_policy.md](../artifacts_retention_policy.md)
+- [doc/external_audit_checklist.md](../backup/external_audit_checklist.md)
+- [doc/external_audit_engagement.md](../backup/external_audit_engagement.md)
+- [doc/pre_audit_findings.md](../backup/pre_audit_findings.md)
+- [doc/pre_live_checklist.md](../backup/pre_live_checklist.md)
+- [doc/artifacts_retention_policy.md](../backup/artifacts_retention_policy.md)
 
 ## Audits internes (Sprint S26)
 

@@ -88,7 +88,7 @@ def test_build_pipeline_summary_rows_exposes_latest_workflow_and_upstream_runs()
             "run_kind": "step",
             "step_key": "alpha_scanner",
             "status": "completed",
-            "run_summary": {"requested_selection_size": 50, "selected_candidates": 2},
+            "run_summary": {"requested_selection_size": 50, "selected_selections": 2},
         },
         {
             "run_id": "sent-1",

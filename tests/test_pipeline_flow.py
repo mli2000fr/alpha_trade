@@ -55,11 +55,11 @@ def test_run_step_none_fn_returns_skipped() -> None:
 
 def test_run_step_ok_fn_returns_ok() -> None:
     def _fn(d, a):
-        return {"candidates_count": 10}
+        return {"selections_count": 10}
 
     result = _run_step("screener", _fn, date(2026, 5, 17), "paper1")
     assert result.status == "OK"
-    assert result.metadata == {"candidates_count": 10}
+    assert result.metadata == {"selections_count": 10}
     assert result.error is None
     assert result.duration_seconds >= 0.0
 

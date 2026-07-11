@@ -106,7 +106,7 @@ def _build_variant_payload(
         "skipped_filters": list(variant.skipped_filters),
         "config_diff": dict(sorted(variant.config_diff.items())),
         "selection_size": int(variant.config.selection_size),
-        "selected_candidates": int(len(selected_symbols)),
+        "selected_selections": int(len(selected_symbols)),
         "selection_fill_ratio": round((len(selected_symbols) / variant.config.selection_size), 4)
         if variant.config.selection_size > 0
         else 0.0,

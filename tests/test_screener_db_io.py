@@ -60,7 +60,6 @@ class _FakeInsert:
             historical_range_score="historical_range_score",
             total_score="total_score",
             last_updated_score="last_updated_score",
-            is_candidate="is_candidate",
             sector="sector",
             anomaly_count="anomaly_count",
             missing_days_count="missing_days_count",
@@ -78,7 +77,7 @@ class _FakeInsert:
 
 def test_archivable_score_columns_include_selector_explainability_fields() -> None:
   expected_columns = {
-    "candidate_rank",
+    "selection_rank",
     "raw_final_score",
     "normalized_total_score",
     "normalized_rsi",
@@ -157,7 +156,6 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
                 "historical_range_score": 3.0,
                 "total_score": 4.0,
                 "last_updated_score": "2026-01-01 00:00:00",
-                "is_candidate": 1,
                 "sector": "Tech",
                 "last_updated_scan": "2026-01-01 00:05:00",
             },
@@ -168,7 +166,6 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
                 "historical_range_score": 3.1,
                 "total_score": 4.1,
                 "last_updated_score": "2026-01-01 00:00:00",
-                "is_candidate": 0,
                 "sector": None,
                 "last_updated_scan": "2026-01-01 00:05:00",
             },
@@ -179,7 +176,6 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
                 "historical_range_score": 3.2,
                 "total_score": 4.2,
                 "last_updated_score": "2026-01-01 00:00:00",
-                "is_candidate": 0,
                 "sector": "Finance",
                 "last_updated_scan": "2026-01-01 00:05:00",
             },
@@ -194,7 +190,7 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
     first_statement, _ = engine.connection.executed[0]
     assert first_statement[0] == "upsert"
     assert first_statement[1][0]["last_updated_score"].isoformat(sep=" ") == "2026-01-01 00:00:00"
-    assert first_statement[1][0]["is_candidate"] == 1
+    assert "is_candidate" not in first_statement[1][0]
     assert first_statement[1][0]["sector"] == "Technology"
     assert first_statement[1][0]["anomaly_count"] == 1
     assert first_statement[1][0]["missing_days_count"] == 2
@@ -202,7 +198,7 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
     assert first_statement[1][1]["sector"] == "Industrials"
     assert first_statement[1][1]["sanitizer_status"] == "failed"
     assert first_statement[2]["last_updated_score"] == "last_updated_score"
-    assert first_statement[2]["is_candidate"] == "is_candidate"
+    assert "is_candidate" not in first_statement[2]
     assert first_statement[2]["sector"] == "sector"
     assert first_statement[2]["anomaly_count"] == "anomaly_count"
     assert first_statement[2]["missing_days_count"] == "missing_days_count"
@@ -245,7 +241,7 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
     statement, _ = engine.connection.executed[0]
     record = statement[1][0]
     assert record["last_updated_score"].isoformat(sep=" ") == "2026-01-01 00:00:00"
-    assert record["is_candidate"] == 1
+    assert "is_candidate" not in record
     assert record["sector"] == "Healthcare"
     assert record["sanitizer_status"] == "pending"
     assert record["last_updated_scan"].isoformat(sep=" ") == "2026-01-01 00:00:00"
@@ -275,7 +271,6 @@ def test_upsert_scores_snapshot_can_skip_purge_and_archive(monkeypatch) -> None:
             "historical_range_score": 0.3,
             "total_score": 0.8,
             "last_updated_score": "2025-01-01",
-            "is_candidate": 1,
             "sector": "Tech",
             "last_updated_scan": "2025-01-01",
         }
@@ -307,7 +302,6 @@ def test_upsert_scores_snapshot_converts_nan_values_before_mysql_insert(monkeypa
                 "historical_range_score": 0.3,
                 "total_score": float("nan"),
                 "last_updated_score": "2025-01-01",
-                "is_candidate": 1,
                 "sector": None,
                 "anomaly_count": float("nan"),
                 "missing_days_count": float("nan"),
@@ -575,7 +569,6 @@ def test_upsert_scores_snapshot_calls_archive(monkeypatch) -> None:
         "historical_range_score": 0.3,
         "total_score": 0.8,
         "last_updated_score": "2025-01-01",
-        "is_candidate": 1,
         "sector": "Tech",
         "last_updated_scan": "2025-01-01",
     }])
@@ -611,7 +604,6 @@ def test_upsert_scores_snapshot_archive_failure_does_not_break(monkeypatch) -> N
         "historical_range_score": 0.3,
         "total_score": 0.8,
         "last_updated_score": "2025-01-01",
-        "is_candidate": 1,
         "sector": "Tech",
         "last_updated_scan": "2025-01-01",
     }])

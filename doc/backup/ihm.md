@@ -650,7 +650,7 @@ envoyé automatiquement aux destinataires configurés.
 ### 11.1 Comportement
 
 - Hook branché côté backend dans
-  [`ihm/services/process_registry.py`](../ihm/services/process_registry.py)
+  [`ihm/services/process_registry.py`](../../ihm/services/process_registry.py)
   via `_dispatch_finished_notification(...)`, appelé après
   `_finalize_if_needed` (steps) et `_finalize_workflow_record` (workflows).
 - Les **sous-runs** d'un workflow (`parent_run_id != None`) sont **ignorés** :
@@ -689,7 +689,7 @@ workflow pipeline** :
 
 Préférences persistées dans
 `artifacts/ihm_preferences/notifications.json` (gérées par
-[`ihm/services/notifications_preferences.py`](../ihm/services/notifications_preferences.py)).
+[`ihm/services/notifications_preferences.py`](../../ihm/services/notifications_preferences.py)).
 **Destinataire par défaut** si aucun fichier n'existe : `gamer.2000.fr@gmail.com`.
 
 ### 11.4 Configuration SMTP

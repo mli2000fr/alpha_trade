@@ -192,7 +192,7 @@ def test_compare_to_live_summary_aligns_full_stack_across_sessions() -> None:
 
     assert summary["session_count"] == 2
     assert summary["live_session_count"] == 2
-    assert summary["global_scores"]["candidate_alignment_score"] == 1.0
+    assert summary["global_scores"]["selection_alignment_score"] == 1.0
     assert summary["global_scores"]["risk_alignment_score"] == 1.0
     assert summary["global_scores"]["portfolio_alignment_score"] == 1.0
     assert summary["global_scores"]["execution_alignment_score"] == 1.0
@@ -202,7 +202,7 @@ def test_compare_to_live_summary_aligns_full_stack_across_sessions() -> None:
     assert summary["global_scores"]["fidelity_score"] == 1.0
 
     for session in summary["sessions"]:
-        assert session["candidate_compare"]["status"] == "aligned"
+        assert session["selection_compare"]["status"] == "aligned"
         assert session["risk_compare"]["status"] == "aligned"
         assert session["portfolio_compare"]["status"] == "aligned"
         assert session["execution_compare"]["status"] == "aligned"

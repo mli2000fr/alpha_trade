@@ -79,7 +79,7 @@ def task(fn: Callable | None = None, **kw: Any) -> Any:
 
 try:
     from common.metrics import (
-        candidates_count as _candidates_count,
+        selections_count as _selections_count,
         pipeline_steps_total as _steps_total,
         pipeline_duration_seconds as _duration,
     )
@@ -103,7 +103,7 @@ except Exception:  # pragma: no cover
 
     _steps_total = _Noop()  # type: ignore[assignment]
     _duration = _Noop()  # type: ignore[assignment]
-    _candidates_count = _Noop()  # type: ignore[assignment]
+    _selections_count = _Noop()  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -262,9 +262,9 @@ def daily_pipeline(
     # Mise à jour jauge candidats si disponible depuis le résultat screener
     screener_result = step_results.get("screener")
     if screener_result and screener_result.status == "OK":
-        n = screener_result.metadata.get("candidates_count", 0)
+        n = screener_result.metadata.get("selections_count", 0)
         try:
-            _candidates_count.set(n)
+            _selections_count.set(n)
         except Exception:  # pragma: no cover
             pass
 

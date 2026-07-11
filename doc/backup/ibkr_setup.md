@@ -2,8 +2,8 @@
 
 Ce document décrit la qualification d'un environnement Interactive Brokers
 **paper trading** afin d'exécuter le test live
-[`tests/test_ibkr_submit_order_paper.py`](../tests/test_ibkr_submit_order_paper.py)
-et plus largement l'adapter [`service/ibkr/client.py`](../service/ibkr/client.py).
+[`tests/test_ibkr_submit_order_paper.py`](../../tests/test_ibkr_submit_order_paper.py)
+et plus largement l'adapter [`service/ibkr/client.py`](../../service/ibkr/client.py).
 
 ---
 

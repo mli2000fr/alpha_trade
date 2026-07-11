@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from risk_management import cli as risk_cli
 from risk_management.config import RiskConfig
 from risk_management.models import (
+    PredictionInfo,
     SelectionScore,
     PriceInfo,
 )
@@ -79,7 +81,7 @@ def _reset():
 
 @pytest.fixture()
 def stub_repo_with_rejects(monkeypatch):
-    """Repo qui livre 8 candidats dont 4 sans ATR, 4 avec notional insuffisant."""
+    """Repo qui livre 8 sélections dont 4 sans ATR, 4 avec notional insuffisant."""
 
     candidates = [
         SelectionScore(symbol=f"S{i}", sector="Tech", score_used=0.9, score_source="x")
@@ -95,9 +97,30 @@ def stub_repo_with_rejects(monkeypatch):
     class _Repo:
         def load_account_risk_snapshot(self, *_): return None
         def load_account_equity_breakdown(self, *_): return {}
-        def load_candidates_asof(self, td): return candidates
+        def load_tradable_universe_asof(self, *_):
+            return SimpleNamespace(
+                symbols=tuple(selection.symbol for selection in candidates),
+                data_quality_grade="full",
+                universe_run_id="test-universe-run",
+            )
+        def load_score_context_asof(self, *_): return candidates
         def load_prices_asof(self, syms, td, atr_window=20): return prices
-        def load_predictions_asof(self, *_): return {}
+        def load_predictions_asof(self, symbols, trade_date):
+            return {
+                symbol: PredictionInfo(
+                    symbol=symbol,
+                    predicted_proba=0.9,
+                    predicted_class=2,
+                    run_id="test-run",
+                    prediction_date=trade_date,
+                    predicted_side="long",
+                    proba_long=0.9,
+                    proba_flat=0.05,
+                    proba_short=0.05,
+                )
+                for symbol in symbols
+            }
+        def load_equity_history(self, *_args, **_kwargs): return []
         def load_win_rates_asof(self, *_): return {}
         def load_return_matrix_asof(self, *_): return pd.DataFrame()
 
@@ -144,7 +167,13 @@ def test_run_summary_aggregates_rejected_notional_below_enforced(monkeypatch) ->
         def load_account_equity_breakdown(self, *_):
             return {}
 
-        def load_candidates_asof(self, _trade_date):
+        def load_tradable_universe_asof(self, *_):
+            return SimpleNamespace(symbols=(), data_quality_grade="full", universe_run_id="test-universe-run")
+
+        def load_score_context_asof(self, *_):
+            return []
+
+        def load_equity_history(self, *_args, **_kwargs):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -160,7 +189,7 @@ def test_run_summary_aggregates_rejected_notional_below_enforced(monkeypatch) ->
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl=None, circuit_breaker=None):
+        def __init__(self, config, pnl=None, circuit_breaker=None, **kwargs):
             self.progress_callback = None
 
         def build(self, candidates, prices, predictions, win_rates, return_matrix):

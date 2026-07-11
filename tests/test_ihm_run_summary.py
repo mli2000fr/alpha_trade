@@ -212,7 +212,7 @@ def test_build_run_summary_caption_uses_enriched_risk_management_metrics_mapping
                 "rejected_symbols": 4,
                 "selector_rank_available": 10,
                 "selector_rank_coverage_pct": 0.83,
-                "selector_earnings_blackout_candidates": 2,
+                "selection_earnings_blackout_count": 2,
                 "gross_exposure_pct": 0.62,
                 "max_target_weight": 0.10,
                 "total_initial_risk_dollars": 3200.0,
@@ -397,7 +397,7 @@ def test_build_run_summary_caption_uses_alpha_scanner_metrics_mapping() -> None:
             "step_key": "alpha_scanner",
             "run_summary": {
                 "requested_selection_size": 50,
-                "selected_candidates": 18,
+                "selected_selections": 18,
                 "selected_sectors": 7,
                 "selection_fill_ratio": 0.36,
                 "workers": 4,
@@ -444,7 +444,7 @@ def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_selection_explai
                         {
                             "variant_id": "no_spread",
                             "disabled_filters": ["spread"],
-                            "selected_candidates": 6,
+                            "selected_selections": 6,
                             "overlap_with_primary": {"count": 5, "ratio_vs_primary": 1.0},
                             "selection_diff": {
                                 "added_symbols": ["AMD"],
@@ -730,7 +730,7 @@ def test_get_run_summary_detail_lines_exposes_selector_telemetry_for_risk_manage
             "run_summary": {
                 "selector_rank_available": 8,
                 "selector_rank_coverage_pct": 0.8,
-                "selector_earnings_blackout_candidates": 2,
+                "selection_earnings_blackout_count": 2,
                 "selector_signal_mode_counts": {"strict": 5, "sector_neutralized": 3},
                 "retained_selector_signal_mode_counts": {"strict": 4, "sector_neutralized": 1},
             },

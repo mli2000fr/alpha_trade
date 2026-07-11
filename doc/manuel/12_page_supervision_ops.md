@@ -65,6 +65,6 @@ Tableau de tous les runs des 30 derniers jours, filtres par module / statut.
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/watcher.md](../watcher.md).
-- Runbook 24/7 : [doc/runbook_24_7.md](../runbook_24_7.md).
+- Doc technique : [doc/watcher.md](../backup/watcher.md).
+- Runbook 24/7 : [doc/runbook_24_7.md](../backup/runbook_24_7.md).
 

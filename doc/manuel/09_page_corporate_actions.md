@@ -57,6 +57,6 @@ Actions ». Options :
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/corporate_actions.md](../corporate_actions.md).
+- Doc technique : [doc/corporate_actions.md](../backup/corporate_actions.md).
 - Glossaire : [30_glossaire_financier.md](30_glossaire_financier.md).
 

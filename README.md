@@ -568,7 +568,7 @@ alpha_trade/
 ```
 
 > **Rétention `artifacts/`** : voir
-> [`doc/artifacts_retention_policy.md`](doc/artifacts_retention_policy.md)
+> [`doc/artifacts_retention_policy.md`](doc/backup/artifacts_retention_policy.md)
 > et le script `scripts/prune_artifacts.py` (Sprint S4 / A-023).
 
 ---
@@ -597,7 +597,7 @@ python -m execution_engine.preflight --account <id> --broker-mode live
 python scripts/run_pre_live_checklist.py --account <id>
 ```
 
-Détail : [`doc/pre_live_checklist.md`](doc/pre_live_checklist.md).
+Détail : [`doc/pre_live_checklist.md`](doc/backup/pre_live_checklist.md).
 
 ### Déclaration dans `config.yaml`
 

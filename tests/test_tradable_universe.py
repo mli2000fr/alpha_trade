@@ -11,6 +11,8 @@ from common.tradable_universe import (
     publish_universe_run,
     resolve_universe_asof,
 )
+from common.publish_tradable_universe import publish_full_tradable_universe
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from backtesting.data_loader import (
     load_tradable_universe_asof as load_backtest_universe,
     load_tradable_universe_scope,
@@ -45,6 +47,9 @@ def engine():
                 """
             )
         )
+        connection.execute(text("CREATE TABLE stock_quote_snapshots (symbol VARCHAR(32), quote_date DATE, spread_bps FLOAT)"))
+        connection.execute(text("CREATE TABLE stock_earnings_calendar (symbol VARCHAR(32), earnings_date DATE)"))
+        connection.execute(text("CREATE TABLE stock_metadata (symbol VARCHAR(32) PRIMARY KEY, market_cap FLOAT)"))
         connection.execute(
             text(
                 """
@@ -122,6 +127,57 @@ def test_resolve_can_include_rejected_symbols_with_reasons(engine) -> None:
     rejected = resolution.frame.set_index("symbol").loc["ILLIQ"]
     assert bool(rejected["is_tradable"]) is False
     assert rejected["tradability_reason_code"] == "adv_below_minimum"
+
+
+def test_publish_full_universe_applies_objective_context_without_mutating_source(engine) -> None:
+    snapshot_date = date(2025, 1, 2)
+    source_members = [
+        UniverseMember("AAPL", True, "tradable", history_days=600, close_price=200.0, adv_usd=50_000_000.0, data_quality_grade="degraded"),
+        UniverseMember("WIDE", True, "tradable", history_days=600, close_price=20.0, adv_usd=50_000_000.0, data_quality_grade="degraded"),
+    ]
+    begin_universe_run(
+        engine,
+        universe_run_id="source-degraded",
+        snapshot_date=snapshot_date,
+        capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
+        config_fingerprint="source-config",
+        rows_expected=2,
+        data_quality_grade="degraded",
+    )
+    publish_universe_run(engine, "source-degraded", source_members)
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO stock_quote_snapshots VALUES (:symbol, :quote_date, :spread_bps)"),
+            [
+                {"symbol": "AAPL", "quote_date": snapshot_date, "spread_bps": 5.0},
+                {"symbol": "WIDE", "quote_date": snapshot_date, "spread_bps": 500.0},
+            ],
+        )
+        connection.execute(
+            text("INSERT INTO stock_metadata VALUES (:symbol, :market_cap)"),
+            [
+                {"symbol": "AAPL", "market_cap": 3_000_000_000_000.0},
+                {"symbol": "WIDE", "market_cap": 5_000_000_000.0},
+            ],
+        )
+
+    full_run_id = publish_full_tradable_universe(
+        engine,
+        snapshot_date=snapshot_date,
+        capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
+    )
+
+    resolution = resolve_universe_asof(engine, snapshot_date, DEFAULT_CAPITAL_PRESET_KEY, tradable_only=False)
+    assert resolution.universe_run_id == full_run_id
+    assert resolution.data_quality_grade == "full"
+    rows = resolution.frame.set_index("symbol")
+    assert bool(rows.loc["AAPL", "is_tradable"]) is True
+    assert rows.loc["WIDE", "tradability_reason_code"] == "spread_above_maximum"
+    with engine.connect() as connection:
+        source_grade = connection.execute(
+            text("SELECT data_quality_grade FROM tradable_universe_runs WHERE universe_run_id = 'source-degraded'")
+        ).scalar_one()
+    assert source_grade == "degraded"
 
 
 def test_partial_or_failed_run_is_never_served(engine) -> None:

@@ -15,6 +15,7 @@ from __future__ import annotations
 import sys
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -42,7 +43,13 @@ def stub_repo(monkeypatch):
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_candidates_asof(self, trade_date):
+        def load_tradable_universe_asof(self, *_):
+            return SimpleNamespace(symbols=(), data_quality_grade="full", universe_run_id="test-universe-run")
+
+        def load_score_context_asof(self, *_):
+            return []
+
+        def load_equity_history(self, *_args, **_kwargs):
             return []
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
