@@ -34,7 +34,7 @@ class RiskCheckerImpl:
     # --- Protocol RiskChecker -------------------------------------------
     def check_position_size(
         self, symbol: str, proposed_shares: float, price: float,
-        *, adv_usd: float | None = None,
+        *, side: str = "buy", adv_usd: float | None = None,
     ) -> float:
         """Retourne le nombre de parts autorisé (<= proposed_shares)."""
         if self._cb.is_active():
@@ -49,6 +49,7 @@ class RiskCheckerImpl:
             proposed_shares=proposed_shares,
             price=price,
             state=self._state,
+            side=side,
             adv_usd=adv_usd,
         )
         self._last_decision_reason = reason
@@ -80,12 +81,19 @@ class RiskCheckerImpl:
         return self._last_decision_reason_code
 
     # --- helpers pour portfolio_builder ----------------------------------
-    def accept(self, symbol: str, sector: str, shares: float, price: float) -> None:
+    def accept(
+        self,
+        symbol: str,
+        sector: str,
+        shares: float,
+        price: float,
+        *,
+        side: str = "buy",
+    ) -> None:
         """Enregistre une position acceptée dans l'état courant."""
-        notional = shares * price
-        self._state.position_count += 1
-        self._state.total_notional += notional
-        assert self._state.sector_notional is not None
-        self._state.sector_notional[sector] = self._state.sector_notional.get(sector, 0.0) + notional
-        assert self._state.sector_ticker_count is not None
-        self._state.sector_ticker_count[sector] = self._state.sector_ticker_count.get(sector, 0) + 1
+        self._state.add_position(
+            notional=shares * price,
+            sector=sector,
+            side=side,
+            symbol=symbol,
+        )

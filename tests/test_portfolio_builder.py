@@ -194,6 +194,36 @@ def test_short_uses_proba_short_for_kelly_and_audit() -> None:
     assert entry.effective_probability == pytest.approx(expected_p_eff)
 
 
+def test_builder_enforces_short_cap_and_places_stop_above_entry() -> None:
+    cfg = _cfg(max_positions=3, max_long_positions=3, max_short_positions=1)
+    builder = PortfolioBuilder(cfg)
+    candidates = [
+        SelectionScore("AAPL", "Tech", 0.20),
+        SelectionScore("MSFT", "Tech", 0.20),
+    ]
+    predictions = {
+        symbol: PredictionInfo(
+            symbol,
+            0.10,
+            0,
+            "run1",
+            predicted_side="short",
+            proba_long=0.10,
+            proba_flat=0.10,
+            proba_short=0.80,
+        )
+        for symbol in ("AAPL", "MSFT")
+    }
+
+    entries = builder.build(candidates, _prices(), predictions=predictions)
+
+    accepted = [entry for entry in entries if entry.approved_shares > 0]
+    assert len(accepted) == 1
+    assert accepted[0].side == "sell"
+    assert accepted[0].stop_price_initial > accepted[0].entry_price
+    assert any(entry.decision_reason == "max_short_positions atteint" for entry in entries)
+
+
 def test_builder_propagates_walk_forward_metadata() -> None:
     builder = PortfolioBuilder(_cfg())
     entries = builder.build(

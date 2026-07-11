@@ -11,11 +11,12 @@ from pandas import DataFrame
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from core.conviction import fuse as _fuse_conviction_long
 from core.conviction import fuse_short as _fuse_conviction_short
+from core.direction import compute_initial_stop_price
 from core.run_summary import attach_live_progress
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.constraints import PortfolioState
-from risk_management.correlation_filter import filter_correlated
+from risk_management.correlation_filter import filter_correlated_signed
 from risk_management.enums import Decision, DecisionReasonCode, SizingMethod
 from risk_management.kelly import KellySizer
 from risk_management.models import (
@@ -584,7 +585,7 @@ class PortfolioBuilder:
             else:
                 retained = enriched
         elif return_matrix is not None and not return_matrix.empty:
-            retained, rejections = filter_correlated(
+            retained, rejections = filter_correlated_signed(
                 enriched, return_matrix, self._cfg.correlation_threshold, self._cfg.correlation_min_overlap,
             )
             for rej in rejections:
@@ -738,7 +739,15 @@ class PortfolioBuilder:
                 )
                 continue
 
-            approved = normalize_share_quantity(checker.check_position_size(ec.symbol, sizing.proposed_shares, pi.last_close, adv_usd=pi.adv_usd))
+            approved = normalize_share_quantity(
+                checker.check_position_size(
+                    ec.symbol,
+                    sizing.proposed_shares,
+                    pi.last_close,
+                    side=ec.side,
+                    adv_usd=pi.adv_usd,
+                )
+            )
             if approved < minimum_viable_shares:
                 reason = checker.get_last_decision_reason()
                 reason_code = checker.get_last_decision_reason_code()
@@ -766,7 +775,7 @@ class PortfolioBuilder:
             decision = Decision.ACCEPTED if abs(approved - sizing.proposed_shares) <= QUANTITY_EPSILON else Decision.REDUCED
             reason = "OK" if decision == Decision.ACCEPTED else checker.get_last_decision_reason()
             reason_code = DecisionReasonCode.OK if decision == Decision.ACCEPTED else checker.get_last_decision_reason_code()
-            checker.accept(ec.symbol, ec.sector, approved, pi.last_close)
+            checker.accept(ec.symbol, ec.sector, approved, pi.last_close, side=ec.side)
             accepted_rank += 1
 
             notional = approved * pi.last_close
@@ -774,7 +783,11 @@ class PortfolioBuilder:
             risk_per_share = pi.atr_20 * self._cfg.atr_stop_multiple if pi.atr_20 is not None and pi.atr_20 > 0 else None
             risk_budget_dollars = equity * self._cfg.risk_per_trade_pct if equity > 0 else None
             initial_risk_dollars = approved * risk_per_share if risk_per_share is not None else None
-            stop_price_initial = max(0.0, pi.last_close - risk_per_share) if risk_per_share is not None else None
+            stop_price_initial = compute_initial_stop_price(
+                ec.side,
+                pi.last_close,
+                risk_per_share=risk_per_share,
+            )
 
             # Compute Kelly-specific audit fields
             p_eff: float | None = None

@@ -197,10 +197,11 @@ python -m pytest tests/test_ml_selection_contract.py tests/test_ml_ternary_decis
 - Restaurer `modelFactory/predictor.py`, `modelFactory/tabular_baseline.py`, `backtesting/signal_replay.py`, `core/ml_selection_contract.py` aux versions précédentes.
 - Supprimer `core/ternary_decision_policy.py`, `tests/test_ml_ternary_decision_policy.py`, `tests/test_ml_timing_contract.py`.
 
-#### Gate GO/NO-GO : ✅ GO
+#### Gate GO/NO-GO : ⚠️ PARTIEL — fondation technique validée, sprint non clôturé
 
-- Une seule fonction décide du side : `decide_ternary_side` dans `core/ternary_decision_policy.py`.
-- Parité side garantie par construction (même fonction dans predictor, evaluation, signal_replay).
+- `decide_ternary_side` pilote bien le chemin tabulaire, mais le chemin LSTM conserve un `argmax` local.
+- La baseline JSON n'est pas produite et `decision_timing` est déclaré, sans contrôle runtime général.
+- Le gate `research_only` est bien appliqué par `predict_symbol()`.
 - Gestion déterministe des égalités, NaN et probabilités invalides.
 - Blocage `research_only` dans `predict_symbol`.
 - 83 tests verts, 0 régression sur les modules modifiés.
@@ -296,13 +297,11 @@ python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_c
 - Restaurer `modelFactory/evaluation.py` (supprimer les fonctions multiclasses).
 - Supprimer `tests/test_model_factory_evaluation_ternary.py`, `tests/test_model_factory_multiclass_calibration.py`.
 
-#### Gate GO/NO-GO : ✅ GO
+#### Gate GO/NO-GO : ⚠️ PARTIEL — métriques et gates disponibles, isolation non démontrée de bout en bout
 
-- Zéro métrique invalide : `_validate_proba_array` + `_validate_metric_gates` garantissent qu'aucun modèle avec probas/AUC invalides n'est éligible.
-- Side identique évaluation/prédiction : la policy `decide_ternary_side_batch` est utilisée dans `compute_tabular_metrics` pour les F1, même policy que `decide_ternary_side` dans `predict_symbol`.
-- Aucune lecture du test dans la sélection : `selection_score_from_result` ne lit plus `result["test"]`.
-- Anciens artefacts : le gate `legacy_metrics` existe, reste à peupler automatiquement.
-- 32 nouveaux tests, 115 total, 0 régression.
+- Les métriques et le gate de collapse sont testés, mais les probabilités ternaires calibrées ne sont pas consommées uniformément par tous les chemins d'inférence.
+- `selection_score_from_result()` n'accède plus directement à `result["test"]`; le `selection_score` top-level reste toutefois accepté sans provenance typée vérifiable.
+- Les artefacts legacy ne sont pas automatiquement invalidés.
 
 ---
 
@@ -395,13 +394,11 @@ python -m pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_c
 - Restaurer `modelFactory/predictor.py` (retirer `_pit_validate_bars`, `_pit_build_availability`, imports PIT).
 - Supprimer `tests/test_feature_availability_pit.py`, `tests/test_historical_universe_survivorship.py`.
 
-#### Gate GO/NO-GO : ✅ GO
+#### Gate GO/NO-GO : ⚠️ PARTIEL — contrat PIT disponible, ingestion PIT non intégrée
 
-- Zéro observation future : `_pit_validate_bars` + `FutureDataError` bloquent toute donnée postérieure au cutoff.
-- Univers sans survivorship bias : l'infrastructure `tradable_universe_history` + `resolve_universe_asof` existe déjà.
-- 100 % des prédictions avec cutoff, qualité et fingerprints : `data_source`, `data_available_at`, `data_quality` ajoutés à chaque prédiction.
-- Aucune sentinelle numérique ambiguë : `QualityState` (enum 7 valeurs) remplace les NaN.
-- 28 nouveaux tests, 143 total, 0 régression.
+- Le predictor ne vérifie que la date de barre; les loaders ne peuplent pas `available_at` pour les données réelles ni pour les sources sentiment/événements.
+- Le rapport de qualité n'est pas planifié et l'univers PIT n'est pas propagé avec un `universe_run_id` dans tout le pipeline.
+- Les tests unitaires du contrat passent, mais le gate "zéro donnée future" n'est donc pas démontré sur le workflow de données réel.
 
 ---
 
@@ -496,14 +493,11 @@ python -m pytest [suite complete Sprint 0-3] --no-cov -q
 - Restaurer `modelFactory/target_optimization.py` (remettre le `neg_mask = active_target == 0` legacy).
 - Supprimer `tests/test_model_factory_labeling.py`.
 
-#### Gate GO/NO-GO : ✅ GO
+#### Gate GO/NO-GO : ❌ NO-GO — labeler isolé du workflow d'entraînement et du simulateur
 
-- Premier barrier correctement sélectionné : `_resolve_exit` avec priorité conservative testée.
-- Gap à travers stop exécuté au prix disponible : `gap_stop` / `gap_tp` avec prix open.
-- Coûts capables de transformer un gain brut en non-trade/perte : testé (`test_costs_turn_gain_into_flat`).
-- Aucun label ne traverse la frontière du fold : le labeler est une fonction pure sans état, l'optimisation reste dans `optimize_target_parameters` (fold train).
-- Symétrie long/short sur série inversée : testée (`test_long_short_symmetry`).
-- 19 nouveaux tests, 166 total, 0 régression.
+- Le labeler triple-barrier et la correction ternaire de l'optimiseur sont testés isolément.
+- Aucun chemin de training ne sélectionne encore ce labeler et `backtesting/simulator.py` ne l'utilise pas; les coûts ne sont pas réellement partagés.
+- La parité label/backtest et l'isolation fold ne peuvent pas être validées avant cette intégration.
 
 ---
 
@@ -595,13 +589,10 @@ python -m pytest [suite complete Sprint 0-4] --no-cov -q
 - Supprimer `tests/test_model_factory_model_benchmark.py`.
 - Restaurer `tests/test_model_factory_reproducibility.py` (retirer les 9 tests ajoutés).
 
-#### Gate GO/NO-GO : ✅ GO
+#### Gate GO/NO-GO : ⚠️ PARTIEL — benchmark fonctionnel, couverture des architectures incomplète
 
-- Champion non collapsed : `BenchmarkRunner._select_champion` exclut les modèles `collapsed=True`.
-- Gain crédible face aux baselines : seuil `min_improvement_vs_baseline` (1% par défaut), modèles sous le seuil rejetés.
-- Architecture justifiée par performance nette et complexité : le rapport inclut les métriques par seed, le summary compare les challengers.
-- Latence compatible EOD : `max_latency_ms=60000` (60s), mesurée pour la baseline logistique.
-- 21 nouveaux tests, 187 total, 0 régression.
+- LightGBM et CatBoost sont exécutés avec des baselines et plusieurs seeds.
+- LSTM et modèle global ne sont pas benchmarkés; le rapport ne fournit pas encore une mesure exploitable de complexité ni une évaluation financière nette.
 
 ---
 
@@ -688,14 +679,11 @@ python -m pytest [suite complete Sprint 0-5] --no-cov -q
 - Supprimer `risk_management/selection_contract.py`.
 - Supprimer `tests/test_risk_ml_first_contract.py`.
 
-#### Gate GO/NO-GO : ✅ GO
+#### Gate GO/NO-GO : ❌ NO-GO — contrat défini mais non consommé par les moteurs actifs
 
-- ML seul détermine side et ordre nominal : `MLRankedCandidate.side` est immutable, `build_rankings` trie par `p_side` ML uniquement.
-- Selector incapable de changer side/rank : `SelectorVetoContext` n'a pas de champ side/rank par construction.
-- Flat n'atteint jamais le sizing : `is_actionable()` + `filter_actionable()`.
-- Lineage et trade date obligatoires : `__post_init__` rejette les symboles et model_run_id vides.
-- Rankings long/short conservés : `build_rankings` produit deux listes indépendantes.
-- 20 nouveaux tests, 207 total, 0 régression.
+- `MLRankedCandidate` et ses tests existent, mais `PortfolioBuilder` et `risk_bridge` consomment toujours `SelectionScore` / `PredictionInfo`.
+- `risk_bridge.py` appelle toujours `tag_short_candidates()`: le selector reste donc dans la détermination du chemin short nominal.
+- Il n'existe pas de test bridge/live consommant le nouveau contrat.
 
 ---
 
@@ -802,13 +790,11 @@ python -m pytest [suite complete Sprint 0-6] --no-cov -q
 - Restaurer `risk_management/config.py` (retirer fingerprint, to_dict, from_dict, with_overrides).
 - Supprimer `tests/test_risk_config_parity.py`.
 
-#### Gate GO/NO-GO : ✅ GO
+#### Gate GO/NO-GO : ⚠️ PARTIEL — contraintes directionnelles maintenant actives dans le builder, configuration et bridge à terminer
 
-- Zéro dépassement directionnel : caps `max_long_positions` et `max_short_positions` appliqués avant `max_positions`.
-- Zéro paramètre décoratif : `from_dict()` et `with_overrides()` rejettent les clés inconnues.
-- Fingerprint différent pour toute différence effective : SHA256/16 du JSON canonique.
-- Moteur minimal stable : `PortfolioState` directionnel, ADV fail-closed, corrélation signée, config fingerprintée.
-- 20 nouveaux tests, 227 total, 0 régression.
+- Vérification indépendante: `PortfolioBuilder` transmet désormais le `side`, met à jour `PortfolioState.add_position()`, utilise `filter_correlated_signed()` et calcule le stop initial via `compute_initial_stop_price()`.
+- Il manque toujours un loader typé unique pour YAML/CLI/backtest, les contraintes factorielles signées finales et la suppression du short-tagging selector dans le bridge.
+- Les tests unitaires de cette surface passent, mais la parité bridge/live est encore rouge sur les anciennes fixtures incomplètes.
 
 ---
 
@@ -850,6 +836,57 @@ Valider l'alpha OOS avec le contrat et les contraintes risque qui seront réelle
 - drawdown sous budget ;
 - aucune jambe activée structurellement non validée ;
 - holdout externe intact.
+
+### ✅ Ce qui a été implémenté (2026-07-11)
+
+#### Fichiers modifiés
+
+| Fichier | Changements |
+|---|---|
+| `backtesting/statistical_validation.py` | **`deflated_sharpe_ratio()`** : Deflated Sharpe Ratio (Harvey & Liu 2015) corrigeant le multiple testing. Calcule le Sharpe annualisé, la skewness, la kurtosis, le DSR et la p-value asymptotique. Plus il y a de stratégies testées (`n_trials`), plus le DSR est pénalisé. Retourne `DeflatedSharpeResult` avec `is_significant` (p < 0.05). **`block_bootstrap_sharpe()`** : Block bootstrap avec blocs de N jours préservant la dépendance temporelle (auto-corrélation, volatility clustering). **`multiple_testing_correction()`** : Correction Bonferroni (p × n) ou Benjamini-Hochberg (FDR) avec monotonisation. **`compute_promotion_score()`** : Score composite 0-1 avec 5 composantes pondérées : Sharpe (30%), Drawdown (25%), Profit Factor (20%), Stabilité des folds (15%), Cost Efficiency (10%). Seuil de promotion : 0.60. **`WalkForwardPlan`** : Dataclass avec bornes train/val/test, purge_days, embargo_days. **`PromotionScoreResult`** / **`DeflatedSharpeResult`** : Conteneurs de résultats avec `to_dict()`. |
+
+#### Nouveaux fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `tests/test_model_walk_forward_nested.py` | 16 tests : WalkForwardPlan construction + purge/embargo, Deflated Sharpe (positif, aléatoire, données insuffisantes, plus de trials = plus dur), block bootstrap (basique, données insuffisantes), correction multiple testing (Bonferroni, Benjamini-Hochberg, vide), promotion score (excellent, poor, borderline, Deflated Sharpe, to_dict). |
+
+#### Décisions d'architecture
+
+- **Deflated Sharpe Ratio** : corrige le biais de sélection. La formule E[max Sharpe] = √(2·log(n_trials)) pénalise les stratégies optimisées sur beaucoup d'essais. Le DSR est utilisé dans le promotion score s'il est fourni (`sharpe_deflated`).
+- **Block bootstrap** : contrairement au bootstrap i.i.d. existant, le block bootstrap préserve la structure de dépendance temporelle (blocs de 10 jours ≈ 2 semaines). Évite de sous-estimer la variance du Sharpe.
+- **Promotion score composite** : 5 composantes normalisées 0-1 avec pondérations fixes. Le seuil 0.60 est exigeant : une stratégie avec Sharpe=1.0, DD=15%, PF=1.2, stabilité 70%, coûts 25% obtient environ 0.55.
+- **WalkForwardPlan** : structure canonique pour décrire un fold de walk-forward avec purge (évite chevauchement des labels entre train et val) et embargo (isole le test du dernier jour de val).
+
+#### Commandes exécutées et résultats
+
+```powershell
+python -m pytest tests/test_model_walk_forward_nested.py --no-cov -q
+# 16 passed (nouveaux tests Sprint 7)
+
+python -m pytest [suite complete Sprint 0-7] --no-cov -q
+# 243 passed
+```
+
+#### Artefacts produits
+
+- `tests/test_model_walk_forward_nested.py` — 16 tests
+- Fonctions ajoutées dans `backtesting/statistical_validation.py` : `deflated_sharpe_ratio`, `block_bootstrap_sharpe`, `multiple_testing_correction`, `compute_promotion_score`, classes `WalkForwardPlan`, `PromotionScoreResult`, `DeflatedSharpeResult`
+
+#### Risques résiduels
+
+- **Tests uniquement sur données synthétiques** : le Deflated Sharpe et le block bootstrap sont testés avec `np.random.normal`. Les vrais rendements ont des queues épaisses et de l'auto-corrélation qui peuvent affecter les résultats.
+- **Intégration dans le pipeline de backtest non faite** : les fonctions sont disponibles mais le CLI backtest n'appelle pas encore `deflated_sharpe_ratio` ou `compute_promotion_score`. Sera intégré au Sprint 8 (Edge net).
+- **WalkForwardPlan non utilisé par le moteur existant** : la structure est définie mais `backtesting/walk_forward.py` ne la consomme pas encore. Sera fait au Sprint 8.
+
+#### Rollback
+
+- Restaurer `backtesting/statistical_validation.py` (retirer les fonctions Sprint 7).
+- Supprimer `tests/test_model_walk_forward_nested.py`.
+
+#### Gate GO/NO-GO : ❌ NO-GO — primitives statistiques testées, aucun walk-forward financier intégré
+
+`WalkForwardPlan`, DSR, bootstrap et promotion score sont des primitives valides, mais elles ne sont appelées ni par `backtesting/walk_forward.py` ni par le CLI de backtest. Le moteur ne rejoue donc pas les folds via le bridge risque réel, ne produit pas les métriques nettes requises et ne peut pas prouver l'isolation du holdout. Les six échecs actuels de `tests/test_phase2_bridges.py` confirment que la parité d'intégration reste ouverte.
 
 ---
 
