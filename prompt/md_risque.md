@@ -2932,9 +2932,106 @@ Chaque étape doit ajouter un test d'intégration sur le chemin runtime concern�
 
 ## 17. Guide pratique : comprendre les raccordements restants
 
-Les composants des Sprints 8 à 15 existent majoritairement et leurs comportements unitaires sont testés. Un composant « raccordé » signifie toutefois davantage : il reçoit des données réelles au bon moment, sa sortie est consommée par le processus suivant, et un test d'intégration prouve que la chaîne complète se comporte comme prévu. Tant qu'un de ces trois éléments manque, le composant reste une fondation valide, mais il ne doit pas être considéré comme actif en production.
+Les composants des quinze Sprints existent majoritairement et leurs comportements unitaires sont testés. Un composant « raccordé » signifie toutefois davantage : il reçoit des données réelles au bon moment, sa sortie est consommée par le processus suivant, et un test d'intégration prouve que la chaîne complète se comporte comme prévu. Tant qu'un de ces trois éléments manque, le composant reste une fondation valide, mais il ne doit pas être considéré comme actif en production.
 
-### 1. Faire circuler un snapshot opérationnel réel
+### 1. Finaliser la policy de décision et les artefacts de référence
+
+La décision ternaire commune est en place, mais sa validation doit couvrir tous les chemins réellement servis. En particulier, un chemin qui conserve une décision locale différente, un artefact de baseline absent ou une policy non vérifiée à l'exécution peut faire diverger entraînement, backtest et production.
+
+Il reste à :
+
+1. remplacer ou justifier toute décision locale restante, notamment les chemins qui emploient encore un `argmax` indépendant de `decide_ternary_side()` ;
+2. produire et archiver une baseline réelle avec période, univers, seed, version de code, fingerprints de données/configuration et métriques par side ;
+3. vérifier le contrat `decision_cutoff -> entry J+1` dans les entrypoints, pas seulement dans les DTO ;
+4. contrôler que tout artefact `research_only` est refusé avant paper ou live.
+
+Le test d'intégration doit injecter les mêmes probabilités dans tous les chemins et obtenir exactement le même side, y compris pour les égalités et les entrées invalides.
+
+### 2. Étendre le PIT à toutes les sources et au lineage complet
+
+Les barres de prix disposent d'un contrat PIT, mais chaque donnée qui influence une prédiction doit répondre à la même question : était-elle réellement disponible au moment de la décision ? Cela concerne notamment sentiment, événements, macro, corporate actions, univers et données externes.
+
+Il reste à :
+
+1. renseigner systématiquement `event_time`, `available_at`, source, révision, ingestion, fuseau et état de qualité dans tous les loaders ;
+2. transmettre le même `universe_run_id` et les mêmes fingerprints d'univers de l'entraînement à la prédiction, au backtest et au risque ;
+3. conserver les prix ajustés pour les features et les prix exécutables pour les fills, sans les confondre ;
+4. automatiser le rapport quotidien de couverture, fraîcheur, données futures et anomalies d'univers ;
+5. bloquer toute entrée dépendant d'une donnée critique absente, future ou stale.
+
+Le test d'intégration doit démontrer qu'une observation arrivée après le cutoff est exclue même si son `event_time` est antérieur.
+
+### 3. Fermer la parité entre labels tradables et simulateur
+
+Le triple-barrier produit des labels plus réalistes, mais il ne suffit pas qu'il soit correct isolément. Le simulateur doit appliquer les mêmes conventions d'entrée, de gap, de coûts et de sortie ; sinon le modèle apprend une réalité différente de celle évaluée par le backtest.
+
+Il reste à :
+
+1. partager réellement les fonctions de coûts entre labeler et simulateur ;
+2. comparer automatiquement, sur des fixtures OHLC déterministes, le prix de sortie, la raison de sortie, le rendement net et la durée ;
+3. faire optimiser les paramètres du triple-barrier seulement à l'intérieur du fold train ;
+4. vérifier que la séparation train/validation/test empêche tout label ou paramètre de traverser une frontière de fold.
+
+Le test d'intégration doit couvrir gap, double-touch, halt et short, puis exiger une parité complète entre label et replay.
+
+### 4. Achever le benchmark et la promotion de modèle
+
+Le benchmark fournit les primitives nécessaires, mais la décision de promotion ne peut être fiable que si toutes les architectures réellement envisagées sont comparées dans le même protocole et sur des données OOS réelles.
+
+Il reste à :
+
+1. intégrer le LSTM et le modèle global ou les retirer explicitement du périmètre de promotion ;
+2. exécuter le benchmark avec les mêmes folds, coûts, univers et seeds pour toutes les architectures ;
+3. mesurer latence, mémoire, coût de service et complexité à partir des modèles réellement entraînés ;
+4. archiver les résultats multi-seeds et empêcher toute promotion sans rapport de benchmark valide ;
+5. valider les gates de collapse et de gain net avec des résultats réels, pas seulement synthétiques.
+
+Le champion ne peut être promu que s'il améliore une baseline simple sur validation ou walk-forward OOS, sans jamais utiliser le holdout final pour choisir son modèle ou ses seuils.
+
+### 5. Achever le contrat ML-first jusqu'au bridge et à la persistance
+
+Le contrat `MLRankedCandidate` fixe correctement l'autorité du modèle sur le side et le ranking. Il reste à supprimer les derniers chemins legacy qui peuvent encore retransformer, réordonner ou appauvrir cette décision avant le risque ou le backtest.
+
+Il faut :
+
+1. retirer `tag_short_candidates()` et tout rescoring selector du chemin nominal ;
+2. migrer les consommateurs historiques de `SelectionScore` et `PredictionInfo` vers le contrat ML-first, ou isoler les adaptateurs restants comme compatibilité temporaire ;
+3. rendre la persistance des prédictions append-only et idempotente par clé métier ;
+4. exiger account, trade date, modèle, policy, config, univers et feature cutoff dans tout payload consommé ;
+5. faire produire au bridge et au CLI le même contrat sur une fixture commune.
+
+Le test d'intégration doit prouver qu'un selector peut rejeter une entrée, mais ne peut jamais modifier son side ni son rang ML.
+
+### 6. Unifier la configuration risque et les contraintes finales
+
+Les contraintes directionnelles existent, mais tous les entrypoints doivent consommer exactement la même configuration effective. Sans cela, un backtest, le CLI et l'IHM peuvent appliquer des caps ou des hypothèses différentes sans que le fingerprint le révèle utilement.
+
+Il reste à :
+
+1. construire un loader `RiskConfig` typé unique pour YAML, presets, CLI, IHM et backtest ;
+2. supprimer les lectures de configuration ponctuelles et rejeter toute clé non consommée ;
+3. appliquer les contraintes factorielles, beta et expositions signées sur les poids finaux ;
+4. exiger un snapshot broker frais en paper/live et réserver les valeurs statiques au backtest ou au dry-run ;
+5. revalider toutes les contraintes après chaque réduction, neutralisation ou arrondi.
+
+Le test d'intégration doit vérifier qu'une même configuration produit le même fingerprint et les mêmes décisions dans le bridge, le CLI et le backtest.
+
+### 7. Exécuter le véritable walk-forward financier
+
+Les statistiques comme le Deflated Sharpe, le bootstrap et le score de promotion sont disponibles, mais elles ne démontrent rien tant que le moteur de walk-forward ne les emploie pas pour rejouer le pipeline réellement servi.
+
+Il faut :
+
+1. faire consommer `WalkForwardPlan` par le moteur et le CLI de backtest ;
+2. entraîner target, calibration, seuils et hyperparamètres dans le train interne seulement ;
+3. rejouer chaque fold externe avec le bridge ML-first et le moteur risque directionnel ;
+4. rapporter rendements, coûts, turnover, drawdown, exposition et statistiques par side, régime et segment ;
+5. calculer bootstrap, Deflated Sharpe, correction du multiple testing et score de promotion à partir des résultats réellement rejoués ;
+6. corriger les fixtures de parité jusqu'à ce que le bridge backtest/risk soit entièrement vert.
+
+Ce sprint n'est fermé que lorsqu'un rapport OOS reproductible prouve les gates financiers sans fuite du holdout externe.
+
+### 8. Faire circuler un snapshot opérationnel réel
 
 Le risque doit connaître l'état réellement détenu chez le broker avant de décider de nouvelles cibles. Cet état est regroupé dans `OperationalDataSnapshot` : cash, equity, buying power, positions, ordres ouverts et fills. Sans lui, le système pourrait croire qu'il est libre d'acheter alors qu'un ordre est déjà en cours, ou optimiser un portefeuille qui ne correspond pas au portefeuille broker.
 
@@ -2948,7 +3045,7 @@ Concrètement, il faut :
 
 Le test d'intégration doit montrer qu'une position ou un ordre ouvert déjà présent chez le broker change effectivement le résultat du moteur de risque.
 
-### 2. Compléter les données de marché : borrow et covariance PIT
+### 9. Compléter les données de marché : borrow et covariance PIT
 
 Une vente à découvert exige plus qu'un prix : il faut savoir si le titre est empruntable, en quelle quantité, à quel coût et jusqu'à quand un locate est valable. Ces informations sont portées par `BorrowSnapshot`. Elles ne doivent jamais être inventées à partir d'un simple booléen « shortable ».
 
@@ -2964,7 +3061,7 @@ Concrètement :
 
 Si le borrow d'un short, l'ADV, la quote ou la covariance requise manque, la bonne action est le rejet ou le maintien du fallback conservateur, jamais une estimation favorable inventée.
 
-### 3. Terminer la chaîne régime puis optimiser vers l'exécution
+### 10. Terminer la chaîne régime puis optimiser vers l'exécution
 
 Le régime calcule ce qui est autorisé : ouvrir des longs, ouvrir des shorts, réduire le risque ou fermer des positions. Il ne change jamais le side ni le rang décidés par le modèle ML. Lors d'une transition défensive, `TransitionHandler` produit un plan ordonné : annuler d'abord les ordres ouverts, puis réduire ou liquider les positions nécessaires.
 
@@ -2981,7 +3078,7 @@ Il faut donc :
 
 Le test essentiel simule un ordre partiellement rempli et un changement de régime : les annulations doivent précéder les liquidations, et aucune nouvelle entrée interdite ne doit être créée.
 
-### 4. Relier les fills aux protections et à la parité de décision
+### 11. Relier les fills aux protections et à la parité de décision
 
 Le CLI risque décide une cible et produit déjà un journal de décision. L'exécution, elle, obtient ensuite un fill réel, qui peut différer du prix ou de la quantité attendus. Les protections doivent partir de ce fill réel : le stop, le take-profit, le trailing stop et les quantités OCO doivent couvrir exactement la quantité effectivement remplie.
 
@@ -2997,7 +3094,7 @@ La chaîne à finaliser est :
 
 La règle est simple : le CLI risque ne fabrique ni fill ni ordre de protection. Seul le broker confirme un fill ; les protections sont alors recalculées à partir de cette confirmation.
 
-### 5. Rendre les gates MLOps réellement opérationnels
+### 12. Rendre les gates MLOps réellement opérationnels
 
 Le blocage sur drift est déjà relié au CLI : un kill switch ML empêche les nouvelles entrées. Il reste à alimenter ce gate par des preuves réelles de fraîcheur et de compatibilité : heure de publication des prix, date du modèle, calibrateur, policy, schéma de features et champion réellement enregistré.
 
@@ -3011,7 +3108,7 @@ Les étapes sont :
 
 Un rollback stocké seulement en mémoire est utile pour les tests, mais ne constitue pas un rollback de production : il disparaît au redémarrage et ne fournit aucune preuve d'audit.
 
-### 6. Organiser une vraie campagne shadow puis paper
+### 13. Organiser une vraie campagne shadow puis paper
 
 Le mode `shadow` du CLI garantit déjà qu'aucun ordre n'est envoyé. Une campagne ne consiste pas à lancer ce mode une fois : elle collecte quotidiennement des décisions, les compare aux résultats observés et conserve les divergences. Le paper trading suit la même logique, mais avec des ordres sur un compte de simulation et des fills réellement fournis par ce broker paper.
 
@@ -3026,7 +3123,7 @@ Il faut créer un orchestrateur de campagne qui :
 
 Le but est de démontrer que les mêmes décisions restent correctes avec les données qui arrivent réellement, pas seulement avec des fixtures de test.
 
-### 7. Brancher les opérations quotidiennes et le go-live progressif
+### 14. Brancher les opérations quotidiennes et le go-live progressif
 
 Les contrôles opérationnels, la réconciliation, le ramp-up et le journal immuable sont les garde-fous du passage au réel. Ils doivent être alimentés par des sondes et des données réelles, pas par les valeurs par défaut de tests.
 
