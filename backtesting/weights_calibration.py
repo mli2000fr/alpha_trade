@@ -857,7 +857,7 @@ class EmpiricalRiskCalibrator:
         start_date: date,
         end_date: date,
         horizon_days: int = 5,
-        candidates_only: bool = True,
+        selected_only: bool = True,
         include_market_regime: bool = True,
     ) -> pd.DataFrame:
         from sqlalchemy import text
@@ -877,7 +877,7 @@ class EmpiricalRiskCalibrator:
             else "short_score"
         ) if "short_score" in score_columns else "NULL"
         signal_mode_col = "selector_signal_mode" if "selector_signal_mode" in score_columns else "'long'"
-        selection_clause = "AND selection_rank IS NOT NULL" if candidates_only else ""
+        selection_clause = "AND selection_rank IS NOT NULL" if selected_only else ""
         scores_query = text(
             f"""
             SELECT snapshot_date, symbol, {score_expr} AS quant_score,
@@ -1340,7 +1340,7 @@ class EmpiricalRiskCalibrator:
         kelly_fraction_multipliers: Sequence[float] = (0.10, 0.25, 0.50),
         min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
         assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
-        candidates_only: bool = True,
+        selected_only: bool = True,
         min_train_days: int = 252,
         test_days: int = 63,
         step_days: int | None = None,
@@ -1380,7 +1380,7 @@ class EmpiricalRiskCalibrator:
             start_date=start_date,
             end_date=end_date,
             horizon_days=horizon_days,
-            candidates_only=candidates_only,
+            selected_only=selected_only,
         )
         if dataset.empty:
             raise ValueError("walk_forward_optimize : dataset vide, calibration impossible.")
@@ -1440,7 +1440,7 @@ class EmpiricalRiskCalibrator:
                     kelly_fraction_multipliers=kelly_fraction_multipliers,
                     min_effective_probabilities=min_effective_probabilities,
                     assumed_payoff_ratios=assumed_payoff_ratios,
-                    candidates_only=candidates_only,
+                    selected_only=selected_only,
                     dataset=train_dataset,
                     use_backtest_kelly=use_backtest_kelly,
                     top_n_long=resolved_top_n_long,
@@ -1596,7 +1596,7 @@ class EmpiricalRiskCalibrator:
         kelly_fraction_multipliers: Sequence[float] = (0.10, 0.25, 0.50),
         min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
         assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
-        candidates_only: bool = True,
+        selected_only: bool = True,
         market_regime_mode: str = MARKET_REGIME_ALL,
         dataset: pd.DataFrame | None = None,
         lookback_months: int | None = None,
@@ -1620,7 +1620,7 @@ class EmpiricalRiskCalibrator:
             start_date=start_date,
             end_date=end_date,
             horizon_days=horizon_days,
-            candidates_only=candidates_only,
+            selected_only=selected_only,
         )
         if resolved_market_regime_mode != MARKET_REGIME_ALL and "market_regime_mode" in work_dataset.columns:
             work_dataset = work_dataset.loc[
@@ -1897,13 +1897,13 @@ class EmpiricalRiskCalibrator:
         kelly_fraction_multipliers: Sequence[float] = (0.10, 0.25, 0.50),
         min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
         assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
-        candidates_only: bool = True,
+        selected_only: bool = True,
     ) -> dict[str, tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]]:
         dataset = self.load_dataset(
             start_date=start_date,
             end_date=end_date,
             horizon_days=horizon_days,
-            candidates_only=candidates_only,
+            selected_only=selected_only,
         )
         if dataset.empty:
             raise ValueError("EmpiricalRiskCalibrator : dataset vide, calibration impossible.")
@@ -1930,7 +1930,7 @@ class EmpiricalRiskCalibrator:
                     kelly_fraction_multipliers=kelly_fraction_multipliers,
                     min_effective_probabilities=min_effective_probabilities,
                     assumed_payoff_ratios=assumed_payoff_ratios,
-                    candidates_only=candidates_only,
+                    selected_only=selected_only,
                     market_regime_mode=regime_mode,
                     dataset=dataset,
                 )
@@ -1953,7 +1953,7 @@ class EmpiricalRiskCalibrator:
         kelly_fraction_multipliers: Sequence[float] = (0.10, 0.25, 0.50),
         min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
         assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
-        candidates_only: bool = True,
+        selected_only: bool = True,
         min_live_observations: int = 250,
         min_live_snapshot_days: int = 20,
         min_live_symbols: int = 10,
@@ -1970,7 +1970,7 @@ class EmpiricalRiskCalibrator:
                     start_date=segment_start_date,
                     end_date=end_date,
                     horizon_days=horizon_days,
-                    candidates_only=candidates_only,
+                    selected_only=selected_only,
                 )
                 if dataset.empty:
                     LOGGER.info(
@@ -2008,7 +2008,7 @@ class EmpiricalRiskCalibrator:
                             kelly_fraction_multipliers=kelly_fraction_multipliers,
                             min_effective_probabilities=min_effective_probabilities,
                             assumed_payoff_ratios=assumed_payoff_ratios,
-                            candidates_only=candidates_only,
+                            selected_only=selected_only,
                             market_regime_mode=regime_mode,
                             dataset=dataset,
                             lookback_months=lookback_months,

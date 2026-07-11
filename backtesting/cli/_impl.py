@@ -3502,7 +3502,7 @@ def _run_calibrate_sentiment_weights(args: argparse.Namespace) -> None:
         end_date=end,
         horizons=horizons,
         top_n=args.top_n,
-        candidates_only=not args.all_symbols,
+        selected_only=not args.all_symbols,
         output_dir=Path(args.output_dir),
         capital_preset_keys=args.capital_preset_key,
     )
@@ -3706,7 +3706,7 @@ def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
         end_date=end,
         horizons=horizons,
         top_n=args.top_n,
-        candidates_only=not args.all_symbols,
+        selected_only=not args.all_symbols,
         min_train_days=args.min_train_days,
         test_days=args.test_days,
         step_days=args.step_days,

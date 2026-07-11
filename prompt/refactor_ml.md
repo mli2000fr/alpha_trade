@@ -861,7 +861,7 @@ Un utilisateur IHM ne doit plus voir ni devoir comprendre le concept `candidate`
 
 **Objectif :** retirer les dépendances applicatives restantes à `is_candidate` et au vocabulaire candidat.
 
-### Statut d'implémentation (en cours)
+### Statut d'implémentation (runtime terminé, fixtures legacy à migrer)
 
 La tranche Event Sentiment est migrée et validée :
 
@@ -967,13 +967,23 @@ alignés :
   lisent plus les deux colonnes supprimées ;
 - les validations ciblées ont passé : `37 passed` (calibration/diagnostics/ML),
   `16 passed` (score table/screener), `60 passed` (IHM), `10 passed`
-  (Execution IHM), `8 passed` (features ML) et `21 passed` (persistence PIT).
+  (Execution IHM), `8 passed` (features ML), `21 passed` (persistence PIT),
+  `25 passed` (Event Sentiment), `76 passed` (types risk), `35 passed`
+  (repository/risk portfolio), `2 passed` (artefacts Fidelity de parité) et
+  `4 passed` / `21 passed` (calibrations sentiment/poids) ;
+- les interfaces opérationnelles n'exposent plus la source `candidates` :
+  Event Sentiment, Data Integrity et IHM utilisent l'univers tradable PIT ;
+- les artefacts Fidelity sont nommés `selection_target_parity_*`, et les APIs
+  de calibration utilisent `selected_only` pour le filtre
+  `selection_rank IS NOT NULL`.
 
-Le sprint n'est pas encore clos : la suite de backfill conserve un échec hors
-colonnes legacy sur la détection d'un snapshot incomplet (`18 passed, 1 failed`),
-et le test Alembic local est ignoré car le package Alembic n'est pas chargeable.
-Les fixtures selector/backtest/exécution encore basées sur les noms legacy et le
-drill MySQL de migration restent à traiter avant la clôture.
+Le sprint reste à clôturer côté tests d'intégration : plusieurs fixtures
+selector/backtest/exécution matérialisent encore `is_candidate` ou
+`candidate_rank`, malgré l'absence de lecteur/writer runtime. La suite de
+backfill conserve aussi un échec hors colonnes legacy sur la détection d'un
+snapshot incomplet (`18 passed, 1 failed`), et le test Alembic local est ignoré
+car le package Alembic n'est pas chargeable. Le drill MySQL de migration doit
+encore être exécuté avant une clôture formelle.
 
 ### Tâches
 
