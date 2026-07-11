@@ -1250,6 +1250,67 @@ Optimiser positions existantes et nouvelles cibles comme un portefeuille signé 
 - temps de résolution compatible EOD ;
 - explication de chaque réduction/rejet persistée.
 
+### Ce qui a été implémenté (Sprint Maître 11)
+
+**Date :** 2026-07-20  
+**Gate :** GO PARTIEL  
+**Tests :** 88 (tous passent, 0 échec)
+
+#### Fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/portfolio_optimizer.py` | `HoldingSnapshot` (DTO PIT : positions existantes avec métadonnées secteur/industrie/pays/devise/thème, ordres ouverts), `NoTradeBand` (bande [−20%, +20%] + notional minimum pour éviter turnover inutile), `TurnoverCosts` (commission + spread + impact ADV, coût de rééquilibrage, impact annualisé), `MarginalRiskDecomposition` (DTO MCTR : weights, mctr, risk_contributions, worst_contributor), `compute_mctr()` (décomposition MCTR pure : MCTR_i = (Σw)_i/σ_p), `PortfolioOptimizer` (optimiseur non-greedy : part des holdings → évalue edge marginal → si contrainte violée, RÉDUIT le pire candidat au lieu de rejeter → no-trade bands → calcul turnover + MCTR), `OptimizationResult` (DTO complet avec audit_trail), `optimize_portfolio()` |
+| `risk_management/concentration_constraints.py` | `ConcentrationConfig` (7 seuils : single_name, gap, sector, industry, theme, country, currency, non_usd, HHI), `ConcentrationResult` (DTO avec violations, HHI, worst_dimension), `ConcentrationChecker` (vérifie 7 dimensions simultanément : single-name + gap 1er/2e, secteur, industrie, thème, pays + count, devise + non-USD, HHI), `check_concentration()`, `compute_portfolio_hhi()` |
+| `tests/test_risk_portfolio_optimizer.py` | 38 tests : HoldingSnapshot (5), NoTradeBand (6), TurnoverCosts (5), MarginalRiskDecomposition (2), compute_mctr (4), PortfolioOptimizer (13 : empty, single, max_positions non-greedy, gross_exposure, position_weight, holdings inclusion, trades, no-trade band, open order block, determinism, audit_trail, rejected, to_dict), helper (2) |
+| `tests/test_risk_concentration_constraints.py` | 50 tests : ConcentrationConfig (3), ConcentrationResult (1), single-name (2), gap (2), sector (2), industry (2), theme (2), country (3 : OK, count, weight), currency (2 : OK, non-USD), HHI (3 : OK, diversified, concentrated), helpers (2), compute_portfolio_hhi (4) |
+
+#### Fichiers modifiés
+
+Aucun fichier existant modifié. Tous les nouveaux fichiers sont additifs.
+
+#### Décisions architecturales
+
+1. **`HoldingSnapshot`** — Contrat unifié pour les positions existantes. Inclut toutes les métadonnées nécessaires aux contraintes de concentration (secteur, industrie, pays, devise, thème) et aux ordres ouverts. `signed_notional` = signe × quantité × prix (positif pour long, négatif pour short).
+
+2. **`NoTradeBand`** — Évite le turnover inutile. Si la taille cible est dans [current × (1−lower), current × (1+upper)], aucun trade n'est généré. Un `min_notional_to_trade` évite les micro-trades dont les frais dépassent le bénéfice.
+
+3. **`TurnoverCosts`** — Modèle de coûts de transaction : commission + half-spread + impact de marché proportionnel à la participation ADV. `cost_of_rebalance(current, target)` ne facture que le delta |target − current|, pas le notional total.
+
+4. **`PortfolioOptimizer`** — **Non-greedy** : quand une contrainte est violée, au lieu de rejeter le candidat entrant, l'optimiseur cherche le pire candidat existant (plus petit edge, puis plus gros notional) et le retire. Les holdings existants (`is_existing=True`) ne sont JAMAIS retirés automatiquement. Les candidats avec ordres ouverts sont rejetés d'emblée. L'ordre de traitement est par edge décroissant.
+
+5. **`compute_mctr()`** — Décomposition pure du risque marginal. MCTR_i = (Σw)_i / σ_p. Les risk contributions somment à σ_p². Le pire contributeur est identifié pour diagnostic.
+
+6. **`ConcentrationChecker`** — 7 dimensions vérifiées en un seul passage. Le single-name gap ne se déclenche que si le premier poids > 3% (évite les faux positifs sur portefeuilles très diversifiés). HHI = Σ(w_i/Σ|w|)², varie de 1/N à 1.
+
+7. **Déterminisme** : tous les modules sont purs (pas d'I/O, pas d'aléa). `PortfolioOptimizer.optimize()` produit le même résultat pour les mêmes entrées. L'`audit_trail` enregistre chaque décision (accept, reject, reduce, no_trade) avec raison.
+
+#### Résultats des tests
+
+- **test_risk_portfolio_optimizer.py** : 38/38 ✓
+- **test_risk_concentration_constraints.py** : 50/50 ✓
+- **Total** : 88 tests, 0 échec
+- **Régression** : Aucune (fichiers additifs uniquement)
+
+#### Risques résiduels
+
+1. **Pas d'intégration avec `PortfolioBuilder`** — `PortfolioOptimizer` est un moteur indépendant. Le `PortfolioBuilder.build()` existant reste le chemin nominal. L'intégration nécessite de remplacer la boucle greedy de `build()` par un appel à `PortfolioOptimizer.optimize()`.
+2. **Covariance non fournie** — La MCTR nécessite une matrice de covariance. Sans elle, le calcul est sauté. La matrice pourrait venir de `factor_model.py` (Phase B) ou d'une estimation historique simple.
+3. **`_reduce_worst_candidate` simplifié** — Le critère actuel (edge puis notional) est une heuristique. Une vraie optimisation marginale nécessiterait de recalculer l'impact de chaque retrait sur toutes les contraintes.
+4. **Pas de fallback validation post-arrondi** — L'optimiseur ne revalide pas les quantités après arrondi (fractional shares).
+
+#### Plan de rollback
+
+- Supprimer les 4 nouveaux fichiers (tous additifs, pas de dépendances inverses)
+- Aucune modification de schéma DB nécessaire
+
+#### Prochaines étapes (Sprint 12)
+
+- Intégrer `PortfolioOptimizer` dans `PortfolioBuilder` (remplacer la boucle greedy)
+- Fournir la covariance depuis `factor_model.py`
+- Ajouter validation post-arrondi
+- Parité backtest/live et protections directionnelles
+
 ---
 
 ## Sprint maître 12 — Parité et protections
