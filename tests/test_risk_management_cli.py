@@ -13,7 +13,7 @@ import pytest
 from risk_management import cli
 from risk_management.enums import Decision
 from risk_management.audit import persist_decision_audit_log
-from risk_management.models import AccountRiskSnapshot, PortfolioEntry
+from risk_management.models import AccountRiskSnapshot, PortfolioEntry, SelectionScore
 from service.market.models import MarketRegimeSnapshot
 
 
@@ -100,6 +100,99 @@ def test_cli_module_executes_main_with_help() -> None:
 
     assert result.returncode == 0
     assert "Module de gestion de risque Alpha Trade" in result.stdout
+
+
+def test_cli_shadow_mode_forces_dry_run_and_shadow_compare(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo(_BaseFakeRepo):
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {"source": "missing"}
+
+        def load_selection_inputs_asof(self, trade_date):
+            return []
+
+        def load_predictions_asof(self, *args, **kwargs):
+            return {}
+
+        def load_prices_asof(self, *args, **kwargs):
+            return {}
+
+        def load_win_rates_asof(self, *args, **kwargs):
+            return {}
+
+        def load_return_matrix_asof(self, *args, **kwargs):
+            return pd.DataFrame()
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "_print_summary", lambda *args: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: pytest.fail("shadow must not persist decisions"))
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: pytest.fail("shadow must not persist targets"))
+    monkeypatch.setattr(cli, "persist_decision_audit_log", lambda *args, **kwargs: tmp_path / "audit.json")
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(
+        cli,
+        "_run_shadow_compare",
+        lambda **kwargs: captured.setdefault("shadow_compare", kwargs) or {"status": "compared"},
+    )
+
+    cli.main(["--trade-date", "2026-05-01", "--run-mode", "shadow"])
+
+    assert captured["shadow_compare"]["enabled"] is True
+    assert captured["shadow_compare"]["dry_run"] is True
+    assert captured["summary"]["run_mode"] == "shadow"
+    assert captured["summary"]["dry_run"] is True
+
+
+def test_cli_blocks_new_targets_when_mlops_gate_is_closed(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo(_BaseFakeRepo):
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {"source": "missing"}
+
+        def load_selection_inputs_asof(self, trade_date):
+            return [SelectionScore("AAPL", "Tech", 0.8)]
+
+        def load_prices_asof(self, *args, **kwargs):
+            raise AssertionError("no price load when MLOps gate blocks entries")
+
+        def load_predictions_asof(self, *args, **kwargs):
+            raise AssertionError("no prediction load when MLOps gate blocks entries")
+
+        def load_return_matrix_asof(self, *args, **kwargs):
+            return pd.DataFrame()
+
+    from risk_management import ml_gate
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "_print_summary", lambda *args: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(cli, "persist_decision_audit_log", lambda *args, **kwargs: tmp_path / "audit.json")
+    monkeypatch.setattr(
+        ml_gate,
+        "resolve_ml_gate_state",
+        lambda engine: ml_gate.MlGateState(enabled=False, reason="drift_policy_kill_switch", decision_id="drift-1"),
+    )
+    monkeypatch.setattr(ml_gate, "apply_ml_gate_to_risk_config", lambda config, gate_state: config)
+
+    cli.main(["--trade-date", "2026-05-01"])
+
+    assert captured["summary"]["targeted_symbols"] == 0
+    assert captured["summary"]["entries_blocked_by_mlops"] == 1
+    assert captured["summary"]["entry_gate_allows_new_entries"] is False
 
 
 def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypatch) -> None:

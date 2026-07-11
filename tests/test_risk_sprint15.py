@@ -1,6 +1,7 @@
 """Tests unitaires — Sprint Maître 15 (daily_reconciliation, operational_controls, immutable_journal)."""
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 
 import pytest
@@ -304,6 +305,28 @@ class TestImmutableJournal:
         journal.append(JournalEntryType.CONFIG_CHANGE, "ops", "Test")
         d = journal.to_dict()
         assert d["entry_count"] == 1
+
+    def test_save_and_load_preserves_verified_chain(self, tmp_path) -> None:
+        path = tmp_path / "operations.json"
+        journal = ImmutableJournal()
+        journal.append(JournalEntryType.STAGE_TRANSITION, "ops", "SHADOW -> PAPER")
+        journal.save_atomic(path)
+
+        restored = ImmutableJournal.load(path)
+
+        assert restored.entry_count == 1
+        assert restored.verify_chain() == (True, [])
+
+    def test_load_rejects_tampered_chain(self, tmp_path) -> None:
+        path = tmp_path / "operations.json"
+        journal = ImmutableJournal()
+        journal.append(JournalEntryType.OPERATOR_ACTION, "ops", "approved")
+        payload = journal.to_dict()
+        payload["entries"][0]["entry_hash"] = "tampered"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="chaîne de journal invalide"):
+            ImmutableJournal.load(path)
 
 
 class TestCreateJournalEntry:

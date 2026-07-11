@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 
 
 # ── JournalEntryType ────────────────────────────────────────────────────────
@@ -219,6 +221,55 @@ class ImmutableJournal:
             "last_hash": self._last_hash,
             "entries": [e.to_dict() for e in self._entries],
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "ImmutableJournal":
+        """Restaure un journal et refuse une chaîne altérée."""
+        journal = cls()
+        raw_entries = payload.get("entries")
+        if not isinstance(raw_entries, list):
+            raise ValueError("journal entries invalides")
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, dict):
+                raise ValueError("journal entry invalide")
+            journal._entries.append(JournalEntry(
+                entry_id=str(raw_entry["entry_id"]),
+                entry_type=JournalEntryType(str(raw_entry["entry_type"])),
+                timestamp=datetime.fromisoformat(str(raw_entry["timestamp"])),
+                operator=str(raw_entry["operator"]),
+                description=str(raw_entry.get("description") or ""),
+                previous_state=raw_entry.get("previous_state") if isinstance(raw_entry.get("previous_state"), dict) else None,
+                new_state=raw_entry.get("new_state") if isinstance(raw_entry.get("new_state"), dict) else None,
+                reason=str(raw_entry.get("reason") or ""),
+                approval=str(raw_entry["approval"]) if raw_entry.get("approval") is not None else None,
+                prev_hash=str(raw_entry["prev_hash"]) if raw_entry.get("prev_hash") is not None else None,
+                entry_hash=str(raw_entry["entry_hash"]),
+            ))
+        journal._last_hash = journal._entries[-1].entry_hash if journal._entries else None
+        is_valid, violations = journal.verify_chain()
+        if not is_valid:
+            raise ValueError(f"chaîne de journal invalide: {'; '.join(violations)}")
+        return journal
+
+    @classmethod
+    def load(cls, path: Path) -> "ImmutableJournal":
+        """Charge un journal existant, ou retourne un journal vide."""
+        if not path.exists():
+            return cls()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("payload journal invalide")
+        return cls.from_dict(payload)
+
+    def save_atomic(self, path: Path) -> None:
+        """Écrit le journal complet sans exposer de fichier partiellement écrit."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = path.with_suffix(f"{path.suffix}.tmp")
+        temporary_path.write_text(
+            json.dumps(self.to_dict(), ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, path)
 
     @staticmethod
     def _make_entry_id() -> str:

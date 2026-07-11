@@ -7,6 +7,7 @@ import logging
 from collections import Counter
 from dataclasses import replace
 from datetime import date, datetime
+from enum import StrEnum
 from pathlib import Path
 
 import pandas as pd
@@ -43,6 +44,14 @@ from risk_management.portfolio_builder import PortfolioBuilder
 LOGGER = logging.getLogger(__name__)
 
 _VOL_TARGET_BENCHMARK_SYMBOL = "SPY"
+
+
+class RiskRunMode(StrEnum):
+    """Mode d'exécution du calcul de risque avant remise à l'executor."""
+
+    SHADOW = "shadow"
+    PAPER = "paper"
+    LIVE = "live"
 
 
 def _emit_live_progress(
@@ -725,6 +734,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-position-notional", type=float, default=500.0)
     p.add_argument("--trade-date", type=str, default=None, help="YYYY-MM-DD (défaut: aujourd'hui)")
     p.add_argument("--dry-run", action="store_true", default=False)
+    p.add_argument(
+        "--run-mode",
+        choices=[mode.value for mode in RiskRunMode],
+        default=RiskRunMode.LIVE.value,
+        help="Mode typé risk: shadow force dry-run et shadow compare; paper/live publient les targets selon --dry-run.",
+    )
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     # --- V2 arguments ---
     p.add_argument("--correlation-threshold", type=float, default=0.80)
@@ -833,6 +848,9 @@ def _print_summary(entries: list[PortfolioEntry], run_id: str, trade_date: date)
 
 def main(args: list[str] | None = None) -> None:
     args = build_arg_parser().parse_args(args)
+    run_mode = RiskRunMode(args.run_mode)
+    if run_mode is RiskRunMode.SHADOW:
+        args.dry_run = True
     configure_root_logging(
         level=getattr(logging, args.log_level),
         log_path="./log/risk_management.log",
@@ -913,6 +931,7 @@ def main(args: list[str] | None = None) -> None:
     progress_context: dict[str, object] = {
         "trade_date": trade_date.isoformat(),
         "dry_run": bool(args.dry_run),
+        "run_mode": run_mode.value,
         "effective_equity": round(float(effective_equity), 2),
         "account_id": effective_account_id or resolved_account_scope,
     }
@@ -1175,6 +1194,9 @@ def main(args: list[str] | None = None) -> None:
 
     ml_gate_state = resolve_ml_gate_state(getattr(repo, "engine", None))
     config = apply_ml_gate_to_risk_config(config, ml_gate_state)
+    mlops_allows_new_entries = bool(ml_gate_state.enabled)
+    entry_gate_allows_new_entries = regime_allow_new_entries and mlops_allows_new_entries
+    mlops_entries_blocked = 0
     LOGGER.info(
         "ML gate | enabled=%s reason=%s decision_id=%s drift_status=%s action=%s",
         ml_gate_state.enabled,
@@ -1183,10 +1205,16 @@ def main(args: list[str] | None = None) -> None:
         ml_gate_state.drift_status,
         ml_gate_state.action,
     )
+    if not mlops_allows_new_entries:
+        LOGGER.warning(
+            "Gate MLOps bloquant: aucune nouvelle entrée ne sera publiée | reason=%s decision_id=%s",
+            ml_gate_state.reason,
+            ml_gate_state.decision_id,
+        )
 
     symbols = [c.symbol for c in candidates]
     ml_coverage_gate = MlCoverageGateDecision(enabled=False, allowed=True, reason="disabled")
-    if regime_allow_new_entries:
+    if entry_gate_allows_new_entries:
         LOGGER.info("Chargement des predictions ML…")
         predictions = repo.load_predictions_asof(symbols, trade_date) if ml_gate_state.enabled else {}
         LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
@@ -1194,7 +1222,7 @@ def main(args: list[str] | None = None) -> None:
             selection_count=len(candidates),
             prediction_count=len(predictions),
             min_coverage_ratio=args.min_ml_coverage_ratio,
-            regime_allows_new_entries=regime_allow_new_entries,
+            regime_allows_new_entries=entry_gate_allows_new_entries,
             ml_gate_enabled=ml_gate_state.enabled,
         )
         if ml_coverage_gate.enabled and not ml_coverage_gate.allowed:
@@ -1361,7 +1389,8 @@ def main(args: list[str] | None = None) -> None:
             phase="build_portfolio",
         )
     else:
-        regime_entries_blocked = len(candidates)
+        regime_entries_blocked = len(candidates) if not regime_allow_new_entries else 0
+        mlops_entries_blocked = len(candidates) if not mlops_allows_new_entries else 0
         prices = {}
         predictions = {}
         win_rates = {}
@@ -1371,7 +1400,7 @@ def main(args: list[str] | None = None) -> None:
             selection_count=len(candidates),
             prediction_count=0,
             min_coverage_ratio=args.min_ml_coverage_ratio,
-            regime_allows_new_entries=regime_allow_new_entries,
+            regime_allows_new_entries=entry_gate_allows_new_entries,
             ml_gate_enabled=ml_gate_state.enabled,
         )
         _emit_live_progress(
@@ -1403,10 +1432,10 @@ def main(args: list[str] | None = None) -> None:
             phase="load_return_matrix",
         )
         LOGGER.warning(
-            "Le régime marché bloque les nouvelles entrées | mode=%s raisons=%s candidats_bloques=%d",
-            getattr(regime_snapshot, "mode", "unknown"),
-            list(getattr(regime_snapshot, "reasons", ()) or ()),
-            regime_entries_blocked,
+            "Les gates d'entrée bloquent les nouvelles cibles | regime_allowed=%s mlops_allowed=%s candidats_bloques=%d",
+            regime_allow_new_entries,
+            mlops_allows_new_entries,
+            len(candidates),
         )
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), built_entries=0, entries_blocked_by_regime=regime_entries_blocked),
@@ -1430,7 +1459,7 @@ def main(args: list[str] | None = None) -> None:
 
     run_id = build_run_id()
     shadow_compare_summary = _run_shadow_compare(
-        enabled=bool(args.enable_shadow_compare),
+        enabled=bool(args.enable_shadow_compare or run_mode is RiskRunMode.SHADOW),
         reference_run_id=str(args.shadow_compare_run_id or "").strip() or None,
         trade_date=trade_date,
         run_id=run_id,
@@ -1557,6 +1586,7 @@ def main(args: list[str] | None = None) -> None:
         "reduced_symbols": len(reduced_entries),
         "rejected_symbols": len(rejected_entries),
         "entries_blocked_by_regime": regime_entries_blocked,
+        "entries_blocked_by_mlops": mlops_entries_blocked,
         "target_positions": len(retained_entries),
         "total_target_shares": normalize_share_quantity(sum(entry.approved_shares for entry in retained_entries)),
         "total_target_notional": round(total_target_notional, 2),
@@ -1601,6 +1631,7 @@ def main(args: list[str] | None = None) -> None:
             "max_tickers_per_sector": int(config.max_tickers_per_sector) if config.max_tickers_per_sector is not None else None,
         },
         "dry_run": bool(config.dry_run),
+        "run_mode": run_mode.value,
         "effective_equity": round(float(effective_equity), 2),
         "account_equity": round(float(args.account_equity), 2),
         "equity_source": equity_source,
@@ -1622,6 +1653,8 @@ def main(args: list[str] | None = None) -> None:
         "regime_snapshot_applied": regime_snapshot is not None,
         "regime_mode": regime_snapshot_payload.get("mode") if regime_snapshot_payload else None,
         "regime_allow_new_entries": regime_allow_new_entries,
+        "mlops_allows_new_entries": mlops_allows_new_entries,
+        "entry_gate_allows_new_entries": entry_gate_allows_new_entries,
         "regime_reasons": list(regime_snapshot_payload.get("reasons") or []) if regime_snapshot_payload else [],
         "regime_snapshot": regime_snapshot_payload,
         "regime_transition": regime_transition.to_dict() if regime_transition is not None else None,

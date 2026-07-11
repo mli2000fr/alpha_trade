@@ -2889,6 +2889,10 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 - En staleness critique ou drift sévère, activer `block_new_entries` ou `reduce_only`; ne jamais basculer vers un selector-only implicite.
 - Déclencher et auditer un rollback atomique vers un champion compatible.
 
+**Implémenté le 2026-07-12 :** le CLI risque traite désormais un `MlGateState` fermé par la policy de drift comme un blocage explicite des nouvelles entrées. Il ne charge alors ni prédictions ni prix pour fabriquer des targets, publie zéro cible, journalise la raison et expose `entries_blocked_by_mlops`, `mlops_allows_new_entries` et `entry_gate_allows_new_entries` dans le résumé. Il n'existe donc plus de fallback selector/quant-only implicite lorsqu'un kill-switch ML est actif; sorties et protections restent gérées indépendamment par l'executor.
+
+**Reste à raccorder :** `FreshnessGate` et `ModelRegistry` existent, mais `RiskRepository` ne transmet pas encore les timestamps de publication réels du modèle, calibrateur et données prix/ADV, ni un champion registry vérifiable/compatible avec chaque prédiction. Il faut ajouter ces contrats PIT, bloquer les entrées sur `FreshnessResult.must_block`, puis persister et auditer le rollback atomique via le registre réellement stocké. Aucun rollback in-memory ne doit être traité comme un rollback production.
+
 **Gate :** une donnée prix ou un modèle stale interdit toute nouvelle entrée, tout en laissant sorties et protections fonctionnelles.
 
 ### 8. Créer les entrypoints Sprint 14 : shadow et paper
@@ -2897,6 +2901,10 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 - Interdire structurellement toute soumission broker en shadow; en paper, refuser endpoint ou credentials live.
 - Comparer décisions, fills, coûts, protections et divergences avec le journal de décision; produire le rapport quotidien de campagne.
 
+**Implémenté le 2026-07-12 :** `risk_management.cli` expose désormais `--run-mode shadow|paper|live`. Le mode `shadow` force structurellement `dry_run`, active automatiquement le shadow compare et interdit les écritures métier de décisions/targets; le résumé transporte le mode et le résultat du compare. Ce CLI ne construit aucun client broker ni executor, donc une décision shadow ne peut pas soumettre un ordre. Les modes `paper` et `live` conservent le chemin d'exécution séparé de `run_execution.py`, déjà typé par `broker_mode` et validé contre le compte configuré.
+
+**Reste à raccorder :** il faut lancer une campagne continue qui relie le journal de décision à des fills/coûts/protections observés, persiste un rapport quotidien de convergence et applique formellement les durées de shadow/paper avant tout palier live. Le `ShadowEngine`, la checklist et le ramp-up restent actuellement des composants testés mais non orchestrés par un entrypoint de campagne unique.
+
 **Gate :** quatre semaines de shadow puis huit à douze semaines de paper, modèle et policy gelés hors rollback de sécurité.
 
 ### 9. Créer les entrypoints Sprint 15 : opérations et go-live progressif
@@ -2904,6 +2912,10 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 - Lancer `OperationalControls.run_smoke_tests()` avant chaque session et bloquer les entrées si un contrôle critique échoue.
 - Lancer `DailyReconciliation.reconcile()` après chaque session avec ordres, fills, positions, protections, PnL et cash.
 - Persister le journal immuable, les anomalies, les approbations et l'historique des paliers de ramp-up.
+
+**Implémenté le 2026-07-12 :** `ImmutableJournal` dispose maintenant d'une persistance JSON atomique (`save_atomic`) et d'une relecture contrôlée (`load`/`from_dict`). Toute chaîne altérée ou incomplète est refusée avant restauration; les tests couvrent un cycle write/load et le rejet d'une corruption. `execution_engine.reconcile_statement` reste l'entrypoint canonique de réconciliation J+1 avec persistance de son résumé métier.
+
+**Reste à raccorder :** `OperationalControls.run_smoke_tests()` reçoit encore des booléens injectés et ne doit pas être appelé avec ses valeurs par défaut dans un processus live: cela produirait un faux vert. Il faut exposer des probes vérifiables pour connectivité, fraîcheur, kill switch, breaker, modèle, cash et watcher, puis bloquer uniquement les nouvelles entrées sur échec. Il faut ensuite alimenter `DailyReconciliation` depuis les snapshots broker/executor et persister les événements de journal, anomalies, approbations et transitions de `RampUpManager` dans ce journal durable.
 
 **Gate :** une divergence broker, une protection absente, un snapshot critique stale ou un breaker actif bloque les entrées, mais autorise cancel, reduce-only et protection.
 
