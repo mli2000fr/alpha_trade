@@ -43,9 +43,19 @@ def _prices() -> dict[str, PriceInfo]:
     }
 
 
+def _long_predictions(symbols: list[str]) -> dict[str, PredictionInfo]:
+    return {
+        symbol: PredictionInfo(
+            symbol, 0.80, 1, "run1",
+            predicted_side="long", proba_long=0.80, proba_flat=0.10, proba_short=0.10,
+        )
+        for symbol in symbols
+    }
+
+
 def test_build_respects_max_positions() -> None:
     builder = PortfolioBuilder(_cfg())
-    entries = builder.build(_candidates(), _prices())
+    entries = builder.build(_candidates(), _prices(), predictions=_long_predictions([c.symbol for c in _candidates()]))
     accepted = [e for e in entries if e.approved_shares > 0]
     assert len(accepted) <= 3
 
@@ -53,7 +63,7 @@ def test_build_respects_max_positions() -> None:
 def test_missing_price_rejected() -> None:
     builder = PortfolioBuilder(_cfg())
     cands = [CandidateScore("NOPE", "Tech", 0.99)]
-    entries = builder.build(cands, {})
+    entries = builder.build(cands, {}, predictions=_long_predictions(["NOPE"]))
     assert entries[0].decision == "REJECTED"
     assert "prix" in entries[0].decision_reason
     assert entries[0].decision_reason_code == "missing_price"
@@ -64,6 +74,7 @@ def test_missing_atr_rejected() -> None:
     entries = builder.build(
         [CandidateScore("AAPL", "Tech", 0.95)],
         {"AAPL": PriceInfo("AAPL", 150.0, None)},
+        predictions=_long_predictions(["AAPL"]),
     )
     assert entries[0].decision == "REJECTED"
     assert "sizing" in entries[0].decision_reason
@@ -72,7 +83,7 @@ def test_missing_atr_rejected() -> None:
 
 def test_accepted_entries_have_positive_weight() -> None:
     builder = PortfolioBuilder(_cfg())
-    entries = builder.build(_candidates(), _prices())
+    entries = builder.build(_candidates(), _prices(), predictions=_long_predictions([c.symbol for c in _candidates()]))
     for e in entries:
         if e.decision in ("ACCEPTED", "REDUCED"):
             assert e.target_weight > 0
@@ -93,7 +104,11 @@ def test_v2_correlation_rejection_appears_in_entries() -> None:
     base = rng.randn(60)
     mat = pd.DataFrame({"AAPL": base, "MSFT": base + rng.randn(60) * 0.05})
     builder = PortfolioBuilder(_cfg())
-    entries = builder.build(_candidates(), _prices(), return_matrix=mat)
+    entries = builder.build(
+        _candidates(), _prices(),
+        predictions=_long_predictions([c.symbol for c in _candidates()]),
+        return_matrix=mat,
+    )
     corr_rejected = [e for e in entries if e.correlation_blocker is not None]
     assert len(corr_rejected) >= 1
     assert all(entry.decision_reason_code == "correlation_filter" for entry in corr_rejected)
@@ -102,7 +117,7 @@ def test_v2_correlation_rejection_appears_in_entries() -> None:
 def test_v2_kelly_sizing_used_when_enabled() -> None:
     cfg = _cfg(enable_kelly_sizing=True)
     builder = PortfolioBuilder(cfg)
-    preds = {"AAPL": PredictionInfo("AAPL", 0.70, 1, "run1")}
+    preds = _long_predictions(["AAPL"])
     wrs = {"AAPL": WinRateInfo("AAPL", 0.60, "test", "run1")}
     entries = builder.build(
         [CandidateScore("AAPL", "Tech", 0.95)],
@@ -114,17 +129,30 @@ def test_v2_kelly_sizing_used_when_enabled() -> None:
     assert accepted[0].sizing_method in ("kelly_atr", "kelly_only")
 
 
-def test_v2_backward_compat_no_predictions_same_as_v1() -> None:
+def test_v2_rejects_symbols_without_ternary_predictions() -> None:
     builder = PortfolioBuilder(_cfg())
     v2 = builder.build(_candidates(), _prices())
-    # When no predictions/win_rates/return_matrix, should work like V1
-    for e in v2:
-        assert e.score_source == "final_score_sentiment"
-        assert e.conviction_score == e.score_used  # no prediction → conviction = score
+    assert v2 == []
+
+
+def test_post_prediction_score_vetoes_do_not_change_ml_selection_authority() -> None:
+    builder = PortfolioBuilder(
+        _cfg(min_score_veto_long=0.70, max_score_veto_short=0.20)
+    )
+    candidates = [
+        CandidateScore("AAPL", "Tech", 0.60),
+        CandidateScore("MSFT", "Tech", 0.40),
+    ]
+    predictions = {
+        "AAPL": PredictionInfo("AAPL", 0.95, 1, "run1", "long", 0.95, 0.03, 0.02),
+        "MSFT": PredictionInfo("MSFT", 0.05, 0, "run1", "short", 0.05, 0.03, 0.92),
+    }
+
+    assert builder.build(candidates, _prices(), predictions=predictions) == []
 
 
 def test_v2_conviction_score_in_entry() -> None:
-    preds = {"AAPL": PredictionInfo("AAPL", 0.80, 1, "run1")}
+    preds = _long_predictions(["AAPL"])
     builder = PortfolioBuilder(_cfg())
     entries = builder.build(
         [CandidateScore("AAPL", "Tech", 0.95)],
@@ -132,8 +160,7 @@ def test_v2_conviction_score_in_entry() -> None:
         predictions=preds,
     )
     e = entries[0]
-    expected = 0.7 * 0.95 + 0.3 * 0.80
-    assert abs(e.conviction_score - expected) < 1e-6
+    assert e.conviction_score == pytest.approx(0.80)
 
 
 def test_short_uses_proba_short_for_kelly_and_audit() -> None:
@@ -184,6 +211,7 @@ def test_builder_propagates_walk_forward_metadata() -> None:
             )
         ],
         {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
+            predictions=_long_predictions(["AAPL"]),
     )
 
     entry = entries[0]
@@ -209,6 +237,7 @@ def test_builder_preserves_selector_rank_and_metadata() -> None:
             )
         ],
         {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
+            predictions=_long_predictions(["AAPL"]),
     )
 
     entry = entries[0]
@@ -234,6 +263,7 @@ def test_builder_supports_fractional_entries_when_enabled() -> None:
     entries = builder.build(
         [CandidateScore("AAPL", "Tech", 0.95)],
         {"AAPL": PriceInfo("AAPL", 500.0, 10.0)},
+            predictions=_long_predictions(["AAPL"]),
     )
 
     assert len(entries) == 1

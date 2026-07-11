@@ -58,9 +58,13 @@ class RiskConfig:
     # Pour le live, peut être remonté à 3 avec persistence JSON.
     min_breakout_days: int = 1
 
-    # Quick Win 2 — score minimum pour qu'un candidat soit tradable.
-    # 0.0 = filtre désactivé. 0.7 recommandé pour filtrer les entrées faibles.
+    # Ancien alias long, conservé pour les presets non migrés.
     min_score_threshold: float = 0.0
+    # Vetos post-prédiction: le score ne définit ni le scope ni le côté.
+    min_score_veto_long: float = 0.0
+    max_score_veto_short: float = 1.0
+    min_proba_long: float = 0.0
+    min_proba_short: float = 0.0
 
     # Force-close sur circuit breaker : liquide toutes les positions quand
     # le breaker trippe (max_drawdown_pct atteint).
@@ -75,7 +79,7 @@ class RiskConfig:
     short_tp_pct: float = 0.08
     short_trailing_pct: float = 0.10
     short_time_stop_days: int = 20
-    # ML Sprint 4 — seuil de score minimum pour les shorts (distinct des longs)
+    # Ancien alias short, conservé pour les presets non migrés.
     min_score_threshold_short: float = 0.0
     # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné
     filter_candidates_without_ml: bool = False
@@ -207,6 +211,12 @@ class RiskConfig:
             raise ValueError("min_effective_probability doit être dans [0.5, 1[.")
         if not (0.5 <= self.default_win_rate < 1):
             raise ValueError("default_win_rate doit être dans [0.5, 1[.")
+        for field_name in (
+            "min_score_veto_long", "max_score_veto_short", "min_proba_long", "min_proba_short",
+        ):
+            value = getattr(self, field_name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{field_name} doit être dans [0, 1].")
         if abs((self.score_weight + self.prediction_weight) - 1.0) > 1e-6:
             raise ValueError("score_weight + prediction_weight doit == 1.0.")
         if abs((self.prediction_confidence_weight + self.historical_win_rate_weight) - 1.0) > 1e-6:

@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 
 from pandas import DataFrame
 
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
-from core.conviction import ConvictionWeights
 from core.conviction import fuse as _fuse_conviction_long
 from core.conviction import fuse_short as _fuse_conviction_short
 from core.run_summary import attach_live_progress
@@ -366,32 +366,26 @@ class PortfolioBuilder:
         for candidate in candidates:
             prediction = predictions.get(candidate.symbol)
             win_rate = win_rates.get(candidate.symbol)
-            predicted_proba = prediction.predicted_proba if prediction else None
-            historical_win_rate = win_rate.directional_accuracy if win_rate else None
-            # ML Sprint 4 — conviction directionnelle
-            side = getattr(candidate, "side", "buy") or "buy"
-            if side == "sell":
-                # Pour un short : proba_short > proba_long
-                proba_short = getattr(prediction, "proba_short", None) if prediction else None
-                effective_proba = proba_short if proba_short is not None else predicted_proba
-                conviction = _fuse_conviction_short(
-                    quant_score=candidate.score_used,
-                    predicted_proba_short=proba_short,
-                    weights=ConvictionWeights(
-                        score_weight=self._cfg.score_weight,
-                        prediction_weight=self._cfg.prediction_weight,
-                    ),
-                )
-            else:
-                effective_proba = predicted_proba
+            if prediction is None:
+                continue
+            predicted_side = str(prediction.predicted_side or "").strip().lower()
+            if predicted_side == "long" and prediction.proba_long is not None:
+                side = "buy"
+                effective_proba = prediction.proba_long
                 conviction = _fuse_conviction_long(
                     quant_score=candidate.score_used,
-                    predicted_proba=predicted_proba,
-                    weights=ConvictionWeights(
-                        score_weight=self._cfg.score_weight,
-                        prediction_weight=self._cfg.prediction_weight,
-                    ),
+                    predicted_proba=prediction.proba_long,
                 )
+            elif predicted_side == "short" and prediction.proba_short is not None:
+                side = "sell"
+                effective_proba = prediction.proba_short
+                conviction = _fuse_conviction_short(
+                    quant_score=candidate.score_used,
+                    predicted_proba_short=prediction.proba_short,
+                )
+            else:
+                continue
+            historical_win_rate = win_rate.directional_accuracy if win_rate else None
             enriched.append(
                 EnrichedCandidate(
                     symbol=candidate.symbol,
@@ -420,13 +414,12 @@ class PortfolioBuilder:
                     selector_signal_mode=candidate.selector_signal_mode,
                     selection_explanation=candidate.selection_explanation,
                     selector_earnings_blackout=candidate.selector_earnings_blackout,
-                    side=candidate.side,
+                    side=side,
                 )
             )
         enriched.sort(
             key=lambda entry: (
                 -entry.conviction_score,
-                entry.candidate_rank if entry.candidate_rank is not None else 10**9,
                 entry.symbol,
             )
         )
@@ -457,20 +450,28 @@ class PortfolioBuilder:
                 candidates, self._regime_snapshot, rotation_state=self._rotation_state
             )
 
-        # ── 0a. Filtre ML manquant (P2 2026-06-27) ─────────────────
-        if candidates and self._cfg.filter_candidates_without_ml:
+        # ── 0a. Contrat de sélection ML ternaire ────────────────────
+        # Une prédiction complète est obligatoire. Elle détermine le côté;
+        # ni le score ni le tagging short amont ne peuvent le faire.
+        if candidates:
             before = len(candidates)
             filtered: list[CandidateScore] = []
             excluded_symbols: list[str] = []
             for c in candidates:
                 sym = str(c.symbol).strip().upper()
-                if sym in predictions:
-                    filtered.append(c)
-                else:
+                prediction = predictions.get(sym)
+                predicted_side = str(getattr(prediction, "predicted_side", "") or "").strip().lower()
+                has_directional_probability = (
+                    (predicted_side == "long" and getattr(prediction, "proba_long", None) is not None)
+                    or (predicted_side == "short" and getattr(prediction, "proba_short", None) is not None)
+                )
+                if not has_directional_probability:
                     excluded_symbols.append(sym)
+                    continue
+                filtered.append(replace(c, side="sell" if predicted_side == "short" else "buy"))
             if excluded_symbols:
                 LOGGER.info(
-                    "ML filter: excluded %d candidates sans modèle ML entraîné : %s",
+                    "ML ternary selection: excluded %d symbols without a selectable prediction: %s",
                     len(excluded_symbols),
                     ", ".join(sorted(excluded_symbols)),
                 )
@@ -496,34 +497,32 @@ class PortfolioBuilder:
                     self._breakout_tracker.min_breakout_days,
                 )
 
-        # ── 0ter. Score threshold (Quick Win 2) ────────────────────
-        # Sprint 2 — shorts ignorés par le seuil long. ML Sprint 4 — seuil
-        # distinct pour les shorts via min_score_threshold_short.
-        # Note : les shorts sont déjà filtrés par tag_short_candidates() dans
-        # le risk_bridge (selector/short_score.py) qui applique correctement
-        # le sens du score (low score = bearish = bon short). Le check
-        # ci-dessous est redondant pour les shorts et contre-productif car
-        # il compare score_used (score standard) au seuil sans inverser.
+        # ── 0ter. Vetos post-prédiction ─────────────────────────────
         if candidates:
             before = len(candidates)
-            long_threshold = float(self._cfg.min_score_threshold)
+            long_score_veto = float(self._cfg.min_score_veto_long or self._cfg.min_score_threshold)
+            short_score_veto = float(self._cfg.max_score_veto_short)
             filtered: list[CandidateScore] = []
             for c in candidates:
                 side = getattr(c, "side", "buy") or "buy"
+                prediction = predictions[str(c.symbol).strip().upper()]
                 if side == "sell":
-                    # Déjà filtré par tag_short_candidates — on laisse passer.
-                    filtered.append(c)
-                else:
-                    if long_threshold > 0 and c.score_used < long_threshold:
+                    if prediction.proba_short is None or prediction.proba_short < self._cfg.min_proba_short:
                         continue
-                    filtered.append(c)
+                    if c.score_used > short_score_veto:
+                        continue
+                else:
+                    if prediction.proba_long is None or prediction.proba_long < self._cfg.min_proba_long:
+                        continue
+                    if long_score_veto > 0 and c.score_used < long_score_veto:
+                        continue
+                filtered.append(c)
             candidates = filtered
             blocked_score = before - len(candidates)
             if blocked_score:
                 LOGGER.info(
-                    "Score threshold: blocked %d candidates (long < %.2f)",
-                    blocked_score,
-                    long_threshold,
+                    "Post-prediction vetoes blocked %d ML-ranked symbols (long_score>=%.2f short_score<=%.2f)",
+                    blocked_score, long_score_veto, short_score_veto,
                 )
 
         # ── 0quat. Filtres de concentration (Priorité 4) ─────────────

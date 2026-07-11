@@ -11,10 +11,10 @@ import warnings
 
 
 def compute_conviction(
-    score_used: float,
-    predicted_proba: float | None,
-    score_weight: float,
-    prediction_weight: float,
+    score_used: float = 0.0,
+    predicted_proba: float | None = None,
+    score_weight: float = 0.0,
+    prediction_weight: float = 1.0,
 ) -> float:
     """Retourne le conviction score combinant score quant et prédiction ML.
 
@@ -28,7 +28,12 @@ def compute_conviction(
         DeprecationWarning,
         stacklevel=2,
     )
-    if predicted_proba is not None:
-        return score_weight * score_used + prediction_weight * predicted_proba
-    return score_used
+    from core.conviction import compute_conviction as compute_ml_conviction
+
+    return compute_ml_conviction(
+        score_used,
+        predicted_proba,
+        score_weight,
+        prediction_weight,
+    )
 

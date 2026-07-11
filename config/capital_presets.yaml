@@ -58,6 +58,10 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_score_threshold_short: 0.2
+    risk_min_score_veto_long: 0.7
+    risk_max_score_veto_short: 0.2
+    risk_min_proba_long: 0.0
+    risk_min_proba_short: 0.0
     risk_min_breakout_days: 1
     execution_account_type: margin
     execution_swing_only: false
@@ -164,6 +168,10 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.4
     risk_min_score_threshold_short: 0.15
+    risk_min_score_veto_long: 0.4
+    risk_max_score_veto_short: 0.15
+    risk_min_proba_long: 0.0
+    risk_min_proba_short: 0.0
     risk_min_breakout_days: 1
     execution_account_type: margin
     execution_swing_only: false
@@ -267,6 +275,10 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_score_threshold_short: 0.2
+    risk_min_score_veto_long: 0.7
+    risk_max_score_veto_short: 0.2
+    risk_min_proba_long: 0.0
+    risk_min_proba_short: 0.0
     risk_min_breakout_days: 1
     execution_account_type: margin
     execution_swing_only: false
@@ -361,6 +373,10 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_score_threshold_short: 0.2
+    risk_min_score_veto_long: 0.7
+    risk_max_score_veto_short: 0.2
+    risk_min_proba_long: 0.0
+    risk_min_proba_short: 0.0
     risk_min_breakout_days: 1
     execution_account_type: margin
     execution_swing_only: false
@@ -453,6 +469,10 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_score_threshold_short: 0.2
+    risk_min_score_veto_long: 0.7
+    risk_max_score_veto_short: 0.2
+    risk_min_proba_long: 0.0
+    risk_min_proba_short: 0.0
     risk_min_breakout_days: 1
     risk_max_position_pct_of_adv: null      # désactivé à $25K (non contraignant)
     execution_account_type: margin
@@ -539,6 +559,10 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_score_threshold_short: 0.2
+    risk_min_score_veto_long: 0.7
+    risk_max_score_veto_short: 0.2
+    risk_min_proba_long: 0.0
+    risk_min_proba_short: 0.0
     risk_min_breakout_days: 1
     risk_max_position_pct_of_adv: 0.005   # 0.5% ADV — contrainte active à $50K+
     execution_account_type: margin
@@ -647,6 +671,10 @@ presets:
     risk_prediction_weight: 0.6
     risk_min_score_threshold: 0.7
     risk_min_score_threshold_short: 0.2
+    risk_min_score_veto_long: 0.7
+    risk_max_score_veto_short: 0.2
+    risk_min_proba_long: 0.0
+    risk_min_proba_short: 0.0
     risk_min_breakout_days: 1
     risk_max_position_pct_of_adv: 0.01    # 1% ADV — full protection à $100K+
     execution_account_type: margin

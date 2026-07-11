@@ -34,14 +34,11 @@ else:  # pragma: no cover - runtime alias
 
 @dataclass(frozen=True, slots=True)
 class ConvictionWeights:
-    """Pondérations pour la fusion conviction.
+    """Ancien paramétrage de fusion, conservé pour les artefacts historiques.
 
-    Convention historique projet (audit_risk_management §pondérations) :
-    ``score_weight=0.7``, ``prediction_weight=0.3``. P1 (2026-06-25) :
-    réduit pour limiter l'impact du bruit ML sur actions individuelles.
-    P2 (2026-07-11) : inversé à 0.4/0.6 — le ML entraîné est le signal
-    principal, le score technique n'est qu'un filet de sécurité.
-    À recalibrer empiriquement Phase 7 (audit_global Long terme).
+    Le ranking de sélection ML-first ne consomme plus ces poids: sa conviction
+    est la probabilité directionnelle du modèle. Le score technique intervient
+    uniquement dans un veto post-prédiction.
     """
 
     score_weight: float = 0.4
@@ -66,28 +63,15 @@ def compute_conviction(
     score_weight: float,
     prediction_weight: float,
 ) -> float:
-    """Retourne le conviction score combinant score quant et prédiction ML.
+        """Retourne la probabilité ML long, obligatoire pour une sélection.
 
-    Phase 5.1.b — formule désormais hébergée nativement par ``core.conviction``
-    (auparavant déléguée à ``risk_management.conviction``, désormais déprécié).
-    Les nouveaux consommateurs sont encouragés à passer par :func:`fuse` qui
-    prend un objet :class:`ConvictionWeights` typé.
-
-    Pour la conviction short, utiliser :func:`compute_conviction_short`.
-    """
-    if predicted_proba is not None:
-        result = float(np.clip(score_weight * score_used + prediction_weight * predicted_proba, 0.0, 1.0))
-        LOGGER.debug(
-            "conviction_fusion | quant=%.4f (w=%.2f) ml=%.4f (w=%.2f) → conviction=%.4f",
-            score_used, score_weight, predicted_proba, prediction_weight, result,
-        )
-        return result
-    result = float(np.clip(score_used, 0.0, 1.0))
-    LOGGER.debug(
-        "conviction_fusion | quant=%.4f (w=%.2f) ml=N/A → conviction=%.4f (ml fallback)",
-        score_used, score_weight, result,
-    )
-    return result
+        ``score_used`` et les poids sont conservés dans la signature pour la
+        compatibilité des appels existants, mais n'influencent plus le ranking.
+        """
+        del score_used, score_weight, prediction_weight
+        if predicted_proba is None or not np.isfinite(predicted_proba):
+            raise ValueError("Une probabilité ML long finie est obligatoire pour la conviction.")
+        return float(np.clip(predicted_proba, 0.0, 1.0))
 
 
 def compute_conviction_short(
@@ -96,26 +80,11 @@ def compute_conviction_short(
     score_weight: float,
     prediction_weight: float,
 ) -> float:
-    """Retourne le conviction score pour un short.
-
-    ML Sprint 4 — pour un short, on utilise la probabilité de baisse
-    (``predicted_proba_short``) au lieu de la probabilité de hausse.
-    Le score quant est inversé : un score faible → conviction short élevée.
-    """
-    inverted_score = 1.0 - score_used
-    if predicted_proba_short is not None:
-        result = float(np.clip(score_weight * inverted_score + prediction_weight * predicted_proba_short, 0.0, 1.0))
-        LOGGER.debug(
-            "conviction_short_fusion | quant_inv=%.4f (w=%.2f) ml_short=%.4f (w=%.2f) → conviction=%.4f",
-            inverted_score, score_weight, predicted_proba_short, prediction_weight, result,
-        )
-        return result
-    result = float(np.clip(inverted_score, 0.0, 1.0))
-    LOGGER.debug(
-        "conviction_short_fusion | quant_inv=%.4f (w=%.2f) ml_short=N/A → conviction=%.4f (ml fallback)",
-        inverted_score, score_weight, result,
-    )
-    return result
+        """Retourne la probabilité ML short, obligatoire pour une sélection."""
+        del score_used, score_weight, prediction_weight
+        if predicted_proba_short is None or not np.isfinite(predicted_proba_short):
+            raise ValueError("Une probabilité ML short finie est obligatoire pour la conviction.")
+        return float(np.clip(predicted_proba_short, 0.0, 1.0))
 
 
 def fuse(

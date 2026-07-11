@@ -717,6 +717,29 @@ class TestSignalReplay:
         assert "AAPL" not in set(result["symbol"])
         assert "TSLA" not in set(result["symbol"])
 
+    def test_replay_applies_technical_vetoes_after_ml_ranking(self):
+        from backtesting.signal_replay import replay_signals
+
+        scores = self._make_scores()
+        scores.loc[scores["symbol"] == "MSFT", "final_score_sentiment"] = 0.2
+        scores.loc[scores["symbol"] == "NVDA", "final_score_sentiment"] = 0.8
+        result = replay_signals(
+            self._make_predictions(),
+            scores,
+            max_positions=3,
+            min_proba_long=0.8,
+            min_proba_short=0.8,
+            min_score_long=0.5,
+            max_score_short=0.3,
+        ).set_index("symbol")
+
+        assert result.loc["MSFT", "long_rank"] == 1
+        assert result.loc["MSFT", "selected"] == False
+        assert result.loc["MSFT", "veto_reason"] == "technical_score_long_veto"
+        assert result.loc["NVDA", "short_rank"] == 1
+        assert result.loc["NVDA", "selected"] == False
+        assert result.loc["NVDA", "veto_reason"] == "technical_score_short_veto"
+
 
 # ============================================================
 # test resilience policies

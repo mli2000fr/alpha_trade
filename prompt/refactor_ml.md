@@ -679,6 +679,38 @@ Une exécution train/predict depuis l'IHM ne peut utiliser que l'univers tradabl
 
 **Objectif :** faire du score technique un garde-fou et non un driver principal.
 
+### Statut d'implémentation (partiel)
+
+Implémenté et validé sur le noyau de conviction et le replay backtest :
+
+- `core/conviction.py` et le wrapper déprécié `risk_management/conviction.py`
+  retournent désormais exclusivement la probabilité ML directionnelle ; une
+  probabilité absente ou non finie échoue explicitement et ne peut plus produire
+  de conviction score-only ;
+- `backtesting/signal_replay.py` classe toujours séparément les longs par
+  `proba_long` et les shorts par `proba_short`, puis applique des vetos
+  post-ranking : `min_proba_long`, `min_proba_short`, `min_score_long` et
+  `max_score_short` ;
+- les vetos ne changent ni le périmètre de prédiction ni les rangs ML et exposent
+  `veto_reason` pour le diagnostic ;
+- `RiskConfig` et tous les presets capital exposent désormais les vetos
+  directionnels `min_score_veto_long` / `max_score_veto_short` et les seuils
+  `min_proba_long` / `min_proba_short`; les seuils de probabilité restent à
+  `0.0` tant qu'une calibration ne justifie pas un niveau plus strict ;
+- `PortfolioBuilder` refuse toute ligne sans prédiction ternaire directionnelle,
+  dérive le côté depuis `predicted_side`, utilise la probabilité directionnelle
+  comme conviction et ne départage plus par `candidate_rank`;
+- le chemin live commence désormais par `load_tradable_universe_asof(...)` et
+  refuse un snapshot dont `data_quality_grade != full`; le score PIT est chargé
+  comme contexte facultatif pour ce scope, jamais via `is_candidate`.
+- tests ciblés validés : `12 passed` pour la conviction et `4 passed` pour le
+  replay de signaux.
+
+Reste à migrer : les doubles et tests d'intégration de la CLI live vers le
+nouveau repository d'univers, l'élimination de `is_candidate` /
+`candidate_rank` dans les chemins selector/screener, et le retrait physique du
+tagging `short_score` hérité dans la CLI avant chargement des prédictions.
+
 ### Tâches structurantes
 
 1. `core/conviction.py`

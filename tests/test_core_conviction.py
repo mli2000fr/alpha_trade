@@ -100,7 +100,7 @@ def test_sentiment_fusion_weights_rejects_negatives() -> None:
 
 def test_sentiment_fusion_weights_defaults() -> None:
     w = SentimentFusionWeights()
-    assert w.quant_weight == 0.75
-    assert w.sentiment_weight == 0.15
-    assert w.macro_weight == 0.10
+    assert w.quant_weight == 1.0
+    assert w.sentiment_weight == 0.0
+    assert w.macro_weight == 0.0
 

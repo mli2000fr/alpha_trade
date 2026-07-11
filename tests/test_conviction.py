@@ -8,12 +8,12 @@ from risk_management.conviction import compute_conviction
 
 @pytest.mark.unit
 def test_with_prediction() -> None:
-    result = compute_conviction(score_used=0.8, predicted_proba=0.7, score_weight=0.4, prediction_weight=0.6)
-    assert abs(result - (0.4 * 0.8 + 0.6 * 0.7)) < 1e-9
+    result = compute_conviction(predicted_proba=0.7)
+    assert result == pytest.approx(0.7)
 
 
 @pytest.mark.unit
-def test_without_prediction_uses_score_only() -> None:
-    result = compute_conviction(score_used=0.8, predicted_proba=None, score_weight=0.4, prediction_weight=0.6)
-    assert result == 0.8
+def test_compute_conviction_rejects_missing_prediction() -> None:
+    with pytest.raises(ValueError, match="probabilité ML long"):
+        compute_conviction(score_used=0.8, predicted_proba=None)
 

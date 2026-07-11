@@ -276,6 +276,75 @@ class RiskRepository:
             for r in rows
         ]
 
+    def load_score_context_asof(
+        self,
+        symbols: list[str],
+        trade_date: date,
+    ) -> list[CandidateScore]:
+        """Charge le contexte score PIT pour un scope explicite, sans `is_candidate`."""
+        normalized_symbols = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+        if not normalized_symbols:
+            return []
+        stock_score_columns = self._get_table_columns("stock_scores_history")
+        if not stock_score_columns:
+            return []
+        has_walk_forward = "final_score_walk_forward" in stock_score_columns
+        has_capital_preset_key = "capital_preset_key" in stock_score_columns
+        preset_filter_sql = " AND capital_preset_key = :capital_preset_key" if has_capital_preset_key else ""
+        score_expr = (
+            "COALESCE(final_score_walk_forward, final_score_sentiment, final_score)"
+            if has_walk_forward
+            else "COALESCE(final_score_sentiment, final_score)"
+        )
+        score_source_expr = (
+            "CASE WHEN final_score_walk_forward IS NOT NULL THEN 'final_score_walk_forward' "
+            "WHEN final_score_sentiment IS NOT NULL THEN 'final_score_sentiment' ELSE 'final_score' END"
+            if has_walk_forward
+            else "CASE WHEN final_score_sentiment IS NOT NULL THEN 'final_score_sentiment' ELSE 'final_score' END"
+        )
+        symbol_params = {f"symbol_{index}": symbol for index, symbol in enumerate(normalized_symbols)}
+        placeholders = ", ".join(f":symbol_{index}" for index in range(len(normalized_symbols)))
+        params: dict[str, Any] = {
+            "trade_date": trade_date,
+            "capital_preset_key": DEFAULT_CAPITAL_PRESET_KEY,
+            **symbol_params,
+        }
+        with self.engine.connect() as conn:
+            snapshot_date = conn.execute(
+                text(
+                    f"""
+                    SELECT MAX(snapshot_date) FROM stock_scores_history
+                    WHERE snapshot_date <= :trade_date {preset_filter_sql}
+                    """
+                ),
+                params,
+            ).scalar()
+            if snapshot_date is None:
+                return []
+            rows = conn.execute(
+                text(
+                    f"""
+                    SELECT snapshot_date, symbol, COALESCE(sector, 'UNKNOWN') AS sector,
+                           {score_expr} AS score_used, {score_source_expr} AS score_source
+                    FROM stock_scores_history
+                    WHERE snapshot_date = :snapshot_date {preset_filter_sql}
+                      AND symbol IN ({placeholders})
+                      AND {score_expr} IS NOT NULL
+                    """
+                ),
+                {**params, "snapshot_date": snapshot_date},
+            ).mappings().all()
+        return [
+            CandidateScore(
+                symbol=str(row["symbol"]).strip().upper(),
+                sector=str(row["sector"]),
+                score_used=float(row["score_used"]),
+                score_source=str(row["score_source"]),
+                snapshot_date=self._coerce_date(row["snapshot_date"]),
+            )
+            for row in rows
+        ]
+
     def _get_table_columns(self, table_name: str) -> set[str]:
         try:
             inspector = self.engine.dialect.inspector(self.engine)  # type: ignore[attr-defined]

@@ -32,7 +32,7 @@ from risk_management.live_pipeline_guards import (
     evaluate_ml_coverage_gate,
     evaluate_vol_target,
 )
-from risk_management.models import PortfolioEntry
+from risk_management.models import CandidateScore, PortfolioEntry
 from risk_management.portfolio_builder import PortfolioBuilder
 
 LOGGER = logging.getLogger(__name__)
@@ -1073,9 +1073,20 @@ def main(args: list[str] | None = None) -> None:
     else:
         breakout_tracker = BreakoutConfirmationTracker(min_breakout_days=config.min_breakout_days)
 
-    LOGGER.info("Chargement des candidats…")
-    candidates = repo.load_candidates_asof(trade_date)
-    LOGGER.info("Candidats charges : %d", len(candidates))
+    if resolved_capital_preset is None:
+        raise SystemExit("Aucun preset capital ne permet de résoudre l'univers tradable live.")
+    universe = repo.load_tradable_universe_asof(trade_date, resolved_capital_preset.key)
+    if universe.data_quality_grade.strip().lower() != "full":
+        raise SystemExit(
+            "L'univers tradable live doit être de qualité full; "
+            f"grade reçu: {universe.data_quality_grade!r}."
+        )
+    score_context = {entry.symbol: entry for entry in repo.load_score_context_asof(universe.symbols, trade_date)}
+    candidates = [
+        score_context.get(symbol, CandidateScore(symbol=symbol, sector="UNKNOWN", score_used=float("nan"), score_source="unavailable"))
+        for symbol in universe.symbols
+    ]
+    LOGGER.info("Univers tradable ML-first chargé: run=%s symbols=%d", universe.universe_run_id, len(candidates))
     predictions: dict[str, object] = {}
     _emit_live_progress(
         dict(progress_context, targeted_symbols=len(candidates)),

@@ -66,6 +66,10 @@ def replay_signals(
     max_positions: int = 20,
     max_long_positions: int | None = None,
     max_short_positions: int | None = None,
+    min_proba_long: float = 0.0,
+    min_proba_short: float = 0.0,
+    min_score_long: float | None = None,
+    max_score_short: float | None = None,
 ) -> pd.DataFrame:
     """Reconstruit des signaux à partir des prédictions ternaires.
 
@@ -97,6 +101,14 @@ def replay_signals(
         raise ValueError("max_long_positions doit être dans [0, max_positions].")
     if not 0 <= short_limit <= max_positions:
         raise ValueError("max_short_positions doit être dans [0, max_positions].")
+    if not 0.0 <= min_proba_long <= 1.0:
+        raise ValueError("min_proba_long doit être dans [0, 1].")
+    if not 0.0 <= min_proba_short <= 1.0:
+        raise ValueError("min_proba_short doit être dans [0, 1].")
+    if min_score_long is not None and not 0.0 <= min_score_long <= 1.0:
+        raise ValueError("min_score_long doit être dans [0, 1].")
+    if max_score_short is not None and not 0.0 <= max_score_short <= 1.0:
+        raise ValueError("max_score_short doit être dans [0, 1].")
 
     df = predictions_df.copy()
     df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
@@ -175,6 +187,28 @@ def replay_signals(
             on=["symbol", "trade_date"],
             how="left",
         )
+
+    df["veto_reason"] = pd.NA
+    probability_veto = (
+        (df["predicted_side"].eq("long") & (df["proba_long"] < min_proba_long))
+        | (df["predicted_side"].eq("short") & (df["proba_short"] < min_proba_short))
+    )
+    df.loc[probability_veto, "veto_reason"] = "ml_probability_below_threshold"
+    if min_score_long is not None:
+        long_score_veto = (
+            df["predicted_side"].eq("long")
+            & df["score"].notna()
+            & (df["score"] < min_score_long)
+        )
+        df.loc[long_score_veto, "veto_reason"] = "technical_score_long_veto"
+    if max_score_short is not None:
+        short_score_veto = (
+            df["predicted_side"].eq("short")
+            & df["score"].notna()
+            & (df["score"] > max_score_short)
+        )
+        df.loc[short_score_veto, "veto_reason"] = "technical_score_short_veto"
+    df.loc[df["veto_reason"].notna(), "selected"] = False
 
     LOGGER.info(
         "Signaux ML-first reconstruits : %d jours, %d entrées sélectionnées",
