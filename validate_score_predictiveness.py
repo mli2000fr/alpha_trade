@@ -1,29 +1,56 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-validate_score_predictiveness.py — Vérification automatique de la prédictivité des scores ML.
+validate_score_predictiveness.py — Vérification automatique de la prédictivité des scores.
 
-Ce script répond à la question : « Le score final (final_score) trie-t-il correctement
-les gagnants des perdants ? »
+Ce script répond à la question : « Le score trie-t-il correctement les gagnants
+des perdants ? »
+
+Deux sources de scores sont supportées :
+
+  --source screener  →  final_score depuis stock_scores_history (score technique :
+                        trend + VCP + RSI). C'est le score utilisé par le selector
+                        pour classer les candidats. Validation possible SANS avoir
+                        entraîné de modèle ML.
+
+  --source ml        →  predicted_proba depuis model_predictions (prédiction du
+                        modèle LSTM / CatBoost / LightGBM / GlobalModel). Validation
+                        possible APRÈS avoir entraîné un modèle ET généré les
+                        prédictions (inférence).
 
 Méthode :
-  1. Charge les scores PIT depuis ``stock_scores_history`` (période configurable).
-  2. Calcule le forward return à J+5 depuis ``stock_bars_daily``.
+  1. Charge les scores depuis la source choisie (période configurable).
+  2. Calcule le forward return à J+horizon depuis ``stock_bars_daily``.
   3. Merge scores ↔ forward returns par (symbol, date).
   4. Appelle ``bucket_analysis()`` (modelFactory/evaluation.py) pour découper
-     les scores en 5 buckets et mesurer le hit_rate par bucket.
+     les scores en N buckets et mesurer le hit_rate par bucket.
   5. Vérifie la monotonicité : le hit_rate doit CROÎTRE avec le score.
-  6. Affiche un résumé + verdict PASS / FAIL.
+  6. Affiche un résumé + analyses annuelles/mensuelles + verdict PASS / FAIL.
 
 Usage :
-  python validate_score_predictiveness.py
-  python validate_score_predictiveness.py --start 2024-01-01 --end 2025-12-31
-  python validate_score_predictiveness.py --score-col final_score_sentiment --horizon 10
+  # Valider le score technique du screener (pas besoin d'entraînement ML)
+  python validate_score_predictiveness.py --source screener
+
+  # Valider les prédictions ML (après entraînement + prédiction)
+  python validate_score_predictiveness.py --source ml
+
+  # Période personnalisée
+  python validate_score_predictiveness.py --source ml --start 2024-01-01 --end 2025-12-31
+
+  # Colonne spécifique (pour --source screener)
+  python validate_score_predictiveness.py --source screener --score-col final_score_sentiment
+
+  # Horizon 10 jours au lieu de 5
+  python validate_score_predictiveness.py --source ml --horizon 10
+
+  # Inclure tous les scores (pas seulement is_candidate=1)
+  python validate_score_predictiveness.py --source screener --no-candidates-only
 
 Critères de succès :
   - monotonic_hit_rate      = True   (le WR monte avec le score)
   - top_minus_bottom_hit_rate > 10%  (écart significatif entre meilleur et pire bucket)
   - top_bucket_hit_rate     > 50%   (le meilleur bucket bat le hasard)
+  - dispersion P10-P90      > 0.15  (le score discrimine vraiment)
   - avg_future_return croissant avec les buckets
 
 Explications :
@@ -60,6 +87,7 @@ DEFAULT_START = "2024-01-01"
 DEFAULT_END = "2025-12-31"
 DEFAULT_HORIZON_DAYS = 5
 DEFAULT_SCORE_COL = "final_score"
+DEFAULT_SOURCE = "screener"  # screener | ml
 DEFAULT_N_BUCKETS = 5
 DEFAULT_MIN_OBS = 200  # minimum d'observations pour considérer l'analyse valide
 
@@ -115,6 +143,75 @@ def load_scores(
           {candidate_clause}
           AND {score_col} IS NOT NULL
         ORDER BY snapshot_date ASC, symbol ASC
+        """
+    )
+    with engine.connect() as conn:
+        df = pd.read_sql_query(
+            query, conn,
+            params={"start_date": start_date, "end_date": end_date},
+        )
+    if df.empty:
+        return df
+
+    df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
+    df = df.dropna(subset=["symbol", "snapshot_date", "score"])
+    df = df.drop_duplicates(subset=["symbol", "snapshot_date"])
+    df = df.sort_values(["symbol", "snapshot_date"]).reset_index(drop=True)
+    return df
+
+
+def load_ml_predictions(
+    engine,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    """Charge les prédictions ML depuis ``model_predictions``.
+
+    La table model_predictions contient les prédictions générées après
+    l'entraînement d'un modèle (LSTM, CatBoost, LightGBM, GlobalModel).
+    On utilise ``predicted_proba`` comme score (probabilité que le forward
+    return à horizon soit positif).
+
+    Pour le mode ternaire (long/flat/short), on utilise aussi ``proba_long``
+    et ``proba_short`` si disponibles, en créant un score composite :
+        score = proba_long - proba_short  (score directionnel)
+
+    Args:
+        engine: Connexion SQLAlchemy.
+        start_date: Date début (YYYY-MM-DD).
+        end_date: Date fin (YYYY-MM-DD).
+
+    Returns:
+        DataFrame avec colonnes [snapshot_date, symbol, score, selected_model].
+    """
+    # Détecte si les colonnes ternaires existent
+    with engine.connect() as conn:
+        cols = pd.read_sql_query(
+            "SELECT * FROM model_predictions LIMIT 0", conn
+        ).columns.tolist()
+
+    has_ternary = "proba_long" in cols and "proba_short" in cols
+
+    if has_ternary:
+        score_expr = """
+            CASE
+                WHEN proba_long IS NOT NULL AND proba_short IS NOT NULL
+                THEN proba_long - proba_short
+                ELSE predicted_proba
+            END AS score
+        """
+    else:
+        score_expr = "predicted_proba AS score"
+
+    query = text(
+        f"""
+        SELECT prediction_date AS snapshot_date, symbol,
+               {score_expr},
+               COALESCE(selected_model, 'unknown') AS selected_model
+        FROM model_predictions
+        WHERE prediction_date BETWEEN :start_date AND :end_date
+          AND predicted_proba IS NOT NULL
+        ORDER BY prediction_date ASC, symbol ASC
         """
     )
     with engine.connect() as conn:
@@ -418,15 +515,30 @@ def print_verdict(result: dict, df: pd.DataFrame) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Vérifie la prédictivité des scores ML",
+        description="Vérifie la prédictivité des scores (screener ou ML)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemples :
-  python validate_score_predictiveness.py
-  python validate_score_predictiveness.py --start 2024-01-01 --end 2025-12-31
-  python validate_score_predictiveness.py --score-col final_score_sentiment
-  python validate_score_predictiveness.py --horizon 10 --no-candidates-only
+  # Score technique du screener (pas besoin d'entraînement ML)
+  python validate_score_predictiveness.py --source screener
+
+  # Prédictions ML (après entraînement)
+  python validate_score_predictiveness.py --source ml
+
+  # Comparer les deux sources
+  python validate_score_predictiveness.py --source screener --start 2021-01-01 --end 2023-12-31
+  python validate_score_predictiveness.py --source ml --start 2021-01-01 --end 2023-12-31
         """,
+    )
+    parser.add_argument(
+        "--source", type=str, default=DEFAULT_SOURCE,
+        choices=["screener", "ml"],
+        help=(
+            "Source des scores à valider : "
+            "'screener' = stock_scores_history (score technique, pas besoin d'entraînement ML), "
+            "'ml' = model_predictions (prédictions du modèle, nécessite entraînement + inférence). "
+            f"(défaut: {DEFAULT_SOURCE})"
+        ),
     )
     parser.add_argument(
         "--start", type=str, default=DEFAULT_START,
@@ -438,7 +550,11 @@ Exemples :
     )
     parser.add_argument(
         "--score-col", type=str, default=DEFAULT_SCORE_COL,
-        help=f"Colonne score à analyser (défaut: {DEFAULT_SCORE_COL})",
+        help=(
+            f"Colonne score à analyser (défaut: {DEFAULT_SCORE_COL}). "
+            "Utilisé uniquement avec --source screener. "
+            "Valeurs : final_score, final_score_sentiment, final_score_walk_forward, raw_final_score."
+        ),
     )
     parser.add_argument(
         "--horizon", type=int, default=DEFAULT_HORIZON_DAYS,
@@ -450,7 +566,7 @@ Exemples :
     )
     parser.add_argument(
         "--no-candidates-only", action="store_true",
-        help="Inclut TOUS les scores (pas seulement is_candidate=1)",
+        help="Inclut TOUS les scores (pas seulement is_candidate=1). Utilisé uniquement avec --source screener.",
     )
     parser.add_argument(
         "--no-annual", action="store_true",
@@ -473,27 +589,57 @@ Exemples :
         return 2
 
     # ------------------------------------------------------------------
-    # 2. Chargement des données
+    # 2. Chargement des scores (source = screener ou ml)
     # ------------------------------------------------------------------
+    source_label = "Screener (stock_scores_history)" if args.source == "screener" else "ML (model_predictions)"
     print(
-        f"{BOLD}{CYAN}📥 Chargement des scores ({args.start} → {args.end})...{RESET}"
+        f"{BOLD}{CYAN}📥 Chargement des scores — {source_label}{RESET}"
     )
-    scores_df = load_scores(
-        engine,
-        start_date=args.start,
-        end_date=args.end,
-        score_col=args.score_col,
-        candidates_only=not args.no_candidates_only,
-    )
-    if scores_df.empty:
-        print(
-            f"{RED}❌ Aucun score trouvé pour la période {args.start} → {args.end}.{RESET}"
+    print(f"   Période : {args.start} → {args.end}")
+
+    if args.source == "screener":
+        scores_df = load_scores(
+            engine,
+            start_date=args.start,
+            end_date=args.end,
+            score_col=args.score_col,
+            candidates_only=not args.no_candidates_only,
         )
-        print(f"   Vérifie que stock_scores_history contient des données.")
-        return 1
+        if scores_df.empty:
+            print(
+                f"{RED}❌ Aucun score trouvé dans stock_scores_history "
+                f"pour {args.start} → {args.end}.{RESET}"
+            )
+            return 1
+    else:
+        scores_df = load_ml_predictions(
+            engine,
+            start_date=args.start,
+            end_date=args.end,
+        )
+        if scores_df.empty:
+            print(
+                f"{RED}❌ Aucune prédiction trouvée dans model_predictions "
+                f"pour {args.start} → {args.end}.{RESET}"
+            )
+            print(
+                f"   {YELLOW}👉 Vérifie que le modèle a été entraîné ET que les "
+                f"prédictions (inférence) ont été générées.{RESET}"
+            )
+            return 1
+
+        # Affiche la répartition par type de modèle
+        if "selected_model" in scores_df.columns:
+            model_counts = scores_df["selected_model"].value_counts()
+            print(f"   Modèles utilisés :")
+            for model, count in model_counts.items():
+                print(f"     {model}: {count:,} prédictions")
 
     print(f"   {len(scores_df):,} scores chargés ({scores_df['symbol'].nunique()} symboles)")
 
+    # ------------------------------------------------------------------
+    # 3. Forward returns
+    # ------------------------------------------------------------------
     print(
         f"{BOLD}{CYAN}📥 Calcul des forward returns (horizon={args.horizon}j)...{RESET}"
     )
@@ -510,13 +656,13 @@ Exemples :
     print(f"   {len(returns_df):,} forward returns calculés")
 
     # ------------------------------------------------------------------
-    # 3. Merge
+    # 4. Merge
     # ------------------------------------------------------------------
     print(f"{BOLD}{CYAN}🔗 Fusion scores ↔ forward returns...{RESET}")
     merged = merge_scores_with_returns(scores_df, returns_df)
     if merged.empty:
         print(f"{RED}❌ Aucune correspondance score ↔ forward return.{RESET}")
-        print(f"   Vérifie que les dates coïncident entre stock_scores_history et stock_bars_daily.")
+        print(f"   Vérifie que les dates coïncident entre les deux sources.")
         return 1
 
     print(f"   {len(merged):,} observations fusionnées")
@@ -525,7 +671,7 @@ Exemples :
     print(f"   Forward return moyen : {merged['forward_return'].mean() * 100:+.2f}%")
 
     # ------------------------------------------------------------------
-    # 4. Bucket analysis (le cœur du script)
+    # 5. Bucket analysis
     # ------------------------------------------------------------------
     print(
         f"\n{BOLD}{CYAN}🔬 Analyse par bucket ({args.n_buckets} buckets)...{RESET}"
@@ -553,7 +699,7 @@ Exemples :
         )
 
     # ------------------------------------------------------------------
-    # 5. Analyses complémentaires
+    # 6. Analyses complémentaires
     # ------------------------------------------------------------------
     score_distribution_analysis(merged)
 
@@ -564,7 +710,7 @@ Exemples :
         analyze_by_month(merged)
 
     # ------------------------------------------------------------------
-    # 6. Verdict
+    # 7. Verdict
     # ------------------------------------------------------------------
     return print_verdict(result, merged)
 
