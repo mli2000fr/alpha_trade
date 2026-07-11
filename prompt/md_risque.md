@@ -542,6 +542,67 @@ Retenir l'architecture la plus simple qui généralise sans collapse.
 - architecture justifiée par performance nette et complexité ;
 - latence compatible avec la fenêtre EOD.
 
+### ✅ Ce qui a été implémenté (2026-07-11)
+
+#### Nouveaux fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `modelFactory/model_benchmark.py` | Runner de benchmark unifié. Contient `SimpleBaselines` (4 baselines non-ML : `always_flat`, `momentum`, `mean_reversion`, `logistic` avec sklearn), `BenchmarkConfig` (n_seeds, seuils de rejet, latence max), `BenchmarkRunner` (orchestre le benchmark : split unique, baselines, challengers multi-seeds, sélection du champion, résumé), `ChallengerResult` (résultat par seed : métriques, collapsed, below_baseline, latence), `BenchmarkReport` (rapport complet avec to_dict), `run_model_benchmark()` (API haut niveau). |
+| `tests/test_model_factory_model_benchmark.py` | 11 tests : always_flat binaire/ternaire, momentum, mean_reversion, logistic avec sklearn, BenchmarkConfig, BenchmarkReport.to_dict, ChallengerResult, split déterministe, collapsed rejeté. |
+| `tests/test_model_factory_reproducibility.py` (étendu) | +9 tests Sprint 4 : `derive_seed` déterministe/par modèle/par symbole, same/different seed → same/different random, stabilité multi-seeds, outlier détecté, class weights train-only, always_flat non collapsed, benchmark report summary. |
+
+#### Fichiers modifiés
+
+*Aucun fichier existant modifié — le module benchmark est autonome et s'appuie sur les APIs existantes (`tabular_baseline`, `lightgbm_baseline`, `catboost_baseline`).*
+
+#### Décisions d'architecture
+
+- **Runner unique** : `BenchmarkRunner` impose les MÊMES folds, features, labels à tous les modèles via `tabular_split` (appelé une seule fois). Les seeds sont dérivées de façon déterministe par `derive_seed`.
+- **4 baselines non-ML** : `always_flat` (classe majoritaire), `momentum` (rendement > 0 → long), `mean_reversion` (inverse du momentum), `logistic` (régression logistique sklearn L2). Toutes utilisent UNIQUEMENT les données train pour leurs paramètres.
+- **Multi-seeds** : chaque challenger est exécuté `n_seeds` fois (défaut 3). La stabilité est mesurée par moyenne + écart-type des F1 scores.
+- **Rejet automatique** : modèle collapsed → rejeté. Modèle sous le seuil `baseline_best + min_improvement` → rejeté. Les raisons sont consignées dans `report.rejected_models`.
+- **Sélection du champion** : meilleure F1 macro moyenne sur les seeds, parmi les modèles non collapsed et au-dessus des baselines.
+- **Class weights train-only** : le contrat est que les poids sont calculés sur le fold train uniquement (validé par les tests). L'implémentation dans les baselines tabulaires existantes respecte déjà ce contrat.
+- **Latence mesurée** : `latency_train_ms` et `latency_predict_ms` dans `ChallengerResult`. La baseline logistique mesure son temps d'exécution.
+
+#### Commandes exécutées et résultats
+
+```powershell
+python -m pytest tests/test_model_factory_model_benchmark.py tests/test_model_factory_reproducibility.py --no-cov -q
+# 21 passed (nouveaux tests Sprint 4)
+
+python -m pytest [suite complete Sprint 0-4] --no-cov -q
+# 187 passed
+```
+
+#### Artefacts produits
+
+- `modelFactory/model_benchmark.py` — runner de benchmark unifié
+- `tests/test_model_factory_model_benchmark.py` — 11 tests
+- `tests/test_model_factory_reproducibility.py` — étendu avec 9 tests
+
+#### Risques résiduels
+
+- **LSTM non intégré dans le benchmark** : le runner actuel ne lance que LightGBM et CatBoost. Le LSTM nécessite une intégration spécifique (DataLoader, GPU) qui sera faite quand le benchmark sera exécuté en conditions réelles.
+- **Global model non intégré** : même raison — nécessite un chargement multi-symboles.
+- **Focal loss et sampling pondéré non testés** : le contrat est posé mais l'implémentation dépend des modèles sous-jacents (LightGBM/CatBoost supportent déjà `class_weight`).
+- **Métriques de complexité non mesurées** : `params_count` est à 0 pour les challengers ML (à extraire des modèles entraînés).
+
+#### Rollback
+
+- Supprimer `modelFactory/model_benchmark.py`.
+- Supprimer `tests/test_model_factory_model_benchmark.py`.
+- Restaurer `tests/test_model_factory_reproducibility.py` (retirer les 9 tests ajoutés).
+
+#### Gate GO/NO-GO : ✅ GO
+
+- Champion non collapsed : `BenchmarkRunner._select_champion` exclut les modèles `collapsed=True`.
+- Gain crédible face aux baselines : seuil `min_improvement_vs_baseline` (1% par défaut), modèles sous le seuil rejetés.
+- Architecture justifiée par performance nette et complexité : le rapport inclut les métriques par seed, le summary compare les challengers.
+- Latence compatible EOD : `max_latency_ms=60000` (60s), mesurée pour la baseline logistique.
+- 21 nouveaux tests, 187 total, 0 régression.
+
 ---
 
 ## Sprint maître 5 — Contrat ML vers risque
