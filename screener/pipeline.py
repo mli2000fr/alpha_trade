@@ -4,6 +4,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from common.tradable_universe import UniverseMember
 from screener.models import ScreenerConfig
 
 
@@ -37,6 +38,77 @@ def _empty_candidates() -> pd.DataFrame:
 
 def _empty_historical_range() -> pd.DataFrame:
     return pd.DataFrame(columns=HISTORICAL_RANGE_COLUMNS)
+
+
+def evaluate_objective_tradability(
+    prices_df: pd.DataFrame,
+    symbols: list[str],
+    config: ScreenerConfig,
+    as_of_date: Optional[date] = None,
+) -> tuple[UniverseMember, ...]:
+    """Évalue la tradabilité liée aux barres sans appliquer de signal technique."""
+    prices = _prepare_prices(prices_df, as_of_date=as_of_date)
+    members: list[UniverseMember] = []
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).strip().upper()
+        symbol_prices = prices[prices["symbol"].astype(str).str.upper() == symbol] if not prices.empty else prices
+        if symbol_prices.empty:
+            members.append(
+                UniverseMember(
+                    symbol=symbol,
+                    is_tradable=False,
+                    tradability_reason_code="bars_unavailable",
+                    bars_available=False,
+                    data_quality_grade="degraded",
+                )
+            )
+            continue
+
+        history_days = int(len(symbol_prices))
+        latest_close = pd.to_numeric(symbol_prices["close_price"], errors="coerce").iloc[-1]
+        recent = symbol_prices.tail(config.lookback_liquidity_bars)
+        dollar_volume = (
+            pd.to_numeric(recent["volume"], errors="coerce")
+            * pd.to_numeric(recent["close_price"], errors="coerce")
+        )
+        adv_usd = float(dollar_volume.mean()) if dollar_volume.notna().any() else None
+        data_source = None
+        if "data_source" in symbol_prices.columns:
+            sources = symbol_prices["data_source"].dropna().astype(str).str.strip()
+            data_source = sources.iloc[-1] if not sources.empty else None
+
+        reason_code = "tradable"
+        is_tradable = True
+        if history_days < config.min_history_days:
+            reason_code = "insufficient_history"
+            is_tradable = False
+        elif pd.isna(latest_close):
+            reason_code = "close_unavailable"
+            is_tradable = False
+        elif float(latest_close) < config.min_close_price:
+            reason_code = "close_below_minimum"
+            is_tradable = False
+        elif adv_usd is None:
+            reason_code = "adv_unavailable"
+            is_tradable = False
+        elif adv_usd < config.liquidity_threshold_usd:
+            reason_code = "adv_below_minimum"
+            is_tradable = False
+
+        members.append(
+            UniverseMember(
+                symbol=symbol,
+                is_tradable=is_tradable,
+                tradability_reason_code=reason_code,
+                history_days=history_days,
+                bars_available=True,
+                data_source=data_source,
+                close_price=None if pd.isna(latest_close) else float(latest_close),
+                adv_usd=adv_usd,
+                data_quality_grade="degraded",
+            )
+        )
+    return tuple(members)
 
 
 def _percentile_score(series: pd.Series) -> pd.Series:

@@ -18,9 +18,27 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from backtesting.fidelity import PitHistoryRequiredError, ScoreLoadDiagnostics, ScoreLoadResult
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
+from common.tradable_universe import UniverseResolution, resolve_universe_asof
 
 LOGGER = logging.getLogger(__name__)
 BACKTEST_REQUIRED_BARS_DATA_SOURCE = "eodhd_eod"
+
+
+def load_tradable_universe_asof(
+    engine: Engine,
+    trade_date: date,
+    capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+    *,
+    tradable_only: bool = True,
+) -> UniverseResolution:
+    """Charge l'univers PIT canonique utilisé par le backtest."""
+    return resolve_universe_asof(
+        engine,
+        trade_date,
+        capital_preset_key,
+        tradable_only=tradable_only,
+    )
 
 
 def _build_table_access_error(table_name: str, exc: Exception) -> RuntimeError:

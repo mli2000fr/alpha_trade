@@ -5,6 +5,7 @@ import pandas as pd
 
 from screener.models import ScreenerConfig
 from screener import RESULT_COLUMNS, compute_scores_from_prices
+from screener.pipeline import evaluate_objective_tradability
 
 
 def _make_symbol_frame(symbol: str, base_price: float, drift: float, volume: float, rows: int = 2600) -> pd.DataFrame:
@@ -104,6 +105,35 @@ def test_compute_scores_excludes_symbols_below_min_relative_strength() -> None:
 
     assert scores.empty
     assert list(scores.columns) == RESULT_COLUMNS
+
+
+def test_objective_tradability_does_not_gate_on_relative_strength() -> None:
+    config = ScreenerConfig(
+        liquidity_threshold_usd=100.0,
+        min_relative_strength_index=999.0,
+    )
+    prices = _make_symbol_frame("LAG", base_price=50.0, drift=0.01, volume=50_000, rows=400)
+
+    members = evaluate_objective_tradability(prices, ["LAG", "MISSING"], config)
+
+    assert members[0].is_tradable is True
+    assert members[0].tradability_reason_code == "tradable"
+    assert members[1].is_tradable is False
+    assert members[1].tradability_reason_code == "bars_unavailable"
+
+
+def test_objective_tradability_records_objective_rejection_reason() -> None:
+    config = ScreenerConfig(
+        liquidity_threshold_usd=10_000_000.0,
+        min_relative_strength_index=1.0,
+    )
+    prices = _make_symbol_frame("ILLIQ", base_price=20.0, drift=0.50, volume=100, rows=400)
+
+    member = evaluate_objective_tradability(prices, ["ILLIQ"], config)[0]
+
+    assert member.is_tradable is False
+    assert member.tradability_reason_code == "adv_below_minimum"
+    assert member.adv_usd is not None
 
 
 def test_compute_scores_uses_recent_range_window_not_full_history() -> None:

@@ -1,6 +1,6 @@
 # Refactor ML-First — Suppression du chemin critique `candidate -> ML`
 
-**Statut :** Plan détaillé audité sur le code — Sprint 0 terminé  
+**Statut :** Plan détaillé audité sur le code — Sprints 0 et 1 terminés  
 **Date :** 2026-07-11  
 **Auteur :** Session Copilot  
 **Fichier :** `prompt/refactor_ml.md`
@@ -154,11 +154,13 @@ Les tables actuelles ne fournissent pas encore un univers PIT complet :
 
 Le refactor doit donc créer un **contrat d'univers PIT persistant**. Recommandation : une table dédiée `tradable_universe_history` plutôt que de surcharger `stock_scores_history`.
 
-Clé minimale :
+Clé logique du snapshot :
 
 ```text
-(snapshot_date, capital_preset_key, symbol)
+(universe_run_id, symbol)
 ```
+
+`universe_run_id` référence un run qui porte `snapshot_date` et `capital_preset_key`; cela conserve les reruns, tout en désignant un seul run canonique pour chaque couple date/preset.
 
 Champs minimaux :
 
@@ -381,6 +383,51 @@ La sécurité vient de la validation pré-déploiement; le runtime ne maintient 
 ## Sprint 1 — Créer le contrat d'univers tradable PIT
 
 **Objectif :** produire et lire le même univers historique complet pour le train, le predict, le backtest et le live.
+
+### État d'implémentation au 2026-07-11
+
+**Sprint 1 terminé au niveau fondation PIT.** Le runtime de sélection reste volontairement candidate-first jusqu'au Sprint 2; le nouvel univers ne sert donc pas encore à ouvrir des positions live ou backtest.
+
+Implémenté :
+
+1. Migration Alembic `0046_add_tradable_universe_history` :
+  - `tradable_universe_runs` porte le statut, le preset, la date PIT, le fingerprint, les compteurs, la qualité et le caractère canonique;
+  - `tradable_universe_history` porte une ligne par `(universe_run_id, symbol)` avec décision, motifs, métriques objectives et qualité;
+  - index as-of sur les runs et index scope/tradabilité sur les lignes.
+2. `common/tradable_universe.py` centralise le contrat :
+  - `UniverseMember` et `UniverseResolution`;
+  - création d'un run `running`;
+  - publication transactionnelle seulement quand `rows_written == rows_expected`;
+  - bascule atomique du run canonique sans mutation des reruns précédents;
+  - échec explicite d'un run incomplet ou d'un chunk screener défaillant;
+  - résolution `resolve_universe_asof(...)` qui ne sert que le dernier run `completed`, canonique, complet et antérieur ou égal à la date demandée.
+3. Loaders partagés ajoutés :
+  - `RiskRepository.load_tradable_universe_asof(...)`;
+  - `backtesting.data_loader.load_tradable_universe_asof(...)`;
+  - `modelFactory.db_registry.load_tradable_universe_symbols(...)` et source `tradable-universe`, avec date explicite obligatoire.
+4. `screener/stock_screener.py` publie un membre PIT pour chaque symbole évalué, y compris les titres rejetés avant les scores finaux.
+  - Les motifs objectifs actuels couvrent disponibilité des barres, historique, prix et ADV;
+  - force relative et range ne déterminent plus `is_tradable` dans ce nouveau snapshot;
+  - aucune publication canonique n'a lieu sur run partiel ou lorsque le schéma n'est pas migré.
+5. La qualité des snapshots produits par le screener courant est explicitement `degraded`.
+  - quotes/spread, earnings blackout et market-cap ne sont pas encore intégrés à cette publication;
+  - le grade est restitué par `UniverseResolution` pour que les Sprints 2-3 puissent refuser tout snapshot non `full` avant un usage runtime;
+  - il ne s'agit pas d'un contournement du contrat live final.
+
+Validé :
+
+1. `tests/test_tradable_universe.py` couvre scope tradable, rejet observable, run partiel/failed, rerun canonique, absence de look-ahead, presets indépendants et parité des trois loaders;
+2. `tests/test_stock_screener.py` couvre la publication du scope complet, y compris un symbole rejeté;
+3. `tests/test_model_factory_db_registry.py` couvre la source `tradable-universe` et l'obligation de date;
+4. `tests/test_alembic_rollback.py` valide la révision `0046`;
+5. la suite ciblée PIT/screener/registry/Alembic est passée sans échec et les diagnostics éditeur sont nuls.
+
+Reste hors Sprint 1 :
+
+1. enrichir le snapshot avec quotes, earnings et market-cap afin d'autoriser le grade `full`;
+2. basculer réellement live/backtest sur ces loaders au Sprint 2;
+3. relier l'univers au workflow IHM quotidien et au predict ML au Sprint 3;
+4. exécuter le backfill historique complet avant le cutover.
 
 ### Tâches structurantes
 

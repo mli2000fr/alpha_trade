@@ -10,6 +10,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
+from common.tradable_universe import resolve_universe_asof
 from database.stock_scores import (
     list_candidate_symbols as list_candidate_stock_score_symbols,
 )
@@ -686,9 +688,23 @@ def load_stock_scores_all_symbols(engine: Engine) -> list[str]:
     return symbols
 
 
-def load_symbols_for_source(engine: Engine, symbol_source: str) -> list[str]:
+def load_symbols_for_source(
+    engine: Engine,
+    symbol_source: str,
+    *,
+    trade_date: date | None = None,
+    capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+) -> list[str]:
     """Résout l’univers ML demandé via un identifiant de source stable."""
     normalized_source = str(symbol_source or "candidates").strip().lower()
+    if normalized_source == "tradable-universe":
+        if trade_date is None:
+            raise ValueError("trade_date est obligatoire pour la source tradable-universe.")
+        return load_tradable_universe_symbols(
+            engine,
+            trade_date=trade_date,
+            capital_preset_key=capital_preset_key,
+        )
     if normalized_source == "stock-bars-daily":
         return load_stock_bars_daily_symbols(engine)
     if normalized_source == "stock-scores":
@@ -698,6 +714,29 @@ def load_symbols_for_source(engine: Engine, symbol_source: str) -> list[str]:
     if normalized_source == "stock-scores-all":
         return load_stock_scores_all_symbols(engine)
     return load_candidate_symbols(engine)
+
+
+def load_tradable_universe_symbols(
+    engine: Engine,
+    *,
+    trade_date: date,
+    capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+) -> list[str]:
+    """Charge les symboles tradables depuis le snapshot PIT canonique."""
+    resolution = resolve_universe_asof(
+        engine,
+        trade_date,
+        capital_preset_key,
+        tradable_only=True,
+    )
+    LOGGER.info(
+        "load_tradable_universe_symbols count=%d run_id=%s snapshot_date=%s preset=%s",
+        len(resolution.symbols),
+        resolution.universe_run_id,
+        resolution.snapshot_date,
+        resolution.capital_preset_key,
+    )
+    return resolution.symbols
 
 
 def load_stock_bars_daily_symbols(engine: Engine) -> list[str]:

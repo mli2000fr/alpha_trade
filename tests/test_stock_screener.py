@@ -2,6 +2,7 @@ import logging
 
 import pandas as pd
 
+from common.tradable_universe import UniverseMember
 from screener.models import ScreenerChunkMetrics, ScreenerConfig
 from screener.stock_screener import run_screener, run_screener_with_report
 
@@ -150,6 +151,67 @@ def test_run_screener_with_report_aggregates_two_pass_metrics(monkeypatch) -> No
     assert report.persisted_rows == 1
     assert report.purge_performed is True
     assert report.archive_performed is True
+
+
+def test_run_screener_publishes_complete_objective_universe(monkeypatch) -> None:
+    fake_engine = object()
+    published: list[tuple[str, list[UniverseMember]]] = []
+    failed: list[tuple[str, str]] = []
+    chunk_scores = pd.DataFrame(
+        [
+            {
+                "symbol": "AAA",
+                "liquidity_val": 10.0,
+                "relative_strength_index": 110.0,
+                "historical_range_score": 80.0,
+                "total_score": 95.0,
+                "last_updated_score": pd.Timestamp("2026-04-24 00:00:00"),
+                "is_candidate": 0,
+                "sector": None,
+                "last_updated_scan": pd.Timestamp("2026-04-24 00:00:00"),
+            }
+        ]
+    )
+    members = (
+        UniverseMember("AAA", True, "tradable", data_quality_grade="degraded"),
+        UniverseMember("BBB", False, "adv_below_minimum", data_quality_grade="degraded"),
+    )
+    metrics = ScreenerChunkMetrics(
+        input_symbols=2,
+        symbols_final=1,
+        universe_members=members,
+    )
+
+    monkeypatch.setattr("screener.stock_screener.get_engine", lambda: fake_engine)
+    monkeypatch.setattr("screener.stock_screener.ProcessPoolExecutor", _ImmediateExecutor)
+    monkeypatch.setattr("screener.stock_screener.wait", _immediate_wait)
+    monkeypatch.setattr("screener.stock_screener.load_spy_return_6m", lambda *args, **kwargs: 0.05)
+    monkeypatch.setattr("screener.stock_screener.iter_symbol_chunks", lambda *args, **kwargs: iter([["AAA", "BBB"]]))
+    monkeypatch.setattr(
+        "screener.stock_screener._process_chunk_two_passes",
+        lambda *args, **kwargs: (chunk_scores.copy(), metrics),
+    )
+    monkeypatch.setattr("screener.stock_screener.upsert_scores_snapshot", lambda *args, **kwargs: None)
+    monkeypatch.setattr("screener.stock_screener.universe_schema_available", lambda engine: True)
+    monkeypatch.setattr("screener.stock_screener.begin_universe_run", lambda *args, **kwargs: "universe-run-1")
+    monkeypatch.setattr(
+        "screener.stock_screener.publish_universe_run",
+        lambda engine, run_id, rows: published.append((run_id, list(rows))),
+    )
+    monkeypatch.setattr(
+        "screener.stock_screener.fail_universe_run",
+        lambda engine, run_id, reason: failed.append((run_id, reason)),
+    )
+
+    _, report = run_screener_with_report(ScreenerConfig(), max_workers=1)
+
+    assert [(run_id, [row.symbol for row in rows]) for run_id, rows in published] == [
+        ("universe-run-1", ["AAA", "BBB"])
+    ]
+    assert failed == []
+    assert report.universe_run_id == "universe-run-1"
+    assert report.universe_persistence_status == "completed_degraded"
+    assert report.universe_rows_written == 2
 
 
 def test_run_screener_with_report_preserves_previous_snapshot_when_chunk_failures_exist(monkeypatch) -> None:

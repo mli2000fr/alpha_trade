@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 
 from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from common.config_loader import load_config
+from common.tradable_universe import UniverseResolution, resolve_universe_asof
 from database.connection import get_sqlalchemy_engine
 from risk_management.config import RiskConfig
 from risk_management.ml_gate import resolve_ml_gate_state
@@ -118,6 +119,21 @@ class RiskRepository:
     # ------------------------------------------------------------------
     # Lecture
     # ------------------------------------------------------------------
+    def load_tradable_universe_asof(
+        self,
+        trade_date: date,
+        capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+        *,
+        tradable_only: bool = True,
+    ) -> UniverseResolution:
+        """Charge le snapshot canonique partagé sans logique candidate."""
+        return resolve_universe_asof(
+            self.engine,
+            trade_date,
+            capital_preset_key,
+            tradable_only=tradable_only,
+        )
+
     def load_candidates(self, config: RiskConfig, trade_date: date | None = None) -> list[CandidateScore]:
         """Compatibilité API : charge les candidats PIT à la date demandée."""
         return self.load_candidates_asof(trade_date or date.today())

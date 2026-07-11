@@ -1,3 +1,4 @@
+from datetime import date
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -212,5 +213,27 @@ def test_load_symbols_for_source_dispatches_stock_scores_all(monkeypatch) -> Non
     result = db_registry.load_symbols_for_source(cast(Engine, object()), "stock-scores-all")
 
     assert result == ["AAPL", "MSFT"]
+
+
+def test_load_symbols_for_source_dispatches_tradable_universe(monkeypatch) -> None:
+    monkeypatch.setattr(
+        db_registry,
+        "load_tradable_universe_symbols",
+        lambda engine, *, trade_date, capital_preset_key: ["AAPL", "MSFT"],
+    )
+
+    result = db_registry.load_symbols_for_source(
+        cast(Engine, object()),
+        "tradable-universe",
+        trade_date=date(2025, 1, 2),
+        capital_preset_key="small",
+    )
+
+    assert result == ["AAPL", "MSFT"]
+
+
+def test_tradable_universe_source_requires_trade_date() -> None:
+    with pytest.raises(ValueError, match="trade_date est obligatoire"):
+        db_registry.load_symbols_for_source(cast(Engine, object()), "tradable-universe")
 
 

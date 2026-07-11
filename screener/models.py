@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 # (poids, fenêtres, two-pass loading) mais peut désormais être instancié
 # directement à partir du profil partagé via :meth:`from_filter_profile`.
 from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
+from common.tradable_universe import UniverseMember
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +152,7 @@ class ScreenerChunkMetrics:
     duration_seconds: float = 0.0
     failed: bool = False
     error_message: str | None = None
+    universe_members: tuple[UniverseMember, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +184,9 @@ class ScreenerRunReport:
     persisted_rows: int = 0
     purge_performed: bool = False
     archive_performed: bool = False
+    universe_run_id: str | None = None
+    universe_persistence_status: str = "pending"
+    universe_rows_written: int = 0
     chunk_error_samples: list[dict[str, object]] = field(default_factory=list)
 
     @property

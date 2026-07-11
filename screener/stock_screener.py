@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -10,6 +11,14 @@ from uuid import uuid4
 
 import pandas as pd
 
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
+from common.tradable_universe import (
+    UniverseMember,
+    begin_universe_run,
+    fail_universe_run,
+    publish_universe_run,
+    universe_schema_available,
+)
 from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
 from database.run_business_summaries import persist_run_business_summary
@@ -24,7 +33,7 @@ from screener.db_io import (
 )
 from screener.models import ScreenerChunkMetrics, ScreenerConfig, ScreenerRunReport
 from screener import RESULT_COLUMNS, compute_scores_from_prices
-from screener.pipeline import finalize_scores_with_historical_range, screen_recent_prices
+from screener.pipeline import evaluate_objective_tradability, finalize_scores_with_historical_range, screen_recent_prices
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -103,17 +112,20 @@ def _process_chunk_two_passes(
     try:
         if not config.enable_two_pass_loading:
             chunk_prices = load_prices_for_chunk(engine, symbols, config, as_of_date=as_of)
+            universe_members = evaluate_objective_tradability(chunk_prices, symbols, config, as_of_date=as_of)
             scores = compute_scores_from_prices(chunk_prices, spy_return_6m, config, as_of_date=as_of)
             metrics = ScreenerChunkMetrics(
                 input_symbols=len(symbols),
                 recent_rows_loaded=len(chunk_prices),
                 symbols_final=len(scores),
                 duration_seconds=round(time.perf_counter() - started, 4),
+                universe_members=universe_members,
             )
             return scores, metrics
 
         pass1_started = time.perf_counter()
         recent_prices = load_recent_prices_for_chunk(engine, symbols, config, as_of_date=as_of)
+        universe_members = evaluate_objective_tradability(recent_prices, symbols, config, as_of_date=as_of)
         candidates, stage_counts = screen_recent_prices(
             recent_prices,
             spy_return_6m=spy_return_6m,
@@ -131,6 +143,7 @@ def _process_chunk_two_passes(
                 symbols_pass_relative_strength=stage_counts["symbols_pass_relative_strength"],
                 pass1_seconds=pass1_seconds,
                 duration_seconds=round(time.perf_counter() - started, 4),
+                universe_members=universe_members,
             )
             return pd.DataFrame(columns=RESULT_COLUMNS), metrics
 
@@ -159,6 +172,7 @@ def _process_chunk_two_passes(
             pass1_seconds=pass1_seconds,
             pass2_seconds=pass2_seconds,
             duration_seconds=round(time.perf_counter() - started, 4),
+            universe_members=universe_members,
         )
         return scores, metrics
     except Exception as exc:
@@ -229,12 +243,19 @@ def _record_chunk_error_sample(
     )
 
 
-def _append_completed_results(done, all_results: List[pd.DataFrame], summary: dict[str, object], pending: dict) -> None:
+def _append_completed_results(
+    done,
+    all_results: List[pd.DataFrame],
+    all_universe_members: list[UniverseMember],
+    summary: dict[str, object],
+    pending: dict,
+) -> None:
     for future in done:
         chunk_symbols = list(pending.pop(future, []))
         chunk_result, chunk_metrics = future.result()
         _merge_run_metrics(summary, chunk_metrics)
         _record_chunk_error_sample(summary, chunk_metrics, chunk_symbols)
+        all_universe_members.extend(chunk_metrics.universe_members)
         if not chunk_result.empty:
             all_results.append(chunk_result)
 
@@ -269,6 +290,7 @@ def run_screener_with_report(
     as_of_date: Optional[date] = None,
     snapshot_date: Optional[date] = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
+    capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
 ) -> tuple[pd.DataFrame, ScreenerRunReport]:
     """Exécute le screener et retourne les scores ainsi qu'un rapport détaillé.
 
@@ -313,6 +335,9 @@ def run_screener_with_report(
         "persisted_rows": 0,
         "purge_performed": False,
         "archive_performed": False,
+        "universe_run_id": None,
+        "universe_persistence_status": "pending",
+        "universe_rows_written": 0,
         "chunk_error_samples": [],
     }
 
@@ -323,6 +348,7 @@ def run_screener_with_report(
     max_in_flight = max(2, workers * 2)
     config_dict = config.to_dict()
     all_results: List[pd.DataFrame] = []
+    all_universe_members: list[UniverseMember] = []
     pending: dict[object, List[str]] = {}
 
     LOGGER.info(
@@ -339,13 +365,34 @@ def run_screener_with_report(
     symbol_chunks = list(iter_symbol_chunks(engine, config.chunk_size))
     summary["chunks_total"] = len(symbol_chunks)
     summary["targeted_symbols"] = sum(len(symbol_chunk) for symbol_chunk in symbol_chunks)
+    universe_run_id: str | None = None
+    if int(summary["targeted_symbols"]) <= 0:
+        summary["universe_persistence_status"] = "skipped_empty_scope"
+    elif not universe_schema_available(engine):
+        summary["universe_persistence_status"] = "schema_unavailable"
+    else:
+        fingerprint_payload = json.dumps(
+            {"capital_preset_key": capital_preset_key, "screener": config_dict},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        universe_run_id = begin_universe_run(
+            engine,
+            snapshot_date=snapshot_date or as_of_date or date.today(),
+            capital_preset_key=capital_preset_key,
+            config_fingerprint=hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()[:16],
+            rows_expected=int(summary["targeted_symbols"]),
+            data_quality_grade="degraded",
+        )
+        summary["universe_run_id"] = universe_run_id
+        summary["universe_persistence_status"] = "running"
     _emit_live_progress(progress_callback, summary)
 
     with ProcessPoolExecutor(max_workers=workers) as executor:
         for symbol_chunk in symbol_chunks:
             while len(pending) >= max_in_flight:
                 done, _ = wait(set(pending), return_when=FIRST_COMPLETED)
-                _append_completed_results(done, all_results, summary, pending)
+                _append_completed_results(done, all_results, all_universe_members, summary, pending)
                 _emit_live_progress(progress_callback, summary)
 
             future = executor.submit(_process_chunk_two_passes, symbol_chunk, config_dict, spy_return_6m, as_of_iso)
@@ -353,7 +400,7 @@ def run_screener_with_report(
 
         while pending:
             done, _ = wait(set(pending), return_when=FIRST_COMPLETED)
-            _append_completed_results(done, all_results, summary, pending)
+            _append_completed_results(done, all_results, all_universe_members, summary, pending)
             _emit_live_progress(progress_callback, summary)
 
     if all_results:
@@ -367,6 +414,20 @@ def run_screener_with_report(
         final_scores = _empty_scores()
 
     summary["symbols_final"] = len(final_scores)
+
+    if universe_run_id is not None:
+        try:
+            if int(summary["chunk_failures"]) > 0:
+                fail_universe_run(engine, universe_run_id, "screener_chunk_failure")
+                summary["universe_persistence_status"] = "failed"
+            else:
+                publish_universe_run(engine, universe_run_id, all_universe_members)
+                summary["universe_persistence_status"] = "completed_degraded"
+                summary["universe_rows_written"] = len(all_universe_members)
+        except Exception as exc:
+            fail_universe_run(engine, universe_run_id, str(exc))
+            summary["universe_persistence_status"] = "failed"
+            LOGGER.exception("Publication univers PIT échouée | run_id=%s", universe_run_id)
 
     # Politique P0 : ne jamais détruire ni tronquer ``stock_scores`` sur un run
     # vide ou partiel. Le snapshot précédent reste la source de vérité tant que
