@@ -640,6 +640,63 @@ Figer la frontière entre alpha ML, contexte selector et autorité risque avant 
 - 100 % des décisions rattachées aux snapshots ;
 - contrat consommable par live et backtest.
 
+### ✅ Ce qui a été implémenté (2026-07-11)
+
+#### Nouveaux fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/selection_contract.py` | Module canonique du contrat ML→Risque. Contient `MLRankedCandidate` (DTO frozen+slots avec side, p_side, p_long/flat/short, side_rank, expected_edge, model_run_id, policy_version, universe_run_id, feature_cutoff, decision_cutoff, lineage — validation cohérence side/p_side et sommes), `SelectorVetoContext` (DTO SANS champ side/rank : uniquement veto, sector, quality, earnings_blackout, score_available informatif), `RiskDecisionInput` (combine candidat + veto + contrat), `build_rankings()` (sépare long/short, trie par p_side décroissant, peuple side_rank), `filter_actionable()` (exclut flat), `validate_candidate_consistency()` (6 vérifications), `build_candidate_from_prediction()` (construit depuis une prédiction). |
+| `tests/test_risk_ml_first_contract.py` | 20 tests : construction MLRankedCandidate, flat non actionable, validation side/p_side cohérence, rejet symbol/run_id vides, to_dict, SelectorVetoContext sans side/rank, veto, RiskDecisionInput vetoed/non-vetoed, build_rankings séparation long/short + flat exclus, filter_actionable, validate_candidate_consistency (OK + prob sum + trade date), build_candidate_from_prediction long/flat/unknown. |
+
+#### Fichiers modifiés
+
+*Aucun fichier existant modifié — le module est autonome. L'intégration dans `risk_bridge.py` et `portfolio_builder.py` suivra dans les sprints suivants (Sprint 6 pour les contraintes directionnelles).*
+
+#### Décisions d'architecture
+
+- **`MLRankedCandidate` est LE contrat entre ML et risque** : DTO immutable avec tous les champs de lineage obligatoires. Le ML est la SEULE autorité sur `side` et `side_rank`. Le risque peut rejeter ou réduire, pas changer.
+- **`SelectorVetoContext` sans autorité side/ranking** : par construction, cette dataclass n'a PAS de champ `side`, `rank` ou `side_rank`. Le selector ne peut que poser des vetos avec raison documentée.
+- **`side_rank` séparé par direction** : `build_rankings()` produit DEUX listes distinctes (longs, shorts), triées par `p_side` décroissant. Les rangs sont indépendants : le 1er long et le 1er short sont tous deux `side_rank=1`.
+- **Flat ne passe jamais le sizing** : `filter_actionable()` et `MLRankedCandidate.is_actionable()` garantissent que `side="flat"` est exclu avant toute construction de portefeuille.
+- **6 validations de cohérence** : `validate_candidate_consistency()` vérifie symbol, side, model_run_id, policy_version, probabilités (bornes + somme ≈ 1), cohérence side/p_side.
+- **`build_candidate_from_prediction()`** : constructeur qui fait le pont entre les prédictions existantes (`PredictionInfo`) et le nouveau contrat `MLRankedCandidate`.
+
+#### Commandes exécutées et résultats
+
+```powershell
+python -m pytest tests/test_risk_ml_first_contract.py --no-cov -q
+# 20 passed (nouveaux tests Sprint 5)
+
+python -m pytest [suite complete Sprint 0-5] --no-cov -q
+# 207 passed
+```
+
+#### Artefacts produits
+
+- `risk_management/selection_contract.py` — module canonique du contrat ML→Risque
+- `tests/test_risk_ml_first_contract.py` — 20 tests
+
+#### Risques résiduels
+
+- **`tag_short_candidates` non encore retiré du bridge** : la fonction est toujours appelée dans `backtesting/risk_bridge.py`. Le contrat est prêt mais l'intégration effective sera faite au Sprint 6 (Contraintes directionnelles) qui refond le bridge.
+- **`PortfolioBuilder` non encore migré** : utilise toujours `SelectionScore` et `EnrichedSelection`. L'adaptateur temporaire sera créé au Sprint 6.
+- **APIs legacy non dépréciées** : `SelectionScore` et `PredictionInfo` restent utilisés. Un adaptateur `MLRankedCandidate → SelectionScore` sera fourni au Sprint 6 pour la transition.
+
+#### Rollback
+
+- Supprimer `risk_management/selection_contract.py`.
+- Supprimer `tests/test_risk_ml_first_contract.py`.
+
+#### Gate GO/NO-GO : ✅ GO
+
+- ML seul détermine side et ordre nominal : `MLRankedCandidate.side` est immutable, `build_rankings` trie par `p_side` ML uniquement.
+- Selector incapable de changer side/rank : `SelectorVetoContext` n'a pas de champ side/rank par construction.
+- Flat n'atteint jamais le sizing : `is_actionable()` + `filter_actionable()`.
+- Lineage et trade date obligatoires : `__post_init__` rejette les symboles et model_run_id vides.
+- Rankings long/short conservés : `build_rankings` produit deux listes indépendantes.
+- 20 nouveaux tests, 207 total, 0 régression.
+
 ---
 
 ## Sprint maître 6 — Contraintes directionnelles et configuration
