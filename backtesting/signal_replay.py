@@ -4,6 +4,11 @@ Refactor Phase A (refactor/backtesting/audit_plan.md) :
 - A2 : ``fuse()`` vectorisé (suppression du ``df.apply`` ligne par ligne).
 - A3 : cascade de fallback factorisée via ``_pick_score_column`` +
        ``SCORE_FALLBACK_PRIORITY`` (au lieu de 4 branches dupliquées).
+
+Sprint Maître 0 :
+- ``predicted_side`` est produit par ``decide_ternary_side`` (policy partagée).
+  Ce module ne recrée PAS de décision de side ; il lit la colonne
+  ``predicted_side`` persistée, garantissant la parité backtest/live.
 """
 from __future__ import annotations
 
@@ -13,6 +18,8 @@ from typing import Iterable, Optional
 import numpy as np
 import pandas as pd
 
+from core.ternary_decision_policy import DEFAULT_TERNARY_POLICY
+
 LOGGER = logging.getLogger(__name__)
 
 # Ordre de priorité des colonnes de score (du plus riche au plus brut).
@@ -21,6 +28,31 @@ SCORE_FALLBACK_PRIORITY: tuple[str, ...] = (
     "final_score_sentiment",
     "final_score",
 )
+
+
+def _validate_prediction_policy_consistency(df: pd.DataFrame) -> None:
+    """Vérifie que les prédictions utilisent bien la policy ternaire partagée (Sprint Maître 0).
+
+    Les prédictions sans colonnes ternaires complètes ou avec des sides
+    non conformes à la policy sont loggées mais ne bloquent pas le replay
+    (rétrocompatibilité avec les données antérieures au Sprint 0).
+    """
+    policy_version = DEFAULT_TERNARY_POLICY.version
+    if "decision_policy_version" in df.columns:
+        legacy = df["decision_policy_version"].isna() | (df["decision_policy_version"] != policy_version)
+        if legacy.any():
+            LOGGER.info(
+                "replay_signals legacy_predictions: %d/%d rows antérieures au policy v%d",
+                legacy.sum(), len(df), policy_version,
+            )
+    # Vérification de cohérence basique
+    valid_sides = {"long", "flat", "short"}
+    unknown = ~df["predicted_side"].isin(valid_sides)
+    if unknown.any():
+        LOGGER.warning(
+            "replay_signals unknown_predicted_side: %d rows (attendu long/flat/short)",
+            unknown.sum(),
+        )
 
 
 def _pick_score_column(
@@ -118,6 +150,9 @@ def replay_signals(
     df["proba_short"] = pd.to_numeric(df["proba_short"], errors="coerce")
     df = df.dropna(subset=["symbol", "trade_date"])
     df = df.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
+
+    # ── Sprint Maître 0 : valider que predicted_side vient de la policy ─
+    _validate_prediction_policy_consistency(df)
 
     is_long = df["predicted_side"].eq("long") & df["proba_long"].notna()
     is_short = df["predicted_side"].eq("short") & df["proba_short"].notna()

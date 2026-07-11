@@ -17,6 +17,7 @@ from modelFactory.calibration import calibrator_from_state_dict, margin_from_log
 from modelFactory.champion_selection import ArtifactSignatureError, verify_route_artifact_signatures
 from modelFactory.config import DataConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
+from core.ternary_decision_policy import decide_ternary_side, TernaryDecisionPolicy
 from modelFactory.data_loader import (
     load_benchmark_bars,
     load_symbol_bars,
@@ -310,6 +311,9 @@ def _build_prediction_result(
     proba_long: float | None = None,
     proba_flat: float | None = None,
     proba_short: float | None = None,
+    # Sprint Maître 0 — policy partagée
+    decision_policy_version: int = 1,
+    decision_reason: str | None = None,
 ) -> pd.DataFrame:
     row: dict[str, object] = {
         "symbol": symbol,
@@ -322,7 +326,10 @@ def _build_prediction_result(
         "signal_label": signal_label,
         "calibration_method": calibration_method,
         "selected_model": selected_model,
+        "decision_policy_version": decision_policy_version,
     }
+    if decision_reason is not None:
+        row["decision_reason"] = decision_reason
     # Ajoute les colonnes ternaires si presentes
     if predicted_side is not None:
         row["predicted_side"] = predicted_side
@@ -949,22 +956,35 @@ def _predict_with_tabular_model(
     effective_threshold = _numeric_threshold(threshold_value, float(data_cfg.decision_threshold or 0.5))
     pred_date = prediction_date or date.today()
 
-    # ── Ternaire tabulaire : side + signal (P2 2026-06-30) ─────────
+    # ── Ternaire tabulaire : side + signal via policy partagée (Sprint Maître 0) ─
     if is_ternary_tab:
         # Utiliser les probas calibrées si dispo, sinon les brutes
         p_short = proba_short_val or 0.0
         p_flat = proba_flat_val or 0.0
         p_long = proba_long_val or 0.0
-        side_idx = int(np.argmax([p_short, p_flat, p_long]))
-        side_map = {0: "short", 1: "flat", 2: "long"}
-        predicted_side_val: str | None = side_map.get(side_idx, "flat")
-        pred_class = 1 if predicted_side_val == "long" else 0
-        signal_label = predicted_side_val
-        proba = p_long
+        try:
+            # ── Sprint Maître 0 : décision via la policy partagée ─
+            decision = decide_ternary_side(
+                proba_short=p_short,
+                proba_flat=p_flat,
+                proba_long=p_long,
+            )
+            predicted_side_val: str | None = decision.side
+            pred_class = 1 if decision.side == "long" else 0
+            signal_label = decision.side
+            proba = decision.p_side
+            decision_reason = decision.reason
+        except ValueError as exc:
+            LOGGER.warning(
+                "predict_symbol ternary_decision_invalid symbol=%s selected_model=%s error=%s",
+                symbol, selected_model, exc,
+            )
+            return None
     else:
         pred_class = 1 if proba >= effective_threshold else 0
         signal_label = "long" if pred_class == 1 else "no_trade"
         predicted_side_val = None
+        decision_reason = None
 
     result = _build_prediction_result(
         symbol=symbol,
@@ -981,6 +1001,7 @@ def _predict_with_tabular_model(
         proba_long=proba_long_val,
         proba_flat=proba_flat_val,
         proba_short=proba_short_val,
+        decision_reason=decision_reason,
     )
     update_runtime_status(
         last_prediction_symbol=symbol,
@@ -1033,6 +1054,15 @@ def predict_symbol(
     try:
         cfg_data = _load_json_dict(config_path, symbol=symbol, artifact_kind="config")
     except ArtifactIntegrityError:
+        return None
+
+    # ── Sprint Maître 0 : blocage research_only ─────────────────────────
+    if cfg_data.get("research_only") is True:
+        LOGGER.warning(
+            "predict_symbol blocked_research_only symbol=%s config=%s",
+            symbol, config_path,
+        )
+        _record_artifact_issue(symbol, reason="research_only_blocked", path=config_path)
         return None
 
     fingerprint_reason = _check_feature_contract(cfg_data, symbol=symbol, config_path=config_path)

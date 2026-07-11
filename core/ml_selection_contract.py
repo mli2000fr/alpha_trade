@@ -3,6 +3,12 @@
 Ce module décrit les invariants du cutover sans activer le nouveau runtime.
 Les implémentations train, predict, live et backtest doivent importer ce
 contrat au lieu de redéfinir localement la portée ou les règles de sélection.
+
+Sprint Maître 0 — ajouts :
+- ``decision_policy_version`` : version de la TernaryDecisionPolicy utilisée.
+- ``research_only`` : si True, le modèle ne peut PAS produire d'ordre réel
+  (paper/live bloqué).
+- ``decision_timing`` : contrat temporel features → décision → entrée.
 """
 from __future__ import annotations
 
@@ -15,6 +21,7 @@ ScoreRole = Literal["feature_veto"]
 FeatureScope = Literal["full_tradable_universe"]
 VetoTiming = Literal["post_prediction_ranking"]
 TrainingWorkflow = Literal["separate"]
+DecisionTiming = Literal["features_close_j_decision_cutoff_entry_j1"]
 
 LIVE_WORKFLOW_STAGES: tuple[str, ...] = (
     "import_market_data",
@@ -55,7 +62,13 @@ class SelectionCapacity:
 
 @dataclass(frozen=True, slots=True)
 class MLFirstSelectionContract:
-    """Invariants non configurables du chemin nominal après cutover."""
+    """Invariants non configurables du chemin nominal après cutover.
+
+    Sprint Maître 0 :
+    - ``decision_policy_version`` trace la version de TernaryDecisionPolicy.
+    - ``research_only`` bloque paper/live quand True.
+    - ``decision_timing`` fige le contrat temporel features → décision → entrée.
+    """
 
     universe_source: UniverseSource = "tradable-universe"
     prediction_target_mode: PredictionTargetMode = "ternary"
@@ -66,6 +79,12 @@ class MLFirstSelectionContract:
     prediction_required: bool = True
     separate_side_ranking: bool = True
     live_workflow_stages: tuple[str, ...] = LIVE_WORKFLOW_STAGES
+
+    # ── Sprint Maître 0 ──────────────────────────────────────────────────
+    decision_policy_version: int = 1
+    decision_timing: DecisionTiming = "features_close_j_decision_cutoff_entry_j1"
+    research_only: bool = False
+
     capacity: SelectionCapacity = field(
         default_factory=lambda: SelectionCapacity(
             max_positions=20,
@@ -93,6 +112,14 @@ class MLFirstSelectionContract:
             raise ValueError("Les rankings long et short doivent être séparés.")
         if self.live_workflow_stages != LIVE_WORKFLOW_STAGES:
             raise ValueError("Le workflow live doit respecter les 12 étapes canoniques.")
+        # ── Sprint Maître 0 ──────────────────────────────────────────────
+        if self.decision_policy_version < 1:
+            raise ValueError("decision_policy_version doit être >= 1.")
+        if self.decision_timing != "features_close_j_decision_cutoff_entry_j1":
+            raise ValueError(
+                "Le timing doit être features_close_j_decision_cutoff_entry_j1."
+            )
+        # research_only n'a pas de contrainte — True ou False sont valides.
 
 
 ML_FIRST_SELECTION_CONTRACT = MLFirstSelectionContract()

@@ -16,6 +16,7 @@ from modelFactory.features import build_feature_contract
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import get_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
+from core.ternary_decision_policy import decide_ternary_side_batch
 
 
 def tabular_split(
@@ -103,12 +104,13 @@ def compute_tabular_metrics(
 		**threshold_metrics,
 	}
 
-	# ── F1 ternaire pour challengers tabulaires (P2 2026-07-01) ──
+	# ── F1 ternaire pour challengers tabulaires (Sprint Maître 0 : policy partagée) ──
 	if is_ternary and raw_proba_all is not None and target_raw is not None:
 		probs_all = np.asarray(raw_proba_all, dtype=np.float64)
 		targets = np.asarray(target_raw, dtype=np.int64)  # {-1, 0, 1}
 		if probs_all.ndim == 2 and probs_all.shape[1] >= 3 and len(targets) == probs_all.shape[0]:
-			preds_multi = np.argmax(probs_all, axis=1)  # {0, 1, 2}
+			# ── Sprint Maître 0 : décision via la policy partagée ─
+			preds_multi = decide_ternary_side_batch(probs_all[:, :3])  # {0=short, 1=flat, 2=long}
 			labels_shifted = targets + 1  # {-1,0,1} -> {0,1,2}
 			for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
 				tp = int(((preds_multi == cls_idx) & (labels_shifted == cls_idx)).sum())
