@@ -1,6 +1,7 @@
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from modelFactory import cli
 
@@ -63,21 +64,11 @@ def test_cli_parser_accepts_cross_sectional_options() -> None:
     assert opts.cross_sectional_min_universe == 12
 
 
-def test_cli_parser_accepts_selector_universe_filter_options() -> None:
+def test_cli_parser_rejects_selector_universe_filter_options() -> None:
     parser = cli.build_arg_parser()
 
-    opts = parser.parse_args([
-        "--mode", "train",
-        "--include-selector-context",
-        "--selector-universe-signal-modes", "strict", "sector_neutralized",
-        "--selector-universe-max-candidate-rank", "25",
-        "--selector-universe-exclude-earnings-blackout",
-    ])
-
-    assert opts.include_selector_context is True
-    assert opts.selector_universe_signal_modes == ["strict", "sector_neutralized"]
-    assert opts.selector_universe_max_candidate_rank == 25
-    assert opts.selector_universe_exclude_earnings_blackout is True
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--mode", "train", "--selector-universe-signal-modes", "strict"])
 
 
 def test_cli_parser_accepts_global_model_options() -> None:
@@ -110,26 +101,12 @@ def test_cli_parser_accepts_champion_selection_options() -> None:
     assert opts.champion_selection_metric == "business_score"
 
 
-def test_cli_parser_accepts_symbol_source_option() -> None:
+def test_cli_parser_defaults_to_tradable_universe_and_rejects_legacy_source() -> None:
     parser = cli.build_arg_parser()
 
-    opts = parser.parse_args([
-        "--mode", "train",
-        "--symbol-source", "stock-bars-daily",
-    ])
-
-    assert opts.symbol_source == "stock-bars-daily"
-
-
-def test_cli_parser_accepts_stock_scores_all_symbol_source_option() -> None:
-    parser = cli.build_arg_parser()
-
-    opts = parser.parse_args([
-        "--mode", "train",
-        "--symbol-source", "stock-scores-all",
-    ])
-
-    assert opts.symbol_source == "stock-scores-all"
+    assert parser.parse_args(["--mode", "train"]).symbol_source == "tradable-universe"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--mode", "train", "--symbol-source", "candidates"])
 
 
 def test_cli_parser_accepts_debug_train_and_watchdog_options() -> None:
@@ -183,13 +160,16 @@ def test_cli_main_predict_historical_loops_over_available_trading_dates(monkeypa
     monkeypatch.setattr(cli, "apply_reproducibility", lambda *args, **kwargs: {"seed": 42, "deterministic_applied": True, "deterministic_requested": True})
     monkeypatch.setattr(cli, "get_sqlalchemy_engine", lambda: object())
     monkeypatch.setattr(cli, "load_available_trading_dates", lambda engine, symbols=None, start_date=None, end_date=None: [date(2022, 1, 3), date(2022, 1, 4)])
-    monkeypatch.setattr(db_registry, "load_symbols_for_source", lambda engine, source: ["AAPL", "MSFT"])
-    monkeypatch.setattr(db_registry, "filter_symbols_by_selector_context", lambda engine, symbols, **kwargs: (symbols, {"enabled": False, "applied": False}))
+    monkeypatch.setattr(
+        db_registry,
+        "load_symbols_for_source",
+        lambda engine, source, *, trade_date: ["AAPL", "MSFT"],
+    )
     monkeypatch.setattr(db_registry, "insert_predictions", lambda engine, preds: inserted_batches.append(preds.copy()) or len(preds))
     monkeypatch.setattr(
         predictor,
         "predict_batch",
-        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto": prediction_calls.append((prediction_date, as_of_date)) or pd.DataFrame([
+        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto", max_workers=1: prediction_calls.append((prediction_date, as_of_date)) or pd.DataFrame([
             {
                 "symbol": symbols[0],
                 "prediction_date": prediction_date,
@@ -203,7 +183,6 @@ def test_cli_main_predict_historical_loops_over_available_trading_dates(monkeypa
 
     cli.main([
         "--mode", "predict",
-        "--symbol-source", "candidates",
         "--training-start-date", "2022-01-01",
         "--training-end-date", "2022-01-04",
     ])
@@ -219,7 +198,7 @@ def test_cli_main_predict_historical_loops_over_available_trading_dates(monkeypa
     assert emitted_summaries[-1]["training_end_date"] == "2022-01-04"
 
 
-def test_cli_main_predict_historical_stock_scores_history_uses_pit_scopes(monkeypatch) -> None:
+def test_cli_main_predict_historical_resolves_pit_universe_per_date(monkeypatch) -> None:
     import modelFactory.db_registry as db_registry
     import modelFactory.predictor as predictor
 
@@ -231,18 +210,23 @@ def test_cli_main_predict_historical_stock_scores_history_uses_pit_scopes(monkey
     monkeypatch.setattr(cli, "get_sqlalchemy_engine", lambda: object())
     monkeypatch.setattr(
         cli,
-        "load_historical_prediction_scopes_from_scores_history",
-        lambda engine, **kwargs: {
-            date(2022, 1, 3): ["AAPL", "MSFT"],
-            date(2022, 1, 4): ["MSFT"],
-        },
+        "load_available_trading_dates",
+        lambda engine, **kwargs: [date(2022, 1, 3), date(2022, 1, 4)],
     )
-    monkeypatch.setattr(db_registry, "load_symbols_for_source", lambda engine, source: ["AAPL", "MSFT", "NVDA"])
+    symbols_by_date = {
+        date(2022, 1, 3): ["AAPL", "MSFT"],
+        date(2022, 1, 4): ["MSFT"],
+    }
+    monkeypatch.setattr(
+        db_registry,
+        "load_symbols_for_source",
+        lambda engine, source, *, trade_date: symbols_by_date[trade_date],
+    )
     monkeypatch.setattr(db_registry, "insert_predictions", lambda engine, preds: inserted_batches.append(preds.copy()) or len(preds))
     monkeypatch.setattr(
         predictor,
         "predict_batch",
-        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto": prediction_calls.append((tuple(symbols), prediction_date, as_of_date)) or pd.DataFrame([
+        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto", max_workers=1: prediction_calls.append((tuple(symbols), prediction_date, as_of_date)) or pd.DataFrame([
             {
                 "symbol": symbol,
                 "prediction_date": prediction_date,
@@ -257,7 +241,6 @@ def test_cli_main_predict_historical_stock_scores_history_uses_pit_scopes(monkey
 
     cli.main([
         "--mode", "predict",
-        "--symbol-source", "stock-scores-history",
         "--training-start-date", "2022-01-01",
         "--training-end-date", "2022-01-04",
     ])

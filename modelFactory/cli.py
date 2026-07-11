@@ -40,11 +40,7 @@ LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
 SYMBOL_SOURCES = (
-    "candidates",
-    "stock-bars-daily",
-    "stock-scores",
-    "stock-scores-history",
-    "stock-scores-all",
+    "tradable-universe",
 )
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 
@@ -90,7 +86,7 @@ class _LiveRunSummaryEmitter:
 
     def __enter__(self) -> "_LiveRunSummaryEmitter":
         if self.heartbeat_interval_seconds > 0:
-            self.emit_now()
+            self.emit_now()  # type: ignore[no-untyped-call]
             self._thread = threading.Thread(target=self._run, daemon=True, name=f"ml-heartbeat-{self.run_id}")
             self._thread.start()
         return self
@@ -141,16 +137,19 @@ class _LiveRunSummaryEmitter:
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Model Factory — LSTM per-symbol training & prediction")
     p.add_argument("--mode", choices=["train", "predict"], required=True, help="train ou predict")
-    p.add_argument("--symbols", nargs="*", default=None, help="Liste de symboles (défaut: is_candidate=1)")
+    p.add_argument("--symbols", nargs="*", default=None, help="Liste explicite de symboles")
     p.add_argument(
         "--symbol-source",
         type=str,
-        default="candidates",
+        default="tradable-universe",
         choices=list(SYMBOL_SOURCES),
-        help=(
-            "Source des symboles quand --symbols n'est pas fourni : candidates | stock-bars-daily | "
-            "stock-scores | stock-scores-history | stock-scores-all"
-        ),
+        help="Source nominale quand --symbols n'est pas fourni : tradable-universe",
+    )
+    p.add_argument(
+        "--universe-date",
+        type=_parse_iso_date_arg,
+        default=None,
+        help="Date PIT de l'univers tradable (défaut: training-end-date ou date du jour)",
     )
     p.add_argument(
         "--start-symbol",
@@ -196,24 +195,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les features VIX3M + ratio term structure (contango/backwardation) dans le modèle")
     p.add_argument("--include-macro-move", action="store_true", default=False,
                    help="Inclure les features MOVE (volatilité obligataire ICE BofA) dans le modèle")
-    p.add_argument(
-        "--selector-universe-signal-modes",
-        nargs="*",
-        default=None,
-        help="Filtre optionnel de l’univers ML courant selon stock_scores.selector_signal_mode (liste ou valeurs séparées par des virgules)",
-    )
-    p.add_argument(
-        "--selector-universe-max-candidate-rank",
-        type=int,
-        default=None,
-        help="Filtre optionnel de l’univers ML courant : ne conserve que les symboles avec candidate_rank <= N",
-    )
-    p.add_argument(
-        "--selector-universe-exclude-earnings-blackout",
-        action="store_true",
-        default=False,
-        help="Filtre optionnel de l’univers ML courant : exclut les symboles marqués earnings_blackout dans stock_scores",
-    )
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
                    help="Active les features cross-sectionnelles PIT-safe calculées depuis l'univers historique")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
@@ -329,9 +310,6 @@ def main(args: list[str] | None = None) -> None:
             include_macro_vxn_features=opts.include_macro_vxn,
             include_macro_vix3m_features=opts.include_macro_vix3m,
             include_macro_move_features=opts.include_macro_move,
-            selector_universe_signal_modes=_parse_selector_signal_modes_arg(opts.selector_universe_signal_modes),
-            selector_universe_max_candidate_rank=opts.selector_universe_max_candidate_rank,
-            selector_universe_exclude_earnings_blackout=opts.selector_universe_exclude_earnings_blackout,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,
@@ -405,6 +383,7 @@ def main(args: list[str] | None = None) -> None:
     reproducibility_state = apply_reproducibility(cfg.reproducibility, context=f"cli:{opts.mode}")
 
     engine = get_sqlalchemy_engine()
+    universe_date = opts.universe_date or cfg.data.training_end_date or date.today()
 
     started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     run_id = f"model-factory-{started_at.strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
@@ -452,6 +431,7 @@ def main(args: list[str] | None = None) -> None:
                 symbols=opts.symbols,
                 mode=opts.ml_mode,
                 symbol_source=opts.symbol_source,
+                universe_date=universe_date,
                 start_symbol=opts.start_symbol,
             )
         completed = sum(1 for r in results if r.status == "completed")
@@ -494,7 +474,6 @@ def main(args: list[str] | None = None) -> None:
 
     elif opts.mode == "predict":
         from modelFactory.db_registry import (
-            filter_symbols_by_selector_context,
             insert_predictions,
             load_symbols_for_source,
         )
@@ -507,7 +486,6 @@ def main(args: list[str] | None = None) -> None:
             summary_fields as _drift_summary_fields,
         )
         historical_predict_enabled = cfg.data.training_end_date is not None
-        use_historical_pit_scopes = historical_predict_enabled and str(opts.symbol_source or "candidates") == "stock-scores-history"
         persisted_incrementally = False
 
         def _persist_predictions_chunk(
@@ -535,114 +513,53 @@ def main(args: list[str] | None = None) -> None:
                     last_db_issue_reason=f"prediction_persist_failed:{type(exc).__name__}",
                 )
 
-        symbols = opts.symbols or load_symbols_for_source(engine, str(opts.symbol_source or "candidates"))
-        selector_filter_summary = {
-            "enabled": False,
-            "applied": False,
-            "input_symbol_count": len(symbols),
-            "output_symbol_count": len(symbols),
-            "reason": None,
-        }
-        if not use_historical_pit_scopes:
-            symbols, selector_filter_summary = filter_symbols_by_selector_context(
-                engine,
-                symbols,
-                signal_modes=cfg.data.selector_universe_signal_modes,
-                max_candidate_rank=cfg.data.selector_universe_max_candidate_rank,
-                exclude_earnings_blackout=cfg.data.selector_universe_exclude_earnings_blackout,
-            )
-        if selector_filter_summary.get("enabled"):
-            LOGGER.info(
-                "predict selector_universe_filter applied=%s input=%s output=%s reason=%s",
-                selector_filter_summary.get("applied"),
-                selector_filter_summary.get("input_symbol_count"),
-                selector_filter_summary.get("output_symbol_count"),
-                selector_filter_summary.get("reason"),
-            )
+        symbols = opts.symbols or load_symbols_for_source(
+            engine,
+            opts.symbol_source,
+            trade_date=universe_date,
+        )
         if historical_predict_enabled:
-            if use_historical_pit_scopes:
-                historical_scopes = load_historical_prediction_scopes_from_scores_history(
+            prediction_dates = load_available_trading_dates(
+                engine,
+                symbols=symbols,
+                start_date=cfg.data.training_start_date,
+                end_date=cfg.data.training_end_date,
+            )
+            LOGGER.info(
+                "predict historical_backfill enabled symbols=%d start=%s end=%s dates=%d",
+                len(symbols),
+                cfg.data.training_start_date,
+                cfg.data.training_end_date,
+                len(prediction_dates),
+            )
+            prediction_parts = []
+            for prediction_date in prediction_dates:
+                symbols_for_date = opts.symbols or load_symbols_for_source(
                     engine,
-                    start_date=cfg.data.training_start_date,
-                    end_date=cfg.data.training_end_date,
-                    symbols=symbols if opts.symbols else None,
-                    signal_modes=cfg.data.selector_universe_signal_modes,
-                    max_candidate_rank=cfg.data.selector_universe_max_candidate_rank,
-                    exclude_earnings_blackout=cfg.data.selector_universe_exclude_earnings_blackout,
+                    opts.symbol_source,
+                    trade_date=prediction_date,
                 )
-                LOGGER.info(
-                    "predict historical_pit_backfill enabled days=%d explicit_symbols=%d start=%s end=%s",
-                    len(historical_scopes),
-                    len(symbols),
-                    cfg.data.training_start_date,
-                    cfg.data.training_end_date,
-                )
-                prediction_parts: list[pd.DataFrame] = []
-                for prediction_date, symbols_for_date in historical_scopes.items():
-                    if not symbols_for_date:
-                        continue
-                    part = predict_batch(
-                        symbols_for_date,
-                        Path(opts.artifacts_dir),
-                        engine,
-                        prediction_date=prediction_date,
-                        as_of_date=prediction_date,
-                        persist=False,
-                        accelerator=opts.accelerator,
-                        max_workers=opts.max_workers,
-                    )
-                    if not part.empty:
-                        prediction_parts.append(part)
-                        _persist_predictions_chunk(
-                            part,
-                            operation="insert_predictions_historical_date",
-                            prediction_date=prediction_date,
-                        )
-                    else:
-                        LOGGER.info(
-                            "predict date=%s skipped rows=0 reason=no_valid_predictions",
-                            prediction_date.isoformat(),
-                        )
-                persisted_incrementally = True
-            else:
-                prediction_dates = load_available_trading_dates(
+                part = predict_batch(
+                    symbols_for_date,
+                    Path(opts.artifacts_dir),
                     engine,
-                    symbols=symbols,
-                    start_date=cfg.data.training_start_date,
-                    end_date=cfg.data.training_end_date,
+                    prediction_date=prediction_date,
+                    as_of_date=prediction_date,
+                    persist=False,
+                    accelerator=opts.accelerator,
+                    max_workers=opts.max_workers,
                 )
-                LOGGER.info(
-                    "predict historical_backfill enabled symbols=%d start=%s end=%s dates=%d",
-                    len(symbols),
-                    cfg.data.training_start_date,
-                    cfg.data.training_end_date,
-                    len(prediction_dates),
-                )
-                prediction_parts = []
-                for prediction_date in prediction_dates:
-                    part = predict_batch(
-                        symbols,
-                        Path(opts.artifacts_dir),
-                        engine,
+                if not part.empty:
+                    prediction_parts.append(part)
+                    _persist_predictions_chunk(
+                        part,
+                        operation="insert_predictions_historical_date",
                         prediction_date=prediction_date,
-                        as_of_date=prediction_date,
-                        persist=False,
-                        accelerator=opts.accelerator,
-                        max_workers=opts.max_workers,
                     )
-                    if not part.empty:
-                        prediction_parts.append(part)
-                        _persist_predictions_chunk(
-                            part,
-                            operation="insert_predictions_historical_date",
-                            prediction_date=prediction_date,
-                        )
-                    else:
-                        LOGGER.info(
-                            "predict date=%s skipped rows=0 reason=no_valid_predictions",
-                            prediction_date.isoformat(),
-                        )
-                persisted_incrementally = True
+                else:
+                    LOGGER.info(
+                        "predict date=%s skipped rows=0 reason=no_valid_predictions", prediction_date.isoformat())
+            persisted_incrementally = True
             non_empty_parts = [part for part in prediction_parts if not part.empty]
             preds = (
                 pd.concat(non_empty_parts, ignore_index=True)
@@ -780,11 +697,9 @@ def _build_run_summary(
         "ml_mode": str(getattr(opts, "ml_mode", "rebuild-all")),
         "training_start_date": cfg.data.training_start_date.isoformat() if cfg.data.training_start_date is not None else None,
         "training_end_date": cfg.data.training_end_date.isoformat() if cfg.data.training_end_date is not None else None,
-        "symbol_source": str(getattr(opts, "symbol_source", "candidates")),
+        "symbol_source": str(getattr(opts, "symbol_source", "tradable-universe")),
         "historical_prediction_range_enabled": bool(mode == "predict" and cfg.data.training_end_date is not None),
-        "selector_universe_signal_modes": list(cfg.data.selector_universe_signal_modes),
-        "selector_universe_max_candidate_rank": cfg.data.selector_universe_max_candidate_rank,
-        "selector_universe_exclude_earnings_blackout": bool(cfg.data.selector_universe_exclude_earnings_blackout),
+        "universe_date": (getattr(opts, "universe_date", None) or cfg.data.training_end_date or date.today()).isoformat(),
         "debug_train_enabled": bool(getattr(opts, "debug_train", False)),
         "heartbeat_interval_seconds": float(getattr(opts, "heartbeat_interval_seconds", DEFAULT_HEARTBEAT_INTERVAL_SECONDS) or 0.0),
         "watchdog_timeout_seconds": int(getattr(opts, "watchdog_timeout_seconds", 0) or 0),

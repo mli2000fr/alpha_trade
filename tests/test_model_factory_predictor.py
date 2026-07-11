@@ -512,7 +512,11 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
     monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
     monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
     monkeypatch.setattr(predictor, "load_benchmark_bars", lambda engine, benchmark_symbol, end_date=None: bars.assign(symbol="SPY"))
-    monkeypatch.setattr(predictor, "load_candidate_symbols", lambda engine: ["AAPL", "MSFT"])
+    monkeypatch.setattr(
+        predictor,
+        "load_tradable_universe_symbols",
+        lambda engine, *, trade_date: ["AAPL", "MSFT"],
+    )
     monkeypatch.setattr(predictor, "load_universe_bars", lambda engine, symbols, end_date=None: bars.assign(symbol="AAPL"))
     monkeypatch.setattr(
         predictor,

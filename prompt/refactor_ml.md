@@ -1,6 +1,6 @@
 # Refactor ML-First — Suppression du chemin critique `candidate -> ML`
 
-**Statut :** Plan détaillé audité sur le code — Sprints 0 et 1 terminés; Sprint 2 en cours
+**Statut :** Plan détaillé audité sur le code — Sprints 0 et 1 terminés; Sprints 2 et 3 en cours
 **Date :** 2026-07-11  
 **Auteur :** Session Copilot  
 **Fichier :** `prompt/refactor_ml.md`
@@ -593,6 +593,28 @@ Le Sprint 2 n'est pas encore terminé. Restent le basculement de `risk_managemen
 ## Sprint 3 — Migrer train/predict ML hors de `symbol_source=candidates`
 
 **Objectif :** éviter de garder un gate implicite côté ML après avoir corrigé le backtest.
+
+### État d'implémentation (2026-07-11, en cours)
+
+La migration du chemin nominal `modelFactory` est implémentée :
+
+- `modelFactory/cli.py` n'accepte plus que `--symbol-source tradable-universe`, désormais la valeur par défaut. Les options `--selector-universe-*` sont supprimées; `--universe-date` porte la date PIT explicite, avec repli déterministe sur `training-end-date`, puis la date du jour.
+- `modelFactory/db_registry.py` ne résout plus les anciennes sources de train/predict. Une source hors `tradable-universe` échoue explicitement, et la résolution exige une date PIT.
+- `modelFactory/orchestrator.py` entraîne sur cet univers et exige `universe_date` lorsque les symboles ne sont pas fournis explicitement. Il n'applique plus de filtre selector après chargement.
+- Le backfill `predict` résout le scope `tradable-universe` pour chaque date de prédiction; il ne réutilise plus `stock-scores-history` pour construire les scopes historiques.
+- `modelFactory/predictor.py` utilise l'univers tradable PIT à la date de cutoff pour les features cross-sectionnelles, au lieu de `load_candidate_symbols()`.
+- `DataConfig` ne porte plus les paramètres `selector_universe_*`.
+
+Validation exécutée :
+
+```text
+63 passed: tests/test_model_factory_cli.py,
+tests/test_model_factory_config.py,
+tests/test_model_factory_db_registry.py,
+tests/test_model_factory_orchestrator.py
+```
+
+Le Sprint 3 reste en cours : l'IHM `pipeline_runner`, les options et libellés IHM, ainsi que la publication d'un univers de grade `full` ne sont pas encore basculés. La suite large `tests/test_model_factory_predictor.py` contient en outre des fixtures existantes dont le stub `get_feature_columns` ne supporte pas l'argument actuel `include_short_score`; elle n'a pas été utilisée comme validation de ce changement ciblé.
 
 ### Tâches structurantes
 

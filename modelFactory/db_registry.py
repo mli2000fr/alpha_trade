@@ -696,7 +696,7 @@ def load_symbols_for_source(
     capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
 ) -> list[str]:
     """Résout l’univers ML demandé via un identifiant de source stable."""
-    normalized_source = str(symbol_source or "candidates").strip().lower()
+    normalized_source = str(symbol_source or "tradable-universe").strip().lower()
     if normalized_source == "tradable-universe":
         if trade_date is None:
             raise ValueError("trade_date est obligatoire pour la source tradable-universe.")
@@ -705,15 +705,7 @@ def load_symbols_for_source(
             trade_date=trade_date,
             capital_preset_key=capital_preset_key,
         )
-    if normalized_source == "stock-bars-daily":
-        return load_stock_bars_daily_symbols(engine)
-    if normalized_source == "stock-scores":
-        return load_stock_scores_symbols(engine)
-    if normalized_source == "stock-scores-history":
-        return load_stock_scores_history_symbols(engine)
-    if normalized_source == "stock-scores-all":
-        return load_stock_scores_all_symbols(engine)
-    return load_candidate_symbols(engine)
+    raise ValueError(f"Source ML non admise: {normalized_source}. Utilisez tradable-universe.")
 
 
 def load_tradable_universe_symbols(

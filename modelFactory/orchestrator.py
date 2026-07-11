@@ -31,8 +31,6 @@ from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import normalize_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.db_registry import (
-    filter_symbols_by_selector_context,
-    load_candidate_symbols,
     load_symbols_for_source,
     replace_model_governance,
 )
@@ -43,11 +41,7 @@ from database.selector_reference import filter_symbols_from_start, normalize_sta
 
 LOGGER = logging.getLogger(__name__)
 SymbolSource = Literal[
-    "candidates",
-    "stock-bars-daily",
-    "stock-scores",
-    "stock-scores-history",
-    "stock-scores-all",
+    "tradable-universe",
 ]
 
 
@@ -374,10 +368,11 @@ def run_training_batch(
     symbols: Optional[list[str]] = None,
     *,
     mode: str = "rebuild-all",
-    symbol_source: SymbolSource = "candidates",
+    symbol_source: SymbolSource = "tradable-universe",
+    universe_date: date | None = None,
     start_symbol: str | None = None,
 ) -> list[TrainResult]:
-    """Entraîne tous les symboles candidats en parallèle.
+    """Entraîne tous les symboles de l'univers tradable PIT en parallèle.
 
     Args:
         cfg: Configuration d'entraînement.
@@ -386,7 +381,8 @@ def run_training_batch(
         mode: Phase 4.2.g — ``rebuild-all`` (défaut), ``rebuild-missing``
             (skippe les symboles déjà entraînés au feature_fingerprint
             courant), ou ``refresh-stale``.
-        symbol_source: Source par défaut si ``symbols`` n'est pas fourni.
+        symbol_source: Source nominale ``tradable-universe`` si ``symbols`` n'est pas fourni.
+        universe_date: Date PIT obligatoire pour résoudre l'univers nominal.
         start_symbol: Si renseigné, filtre les symboles pour ne garder que ceux
             alphabétiquement >= à cette valeur. Exemple: ``HGI`` démarre à HGI.
 
@@ -394,13 +390,13 @@ def run_training_batch(
         Liste de TrainResult.
     """
     if symbols is None:
-        if symbol_source == "candidates":
-            try:
-                symbols = load_candidate_symbols(engine)
-            except Exception:  # noqa: BLE001 - compatibilité legacy tests / fallback source générique
-                symbols = load_symbols_for_source(engine, symbol_source)
-        else:
-            symbols = load_symbols_for_source(engine, symbol_source)
+        if universe_date is None:
+            raise ValueError("universe_date est obligatoire quand symbols n'est pas fourni.")
+        symbols = load_symbols_for_source(
+            engine,
+            symbol_source,
+            trade_date=universe_date,
+        )
 
     if start_symbol is not None:
         normalized_start = normalize_start_symbol(start_symbol)
@@ -408,25 +404,8 @@ def run_training_batch(
             symbols = filter_symbols_from_start(symbols, start_symbol=normalized_start)
             LOGGER.info("run_training_batch start_symbol=%s symbols_filtered=%d", normalized_start, len(symbols))
 
-    if symbols:
-        symbols, selector_filter_summary = filter_symbols_by_selector_context(
-            engine,
-            symbols,
-            signal_modes=cfg.data.selector_universe_signal_modes,
-            max_candidate_rank=cfg.data.selector_universe_max_candidate_rank,
-            exclude_earnings_blackout=cfg.data.selector_universe_exclude_earnings_blackout,
-        )
-        if selector_filter_summary.get("enabled"):
-            LOGGER.info(
-                "run_training_batch selector_universe_filter applied=%s input=%s output=%s reason=%s",
-                selector_filter_summary.get("applied"),
-                selector_filter_summary.get("input_symbol_count"),
-                selector_filter_summary.get("output_symbol_count"),
-                selector_filter_summary.get("reason"),
-            )
-
     if not symbols:
-        LOGGER.warning("run_training_batch no_candidates")
+        LOGGER.warning("run_training_batch no_tradable_symbols")
         return []
 
     if mode != "rebuild-all":

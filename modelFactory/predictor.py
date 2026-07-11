@@ -25,7 +25,7 @@ from modelFactory.data_loader import (
     load_universe_bars,
 )
 from modelFactory.dataset import FeatureScaler
-from modelFactory.db_registry import insert_predictions, load_candidate_symbols, load_training_run
+from modelFactory.db_registry import insert_predictions, load_tradable_universe_symbols, load_training_run
 from modelFactory.features import compute_features, get_feature_columns, validate_feature_contract
 from modelFactory.model import LSTMAttentionModule
 from modelFactory.runtime_status import increment_runtime_counter, update_runtime_status
@@ -708,7 +708,10 @@ def _prepare_prediction_frame(
         return pd.DataFrame()
     if data_cfg.enable_cross_sectional_features:
         try:
-            universe_symbols = load_candidate_symbols(engine)
+            universe_symbols = load_tradable_universe_symbols(
+                engine,
+                trade_date=cutoff_date,
+            )
             if symbol not in universe_symbols:
                 universe_symbols.append(symbol)
             universe_df = load_universe_bars(engine, universe_symbols, end_date=cutoff_date)
