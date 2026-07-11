@@ -1,257 +1,359 @@
-# Synthèse Long/Short : univers PIT, ML ternaire, risque et calibration
+# Comprendre le trading Long/Short ML-first de bout en bout
 
-> Référence fonctionnelle mise à jour le 2026-07-11 après le cutover ML-first.
+> Guide fonctionnel et opérationnel du pipeline PIT, du ML ternaire, du risque, de l'exécution et du backtest. Révision du 2026-07-11.
 
-## Quick Reference
+## Partie 1 - Public, mode d'emploi et parcours
+
+### 1.1 Public et objectif
+
+Ce guide s'adresse à une personne qui découvre à la fois le trading algorithmique et cette application. Il ne suppose aucune connaissance des marchés, du machine learning, du broker ou du backtest.
+
+À la fin du parcours, le lecteur doit pouvoir suivre un symbole depuis les données jusqu'à sa sortie, expliquer chaque rejet, distinguer une sélection d'un fill, comparer live et backtest, et reconnaître les invariants ML-first.
+
+### 1.2 Comment lire le guide
+
+Les parties 1 à 3 donnent le vocabulaire et un modèle mental sans équation. Les parties 4 à 9 détaillent la chaîne opérationnelle. Les parties 10 à 12 servent de manuel de calibration et d'audit.
+
+Trois conventions :
+
+1. **Nominal** désigne le chemin autorisé pour ouvrir une nouvelle position.
+2. **PIT** signifie que l'information était disponible à la date et au cutoff considérés.
+3. **Post-ML** signifie qu'un contrôle intervient après la direction ML : il peut conserver, réduire ou rejeter, jamais inventer ni inverser cette direction.
+
+### 1.3 Table des matières
+
+1. Public, mode d'emploi et parcours
+2. Concepts essentiels et glossaire
+3. Modèle mental et histoire d'un symbole
+4. Pipeline partagé, dans l'ordre causal
+5. Mécanique détaillée d'une position long
+6. Mécanique détaillée d'une position short
+7. Parcours complet live et paper dans l'IHM
+8. Parcours complet d'un backtest PIT
+9. Comparaison live/backtest et exemple chiffré
+10. Calibration, monitoring et gouvernance
+11. Rejets, activation des shorts et invariants
+12. Fichiers de référence et contrat exécutable
+
+### 1.4 Les quatre réponses à retenir
 
 | Question | Réponse |
 |---|---|
-| Quel est le scope nominal ? | Le dernier univers tradable PIT canonique, complet et de qualité `full`, pour la date et le preset capital demandés. |
-| Qui décide du côté ? | Uniquement `predicted_side` produit par le ML ternaire : `long`, `flat` ou `short`. |
-| Qui décide de l'ordre ? | `proba_long` pour la jambe long et `proba_short` pour la jambe short, avec des rangs et capacités séparés. |
-| Que devient `flat` ? | Une prédiction `flat`, absente, binaire ou incomplète ne peut pas ouvrir une position. |
-| À quoi servent les scores techniques ? | Features, contexte explicable et vetos post-prédiction. Ils ne définissent ni le scope, ni le côté, ni le ranking principal. |
-| À quoi sert le sentiment ? | Feature ML et/ou veto/overlay calibré. Il ne remplace jamais une prédiction directionnelle. |
-| Quel est le rôle du régime ? | Bloquer ou réduire les entrées, ajuster les contraintes et le sizing. Il ne transforme pas un long ML en short, ni l'inverse. |
-| Quel rang est persisté ? | `selection_rank` avant contraintes de risque; `decision_rank` après risque. |
-| Le train est-il quotidien ? | Non. `ml_train` est un workflow offline optionnel. Le pipeline quotidien utilise un champion déjà publié. |
-| Existe-t-il un fallback score-only ? | Non. Sans probabilité directionnelle ML complète, il n'y a pas de nouvelle position. |
+| Quel est le scope nominal ? | Le dernier univers tradable PIT canonique, complet et de qualité `full`, pour la date et le preset capital. |
+| Qui décide du côté ? | Uniquement le ML ternaire via `predicted_side = long`, `flat` ou `short`. |
+| Qui décide du rang ? | `proba_long` pour la jambe long et `proba_short` pour la jambe short, avec deux classements séparés. |
+| À quoi servent selector, scanner et scores ? | À produire des features, du contexte explicable ou des vetos post-ML. Après le cutover, ils ne définissent jamais le scope nominal, le côté ou le ranking principal. |
 
-## 0. Architecture canonique
+La partie suivante définit précisément ces mots avant de montrer le pipeline.
 
-### 0.1 Pipeline quotidien live
+## Partie 2 - Concepts essentiels et glossaire
+
+### 2.1 De la donnée à la décision
+
+| Terme | Définition simple | Rôle dans l'application |
+|---|---|---|
+| **Symbole** | Code identifiant un instrument, par exemple une action. | Clé reliant données, prédiction, ordre et position. |
+| **Univers** | Ensemble des symboles étudiés. | Le scope nominal est `tradable-universe` PIT `full`, pas un Top-N technique. |
+| **PIT** | *Point in time* : connu à cet instant. | Interdit les données futures et l'univers actuel projeté dans le passé. |
+| **Feature** | Variable fournie au modèle. | Prix, volume, volatilité, facteurs, sentiment, macro ou régime. |
+| **Score** | Résumé numérique d'un contexte. | Feature, diagnostic ou veto ; jamais autorité nominale de scope, côté ou rang. |
+| **Selector / scanner** | Module calculant des facteurs sur de nombreux symboles. | Enrichit le contexte ; son Top-N n'est pas la population nominale du ML. |
+| **ML ternaire** | Modèle à trois classes. | Produit `short`, `flat`, `long` et trois probabilités. |
+| **Probabilité** | Confiance calibrée entre 0 et 1. | `proba_long`, `proba_flat`, `proba_short`. |
+| **Long** | Position gagnant si le prix monte. | Ouverture `buy`, clôture `sell`. |
+| **Short** | Vente à découvert gagnant si le prix baisse. | Ouverture `sell`, clôture `buy` (buy-to-cover). |
+| **Flat** | Aucun pari directionnel. | N'ouvre aucune position, même avec un score élevé. |
+| **Ranking** | Classement des opportunités. | Longs par `proba_long`, shorts par `proba_short`. |
+| **Veto** | Contrôle qui bloque une opportunité. | Post-ML ; ne change jamais la direction. |
+
+### 2.2 Du risque à la position
+
+| Terme | Définition | Distinction essentielle |
+|---|---|---|
+| **Sizing** | Calcul de la quantité à engager. | Dimensionne une sélection ; ne choisit pas le symbole. |
+| **Target** | Cible approuvée par le risk. | Ce n'est pas encore un ordre. |
+| **Intent** | Demande locale idempotente d'ordre. | Décrit côté, quantité, type, prix et rôle. |
+| **Order** | Instruction reçue par le broker/simulateur. | Peut être refusée, annulée ou partiellement remplie. |
+| **Fill** | Exécution effective. | Seule la quantité remplie devient une position. |
+| **Stop** | Sortie défavorable limitant la perte. | Sous le marché pour un long, au-dessus pour un short. |
+| **Take-profit** | Sortie favorable matérialisant un gain. | Au-dessus pour un long, en dessous pour un short. |
+| **Exposition brute** | Longs plus valeur absolue des shorts. | Mesure le risque total engagé. |
+| **Exposition nette** | Longs moins valeur absolue des shorts. | Mesure le biais directionnel. |
+
+### 2.3 Live, paper et backtest
+
+| Mode | Source et exécution | Capital réel | Usage |
+|---|---|---:|---|
+| **Live** | Données courantes, broker réel | Oui | Production gouvernée. |
+| **Paper** | Même chaîne, compte broker simulé | Non | Tester intégration, fills et protections. |
+| **Backtest** | Snapshots PIT et simulateur versionné | Non | Rejouer le passé sans fuite. |
+
+Le mode `simulate` vérifie surtout la construction locale sans nécessairement tester l'intégration broker comme le paper.
+
+### 2.4 Rangs et décisions
+
+- `long_rank` et `short_rank` sont propres à chaque jambe.
+- `selection_rank` est l'ordre ML avant contraintes de portefeuille.
+- `decision_rank` est l'ordre des positions acceptées après risk.
+- `ACCEPTED` conserve la target, `REDUCED` diminue sa quantité, `REJECTED` ne produit aucune quantité.
+
+Un rang ML 1 peut être rejeté ; le rang ML 2 peut devenir `decision_rank=1` sans réécriture de son `selection_rank`.
+
+## Partie 3 - Modèle mental et histoire d'un symbole
+
+### 3.1 La chaîne en une phrase
+
+Le système observe les symboles tradables à la date, construit des informations PIT, demande au ML s'il faut envisager long, flat ou short, classe séparément les directions, laisse des gardes-fous rejeter les choix, dimensionne les survivants, puis exécute et protège uniquement les quantités remplies.
+
+```mermaid
+flowchart LR
+    D[Données connues] --> U[Univers PIT full]
+    U --> F[Features et contexte]
+    F --> M[ML ternaire]
+    M --> R[Rankings long et short]
+    R --> V[Vetos post-ML]
+    V --> K[Risque et sizing]
+    K --> T[Target]
+    T --> I[Intent]
+    I --> O[Ordre]
+    O --> X[Fill]
+    X --> P[Protection et sortie]
+```
+
+Une ligne peut disparaître à chaque frontière. Aucun module aval ne peut inventer un symbole hors univers ou une direction absente du ML.
+
+### 3.2 Histoire courte de AAA
+
+1. Au cutoff, AAA a assez d'historique, de liquidité, un spread acceptable et aucun blackout earnings : il est `is_tradable=true` dans l'univers `full`.
+2. Selector, scanner et sentiment calculent facteurs et contexte. Ils ne décident pas d'acheter.
+3. Le ML produit `P(long)=0,72`, `P(flat)=0,18`, `P(short)=0,10` et `predicted_side=long`.
+4. AAA devient deuxième du classement long par `proba_long`, jamais par score technique.
+5. Il dépasse le seuil long et aucun veto ne le bloque.
+6. Le risk vérifie corrélation, secteur, liquidité, cash et expositions, puis réduit la taille : target `REDUCED`.
+7. L'exécution crée un intent `buy`. Le broker remplit 80 des 100 actions.
+8. La position et ses protections portent sur 80 actions, pas 100.
+9. Une sortie `sell` clôt ensuite la position ; la TCA conserve prix de décision, fill et coûts.
+
+En live/paper, le broker produit les faits d'exécution. En backtest, le simulateur les estime. Avec `predicted_side=flat`, l'histoire s'arrête après le ML : aucun score ni place libre ne crée de position. Il n'existe aucun fallback score-only.
+
+## Partie 4 - Pipeline partagé, dans l'ordre causal
+
+### 4.1 Vue canonique
 
 ```mermaid
 flowchart TD
-    A[Barres PIT nettoyées] --> B[Screener large: barres, historique, prix, ADV]
-    B --> C[Run univers initial degraded]
-    C --> D[Sync quotes et earnings]
-    D --> E[Publication univers PIT full]
-    E --> F[Features techniques, sentiment et macro]
-    F --> G[ML Predict ternaire]
-    G --> H[Ranking long et short séparé]
-    H --> I[Vetos post-prédiction]
-    I --> J[Contraintes et sizing risk]
-    J --> K[Portfolio targets]
-    K --> L[Execution]
+    A[Données PIT nettoyées] --> B[Scope large et contrôles objectifs]
+    B --> C[Quotes, spread, market cap, earnings]
+    C --> D[Univers full immuable]
+    D --> E[Features, selector, sentiment, régime]
+    E --> F[ML ternaire]
+    F --> G[Rankings séparés]
+    G --> H[Vetos post-ML]
+    H --> I[Risk et sizing]
+    I --> J[Targets et exécution]
+    J --> K[Protections et sorties]
+    K --> L[Monitoring et gouvernance]
 ```
 
-Ordre opérationnel :
+### 4.2 Données, puis univers PIT
 
-1. Importer et assainir les barres.
-2. Évaluer le scope large sur les règles disponibles au screener.
-3. Synchroniser quotes et calendrier de résultats.
-4. Publier atomiquement l'univers `full`.
-5. Calculer les features PIT pour les symboles de cet univers.
-6. Exécuter l'inférence ternaire avec un champion déjà publié.
-7. Classer séparément les longs et les shorts par probabilité directionnelle.
-8. Appliquer les seuils, blackout, score, régime et autres vetos.
-9. Appliquer corrélation, concentration, sizing, exposition et circuit breakers.
-10. Persister les décisions puis exécuter les ordres autorisés.
+Barres, quotes, calendrier, nouvelles et macro doivent être nettoyés, datés et frais. En backtest, leur cutoff historique est explicite ; en live, leur fraîcheur est contrôlée.
 
-L'étape `common.publish_tradable_universe` crée un nouveau run immuable. Elle ne modifie pas le run `degraded` du screener. Un run n'est résolu que s'il est `completed`, canonique et complet (`rows_written == rows_expected`).
+#### Étape A - Collecter les données
 
-### 0.2 Workflow offline
+Le système ne commence pas par chercher « la meilleure action ». Il commence par réunir les faits nécessaires pour savoir quels symboles peuvent être étudiés sans danger.
 
-Le workflow offline couvre :
+| Type de donnée | Exemple | Pourquoi elle est nécessaire |
+|---|---|---|
+| Barres OHLCV | open, high, low, close, volume quotidien | calculer rendements, tendance, volatilité et ATR |
+| Métadonnées | statut, classe d'actif, secteur, capitalisation | éliminer les instruments hors scope et contrôler les concentrations |
+| Quotes | bid, ask, spread | éviter une entrée trop coûteuse ou impossible à exécuter |
+| Calendrier earnings | date du prochain résultat | éviter un gap événementiel pendant le blackout |
+| News/sentiment | articles datés et associés à un ticker | fournir un contexte connu au cutoff |
+| Macro/régime | taux, marché, volatilité, benchmark | adapter les limites et enrichir les features |
+| État de compte | equity, cash, buying power, positions | dimensionner et vérifier ce qui est réellement finançable |
 
-1. backfill des univers et features PIT;
-2. entraînement ternaire;
-3. calibration des probabilités;
-4. sélection et publication du champion;
-5. génération des prédictions historiques PIT;
-6. calibration des seuils, capacités, vetos et paramètres de risque;
-7. validation walk-forward et contrôle de fidélité live/backtest.
+**En live/paper**, les données viennent des providers et du broker. Elles doivent être suffisamment fraîches pour la date de décision. Une quote ancienne n'est pas équivalente à une quote absente : les deux doivent produire un état explicite.
 
-L'entraînement n'est pas une dépendance quotidienne de `ml_predict`. La production consomme uniquement un champion validé et déjà publié.
+**En backtest**, chaque valeur doit être celle connue historiquement. Une annonce corrigée plus tard, une composition d'indice actuelle ou une capitalisation recalculée avec des données futures provoquerait du look-ahead.
 
-### 0.3 Backtest
+**Sortie de l'étape :** des données normalisées, datées et auditables. Elles ne contiennent encore aucune décision long ou short.
 
-Le backtest rejoue, pour chaque séance :
+#### Étape B - Nettoyer et contrôler
 
-- l'univers tradable PIT de la date;
-- les features et scores historiques disponibles à cette date;
-- les prédictions ternaires persistées;
-- le même ranking directionnel et les mêmes vetos que le live;
-- les contraintes de risque et le modèle d'exécution simulé.
+Le sanitizer aligne les calendriers, détecte les trous, doublons et anomalies, puis produit des audits. Cette étape existe parce qu'un indicateur mathématiquement correct calculé sur une série incorrecte reste une mauvaise information.
 
-Une date sans univers canonique complet ou sans couverture ML suffisante est bloquée ou explicitement dégradée selon le mode de validation. Elle ne doit jamais basculer silencieusement sur un classement technique.
+Exemples de blocage : historique trop court, volume incohérent, prix non positif, barre dupliquée ou date hors calendrier. En live, le run peut échouer avant publication. En backtest, la séance doit être exclue ou marquée dégradée selon une règle versionnée, jamais réparée silencieusement avec une valeur future.
 
-## 1. Univers tradable PIT
+#### Étape C - Construire l'univers tradable
 
-### 1.1 Contrôles objectifs
+L'univers est résolu par `(snapshot_date, capital_preset_key)`. Le preset dépend de l'equity et influence les seuils. Les contrôles couvrent statut, classe d'actif, profondeur de barres, prix, ADV, spread, market cap, earnings et anomalies.
 
-Le grade `full` signifie que toutes les règles objectives requises ont été évaluées. Il ne signifie pas que tous les symboles ont passé les règles.
+Chaque membre reçoit `is_tradable` et un motif éventuel : `quote_unavailable`, `spread_above_maximum`, `market_cap_unavailable`, `market_cap_below_minimum` ou `earnings_blackout`.
 
-Les contrôles couvrent notamment :
+`full` signifie que tous les contrôles requis ont été évalués, non que tous les symboles passent. Le run est `completed`, canonique, immuable et complet (`rows_written == rows_expected`). Un run partiel ou `degraded` n'ouvre pas de position live. Une date backtest sans run PIT complet échoue ou est explicitement dégradée, sans univers courant de secours.
 
-- statut et classe d'actif compatibles avec le marché visé;
-- disponibilité et profondeur des barres;
-- prix minimum;
-- ADV/liquidité;
-- spread maximum;
-- market cap minimum;
-- blackout earnings;
-- anomalies et qualité des données.
+Le screener produit d'abord un scope large et les données nécessaires aux contrôles. La synchronisation des quotes et des earnings complète les informations objectives. `common.publish_tradable_universe` publie ensuite un **nouveau run immuable** de qualité `full`; elle ne transforme pas en place le run intermédiaire.
 
-Chaque symbole du scope évalué reçoit `is_tradable` et, en cas de rejet, un motif explicite comme `quote_unavailable`, `spread_above_maximum`, `market_cap_unavailable`, `market_cap_below_minimum` ou `earnings_blackout`.
+| Question | Live/paper | Backtest |
+|---|---|---|
+| Quelle date ? | date de trading demandée | date rejouée dans la boucle historique |
+| Quel preset ? | résolu depuis l'equity effective | preset explicite ou equity simulée, figé pour la séance |
+| Quel run ? | dernier run canonique complet correspondant | run PIT canonique correspondant exactement à la date |
+| Que faire s'il manque ? | bloquer les nouvelles entrées | échouer ou déclarer la dégradation selon le mode |
+| Peut-on utiliser l'univers d'aujourd'hui ? | seulement pour aujourd'hui | non, jamais pour une date passée |
 
-### 1.2 Preset capital
+**Sortie de l'étape :** la liste complète des membres évalués, avec `is_tradable`, les raisons de rejet et `universe_run_id`. Seuls les membres tradables passent à la construction des features.
 
-L'univers est résolu par `(snapshot_date, capital_preset_key)`. Le preset influence les seuils objectifs. Le live risk et la publication doivent donc résoudre la même clé à partir de l'equity effective.
+### 4.3 Features, scores et sentiment
 
-## 2. Scores techniques, sentiment et macro
+#### Étape D - Transformer les données en features
 
-### 2.1 Scores techniques
+Une feature est une information donnée au modèle, pas un ordre. Par exemple, le rendement sur 20 jours est plus directement exploitable par un modèle qu'une longue série de prix bruts. L'ATR mesure une amplitude habituelle; la force relative compare un symbole à un benchmark; les facteurs de liquidité décrivent la capacité d'exécution.
 
-Le screener et l'alpha scanner peuvent calculer des métriques telles que liquidité, force relative, tendance, VCP, ATR, beta et proximité du plus haut 52 semaines.
+Une feature doit avoir :
 
-Exemple de score large :
+- un nom et une définition stables;
+- une date d'observation et un cutoff;
+- une politique pour les valeurs manquantes;
+- une unité ou une normalisation connue;
+- la même méthode de calcul en entraînement, predict live et replay historique.
 
-$$
-total\_score = 0.15\,liquidity + 0.55\,relative\_strength + 0.30\,historical\_range
-$$
+Si une feature utilise une fenêtre de 20 séances au jour $t$, seules les séances disponibles au cutoff de $t$ peuvent entrer dans son calcul. Le même principe s'applique aux news et aux événements macro.
 
-Exemple de score technique contextualisé :
+#### Étape E - Comprendre le rôle du selector et du scanner
+
+Le nom historique « selector » peut prêter à confusion. Dans le chemin ML-first actuel, il ne sélectionne plus la petite liste finale envoyée au modèle. Il calcule et persiste surtout des facteurs techniques, des scores explicables, des informations sectorielles et des diagnostics.
+
+Le scanner peut produire un Top-N pour l'affichage ou des analyses historiques. Ce Top-N n'est pas la source nominale de `ml_predict` ni du risk. La source nominale reste tout l'univers tradable `full`.
+
+Exemples :
 
 $$
-technical\_score = w_t\frac{trend+vcp}{2} + w_s\,total\_score + w_r\,relative\_strength
+total\_score=0.15\,liquidity+0.55\,relative\_strength+0.30\,historical\_range
 $$
 
-Ces scores peuvent être winsorisés, normalisés et neutralisés par secteur. Après le cutover, ils ont trois usages autorisés :
-
-1. features du modèle;
-2. diagnostics et explicabilité;
-3. vetos post-prédiction, par exemple un minimum technique pour un long ou un maximum pour un short.
-
-Ils ne servent plus à fabriquer une liste Top-N transmise au ML.
-
-### 2.2 Score baissier
-
-Un score baissier technique peut rester disponible comme feature ou veto :
-
 $$
-short\_score = 0.30(1-trend) + 0.25(1-RSI/100)
- + 0.25\mathbf{1}_{price<SMA50} + 0.20\mathbf{1}_{price<SMA200}
+technical\_score=w_t\frac{trend+vcp}{2}+w_s\,total\_score+w_r\,relative\_strength
 $$
 
-Il ne décide pas du côté. Un symbole n'est short que si `predicted_side == "short"` et si `proba_short` satisfait les contrôles directionnels.
-
-### 2.3 Sentiment et macro
-
-Le pipeline sentiment calcule les signaux article, ticker, secteur et macro. La fusion de contexte peut s'écrire :
-
 $$
-context\_score = w_q\,technical + w_s\,sentiment + w_m\,macro
+short\_score=0.30(1-trend)+0.25(1-RSI/100)+0.25\mathbf{1}_{price<SMA50}+0.20\mathbf{1}_{price<SMA200}
 $$
 
-Ce résultat reste une feature ou un veto. Même avec des poids calibrés, il ne devient pas l'autorité de ranking.
+$$
+context\_score=w_q\,technical+w_s\,sentiment+w_m\,macro
+$$
 
-Les poids par défaut peuvent rester conservateurs (`quant=1`, `sentiment=0`, `macro=0`) lorsque les tests IC/OOS ne montrent pas de valeur incrémentale stable.
+Ces valeurs peuvent être winsorisées, normalisées et neutralisées par secteur. Leurs seuls usages autorisés sont feature ML, diagnostic/explicabilité et veto post-ML. Elles ne fabriquent plus un Top-N nominal transmis au ML. Les poids peuvent rester `quant=1`, `sentiment=0`, `macro=0` sans valeur IC/OOS stable.
 
-## 3. ML ternaire
+Le sentiment suit la même règle. Un article très positif ne crée pas un long et un article négatif ne crée pas un short. Le signal peut aider le modèle ou opposer un veto calibré après la prédiction.
 
-### 3.1 Scope d'entraînement et d'inférence
+| Élément | Peut définir le scope ? | Peut définir le côté ? | Peut définir le rang principal ? | Peut être feature/veto ? |
+|---|---:|---:|---:|---:|
+| Règle objective d'univers | oui | non | non | contexte seulement |
+| Score selector/scanner | non | non | non | oui |
+| Sentiment/macro | non | non | non | oui |
+| `predicted_side` | non | oui | détermine la jambe | oui |
+| Probabilité directionnelle | non | avec `predicted_side` | oui | oui |
 
-La seule source nominale est `tradable-universe`. Le train historique résout le scope PIT de chaque période; le predict quotidien résout le snapshot `full` courant.
+**Sortie de l'étape :** une ligne de features et de contexte par symbole/date, sans ordre de trading.
 
-Les features peuvent inclure :
+### 4.4 ML ternaire et calibration
 
-- OHLCV et indicateurs techniques;
-- volatilité, liquidité et facteurs cross-sectionnels;
-- sentiment ticker/secteur;
-- contexte macro et régime;
-- scores techniques, sans filtre préalable basé sur ces scores.
+#### Étape F - Entraîner offline, prédire quotidiennement
 
-### 3.2 Target
+Il faut distinguer deux opérations :
 
-Le contrat de production est ternaire :
+- **Train** : apprendre les relations historiques. C'est un workflow offline, long, évalué et gouverné.
+- **Predict** : appliquer un champion déjà publié aux features du jour. C'est l'opération quotidienne.
 
-| Classe | Sens |
+Le pipeline quotidien ne réentraîne pas automatiquement le modèle. Cela évite de modifier sa logique sans validation juste avant de prendre une décision réelle.
+
+| Classe | Target future |
 |---|---|
-| `short` | baisse au-delà du seuil inférieur sur l'horizon |
-| `flat` | rendement entre les deux seuils |
-| `long` | hausse au-delà du seuil supérieur sur l'horizon |
-
-Les seuils et l'horizon sont optimisés offline, avec splits chronologiques purgés et validation walk-forward. Un modèle binaire ne satisfait pas le contrat live ML-first.
-
-### 3.3 Probabilités et calibration
-
-Le modèle produit :
+| `short` | baisse au-delà du seuil inférieur |
+| `flat` | rendement entre les seuils |
+| `long` | hausse au-delà du seuil supérieur |
 
 $$
-P(short) + P(flat) + P(long) = 1
+P(short)+P(flat)+P(long)=1
 $$
 
-Pour un modèle ternaire, le Temperature Scaling applique :
+Le Temperature Scaling applique :
 
 $$
-P_k = softmax(z_k/T)
+P_k=softmax(z_k/T)
 $$
 
-Le paramètre $T$ est ajusté sur validation seulement. La calibration doit améliorer la fiabilité probabiliste sans changer arbitrairement la logique de classe.
+$T$ est ajusté sur validation seulement. Le système persiste côté, trois probabilités, date PIT et version du modèle. Une sortie absente, binaire ou incomplète n'ouvre rien.
 
-Les sorties persistées minimales sont `predicted_side`, `proba_long`, `proba_flat`, `proba_short`, la date PIT et l'identité/version du modèle.
+`predicted_side` correspond normalement à la classe retenue par le modèle après calibration, mais le contrat exige aussi la probabilité de chaque classe. Une simple étiquette `long` sans `proba_long`, `proba_flat` et `proba_short` n'est pas suffisante pour le pipeline nominal.
 
-## 4. Ranking directionnel
+Exemple :
 
-### 4.1 Jambes séparées
+| Symbole | `proba_short` | `proba_flat` | `proba_long` | `predicted_side` | Conséquence |
+|---|---:|---:|---:|---|---|
+| AAA | 0,10 | 0,18 | 0,72 | long | peut entrer dans la jambe long |
+| BBB | 0,24 | 0,58 | 0,18 | flat | aucune nouvelle position |
+| CCC | 0,67 | 0,20 | 0,13 | short | peut entrer dans la jambe short |
+| DDD | absent | absent | absent | absent | aucune nouvelle position |
 
-Après exclusion de `flat` et des prédictions incomplètes :
+**Live/paper :** le predict charge le champion publié et calcule les probabilités sur le snapshot `full` courant.
 
-- la jambe long est triée par `proba_long` décroissante;
-- la jambe short est triée par `proba_short` décroissante;
-- les capacités long et short sont appliquées séparément;
-- `max_positions` borne ensuite la capacité totale.
+**Backtest :** le mode de parité charge des prédictions PIT persistées. Recalculer aujourd'hui tout le passé avec un modèle entraîné plus tard ne reproduirait pas ce que l'application savait réellement à l'époque.
 
-Le score technique ne départage pas le ranking nominal. Un éventuel tie-break doit être déterministe et auditable, par exemple le symbole, sans réintroduire une autorité score-first.
+**Sortie de l'étape :** une prédiction ternaire versionnée par symbole/date.
 
-### 4.2 Rangs
+### 4.5 Rankings et vetos
 
-- `selection_rank` représente l'ordre ML avant contraintes de portefeuille;
-- `decision_rank` représente l'ordre des positions acceptées après risque;
-- un rejet conserve son contexte et son motif, mais ne reçoit pas artificiellement un meilleur rang.
+#### Étape G - Construire deux classements
 
-## 5. Vetos post-prédiction
-
-Les vetos s'appliquent après que le ML a fixé le côté. Ils peuvent :
-
-- exiger `proba_long >= min_proba_long` ou `proba_short >= min_proba_short`;
-- exiger un score technique minimal pour un long;
-- imposer un score technique maximal ou un signal baissier minimal pour un short;
-- bloquer un earnings blackout ou une donnée périmée;
-- bloquer les nouvelles entrées selon le régime;
-- appliquer confirmation, concentration ou blacklist;
-- refuser une couverture ML globale insuffisante.
-
-Un veto peut conserver ou rejeter une direction. Il ne peut pas inverser cette direction.
-
-## 6. Risk et sizing
-
-### 6.1 Ordre des contraintes
-
-```mermaid
-flowchart TD
-    A[Selections ML classées] --> B[Vetos directionnels et contextuels]
-    B --> C[Confirmation et concentration]
-    C --> D[Filtre corrélation ou factoriel]
-    D --> E[Contraintes secteur, beta et exposition]
-    E --> F[Sizing ATR ou Kelly]
-    F --> G[Circuit breakers]
-    G --> H[decision_rank et portfolio_targets]
-```
-
-La conviction utilisée pour ordonner les sélections est désormais la probabilité directionnelle :
+Après retrait des `flat` : longs par `proba_long` décroissante, shorts par `proba_short` décroissante, capacités de jambe séparées, puis `max_positions`. Le symbole peut servir de tie-break déterministe. Le score ne départage pas le ranking nominal.
 
 $$
-conviction_{long}=P(long), \qquad conviction_{short}=P(short)
+conviction_{long}=P(long),\qquad conviction_{short}=P(short)
 $$
 
-Les anciennes signatures `score_weight`/`prediction_weight` peuvent subsister pour lire des artefacts historiques, mais elles n'influencent plus le ranking runtime.
+Pourquoi deux classements ? Une probabilité long de 0,70 et une probabilité short de 0,70 décrivent deux paris opposés mais également forts dans leur propre jambe. Les mélanger avant d'appliquer les capacités pourrait supprimer tous les shorts ou tous les longs selon la distribution des classes.
 
-### 6.2 Kelly
+L'ordre exact est :
 
-Le sizing Kelly peut combiner probabilité ML calibrée et taux de succès historique :
+1. exclure `flat` et les prédictions incomplètes;
+2. classer les longs entre eux;
+3. classer les shorts entre eux;
+4. conserver au plus `max_long_positions` et `max_short_positions`;
+5. réunir les survivants;
+6. appliquer `max_positions` sur la probabilité directionnelle;
+7. attribuer `selection_rank` avant risk.
+
+Une capacité est un maximum, pas un objectif à remplir. S'il n'existe aucun bon short, l'application ne fabrique pas un short pour atteindre `max_short_positions`.
+
+#### Étape H - Appliquer les vetos post-ML
+
+Les vetos peuvent imposer probabilité, score long minimal, score short maximal, fraîcheur, earnings, régime, confirmation, concentration ou couverture ML. Ils ne peuvent pas inverser le côté.
+
+Le seuil de probabilité répond à la question « la confiance est-elle suffisante ? ». Le veto technique répond à une autre question : « le contexte rend-il ce pari incohérent malgré le ML ? ». La séparation est importante pour attribuer correctement le motif de rejet.
+
+Exemples :
+
+- `predicted_side=long`, mais `proba_long < min_proba_long` : rejet de confiance;
+- `predicted_side=short`, mais score technique trop haussier : veto short;
+- prédiction valide, mais earnings demain : blackout;
+- symbole valide aujourd'hui, mais confirmation requise depuis trois jours non atteinte : attente;
+- couverture globale ML insuffisante : blocage de toutes les nouvelles entrées.
+
+**Sortie de l'étape :** des sélections ML survivantes avec rang et, pour chaque exclusion, un motif auditables.
+
+### 4.6 Risk, sizing et exécution
+
+#### Étape I - Construire un portefeuille, pas une collection de paris isolés
+
+L'ordre est : vetos, confirmation/concentration, corrélation, secteur/beta/expositions, sizing ATR ou Kelly, liquidité/capacité, circuit breakers, `decision_rank`, targets.
+
+Même si deux symboles sont individuellement attractifs, les posséder ensemble peut concentrer le même risque. Le risk regarde donc le portefeuille global : corrélation, secteur, beta, facteurs, exposition brute, exposition nette et capital disponible.
+
+Le filtre de corrélation traite d'abord les convictions les plus fortes. Lorsque deux opportunités dépassent le seuil de similarité, il conserve normalement la mieux classée et bloque l'autre. Il ne doit pas retrier les symboles avec un score technique.
 
 $$
 p_{eff}=\alpha p_{ML}+(1-\alpha)p_{historique}
@@ -261,337 +363,101 @@ $$
 f_{Kelly}=p_{eff}-\frac{1-p_{eff}}{payoff\_ratio}
 $$
 
-La fraction réellement engagée est réduite par un multiplicateur prudent et bornée par les limites ATR, poids par ligne, poids secteur, liquidité et exposition.
+Kelly dimensionne seulement. Régime et circuit breakers peuvent réduire ou bloquer, jamais choisir le côté. L'exécution crée un intent idempotent, observe le fill et protège la quantité remplie. Le monitoring relie toutes les étapes par identifiants de run.
 
-Le Kelly ne choisit pas les symboles. Il dimensionne uniquement une sélection déjà validée.
+Le sizing répond à trois plafonds conceptuels :
 
-### 6.3 Régime et circuit breakers
+1. **Perte acceptable** : quantité permise par le stop et le budget de risque.
+2. **Concentration acceptable** : poids maximal de la ligne et du secteur.
+3. **Exécution acceptable** : ADV, notionnel minimal, quantité fractionnaire, cash/marge et buying power.
 
-Le régime peut réduire les capacités, l'exposition ou le risque par trade, interdire de nouvelles entrées, ou forcer un mode de préservation. Les circuit breakers protègent contre le drawdown, la perte journalière et les états de données/modèle non fiables.
+La quantité approuvée est le minimum imposé par les contraintes actives. Si elle tombe à zéro ou sous le minimum exécutable, la ligne est rejetée. Sinon elle devient target `ACCEPTED` ou `REDUCED`.
 
-## 7. Fidélité live/backtest
+#### Étape J - Exécuter, remplir et protéger
 
-| Élément | Live | Backtest |
-|---|---|---|
-| Univers | run canonique `full` courant | run canonique PIT de chaque séance |
-| Features | calcul courant avec cutoff | snapshots/features au cutoff historique |
-| Prédictions | inférence du champion publié | prédictions PIT persistées |
-| Ranking | probabilités directionnelles | mêmes probabilités et mêmes capacités |
-| Vetos/risk | configuration active | configuration versionnée du replay |
-| Exécution | broker paper/live | simulateur avec coûts et règles de fill |
+Une target n'est pas envoyée telle quelle sans contrôle. Le moteur d'exécution :
 
-Les contrôles de fidélité doivent comparer le scope, les prédictions, les rangs, les motifs de rejet, les tailles et les expositions. Toute dégradation PIT doit être visible dans les artefacts, jamais remplacée silencieusement par des données courantes.
+1. prend un snapshot des targets liées au `risk_run_id`;
+2. vérifie la fenêtre de soumission et l'état du compte;
+3. construit un intent idempotent;
+4. applique les contrôles de gap, buying power et positions existantes;
+5. soumet au broker ou au simulateur;
+6. observe rejet, fill partiel ou fill complet;
+7. crée les protections sur la quantité réellement remplie;
+8. réconcilie requests, ordres, fills, positions et lots;
+9. calcule slippage et implementation shortfall.
 
-## 8. Calibration multi-niveaux
+Le take-profit, le stop initial et le trailing stop sont des ordres enfants de la position. Le watcher maintient leur lifecycle. Une position remplie sans protection attendue est une anomalie opérationnelle, pas un simple détail de reporting.
 
-### 8.1 Principe
+#### Étape K - Sortir et mesurer
 
-La calibration suit l'ordre des dépendances du système. Elle ne doit pas optimiser un score amont pour reproduire indirectement une sélection que le ML est désormais seul à ordonner.
+Une sortie peut venir d'un take-profit, stop initial, trailing stop, time stop, circuit breaker, ordre manuel ou réconciliation. Le P&L n'est définitif qu'après prise en compte de la quantité, des prix de fill et des coûts.
 
-Il faut distinguer :
+**En live/paper**, les fills broker et positions réconciliées constituent les faits observés.
 
-- la calibration du modèle et de ses probabilités;
-- la calibration des décisions directionnelles;
-- la calibration des vetos/contextes;
-- la calibration du risque et du sizing;
-- la validation OOS de l'ensemble.
+**En backtest**, les mêmes transitions sont simulées avec des hypothèses de timing et de priorité intrabar. Ces hypothèses doivent être conservatrices, versionnées et visibles dans l'artefact.
 
-### 8.2 Ordre offline obligatoire
+**Sortie finale :** position fermée ou toujours ouverte, P&L, coûts, motifs et chaîne complète d'identifiants permettant de remonter jusqu'à l'univers et au modèle.
 
-1. **Construire les données PIT**
-   - publier/backfiller les univers par date et preset;
-   - calculer les features avec leur cutoff;
-   - vérifier l'absence de look-ahead et la complétude.
+## Partie 5 - Mécanique détaillée d'une position long
 
-2. **Entraîner le modèle ternaire**
-   - optimiser horizon, seuils `short/flat/long` et hyperparamètres sur train/validation chronologiques;
-   - mesurer la performance par classe et par régime;
-   - conserver un test final non utilisé pour le réglage.
+### 5.1 Éligibilité et classement
 
-3. **Calibrer les probabilités**
-   - ajuster Temperature Scaling sur validation;
-   - contrôler Brier/NLL, reliability curves et calibration par classe;
-   - rejeter une calibration qui améliore une métrique globale en dégradant fortement une jambe.
-
-4. **Publier le champion et générer les prédictions PIT**
-   - versionner modèle, scaler, calibrateur et feature schema;
-   - produire les quatre champs ternaires pour tout l'univers éligible;
-   - vérifier la couverture par date avant toute calibration aval.
-
-5. **Calibrer les décisions directionnelles**
-   - optimiser `min_proba_long` et `min_proba_short` séparément;
-   - calibrer capacités long, short et totale;
-   - évaluer turnover, précision, rendement, drawdown et exposition par jambe;
-   - ne jamais remplacer une probabilité absente par un score.
-
-6. **Calibrer les vetos de contexte**
-   - tester les seuils techniques, sentiment, macro, earnings et régime après le ranking ML;
-   - conserver un veto uniquement s'il apporte une valeur OOS stable;
-   - les poids quant/sentiment/macro calibrent une feature ou un veto, pas la conviction directionnelle.
-
-7. **Calibrer le sizing**
-   - ajuster `kelly_fraction_multiplier`, `assumed_payoff_ratio`, `min_effective_probability`, risque par trade et bornes ATR;
-   - figer d'abord ranking et vetos pour éviter qu'un mauvais sizing masque une bonne sélection;
-   - utiliser le moteur complet avec coûts, corrélation et circuit breakers pour la validation finale.
-
-8. **Valider en walk-forward**
-   - recalibrer uniquement sur la fenêtre train de chaque fold;
-   - tester sur la fenêtre suivante sans fuite;
-   - agréger les métriques long, short, portefeuille, régimes et coûts;
-   - comparer au champion/baseline en place et appliquer les règles de gouvernance avant promotion.
-
-### 8.3 Ce qui n'est plus une calibration de production
-
-La grille historique :
+Il faut : univers `full`, `is_tradable=true`, features PIT, prédiction complète, `predicted_side=long`, probabilité finie, capacités respectées, `proba_long >= min_proba_long`, aucun veto, notionnel exécutable, prix/ATR/liquidité frais et aucun kill-switch.
 
 $$
-w_{score}\,score + w_{ML}\,probabilité
+long\_rank_i=rank_{desc}(P_i(long)),\quad i\in L_t
 $$
 
-ne calibre plus l'autorité de sélection. Dans le runtime ML-first, `core.conviction.compute_conviction()` et `compute_conviction_short()` retournent la probabilité directionnelle obligatoire. Les champs et artefacts `score_weight`/`prediction_weight` peuvent rester lisibles pour compatibilité et comparaison historique, mais ils ne doivent pas être promus comme nouveaux paramètres de ranking live.
-
-La calibration sentiment reste pertinente uniquement pour une feature ou un veto. La calibration Kelly reste pertinente pour le sizing.
-
-### 8.4 Ordre quotidien après calibration
-
-L'exécution quotidienne ne relance aucune grille :
-
-1. charger le champion et son calibrateur publiés;
-2. produire les probabilités ternaires sur l'univers `full`;
-3. classer long et short séparément;
-4. appliquer les seuils directionnels et les vetos de contexte;
-5. appliquer les contraintes de portefeuille;
-6. dimensionner les positions;
-7. persister `selection_rank`, `decision_rank`, motifs et versions;
-8. exécuter.
-
-### 8.5 Fréquence et déclencheurs
-
-Une recalibration peut être planifiée trimestriellement et déclenchée après :
-
-- nouvel entraînement ou changement de feature schema;
-- dérive de distribution ou de calibration;
-- changement durable de régime;
-- modification des règles d'univers, des coûts ou des contraintes risk;
-- écart significatif de fidélité live/backtest.
-
-Une dérive n'autorise pas une promotion automatique. Elle déclenche une analyse, une validation OOS et une décision de gouvernance.
-
-## 9. Monitoring et gouvernance
-
-Le monitoring minimal couvre :
-
-- complétude et fingerprint de l'univers;
-- couverture ML et répartition `long/flat/short`;
-- Brier/NLL et calibration par classe;
-- performance et turnover par jambe;
-- stabilité des seuils et capacités;
-- taux et motifs de veto;
-- expositions nettes/brutes, secteurs, beta et corrélations;
-- slippage, fills, drawdown et circuit breakers;
-- cohérence entre `selection_rank` et `decision_rank`.
-
-Le kill-switch ML bloque les nouvelles positions lorsque la gouvernance ou la dérive invalide le modèle. Il n'active pas un chemin score-only.
-
-## 10. Fichiers de référence
-
-| Domaine | Fichiers principaux |
-|---|---|
-| Univers PIT | `common/tradable_universe.py`, `common/publish_tradable_universe.py`, `alembic/versions/0046_add_tradable_universe_history.py` |
-| Orchestration | `ihm/services/pipeline_runner.py` |
-| Features/scores | `screener/pipeline.py`, `selector/factors.py`, `selector/ranking.py`, `event_sentiment/signal_aggregator.py` |
-| Train/predict | `modelFactory/orchestrator.py`, `modelFactory/trainer.py`, `modelFactory/predictor.py`, `modelFactory/calibration.py` |
-| Ranking replay | `backtesting/signal_replay.py`, `backtesting/risk_bridge.py` |
-| Risk live | `risk_management/cli.py`, `risk_management/portfolio_builder.py`, `core/conviction.py` |
-| Calibration | `backtesting/weights_calibration.py`, `backtesting/sentiment_calibration.py`, `backtesting/walk_forward.py` |
-| Schéma final | `alembic/versions/0047_add_selection_rank_to_risk_execution.py`, `alembic/versions/0048_drop_candidate_columns_from_score_snapshots.py` |
-
-## 11. Invariants à ne pas réintroduire
-
-1. Aucun scope nominal construit depuis un flag ou rang de présélection technique.
-2. Aucun modèle binaire accepté par le live directionnel.
-3. Aucun côté dérivé d'un score ou d'un tagging technique.
-4. Aucun fallback score-only en l'absence de ML.
-5. Aucun mélange score/probabilité utilisé comme autorité de ranking.
-6. Aucun train automatique requis dans le workflow quotidien.
-7. Aucun snapshot PIT partiel ou `degraded` utilisé pour ouvrir une position live.
-8. Aucune confusion entre `selection_rank` et `decision_rank`.
-
-## 12. Vocabulaire et objets qui circulent entre les modules
-
-Le mot « sélection » désigne ici un symbole auquel le ML a attribué une direction exploitable et qui se trouve encore dans la capacité de sa jambe. Il ne désigne pas une présélection technique antérieure au ML.
-
-| Objet | Produit par | Contenu utile | Autorité |
-|---|---|---|---|
-| Membre d'univers | screener puis publication `full` | symbole, prix, ADV, spread, market cap, blackout, `is_tradable`, motif | définit le scope objectif |
-| Features/scores | screener, selector, sentiment, régime | facteurs techniques et contextuels datés | explique et alimente le ML; peut opposer un veto |
-| Prédiction | Model Factory | `predicted_side`, trois probabilités, date et version du modèle | définit la direction et la conviction |
-| Signal rejoué | `backtesting.signal_replay` | côté `buy`/`sell`, probabilité directionnelle, rangs, veto | matérialise le ranking ML en backtest |
-| `SelectionScore` | repository/bridge risk | score de contexte, secteur, dates PIT, explication, `selection_rank` | entrée contextuelle du risk, jamais source du côté |
-| `PredictionInfo` | repository de prédictions | direction et probabilités ternaires | preuve ML obligatoire pour le risk |
-| `PortfolioEntry` | `PortfolioBuilder` | quantité proposée/approuvée, notionnel, poids, décision, rangs, stop, conviction | décision de portefeuille |
-| `ExecutionTarget` | persistance risk/execution | cible figée associée au `risk_run_id` | contrat entre risk et exécution |
-| `OrderIntent` | moteur d'exécution | côté broker, quantité, type, prix, rôle, idempotence | demande d'ordre auditable |
-| Fill | broker ou simulateur | quantité réellement remplie, prix moyen, slippage, shortfall | vérité d'exécution |
-| Protection | exécuteur/watcher | take-profit, stop initial, trailing stop, time stop | contrôle de la position ouverte |
-
-La chaîne de causalité est donc :
-
-```mermaid
-flowchart LR
-   U[UniverseMember full] --> F[Features et scores PIT]
-   F --> P[Prediction ternaire]
-   P --> S[Selection ML]
-   F --> V[Vetos de contexte]
-   S --> V
-   V --> R[PortfolioEntry]
-   R --> T[ExecutionTarget]
-   T --> O[OrderIntent]
-   O --> X[Fill]
-   X --> G[Protections et sortie]
-```
-
-Une ligne peut disparaître à chaque frontière, mais aucune frontière aval ne peut inventer une direction absente en amont.
-
-## 13. Comment une position long est construite
-
-### 13.1 Conditions nécessaires
-
-Un symbole ne devient éligible à un achat que si toutes les conditions suivantes sont vraies :
-
-1. il appartient au snapshot `tradable-universe` `full` résolu pour la date et le preset capital;
-2. sa ligne d'univers porte `is_tradable=true`;
-3. ses features respectent le cutoff PIT;
-4. une prédiction ternaire complète existe pour le symbole et la date;
-5. `predicted_side == "long"` et `proba_long` est finie;
-6. son rang long ne dépasse pas `max_long_positions`;
-7. son rang total ne dépasse pas `max_positions`;
-8. `proba_long >= min_proba_long`;
-9. les vetos de contexte, de régime et de concentration ne le bloquent pas;
-10. les contraintes de portefeuille autorisent un notionnel supérieur au minimum exécutable;
-11. les données de prix, ATR et liquidité nécessaires au sizing sont disponibles et fraîches;
-12. les circuit breakers et le kill-switch ML autorisent de nouvelles entrées.
-
-La conviction est :
+Si activé :
 
 $$
-conviction = P(long)
+score_i<min\_score\_veto\_long\Rightarrow rejet
 $$
 
-Le côté applicatif devient `buy`. La quantité reste positive; c'est le champ `side` qui donne son sens à l'ordre.
+Un score élevé sans côté long ne produit jamais d'achat.
 
-### 13.2 Classement
-
-Pour une date $t$, soit $L_t$ l'ensemble des symboles prédits long. Le classement de jambe est :
+### 5.2 Taille et protections
 
 $$
-long\_rank_i = rank_{desc}\left(P_i(long)\right), \quad i \in L_t
+risk\_budget=equity\times risk\_per\_trade\_pct\times risk\_multiplier
 $$
-
-Seuls les premiers `max_long_positions` survivent au plafond de jambe. Les survivants long et short sont ensuite réunis et triés par leur probabilité directionnelle pour appliquer `max_positions`. Le symbole sert de tie-break déterministe après la probabilité.
-
-### 13.3 Veto technique long
-
-Si le veto est activé :
-
-$$
-score_i < min\_score\_veto\_long \Rightarrow rejet
-$$
-
-Ce contrôle ne promeut jamais un symbole. Un score très élevé sans `predicted_side=long` ne produit aucun achat. Un score faible peut en revanche annuler un long ML si la gouvernance a démontré que ce veto améliore les résultats OOS.
-
-### 13.4 Sizing et risque initial
-
-Avec un sizing ATR, le budget de risque nominal vaut :
-
-$$
-risk\_budget = equity \times risk\_per\_trade\_pct \times risk\_multiplier
-$$
-
-Pour un long :
 
 $$
 stop_{initial}=entry-ATR_{20}\times atr\_stop\_multiple
 $$
 
 $$
-risk\_per\_share=entry-stop_{initial}
+shares_{risk}=\frac{risk\_budget}{entry-stop_{initial}}
 $$
 
-$$
-shares_{risk}=\frac{risk\_budget}{risk\_per\_share}
-$$
-
-La quantité finale est bornée par le poids maximal par ligne, l'ADV, le notionnel minimal, l'exposition brute, le secteur, le cash/buying power et les autres contraintes actives. Une réduction crée une décision `REDUCED`; une quantité nulle ou non exécutable crée un rejet.
-
-### 13.5 Ordres et protections long
-
-Après fill de l'entrée `buy`, l'exécution construit normalement :
-
-- un take-profit `sell` au-dessus du fill;
-- un stop initial `sell` sous le fill;
-- un trailing stop `sell`, initialement tenu puis activé par le watcher;
-- éventuellement un time stop et des ordres de réconciliation.
-
-Le take-profit combine la cible en pourcentage et, lorsque le risque par action est disponible, une cible en multiple de $R$. Pour un objectif $2R$ :
+Poids, ADV, notionnel minimal, secteur, exposition, cash et buying power bornent la quantité. L'entrée est `buy`; take-profit, stop, trailing et clôture sont `sell`. Pour $2R$ :
 
 $$
 TP_{long}=entry+2\times risk\_per\_share
 $$
 
-Le moteur utilise la cible la plus exigeante entre la règle en pourcentage et la règle en $R$.
+Le moteur peut retenir la cible la plus exigeante entre pourcentage et multiple de $R$. Fills partiels et gaps doivent modifier la quantité et le prix réellement protégés.
 
-## 14. Comment une position short est construite
+## Partie 6 - Mécanique détaillée d'une position short
 
-### 14.1 Conditions supplémentaires
+### 6.1 Conditions et ranking
 
-Un short satisfait le même contrat PIT et ML qu'un long, avec :
-
-1. `short_selling_enabled=true` dans le chemin risk concerné;
-2. `predicted_side == "short"`;
-3. une `proba_short` finie et supérieure à `min_proba_short`;
-4. `short_rank <= max_short_positions`;
-5. les éventuels contrôles de rotation et de benchmark baissier;
-6. l'autorisation broker, la marge, le buying power et la disponibilité à l'emprunt au moment de l'exécution;
-7. une exposition short compatible avec l'exposition brute, nette, sectorielle et factorielle.
-
-La conviction est :
+Aux conditions communes s'ajoutent `short_selling_enabled=true`, `predicted_side=short`, seuil et capacité short, contexte benchmark/rotation, autorisation broker, marge, buying power, borrow et limites d'exposition.
 
 $$
-conviction = P(short)
+short\_rank_i=rank_{desc}(P_i(short)),\quad i\in S_t
 $$
 
-Le côté applicatif devient `sell`. La quantité demeure positive. Une clôture short est un ordre `buy`, c'est-à-dire un buy-to-cover.
-
-### 14.2 Classement
-
-Pour l'ensemble $S_t$ des symboles prédits short :
+`long_rank=1` et `short_rank=1` peuvent coexister. Le veto short est souvent un plafond :
 
 $$
-short\_rank_i = rank_{desc}\left(P_i(short)\right), \quad i \in S_t
+score_i>max\_score\_veto\_short\Rightarrow rejet
 $$
 
-Le rang short n'est pas comparé au rang long avant l'application des capacités propres aux jambes. Ainsi, `long_rank=1` et `short_rank=1` peuvent coexister. Le plafond total décide ensuite lesquels entrent dans la capacité globale en comparant leurs probabilités directionnelles.
+Un `short_score` reste feature ou veto, jamais source du côté.
 
-### 14.3 Veto technique short
-
-Le score technique historique étant orienté vers la qualité haussière, le veto short est un plafond :
-
-$$
-score_i > max\_score\_veto\_short \Rightarrow rejet
-$$
-
-Il ne faut pas confondre ce veto avec `short_score`. Un signal baissier peut enrichir les features ou justifier un veto, mais il ne remplace jamais `predicted_side=short`.
-
-### 14.4 Contexte de marché
-
-Selon la configuration active, le système peut exiger une rotation compatible et un benchmark baissier, par exemple SPY sous sa SMA50. Ces contrôles réduisent les faux shorts pendant un rebond violent. Ils ont trois résultats possibles : conserver, réduire ou bloquer le short. Ils ne transforment jamais le symbole en long.
-
-Le régime peut aussi réduire `max_short_positions`, resserrer les seuils, limiter l'exposition brute ou désactiver complètement les nouvelles ventes à découvert.
-
-### 14.5 Sizing, stop et protections short
-
-Pour un short, le risque adverse se trouve au-dessus du prix d'entrée :
+### 6.2 Sens, taille et contexte
 
 $$
 stop_{initial}=entry+ATR_{20}\times atr\_stop\_multiple
@@ -601,562 +467,730 @@ $$
 risk\_per\_share=stop_{initial}-entry
 $$
 
-La logique de budget de risque et les plafonds de notionnel restent identiques au long. Les intents sont direction-aware :
-
 | Étape | Long | Short |
 |---|---|---|
 | Entrée | `buy` | `sell` |
 | Take-profit | `sell` au-dessus | `buy` en dessous |
-| Stop initial | `sell` en dessous | `buy` au-dessus |
-| Trailing stop | `sell` | `buy` |
-| Clôture/réconciliation | vente | buy-to-cover |
-
-Pour un objectif de gain $g$ :
+| Stop | `sell` en dessous | `buy` au-dessus |
+| Clôture | vente | buy-to-cover |
 
 $$
-TP_{long}=entry(1+g), \qquad TP_{short}=entry(1-g)
+TP_{long}=entry(1+g),\qquad TP_{short}=entry(1-g)
 $$
 
-Le moteur d'intents inverse aussi le buffer de limite : une limite d'achat long cherche un prix inférieur au signal, tandis qu'une limite d'entrée short cherche un prix supérieur au signal.
+Benchmark baissier, rotation et régime peuvent conserver, réduire ou bloquer le short. Ils ne le transforment pas en long.
 
-### 14.6 Risques propres au short
+### 6.3 Risques asymétriques
 
-Le risque short n'est pas parfaitement symétrique au long : perte théorique non bornée, rappel d'emprunt, hard-to-borrow, frais d'emprunt, gap haussier et contrainte de marge. Le backtest ne doit pas considérer ces coûts comme nuls par défaut si l'objectif est une estimation réaliste. Une comparaison sérieuse doit documenter :
+Le short expose à une perte théorique non bornée, gap haussier, rappel d'emprunt, hard-to-borrow, frais de borrow, dividendes dus, marge et liquidation forcée. Ces risques appartiennent au broker/simulateur, pas à `proba_short`. Le backtest documente disponibilité, borrow, dividendes, marge, gaps et fills de stops.
 
-- le modèle de borrow et son coût;
-- l'hypothèse de disponibilité des titres;
-- le traitement des dividendes dus;
-- les exigences de marge;
-- les gaps et limites de fill des stops;
-- la liquidation forcée éventuelle.
+## Partie 7 - Parcours complet live et paper dans l'IHM
 
-Ces éléments relèvent de l'exécution et du simulateur; ils ne doivent pas être artificiellement absorbés par `proba_short`.
+### 7.1 Préconditions et Pipeline
 
-## 15. Déroulement complet d'un run live
+Exiger schémas attendus, données fraîches, univers `full`, champion et calibrateur publiés, couverture ML, régime/compte/broker, configurations validées et kill-switch ouvert.
 
-### 15.1 Préconditions
+| Étape IHM | Rôle | Contrôle |
+|---|---|---|
+| Import Alpaca Bar | charge les barres | dates et complétude |
+| Data Sanitizer Daily | nettoie | anomalies et fraîcheur |
+| Stock Screener | scope large/contexte | aucune sélection directionnelle |
+| Sync Latest Quotes | prix/spread | couverture |
+| Sync Earnings Calendar | blackouts | dates de résultats |
+| Publish Tradable Universe | run `full` | grade, preset, lignes |
+| Alpha Scanner | facteurs | Top-N non autoritaire |
+| Sentiment / Signal Aggregator | contexte | feature/veto uniquement |
+| ML Predict | trois probabilités | champion, couverture, classes |
+| Risk Management | targets/tailles | vetos, rangs, expositions |
+| Execution | ordres/fills | mode, compte, rejets |
+| Protection Watcher | sorties | TP, stops, trailing |
 
-Avant toute décision, le run live doit disposer de :
+`ML Train` est offline et optionnel. Le quotidien utilise un champion publié. Les anciens champs `score_weight`/`prediction_weight` n'influencent plus le ranking runtime.
 
-- tables et schémas à la version attendue;
-- barres, quotes et calendrier de résultats suffisamment frais;
-- run univers `full`, `completed`, canonique et complet;
-- champion ML publié avec son feature schema et son calibrateur;
-- prédictions couvrant suffisamment l'univers;
-- snapshot de régime et état de compte/broker;
-- configuration risk et execution validée;
-- aucun kill-switch bloquant les entrées.
+### 7.2 Préparer et contrôler le run
 
-### 15.2 Chronologie détaillée
+Vérifier dans l'ordre : date/preset, equity/compte, mode `simulate`/`paper`/`live`, capacités, seuils/couverture ML, limites ligne/secteur/ADV/expositions, Kelly/facteurs, type d'ordre/buffer/gap, protections, dry-run et approbations.
+
+La page ML contrôle champion, artefacts, couverture, distribution des classes, dérive et cohérence des runs. Une classe absente ou une couverture insuffisante se diagnostique ; elle ne justifie ni baisse précipitée des seuils ni score-first.
+
+$$
+coverage=\frac{predictions\ disponibles}{symboles\ attendus}
+$$
+
+Sous le seuil, aucune nouvelle entrée.
+
+### 7.3 De la sélection à la target
+
+Le risk applique régime, contrat ternaire, confirmation, seuils/vetos, concentration, conviction ML, corrélation, sizing, limites et décision. Il persiste motifs et rangs, puis peut réduire le côté excédentaire :
+
+$$
+gross\_exposure=\frac{N_L+N_S}{equity},\qquad net\_exposure=\frac{N_L-N_S}{equity}
+$$
+
+$$
+target-tolerance\le net\_exposure\le target+tolerance
+$$
+
+Il réduit sans ajouter artificiellement une position ni changer son côté.
+
+### 7.4 Target, intent, ordre, fill, protection
 
 ```mermaid
 sequenceDiagram
-   participant S as Screener/Publisher
-   participant F as Features/Selector
-   participant M as ML Predict
-   participant R as Risk
-   participant E as Execution
-   participant B as Broker
-   participant W as Protection Watcher
-
-   S->>S: publier le snapshot full immuable
-   S->>F: fournir les symboles tradables PIT
-   F->>M: fournir les features au cutoff
-   M->>M: inférence et calibration ternaire
-   M->>R: directions et probabilités persistées
-   F->>R: scores, secteurs et contextes
-   R->>R: coverage gate, ranking et vetos
-   R->>R: corrélation, contraintes et sizing
-   R->>E: ExecutionTargets avec rangs et side
-   E->>B: intents d'entrée idempotents
-   B-->>E: fills ou rejets broker
-   E->>B: protections après fill
-   W->>B: activation/remplacement des stops
-   B-->>W: fills de sortie et état des positions
+    participant R as Risk
+    participant E as Execution
+    participant B as Broker
+    participant W as Watcher
+    R->>E: Target approuvée
+    E->>E: Intent idempotent
+    E->>B: Ordre
+    B-->>E: Rejet ou fill
+    E->>B: Protections sur quantité remplie
+    W->>B: Activation/remplacement des stops
 ```
 
-### 15.3 Chargement et contrôle de couverture ML
-
-Le CLI risk charge les symboles du run `full`, les scores/contextes, les prix, les prédictions et les métriques historiques. Le coverage gate calcule :
-
-$$
-coverage=\frac{nombre\ de\ prédictions\ disponibles}{nombre\ de\ sélections\ attendues}
-$$
-
-Si la couverture est inférieure au seuil, les nouvelles entrées sont bloquées. Si le régime interdit déjà les nouvelles entrées, le gate peut être marqué comme ignoré par régime; cela ne crée aucune position.
-
-### 15.4 Construction du portefeuille
-
-`PortfolioBuilder` suit l'ordre observable suivant :
-
-1. appliquer le contexte de régime aux données de sélection;
-2. retirer toute ligne sans prédiction ternaire directionnelle exploitable;
-3. appliquer la confirmation de présence `min_breakout_days` aux deux jambes;
-4. appliquer les seuils de probabilité et vetos techniques post-prédiction;
-5. appliquer les filtres de concentration et blacklist;
-6. enrichir avec probabilité et taux de succès historique;
-7. trier par conviction ML décroissante;
-8. appliquer le filtre de corrélation Pearson ou factoriel;
-9. calculer la taille proposée;
-10. appliquer poids par ligne, secteur, exposition brute, liquidité et capacité;
-11. attribuer `ACCEPTED`, `REDUCED` ou `REJECTED` et un motif codifié;
-12. attribuer `decision_rank` aux lignes acceptées;
-13. rééquilibrer éventuellement l'exposition nette long/short;
-14. persister le run, ses décisions et les targets.
-
-Le `selection_rank` provient de l'ordre ML avant risk. Le `decision_rank` incrémente seulement pour les positions effectivement retenues. Un symbole de rang ML 2 peut donc devenir `decision_rank=1` si le rang ML 1 est rejeté pour corrélation, liquidité ou contrainte sectorielle.
-
-### 15.5 Exposition long/short
-
-Avec $N_L$ la somme des notionnels longs et $N_S$ la valeur absolue des notionnels shorts :
-
-$$
-gross\_exposure=\frac{N_L+N_S}{equity}
-$$
-
-$$
-net\_exposure=\frac{N_L-N_S}{equity}
-$$
-
-Si `enforce_net_exposure=true`, le corridor admissible est :
-
-$$
-target-tolerance \le net\_exposure \le target+tolerance
-$$
-
-Le système réduit proportionnellement le côté excédentaire. Il n'ajoute pas artificiellement des positions du côté déficitaire et ne change pas leur direction.
-
-### 15.6 Passage au broker
-
-Le moteur transforme chaque target de quantité strictement positive en intent :
-
-- `side=buy` pour ouvrir un long;
-- `side=sell` pour ouvrir un short;
-- `market` ou `limit` selon la configuration;
-- clé d'idempotence fondée sur run, symbole, rôle, côté, quantité et mode broker;
-- `decision_price` conservé pour la TCA.
-
-Avant soumission, l'exécution peut encore bloquer ou réduire selon le buying power, le gap d'entrée, l'exposition imposée par le régime, la quantité fractionnaire autorisée et l'état déjà présent chez le broker.
-
-Après le fill, les protections sont créées sur la quantité réellement remplie, pas simplement sur la quantité demandée. La TCA mesure notamment slippage et implementation shortfall par rapport au prix de décision.
-
-### 15.7 États qui ne doivent pas être confondus
+Le `decision_price` sert à la TCA. Buying power, gap, régime, fractionnement et position existante peuvent encore bloquer. Pour un short, entrée `sell` et enfants `buy`; pour un long, l'inverse.
 
 | État | Signification |
 |---|---|
-| Sélection ML | dans la capacité de ranking, avant contraintes risk |
-| `ACCEPTED` | target risk conservée sans réduction bloquante |
-| `REDUCED` | target conservée mais notionnel diminué |
-| `REJECTED` | aucune quantité à exécuter |
-| Intent créé | demande locale idempotente, pas encore un ordre broker rempli |
-| Ordre soumis | broker a reçu la demande |
-| Partiellement rempli | seule la quantité remplie constitue une position |
-| Rempli | entrée ou sortie effectivement exécutée |
-| Protection active | stop/TP réellement présent et suivi |
+| Sélection ML | dans la capacité avant risk |
+| Target acceptée/réduite | quantité autorisée, pas encore ordre |
+| Intent | demande locale, pas fill |
+| Ordre soumis | reçu par le broker |
+| Fill partiel | seule la partie remplie est position |
+| Position protégée | stop/TP réellement actifs et suivis |
 
-## 16. Déroulement complet d'un backtest
+Les pages Parity, Overview, Screening, Market Regime, Ops/Infra et Alpaca Accounts se relient par `universe_run_id`, run ML, `risk_run_id` et `exec_run_id`, pas seulement par l'heure.
 
-### 16.1 Règle fondamentale PIT
+### 7.5 Lire les pages IHM dans l'ordre
 
-Pour chaque date $t$, le backtest ne peut utiliser que ce qui était connu au cutoff de $t$. Cela vaut pour l'univers, les features, les résultats publiés, le sentiment, le régime, le modèle, les probabilités, l'ATR et les prix d'exécution.
+#### Overview
 
-Un backtest correct ne prend pas l'univers actuel pour le projeter dans le passé. Il résout un `universe_run_id` propre à chaque séance et conserve les symboles rejetés avec leur motif lorsque l'analyse d'audit l'exige.
+Overview répond à « où en est le système ? ». Il permet de repérer le dernier workflow, les étapes terminées ou en erreur et les résumés principaux. Une étape verte prouve qu'elle s'est terminée, pas que toutes les données étaient économiquement valides; il faut encore lire ses compteurs et son artefact.
 
-### 16.2 Phase 1 : replay des signaux
+#### Screening
 
-`replay_signals()` reçoit les prédictions ternaires comme source de scope et de classement. Il :
+Screening répond à « quel scope et quel contexte technique ont été calculés ? ». On y contrôle notamment les volumes de symboles, scores, anomalies et raisons d'exclusion. Cette page n'est pas une liste d'ordres. Un symbole haut dans un tableau de screening peut être `flat`, hors capacité ML ou rejeté plus tard.
 
-1. valide les colonnes `symbol`, `trade_date`, `predicted_side`, `proba_long`, `proba_short`;
-2. normalise symboles, dates, directions et probabilités;
-3. déduplique par symbole/date;
-4. élimine `flat` et les directions sans probabilité correspondante;
-5. convertit long en `buy` et short en `sell`;
-6. définit `selection_score`, `predicted_proba` et `conviction` avec la probabilité directionnelle;
-7. calcule `long_rank` et `short_rank` séparément;
-8. applique les capacités par jambe puis la capacité totale;
-9. joint les scores uniquement comme contexte;
-10. applique les seuils de probabilité et vetos techniques;
-11. conserve un `veto_reason` explicite.
+#### ML
 
-Cette phase est le miroir déterministe du contrat de sélection live. Elle ne simule pas encore le capital ni les fills.
+ML répond à « quel modèle a prédit quoi ? ». Pour le run courant, vérifier :
 
-### 16.3 Phase 2 : bridge risk
+- identité et statut du champion;
+- date d'entraînement et date de publication;
+- feature schema attendu;
+- date du predict;
+- nombre de symboles attendus et prédits;
+- distribution `long/flat/short`;
+- probabilités et éventuels diagnostics de dérive;
+- état du gate de gouvernance.
 
-Le bridge transforme les signaux sélectionnés en entrées compatibles avec le `PortfolioBuilder` live. Il reconstruit les prix, ATR, volumes, secteurs, prédictions et snapshots de régime à la date simulée, puis appelle le moteur de risque partagé.
+Une distribution inhabituelle n'est pas forcément une erreur, mais elle exige une explication. Par exemple, 100 % de longs peut venir d'un régime exceptionnel, d'un modèle mal chargé ou d'un mauvais mapping des classes.
 
-Le résultat contient les `PortfolioEntry`, décisions, quantités, notionnels, stops, rangs et motifs. Utiliser le même builder évite qu'une formule de sizing ou un filtre de corrélation diverge silencieusement entre recherche et production.
+#### Market Regime
 
-### 16.4 Phase 3 : replay d'exécution
+Market Regime répond à « quelles limites dynamiques s'appliquent aujourd'hui ? ». Le snapshot peut modifier multiplicateur de risque, slots autorisés, exposition brute, comportement défensif et conditions short. Il faut conserver ses raisons, car deux runs avec les mêmes probabilités peuvent produire des tailles différentes sous deux régimes.
 
-Le replay convertit les targets acceptées en intents, simule la soumission puis les fills selon le profil d'exécution. Il doit préciser dans l'artefact :
+#### Risk
 
-- timing du fill, par exemple prochaine ouverture ou barre autorisée;
-- type d'ordre;
-- slippage et spread;
-- commission;
-- quantité fractionnaire ou entière;
-- traitement d'un gap au-delà de la limite;
-- liquidité/participation maximale;
-- comportement des fills partiels;
-- contraintes short et borrow, si modélisées.
+Risk répond à « pourquoi ce symbole a-t-il ou non une target ? ». Pour chaque ligne, lire :
 
-Le prix de décision et le prix de fill doivent rester distincts. Leur écart sert à mesurer le coût d'exécution plutôt qu'à réécrire rétroactivement la décision.
+1. symbole et côté;
+2. probabilité/conviction;
+3. `selection_rank`;
+4. score et source de contexte;
+5. décision et code de motif;
+6. quantité proposée puis approuvée;
+7. notionnel et poids;
+8. stop initial, risque par action et budget en dollars;
+9. `decision_rank`;
+10. dates as-of du score, prix, ATR, modèle et métriques.
 
-### 16.5 Phase 4 : protections
+Un `REJECTED` correctement motivé prouve que le garde-fou a fonctionné. Il ne faut pas supprimer automatiquement un contrôle simplement pour augmenter le nombre de trades.
 
-Après le fill simulé, `execution_lifecycle_replay` crée les états de protection :
+#### Execution
 
-- take-profit soumis;
-- stop initial soumis lorsqu'un niveau valide existe;
-- trailing stop tenu en attente d'activation;
-- lien parent/enfants entre l'entrée et ses protections.
+Execution répond à « qu'est-il réellement arrivé après la target ? ». La vue doit permettre de relier :
 
-`protection_watcher_replay` simule ensuite la transition du stop initial vers le trailing stop, avec annulation/remplacement explicite dans le lifecycle.
+```text
+risk_run_id
+    -> execution target snapshot
+    -> execution order request
+    -> broker order
+    -> broker fill
+    -> position/lot
+    -> protection
+    -> réconciliation et TCA
+```
 
-### 16.6 Phase 5 : sorties intrabar
+Comparer target et fill : quantité, côté, prix de décision, prix moyen, statut, motif de rejet et slippage. Une target absente du broker peut être bloquée par la fenêtre de soumission, le gap, le buying power ou une request idempotente déjà traitée.
 
-Le replay de sortie parcourt les barres postérieures à l'entrée, met à jour l'extrême favorable et résout les collisions intrabar selon une priorité configurée. Si le high et le low touchent plusieurs niveaux le même jour, l'ordre réel des ticks est inconnu; une convention conservatrice doit donc être utilisée et documentée.
+#### Alpaca Accounts et Supervision
 
-Les motifs standards sont :
+Ces pages répondent à « le compte et les services confirment-ils l'état interne ? ». Vérifier equity, cash, buying power, positions, ordres ouverts, mode paper/live et santé des watchers. La base locale ne doit pas être considérée correcte si elle diverge du broker sans résultat de réconciliation explicite.
 
-- `take_profit`;
-- `initial_stop`;
-- `trailing_stop`;
-- time stop ou clôture terminale lorsqu'ils sont pris en charge par le scénario.
+#### Parity et Backtesting
 
-**Point de validation important :** les builders d'intents sont explicitement direction-aware pour long et short. En revanche, toute fonction de replay intrabar qui compare directement `high`, `low`, stop et take-profit doit posséder des tests short dédiés avant d'être déclarée parfaitement symétrique. La fidélité short exige notamment de vérifier le suivi du creux favorable, le stop au-dessus du marché et le buy-to-cover. En l'absence de cette preuve, les métriques short de sortie doivent être marquées comme une limite du scénario, pas présentées comme équivalentes au live.
+Parity répond à « le replay reproduit-il la production ? ». Backtesting permet de lancer ou consulter le replay. La comparaison commence par les sélections, puis risk, targets, execution, fills, sorties et P&L; elle ne commence pas par essayer de faire coïncider le rendement final.
 
-### 16.7 Phase 6 : P&L
+### 7.6 Diagnostiquer un symbole précis
 
-Pour un long :
+Si l'utilisateur demande « pourquoi XYZ n'a pas été tradé ? », suivre cette procédure :
+
+1. **Univers** : XYZ existe-t-il dans le bon `universe_run_id` ? `is_tradable` est-il vrai ? Quel est le motif sinon ?
+2. **Features** : les lignes nécessaires existent-elles au cutoff ? Une donnée est-elle périmée ou manquante ?
+3. **Prédiction** : existe-t-elle pour la bonne date et le bon modèle ? Est-elle ternaire complète ?
+4. **Direction** : est-elle `flat`, long ou short ?
+5. **Ranking** : quel est le rang de jambe ? Dépasse-t-il sa capacité ?
+6. **Veto** : probabilité, score, earnings, régime ou confirmation ont-ils bloqué ?
+7. **Risk** : corrélation, secteur, exposition, ADV, notionnel ou breaker ont-ils réduit à zéro ?
+8. **Target** : existe-t-elle, avec quelle quantité et quel `decision_rank` ?
+9. **Intent/request** : a-t-elle été créée ou bloquée avant broker ?
+10. **Ordre/fill** : refus, annulation, expiration ou fill partiel ?
+11. **Protection** : la quantité remplie est-elle couverte ?
+
+Cette méthode distingue quatre réponses très différentes : « non tradable », « non choisi par le ML », « choisi puis rejeté par le risk » et « autorisé mais non exécuté ». Les confondre conduit à modifier le mauvais module.
+
+## Partie 8 - Parcours complet d'un backtest PIT
+
+### 8.1 Règle et réglages
+
+À chaque date $t$, n'utiliser que l'univers, les features, résultats, sentiment, régime, modèle, probabilités, ATR et prix connus au cutoff. Un univers actuel dans le passé crée un biais de survivance.
+
+Un backtest est une **simulation chronologique**, pas une simple formule appliquée à un tableau. Le moteur avance de séance en séance et transporte un état : cash, equity, positions ouvertes, lots, protections, drawdown, exposition et historique des décisions.
+
+Pour une séance donnée, l'ordre temporel doit être défini. Par exemple :
+
+1. les informations sont arrêtées après la clôture de $t$;
+2. les signaux et targets sont calculés avec ces informations;
+3. l'entrée est autorisée à l'ouverture de $t+1$;
+4. les protections utilisent ensuite les barres postérieures au fill.
+
+Utiliser le close de $t$ comme prix de décision et prétendre avoir été rempli à ce même close sans hypothèse explicite créerait un biais. Le timing exact dépend du profil configuré, mais il doit rester identique dans tout le run.
+
+Dans l'IHM, préférer `pipeline_live_like` ou `production_parity`, mode `pipeline`, prédictions `use-persisted`, `phase2_mode=risk_execution`, replays execution/protection/watcher/sortie, coûts, couverture PIT/ML et capacités long/short. Le mode `research` n'est pas une preuve de parité s'il assouplit ces contrôles.
+
+| Mode | But | Tolérance possible | Conclusion autorisée |
+|---|---|---|---|
+| `research` | explorer rapidement une idée | composants simplifiés ou contrôles moins stricts | hypothèse à approfondir |
+| `pipeline` | rejouer le contrat de production | PIT et phases renforcés | validation fonctionnelle si données complètes |
+| `pipeline_live_like` | préremplir une chaîne proche du live | hypothèses de fill toujours simulées | estimation de comportement live |
+| `production_parity` | comparer un run production/paper | configuration et artefacts rapprochés | diagnostic de fidélité |
+
+Avant le lancement, vérifier :
+
+- présence d'un univers `full` pour les dates attendues;
+- présence de prédictions PIT du champion utilisé à chaque période;
+- couverture des prix et ATR;
+- preset capital et capital initial;
+- capacités long/short;
+- phases de risk et d'exécution activées;
+- coûts, fractionnement et timing;
+- politique de données manquantes;
+- paramètres de sortie et priorité intrabar.
+
+Si une donnée requise manque, le mode pipeline doit échouer clairement ou marquer la date non comparable. Il ne doit pas remplacer la prédiction par un score ni le snapshot historique par une valeur actuelle.
+
+### 8.2 Ordre obligatoire pour préparer et lancer un backtest
+
+Cette section donne l'ordre **opérationnel**. Elle complète les phases internes décrites ensuite. Il faut distinguer deux situations : les artefacts PIT existent déjà, ou ils doivent être préparés.
+
+#### 8.2.1 Cas A - Les artefacts PIT existent déjà
+
+C'est le cas nominal pour rejouer fidèlement le pipeline. L'ordre est :
+
+1. **Choisir la période**
+   - définir `start` et `end`;
+   - vérifier que la période ne mélange pas volontairement train/calibration et test final;
+   - choisir une période courte pour le premier run de validation.
+
+2. **Choisir le preset capital et l'equity initiale**
+   - le preset contrôle les règles d'univers et certaines contraintes;
+   - l'equity contrôle les tailles, tickets minimaux et capacités effectives;
+   - utiliser des valeurs cohérentes avec le scénario live/paper comparé.
+
+3. **Vérifier les données PIT avant le lancement**
+   - barres présentes pour la période et le lookback requis;
+   - univers `full` disponible pour chaque séance attendue;
+   - features/scores historiques disponibles au cutoff;
+   - prédictions ternaires persistées pour chaque symbole/date attendu;
+   - macro, sentiment, régime, ATR et prix suffisamment couverts;
+   - aucun run d'univers partiel utilisé comme remplacement.
+
+4. **Sélectionner le type de backtest**
+   - `standard_research` pour une exploration rapide;
+   - `pipeline_live_like` pour rejouer la chaîne proche du live;
+   - `production_parity` pour une validation pré-live ou une comparaison avec un run paper/live.
+
+5. **Pour un backtest ML-first fidèle, fixer les options de base**
+   - `engine_mode=pipeline`;
+   - `ml_pit_strategy=use-persisted`;
+   - modèle ML activé avec les prédictions PIT persistées;
+   - politique macro stricte ou explicitement documentée;
+   - coûts, fractionnement et logique de protection choisis.
+
+6. **Activer les phases dans leur ordre de dépendance**
+
+   ```text
+   Phase 1 : signal ML ternaire et ranking
+       ↓
+   Phase 2 : risk_execution
+       ↓
+   Phase 3 : execution_replay
+       ↓
+   Phase 4 : protection_replay
+       ↓
+   Phase 5 : watcher_replay
+       ↓
+   Phase 7 : exit_lifecycle_replay
+   ```
+
+   Les valeurs IHM/CLI correspondantes sont :
+
+   | Phase | Valeur | Dépendance obligatoire |
+   |---|---|---|
+   | Phase 2 | `risk_execution` | signaux et données risk PIT |
+   | Phase 3 | `execution_replay` | Phase 2 = `risk_execution` |
+   | Phase 4 | `protection_replay` | Phase 3 = `execution_replay` |
+   | Phase 5 | `watcher_replay` | Phase 4 = `protection_replay` |
+   | Phase 7 | `exit_lifecycle_replay` | Phase 5 = `watcher_replay` |
+
+   Une phase aval ne doit pas être activée seule. Par exemple, le replay de protection ne peut pas fonctionner correctement sans targets, intents et fills produits par les phases précédentes.
+
+7. **Configurer le risque et les jambes**
+   - capital et `max_positions`;
+   - capacités long et short;
+   - seuils `min_proba_long` et `min_proba_short`;
+   - activation short et contraintes benchmark/rotation;
+   - risque par trade, ATR, poids ligne/secteur et ADV;
+   - corrélation, factor model, Kelly et neutralité nette si volontairement activés;
+   - circuit breakers et vol targeting.
+
+8. **Configurer l'exécution simulée**
+   - logique de protection live ou paramètres fixes;
+   - take-profit et trailing stop;
+   - commissions et slippage en bps;
+   - quantité entière ou fractionnaire;
+   - timing d'entrée, gap maximal et participation;
+   - hypothèses short : borrow, marge, dividendes et rejets éventuels.
+
+9. **Lancer les préflights IHM**
+   - contrôle de couverture des univers PIT;
+   - contrôle de couverture ML PIT;
+   - validation de la chaîne de phases;
+   - contrôle des dates, preset et paramètres obligatoires.
+
+   Un préflight rouge doit être corrigé avant de lancer un run de parité. Abaisser un seuil de couverture uniquement pour obtenir un run vert ne constitue pas une correction.
+
+10. **Lancer le backtest**
+    - utiliser d'abord une fenêtre courte;
+    - conserver les artefacts (`no_save=false`);
+    - noter le `run_id`, le preset et la configuration;
+    - ne pas modifier les paramètres pendant le run.
+
+11. **Contrôler le run pendant son exécution**
+    - lire le statut et les logs dans le Runtime Center;
+    - vérifier que les dates avancent chronologiquement;
+    - rechercher erreurs PIT, couverture ML, phase ignorée ou fallback;
+    - arrêter le run si une hypothèse structurante est invalide.
+
+12. **Valider les artefacts après le run**
+    - vérifier le rapport structuré et les métadonnées;
+    - comparer nombres d'univers, prédictions, sélections, targets, fills et sorties;
+    - lire les rejets et dates non comparables;
+    - contrôler les résultats long et short séparément;
+    - contrôler coûts, turnover, expositions et drawdown;
+    - seulement ensuite interpréter rendement, Sharpe ou P&L.
+
+13. **Comparer à la baseline ou au live/paper**
+    - comparer d'abord univers et prédictions;
+    - puis ranking/vetos, risk et targets;
+    - puis execution, protections et sorties;
+    - comparer le P&L en dernier.
+
+#### 8.2.2 Cas B - Les artefacts PIT n'existent pas encore
+
+Il faut alors exécuter la préparation offline **avant** le backtest principal :
+
+1. importer et nettoyer l'historique de barres;
+2. backfiller les métadonnées, quotes, earnings et autres données objectives nécessaires;
+3. publier ou reconstruire les univers PIT `full` par date et preset;
+4. calculer/backfiller les features et scores PIT sur tout l'univers;
+5. préparer les targets ternaires sans fuite future;
+6. entraîner le modèle sur les fenêtres chronologiques autorisées;
+7. calibrer les probabilités uniquement sur validation;
+8. publier/versionner le champion et son feature schema;
+9. générer les prédictions historiques PIT pour chaque date de replay;
+10. vérifier la couverture des univers et prédictions;
+11. figer seuils, capacités, vetos, risk et hypothèses d'exécution;
+12. lancer ensuite le Cas A avec `use-persisted`.
+
+Pour une validation walk-forward, les étapes 6 à 9 sont répétées à l'intérieur de chaque fold sans laisser le modèle voir la fenêtre de test suivante. Pour une comparaison de production, il faut préférer les prédictions réellement persistées à l'époque plutôt qu'un modèle reconstruit aujourd'hui.
+
+#### 8.2.3 Ordre dans l'IHM Backtesting
+
+Dans la page Backtesting :
+
+1. ouvrir **Lancer un backtest**;
+2. choisir `pipeline_live_like` ou `production_parity`;
+3. cliquer sur l'action de préremplissage des options;
+4. saisir les dates et sélectionner le preset capital;
+5. vérifier `engine mode = pipeline`;
+6. vérifier `ML PIT strategy = use-persisted`;
+7. vérifier les phases 2, 3, 4, 5 et 7 dans l'ordre indiqué;
+8. configurer equity, positions, coûts, protections et overlays risk;
+9. lire les diagnostics de couverture PIT et ML;
+10. lancer le run;
+11. suivre les logs et le statut;
+12. ouvrir les artefacts et la comparaison de fidélité après succès.
+
+Les presets préremplissent la chaîne, mais ils n'inventent ni les univers ni les prédictions manquantes.
+
+#### 8.2.4 Équivalent CLI minimal de parité
+
+L'équivalent conceptuel du preset complet est :
+
+```powershell
+python -m backtesting run `
+  --start 2025-01-01 `
+  --end 2025-12-31 `
+  --equity 100000 `
+  --engine-mode pipeline `
+  --ml-pit-strategy use-persisted `
+  --phase2-mode risk_execution `
+  --phase3-mode execution_replay `
+  --phase4-mode protection_replay `
+  --phase5-mode watcher_replay `
+  --phase7-mode exit_lifecycle_replay
+```
+
+Cette commande montre l'ordre des moteurs, mais les autres paramètres doivent être explicités ou provenir d'une configuration versionnée : preset capital, ML mode, coûts, protections, capacités, risque, macro et répertoire d'artefacts. Pour un résultat reproductible, conserver la commande complète générée par l'IHM avec le rapport du run.
+
+#### 8.2.5 Règles d'arrêt
+
+Ne pas interpréter le backtest comme valide si l'un des événements suivants apparaît :
+
+- univers `full` manquant sur une partie significative de la période;
+- prédictions PIT absentes ou couverture sous le seuil;
+- fallback vers données actuelles, score-only ou modèle non versionné;
+- phase demandée silencieusement désactivée;
+- dates as-of postérieures à la date simulée;
+- coûts ou slippage nuls sans justification;
+- shorts simulés sans hypothèse de borrow/marge documentée;
+- incohérence entre quantités risk, fills et positions;
+- sorties short utilisées comme preuve de parité sans tests directionnels dédiés.
+
+### 8.3 Phases 1 à 3 : signal, risk, fill
+
+`replay_signals()` valide les colonnes ternaires, normalise/déduplique, élimine `flat`, convertit long en `buy` et short en `sell`, fixe conviction à la probabilité directionnelle, classe les jambes, applique capacités, joint les scores comme contexte, puis applique vetos avec `veto_reason`.
+
+#### Phase 1 - Rejouer la décision ML
+
+Cette phase répond uniquement à : « Avec les prédictions connues ce jour-là, quels symboles auraient été classés et lesquels auraient passé les premiers vetos ? »
+
+Elle produit notamment :
+
+- `trade_date` et `symbol`;
+- probabilités et `predicted_side`;
+- côté applicatif `buy` ou `sell`;
+- `long_rank`, `short_rank`, `selection_rank`;
+- booléen `selected`;
+- score/secteur joints comme contexte;
+- `veto_reason` éventuel.
+
+Elle ne connaît pas encore toutes les positions existantes, le cash simulé ou le fill futur. Un signal sélectionné n'est donc toujours pas un trade.
+
+Le bridge reconstruit prix, ATR, volumes, secteurs, prédictions et régime puis appelle le builder risk partagé. Cela réduit la divergence de formule sans garantir à lui seul la fidélité des données/exécutions.
+
+#### Phase 2 - Rejouer le risk
+
+Le bridge adapte les DataFrames historiques aux objets attendus par le `PortfolioBuilder`. Il doit conserver les dates as-of pour prouver que prix, ATR, score et prédiction appartiennent au bon cutoff.
+
+Le builder reçoit aussi l'état simulé : equity, positions, expositions, historique de pertes et snapshot de régime. Il applique alors les mêmes familles de contraintes que le live.
+
+Résultats possibles :
+
+- `ACCEPTED` : quantité proposée conservée;
+- `REDUCED` : quantité diminuée par une ou plusieurs limites;
+- `REJECTED` : quantité approuvée nulle;
+- aucune ligne : le signal avait déjà été retiré avant le risk.
+
+Le backtest doit conserver les rejets, pas seulement les trades gagnants et perdants. Sans eux, il est impossible de savoir si la stratégie a évité une perte grâce au ML, à un veto, au manque de capital ou par hasard.
+
+Le replay d'exécution documente timing du fill, ordre, spread, slippage, commission, fractionnement, gaps, participation, fills partiels et contraintes borrow. Prix de décision et prix de fill restent distincts.
+
+#### Phase 3 - Simuler intent, ordre et fill
+
+Le simulateur transforme une target en intent comme en production. Ensuite, il doit décider si et comment l'ordre aurait pu être rempli.
+
+Exemple pour une limite long à 100 :
+
+- si la séance suivante ouvre à 99 et que la liquidité est suffisante, un fill est plausible;
+- si elle ouvre à 105 et ne revient jamais à 100, l'ordre limite ne doit pas être rempli;
+- un modèle qui remplit toujours à 100 ignorerait le gap et surestimerait la qualité d'exécution.
+
+Pour un short limite, le sens favorable est inversé : vendre plus haut est préférable. Les contrôles doivent donc utiliser le côté de l'intent, pas une formule long appliquée sans signe.
+
+Les coûts principaux sont :
+
+$$
+commission=notional\times\frac{commission\_bps}{10\,000}
+$$
+
+$$
+slippage\_bps=\frac{prix\ de\ fill-prix\ de\ décision}{prix\ de\ décision}\times10\,000
+$$
+
+Le signe économique du slippage dépend du côté. Une hausse du prix de fill pénalise un achat mais favorise une vente. La TCA doit donc interpréter le côté et la quantité, pas seulement soustraire deux prix.
+
+Un fill partiel crée une position partielle et rend le reliquat annulé, ouvert ou expiré selon la politique du scénario. Les protections doivent porter uniquement sur le fill.
+
+### 8.4 Phases 4 à 6 : protections, sorties, P&L
+
+Le lifecycle crée take-profit, stop initial et trailing tenu avec liens parent/enfants. Le watcher simule activation et annulation/remplacement.
+
+#### Phase 4 - Créer le lifecycle de protection
+
+Après l'entrée simulée, le replay enregistre les enfants :
+
+- take-profit en état soumis;
+- stop initial en état soumis si son prix est valide;
+- trailing stop en attente;
+- relation avec l'intent d'entrée parent;
+- quantité et prix dérivés du fill observé.
+
+Le lifecycle est important même si le backtest connaît déjà les barres futures. Il empêche d'utiliser un stop avant sa création ou un trailing stop avant son activation.
+
+#### Phase 5 - Rejouer le watcher et les sorties
+
+Le watcher observe la progression favorable. Lorsque la condition d'activation est atteinte, il remplace le stop initial par le trailing stop et enregistre l'annulation/remplacement.
+
+Le replay intrabar met à jour l'extrême favorable et résout les collisions high/low selon une priorité conservatrice versionnée. Les sorties incluent `take_profit`, `initial_stop`, `trailing_stop`, time stop ou clôture terminale.
+
+Avec des barres quotidiennes, on connaît seulement open, high, low et close, pas l'ordre exact des ticks. Si le high touche le take-profit et le low touche le stop le même jour, les deux chemins sont possibles. La convention conservatrice choisit normalement l'issue la moins favorable; une convention agressive doit être présentée séparément.
+
+Pour un long, l'extrême favorable est le plus haut depuis l'entrée. Pour un short, c'est le plus bas. Cette différence commande le calcul du trailing stop.
+
+**Réserve obligatoire :** les builders d'intents sont direction-aware, mais cela ne prouve pas la parité intrabar short. Toute comparaison de high, low, stop et take-profit exige des tests short dédiés sur creux favorable, stop au-dessus et buy-to-cover. Sans cette preuve, les métriques de sortie short restent une limite du scénario ; la parité avec le live ne doit pas être déclarée.
 
 $$
 PnL_{long}=q(exit-entry)-coûts
 $$
 
-Pour un short :
-
 $$
 PnL_{short}=q(entry-exit)-coûts-borrow-dividendes
 $$
 
-Les coûts incluent au minimum commissions et slippage. Pour un backtest short réaliste, ils incluent aussi frais d'emprunt et dividendes dus lorsque les données sont disponibles.
+#### Phase 6 - Mettre à jour le portefeuille et les métriques
 
-### 16.8 Walk-forward
+Après chaque fill de sortie, le moteur met à jour quantité ouverte, cash, equity, exposition, lots et drawdown. Une sortie partielle ne ferme pas tout le trade.
 
-Chaque fold doit séparer :
+Les métriques de résultat comprennent au minimum :
 
-1. fenêtre d'entraînement;
-2. fenêtre de calibration;
-3. fenêtre de test suivante;
-4. purge/embargo adaptés à l'horizon de target.
+- rendement total et annualisé;
+- volatilité, Sharpe et Sortino;
+- drawdown maximal et durée de récupération;
+- taux de succès et payoff moyen;
+- turnover et coûts;
+- exposition brute/nette moyenne et maximale;
+- performance long et short séparée;
+- résultats par régime et secteur;
+- nombre de signaux, vetos, targets, fills et sorties;
+- couverture PIT/ML et dates non comparables.
 
-Les seuils, capacités, vetos et paramètres Kelly choisis dans un fold ne doivent jamais voir les résultats de sa fenêtre de test. Les métriques finales sont agrégées par jambe, régime et coût, puis comparées au champion en place.
+Une bonne performance globale peut masquer une jambe short déficiente, un coût irréaliste ou quelques trades concentrés. Les métriques par jambe et les distributions sont donc aussi importantes que le rendement final.
 
-## 17. Matrice de décision par symbole
+### 8.5 Walk-forward
 
-| Situation | Résultat | Motif attendu |
-|---|---|---|
-| Pas dans l'univers `full` | aucune inférence/entrée nominale | scope non tradable ou run absent |
-| `is_tradable=false` | aucune entrée | `tradability_reason_code` |
-| Prédiction absente | aucune entrée | couverture ML incomplète |
-| Prédiction binaire/incomplète | aucune entrée | contrat ternaire invalide |
-| `predicted_side=flat` | aucune entrée | classe non directionnelle |
-| Long sous `min_proba_long` | veto | `ml_probability_below_threshold` |
-| Short sous `min_proba_short` | veto | `ml_probability_below_threshold` |
-| Long sous le score minimal | veto | `technical_score_long_veto` |
-| Short au-dessus du score maximal | veto | `technical_score_short_veto` |
-| Hors capacité de jambe | non sélectionné | rang directionnel trop élevé |
-| Hors capacité totale | non sélectionné | `selection_rank > max_positions` |
-| Confirmation insuffisante | rejet | filtre `min_breakout_days` |
-| Trop de pertes/trades récents | rejet | concentration/blacklist |
-| Trop corrélé à une meilleure conviction | rejet | filtre de corrélation |
-| Secteur saturé | rejet ou réduction | contrainte sectorielle |
-| Exposition brute saturée | rejet ou réduction | `constraint_max_gross_exposure` |
-| Notionnel sous minimum | rejet | ordre non exécutable |
-| ADV insuffisant | réduction ou rejet | contrainte de liquidité |
-| Circuit breaker actif | blocage ou sizing dégradé | état de protection capital |
-| Buying power insuffisant | réduction/rejet execution | contrôle compte/broker |
-| Gap d'entrée excessif | intent bloqué | contrôle de gap |
-| Broker refuse le short | aucune position | rejet broker/borrow/marge |
+Chaque fold sépare entraînement, calibration, test suivant, purge et embargo. Aucun paramètre du fold ne voit son test. Agréger par jambe, régime et coût, puis comparer au champion.
 
-## 18. Exemple chiffré d'une séance mixte
+Un walk-forward imite une succession de décisions réelles :
 
-Supposons :
-
-- `max_long_positions=2`;
-- `max_short_positions=1`;
-- `max_positions=3`;
-- `min_proba_long=0.58`;
-- `min_proba_short=0.62`;
-- `min_score_veto_long=0.30`;
-- `max_score_veto_short=0.55`.
-
-| Symbole | Side ML | Probabilité directionnelle | Score contexte | Rang jambe | Résultat initial |
-|---|---:|---:|---:|---:|---|
-| AAA | long | 0.81 | 0.72 | long 1 | sélectionné |
-| BBB | long | 0.67 | 0.25 | long 2 | veto technique long |
-| CCC | long | 0.61 | 0.60 | long 3 | hors capacité long |
-| DDD | short | 0.76 | 0.41 | short 1 | sélectionné |
-| EEE | short | 0.71 | 0.70 | short 2 | hors capacité short et veto technique |
-| FFF | flat | 0.88 pour flat | 0.90 | aucun | aucune entrée |
-
-Après vetos, AAA et DDD arrivent au risk. Si AAA et DDD sont très corrélés en valeur absolue et qu'AAA a la conviction la plus forte, DDD peut être rejeté par le filtre de corrélation. Si les deux survivent :
-
-- AAA produit une target `buy`;
-- DDD produit une target `sell`;
-- leur `selection_rank` reflète 0.81 puis 0.76;
-- leur `decision_rank` reflète l'ordre des targets réellement acceptées;
-- la neutralité nette peut réduire AAA ou DDD sans changer leur côté.
-
-Pour une equity de 100 000, un risque par trade de 1 %, AAA à 50 avec ATR 2 et multiple 2 :
-
-$$
-stop=50-2\times2=46
-$$
-
-$$
-shares_{risk}=\frac{100000\times0.01}{50-46}=250
-$$
-
-Le notionnel brut serait 12 500. Avec `max_position_weight=10%`, il est plafonné à 10 000, soit 200 actions avant les autres contraintes.
-
-Pour DDD short à 40 avec ATR 1,5 et multiple 2 :
-
-$$
-stop=40+1.5\times2=43
-$$
-
-$$
-shares_{risk}=\frac{100000\times0.01}{43-40}\approx333
-$$
-
-Le plafond de poids à 10 % limite le short à 10 000, soit 250 actions avant marge, ADV et neutralité nette.
-
-## 19. Paramètres à versionner avec chaque run
-
-### 19.1 Univers et ML
-
-- `snapshot_date`, `capital_preset_key`, `universe_run_id`, fingerprint et grade;
-- version des règles de tradabilité;
-- modèle, feature schema, calibrateur et date de promotion;
-- horizon et seuils de target ternaire;
-- `min_proba_long`, `min_proba_short`;
-- `max_long_positions`, `max_short_positions`, `max_positions`.
-
-### 19.2 Vetos et risque
-
-- `min_score_veto_long`, `max_score_veto_short`;
-- `min_breakout_days` et configuration concentration;
-- seuil/type/lookback de corrélation;
-- limites secteur, beta et facteurs;
-- `risk_per_trade_pct`, ATR, multiple de stop;
-- poids/notionnel/ADV/exposition brute maximum;
-- paramètres Kelly et poids ML/historique utilisés uniquement pour le sizing;
-- objectif/tolérance d'exposition nette;
-- configuration de régime et circuit breakers.
-
-### 19.3 Exécution
-
-- mode broker et type d'ordre;
-- fractionnement autorisé;
-- buffer des limites et filtre de gap;
-- slippage, commissions et participation;
-- take-profit, activation trailing et time stop;
-- politique de priorité intrabar du backtest;
-- hypothèses de borrow, marge et dividendes short.
-
-Sans ces versions, deux runs portant les mêmes symboles ne sont pas reproductibles.
-
-## 20. Diagnostic d'un écart live/backtest
-
-L'analyse doit suivre la chaîne dans l'ordre, sans commencer par le P&L :
-
-1. **Univers** : même date, preset, run `full`, fingerprint et liste tradable ?
-2. **Features** : mêmes valeurs et cutoffs, aucune révision future ?
-3. **Modèle** : même champion, calibrateur et feature schema ?
-4. **Prédictions** : mêmes directions et probabilités ?
-5. **Ranking** : mêmes capacités et mêmes `selection_rank` ?
-6. **Vetos** : mêmes seuils et mêmes motifs ?
-7. **Risk** : même equity, ATR, prix, corrélations, régime et tailles ?
-8. **Targets** : mêmes sides, quantités et `decision_rank` ?
-9. **Execution** : même timing, limites, fills, coûts et rejets ?
-10. **Protection** : mêmes niveaux, activation trailing et priorité intrabar ?
-11. **Sorties/P&L** : mêmes quantités, prix, coûts et corporate actions ?
-
-Le rapport de fidélité compare d'abord les `selections`, puis `risk_decisions`, `portfolio_targets`, `execution_targets`, fills, sorties et P&L. Une divergence amont explique souvent toutes les divergences aval; il faut donc corriger la première différence causale, pas ajuster le résultat final.
-
-## 21. Checklist avant activation live des shorts
-
-1. Le champion ternaire est calibré et validé séparément sur la classe short.
-2. Les probabilités short sont fiables par régime, secteur et niveau de liquidité.
-3. `short_selling_enabled`, capacités et seuils sont explicites dans le preset.
-4. Les règles benchmark/rotation sont testées OOS.
-5. Le broker et le compte autorisent la vente à découvert.
-6. Le contrôle hard-to-borrow/borrow est disponible ou la limite est documentée.
-7. Stops, take-profits, trailing stops et buy-to-cover sont testés en paper.
-8. Les fills partiels et rejets broker ne laissent aucune position sans protection.
-9. La réconciliation reconnaît correctement les quantités short existantes.
-10. Les frais d'emprunt, dividendes et exigences de marge sont inclus dans les attentes.
-11. Le replay de sortie short possède des tests directionnels dédiés.
-12. L'exposition nette et brute est monitorée avec des signes cohérents.
-13. Le circuit breaker sait réduire ou fermer les deux jambes.
-14. La fidélité live/backtest est mesurée séparément pour longs et shorts.
-
-Tant qu'un de ces points critiques n'est pas prouvé, le réglage prudent est `short_selling_enabled=false` ou `max_short_positions=0`, sans modifier le chemin long.
-
-## 22. Utilisation dans l'IHM de l'application
-
-### 22.1 Page Pipeline / Execution Center
-
-La page Pipeline est le point d'entrée du workflow quotidien. L'ordre affiché doit être interprété ainsi :
-
-| Étape IHM | Rôle long/short | Contrôle opérateur |
-|---|---|---|
-| Import Alpaca Bar | alimente les barres | dates, provider, complétude |
-| Data Sanitizer Daily | nettoie les barres | anomalies, calendrier, fraîcheur |
-| Stock Screener | prépare scope large et scores de contexte | volumétrie, erreurs, pas de sélection directionnelle |
-| Sync Latest Quotes | apporte prix/spread | fraîcheur et couverture |
-| Sync Earnings Calendar | apporte les blackouts | couverture des dates de résultats |
-| Publish Tradable Universe | crée le run `full` | grade, preset, lignes attendues/écrites |
-| Alpha Scanner | calcule/enrichit les facteurs techniques | diagnostics; son éventuel Top-N n'est pas l'autorité ML-first |
-| Sentiment Pipeline | calcule le contexte texte/macro | couverture, cutoff, qualité |
-| Signal Aggregator | persiste le contexte composite | feature/veto, jamais côté ou rang principal |
-| ML Predict | produit les trois probabilités | champion, version, couverture, distribution des classes |
-| Risk Management | décide targets et tailles | vetos, rangs, exposition, motifs, dry-run |
-| Execution | soumet/simule et réconcilie | mode simulate/paper/live, compte, fenêtre, fills |
-| Protection Watcher | maintient les protections | TP, stop initial, trailing, time stop |
-
-`ML Train` est une étape auxiliaire offline. Elle ne doit pas être cochée comme dépendance systématique du run quotidien. Une nouvelle exécution live doit consommer le champion déjà publié, pas entraîner un modèle avec les données du jour puis l'utiliser immédiatement sans gouvernance.
-
-Les champs IHM historiques `selection_size`, `short_selection_size`, `score_weight` ou `prediction_weight` peuvent encore apparaître dans certaines surfaces de configuration ou artefacts. Ils ne changent pas les invariants : la source nominale reste l'univers `full`, le côté vient du ML ternaire et la conviction runtime est la probabilité directionnelle.
-
-### 22.2 Préparation d'un run live ou paper
-
-L'opérateur doit vérifier, dans cet ordre :
-
-1. la `trade_date` et le preset capital;
-2. l'equity et le type de compte utilisés par le risk;
-3. le mode d'exécution `simulate`, `paper` ou `live`;
-4. les capacités totale, long et short;
-5. les seuils ML et le minimum de couverture;
-6. les limites par position, secteur, ADV, exposition brute et nette;
-7. Kelly, vol targeting et factor model s'ils sont volontairement activés;
-8. le type d'ordre, le buffer limite et le gap maximal;
-9. take-profit, trailing trigger et paramètres de protection;
-10. le dry-run risk et les mécanismes d'approbation live.
-
-Le mode `simulate` valide la construction sans soumission réelle. Le mode `paper` valide l'intégration broker et les protections sans capital réel. Le mode `live` ne doit être utilisé qu'après comparaison paper/backtest et contrôle des tokens/approbations requis par l'application.
-
-### 22.3 Page ML
-
-La page ML sert à contrôler :
-
-- le champion publié et son statut de gouvernance;
-- la date/version des artefacts;
-- la couverture des prédictions;
-- les distributions long/flat/short;
-- le gate de dérive et l'action associée;
-- la cohérence entre le dernier run ML et le run risk.
-
-Une proportion anormale de `flat`, une disparition de la classe short ou une couverture inférieure au seuil doit être diagnostiquée avant le risk. Il ne faut pas compenser le problème en abaissant immédiatement les seuils ou en réactivant un classement par score.
-
-### 22.4 Page Risk
-
-La page Risk doit être lue ligne par ligne :
-
-- côté demandé `buy` ou `sell`;
-- `selection_rank` et `decision_rank`;
-- probabilité et conviction;
-- score/source de contexte;
-- décision `ACCEPTED`, `REDUCED` ou `REJECTED`;
-- motif humain et code stable;
-- quantité proposée et approuvée;
-- poids, notionnel, stop initial et risque en dollars;
-- dates as-of des scores, prix, ATR, prédictions et métriques ML.
-
-Pour expliquer pourquoi un symbole n'a pas été tradé, il faut chercher d'abord sa présence dans l'univers et les prédictions, ensuite son rang/veto, puis sa décision risk. L'absence dans les targets n'est pas à elle seule un diagnostic.
-
-### 22.5 Page Execution
-
-La page Execution permet de distinguer :
-
-- target risk;
-- request locale;
-- ordre broker;
-- fill observé;
-- position et lot reconstruits;
-- résultat de réconciliation;
-- événement de protection;
-- slippage et implementation shortfall.
-
-Pour un short, vérifier explicitement que l'entrée broker est `sell` et que les enfants de protection sont `buy`. Pour un long, l'entrée est `buy` et les protections sont `sell`. Une divergence de signe est une anomalie bloquante.
-
-### 22.6 Page Backtesting
-
-Deux presets sont particulièrement adaptés :
-
-- `pipeline_live_like` : replay proche du pipeline live courant;
-- `production_parity` : chaîne complète orientée comparaison production.
-
-Pour une validation long/short fidèle, sélectionner le mode `pipeline`, utiliser les prédictions PIT persistées et activer la chaîne risk/execution/protection/watcher/exit lifecycle. Le mode `research` peut rester utile pour explorer rapidement une hypothèse, mais il ne constitue pas une preuve de parité production lorsqu'il assouplit les contrôles PIT ou les phases d'exécution.
-
-Les options importantes sont :
-
-- dates de début et de fin;
-- preset capital;
-- `engine_mode=pipeline`;
-- stratégie ML PIT `use-persisted`;
-- `phase2_mode=risk_execution`;
-- replay d'exécution et de protections;
-- commissions/slippage;
-- quantités fractionnaires;
-- contrôle de couverture PIT/ML;
-- capacités long/short et neutralité nette;
-- overlays de drawdown, volatilité, secteur et gap.
-
-Avant de lancer, les diagnostics de couverture PIT doivent confirmer qu'un univers et des prédictions existent pour toutes les dates attendues. Un run pipeline qui échoue pour données manquantes est préférable à un run apparemment rentable utilisant un fallback non PIT.
-
-### 22.7 Pages Parity, Overview et Ops
-
-- **Parity** compare les décisions risk live/paper aux décisions rejouées.
-- **Overview** donne la séquence et l'état global des derniers runs.
-- **Screening** expose les résultats de scope et de scoring sans leur donner une autorité directionnelle.
-- **Market Regime** explique les multiplicateurs, slots et limites dynamiques.
-- **Ops/Infra** expose les métriques Prometheus, notamment le nombre de sélections.
-- **Alpaca Accounts** et la supervision complètent l'état broker, positions et services.
-
-Une investigation opérationnelle doit relier les pages par les identifiants de run (`universe_run_id`, run ML, `risk_run_id`, `exec_run_id`) plutôt que comparer seulement les heures ou les symboles affichés.
-
-## 23. Résumé exécutable du contrat
-
-Pour chaque symbole et chaque date :
-
-```text
-SI univers full absent ou symbole non tradable
-   ALORS aucune nouvelle position
-SINON calculer/charger les features PIT
-SI prédiction ternaire absente, incomplète ou flat
-   ALORS aucune nouvelle position
-SINON direction = predicted_side
-     conviction = proba_long si long, proba_short si short
-     calculer le rang dans la jambe
-SI hors capacité de jambe ou capacité totale
-   ALORS non sélectionné
-SINON appliquer seuil de probabilité et vetos post-ML
-SI veto
-   ALORS rejet avec motif
-SINON appliquer confirmation, concentration et corrélation
-     calculer sizing ATR/Kelly
-     appliquer limites ligne/secteur/ADV/expositions/régime
-     attribuer decision_rank
-SI quantité approuvée <= 0
-   ALORS aucune exécution
-SINON créer une target puis un intent idempotent
-     buy ouvre un long; sell ouvre un short
-SI fill
-   ALORS protéger la quantité remplie et suivre la sortie
-     persister fill, position, coûts, rangs et identifiants de run
+```mermaid
+flowchart LR
+    A[Train 1] --> B[Calibration 1]
+    B --> C[Test 1 futur]
+    C --> D[Train 2 élargi ou roulant]
+    D --> E[Calibration 2]
+    E --> F[Test 2 futur]
 ```
 
-Cette séquence est commune au live et au backtest. Ce qui change est la provenance de l'état observable : broker et données courantes contrôlées en live; snapshots PIT, simulateur et règles de fill versionnées en backtest.
+La purge retire les observations dont l'horizon de target chevauche la frontière train/test. L'embargo ajoute une zone de sécurité. Sans eux, deux lignes proches dans le temps peuvent partager une partie du même rendement futur.
+
+Le champion n'est promu que si les folds montrent une amélioration stable, après coûts, sans dépendance excessive à une période, une jambe ou un régime. Le test final gardé intact sert de dernière vérification, pas de nouvelle fenêtre d'optimisation.
+
+## Partie 9 - Comparaison live/backtest et exemple chiffré
+
+### 9.1 Fidélité et ordre de diagnostic
+
+| Couche | Live/paper | Backtest |
+|---|---|---|
+| Univers | run `full` courant | run PIT de chaque séance |
+| Features/ML | cutoff et champion courants | snapshots et versions historiques |
+| Ranking/vetos | configuration active | configuration versionnée identique |
+| Risk | compte/prix/régime | état reconstruit |
+| Exécution | broker | simulateur et hypothèses |
+| Protection | ordres observés | lifecycle simulé |
+| Short intrabar | faits broker | parité non prouvée sans tests dédiés |
+
+Diagnostiquer : 1) univers, 2) features, 3) modèle, 4) prédictions, 5) ranking, 6) vetos, 7) risk, 8) targets, 9) exécution, 10) protections, 11) sorties/P&L. Corriger la première divergence causale.
+
+### 9.2 Séance mixte détaillée
+
+Equity 100 000 ; capacités long 2, short 1, totale 3 ; seuils 0,58/0,62 ; vetos score long 0,30 et short 0,55 ; risque 1 %, stop 2 ATR, poids maximal 10 %.
+
+| Symbole | Côté | Probabilité | Score | Rang | Résultat |
+|---|---:|---:|---:|---:|---|
+| AAA | long | 0.81 | 0.72 | L1 | sélectionné |
+| BBB | long | 0.67 | 0.25 | L2 | veto long |
+| CCC | long | 0.61 | 0.60 | L3 | hors capacité |
+| DDD | short | 0.76 | 0.41 | S1 | sélectionné |
+| EEE | short | 0.71 | 0.70 | S2 | hors capacité et veto |
+| FFF | flat | 0.88 flat | 0.90 | aucun | aucune entrée |
+
+Pour AAA à 50, ATR 2 :
+
+$$
+stop=46,\qquad shares=\frac{100000\times0.01}{50-46}=250
+$$
+
+12 500 sont plafonnés à 10 000, soit 200 actions.
+
+Pour DDD short à 40, ATR 1,5 :
+
+$$
+stop=43,\qquad shares=\frac{100000\times0.01}{43-40}\approx333
+$$
+
+Le plafond donne 250 actions. Avant fill, brut = 20 % et net = 0 %. Supposons 180 AAA remplies à 50,10 et 200 DDD à 39,90, reliquat short refusé pour borrow. Seules ces quantités sont positions et protégées. Le backtest doit expliciter s'il sait simuler ces fills partiels et ce rejet.
+
+## Partie 10 - Calibration, monitoring et gouvernance
+
+### 10.1 Ordre offline
+
+1. Construire univers/features PIT et vérifier look-ahead/completude.
+2. Entraîner le ternaire avec splits chronologiques purgés et test intact.
+3. Calibrer les probabilités sur validation (Brier, NLL, reliability par classe).
+4. Publier modèle, scaler, calibrateur, feature schema et prédictions PIT.
+5. Calibrer seuils et capacités séparément par jambe.
+6. Calibrer vetos après ranking et conserver seulement la valeur OOS stable.
+7. Calibrer Kelly, risque et ATR après ranking/vetos figés.
+8. Valider walk-forward par jambe, régime et coûts avant promotion.
+
+La formule historique
+
+$$
+w_{score}\,score+w_{ML}\,probabilite
+$$
+
+ne décide plus du ranking. `score_weight` et `prediction_weight` peuvent subsister pour compatibilité. La calibration sentiment concerne feature/veto ; Kelly concerne sizing.
+
+### 10.2 Monitoring et versions
+
+Surveiller univers/fingerprint, couverture et classes ML, Brier/NLL, performance/turnover par jambe, seuils/capacités, vetos, expositions, secteurs/beta/corrélations, slippage/fills/borrow, drawdown/circuit breakers, rangs et fidélité. Le kill-switch bloque ; il n'active aucun score-only.
+
+Versionner univers/preset/règles, modèle/schema/calibrateur/target, seuils/capacités, vetos, corrélation, ATR/Kelly/limites/expositions/régime, mode/type d'ordre, buffer/gap, coûts/participation, protections/priorité intrabar et hypothèses borrow/marge/dividendes.
+
+Une recalibration trimestrielle ou déclenchée par dérive, changement de données/modèle/coûts/risk exige validation OOS et décision de gouvernance. Aucune promotion automatique.
+
+## Partie 11 - Rejets, activation des shorts et invariants
+
+### 11.1 Matrice de décision
+
+| Situation | Résultat attendu |
+|---|---|
+| Univers absent/non tradable | aucune entrée, motif de scope |
+| Prédiction absente/binaire/incomplète/flat | aucune entrée |
+| Probabilité sous seuil | `ml_probability_below_threshold` |
+| Score long trop bas / short trop haut | veto technique post-ML |
+| Hors capacité | non sélectionné, rang conservé |
+| Confirmation/concentration/corrélation | rejet motivé |
+| Secteur/exposition/ADV | réduction ou rejet |
+| Circuit breaker | blocage ou risque réduit |
+| Buying power/gap | intent réduit ou bloqué |
+| Refus short broker | aucune position |
+| Fill partiel | protéger uniquement le fill |
+
+### 11.2 Checklist short
+
+1. Champion validé sur la classe short et par régime/secteur/liquidité.
+2. Activation, capacités et seuils explicites.
+3. Benchmark/rotation testés OOS.
+4. Broker, compte, marge et borrow contrôlés.
+5. Stops, TP, trailing et buy-to-cover testés en paper.
+6. Fills partiels/rejets sans position non protégée.
+7. Réconciliation des quantités short correcte.
+8. Borrow/dividendes/marge inclus ou documentés.
+9. Replay short couvert par tests directionnels dédiés.
+10. Expositions et circuit breakers cohérents sur deux jambes.
+11. Fidélité mesurée séparément long/short.
+
+Sinon, garder `short_selling_enabled=false` ou `max_short_positions=0` sans toucher au long.
+
+### 11.3 Invariants à ne pas réintroduire
+
+1. Aucun scope nominal issu d'un flag, rang ou Top-N technique.
+2. Aucun modèle binaire directionnel.
+3. Aucun côté dérivé d'un score, selector ou sentiment.
+4. Aucun fallback score-only.
+5. Aucun mélange score/probabilité comme ranking.
+6. Rankings long/short séparés par probabilité.
+7. `flat` n'ouvre rien.
+8. Scores scanner/selector = features, contexte ou vetos post-ML seulement.
+9. Aucun veto n'inverse une direction.
+10. Kelly/ATR dimensionnent sans sélectionner.
+11. Aucun train requis quotidiennement.
+12. Aucun snapshot partiel/degraded pour ouvrir en live.
+13. Ne pas confondre sélection, target, intent, ordre, fill et protection.
+14. Ne pas confondre `selection_rank` et `decision_rank`.
+15. Ne pas déclarer la parité intrabar short sans preuve dédiée.
+
+## Partie 12 - Fichiers de référence et contrat exécutable
+
+### 12.1 Références workspace-relative
+
+| Domaine | Fichiers existants |
+|---|---|
+| Contrat | `core/ml_selection_contract.py`, `core/conviction.py` |
+| Univers PIT | `common/tradable_universe.py`, `common/publish_tradable_universe.py`, `alembic/versions/0046_add_tradable_universe_history.py` |
+| IHM | `ihm/services/pipeline_runner.py`, `ihm/pages/pipeline.py`, `ihm/pages/parity.py` |
+| Features/contexte | `screener/pipeline.py`, `selector/factors.py`, `selector/ranking.py`, `event_sentiment/pipeline.py`, `event_sentiment/signal_aggregator.py` |
+| ML | `modelFactory/orchestrator.py`, `modelFactory/trainer.py`, `modelFactory/predictor.py`, `modelFactory/calibration.py` |
+| Risk | `risk_management/cli.py`, `risk_management/db_io.py`, `risk_management/portfolio_builder.py` |
+| Replay | `backtesting/signal_replay.py`, `backtesting/risk_bridge.py`, `backtesting/execution_lifecycle_replay.py`, `backtesting/protection_watcher_replay.py`, `backtesting/exit_lifecycle_replay.py` |
+| Calibration | `backtesting/weights_calibration.py`, `backtesting/sentiment_calibration.py`, `backtesting/walk_forward.py` |
+| Schéma | `alembic/versions/0047_add_selection_rank_to_risk_execution.py`, `alembic/versions/0048_drop_candidate_columns_from_score_snapshots.py` |
+
+### 12.2 Contrat exécutable résumé
+
+```text
+SI univers full absent OU symbole non tradable
+    ALORS aucune nouvelle position
+SINON charger les features PIT
+
+SI prédiction ternaire absente, incomplète OU flat
+    ALORS aucune nouvelle position
+SINON direction = predicted_side
+      conviction = probabilité de cette direction
+      classer dans la jambe long ou short
+
+SI hors capacité
+    ALORS non sélectionné
+SINON appliquer seuils et vetos post-ML
+
+SI veto
+    ALORS rejet motivé
+SINON appliquer confirmation, concentration, corrélation,
+      sizing ATR/Kelly, liquidité, secteurs, expositions et régime
+      attribuer decision_rank et persister la target
+
+SI quantité approuvée > 0
+    ALORS créer un intent idempotent
+      buy ouvre un long ; sell ouvre un short
+
+SI fill
+    ALORS protéger uniquement la quantité remplie
+      suivre la sortie et persister coûts, rangs et identifiants de run
+```
+
+Cette causalité est commune au live, au paper et au backtest. La provenance change : broker et données contrôlées en live/paper ; snapshots PIT, simulateur et règles versionnées en backtest. Cette différence reste visible dans les artefacts et ne doit jamais être masquée par un fallback ou une affirmation de parité non testée.
