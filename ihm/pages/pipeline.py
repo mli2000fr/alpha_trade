@@ -270,10 +270,11 @@ def _render_period_sync_block(
         st.caption("Un run de cette étape est déjà actif : le lancement historique attend sa fin.")
 
     current_symbol_source = str(
-        st.session_state.get(symbol_source_key, getattr(options, source_attr, "candidates") or "candidates")
+        st.session_state.get(symbol_source_key, getattr(options, source_attr, "active_tradable") or "active_tradable")
     ).strip().lower()
     if current_symbol_source not in DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS:
-        current_symbol_source = "candidates"
+        current_symbol_source = "active_tradable"
+        st.session_state[symbol_source_key] = current_symbol_source
 
     selected_symbol_source = str(
         st.selectbox(
@@ -283,14 +284,12 @@ def _render_period_sync_block(
             key=symbol_source_key,
             format_func=lambda value: DATA_INTEGRITY_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
             help=(
-                "Choisissez le périmètre ciblé : l'univers éligible courant (`stock_metadata`), les snapshots scores, "
-                "l'historique PIT, les candidats du jour ou l'univers large `stock_bars_daily`."
+                "Choisissez le périmètre ciblé : l'univers éligible courant (`stock_metadata`) ou l'univers tradable PIT canonique."
             ),
         )
     )
     st.caption(
-        "`active_tradable` = symboles `stock_metadata` actifs/tradables/éligibles ; `stock_scores_all` = union `stock_scores` + "
-        "`stock_scores_history` ; `candidates` = candidats du jour ; `stock_bars_daily` = univers large."
+        "`active_tradable` = symboles `stock_metadata` actifs/tradables/éligibles ; `tradable-universe` = snapshot PIT canonique publié."
     )
 
     normalized_start_symbol = None

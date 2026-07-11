@@ -1334,7 +1334,7 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     session_state: dict[str, object] = {
         pipeline.QUOTE_HISTORY_START_DATE_KEY: dt_date(2026, 4, 1),
         pipeline.QUOTE_HISTORY_END_DATE_KEY: dt_date(2026, 4, 30),
-        pipeline.QUOTE_HISTORY_SYMBOL_SOURCE_KEY: "candidates",
+        pipeline.QUOTE_HISTORY_SYMBOL_SOURCE_KEY: "stock_scores_all",
         pipeline.QUOTE_HISTORY_START_SYMBOL_KEY: "AAG",
     }
     launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
@@ -1391,9 +1391,9 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     step_key, step_label, options = launch_calls[0]
     assert step_key == "sync_latest_quotes"
     assert "2026-04-01 → 2026-04-30" in step_label
-    assert "Candidats du jour" in step_label
+    assert "Tous les symboles éligibles" in step_label
     assert "depuis AAG" in step_label
-    assert options.data_integrity_quotes_symbol_source == "candidates"
+    assert options.data_integrity_quotes_symbol_source == "active_tradable"
     assert options.data_integrity_quotes_from_date == "2026-04-01"
     assert options.data_integrity_quotes_to_date == "2026-04-30"
     assert options.data_integrity_quotes_start_symbol == "AAG"
