@@ -2,14 +2,23 @@
 from __future__ import annotations
 
 import logging
+import json
+import os
 import uuid
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from sqlalchemy.engine import Engine
 
 from risk_management.db_io import RiskRepository
 from risk_management.models import PortfolioEntry
+from risk_management.decision_fingerprint import (
+    AuditLogEntry,
+    DecisionAuditLog,
+    DecisionFingerprint,
+    build_position_fingerprint,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,6 +26,76 @@ LOGGER = logging.getLogger(__name__)
 def build_run_id() -> str:
     """Génère un identifiant unique de run."""
     return uuid.uuid4().hex[:16]
+
+
+def persist_decision_audit_log(
+    entries: list[PortfolioEntry],
+    *,
+    run_id: str,
+    trade_date: date,
+    config_fingerprint: str,
+    model_run_id: str,
+    regime_mode: str,
+    output_dir: Path = Path("artifacts/risk_decision_audit"),
+) -> Path:
+    """Persiste le journal rejouable d'une décision live de façon atomique."""
+    universe_fingerprint = ",".join(sorted(entry.symbol for entry in entries))
+    decision_fingerprint = DecisionFingerprint(
+        trade_date=trade_date,
+        run_id=run_id,
+        config_fingerprint=config_fingerprint,
+        model_run_id=model_run_id,
+        policy_version=1,
+        universe_fingerprint=universe_fingerprint,
+        regime_mode=regime_mode,
+        candidate_count=len(entries),
+    )
+    audit_log = DecisionAuditLog(
+        trade_date=trade_date,
+        run_id=run_id,
+        decision_fingerprint=decision_fingerprint,
+    )
+    decision_timestamp = datetime.combine(trade_date, datetime.min.time())
+    for entry in entries:
+        side = "short" if entry.side == "sell" else "long"
+        position_fingerprint = build_position_fingerprint(
+            entry.symbol,
+            side,
+            decision_fingerprint.fingerprint,
+            predicted_proba=float(entry.predicted_proba or 0.0),
+            p_side=float(entry.predicted_proba or 0.0),
+            price=float(entry.entry_price),
+            atr=entry.atr_20,
+            config_fingerprint=config_fingerprint,
+        )
+        audit_log.add_entry(AuditLogEntry(
+            trade_date=trade_date,
+            timestamp=decision_timestamp,
+            run_id=run_id,
+            symbol=entry.symbol,
+            side=side,
+            decision=str(entry.decision),
+            reason=entry.decision_reason,
+            proposed_shares=float(entry.proposed_shares),
+            approved_shares=float(entry.approved_shares),
+            entry_price=float(entry.entry_price),
+            stop_price=entry.stop_price_initial,
+            fingerprint=position_fingerprint.fingerprint,
+            predicted_proba=entry.predicted_proba,
+            atr=entry.atr_20,
+            config_fingerprint=config_fingerprint,
+            model_run_id=model_run_id,
+        ))
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"{trade_date.isoformat()}_{run_id}.json"
+    temporary_path = path.with_suffix(".tmp")
+    temporary_path.write_text(
+        json.dumps(audit_log.to_dict(), indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+    os.replace(temporary_path, path)
+    return path
 
 
 def persist_decisions(

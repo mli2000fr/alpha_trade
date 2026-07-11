@@ -2841,6 +2841,10 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 - Appliquer uniquement permissions long/short, budgets et blocage des nouvelles entrées; le régime ne modifie jamais le rank ou le side ML.
 - Adapter positions et ordres ouverts vers `TransitionHandler`, puis transmettre le plan à l'executor : annulation des ordres, réduction ou liquidation dans cet ordre.
 
+**Implémenté le 2026-07-12 :** le CLI live évalue désormais `RegimeStateMachine` à partir du snapshot PIT et de son `previous_mode`, applique `RegimeTransition` de façon conservative via `apply_transition()`, puis inclut la transition sérialisée dans le résumé de run. `PortfolioBuilder` reçoit la transition et bloque les nouvelles entrées long/short non autorisées sans modifier le side ou le rang déterminés par le ML. Un état défensif maintenu (`close_only` ou `cash_only`) conserve explicitement ses permissions de blocage; les budgets détaillés du snapshot marché restent la source autoritative lorsqu'il n'y a pas de changement d'état.
+
+**Reste à raccorder :** fournir un `OperationalDataSnapshot` réel au `TransitionHandler`, persister le `PositionTransitionPlan`, puis transmettre ses annulations/réductions/liquidations à l'executor. Aucun ordre de transition destructif n'est encore émis par le CLI.
+
 **Test d'intégration :** un changement de régime modifie permissions/budgets sans reranker les candidats ML, et traite explicitement un ordre partiellement rempli.
 
 ### 4. Raccorder le Sprint 10 : liquidité, borrow et capacité
@@ -2848,6 +2852,10 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 - Appeler `LiquidityGate.evaluate()` avant toute entrée avec ADV, quote fraîche et spread.
 - Pour un short, exiger un `BorrowSnapshot` frais, shortable, avec quantité disponible et locate valide si HTB.
 - Réévaluer quote et borrow juste avant soumission broker; estimer slippage/impact et intégrer le coût du borrow dans l'edge.
+
+**Implémenté le 2026-07-12 :** le CLI live charge les quotes Alpaca bid/ask horodatées et les injecte dans `PortfolioBuilder`. Lorsque ce chemin live est actif, `LiquidityGate` est évalué après le sizing et avant l'acceptation dans le state portefeuille; quote manquante ou stale, spread invalide, ADV absent, participation excessive ou slippage estimé trop élevé produisent un rejet `liquidity_gate`. La fraîcheur préserve le fuseau de la quote. Pour un short, l'absence de `BorrowSnapshot` déclenche déjà un rejet fermé: aucun statut ETB/HTB n'est inventé.
+
+**Reste à raccorder :** créer un provider borrow PIT (quantité, fee, locate, recall et source), l'injecter dans le CLI juste avant la soumission broker et déduire son coût de l'edge short. Le bridge de backtest doit recevoir les mêmes snapshots historiques quote/borrow; capacité, liquidation multi-jours et réévaluation pré-soumission ne sont pas encore implémentées.
 
 **Gate :** borrow, ADV ou quote manquants/stale impliquent un rejet; aucun fallback optimiste n'est autorisé.
 
@@ -2857,6 +2865,10 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 - Appliquer les cibles optimisées, arrondir les quantités puis vérifier de nouveau toutes les expositions et contraintes.
 - Garder le contrôleur incrémental actuel comme fallback conservateur tant que snapshot broker ou covariance sont indisponibles.
 
+**Implémenté le 2026-07-12 :** `PortfolioBuilder` possède désormais une étape post-sizing `set_portfolio_optimization()` qui consomme un `PortfolioOptimizer`, des `HoldingSnapshot` PIT, une covariance et un edge net explicite par symbole. Elle convertit les tailles individuelles validées en candidats optimisés, applique les réductions/rejets du solveur aux cibles finales et expose `last_optimization_result` pour audit. Une cible sans edge directionnel explicite est rejetée `missing_directional_edge`; aucun score selector ou probabilité ML ne sert de proxy d'objectif. Les tests couvrent une réduction effective et ce rejet fermé.
+
+**Reste à raccorder :** le CLI live ne construit pas encore `OperationalDataSnapshot` ni covariance PIT au moment de la décision, et le bridge ne porte pas de holdings historiques ni d'edge directionnel par date. L'optimiseur reste donc inactif par défaut, tandis que le contrôleur incrémental actuel demeure le fallback nominal. Il faut ensuite revalider les contraintes après arrondi et transmettre les deltas `OptimizationResult.trades` à l'executor.
+
 **Gate :** la sortie optimise des poids signés sans violation brute, nette, sectorielle ou de position après arrondi.
 
 ### 6. Achever le Sprint 12 : parité, stops et protections
@@ -2864,6 +2876,10 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 - Persister le journal de décision déjà produit par le bridge au moment de chaque décision live.
 - Utiliser `StopCalculator` pour générer stop, take-profit et trailing dans les intents d'exécution.
 - Recalculer les protections à chaque fill sur le prix et la quantité réels, puis faire vérifier/réparer l'état par `ProtectionContract` et le watcher.
+
+**Implémenté le 2026-07-12 :** chaque run du CLI risque écrit maintenant un `DecisionAuditLog` JSON atomique dans `artifacts/risk_decision_audit/<trade_date>_<run_id>.json`; son chemin est inclus dans le résumé de run. Le journal contient le fingerprint de décision, les fingerprints de position, les décisions finales, quantités, prix, stop initial, ATR et informations modèle. `StopCalculator` est rendu déterministe: un calcul en régime défensif ne modifie plus la configuration take-profit des calculs suivants.
+
+**Reste à raccorder :** l'executor produit déjà stop, take-profit et trailing après fill à partir de `stop_price_initial` et `risk_per_share`, mais il ne consomme pas encore ce journal ni `ProtectionContract` comme contrôle commun. Il faut convertir les fills broker en `ProtectionState`, recalculer les niveaux sur prix/quantité réellement exécutés, persister cet état, puis faire piloter les réparations/force-close par le watcher. Aucun fill ni ordre de protection n'est inventé par le CLI risque.
 
 **Gate :** la quantité protégée est égale à la quantité filled, le stop est du bon côté et un replay avec les mêmes inputs reproduit la décision.
 

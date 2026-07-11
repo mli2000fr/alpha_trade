@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import date
 
 from pandas import DataFrame
+import numpy as np
 
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from core.conviction import fuse as _fuse_conviction_long
@@ -21,6 +22,7 @@ from risk_management.correlation_filter import filter_correlated_signed
 from risk_management.edge import EdgeCalculator
 from risk_management.enums import Decision, DecisionReasonCode, SizingMethod
 from risk_management.kelly import KellySizer
+from risk_management.liquidity import BorrowSnapshot, LiquidityGate, SpreadSnapshot
 from risk_management.models import (
     DirectionalWinRateInfo,
     SelectionScore,
@@ -30,9 +32,11 @@ from risk_management.models import (
     PriceInfo,
     WinRateInfo,
 )
+from risk_management.portfolio_optimizer import HoldingSnapshot, OptimizationResult, PortfolioOptimizer
 from risk_management.position_sizer import PositionSizer
 from risk_management.risk_checker import RiskCheckerImpl
 from risk_management.selection_contract import MLRankedCandidate
+from risk_management.regime_state_machine import RegimeTransition
 from risk_management.concentration import (
     BreakoutConfirmationTracker,
     ConsecutiveLossTracker,
@@ -303,6 +307,7 @@ class PortfolioBuilder:
         regime_snapshot: object | None = None,
         rotation_state: object | None = None,
         breakout_tracker: object | None = None,
+        regime_transition: RegimeTransition | None = None,
         # Factor risk model (Priorité 3)
         factor_exposures: dict[str, object] | None = None,
         factor_covariance: object | None = None,
@@ -313,6 +318,7 @@ class PortfolioBuilder:
         self._pnl = pnl
         self._circuit_breaker = circuit_breaker
         self._regime_snapshot = regime_snapshot
+        self._regime_transition = regime_transition
         self._rotation_state = rotation_state
         # Factor risk model (Priorité 3)
         self._factor_exposures: dict[str, object] = factor_exposures or {}
@@ -335,6 +341,14 @@ class PortfolioBuilder:
                 min_breakout_days=config.min_breakout_days,
             )
         self._directional_win_rates: Mapping[str | tuple[str, str], DirectionalWinRateInfo] = {}
+        self._liquidity_gate: LiquidityGate | None = None
+        self._spread_snapshots: Mapping[str, SpreadSnapshot] = {}
+        self._borrow_snapshots: Mapping[str, BorrowSnapshot] = {}
+        self._portfolio_optimizer: PortfolioOptimizer | None = None
+        self._optimizer_holdings: tuple[HoldingSnapshot, ...] = ()
+        self._optimizer_covariance: np.ndarray | None = None
+        self._optimizer_edges: Mapping[str, float] = {}
+        self.last_optimization_result: OptimizationResult | None = None
         self.progress_callback: Callable[[dict[str, object]], None] | None = None
 
     def set_directional_win_rates(
@@ -343,6 +357,37 @@ class PortfolioBuilder:
     ) -> None:
         """Injecte les métriques OOS PIT utilisées par le sizing Kelly."""
         self._directional_win_rates = directional_win_rates
+
+    def set_liquidity_data(
+        self,
+        liquidity_gate: LiquidityGate,
+        *,
+        spread_snapshots: Mapping[str, SpreadSnapshot],
+        borrow_snapshots: Mapping[str, BorrowSnapshot],
+    ) -> None:
+        """Injecte les snapshots quote/borrow vérifiés avant toute entrée."""
+        self._liquidity_gate = liquidity_gate
+        self._spread_snapshots = spread_snapshots
+        self._borrow_snapshots = borrow_snapshots
+
+    def set_portfolio_optimization(
+        self,
+        optimizer: PortfolioOptimizer,
+        *,
+        holdings: tuple[HoldingSnapshot, ...],
+        covariance: np.ndarray | None,
+        edge_by_symbol: Mapping[str, float],
+    ) -> None:
+        """Active l'optimisation finale avec des données PIT explicites.
+
+        Les candidates sans edge net sont exclues de cette étape: la sélection
+        ne doit jamais utiliser un score selector ou une probabilité comme
+        proxy d'objectif d'optimisation.
+        """
+        self._portfolio_optimizer = optimizer
+        self._optimizer_holdings = holdings
+        self._optimizer_covariance = covariance
+        self._optimizer_edges = edge_by_symbol
 
     def _emit_progress(
         self,
@@ -483,6 +528,15 @@ class PortfolioBuilder:
                 if not has_directional_probability:
                     excluded_symbols.append(sym)
                     continue
+                if self._regime_transition is not None:
+                    is_short = predicted_side == "short"
+                    if (
+                        not self._regime_transition.allow_new_entries
+                        or (is_short and not self._regime_transition.allow_short)
+                        or (not is_short and not self._regime_transition.allow_long)
+                    ):
+                        excluded_symbols.append(sym)
+                        continue
                 filtered.append(replace(c, side="sell" if predicted_side == "short" else "buy"))
             if excluded_symbols:
                 LOGGER.info(
@@ -840,13 +894,33 @@ class PortfolioBuilder:
                 )
                 continue
 
+            notional = approved * pi.last_close
+            if self._liquidity_gate is not None:
+                liquidity = self._liquidity_gate.evaluate(
+                    ec.symbol,
+                    "short" if ec.side == "sell" else "long",
+                    notional,
+                    spread=self._spread_snapshots.get(ec.symbol),
+                    borrow=self._borrow_snapshots.get(ec.symbol),
+                    adv_usd=pi.adv_usd,
+                    daily_vol_pct=(pi.atr_20 / pi.last_close) if pi.atr_20 and pi.last_close > 0 else None,
+                )
+                if not liquidity.go:
+                    entries.append(self._make_entry_v2(
+                        ec, pi, sizing.proposed_shares, 0, Decision.REJECTED,
+                        f"liquidité: {liquidity.reason}",
+                        decision_reason_code=DecisionReasonCode.LIQUIDITY_GATE,
+                        sizing_method=sizing.method,
+                    ))
+                    processed_candidates += 1
+                    continue
+
             decision = Decision.ACCEPTED if abs(approved - sizing.proposed_shares) <= QUANTITY_EPSILON else Decision.REDUCED
             reason = "OK" if decision == Decision.ACCEPTED else checker.get_last_decision_reason()
             reason_code = DecisionReasonCode.OK if decision == Decision.ACCEPTED else checker.get_last_decision_reason_code()
             checker.accept(ec.symbol, ec.sector, approved, pi.last_close, side=ec.side)
             accepted_rank += 1
 
-            notional = approved * pi.last_close
             weight = notional / equity if equity > 0 else 0.0
             risk_per_share = pi.atr_20 * self._cfg.atr_stop_multiple if pi.atr_20 is not None and pi.atr_20 > 0 else None
             risk_budget_dollars = equity * self._cfg.risk_per_trade_pct if equity > 0 else None
@@ -954,7 +1028,86 @@ class PortfolioBuilder:
                 entry_by_symbol[ae.symbol] = ae
             entries = list(entry_by_symbol.values())
 
+        if self._portfolio_optimizer is not None:
+            entries = self._apply_portfolio_optimization(entries, equity)
+
         return entries
+
+    # ------------------------------------------------------------------
+
+    def _apply_portfolio_optimization(
+        self,
+        entries: list[PortfolioEntry],
+        equity: float,
+    ) -> list[PortfolioEntry]:
+        candidates: list[dict[str, object]] = []
+        rejected_missing_edge: set[str] = set()
+        for entry in entries:
+            if entry.decision not in (Decision.ACCEPTED, Decision.REDUCED):
+                continue
+            edge = self._optimizer_edges.get(entry.symbol)
+            if edge is None:
+                rejected_missing_edge.add(entry.symbol)
+                continue
+            candidates.append({
+                "symbol": entry.symbol,
+                "side": "short" if entry.side == "sell" else "long",
+                "edge": float(edge),
+                "proposed_quantity": float(entry.approved_shares),
+                "price": float(entry.entry_price),
+                "sector": entry.sector,
+            })
+
+        result = self._portfolio_optimizer.optimize(
+            candidates,
+            list(self._optimizer_holdings),
+            account_equity=equity,
+            covariance=self._optimizer_covariance,
+        )
+        self.last_optimization_result = result
+        optimized_entries: list[PortfolioEntry] = []
+        for entry in entries:
+            if entry.symbol in rejected_missing_edge:
+                optimized_entries.append(replace(
+                    entry,
+                    approved_shares=0,
+                    target_notional=0.0,
+                    target_weight=0.0,
+                    decision=Decision.REJECTED,
+                    decision_reason="optimizer: edge net manquant",
+                    decision_reason_code=DecisionReasonCode.MISSING_DIRECTIONAL_EDGE,
+                ))
+                continue
+            if entry.symbol in result.rejected_symbols:
+                optimized_entries.append(replace(
+                    entry,
+                    approved_shares=0,
+                    target_notional=0.0,
+                    target_weight=0.0,
+                    decision=Decision.REJECTED,
+                    decision_reason=f"optimizer: {result.rejected_symbols[entry.symbol]}",
+                    decision_reason_code=DecisionReasonCode.CONSTRAINT_UNKNOWN,
+                ))
+                continue
+            quantity = result.target_quantities.get(entry.symbol)
+            if quantity is None:
+                optimized_entries.append(entry)
+                continue
+            target_notional = float(quantity) * entry.entry_price
+            is_reduced = float(quantity) + QUANTITY_EPSILON < entry.approved_shares
+            optimized_entries.append(replace(
+                entry,
+                approved_shares=normalize_share_quantity(float(quantity)),
+                target_notional=target_notional,
+                target_weight=target_notional / equity if equity > 0 else 0.0,
+                decision=Decision.REDUCED if is_reduced else entry.decision,
+                decision_reason=(
+                    f"optimizer: {result.reduced_symbols[entry.symbol][1]}"
+                    if entry.symbol in result.reduced_symbols
+                    else entry.decision_reason
+                ),
+            ))
+        return optimized_entries
 
     # ------------------------------------------------------------------
 

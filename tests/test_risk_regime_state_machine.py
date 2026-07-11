@@ -367,6 +367,19 @@ class TestRegimeStateMachineParity:
         with pytest.raises(Exception):
             t.action = TransitionAction.LIQUIDATE_ALL  # type: ignore[misc]
 
+    def test_maintained_close_only_keeps_entries_blocked(self, sm: RegimeStateMachine) -> None:
+        snap = MarketRegimeSnapshot(
+            trade_date=date(2026, 7, 1),
+            mode="close_only",
+        )
+
+        transition = sm.evaluate_from_snapshot(RegimeState.CLOSE_ONLY, snap)
+
+        assert transition.action == TransitionAction.NO_OP
+        assert transition.allow_new_entries is False
+        assert transition.allow_long is False
+        assert transition.allow_short is False
+
 
 # ── Stress scenarios ────────────────────────────────────────────────────────
 

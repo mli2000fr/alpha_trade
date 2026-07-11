@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from dataclasses import replace
@@ -11,6 +12,7 @@ import pytest
 
 from risk_management import cli
 from risk_management.enums import Decision
+from risk_management.audit import persist_decision_audit_log
 from risk_management.models import AccountRiskSnapshot, PortfolioEntry
 from service.market.models import MarketRegimeSnapshot
 
@@ -38,6 +40,54 @@ class _BaseFakeRepo:
 
 def test_cli_importable():
     assert hasattr(cli, "__doc__")
+
+
+def test_persist_decision_audit_log_writes_replayable_payload(tmp_path) -> None:
+    entry = PortfolioEntry(
+        symbol="AAPL",
+        sector="Tech",
+        entry_price=150.0,
+        score_used=0.8,
+        score_source="ml",
+        atr_20=5.0,
+        proposed_shares=10,
+        approved_shares=10,
+        target_notional=1_500.0,
+        target_weight=0.015,
+        decision=Decision.ACCEPTED,
+        decision_reason="accepted",
+        predicted_proba=0.8,
+        side="buy",
+        stop_price_initial=140.0,
+    )
+
+    path = persist_decision_audit_log(
+        [entry],
+        run_id="run-1",
+        trade_date=date(2026, 7, 12),
+        config_fingerprint="config-1",
+        model_run_id="model-1",
+        regime_mode="normal",
+        output_dir=tmp_path,
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["run_id"] == "run-1"
+    assert payload["entries"][0]["symbol"] == "AAPL"
+    assert payload["entries"][0]["stop_price"] == 140.0
+
+
+def test_evaluate_regime_transition_preserves_close_only_permissions() -> None:
+    from service.market.models import MarketRegimeSnapshot
+
+    transition = cli._evaluate_regime_transition(
+        MarketRegimeSnapshot(trade_date=date(2026, 5, 1), mode="close_only")
+    )
+
+    assert transition is not None
+    assert transition.allow_new_entries is False
+    assert transition.allow_long is False
+    assert transition.allow_short is False
 
 
 def test_cli_module_executes_main_with_help() -> None:

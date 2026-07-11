@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import date
 
 from risk_management.config import RiskConfig
-from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
+from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards, apply_transition
+from risk_management.regime_state_machine import RegimeState, RegimeTransition, TransitionAction
 from service.market.config import MarketRegimesConfig
 from service.market.models import MarketRegimeSnapshot
 
@@ -110,5 +111,26 @@ def test_apply_snapshot_exposure_caps():
     assert new.max_position_weight == 0.15
     assert new.max_sector_weight == 0.20
     assert new.max_gross_exposure == 0.35
+
+
+def test_apply_transition_only_tightens_permissions_and_exposure() -> None:
+    cfg = RiskConfig(max_long_positions=4, max_short_positions=3, max_gross_exposure=0.8)
+    transition = RegimeTransition(
+        from_state=RegimeState.NORMAL,
+        to_state=RegimeState.CAPITAL_PRESERVATION,
+        action=TransitionAction.LIQUIDATE_LONGS,
+        risk_multiplier=0.3,
+        max_gross_exposure=0.3,
+        allow_new_entries=True,
+        allow_long=False,
+        allow_short=True,
+    )
+
+    adjusted = apply_transition(cfg, transition)
+
+    assert adjusted.risk_multiplier == 0.3
+    assert adjusted.max_gross_exposure == 0.3
+    assert adjusted.max_long_positions == 0
+    assert adjusted.max_short_positions == 3
 
 

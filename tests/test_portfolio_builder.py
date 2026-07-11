@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from risk_management.config import RiskConfig
+from risk_management.enums import Decision
 from risk_management.models import (
     DirectionalWinRateInfo,
     PredictionInfo,
@@ -14,6 +15,9 @@ from risk_management.models import (
     WinRateInfo,
 )
 from risk_management.portfolio_builder import PortfolioBuilder
+from risk_management.regime_state_machine import RegimeState, RegimeTransition, TransitionAction
+from risk_management.liquidity import LiquidityGate
+from risk_management.portfolio_optimizer import PortfolioOptimizer
 
 
 def _cfg(**overrides) -> RiskConfig:  # type: ignore[no-untyped-def]
@@ -75,6 +79,72 @@ def test_build_respects_max_positions() -> None:
     entries = builder.build(_candidates(), _prices(), predictions=_long_predictions([c.symbol for c in _candidates()]))
     accepted = [e for e in entries if e.approved_shares > 0]
     assert len(accepted) <= 3
+
+
+def test_regime_transition_blocks_long_entries_without_changing_ml_side() -> None:
+    candidates = _candidates()[:1]
+    transition = RegimeTransition(
+        from_state=RegimeState.NORMAL,
+        to_state=RegimeState.CAPITAL_PRESERVATION,
+        action=TransitionAction.LIQUIDATE_LONGS,
+        allow_new_entries=True,
+        allow_long=False,
+        allow_short=True,
+        risk_multiplier=0.3,
+    )
+    builder = PortfolioBuilder(_cfg(), regime_transition=transition)
+
+    entries = builder.build(candidates, _prices(), predictions=_long_predictions(["AAPL"]))
+
+    assert entries == []
+
+
+def test_liquidity_gate_rejects_entry_without_live_quote() -> None:
+    candidate = _candidates()[:1]
+    prices = _prices()
+    prices["AAPL"] = PriceInfo("AAPL", 150.0, 5.0, adv_usd=10_000_000)
+    builder = PortfolioBuilder(_cfg())
+    builder.set_liquidity_data(LiquidityGate(), spread_snapshots={}, borrow_snapshots={})
+
+    entries = builder.build(candidate, prices, predictions=_long_predictions(["AAPL"]))
+
+    assert len(entries) == 1
+    assert entries[0].decision == Decision.REJECTED
+    assert entries[0].decision_reason_code.value == "liquidity_gate"
+
+
+def test_optimizer_reduces_sized_target_with_explicit_directional_edge() -> None:
+    candidate = _candidates()[:1]
+    prices = _prices()
+    builder = PortfolioBuilder(_cfg(max_position_weight=0.20))
+    builder.set_portfolio_optimization(
+        PortfolioOptimizer(max_position_weight=0.02, max_gross_exposure=1.0),
+        holdings=(),
+        covariance=None,
+        edge_by_symbol={"AAPL": 0.05},
+    )
+
+    entries = builder.build(candidate, prices, predictions=_long_predictions(["AAPL"]))
+
+    assert entries[0].decision == Decision.REDUCED
+    assert entries[0].approved_shares <= (0.02 * 100_000 / 150.0)
+    assert builder.last_optimization_result is not None
+
+
+def test_optimizer_rejects_target_without_explicit_directional_edge() -> None:
+    candidate = _candidates()[:1]
+    builder = PortfolioBuilder(_cfg())
+    builder.set_portfolio_optimization(
+        PortfolioOptimizer(),
+        holdings=(),
+        covariance=None,
+        edge_by_symbol={},
+    )
+
+    entries = builder.build(candidate, _prices(), predictions=_long_predictions(["AAPL"]))
+
+    assert entries[0].decision == Decision.REJECTED
+    assert entries[0].decision_reason_code.value == "missing_directional_edge"
 
 
 def test_missing_price_rejected() -> None:

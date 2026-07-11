@@ -120,7 +120,12 @@ class SpreadSnapshot:
         """True si la quote est trop ancienne."""
         if self.quote_time is None:
             return True
-        age = (datetime.now() - self.quote_time).total_seconds()
+        now = (
+            datetime.now(self.quote_time.tzinfo)
+            if self.quote_time.tzinfo is not None
+            else datetime.now()
+        )
+        age = (now - self.quote_time).total_seconds()
         return age > self.max_age_seconds
 
     @property
@@ -568,7 +573,11 @@ class LiquidityGate:
         adv_ok = True
 
         # ── 1. Spread ──────────────────────────────────────────────────
-        if spread is not None:
+        if spread is None:
+            if self.require_fresh_quote:
+                spread_ok = False
+                reasons.append("quote_snapshot_manquant")
+        else:
             if not spread.is_available:
                 spread_ok = False
                 reasons.append("spread_indisponible")

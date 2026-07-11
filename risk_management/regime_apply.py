@@ -21,6 +21,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from risk_management.config import RiskConfig
+from risk_management.regime_state_machine import RegimeTransition
 
 if TYPE_CHECKING:
     from service.market import MarketRegimesConfig
@@ -112,5 +113,38 @@ def apply_snapshot(
     return new_cfg
 
 
-__all__ = ["apply_snapshot", "apply_structural_market_guards"]
+def apply_transition(
+    cfg: RiskConfig,
+    transition: RegimeTransition | None,
+) -> RiskConfig:
+    """Applique les permissions et plafonds de la transition sans reranking.
+
+    Le snapshot marché peut déjà avoir réduit la configuration. Cette couche
+    ne fait donc qu'ajouter des contraintes, via le minimum des budgets et
+    expositions, plutôt que d'appliquer deux fois un multiplicateur de régime.
+    """
+    if transition is None:
+        return cfg
+
+    updates: dict[str, float | int | None] = {}
+    if transition.is_transition:
+        updates["risk_multiplier"] = min(
+            float(cfg.risk_multiplier),
+            float(transition.risk_multiplier),
+        )
+        if transition.max_gross_exposure is not None:
+            updates["max_gross_exposure"] = min(
+                float(cfg.max_gross_exposure),
+                float(transition.max_gross_exposure),
+            )
+    if not transition.allow_new_entries:
+        updates["effective_max_positions_override"] = 0
+    if not transition.allow_long:
+        updates["max_long_positions"] = 0
+    if not transition.allow_short:
+        updates["max_short_positions"] = 0
+    return replace(cfg, **updates)
+
+
+__all__ = ["apply_snapshot", "apply_structural_market_guards", "apply_transition"]
 

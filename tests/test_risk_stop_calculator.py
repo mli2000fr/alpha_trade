@@ -135,6 +135,14 @@ class TestStopCalculator:
         # Défensif → stop plus serré → stop_distance plus petite
         assert defensive.stop_distance_pct < normal.stop_distance_pct
 
+    def test_defensive_calculation_does_not_mutate_future_take_profit(self) -> None:
+        calc = StopCalculator(atr_stop_multiple=2.0, tp_atr_multiple=3.0)
+        calc.compute("AAPL", "long", 150.0, atr=5.0, is_defensive_regime=True)
+
+        normal = calc.compute("AAPL", "long", 150.0, atr=5.0)
+
+        assert normal.take_profit_price == pytest.approx(165.0)
+
     def test_min_stop_distance(self) -> None:
         calc = StopCalculator(atr_stop_multiple=0.1, min_stop_distance_pct=0.02)
         levels = calc.compute("AAPL", "long", 150.0, atr=0.5)

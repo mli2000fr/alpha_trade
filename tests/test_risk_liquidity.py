@@ -6,7 +6,7 @@ ParticipationLimit, SlippageEstimator, LiquidityGate.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -71,6 +71,11 @@ class TestSpreadSnapshot:
 
     def test_fresh_quote(self) -> None:
         recent = datetime.now()
+        s = SpreadSnapshot("AAPL", bid=149.0, ask=151.0, quote_time=recent, max_age_seconds=300)
+        assert s.is_stale is False
+
+    def test_utc_quote_freshness_uses_utc_clock(self) -> None:
+        recent = datetime.now(timezone.utc) - timedelta(seconds=60)
         s = SpreadSnapshot("AAPL", bid=149.0, ask=151.0, quote_time=recent, max_age_seconds=300)
         assert s.is_stale is False
 
@@ -300,9 +305,17 @@ class TestLiquidityGateBasic:
         result = gate.evaluate(
             "AAPL", "short", 50_000,
             adv_usd=10_000_000,
+            spread=SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=datetime.now()),
             borrow=BorrowSnapshot("AAPL", status=BorrowStatus.EASY_TO_BORROW),
         )
         assert result.go is True
+
+    def test_missing_quote_blocks_when_fresh_quote_is_required(self) -> None:
+        result = LiquidityGate(require_fresh_quote=True).evaluate(
+            "AAPL", "long", 50_000, adv_usd=10_000_000,
+        )
+        assert result.go is False
+        assert "quote_snapshot_manquant" in result.reason
 
     def test_short_htb_without_locate_blocked(self) -> None:
         gate = LiquidityGate(block_htb_without_locate=True)

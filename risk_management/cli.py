@@ -21,7 +21,12 @@ from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
 from database.macro_indicators import persist_market_macro_snapshot_daily
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
-from risk_management.audit import build_run_id, persist_decisions, persist_portfolio_targets
+from risk_management.audit import (
+    build_run_id,
+    persist_decision_audit_log,
+    persist_decisions,
+    persist_portfolio_targets,
+)
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.db_io import RiskRepository
@@ -118,6 +123,72 @@ def _serialize_market_regime_snapshot(snapshot: object | None) -> dict[str, obje
     elif isinstance(snapshot, dict):
         payload = snapshot
     return dict(payload) if isinstance(payload, dict) else None
+
+
+def _evaluate_regime_transition(snapshot: object | None) -> object | None:
+    """Évalue la policy risque à partir du snapshot de régime déjà PIT."""
+    if snapshot is None:
+        return None
+    try:
+        from risk_management.regime_state_machine import RegimeState, RegimeStateMachine
+
+        previous_mode = str(
+            getattr(snapshot, "previous_mode", None)
+            or getattr(snapshot, "mode", "normal")
+            or "normal"
+        )
+        previous_state = RegimeState.from_regime_mode(previous_mode)
+        return RegimeStateMachine().evaluate_from_snapshot(previous_state, snapshot)
+    except Exception:
+        LOGGER.warning("Évaluation de transition régime impossible côté risk_management.", exc_info=True)
+        return None
+
+
+def _load_live_spread_snapshots(
+    symbols: list[str],
+    *,
+    account_id: str,
+) -> dict[str, object]:
+    """Charge les quotes Alpaca et les normalise pour le gate de liquidité."""
+    from risk_management.liquidity import SpreadSnapshot
+    from service.alpaca.clientAlpaca import fetch_latest_quotes
+
+    try:
+        raw_quotes = fetch_latest_quotes(symbols, account_id=account_id)
+    except Exception:
+        LOGGER.warning("Quotes live indisponibles: les entrées seront bloquées par le gate de liquidité.", exc_info=True)
+        return {}
+
+    snapshots: dict[str, SpreadSnapshot] = {}
+    for symbol, quote in raw_quotes.items():
+        if not isinstance(quote, dict):
+            continue
+        quote_time = _parse_quote_time(quote.get("t"))
+        snapshots[str(symbol).strip().upper()] = SpreadSnapshot(
+            symbol=str(symbol).strip().upper(),
+            bid=_optional_quote_float(quote.get("bp")),
+            ask=_optional_quote_float(quote.get("ap")),
+            quote_time=quote_time,
+            source="alpaca",
+        )
+    return snapshots
+
+
+def _parse_quote_time(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed
+
+
+def _optional_quote_float(value: object) -> float | None:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _build_preflight_data_quality(
@@ -941,7 +1012,7 @@ def main(args: list[str] | None = None) -> None:
     except Exception:
         LOGGER.warning("Chargement de la configuration market_regimes impossible côté risk_management.", exc_info=True)
 
-    from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards
+    from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards, apply_transition
 
     config = apply_structural_market_guards(
         config,
@@ -950,6 +1021,7 @@ def main(args: list[str] | None = None) -> None:
     )
     regime_snapshot = _resolve_market_regime_snapshot(trade_date, effective_equity, repo)
     regime_snapshot_payload = _serialize_market_regime_snapshot(regime_snapshot)
+    regime_transition = _evaluate_regime_transition(regime_snapshot)
     if regime_snapshot is not None:
         persist_market_macro_snapshot_daily(
             trade_date=trade_date,
@@ -958,6 +1030,7 @@ def main(args: list[str] | None = None) -> None:
         )
 
         config = apply_snapshot(config, regime_snapshot)
+    config = apply_transition(config, regime_transition)
     requested_calibration_market_regime_mode = (
         str(getattr(regime_snapshot, "mode", "") or "").strip().lower() or "all"
     )
@@ -1005,7 +1078,9 @@ def main(args: list[str] | None = None) -> None:
             vol_target_state.benchmark_symbol,
         )
     regime_allow_new_entries = bool(
-        getattr(regime_snapshot, "allow_new_entries", True) if regime_snapshot is not None else True
+        getattr(regime_transition, "allow_new_entries", True)
+        if regime_transition is not None
+        else getattr(regime_snapshot, "allow_new_entries", True) if regime_snapshot is not None else True
     )
     regime_entries_blocked = 0
     snapshot_source = str(getattr(account_snapshot, "source", "") or "").strip()
@@ -1185,11 +1260,23 @@ def main(args: list[str] | None = None) -> None:
             phase="load_return_matrix",
         )
 
+        liquidity_gate = None
+        spread_snapshots: dict[str, object] = {}
+        if not config.dry_run:
+            from risk_management.liquidity import LiquidityGate
+
+            liquidity_gate = LiquidityGate()
+            spread_snapshots = _load_live_spread_snapshots(
+                symbols,
+                account_id=effective_account_id,
+            )
+
         builder = PortfolioBuilder(
             config,
             pnl=pnl_snapshot,
             circuit_breaker=circuit_breaker,
             regime_snapshot=regime_snapshot,
+            regime_transition=regime_transition,
             rotation_state=rotation_state,
             breakout_tracker=breakout_tracker,
         )
@@ -1234,6 +1321,7 @@ def main(args: list[str] | None = None) -> None:
                             pnl=pnl_snapshot,
                             circuit_breaker=circuit_breaker,
                             regime_snapshot=regime_snapshot,
+                            regime_transition=regime_transition,
                             rotation_state=rotation_state,
                             breakout_tracker=breakout_tracker,
                             factor_exposures=factor_exposures_live,
@@ -1256,6 +1344,13 @@ def main(args: list[str] | None = None) -> None:
         set_directional_win_rates = getattr(builder, "set_directional_win_rates", None)
         if callable(set_directional_win_rates):
             set_directional_win_rates(directional_win_rates)
+        set_liquidity_data = getattr(builder, "set_liquidity_data", None)
+        if liquidity_gate is not None and callable(set_liquidity_data):
+            set_liquidity_data(
+                liquidity_gate,
+                spread_snapshots=spread_snapshots,
+                borrow_snapshots={},
+            )
         builder.progress_callback = emit_run_summary
         entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
         _emit_live_progress(
@@ -1343,6 +1438,15 @@ def main(args: list[str] | None = None) -> None:
         entries=entries,
         repo=repo,
         dry_run=bool(config.dry_run),
+    )
+    model_run_ids = sorted({str(prediction.run_id) for prediction in predictions.values() if prediction.run_id})
+    decision_audit_path = persist_decision_audit_log(
+        entries,
+        run_id=run_id,
+        trade_date=trade_date,
+        config_fingerprint=config.fingerprint,
+        model_run_id="|".join(model_run_ids),
+        regime_mode=str(getattr(regime_snapshot, "mode", "normal") or "normal"),
     )
     _print_summary(entries, run_id, trade_date)
 
@@ -1520,6 +1624,7 @@ def main(args: list[str] | None = None) -> None:
         "regime_allow_new_entries": regime_allow_new_entries,
         "regime_reasons": list(regime_snapshot_payload.get("reasons") or []) if regime_snapshot_payload else [],
         "regime_snapshot": regime_snapshot_payload,
+        "regime_transition": regime_transition.to_dict() if regime_transition is not None else None,
         "preflight_data_quality": preflight_data_quality,
         # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
         "account_equity_breakdown": equity_breakdown,
@@ -1534,6 +1639,7 @@ def main(args: list[str] | None = None) -> None:
         "conviction_weights_calibration": conviction_weights_calibration,
         "empirical_risk_calibration": empirical_risk_calibration,
         "shadow_compare": shadow_compare_summary,
+        "decision_audit_log_path": str(decision_audit_path),
         "postmortem_artifacts": postmortem_artifacts,
         **ml_gate_state.to_summary(),
     }

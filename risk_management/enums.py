@@ -51,6 +51,7 @@ class DecisionReasonCode(StrEnum):
     FACTOR_CORRELATION_FILTER = "factor_correlation_filter"
     # Liquidité dynamique (LiquiditeDynamique.md P1)
     CONSTRAINT_MAX_POSITION_PCT_OF_ADV = "constraint_max_position_pct_of_adv"
+    LIQUIDITY_GATE = "liquidity_gate"
 
 
 class KellyFallback(StrEnum):

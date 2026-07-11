@@ -235,10 +235,11 @@ class StopCalculator:
             stop_distance_pct = 0.03  # 3% par défaut sans ATR
 
         # Régime défensif → stops plus serrés
+        tp_atr_multiple = self.tp_atr_multiple
         if is_defensive_regime:
             stop_distance_pct *= 0.7
-            if self.tp_atr_multiple is not None:
-                self.tp_atr_multiple *= 0.7
+            if tp_atr_multiple is not None:
+                tp_atr_multiple *= 0.7
 
         # Clamp
         stop_distance_pct = max(self.min_stop_distance_pct, min(stop_distance_pct, self.max_stop_distance_pct))
@@ -252,8 +253,8 @@ class StopCalculator:
         # ── Take profit ────────────────────────────────────────────────
         tp_price = None
         tp_distance_pct = None
-        if self.tp_atr_multiple is not None and atr is not None and atr > 0:
-            tp_distance_pct = (atr * self.tp_atr_multiple) / entry_price
+        if tp_atr_multiple is not None and atr is not None and atr > 0:
+            tp_distance_pct = (atr * tp_atr_multiple) / entry_price
             tp_distance_pct = min(tp_distance_pct, 0.30)  # Cap 30%
             if side == "long":
                 tp_price = entry_price * (1.0 + tp_distance_pct)

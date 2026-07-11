@@ -424,7 +424,7 @@ class RegimeStateMachine:
         # Si on est en RECOVERY → on y reste tant que le ramp-up n'est pas fini
         # (géré par CircuitBreaker.allocation_scale)
 
-        return self.evaluate_transition(
+        transition = self.evaluate_transition(
             current_state=previous_state,
             target_state=target,
             days_in_current_mode=snapshot.state_age_days or 0,
@@ -432,6 +432,25 @@ class RegimeStateMachine:
             soft_exit_streak=0,  # Pas directement exposé par snapshot
             hard_calm_streak=0,  # Pas directement exposé
             hard_triggered=snapshot.hard_triggered,
+        )
+        if transition.to_state != target or transition.is_transition:
+            return transition
+
+        # Une transition NO_OP ne signifie pas que les permissions redeviennent
+        # nominales. L'état déjà actif doit conserver ses plafonds et ses
+        # autorisations tant qu'il est maintenu.
+        return RegimeTransition(
+            from_state=transition.from_state,
+            to_state=transition.to_state,
+            action=transition.action,
+            reason=transition.reason,
+            hysteresis_applied=transition.hysteresis_applied,
+            min_hold_remaining=transition.min_hold_remaining,
+            risk_multiplier=self._risk_multiplier_for_state(target),
+            max_gross_exposure=self._max_gross_for_state(target),
+            allow_new_entries=not target.is_blocking_entries,
+            allow_long=target.allows_long,
+            allow_short=target.allows_short,
         )
 
     # ── Helpers ─────────────────────────────────────────────────────────
