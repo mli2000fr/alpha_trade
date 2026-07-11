@@ -71,7 +71,7 @@ HISTORY_COLUMNS = [
     "earnings_date",
     "days_to_earnings",
     "earnings_blackout",
-    "candidate_rank",
+    "selection_rank",
     "raw_final_score",
     "normalized_total_score",
     "normalized_rsi",
@@ -84,7 +84,6 @@ HISTORY_COLUMNS = [
     "weekly_trend_score",
     "high_52w_proximity",
     "volatility_ratio",
-    "is_candidate",
     "selector_signal_mode",  # Plan v2 Sprint 5 — long/short
     "selection_explanation",
     "sentiment_net_agg",
@@ -292,11 +291,11 @@ class BackfillScoresHistoryService:
         _selector_columns_to_preserve = [
             "symbol", "final_score", "trend_score", "vcp_score", "total_score", "sector",
             "liquidity_val", "relative_strength_index", "historical_range_score",
-            "anomaly_count", "missing_days_count", "is_candidate", "selector_signal_mode",
+            "anomaly_count", "missing_days_count", "selector_signal_mode",
             # Colonnes enrichies par le pipeline selector (metadata / quotes / earnings / ranking)
             "market_cap", "beta_126", "spread_bps",
             "earnings_date", "days_to_earnings", "earnings_blackout",
-            "candidate_rank", "raw_final_score",
+            "selection_rank", "raw_final_score",
             "normalized_total_score", "normalized_rsi",
             "total_score_neutralized", "relative_strength_index_neutralized",
             "trend_vcp_component", "total_score_component", "rsi_component",
@@ -314,7 +313,7 @@ class BackfillScoresHistoryService:
             "Snapshot PIT construit | date=%s lignes=%s candidats=%s",
             as_of_date,
             len(history_df),
-            int(history_df["is_candidate"].sum()) if not history_df.empty else 0,
+            int(history_df["selection_rank"].notna().sum()) if not history_df.empty else 0,
         )
         return history_df
 
@@ -539,15 +538,13 @@ class BackfillScoresHistoryService:
         if not short_selected.empty:
             selected = pd.concat([selected, short_selected], ignore_index=True)
             selected = selected.drop_duplicates(subset=["symbol"], keep="first")
-        selected_symbols = set(selected["symbol"].astype(str).tolist()) if not selected.empty else set()
-        merged_candidates["is_candidate"] = merged_candidates["symbol"].astype(str).isin(selected_symbols).astype(int)
-        # Propager selector_signal_mode et candidate_rank aux candidats
+        # Propager selector_signal_mode et selection_rank aux symboles sélectionnés.
         if "selector_signal_mode" in selected.columns:
             mode_map = selected.set_index("symbol")["selector_signal_mode"]
             merged_candidates["selector_signal_mode"] = merged_candidates["symbol"].map(mode_map)
-        if "candidate_rank" in selected.columns and not selected.empty:
-            rank_map = selected.set_index("symbol")["candidate_rank"]
-            merged_candidates["candidate_rank"] = merged_candidates["symbol"].map(rank_map)
+        if "selection_rank" in selected.columns and not selected.empty:
+            rank_map = selected.set_index("symbol")["selection_rank"]
+            merged_candidates["selection_rank"] = merged_candidates["symbol"].map(rank_map)
         return merged_candidates
 
     def _enrich_short_score_pit(self, merged_df: pd.DataFrame, as_of_date: date) -> None:
@@ -868,7 +865,7 @@ class BackfillScoresHistoryService:
             "earnings_date": None,
             "days_to_earnings": None,
             "earnings_blackout": 0,
-            "candidate_rank": None,
+            "selection_rank": None,
             "raw_final_score": None,
             "normalized_total_score": None,
             "normalized_rsi": None,
@@ -881,7 +878,6 @@ class BackfillScoresHistoryService:
             "weekly_trend_score": None,
             "high_52w_proximity": None,
             "volatility_ratio": None,
-            "is_candidate": 0,
             "selector_signal_mode": None,  # Plan v2 Sprint 5 — long/short
             "selection_explanation": None,
             "sentiment_net_agg": 0.0,
@@ -912,7 +908,6 @@ class BackfillScoresHistoryService:
                 history_df[col] = default
 
         history_df["signal_active"] = history_df["signal_active"].fillna(False).astype(int)
-        history_df["is_candidate"] = history_df["is_candidate"].fillna(0).astype(int)
         history_df["earnings_blackout"] = history_df["earnings_blackout"].fillna(0).astype(int)
         history_df["anomaly_count"] = history_df["anomaly_count"].fillna(0).astype(int)
         history_df["missing_days_count"] = history_df["missing_days_count"].fillna(0).astype(int)
@@ -959,7 +954,7 @@ class BackfillScoresHistoryService:
                 liquidity_val, relative_strength_index, historical_range_score, total_score,
                 trend_score, vcp_score, final_score,
                 market_cap, beta_126, spread_bps, earnings_date, days_to_earnings, earnings_blackout,
-                candidate_rank, raw_final_score,
+                selection_rank, raw_final_score,
                 normalized_total_score, normalized_rsi,
                 total_score_neutralized, relative_strength_index_neutralized,
                 trend_vcp_component, total_score_component, rsi_component,
@@ -979,7 +974,7 @@ class BackfillScoresHistoryService:
                 :liquidity_val, :relative_strength_index, :historical_range_score, :total_score,
                 :trend_score, :vcp_score, :final_score,
                 :market_cap, :beta_126, :spread_bps, :earnings_date, :days_to_earnings, :earnings_blackout,
-                :candidate_rank, :raw_final_score,
+                :selection_rank, :raw_final_score,
                 :normalized_total_score, :normalized_rsi,
                 :total_score_neutralized, :relative_strength_index_neutralized,
                 :trend_vcp_component, :total_score_component, :rsi_component,

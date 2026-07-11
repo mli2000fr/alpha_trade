@@ -1446,10 +1446,9 @@ class SentimentSignalAggregator:
 def _load_scores_from_db(engine: Engine, all_symbols: bool) -> pd.DataFrame:
     """
     Charge depuis stock_scores les colonnes nécessaires à merge().
-    Par défaut ne charge que les candidats (is_candidate=1).
-    Si all_symbols=True, charge tous les symboles.
+    Charge tous les symboles du snapshot score; le score ne définit pas le
+    périmètre nominal du pipeline sentiment.
     """
-    where = "" if all_symbols else "WHERE is_candidate = 1"
     stmt = text(
         f"""
         SELECT symbol,
@@ -1459,7 +1458,6 @@ def _load_scores_from_db(engine: Engine, all_symbols: bool) -> pd.DataFrame:
                total_score,
                sector
         FROM stock_scores
-        {where}
         ORDER BY total_score DESC
         """
     )

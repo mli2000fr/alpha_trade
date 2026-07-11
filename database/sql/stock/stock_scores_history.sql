@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores_history (
     earnings_date           DATE           DEFAULT NULL,
     days_to_earnings        INT            DEFAULT NULL,
     earnings_blackout       TINYINT(1)     DEFAULT 0,
-    candidate_rank          INT            DEFAULT NULL,
+    selection_rank          INT            DEFAULT NULL,
     raw_final_score         DOUBLE         DEFAULT NULL,
     normalized_total_score  DOUBLE         DEFAULT NULL,
     normalized_rsi          DOUBLE         DEFAULT NULL,
@@ -44,7 +44,6 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores_history (
     volatility_ratio        DOUBLE         DEFAULT NULL,
     selector_signal_mode    VARCHAR(32)    DEFAULT NULL,
     selection_explanation   VARCHAR(255)   DEFAULT NULL,
-    is_candidate            TINYINT(1)     DEFAULT 0,
     sentiment_net_agg       DOUBLE         DEFAULT NULL,
     sector_impact_agg       DOUBLE         DEFAULT NULL,
     company_idio_score      DOUBLE         DEFAULT NULL,
@@ -71,7 +70,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores_history (
     created_at              TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_snapshot_preset_symbol (snapshot_date, capital_preset_key, symbol),
     INDEX idx_history_symbol     (symbol, snapshot_date),
-    INDEX idx_history_candidate  (snapshot_date, is_candidate),
-    INDEX idx_history_preset_candidate (capital_preset_key, snapshot_date, is_candidate)
+    INDEX idx_history_selection_rank  (snapshot_date, selection_rank),
+    INDEX idx_history_preset_selection_rank (capital_preset_key, snapshot_date, selection_rank)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Archivage quotidien des snapshots stock_scores';

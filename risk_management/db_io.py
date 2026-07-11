@@ -203,6 +203,7 @@ class RiskRepository:
             f"s.{column}" if column in stock_score_columns else f"NULL AS {column}"
             for column in [*optional_float_columns, *optional_int_columns, *optional_text_columns]
         ]
+        selection_rank_order = "COALESCE(s.selection_rank, 999999)" if "selection_rank" in stock_score_columns else "COALESCE(NULL, 999999)"
         query = text(f"""
             SELECT
                 s.snapshot_date,
@@ -214,16 +215,14 @@ class RiskRepository:
             FROM stock_scores_history s
             WHERE s.snapshot_date = :snapshot_date
               {preset_filter_sql}
-              AND s.is_candidate = 1
               AND {score_expr} IS NOT NULL
-            ORDER BY score_used DESC, s.symbol ASC
+                        ORDER BY {selection_rank_order}, score_used DESC, s.symbol ASC
         """)
         resolve_snapshot_query = text(f"""
             SELECT MAX(snapshot_date) AS snapshot_date
             FROM stock_scores_history
             WHERE snapshot_date <= :trade_date
               {preset_filter_sql}
-              AND is_candidate = 1
               AND {score_expr_unaliased} IS NOT NULL
         """)
         with self.engine.connect() as conn:
@@ -231,7 +230,7 @@ class RiskRepository:
             resolved_snapshot_date = self._coerce_date(resolved_row["snapshot_date"]) if resolved_row else None
             if resolved_snapshot_date is None:
                 LOGGER.warning(
-                    "load_candidates_asof | aucun snapshot stock_scores_history avec is_candidate=1 trouve pour trade_date<=%s.",
+                    "load_candidates_asof | aucun snapshot de scores exploitable trouve pour trade_date<=%s.",
                     trade_date,
                 )
                 return []

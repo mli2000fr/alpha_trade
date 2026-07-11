@@ -62,7 +62,7 @@ PERSISTED_SELECTOR_REQUIRED_COLUMNS = [
     "earnings_blackout",
 ]
 PERSISTED_SELECTOR_OPTIONAL_COLUMNS = [
-    "candidate_rank",
+    "selection_rank",
     "raw_final_score",
     "normalized_total_score",
     "normalized_rsi",
@@ -85,7 +85,7 @@ PERSISTED_SELECTOR_SCORE_COLUMNS = [
 OUTPUT_COLUMNS = [
     "rank",
     "symbol",
-    "candidate_rank",
+    "selection_rank",
     "sector",
     "latest_close",
     "avg_dollar_volume_20d",
@@ -256,7 +256,7 @@ def merge_scores(
         config.weight_total_score * merged.loc[aux_mask, "normalized_total_score"].fillna(0.0)
     )
     rsi_component.loc[aux_mask] = config.weight_rsi * merged.loc[aux_mask, "normalized_rsi"].fillna(0.0)
-    merged["candidate_rank"] = np.nan
+    merged["selection_rank"] = np.nan
     merged["total_score_neutralized"] = np.nan
     merged["relative_strength_index_neutralized"] = np.nan
     return _apply_selection_explainability(
@@ -460,7 +460,7 @@ def rank_and_select(
         ascending=False,
     ).reset_index(drop=True)
     selected.insert(0, "rank", np.arange(1, len(selected) + 1))
-    selected["candidate_rank"] = selected["rank"]
+    selected["selection_rank"] = selected["rank"]
     LOGGER.info("Classement termine | selection_finale=%s top3=%s", len(selected), selected["symbol"].head(3).tolist())
     for column in OUTPUT_COLUMNS:
         if column not in selected.columns:
@@ -505,7 +505,7 @@ def rank_and_select_short(
     target_size = min(config.short_selection_size, len(short_candidates))
     selected = short_candidates.head(target_size).copy()
     selected.insert(0, "rank", np.arange(1, len(selected) + 1))
-    selected["candidate_rank"] = selected["rank"]
+    selected["selection_rank"] = selected["rank"]
     selected["selector_signal_mode"] = "short"
 
     LOGGER.info(

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores (
     earnings_date           DATE           DEFAULT NULL,
     days_to_earnings        INT            DEFAULT NULL,
     earnings_blackout       TINYINT(1)     DEFAULT 0,
-    candidate_rank          INT            DEFAULT NULL,
+    selection_rank          INT            DEFAULT NULL,
     raw_final_score         DOUBLE         DEFAULT NULL,
     normalized_total_score  DOUBLE         DEFAULT NULL,
     normalized_rsi          DOUBLE         DEFAULT NULL,
@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores (
     selector_signal_mode    VARCHAR(32)    DEFAULT NULL,
     selection_explanation   VARCHAR(255)   DEFAULT NULL,
     final_score             DOUBLE         DEFAULT NULL,
-    is_candidate            TINYINT(1)     DEFAULT 0,
     last_updated_scan       DATETIME       DEFAULT NULL,
 
     -- métadonnées

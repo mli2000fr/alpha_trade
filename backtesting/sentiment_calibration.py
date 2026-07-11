@@ -257,7 +257,7 @@ class SentimentWeightCalibrator:
             SELECT DISTINCT h.symbol
             FROM stock_scores_history h
             WHERE h.snapshot_date BETWEEN :start_date AND :end_date
-              AND (:candidates_only = 0 OR h.is_candidate = 1)
+              AND (:candidates_only = 0 OR h.selection_rank IS NOT NULL)
               {preset_clause}
             ORDER BY h.symbol
             """
@@ -311,7 +311,7 @@ class SentimentWeightCalibrator:
                 h.sector_impact_agg,
                 h.final_score_sentiment,
                 h.short_score,
-                h.is_candidate,
+                h.selection_rank,
                 b.date AS bar_date,
                 COALESCE(b.adj_close, b.close) AS close_price
             FROM stock_scores_history h
@@ -322,7 +322,7 @@ class SentimentWeightCalibrator:
              {source_filter_sql}
             WHERE h.symbol IN ({escaped})
               AND h.snapshot_date BETWEEN :start_date AND :end_date
-              AND (:candidates_only = 0 OR h.is_candidate = 1)
+              AND (:candidates_only = 0 OR h.selection_rank IS NOT NULL)
               {preset_clause}
             ORDER BY h.snapshot_date, h.symbol, b.date
             """

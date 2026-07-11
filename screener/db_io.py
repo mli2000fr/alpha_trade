@@ -19,7 +19,6 @@ REQUIRED_SCORE_COLUMNS = (
 	"historical_range_score",
 	"total_score",
 	"last_updated_score",
-	"is_candidate",
 	"sector",
 	"anomaly_count",
 	"missing_days_count",
@@ -42,7 +41,7 @@ ARCHIVABLE_SCORE_COLUMNS = (
 	"earnings_date",
 	"days_to_earnings",
 	"earnings_blackout",
-	"candidate_rank",
+	"selection_rank",
 	"raw_final_score",
 	"normalized_total_score",
 	"normalized_rsi",
@@ -57,7 +56,6 @@ ARCHIVABLE_SCORE_COLUMNS = (
 	"volatility_ratio",
 	"selector_signal_mode",
 	"selection_explanation",
-	"is_candidate",
 	"sentiment_net_agg",
 	"sector_impact_agg",
 	"company_idio_score",
@@ -382,13 +380,8 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	normalized = scores_df.copy()
 	if "last_updated_score" not in normalized.columns and "last_updated" in normalized.columns:
 		normalized = normalized.rename(columns={"last_updated": "last_updated_score"})
-	if "is_candidate" not in normalized.columns and "top_swing" in normalized.columns:
-		normalized = normalized.rename(columns={"top_swing": "is_candidate"})
-
 	if "last_updated_score" not in normalized.columns:
 		normalized["last_updated_score"] = datetime.now(UTC).replace(tzinfo=None)
-	if "is_candidate" not in normalized.columns:
-		normalized["is_candidate"] = 0
 	if "sector" not in normalized.columns:
 		normalized["sector"] = None
 	if "anomaly_count" not in normalized.columns:
@@ -402,7 +395,6 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 
 	normalized["last_updated_score"] = pd.to_datetime(normalized["last_updated_score"], utc=False)
 	normalized["last_updated_scan"] = pd.to_datetime(normalized["last_updated_scan"], utc=False)
-	normalized["is_candidate"] = normalized["is_candidate"].fillna(0).astype(int)
 	normalized["sector"] = normalized["sector"].where(normalized["sector"].notna(), None)
 	normalized["anomaly_count"] = pd.to_numeric(normalized["anomaly_count"], errors="coerce")
 	normalized["missing_days_count"] = pd.to_numeric(normalized["missing_days_count"], errors="coerce")
@@ -522,7 +514,6 @@ def upsert_scores_snapshot(
 				"historical_range_score": stmt.inserted.historical_range_score,
 				"total_score": stmt.inserted.total_score,
 				"last_updated_score": stmt.inserted.last_updated_score,
-				"is_candidate": stmt.inserted.is_candidate,
 				"sector": stmt.inserted.sector,
 				"anomaly_count": stmt.inserted.anomaly_count,
 				"missing_days_count": stmt.inserted.missing_days_count,

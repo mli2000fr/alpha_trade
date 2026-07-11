@@ -60,13 +60,13 @@ def _clean_date(value: object) -> str | None:
 
 
 def build_candidate_explainability_payload(row: Mapping[str, object]) -> dict[str, object]:
-    """Construit un payload canonique d'explicabilité pour un candidat selector."""
+    """Construit un payload canonique d'explicabilité pour une sélection score."""
     return {
         "identity": {
             "symbol": _clean_text(row.get("symbol")),
             "sector": _clean_text(row.get("sector")),
             "rank": _clean_int(row.get("rank")),
-            "candidate_rank": _clean_int(row.get("candidate_rank")),
+            "selection_rank": _clean_int(row.get("selection_rank")),
         },
         "score_inputs": {
             "trend_score": _clean_float(row.get("trend_score")),

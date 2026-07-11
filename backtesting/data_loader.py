@@ -381,7 +381,6 @@ def load_scores(
                    final_score_sentiment,
                    {_optional_select(history_columns, 'final_score_walk_forward')},
                    sector,
-                   is_candidate,
                    {_optional_select(history_columns, 'sentiment_net_agg')},
                    {_optional_select(history_columns, 'sector_impact_agg')},
                    {_optional_select(history_columns, 'company_idio_score')},
@@ -407,7 +406,6 @@ def load_scores(
             FROM stock_scores_history
             WHERE snapshot_date BETWEEN :start AND :end
               {history_preset_filter}
-              AND is_candidate = 1
             ORDER BY snapshot_date, symbol
         """)
         if normalized_scores_pit_mode == "asof_latest":
@@ -434,7 +432,6 @@ def load_scores(
                        s.final_score_sentiment,
                        {('s.final_score_walk_forward' if has_walk_forward else 'NULL AS final_score_walk_forward')},
                        s.sector,
-                       s.is_candidate,
                        {('s.sentiment_net_agg' if 'sentiment_net_agg' in history_columns else 'NULL AS sentiment_net_agg')},
                        {('s.sector_impact_agg' if 'sector_impact_agg' in history_columns else 'NULL AS sector_impact_agg')},
                        {('s.company_idio_score' if 'company_idio_score' in history_columns else 'NULL AS company_idio_score')},
@@ -469,10 +466,8 @@ def load_scores(
                       FROM stock_scores_history
                       WHERE snapshot_date <= td.trade_date
                         {history_preset_filter}
-                        AND is_candidate = 1
                         AND {history_score_expr_unaliased} IS NOT NULL
                   )
-                WHERE s.is_candidate = 1
                   {history_preset_filter_aliased}
                   AND {history_score_expr} IS NOT NULL
                 ORDER BY td.trade_date, s.symbol
@@ -534,7 +529,6 @@ def load_scores(
                final_score_sentiment,
                {_optional_select(stock_columns, 'final_score_walk_forward')},
                sector,
-               is_candidate,
                {_optional_select(stock_columns, 'sentiment_net_agg')},
                {_optional_select(stock_columns, 'sector_impact_agg')},
                {_optional_select(stock_columns, 'company_idio_score')},
@@ -556,7 +550,6 @@ def load_scores(
                END AS score_source
         FROM stock_scores
         WHERE DATE(COALESCE(last_updated_sentiment, last_updated_scan, last_updated_score)) BETWEEN :start AND :end
-          AND is_candidate = 1
         ORDER BY trade_date, symbol
     """)
     with engine.connect() as conn:

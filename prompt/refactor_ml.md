@@ -951,6 +951,25 @@ les parcours risk/exécution. Le nettoyage physique du schéma reste le Sprint 7
 
 **Objectif :** retirer les colonnes et index candidate devenus sans lecteur ni writer.
 
+### Statut d'implémentation (en cours)
+
+La migration de schéma finale est préparée :
+
+- `0048_drop_candidate_columns_from_score_snapshots` ajoute
+  `selection_rank` à `stock_scores` et `stock_scores_history`, reprend les
+  valeurs disponibles de `candidate_rank`, supprime les index candidats puis
+  retire `is_candidate` et `candidate_rank` ;
+- les DDL de création des deux tables portent désormais `selection_rank` et les
+  index `idx_history_selection_rank` / `idx_history_preset_selection_rank` ;
+- le selector, le screener, le loader risk et le loader backtest ont commencé à
+  migrer leurs écritures et lectures vers le rang de sélection et un scope de
+  scores non nul.
+
+Le sprint n'est pas encore clos: les backfills, certains diagnostics/IHM et les
+fixtures de persistence doivent être basculés vers `selection_rank`, puis les
+tests de migration Alembic et les suites selector/risk/backtest doivent passer
+sur un schéma effectivement dépourvu des deux colonnes legacy.
+
 ### Tâches
 
 1. Supprimer les colonnes `is_candidate` et `candidate_rank` de `stock_scores` et `stock_scores_history` après migration des données nécessaire à l'audit.

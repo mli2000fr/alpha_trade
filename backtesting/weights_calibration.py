@@ -877,7 +877,7 @@ class EmpiricalRiskCalibrator:
             else "short_score"
         ) if "short_score" in score_columns else "NULL"
         signal_mode_col = "selector_signal_mode" if "selector_signal_mode" in score_columns else "'long'"
-        candidate_clause = "AND is_candidate = 1" if candidates_only else ""
+        selection_clause = "AND selection_rank IS NOT NULL" if candidates_only else ""
         scores_query = text(
             f"""
             SELECT snapshot_date, symbol, {score_expr} AS quant_score,
@@ -885,7 +885,7 @@ class EmpiricalRiskCalibrator:
                    {signal_mode_col} AS selector_signal_mode
             FROM stock_scores_history
             WHERE snapshot_date BETWEEN :start_date AND :end_date
-              {candidate_clause}
+              {selection_clause}
               AND {score_expr} IS NOT NULL
             ORDER BY snapshot_date ASC, symbol ASC
             """

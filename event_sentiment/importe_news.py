@@ -36,9 +36,9 @@ def get_all_symbols_from_stock_bars_daily():
     return _load_distinct_symbols("SELECT DISTINCT symbol FROM stock_bars_daily ORDER BY symbol ASC")
 
 
-def get_all_symbols_from_stock_scores(*, candidates_only: bool = False) -> list[str]:
+def get_all_symbols_from_stock_scores(*, selected_only: bool = False) -> list[str]:
     """Retourne les symboles distincts présents dans stock_scores."""
-    where_clause = "WHERE is_candidate = 1" if candidates_only else ""
+    where_clause = "WHERE selection_rank IS NOT NULL" if selected_only else ""
     return _load_distinct_symbols(
         f"""
         SELECT DISTINCT symbol

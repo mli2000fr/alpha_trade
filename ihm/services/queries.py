@@ -34,8 +34,7 @@ ALPHA_SCANNER_DEPENDENCY_THRESHOLDS: dict[str, dict[str, float]] = DEFAULT_ALPHA
 STOCK_SCORES_BASE_COLUMNS = [
     "symbol",
     "sector",
-    "is_candidate",
-    "candidate_rank",
+    "selection_rank",
     "total_score",
     "final_score",
     "final_score_sentiment",
@@ -143,13 +142,11 @@ def _build_stock_scores_query(available_columns: set[str]) -> str:
         if column in available_columns
     ]
     if not selected_columns:
-        selected_columns = ["symbol", "sector", "is_candidate", "total_score", "final_score", "final_score_sentiment"]
+        selected_columns = ["symbol", "sector", "total_score", "final_score", "final_score_sentiment"]
     order_by_parts: list[str] = []
-    if "is_candidate" in available_columns:
-        order_by_parts.append("COALESCE(is_candidate, 0) DESC")
-    if "candidate_rank" in available_columns:
-        order_by_parts.append("CASE WHEN candidate_rank IS NULL THEN 1 ELSE 0 END ASC")
-        order_by_parts.append("candidate_rank ASC")
+    if "selection_rank" in available_columns:
+        order_by_parts.append("CASE WHEN selection_rank IS NULL THEN 1 ELSE 0 END ASC")
+        order_by_parts.append("selection_rank ASC")
     for column in ("final_score_sentiment", "final_score", "total_score"):
         if column in available_columns:
             order_by_parts.append(f"{column} DESC")

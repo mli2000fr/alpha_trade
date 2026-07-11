@@ -16,7 +16,7 @@ SELECTOR_HISTORY_CONTEXT_COLUMNS: tuple[str, ...] = (
     "vcp_score",
     "final_score",
     "raw_final_score",
-    "candidate_rank",
+    "selection_rank",
     "atr_pct_20",
     "weekly_trend_score",
     "high_52w_proximity",
@@ -207,16 +207,16 @@ def load_historical_prediction_scopes_from_scores_history(
     end_date: date,
     symbols: list[str] | None = None,
     signal_modes: tuple[str, ...] | list[str] | None = None,
-    max_candidate_rank: int | None = None,
+    max_selection_rank: int | None = None,
     exclude_earnings_blackout: bool = False,
 ) -> dict[date, list[str]]:
     """Construit un scope PIT ``snapshot_date -> [symbols]`` depuis stock_scores_history.
 
-    Ce loader sert au backfill historique de ``model_predictions`` afin de ne prédire,
-    pour chaque date, que l'univers effectivement candidat à cette date.
+    Ce loader sert au backfill historique de ``model_predictions`` sur le
+    snapshot de scores disponible à chaque date.
     """
     history_columns = _get_table_columns(engine, "stock_scores_history")
-    required_columns = {"snapshot_date", "symbol", "is_candidate"}
+    required_columns = {"snapshot_date", "symbol"}
     missing_columns = required_columns.difference(history_columns)
     if missing_columns:
         LOGGER.warning(
@@ -227,7 +227,6 @@ def load_historical_prediction_scopes_from_scores_history(
 
     where_clauses = [
         "snapshot_date BETWEEN :start_date AND :end_date",
-        "COALESCE(is_candidate, 0) = 1",
         "COALESCE(TRIM(symbol), '') <> ''",
     ]
     params: dict[str, object] = {
@@ -251,9 +250,9 @@ def load_historical_prediction_scopes_from_scores_history(
         where_clauses.append(f"LOWER(TRIM(selector_signal_mode)) IN ({mode_placeholders})")
         params.update(mode_params_remapped)
 
-    if max_candidate_rank is not None and int(max_candidate_rank) > 0 and "candidate_rank" in history_columns:
-        where_clauses.append("candidate_rank <= :max_candidate_rank")
-        params["max_candidate_rank"] = int(max_candidate_rank)
+    if max_selection_rank is not None and int(max_selection_rank) > 0 and "selection_rank" in history_columns:
+        where_clauses.append("selection_rank <= :max_selection_rank")
+        params["max_selection_rank"] = int(max_selection_rank)
 
     if exclude_earnings_blackout and "earnings_blackout" in history_columns:
         where_clauses.append("COALESCE(earnings_blackout, 0) = 0")

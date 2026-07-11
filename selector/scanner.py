@@ -612,10 +612,10 @@ class AlphaScanner:
 
             if not scored_for_persistence.empty:
                 if not selected.empty and {"symbol", "rank"}.issubset(selected.columns):
-                    candidate_rank_map = selected.set_index("symbol")["rank"]
-                    scored_for_persistence["candidate_rank"] = scored_for_persistence["symbol"].map(candidate_rank_map)
-                elif "candidate_rank" not in scored_for_persistence.columns:
-                    scored_for_persistence["candidate_rank"] = pd.NA
+                    selection_rank_map = selected.set_index("symbol")["rank"]
+                    scored_for_persistence["selection_rank"] = scored_for_persistence["symbol"].map(selection_rank_map)
+                elif "selection_rank" not in scored_for_persistence.columns:
+                    scored_for_persistence["selection_rank"] = pd.NA
 
             self._emit_live_progress(
                 current=scan_meta["chunks_total"],
