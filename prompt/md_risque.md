@@ -1148,6 +1148,68 @@ Garantir que chaque cible est exécutable et liquidable dans les conditions pré
 - coûts stressés persistés ;
 - capacité maximale et plan de liquidation chiffrés.
 
+### Ce qui a été implémenté (Sprint Maître 10)
+
+**Date :** 2026-07-20  
+**Gate :** GO PARTIEL  
+**Tests :** 76 (tous passent, 0 échec)
+
+#### Fichiers créés
+
+| Fichier | Rôle |
+|---|---|
+| `risk_management/liquidity.py` | `BorrowStatus` (ETB/HTB/NOT_SHORTABLE avec fee_multiplier), `SpreadSnapshot` (bid/ask/spread_bps/quote_time/max_age, stale detection, mid_price, effective_spread_bps), `BorrowSnapshot` (DTO PIT : status, fee_annual, quantity_available, locate_required/confirmed/deadline, recall_risk — validation auto HTB→locate_required, NOT_SHORTABLE→quantity=0), `ParticipationLimit` (max_pct ADV entrée/liquidation, cap absolu, min_adv), `SlippageEstimator` (modèle 3 composantes : half-spread + sqrt impact + vol adverse selection, mode stressé ×3), `SlippageEstimate` (DTO résultat), `LiquidityGate` (gate combiné spread+borrow+ADV+slippage → GO/NO-GO), `check_liquidity_pre_entry()` |
+| `risk_management/capacity.py` | `CapacityEstimate` (DTO : scope, max_notional, max_shares, turnover_days normal/stressé, contraintes ADV/spread), `CapacityEstimator` (3 méthodes : `estimate_symbol` avec réduction spread + slippage, `estimate_sector` avec discount corrélation 30%, `estimate_strategy` avec diversification √N × facteur corrélation), `estimate_symbol_capacity()` |
+| `tests/test_risk_liquidity.py` | 38 tests : BorrowStatus (6), SpreadSnapshot (8), BorrowSnapshot (10), ParticipationLimit (9), SlippageEstimator (6), LiquidityGate (13), LiquidityGateResult (2), check_liquidity_pre_entry (4) |
+| `tests/test_risk_capacity.py` | 38 tests : CapacityEstimate (4), estimate_symbol (9), estimate_sector (3), estimate_strategy (3), helper (4) |
+
+#### Fichiers modifiés
+
+Aucun fichier existant modifié. Tous les nouveaux fichiers sont additifs.
+
+#### Décisions architecturales
+
+1. **`BorrowStatus`** — 3 états avec propriétés calculées : `is_shortable`, `requires_locate` (HTB uniquement), `fee_multiplier` (ETB=1×, HTB=5×, NOT_SHORTABLE=∞). L'énumération est consommable par le `LiquidityGate` et par `EdgeCalculator` (coût d'emprunt dynamique).
+
+2. **`BorrowSnapshot`** — DTO PIT immutable avec validation automatique : `NOT_SHORTABLE` force `quantity_available=0` et `fee_annual=∞` ; `HARD_TO_BORROW` force `locate_required=True`. `is_htb_blocked` = HTB + locate_required + not locate_confirmed. `edge_cost_for_holding()` calcule le coût proportionnel à la durée.
+
+3. **`SpreadSnapshot`** — DTO PIT avec stale detection (`is_stale` si `now - quote_time > max_age_seconds`). `effective_spread_bps` utilise soit la valeur explicite, soit le calcul (ask-bid)/mid×10000.
+
+4. **`SlippageEstimator`** — Modèle 3 composantes inspiré d'Almgren-Chriss simplifié : (a) half-spread, (b) impact = `impact_factor × √(participation) × 10000`, (c) adverse selection = `volatility_factor × σ_daily × √(participation) × 100`. Mode stressé = ×3.0. Le modèle est cohérent avec `backtesting/microstructure.py` mais autonome (pas de dépendance backtesting).
+
+5. **`LiquidityGate`** — Gate unique combinant 4 vérifications : spread (disponible, frais, sous max_spread_bps), borrow (obligatoire pour shorts, HTB bloqué sans locate), ADV (participation ≤ max_pct, min_adv respecté), slippage (estimé ≤ max_slippage_bps). Le résultat inclut la participation estimée et le slippage pour audit.
+
+6. **`CapacityEstimator`** — Trois niveaux : symbole (ADV + spread + slippage), secteur (somme × 0.70 discount corrélation), stratégie (top N × diversification √N × facteur). La contrainte slippage réduit la capacité théorique ADV : pour 50 bps max, spread 5 bps → participation max ≈ 0.2% (modèle conservateur). Le `turnover_days` normal et stressé estiment le temps de liquidation.
+
+7. **Intégration avec l'existant** : `ParticipationLimit` est conçu pour être consommé par `ConstraintChecker` (remplacer la contrainte ADV actuelle). `BorrowSnapshot` alimente `EdgeCalculator` (coût d'emprunt dynamique au lieu d'un taux fixe). `LiquidityGate` s'insère avant le sizing dans le pipeline.
+
+#### Résultats des tests
+
+- **test_risk_liquidity.py** : 38/38 ✓
+- **test_risk_capacity.py** : 38/38 ✓
+- **Total** : 76 tests, 0 échec
+- **Régression** : Aucune (fichiers additifs uniquement)
+
+#### Risques résiduels
+
+1. **Pas de source de données réelle pour BorrowSnapshot** — Le type est défini mais aucune intégration avec Alpaca/IBKR pour peupler les snapshots. L'API Alpaca expose `easy_to_borrow`/`hard_to_borrow` mais n'est pas encore consommée.
+2. **`LiquidityGate` non intégré au pipeline live** — Le gate est prêt mais pas branché dans `cli.py` ou `portfolio_builder.py`.
+3. **SlippageEstimator non calibré sur données réelles** — Les paramètres `impact_factor=0.1` et `volatility_factor=0.5` sont des valeurs initiales conservatives. Une calibration sur données de marché réelles (TCA) est nécessaire.
+4. **Partial fills et liquidations multi-jours non simulés** — Le contrat est posé (`ParticipationLimit.check_liquidation`) mais pas de simulation de scénarios de liquidation stressée.
+
+#### Plan de rollback
+
+- Supprimer les 4 nouveaux fichiers (tous additifs, pas de dépendances inverses)
+- Aucune modification de schéma DB nécessaire
+- Aucune migration de données nécessaire
+
+#### Prochaines étapes (Sprint 11)
+
+- Brancher `LiquidityGate` en pre-flight check dans `cli.py`
+- Intégrer `BorrowSnapshot` dans le flux de données live (Alpaca API)
+- Calibrer `SlippageEstimator` avec données TCA réelles
+- Ajouter les contraintes de concentration (industrie, thème, pays, devise)
+
 ---
 
 ## Sprint maître 11 — Optimisation portefeuille complet
