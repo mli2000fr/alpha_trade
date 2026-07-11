@@ -38,3 +38,7 @@ todo:
     ORDER BY a.date, a.symbol;
 
     2. check table run date start et fin
+
+
+
+    ml 2018 2023, predit 2018 2025
