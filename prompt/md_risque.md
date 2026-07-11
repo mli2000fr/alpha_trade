@@ -2927,3 +2927,122 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 4. Shadow/paper, réconciliation, ramp-up et go-live.
 
 Chaque étape doit ajouter un test d'intégration sur le chemin runtime concerné avant de déclarer le gate associé satisfait.
+
+---
+
+## 17. Guide pratique : comprendre les raccordements restants
+
+Les composants des Sprints 8 à 15 existent majoritairement et leurs comportements unitaires sont testés. Un composant « raccordé » signifie toutefois davantage : il reçoit des données réelles au bon moment, sa sortie est consommée par le processus suivant, et un test d'intégration prouve que la chaîne complète se comporte comme prévu. Tant qu'un de ces trois éléments manque, le composant reste une fondation valide, mais il ne doit pas être considéré comme actif en production.
+
+### 1. Faire circuler un snapshot opérationnel réel
+
+Le risque doit connaître l'état réellement détenu chez le broker avant de décider de nouvelles cibles. Cet état est regroupé dans `OperationalDataSnapshot` : cash, equity, buying power, positions, ordres ouverts et fills. Sans lui, le système pourrait croire qu'il est libre d'acheter alors qu'un ordre est déjà en cours, ou optimiser un portefeuille qui ne correspond pas au portefeuille broker.
+
+Concrètement, il faut :
+
+1. appeler le broker au début du cycle de décision ;
+2. convertir la réponse avec `LiveBrokerOperationalDataAdapter` ;
+3. transmettre le même snapshot à `TransitionHandler`, `PortfolioOptimizer` et `DailyReconciliation` ;
+4. refuser les nouvelles entrées si le snapshot est absent, incomplet ou trop ancien ;
+5. employer en backtest le même contrat, mais alimenté par des snapshots historiques disponibles à cette date.
+
+Le test d'intégration doit montrer qu'une position ou un ordre ouvert déjà présent chez le broker change effectivement le résultat du moteur de risque.
+
+### 2. Compléter les données de marché : borrow et covariance PIT
+
+Une vente à découvert exige plus qu'un prix : il faut savoir si le titre est empruntable, en quelle quantité, à quel coût et jusqu'à quand un locate est valable. Ces informations sont portées par `BorrowSnapshot`. Elles ne doivent jamais être inventées à partir d'un simple booléen « shortable ».
+
+Il faut aussi produire une matrice de covariance pour l'optimiseur. Elle mesure la façon dont les titres évoluent ensemble afin d'éviter que plusieurs positions apparemment différentes concentrent le même risque. Elle doit être calculée uniquement avec des rendements connus à la date de décision : c'est la règle PIT (*point in time*).
+
+Concrètement :
+
+1. créer un provider broker ou fournisseur de données qui charge borrow, quote, spread et ADV avec leurs horodatages et leur source ;
+2. persister ou rendre disponibles les snapshots historiques correspondants pour le backtest ;
+3. calculer une covariance versionnée, datée et alignée sur les symboles réellement optimisés ;
+4. transmettre borrow et quote au `LiquidityGate`, puis la covariance au `PortfolioOptimizer` ;
+5. revérifier quote et borrow juste avant la soumission d'un ordre.
+
+Si le borrow d'un short, l'ADV, la quote ou la covariance requise manque, la bonne action est le rejet ou le maintien du fallback conservateur, jamais une estimation favorable inventée.
+
+### 3. Terminer la chaîne régime puis optimiser vers l'exécution
+
+Le régime calcule ce qui est autorisé : ouvrir des longs, ouvrir des shorts, réduire le risque ou fermer des positions. Il ne change jamais le side ni le rang décidés par le modèle ML. Lors d'une transition défensive, `TransitionHandler` produit un plan ordonné : annuler d'abord les ordres ouverts, puis réduire ou liquider les positions nécessaires.
+
+L'optimiseur, lui, reçoit les cibles individuelles et l'état réel du portefeuille. Il calcule des tailles finales cohérentes globalement. Sa sortie contient des deltas de position, pas des ordres broker prêts à envoyer.
+
+Il faut donc :
+
+1. persister l'état de régime précédent et construire une `RegimeTransition` à chaque cycle ;
+2. fournir les positions et ordres ouverts réels à `TransitionHandler` ;
+3. persister le `PositionTransitionPlan` pour audit ;
+4. traduire explicitement chaque delta de l'optimiseur en intention d'exécution ;
+5. traiter un changement long vers short comme deux opérations contrôlées, fermeture puis nouvelle ouverture, et non comme un ordre ambigu ;
+6. réappliquer les contraintes après l'arrondi des quantités.
+
+Le test essentiel simule un ordre partiellement rempli et un changement de régime : les annulations doivent précéder les liquidations, et aucune nouvelle entrée interdite ne doit être créée.
+
+### 4. Relier les fills aux protections et à la parité de décision
+
+Le CLI risque décide une cible et produit déjà un journal de décision. L'exécution, elle, obtient ensuite un fill réel, qui peut différer du prix ou de la quantité attendus. Les protections doivent partir de ce fill réel : le stop, le take-profit, le trailing stop et les quantités OCO doivent couvrir exactement la quantité effectivement remplie.
+
+La chaîne à finaliser est :
+
+1. associer le fingerprint du journal de décision à l'intention puis à l'ordre broker ;
+2. convertir chaque fill broker en `ProtectionState` ;
+3. appeler `StopCalculator.recalculate_after_fill()` avec le prix et la quantité réellement exécutés ;
+4. créer ou mettre à jour les ordres de protection ;
+5. vérifier l'état avec `ProtectionContract` ;
+6. laisser le watcher réparer une position nue ou déclencher le force-close lorsque le SLA est dépassé ;
+7. persister les états, actions de réparation et raisons de fermeture.
+
+La règle est simple : le CLI risque ne fabrique ni fill ni ordre de protection. Seul le broker confirme un fill ; les protections sont alors recalculées à partir de cette confirmation.
+
+### 5. Rendre les gates MLOps réellement opérationnels
+
+Le blocage sur drift est déjà relié au CLI : un kill switch ML empêche les nouvelles entrées. Il reste à alimenter ce gate par des preuves réelles de fraîcheur et de compatibilité : heure de publication des prix, date du modèle, calibrateur, policy, schéma de features et champion réellement enregistré.
+
+Les étapes sont :
+
+1. enrichir les données chargées avec leurs timestamps et identifiants de version ;
+2. vérifier `FreshnessGate` avant de produire des targets ;
+3. charger le champion depuis un registry durable, et vérifier sa compatibilité avec la prédiction ;
+4. en cas de drift sévère, staleness critique ou incompatibilité, publier zéro nouvelle entrée ou passer en reduce-only selon le contexte ;
+5. exécuter le rollback sur le registry persistant, puis journaliser son motif, l'ancien champion et le champion restauré.
+
+Un rollback stocké seulement en mémoire est utile pour les tests, mais ne constitue pas un rollback de production : il disparaît au redémarrage et ne fournit aucune preuve d'audit.
+
+### 6. Organiser une vraie campagne shadow puis paper
+
+Le mode `shadow` du CLI garantit déjà qu'aucun ordre n'est envoyé. Une campagne ne consiste pas à lancer ce mode une fois : elle collecte quotidiennement des décisions, les compare aux résultats observés et conserve les divergences. Le paper trading suit la même logique, mais avec des ordres sur un compte de simulation et des fills réellement fournis par ce broker paper.
+
+Il faut créer un orchestrateur de campagne qui :
+
+1. exécute chaque jour les décisions shadow ou paper avec une configuration et un modèle gelés ;
+2. relie chaque décision au journal, aux quotes observées, aux fills, aux coûts, aux protections et à la réconciliation ;
+3. produit un rapport quotidien de convergence et une revue hebdomadaire ;
+4. applique les durées minimales de quatre semaines en shadow puis huit à douze semaines en paper ;
+5. refuse une promotion si les gates de divergence, de protection, de frais, de borrow ou de réconciliation ne sont pas satisfaits ;
+6. enregistre les approbations humaines et les éventuels rollback de sécurité.
+
+Le but est de démontrer que les mêmes décisions restent correctes avec les données qui arrivent réellement, pas seulement avec des fixtures de test.
+
+### 7. Brancher les opérations quotidiennes et le go-live progressif
+
+Les contrôles opérationnels, la réconciliation, le ramp-up et le journal immuable sont les garde-fous du passage au réel. Ils doivent être alimentés par des sondes et des données réelles, pas par les valeurs par défaut de tests.
+
+Avant chaque session, il faut construire des probes vérifiables pour la connectivité broker, la fraîcheur des données, le kill switch, le circuit breaker, le modèle, le cash disponible et le watcher de protection. `OperationalControls.run_smoke_tests()` doit recevoir leurs résultats réels. Un échec bloque les nouvelles entrées, mais doit laisser fonctionner annulation, réduction et protection des positions existantes.
+
+Après chaque session, `DailyReconciliation` doit comparer les ordres, fills, positions, protections, PnL et cash attendus avec les snapshots broker. Toute divergence doit créer une anomalie durable, être journalisée et empêcher une montée de palier tant qu'elle n'est pas résolue.
+
+Enfin, chaque transition de `RampUpManager` doit être enregistrée dans `ImmutableJournal` avec les métriques, incidents, approbations humaines et budget de risque appliqué. La persistance atomique du journal protège l'historique, mais il reste à y écrire les événements réels du processus.
+
+### Ordre recommandé de mise en oeuvre
+
+1. Faire circuler les snapshots opérationnels et les données PIT manquantes.
+2. Raccorder régime, liquidité et optimizer aux données réelles, puis vérifier les deltas et les contraintes après arrondi.
+3. Relier décisions, fills et protections, avec audit et watcher de réparation.
+4. Alimenter fraîcheur, registry, drift et rollback avec des métadonnées durables.
+5. Construire la campagne shadow/paper et ses rapports quotidiens.
+6. Activer probes, réconciliation, journalisation des paliers et ramp-up progressif.
+
+À chaque étape, ajouter un test d'intégration du chemin complet concerné. Le critère de fin n'est pas seulement « la classe existe » : les données réelles doivent entrer, une décision sûre doit en sortir, et le résultat doit être traçable jusqu'au broker et au journal d'audit.
