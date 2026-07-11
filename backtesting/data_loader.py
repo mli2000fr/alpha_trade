@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 from sqlalchemy import inspect, text
@@ -39,6 +39,34 @@ def load_tradable_universe_asof(
         capital_preset_key,
         tradable_only=tradable_only,
     )
+
+
+def load_tradable_universe_scope(
+    engine: Engine,
+    trade_dates: Iterable[object],
+    capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+) -> pd.DataFrame:
+    """Résout le scope tradable PIT pour chaque séance réellement backtestée."""
+    normalized_dates = sorted({
+        pd.Timestamp(value).date()
+        for value in trade_dates
+        if not pd.isna(pd.Timestamp(value))
+    })
+    frames: list[pd.DataFrame] = []
+    for trade_date in normalized_dates:
+        resolution = load_tradable_universe_asof(
+            engine,
+            trade_date,
+            capital_preset_key,
+            tradable_only=True,
+        )
+        frame = resolution.frame[["symbol"]].copy()
+        frame["trade_date"] = pd.Timestamp(trade_date)
+        frame["universe_run_id"] = resolution.universe_run_id
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame(columns=["symbol", "trade_date", "universe_run_id"])
+    return pd.concat(frames, ignore_index=True)
 
 
 def _build_table_access_error(table_name: str, exc: Exception) -> RuntimeError:

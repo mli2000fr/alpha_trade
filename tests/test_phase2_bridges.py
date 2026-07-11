@@ -65,9 +65,18 @@ def test_signal_replay_and_risk_bridge_keep_same_score_cascade(score_column, exp
         }
     )
 
+    predictions_df = pd.DataFrame(
+        {
+            "symbol": ["AAA", "BBB", "CCC"],
+            "trade_date": [snapshot_ts, snapshot_ts, snapshot_ts],
+            "predicted_side": ["long", "long", "short"],
+            "proba_long": [0.70, 0.80, 0.05],
+            "proba_short": [0.10, 0.05, 0.90],
+        }
+    )
     replay_df = replay_signals(
+        predictions_df,
         scores_df,
-        predictions_df=None,
         score_column=score_column,
         max_positions=10,
     )

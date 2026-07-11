@@ -11,7 +11,10 @@ from common.tradable_universe import (
     publish_universe_run,
     resolve_universe_asof,
 )
-from backtesting.data_loader import load_tradable_universe_asof as load_backtest_universe
+from backtesting.data_loader import (
+    load_tradable_universe_asof as load_backtest_universe,
+    load_tradable_universe_scope,
+)
 from modelFactory.db_registry import load_tradable_universe_symbols
 from risk_management.db_io import RiskRepository
 
@@ -187,3 +190,17 @@ def test_runtime_loaders_share_the_same_canonical_snapshot(engine) -> None:
 
     assert risk_resolution.universe_run_id == backtest_resolution.universe_run_id == "shared-run"
     assert risk_resolution.symbols == backtest_resolution.symbols == model_symbols == ["AAPL"]
+
+
+def test_backtest_scope_resolves_each_date_asof_its_canonical_universe(engine) -> None:
+    _publish(engine, "first", date(2025, 1, 2), preset="small")
+    _publish(engine, "second", date(2025, 1, 3), preset="small")
+
+    scope = load_tradable_universe_scope(
+        engine,
+        [date(2025, 1, 2), date(2025, 1, 3)],
+        capital_preset_key="small",
+    )
+
+    assert scope["universe_run_id"].tolist() == ["first", "second"]
+    assert scope["symbol"].tolist() == ["AAPL", "AAPL"]

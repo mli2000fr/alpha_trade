@@ -1,6 +1,6 @@
 # Refactor ML-First — Suppression du chemin critique `candidate -> ML`
 
-**Statut :** Plan détaillé audité sur le code — Sprints 0 et 1 terminés  
+**Statut :** Plan détaillé audité sur le code — Sprints 0 et 1 terminés; Sprint 2 en cours
 **Date :** 2026-07-11  
 **Auteur :** Session Copilot  
 **Fichier :** `prompt/refactor_ml.md`
@@ -566,6 +566,27 @@ Pour une date donnée, le système peut lister de façon rejouable tous les symb
 ### Critère de sortie
 
 Backtest et live peuvent sélectionner des positions à partir de prédictions couvrant l'univers tradable, même si un titre n'a jamais été `is_candidate=1`.
+
+### État d'implémentation (2026-07-11, en cours)
+
+Les fondations backtest du Sprint 2 sont implémentées et validées :
+
+- `backtesting/signal_replay.py` est désormais predictions-first. Les colonnes ternaires `predicted_side`, `proba_long`, `proba_flat` et `proba_short` sont obligatoires; `flat` et les probabilités directionnelles incomplètes sont exclus. Les rangs et plafonds long/short sont calculés séparément, puis les scores ne sont joints qu'en contexte.
+- `backtesting/data_loader.py` expose `load_tradable_universe_scope()`, qui résout le snapshot PIT canonique pour chaque séance effectivement rejouée.
+- `backtesting/resilience.py` déduit la couverture ML attendue depuis ce scope d'univers, et non plus depuis les lignes de score.
+- `backtesting/cli/_impl.py` fournit ce scope à `prepare_predictions_for_ml_mode()` et bloque explicitement si l'univers PIT est absent ou vide.
+- `risk_management/db_io.py` charge maintenant uniquement les prédictions live ternaires complètes. Une ligne binaire ou incomplète ne peut pas être traitée comme une prédiction de sélection ML-first.
+
+Validation exécutée :
+
+```text
+16 passed: tests/test_tradable_universe.py,
+tests/test_backtesting.py::TestSignalReplay,
+tests/test_phase2_bridges.py::test_signal_replay_and_risk_bridge_keep_same_score_cascade,
+tests/test_db_io_v2.py::{test_load_predictions_returns_latest,test_load_predictions_empty_symbols}
+```
+
+Le Sprint 2 n'est pas encore terminé. Restent le basculement de `risk_management/cli.py` vers l'univers PIT `full`, la représentation neutre de sélection et le remplacement du ranking/fusion score-first dans `PortfolioBuilder` et `backtesting/risk_bridge.py`. Le snapshot d'univers actuellement publié avec le grade `degraded` ne doit pas être activé pour la sélection live.
 
 ---
 

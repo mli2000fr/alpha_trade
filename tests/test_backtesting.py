@@ -673,94 +673,49 @@ class TestSignalReplay:
             "sector": ["Tech", "Tech", "Tech"],
         })
 
-    def test_replay_without_predictions(self):
+    def _make_predictions(self):
+        dates = pd.to_datetime(["2025-01-01"] * 4)
+        return pd.DataFrame({
+            "symbol": ["AAPL", "MSFT", "NVDA", "TSLA"],
+            "trade_date": dates,
+            "predicted_side": ["long", "long", "short", "flat"],
+            "proba_long": [0.70, 0.95, 0.05, 0.40],
+            "proba_short": [0.10, 0.02, 0.91, 0.20],
+        })
+
+    def test_replay_requires_ternary_predictions(self):
         from backtesting.signal_replay import replay_signals
 
         scores = self._make_scores()
-        result = replay_signals(scores, None, max_positions=2)
-        assert len(result) == 3
-        assert result["selected"].sum() == 2
-        # Top 2 by conviction (score_weight=0.4 only since no prediction)
-        selected = result[result["selected"]]["symbol"].tolist()
-        assert "AAPL" in selected  # highest score
+        with pytest.raises(ValueError, match="colonnes ternaires"):
+            replay_signals(scores, max_positions=2)
 
-    def test_replay_with_predictions(self):
+    def test_replay_uses_predictions_as_scope_and_ranks_sides_separately(self):
         from backtesting.signal_replay import replay_signals
 
         scores = self._make_scores()
-        preds = pd.DataFrame({
-            "symbol": ["AAPL", "MSFT", "NVDA"],
-            "trade_date": pd.to_datetime(["2025-01-01"] * 3),
-            "predicted_proba": [0.5, 0.95, 0.6],
-        })
-        result = replay_signals(scores, preds, max_positions=1)
+        result = replay_signals(
+            self._make_predictions(),
+            scores,
+            max_positions=2,
+            max_long_positions=1,
+            max_short_positions=1,
+        )
         selected = result[result["selected"]]
-        # MSFT has highest conviction: 0.7*0.4 + 0.95*0.6 = 0.85
-        assert selected.iloc[0]["symbol"] == "MSFT"
+        assert set(result["symbol"]) == {"AAPL", "MSFT", "NVDA"}
+        assert set(selected["symbol"]) == {"MSFT", "NVDA"}
+        assert set(selected["side"]) == {"buy", "sell"}
+        assert result.set_index("symbol").loc["MSFT", "score"] == 0.7
 
-    def test_replay_uses_final_score_fallback(self):
+    def test_replay_excludes_incomplete_directional_probability(self):
         from backtesting.signal_replay import replay_signals
 
-        scores = pd.DataFrame({
-            "symbol": ["AAPL"],
-            "trade_date": pd.to_datetime(["2025-01-01"]),
-            "final_score": [0.8],
-            "sector": ["Tech"],
-        })
-        result = replay_signals(scores, None, max_positions=5)
-        assert len(result) == 1
-        assert result.iloc[0]["score"] == 0.8
+        predictions = self._make_predictions()
+        predictions.loc[predictions["symbol"] == "AAPL", "proba_long"] = None
+        result = replay_signals(predictions, self._make_scores(), max_positions=5)
 
-    def test_replay_falls_back_per_row_when_final_score_sentiment_missing(self):
-        from backtesting.signal_replay import replay_signals
-
-        scores = pd.DataFrame({
-            "symbol": ["AAPL", "MSFT"],
-            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
-            "final_score_sentiment": [None, 0.9],
-            "final_score": [0.7, 0.8],
-            "sector": ["Tech", "Tech"],
-        })
-        result = replay_signals(scores, None, max_positions=2)
-        assert result.loc[result["symbol"] == "AAPL", "score"].iloc[0] == 0.7
-        assert result.loc[result["symbol"] == "MSFT", "score"].iloc[0] == 0.9
-
-    def test_replay_supports_explicit_walk_forward_score_column(self):
-        from backtesting.signal_replay import replay_signals
-
-        scores = pd.DataFrame({
-            "symbol": ["AAPL", "MSFT"],
-            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
-            "final_score_walk_forward": [0.66, 0.91],
-            "final_score_sentiment": [0.80, 0.20],
-            "final_score": [0.70, 0.70],
-            "sector": ["Tech", "Tech"],
-        })
-
-        result = replay_signals(scores, None, score_column="final_score_walk_forward", max_positions=1)
-
-        selected = result[result["selected"]]
-        assert selected.iloc[0]["symbol"] == "MSFT"
-        assert selected.iloc[0]["score"] == 0.91
-
-    def test_replay_uses_walk_forward_by_default_and_exposes_score_source(self):
-        from backtesting.signal_replay import replay_signals
-
-        scores = pd.DataFrame({
-            "symbol": ["AAPL", "MSFT"],
-            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
-            "final_score_walk_forward": [0.72, 0.88],
-            "final_score_sentiment": [0.95, 0.10],
-            "final_score": [0.60, 0.60],
-            "sector": ["Tech", "Tech"],
-        })
-
-        result = replay_signals(scores, None, max_positions=1)
-
-        selected = result[result["selected"]].iloc[0]
-        assert selected["symbol"] == "MSFT"
-        assert selected["score"] == 0.88
-        assert selected["score_source"] == "final_score_walk_forward"
+        assert "AAPL" not in set(result["symbol"])
+        assert "TSLA" not in set(result["symbol"])
 
 
 # ============================================================

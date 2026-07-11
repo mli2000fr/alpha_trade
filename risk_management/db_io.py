@@ -434,10 +434,9 @@ class RiskRepository:
     ) -> dict[str, PredictionInfo]:
         """Charge la dernière prédiction ML par symbole à la date de trade.
 
-        Sprint S8 — kill-switch ML : si :func:`risk_management.ml_gate.resolve_ml_gate_state`
-        renvoie ``enabled=False`` (drift policy ALERT ou flag CLI ``--disable-ml``),
-        on retourne ``{}`` sans même interroger ``model_predictions``. Le risk
-        sizer retombe ainsi sur le score quantitatif pur.
+        Une prédiction exploitable expose obligatoirement la direction ternaire
+        et ses trois probabilités. Le score quantitatif n'est pas un fallback
+        de sélection.
         """
         if not symbols:
             return {}
@@ -453,9 +452,11 @@ class RiskRepository:
         params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
         params["trade_date"] = trade_date
         query = text(f"""
-            SELECT symbol, predicted_proba, predicted_class, run_id, prediction_date
+                 SELECT symbol, predicted_proba, predicted_class, predicted_side,
+                     proba_long, proba_flat, proba_short, run_id, prediction_date
             FROM (
-                SELECT symbol, predicted_proba, predicted_class, run_id, prediction_date,
+                  SELECT symbol, predicted_proba, predicted_class, predicted_side,
+                      proba_long, proba_flat, proba_short, run_id, prediction_date,
                        ROW_NUMBER() OVER (
                            PARTITION BY symbol
                            ORDER BY prediction_date DESC, created_at DESC, run_id DESC
@@ -464,6 +465,10 @@ class RiskRepository:
                 WHERE symbol IN ({placeholders})
                   AND prediction_date <= :trade_date
                   AND predicted_proba IS NOT NULL
+                  AND predicted_side IN ('long', 'flat', 'short')
+                  AND proba_long IS NOT NULL
+                  AND proba_flat IS NOT NULL
+                  AND proba_short IS NOT NULL
             ) ranked
             WHERE rn = 1
         """)
@@ -480,6 +485,10 @@ class RiskRepository:
                 predicted_class=int(r["predicted_class"]),
                 run_id=str(r["run_id"]),
                 prediction_date=self._coerce_date(r.get("prediction_date")),
+                predicted_side=str(r["predicted_side"]),
+                proba_long=float(r["proba_long"]),
+                proba_flat=float(r["proba_flat"]),
+                proba_short=float(r["proba_short"]),
             )
             for r in rows
         }

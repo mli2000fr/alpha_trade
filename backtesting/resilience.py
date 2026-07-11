@@ -40,10 +40,11 @@ def _normalize_dates(df: pd.DataFrame, date_col: str = "trade_date") -> pd.DataF
     return normalized
 
 
-def _expected_symbol_dates(scores_df: pd.DataFrame) -> set[tuple[str, pd.Timestamp]]:
-    if scores_df.empty:
+def _expected_symbol_dates(universe_df: pd.DataFrame) -> set[tuple[str, pd.Timestamp]]:
+    """Construit le scope ML attendu depuis l'univers PIT, jamais les scores."""
+    if universe_df.empty:
         return set()
-    normalized = _normalize_dates(scores_df)
+    normalized = _normalize_dates(universe_df)
     return {
         (str(row["symbol"]), pd.Timestamp(row["trade_date"]))
         for _, row in normalized[["symbol", "trade_date"]].dropna().drop_duplicates().iterrows()
@@ -366,7 +367,7 @@ def _apply_walk_forward_overlay(scores_df: pd.DataFrame, artifacts_dir: Path | N
 
 def prepare_predictions_for_ml_mode(
     engine: Engine,
-    scores_df: pd.DataFrame,
+    universe_df: pd.DataFrame,
     predictions_df: pd.DataFrame,
     *,
     ml_mode: MLMode,
@@ -406,7 +407,7 @@ def prepare_predictions_for_ml_mode(
         else pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
     )
 
-    expected_keys = _expected_symbol_dates(scores_df)
+    expected_keys = _expected_symbol_dates(universe_df)
     diagnostics = MlPreparationDiagnostics(
         requested_mode=ml_mode,
         requested_strategy=ml_pit_strategy,

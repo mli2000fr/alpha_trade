@@ -1551,7 +1551,7 @@ def _run_statistical_validation(
     if do_sensitivity:
         _safe_print("\n📊 Analyse de sensibilité ±10% (tp / ts / fees_pct)...")
         try:
-            from backtesting.data_loader import load_ohlcv, load_scores, pivot_ohlcv
+            from backtesting.data_loader import load_ohlcv, load_predictions, load_scores, pivot_ohlcv
             from backtesting.resilience import prepare_scores_for_sentiment_mode
             from backtesting.signal_replay import replay_signals
             from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -1584,7 +1584,12 @@ def _run_statistical_validation(
                 _tp = float(params.get("tp", 0.08))
                 _ts = float(params.get("ts", 0.05))
                 _fees = float(params.get("fees_pct", 0.001))
-                _signals = replay_signals(_scores_df, None, max_positions=int(args.max_positions))
+                _predictions_df = load_predictions(_engine, _start, _end)
+                _signals = replay_signals(
+                    _predictions_df,
+                    _scores_df,
+                    max_positions=int(args.max_positions),
+                )
                 _cfg = BacktestConfig(
                     start_date=_start, end_date=_end,
                     initial_equity=float(args.equity),
@@ -1854,6 +1859,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         load_predictions,
         load_scores,
         load_spreads,
+        load_tradable_universe_scope,
         pivot_ohlcv,
     )
     from backtesting.resilience import prepare_predictions_for_ml_mode, prepare_scores_for_sentiment_mode
@@ -2081,6 +2087,23 @@ def _run_backtest(args: argparse.Namespace) -> None:
     if ohlcv_df.empty:
         _safe_print("❌ Aucune donnée OHLCV trouvée. Vérifiez la base de données.")
         sys.exit(1)
+    universe_trade_dates = pd.to_datetime(ohlcv_df["trade_date"], errors="coerce")
+    universe_trade_dates = universe_trade_dates[
+        (universe_trade_dates >= pd.Timestamp(start))
+        & (universe_trade_dates <= pd.Timestamp(end))
+    ]
+    try:
+        universe_scope_df = load_tradable_universe_scope(
+            engine,
+            universe_trade_dates.dropna().unique(),
+            capital_preset_key=effective_preset.key,
+        )
+    except Exception as exc:
+        _safe_print(f"❌ Univers tradable PIT indisponible: {exc}")
+        sys.exit(1)
+    if universe_scope_df.empty:
+        _safe_print("❌ Univers tradable PIT vide sur la période demandée.")
+        sys.exit(1)
     if ohlcv_start < start:
         _safe_print(
             "   warmup_ohlcv={} jours calendaires ({} → {}) pour ATR/corrélation phase2\n".format(
@@ -2142,7 +2165,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     try:
         prepared_predictions = prepare_predictions_for_ml_mode(
             engine,
-            scores_df,
+            universe_scope_df,
             preds_df,
             ml_mode=args.ml_mode,
             artifacts_dir=Path(args.artifacts_dir),
@@ -2234,8 +2257,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
     )
     if phase2_mode == "off":
         research_signals_df = replay_signals(
+            preds_df,
             scores_df,
-            preds_df if not preds_df.empty else None,
             score_column=None if args.score_column == "auto" else args.score_column,
             max_positions=args.max_positions,
         )

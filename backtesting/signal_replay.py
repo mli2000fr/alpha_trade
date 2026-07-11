@@ -1,9 +1,4 @@
-"""
-backtesting/signal_replay.py
-==============================
-Reconstruit les signaux de trading jour par jour à partir des scores,
-du sentiment et des prédictions ML, en réutilisant la logique de conviction
-du module ``core.conviction``.
+"""Reconstruction predictions-first des signaux de trading.
 
 Refactor Phase A (refactor/backtesting/audit_plan.md) :
 - A2 : ``fuse()`` vectorisé (suppression du ``df.apply`` ligne par ligne).
@@ -17,8 +12,6 @@ from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
-
-from core.conviction import ConvictionWeights
 
 LOGGER = logging.getLogger(__name__)
 
@@ -65,99 +58,126 @@ def _pick_score_column(
     return score, source
 
 
-def _vectorized_fuse(
-    scores: pd.Series,
-    predicted_proba: pd.Series,
-    weights: ConvictionWeights,
-) -> pd.Series:
-    """Variante vectorisée de ``core.conviction.fuse``.
-
-    - ``predicted_proba`` NaN sur une ligne → conviction = score brut.
-    - sinon → ``score_weight * score + prediction_weight * proba``.
-    NaN dans ``score`` → 0.0 (cohérent avec l'ancien call-site).
-    """
-    score_arr = scores.fillna(0.0).to_numpy(dtype=float)
-    proba_arr = predicted_proba.to_numpy(dtype=float)
-    has_proba = ~np.isnan(proba_arr)
-    fused = np.where(
-        has_proba,
-        weights.score_weight * score_arr + weights.prediction_weight * np.nan_to_num(proba_arr),
-        score_arr,
-    )
-    # Clip de securite [0, 1] — coherent avec core.conviction.compute_conviction
-    fused = np.clip(fused, 0.0, 1.0)
-    return pd.Series(fused, index=scores.index, name="conviction")
-
-
 def replay_signals(
-    scores_df: pd.DataFrame,
-    predictions_df: Optional[pd.DataFrame],
+    predictions_df: pd.DataFrame,
+    scores_df: Optional[pd.DataFrame] = None,
     *,
     score_column: str | None = None,
-    score_weight: float = 0.40,
-    prediction_weight: float = 0.60,
     max_positions: int = 20,
+    max_long_positions: int | None = None,
+    max_short_positions: int | None = None,
 ) -> pd.DataFrame:
-    """Reconstruit les signaux de conviction quotidiens.
+    """Reconstruit des signaux à partir des prédictions ternaires.
+
+    ``predictions_df`` est la source de portée et de classement. ``scores_df``
+    est joint uniquement pour fournir secteur, score et futurs vetos; aucun
+    score absent ou élevé ne peut créer un signal sans prédiction ML.
 
     Returns
     -------
-    DataFrame : trade_date, symbol, score, score_source, sector,
-                predicted_proba, conviction, rank, selected.
+    DataFrame : trade_date, symbol, predicted_side, proba_long, proba_short,
+                selection_score, long_rank, short_rank, selected, side,
+                avec les éventuelles colonnes de contexte score.
     """
-    base_columns = ["symbol", "trade_date"]
-    optional_columns = [
-        score_column,
-        *SCORE_FALLBACK_PRIORITY,
-        "sector",
-        "score_source",
-    ]
-    keep_columns = list(base_columns)
-    for col in optional_columns:
-        if col is None:
-            continue
-        if col in scores_df.columns and col not in keep_columns:
-            keep_columns.append(col)
+    required_prediction_columns = {
+        "symbol", "trade_date", "predicted_side", "proba_long", "proba_short",
+    }
+    missing_prediction_columns = required_prediction_columns.difference(predictions_df.columns)
+    if missing_prediction_columns:
+        raise ValueError(
+            "predictions_df requiert les colonnes ternaires: "
+            f"{sorted(missing_prediction_columns)}"
+        )
+    if max_positions < 1:
+        raise ValueError("max_positions doit être >= 1.")
 
-    df = scores_df[keep_columns].copy()
-    score, source = _pick_score_column(df, preferred=score_column)
-    df["score"] = score.values
-    # Lorsqu'une colonne de score explicite est demandée (--score-column),
-    # la source résolue prend priorité sur un éventuel score_source préexistant
-    # (ex. label "final_score_walk_forward" posé par l'overlay walk-forward).
-    if "score_source" in df.columns and score_column is None:
-        existing_source = df["score_source"]
-        df["score_source"] = existing_source.where(existing_source.notna(), source.values)
-    else:
-        df["score_source"] = source.values
+    long_limit = max_positions if max_long_positions is None else max_long_positions
+    short_limit = max_positions if max_short_positions is None else max_short_positions
+    if not 0 <= long_limit <= max_positions:
+        raise ValueError("max_long_positions doit être dans [0, max_positions].")
+    if not 0 <= short_limit <= max_positions:
+        raise ValueError("max_short_positions doit être dans [0, max_positions].")
 
-    if "sector" not in df.columns:
+    df = predictions_df.copy()
+    df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
+    df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce").dt.normalize()
+    df["predicted_side"] = df["predicted_side"].astype(str).str.strip().str.lower()
+    df["proba_long"] = pd.to_numeric(df["proba_long"], errors="coerce")
+    df["proba_short"] = pd.to_numeric(df["proba_short"], errors="coerce")
+    df = df.dropna(subset=["symbol", "trade_date"])
+    df = df.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
+
+    is_long = df["predicted_side"].eq("long") & df["proba_long"].notna()
+    is_short = df["predicted_side"].eq("short") & df["proba_short"].notna()
+    df = df.loc[is_long | is_short].copy()
+    df["side"] = np.where(df["predicted_side"].eq("short"), "sell", "buy")
+    df["selection_score"] = np.where(
+        df["predicted_side"].eq("long"), df["proba_long"], df["proba_short"],
+    )
+    df["predicted_proba"] = df["selection_score"]
+    df["conviction"] = df["selection_score"]
+    df["conviction_source"] = "ml_ternary"
+    df["long_rank"] = np.nan
+    df["short_rank"] = np.nan
+    long_mask = df["predicted_side"].eq("long")
+    short_mask = df["predicted_side"].eq("short")
+    df.loc[long_mask, "long_rank"] = df.loc[long_mask].groupby("trade_date")["proba_long"].rank(
+        ascending=False, method="first"
+    )
+    df.loc[short_mask, "short_rank"] = df.loc[short_mask].groupby("trade_date")["proba_short"].rank(
+        ascending=False, method="first"
+    )
+    df["rank"] = np.where(long_mask, df["long_rank"], df["short_rank"])
+    df["selected"] = (
+        (long_mask & (df["long_rank"] <= long_limit))
+        | (short_mask & (df["short_rank"] <= short_limit))
+    )
+
+    # Le plafond total s'applique après les plafonds directionnels. Un tri
+    # déterministe maintient les probabilités ML comme seule autorité de rang.
+    selected = df.loc[df["selected"]].sort_values(
+        ["trade_date", "selection_score", "symbol"],
+        ascending=[True, False, True],
+        kind="stable",
+    )
+    total_rank = selected.groupby("trade_date").cumcount() + 1
+    df["selection_rank"] = np.nan
+    df.loc[selected.index, "selection_rank"] = total_rank.to_numpy()
+    df.loc[df["selected"] & (df["selection_rank"] > max_positions), "selected"] = False
+
+    if scores_df is None or scores_df.empty:
+        df["score"] = np.nan
+        df["score_source"] = pd.NA
         df["sector"] = None
-
-    df = df[["symbol", "trade_date", "score", "score_source", "sector"]].copy()
-
-    if predictions_df is not None and len(predictions_df) > 0:
-        preds = predictions_df[["symbol", "trade_date", "predicted_proba"]].copy()
-        df = df.merge(preds, on=["symbol", "trade_date"], how="left")
     else:
-        df["predicted_proba"] = np.nan
-
-    weights = ConvictionWeights(
-        score_weight=score_weight,
-        prediction_weight=prediction_weight,
-    )
-    df["conviction"] = _vectorized_fuse(df["score"], df["predicted_proba"], weights)
-    df["conviction_source"] = np.where(
-        df["predicted_proba"].notna(),
-        "core.conviction:score_plus_prediction",
-        "core.conviction:score_only",
-    )
-
-    df["rank"] = df.groupby("trade_date")["conviction"].rank(ascending=False, method="first")
-    df["selected"] = df["rank"] <= max_positions
+        base_columns = ["symbol", "trade_date"]
+        optional_columns = [
+            score_column,
+            *SCORE_FALLBACK_PRIORITY,
+            "sector",
+            "score_source",
+        ]
+        keep_columns = list(base_columns)
+        for col in optional_columns:
+            if col is not None and col in scores_df.columns and col not in keep_columns:
+                keep_columns.append(col)
+        context = scores_df[keep_columns].copy()
+        context["symbol"] = context["symbol"].astype(str).str.strip().str.upper()
+        context["trade_date"] = pd.to_datetime(context["trade_date"], errors="coerce").dt.normalize()
+        context = context.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
+        score, source = _pick_score_column(context, preferred=score_column)
+        context["score"] = score
+        context["score_source"] = source
+        if "sector" not in context.columns:
+            context["sector"] = None
+        df = df.merge(
+            context[["symbol", "trade_date", "score", "score_source", "sector"]],
+            on=["symbol", "trade_date"],
+            how="left",
+        )
 
     LOGGER.info(
-        "Signaux reconstruits : %d jours, %d entrées sélectionnées",
+        "Signaux ML-first reconstruits : %d jours, %d entrées sélectionnées",
         df["trade_date"].nunique(),
         int(df["selected"].sum()),
     )

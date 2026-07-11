@@ -36,6 +36,10 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
                 symbol VARCHAR(20),
                 predicted_proba DOUBLE,
                 predicted_class INT,
+                predicted_side VARCHAR(10),
+                proba_long DOUBLE,
+                proba_flat DOUBLE,
+                proba_short DOUBLE,
                 run_id VARCHAR(50),
                 prediction_date DATE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -189,15 +193,20 @@ def test_load_predictions_returns_latest() -> None:
     _create_tables(engine)
     with engine.begin() as conn:
         conn.execute(text("""
-            INSERT INTO model_predictions (symbol, predicted_proba, predicted_class, run_id, prediction_date)
-            VALUES ('AAPL', 0.72, 1, 'run1', '2026-04-15'),
-                   ('AAPL', 0.65, 1, 'run0', '2026-04-10'),
-                   ('AAPL', 0.91, 1, 'future-run', '2024-01-31')
+                 INSERT INTO model_predictions (
+                  symbol, predicted_proba, predicted_class, predicted_side,
+                  proba_long, proba_flat, proba_short, run_id, prediction_date
+                 )
+                 VALUES ('AAPL', 0.72, 1, 'long', 0.72, 0.18, 0.10, 'run1', '2026-04-15'),
+                     ('AAPL', 0.65, 1, 'long', 0.65, 0.20, 0.15, 'run0', '2026-04-10'),
+                     ('AAPL', 0.91, 1, 'long', 0.91, 0.05, 0.04, 'future-run', '2024-01-31')
         """))
     repo = RiskRepository(engine=engine)
     preds = repo.load_predictions_asof(["AAPL"], date(2026, 4, 18))
     assert "AAPL" in preds
     assert preds["AAPL"].predicted_proba == 0.72
+    assert preds["AAPL"].predicted_side == "long"
+    assert preds["AAPL"].proba_short == 0.10
     assert preds["AAPL"].prediction_date == date(2026, 4, 15)
 
 
