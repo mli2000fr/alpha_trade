@@ -44,6 +44,24 @@ def test_compute_metrics_persists_ternary_directional_oos_statistics() -> None:
     assert directional["short"]["payoff"] == pytest.approx(1.5)
 
 
+def test_compute_metrics_uses_ternary_policy_for_served_predictions() -> None:
+    outputs = {
+        "labels": np.array([0]),
+        "logits": np.array([[0.0, 0.0, 0.0]]),
+        # Argmax alone would select long. The canonical policy abstains because
+        # the top-two margin is below its required threshold.
+        "raw_proba": np.array([[0.20, 0.36, 0.44]]),
+        "margins": np.zeros(1),
+        "num_classes": 3,
+    }
+
+    metrics = trainer._compute_metrics(outputs, decision_threshold=0.5)
+
+    assert metrics["pred_flat_pct"] == 100.0
+    assert metrics["pred_long_pct"] == 0.0
+    assert metrics["action_rate"] == 0.0
+
+
 def test_train_symbol_skips_when_history_too_short(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, dict]] = []
     monkeypatch.setattr(trainer, "ensure_registry_entry", lambda engine, symbol: 1)

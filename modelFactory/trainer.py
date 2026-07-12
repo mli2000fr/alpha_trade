@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
 
 from sqlalchemy.engine import Engine
 
+from core.ternary_decision_policy import decide_ternary_side_batch
 from modelFactory.calibration import PlattCalibrator, TemperatureScaler, margin_from_logits
 from modelFactory.champion_selection import (
     build_challenger_ranking,
@@ -576,7 +577,7 @@ def _compute_metrics(
             if isinstance(calibrator, TemperatureScaler) and calibrator.fitted
             else outputs["raw_proba"]
         )
-        preds = np.argmax(probs, axis=1)  # {0, 1, 2}
+        preds = decide_ternary_side_batch(probs)  # {0=short, 1=flat, 2=long}
         # Décale labels {-1, 0, 1} → {0, 1, 2}
         labels_shifted = labels + 1
         accuracy = float((preds == labels_shifted).mean())

@@ -1,7 +1,9 @@
 """modelFactory/tabular_baseline.py — Helpers communs aux challengers tabulaires."""
 from __future__ import annotations
 
+import json
 import pickle
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -425,4 +427,112 @@ def run_tabular_baseline(
 		}
 	return result
 
+
+def save_baseline_artifact(
+	result: dict[str, Any],
+	*,
+	artifact_dir: Path,
+	period_start: date | str,
+	period_end: date | str,
+	universe_run_id: str = "",
+	code_version: str = "",
+	data_fingerprint: str,
+	config_fingerprint: str,
+	symbol_tag: str = "__BATCH__",
+) -> Path:
+	"""Produit et sauvegarde un artefact baseline JSON standalone (Sprint 0 tâche 5).
+
+	L'artefact contient : période, univers, seed, version de code,
+	fingerprints de données/configuration, et métriques par side.
+	"""
+	from core.ternary_decision_policy import DEFAULT_TERNARY_POLICY
+
+	if not data_fingerprint:
+		raise ValueError("data_fingerprint is required for a baseline artifact.")
+	if not config_fingerprint:
+		raise ValueError("config_fingerprint is required for a baseline artifact.")
+
+	artifact_dir = Path(artifact_dir)
+	artifact_dir.mkdir(parents=True, exist_ok=True)
+
+	val: dict[str, Any] = result.get("val", {})
+	test: dict[str, Any] = result.get("test", {})
+
+	baseline = {
+		"baseline_version": 1,
+		"generated_at": datetime.now(timezone.utc).isoformat(),
+		"period": {
+			"start": str(period_start),
+			"end": str(period_end),
+		},
+		"universe": {
+			"run_id": universe_run_id,
+		},
+		"model": {
+			"name": result.get("model_name", "unknown"),
+			"inference_backend": result.get("inference_backend", ""),
+			"seed": result.get("seed"),
+			"calibration_method": result.get("calibration_method", "none"),
+			"decision_threshold": result.get("selected_decision_threshold"),
+		},
+		"policy": {
+			"version": DEFAULT_TERNARY_POLICY.version,
+			"threshold_long": DEFAULT_TERNARY_POLICY.threshold_long,
+			"threshold_short": DEFAULT_TERNARY_POLICY.threshold_short,
+			"top2_margin": DEFAULT_TERNARY_POLICY.top2_margin,
+		},
+		"code": {
+			"version": code_version,
+		},
+		"fingerprints": {
+			"features": result.get("feature_fingerprint", ""),
+			"data": data_fingerprint,
+			"configuration": config_fingerprint,
+		},
+		"metrics": {
+			"val": {
+				"n_observations": val.get("n_observations"),
+				"accuracy": val.get("accuracy"),
+				"f1_macro": val.get("f1_macro"),
+				"f1_weighted": val.get("f1_weighted"),
+				"f1_long": val.get("f1_long"),
+				"f1_short": val.get("f1_short"),
+				"f1_flat": val.get("f1_flat"),
+				"balanced_accuracy": val.get("balanced_accuracy"),
+				"action_rate": val.get("action_rate"),
+				"pred_fraction_long": val.get("pred_fraction_long"),
+				"pred_fraction_short": val.get("pred_fraction_short"),
+				"pred_fraction_flat": val.get("pred_fraction_flat"),
+				"brier_multiclass": val.get("brier_multiclass"),
+				"log_loss": val.get("log_loss"),
+				"selection_score": result.get("selection_score"),
+			},
+			"test": {
+				"n_observations": test.get("n_observations"),
+				"accuracy": test.get("accuracy"),
+				"f1_macro": test.get("f1_macro"),
+				"f1_weighted": test.get("f1_weighted"),
+				"f1_long": test.get("f1_long"),
+				"f1_short": test.get("f1_short"),
+				"f1_flat": test.get("f1_flat"),
+				"balanced_accuracy": test.get("balanced_accuracy"),
+				"action_rate": test.get("action_rate"),
+				"pred_fraction_long": test.get("pred_fraction_long"),
+				"pred_fraction_short": test.get("pred_fraction_short"),
+				"pred_fraction_flat": test.get("pred_fraction_flat"),
+				"brier_multiclass": test.get("brier_multiclass"),
+				"log_loss": test.get("log_loss"),
+			},
+		},
+		"collapsed": {
+			"val": val.get("collapsed", False),
+			"test": test.get("collapsed", False),
+		},
+	}
+
+	path = artifact_dir / f"baseline_{symbol_tag}_{result.get('model_name','unknown')}.json"
+	with open(path, "w", encoding="utf-8") as fh:
+		json.dump(baseline, fh, indent=2, ensure_ascii=False, default=str)
+
+	return path
 
