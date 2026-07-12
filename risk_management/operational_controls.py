@@ -331,6 +331,10 @@ def build_operational_probes(
     config: object | None = None,
     trade_date: date | None = None,
     model_registry_path: str = "artifacts/model_registry.json",
+    require_broker: bool = False,
+    require_model_registry: bool = False,
+    watcher_healthy: bool | None = None,
+    require_watcher: bool = False,
 ) -> dict[str, bool]:
     """Construit les résultats des 7 smoke tests avec des probes réelles (Point 14).
 
@@ -339,28 +343,27 @@ def build_operational_probes(
 
     Returns un dict {test_id: ok_bool}.
     """
-    import time as _time
-
     probes: dict[str, bool] = {}
 
     # 1. Connectivité broker
     if broker is not None:
         try:
-            t0 = _time.monotonic()
-            _ = broker.get_account_equity() if hasattr(broker, "get_account_equity") else None
-            probes["SMOKE_CONNECTIVITY"] = True
+            if not hasattr(broker, "get_account_equity"):
+                raise AttributeError("broker sans get_account_equity")
+            equity = broker.get_account_equity()
+            probes["SMOKE_CONNECTIVITY"] = equity is not None
         except Exception:
             probes["SMOKE_CONNECTIVITY"] = False
     else:
-        probes["SMOKE_CONNECTIVITY"] = True  # dry-run: skip
+        probes["SMOKE_CONNECTIVITY"] = not require_broker
 
     # 2. Fraîcheur données — vérifier que trade_date n'est pas trop ancien
     if trade_date is not None:
         from datetime import date as _date
         staleness = (_date.today() - trade_date).days
-        probes["SMOKE_DATA_FRESH"] = staleness <= 1
+        probes["SMOKE_DATA_FRESH"] = 0 <= staleness <= 1
     else:
-        probes["SMOKE_DATA_FRESH"] = True
+        probes["SMOKE_DATA_FRESH"] = False
 
     # 3. Kill switch — vérifier qu'aucun kill switch n'est actif
     if config is not None:
@@ -372,12 +375,15 @@ def build_operational_probes(
     # 4. Circuit breaker — vérifier que le breaker n'est pas trippé
     if circuit_breaker is not None:
         try:
-            tripped = getattr(circuit_breaker, "just_tripped", lambda: False)()
+            probe = getattr(circuit_breaker, "just_tripped", None)
+            if not callable(probe):
+                raise AttributeError("circuit breaker sans just_tripped")
+            tripped = probe()
             probes["SMOKE_CIRCUIT_BREAKER"] = not tripped
         except Exception:
-            probes["SMOKE_CIRCUIT_BREAKER"] = True  # fail-open si indisponible
+            probes["SMOKE_CIRCUIT_BREAKER"] = False
     else:
-        probes["SMOKE_CIRCUIT_BREAKER"] = True
+        probes["SMOKE_CIRCUIT_BREAKER"] = False
 
     # 5. Modèle ML prêt — vérifier que le champion existe dans le registry
     try:
@@ -387,22 +393,28 @@ def build_operational_probes(
             champions = registry.count_by_status().get("champion", 0)
             probes["SMOKE_ML_READY"] = champions > 0
         else:
-            probes["SMOKE_ML_READY"] = True  # premier run
+            probes["SMOKE_ML_READY"] = not require_model_registry
     except Exception:
-        probes["SMOKE_ML_READY"] = True  # fail-open
+        probes["SMOKE_ML_READY"] = False
 
     # 6. Cash disponible
     if broker is not None:
         try:
-            equity = broker.get_account_equity() if hasattr(broker, "get_account_equity") else 0
+            if not hasattr(broker, "get_account_equity"):
+                raise AttributeError("broker sans get_account_equity")
+            equity = broker.get_account_equity()
             probes["SMOKE_CASH"] = float(equity or 0) > 0
         except Exception:
             probes["SMOKE_CASH"] = False
     else:
-        probes["SMOKE_CASH"] = True  # dry-run
+        probes["SMOKE_CASH"] = not require_broker
 
-    # 7. Watcher actif — vérifier qu'un watcher tourne (via lock DB ou PID)
-    probes["SMOKE_WATCHER"] = True  # best-effort: le watcher est optionnel en shadow
+    # 7. Watcher actif — le runtime doit injecter un heartbeat vérifié.
+    probes["SMOKE_WATCHER"] = (
+        bool(watcher_healthy)
+        if watcher_healthy is not None
+        else not require_watcher
+    )
 
     return probes
 
@@ -417,53 +429,27 @@ def persist_ramp_up_transition(
     reason: str = "",
     metrics_snapshot: dict[str, object] | None = None,
     journal_path: str = "artifacts/ramp_up_journal.json",
-) -> str | None:
+) -> str:
     """Persiste une transition de palier RampUpManager dans le journal immuable (Point 14).
 
     Returns le chemin du journal ou None si erreur.
     """
-    import json as _json
-    from datetime import datetime as _dt
     from pathlib import Path as _Path
+    from risk_management.immutable_journal import ImmutableJournal, JournalEntryType
 
-    # Essaye d'abord ImmutableJournal, sinon fallback JSON simple
-    try:
-        from risk_management.immutable_journal import ImmutableJournal
-
-        journal = ImmutableJournal.load_or_create(journal_path)
-        journal.add_entry(
-            entry_type="ramp_up_transition",
-            payload={
-                "from_stage": from_stage,
-                "to_stage": to_stage,
-                "approved_by": approved_by,
-                "reason": reason,
-                "metrics_snapshot": metrics_snapshot or {},
-                "transition_at": _dt.now().isoformat(),
-            },
-        )
-        journal.save_atomic(journal_path)
-        return str(_Path(journal_path).absolute())
-    except (ImportError, AttributeError):
-        pass  # fallback ci-dessous
-
-    # Fallback: simple JSON append
-    try:
-        target = _Path(journal_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        entry = {
-            "type": "ramp_up_transition",
-            "from_stage": from_stage,
-            "to_stage": to_stage,
-            "approved_by": approved_by,
-            "reason": reason,
-            "timestamp": _dt.now().isoformat(),
-        }
-        existing: list[dict[str, object]] = []
-        if target.exists():
-            existing = _json.loads(target.read_text(encoding="utf-8"))
-        existing.append(entry)
-        target.write_text(_json.dumps(existing, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-        return str(target.absolute())
-    except Exception:
-        return None
+    target = _Path(journal_path)
+    journal = ImmutableJournal.load(target)
+    journal.append(
+        JournalEntryType.STAGE_TRANSITION,
+        approved_by,
+        f"Transition de palier {from_stage} -> {to_stage}",
+        previous_state={"stage": from_stage},
+        new_state={
+            "stage": to_stage,
+            "metrics_snapshot": metrics_snapshot or {},
+        },
+        reason=reason,
+        approval=approved_by,
+    )
+    journal.save_atomic(target)
+    return str(target.absolute())

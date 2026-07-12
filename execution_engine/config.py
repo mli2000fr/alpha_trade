@@ -235,6 +235,7 @@ class ExecutionConfig:
     reconcile_tolerance_shares: float = 0.0
     reconcile_tolerance_epsilon: float = QUANTITY_EPSILON
     auto_rebalance_on_reconcile: bool = False  # si True : soumet des ordres pour corriger les ecarts
+    force_close_on_protection_breach: bool = True
 
     # --- TCA ---
     enable_tca: bool = True

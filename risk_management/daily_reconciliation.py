@@ -192,8 +192,13 @@ class DailyReconciliation:
 
         # ── Synthèse ───────────────────────────────────────────────────
         matched = sum(1 for i in items if i.is_matched)
-        mismatched = len(items) - matched
-        overall = ReconStatus.MATCHED if mismatched == 0 else ReconStatus.MISMATCHED
+        mismatched = sum(1 for i in items if i.status in (ReconStatus.MISMATCHED, ReconStatus.FAILED))
+        if mismatched > 0:
+            overall = ReconStatus.MISMATCHED
+        elif any(status == ReconStatus.PENDING for status in cat_statuses.values()):
+            overall = ReconStatus.PENDING
+        else:
+            overall = ReconStatus.MATCHED
 
         requires_action = any(
             s in (ReconStatus.MISMATCHED, ReconStatus.FAILED)

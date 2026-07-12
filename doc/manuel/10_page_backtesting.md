@@ -165,9 +165,37 @@ historisé et calibré sans apprendre sur la période que l'on prétend tester.
    (par exemple `63`), les coûts, le capital et le nombre de positions, puis
    cliquez **🚶 Lancer walk-forward-sentiment**.
 5. Conservez les artefacts seulement si les folds hors échantillon sont
-   stables. Le backtest détecte automatiquement les artefacts produits dans
-   `artifacts/sentiment_walk_forward` ; vous pouvez alors laisser l'overlay
-   walk-forward actif.
+    stables. Le backtest détecte automatiquement les artefacts produits dans
+    `artifacts/sentiment_walk_forward` ; vous pouvez alors laisser l'overlay
+    walk-forward actif.
+
+#### Exemple de découpage chronologique avec sentiment
+
+Pour réserver `2025-01-01` à `2026-12-31` au backtest final, un découpage
+cohérent est le suivant :
+
+| Usage | Période | Action IHM |
+|---|---|---|
+| Apprentissage des poids sentiment | 2015-01-01 → 2020-12-31 | **🧪 Backtesting** → **📰 Calibrate sentiment** → **📰 Lancer calibrate-sentiment-weights** |
+| Validation hors échantillon sentiment | 2021-01-01 → 2024-12-31 | **🧪 Backtesting** → **🚶 Walk-forward sentiment** → **🚶 Lancer walk-forward-sentiment** |
+| Entraînement ML initial, incluant le régime COVID | 2015-01-01 → 2020-12-31 | **🔄 Pipeline** → **9. ML Train** → **Entraîner l'univers sélectionné** |
+| Prédictions ML historiques PIT | 2021-01-01 → 2024-12-31 | **🔄 Pipeline** → **10. ML Predict** → **Prédire l'univers sélectionné** |
+| Calibration et validation conviction | 2021-01-01 → 2024-12-31 | onglets **🎯 Calibrate conviction** puis **🔄 Walk-forward conviction** |
+| Évaluation finale, jamais utilisée pour régler les paramètres | 2025-01-01 → 2026-12-31 | onglet **▶️ Backtest** → **🚀 Lancer le backtest** |
+
+Dans **🚶 Walk-forward sentiment**, utilisez par exemple `Min train days /
+fold = 504` et `Test days / fold = 126`. Le début `2021-01-01` laisse alors
+deux années de séances pour apprendre dans les premiers folds, et les tests
+hors échantillon couvrent ensuite 2023–2024.
+
+#### Figer les poids sentiment retenus
+
+Après validation, ne relancez plus **Calibrate sentiment** ni
+**Walk-forward sentiment** avant le backtest final. L'IHM utilise
+automatiquement en priorité
+`artifacts/sentiment_walk_forward\latest_best_weights.json`. Ce fichier est
+remplacé par le prochain walk-forward : le gel est donc actuellement
+opérationnel, mais pas encore versionné dans l'IHM.
 
 Pour mesurer la contribution du sentiment, faites ensuite deux runs finaux
 identiques : **Mode sentiment** = `off`, puis `auto`. L'écart est une mesure
@@ -194,6 +222,33 @@ plus utile qu'un score isolé.
    d'apprentissage puis cliquez **🎯 Lancer calibrate-conviction-weights**.
    Confirmez-la hors échantillon dans **🔄 Walk-forward conviction** avec
    `Min train days / fold`, `Test days / fold` et, si utile, `Step days`.
+
+> **Calibration conviction/Kelly dans le backtest** : les outils
+> `calibrate-conviction-weights` et `walk-forward-conviction` écrivent leurs
+> résultats dans la table `weights_calibration_runs` (scope=`risk`). Le bouton
+> **🚀 Lancer le backtest** expose désormais un contrôle opt-in
+> **🎯 Calibration conviction/Kelly** (uniquement en Phase 2 `risk` ou
+> `risk_execution`) :
+>
+> - **`off`** (défaut) : comportement standard, poids par défaut.
+> - **`auto`** : charge automatiquement le dernier run éligible dont
+>   `window_end ≤ start` du backtest (PIT-safe — aucun look-ahead). Si aucun
+>   run éligible n'existe, le comportement standard est conservé avec un
+>   avertissement explicite dans les logs et les métadonnées du run.
+> - **`pinned`** : utilise un `run_id` explicite (sélectionnable dans
+>   l'interface). Si `window_end > start`, le run échoue immédiatement pour
+>   éviter tout look-ahead.
+>
+> Les poids appliqués (`score_weight`, `prediction_weight`, Kelly) et les
+> métadonnées de calibration (run_id, window_start/end, statut) sont
+> systématiquement enregistrés dans `report.json` sous la clé
+> `conviction_calibration`, et dans les métadonnées du run IHM. Un résultat
+> sans calibration explicite (mode `off`) est clairement distingué d'un
+> résultat avec calibration appliquée.
+>
+> N'activez pas ce mode sans une calibration validée hors-échantillon
+> (étapes 9 walk-forward conviction). Un run avec calibration in-sample
+> produira un over-fit.
 
 > Le choix **Stratégie ML PIT** =
 > `walk-forward-train-then-predict` est actuellement explicitement non pris

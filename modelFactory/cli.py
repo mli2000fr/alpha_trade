@@ -204,6 +204,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
     p.add_argument("--benchmark-symbol", type=str, default="SPY")
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary"])
+    p.add_argument("--label-method", type=str, default="fixed_horizon", choices=["fixed_horizon", "triple_barrier"])
+    p.add_argument("--triple-barrier-stop-atr-mult", type=float, default=2.0)
+    p.add_argument("--triple-barrier-tp-atr-mult", type=float, default=3.0)
+    p.add_argument("--triple-barrier-max-sessions", type=int, default=20)
     p.add_argument("--target-up-threshold", type=float, default=0.0,
                    help="Seuil de rendement futur pour classer une hausse tradeable")
     p.add_argument("--target-down-threshold", type=float, default=0.0,
@@ -290,6 +294,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(args: list[str] | None = None) -> None:
     parser = build_arg_parser()
     opts = parser.parse_args(args)
+    if opts.label_method == "triple_barrier" and (opts.target_mode != "ternary" or opts.num_classes != 3):
+        parser.error("--label-method triple_barrier requiert --target-mode ternary et --num-classes 3")
 
     effective_log_level = logging.DEBUG if opts.debug_train else getattr(logging, opts.log_level)
 
@@ -317,8 +323,12 @@ def main(args: list[str] | None = None) -> None:
             feature_set=opts.feature_set,
             benchmark_symbol=opts.benchmark_symbol,
             target_mode=opts.target_mode,
+            label_method=opts.label_method,
             target_up_threshold=opts.target_up_threshold,
             target_down_threshold=opts.target_down_threshold,
+            triple_barrier_stop_atr_mult=opts.triple_barrier_stop_atr_mult,
+            triple_barrier_tp_atr_mult=opts.triple_barrier_tp_atr_mult,
+            triple_barrier_max_sessions=opts.triple_barrier_max_sessions,
             decision_threshold=opts.decision_threshold,
         ),
         model=ModelConfig(batch_size=opts.batch_size, hidden_size=opts.hidden_size, max_epochs=opts.max_epochs, num_classes=opts.num_classes),

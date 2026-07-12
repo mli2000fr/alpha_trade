@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader, Dataset
 from modelFactory.config import DataConfig, ModelConfig
 from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, build_cross_sectional_features, merge_cross_sectional_features
 from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features, compute_future_return, get_feature_columns
+from modelFactory.labeling import TripleBarrierConfig, build_triple_barrier_targets
 from modelFactory.reproducibility import build_torch_generator, derive_seed, seed_worker
 
 LOGGER = logging.getLogger(__name__)
@@ -639,14 +640,26 @@ def prepare_symbol_frame(
                 min_universe_size=data_cfg.cross_sectional_min_universe,
             )
         df = merge_cross_sectional_features(df, cross_sectional_df)
-    df["future_return"] = compute_future_return(df, horizon=data_cfg.forecast_horizon)
-    df["target"] = build_target(
-        df,
-        horizon=data_cfg.forecast_horizon,
-        mode=data_cfg.target_mode,
-        positive_threshold=data_cfg.target_up_threshold,
-        negative_threshold=data_cfg.target_down_threshold,
-    )
+    if data_cfg.label_method == "triple_barrier":
+        triple_targets = build_triple_barrier_targets(
+            df,
+            TripleBarrierConfig(
+                stop_atr_mult=data_cfg.triple_barrier_stop_atr_mult,
+                tp_atr_mult=data_cfg.triple_barrier_tp_atr_mult,
+                max_sessions=data_cfg.triple_barrier_max_sessions,
+            ),
+        )
+        df["future_return"] = triple_targets["future_return"]
+        df["target"] = triple_targets["target"]
+    else:
+        df["future_return"] = compute_future_return(df, horizon=data_cfg.forecast_horizon)
+        df["target"] = build_target(
+            df,
+            horizon=data_cfg.forecast_horizon,
+            mode=data_cfg.target_mode,
+            positive_threshold=data_cfg.target_up_threshold,
+            negative_threshold=data_cfg.target_down_threshold,
+        )
     active_features = get_feature_columns(
         data_cfg.include_sentiment_features,
         feature_set=data_cfg.feature_set,

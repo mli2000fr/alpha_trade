@@ -134,6 +134,24 @@ def test_reconcile_execution_state_marks_sell_excess_with_internal_mismatch() ->
     assert results[0].reason_code == "internal_position_mismatch"
 
 
+def test_reconcile_execution_state_marks_opposite_sign_target_as_side_flip() -> None:
+    results = reconciliation.reconcile_execution_state(
+        exec_run_id="exec-flip-1",
+        account_id="acct-1",
+        targets=[_target(shares=-100, entry_price=150.0)],
+        broker_positions=[{"symbol": "AAPL", "qty": 100}],
+        internal_positions=[ExecutionPosition(account_id="acct-1", symbol="AAPL", net_qty=100)],
+        open_order_state=[],
+        protection_state=[{"symbol": "AAPL", "protection_qty": 100.0}],
+        tolerance=0,
+        buying_power_available=100_000.0,
+    )
+
+    assert results[0].action == "side_flip"
+    assert results[0].position_delta == pytest.approx(200.0)
+    assert results[0].reconciliation_status == ReconciliationStatus.SAFE_AUTO
+
+
 def test_reconcile_targets_vs_broker_returns_legacy_diff_projection() -> None:
     diffs = reconciliation.reconcile_targets_vs_broker(
         targets=[_target(symbol="AAPL", shares=10, entry_price=100.0)],

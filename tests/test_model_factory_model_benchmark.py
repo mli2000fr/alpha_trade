@@ -495,6 +495,7 @@ class TestValidateBenchmarkQuality:
 
         qr = validate_benchmark_quality(report, max_f1_std_across_seeds=0.10)
         assert not qr.multi_seed_stability_ok
+        assert any("stability" in violation for violation in qr.violations)
 
 
 # ── Sprint Maître 4 Point 4.1 (suite) : GlobalBenchmarkRunner ───────────────
@@ -723,7 +724,6 @@ class TestLstmBenchmarkAdapter:
             assert "params_count" in result
             assert result["params_count"] > 0
             assert result["model_name"] == "lstm_attention"
-        assert any("stability" in v for v in qr.violations)
 
     def test_quality_report_is_frozen(self) -> None:
         qr = BenchmarkQualityReport(

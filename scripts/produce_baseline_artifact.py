@@ -18,10 +18,11 @@ Exigences Point 1 (cf. md_risque.md) :
 from __future__ import annotations
 
 import argparse
-import datetime as _dt
 import json
+import math
 import os
 import sys
+from pathlib import Path
 
 # Ajoute la racine du projet au path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -50,33 +51,23 @@ DEFAULT_UNIVERSE = [
     "XLC",   # Communication Services
 ]
 
-# ── Métriques dummy (à remplacer par des métriques réelles calculées) ─────────
-# Dans la vraie vie, ces métriques sont calculées par le pipeline ML sur
-# la période et l'univers donnés. Ici on met des placeholders documentés.
-
-DUMMY_METRICS_BY_SIDE: dict[str, dict[str, float]] = {
-    "long": {
-        "precision": 0.0,
-        "recall": 0.0,
-        "f1": 0.0,
-        "hit_rate": 0.0,
-        "total_predictions": 0,
-        "note": "PLACEHOLDER — run real ML pipeline to populate",
-    },
-    "short": {
-        "precision": 0.0,
-        "recall": 0.0,
-        "f1": 0.0,
-        "hit_rate": 0.0,
-        "total_predictions": 0,
-        "note": "PLACEHOLDER — run real ML pipeline to populate",
-    },
-    "flat": {
-        "abstention_rate": 0.0,
-        "total_predictions": 0,
-        "note": "PLACEHOLDER — run real ML pipeline to populate",
-    },
-}
+def _load_metrics(path: str) -> dict[str, dict[str, float]]:
+    """Load computed side metrics and reject placeholder-like input."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("--metrics-json doit contenir un objet JSON")
+    metrics: dict[str, dict[str, float]] = {}
+    for side in ("long", "short", "flat"):
+        values = payload.get(side)
+        if not isinstance(values, dict) or not values:
+            raise ValueError(f"--metrics-json doit contenir un objet non vide pour {side}")
+        parsed: dict[str, float] = {}
+        for name, value in values.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise ValueError(f"métrique invalide {side}.{name}: valeur numérique finie requise")
+            parsed[str(name)] = float(value)
+        metrics[side] = parsed
+    return metrics
 
 
 def main() -> None:
@@ -104,16 +95,34 @@ def main() -> None:
         default=42,
         help="Seed de reproductibilité. Défaut: 42.",
     )
+    parser.add_argument(
+        "--metrics-json",
+        required=True,
+        help="JSON des métriques réelles par side: long, short et flat.",
+    )
+    parser.add_argument(
+        "--data-fingerprint",
+        required=True,
+        help="Fingerprint du dataset effectivement évalué; 'unknown' est refusé.",
+    )
     args = parser.parse_args()
 
     universe = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    data_fingerprint = args.data_fingerprint.strip()
+    if not data_fingerprint or data_fingerprint.lower() == "unknown":
+        parser.error("--data-fingerprint doit identifier le dataset réellement évalué")
+    try:
+        metrics_by_side = _load_metrics(args.metrics_json)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        parser.error(str(exc))
 
     artifact: BaselineArtifact = produce_baseline_artifact(
         period_start=args.start,
         period_end=args.end,
         universe=universe,
-        metrics_by_side=DUMMY_METRICS_BY_SIDE,
+        metrics_by_side=metrics_by_side,
         seed=args.seed,
+        data_fingerprint=data_fingerprint,
     )
 
     filepath: str = save_baseline_artifact(artifact)

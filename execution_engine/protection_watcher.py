@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from uuid import uuid4
 from collections import defaultdict
 from dataclasses import replace
 from datetime import date, datetime
@@ -1157,21 +1158,79 @@ class ProtectionTransitionWatcher:
             try:
                 from execution_engine.protection_state_bridge import (
                     build_protection_state_from_fill,
+                    persist_protection_state,
                     verify_fill_protection_consistency,
                 )
                 _ps = build_protection_state_from_fill(
                     symbol=symbol,
-                    side=str(parent_intent.side),
+                    side="short" if parent_intent.side == "sell" else "long",
                     fill_qty=fill_qty,
                     fill_price=fill_price,
                     decision_price=float(row.get("decision_price", fill_price) or fill_price),
+                    parent_intent_id=parent_intent.intent_id,
+                    decision_fingerprint=parent_intent.decision_fingerprint,
                 )
                 _ok, _issues = verify_fill_protection_consistency(_ps)
+                _ps["verification"] = {"ok": _ok, "issues": _issues}
+                persist_protection_state(_ps, exec_run_id=str(row["exec_run_id"]))
                 if not _ok:
-                    LOGGER.warning(
-                        "ProtectionContract issue post-arm | symbol=%s issues=%s",
+                    metrics["protection_contract_breaches"] = (
+                        int(metrics.get("protection_contract_breaches", 0) or 0) + 1
+                    )
+                    self._persist_event(make_event(
+                        str(row["exec_run_id"]),
+                        EventType.ORDER_REJECTED,
+                        f"Protection contract breach after repair: {'; '.join(_issues)}",
+                        symbol=symbol,
+                        intent_id=parent_intent.intent_id,
+                        payload={"issues": _issues, "repair_attempted": True, "requires_force_close_review": True},
+                    ))
+                    LOGGER.error(
+                        "ProtectionContract breach after repair | symbol=%s issues=%s",
                         symbol, "; ".join(_issues),
                     )
+                    if config.force_close_on_protection_breach:
+                        force_close_intent = OrderIntent(
+                            intent_id=f"force-close-{uuid4().hex[:16]}",
+                            risk_run_id=str(row.get("risk_run_id") or ""),
+                            exec_run_id=str(row["exec_run_id"]),
+                            symbol=symbol,
+                            side="buy" if parent_intent.side == "sell" else "sell",
+                            qty=fill_qty,
+                            order_type="market",
+                            limit_price=None,
+                            trail_percent=None,
+                            broker_mode=broker_mode,
+                            parent_intent_id=parent_intent.intent_id,
+                            intent_role="force_close",
+                            idempotency_key=f"force-close:{parent_intent.intent_id}",
+                            decision_price=fill_price,
+                            decision_fingerprint=parent_intent.decision_fingerprint,
+                        )
+                        try:
+                            force_close_order = broker.submit_intent(force_close_intent)
+                            self._persist_order_state(force_close_intent, force_close_order, account_id=account_id)
+                            metrics["protection_force_closes"] = int(metrics.get("protection_force_closes", 0) or 0) + 1
+                            self._persist_event(make_event(
+                                str(row["exec_run_id"]),
+                                EventType.ORDER_SUBMITTED,
+                                f"Force-close submitted after protection breach for {symbol}",
+                                symbol=symbol,
+                                intent_id=force_close_intent.intent_id,
+                                broker_order_id=force_close_order.broker_order_id,
+                                payload={"parent_intent_id": parent_intent.intent_id, "issues": _issues},
+                            ))
+                        except Exception as force_close_exc:
+                            metrics["protection_force_close_failures"] = int(metrics.get("protection_force_close_failures", 0) or 0) + 1
+                            self._persist_event(make_event(
+                                str(row["exec_run_id"]),
+                                EventType.PROTECTION_TRANSITION_FAILED,
+                                f"Force-close failed after protection breach for {symbol}",
+                                symbol=symbol,
+                                intent_id=parent_intent.intent_id,
+                                payload={"issues": _issues, "error": str(force_close_exc)[:300]},
+                            ))
+                            LOGGER.critical("Force-close failed after protection breach for %s", symbol, exc_info=True)
             except Exception:
                 LOGGER.debug("ProtectionContract verification skipped for %s", symbol, exc_info=True)
         else:

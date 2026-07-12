@@ -1462,6 +1462,58 @@ class RiskRepository:
         )
         return selected
 
+    def load_eligible_calibration_run_ids(
+        self,
+        *,
+        as_of_date: date | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Liste les runs de calibration risk éligibles pour l'affichage IHM."""
+        table_columns = self._get_table_columns("weights_calibration_runs")
+        if not table_columns:
+            return []
+        has_eligible_for_live = "eligible_for_live" in table_columns
+        has_segment_key = "segment_key" in table_columns
+        eligible_clause = "AND eligible_for_live = 1" if has_eligible_for_live else ""
+        segment_select = ", segment_key" if has_segment_key else ""
+        date_clause = ""
+        params: dict[str, Any] = {"scope": "risk", "limit": limit}
+        if as_of_date is not None:
+            date_clause = "AND window_end <= :as_of_date"
+            params["as_of_date"] = as_of_date
+        query = text(
+            f"""
+            SELECT run_id, window_start, window_end, metric_name, metric_value{segment_select}
+            FROM weights_calibration_runs
+            WHERE scope = :scope
+              {eligible_clause}
+              {date_clause}
+            ORDER BY window_end DESC, calibrated_at DESC, run_id DESC
+            LIMIT :limit
+            """
+        )
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(query, params).mappings().all()
+        except Exception:
+            LOGGER.warning("load_eligible_calibration_run_ids: table indisponible", exc_info=True)
+            return []
+        return [
+            {
+                "run_id": str(row["run_id"] or "").strip(),
+                "window_start": self._coerce_date(row.get("window_start")),
+                "window_end": self._coerce_date(row.get("window_end")),
+                "metric_name": str(row.get("metric_name") or "").strip() or None,
+                "metric_value": float(row["metric_value"]) if row.get("metric_value") is not None else None,
+                "segment_key": (
+                    str(row.get("segment_key") or "").strip() or None
+                    if has_segment_key
+                    else None
+                ),
+            }
+            for row in rows
+        ]
+
     # ------------------------------------------------------------------
     # Écriture
     # ------------------------------------------------------------------

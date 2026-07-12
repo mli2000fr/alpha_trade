@@ -480,3 +480,51 @@ def test_build_walk_forward_conviction_command_includes_market_neutral_flags():
 	assert command[command.index("--net-exposure-target") + 1] == "0.0"
 
 
+def test_build_backtesting_run_command_conviction_calibration_off_by_default():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01"))
+
+    assert "--conviction-calibration-mode" not in command
+    assert "--conviction-calibration-run-id" not in command
+
+
+def test_build_backtesting_run_command_conviction_calibration_auto():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            phase2_mode="risk",
+            conviction_calibration_mode="auto",
+        ),
+    )
+
+    assert "--conviction-calibration-mode" in command
+    idx = command.index("--conviction-calibration-mode")
+    assert command[idx + 1] == "auto"
+    assert "--conviction-calibration-run-id" not in command
+
+
+def test_build_backtesting_run_command_conviction_calibration_pinned():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            phase2_mode="risk_execution",
+            conviction_calibration_mode="pinned",
+            conviction_calibration_run_id="cal_run_20241201",
+        ),
+    )
+
+    assert "--conviction-calibration-mode" in command
+    idx = command.index("--conviction-calibration-mode")
+    assert command[idx + 1] == "pinned"
+    assert "--conviction-calibration-run-id" in command
+    rid_idx = command.index("--conviction-calibration-run-id")
+    assert command[rid_idx + 1] == "cal_run_20241201"
+
+

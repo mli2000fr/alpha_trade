@@ -434,11 +434,16 @@ def _prepare_target_optimization_summary(
         universe_df=universe_df,
         selector_df=selector_df,
     )
+    label_horizon = (
+        cfg.data.triple_barrier_max_sessions
+        if cfg.data.label_method == "triple_barrier"
+        else cfg.data.forecast_horizon
+    )
     split = chrono_split(
         prepared_df,
         cfg.data.train_ratio,
         cfg.data.val_ratio,
-        forecast_horizon=cfg.data.forecast_horizon,
+        forecast_horizon=label_horizon,
     )
     train_df = split.train.reset_index(drop=True)
     summary: dict[str, Any] = {
@@ -1145,18 +1150,32 @@ def train_symbol(
             selected_horizon = int(target_optimization_summary.get("selected_horizon", cfg.data.forecast_horizon))
             selected_up_threshold = float(target_optimization_summary.get("selected_target_up_threshold", cfg.data.target_up_threshold))
             selected_down_threshold = float(target_optimization_summary.get("selected_target_down_threshold", cfg.data.target_down_threshold))
+            selected_stop_atr_mult = float(target_optimization_summary.get("selected_triple_barrier_stop_atr_mult", cfg.data.triple_barrier_stop_atr_mult))
+            selected_tp_atr_mult = float(target_optimization_summary.get("selected_triple_barrier_tp_atr_mult", cfg.data.triple_barrier_tp_atr_mult))
+            selected_max_sessions = int(target_optimization_summary.get("selected_triple_barrier_max_sessions", cfg.data.triple_barrier_max_sessions))
+            effective_forecast_horizon = (
+                selected_max_sessions
+                if cfg.data.label_method == "triple_barrier"
+                else selected_horizon
+            )
             if (
-                selected_horizon != cfg.data.forecast_horizon
+                effective_forecast_horizon != cfg.data.forecast_horizon
                 or selected_up_threshold != cfg.data.target_up_threshold
                 or selected_down_threshold != cfg.data.target_down_threshold
+                or selected_stop_atr_mult != cfg.data.triple_barrier_stop_atr_mult
+                or selected_tp_atr_mult != cfg.data.triple_barrier_tp_atr_mult
+                or selected_max_sessions != cfg.data.triple_barrier_max_sessions
             ):
                 effective_cfg = replace(
                     cfg,
                     data=replace(
                         cfg.data,
-                        forecast_horizon=selected_horizon,
+                        forecast_horizon=effective_forecast_horizon,
                         target_up_threshold=selected_up_threshold,
                         target_down_threshold=selected_down_threshold,
+                        triple_barrier_stop_atr_mult=selected_stop_atr_mult,
+                        triple_barrier_tp_atr_mult=selected_tp_atr_mult,
+                        triple_barrier_max_sessions=selected_max_sessions,
                     ),
                 )
                 LOGGER.info(
@@ -1435,6 +1454,9 @@ def train_symbol(
             "selected_forecast_horizon": effective_cfg.data.forecast_horizon,
             "selected_target_up_threshold": effective_cfg.data.target_up_threshold,
             "selected_target_down_threshold": effective_cfg.data.target_down_threshold,
+            "selected_triple_barrier_stop_atr_mult": effective_cfg.data.triple_barrier_stop_atr_mult,
+            "selected_triple_barrier_tp_atr_mult": effective_cfg.data.triple_barrier_tp_atr_mult,
+            "selected_triple_barrier_max_sessions": effective_cfg.data.triple_barrier_max_sessions,
             "selected_decision_threshold": effective_cfg.data.decision_threshold,
             "trained_through_date": trained_through_date,
             "architecture_selected": selected_architecture,

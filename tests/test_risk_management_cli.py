@@ -17,6 +17,24 @@ from risk_management.models import AccountRiskSnapshot, PortfolioEntry, Selectio
 from service.market.models import MarketRegimeSnapshot
 
 
+def test_live_borrow_provider_blocks_short_when_asset_api_fails(monkeypatch) -> None:
+    import service.alpaca.clientAlpaca as alpaca_module
+
+    def _unavailable(*args, **kwargs):
+        raise RuntimeError("asset API unavailable")
+
+    monkeypatch.setattr(alpaca_module, "fetch_asset_by_symbol", _unavailable)
+
+    snapshots = cli._load_live_borrow_snapshots(
+        ["AAPL"],
+        account_id="paper",
+        trade_date=date.today(),
+    )
+
+    assert snapshots["AAPL"].status.value == "not_shortable"
+    assert snapshots["AAPL"].quantity_available == 0
+
+
 class _BaseFakeRepo:
     def load_equity_history(self, account_id, trade_date, lookback_days=25):
         return []

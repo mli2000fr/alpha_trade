@@ -356,3 +356,51 @@ class TestRampUpManager:
         mgr = create_ramp_up_manager(start_stage=RampUpStage.SHADOW)
         result = mgr.rollback("Test")
         assert result is None  # Pas de palier précédent
+
+
+def test_campaign_day_fails_without_real_run_evidence(tmp_path, monkeypatch) -> None:
+    import risk_management.campaign_orchestrator as campaign_module
+    from risk_management.campaign_orchestrator import CampaignConfig, CampaignOrchestrator
+
+    monkeypatch.setattr(campaign_module, "PROJECT_ROOT", tmp_path)
+    orchestrator = CampaignOrchestrator(CampaignConfig(
+        campaign_id="audit-shadow",
+        model_run_id="model-1",
+        config_fingerprint="cfg-1",
+    ))
+    orchestrator.init_campaign()
+
+    result = orchestrator.run_daily_cycle(date.today())
+
+    assert result.status == "failed"
+    assert any("Résumé risque requis absent" in error for error in result.errors)
+
+
+def test_campaign_reloads_history_and_applies_ramp_up_budget(tmp_path, monkeypatch) -> None:
+    import risk_management.campaign_orchestrator as campaign_module
+    from risk_management.campaign_orchestrator import CampaignConfig, CampaignDayResult, CampaignOrchestrator
+
+    monkeypatch.setattr(campaign_module, "PROJECT_ROOT", tmp_path)
+    config = CampaignConfig(
+        campaign_id="audit-live",
+        phase="live_10pct",
+        model_run_id="model-1",
+        config_fingerprint="cfg-1",
+        base_risk_budget=100_000.0,
+    )
+    orchestrator = CampaignOrchestrator(config)
+    orchestrator.init_campaign()
+    stored = CampaignDayResult(
+        trade_date=date.today(),
+        campaign_id=config.campaign_id,
+        phase=config.phase,
+        day_number=1,
+        status="completed",
+        effective_risk_budget=10_000.0,
+    )
+    orchestrator._persist_day_result(stored)
+
+    reloaded = CampaignOrchestrator(config)
+
+    assert reloaded.effective_risk_budget == 10_000.0
+    assert [result.status for result in reloaded._results] == ["completed"]

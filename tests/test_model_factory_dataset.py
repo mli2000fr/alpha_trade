@@ -130,6 +130,44 @@ def test_prepare_symbol_frame_adds_future_return() -> None:
     assert "relative_strength_20" in prepared.columns
 
 
+def test_prepare_symbol_frame_uses_triple_barrier_targets(monkeypatch) -> None:
+    n = 260
+    bars = pd.DataFrame(
+        {
+            "symbol": ["AAPL"] * n,
+            "date": pd.date_range("2020-01-01", periods=n, freq="D"),
+            "open": [100.0 + index for index in range(n)],
+            "high": [101.0 + index for index in range(n)],
+            "low": [99.0 + index for index in range(n)],
+            "close": [100.0 + index for index in range(n)],
+            "volume": [1_000_000.0] * n,
+            "adj_close": [100.0 + index for index in range(n)],
+            "vwap": [100.0 + index for index in range(n)],
+            "daily_return": [0.0] * n,
+            "is_filled": [0] * n,
+        }
+    )
+    expected = pd.DataFrame(
+        {"target": [1] * n, "future_return": [0.0125] * n},
+        index=bars.index,
+    )
+    calls: list[object] = []
+    monkeypatch.setattr(
+        dataset,
+        "build_triple_barrier_targets",
+        lambda frame, cfg: calls.append(cfg) or expected,
+    )
+
+    prepared = dataset.prepare_symbol_frame(
+        bars,
+        dataset.DataConfig(target_mode="ternary", label_method="triple_barrier"),
+    )
+
+    assert calls
+    assert prepared["target"].eq(1).all()
+    assert prepared["future_return"].eq(0.0125).all()
+
+
 # ── Fold isolation tests (Sprint 3 Point 3.4) ────────────────────────────────
 
 class TestFoldDisjointness:

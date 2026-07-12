@@ -959,6 +959,40 @@ class ProductionExecutor:
                         except Exception:
                             LOGGER.debug("Could not persist Sprint 2 fill", exc_info=True)
 
+                        try:
+                            from execution_engine.protection_state_bridge import (
+                                build_protection_state_from_fill,
+                                persist_protection_state,
+                                verify_fill_protection_consistency,
+                            )
+                            protection_state = build_protection_state_from_fill(
+                                symbol=fill.symbol,
+                                side="short" if intent.side == "sell" else "long",
+                                fill_qty=fill.filled_qty,
+                                fill_price=fill.avg_fill_price,
+                                decision_price=fill.decision_price,
+                                parent_intent_id=intent.intent_id,
+                                decision_fingerprint=intent.decision_fingerprint,
+                            )
+                            protection_ok, protection_issues = verify_fill_protection_consistency(protection_state)
+                            protection_state["verification"] = {
+                                "ok": protection_ok,
+                                "issues": protection_issues,
+                            }
+                            persist_protection_state(protection_state, exec_run_id=exec_run_id)
+                            if not protection_ok:
+                                metrics["protection_breaches"] = int(metrics.get("protection_breaches", 0) or 0) + 1
+                                events.append(make_event(
+                                    exec_run_id, EventType.ORDER_REJECTED,
+                                    f"Protection contract breach: {'; '.join(protection_issues)}",
+                                    symbol=intent.symbol,
+                                    intent_id=intent.intent_id,
+                                ))
+                                LOGGER.error("Protection contract breach for %s: %s", intent.symbol, protection_issues)
+                        except Exception:
+                            metrics["protection_persistence_failures"] = int(metrics.get("protection_persistence_failures", 0) or 0) + 1
+                            LOGGER.exception("Protection state persistence failed for %s", intent.symbol)
+
                         # Slippage alert
                         if abs(fill.slippage_bps) > self._cfg.max_slippage_bps:
                             events.append(make_event(
@@ -1408,7 +1442,10 @@ class ProductionExecutor:
                 intent,
                 order,
                 account_id=self._cfg.resolved_account_id,
-                raw_payload=intent_to_alpaca_payload(intent),
+                raw_payload={
+                    **intent_to_alpaca_payload(intent),
+                    "decision_fingerprint": intent.decision_fingerprint,
+                },
             )
         except Exception:
             LOGGER.debug("Could not persist Sprint 2 broker order for %s", intent.intent_id, exc_info=True)

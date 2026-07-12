@@ -13,11 +13,13 @@ from risk_management.daily_reconciliation import (
     ReconStatus,
 )
 from risk_management.operational_controls import (
+    build_operational_probes,
     ControlFrequency,
     ControlResult,
     ControlSchedule,
     ControlStatus,
     OperationalControls,
+    persist_ramp_up_transition,
     SmokeTest,
     run_pre_session_smoke_tests,
 )
@@ -71,6 +73,8 @@ class TestDailyReconciliation:
         recon = DailyReconciliation()
         report = recon.reconcile(date.today())
         assert report.total_items == 0
+        assert report.overall_status == ReconStatus.PENDING
+        assert report.is_clean is False
 
     def test_matched_orders(self) -> None:
         recon = DailyReconciliation()
@@ -216,6 +220,44 @@ class TestRunPreSessionSmokeTests:
         all_ok, results = run_pre_session_smoke_tests()
         assert all_ok is True
         assert len(results) == 7
+
+
+class TestOperationalProbes:
+    def test_required_dependencies_fail_closed(self, tmp_path) -> None:
+        probes = build_operational_probes(
+            trade_date=date.today(),
+            model_registry_path=str(tmp_path / "missing_registry.json"),
+            require_broker=True,
+            require_model_registry=True,
+            require_watcher=True,
+        )
+        assert probes["SMOKE_CONNECTIVITY"] is False
+        assert probes["SMOKE_CIRCUIT_BREAKER"] is False
+        assert probes["SMOKE_ML_READY"] is False
+        assert probes["SMOKE_CASH"] is False
+        assert probes["SMOKE_WATCHER"] is False
+
+    def test_persist_ramp_up_transition_uses_immutable_chain(self, tmp_path) -> None:
+        journal_path = tmp_path / "ramp_up.json"
+        persisted = persist_ramp_up_transition(
+            from_stage="paper",
+            to_stage="live_5pct",
+            approved_by="risk-ops",
+            reason="gates vertes",
+            metrics_snapshot={"drawdown": 0.01},
+            journal_path=str(journal_path),
+        )
+        journal = ImmutableJournal.load(journal_path)
+        valid, violations = journal.verify_chain()
+        assert persisted == str(journal_path.absolute())
+        assert valid is True
+        assert violations == []
+        assert journal.entry_count == 1
+        assert journal.entries[0].entry_type == JournalEntryType.STAGE_TRANSITION
+        assert journal.entries[0].new_state == {
+            "stage": "live_5pct",
+            "metrics_snapshot": {"drawdown": 0.01},
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════

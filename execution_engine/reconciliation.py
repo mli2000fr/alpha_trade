@@ -81,8 +81,15 @@ def reconcile_execution_state(
         protection_qty = _qty(protection_map.get(symbol, 0.0))
         has_open_protection = protection_qty > effective_tolerance
 
+        is_side_flip = (
+            abs(broker_qty) > effective_tolerance
+            and abs(target_qty) > effective_tolerance
+            and broker_qty * target_qty < 0
+        )
         if abs(delta) <= effective_tolerance:
             action = "none"
+        elif is_side_flip:
+            action = "side_flip"
         elif symbol not in target_map:
             action = "investigate"
         elif delta > 0:

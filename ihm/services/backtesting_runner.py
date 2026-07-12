@@ -83,6 +83,9 @@ class BacktestRunOptions:
     dd_recovery_pct: float = 0.92
     target_annual_vol: float | None = None
     min_ml_coverage_ratio: float | None = None
+    # Conviction/Kelly calibration (opt-in, Phase 2 only)
+    conviction_calibration_mode: Literal["off", "auto", "pinned"] = "off"
+    conviction_calibration_run_id: str | None = None
 
     @property
     def ml_first_selection_contract(self) -> MLFirstSelectionContract:
@@ -334,6 +337,10 @@ def build_backtesting_command(
             command.extend(["--target-annual-vol", str(options.target_annual_vol)])
         if options.min_ml_coverage_ratio is not None:
             command.extend(["--min-ml-coverage-ratio", str(options.min_ml_coverage_ratio)])
+        if options.conviction_calibration_mode != "off":
+            command.extend(["--conviction-calibration-mode", options.conviction_calibration_mode])
+            if options.conviction_calibration_run_id:
+                command.extend(["--conviction-calibration-run-id", options.conviction_calibration_run_id])
         return command
 
     if kind == "backfill-scores-history":

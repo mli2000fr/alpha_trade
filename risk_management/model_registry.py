@@ -15,6 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+import json
+import os
+from pathlib import Path
+from uuid import uuid4
 
 
 # ── ModelStatus ─────────────────────────────────────────────────────────────
@@ -307,7 +311,11 @@ class ModelRegistry:
                 architecture=str(e_data.get("architecture", "lightgbm")),
                 version=int(e_data.get("version", 1)),
                 status=ModelStatus(str(e_data.get("status", "candidate"))),
+                promoted_at=datetime.fromisoformat(str(e_data["promoted_at"])) if e_data.get("promoted_at") else None,
+                demoted_at=datetime.fromisoformat(str(e_data["demoted_at"])) if e_data.get("demoted_at") else None,
                 reason=str(e_data.get("reason", "")),
+                previous_status=ModelStatus(str(e_data["previous_status"])) if e_data.get("previous_status") else None,
+                metrics_snapshot=dict(e_data["metrics_snapshot"]) if isinstance(e_data.get("metrics_snapshot"), dict) else None,
                 artifact_path=str(e_data["artifact_path"]) if e_data.get("artifact_path") else None,
                 fingerprint=str(e_data.get("fingerprint", "")),
             )
@@ -321,10 +329,7 @@ class ModelRegistry:
 
         Returns le chemin du fichier écrit.
         """
-        import json as _json
-        from pathlib import Path as _Path
-
-        target = _Path(path or "artifacts/model_registry.json")
+        target = Path(path or "artifacts/model_registry.json")
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = self.to_dict()
         payload["_meta"] = {
@@ -332,10 +337,16 @@ class ModelRegistry:
             "entry_count": len(self._entries),
             "champion_count": len(self._champions),
         }
-        target.write_text(
-            _json.dumps(payload, indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
+        temporary_path = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+        try:
+            temporary_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            os.replace(temporary_path, target)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
         return str(target)
 
     @classmethod
@@ -344,14 +355,11 @@ class ModelRegistry:
 
         Returns None si le fichier n'existe pas ou est corrompu.
         """
-        import json as _json
-        from pathlib import Path as _Path
-
-        target = _Path(path)
+        target = Path(path)
         if not target.exists():
             return None
         try:
-            data = _json.loads(target.read_text(encoding="utf-8"))
+            data = json.loads(target.read_text(encoding="utf-8"))
             return cls.from_dict(data)
         except Exception:
             return None
@@ -427,3 +435,55 @@ def create_model_entry(
         status=status,
         fingerprint=fingerprint,
     )
+
+
+def rollback_persisted_registry(
+    *,
+    symbol: str,
+    reason: str,
+    operator: str,
+    registry_path: str = "artifacts/model_registry.json",
+    journal_path: str = "artifacts/model_registry_journal.json",
+) -> ModelRegistryEntry:
+    """Rollback a persisted champion and record the transition immutably.
+
+    The JSON registry is the governing source for this operation.  It is
+    restored to its previous on-disk state if the immutable journal cannot be
+    persisted, so a champion change is never silently left unaudited.
+    """
+    normalized_symbol = symbol.strip()
+    normalized_reason = reason.strip()
+    normalized_operator = operator.strip()
+    if not normalized_symbol or not normalized_reason or not normalized_operator:
+        raise ValueError("symbol, reason et operator sont obligatoires pour un rollback")
+
+    registry = ModelRegistry.load_from_json(registry_path)
+    if registry is None:
+        raise RuntimeError(f"registre modèle introuvable ou invalide: {registry_path}")
+
+    previous_state = registry.to_dict()
+    restored = registry.rollback(normalized_symbol, normalized_reason)
+    if restored is None:
+        raise RuntimeError(f"aucun champion précédent éligible pour {normalized_symbol}")
+
+    from risk_management.immutable_journal import ImmutableJournal, JournalEntryType
+
+    journal = ImmutableJournal.load(Path(journal_path))
+    journal.append(
+        JournalEntryType.ROLLBACK,
+        normalized_operator,
+        f"Rollback champion modèle {normalized_symbol}",
+        previous_state=previous_state,
+        new_state=registry.to_dict(),
+        reason=normalized_reason,
+    )
+    registry.save_to_json(registry_path)
+    try:
+        journal.save_atomic(Path(journal_path))
+    except Exception:
+        try:
+            ModelRegistry.from_dict(previous_state).save_to_json(registry_path)
+        except Exception as restore_error:
+            raise RuntimeError("rollback persisté sans journal et restauration du registre échouée") from restore_error
+        raise
+    return restored

@@ -38,6 +38,30 @@ class BrokerAdapter:
         resp = self._client.submit_order(payload)
         return self._resp_to_broker_order(resp, intent.intent_id)
 
+    def submit_market_order(
+        self,
+        *,
+        symbol: str,
+        qty: float,
+        side: str,
+        intent_id: str,
+    ) -> BrokerOrder:
+        """Soumet une clôture/réduction marché hors flux de cible nominal."""
+        if qty <= 0:
+            raise ValueError("qty doit être > 0")
+        if side not in ("buy", "sell"):
+            raise ValueError("side doit être buy ou sell")
+        payload = {
+            "symbol": symbol,
+            "qty": str(qty),
+            "side": side,
+            "type": "market",
+            "time_in_force": "day",
+            "client_order_id": intent_id,
+        }
+        response = self._client.submit_order(payload)
+        return self._resp_to_broker_order(response, intent_id)
+
     def submit_oco_protection(
         self,
         parent_intent: OrderIntent,

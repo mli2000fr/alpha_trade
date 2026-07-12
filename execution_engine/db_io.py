@@ -583,6 +583,70 @@ class ExecutionRepository:
             row = conn.execute(stmt, {"account_id": account_id, "snapshot_kind": snapshot_kind}).mappings().first()
         return dict(row) if row is not None else None
 
+    def load_internal_ledger_for_run(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str,
+    ) -> dict[str, float | None]:
+        """Calcule le ledger interne d'un run à partir des écritures OMS.
+
+        Le cash provient du snapshot préflight plus les flux signés des fills.
+        Le PnL combine les lots clôturés et le mark-to-market des lots restants,
+        avec un calcul symétrique pour les positions longues et courtes.
+        """
+        required = ("execution_broker_fills", "execution_order_requests", "execution_position_lots")
+        if not all(self._has_table(table) for table in required):
+            return {"calculated_cash": None, "calculated_pnl": None}
+        cash_stmt = text("""
+            SELECT COALESCE(SUM(CASE
+                WHEN req.side = 'buy' THEN -fill.filled_qty * fill.avg_fill_price
+                WHEN req.side = 'sell' THEN fill.filled_qty * fill.avg_fill_price
+                ELSE 0 END), 0) AS cash_delta
+            FROM execution_broker_fills fill
+            INNER JOIN execution_order_requests req ON req.request_id = fill.request_id
+            WHERE fill.exec_run_id = :exec_run_id AND fill.account_id = :account_id
+        """)
+        preflight_stmt = text("""
+            SELECT cash FROM broker_account_snapshots
+            WHERE exec_run_id = :exec_run_id AND account_id = :account_id
+              AND snapshot_kind = 'preflight'
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        """)
+        pnl_stmt = text("""
+            SELECT
+                COALESCE(SUM(CASE
+                    WHEN lot.exit_price IS NOT NULL AND lot.opened_qty > lot.remaining_qty AND open_req.side = 'buy'
+                        THEN (lot.opened_qty - lot.remaining_qty) * (lot.exit_price - lot.entry_price)
+                    WHEN lot.exit_price IS NOT NULL AND lot.opened_qty > lot.remaining_qty AND open_req.side = 'sell'
+                        THEN (lot.opened_qty - lot.remaining_qty) * (lot.entry_price - lot.exit_price)
+                    ELSE 0 END), 0) AS realized_pnl,
+                COALESCE(SUM(CASE
+                    WHEN lot.remaining_qty > 0 AND pos.market_price IS NOT NULL AND open_req.side = 'buy'
+                        THEN lot.remaining_qty * (pos.market_price - lot.entry_price)
+                    WHEN lot.remaining_qty > 0 AND pos.market_price IS NOT NULL AND open_req.side = 'sell'
+                        THEN lot.remaining_qty * (lot.entry_price - pos.market_price)
+                    ELSE 0 END), 0) AS unrealized_pnl
+            FROM execution_position_lots lot
+            INNER JOIN execution_order_requests open_req ON open_req.request_id = lot.open_request_id
+            LEFT JOIN execution_positions pos ON pos.account_id = lot.account_id AND pos.symbol = lot.symbol
+            WHERE lot.account_id = :account_id
+              AND (lot.open_exec_run_id = :exec_run_id OR lot.close_exec_run_id = :exec_run_id)
+        """)
+        with self.engine.connect() as conn:
+            cash_delta = float(conn.execute(cash_stmt, {"exec_run_id": exec_run_id, "account_id": account_id}).scalar() or 0.0)
+            preflight_cash = conn.execute(preflight_stmt, {"exec_run_id": exec_run_id, "account_id": account_id}).scalar()
+            pnl_row = conn.execute(pnl_stmt, {"exec_run_id": exec_run_id, "account_id": account_id}).mappings().one()
+        realized = float(pnl_row["realized_pnl"] or 0.0)
+        unrealized = float(pnl_row["unrealized_pnl"] or 0.0)
+        return {
+            "calculated_cash": float(preflight_cash) + cash_delta if preflight_cash is not None else None,
+            "calculated_pnl": realized + unrealized,
+            "cash_delta": cash_delta,
+            "realized_pnl": realized,
+            "unrealized_pnl": unrealized,
+        }
+
     def load_execution_run_context(self, *, exec_run_id: str) -> dict[str, Any] | None:
         stmt = text("""
             SELECT exec_run_id, risk_run_id, trade_date, broker_mode, status, account_id,
@@ -739,6 +803,63 @@ class ExecutionRepository:
             LOGGER.warning("load_execution_fills_for_run failed exec_run_id=%s", exec_run_id, exc_info=True)
             return pd.DataFrame(columns=columns)
         return pd.DataFrame([dict(row) for row in rows], columns=columns)
+
+    def load_reconciliation_orders_for_run(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Charge les intentions et soumissions OMS liées à un run donné."""
+        stmt = text("""
+            SELECT req.request_id AS intent_id, req.symbol, req.side, req.target_qty,
+                   req.status AS request_status, bo.broker_order_id,
+                   bo.normalized_status AS broker_status, bo.client_order_id
+            FROM execution_order_requests req
+            LEFT JOIN execution_broker_orders bo ON bo.request_id = req.request_id
+            WHERE req.exec_run_id = :exec_run_id AND req.account_id = :account_id
+            ORDER BY req.created_at ASC, req.request_id ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = [dict(row) for row in conn.execute(stmt, {"exec_run_id": exec_run_id, "account_id": account_id}).mappings().all()]
+        intended = [{key: value for key, value in row.items() if key != "broker_order_id"} for row in rows]
+        submitted = [
+            {"intent_id": row["intent_id"], "broker_order_id": row["broker_order_id"], "status": row["broker_status"]}
+            for row in rows if row.get("broker_order_id")
+        ]
+        return intended, submitted
+
+    def load_reconciliation_protections_for_run(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Charge protections attendues et protections broker ouvertes par parent intent."""
+        stmt = text("""
+            SELECT parent.request_id AS parent_intent_id,
+                   child.request_id AS intent_id,
+                   child.intent_role,
+                   child.status AS request_status,
+                   broker.broker_order_id,
+                   broker.normalized_status
+            FROM execution_order_requests child
+            INNER JOIN execution_order_requests parent ON parent.request_id = child.parent_request_id
+            LEFT JOIN execution_broker_orders broker ON broker.request_id = child.request_id
+            WHERE parent.exec_run_id = :exec_run_id
+              AND parent.account_id = :account_id
+              AND child.intent_role IN ('take_profit', 'initial_stop', 'trailing_stop')
+            ORDER BY parent.request_id ASC, child.request_id ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = [dict(row) for row in conn.execute(stmt, {"exec_run_id": exec_run_id, "account_id": account_id}).mappings().all()]
+        expected = [{"oco_id": row["intent_id"], "parent_intent_id": row["parent_intent_id"]} for row in rows]
+        actual = [
+            {"oco_id": row["intent_id"], "broker_order_id": row["broker_order_id"]}
+            for row in rows
+            if row.get("broker_order_id") and str(row.get("normalized_status") or row.get("request_status") or "").upper() in {"NEW", "SUBMITTED", "PARTIALLY_FILLED", "ACCEPTED", "PENDING_NEW"}
+        ]
+        return expected, actual
 
     def load_execution_position_lots_for_open_run(
         self,
@@ -1460,6 +1581,40 @@ class ExecutionRepository:
                 conn.execute(stmt, params)
         except Exception as exc:  # noqa: BLE001
             LOGGER.debug("watcher_heartbeats upsert ignored (table absente ?): %s", exc)
+
+    def is_watcher_healthy(
+        self,
+        *,
+        account_id: str | None = None,
+        max_age_seconds: int = 900,
+    ) -> bool:
+        """Retourne True uniquement pour un heartbeat RUNNING suffisamment récent."""
+        if max_age_seconds <= 0:
+            raise ValueError("max_age_seconds doit être > 0")
+        stmt = text("""
+            SELECT status, last_heartbeat_at
+            FROM watcher_heartbeats
+            WHERE account_id = :account_id
+            ORDER BY last_heartbeat_at DESC
+            LIMIT 1
+        """)
+        try:
+            with self.engine.connect() as conn:
+                row = conn.execute(
+                    stmt,
+                    {"account_id": account_id or "default"},
+                ).mappings().first()
+        except Exception:
+            LOGGER.warning("Lecture du heartbeat watcher impossible.", exc_info=True)
+            return False
+        if row is None or str(row.get("status") or "").upper() != "RUNNING":
+            return False
+        heartbeat = row.get("last_heartbeat_at")
+        if not isinstance(heartbeat, datetime):
+            return False
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=UTC)
+        return datetime.now(UTC) - heartbeat.astimezone(UTC) <= timedelta(seconds=max_age_seconds)
 
     def snapshot_execution_targets(
         self,

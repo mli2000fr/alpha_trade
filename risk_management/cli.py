@@ -196,7 +196,7 @@ def _load_live_borrow_snapshots(
     Point 9 — Interroge l'API Alpaca ``GET /v2/assets/{symbol}`` pour les champs
     ``shortable`` et ``easy_to_borrow``, puis les mappe vers les statuts
     ``BorrowStatus`` (ETB/HTB/NOT_SHORTABLE). En cas d'indisponibilité de l'API,
-    un fallback local ``EASY_TO_BORROW`` est appliqué (conservateur, documenté).
+    le symbole est ``NOT_SHORTABLE`` : aucune disponibilité favorable n'est inventée.
     """
     from datetime import datetime as _dt, timezone as _tz
 
@@ -216,24 +216,23 @@ def _load_live_borrow_snapshots(
             try:
                 asset = fetch_asset_by_symbol(sym, account_id=account_id)
             except Exception:
-                LOGGER.debug(
-                    "fetch_asset_by_symbol échoué pour %s, fallback ETB.", sym,
+                LOGGER.warning(
+                    "fetch_asset_by_symbol échoué pour %s, short bloqué.", sym,
                     exc_info=True,
                 )
-                # Fallback ETB individuel pour ce symbole
                 snapshots[sym] = BorrowSnapshot(
                     symbol=sym,
-                    status=BorrowStatus.EASY_TO_BORROW,
-                    fee_annual=0.003,
-                    quantity_available=None,
+                    status=BorrowStatus.NOT_SHORTABLE,
+                    fee_annual=float("inf"),
+                    quantity_available=0,
                     locate_required=False,
                     as_of=as_of,
-                    source="alpaca_asset_fallback_etb",
+                    source="alpaca_asset_unavailable",
                 )
                 continue
 
-            shortable = bool(asset.get("shortable", True))
-            easy_to_borrow = bool(asset.get("easy_to_borrow", True))
+            shortable = bool(asset.get("shortable", False))
+            easy_to_borrow = bool(asset.get("easy_to_borrow", False))
 
             if not shortable:
                 status = BorrowStatus.NOT_SHORTABLE
@@ -278,29 +277,27 @@ def _load_live_borrow_snapshots(
             )
             return snapshots
     except Exception:
-        LOGGER.debug(
-            "API Alpaca borrow globalement indisponible, fallback local.",
+        LOGGER.warning(
+            "API Alpaca borrow globalement indisponible, shorts bloqués.",
             exc_info=True,
         )
 
-    # ── Fallback local : ETB pour tous les symboles ─────────────────
+    # ── Fail-closed global : aucune disponibilité favorable inventée ──
     for symbol in symbols:
         sym = str(symbol).strip().upper()
         if not sym:
             continue
         snapshots[sym] = BorrowSnapshot(
             symbol=sym,
-            status=BorrowStatus.EASY_TO_BORROW,
-            fee_annual=0.003,
-            quantity_available=None,
+            status=BorrowStatus.NOT_SHORTABLE,
+            fee_annual=float("inf"),
+            quantity_available=0,
             locate_required=False,
             as_of=as_of,
-            source="local_fallback_etb",
+            source="borrow_provider_unavailable",
         )
-    LOGGER.info(
-        "Borrow snapshots chargés (fallback local ETB): %d symboles | "
-        "ATTENTION: aucun endpoint broker réel n'est disponible pour le borrow. "
-        "Les shorts seront acceptés sous réserve de liquidité.",
+    LOGGER.warning(
+        "Borrow indisponible pour %d symboles : shorts bloqués.",
         len(snapshots),
     )
     return snapshots
@@ -1103,11 +1100,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Module de gestion de risque Alpha Trade")
     p.add_argument("--account-equity", type=float, default=100_000.0)
     p.add_argument("--risk-per-trade-pct", type=float, default=0.01)
+    p.add_argument(
+        "--risk-budget-dollars",
+        type=float,
+        default=None,
+        help="Budget de risque absolu par position ; remplace --risk-per-trade-pct après résolution de l'equity.",
+    )
     p.add_argument("--max-positions", type=int, default=20)
     p.add_argument("--max-position-weight", type=float, default=0.10)
     p.add_argument("--max-sector-weight", type=float, default=0.30)
     p.add_argument("--min-position-notional", type=float, default=500.0)
     p.add_argument("--trade-date", type=str, default=None, help="YYYY-MM-DD (défaut: aujourd'hui)")
+    p.add_argument("--summary-path", type=str, default=None, help="Chemin de sortie atomique du résumé JSON du run.")
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument(
         "--run-mode",
@@ -1298,6 +1302,14 @@ def main(args: list[str] | None = None) -> None:
                     capped_equity,
                 )
                 effective_equity = capped_equity
+
+        if args.risk_budget_dollars is not None:
+            budget_dollars = float(args.risk_budget_dollars)
+            if budget_dollars <= 0.0:
+                raise ValueError("--risk-budget-dollars doit être strictement positif")
+            if effective_equity <= 0.0 or budget_dollars >= effective_equity:
+                raise ValueError("--risk-budget-dollars doit être inférieur à l'equity effective")
+            args.risk_per_trade_pct = budget_dollars / effective_equity
         daily_pnl = account_snapshot.daily_total_pnl
         if daily_pnl is None:
             realized = account_snapshot.daily_realized_pnl or 0.0
@@ -2320,6 +2332,7 @@ def main(args: list[str] | None = None) -> None:
         "run_mode": run_mode.value,
         "effective_equity": round(float(effective_equity), 2),
         "account_equity": round(float(args.account_equity), 2),
+        "risk_budget_dollars": round(float(args.risk_budget_dollars), 2) if args.risk_budget_dollars is not None else None,
         "equity_source": equity_source,
         "equity_fallback_used": equity_fallback_used,
         "snapshot_freshness_days": snapshot_freshness_days,
@@ -2416,6 +2429,12 @@ def main(args: list[str] | None = None) -> None:
         started_at=started_at,
         finished_at=finished_at,
     )
+    if args.summary_path:
+        summary_path = Path(args.summary_path)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = summary_path.with_suffix(summary_path.suffix + ".tmp")
+        temporary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        temporary_path.replace(summary_path)
     emit_run_summary(summary)
 
 

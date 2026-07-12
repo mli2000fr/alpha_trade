@@ -249,40 +249,66 @@ def submit_rebalance_orders(
             )
             continue
 
-        qty = abs(diff.delta)
-        if qty <= 1e-9:
-            continue
-
-        if diff.action == "sell_excess":
-            intent = build_rebalance_sell_intent(
-                exec_run_id=exec_run_id,
-                risk_run_id=risk_run_id,
-                symbol=diff.symbol,
-                qty=qty,
-                broker_mode=cfg.broker_mode,
-            )
-            action_label = (
-                f"SELL EXCESS {diff.symbol}: -{format_share_quantity(qty)} shares "
-                f"(broker={format_share_quantity(diff.broker_qty)} > cible={format_share_quantity(diff.target_qty)})"
-            )
-        else:  # buy_more
-            intent = build_rebalance_buy_intent(
-                exec_run_id=exec_run_id,
-                risk_run_id=risk_run_id,
-                symbol=diff.symbol,
-                qty=qty,
-                broker_mode=cfg.broker_mode,
-            )
-            action_label = (
-                f"BUY MORE {diff.symbol}: +{format_share_quantity(qty)} shares "
-                f"(broker={format_share_quantity(diff.broker_qty)} < cible={format_share_quantity(diff.target_qty)})"
-            )
-
-            if not reserve_account_capacity_for_intent(
-                intent, account_state, exec_run_id, events, metrics
-            ):
-                LOGGER.info("Rebalance buy blocked by account constraints: %s", diff.symbol)
+        if diff.action == "side_flip":
+            close_qty = abs(diff.broker_qty)
+            if close_qty <= 1e-9:
                 continue
+            if diff.broker_qty > 0:
+                intent = build_rebalance_sell_intent(
+                    exec_run_id=exec_run_id,
+                    risk_run_id=risk_run_id,
+                    symbol=diff.symbol,
+                    qty=close_qty,
+                    broker_mode=cfg.broker_mode,
+                )
+            else:
+                intent = build_rebalance_buy_intent(
+                    exec_run_id=exec_run_id,
+                    risk_run_id=risk_run_id,
+                    symbol=diff.symbol,
+                    qty=close_qty,
+                    broker_mode=cfg.broker_mode,
+                )
+            action_label = (
+                f"CLOSE FOR SIDE FLIP {diff.symbol}: {format_share_quantity(close_qty)} shares "
+                f"(broker={format_share_quantity(diff.broker_qty)} cible={format_share_quantity(diff.target_qty)}); "
+                "opposite entry deferred until broker close confirmation"
+            )
+        else:
+            qty = abs(diff.delta)
+            if qty <= 1e-9:
+                continue
+
+            if diff.action == "sell_excess":
+                intent = build_rebalance_sell_intent(
+                    exec_run_id=exec_run_id,
+                    risk_run_id=risk_run_id,
+                    symbol=diff.symbol,
+                    qty=qty,
+                    broker_mode=cfg.broker_mode,
+                )
+                action_label = (
+                    f"SELL EXCESS {diff.symbol}: -{format_share_quantity(qty)} shares "
+                    f"(broker={format_share_quantity(diff.broker_qty)} > cible={format_share_quantity(diff.target_qty)})"
+                )
+            else:  # buy_more
+                intent = build_rebalance_buy_intent(
+                    exec_run_id=exec_run_id,
+                    risk_run_id=risk_run_id,
+                    symbol=diff.symbol,
+                    qty=qty,
+                    broker_mode=cfg.broker_mode,
+                )
+                action_label = (
+                    f"BUY MORE {diff.symbol}: +{format_share_quantity(qty)} shares "
+                    f"(broker={format_share_quantity(diff.broker_qty)} < cible={format_share_quantity(diff.target_qty)})"
+                )
+
+                if not reserve_account_capacity_for_intent(
+                    intent, account_state, exec_run_id, events, metrics
+                ):
+                    LOGGER.info("Rebalance buy blocked by account constraints: %s", diff.symbol)
+                    continue
 
         LOGGER.info("Rebalance: %s", action_label)
 

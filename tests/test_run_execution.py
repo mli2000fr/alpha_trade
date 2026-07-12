@@ -3,6 +3,33 @@ from typing import Any, cast
 import run_execution
 
 
+def test_transition_plan_cancels_before_liquidating() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class _Broker:
+        def cancel_broker_order(self, broker_order_id: str) -> bool:
+            calls.append(("cancel", broker_order_id))
+            return True
+
+        def submit_market_order(self, *, symbol: str, qty: float, side: str, intent_id: str):
+            calls.append(("market", f"{symbol}:{qty}:{side}:{intent_id}"))
+            return object()
+
+    plan = {
+        "steps": [
+            {"action": "cancel", "symbol": "AAPL", "order_id": "order-1"},
+            {"action": "liquidate", "symbol": "AAPL", "side": "long", "quantity": 10},
+        ]
+    }
+
+    counters = run_execution._execute_transition_plan(plan, broker=_Broker())
+
+    assert [kind for kind, _ in calls] == ["cancel", "market"]
+    assert counters["cancelled"] == 1
+    assert counters["liquidated"] == 1
+    assert counters["failed"] == 0
+
+
 def test_run_bridges_executor_live_progress_to_run_summaries(monkeypatch) -> None:
     emitted_payloads: list[dict[str, object]] = []
     captured_progress_callbacks: list[object] = []
@@ -208,6 +235,8 @@ def test_run_propagates_regime_max_gross_exposure_to_execution_config(monkeypatc
     monkeypatch.setattr(service_market_module, "build_default_macro_provider", lambda raw: object())
     monkeypatch.setattr(service_market_module, "DbSentimentScoreProvider", lambda trade_date: object())
     monkeypatch.setattr(service_market_module, "build_snapshot", lambda *args, **kwargs: _FakeSnapshot())
+    monkeypatch.setattr(service_market_module, "load_regime_state", lambda: None)
+    monkeypatch.setattr(service_market_module, "save_regime_state", lambda state: None)
 
     run_execution.run("simulate", "risk-1", "2026-05-01", debug=False)
 

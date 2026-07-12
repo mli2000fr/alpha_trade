@@ -19,6 +19,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import subprocess
+import hmac
+from hashlib import sha256
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -79,6 +83,7 @@ class CampaignConfig:
     """
 
     campaign_id: str = ""
+    base_risk_budget: float = 0.0
     phase: str = CampaignPhase.SHADOW
     start_date: date = field(default_factory=date.today)
     end_date: date | None = None
@@ -91,12 +96,16 @@ class CampaignConfig:
     approved_at: datetime | None = None
     frozen_artifacts: dict[str, str] = field(default_factory=dict)
     auto_promote: bool = False
+    risk_command: list[str] = field(default_factory=list)
+    execution_command: list[str] = field(default_factory=list)
+    signing_key_env: str = "ALPHA_TRADE_CAMPAIGN_SIGNING_KEY"
 
     def to_dict(self) -> dict[str, object]:
         return {
             "campaign_id": self.campaign_id,
             "phase": self.phase,
             "start_date": self.start_date.isoformat(),
+            "base_risk_budget": self.base_risk_budget,
             "end_date": self.end_date.isoformat() if self.end_date else None,
             "model_run_id": self.model_run_id,
             "policy_version": self.policy_version,
@@ -107,6 +116,9 @@ class CampaignConfig:
             "approved_at": self.approved_at.isoformat() if self.approved_at else None,
             "frozen_artifacts": self.frozen_artifacts,
             "auto_promote": self.auto_promote,
+            "risk_command": self.risk_command,
+            "execution_command": self.execution_command,
+            "signing_key_env": self.signing_key_env,
         }
 
     @property
@@ -175,12 +187,14 @@ class CampaignDayResult:
     # Status
     status: str = "pending"
     errors: list[str] = field(default_factory=list)
+    effective_risk_budget: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
         return {
             "trade_date": self.trade_date.isoformat(),
             "campaign_id": self.campaign_id,
             "phase": self.phase,
+            "effective_risk_budget": self.effective_risk_budget,
             "day_number": self.day_number,
             "risk_run_id": self.risk_run_id,
             "entries_count": self.entries_count,
@@ -293,6 +307,11 @@ class CampaignOrchestrator:
     config: CampaignConfig
     _results: list[CampaignDayResult] = field(default_factory=list)
     _reviews: list[WeeklyReview] = field(default_factory=list)
+    _ramp_up: Any = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._reload_history()
+        self._ramp_up = self._load_ramp_up_state()
 
     @property
     def campaign_dir(self) -> Path:
@@ -306,6 +325,14 @@ class CampaignOrchestrator:
     def weekly_dir(self) -> Path:
         return self.campaign_dir / "weekly"
 
+    @property
+    def ramp_up_state_path(self) -> Path:
+        return self.campaign_dir / "ramp_up_state.json"
+
+    @property
+    def effective_risk_budget(self) -> float:
+        return float(self._ramp_up.effective_risk_budget(self.config.base_risk_budget))
+
     def init_campaign(self) -> None:
         """Initialise la structure de la campagne."""
         self.campaign_dir.mkdir(parents=True, exist_ok=True)
@@ -313,10 +340,7 @@ class CampaignOrchestrator:
         self.weekly_dir.mkdir(parents=True, exist_ok=True)
 
         # Persister la config
-        (self.campaign_dir / "campaign_config.json").write_text(
-            json.dumps(self.config.to_dict(), indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
+        self._write_json_atomic(self.campaign_dir / "campaign_config.json", self.config.to_dict())
         LOGGER.info("Campagne initialisée | id=%s phase=%s dir=%s",
                      self.config.campaign_id, self.config.phase, self.campaign_dir)
 
@@ -350,6 +374,7 @@ class CampaignOrchestrator:
         En paper  : run risque + run exécution paper.
         """
         td = trade_date or date.today()
+        self._reload_history()
         day_number = len(self._results) + 1
 
         result = CampaignDayResult(
@@ -357,6 +382,7 @@ class CampaignOrchestrator:
             campaign_id=self.config.campaign_id,
             phase=self.config.phase,
             day_number=day_number,
+            effective_risk_budget=self.effective_risk_budget,
         )
 
         try:
@@ -367,13 +393,17 @@ class CampaignOrchestrator:
                 self._results.append(result)
                 self._persist_day_result(result)
                 return result
+            if self.config.phase != CampaignPhase.SHADOW and not os.environ.get(self.config.signing_key_env):
+                raise RuntimeError(f"clé de signature campagne absente: {self.config.signing_key_env}")
 
             # ── 2. Exécuter le run risque (décisions) ──
             # Note: en production, ceci appelle subprocess ou l'API CLI
             # Pour le framework, on enregistre les métadonnées
             risk_result = self._execute_risk_run(td)
             result.risk_run_id = risk_result.get("run_id", "")
-            result.entries_count = risk_result.get("entries_count", 0)
+            if not result.risk_run_id:
+                raise RuntimeError("résumé risque sans run_id")
+            result.entries_count = risk_result.get("entries_count", risk_result.get("target_positions", 0))
             result.entries_long = risk_result.get("entries_long", 0)
             result.entries_short = risk_result.get("entries_short", 0)
             result.freshness_blocked = risk_result.get("freshness_blocked", False)
@@ -384,15 +414,19 @@ class CampaignOrchestrator:
             if not self.config.dry_run:
                 exec_result = self._execute_paper_run(td, result.risk_run_id)
                 result.exec_run_id = exec_result.get("run_id", "")
-                result.orders_submitted = exec_result.get("orders_submitted", 0)
-                result.orders_filled = exec_result.get("orders_filled", 0)
-                result.orders_failed = exec_result.get("orders_failed", 0)
+                if not result.exec_run_id:
+                    raise RuntimeError("résumé paper sans run_id")
+                result.orders_submitted = exec_result.get("orders_submitted", exec_result.get("submitted", 0))
+                result.orders_filled = exec_result.get("orders_filled", exec_result.get("filled", 0))
+                result.orders_failed = exec_result.get("orders_failed", exec_result.get("failed", 0))
                 result.slippage_median_bps = exec_result.get("slippage_median_bps")
                 result.protection_coverage_pct = exec_result.get("protection_coverage_pct", 100.0)
                 result.reconciliation_status = exec_result.get("reconciliation_status", "clean")
 
             # ── 4. Shadow compare (si applicable) ──
             shadow_compare = self._run_shadow_compare(td)
+            if self.config.phase == CampaignPhase.SHADOW and shadow_compare is None:
+                raise RuntimeError("rapport shadow_compare manquant")
             if shadow_compare:
                 result.shadow_divergence_rate = shadow_compare.get("divergence_rate", 0.0)
                 result.shadow_is_convergent = shadow_compare.get("is_convergent", True)
@@ -419,26 +453,43 @@ class CampaignOrchestrator:
         """Exécute le run risque (décisions) pour un jour donné."""
         day_dir = self.daily_dir / trade_date.isoformat()
         day_dir.mkdir(parents=True, exist_ok=True)
+        self._persist_runtime_parameters(day_dir)
+        self._run_configured_entrypoint(
+            kind="risk",
+            command=self.config.risk_command,
+            trade_date=trade_date,
+            day_dir=day_dir,
+            risk_run_id=None,
+        )
 
         # Lecture du résumé de run existant (produit par risk_management/cli.py)
         summary_path = day_dir / "risk_run_summary.json"
         if summary_path.exists():
             return json.loads(summary_path.read_text(encoding="utf-8"))
 
-        # Si pas de run pré-existant, retourne un squelette
-        LOGGER.warning("Aucun run risque pré-existant pour %s — squelette.", trade_date)
-        return {"run_id": "", "entries_count": 0}
+        raise FileNotFoundError(
+            f"Résumé risque requis absent pour {trade_date}: {summary_path}"
+        )
 
     def _execute_paper_run(self, trade_date: date, risk_run_id: str) -> dict[str, Any]:
         """Exécute le run paper (ordres simulés) pour un jour donné."""
         day_dir = self.daily_dir / trade_date.isoformat()
         day_dir.mkdir(parents=True, exist_ok=True)
+        self._run_configured_entrypoint(
+            kind="execution",
+            command=self.config.execution_command,
+            trade_date=trade_date,
+            day_dir=day_dir,
+            risk_run_id=risk_run_id,
+        )
 
         summary_path = day_dir / "exec_run_summary.json"
         if summary_path.exists():
             return json.loads(summary_path.read_text(encoding="utf-8"))
 
-        return {"run_id": "", "orders_submitted": 0, "orders_filled": 0}
+        raise FileNotFoundError(
+            f"Résumé paper requis absent pour {trade_date}: {summary_path}"
+        )
 
     def _run_shadow_compare(self, trade_date: date) -> dict[str, Any] | None:
         """Compare les décisions shadow vs live."""
@@ -450,14 +501,189 @@ class CampaignOrchestrator:
             return json.loads(compare_path.read_text(encoding="utf-8"))
         return None
 
+    def _run_configured_entrypoint(
+        self,
+        *,
+        kind: str,
+        command: list[str],
+        trade_date: date,
+        day_dir: Path,
+        risk_run_id: str | None,
+    ) -> None:
+        """Exécute une commande configurée sans shell et conserve un reçu haché."""
+        if not command:
+            return
+        values = {
+            "trade_date": trade_date.isoformat(),
+            "day_dir": str(day_dir),
+            "risk_run_id": risk_run_id or "",
+            "effective_risk_budget": f"{self.effective_risk_budget:.8f}",
+        }
+        rendered = [str(part).format_map(values) for part in command]
+        if kind == "risk":
+            rendered.extend([
+                "--trade-date", trade_date.isoformat(), "--run-mode", self.config.run_mode,
+                "--summary-path", str(day_dir / "risk_run_summary.json"),
+            ])
+            if self.effective_risk_budget > 0.0:
+                rendered.extend(["--risk-budget-dollars", f"{self.effective_risk_budget:.8f}"])
+        elif risk_run_id:
+            rendered.extend([
+                "--run-id", risk_run_id, "--date", trade_date.isoformat(),
+                "--summary-path", str(day_dir / "exec_run_summary.json"),
+            ])
+        completed = subprocess.run(
+            rendered,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+        self._write_json_atomic(day_dir / f"{kind}_entrypoint_receipt.json", {
+            "kind": kind,
+            "command": rendered,
+            "returncode": completed.returncode,
+            "stdout_sha256": sha256(completed.stdout.encode("utf-8", errors="replace")).hexdigest(),
+            "stderr_sha256": sha256(completed.stderr.encode("utf-8", errors="replace")).hexdigest(),
+        })
+        if completed.returncode != 0:
+            raise RuntimeError(f"entrypoint {kind} failed with exit code {completed.returncode}")
+
     def _persist_day_result(self, result: CampaignDayResult) -> None:
         """Persiste le résultat quotidien."""
         day_dir = self.daily_dir / result.trade_date.isoformat()
         day_dir.mkdir(parents=True, exist_ok=True)
-        (day_dir / "campaign_day_result.json").write_text(
-            json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
+        self._write_json_atomic(day_dir / "campaign_day_result.json", result.to_dict())
+        summaries = {}
+        for name in ("risk_run_summary.json", "exec_run_summary.json", "shadow_compare.json"):
+            path = day_dir / name
+            if path.exists():
+                summaries[name] = sha256(path.read_bytes()).hexdigest()
+        manifest = {
+            "campaign_id": self.config.campaign_id,
+            "trade_date": result.trade_date.isoformat(),
+            "status": result.status,
+            "summary_sha256": summaries,
+        }
+        signing_key = os.environ.get(self.config.signing_key_env, "")
+        canonical = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        manifest["signature_hmac_sha256"] = (
+            hmac.new(signing_key.encode("utf-8"), canonical.encode("utf-8"), "sha256").hexdigest()
+            if signing_key else None
         )
+        manifest["signature_key_env"] = self.config.signing_key_env
+        self._write_json_atomic(day_dir / "evidence_manifest.json", manifest)
+
+    def _reload_history(self) -> None:
+        """Recharge les journées persistées avant tout rapport ou promotion."""
+        if not self.daily_dir.exists():
+            return
+        loaded: list[CampaignDayResult] = []
+        for path in sorted(self.daily_dir.glob("*/campaign_day_result.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["trade_date"] = date.fromisoformat(str(data["trade_date"]))
+                allowed = {field_name: data[field_name] for field_name in CampaignDayResult.__dataclass_fields__ if field_name in data}
+                loaded.append(CampaignDayResult(**allowed))
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                LOGGER.error("Historique campagne invalide: %s", path, exc_info=True)
+        self._results = loaded
+
+    def _load_ramp_up_state(self) -> Any:
+        from risk_management.gradual_ramp_up import RampUpManager, RampUpStage
+
+        if self.ramp_up_state_path.exists():
+            try:
+                data = json.loads(self.ramp_up_state_path.read_text(encoding="utf-8"))
+                return RampUpManager(
+                    current_stage=RampUpStage(str(data["current_stage"])),
+                    stage_started_at=date.fromisoformat(str(data["stage_started_at"])),
+                    drawdown_current=float(data.get("drawdown_current", 0.0)),
+                    open_incidents=int(data.get("open_incidents", 0)),
+                )
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                LOGGER.error("État ramp-up invalide: %s", self.ramp_up_state_path, exc_info=True)
+                raise RuntimeError("Etat ramp-up persiste invalide")
+        try:
+            stage = RampUpStage(self.config.phase)
+        except ValueError:
+            stage = RampUpStage.SHADOW
+        return RampUpManager(current_stage=stage, stage_started_at=self.config.start_date)
+
+    def _persist_ramp_up_state(self) -> None:
+        self._write_json_atomic(self.ramp_up_state_path, {
+            "current_stage": self._ramp_up.current_stage.value,
+            "stage_started_at": self._ramp_up.stage_started_at.isoformat(),
+            "drawdown_current": self._ramp_up.drawdown_current,
+            "open_incidents": self._ramp_up.open_incidents,
+            "effective_risk_budget": self.effective_risk_budget,
+        })
+
+    def _persist_runtime_parameters(self, day_dir: Path) -> None:
+        self._write_json_atomic(day_dir / "runtime_parameters.json", {
+            "campaign_id": self.config.campaign_id,
+            "ramp_up_stage": self._ramp_up.current_stage.value,
+            "base_risk_budget": self.config.base_risk_budget,
+            "effective_risk_budget": self.effective_risk_budget,
+        })
+
+    @staticmethod
+    def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        os.replace(temporary, path)
+
+    def transition_ramp_up(self, *, reviewer: str, reason: str = "") -> tuple[bool, str]:
+        """Applique une promotion gouvernée et journalise chaque transition."""
+        can_promote, gate_reason = self._ramp_up.can_promote(
+            checklist_passed=self._check_promotion_gates()[0],
+            shadow_convergent=all(result.shadow_is_convergent for result in self._results),
+            human_reviewer=reviewer,
+        )
+        if not can_promote:
+            return False, gate_reason
+        transition = self._ramp_up.promote(
+            checklist_passed=True,
+            shadow_convergent=True,
+            human_reviewer=reviewer,
+        )
+        from risk_management.operational_controls import persist_ramp_up_transition
+        persist_ramp_up_transition(
+            from_stage=transition.from_stage.value,
+            to_stage=transition.to_stage.value if transition.to_stage else "",
+            approved_by=reviewer,
+            reason=reason or transition.reason,
+            metrics_snapshot={"campaign_id": self.config.campaign_id, "completed_days": len(self._results)},
+            journal_path=str(self.campaign_dir / "ramp_up_journal.json"),
+        )
+        self.config.phase = self._ramp_up.current_stage.value
+        self.config.run_mode = (
+            "shadow" if self._ramp_up.current_stage.value == CampaignPhase.SHADOW
+            else "paper" if self._ramp_up.current_stage.value == CampaignPhase.PAPER
+            else "live"
+        )
+        self.config.dry_run = self._ramp_up.current_stage.value == CampaignPhase.SHADOW
+        self._persist_ramp_up_state()
+        self._write_json_atomic(self.campaign_dir / "campaign_config.json", self.config.to_dict())
+        return True, transition.reason
+
+    def _maybe_auto_rollback(self, result: CampaignDayResult) -> None:
+        incidents = int(result.orders_failed > 0 or result.reconciliation_status != "clean")
+        self._ramp_up.open_incidents = incidents
+        transition = self._ramp_up.check_drawdown_breach(0.0)
+        if transition is not None:
+            from risk_management.operational_controls import persist_ramp_up_transition
+            persist_ramp_up_transition(
+                from_stage=transition.from_stage.value,
+                to_stage=transition.to_stage.value if transition.to_stage else "",
+                approved_by="system",
+                reason=transition.reason,
+                metrics_snapshot={"campaign_id": self.config.campaign_id, "incidents": incidents},
+                journal_path=str(self.campaign_dir / "ramp_up_journal.json"),
+            )
+        self._persist_ramp_up_state()
 
     def _build_weekly_review(self) -> WeeklyReview:
         """Construit la revue hebdomadaire à partir des résultats quotidiens."""
@@ -527,10 +753,7 @@ class CampaignOrchestrator:
         self._reviews.append(review)
 
         # Persister
-        (self.weekly_dir / f"week_{week_number:02d}.json").write_text(
-            json.dumps(review.to_dict(), indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
+        self._write_json_atomic(self.weekly_dir / f"week_{week_number:02d}.json", review.to_dict())
 
         LOGGER.info("Revue hebdomadaire #%d | reco=%s issues=%d",
                      week_number, review.recommendation, len(issues))
@@ -614,10 +837,7 @@ class CampaignOrchestrator:
         """Persiste le rapport de campagne."""
         report = self.build_campaign_report()
         path = self.campaign_dir / "campaign_report.json"
-        path.write_text(
-            json.dumps(report, indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
+        self._write_json_atomic(path, report)
         return str(path)
 
 
@@ -635,6 +855,10 @@ def create_campaign(
     approved_by: str | None = None,
     start_date: date | None = None,
     auto_promote: bool = False,
+    base_risk_budget: float = 0.0,
+    risk_command: list[str] | None = None,
+    execution_command: list[str] | None = None,
+    signing_key_env: str = "ALPHA_TRADE_CAMPAIGN_SIGNING_KEY",
     frozen_model_path: str = "",
     frozen_calibrator_path: str = "",
     frozen_config_path: str = "",
@@ -652,6 +876,10 @@ def create_campaign(
         approved_by=approved_by,
         approved_at=datetime.now() if approved_by else None,
         auto_promote=auto_promote,
+        base_risk_budget=base_risk_budget,
+        risk_command=list(risk_command or []),
+        execution_command=list(execution_command or []),
+        signing_key_env=signing_key_env,
         frozen_artifacts={
             "model": frozen_model_path,
             "calibrator": frozen_calibrator_path,

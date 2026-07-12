@@ -499,6 +499,8 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "phase4_mode", "Explication": "off = comportement Phase 3, protection_replay = rejoue les protections TP/stop/trailing issues des child intents d'exécution.", "Défaut": "off"},
             {"Paramètre": "phase5_mode", "Explication": "off = comportement Phase 4, watcher_replay = rejoue les transitions du watcher de protection (trigger -> promotion trailing) dans le moteur.", "Défaut": "off"},
             {"Paramètre": "phase7_mode", "Explication": "off = comportement Phase 5, exit_lifecycle_replay = rejoue l'issue terminale des child orders et l'annulation OCO du sibling.", "Défaut": "off"},
+            {"Paramètre": "conviction_calibration_mode", "Explication": "off = comportement standard (défaut) ; auto = charge la dernière calibration éligible PIT-safe ; pinned = run_id explicite forcé (window_end <= start requis).", "Défaut": "off"},
+            {"Paramètre": "conviction_calibration_run_id", "Explication": "run_id explicite d'un run weights_calibration_runs à appliquer en mode pinned.", "Défaut": "None"},
             {"Paramètre": "allow_neutral_fallback_on_missing_macro_data", "Explication": "Si vrai, le backtest continue quand la macro requise est indisponible et marque la séance en `data_quality=missing`. Sinon, il échoue explicitement.", "Défaut": "False"},
             {"Paramètre": "fidelity_baseline_id", "Explication": "Identifiant optionnel de baseline fidélité promue à comparer au run courant (Sprint 6).", "Défaut": "None"},
             {"Paramètre": "fidelity_baseline_catalog", "Explication": "Chemin optionnel vers le catalogue JSON des baselines fidélité. Convention stable recommandée : `config/fidelity_baseline_catalog.json` pointant vers `artifacts/fidelity_baselines/<baseline_id>/...`.", "Défaut": "None"},
@@ -1589,6 +1591,116 @@ def _build_run_options() -> BacktestRunOptions:
             ),
         )
 
+    # ── Calibration conviction/Kelly (opt-in, Phase 2 uniquement) ──────
+    calibration_col1, calibration_col2 = st.columns([2, 3])
+    _phase2_active = phase2_mode != "off"
+    with calibration_col1:
+        conviction_calibration_mode = cast(
+            str,
+            st.selectbox(
+                "🎯 Calibration conviction/Kelly",
+                options=["off", "auto", "pinned"],
+                index=["off", "auto", "pinned"].index(
+                    cast(str, st.session_state.get("bt_run_conviction_calibration_mode", "off"))
+                    if st.session_state.get("bt_run_conviction_calibration_mode", "off") in {"off", "auto", "pinned"}
+                    else "off"
+                ),
+                key="bt_run_conviction_calibration_mode",
+                disabled=not _phase2_active,
+                help=(
+                    "Opt-in pour utiliser un run de calibration conviction/Kelly validé dans le backtest Phase 2. "
+                    "`off` = comportement standard (défaut). "
+                    "`auto` = sélectionne automatiquement le dernier run éligible avec window_end <= start (PIT). "
+                    "`pinned` = utilise un run_id explicite ; refusé si window_end > start."
+                ),
+            ),
+        )
+    with calibration_col2:
+        if not _phase2_active:
+            st.caption("⚠️ Disponible uniquement avec Phase 2 `risk` ou `risk_execution` activé.")
+            conviction_calibration_run_id = None
+        elif conviction_calibration_mode == "off":
+            st.caption("Calibration conviction désactivée (comportement standard).")
+            conviction_calibration_run_id = None
+        else:
+            _available_cal_runs: list[dict[str, object]] = []
+            try:
+                from datetime import datetime as _datetime
+
+                from database.connection import get_sqlalchemy_engine as _gse_ihm
+                from risk_management.db_io import RiskRepository as _RR
+
+                _backtest_start_date = _datetime.strptime(start.strip(), "%Y-%m-%d").date()
+                _available_cal_runs = _RR(_gse_ihm()).load_eligible_calibration_run_ids(
+                    as_of_date=_backtest_start_date,
+                    limit=30,
+                )
+            except ValueError:
+                st.warning(
+                    "La date de début du backtest doit être au format YYYY-MM-DD "
+                    "pour afficher les calibrations conviction compatibles PIT."
+                )
+            except Exception as exc:
+                st.warning(f"Impossible de charger les calibrations conviction : {exc}")
+            if conviction_calibration_mode == "auto":
+                if _available_cal_runs:
+                    latest = _available_cal_runs[0]
+                    st.caption(
+                        "Sélection automatique : run `{}` (window_end={}, metric={} ={})".format(
+                            str(latest.get("run_id") or "—"),
+                            str(latest.get("window_end") or "—"),
+                            str(latest.get("metric_name") or "—"),
+                            "{:.4f}".format(float(latest["metric_value"]))
+                            if latest.get("metric_value") is not None
+                            else "—",
+                        )
+                    )
+                else:
+                    st.caption("Aucun run de calibration éligible trouvé. Le run se poursuivra sans calibration si aucun n'est disponible.")
+                conviction_calibration_run_id = None
+            else:
+                _run_id_options = [str(run["run_id"]) for run in _available_cal_runs if run.get("run_id")]
+                _default_run_id = str(st.session_state.get("bt_run_conviction_calibration_run_id", "") or "")
+                if _run_id_options:
+                    _sel_idx = _run_id_options.index(_default_run_id) if _default_run_id in _run_id_options else 0
+                    _selected_id = cast(
+                        str,
+                        st.selectbox(
+                            "Run ID calibration",
+                            options=_run_id_options,
+                            index=_sel_idx,
+                            key="bt_run_conviction_calibration_run_id_select",
+                            help="Sélectionnez le run de calibration. window_end doit être <= start du backtest.",
+                            format_func=lambda run_id: "{} (end={})".format(
+                                run_id,
+                                next(
+                                    (
+                                        str(run.get("window_end") or "?")
+                                        for run in _available_cal_runs
+                                        if str(run.get("run_id")) == run_id
+                                    ),
+                                    "?",
+                                ),
+                            ),
+                        ),
+                    )
+                    st.session_state["bt_run_conviction_calibration_run_id"] = _selected_id
+                    conviction_calibration_run_id = _selected_id
+                else:
+                    conviction_calibration_run_id = st.text_input(
+                        "Run ID calibration (manuel)",
+                        value=_default_run_id,
+                        key="bt_run_conviction_calibration_run_id",
+                        help="Entrez le run_id exact depuis weights_calibration_runs. Aucun run trouvé en DB.",
+                    ).strip() or None
+    if conviction_calibration_mode != "off" and _phase2_active:
+        st.info(
+            "🎯 **Calibration conviction/Kelly active** — PIT-safe : seuls les runs avec `window_end ≤ start` du backtest "
+            "sont appliqués. En mode `auto`, si aucun run éligible n'existe pour la date de début, le comportement "
+            "standard (poids par défaut) est conservé avec un avertissement explicite dans les logs et les métadonnées. "
+            "En mode `pinned`, un `window_end > start` cause l'échec immédiat du run pour éviter tout look-ahead."
+        )
+
     macro_mode_col1, macro_mode_col2 = st.columns([1.5, 2.5])
     with macro_mode_col1:
         macro_pit_mode = cast(
@@ -1761,6 +1873,12 @@ def _build_run_options() -> BacktestRunOptions:
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
+        conviction_calibration_mode=cast(Any, conviction_calibration_mode if _phase2_active else "off"),
+        conviction_calibration_run_id=(
+            conviction_calibration_run_id
+            if _phase2_active and conviction_calibration_mode == "pinned"
+            else None
+        ),
         **_build_overlay_options(
             engine_mode=engine_mode,
             selected_run_preset_key=selected_run_preset_key,

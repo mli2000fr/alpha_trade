@@ -8,6 +8,7 @@ from risk_management.model_registry import (
     ModelRegistryEntry,
     ModelStatus,
     create_model_entry,
+    rollback_persisted_registry,
 )
 
 
@@ -188,6 +189,35 @@ class TestModelRegistry:
             reg.promote("m1", "ok")
         with pytest.raises(ValueError, match="peut pas"):
             reg.promote("m1", "déjà champion")
+
+    def test_persisted_rollback_restores_champion_and_journals(self, tmp_path) -> None:
+        registry = ModelRegistry()
+        registry.register(create_model_entry("m1", "AAPL"))
+        registry.register(create_model_entry("m2", "AAPL"))
+        for _ in range(3):
+            registry.promote("m1", "ok")
+        for _ in range(3):
+            registry.promote("m2", "better")
+        registry_path = tmp_path / "model_registry.json"
+        journal_path = tmp_path / "model_registry_journal.json"
+        registry.save_to_json(str(registry_path))
+
+        restored = rollback_persisted_registry(
+            symbol="AAPL",
+            reason="drift confirmed",
+            operator="risk-operator",
+            registry_path=str(registry_path),
+            journal_path=str(journal_path),
+        )
+
+        from risk_management.immutable_journal import ImmutableJournal, JournalEntryType
+
+        loaded = ModelRegistry.load_from_json(str(registry_path))
+        journal = ImmutableJournal.load(journal_path)
+        assert restored.model_id == "m1"
+        assert loaded is not None and loaded.get_champion("AAPL").model_id == "m1"  # type: ignore[union-attr]
+        assert journal.verify_chain()[0] is True
+        assert len(journal.get_by_type(JournalEntryType.ROLLBACK)) == 1
 
 
 # ── create_model_entry ──────────────────────────────────────────────────────

@@ -32,6 +32,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _parse_command(value: str, option_name: str) -> list[str]:
+    if not value:
+        return []
+    parsed = json.loads(value)
+    if not isinstance(parsed, list) or not parsed or not all(isinstance(item, str) and item for item in parsed):
+        raise ValueError(f"{option_name} doit être une liste JSON non vide de chaînes")
+    return parsed
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Initialise une nouvelle campagne."""
     from risk_management.campaign_orchestrator import (
@@ -52,6 +61,10 @@ def cmd_init(args: argparse.Namespace) -> None:
         approved_by=args.approved_by,
         start_date=date.today(),
         auto_promote=args.auto_promote,
+        base_risk_budget=args.base_risk_budget,
+        risk_command=_parse_command(args.risk_command_json, "--risk-command-json"),
+        execution_command=_parse_command(args.execution_command_json, "--execution-command-json"),
+        signing_key_env=args.signing_key_env,
         frozen_model_path=args.frozen_model_path or "",
         frozen_calibrator_path=args.frozen_calibrator_path or "",
         frozen_config_path=args.frozen_config_path or "",
@@ -88,6 +101,11 @@ def cmd_daily(args: argparse.Namespace) -> None:
         run_mode=config_data.get("run_mode", "shadow"),
         dry_run=bool(config_data.get("dry_run", True)),
         frozen_artifacts=config_data.get("frozen_artifacts", {}),
+        auto_promote=bool(config_data.get("auto_promote", False)),
+        base_risk_budget=float(config_data.get("base_risk_budget", 0.0) or 0.0),
+        risk_command=list(config_data.get("risk_command", []) or []),
+        execution_command=list(config_data.get("execution_command", []) or []),
+        signing_key_env=str(config_data.get("signing_key_env") or "ALPHA_TRADE_CAMPAIGN_SIGNING_KEY"),
     )
 
     orchestrator = CampaignOrchestrator(config)
@@ -129,6 +147,11 @@ def cmd_report(args: argparse.Namespace) -> None:
         config_fingerprint=config_data.get("config_fingerprint", ""),
         run_mode=config_data.get("run_mode", "shadow"),
         dry_run=bool(config_data.get("dry_run", True)),
+        auto_promote=bool(config_data.get("auto_promote", False)),
+        base_risk_budget=float(config_data.get("base_risk_budget", 0.0) or 0.0),
+        risk_command=list(config_data.get("risk_command", []) or []),
+        execution_command=list(config_data.get("execution_command", []) or []),
+        signing_key_env=str(config_data.get("signing_key_env") or "ALPHA_TRADE_CAMPAIGN_SIGNING_KEY"),
     )
 
     orchestrator = CampaignOrchestrator(config)
@@ -146,7 +169,7 @@ def cmd_report(args: argparse.Namespace) -> None:
 
 def cmd_promote(args: argparse.Namespace) -> None:
     """Tente de promouvoir la campagne au palier suivant."""
-    from risk_management.campaign_orchestrator import CampaignOrchestrator, CampaignConfig, CampaignPhase
+    from risk_management.campaign_orchestrator import CampaignOrchestrator, CampaignConfig
 
     campaign_dir = PROJECT_ROOT / "artifacts" / "campaigns" / args.campaign_id
     config_path = campaign_dir / "campaign_config.json"
@@ -165,61 +188,23 @@ def cmd_promote(args: argparse.Namespace) -> None:
         config_fingerprint=config_data.get("config_fingerprint", ""),
         run_mode=config_data.get("run_mode", "shadow"),
         dry_run=bool(config_data.get("dry_run", True)),
+        auto_promote=bool(config_data.get("auto_promote", False)),
+        base_risk_budget=float(config_data.get("base_risk_budget", 0.0) or 0.0),
+        risk_command=list(config_data.get("risk_command", []) or []),
+        execution_command=list(config_data.get("execution_command", []) or []),
+        signing_key_env=str(config_data.get("signing_key_env") or "ALPHA_TRADE_CAMPAIGN_SIGNING_KEY"),
     )
 
     orchestrator = CampaignOrchestrator(config)
-    can_promote, issues = orchestrator._check_promotion_gates()
-
-    if not can_promote:
-        print("PROMOTION REFUSÉE — gates en échec :")
-        for issue in issues:
-            print(f"  ❌ {issue}")
-        sys.exit(1)
-
-    if not args.approved_by:
-        print("PROMOTION BLOQUÉE — approbation humaine requise (--approved-by)")
-        sys.exit(1)
-
-    # Promotion : shadow → paper, paper → live_5pct, etc.
-    next_phase = {
-        CampaignPhase.SHADOW: CampaignPhase.PAPER,
-        CampaignPhase.PAPER: "live_5pct",
-    }.get(config.phase, config.phase)
-
-    config.phase = next_phase
-    config.dry_run = next_phase == CampaignPhase.SHADOW
-    config.approved_by = args.approved_by
-    config.approved_at = datetime.now()
-
-    # Persister la config mise à jour
-    (campaign_dir / "campaign_config.json").write_text(
-        json.dumps(config.to_dict(), indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
+    promoted, detail = orchestrator.transition_ramp_up(
+        reviewer=args.approved_by,
+        reason=args.reason,
     )
-
-    # Enregistrer l'approbation dans le journal immuable
-    try:
-        from risk_management.immutable_journal import ImmutableJournal
-        journal = ImmutableJournal.load_or_create(
-            str(campaign_dir / "approval_journal.json")
-        )
-        journal.add_entry(
-            entry_type="campaign_promotion",
-            payload={
-                "campaign_id": args.campaign_id,
-                "from_phase": config_data.get("phase"),
-                "to_phase": next_phase,
-                "approved_by": args.approved_by,
-                "approved_at": datetime.now().isoformat(),
-                "reason": args.reason or "",
-            },
-        )
-        journal.save_atomic(str(campaign_dir / "approval_journal.json"))
-    except ImportError:
-        pass
-
-    print(f"✅ Campagne promue : {config_data.get('phase')} → {next_phase}")
-    print(f"   Approuvé par : {args.approved_by}")
+    if not promoted:
+        print(f"PROMOTION REFUSÉE — {detail}")
+        sys.exit(1)
+    print(f"Campagne promue : {config_data.get('phase')} → {orchestrator.config.phase}")
+    print(f"Approuvé par : {args.approved_by}")
 
 
 def main() -> None:
@@ -238,6 +223,10 @@ def main() -> None:
     p_init.add_argument("--run-mode", default="", choices=["shadow", "paper"])
     p_init.add_argument("--approved-by")
     p_init.add_argument("--auto-promote", action="store_true")
+    p_init.add_argument("--base-risk-budget", type=float, default=0.0)
+    p_init.add_argument("--risk-command-json", default="", help="Liste JSON non-shell du runner risque.")
+    p_init.add_argument("--execution-command-json", default="", help="Liste JSON non-shell du runner exécution.")
+    p_init.add_argument("--signing-key-env", default="ALPHA_TRADE_CAMPAIGN_SIGNING_KEY")
     p_init.add_argument("--frozen-model-path", default="")
     p_init.add_argument("--frozen-calibrator-path", default="")
     p_init.add_argument("--frozen-config-path", default="")

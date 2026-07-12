@@ -20,10 +20,13 @@ def test_to_conviction_weights_returns_typed_object() -> None:
     assert weights.prediction_weight == pytest.approx(0.6)
 
 
-def test_default_conviction_weights_are_40_60() -> None:
+def test_default_conviction_weights_are_legacy_only() -> None:
     cfg = RiskConfig()
-    assert cfg.score_weight == pytest.approx(0.40)
-    assert cfg.prediction_weight == pytest.approx(0.60)
+    assert cfg.score_weight + cfg.prediction_weight == pytest.approx(1.0)
+    assert cfg.to_conviction_weights() == ConvictionWeights(
+        score_weight=cfg.score_weight,
+        prediction_weight=cfg.prediction_weight,
+    )
 
 
 def test_legacy_compute_conviction_emits_deprecation_warning() -> None:
@@ -40,7 +43,6 @@ def test_legacy_returns_same_value_as_core_fuse() -> None:
     from risk_management.conviction import compute_conviction as legacy
     cases = [
         (0.5, 0.7, 0.4, 0.6),
-        (0.9, None, 0.4, 0.6),
         (0.1, 0.1, 0.5, 0.5),
         (0.8, 0.6, 0.3, 0.7),
         (0.65, 0.55, 0.4, 0.6),
@@ -55,6 +57,12 @@ def test_legacy_returns_same_value_as_core_fuse() -> None:
             weights=ConvictionWeights(sw, pw),
         )
         assert legacy_value == pytest.approx(core_value, abs=1e-12)
+
+
+def test_legacy_rejects_missing_ml_probability() -> None:
+    from risk_management.conviction import compute_conviction as legacy
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="probabilité ML"):
+        legacy(0.9, None, 0.4, 0.6)
 
 
 # --- run_summary contractuels ---

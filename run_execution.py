@@ -671,21 +671,20 @@ def _load_pre_submission_borrows(
         try:
             asset = fetch_asset_by_symbol(sym, account_id=account_id)
         except Exception:
-            # Fallback ETB conservateur par symbole
-            LOGGER.debug("Borrow indisponible pour %s — fallback ETB.", sym)
+            LOGGER.warning("Borrow indisponible pour %s — short bloqué.", sym)
             snapshots[sym] = BorrowSnapshot(
                 symbol=sym,
-                status=BorrowStatus.EASY_TO_BORROW,
-                fee_annual=0.003,
-                quantity_available=None,
+                status=BorrowStatus.NOT_SHORTABLE,
+                fee_annual=float("inf"),
+                quantity_available=0,
                 locate_required=False,
                 as_of=as_of,
-                source="alpaca_asset_fallback_etb",
+                source="alpaca_asset_unavailable",
             )
             continue
 
-        shortable = bool(asset.get("shortable", True))
-        easy_to_borrow = bool(asset.get("easy_to_borrow", True))
+        shortable = bool(asset.get("shortable", False))
+        easy_to_borrow = bool(asset.get("easy_to_borrow", False))
 
         if not shortable:
             status = BorrowStatus.NOT_SHORTABLE
@@ -842,11 +841,11 @@ def _execute_transition_plan(
                     continue
                 if not dry_run:
                     try:
-                        broker.submit_order(
+                        broker.submit_market_order(
                             symbol=symbol,
                             qty=quantity,
                             side=close_side,
-                            order_type="market",
+                            intent_id=f"{exec_id}-{action}-{symbol}",
                         )
                     except Exception:
                         LOGGER.warning("Transition %s | %s failed", action, symbol, exc_info=True)
@@ -936,7 +935,8 @@ def run(
     inter_order_delay_ms: int | None = None,
     approval_token: str | None = None,
     run_plan_file: str | None = None,
-) -> None:
+    summary_path: str | None = None,
+) -> dict[str, object]:
     level = logging.DEBUG if debug else logging.INFO
     configure_root_logging(
         level=level,
@@ -1466,6 +1466,14 @@ def run(
             circuit_breaker=cb,
             config=config,
             trade_date=trade_date_val,
+            require_broker=not config.dry_run,
+            require_model_registry=mode == "live",
+            watcher_healthy=(
+                repo.is_watcher_healthy(account_id=config.resolved_account_id)
+                if mode == "live"
+                else None
+            ),
+            require_watcher=mode == "live",
         )
         _op_ctrl = OperationalControls()
         _smoke_ok, _smoke_results = _op_ctrl.run_smoke_tests(
@@ -1542,42 +1550,107 @@ def run(
         # Rapprochement avec snapshot broker réel
         _broker_positions_raw: list[dict[str, object]] = []
         _broker_fills_raw: list[dict[str, object]] = []
+        _intended_orders: list[dict[str, object]] = []
+        _submitted_orders: list[dict[str, object]] = []
+        _expected_protections: list[dict[str, object]] = []
+        _actual_protections: list[dict[str, object]] = []
+        _internal_cash_raw: float | None = None
         _broker_cash_raw: float | None = None
         _broker_pnl_raw: float | None = None
         if not config.dry_run:
             try:
-                _broker_positions_raw = broker.list_positions() or []
+                _broker_positions_raw = [
+                    {
+                        **position,
+                        "quantity": float(position.get("qty", position.get("quantity", 0)) or 0),
+                        "side": str(position.get("side") or "long"),
+                    }
+                    for position in (broker.get_all_positions() or [])
+                ]
             except Exception:
                 LOGGER.warning("daily_reconciliation: impossible de récupérer les positions broker", exc_info=True)
             try:
-                _broker_fills_raw = broker.list_orders(status="filled", limit=500) or []
+                _broker_fills_raw = [
+                    {
+                        **order,
+                        "intent_id": str(order.get("client_order_id") or order.get("intent_id") or ""),
+                    }
+                    for order in (broker.list_recent_orders(status="filled", limit=500) or [])
+                ]
             except Exception:
                 LOGGER.warning("daily_reconciliation: impossible de récupérer les ordres broker", exc_info=True)
             try:
-                _broker_cash_raw = broker.get_buying_power() if hasattr(broker, "get_buying_power") else None
+                _account_snapshot = broker.get_account_snapshot()
+                _broker_cash_raw = float(_account_snapshot.get("cash", 0) or 0)
+                _broker_pnl_raw = float(_account_snapshot.get("equity", 0) or 0) - float(
+                    _account_snapshot.get("last_equity", 0) or 0
+                )
+                _exec_run_id_for_snapshot = str(metrics.get("exec_run_id") or "")
+                if _exec_run_id_for_snapshot:
+                    repo.snapshot_broker_account(
+                        _exec_run_id_for_snapshot,
+                        account_id=config.resolved_account_id,
+                        broker_mode=config.broker_mode,
+                        snapshot=_account_snapshot,
+                        snapshot_kind="postrun",
+                    )
             except Exception:
-                LOGGER.warning("daily_reconciliation: impossible de récupérer le cash broker", exc_info=True)
-            try:
-                _broker_pnl_raw = broker.get_account_pnl() if hasattr(broker, "get_account_pnl") else None
-            except Exception:
-                LOGGER.warning("daily_reconciliation: impossible de récupérer le PnL broker", exc_info=True)
+                LOGGER.warning("daily_reconciliation: snapshot compte broker indisponible", exc_info=True)
 
-        _target_positions = [
-            {"symbol": str(k), "qty": float(v)}
-            for k, v in (metrics.get("positions", {}) or {}).items()
-        ]
+        _target_positions = []
+        _exec_run_id = str(metrics.get("exec_run_id") or "")
+        if _exec_run_id:
+            try:
+                _target_positions = [
+                    {
+                        "symbol": target.symbol,
+                        "quantity": float(target.target_shares),
+                        "side": str(target.side.value if hasattr(target.side, "value") else target.side),
+                    }
+                    for target in repo.load_execution_targets_snapshot(exec_run_id=_exec_run_id)
+                ]
+            except Exception:
+                LOGGER.warning("daily_reconciliation: targets persistées indisponibles", exc_info=True)
+            try:
+                _intended_orders, _submitted_orders = repo.load_reconciliation_orders_for_run(
+                    exec_run_id=_exec_run_id,
+                    account_id=config.resolved_account_id,
+                )
+                _broker_fills_raw = [
+                    {
+                        "intent_id": str(row.get("request_id") or ""),
+                        "fill_id": str(row.get("fill_id") or ""),
+                        "symbol": str(row.get("symbol") or ""),
+                    }
+                    for row in repo.load_execution_fills_for_run(
+                        exec_run_id=_exec_run_id,
+                        account_id=config.resolved_account_id,
+                    ).to_dict("records")
+                ]
+                _expected_protections, _actual_protections = repo.load_reconciliation_protections_for_run(
+                    exec_run_id=_exec_run_id,
+                    account_id=config.resolved_account_id,
+                )
+                _internal_ledger = repo.load_internal_ledger_for_run(
+                    exec_run_id=_exec_run_id,
+                    account_id=config.resolved_account_id,
+                )
+                _internal_cash_raw = _internal_ledger.get("calculated_cash")
+                _internal_pnl_raw = _internal_ledger.get("calculated_pnl")
+            except Exception:
+                LOGGER.warning("daily_reconciliation: preuves OMS persistées indisponibles", exc_info=True)
         _rec_result: object = _daily_rec.reconcile(
             trade_date=trade_date_val or date.today(),
-            intended_orders=metrics.get("intended_orders", []),
-            submitted_orders=metrics.get("submitted_orders", []),
-            fills=_broker_fills_raw or metrics.get("fills", []),
+            intended_orders=_intended_orders,
+            submitted_orders=_submitted_orders,
+            fills=_broker_fills_raw,
             target_positions=_target_positions,
             actual_positions=_broker_positions_raw,
-            expected_protections=metrics.get("protections", []),
-            actual_protections=None,  # à alimenter via fetch_protection_orders si nécessaire
-            calculated_pnl=metrics.get("pnl"),
+            expected_protections=_expected_protections,
+            actual_protections=_actual_protections,
+            calculated_pnl=locals().get("_internal_pnl_raw"),
             broker_pnl=_broker_pnl_raw,
-            calculated_cash=_broker_cash_raw,
+            calculated_cash=_internal_cash_raw,
             broker_cash=_broker_cash_raw,
         )
         if hasattr(_rec_result, "is_clean"):
@@ -1659,6 +1732,15 @@ def run(
         )
     except Exception:
         logging.getLogger(__name__).debug("Persistance run_business_summaries indisponible pour execution.", exc_info=True)
+    if summary_path:
+        target_summary_path = Path(summary_path)
+        target_summary_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_summary_path = target_summary_path.with_suffix(target_summary_path.suffix + ".tmp")
+        temporary_summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        temporary_summary_path.replace(target_summary_path)
     emit_run_summary(summary)
 
     # Sprint S2 / A-018 — option ``--auto-watcher`` : lance le watcher de
@@ -1739,6 +1821,7 @@ def run(
         print(f"{YELLOW}    Les ordres 'day' expirent si non remplis en fin de prochaine seance.{RESET}")
     else:
         print(f"{GREEN}[OK] Run termine avec succes.{RESET}")
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -1768,6 +1851,7 @@ Exemples :
     )
     p.add_argument("--date",              dest="trade_date",      metavar="YYYY-MM-DD", help="Date du run (ex: 2026-04-18)")
     p.add_argument("--run-id",            dest="run_id",          metavar="RUN_ID",     help="risk_run_id precis")
+    p.add_argument("--summary-path",      dest="summary_path",    metavar="PATH",       help="Chemin de sortie atomique du résumé JSON d'exécution")
     p.add_argument("--debug",             action="store_true",                          help="Active les logs DEBUG")
     p.add_argument("--allow-fractional-shares", dest="allow_fractional_shares", action="store_true", help="Active les quantités fractionnaires côté exécution quand le broker/le moteur le supporte")
     p.add_argument("--allow-outside-rth",      dest="allow_outside_rth",  action="store_true", help="Execute meme si marche ferme (week-end / hors RTH)")
@@ -1888,6 +1972,7 @@ def main() -> None:
         protection_transition_timeout_seconds = None
         protection_transition_poll_interval_seconds = None
         config_path = getattr(args, "config_path", None)
+        summary_path = None
     else:
         mode              = args.mode
         run_id            = args.run_id
@@ -1913,6 +1998,7 @@ def main() -> None:
         approval_token = args.approval_token
         run_plan_file = args.run_plan_file
         config_path = args.config_path
+        summary_path = args.summary_path
 
     with override_config_path(config_path):
         abort_missing_env(account_id=account_id, mode=mode)
@@ -1940,6 +2026,7 @@ def main() -> None:
             protection_transition_poll_interval_seconds=protection_transition_poll_interval_seconds,
             approval_token=approval_token,
             run_plan_file=run_plan_file,
+            summary_path=summary_path,
         )
 
 

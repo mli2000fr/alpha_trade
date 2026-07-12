@@ -141,7 +141,7 @@ def run_lstm_benchmark(
         ``{"status", "model_name", "seed", "val": {...}, "test": {...},
            "artifact_paths": {...}}``
     """
-    from modelFactory.dataset import tabular_split
+    from modelFactory.tabular_baseline import tabular_split
     from modelFactory.evaluation import compute_multiclass_metrics, check_model_collapse
     from modelFactory.features import get_feature_columns
 

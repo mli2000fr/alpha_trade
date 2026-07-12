@@ -1145,8 +1145,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Seuil minimal de couverture ML autorisé en mode pipeline (0.80 = 80%%). 0 ou None = désactivé.",
     )
-
-    # --- backfill-scores-history ---
+    run_p.add_argument(
+        "--conviction-calibration-mode",
+        choices=["off", "auto", "pinned"],
+        default="off",
+        help="Mode calibration conviction/Kelly pour Phase 2 : "
+             "`off` = comportement standard (défaut) ; "
+             "`auto` = charge la dernière calibration éligible avec window_end <= start du backtest (PIT) ; "
+             "`pinned` = utilise le run_id explicite (--conviction-calibration-run-id), enforces window_end <= start.",
+    )
+    run_p.add_argument(
+        "--conviction-calibration-run-id",
+        default=None,
+        help="run_id explicite d'un run weights_calibration_runs (scope=risk) à appliquer (mode=pinned). "
+             "Si window_end > start, le backtest refuse le run pour éviter le look-ahead.",
+    )
     backfill_p = sub.add_parser(
         "backfill-scores-history",
         help="Reconstruire stock_scores_history en point-in-time depuis les bars déjà en base",
@@ -1971,6 +1984,22 @@ def _run_backtest(args: argparse.Namespace) -> None:
         explicit_flags=explicit_flags,
     )
     phase2_risk_config = None
+    conviction_calibration_mode = str(
+        getattr(args, "conviction_calibration_mode", "off") or "off"
+    ).strip().lower()
+    conviction_calibration_run_id = str(
+        getattr(args, "conviction_calibration_run_id", "") or ""
+    ).strip() or None
+    _conviction_calibration_diagnostic: dict[str, object] = {
+        "requested_mode": conviction_calibration_mode,
+        "requested_run_id": conviction_calibration_run_id,
+        "status": "disabled",
+        "applied_run_id": None,
+        "window_start": None,
+        "window_end": None,
+        "applied_overrides": {},
+        "fallback_reason": None,
+    }
     if phase2_mode != "off":
         # ── Section 17 Point 6.1 : loader unifié ────────────────────────
         # Priorité : defaults < config.yaml < capital_preset < CLI args
@@ -2001,6 +2030,132 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 filter_unmodeled_selections=True,
             )
             LOGGER.info("filter-no-ml activé : exclusion des sélections sans modèle ML entraîné")
+
+    # ── Conviction/Kelly calibration opt-in (Phase 2 only) ──────────────
+    if phase2_risk_config is not None and conviction_calibration_mode != "off":
+        try:
+            from risk_management.cli import _apply_empirical_risk_calibration as _apply_cal
+            from risk_management.db_io import RiskRepository as _RiskRepo
+
+            _risk_repo = _RiskRepo(engine)
+            if conviction_calibration_mode == "pinned":
+                if conviction_calibration_run_id is None:
+                    _conviction_calibration_diagnostic["status"] = "error_no_run_id"
+                    _conviction_calibration_diagnostic["fallback_reason"] = (
+                        "mode=pinned mais aucun --conviction-calibration-run-id fourni"
+                    )
+                    _safe_print("❌ Calibration conviction: mode=pinned mais --conviction-calibration-run-id manquant.")
+                    sys.exit(1)
+                _cal_payload = _risk_repo.load_latest_empirical_risk_calibration(
+                    start, run_id=conviction_calibration_run_id
+                )
+                if _cal_payload is None:
+                    _conviction_calibration_diagnostic["status"] = "error_run_not_found"
+                    _conviction_calibration_diagnostic["fallback_reason"] = (
+                        f"run_id={conviction_calibration_run_id} introuvable dans "
+                        "weights_calibration_runs (scope=risk)"
+                    )
+                    _safe_print(f"❌ Calibration conviction pinned: run_id={conviction_calibration_run_id} introuvable.")
+                    sys.exit(1)
+                _cal_window_end = _cal_payload.get("window_end")
+                if _cal_window_end is not None and _cal_window_end > start:
+                    _conviction_calibration_diagnostic.update(
+                        {
+                            "status": "refused_lookahead",
+                            "applied_run_id": conviction_calibration_run_id,
+                            "window_end": str(_cal_window_end),
+                            "fallback_reason": (
+                                f"PIT safety: window_end={_cal_window_end} > start={start} → look-ahead refusé"
+                            ),
+                        }
+                    )
+                    _safe_print(
+                        f"❌ Calibration conviction pinned: window_end={_cal_window_end} > start={start}. "
+                        "Run refusé pour éviter le look-ahead."
+                    )
+                    sys.exit(1)
+            else:
+                _cal_payload = _risk_repo.load_latest_empirical_risk_calibration(start, run_id=None)
+            if _cal_payload is not None and _cal_payload.get("status") == "selected":
+                _original_config = phase2_risk_config
+                phase2_risk_config = _apply_cal(phase2_risk_config, _cal_payload)
+                _applied = phase2_risk_config is not _original_config
+                _best_weights = _cal_payload.get("best_weights", {})
+                _overrides: dict[str, object] = {}
+                if _applied and isinstance(_best_weights, dict):
+                    for _field in (
+                        "score_weight",
+                        "prediction_weight",
+                        "kelly_fraction_multiplier",
+                        "min_effective_probability",
+                        "assumed_payoff_ratio",
+                    ):
+                        if _field in _best_weights:
+                            _overrides[_field] = float(_best_weights[_field])
+                _conviction_calibration_diagnostic.update(
+                    {
+                        "status": "applied" if _applied else "no_change",
+                        "applied_run_id": _cal_payload.get("run_id"),
+                        "window_start": str(_cal_payload.get("window_start") or ""),
+                        "window_end": str(_cal_payload.get("window_end") or ""),
+                        "applied_overrides": _overrides,
+                        "metric_name": _cal_payload.get("metric_name"),
+                        "metric_value": _cal_payload.get("metric_value"),
+                        "segment_key": _cal_payload.get("segment_key"),
+                        "fallback_reason": _cal_payload.get("fallback_reason"),
+                        "fallback_level": _cal_payload.get("fallback_level"),
+                        "eligible_for_live": _cal_payload.get("eligible_for_live"),
+                    }
+                )
+                _safe_print(
+                    "   conviction_calibration: mode={} run_id={} window_end={} overrides={}\n".format(
+                        conviction_calibration_mode,
+                        _cal_payload.get("run_id"),
+                        _cal_payload.get("window_end"),
+                        list(_overrides.keys()),
+                    )
+                )
+            elif _cal_payload is not None and _cal_payload.get("status") == "blocked_by_governance":
+                _conviction_calibration_diagnostic.update(
+                    {
+                        "status": "blocked_by_governance",
+                        "applied_run_id": _cal_payload.get("run_id"),
+                        "fallback_reason": _cal_payload.get("eligibility_reason") or "eligible_for_live=False",
+                    }
+                )
+                _safe_print(
+                    "   ⚠️ Calibration conviction: run bloqué par gouvernance (eligible_for_live=False). "
+                    "Comportement standard conservé.\n"
+                )
+            else:
+                _conviction_calibration_diagnostic.update(
+                    {
+                        "status": "not_found",
+                        "fallback_reason": f"Aucun run calibration éligible trouvé avec window_end <= {start}",
+                    }
+                )
+                _safe_print(
+                    f"   ⚠️ Calibration conviction ({conviction_calibration_mode}): aucun run éligible trouvé "
+                    f"pour start={start}. Comportement standard conservé.\n"
+                )
+        except SystemExit:
+            raise
+        except Exception as _cal_exc:
+            _conviction_calibration_diagnostic.update(
+                {"status": "error", "fallback_reason": str(_cal_exc)}
+            )
+            LOGGER.warning("Calibration conviction load failed: %s", _cal_exc, exc_info=True)
+            if conviction_calibration_mode == "pinned":
+                _safe_print(
+                    f"❌ Calibration conviction pinned: erreur de chargement ({_cal_exc}). "
+                    "Run arrêté pour éviter un replay avec des poids par défaut.\n"
+                )
+                sys.exit(1)
+            _safe_print(
+                f"   ⚠️ Calibration conviction: erreur de chargement ({_cal_exc}). "
+                "Comportement standard conservé.\n"
+            )
+    _safe_print(f"   conviction_calibration_mode={conviction_calibration_mode}\n")
 
     if phase3_mode != "off" and phase2_mode != "risk_execution":
         _safe_print(
@@ -2694,6 +2849,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         phase5_watcher_replay_result=phase5_watcher_replay_result,
         phase7_exit_lifecycle_result=phase7_exit_lifecycle_result,
     )
+    common_params["conviction_calibration"] = _conviction_calibration_diagnostic
 
     # Phase A.4 — métadonnées de reproductibilité.
     run_metadata = build_run_metadata(
