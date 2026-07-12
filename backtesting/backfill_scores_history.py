@@ -1,6 +1,8 @@
 """Backfill point-in-time de stock_scores_history pour le backtesting."""
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
@@ -14,6 +16,14 @@ from sqlalchemy.engine import Engine
 
 from backtesting.data_loader import get_required_bars_source_filter
 from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
+from common.market_calendar import nyse_session_dates
+from common.tradable_universe import (
+    UniverseMember,
+    begin_universe_run,
+    fail_universe_run,
+    publish_universe_run,
+    universe_schema_available,
+)
 from database.connection import get_sqlalchemy_engine
 from event_sentiment.signal_aggregator import SentimentBoostConfig, SentimentSignalAggregator
 from screener.db_io import iter_symbol_chunks, load_spy_return_6m
@@ -119,6 +129,8 @@ class BackfillScoresHistoryResult:
     trading_days_processed: int
     rows_inserted: int
     trading_days_skipped_existing: int
+    universe_runs_created: int = 0
+    universe_rows_written: int = 0
 
 
 class BackfillScoresHistoryService:
@@ -933,6 +945,245 @@ class BackfillScoresHistoryService:
     # Persistance
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Rattrapage univers seul (depuis stock_scores_history existant)
+    # ------------------------------------------------------------------
+
+    def backfill_universe_only(
+        self,
+        start_date: date,
+        end_date: date | None = None,
+        overwrite_existing: bool = False,
+        limit_days: int | None = None,
+    ) -> BackfillScoresHistoryResult:
+        """Alimente tradable_universe_runs + tradable_universe_history depuis stock_scores_history existant.
+
+        Aucun recalcul screener/selector : lit les snapshots déjà présents dans stock_scores_history
+        et les convertit en UniverseMember.
+        """
+        if not universe_schema_available(self.engine):
+            raise RuntimeError("Tables tradable_universe_runs / tradable_universe_history absentes.")
+
+        resolved_end = end_date or date.today()
+
+        with self.engine.connect() as conn:
+            snapshot_dates_raw = conn.execute(
+                text(
+                    """
+                    SELECT DISTINCT snapshot_date
+                    FROM stock_scores_history
+                    WHERE snapshot_date BETWEEN :start_date AND :end_date
+                      AND capital_preset_key = :capital_preset_key
+                    ORDER BY snapshot_date
+                    """
+                ),
+                {
+                    "start_date": start_date,
+                    "end_date": resolved_end,
+                    "capital_preset_key": self.capital_preset_key,
+                },
+            ).scalars().all()
+
+        trading_days = [self._coerce_date(d) for d in snapshot_dates_raw]
+        trading_days = [d for d in trading_days if d is not None]
+
+        # Ne garder que les vrais jours de bourse NYSE (exclut week-ends et jours fériés)
+        if trading_days:
+            nyse_set = {d for d in nyse_session_dates(trading_days[0], trading_days[-1])}
+            trading_days = [d for d in trading_days if d in nyse_set]
+
+        if limit_days is not None:
+            trading_days = trading_days[:limit_days]
+
+        universe_runs_created = 0
+        universe_rows_written = 0
+        processed = 0
+
+        LOGGER.info(
+            "Backfill universe-only | start=%s end=%s séances=%s preset=%s",
+            start_date,
+            resolved_end,
+            len(trading_days),
+            self.capital_preset_key,
+        )
+
+        for idx, trading_day in enumerate(trading_days, start=1):
+            LOGGER.info("Universe-only progression | %s/%s | date=%s", idx, len(trading_days), trading_day)
+            try:
+                run_created, rows = self._persist_universe_from_history(trading_day, overwrite_existing=overwrite_existing)
+                universe_runs_created += run_created
+                universe_rows_written += rows
+                processed += 1
+                LOGGER.info(
+                    "Universe-only snapshot | date=%s run=%s symboles=%s",
+                    trading_day,
+                    run_created,
+                    rows,
+                )
+            except Exception:
+                LOGGER.exception("Universe-only échoué | date=%s", trading_day)
+
+        return BackfillScoresHistoryResult(
+            start_date=start_date,
+            end_date=resolved_end,
+            trading_days_requested=len(trading_days),
+            trading_days_processed=processed,
+            rows_inserted=0,
+            trading_days_skipped_existing=0,
+            universe_runs_created=universe_runs_created,
+            universe_rows_written=universe_rows_written,
+        )
+
+    def _persist_universe_from_history(self, snapshot_date: date, overwrite_existing: bool = False) -> tuple[int, int]:
+        """Lit un snapshot depuis stock_scores_history et le convertit en run univers degraded.
+
+        Returns (run_created, rows_written).
+        """
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT symbol, market_cap, beta_126, spread_bps,
+                           earnings_date, days_to_earnings, earnings_blackout,
+                           atr_pct_20, selection_rank, selector_signal_mode
+                    FROM stock_scores_history
+                    WHERE snapshot_date = :snapshot_date
+                      AND capital_preset_key = :capital_preset_key
+                    ORDER BY selection_rank IS NULL, selection_rank, symbol
+                    """
+                ),
+                {"snapshot_date": snapshot_date, "capital_preset_key": self.capital_preset_key},
+            ).mappings().all()
+
+        if not rows:
+            LOGGER.warning("Universe-only: aucun snapshot dans stock_scores_history pour %s", snapshot_date)
+            return 0, 0
+
+        members: list[UniverseMember] = []
+        for row in rows:
+            symbol = str(row["symbol"]).strip().upper()
+            spread = pd.to_numeric(row.get("spread_bps"), errors="coerce")
+            market_cap = pd.to_numeric(row.get("market_cap"), errors="coerce")
+            atr = pd.to_numeric(row.get("atr_pct_20"), errors="coerce")
+            earnings_blackout = bool(row.get("earnings_blackout", False))
+            members.append(
+                UniverseMember(
+                    symbol=symbol,
+                    is_tradable=True,
+                    tradability_reason_code="tradable",
+                    tradability_reasons=(),
+                    spread_bps=float(spread) if pd.notna(spread) else None,
+                    market_cap=float(market_cap) if pd.notna(market_cap) else None,
+                    atr_pct_20=float(atr) if pd.notna(atr) else None,
+                    earnings_blackout=earnings_blackout,
+                    data_quality_grade="degraded",
+                )
+            )
+
+        return self._persist_universe_members(snapshot_date, members)
+
+    def _persist_universe_members(self, snapshot_date: date, members: list[UniverseMember]) -> tuple[int, int]:
+        """Persiste une liste de UniverseMember dans tradable_universe_runs + tradable_universe_history."""
+        rows_expected = len(members)
+        if rows_expected == 0:
+            return 0, 0
+
+        fingerprint = self.config_fingerprint
+        if not fingerprint:
+            fingerprint_payload = json.dumps(
+                {"capital_preset_key": self.capital_preset_key, "source": "backfill-universe-only"},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            fingerprint = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()[:16]
+
+        try:
+            universe_run_id = begin_universe_run(
+                self.engine,
+                snapshot_date=snapshot_date,
+                capital_preset_key=self.capital_preset_key,
+                config_fingerprint=fingerprint,
+                rows_expected=rows_expected,
+                data_quality_grade="degraded",
+            )
+        except Exception:
+            LOGGER.exception(
+                "begin_universe_run échoué (universe-only) | date=%s preset=%s",
+                snapshot_date,
+                self.capital_preset_key,
+            )
+            return 0, 0
+
+        try:
+            publish_universe_run(self.engine, universe_run_id, members)
+            LOGGER.info(
+                "Univers PIT (universe-only) persisté | date=%s run_id=%s symboles=%s",
+                snapshot_date,
+                universe_run_id,
+                rows_expected,
+            )
+        except Exception:
+            LOGGER.exception(
+                "publish_universe_run échoué (universe-only) | date=%s run_id=%s",
+                snapshot_date,
+                universe_run_id,
+            )
+            try:
+                fail_universe_run(self.engine, universe_run_id, "universe_only_publish_failed")
+            except Exception:
+                pass
+            return 0, 0
+
+        return 1, rows_expected
+
+    # ------------------------------------------------------------------
+    # Persistance tradable_universe (degraded)
+    # ------------------------------------------------------------------
+
+    def _build_universe_members_from_snapshot(self, snapshot_df: pd.DataFrame) -> list[UniverseMember]:
+        """Construit les UniverseMember à partir d'un snapshot backfill."""
+        members: list[UniverseMember] = []
+        for _, row in snapshot_df.iterrows():
+            symbol = str(row["symbol"]).strip().upper()
+            spread = pd.to_numeric(row.get("spread_bps"), errors="coerce")
+            market_cap = pd.to_numeric(row.get("market_cap"), errors="coerce")
+            atr = pd.to_numeric(row.get("atr_pct_20"), errors="coerce")
+            earnings_blackout = bool(row.get("earnings_blackout", False))
+            members.append(
+                UniverseMember(
+                    symbol=symbol,
+                    is_tradable=True,
+                    tradability_reason_code="tradable",
+                    tradability_reasons=(),
+                    spread_bps=float(spread) if pd.notna(spread) else None,
+                    market_cap=float(market_cap) if pd.notna(market_cap) else None,
+                    atr_pct_20=float(atr) if pd.notna(atr) else None,
+                    earnings_blackout=earnings_blackout,
+                    data_quality_grade="degraded",
+                )
+            )
+        return members
+
+    def _persist_universe_snapshot(self, snapshot_df: pd.DataFrame) -> tuple[int, int]:
+        """Écrit un snapshot dans tradable_universe_runs + tradable_universe_history (degraded).
+
+        Returns (run_created, rows_written). (0, 0) si schéma absent, snapshot vide, ou échec.
+        """
+        if snapshot_df.empty or not universe_schema_available(self.engine):
+            return 0, 0
+
+        snapshot_dates = snapshot_df["snapshot_date"].dropna().unique().tolist()
+        if len(snapshot_dates) != 1:
+            return 0, 0
+        snapshot_date = snapshot_dates[0]
+
+        members = self._build_universe_members_from_snapshot(snapshot_df)
+        return self._persist_universe_members(snapshot_date, members)
+
+    # ------------------------------------------------------------------
+    # Persistance stock_scores_history
+    # ------------------------------------------------------------------
+
     def persist_snapshot(self, snapshot_df: pd.DataFrame, overwrite_existing: bool = False) -> int:
         """Insère un snapshot journalier dans `stock_scores_history`."""
         if snapshot_df.empty:
@@ -1029,10 +1280,12 @@ class BackfillScoresHistoryService:
 
         skipped_existing = 0
         rows_inserted = 0
+        universe_runs_created = 0
+        universe_rows_written = 0
         processed = 0
 
         LOGGER.info(
-            "Backfill stock_scores_history | start=%s end=%s séances=%s overwrite=%s",
+            "Backfill stock_scores_history + tradable_universe | start=%s end=%s séances=%s overwrite=%s",
             start_date,
             resolved_end,
             len(trading_days),
@@ -1069,12 +1322,16 @@ class BackfillScoresHistoryService:
                     raise
                 inserted_for_day = self.persist_snapshot(snapshot, overwrite_existing=overwrite_existing)
                 rows_inserted += inserted_for_day
+                universe_run_created, universe_rows = self._persist_universe_snapshot(snapshot)
+                universe_runs_created += universe_run_created
+                universe_rows_written += universe_rows
                 processed += 1
                 LOGGER.info(
-                    "Backfill snapshot persisté | date=%s lignes=%s lignes_cumulées=%s séances_traitées=%s/%s",
+                    "Backfill snapshot persisté | date=%s lignes=%s lignes_cumulées=%s univers=%s séances_traitées=%s/%s",
                     trading_day,
                     inserted_for_day,
                     rows_inserted,
+                    universe_run_created,
                     processed,
                     len(trading_days),
                 )
@@ -1088,6 +1345,8 @@ class BackfillScoresHistoryService:
             trading_days_processed=processed,
             rows_inserted=rows_inserted,
             trading_days_skipped_existing=skipped_existing,
+            universe_runs_created=universe_runs_created,
+            universe_rows_written=universe_rows_written,
         )
 
     # ------------------------------------------------------------------

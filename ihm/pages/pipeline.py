@@ -41,6 +41,7 @@ from ihm.pages._execution_center import (
     _apply_execution_prefills,
     _build_execution_prefill_caption,
     _format_capital_preset_label,
+    _get_capital_preset_options,
     _build_launch_options,
 )
 from ihm.pages._shared import (
@@ -142,6 +143,7 @@ QUOTE_HISTORY_CONFIRM_LARGE_RUN_KEY = "pipeline_sync_latest_quotes_confirm_large
 EARNINGS_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_earnings_calendar_symbol_source"
 TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY = "pipeline_publish_tradable_universe_period_start_date"
 TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY = "pipeline_publish_tradable_universe_period_end_date"
+TRADABLE_UNIVERSE_PUBLISH_PRESET_KEY = "pipeline_publish_tradable_universe_preset_key"
 
 
 def _coerce_ui_date(value: object, *, fallback: date) -> date:
@@ -465,6 +467,8 @@ def _render_tradable_universe_publish_block(
             ),
             key=TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY,
             format="YYYY-MM-DD",
+            min_value=date(2000, 1, 1),
+            max_value=date(2100, 12, 31),
         )
     with period_col2:
         end_picker = st.date_input(
@@ -475,6 +479,8 @@ def _render_tradable_universe_publish_block(
             ),
             key=TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY,
             format="YYYY-MM-DD",
+            min_value=date(2000, 1, 1),
+            max_value=date(2100, 12, 31),
         )
 
     selected_start = _coerce_ui_date(
@@ -484,6 +490,23 @@ def _render_tradable_universe_publish_block(
     selected_end = _coerce_ui_date(
         st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY, end_picker),
         fallback=end_default,
+    )
+
+    # ── Preset selector ──
+    publish_preset_options = _get_capital_preset_options()
+    selected_publish_preset_key = cast(
+        str,
+        st.selectbox(
+            "Preset capital",
+            options=publish_preset_options,
+            format_func=_format_capital_preset_label,
+            index=publish_preset_options.index(
+                str(st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_PRESET_KEY, "capital_2001_5000"))
+            ) if str(st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_PRESET_KEY, "capital_2001_5000")) in publish_preset_options
+            else 0,
+            key=TRADABLE_UNIVERSE_PUBLISH_PRESET_KEY,
+            help="Preset capital utilisé pour la publication. Détermine les seuils de filtre (spread, market cap, earnings blackout).",
+        ),
     )
 
     if selected_start > selected_end:
@@ -512,6 +535,8 @@ def _render_tradable_universe_publish_block(
                 selected_start.isoformat(),
                 "--end-date",
                 selected_end.isoformat(),
+                "--capital-preset-key",
+                selected_publish_preset_key,
             ]
         ),
         language="powershell",
@@ -525,12 +550,9 @@ def _render_tradable_universe_publish_block(
         disabled=disabled or not trading_days,
     ):
         from common.publish_tradable_universe import publish_full_tradable_universe
-        from common.capital_presets import (
-            DEFAULT_CAPITAL_PRESET_KEY,
-            require_capital_preset,
-        )
+        from common.capital_presets import require_capital_preset
 
-        preset = require_capital_preset(DEFAULT_CAPITAL_PRESET_KEY)
+        preset = require_capital_preset(selected_publish_preset_key)
         engine = get_sqlalchemy_engine()
         success_count = 0
         error_count = 0

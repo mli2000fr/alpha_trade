@@ -2520,7 +2520,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         if live_ml_diagnostic.get("status") == "available":
             diagnostic_col1, diagnostic_col2, diagnostic_col3, diagnostic_col4 = st.columns(4)
             diagnostic_col1.metric("Univers PIT", str(live_ml_diagnostic.get("universe_run_id") or "—"))
-            diagnostic_col2.metric("Couverture ML", f"{_to_float(live_ml_diagnostic.get('coverage_pct')):.1f}%")
+            diagnostic_col2.metric("Couverture ML", f"{float(live_ml_diagnostic.get('coverage_pct') or 0):.1f}%")
             diagnostic_col3.metric("Champion servi", str(live_ml_diagnostic.get("served_champion") or "—"))
             diagnostic_col4.metric("Grade univers", str(live_ml_diagnostic.get("data_quality_grade") or "unknown"))
         else:

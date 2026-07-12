@@ -1161,6 +1161,11 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill_p.add_argument("--selection-size", type=int, default=60, help="Nombre final de candidats selector par séance")
     backfill_p.add_argument("--selection-size-short", type=int, default=None, help="Nombre de shorts par séance (défaut = selection-size). Sprint 6.")
     backfill_p.add_argument("--screener-workers", type=int, default=4, help="Nombre de workers ProcessPool pour le screener PIT")
+    backfill_p.add_argument(
+        "--universe-only",
+        action="store_true",
+        help="Alimente uniquement tradable_universe_runs + tradable_universe_history depuis stock_scores_history existant (pas de recalcul screener/selector).",
+    )
 
     # --- diagnose-screener ---
     diag_p = sub.add_parser(
@@ -2911,6 +2916,21 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
         capital_preset_key=effective_preset.key,
         config_fingerprint=preset_fingerprint,
     )
+
+    if getattr(args, "universe_only", False):
+        _safe_print("\n🧱 Mode universe-only : alimentation tradable_universe_runs + tradable_universe_history depuis stock_scores_history existant.\n")
+        result = service.backfill_universe_only(
+            start_date=start,
+            end_date=end,
+            overwrite_existing=args.overwrite_existing,
+            limit_days=args.limit_days,
+        )
+        _safe_print("\n✅ Rattrapage univers terminé")
+        _safe_print(f"   Période              : {result.start_date} → {result.end_date}")
+        _safe_print(f"   Runs univers créés    : {result.universe_runs_created}")
+        _safe_print(f"   Lignes univers écrites: {result.universe_rows_written}\n")
+        return
+
     resolve_end_date = getattr(service, "resolve_end_date", None)
     if callable(resolve_end_date):
         resolved_preflight_end = resolve_end_date(start, explicit_end_date=end)
@@ -2945,10 +2965,12 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
     )
 
     _safe_print("\n✅ Backfill terminé")
-    _safe_print(f"   Période résolue     : {result.start_date} → {result.end_date}")
-    _safe_print(f"   Séances traitées    : {result.trading_days_processed}/{result.trading_days_requested}")
-    _safe_print(f"   Séances ignorées    : {result.trading_days_skipped_existing}")
-    _safe_print(f"   Lignes insérées     : {result.rows_inserted}\n")
+    _safe_print(f"   Période résolue        : {result.start_date} → {result.end_date}")
+    _safe_print(f"   Séances traitées       : {result.trading_days_processed}/{result.trading_days_requested}")
+    _safe_print(f"   Séances ignorées       : {result.trading_days_skipped_existing}")
+    _safe_print(f"   Lignes insérées        : {result.rows_inserted}")
+    _safe_print(f"   Runs univers créés     : {result.universe_runs_created}")
+    _safe_print(f"   Lignes univers écrites : {result.universe_rows_written}\n")
 
 
 def _parse_csv_values(raw: str, *, cast_type):

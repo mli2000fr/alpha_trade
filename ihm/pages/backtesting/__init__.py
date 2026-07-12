@@ -1880,6 +1880,17 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
             help="Nombre de workers ProcessPool. Laissez vide pour utiliser l'auto-détection du service.",
         )
 
+    universe_only = st.checkbox(
+        "Rattrapage univers uniquement (sans recalcul screener/selector)",
+        value=bool(st.session_state.get("bt_backfill_universe_only", False)),
+        key="bt_backfill_universe_only",
+        help=(
+            "Si coché, lit les snapshots déjà présents dans stock_scores_history et alimente uniquement "
+            "tradable_universe_runs + tradable_universe_history (degraded). Aucun recalcul screener/selector. "
+            "Pratique après un backfill-scores-history déjà terminé."
+        ),
+    )
+
     limit_days = _parse_optional_int(limit_days_raw, label="limit_days")
     screener_workers = _parse_optional_int(screener_workers_raw, label="screener_workers")
 
@@ -1893,6 +1904,7 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
         chunk_size=int(chunk_size),
         selection_size=int(selection_size),
         screener_workers=screener_workers,
+        universe_only=bool(universe_only),
     )
 
     st.code(format_command_for_display(build_backtesting_command("backfill-scores-history", options)), language="powershell")
