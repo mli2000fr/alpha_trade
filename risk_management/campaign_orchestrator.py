@@ -184,6 +184,11 @@ class CampaignDayResult:
     model_compatible: bool = True
     liquidity_blocked: int = 0
 
+    # ── Drawdown tracking (Blocker 4.3) ──
+    equity_current: float = 0.0
+    equity_high_water_mark: float = 0.0
+    drawdown_current: float = 0.0
+
     # Status
     status: str = "pending"
     errors: list[str] = field(default_factory=list)
@@ -212,6 +217,9 @@ class CampaignDayResult:
             "freshness_blocked": self.freshness_blocked,
             "model_compatible": self.model_compatible,
             "liquidity_blocked": self.liquidity_blocked,
+            "equity_current": self.equity_current,
+            "equity_high_water_mark": self.equity_high_water_mark,
+            "drawdown_current": round(self.drawdown_current, 6),
             "status": self.status,
             "errors": self.errors,
         }
@@ -440,6 +448,9 @@ class CampaignOrchestrator:
 
         self._results.append(result)
         self._persist_day_result(result)
+
+        # ── 5. Drawdown & rollback automatique (Blocker 4.3) ──
+        self._compute_and_check_drawdown(result)
 
         # ── Revue hebdomadaire ──
         if day_number % 5 == 0:
@@ -670,20 +681,124 @@ class CampaignOrchestrator:
         return True, transition.reason
 
     def _maybe_auto_rollback(self, result: CampaignDayResult) -> None:
+        """Vérifie le drawdown réel et déclenche un rollback automatique si breach (Blocker 4.3).
+
+        Appelé après persistance des métriques quotidiennes. Journalise la valeur,
+        le seuil, la source broker et la transition. Bloque toute promotion si le
+        drawdown est inconnu (equity_current == 0.0).
+        """
+        drawdown = result.drawdown_current
         incidents = int(result.orders_failed > 0 or result.reconciliation_status != "clean")
         self._ramp_up.open_incidents = incidents
-        transition = self._ramp_up.check_drawdown_breach(0.0)
+
+        max_dd = self._ramp_up.config.get_max_drawdown(self._ramp_up.current_stage)
+        stage_name = self._ramp_up.current_stage.value
+
+        # ── Blocage promotion si drawdown inconnu ──
+        if result.equity_current <= 0.0:
+            LOGGER.warning(
+                "[drawdown] equity inconnue (%.2f) — drawdown non vérifiable, "
+                "blocage promotion implicite | stage=%s",
+                result.equity_current, stage_name,
+            )
+            self._ramp_up.drawdown_current = -1.0  # sentinelle : inconnu
+            self._persist_ramp_up_state()
+            return
+
+        # ── Journalisation obligatoire ──
+        LOGGER.info(
+            "[drawdown] equity=%.2f hwm=%.2f drawdown=%.4f%% seuil=%.2f%% stage=%s "
+            "broker_source=risk_run_summary incidents=%d",
+            result.equity_current,
+            result.equity_high_water_mark,
+            drawdown * 100,
+            max_dd * 100,
+            stage_name,
+            incidents,
+        )
+
+        # ── Détection breach ──
+        transition = self._ramp_up.check_drawdown_breach(drawdown)
         if transition is not None:
+            LOGGER.error(
+                "[drawdown] BREACH détecté | drawdown=%.4f%% > seuil=%.2f%% | "
+                "rollback %s → %s reason=%s",
+                drawdown * 100,
+                max_dd * 100,
+                transition.from_stage.value,
+                transition.to_stage.value if transition.to_stage else "N/A",
+                transition.reason,
+            )
             from risk_management.operational_controls import persist_ramp_up_transition
             persist_ramp_up_transition(
                 from_stage=transition.from_stage.value,
                 to_stage=transition.to_stage.value if transition.to_stage else "",
                 approved_by="system",
                 reason=transition.reason,
-                metrics_snapshot={"campaign_id": self.config.campaign_id, "incidents": incidents},
+                metrics_snapshot={
+                    "campaign_id": self.config.campaign_id,
+                    "incidents": incidents,
+                    "drawdown": drawdown,
+                    "equity_current": result.equity_current,
+                    "equity_high_water_mark": result.equity_high_water_mark,
+                },
                 journal_path=str(self.campaign_dir / "ramp_up_journal.json"),
             )
         self._persist_ramp_up_state()
+
+    def _compute_and_check_drawdown(self, result: CampaignDayResult) -> None:
+        """Calcule le drawdown réel à partir des résumés et de l'historique (Blocker 4.3).
+
+        Extrait equity_current du risk_run_summary (ou exec_run_summary en paper),
+        maintient le high-water mark à travers les jours de campagne, et appelle
+        _maybe_auto_rollback avec le drawdown réel.
+        """
+        # ── Extraire l'equity du résumé risque / exécution ──
+        day_dir = self.daily_dir / result.trade_date.isoformat()
+        equity: float = 0.0
+
+        for summary_name in ("risk_run_summary.json", "exec_run_summary.json"):
+            summary_path = day_dir / summary_name
+            if not summary_path.exists():
+                continue
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                candidate = (
+                    summary.get("equity_current")
+                    or summary.get("equity")
+                    or summary.get("effective_equity")
+                    or summary.get("account_equity")
+                )
+                if candidate is not None:
+                    equity = float(candidate)
+                    break
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                continue
+
+        result.equity_current = equity
+
+        # ── Maintenir le high-water mark à travers l'historique ──
+        hwm = max(
+            (r.equity_current for r in self._results if r.equity_current > 0),
+            default=equity,
+        )
+        hwm = max(hwm, equity)
+
+        result.equity_high_water_mark = hwm
+
+        # ── Calculer le drawdown ──
+        # drawdown = (HWM - equity) / HWM
+        if hwm > 0 and equity > 0:
+            result.drawdown_current = max(0.0, (hwm - equity) / hwm)
+        elif hwm > 0 and equity <= 0:
+            result.drawdown_current = 1.0  # perte totale si equity nulle ou négative
+        else:
+            result.drawdown_current = 0.0
+
+        self._ramp_up.drawdown_current = result.drawdown_current
+
+        # ── Appeler le rollback automatique ──
+        self._maybe_auto_rollback(result)
 
     def _build_weekly_review(self) -> WeeklyReview:
         """Construit la revue hebdomadaire à partir des résultats quotidiens."""

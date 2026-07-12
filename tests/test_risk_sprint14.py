@@ -404,3 +404,134 @@ def test_campaign_reloads_history_and_applies_ramp_up_budget(tmp_path, monkeypat
 
     assert reloaded.effective_risk_budget == 10_000.0
     assert [result.status for result in reloaded._results] == ["completed"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Blocker 4.3 — Drawdown réel et rollback automatique
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _make_campaign_orchestrator(tmp_path, monkeypatch, *, phase: str = "live_10pct"):
+    import risk_management.campaign_orchestrator as campaign_module
+    from risk_management.campaign_orchestrator import CampaignConfig, CampaignOrchestrator
+
+    monkeypatch.setattr(campaign_module, "PROJECT_ROOT", tmp_path)
+    config = CampaignConfig(
+        campaign_id="dd-test",
+        phase=phase,
+        model_run_id="model-1",
+        config_fingerprint="cfg-1",
+        base_risk_budget=100_000.0,
+    )
+    orchestrator = CampaignOrchestrator(config)
+    orchestrator.init_campaign()
+    return orchestrator
+
+
+def _write_day_summary(orchestrator, trade_date, equity: float) -> None:
+    import json as _json
+
+    day_dir = orchestrator.daily_dir / trade_date.isoformat()
+    day_dir.mkdir(parents=True, exist_ok=True)
+    (day_dir / "risk_run_summary.json").write_text(
+        _json.dumps({"run_id": "r1", "effective_equity": equity}),
+        encoding="utf-8",
+    )
+
+
+class TestComputeAndCheckDrawdown:
+    def test_no_breach_below_threshold(self, tmp_path, monkeypatch) -> None:
+        from risk_management.campaign_orchestrator import CampaignDayResult
+
+        orch = _make_campaign_orchestrator(tmp_path, monkeypatch, phase="live_10pct")
+        d = date.today()
+        _write_day_summary(orch, d, 100_000.0)
+        result = CampaignDayResult(trade_date=d, campaign_id="dd-test", phase="live_10pct", day_number=1)
+
+        orch._compute_and_check_drawdown(result)
+
+        assert result.equity_current == 100_000.0
+        assert result.equity_high_water_mark == 100_000.0
+        assert result.drawdown_current == 0.0
+        assert orch._ramp_up.current_stage.value == "live_10pct"
+
+    def test_drawdown_computed_from_hwm(self, tmp_path, monkeypatch) -> None:
+        from risk_management.campaign_orchestrator import CampaignDayResult
+
+        orch = _make_campaign_orchestrator(tmp_path, monkeypatch, phase="live_10pct")
+        d1 = date(2026, 7, 1)
+        d2 = date(2026, 7, 2)
+        # Jour 1 : HWM à 100k
+        _write_day_summary(orch, d1, 100_000.0)
+        r1 = CampaignDayResult(trade_date=d1, campaign_id="dd-test", phase="live_10pct", day_number=1)
+        orch._compute_and_check_drawdown(r1)
+        orch._results.append(r1)
+        # Jour 2 : equity 97k → drawdown 3% < seuil 5% pour live_10pct
+        _write_day_summary(orch, d2, 97_000.0)
+        r2 = CampaignDayResult(trade_date=d2, campaign_id="dd-test", phase="live_10pct", day_number=2)
+        orch._compute_and_check_drawdown(r2)
+
+        assert r2.equity_high_water_mark == 100_000.0
+        assert r2.drawdown_current == pytest.approx(0.03)
+        assert orch._ramp_up.current_stage.value == "live_10pct"  # pas de rollback
+
+    def test_breach_triggers_live_stage_rollback(self, tmp_path, monkeypatch) -> None:
+        from risk_management.campaign_orchestrator import CampaignDayResult
+
+        orch = _make_campaign_orchestrator(tmp_path, monkeypatch, phase="live_10pct")
+        d1 = date(2026, 7, 1)
+        d2 = date(2026, 7, 2)
+        _write_day_summary(orch, d1, 100_000.0)
+        r1 = CampaignDayResult(trade_date=d1, campaign_id="dd-test", phase="live_10pct", day_number=1)
+        orch._compute_and_check_drawdown(r1)
+        orch._results.append(r1)
+        # Jour 2 : equity 92k → drawdown 8% > seuil 5% pour live_10pct
+        _write_day_summary(orch, d2, 92_000.0)
+        r2 = CampaignDayResult(trade_date=d2, campaign_id="dd-test", phase="live_10pct", day_number=2)
+        orch._compute_and_check_drawdown(r2)
+
+        assert r2.drawdown_current == pytest.approx(0.08)
+        assert orch._ramp_up.current_stage.value == "live_5pct"  # rollback automatique
+        journal = orch.campaign_dir / "ramp_up_journal.json"
+        assert journal.exists()
+
+    def test_unknown_equity_blocks_without_rollback(self, tmp_path, monkeypatch) -> None:
+        from risk_management.campaign_orchestrator import CampaignDayResult
+
+        orch = _make_campaign_orchestrator(tmp_path, monkeypatch, phase="live_10pct")
+        d = date.today()
+        # Aucun résumé écrit → equity inconnue
+        result = CampaignDayResult(trade_date=d, campaign_id="dd-test", phase="live_10pct", day_number=1)
+
+        orch._compute_and_check_drawdown(result)
+
+        assert result.equity_current == 0.0
+        assert orch._ramp_up.drawdown_current == -1.0  # sentinelle : drawdown inconnu
+        assert orch._ramp_up.current_stage.value == "live_10pct"  # pas de rollback aveugle
+
+    def test_incident_open_recorded(self, tmp_path, monkeypatch) -> None:
+        from risk_management.campaign_orchestrator import CampaignDayResult
+
+        orch = _make_campaign_orchestrator(tmp_path, monkeypatch, phase="live_10pct")
+        d = date.today()
+        _write_day_summary(orch, d, 100_000.0)
+        result = CampaignDayResult(
+            trade_date=d, campaign_id="dd-test", phase="live_10pct", day_number=1,
+            orders_failed=2, reconciliation_status="mismatch",
+        )
+
+        orch._compute_and_check_drawdown(result)
+
+        assert orch._ramp_up.open_incidents == 1
+
+    def test_day_result_serializes_drawdown_fields(self) -> None:
+        from risk_management.campaign_orchestrator import CampaignDayResult
+
+        result = CampaignDayResult(
+            trade_date=date(2026, 7, 1), campaign_id="c", phase="shadow", day_number=1,
+            equity_current=98_000.0, equity_high_water_mark=100_000.0, drawdown_current=0.02,
+        )
+        payload = result.to_dict()
+        assert payload["equity_current"] == 98_000.0
+        assert payload["equity_high_water_mark"] == 100_000.0
+        assert payload["drawdown_current"] == 0.02

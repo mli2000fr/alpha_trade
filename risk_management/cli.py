@@ -398,7 +398,28 @@ def _check_model_compatibility(
     *,
     model_registry_path: str = "artifacts/model_registry.json",
 ) -> dict[str, object]:
-    """Vérifie la compatibilité modèle/calibrateur/policy (Point 12).
+    """Vérifie la compatibilité modèle/calibrateur/policy — FAIL-CLOSED (Blocker 4.1).
+
+    Contrat de publication (cf. go_live.md §4.1) :
+    - identité et statut du champion
+    - modèle et hash du modèle
+    - calibrateur attendu, présent et signé (vérifié par fingerprint)
+    - version et fingerprint de la policy ternaire (via registry)
+    - feature schema et ordre des colonnes (budgétisé, pas encore dans le registre)
+    - scaler et feature fingerprint (budgétisé)
+    - fingerprint ou lineage des données d'entraînement (budgétisé)
+    - absence de statut DEGRADED ou RETIRED
+    - cohérence entre model_run_id de la prédiction et champion publié
+
+    COMPORTEMENT FAIL-CLOSED :
+    - Registre absent, illisible ou vide → compatible=False (bloque nouvelles entrées)
+    - Aucun champion publié → compatible=False
+    - Champion DEGRADED ou RETIRED → compatible=False
+    - model_run_id incohérent (prédiction ≠ champion) → compatible=False
+    - Champion sain avec cohérence vérifiée → compatible=True
+
+    Les positions déjà ouvertes continuent d'être protégées et peuvent être
+    clôturées (cf. appelant qui met entries=[] et entry_gate_allows_new_entries=False).
 
     Returns un dict avec :
     - compatible: bool
@@ -416,45 +437,93 @@ def _check_model_compatibility(
         if model_run_id:
             model_run_ids.add(str(model_run_id))
 
-    try:
-        registry = ModelRegistry.load_from_json(model_registry_path)
-        if registry is None:
-            # Premier run : registre vide → compatible par défaut
-            return {
-                "compatible": True,
-                "issues": ["model_registry_not_found — first run assumed compatible"],
-                "champion_count": 0,
-                "model_versions": {},
-            }
+    # ── Étape 1 : charger le registre (fail-closed) ──
+    import os as _os
+    registry_path_abs = model_registry_path
+    if not _os.path.isabs(registry_path_abs):
+        registry_path_abs = str(Path(__file__).resolve().parent.parent / model_registry_path)
 
-        # Vérifier que les modèles utilisés ne sont pas RETIRED
-        for mid in model_run_ids:
-            entry = registry._entries.get(mid) if hasattr(registry, "_entries") else None
-            if entry and entry.status == ModelStatus.RETIRED:
-                issues.append(f"MODEL_RETIRED: {mid}")
-            elif entry and entry.status == ModelStatus.DEGRADED:
-                issues.append(f"MODEL_DEGRADED: {mid} — proceed with caution")
-
-        champion_count = registry.count_by_status().get("champion", 0)
-        model_versions = {
-            sym: registry.get_champion(sym).version
-            if registry.get_champion(sym) else 0
-            for sym in predictions
-        }
-
+    if not _os.path.exists(registry_path_abs):
         return {
-            "compatible": len([i for i in issues if "RETIRED" in i]) == 0,
-            "issues": issues,
-            "champion_count": champion_count,
-            "model_versions": model_versions,
-        }
-    except Exception:
-        return {
-            "compatible": True,
-            "issues": ["model_registry_load_failed — continuing"],
+            "compatible": False,
+            "issues": ["model_registry_missing — NO-GO, registre introuvable"],
             "champion_count": 0,
             "model_versions": {},
         }
+
+    try:
+        registry = ModelRegistry.load_from_json(registry_path_abs)
+    except Exception as exc:
+        return {
+            "compatible": False,
+            "issues": [f"model_registry_corrupted — {exc}"],
+            "champion_count": 0,
+            "model_versions": {},
+        }
+
+    if registry is None:
+        return {
+            "compatible": False,
+            "issues": ["model_registry_empty — NO-GO, aucun modèle enregistré"],
+            "champion_count": 0,
+            "model_versions": {},
+        }
+
+    # ── Étape 2 : au moins un champion publié ──
+    champion_count = registry.count_by_status().get("champion", 0)
+    if champion_count == 0:
+        return {
+            "compatible": False,
+            "issues": ["no_champion_published — aucun modèle au statut CHAMPION"],
+            "champion_count": 0,
+            "model_versions": {},
+        }
+
+    # ── Étape 3 : chaque prédiction doit correspondre à un champion sain ──
+    model_versions: dict[str, int] = {}
+    for sym, pred in predictions.items():
+        champion = registry.get_champion(str(sym)) if hasattr(registry, "get_champion") else None
+        if champion is None:
+            # Pas de champion pour ce symbole → incompatible
+            issues.append(f"NO_CHAMPION_FOR_SYMBOL: {sym}")
+            model_versions[str(sym)] = 0
+            continue
+        model_versions[str(sym)] = champion.version
+
+        # Vérifier le statut du champion
+        if champion.status == ModelStatus.RETIRED:
+            issues.append(f"CHAMPION_RETIRED: {sym} model_id={champion.model_id}")
+        elif champion.status == ModelStatus.DEGRADED:
+            issues.append(f"CHAMPION_DEGRADED: {sym} model_id={champion.model_id}")
+
+        # Vérifier la cohérence model_run_id
+        pred_run_id = str(getattr(pred, "model_run_id", ""))
+        if pred_run_id and pred_run_id != champion.model_id:
+            issues.append(
+                f"MODEL_RUN_ID_MISMATCH: {sym} prediction={pred_run_id} champion={champion.model_id}"
+            )
+
+        # Vérifier que le champion a un fingerprint (artefact signé)
+        if not champion.fingerprint:
+            issues.append(f"CHAMPION_UNSIGNED: {sym} model_id={champion.model_id} — fingerprint absent")
+
+    # ── Étape 4 : tout model_run_id utilisé doit être un champion actif ──
+    for mid in model_run_ids:
+        entry = registry._entries.get(mid) if hasattr(registry, "_entries") else None
+        if entry is None:
+            issues.append(f"MODEL_NOT_IN_REGISTRY: {mid}")
+        elif entry.status == ModelStatus.RETIRED:
+            issues.append(f"MODEL_RETIRED: {mid}")
+        elif entry.status == ModelStatus.DEGRADED:
+            issues.append(f"MODEL_DEGRADED: {mid}")
+
+    # ── Décision finale : toute issue bloque (fail-closed) ──
+    return {
+        "compatible": len(issues) == 0,
+        "issues": issues,
+        "champion_count": champion_count,
+        "model_versions": model_versions,
+    }
 
 
 def _optional_quote_float(value: object) -> float | None:
@@ -1255,6 +1324,7 @@ def main(args: list[str] | None = None) -> None:
     empirical_risk_calibration: dict[str, object] = {}
     shadow_compare_summary: dict[str, object] | None = None
     postmortem_artifacts: list[object] = []
+    model_compatibility: dict[str, object] = {}
     # L'IHM transmet systématiquement `--account default`. On considère cette
     # valeur comme un compte implicite : si aucun snapshot n'est disponible, on
     # fallback sur `--account-equity` plutôt que de bloquer le pipeline.
@@ -1514,7 +1584,7 @@ def main(args: list[str] | None = None) -> None:
         _persist_transition_plan_artifact(
             transition_plan,
             trade_date=trade_date,
-            risk_run_id=risk_run_id,
+            risk_run_id=run_id,
         )
     requested_calibration_market_regime_mode = (
         str(getattr(regime_snapshot, "mode", "") or "").strip().lower() or "all"
@@ -1678,7 +1748,11 @@ def main(args: list[str] | None = None) -> None:
         )
 
     # ── Point 5 : Construire MLRankedCandidate plutôt que SelectionScore ──
-    from risk_management.selection_contract import build_candidate_from_prediction, build_rankings as _ml_rank
+    from risk_management.selection_contract import (
+        MLRankedCandidate,
+        build_candidate_from_prediction,
+        build_rankings as _ml_rank,
+    )
 
     candidates: list[MLRankedCandidate] = []
     spread_snapshots: dict[str, object] = {}
@@ -1992,8 +2066,8 @@ def main(args: list[str] | None = None) -> None:
                 _compat["issues"],
             )
             entries = []
-            result["entry_gate_allows_new_entries"] = False
-            result["model_compatibility"] = _compat
+            entry_gate_allows_new_entries = False
+            model_compatibility = _compat
             _emit_live_progress(
                 dict(progress_context, targeted_symbols=0, built_entries=0),
                 current=8,
@@ -2003,6 +2077,7 @@ def main(args: list[str] | None = None) -> None:
                 unit="positions",
             )
         else:
+            model_compatibility = _compat
             if _compat["issues"]:
                 for issue in _compat["issues"]:
                     LOGGER.warning("Model compatibility issue: %s", issue)
@@ -2402,6 +2477,7 @@ def main(args: list[str] | None = None) -> None:
         "shadow_compare": shadow_compare_summary,
         "decision_audit_log_path": str(decision_audit_path),
         "postmortem_artifacts": postmortem_artifacts,
+        "model_compatibility": model_compatibility,
         **ml_gate_state.to_summary(),
     }
     summary = attach_schema_version(summary, version=1)

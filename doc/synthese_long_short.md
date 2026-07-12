@@ -191,6 +191,8 @@ L'univers est résolu par `(snapshot_date, capital_preset_key)`. Le preset dépe
 
 Chaque membre reçoit `is_tradable` et un motif éventuel : `quote_unavailable`, `spread_above_maximum`, `market_cap_unavailable`, `market_cap_below_minimum` ou `earnings_blackout`.
 
+Le blackout earnings est un contrôle **d'entrée** : il empêche d'ouvrir une nouvelle position juste avant une publication de résultats. Il ne force pas la sortie d'une position déjà ouverte. Une position swing conservée plusieurs semaines peut donc traverser une date de résultats ; la politique de conservation, réduction ou clôture avant publication relève du risk et de la configuration de sortie, pas de l'univers.
+
 `full` signifie que tous les contrôles requis ont été évalués, non que tous les symboles passent. Le run est `completed`, canonique, immuable et complet (`rows_written == rows_expected`). Un run partiel ou `degraded` n'ouvre pas de position live. Une date backtest sans run PIT complet échoue ou est explicitement dégradée, sans univers courant de secours.
 
 Le screener produit d'abord un scope large et les données nécessaires aux contrôles. La synchronisation des quotes et des earnings complète les informations objectives. `common.publish_tradable_universe` publie ensuite un **nouveau run immuable** de qualité `full`; elle ne transforme pas en place le run intermédiaire.
@@ -438,6 +440,8 @@ TP_{long}=entry+2\times risk\_per\_share
 $$
 
 Le moteur peut retenir la cible la plus exigeante entre pourcentage et multiple de $R$. Fills partiels et gaps doivent modifier la quantité et le prix réellement protégés.
+
+**Limite importante du stop :** le stop définit la perte visée, pas la perte maximale garantie. En swing, un gap d'ouverture peut traverser le stop et produire une perte supérieure à $1R$ (nettement supérieure lors d'une publication de résultats ou d'une nouvelle majeure). C'est pourquoi le plafond de poids par ligne reste indispensable même quand le sizing par budget de risque autorise davantage.
 
 ## Partie 6 - Mécanique détaillée d'une position short
 

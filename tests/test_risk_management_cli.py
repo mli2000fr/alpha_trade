@@ -60,6 +60,119 @@ def test_cli_importable():
     assert hasattr(cli, "__doc__")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Blocker 4.1 — Compatibilité ML fail-closed
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _write_registry(tmp_path, *, status="champion", fingerprint="abc123", model_id="model-1", symbol="AAPL"):
+    from risk_management.model_registry import ModelRegistry, ModelRegistryEntry, ModelStatus
+
+    registry = ModelRegistry()
+    entry = ModelRegistryEntry(
+        model_id=model_id,
+        symbol=symbol,
+        status=ModelStatus(status),
+        fingerprint=fingerprint,
+    )
+    registry._entries[entry.model_id] = entry
+    if status == "champion":
+        registry._champions[symbol] = model_id
+    path = tmp_path / "model_registry.json"
+    registry.save_to_json(str(path))
+    return str(path)
+
+
+class TestCheckModelCompatibilityFailClosed:
+    def _pred(self, model_run_id="model-1"):
+        return SimpleNamespace(model_run_id=model_run_id)
+
+    def test_registry_missing_blocks(self, tmp_path) -> None:
+        result = cli._check_model_compatibility(
+            {"AAPL": self._pred()},
+            model_registry_path=str(tmp_path / "absent.json"),
+        )
+        assert result["compatible"] is False
+        assert any("model_registry_missing" in issue for issue in result["issues"])
+
+    def test_registry_corrupted_blocks(self, tmp_path) -> None:
+        bad = tmp_path / "model_registry.json"
+        bad.write_text("{invalid json", encoding="utf-8")
+        result = cli._check_model_compatibility(
+            {"AAPL": self._pred()},
+            model_registry_path=str(bad),
+        )
+        assert result["compatible"] is False
+        assert any("model_registry" in issue for issue in result["issues"])
+
+    def test_no_champion_blocks(self, tmp_path) -> None:
+        path = _write_registry(tmp_path, status="candidate")
+        result = cli._check_model_compatibility(
+            {"AAPL": self._pred()},
+            model_registry_path=path,
+        )
+        assert result["compatible"] is False
+        assert any("no_champion_published" in issue for issue in result["issues"])
+
+    def test_retired_model_blocks(self, tmp_path) -> None:
+        from risk_management.model_registry import ModelRegistry, ModelRegistryEntry, ModelStatus
+
+        registry = ModelRegistry()
+        champion = ModelRegistryEntry(model_id="model-1", symbol="AAPL", status=ModelStatus.CHAMPION, fingerprint="abc")
+        retired = ModelRegistryEntry(model_id="model-0", symbol="AAPL", status=ModelStatus.RETIRED, fingerprint="old")
+        registry._entries["model-1"] = champion
+        registry._entries["model-0"] = retired
+        registry._champions["AAPL"] = "model-1"
+        path = tmp_path / "model_registry.json"
+        registry.save_to_json(str(path))
+
+        # La prédiction référence le modèle RETIRED → blocage
+        result = cli._check_model_compatibility(
+            {"AAPL": self._pred(model_run_id="model-0")},
+            model_registry_path=str(path),
+        )
+        assert result["compatible"] is False
+        assert any("MODEL_RETIRED" in issue or "MODEL_RUN_ID_MISMATCH" in issue for issue in result["issues"])
+
+    def test_model_run_id_mismatch_blocks(self, tmp_path) -> None:
+        path = _write_registry(tmp_path, model_id="model-1")
+        result = cli._check_model_compatibility(
+            {"AAPL": self._pred(model_run_id="model-other")},
+            model_registry_path=path,
+        )
+        assert result["compatible"] is False
+        assert any("MODEL_RUN_ID_MISMATCH" in issue for issue in result["issues"])
+
+    def test_unsigned_champion_blocks(self, tmp_path) -> None:
+        path = _write_registry(tmp_path, fingerprint="")
+        result = cli._check_model_compatibility(
+            {"AAPL": self._pred()},
+            model_registry_path=path,
+        )
+        assert result["compatible"] is False
+        assert any("CHAMPION_UNSIGNED" in issue for issue in result["issues"])
+
+    def test_no_champion_for_symbol_blocks(self, tmp_path) -> None:
+        path = _write_registry(tmp_path, symbol="MSFT")
+        result = cli._check_model_compatibility(
+            {"AAPL": self._pred()},
+            model_registry_path=path,
+        )
+        assert result["compatible"] is False
+        assert any("NO_CHAMPION_FOR_SYMBOL" in issue for issue in result["issues"])
+
+    def test_nominal_champion_passes(self, tmp_path) -> None:
+        path = _write_registry(tmp_path)
+        result = cli._check_model_compatibility(
+            {"AAPL": self._pred(model_run_id="model-1")},
+            model_registry_path=path,
+        )
+        assert result["compatible"] is True
+        assert result["issues"] == []
+        assert result["champion_count"] == 1
+        assert result["model_versions"]["AAPL"] == 1
+
+
 def test_persist_decision_audit_log_writes_replayable_payload(tmp_path) -> None:
     entry = PortfolioEntry(
         symbol="AAPL",
@@ -388,6 +501,16 @@ def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypat
     monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(
+        cli,
+        "_check_model_compatibility",
+        lambda predictions, **kwargs: {
+            "compatible": True,
+            "issues": [],
+            "champion_count": 1,
+            "model_versions": {},
+        },
+    )
     monkeypatch.setattr(
         cli,
         "_resolve_market_regime_snapshot",
@@ -1165,6 +1288,16 @@ def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -
     monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(
+        cli,
+        "_check_model_compatibility",
+        lambda predictions, **kwargs: {
+            "compatible": True,
+            "issues": [],
+            "champion_count": 1,
+            "model_versions": {},
+        },
+    )
 
     cli.main(["--trade-date", "2026-05-01", "--dry-run", "--enable-shadow-compare"])
 

@@ -1,6 +1,7 @@
 # Plan d'action pour obtenir un GO live
 
 Date de préparation : 2026-07-12  
+Revue expert swing et vérification code : 2026-07-13  
 Application : Alpha Trade, swing trading US long/short ML-first  
 Document fonctionnel de référence : `doc/synthese_long_short.md`
 
@@ -98,26 +99,27 @@ Principes obligatoires :
 
 Ces points viennent du code source actuel et doivent être corrigés avant de démarrer le chronomètre des quatre semaines shadow.
 
-### 4.1 Compatibilité ML complète et fail-closed
+### 4.1 Compatibilité ML complète et fail-closed ✅ **FERMÉ (2026-07-13)**
 
-**État actuel :** `modelFactory/predictor.py` valide déjà la signature des artefacts et le contrat de features. En revanche, `risk_management.cli._check_model_compatibility()` considère encore un registre absent ou illisible comme compatible.
+**État final :** `risk_management.cli._check_model_compatibility()` est désormais **fail-closed**. Toute preuve absente, illisible ou incohérente bloque les nouvelles entrées.
 
-**Action :** construire un contrat unique de publication vérifiant au minimum :
+| Situation | Avant (fail-open) | Après (fail-closed) |
+|---|---|---|
+| Registre absent | `compatible=True` | `compatible=False` — `model_registry_missing` |
+| Registre corrompu | `compatible=True` | `compatible=False` — `model_registry_corrupted` |
+| Registre vide | `compatible=True` | `compatible=False` — `model_registry_empty` |
+| Aucun champion publié | passage | `compatible=False` — `no_champion_published` |
+| Pas de champion pour un symbole | non vérifié | `compatible=False` — `NO_CHAMPION_FOR_SYMBOL` |
+| Champion `DEGRADED` | warning seul | `compatible=False` — `CHAMPION_DEGRADED` |
+| Champion `RETIRED` | `compatible=False` | `compatible=False` — `CHAMPION_RETIRED` |
+| `model_run_id` ≠ champion | non vérifié | `compatible=False` — `MODEL_RUN_ID_MISMATCH` |
+| Champion sans fingerprint | non vérifié | `compatible=False` — `CHAMPION_UNSIGNED` |
 
-- identité et statut du champion ;
-- modèle et hash du modèle ;
-- calibrateur attendu, présent et signé ;
-- version et fingerprint de la policy ternaire ;
-- feature schema et ordre des colonnes ;
-- scaler et feature fingerprint ;
-- fingerprint ou lineage des données d'entraînement ;
-- architecture et route d'inférence sélectionnées ;
-- absence de statut `DEGRADED` ou `RETIRED` ;
-- cohérence entre `model_run_id` de la prédiction et champion publié.
+Les positions déjà ouvertes continuent d'être protégées et peuvent être clôturées : l'appelant met `entries=[]` et `entry_gate_allows_new_entries=False`, et le résumé expose `model_compatibility`. Un bug latent (`NameError` sur `result` dans le bloc d'incompatibilité, code mort avec l'ancien fail-open) a été corrigé au passage.
 
-**Comportement requis :** toute preuve absente, illisible ou incohérente bloque les nouvelles entrées. Les positions déjà ouvertes continuent d'être protégées et peuvent être clôturées.
+**Tests livrés :** `tests/test_risk_management_cli.py::TestCheckModelCompatibilityFailClosed` — 8 tests : registre absent, registre corrompu, aucun champion, modèle retired, `model_run_id` incohérent, champion non signé, symbole sans champion, cas nominal complet.
 
-**Tests requis :** modèle absent, calibrateur absent, policy différente, feature déplacée, fingerprint différent, registre corrompu, modèle retired et cas nominal complet.
+**Reste budgétisé (non bloquant pour le gate) :** vérification du calibrateur, du feature schema, du scaler et du lineage des données d'entraînement dès que ces preuves seront publiées dans le registre par `modelFactory`. La route runtime est déjà fail-closed : toute preuve future absente sera bloquée par la même mécanique.
 
 ### 4.2 Raccorder le shadow compare à la campagne
 
@@ -127,31 +129,33 @@ Ces points viennent du code source actuel et doivent être corrigés avant de d�
 
 **Test requis :** un cycle shadow réel simulé par fixtures doit produire le fichier, son hash dans `evidence_manifest.json`, puis être correctement rechargé par une nouvelle instance de l'orchestrateur.
 
-### 4.3 Alimenter le rollback avec le drawdown réel
+### 4.3 Alimenter le rollback avec le drawdown réel ✅ **FERMÉ (2026-07-13)**
 
-**État actuel :** `_maybe_auto_rollback()` appelle `check_drawdown_breach(0.0)` et n'est pas appelé dans le cycle quotidien. Le rollback de drawdown est donc présent comme primitive, mais pas comme protection runtime démontrée.
+**État final :** le cycle quotidien de campagne calcule désormais le drawdown réel et l'applique au rollback automatique.
 
-**Action :**
+| Élément livré | Localisation |
+|---|---|
+| Champs `equity_current`, `equity_high_water_mark`, `drawdown_current` | `CampaignDayResult` (+ sérialisation `to_dict`) |
+| Extraction equity depuis `risk_run_summary.json` / `exec_run_summary.json` (`equity_current`, `equity`, `effective_equity`, `account_equity`) | `_compute_and_check_drawdown()` |
+| High-water mark maintenu à travers l'historique de campagne | `_compute_and_check_drawdown()` |
+| Calcul $drawdown = (HWM - equity)/HWM$ | `_compute_and_check_drawdown()` |
+| Appel dans le cycle quotidien après `_persist_day_result` | `run_daily_cycle()` étape 5 |
+| Drawdown réel passé à `check_drawdown_breach()` (plus jamais `0.0`) | `_maybe_auto_rollback()` |
+| Journalisation equity/HWM/drawdown %/seuil %/stage/source/incidents | `_maybe_auto_rollback()` (`LOGGER.info`, `LOGGER.error` sur breach) |
+| Blocage si equity inconnue : sentinelle `drawdown_current = -1.0`, aucun rollback aveugle | `_maybe_auto_rollback()` |
+| Métriques enrichies dans le journal de transition (drawdown, equity, HWM) | `persist_ramp_up_transition` |
 
-- ajouter au résumé d'exécution/campagne l'equity courante et le high-water mark ;
-- calculer le drawdown :
+**Tests livrés :** `tests/test_risk_sprint14.py::TestComputeAndCheckDrawdown` — 6 tests : absence de breach, drawdown calculé depuis le HWM multi-jours, breach 8 % > seuil 5 % avec rollback `live_10pct → live_5pct` et journal écrit, equity inconnue sans rollback aveugle, incident ouvert enregistré, sérialisation des nouveaux champs.
 
-$$
-drawdown = \frac{high\ water\ mark-equity\ courante}{high\ water\ mark}
-$$
-
-- appeler `_maybe_auto_rollback(result)` après la persistance des métriques quotidiennes ;
-- passer le drawdown réel à `check_drawdown_breach()` ;
-- journaliser valeur, seuil, source broker et transition ;
-- bloquer toute promotion si le drawdown est inconnu.
-
-**Tests requis :** absence de breach, breach au seuil, rollback d'un palier live, incident ouvert, échec de journalisation.
+**Ancien état (avant correction) :** `_maybe_auto_rollback()` appelait `check_drawdown_breach(0.0)` et n'était pas appelé dans le cycle quotidien (zéro ligne exécutée en couverture).
 
 ### 4.4 Faire suivre le mode d'exécution lors d'une promotion live
 
 **État actuel :** la transition change `CampaignConfig.run_mode` vers `live`, mais la commande d'exécution est une liste figée. Une commande initialisée avec `run_execution.py paper` reste paper après la promotion.
 
 **Action :** supporter un placeholder explicite `{run_mode}` dans la commande d'exécution, ou construire le mode depuis la phase dans l'orchestrateur. Refuser une journée si le reçu d'entrypoint indique un mode différent du palier attendu.
+
+**Détail vérifié le 2026-07-13 :** `_run_configured_entrypoint()` rend la commande via `format_map()` avec un dictionnaire contenant seulement `trade_date`, `day_dir`, `risk_run_id` et `effective_risk_budget`. Un placeholder `{run_mode}` lèverait aujourd'hui une `KeyError` au premier run. Le correctif doit donc ajouter `run_mode` aux valeurs de rendu, plus un test qui prouve qu'une campagne promue de paper vers live rend bien `live` dans le reçu d'entrypoint.
 
 Exemple de contrat cible :
 
@@ -188,6 +192,17 @@ La phase est terminée si :
 - les tests risque/exécution/backtesting existants ne régressent pas ;
 - une répétition locale complète produit les artefacts attendus ;
 - aucun blocker ci-dessus n'est seulement documenté sans raccordement runtime.
+
+**État au 2026-07-13 :**
+
+| Blocker | Statut | Preuve |
+|---|---|---|
+| 4.1 Compatibilité ML fail-closed | ✅ FERMÉ | 8 tests dédiés + 84/84 tests risk verts |
+| 4.2 Raccorder shadow_compare à la campagne | ⬜ À faire | — |
+| 4.3 Rollback avec drawdown réel | ✅ FERMÉ | 6 tests dédiés + 84/84 tests risk verts |
+| 4.4 Placeholder `{run_mode}` dans commande exécution | ⬜ À faire | — |
+| 4.5 Side flip broker de bout en bout | ⬜ À prouver en paper | — |
+| 4.6 Métriques de baseline automatiques | ⬜ À faire | — |
 
 ## 5. Phase A - Geler la stratégie candidate
 
@@ -471,7 +486,9 @@ Tous doivent passer. Il ne faut pas compenser un gate rouge par une moyenne subj
 - performance encore acceptable avec coûts augmentés de 50 % ;
 - performance encore acceptable avec entrée retardée d'une séance ou slippage dégradé ;
 - absence de fuite détectée par les audits PIT ;
-- couverture ML suffisante sur chaque fold, pas seulement en moyenne.
+- couverture ML suffisante sur chaque fold, pas seulement en moyenne ;
+- distribution des pertes au-delà de 1R documentée : fréquence et taille des gaps à travers le stop (voir section 15.1) ;
+- contribution au PnL des positions ayant traversé une publication de résultats mesurée séparément (voir section 15.2).
 
 ### 8.6 Baseline réelle
 
@@ -665,7 +682,7 @@ Obligatoires :
 - slippage paper comparé au modèle par liquidité et par côté ;
 - incidents clôturés avec cause racine.
 
-Recommandation de volume d'observation : obtenir au moins 20 fills protégés et plusieurs sorties complètes. Si la stratégie trade moins, prolonger le paper ; ne pas abaisser les seuils pour fabriquer des trades.
+Recommandation de volume d'observation : obtenir au moins 20 fills protégés et plusieurs sorties complètes comme **minimum opérationnel**. Ce volume prouve la plomberie, pas l'alpha ni le modèle de coûts. Pour calibrer le slippage par jambe et par tranche de liquidité, viser au moins 60 fills ; en dessous, la conclusion doit rester « exécution opérationnellement fiable », jamais « coûts validés ». Si la stratégie trade moins, prolonger le paper ; ne pas abaisser les seuils pour fabriquer des trades.
 
 ### 10.6 Gate GO live 5 %
 
@@ -840,7 +857,74 @@ Pour chaque candidat ou campagne, conserver :
 
 Les secrets ne doivent jamais apparaître dans ces artefacts.
 
-## 15. Matrice finale GO/NO-GO
+## 15. Risques spécifiques au swing trading — compléments d'expert
+
+Ces points ne remplacent aucun gate précédent. Ils couvrent les risques propres à une stratégie qui conserve des positions plusieurs nuits et week-ends, risques qu'un backtest bien construit peut quand même sous-représenter.
+
+### 15.1 Le stop ne protège pas contre le gap
+
+En swing, la perte maximale réelle d'une position n'est pas la distance au stop : c'est le gap d'ouverture qui traverse le stop. Un titre peut ouvrir 20 ou 30 % au-delà du stop après une nouvelle défavorable, et un short peut ouvrir bien au-dessus du stop après une OPA ou un short squeeze.
+
+Exigences avant tout palier live :
+
+- mesurer dans l'OOS et le paper la distribution des pertes réalisées exprimées en multiples de R, et documenter la queue au-delà de 1R ;
+- fixer un plafond notionnel par ligne tel qu'un gap adverse extrême (par exemple 30 % contre la position) reste inférieur à une fraction acceptée de l'equity, décidée par écrit avant le live ;
+- vérifier que le sizing par budget de risque n'autorise pas, via un stop très serré, un notionnel démesuré sur un titre volatil : le plafond de poids doit toujours mordre en second contrôle ;
+- pour la jambe short, considérer la perte au-delà du stop comme non bornée et dimensionner le plafond de poids short en conséquence, indépendamment de `proba_short`.
+
+### 15.2 Traversée des earnings par les positions ouvertes
+
+Le blackout earnings de l'univers est un contrôle **d'entrée** : il empêche d'ouvrir une position juste avant une publication. Il ne force pas la sortie d'une position déjà ouverte. Avec un label triple-barrier de 20 séances, la plupart des positions traverseront au moins une date de résultats.
+
+Exigences :
+
+- geler une politique explicite avant la campagne : conserver, réduire ou clôturer avant la publication ;
+- mesurer dans l'OOS la contribution au PnL et au drawdown des séances de publication traversées, par jambe ;
+- si la politique retenue est « conserver », le stress de gap de la section 15.1 doit inclure les gaps d'earnings observés historiquement sur l'univers ;
+- toute modification ultérieure de cette politique est un changement de stratégie et redémarre les campagnes.
+
+### 15.3 Dérive d'alpha en live : bandes prédéclarées
+
+Un avantage statistique se dégrade souvent lentement, sans incident opérationnel. Attendre le breach de drawdown codé pour réagir est trop tard.
+
+Exigences :
+
+- avant le live 5 %, dériver des bandes de tolérance depuis l'OOS et le paper : hit rate, payoff, Sharpe roulant, slippage médian, turnover ;
+- déclarer par écrit les seuils qui déclenchent une revue (par exemple hit rate sous le 10e percentile des folds OOS pendant 20 séances) ;
+- appliquer un suivi séquentiel simple (CUSUM ou équivalent) sur le PnL par trade normalisé en R ;
+- une sortie de bande ne prouve pas que le modèle est mort, mais gèle la promotion en cours et déclenche une analyse documentée.
+
+### 15.4 Capacité et scaling des paliers
+
+Le passage de 5 % à 100 % du budget multiplie les tailles par 20. Un slippage acceptable au palier 5 % ne le reste pas nécessairement.
+
+Exigences à chaque promotion :
+
+- comparer le slippage médian et p90 du palier courant à ceux des paliers précédents, par jambe et par tranche d'ADV ;
+- recalculer la participation ADV effective avec les nouvelles tailles ; refuser la promotion si des lignes dépassent la participation maximale gelée ;
+- vérifier que le ratio coûts/alpha reste sous le seuil du gate quantitatif avec les coûts réellement observés, pas les coûts modélisés.
+
+### 15.5 Limites du paper pour la jambe short
+
+Un compte paper ne simule pas fidèlement la disponibilité d'emprunt, les frais hard-to-borrow, les rappels de titres ni les files d'attente de locate. La jambe short sort donc du paper avec une preuve opérationnelle plus faible que la jambe long.
+
+Exigences :
+
+- démarrer le live 5 % avec `max_short_positions` réduit, voire la jambe short désactivée, jusqu'à observation réelle du borrow au broker ;
+- comparer dès les premiers shorts live les frais de borrow réels aux hypothèses du simulateur (`borrow_fee_annual`) et recalculer le PnL net ;
+- traiter tout rejet de short pour borrow comme une donnée à archiver, pas comme un simple échec technique.
+
+### 15.6 Corporate actions pendant une position ouverte
+
+Un split, un dividende exceptionnel ou un spin-off pendant une position ouverte modifie quantité, prix moyen et niveaux de protection.
+
+Exigences :
+
+- vérifier en paper, sur au moins un cas réel ou provoqué, que les stops et take-profits sont recalculés ou recréés correctement après l'ajustement ;
+- vérifier que la réconciliation J+1 explique la variation de quantité/prix par l'action corporate, pas par un écart inexpliqué ;
+- pour un short, provisionner le dividende dû et vérifier son passage dans le ledger.
+
+## 16. Matrice finale GO/NO-GO
 
 | Domaine | Condition GO | Sinon |
 |---|---|---|
@@ -854,9 +938,10 @@ Les secrets ne doivent jamais apparaître dans ces artefacts.
 | Preflight | Aucun fail, warns/skips acceptés explicitement | NO-GO live |
 | Incidents | Aucun incident critique ouvert | NO-GO promotion |
 | Approbation | Revue humaine et journal présents | NO-GO promotion |
+| Risques swing | Gap, earnings, borrow et capacité traités (section 15) | NO-GO palier suivant |
 | Live | Palier courant et budget effectif vérifiés | Arrêt immédiat |
 
-## 16. Ordre prioritaire des actions
+## 17. Ordre prioritaire des actions
 
 ### Maintenant
 
@@ -881,7 +966,7 @@ Les secrets ne doivent jamais apparaître dans ces artefacts.
 13. Lancer live 5 % avec surveillance renforcée.
 14. Respecter chaque durée de palier et rollback au premier breach.
 
-## 17. Définition finale du GO live
+## 18. Définition finale du GO live
 
 Le **GO live 5 %** peut être prononcé uniquement lorsque :
 
