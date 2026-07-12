@@ -52,6 +52,10 @@ class DecisionReasonCode(StrEnum):
     # Liquidité dynamique (LiquiditeDynamique.md P1)
     CONSTRAINT_MAX_POSITION_PCT_OF_ADV = "constraint_max_position_pct_of_adv"
     LIQUIDITY_GATE = "liquidity_gate"
+    # ── Sprint Maître 0 / Section 17 Point 3 ───────────────────────────
+    TIMING_CONTRACT_VIOLATION = "timing_contract_violation"
+    # ── Sprint Maître 0 / Section 17 Point 4 ───────────────────────────
+    RESEARCH_ONLY_BLOCKED = "research_only_blocked"
 
 
 class KellyFallback(StrEnum):

@@ -134,6 +134,9 @@ class PortfolioEntry:
     selector_earnings_blackout: int | None = None
     # Sprint 1 short
     side: str = "buy"
+    # ── Sprint Maître 0 / Section 17 Point 3 ───────────────────────────
+    trade_date: date | None = None
+    entry_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +152,8 @@ class PredictionInfo:
     proba_long: float | None = None
     proba_flat: float | None = None
     proba_short: float | None = None
+    # ── Sprint Maître 0 : statut research_only ─────────────────────────
+    research_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)

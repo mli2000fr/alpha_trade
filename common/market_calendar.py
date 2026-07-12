@@ -121,11 +121,61 @@ def getLastDateMarche(ref_date: Optional[date] = None) -> date:
             return d
 
 
+def next_trading_day(from_date: date, *, nth: int = 1) -> date:
+    """Retourne le *n*-ième jour de bourse NYSE strictement après ``from_date``.
+
+    Parameters
+    ----------
+    from_date : date
+        Date de référence (jour J de la décision).
+    nth : int
+        Rang du jour de bourse recherché (1 = J+1, 2 = J+2, …).
+
+    Returns
+    -------
+    date
+        Le *n*-ième jour de bourse après ``from_date``.
+
+    Raises
+    ------
+    ValueError
+        Si ``nth < 1``.
+    """
+    if nth < 1:
+        raise ValueError("nth doit être >= 1.")
+    cur = from_date + timedelta(days=1)
+    remaining = nth
+    # Garde-fou : 14 jours calendaires maximum (même un long week-end
+    # ne dépasse pas 4 jours fermés consécutifs).
+    for _ in range(14):
+        if is_trading_day(cur):
+            remaining -= 1
+            if remaining == 0:
+                return cur
+        cur += timedelta(days=1)
+    raise RuntimeError(
+        f"Impossible de trouver le {nth}e jour de bourse apres {from_date} "
+        f"(calendrier peut-etre invalide)."
+    )
+
+
+def trading_days_between(start: date, end: date) -> int:
+    """Nombre de jours de bourse NYSE dans ``[start, end]`` (inclusif).
+
+    Utilitaire pour mesurer l'écart entre une décision et une entrée.
+    """
+    if end < start:
+        return 0
+    return len(nyse_session_dates(start, end))
+
+
 __all__ = [
     "get_nyse_session_bounds",
     "getLastDateMarche",
     "is_trading_day",
     "is_us_market_holiday",
+    "next_trading_day",
     "nyse_session_dates",
+    "trading_days_between",
 ]
 

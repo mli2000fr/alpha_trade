@@ -35,7 +35,11 @@ from risk_management.models import (
 from risk_management.portfolio_optimizer import HoldingSnapshot, OptimizationResult, PortfolioOptimizer
 from risk_management.position_sizer import PositionSizer
 from risk_management.risk_checker import RiskCheckerImpl
-from risk_management.selection_contract import MLRankedCandidate
+from risk_management.selection_contract import (
+    MLRankedCandidate,
+    compute_entry_date,
+    validate_decision_timing,
+)
 from risk_management.regime_state_machine import RegimeTransition
 from risk_management.concentration import (
     BreakoutConfirmationTracker,
@@ -745,10 +749,53 @@ class PortfolioBuilder:
         accepted_rank = 0
         minimum_viable_shares = QUANTITY_EPSILON if self._cfg.allow_fractional_shares else 1.0
         decision_date = trade_date or date.today()
+        entry_date = compute_entry_date(decision_date)
         edge_calculator = EdgeCalculator()
         abstention_policy = AbstentionPolicy.sensible_defaults()
 
+        # ── Timing contract gate (Sprint Maître 0 / Section 17 Point 3) ──
+        from common.market_calendar import is_trading_day
+        if not is_trading_day(decision_date):
+            LOGGER.warning(
+                "Decision date %s is not a NYSE trading day — "
+                "entry_date will be the next trading day (%s).",
+                decision_date,
+                entry_date,
+            )
+
+        # ── Research-only gate (Sprint Maître 0 / Section 17 Point 4) ────
+        research_only_symbols: set[str] = set()
+        if predictions:
+            for sym, pred in predictions.items():
+                if getattr(pred, "research_only", False):
+                    research_only_symbols.add(sym.upper())
+        if research_only_symbols:
+            LOGGER.warning(
+                "Research-only gate: %d symbol(s) bloqués car issus "
+                "d'un modèle research_only : %s",
+                len(research_only_symbols),
+                ", ".join(sorted(research_only_symbols)),
+            )
+
         for ec in retained:
+            # ── Research-only rejection (Sprint Maître 0 / Section 17 Point 4)
+            if ec.symbol.upper() in research_only_symbols:
+                entries.append(
+                    self._make_entry_v2(
+                        ec,
+                        prices.get(ec.symbol),
+                        0,
+                        0,
+                        Decision.REJECTED,
+                        "modèle research_only — exécution paper/live interdite",
+                        decision_reason_code=DecisionReasonCode.RESEARCH_ONLY_BLOCKED,
+                        trade_date=decision_date,
+                        entry_date=entry_date,
+                    )
+                )
+                processed_candidates += 1
+                continue
+
             pi = prices.get(ec.symbol)
             if pi is None or pi.last_close <= 0:
                 entries.append(
@@ -760,6 +807,8 @@ class PortfolioBuilder:
                         Decision.REJECTED,
                         "prix indisponible",
                         decision_reason_code=DecisionReasonCode.MISSING_PRICE,
+                        trade_date=decision_date,
+                        entry_date=entry_date,
                     )
                 )
                 processed_candidates += 1
@@ -787,6 +836,8 @@ class PortfolioBuilder:
                         ec, pi, 0, 0, Decision.REJECTED,
                         "statistiques directionnelles OOS manquantes",
                         decision_reason_code=DecisionReasonCode.MISSING_DIRECTIONAL_EDGE,
+                        trade_date=decision_date,
+                        entry_date=entry_date,
                     ))
                     processed_candidates += 1
                     continue
@@ -796,6 +847,8 @@ class PortfolioBuilder:
                     entries.append(self._make_entry_v2(
                         ec, pi, 0, 0, Decision.REJECTED, "prédiction ML manquante",
                         decision_reason_code=DecisionReasonCode.UNKNOWN,
+                        trade_date=decision_date,
+                        entry_date=entry_date,
                     ))
                     processed_candidates += 1
                     continue
@@ -826,6 +879,8 @@ class PortfolioBuilder:
                     entries.append(self._make_entry_v2(
                         ec, pi, 0, 0, Decision.REJECTED, abstention.reason,
                         decision_reason_code=DecisionReasonCode.ABSTENTION_GATE,
+                        trade_date=decision_date,
+                        entry_date=entry_date,
                     ))
                     processed_candidates += 1
                     continue
@@ -844,6 +899,8 @@ class PortfolioBuilder:
                     ec, pi, 0, 0, Decision.REJECTED, "sizing insuffisant",
                     decision_reason_code=DecisionReasonCode(str(sizing.method or SizingMethod.UNKNOWN)),
                     sizing_method=sizing.method,
+                    trade_date=decision_date,
+                    entry_date=entry_date,
                 ))
                 processed_candidates += 1
                 self._emit_progress(
@@ -877,6 +934,8 @@ class PortfolioBuilder:
                     ec, pi, sizing.proposed_shares, 0, Decision.REJECTED, reason,
                     decision_reason_code=reason_code,
                     sizing_method=sizing.method,
+                    trade_date=decision_date,
+                    entry_date=entry_date,
                 ))
                 processed_candidates += 1
                 self._emit_progress(
@@ -911,6 +970,8 @@ class PortfolioBuilder:
                         f"liquidité: {liquidity.reason}",
                         decision_reason_code=DecisionReasonCode.LIQUIDITY_GATE,
                         sizing_method=sizing.method,
+                        trade_date=decision_date,
+                        entry_date=entry_date,
                     ))
                     processed_candidates += 1
                     continue
@@ -980,6 +1041,8 @@ class PortfolioBuilder:
                 selection_explanation=ec.selection_explanation,
                 selector_earnings_blackout=ec.selector_earnings_blackout,
                 side=ec.side,
+                trade_date=decision_date,
+                entry_date=entry_date,
             ))
             processed_candidates += 1
             self._emit_progress(
@@ -1123,6 +1186,9 @@ class PortfolioBuilder:
         sizing_method: SizingMethod = SizingMethod.UNKNOWN,
         correlation_blocker: str | None = None,
         correlation_value: float | None = None,
+        *,
+        trade_date: date | None = None,
+        entry_date: date | None = None,
     ) -> PortfolioEntry:
         price = pi.last_close if pi else 0.0
         atr = pi.atr_20 if pi else None
@@ -1157,4 +1223,6 @@ class PortfolioBuilder:
             selection_explanation=ec.selection_explanation,
             selector_earnings_blackout=ec.selector_earnings_blackout,
             side=ec.side,
+            trade_date=trade_date,
+            entry_date=entry_date,
         )

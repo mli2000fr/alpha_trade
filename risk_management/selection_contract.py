@@ -81,6 +81,8 @@ class MLRankedCandidate:
     feature_cutoff: datetime | None = None
     decision_cutoff: datetime | None = None
     lineage: dict[str, object] = field(default_factory=dict)
+    # ── Sprint Maître 0 / Section 17 Point 4 ───────────────────────────
+    research_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.symbol.strip():
@@ -297,6 +299,7 @@ def build_candidate_from_prediction(
     universe_run_id: str | None = None,
     feature_cutoff: datetime | None = None,
     decision_cutoff: datetime | None = None,
+    research_only: bool = False,
 ) -> MLRankedCandidate:
     """Construit un MLRankedCandidate depuis une prédiction (Sprint Maître 5).
 
@@ -304,7 +307,7 @@ def build_candidate_from_prediction(
     ----------
     symbol, trade_date, predicted_side, proba_long, proba_flat, proba_short,
     proba, model_run_id, policy_version, universe_run_id, feature_cutoff,
-    decision_cutoff
+    decision_cutoff, research_only
 
     Returns
     -------
@@ -339,4 +342,107 @@ def build_candidate_from_prediction(
         universe_run_id=universe_run_id,
         feature_cutoff=feature_cutoff,
         decision_cutoff=decision_cutoff,
+        research_only=research_only,
     )
+
+
+# ── Timing contract enforcement (Sprint Maître 0 / Section 17 Point 3) ──────
+
+def compute_entry_date(decision_date: date) -> date:
+    """Retourne la première date d'entrée tradable après une décision.
+
+    Contrat : features disponibles après clôture J → décision au cutoff J
+    → entrée au prochain open tradable J+1.
+
+    ``decision_date`` est le jour J de la décision.
+    Retourne le prochain jour de bourse NYSE (J+1).
+    """
+    from common.market_calendar import next_trading_day
+
+    return next_trading_day(decision_date)
+
+
+def validate_decision_timing(
+    candidate: MLRankedCandidate,
+    *,
+    decision_date: date | None = None,
+) -> list[str]:
+    """Valide le contrat temporel features → décision → entrée (Sprint Maître 0).
+
+    Vérifie que :
+    - ``trade_date`` est un jour de bourse.
+    - ``feature_cutoff`` (si renseigné) est le jour J ou antérieur.
+    - ``decision_cutoff`` (si renseigné) est le jour J.
+    - L'entrée NE peut PAS avoir lieu le jour J : elle doit être >= J+1.
+
+    Parameters
+    ----------
+    candidate : MLRankedCandidate
+        Le candidat à valider.
+    decision_date : date | None
+        Date de décision (trade_date du run). Si None, utilise candidate.trade_date.
+
+    Returns
+    -------
+    list[str]
+        Liste des violations (vide = contrat respecté).
+    """
+    from common.market_calendar import is_trading_day, next_trading_day
+
+    violations: list[str] = []
+    trade_date = decision_date if decision_date is not None else candidate.trade_date
+
+    # 1. Le jour J doit être un jour de bourse
+    if not is_trading_day(trade_date):
+        violations.append(f"decision_date_not_trading_day:{trade_date}")
+
+    # 2. Si feature_cutoff est renseigné, il doit être le jour J ou antérieur
+    if candidate.feature_cutoff is not None:
+        fc_date = candidate.feature_cutoff.date()
+        if fc_date > trade_date:
+            violations.append(
+                f"feature_cutoff_after_decision:{fc_date}_>{trade_date}"
+            )
+
+    # 3. Si decision_cutoff est renseigné, il doit être le jour J
+    if candidate.decision_cutoff is not None:
+        dc_date = candidate.decision_cutoff.date()
+        if dc_date != trade_date:
+            violations.append(
+                f"decision_cutoff_mismatch:{dc_date}_!={trade_date}"
+            )
+
+    # 4. L'entrée la plus proche est J+1 (le candidat ne peut PAS
+    #    être exécuté le jour même de la décision).
+    entry_date = next_trading_day(trade_date)
+    if entry_date <= trade_date:
+        violations.append(
+            f"entry_not_after_decision:entry={entry_date}_decision={trade_date}"
+        )
+
+    return violations
+
+
+def assert_valid_entry_timing(
+    candidate: MLRankedCandidate,
+    *,
+    decision_date: date | None = None,
+) -> None:
+    """Lève ``ValueError`` si le contrat temporel est violé.
+
+    Parameters
+    ----------
+    candidate : MLRankedCandidate
+    decision_date : date | None
+
+    Raises
+    ------
+    ValueError
+        Si au moins une violation du contrat temporel est détectée.
+    """
+    violations = validate_decision_timing(candidate, decision_date=decision_date)
+    if violations:
+        raise ValueError(
+            f"Violation du contrat decision_cutoff→entry J+1 pour "
+            f"{candidate.symbol}: " + "; ".join(violations)
+        )
