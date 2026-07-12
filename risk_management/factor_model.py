@@ -813,6 +813,100 @@ def check_factor_constraints(
     )
 
 
+# ── Section 17 Point 6.3 : validation factorielle sur poids FINALS ────────
+
+def check_factor_constraints_on_sized_weights(
+    weights: dict[str, float],
+    exposures: dict[str, FactorExposures],
+    factor_cov: FactorCovariance,
+    *,
+    max_portfolio_beta: float = DEFAULT_MAX_PORTFOLIO_BETA,
+    max_factor_concentration: float = DEFAULT_MAX_FACTOR_CONCENTRATION,
+    min_factor_diversification: int = DEFAULT_MIN_FACTOR_DIVERSIFICATION,
+) -> list[str]:
+    """Valide les contraintes factorielles sur les poids FINALS du portefeuille.
+
+    Contrairement à ``check_factor_constraints()`` qui travaille sur une
+    liste de candidats equal-weighted, cette fonction prend les poids
+    réels issus du sizing (post-contraintes, post-optimisation) et
+    vérifie que le portefeuille final respecte bien les contraintes
+    factorielles.
+
+    Parameters
+    ----------
+    weights : dict[str, float]
+        Poids par symbole (fraction de l'equity, signés: long>0, short<0).
+    exposures : dict[str, FactorExposures]
+        Expositions factorielles par symbole.
+    factor_cov : FactorCovariance
+        Covariance factorielle estimée.
+    max_portfolio_beta : float
+        Beta moyen pondéré maximum (défaut 1.2).
+    max_factor_concentration : float
+        Part maximale du risque venant d'un seul facteur (défaut 0.60).
+    min_factor_diversification : int
+        Nombre minimum de facteurs avec contribution > 10% (défaut 2).
+
+    Returns
+    -------
+    list[str]
+        Liste des violations (vide = portefeuille conforme).
+    """
+    import numpy as np
+
+    violations: list[str] = []
+
+    # Filtrer les symboles sans expositions
+    valid_symbols = [s for s in weights if s in exposures and weights[s] != 0]
+    if not valid_symbols:
+        return violations  # rien à vérifier
+
+    # Normaliser en poids absolus pour la décomposition factorielle
+    abs_total = sum(abs(weights[s]) for s in valid_symbols)
+    if abs_total == 0:
+        return violations
+
+    abs_weights = {s: abs(weights[s]) / abs_total for s in valid_symbols}
+
+    # 1. Décomposition du risque factoriel
+    try:
+        decomp = decompose_portfolio_risk(abs_weights, exposures, factor_cov)
+    except Exception:
+        violations.append("factor_decomposition_failed:covariance_unavailable")
+        return violations
+
+    # 2. Beta moyen pondéré
+    B_all = _build_exposure_matrix(
+        valid_symbols, exposures, factor_cov.factor_names
+    )
+    if B_all.shape[1] > 0:
+        w_vec = np.array([abs_weights[s] for s in valid_symbols])
+        avg_beta = float(np.dot(w_vec, B_all[:, 0]))
+        if avg_beta > max_portfolio_beta:
+            violations.append(
+                f"final_beta_exceeded:{avg_beta:.2f}>{max_portfolio_beta}"
+            )
+
+    # 3. Concentration factorielle
+    for factor_name, contrib_pct in decomp.factor_contribution_pct.items():
+        if contrib_pct > max_factor_concentration * 100.0:
+            violations.append(
+                f"final_factor_concentration:{factor_name}:"
+                f"{contrib_pct:.1f}%>{max_factor_concentration*100:.0f}%"
+            )
+
+    # 4. Diversification factorielle
+    significant = sum(
+        1 for pct in decomp.factor_contribution_pct.values() if pct > 10.0
+    )
+    if significant < min_factor_diversification:
+        violations.append(
+            f"final_factor_diversification:{significant}<{min_factor_diversification}"
+        )
+
+    return violations
+
+
 def _filter_worst_offenders(
     candidates: list[EnrichedSelection],
     exposures: dict[str, FactorExposures],

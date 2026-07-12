@@ -368,3 +368,190 @@ class RiskConfig:
         current.update(overrides)
         return RiskConfig.from_dict(current)
 
+    # ── Section 17 Point 6.1 : factories unifiées ─────────────────────
+
+    @classmethod
+    def from_preset(
+        cls,
+        preset_key: str | None = None,
+        *,
+        equity: float | None = None,
+        **overrides: object,
+    ) -> "RiskConfig":
+        """Construit une RiskConfig à partir d'un preset capital.
+
+        Si ``preset_key`` n'est pas fourni, le preset est résolu
+        automatiquement depuis ``equity`` via
+        ``resolve_capital_preset_for_equity()``.
+
+        Les ``overrides`` sont appliqués en dernier (priorité maximale)
+        et les clés inconnues sont rejetées.
+        """
+        from common.capital_presets import (
+            build_risk_config_kwargs_from_preset,
+            resolve_capital_preset_for_equity,
+        )
+
+        if preset_key is not None:
+            from common.capital_presets import get_capital_preset_by_key
+
+            preset = get_capital_preset_by_key(preset_key)
+        elif equity is not None:
+            preset = resolve_capital_preset_for_equity(equity)
+        else:
+            raise ValueError("from_preset requiert preset_key ou equity.")
+
+        kwargs = build_risk_config_kwargs_from_preset(preset)
+        kwargs.update(overrides)
+        return cls.from_dict(kwargs)
+
+    @classmethod
+    def from_yaml_section(
+        cls,
+        yaml_data: dict[str, object] | None = None,
+        *,
+        preset_key: str | None = None,
+        equity: float | None = None,
+        **overrides: object,
+    ) -> "RiskConfig":
+        """Construit une RiskConfig depuis la section ``risk_management``
+        du fichier ``config.yaml``, fusionnée avec un preset capital.
+
+        Priorité (croissante) :
+        1. Défauts du dataclass
+        2. ``config.yaml`` → section ``risk_management``
+        3. Preset capital (auto-résolu ou explicite)
+        4. ``overrides`` explicites (CLI args, etc.)
+
+        Les clés présentes dans le YAML mais non reconnues comme champs
+        valides de ``RiskConfig`` sont journalisées en WARNING, pas
+        rejetées (compatibilité avec les clés de config non-risk).
+        """
+        import logging
+
+        from common.config_loader import load_config
+
+        _logger = logging.getLogger(__name__)
+
+        # 1. Charger config.yaml si pas fourni
+        if yaml_data is None:
+            full_cfg = load_config() or {}
+            yaml_risk = full_cfg.get("risk_management", {})
+            if not isinstance(yaml_risk, dict):
+                yaml_risk = {}
+        else:
+            yaml_risk = dict(yaml_data)
+
+        # 2. Filtrer les clés YAML connues et avertir sur les inconnues
+        import dataclasses
+
+        valid_fields = {f.name for f in dataclasses.fields(cls)}
+        yaml_known: dict[str, object] = {}
+        for k, v in yaml_risk.items():
+            if k in valid_fields:
+                yaml_known[k] = v
+            else:
+                _logger.debug("RiskConfig.from_yaml_section: clé YAML non-risk ignorée %s", k)
+
+        # 3. Résoudre le preset capital
+        if preset_key is not None or equity is not None:
+            preset_cfg = cls.from_preset(preset_key=preset_key, equity=equity)
+        else:
+            preset_cfg = RiskConfig()
+
+        # 4. Fusion : défauts → YAML → preset → overrides
+        #    (on part des défauts, on applique YAML, puis preset, puis overrides)
+        merged = preset_cfg.to_dict(exclude_defaults=False)
+        # YAML écrase les défauts (mais pas le preset)
+        merged.update(yaml_known)
+        # Recharger le preset pour qu'il écrase YAML
+        if preset_key is not None or equity is not None:
+            from common.capital_presets import (
+                build_risk_config_kwargs_from_preset,
+                get_capital_preset_by_key,
+                resolve_capital_preset_for_equity,
+            )
+
+            if preset_key is not None:
+                preset = get_capital_preset_by_key(preset_key)
+            elif equity is not None:
+                preset = resolve_capital_preset_for_equity(equity)
+            else:
+                preset = None
+
+            if preset is not None:
+                preset_kwargs = build_risk_config_kwargs_from_preset(preset)
+                merged.update(preset_kwargs)
+
+        # Overrides écrasent tout
+        merged.update(overrides)
+
+        return cls.from_dict(merged)
+
+
+# ── Section 17 Point 6.1 : loader canonique ────────────────────────────
+
+
+def load_risk_config(
+    *,
+    equity: float | None = None,
+    preset_key: str | None = None,
+    yaml_path: str | None = None,
+    cli_overrides: dict[str, object] | None = None,
+) -> RiskConfig:
+    """Charge une ``RiskConfig`` canonique, point d'entrée unique pour
+    tous les consommateurs (CLI live, backtest, IHM).
+
+    Priorité : defaults < config.yaml < capital_preset < cli_overrides.
+
+    Parameters
+    ----------
+    equity : float | None
+        Equity du compte pour résolution automatique du preset.
+    preset_key : str | None
+        Clé de preset explicite (court-circuite la résolution auto).
+    yaml_path : str | None
+        Chemin vers un fichier YAML alternatif (None = config.yaml).
+    cli_overrides : dict | None
+        Overrides explicites (CLI args, flags IHM, etc.).
+
+    Returns
+    -------
+    RiskConfig
+        Configuration risqué immuable, validée, avec fingerprint.
+    """
+    import logging
+
+    _logger = logging.getLogger(__name__)
+
+    # 1. Charger config.yaml
+    if yaml_path is not None:
+        from common.config_loader import load_config_from_path
+        full_cfg = load_config_from_path(yaml_path) or {}
+    else:
+        from common.config_loader import load_config
+        full_cfg = load_config() or {}
+
+    yaml_risk = full_cfg.get("risk_management", {})
+    if not isinstance(yaml_risk, dict):
+        yaml_risk = {}
+
+    # 2. Construire via from_yaml_section
+    overrides = dict(cli_overrides or {})
+    config = RiskConfig.from_yaml_section(
+        yaml_data=yaml_risk,
+        preset_key=preset_key,
+        equity=equity,
+        **overrides,
+    )
+
+    # 3. Logguer le fingerprint pour audit
+    _logger.info(
+        "load_risk_config: equity=%.0f preset=%s fingerprint=%s",
+        equity or 0,
+        preset_key or "auto",
+        config.fingerprint,
+    )
+
+    return config
+

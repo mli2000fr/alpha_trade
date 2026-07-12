@@ -1098,6 +1098,68 @@ class PortfolioBuilder:
         if self._portfolio_optimizer is not None:
             entries = self._apply_portfolio_optimization(entries, equity)
 
+        # ── Section 17 Point 6.5 : revalidation post-portefeuille ──────
+        violations = checker._constraints.revalidate_portfolio(
+            checker._state,
+            positions=[
+                {
+                    "symbol": e.symbol,
+                    "sector": e.sector,
+                    "notional": e.target_notional,
+                    "adv_usd": prices[e.symbol].adv_usd if e.symbol in prices else None,
+                }
+                for e in entries
+                if e.decision in (Decision.ACCEPTED, Decision.REDUCED)
+                and e.approved_shares > 0
+            ],
+        )
+        if violations:
+            LOGGER.warning(
+                "POST_PORTFOLIO_CONSTRAINT_VIOLATIONS count=%d violations=%s",
+                len(violations),
+                "; ".join(violations[:10]),
+            )
+
+        # ── Section 17 Point 6.3 : contraintes factorielles sur poids FINALS ─
+        if (
+            self._cfg.enable_factor_model
+            and self._factor_covariance is not None
+            and bool(self._factor_exposures)
+        ):
+            from risk_management.factor_model import (
+                FactorCovariance,
+                FactorExposures,
+                check_factor_constraints_on_sized_weights,
+            )
+
+            sized_weights: dict[str, float] = {}
+            for e in entries:
+                if e.decision in (Decision.ACCEPTED, Decision.REDUCED) and e.approved_shares > 0:
+                    sign = -1.0 if e.side == "sell" else 1.0
+                    sized_weights[e.symbol] = sign * e.target_notional / equity
+
+            if sized_weights:
+                fc = self._factor_covariance
+                if isinstance(fc, FactorCovariance):
+                    typed_exposures: dict[str, FactorExposures] = {}
+                    for sym, exp in self._factor_exposures.items():
+                        if isinstance(exp, FactorExposures):
+                            typed_exposures[str(sym)] = exp
+                    factor_violations = check_factor_constraints_on_sized_weights(
+                        sized_weights,
+                        typed_exposures,
+                        fc,
+                        max_portfolio_beta=self._cfg.max_portfolio_beta,
+                        max_factor_concentration=self._cfg.max_factor_concentration_pct,
+                        min_factor_diversification=self._cfg.min_factor_diversification,
+                    )
+                    if factor_violations:
+                        LOGGER.warning(
+                            "POST_PORTFOLIO_FACTOR_VIOLATIONS count=%d violations=%s",
+                            len(factor_violations),
+                            "; ".join(factor_violations[:10]),
+                        )
+
         return entries
 
     # ------------------------------------------------------------------

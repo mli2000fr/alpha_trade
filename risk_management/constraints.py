@@ -227,3 +227,110 @@ class ConstraintChecker:
             return 0.0, reduction_reason or "min_position_notional non atteint"
 
         return proposed_shares, reduction_reason or "OK"
+
+    # ── Section 17 Point 6.5 : revalidation post-portefeuille ─────────
+
+    def revalidate_portfolio(
+        self,
+        state: PortfolioState,
+        *,
+        positions: list[dict[str, object]] | None = None,
+    ) -> list[str]:
+        """Revalide TOUTES les contraintes après construction du portefeuille.
+
+        Cette méthode doit être appelée APRÈS que toutes les positions
+        ont été acceptées, réduites, neutralisées et arrondies. Elle
+        vérifie que l'état final respecte bien les contraintes globales.
+
+        Parameters
+        ----------
+        state : PortfolioState
+            État final du portefeuille après assemblage.
+        positions : list[dict] | None
+            Détail des positions pour les vérifications symbol-level.
+            Chaque dict doit contenir: symbol, sector, notional, adv_usd.
+
+        Returns
+        -------
+        list[str]
+            Liste des violations (vide = portefeuille conforme).
+        """
+        violations: list[str] = []
+        equity = self._cfg.account_equity
+
+        # 1. Caps directionnels
+        if state.long_count > (
+            self._cfg.max_positions
+            if self._cfg.max_long_positions is None
+            else self._cfg.max_long_positions
+        ):
+            violations.append(
+                f"long_count_exceeded:{state.long_count}>"
+                f"{self._cfg.max_long_positions or self._cfg.max_positions}"
+            )
+        if state.short_count > self._cfg.max_short_positions:
+            violations.append(
+                f"short_count_exceeded:{state.short_count}>{self._cfg.max_short_positions}"
+            )
+
+        # 2. Max positions totales
+        if state.position_count > self._cfg.effective_max_positions:
+            violations.append(
+                f"position_count_exceeded:{state.position_count}>"
+                f"{self._cfg.effective_max_positions}"
+            )
+
+        # 3. Gross exposure
+        gross_pct = state.gross_notional / equity
+        if gross_pct > self._cfg.max_gross_exposure + 1e-8:
+            violations.append(
+                f"gross_exposure_exceeded:{gross_pct:.3f}>{self._cfg.max_gross_exposure}"
+            )
+
+        # 4. Net exposure (si enforce_net_exposure)
+        if self._cfg.enforce_net_exposure:
+            net_pct = state.net_notional / equity
+            target = self._cfg.net_exposure_target
+            tol = self._cfg.net_exposure_tolerance
+            if abs(net_pct - target) > tol + 1e-8:
+                violations.append(
+                    f"net_exposure_violation:|{net_pct:.3f}-{target}|>{tol}"
+                )
+
+        # 5. Secteur
+        max_sector_notional = equity * self._cfg.max_sector_weight
+        for sector_name, sector_notional in state.sector_notional.items():
+            if sector_notional > max_sector_notional + 1e-8:
+                violations.append(
+                    f"sector_weight_exceeded:{sector_name}:"
+                    f"{sector_notional:.0f}>{max_sector_notional:.0f}"
+                )
+
+        # 6. Tickers par secteur
+        if self._cfg.max_tickers_per_sector is not None:
+            for sector_name, count in state.sector_ticker_count.items():
+                if count > self._cfg.max_tickers_per_sector:
+                    violations.append(
+                        f"sector_ticker_count_exceeded:{sector_name}:"
+                        f"{count}>{self._cfg.max_tickers_per_sector}"
+                    )
+
+        # 7. Contrôles symbol-level (si positions fournies)
+        if positions:
+            for pos in positions:
+                notional = float(pos.get("notional", 0))
+                symbol = str(pos.get("symbol", "?"))
+                # Poids max par position
+                if notional > equity * self._cfg.max_position_weight + 1e-8:
+                    violations.append(
+                        f"position_weight_exceeded:{symbol}:"
+                        f"{notional:.0f}>{equity * self._cfg.max_position_weight:.0f}"
+                    )
+                # Min notional
+                if 0 < notional < self._cfg.effective_min_notional:
+                    violations.append(
+                        f"min_notional_violation:{symbol}:"
+                        f"{notional:.0f}<{self._cfg.effective_min_notional:.0f}"
+                    )
+
+        return violations

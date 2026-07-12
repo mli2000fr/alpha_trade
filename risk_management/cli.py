@@ -943,85 +943,47 @@ def main(args: list[str] | None = None) -> None:
         phase="resolve_account",
     )
 
-    resolved_capital_preset = resolve_capital_preset_for_equity(float(effective_equity))
-    preset_risk_kwargs = (
-        build_risk_config_kwargs_from_preset(resolved_capital_preset)
-        if resolved_capital_preset is not None
-        else {}
+    # ── Section 17 Point 6.1-6.2 : loader unifié ────────────────────
+    # Priorité : defaults < config.yaml < capital_preset < CLI args
+    from risk_management.config import load_risk_config
+
+    config = load_risk_config(
+        equity=effective_equity,
+        cli_overrides={
+            "account_equity": effective_equity,
+            "risk_per_trade_pct": args.risk_per_trade_pct,
+            "max_positions": args.max_positions,
+            "max_position_weight": args.max_position_weight,
+            "max_sector_weight": args.max_sector_weight,
+            "min_position_notional": args.min_position_notional,
+            "dry_run": args.dry_run,
+            "correlation_threshold": args.correlation_threshold,
+            "correlation_lookback_days": args.correlation_lookback_days,
+            "correlation_min_overlap": args.correlation_min_overlap,
+            "enable_kelly_sizing": args.enable_kelly_sizing,
+            "filter_unmodeled_selections": args.filter_no_ml,
+            "allow_fractional_shares": args.allow_fractional_shares,
+            "assumed_payoff_ratio": args.assumed_payoff_ratio,
+            "kelly_fraction_multiplier": args.kelly_fraction_multiplier,
+            "score_weight": args.score_weight,
+            "prediction_weight": args.prediction_weight,
+            **({
+                "target_annual_vol": float(args.target_annual_vol),
+            } if args.target_annual_vol is not None and float(args.target_annual_vol) > 0 else {}),
+            "vol_target_lookback_days": int(args.vol_target_lookback_days),
+        },
     )
 
-    config = RiskConfig(
-        account_equity=effective_equity,
-        risk_per_trade_pct=args.risk_per_trade_pct,
-        max_positions=args.max_positions,
-        max_position_weight=args.max_position_weight,
-        max_sector_weight=args.max_sector_weight,
-        min_position_notional=args.min_position_notional,
-        dry_run=args.dry_run,
-        correlation_threshold=args.correlation_threshold,
-        correlation_lookback_days=args.correlation_lookback_days,
-        correlation_min_overlap=args.correlation_min_overlap,
-        enable_kelly_sizing=args.enable_kelly_sizing,
-        filter_unmodeled_selections=args.filter_no_ml,
-        allow_fractional_shares=args.allow_fractional_shares,
-        assumed_payoff_ratio=args.assumed_payoff_ratio,
-        kelly_fraction_multiplier=args.kelly_fraction_multiplier,
-        score_weight=args.score_weight,
-        prediction_weight=args.prediction_weight,
-        # Sprint S3 / A-011 — overrides des seuils circuit breaker par préset.
-        max_portfolio_drawdown_pct=(
-            float(args.max_portfolio_drawdown_pct)
-            if args.max_portfolio_drawdown_pct is not None
-            else float(
-                preset_risk_kwargs.get(
-                    "max_portfolio_drawdown_pct",
-                    RiskConfig.__dataclass_fields__["max_portfolio_drawdown_pct"].default,
-                )
-            )
-        ),
-        max_daily_loss_pct=(
-            float(args.max_daily_loss_pct)
-            if args.max_daily_loss_pct is not None
-            else float(
-                preset_risk_kwargs.get(
-                    "max_daily_loss_pct",
-                    RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default,
-                )
-            )
-        ),
-        rolling_peak_window_days=int(
-            preset_risk_kwargs.get(
-                "rolling_peak_window_days",
-                RiskConfig.__dataclass_fields__["rolling_peak_window_days"].default,
-            )
-        ),
-        degraded_entry_allocation_pct=float(
-            preset_risk_kwargs.get(
-                "degraded_entry_allocation_pct",
-                RiskConfig.__dataclass_fields__["degraded_entry_allocation_pct"].default,
-            )
-        ),
-        target_annual_vol=(
-            float(args.target_annual_vol)
-            if args.target_annual_vol is not None and float(args.target_annual_vol) > 0
-            else None
-        ),
-        vol_target_lookback_days=int(args.vol_target_lookback_days),
-    )
-
-    # Appliquer force_close_on_breaker depuis config.yaml si non défini par preset
-    if "force_close_on_breaker" not in preset_risk_kwargs:
-        try:
-            yaml_cfg = load_config() or {}
-            risk_cfg = yaml_cfg.get("risk_management", {}) if isinstance(yaml_cfg, dict) else {}
-            yaml_force_close = risk_cfg.get("force_close_on_breaker")
-            if yaml_force_close is not None:
-                config = replace(config, force_close_on_breaker=bool(yaml_force_close))
-            yaml_force_close_pct = risk_cfg.get("force_close_pct")
-            if yaml_force_close_pct is not None:
-                config = replace(config, force_close_pct=float(yaml_force_close_pct))
-        except Exception:
-            pass
+    # Appliquer les overrides drawdown spécifiques depuis le preset
+    # (déjà intégrés par load_risk_config, mais les CLI args prennent le dessus)
+    if args.max_portfolio_drawdown_pct is not None:
+        config = config.with_overrides(
+            max_portfolio_drawdown_pct=float(args.max_portfolio_drawdown_pct),
+        )
+    if args.max_daily_loss_pct is not None:
+        config = config.with_overrides(
+            max_daily_loss_pct=float(args.max_daily_loss_pct),
+        )
 
     market_regimes_cfg = None
     try:
@@ -1397,7 +1359,60 @@ def main(args: list[str] | None = None) -> None:
                 borrow_snapshots={},
             )
         builder.progress_callback = emit_run_summary
-        entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
+
+        # ── Section 17 Point 6.4 : gate de fraîcheur avant entrées ───────
+        freshness_blocked = False
+        freshness_result = None
+        if not config.dry_run:
+            try:
+                from datetime import datetime, timezone
+
+                from risk_management.freshness_gate import FreshnessConfig, FreshnessGate
+
+                # Collecter les timestamps de fraîcheur disponibles
+                now = datetime.now(timezone.utc)
+                # Prix : utiliser la date de trade comme proxy (données EOD jour J)
+                price_data_at = datetime.combine(trade_date, datetime.min.time(), tzinfo=timezone.utc) if trade_date else None
+                # Modèle ML : dernière prédiction la plus récente
+                ml_timestamps = [
+                    p.prediction_date for p in predictions.values()
+                    if p.prediction_date is not None
+                ]
+                ml_model_at = max(ml_timestamps) if ml_timestamps else None
+                if ml_model_at and not isinstance(ml_model_at, datetime):
+                    ml_model_at = None
+                # Régime : snapshot du jour
+                regime_at = datetime.combine(trade_date, datetime.min.time(), tzinfo=timezone.utc) if trade_date else None
+
+                fg = FreshnessGate(FreshnessConfig())
+                freshness_result = fg.evaluate(
+                    price_data_at=price_data_at,
+                    volume_adv_at=price_data_at,  # même source que les prix
+                    earnings_at=None,  # pas encore de source PIT pour earnings
+                    corporate_actions_at=None,
+                    ml_model_at=ml_model_at,
+                    calibration_at=ml_model_at,  # calibration même timestamp que modèle
+                    market_regime_at=regime_at,
+                    borrow_at=None,  # pas encore de source PIT pour borrow
+                    reference_time=now,
+                )
+                if freshness_result.must_block:
+                    freshness_blocked = True
+                    LOGGER.warning(
+                        "FRESHNESS_GATE_BLOCK blocked_dimensions=%s",
+                        list(freshness_result.blocked_dimensions),
+                    )
+            except Exception:
+                LOGGER.warning("FreshnessGate evaluation failed", exc_info=True)
+
+        if freshness_blocked:
+            entries = []
+            LOGGER.warning(
+                "PORTFOLIO_SKIPPED_FRESHNESS_GATE reason=%s",
+                "critical_data_stale",
+            )
+        else:
+            entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), built_entries=len(entries)),
             current=7,

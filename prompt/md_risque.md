@@ -3173,6 +3173,65 @@ Il reste à :
 4. exiger un snapshot broker frais en paper/live et réserver les valeurs statiques au backtest ou au dry-run ;
 5. revalider toutes les contraintes après chaque réduction, neutralisation ou arrondi.
 
+<!-- ───────────────────────────────────────────────────────────────
+     AUDIT Point 6 — Configuration risque unifiée
+     Date : 2026-07-12
+     ───────────────────────────────────────────────────────────────
+     6.1  ✅ `RiskConfig.from_preset(equity=, preset_key=)` ajouté.
+          `RiskConfig.from_yaml_section(yaml_data=, equity=, ...)` ajouté.
+          `load_risk_config(equity=, preset_key=, cli_overrides=)` ajouté
+          comme point d'entrée unique pour tous les consommateurs.
+          Priorité : defaults < config.yaml < capital_preset < cli_overrides.
+     
+     6.2  ✅ Les clés inconnues sont rejetées par `from_dict()` et
+          `with_overrides()` (fail-fast). Les clés YAML non-RiskConfig
+          sont journalisées en DEBUG (pas rejetées pour compatibilité).
+          `cli.py` utilise maintenant `load_risk_config()` au lieu de
+          construire `RiskConfig(...)` avec des kwargs éparpillés.
+          L'ad-hoc `load_config()` pour `force_close_on_breaker` a été
+          supprimé — tout passe par le loader unifié.
+     
+     6.3  ✅ `check_factor_constraints_on_sized_weights()` ajouté dans
+          factor_model.py. Prend les poids FINALS (signés, post-sizing),
+          les expositions factorielles et la covariance → valide beta,
+          concentration et diversification sur le portefeuille réel.
+          Appelé dans `PortfolioBuilder.build()` après la revalidation
+          des contraintes. Les violations sont loggées en WARNING.
+     
+     6.4  ✅ `FreshnessGate` branché dans `cli.py` avant `builder.build()`.
+          En mode non-dry-run, évalue 8 dimensions de fraîcheur
+          (price_data, volume_adv, earnings, corporate_actions, ml_model,
+           calibration, market_regime, borrow). Si `must_block` (dimension
+          CRITICAL stale), le portefeuille est sauté et le blocage est
+          journalisé. Les timestamps sont collectés depuis les données
+          disponibles (trade_date pour les prix, prediction_date pour le
+          modèle, etc.).
+     
+     6.5  ✅ `ConstraintChecker.revalidate_portfolio()` ajouté avec
+          7 vérifications post-assemblage : caps directionnels,
+          max_positions, gross_exposure, net_exposure, secteur,
+          tickers/secteur, position_weight, min_notional.
+          Appelé dans `PortfolioBuilder.build()` après neutralisation
+          nette et optimisation. Les violations sont loggées en WARNING.
+     
+     Tests  : 149 passed (config_parity + constraints + builder + contract + bridges)
+     Fichiers modifiés :
+       - risk_management/config.py (+from_preset, +from_yaml_section,
+         +load_risk_config)
+       - risk_management/constraints.py (+revalidate_portfolio)
+       - risk_management/portfolio_builder.py (+revalidation call,
+         +factor_on_sized_weights)
+       - risk_management/factor_model.py (+check_factor_constraints_on_sized_weights)
+       - risk_management/cli.py (migré vers load_risk_config, +FreshnessGate)
+       - tests/test_risk_config_parity.py (+24 tests: 20 Point 6.1-6.5 + 4 Point 6.3-6.4)
+     
+     Reste à faire :
+       - Migrer backtesting/cli/_impl.py vers load_risk_config()
+       - Ajouter le champ `account` dans MLRankedCandidate (Point 5.4)
+     
+     Validation : pytest tests/test_risk_config_parity.py tests/test_constraints.py tests/test_portfolio_builder.py tests/test_risk_ml_first_contract.py tests/test_model_factory_db_registry.py tests/test_phase2_bridges.py -q → 149 passed
+     ═══════════════════════════════════════════════════════════════════ -->
+
 Le test d'intégration doit vérifier qu'une même configuration produit le même fingerprint et les mêmes décisions dans le bridge, le CLI et le backtest.
 
 ### 7. Exécuter le véritable walk-forward financier
