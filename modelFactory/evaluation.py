@@ -584,9 +584,15 @@ def optimize_decision_threshold(
 
 
 def align_sequence_rows(df: pd.DataFrame, seq_len: int) -> pd.DataFrame:
-    """Aligne les lignes du DataFrame avec les séquences construites pour le modèle."""
+    """Aligne les lignes du DataFrame avec les fins de séquences du modèle."""
     if "target" not in df.columns:
         raise ValueError("align_sequence_rows requiert une colonne 'target'.")
-    aligned = df.iloc[seq_len:].copy()
-    return aligned.loc[aligned["target"].notna()].reset_index(drop=True)
+    if seq_len < 1:
+        raise ValueError("seq_len doit être >= 1.")
+
+    # build_sequences() crée sa première fenêtre aux lignes [0:seq_len] et
+    # utilise le target de fin, à l'index seq_len - 1.
+    aligned = df.iloc[seq_len - 1 :].copy()
+    targets = pd.to_numeric(aligned["target"], errors="coerce")
+    return aligned.loc[np.isfinite(targets)].reset_index(drop=True)
 

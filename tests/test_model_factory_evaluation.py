@@ -73,7 +73,7 @@ def test_optimize_decision_threshold_falls_back_to_default_when_constraints_fail
     assert summary["selected_threshold"] == 0.60
 
 
-def test_align_sequence_rows_drops_warmup_and_nan_targets() -> None:
+def test_align_sequence_rows_matches_sequence_end_rows_and_drops_non_finite_targets() -> None:
     df = pd.DataFrame(
         {
             "target": [1.0, 0.0, 1.0, np.nan, 0.0],
@@ -83,5 +83,5 @@ def test_align_sequence_rows_drops_warmup_and_nan_targets() -> None:
 
     aligned = align_sequence_rows(df, seq_len=2)
 
-    assert len(aligned) == 2
-    assert aligned["target"].tolist() == [1.0, 0.0]
+    assert len(aligned) == 3
+    assert aligned["target"].tolist() == [0.0, 1.0, 0.0]
