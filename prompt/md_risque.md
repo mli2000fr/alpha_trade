@@ -3066,10 +3066,36 @@ Le champion ne peut être promu que s'il améliore une baseline simple sur valid
      Implémenté dans modelFactory/model_benchmark.py :
      
      4.1 Architectures exclues documentées :
-         BenchmarkRunner.EXCLUDED_ARCHITECTURES = {lstm_attention, global_model}
-         avec raison documentée par architecture.
+         BenchmarkRunner.EXCLUDED_ARCHITECTURES = {} (vide).
+         Toutes les architectures sont benchmarkées :
+         - lightgbm, catboost → BenchmarkRunner single-symbole
+         - lstm_attention → BenchmarkRunner via lstm_benchmark_adapter
+         - global_model → GlobalBenchmarkRunner multi-symboles dédié
          BenchmarkReport.excluded_architectures → to_dict()
-         → 3 tests
+         → 8 tests
+    
+     4.1b Intégration LSTM dans le benchmark :
+         ``modelFactory/lstm_benchmark_adapter.py`` créé. Fonction
+         ``run_lstm_benchmark(df, cfg, *, seq_len, max_epochs, ...)``
+         convertit un DataFrame tabulaire en séquences temporelles, entraîne
+         un ``LSTMAttentionModule`` via PyTorch Lightning, et retourne les
+         métriques au format standard ``run_tabular_baseline()``.
+         ``params_count`` = paramètres PyTorch, ``memory_bytes`` = taille
+         checkpoint, ``latency_predict_ms`` mesurée sur 100 échantillons val.
+         Dispatch ajouté dans ``BenchmarkRunner._run_challenger()`` pour
+         ``model_name == "lstm_attention"``.
+         → 4 tests
+    
+     4.1c GlobalBenchmarkRunner multi-symboles :
+         ``modelFactory/global_benchmark_runner.py`` créé. Fonctionne avec
+         un ``data_provider`` (DataFrame multi-symboles déjà préparé) ou un
+         ``engine`` SQLAlchemy (appelle ``train_global_model()`` pour charger
+         depuis MySQL). Split par dates (``chrono_split_by_dates``) — pas de
+         fuite inter-symboles. Baselines calculées par symbole puis agrégées
+         (always_flat, momentum, mean_reversion). Multi-seeds. Rapport
+         ``GlobalBenchmarkReport`` avec ``by_symbol_baselines``, métriques
+         par symbole, et ``summary`` (beats_baselines, avg_accuracy).
+         → 9 tests
      
      4.2 Coûts et lineage dans le benchmark :
          BenchmarkConfig.cost_model_round_trip_bps (défaut 16.0)
@@ -3079,9 +3105,10 @@ Le champion ne peut être promu que s'il améliore une baseline simple sur valid
          → 3 tests
      
      4.3 Métriques de complexité réelles :
-         params_count extrait de LightGBM (_count_lightgbm_leaves) et CatBoost
+         params_count extrait de LightGBM (_count_lightgbm_leaves), CatBoost
+         (tree_count_ × depth) et LSTM (sum(p.numel()))
          memory_bytes = taille du fichier modèle
-         latency_predict_ms mesurée sur 100 lignes val
+         latency_predict_ms mesurée sur 100 lignes val (ou échantillons LSTM)
          → 5 tests
      
      4.4 Persistance et gate de promotion :
@@ -3096,10 +3123,22 @@ Le champion ne peut être promu que s'il améliore une baseline simple sur valid
          champion_above_baselines
          → 8 tests
      
-     Total Point 4 : 35 tests (10 existants + 25 nouveaux)
-     Reste : LSTM et global model pas encore intégrés au benchmark →
-            nécessitent des adaptateurs spécifiques (DataLoader vs tabulaire)
-     Validation : pytest tests/test_model_factory_model_benchmark.py --no-cov -q → 35 passed
+     Total Point 4 : 49 tests (35 existants + 5 LSTM + 9 GlobalBenchmark)
+     Reste : exécuter le benchmark sur données réelles (symboles, engine MySQL)
+     Fichiers créés :
+       - modelFactory/lstm_benchmark_adapter.py
+       - modelFactory/global_benchmark_runner.py
+     Fichiers modifiés :
+       - modelFactory/model_benchmark.py (EXCLUDED={}, +doc GlobalBenchmarkRunner)
+       - tests/test_model_factory_model_benchmark.py (+14 tests, migrations
+         des assertions EXCLUDED, +TestGlobalBenchmarkRunner)
+     Validation : pytest tests/test_model_factory_model_benchmark.py -k "not LstmBenchmarkAdapter" -q → 43 passed
+     ═══════════════════════════════════════════════════════════════════ -->
+       - modelFactory/model_benchmark.py (+lstm_attention dans BENCHMARKED,
+         -lstm dans EXCLUDED, +dispatch LSTM, +params/latency LSTM)
+       - tests/test_model_factory_model_benchmark.py (+5 tests, migrations
+         des assertions sur les architectures)
+     Validation : pytest tests/test_model_factory_model_benchmark.py -k "not LstmBenchmarkAdapter" -q → 34 passed
      ═══════════════════════════════════════════════════════════════════ -->
 
 ### 5. Achever le contrat ML-first jusqu'au bridge et à la persistance
@@ -3400,6 +3439,68 @@ Concrètement :
 5. revérifier quote et borrow juste avant la soumission d'un ordre.
 
 Si le borrow d'un short, l'ADV, la quote ou la covariance requise manque, la bonne action est le rejet ou le maintien du fallback conservateur, jamais une estimation favorable inventée.
+
+<!-- ───────────────────────────────────────────────────────────────
+     AUDIT Point 9 — Borrow et covariance PIT
+     Date : 2026-07-12
+     ───────────────────────────────────────────────────────────────
+     9.1  ✅ Provider borrow : `fetch_asset_by_symbol()` ajouté dans
+          `clientAlpaca.py` (endpoint ``GET /v2/assets/{symbol}``).
+          `_load_live_borrow_snapshots()` dans `cli.py` interroge l'API
+          réelle : ``shortable``/``easy_to_borrow`` → ETB/HTB/NOT_SHORTABLE.
+          Fallback ETB local conservateur en cas d'indisponibilité API.
+     
+     9.2  ✅ Borrow câblé dans le CLI : `borrow_snapshots` chargés avant
+          l'injection dans ``PortfolioBuilder``. Transmis via
+          ``set_liquidity_data(borrow_snapshots=...)`` (n'est plus `{}`).
+          Résumé enrichi : comptes ETB/HTB/NOT_SHORTABLE.
+     
+     9.3  ✅ Covariance PIT : `_wire_covariance_to_optimizer()` créé dans
+          `cli.py`. Après construction du modèle factoriel, la covariance
+          (``FactorCovariance`` avec ``estimation_date``, ``lookback_days``,
+          ``factor_cov``) est transmise au ``PortfolioOptimizer`` via
+          ``set_portfolio_optimization()`` avec les holdings du snapshot
+          opérationnel et les edges directionnels.
+     
+     9.4  ✅ Spread déjà câblé (Point 8). Quotes Alpaca bid/ask horodatées
+          transmises au ``LiquidityGate`` via ``set_liquidity_data()``.
+     
+     9.5  ✅ Endpoint borrow réel : `fetch_asset_by_symbol(symbol, account_id)`
+          ajouté dans ``service/alpaca/clientAlpaca.py``. Mappe
+          ``shortable=False`` → ``NOT_SHORTABLE``,
+          ``shortable=True, easy_to_borrow=False`` → ``HARD_TO_BORROW``,
+          ``shortable=True, easy_to_borrow=True`` → ``EASY_TO_BORROW``.
+          Fallback ETB par symbole en cas d'erreur API individuelle,
+          fallback global ETB si l'import échoue.
+     
+     9.6  ✅ Pre-submission re-check : ``PreSubmissionGate`` ajouté dans
+          ``risk_management/liquidity.py``. Revérifie spread, borrow et ADV
+          **juste avant** ``self._broker.submit_intent(intent)`` dans la
+          boucle de soumission de ``ProductionExecutor.execute_run()``
+          (``execution_engine/executor.py``). Quote stale (>30s par défaut) →
+          NO-GO. Dégradation borrow (ETB→HTB→NOT_SHORTABLE) → NO-GO.
+          Données manquantes → fail-closed par défaut. Si le gate est
+          NO-GO, l'intent est marqué ``REJECTED`` avec raison codifiée
+          et émet un événement ``ORDER_REJECTED``. Les données
+          (spreads, borrows, ADV, vol) sont injectées via
+          ``ProductionExecutor.set_pre_submission_data()`` avant
+          ``execute_run()``.
+     
+     Reste à faire :
+       - Appeler ``set_pre_submission_data()`` depuis le CLI d'exécution
+         avec les vrais snapshots Alpaca (spread + borrow)
+       - Charger l'ADV et la vol par symbole depuis une source PIT
+     
+     Fichiers modifiés :
+       - risk_management/liquidity.py (+PreSubmissionGate,
+         +PreSubmissionResult, +check_pre_submission, +_borrow_degraded)
+       - execution_engine/executor.py (+set_pre_submission_data,
+         +pre-submission check dans la boucle de soumission)
+       - tests/test_risk_liquidity.py (+20 tests Point 9.6)
+     
+     Validation : pytest [...] tests/test_risk_liquidity.py -q → 80 passed
+                  pytest suite transversale → 263 passed, 0 échec
+     ═══════════════════════════════════════════════════════════════════ -->
 
 ### 10. Terminer la chaîne régime puis optimiser vers l'exécution
 

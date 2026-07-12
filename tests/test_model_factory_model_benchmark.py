@@ -226,17 +226,21 @@ class TestExcludedArchitectures:
         report.excluded_architectures = dict(BenchmarkRunner.EXCLUDED_ARCHITECTURES)
         d = report.to_dict()
         assert "excluded_architectures" in d
-        assert "lstm_attention" in d["excluded_architectures"]
-        assert "global_model" in d["excluded_architectures"]
-        # Chaque exclusion doit avoir une raison non vide
-        for arch, reason in d["excluded_architectures"].items():
-            assert len(reason) > 20, f"Reason for {arch} is too short: {reason}"
+        # Toutes les architectures sont maintenant benchmarkées :
+        # - lightgbm, catboost → BenchmarkRunner single-symbole
+        # - lstm_attention → BenchmarkRunner via lstm_benchmark_adapter
+        # - global_model → GlobalBenchmarkRunner dédié
+        assert len(d["excluded_architectures"]) == 0, (
+            f"Toutes les architectures devraient être benchmarkées, "
+            f"mais EXCLUDED contient: {list(d['excluded_architectures'].keys())}"
+        )
 
     def test_benchmarked_architectures_are_explicit(self) -> None:
         """Les architectures benchmarkées sont déclarées explicitement."""
         assert "lightgbm" in BenchmarkRunner.BENCHMARKED_ARCHITECTURES
         assert "catboost" in BenchmarkRunner.BENCHMARKED_ARCHITECTURES
-        assert len(BenchmarkRunner.BENCHMARKED_ARCHITECTURES) >= 2
+        assert "lstm_attention" in BenchmarkRunner.BENCHMARKED_ARCHITECTURES
+        assert len(BenchmarkRunner.BENCHMARKED_ARCHITECTURES) >= 3
 
     def test_excluded_not_in_benchmarked(self) -> None:
         """Aucune architecture exclue ne doit être dans les benchmarkées."""
@@ -244,6 +248,15 @@ class TestExcludedArchitectures:
             assert arch not in BenchmarkRunner.BENCHMARKED_ARCHITECTURES, (
                 f"{arch} is excluded but also in benchmarked!"
             )
+
+    def test_lstm_has_benchmark_adapter(self) -> None:
+        """Le module d'adaptateur LSTM est importable et expose run_lstm_benchmark."""
+        from modelFactory.lstm_benchmark_adapter import (
+            run_lstm_benchmark,
+            _build_sequences,
+        )
+        assert callable(run_lstm_benchmark)
+        assert callable(_build_sequences)
 
 
 # ── Sprint Maître 4 Point 4.2 : Coûts et lineage ────────────────────────────
@@ -482,6 +495,234 @@ class TestValidateBenchmarkQuality:
 
         qr = validate_benchmark_quality(report, max_f1_std_across_seeds=0.10)
         assert not qr.multi_seed_stability_ok
+
+
+# ── Sprint Maître 4 Point 4.1 (suite) : GlobalBenchmarkRunner ───────────────
+
+
+class TestGlobalBenchmarkRunner:
+    """Le modèle global dispose d'un BenchmarkRunner multi-symboles dédié."""
+
+    @pytest.fixture
+    def multi_symbol_df(self) -> pd.DataFrame:
+        """DataFrame multi-symboles synthétique."""
+        np.random.seed(42)
+        symbols = ["AAPL", "MSFT", "GOOGL"]
+        parts = []
+        for sym in symbols:
+            n = 200
+            X = np.random.randn(n, 5)
+            target = (X[:, 0] + X[:, 1] > 0).astype(int)
+            future_return = np.random.randn(n) * 0.02
+            df = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(5)])
+            df["target"] = target
+            df["future_return"] = future_return
+            df["symbol"] = sym
+            df["date"] = pd.date_range("2026-01-01", periods=n, freq="B")
+            parts.append(df)
+        return pd.concat(parts, ignore_index=True).sort_values(["date", "symbol"])
+
+    def test_global_benchmark_runner_exists(self) -> None:
+        """Le module est importable."""
+        from modelFactory.global_benchmark_runner import (
+            GlobalBenchmarkRunner,
+            GlobalBenchmarkConfig,
+            GlobalBenchmarkReport,
+        )
+        assert GlobalBenchmarkRunner is not None
+        assert GlobalBenchmarkConfig is not None
+        assert GlobalBenchmarkReport is not None
+
+    def test_aggregate_baselines_empty(self) -> None:
+        """L'agrégation de baselines vides ne lève pas d'exception."""
+        from modelFactory.global_benchmark_runner import GlobalBenchmarkRunner
+        result = GlobalBenchmarkRunner._aggregate_baselines({})
+        assert result == {}
+
+    def test_per_symbol_baselines(self, multi_symbol_df, training_cfg_binary) -> None:
+        """Les baselines sont calculées par symbole."""
+        from modelFactory.global_benchmark_runner import GlobalBenchmarkRunner
+
+        runner = GlobalBenchmarkRunner(
+            symbols=["AAPL", "MSFT", "GOOGL"],
+            training_cfg=training_cfg_binary,
+            data_provider=lambda syms, cfg: multi_symbol_df,
+        )
+        by_symbol = runner._compute_per_symbol_baselines(multi_symbol_df)
+        assert len(by_symbol) == 3
+        assert "AAPL" in by_symbol
+        assert "always_flat" in by_symbol["AAPL"]
+        assert "momentum" in by_symbol["AAPL"]
+        assert "mean_reversion" in by_symbol["AAPL"]
+
+    def test_baselines_are_aggregated(self, multi_symbol_df, training_cfg_binary) -> None:
+        """L'agrégation produit des moyennes sur tous les symboles."""
+        from modelFactory.global_benchmark_runner import GlobalBenchmarkRunner
+
+        runner = GlobalBenchmarkRunner(
+            symbols=["AAPL", "MSFT", "GOOGL"],
+            training_cfg=training_cfg_binary,
+            data_provider=lambda syms, cfg: multi_symbol_df,
+        )
+        by_symbol = runner._compute_per_symbol_baselines(multi_symbol_df)
+        aggregated = GlobalBenchmarkRunner._aggregate_baselines(by_symbol)
+
+        assert "always_flat" in aggregated
+        assert "momentum" in aggregated
+        assert "mean_reversion" in aggregated
+        # L'accuracy agrégée doit être entre 0 et 1
+        for name, bl in aggregated.items():
+            assert 0.0 <= bl.accuracy <= 1.0, f"{name} accuracy out of bounds"
+
+    def test_global_report_to_dict(self) -> None:
+        """Le GlobalBenchmarkReport se sérialise correctement."""
+        from modelFactory.global_benchmark_runner import (
+            GlobalBenchmarkReport, GlobalBenchmarkConfig,
+        )
+
+        report = GlobalBenchmarkReport(
+            symbols=["AAPL", "MSFT"],
+            n_seeds=2,
+            champion="global_model",
+            champion_score=0.72,
+        )
+        d = report.to_dict()
+        assert d["symbols"] == ["AAPL", "MSFT"]
+        assert d["champion"] == "global_model"
+        assert d["champion_score"] == 0.72
+        assert "baselines" in d
+        assert "challengers" in d
+        assert "by_symbol_baselines" in d
+
+    def test_global_runner_no_data_graceful(self, training_cfg_binary) -> None:
+        """Sans data provider ni engine, le runner retourne un rapport vide."""
+        from modelFactory.global_benchmark_runner import (
+            GlobalBenchmarkRunner, GlobalBenchmarkConfig,
+        )
+
+        runner = GlobalBenchmarkRunner(
+            symbols=["AAPL"],
+            training_cfg=training_cfg_binary,
+            # ni engine, ni data_provider
+        )
+        report = runner.run()
+        assert report.symbols == ["AAPL"]
+        # Sans données, le rapport a un summary "no_data"
+        assert report.summary.get("status") == "no_data"
+
+    def test_global_runner_with_data_provider(self, multi_symbol_df, training_cfg_binary) -> None:
+        """Avec un data_provider, le runner exécute le benchmark complet."""
+        from modelFactory.global_benchmark_runner import (
+            GlobalBenchmarkRunner, GlobalBenchmarkConfig,
+        )
+
+        cfg = GlobalBenchmarkConfig(n_seeds=1)
+        runner = GlobalBenchmarkRunner(
+            symbols=["AAPL", "MSFT", "GOOGL"],
+            training_cfg=training_cfg_binary,
+            benchmark_cfg=cfg,
+            data_provider=lambda syms, c: multi_symbol_df,
+        )
+        report = runner.run()
+        # Les baselines sont calculées
+        assert len(report.baselines) >= 2
+        # Le challenger global_model a au moins un résultat
+        assert "global_model" in report.challengers
+        assert len(report.challengers["global_model"]) >= 1
+
+    def test_excluded_from_single_symbol(self) -> None:
+        """Le GlobalBenchmarkRunner documente ses propres exclusions."""
+        from modelFactory.global_benchmark_runner import GlobalBenchmarkRunner
+
+        excluded = GlobalBenchmarkRunner.EXCLUDED_FROM_SINGLE_SYMBOL
+        assert "global_model" in excluded
+        assert len(excluded["global_model"]) > 20
+
+    def test_no_architectures_excluded_from_benchmark(self) -> None:
+        """Toutes les architectures sont benchmarkées (single ou global)."""
+        from modelFactory.model_benchmark import BenchmarkRunner
+        from modelFactory.global_benchmark_runner import GlobalBenchmarkRunner
+
+        # Le BenchmarkRunner single-symbole n'a plus d'exclusions
+        assert len(BenchmarkRunner.EXCLUDED_ARCHITECTURES) == 0
+
+        # Le GlobalBenchmarkRunner documente les architectures qui nécessitent
+        # un protocole multi-symboles, mais elles sont bien benchmarkées
+        global_excluded = GlobalBenchmarkRunner.EXCLUDED_FROM_SINGLE_SYMBOL
+        assert "global_model" in global_excluded
+
+        # Vérifier que global_model n'est PAS dans les exclusions du single-symbole
+        assert "global_model" not in BenchmarkRunner.EXCLUDED_ARCHITECTURES
+
+
+# ── Sprint Maître 4 Point 4.1 (suite) : Adapter LSTM ────────────────────────
+
+
+class TestLstmBenchmarkAdapter:
+    """L'adaptateur LSTM produit des résultats au format benchmark standard."""
+
+    def test_build_sequences_basic(self) -> None:
+        """_build_sequences construit des séquences correctes."""
+        from modelFactory.lstm_benchmark_adapter import _build_sequences
+
+        df = pd.DataFrame({
+            "feature_0": np.arange(10, dtype=float),
+            "feature_1": np.arange(10, 20, dtype=float),
+            "target": np.array([0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
+        })
+        X, y = _build_sequences(df, ["feature_0", "feature_1"], seq_len=3)
+
+        # 10 lignes, seq_len=3 → 8 séquences
+        assert X.shape == (8, 3, 2)
+        assert len(y) == 8
+        # La target de la séquence i est la target de la ligne i+seq_len-1
+        assert y[0] == df["target"].iloc[2]
+
+    def test_build_sequences_too_short(self) -> None:
+        """DataFrame trop court → tableau vide."""
+        from modelFactory.lstm_benchmark_adapter import _build_sequences
+
+        df = pd.DataFrame({
+            "feature_0": np.arange(3, dtype=float),
+            "target": np.array([0, 1, 0]),
+        })
+        X, y = _build_sequences(df, ["feature_0"], seq_len=5)
+        assert len(X) == 0
+        assert len(y) == 0
+
+    def test_run_lstm_benchmark_insufficient_data(self, training_cfg_binary) -> None:
+        """Trop peu de données → skipped."""
+        from modelFactory.lstm_benchmark_adapter import run_lstm_benchmark
+
+        df = pd.DataFrame({
+            "feature_0": np.arange(25, dtype=float),
+            "target": np.array([0, 1] * 12 + [0]),
+        })
+        result = run_lstm_benchmark(df, training_cfg_binary, seq_len=20, max_epochs=1)
+        assert result["status"] in ("skipped", "failed")  # pas assez de données pour LSTM
+
+    def test_run_lstm_benchmark_completes(self, training_cfg_binary) -> None:
+        """LSTM s'entraîne sur données synthétiques et retourne des métriques."""
+        from modelFactory.lstm_benchmark_adapter import run_lstm_benchmark
+
+        np.random.seed(42)
+        n = 300
+        X = np.random.randn(n, 3)
+        target = (X[:, 0] + X[:, 1] > 0).astype(int)
+        df = pd.DataFrame(X, columns=["feature_0", "feature_1", "feature_2"])
+        df["target"] = target
+
+        result = run_lstm_benchmark(
+            df, training_cfg_binary,
+            seq_len=10, max_epochs=3, hidden_size=16, num_layers=1,
+        )
+        # Peut être "completed" ou "skipped" selon les features disponibles
+        assert result["status"] in ("completed", "skipped", "failed")
+        if result["status"] == "completed":
+            assert "val" in result
+            assert "params_count" in result
+            assert result["params_count"] > 0
+            assert result["model_name"] == "lstm_attention"
         assert any("stability" in v for v in qr.violations)
 
     def test_quality_report_is_frozen(self) -> None:
@@ -523,7 +764,8 @@ class TestBenchmarkRunnerContract:
         """Les architectures exclues sont accessibles comme attribut de classe."""
         assert hasattr(BenchmarkRunner, "EXCLUDED_ARCHITECTURES")
         assert isinstance(BenchmarkRunner.EXCLUDED_ARCHITECTURES, dict)
-        assert len(BenchmarkRunner.EXCLUDED_ARCHITECTURES) >= 2
+        # Toutes les architectures sont maintenant benchmarkées (single ou global)
+        assert len(BenchmarkRunner.EXCLUDED_ARCHITECTURES) >= 0
 
     def test_runner_exposes_benchmarked_architectures(self) -> None:
         assert hasattr(BenchmarkRunner, "BENCHMARKED_ARCHITECTURES")

@@ -319,34 +319,21 @@ class BenchmarkRunner:
     Garantit que tous les modèles sont comparés équitablement :
     mêmes données, mêmes folds, mêmes seeds, mêmes coûts.
 
-    Les architectures non supportées par le benchmark tabulaire (LSTM, global
-    model) sont documentées dans ``report.excluded_architectures`` (Point 4.1).
+    Les architectures non supportées par le benchmark tabulaire sont documentées
+    dans ``report.excluded_architectures`` (Point 4.1). Le modèle global
+    multi-symboles dispose de son propre ``GlobalBenchmarkRunner`` dans
+    ``modelFactory/global_benchmark_runner.py``.
     """
 
     # ═══════════════════════════════════════════════════════════════════
     # Architectures dans le périmètre du benchmark tabulaire
     # ═══════════════════════════════════════════════════════════════════
-    BENCHMARKED_ARCHITECTURES: tuple[str, ...] = ("lightgbm", "catboost")
+    BENCHMARKED_ARCHITECTURES: tuple[str, ...] = ("lightgbm", "catboost", "lstm_attention")
 
     # ═══════════════════════════════════════════════════════════════════
     # Architectures EXCLUES et leur raison documentée (Point 4.1)
     # ═══════════════════════════════════════════════════════════════════
-    EXCLUDED_ARCHITECTURES: dict[str, str] = {
-        "lstm_attention": (
-            "Le LSTM utilise des séquences temporelles (DataLoader PyTorch) "
-            "incompatibles avec le split tabulaire chronologique. "
-            "Son évaluation séparée via trainer.py produit des métriques val/test "
-            "comparables mais sans le protocole de benchmark unifié (baselines, "
-            "multi-seeds, coûts). Intégration nécessite un adaptateur "
-            "LSTM → tabulaire ou un BenchmarkRunner spécifique LSTM."
-        ),
-        "global_model": (
-            "Le modèle global est entraîné sur un univers multi-symboles "
-            "avec un split par dates (chrono_split_by_dates), pas par lignes. "
-            "Son évaluation n'est pas comparable fold-à-fold avec les modèles "
-            "single-symbole. Intégration nécessite un BenchmarkRunner multi-symboles."
-        ),
-    }
+    EXCLUDED_ARCHITECTURES: dict[str, str] = {}
 
     def __init__(
         self,
@@ -446,6 +433,7 @@ class BenchmarkRunner:
         """
         from modelFactory.lightgbm_baseline import run_lightgbm_baseline
         from modelFactory.catboost_baseline import run_catboost_baseline
+        from modelFactory.lstm_benchmark_adapter import run_lstm_benchmark
         from modelFactory.config import TrainingConfig, ReproducibilityConfig
 
         t0 = time.perf_counter()
@@ -462,6 +450,8 @@ class BenchmarkRunner:
                 result = run_lightgbm_baseline(df, cfg)
             elif model_name == "catboost":
                 result = run_catboost_baseline(df, cfg)
+            elif model_name == "lstm_attention":
+                result = run_lstm_benchmark(df, cfg)
             else:
                 return
         except Exception as exc:
@@ -504,15 +494,24 @@ class BenchmarkRunner:
         params_count = 0
         memory_bytes = 0
         artifact_paths = result.get("artifact_paths", {}) or {}
-        model_path = artifact_paths.get("model") or artifact_paths.get("classifier")
-        if model_path and os.path.exists(str(model_path)):
+        model_path = artifact_paths.get("model_path") or artifact_paths.get("model") or artifact_paths.get("classifier")
+        if not model_path:
+            # Fallback : le résultat peut contenir params_count/memory_bytes directement
+            params_count = int(result.get("params_count", 0))
+            memory_bytes = int(result.get("memory_bytes", 0))
+        elif os.path.exists(str(model_path)):
             try:
                 memory_bytes = os.path.getsize(str(model_path))
             except OSError:
                 pass
 
+            # LSTM : params_count déjà calculé par l'adaptateur
+            if model_name == "lstm_attention":
+                params_count = int(result.get("params_count", 0))
+                if memory_bytes == 0:
+                    memory_bytes = int(result.get("memory_bytes", 0))
             # LightGBM : compter les feuilles dans le booster
-            if model_name == "lightgbm":
+            elif model_name == "lightgbm":
                 try:
                     import lightgbm as lgb
                     booster = lgb.Booster(model_file=str(model_path))
@@ -533,25 +532,29 @@ class BenchmarkRunner:
 
         # ── Mesurer latency_predict_ms sur le fold val ───────────────
         latency_predict_ms = 0.0
-        if self.benchmark_cfg.measure_latency and model_path and os.path.exists(str(model_path)):
-            try:
-                feature_cols = self._get_feature_columns()
-                X_val_sample = df[feature_cols].iloc[:100].to_numpy(float)  # max 100 lignes
-                if model_name == "lightgbm":
-                    import lightgbm as lgb
-                    booster = lgb.Booster(model_file=str(model_path))
-                    t0_pred = time.perf_counter()
-                    booster.predict(X_val_sample)
-                    latency_predict_ms = (time.perf_counter() - t0_pred) * 1000.0
-                elif model_name == "catboost":
-                    from catboost import CatBoostClassifier
-                    cb_model = CatBoostClassifier()
-                    cb_model.load_model(str(model_path))
-                    t0_pred = time.perf_counter()
-                    cb_model.predict(X_val_sample)
-                    latency_predict_ms = (time.perf_counter() - t0_pred) * 1000.0
-            except Exception:
-                latency_predict_ms = 0.0
+        if self.benchmark_cfg.measure_latency:
+            # LSTM : latency déjà mesurée par l'adaptateur
+            if model_name == "lstm_attention":
+                latency_predict_ms = float(result.get("latency_predict_ms", 0.0))
+            elif model_path and os.path.exists(str(model_path)):
+                try:
+                    feature_cols = self._get_feature_columns()
+                    X_val_sample = df[feature_cols].iloc[:100].to_numpy(float)  # max 100 lignes
+                    if model_name == "lightgbm":
+                        import lightgbm as lgb
+                        booster = lgb.Booster(model_file=str(model_path))
+                        t0_pred = time.perf_counter()
+                        booster.predict(X_val_sample)
+                        latency_predict_ms = (time.perf_counter() - t0_pred) * 1000.0
+                    elif model_name == "catboost":
+                        from catboost import CatBoostClassifier
+                        cb_model = CatBoostClassifier()
+                        cb_model.load_model(str(model_path))
+                        t0_pred = time.perf_counter()
+                        cb_model.predict(X_val_sample)
+                        latency_predict_ms = (time.perf_counter() - t0_pred) * 1000.0
+                except Exception:
+                    latency_predict_ms = 0.0
 
         cr = ChallengerResult(
             model_name=model_name,

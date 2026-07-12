@@ -711,3 +711,306 @@ def check_liquidity_pre_entry(
         borrow=borrow,
         adv_usd=adv_usd,
     )
+
+
+# ── PreSubmissionGate (Point 9.6) ───────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class PreSubmissionResult:
+    """Résultat de la réévaluation liquidité/borrow juste avant soumission broker.
+
+    Point 9.6 — Ce DTO capture le verdict de la vérification pré-soumission :
+    le spread, le borrow et l'ADV sont-ils toujours valides au moment de
+    soumettre l'ordre au broker ?
+
+    Attributes
+    ----------
+    go : bool
+        True si l'ordre peut être soumis.
+    reason : str
+        Raison explicite du GO ou NO-GO.
+    intent_id : str | None
+        Identifiant de l'intent vérifié.
+    symbol : str
+        Symbole concerné.
+    side : str
+        "long" ou "short".
+    liquidity_result : LiquidityGateResult | None
+        Résultat détaillé du LiquidityGate sous-jacent.
+    checked_at : datetime
+        Horodatage de la vérification.
+    spread_stale : bool
+        True si la quote était stale au moment de la vérification.
+    borrow_changed : bool
+        True si le statut borrow a changé depuis la décision de risque
+        (ex: ETB → HTB ou HTB → NOT_SHORTABLE).
+    """
+
+    go: bool
+    reason: str = ""
+    intent_id: str | None = None
+    symbol: str = ""
+    side: str = ""
+    liquidity_result: LiquidityGateResult | None = None
+    checked_at: datetime | None = None
+    spread_stale: bool = False
+    borrow_changed: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "go": self.go,
+            "reason": self.reason,
+            "intent_id": self.intent_id,
+            "symbol": self.symbol,
+            "side": self.side,
+            "liquidity_result": self.liquidity_result.to_dict() if self.liquidity_result else None,
+            "checked_at": self.checked_at.isoformat() if self.checked_at else None,
+            "spread_stale": self.spread_stale,
+            "borrow_changed": self.borrow_changed,
+        }
+
+
+@dataclass
+class PreSubmissionGate:
+    """Gate de réévaluation liquidité/borrow juste avant soumission broker.
+
+    Point 9.6 — Ce gate est appelé **après** la décision de risque mais
+    **avant** l'envoi de l'ordre au broker. Il revérifie que les conditions
+    de marché n'ont pas changé défavorablement entre la décision et la
+    soumission.
+
+    Si le spread s'est élargi, le borrow est devenu indisponible, ou l'ADV
+    est insuffisant, l'ordre est bloqué (NO-GO) avec une raison explicite.
+
+    Parameters
+    ----------
+    liquidity_gate : LiquidityGate
+        Le gate de liquidité sous-jacent.
+    require_fresh_quote : bool
+        Si True, exige une quote non stale (moins de max_quote_age_seconds).
+        Défaut : True (plus strict que le LiquidityGate de décision).
+    max_quote_age_seconds : float
+        Âge max de la quote pour la réévaluation pré-soumission.
+        Défaut : 30s (beaucoup plus strict que les ~5min de la décision).
+    fail_closed_on_missing_data : bool
+        Si True, bloque l'ordre si les données nécessaires sont absentes.
+        Défaut : True (principe de précaution).
+    """
+
+    liquidity_gate: LiquidityGate = field(default_factory=LiquidityGate)
+    require_fresh_quote: bool = True
+    max_quote_age_seconds: float = 30.0
+    fail_closed_on_missing_data: bool = True
+
+    def evaluate(
+        self,
+        symbol: str,
+        side: str,
+        notional: float,
+        *,
+        spread: SpreadSnapshot | None = None,
+        borrow: BorrowSnapshot | None = None,
+        adv_usd: float | None = None,
+        daily_vol_pct: float | None = None,
+        intent_id: str | None = None,
+        previous_borrow: BorrowSnapshot | None = None,
+    ) -> PreSubmissionResult:
+        """Réévalue les conditions de liquidité juste avant soumission.
+
+        Parameters
+        ----------
+        symbol : str
+        side : str
+            "long" ou "short".
+        notional : float
+            Taille visée en dollars.
+        spread : SpreadSnapshot | None
+            Quote fraîche (doit avoir moins de ``max_quote_age_seconds``).
+        borrow : BorrowSnapshot | None
+            Statut borrow actuel.
+        adv_usd : float | None
+            ADV 20j en dollars.
+        daily_vol_pct : float | None
+            Volatilité quotidienne en %.
+        intent_id : str | None
+            Identifiant de l'intent pour traçabilité.
+        previous_borrow : BorrowSnapshot | None
+            Statut borrow au moment de la décision de risque, pour détecter
+            un changement défavorable.
+
+        Returns
+        -------
+        PreSubmissionResult
+        """
+        from datetime import datetime as _dt, timezone as _tz
+
+        checked_at = _dt.now(_tz.utc)
+        spread_stale = False
+        borrow_changed = False
+
+        # ── Vérification fraîcheur de la quote ─────────────────────
+        if spread is not None and self.require_fresh_quote:
+            if spread.quote_time is not None:
+                quote_dt = spread.quote_time
+                if quote_dt.tzinfo is None:
+                    # Assume UTC si naive (rétrocompatibilité)
+                    from datetime import timezone as _tz_mod
+                    quote_dt = quote_dt.replace(tzinfo=_tz_mod.utc)
+                age = (checked_at - quote_dt).total_seconds()
+                if age > self.max_quote_age_seconds:
+                    spread_stale = True
+                    return PreSubmissionResult(
+                        go=False,
+                        reason=f"quote_stale_pre_soumission ({age:.0f}s > {self.max_quote_age_seconds:.0f}s)",
+                        intent_id=intent_id,
+                        symbol=symbol,
+                        side=side,
+                        checked_at=checked_at,
+                        spread_stale=True,
+                        borrow_changed=borrow_changed,
+                    )
+
+        # ── Détection changement borrow ────────────────────────────
+        if (
+            previous_borrow is not None
+            and borrow is not None
+            and borrow.status != previous_borrow.status
+        ):
+            borrow_changed = True
+            # Si la situation s'est dégradée, on bloque
+            if _borrow_degraded(previous_borrow.status, borrow.status):
+                return PreSubmissionResult(
+                    go=False,
+                    reason=(
+                        f"borrow_degrade: {previous_borrow.status.value} → "
+                        f"{borrow.status.value}"
+                    ),
+                    intent_id=intent_id,
+                    symbol=symbol,
+                    side=side,
+                    checked_at=checked_at,
+                    spread_stale=spread_stale,
+                    borrow_changed=True,
+                )
+
+        # ── Délégation au LiquidityGate ────────────────────────────
+        pre_gate = LiquidityGate(
+            participation_limit=self.liquidity_gate.participation_limit,
+            slippage_estimator=self.liquidity_gate.slippage_estimator,
+            max_spread_bps=self.liquidity_gate.max_spread_bps,
+            require_fresh_quote=self.fail_closed_on_missing_data,
+            max_slippage_bps=self.liquidity_gate.max_slippage_bps,
+            block_htb_without_locate=self.liquidity_gate.block_htb_without_locate,
+        )
+
+        # ── Gestion données manquantes ─────────────────────────────
+        is_short = side == "short"
+        if self.fail_closed_on_missing_data:
+            if spread is None:
+                return PreSubmissionResult(
+                    go=False,
+                    reason="spread_indisponible_pre_soumission",
+                    intent_id=intent_id,
+                    symbol=symbol,
+                    side=side,
+                    checked_at=checked_at,
+                    spread_stale=True,
+                )
+            if is_short and borrow is None:
+                return PreSubmissionResult(
+                    go=False,
+                    reason="borrow_indisponible_pre_soumission",
+                    intent_id=intent_id,
+                    symbol=symbol,
+                    side=side,
+                    checked_at=checked_at,
+                )
+
+        liquidity_result = pre_gate.evaluate(
+            symbol=symbol,
+            side=side,
+            notional=notional,
+            spread=spread,
+            borrow=borrow if is_short else None,
+            adv_usd=adv_usd,
+            daily_vol_pct=daily_vol_pct,
+        )
+
+        return PreSubmissionResult(
+            go=liquidity_result.go,
+            reason=liquidity_result.reason,
+            intent_id=intent_id,
+            symbol=symbol,
+            side=side,
+            liquidity_result=liquidity_result,
+            checked_at=checked_at,
+            spread_stale=spread_stale,
+            borrow_changed=borrow_changed,
+        )
+
+
+def _borrow_degraded(old: BorrowStatus, new: BorrowStatus) -> bool:
+    """True si le statut borrow s'est dégradé (ETB→HTB, ETB→NOT_SHORTABLE, HTB→NOT_SHORTABLE)."""
+    severity = {
+        BorrowStatus.EASY_TO_BORROW: 0,
+        BorrowStatus.HARD_TO_BORROW: 1,
+        BorrowStatus.NOT_SHORTABLE: 2,
+    }
+    return severity.get(new, 0) > severity.get(old, 0)
+
+
+def check_pre_submission(
+    symbol: str,
+    side: str,
+    notional: float,
+    *,
+    spread: SpreadSnapshot | None = None,
+    borrow: BorrowSnapshot | None = None,
+    adv_usd: float | None = None,
+    daily_vol_pct: float | None = None,
+    intent_id: str | None = None,
+    previous_borrow: BorrowSnapshot | None = None,
+) -> PreSubmissionResult:
+    """Réévalue la liquidité/borrow juste avant soumission broker (Point 9.6).
+
+    Helper pur utilisable comme veto dans la boucle de soumission de l'executor.
+    Utilise un ``PreSubmissionGate`` avec les réglages par défaut (quote < 30s,
+    fail-closed si données manquantes).
+
+    Parameters
+    ----------
+    symbol : str
+    side : str
+        "long" ou "short".
+    notional : float
+        Taille visée en dollars.
+    spread : SpreadSnapshot | None
+        Quote fraîche bid/ask.
+    borrow : BorrowSnapshot | None
+        Statut borrow actuel.
+    adv_usd : float | None
+        ADV 20j en dollars.
+    daily_vol_pct : float | None
+        Volatilité quotidienne en %.
+    intent_id : str | None
+        Identifiant de l'intent pour traçabilité.
+    previous_borrow : BorrowSnapshot | None
+        Statut borrow au moment de la décision de risque.
+
+    Returns
+    -------
+    PreSubmissionResult
+    """
+    gate = PreSubmissionGate()
+    return gate.evaluate(
+        symbol=symbol,
+        side=side,
+        notional=notional,
+        spread=spread,
+        borrow=borrow,
+        adv_usd=adv_usd,
+        daily_vol_pct=daily_vol_pct,
+        intent_id=intent_id,
+        previous_borrow=previous_borrow,
+    )

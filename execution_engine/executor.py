@@ -94,6 +94,41 @@ class ProductionExecutor:
         self._oco = oco
         self._circuit_breaker = circuit_breaker
         self._progress_callback = progress_callback
+        # ── Point 9.6 : données de réévaluation pré-soumission ─────
+        self._pre_submission_spreads: dict[str, object] | None = None
+        self._pre_submission_borrows: dict[str, object] | None = None
+        self._pre_submission_adv: dict[str, float] | None = None
+        self._pre_submission_daily_vol: dict[str, float] | None = None
+
+    def set_pre_submission_data(
+        self,
+        *,
+        spreads: dict[str, object] | None = None,
+        borrows: dict[str, object] | None = None,
+        adv: dict[str, float] | None = None,
+        daily_vol: dict[str, float] | None = None,
+    ) -> None:
+        """Injecte les données de marché pour la réévaluation pré-soumission (Point 9.6).
+
+        Appelé avant ``execute_run()`` pour fournir les snapshots spread/borrow/ADV
+        frais qui seront utilisés pour revérifier chaque intent juste avant
+        soumission broker.
+
+        Parameters
+        ----------
+        spreads : dict[str, SpreadSnapshot] | None
+            Quotes bid/ask par symbole.
+        borrows : dict[str, BorrowSnapshot] | None
+            Statuts borrow par symbole.
+        adv : dict[str, float] | None
+            ADV 20j en dollars par symbole.
+        daily_vol : dict[str, float] | None
+            Volatilité quotidienne en % par symbole.
+        """
+        self._pre_submission_spreads = spreads
+        self._pre_submission_borrows = borrows
+        self._pre_submission_adv = adv
+        self._pre_submission_daily_vol = daily_vol
 
     def _emit_progress(
         self,
@@ -728,6 +763,80 @@ class ProductionExecutor:
                     ))
                     metrics["submitted"] += 1
                     batch_count += 1
+                    self._emit_progress(
+                        metrics,
+                        current=submit_processed,
+                        total=submit_total,
+                        label="⚙️ Progression execution — soumission des ordres d'entrée",
+                        phase="submit_entries",
+                        item=intent.symbol,
+                    )
+                    continue
+
+                # ── Point 9.6 : réévaluation liquidité/borrow pré-soumission ──
+                pre_submission_blocked = False
+                if self._pre_submission_spreads is not None or self._pre_submission_borrows is not None:
+                    try:
+                        from risk_management.liquidity import check_pre_submission
+
+                        notional = abs(intent.qty * (intent.decision_price or 0.0))
+                        sym = intent.symbol.upper()
+                        side = "short" if intent.side == "sell" else "long"
+
+                        spread_snap = (
+                            self._pre_submission_spreads.get(sym)
+                            if self._pre_submission_spreads else None
+                        )
+                        borrow_snap = (
+                            self._pre_submission_borrows.get(sym)
+                            if self._pre_submission_borrows else None
+                        )
+                        adv = (
+                            self._pre_submission_adv.get(sym)
+                            if self._pre_submission_adv else None
+                        )
+                        vol = (
+                            self._pre_submission_daily_vol.get(sym)
+                            if self._pre_submission_daily_vol else None
+                        )
+
+                        result = check_pre_submission(
+                            symbol=sym,
+                            side=side,
+                            notional=notional,
+                            spread=spread_snap,      # type: ignore[arg-type]
+                            borrow=borrow_snap,        # type: ignore[arg-type]
+                            adv_usd=adv,
+                            daily_vol_pct=vol,
+                            intent_id=intent.intent_id,
+                        )
+
+                        if not result.go:
+                            LOGGER.warning(
+                                "Pre-submission gate NO-GO pour %s: %s",
+                                sym, result.reason,
+                            )
+                            events.append(make_event(
+                                exec_run_id, EventType.ORDER_REJECTED,
+                                f"Pre-submission gate: {result.reason}",
+                                symbol=intent.symbol,
+                                intent_id=intent.intent_id,
+                            ))
+                            self._persist_order_request_state(
+                                intent,
+                                status=OrderStatus.REJECTED,
+                                failure_reason=f"pre_submission_gate: {result.reason}",
+                            )
+                            metrics["skipped"] = metrics.get("skipped", 0) + 1
+                            pre_submission_blocked = True
+                    except Exception:
+                        LOGGER.debug(
+                            "Pre-submission gate indisponible pour %s, "
+                            "poursuite sans vérification.",
+                            intent.symbol, exc_info=True,
+                        )
+
+                if pre_submission_blocked:
                     self._emit_progress(
                         metrics,
                         current=submit_processed,

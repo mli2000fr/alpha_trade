@@ -18,6 +18,7 @@ PAUSE_CALL_BAR = 0.2
 PAUSE_CALL_QUOTE = 0.18
 HISTORICAL_QUOTES_LOG_EVERY_PAGES = 10
 ALPACA_ASSETS_ENDPOINT = "https://paper-api.alpaca.markets/v2/assets"
+ALPACA_ASSET_ENDPOINT_TEMPLATE = "https://paper-api.alpaca.markets/v2/assets/{symbol}"
 ALPACA_BARS_ENDPOINT_TEMPLATE = "https://data.alpaca.markets/v2/stocks/{symbol}/bars"
 ALPACA_QUOTES_ENDPOINT_TEMPLATE = "https://data.alpaca.markets/v2/stocks/{symbol}/quotes"
 ALPACA_LATEST_QUOTES_ENDPOINT = "https://data.alpaca.markets/v2/stocks/quotes/latest"
@@ -162,6 +163,46 @@ def fetch_alpaca_assets(session: Optional[requests.Session] = None, account_id: 
         )
         _telemetry_bump("alpaca", "success_total")
         return response.json()
+    finally:
+        if owned_session:
+            client.close()
+
+
+def fetch_asset_by_symbol(
+    symbol: str,
+    *,
+    session: Optional[requests.Session] = None,
+    account_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Récupère les détails d'un asset Alpaca par symbole, notamment les champs
+    ``shortable`` et ``easy_to_borrow`` utilisés par le gate de liquidité
+    (Point 9 — borrow PIT).
+
+    Endpoint : ``GET /v2/assets/{symbol}``
+    Retourne un dict contenant : ``symbol``, ``shortable``, ``easy_to_borrow``,
+    ``marginable``, ``fractionable``, ``status``, etc.
+
+    Lève ``AlpacaBarsFetchError`` en cas d'erreur technique (timeout, auth, etc.).
+    """
+    owned_session = session is None
+    client = session or requests.Session()
+    _telemetry_bump("alpaca", "requests_total")
+    try:
+        endpoint = ALPACA_ASSET_ENDPOINT_TEMPLATE.format(symbol=symbol.upper())
+        response = request_with_retry(
+            client,
+            "GET",
+            endpoint,
+            headers=_build_headers(account_id),
+            policy=_alpaca_retry_policy(),
+        )
+        _telemetry_bump("alpaca", "success_total")
+        return response.json()
+    except Exception as exc:
+        _try_alert_api_failure("alpaca_asset", str(exc))
+        raise AlpacaBarsFetchError(
+            f"Échec fetch_asset_by_symbol pour {symbol}: {exc}"
+        ) from exc
     finally:
         if owned_session:
             client.close()

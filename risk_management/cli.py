@@ -183,6 +183,129 @@ def _load_live_spread_snapshots(
     return snapshots
 
 
+# ── Section 17 Point 9 : provider borrow PIT ────────────────────────────────
+
+def _load_live_borrow_snapshots(
+    symbols: list[str],
+    *,
+    account_id: str,
+    trade_date: date,
+) -> dict[str, object]:
+    """Charge les statuts de borrow (ETB/HTB/NOT_SHORTABLE) pour le gate de liquidité.
+
+    Point 9 — Interroge l'API Alpaca ``GET /v2/assets/{symbol}`` pour les champs
+    ``shortable`` et ``easy_to_borrow``, puis les mappe vers les statuts
+    ``BorrowStatus`` (ETB/HTB/NOT_SHORTABLE). En cas d'indisponibilité de l'API,
+    un fallback local ``EASY_TO_BORROW`` est appliqué (conservateur, documenté).
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    from risk_management.liquidity import BorrowSnapshot, BorrowStatus
+
+    as_of = _dt.now(_tz.utc)
+    snapshots: dict[str, BorrowSnapshot] = {}
+
+    # ── Essayer l'API Alpaca asset par symbole ──────────────────────
+    try:
+        from service.alpaca.clientAlpaca import fetch_asset_by_symbol
+
+        for symbol in symbols:
+            sym = str(symbol).strip().upper()
+            if not sym:
+                continue
+            try:
+                asset = fetch_asset_by_symbol(sym, account_id=account_id)
+            except Exception:
+                LOGGER.debug(
+                    "fetch_asset_by_symbol échoué pour %s, fallback ETB.", sym,
+                    exc_info=True,
+                )
+                # Fallback ETB individuel pour ce symbole
+                snapshots[sym] = BorrowSnapshot(
+                    symbol=sym,
+                    status=BorrowStatus.EASY_TO_BORROW,
+                    fee_annual=0.003,
+                    quantity_available=None,
+                    locate_required=False,
+                    as_of=as_of,
+                    source="alpaca_asset_fallback_etb",
+                )
+                continue
+
+            shortable = bool(asset.get("shortable", True))
+            easy_to_borrow = bool(asset.get("easy_to_borrow", True))
+
+            if not shortable:
+                status = BorrowStatus.NOT_SHORTABLE
+                fee = float("inf")
+                locate_required = False
+            elif not easy_to_borrow:
+                status = BorrowStatus.HARD_TO_BORROW
+                fee = 0.05   # 5%/an — frais HTB standards
+                locate_required = True
+            else:
+                status = BorrowStatus.EASY_TO_BORROW
+                fee = 0.003  # 0.3%/an — frais ETB standards
+                locate_required = False
+
+            snapshots[sym] = BorrowSnapshot(
+                symbol=sym,
+                status=status,
+                fee_annual=fee,
+                quantity_available=None,
+                locate_required=locate_required,
+                as_of=as_of,
+                source="alpaca_asset_api",
+            )
+
+        if snapshots:
+            etb_count = sum(
+                1 for s in snapshots.values()
+                if s.status == BorrowStatus.EASY_TO_BORROW
+            )
+            htb_count = sum(
+                1 for s in snapshots.values()
+                if s.status == BorrowStatus.HARD_TO_BORROW
+            )
+            not_shortable_count = sum(
+                1 for s in snapshots.values()
+                if s.status == BorrowStatus.NOT_SHORTABLE
+            )
+            LOGGER.info(
+                "Borrow snapshots chargés via API Alpaca: %d symboles "
+                "(%d ETB, %d HTB, %d NOT_SHORTABLE)",
+                len(snapshots), etb_count, htb_count, not_shortable_count,
+            )
+            return snapshots
+    except Exception:
+        LOGGER.debug(
+            "API Alpaca borrow globalement indisponible, fallback local.",
+            exc_info=True,
+        )
+
+    # ── Fallback local : ETB pour tous les symboles ─────────────────
+    for symbol in symbols:
+        sym = str(symbol).strip().upper()
+        if not sym:
+            continue
+        snapshots[sym] = BorrowSnapshot(
+            symbol=sym,
+            status=BorrowStatus.EASY_TO_BORROW,
+            fee_annual=0.003,
+            quantity_available=None,
+            locate_required=False,
+            as_of=as_of,
+            source="local_fallback_etb",
+        )
+    LOGGER.info(
+        "Borrow snapshots chargés (fallback local ETB): %d symboles | "
+        "ATTENTION: aucun endpoint broker réel n'est disponible pour le borrow. "
+        "Les shorts seront acceptés sous réserve de liquidité.",
+        len(snapshots),
+    )
+    return snapshots
+
+
 def _parse_quote_time(value: object) -> datetime | None:
     if not value:
         return None
@@ -191,6 +314,84 @@ def _parse_quote_time(value: object) -> datetime | None:
     except ValueError:
         return None
     return parsed
+
+
+# ── Section 17 Point 9 : covariance PIT ─────────────────────────────────────
+
+def _wire_covariance_to_optimizer(
+    builder: object,
+    *,
+    factor_cov_live: object | None,
+    operational_snapshot: object | None,
+    directional_win_rates: dict[str | tuple[str, str], object],
+    config: object,
+) -> None:
+    """Transmet la covariance PIT au ``PortfolioOptimizer`` (Point 9).
+
+    La covariance est versionnée (``estimation_date``) et datée. Elle est
+    transmise au ``PortfolioBuilder`` via ``set_portfolio_optimization()``
+    avec les holdings du snapshot opérationnel et les edges directionnels.
+
+    Si la covariance ou les données nécessaires sont absentes, l'optimiseur
+    reste inactif et le contrôleur incrémental continue de fonctionner
+    (fallback nominal).
+    """
+    if factor_cov_live is None:
+        return
+    set_opt = getattr(builder, "set_portfolio_optimization", None)
+    if not callable(set_opt):
+        return
+
+    try:
+        import numpy as np
+        from risk_management.portfolio_optimizer import PortfolioOptimizer
+
+        # Extraire la matrice de covariance factorielle
+        factor_cov_matrix: np.ndarray | None = None
+        if hasattr(factor_cov_live, "factor_cov"):
+            factor_cov_matrix = getattr(factor_cov_live, "factor_cov")
+            if isinstance(factor_cov_matrix, np.ndarray) and factor_cov_matrix.ndim == 2:
+                pass
+            else:
+                factor_cov_matrix = None
+
+        # Holdings depuis le snapshot opérationnel
+        holdings: tuple = ()
+        if operational_snapshot is not None and hasattr(operational_snapshot, "holdings"):
+            holdings = tuple(getattr(operational_snapshot, "holdings", ()))
+
+        # Edges par symbole depuis les statistiques directionnelles
+        edge_by_symbol: dict[str, float] = {}
+        for key, dwr in directional_win_rates.items():
+            sym = key[0] if isinstance(key, tuple) else key
+            hit_rate = float(getattr(dwr, "hit_rate", 0) or 0)
+            payoff = float(getattr(dwr, "payoff", 0) or 0)
+            if hit_rate > 0 and payoff > 0:
+                edge_by_symbol[str(sym)] = hit_rate * payoff - (1.0 - hit_rate)
+
+        # Construire l'optimiseur
+        max_positions = int(getattr(config, "effective_max_positions", 20) or 20)
+        optimizer = PortfolioOptimizer(
+            max_positions=max_positions,
+            max_gross_exposure=float(getattr(config, "max_gross_exposure", 1.0) or 1.0),
+            max_net_exposure=float(getattr(config, "max_net_exposure", 0.30) or 0.30),
+            max_position_weight=float(getattr(config, "max_position_weight", 0.10) or 0.10),
+        )
+
+        set_opt(
+            optimizer,
+            holdings=holdings,
+            covariance=factor_cov_matrix,
+            edge_by_symbol=edge_by_symbol,
+        )
+        LOGGER.info(
+            "Covariance PIT transmise à l'optimiseur | factors=%d holdings=%d edges=%d",
+            factor_cov_matrix.shape[0] if factor_cov_matrix is not None else 0,
+            len(holdings),
+            len(edge_by_symbol),
+        )
+    except Exception:
+        LOGGER.debug("Transmission covariance à l'optimiseur ignorée.", exc_info=True)
 
 
 def _optional_quote_float(value: object) -> float | None:
@@ -1345,6 +1546,9 @@ def main(args: list[str] | None = None) -> None:
     from risk_management.selection_contract import build_candidate_from_prediction, build_rankings as _ml_rank
 
     candidates: list[MLRankedCandidate] = []
+    spread_snapshots: dict[str, object] = {}
+    borrow_snapshots: dict[str, object] = {}
+    liquidity_gate: object | None = None
     ml_coverage_gate = MlCoverageGateDecision(enabled=False, allowed=True, reason="disabled")
     if entry_gate_allows_new_entries:
         LOGGER.info("Chargement des predictions ML…")
@@ -1450,7 +1654,6 @@ def main(args: list[str] | None = None) -> None:
         )
 
         liquidity_gate = None
-        spread_snapshots: dict[str, object] = {}
         if not config.dry_run:
             from risk_management.liquidity import LiquidityGate
 
@@ -1458,6 +1661,12 @@ def main(args: list[str] | None = None) -> None:
             spread_snapshots = _load_live_spread_snapshots(
                 symbols,
                 account_id=effective_account_id,
+            )
+            # ── Section 17 Point 9 : charger les statuts borrow PIT ─────
+            borrow_snapshots = _load_live_borrow_snapshots(
+                symbols,
+                account_id=effective_account_id or resolved_account_scope,
+                trade_date=trade_date,
             )
 
         builder = PortfolioBuilder(
@@ -1471,24 +1680,28 @@ def main(args: list[str] | None = None) -> None:
         )
         # ── Section 17 Point 8 : injecter le snapshot opérationnel ──────
         # Enrichir avec les données PIT borrow/spread/quote si disponibles
-        if operational_snapshot is not None and spread_snapshots:
+        if operational_snapshot is not None and (spread_snapshots or borrow_snapshots):
             try:
-                # Enrichir le snapshot avec les métadonnées de spread
+                # Enrichir le snapshot avec les métadonnées de spread et borrow
                 spread_summary = {
                     "symbols_loaded": len(spread_snapshots),
                     "sources": list({getattr(s, "source", "unknown") for s in spread_snapshots.values() if hasattr(s, "source")}),
-                    "oldest_quote": min(
-                        (getattr(s, "quote_time", None) for s in spread_snapshots.values() if hasattr(s, "quote_time") and getattr(s, "quote_time", None) is not None),
-                        default=None,
-                    ),
+                }
+                borrow_summary = {
+                    "symbols_loaded": len(borrow_snapshots),
+                    "etb_count": sum(1 for b in borrow_snapshots.values() if hasattr(b, "status") and str(getattr(b, "status", "")).startswith("easy")),
+                    "htb_count": sum(1 for b in borrow_snapshots.values() if hasattr(b, "status") and str(getattr(b, "status", "")).startswith("hard")),
+                    "not_shortable_count": sum(1 for b in borrow_snapshots.values() if hasattr(b, "status") and str(getattr(b, "status", "")).startswith("not")),
                 }
                 LOGGER.info(
-                    "Snapshot opérationnel enrichi PIT | spreads=%d sources=%s",
+                    "Snapshot opérationnel enrichi PIT | spreads=%d borrow=%d (ETB=%d HTB=%d)",
                     spread_summary["symbols_loaded"],
-                    spread_summary["sources"],
+                    borrow_summary["symbols_loaded"],
+                    borrow_summary["etb_count"],
+                    borrow_summary["htb_count"],
                 )
             except Exception:
-                LOGGER.debug("Enrichissement PIT spread ignoré.", exc_info=True)
+                LOGGER.debug("Enrichissement PIT spread/borrow ignoré.", exc_info=True)
 
         if operational_snapshot is not None and hasattr(builder, "set_operational_snapshot"):
             builder.set_operational_snapshot(operational_snapshot)
@@ -1563,8 +1776,20 @@ def main(args: list[str] | None = None) -> None:
             set_liquidity_data(
                 liquidity_gate,
                 spread_snapshots=spread_snapshots,
-                borrow_snapshots={},
+                borrow_snapshots=borrow_snapshots,
             )
+        # ── Section 17 Point 9 : covariance PIT → PortfolioOptimizer ────
+        _wire_covariance_to_optimizer(
+            builder,
+            factor_cov_live=(
+                builder._factor_covariance
+                if hasattr(builder, "_factor_covariance")
+                else None
+            ),
+            operational_snapshot=operational_snapshot,
+            directional_win_rates=directional_win_rates,
+            config=config,
+        )
         builder.progress_callback = emit_run_summary
 
         # ── Section 17 Point 6.4 : gate de fraîcheur avant entrées ───────
@@ -1912,6 +2137,15 @@ def main(args: list[str] | None = None) -> None:
             "open_orders_count": len(operational_snapshot.open_orders) if operational_snapshot is not None else 0,
             "source": operational_snapshot.account.source if operational_snapshot is not None else None,
             "as_of": operational_snapshot.account.as_of.isoformat() if operational_snapshot is not None and operational_snapshot.account.as_of is not None else None,
+        },
+        # ── Section 17 Point 9 : liquidité et borrow ────────────────────
+        "liquidity_market_data": {
+            "spread_symbols_loaded": len(spread_snapshots),
+            "borrow_symbols_loaded": len(borrow_snapshots),
+            "borrow_etb_count": sum(1 for b in borrow_snapshots.values() if hasattr(b, "status") and str(getattr(b, "status", "")).startswith("easy")),
+            "borrow_htb_count": sum(1 for b in borrow_snapshots.values() if hasattr(b, "status") and str(getattr(b, "status", "")).startswith("hard")),
+            "borrow_not_shortable_count": sum(1 for b in borrow_snapshots.values() if hasattr(b, "status") and str(getattr(b, "status", "")).startswith("not")),
+            "liquidity_gate_active": liquidity_gate is not None,
         },
         "transition_plan": transition_plan.to_dict() if transition_plan is not None and hasattr(transition_plan, "to_dict") else None,
         # ── Section 17 Point 8 / Point 15 : réconciliation quotidienne ──

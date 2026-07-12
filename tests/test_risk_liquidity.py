@@ -16,10 +16,14 @@ from risk_management.liquidity import (
     LiquidityGate,
     LiquidityGateResult,
     ParticipationLimit,
+    PreSubmissionGate,
+    PreSubmissionResult,
     SlippageEstimate,
     SlippageEstimator,
     SpreadSnapshot,
+    _borrow_degraded,
     check_liquidity_pre_entry,
+    check_pre_submission,
 )
 
 
@@ -413,3 +417,233 @@ class TestCheckLiquidityPreEntry:
     def test_no_adv_blocks(self) -> None:
         result = check_liquidity_pre_entry("AAPL", "long", 50_000)
         assert result.go is False
+
+
+# ── PreSubmissionGate (Point 9.6) ───────────────────────────────────────────
+
+
+class TestBorrowDegraded:
+    def test_etb_to_htb_degraded(self) -> None:
+        assert _borrow_degraded(BorrowStatus.EASY_TO_BORROW, BorrowStatus.HARD_TO_BORROW) is True
+
+    def test_etb_to_not_shortable_degraded(self) -> None:
+        assert _borrow_degraded(BorrowStatus.EASY_TO_BORROW, BorrowStatus.NOT_SHORTABLE) is True
+
+    def test_htb_to_not_shortable_degraded(self) -> None:
+        assert _borrow_degraded(BorrowStatus.HARD_TO_BORROW, BorrowStatus.NOT_SHORTABLE) is True
+
+    def test_same_status_not_degraded(self) -> None:
+        assert _borrow_degraded(BorrowStatus.EASY_TO_BORROW, BorrowStatus.EASY_TO_BORROW) is False
+        assert _borrow_degraded(BorrowStatus.HARD_TO_BORROW, BorrowStatus.HARD_TO_BORROW) is False
+
+    def test_htb_to_etb_not_degraded(self) -> None:
+        assert _borrow_degraded(BorrowStatus.HARD_TO_BORROW, BorrowStatus.EASY_TO_BORROW) is False
+
+    def test_not_shortable_to_etb_not_degraded(self) -> None:
+        assert _borrow_degraded(BorrowStatus.NOT_SHORTABLE, BorrowStatus.EASY_TO_BORROW) is False
+
+
+class TestPreSubmissionGate:
+    def test_all_ok_long(self) -> None:
+        gate = PreSubmissionGate()
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        result = gate.evaluate(
+            "AAPL", "long", 50_000,
+            spread=spread,
+            adv_usd=10_000_000,
+            intent_id="intent-1",
+        )
+        assert result.go is True
+        assert result.reason == "liquidite_ok"
+        assert result.symbol == "AAPL"
+        assert result.side == "long"
+        assert result.intent_id == "intent-1"
+        assert result.spread_stale is False
+        assert result.borrow_changed is False
+
+    def test_all_ok_short_etb(self) -> None:
+        gate = PreSubmissionGate()
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        borrow = BorrowSnapshot("AAPL", status=BorrowStatus.EASY_TO_BORROW)
+        result = gate.evaluate(
+            "AAPL", "short", 50_000,
+            spread=spread,
+            borrow=borrow,
+            adv_usd=10_000_000,
+        )
+        assert result.go is True
+
+    def test_spread_stale_blocks(self) -> None:
+        gate = PreSubmissionGate(max_quote_age_seconds=30.0)
+        old = datetime.now(timezone.utc) - timedelta(seconds=60)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=old)
+        result = gate.evaluate(
+            "AAPL", "long", 50_000,
+            spread=spread,
+            adv_usd=10_000_000,
+        )
+        assert result.go is False
+        assert result.spread_stale is True
+
+    def test_borrow_degraded_etb_to_htb_blocks(self) -> None:
+        gate = PreSubmissionGate()
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        previous = BorrowSnapshot("AAPL", status=BorrowStatus.EASY_TO_BORROW)
+        current = BorrowSnapshot(
+            "AAPL", status=BorrowStatus.HARD_TO_BORROW,
+            locate_required=True, locate_confirmed=False,
+        )
+        result = gate.evaluate(
+            "AAPL", "short", 50_000,
+            spread=spread,
+            borrow=current,
+            adv_usd=10_000_000,
+            previous_borrow=previous,
+        )
+        assert result.go is False
+        assert "borrow_degrade" in result.reason
+        assert result.borrow_changed is True
+
+    def test_borrow_degraded_htb_to_not_shortable_blocks(self) -> None:
+        gate = PreSubmissionGate()
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        previous = BorrowSnapshot("AAPL", status=BorrowStatus.HARD_TO_BORROW)
+        current = BorrowSnapshot("AAPL", status=BorrowStatus.NOT_SHORTABLE)
+        result = gate.evaluate(
+            "AAPL", "short", 50_000,
+            spread=spread,
+            borrow=current,
+            adv_usd=10_000_000,
+            previous_borrow=previous,
+        )
+        assert result.go is False
+        assert result.borrow_changed is True
+
+    def test_borrow_improved_not_blocked(self) -> None:
+        """HTB→ETB n'est pas un blocage (amélioration)."""
+        gate = PreSubmissionGate()
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        previous = BorrowSnapshot("AAPL", status=BorrowStatus.HARD_TO_BORROW)
+        current = BorrowSnapshot("AAPL", status=BorrowStatus.EASY_TO_BORROW)
+        result = gate.evaluate(
+            "AAPL", "short", 50_000,
+            spread=spread,
+            borrow=current,
+            adv_usd=10_000_000,
+            previous_borrow=previous,
+        )
+        assert result.go is True
+        assert result.borrow_changed is True  # changement détecté, mais pas bloquant
+
+    def test_missing_spread_fail_closed(self) -> None:
+        gate = PreSubmissionGate(fail_closed_on_missing_data=True)
+        result = gate.evaluate(
+            "AAPL", "long", 50_000,
+            adv_usd=10_000_000,
+        )
+        assert result.go is False
+        assert "spread_indisponible" in result.reason
+
+    def test_missing_borrow_for_short_fail_closed(self) -> None:
+        gate = PreSubmissionGate(fail_closed_on_missing_data=True)
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        result = gate.evaluate(
+            "AAPL", "short", 50_000,
+            spread=spread,
+            adv_usd=10_000_000,
+        )
+        assert result.go is False
+        assert "borrow_indisponible" in result.reason
+
+    def test_missing_borrow_for_long_ok(self) -> None:
+        """Pour un long, l'absence de borrow n'est pas bloquante."""
+        gate = PreSubmissionGate(fail_closed_on_missing_data=True)
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        result = gate.evaluate(
+            "AAPL", "long", 50_000,
+            spread=spread,
+            adv_usd=10_000_000,
+        )
+        assert result.go is True
+
+    def test_fail_open_on_missing_data(self) -> None:
+        """Si fail_closed_on_missing_data=False, données absentes → GO (rétrocompatibilité)."""
+        gate = PreSubmissionGate(fail_closed_on_missing_data=False)
+        result = gate.evaluate("AAPL", "long", 50_000, adv_usd=10_000_000)
+        assert result.go is True
+
+
+# ── check_pre_submission (helper Point 9.6) ─────────────────────────────────
+
+
+class TestCheckPreSubmission:
+    def test_long_ok(self) -> None:
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        result = check_pre_submission(
+            "AAPL", "long", 50_000,
+            spread=spread, adv_usd=10_000_000, intent_id="i1",
+        )
+        assert result.go is True
+        assert result.intent_id == "i1"
+
+    def test_short_ok(self) -> None:
+        now = datetime.now(timezone.utc)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=now)
+        borrow = BorrowSnapshot("AAPL", status=BorrowStatus.EASY_TO_BORROW)
+        result = check_pre_submission(
+            "AAPL", "short", 50_000,
+            spread=spread, borrow=borrow, adv_usd=10_000_000,
+        )
+        assert result.go is True
+
+    def test_stale_spread_blocks(self) -> None:
+        old = datetime.now(timezone.utc) - timedelta(seconds=120)
+        spread = SpreadSnapshot("AAPL", bid=149.9, ask=150.1, quote_time=old)
+        result = check_pre_submission(
+            "AAPL", "long", 50_000,
+            spread=spread, adv_usd=10_000_000,
+        )
+        assert result.go is False
+
+    def test_missing_data_blocks(self) -> None:
+        result = check_pre_submission("AAPL", "long", 50_000)
+        assert result.go is False
+
+
+# ── PreSubmissionResult ─────────────────────────────────────────────────────
+
+
+class TestPreSubmissionResult:
+    def test_to_dict_go(self) -> None:
+        now = datetime.now(timezone.utc)
+        r = PreSubmissionResult(
+            go=True, reason="liquidite_ok",
+            intent_id="i1", symbol="AAPL", side="long",
+            checked_at=now,
+        )
+        d = r.to_dict()
+        assert d["go"] is True
+        assert d["intent_id"] == "i1"
+        assert d["checked_at"] is not None
+
+    def test_to_dict_no_go(self) -> None:
+        now = datetime.now(timezone.utc)
+        r = PreSubmissionResult(
+            go=False, reason="spread_stale",
+            intent_id="i2", symbol="TSLA", side="short",
+            spread_stale=True, borrow_changed=True,
+            checked_at=now,
+        )
+        d = r.to_dict()
+        assert d["go"] is False
+        assert d["spread_stale"] is True
+        assert d["borrow_changed"] is True
+        assert d["reason"] == "spread_stale"
