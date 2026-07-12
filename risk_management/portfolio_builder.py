@@ -393,6 +393,35 @@ class PortfolioBuilder:
         self._optimizer_covariance = covariance
         self._optimizer_edges = edge_by_symbol
 
+    # ── Section 17 Point 8 : snapshot opérationnel ─────────────────────────
+
+    def set_operational_snapshot(self, snapshot: object) -> None:
+        """Reçoit le snapshot opérationnel complet (compte, positions, ordres).
+
+        Injecté par le CLI live avant ``build()`` pour que le builder puisse :
+        - tenir compte des positions existantes (optimiseur)
+        - détecter les ordres ouverts (blocage des entrées conflictuelles)
+        - valider la fraîcheur du snapshot
+
+        Parameters
+        ----------
+        snapshot:
+            ``OperationalDataSnapshot`` produit par
+            ``LiveBrokerOperationalDataAdapter`` ou
+            ``RiskRepository``.
+        """
+        self._operational_snapshot = snapshot
+        # Pré-remplir les holdings pour l'optimiseur si pas déjà fait
+        if self._portfolio_optimizer is None and hasattr(snapshot, "holdings"):
+            holdings = getattr(snapshot, "holdings", ())
+            if holdings:
+                self._optimizer_holdings = tuple(holdings)
+
+    @property
+    def operational_snapshot(self) -> object | None:
+        """Le snapshot opérationnel injecté, ou ``None``."""
+        return getattr(self, "_operational_snapshot", None)
+
     def _emit_progress(
         self,
         summary: dict[str, object],

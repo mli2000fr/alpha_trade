@@ -200,6 +200,78 @@ def _optional_quote_float(value: object) -> float | None:
         return None
 
 
+def _build_reconciliation_summary(
+    *,
+    trade_date: date,
+    operational_snapshot: object | None,
+    target_entries: list[object],
+) -> dict[str, object]:
+    """Construit un résumé de réconciliation entre snapshot opérationnel et cibles.
+
+    Point 15 — La réconciliation complète (ordres, fills, PnL, cash) est
+    exécutée par ``execution_engine.reconcile_statement`` après l'exécution.
+    Cette fonction fournit une pré-réconciliation basée sur les positions
+    attendues vs. existantes.
+    """
+    if operational_snapshot is None:
+        return {"status": "skipped", "reason": "no_operational_snapshot"}
+
+    try:
+        from risk_management.daily_reconciliation import DailyReconciliation, ReconStatus
+
+        existing_positions = getattr(operational_snapshot, "positions", ())
+        existing_symbols = {p.symbol for p in existing_positions}
+        target_symbols = {str(getattr(e, "symbol", "")) for e in target_entries}
+
+        # Positions chevauchantes : le builder devrait en tenir compte
+        overlapping = existing_symbols & target_symbols
+        new_only = target_symbols - existing_symbols
+        closed_only = existing_symbols - target_symbols
+
+        recon = DailyReconciliation()
+        target_positions_raw: list[dict[str, object]] = [
+            {
+                "symbol": str(getattr(e, "symbol", "")),
+                "side": str(getattr(e, "side", "")),
+                "quantity": float(getattr(e, "approved_shares", 0) or 0),
+                "entry_price": float(getattr(e, "entry_price", 0) or 0),
+            }
+            for e in target_entries
+        ]
+        actual_positions_raw: list[dict[str, object]] = [
+            {
+                "symbol": p.symbol,
+                "side": p.side,
+                "quantity": float(getattr(p, "quantity", 0) or 0),
+                "avg_entry_price": float(getattr(p, "avg_entry_price", 0) or 0),
+            }
+            for p in existing_positions
+        ]
+
+        report = recon.reconcile(
+            trade_date=trade_date,
+            target_positions=target_positions_raw,
+            actual_positions=actual_positions_raw,
+        )
+
+        return {
+            "status": report.overall_status.value,
+            "is_clean": report.is_clean,
+            "match_rate": round(report.match_rate, 4),
+            "total_items": report.total_items,
+            "matched_items": report.matched_items,
+            "mismatched_items": report.mismatched_items,
+            "overlapping_positions": len(overlapping),
+            "new_positions": len(new_only),
+            "closed_positions": len(closed_only),
+            "requires_operator_action": report.requires_operator_action,
+            "summary": report.summary,
+        }
+    except Exception:
+        LOGGER.debug("Pré-réconciliation ignorée.", exc_info=True)
+        return {"status": "error", "reason": "reconciliation_failed"}
+
+
 def _build_preflight_data_quality(
     *,
     trade_date: date,
@@ -927,6 +999,78 @@ def main(args: list[str] | None = None) -> None:
             account_snapshot.buying_power,
         )
 
+    # ── Section 17 Point 8 : snapshot opérationnel réel ─────────────────
+    operational_snapshot = None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+
+        from risk_management.operational_data import OperationalDataSnapshot
+        from risk_management.transition_handler import OpenOrder, OpenPosition
+
+        # Construire le snapshot opérationnel à partir des données disponibles
+        account_as_of = (
+            _dt.combine(account_snapshot.trade_date, _dt.min.time(), tzinfo=_tz.utc)
+            if account_snapshot is not None
+            else _dt.now(_tz.utc)
+        )
+        account_data: dict[str, object] = {
+            "equity": effective_equity,
+            "cash": float(getattr(account_snapshot, "cash", 0.0) or 0.0) if account_snapshot is not None else 0.0,
+            "settled_cash": float(getattr(account_snapshot, "cash", 0.0) or 0.0) if account_snapshot is not None else 0.0,
+            "buying_power": float(getattr(account_snapshot, "buying_power", effective_equity * 2.0) or effective_equity * 2.0)
+            if account_snapshot is not None
+            else effective_equity * 2.0,
+        }
+
+        # Charger les positions existantes depuis les décisions de risque précédentes
+        existing_positions: list[OpenPosition] = []
+        if account_snapshot is not None and hasattr(repo, "load_risk_decisions_for_date"):
+            try:
+                prev_decisions = repo.load_risk_decisions_for_date(
+                    trade_date, account_id=effective_account_id or resolved_account_scope
+                )
+                if not prev_decisions.empty:
+                    for _, row in prev_decisions.iterrows():
+                        sym = str(row.get("symbol") or "").strip().upper()
+                        side_raw = str(row.get("side") or "").strip().lower()
+                        if not sym or side_raw not in ("buy", "sell"):
+                            continue
+                        qty = float(row.get("approved_shares", 0) or 0)
+                        if qty <= 0:
+                            continue
+                        existing_positions.append(
+                            OpenPosition(
+                                symbol=sym,
+                                side="short" if side_raw == "sell" else "long",
+                                quantity=qty,
+                                avg_entry_price=float(row.get("entry_price", 0) or 0),
+                            )
+                        )
+            except Exception:
+                LOGGER.debug("Impossible de charger les positions existantes pour le snapshot opérationnel.", exc_info=True)
+
+        operational_snapshot = OperationalDataSnapshot.from_raw(
+            account_id=effective_account_id or resolved_account_scope,
+            account=account_data,
+            positions=[
+                {"symbol": p.symbol, "side": p.side, "qty": p.quantity,
+                 "avg_entry_price": p.avg_entry_price, "current_price": p.avg_entry_price}
+                for p in existing_positions
+            ],
+            orders=[],  # les ordres ouverts sont gérés par l'executor
+            source="risk_cli_account_snapshot",
+            as_of=account_as_of,
+        )
+        LOGGER.info(
+            "Snapshot opérationnel construit | account=%s equity=%.2f positions=%d",
+            operational_snapshot.account.account_id,
+            operational_snapshot.account.equity,
+            len(operational_snapshot.positions),
+        )
+    except Exception:
+        LOGGER.warning("Construction du snapshot opérationnel échouée — le pipeline continue sans.", exc_info=True)
+        operational_snapshot = None
+
     progress_total_steps = 8
     progress_context: dict[str, object] = {
         "trade_date": trade_date.isoformat(),
@@ -1012,6 +1156,30 @@ def main(args: list[str] | None = None) -> None:
 
         config = apply_snapshot(config, regime_snapshot)
     config = apply_transition(config, regime_transition)
+    # ── Section 17 Point 8 : construire le plan de transition si destructif ──
+    transition_plan = None
+    if (
+        regime_transition is not None
+        and getattr(regime_transition, "action", None) is not None
+        and getattr(regime_transition.action, "is_destructive", False)
+        and operational_snapshot is not None
+    ):
+        try:
+            from risk_management.transition_handler import TransitionHandler
+
+            handler = TransitionHandler()
+            positions_list = list(operational_snapshot.positions)
+            orders_list = list(operational_snapshot.open_orders)
+            transition_plan = handler.build_plan(regime_transition, positions_list, orders_list)
+            LOGGER.warning(
+                "Plan de transition régime construit | action=%s steps=%d reason=%s",
+                regime_transition.action.value,
+                len(transition_plan.steps),
+                regime_transition.reason,
+            )
+        except Exception:
+            LOGGER.warning("Construction du plan de transition échouée.", exc_info=True)
+            transition_plan = None
     requested_calibration_market_regime_mode = (
         str(getattr(regime_snapshot, "mode", "") or "").strip().lower() or "all"
     )
@@ -1301,6 +1469,29 @@ def main(args: list[str] | None = None) -> None:
             rotation_state=rotation_state,
             breakout_tracker=breakout_tracker,
         )
+        # ── Section 17 Point 8 : injecter le snapshot opérationnel ──────
+        # Enrichir avec les données PIT borrow/spread/quote si disponibles
+        if operational_snapshot is not None and spread_snapshots:
+            try:
+                # Enrichir le snapshot avec les métadonnées de spread
+                spread_summary = {
+                    "symbols_loaded": len(spread_snapshots),
+                    "sources": list({getattr(s, "source", "unknown") for s in spread_snapshots.values() if hasattr(s, "source")}),
+                    "oldest_quote": min(
+                        (getattr(s, "quote_time", None) for s in spread_snapshots.values() if hasattr(s, "quote_time") and getattr(s, "quote_time", None) is not None),
+                        default=None,
+                    ),
+                }
+                LOGGER.info(
+                    "Snapshot opérationnel enrichi PIT | spreads=%d sources=%s",
+                    spread_summary["symbols_loaded"],
+                    spread_summary["sources"],
+                )
+            except Exception:
+                LOGGER.debug("Enrichissement PIT spread ignoré.", exc_info=True)
+
+        if operational_snapshot is not None and hasattr(builder, "set_operational_snapshot"):
+            builder.set_operational_snapshot(operational_snapshot)
         # ── Factor risk model (Priorité 3) : construire les exposures ──
         if config.enable_factor_model:
             try:
@@ -1348,6 +1539,8 @@ def main(args: list[str] | None = None) -> None:
                             factor_exposures=factor_exposures_live,
                             factor_covariance=factor_cov_live,
                         )
+                        if operational_snapshot is not None and hasattr(builder, "set_operational_snapshot"):
+                            builder.set_operational_snapshot(operational_snapshot)
                         LOGGER.info(
                             "Factor model enabled: %d exposures, %d factor names",
                             len(factor_exposures_live),
@@ -1709,6 +1902,24 @@ def main(args: list[str] | None = None) -> None:
         "regime_reasons": list(regime_snapshot_payload.get("reasons") or []) if regime_snapshot_payload else [],
         "regime_snapshot": regime_snapshot_payload,
         "regime_transition": regime_transition.to_dict() if regime_transition is not None else None,
+        # ── Section 17 Point 8 : snapshot opérationnel et plan de transition ──
+        "operational_snapshot": {
+            "available": operational_snapshot is not None,
+            "account_id": operational_snapshot.account.account_id if operational_snapshot is not None else None,
+            "equity": round(float(operational_snapshot.account.equity), 2) if operational_snapshot is not None else None,
+            "buying_power": round(float(operational_snapshot.account.buying_power), 2) if operational_snapshot is not None else None,
+            "positions_count": len(operational_snapshot.positions) if operational_snapshot is not None else 0,
+            "open_orders_count": len(operational_snapshot.open_orders) if operational_snapshot is not None else 0,
+            "source": operational_snapshot.account.source if operational_snapshot is not None else None,
+            "as_of": operational_snapshot.account.as_of.isoformat() if operational_snapshot is not None and operational_snapshot.account.as_of is not None else None,
+        },
+        "transition_plan": transition_plan.to_dict() if transition_plan is not None and hasattr(transition_plan, "to_dict") else None,
+        # ── Section 17 Point 8 / Point 15 : réconciliation quotidienne ──
+        "daily_reconciliation": _build_reconciliation_summary(
+            trade_date=trade_date,
+            operational_snapshot=operational_snapshot,
+            target_entries=retained_entries,
+        ),
         "preflight_data_quality": preflight_data_quality,
         # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
         "account_equity_breakdown": equity_breakdown,

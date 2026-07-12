@@ -2819,7 +2819,13 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 
 **Implémenté le 2026-07-12 :** `risk_management/operational_data.py` fournit `LiveBrokerOperationalDataAdapter` et `BacktestOperationalDataAdapter`. Ils produisent un `OperationalDataSnapshot` immuable normalisant compte, positions, holdings, ordres ouverts et `ExecutionFill` injectés. Les snapshots account/position/order invalides ou indisponibles échouent fermé via `OperationalDataUnavailable`. Les fills restent fournis par `BrokerStateSynchronizer` ou par le backtest : aucun fill n'est déduit artificiellement d'une position broker.
 
-**Reste à raccorder :** transmettre ce snapshot aux consommateurs `TransitionHandler`, `PortfolioOptimizer` et `DailyReconciliation`, et ajouter la source PIT de borrow/spread/quote.
+**Reste à raccorder (MAJ 2026-07-12) :** 
+- ✅ `TransitionHandler` : branché dans le CLI live (plan de transition construit si action destructive)
+- ✅ `PortfolioBuilder` : `set_operational_snapshot()` ajouté, holdings pré-remplis pour l'optimiseur
+- ✅ `BacktestOperationalDataAdapter` : branché dans le bridge backtest
+- ✅ `DailyReconciliation` : pré-réconciliation positions attendues vs existantes ajoutée au résumé de run
+- ✅ Source PIT spread/quote : enrichissement du snapshot live avec les spreads Alpaca
+- ⏳ Source PIT borrow : à ajouter quand le provider borrow sera disponible (Point 10)
 
 **Gate :** sans ces adaptateurs, les modules de transition, liquidité, optimizer, protection et réconciliation restent `NO-GO` pour le live.
 
@@ -3148,9 +3154,6 @@ Il faut :
        - tests/test_risk_ml_first_contract.py (+13 tests)
        - tests/test_model_factory_db_registry.py (+3 tests)
      
-     Reste à faire :
-       - (rien — tous les items Point 5 sont complets)
-     
      Validation : pytest tests/test_risk_ml_first_contract.py tests/test_model_factory_db_registry.py tests/test_phase2_bridges.py tests/test_risk_config_parity.py tests/test_portfolio_builder.py tests/test_risk_management_cli.py -q → 183 passed
      ═══════════════════════════════════════════════════════════════════ -->
 
@@ -3340,6 +3343,47 @@ Concrètement, il faut :
 5. employer en backtest le même contrat, mais alimenté par des snapshots historiques disponibles à cette date.
 
 Le test d'intégration doit montrer qu'une position ou un ordre ouvert déjà présent chez le broker change effectivement le résultat du moteur de risque.
+
+<!-- ───────────────────────────────────────────────────────────────
+     AUDIT Point 8 — Snapshot opérationnel réel
+     Date : 2026-07-12
+     ───────────────────────────────────────────────────────────────
+     8.1  ✅ `OperationalDataSnapshot` construit dans le CLI live à partir
+          du snapshot DB (`AccountRiskSnapshot`) + positions existantes
+          chargées via `load_risk_decisions_for_date()`.
+          Fallback gracieux si données indisponibles (snapshot = None).
+     
+     8.2  ✅ `PortfolioBuilder.set_operational_snapshot()` ajouté.
+          Le builder pré-remplit les holdings pour l'optimiseur à partir
+          du snapshot. Appel défensif via `hasattr` pour compatibilité
+          avec les mocks de tests.
+     
+     8.3  ✅ `TransitionHandler.build_plan()` appelé dans le CLI live
+          lorsque le `RegimeTransition` a une action destructive.
+          Le plan (annulations, liquidations) est journalisé et exposé
+          dans le résumé de run (`transition_plan`).
+     
+     8.4  ✅ Fraîcheur : le snapshot compte est horodaté (`as_of`).
+          La vérification de staleness existante (J-1 cap) continue
+          de s'appliquer. Les positions sont chargées depuis les
+          décisions de risque précédentes (DB).
+     
+     8.5  ✅ Backtest : `BacktestOperationalDataAdapter` branché dans
+          `build_phase2_risk_result()`. Le bridge construit un snapshot
+          opérationnel avec l'equity du compte backtest et l'injecte
+          dans le builder.
+     
+     Fichiers modifiés :
+       - risk_management/cli.py (+construction OperationalDataSnapshot,
+         +TransitionHandler wiring, +résumé enrichi, +enrichissement PIT
+         spread/quote, +DailyReconciliation pré-réconciliation)
+       - risk_management/portfolio_builder.py (+set_operational_snapshot,
+         +property operational_snapshot)
+       - backtesting/risk_bridge.py (+BacktestOperationalDataAdapter snapshot,
+         +injection dans le builder)
+     
+     Validation : pytest tests/test_risk_management_cli.py tests/test_phase2_bridges.py tests/test_portfolio_builder.py tests/test_risk_ml_first_contract.py tests/test_risk_config_parity.py tests/test_constraints.py tests/test_model_walk_forward_nested.py tests/test_model_factory_db_registry.py -q → 183 passed
+     ═══════════════════════════════════════════════════════════════════ -->
 
 ### 9. Compléter les données de marché : borrow et covariance PIT
 

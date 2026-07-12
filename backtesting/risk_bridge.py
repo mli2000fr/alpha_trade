@@ -600,6 +600,30 @@ def build_phase2_risk_result(
             factor_exposures=factor_exposures if factor_exposures else None,
             factor_covariance=factor_covariance,
         )
+        # ── Section 17 Point 8.5 : snapshot opérationnel backtest ──────
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+
+            from risk_management.operational_data import BacktestOperationalDataAdapter
+
+            backtest_snapshot = BacktestOperationalDataAdapter.build(
+                account_id=f"backtest-{snapshot_date.isoformat()}",
+                account={
+                    "equity": float(cfg_for_day.account_equity),
+                    "cash": float(cfg_for_day.account_equity),
+                    "settled_cash": float(cfg_for_day.account_equity),
+                    "buying_power": float(cfg_for_day.account_equity) * 2.0,
+                },
+                positions=[],   # backtest simule fresh chaque jour
+                orders=[],
+                as_of=_dt.combine(snapshot_date, _dt.min.time(), tzinfo=_tz.utc),
+                source="backtest_risk_bridge",
+            )
+            if hasattr(builder, "set_operational_snapshot"):
+                builder.set_operational_snapshot(backtest_snapshot)
+        except Exception:
+            LOGGER.debug("Backtest operational snapshot build skipped.", exc_info=True)
+
         entries = builder.build_from_ml_candidates(
             selection_inputs, prices,
             return_matrix=return_matrix,
