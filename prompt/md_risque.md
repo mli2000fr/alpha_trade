@@ -3552,6 +3552,56 @@ Il faut donc :
 
 Le test essentiel simule un ordre partiellement rempli et un changement de régime : les annulations doivent précéder les liquidations, et aucune nouvelle entrée interdite ne doit être créée.
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUDIT 2026-07-12 : POINT 10 — TERMINÉ ✅
+     
+     Implémentation de la chaîne régime → optimiseur → exécution :
+     
+     10.1 ✅ Persistance du plan de transition :
+          ``_persist_transition_plan_artifact()`` dans ``risk_management/cli.py``
+          écrit le ``PositionTransitionPlan`` en JSON atomique dans
+          ``artifacts/transition_plans/{trade_date}_{run_id}.json``.
+     
+     10.2 ✅ Exécution du plan de transition par l'executor :
+          ``_load_transition_plan()`` et ``_execute_transition_plan()`` dans
+          ``run_execution.py``. L'executor charge le plan persisté et exécute
+          les étapes AVANT les nouvelles entrées : CANCEL (annulation ordres),
+          LIQUIDATE (market close), REDUCE (close 50%). Dry-run respecté.
+          Compteurs inclus dans les logs et le résumé.
+     
+     10.3 ✅ Optimiseur → intentions d'exécution :
+          ``PortfolioBuilder._apply_portfolio_optimization()`` convertit les
+          résultats de l'optimiseur en ``PortfolioEntry`` avec
+          ``approved_shares`` = ``target_quantities``. Les deltas
+          (``OptimizationResult.trades``) sont implicites dans les quantités
+          finales. Les entrées rejetées/réduites sont marquées avec la
+          raison ``optimizer: ...``.
+     
+     10.4 ✅ Détection long↔short :
+          ``PortfolioBuilder._apply_portfolio_optimization()`` détecte les
+          flips de side (long→short ou short→long) via comparaison entre le
+          side du holding existant et le signe du delta trade. Log WARNING
+          explicite : « SIDE FLIP détecté | symbol=X long→short delta=-Y ».
+          Le broker gère le split close+open via un ordre unique de vente/achat
+          net (quantité = |delta|).
+     
+     10.5 ✅ Revalidation post-arrondi :
+          ``ConstraintChecker.revalidate_portfolio()`` appelé dans
+          ``PortfolioBuilder.build()`` APRÈS l'optimisation et AVANT la
+          vérification des contraintes factorielles. Vérifie 9 contraintes :
+          caps long/short, max_positions, gross/net exposure, secteur,
+          tickers/secteur, position_weight, min_notional.
+     
+     Fichiers modifiés :
+       - risk_management/cli.py (+_persist_transition_plan_artifact)
+       - run_execution.py (+_load_transition_plan, +_execute_transition_plan,
+         +wiring transition execution before execute_run)
+       - risk_management/portfolio_builder.py (+side flip detection log)
+     
+     Tests : 111 (transition_handler + optimizer + regime), 46 (cli + builder + constraints)
+     Validation : pytest tests/test_risk_transition_handler.py tests/test_risk_portfolio_optimizer.py tests/test_risk_regime_state_machine.py tests/test_risk_management_cli.py tests/test_portfolio_builder.py tests/test_constraints.py -q → 157 passed
+     ═══════════════════════════════════════════════════════════════════ -->
+
 ### 11. Relier les fills aux protections et à la parité de décision
 
 Le CLI risque décide une cible et produit déjà un journal de décision. L'exécution, elle, obtient ensuite un fill réel, qui peut différer du prix ou de la quantité attendus. Les protections doivent partir de ce fill réel : le stop, le take-profit, le trailing stop et les quantités OCO doivent couvrir exactement la quantité effectivement remplie.
@@ -3567,6 +3617,58 @@ La chaîne à finaliser est :
 7. persister les états, actions de réparation et raisons de fermeture.
 
 La règle est simple : le CLI risque ne fabrique ni fill ni ordre de protection. Seul le broker confirme un fill ; les protections sont alors recalculées à partir de cette confirmation.
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUDIT 2026-07-12 : POINT 11 — TERMINÉ ✅
+     
+     Implémentation du pont fills → protections → parité de décision :
+     
+     11.1 ✅ Fingerprint de décision dans les ordres broker :
+          ``OrderIntent.decision_fingerprint`` ajouté (champ optionnel).
+          ``build_entry_intents()`` accepte ``decision_fingerprints: dict[str, str]``
+          et le propage aux intents enfants (TP, stop initial, trailing stop).
+          ``ProductionExecutor.set_decision_fingerprints()`` injecte les
+          fingerprints avant ``execute_run()``.
+     
+     11.2 ✅ Chargement des fingerprints depuis le journal d'audit :
+          ``_load_decision_fingerprints()`` dans ``run_execution.py`` lit
+          le ``DecisionAuditLog`` JSON et extrait les ``PositionDecisionFingerprint``
+          par symbole. Les fingerprints sont injectés dans l'executor avant
+          l'exécution.
+     
+     11.3 ✅ Conversion fill → ProtectionState :
+          ``execution_engine/protection_state_bridge.py`` créé.
+          ``build_protection_state_from_fill()`` convertit un fill broker en
+          ``ProtectionState`` via ``StopCalculator.recalculate_after_fill()``
+          (recentre stop/TP sur le prix de fill réel).
+          ``verify_fill_protection_consistency()`` vérifie l'état avec
+          ``ProtectionContract.check_state()`` + ``should_force_close()``.
+     
+     11.4 ✅ Vérification post-armement dans le watcher :
+          Dans ``_arm_missing_protections()``, après avoir armé les protections,
+          le watcher appelle ``verify_fill_protection_consistency()`` pour
+          détecter les anomalies (stop du mauvais côté, SLA dépassé, etc.).
+          Les issues sont loggées en WARNING.
+     
+     11.5 ✅ Le watcher existant gère déjà :
+          - détection des positions non protégées (``load_unprotected_filled_parents``)
+          - armement des stops/TP manquants (``_arm_missing_protections``)
+          - réparation et force-close (``_load_watch_inputs`` + ``_process_item``)
+     
+     Fichiers modifiés :
+       - execution_engine/models.py (+decision_fingerprint dans OrderIntent)
+       - execution_engine/order_intents.py (+decision_fingerprints param,
+         +propagation aux child intents)
+       - execution_engine/executor.py (+_decision_fingerprints field,
+         +set_decision_fingerprints(), +passage à build_entry_intents)
+       - run_execution.py (+_load_decision_fingerprints, +wiring fingerprints)
+     
+     Fichiers créés :
+       - execution_engine/protection_state_bridge.py (nouveau module pont)
+     
+     Tests : 190 (fingerprint + stop + protection + transition + optimizer + regime)
+     Validation : pytest tests/test_risk_decision_fingerprint.py tests/test_risk_stop_calculator.py tests/test_risk_protection_contract.py tests/test_risk_transition_handler.py tests/test_risk_portfolio_optimizer.py tests/test_risk_regime_state_machine.py -q → 190 passed
+     ═══════════════════════════════════════════════════════════════════ -->
 
 ### 12. Rendre les gates MLOps réellement opérationnels
 

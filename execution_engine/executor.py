@@ -99,6 +99,8 @@ class ProductionExecutor:
         self._pre_submission_borrows: dict[str, object] | None = None
         self._pre_submission_adv: dict[str, float] | None = None
         self._pre_submission_daily_vol: dict[str, float] | None = None
+        # ── Point 11 : fingerprints de décision pour traçabilité ──
+        self._decision_fingerprints: dict[str, str] | None = None
 
     def set_pre_submission_data(
         self,
@@ -129,6 +131,17 @@ class ProductionExecutor:
         self._pre_submission_borrows = borrows
         self._pre_submission_adv = adv
         self._pre_submission_daily_vol = daily_vol
+
+    def set_decision_fingerprints(
+        self,
+        fingerprints: dict[str, str],
+    ) -> None:
+        """Injecte les fingerprints de décision par symbole (Point 11).
+
+        Appelé avant ``execute_run()`` pour associer chaque ``OrderIntent``
+        à la décision de risque qui l'a produite.
+        """
+        self._decision_fingerprints = fingerprints
 
     def _emit_progress(
         self,
@@ -628,7 +641,10 @@ class ProductionExecutor:
                 LOGGER.debug("Corporate actions check skipped: %s", exc)
 
             # Phase 3 — Build intents, filter duplicates
-            entry_intents = build_entry_intents(targets, self._cfg, exec_run_id)
+            entry_intents = build_entry_intents(
+                targets, self._cfg, exec_run_id,
+                decision_fingerprints=self._decision_fingerprints,
+            )
             for target, intent in zip(targets, entry_intents):
                 target_by_intent_id[str(intent.intent_id)] = target
             if entry_intents and float(getattr(self._cfg, "max_entry_gap_pct", 0.0) or 0.0) > 0.0:

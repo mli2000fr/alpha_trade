@@ -102,8 +102,18 @@ def build_entry_intents(
     targets: list[ExecutionTarget],
     config: ExecutionConfig,
     exec_run_id: str,
+    *,
+    decision_fingerprints: dict[str, str] | None = None,
 ) -> list[OrderIntent]:
-    """Construit les OrderIntent d'entrée, direction-aware (Sprint 3)."""
+    """Construit les OrderIntent d'entrée, direction-aware (Sprint 3).
+
+    Parameters
+    ----------
+    decision_fingerprints:
+        Mapping symbole → fingerprint de décision (Point 11).
+        Injecté depuis le journal d'audit du CLI risque pour associer
+        chaque ordre broker à la décision qui l'a produit.
+    """
     from core.direction import is_short_side
 
     intents: list[OrderIntent] = []
@@ -129,6 +139,7 @@ def build_entry_intents(
             limit_price = round(t.entry_price * (1 + bps / 10_000), 2)
 
         intent_id = _make_id()
+        _dfp = (decision_fingerprints or {}).get(t.symbol.upper())
         intents.append(OrderIntent(
             intent_id=intent_id,
             risk_run_id=t.risk_run_id,
@@ -148,6 +159,7 @@ def build_entry_intents(
             decision_price=t.entry_price,
             stop_price=None,
             submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, side, qty, intent_id),
+            decision_fingerprint=_dfp,
         ))
     return intents
 
@@ -534,6 +546,7 @@ def build_take_profit_intent(
         decision_price=parent.decision_price,
         stop_price=None,
         submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TAKE_PROFIT, exit_side, fill_qty, intent_id),
+        decision_fingerprint=parent.decision_fingerprint,
     )
 
 
@@ -576,6 +589,7 @@ def build_initial_stop_intent(
         decision_price=parent.decision_price,
         stop_price=stop_price,
         submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, exit_side, fill_qty, intent_id),
+        decision_fingerprint=parent.decision_fingerprint,
     )
 
 
@@ -643,6 +657,7 @@ def build_manual_buy_initial_stop_intent(
         decision_price=parent.decision_price,
         stop_price=stop_price,
         submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty, intent_id),
+        decision_fingerprint=parent.decision_fingerprint,
     )
 
 
@@ -688,6 +703,7 @@ def build_trailing_stop_intent(
         decision_price=parent.decision_price,
         stop_price=None,
         submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TRAILING_STOP, exit_side, fill_qty, intent_id),
+        decision_fingerprint=parent.decision_fingerprint,
     )
 
 

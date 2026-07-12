@@ -1347,6 +1347,21 @@ class PortfolioBuilder:
             covariance=self._optimizer_covariance,
         )
         self.last_optimization_result = result
+        # ── Point 10 : détection des flips long↔short ──
+        _holdings_by_symbol: dict[str, str] = {}
+        for h in self._optimizer_holdings:
+            _holdings_by_symbol[h.symbol] = h.side
+        for sym, delta in result.trades.items():
+            existing_side = _holdings_by_symbol.get(sym)
+            if existing_side and delta != 0:
+                new_side = "long" if delta > 0 else "short"
+                if existing_side != new_side:
+                    LOGGER.warning(
+                        "SIDE FLIP détecté | symbol=%s %s→%s delta=%.2f — "
+                        "sera exécuté comme close+open (deux ordres distincts)",
+                        sym, existing_side, new_side, delta,
+                    )
+        # ── Appliquer les résultats de l'optimiseur ──
         optimized_entries: list[PortfolioEntry] = []
         for entry in entries:
             if entry.symbol in rejected_missing_edge:

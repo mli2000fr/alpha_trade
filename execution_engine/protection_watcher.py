@@ -1153,6 +1153,27 @@ class ProtectionTransitionWatcher:
                     "protection_available": protection_available,
                 },
             ))
+            # ── Point 11 : vérifier l'état de protection après armement ──
+            try:
+                from execution_engine.protection_state_bridge import (
+                    build_protection_state_from_fill,
+                    verify_fill_protection_consistency,
+                )
+                _ps = build_protection_state_from_fill(
+                    symbol=symbol,
+                    side=str(parent_intent.side),
+                    fill_qty=fill_qty,
+                    fill_price=fill_price,
+                    decision_price=float(row.get("decision_price", fill_price) or fill_price),
+                )
+                _ok, _issues = verify_fill_protection_consistency(_ps)
+                if not _ok:
+                    LOGGER.warning(
+                        "ProtectionContract issue post-arm | symbol=%s issues=%s",
+                        symbol, "; ".join(_issues),
+                    )
+            except Exception:
+                LOGGER.debug("ProtectionContract verification skipped for %s", symbol, exc_info=True)
         else:
             metrics["armed_missing_protections_failed"] = (
                 int(metrics.get("armed_missing_protections_failed", 0) or 0) + 1

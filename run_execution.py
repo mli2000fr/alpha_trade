@@ -772,6 +772,137 @@ def _resolve_pre_submission_symbols(
         return []
 
 
+# ── Point 10 : exécution du plan de transition régime ────────────────────────
+
+def _load_transition_plan(
+    *,
+    trade_date: date,
+    risk_run_id: str,
+) -> dict | None:
+    """Charge le plan de transition persisté par le CLI risque."""
+    import json as _json
+    target = PROJECT_ROOT / "artifacts" / "transition_plans" / f"{trade_date.isoformat()}_{risk_run_id}.json"
+    if not target.exists():
+        return None
+    try:
+        return _json.loads(target.read_text(encoding="utf-8"))
+    except Exception:
+        LOGGER.debug("Plan de transition illisible.", exc_info=True)
+        return None
+
+
+def _execute_transition_plan(
+    plan: dict,
+    *,
+    broker: object,
+    exec_run_id: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Exécute les étapes CANCEL → LIQUIDATE → REDUCE d'un plan de transition.
+
+    Returns un dict de compteurs {cancelled, liquidated, reduced, failed, skipped}.
+    """
+    from risk_management.transition_handler import OrderAction
+
+    counters: dict[str, int] = {"cancelled": 0, "liquidated": 0, "reduced": 0, "failed": 0, "skipped": 0}
+    steps = plan.get("steps", [])
+    if not steps:
+        return counters
+
+    LOGGER.info("Transition plan execution | %d steps | dry_run=%s", len(steps), dry_run)
+    exec_id = exec_run_id or "transition"
+
+    for step in steps:
+        action = str(step.get("action", ""))
+        symbol = str(step.get("symbol", ""))
+        if not symbol:
+            continue
+
+        try:
+            if action == OrderAction.CANCEL.value:
+                order_id = str(step.get("order_id", ""))
+                if order_id and not dry_run:
+                    try:
+                        broker.cancel_broker_order(order_id)
+                    except Exception:
+                        LOGGER.warning("Cancel order %s failed", order_id, exc_info=True)
+                        counters["failed"] += 1
+                        continue
+                counters["cancelled"] += 1
+                LOGGER.info("Transition CANCEL | symbol=%s order_id=%s", symbol, order_id)
+
+            elif action in (OrderAction.LIQUIDATE.value, OrderAction.REDUCE.value):
+                side = str(step.get("side", "long"))
+                close_side = "sell" if side == "long" else "buy"
+                quantity = float(step.get("quantity", 0) or 0)
+                if action == OrderAction.REDUCE.value:
+                    quantity = quantity * 0.50
+                if quantity <= 0:
+                    counters["skipped"] += 1
+                    continue
+                if not dry_run:
+                    try:
+                        broker.submit_order(
+                            symbol=symbol,
+                            qty=quantity,
+                            side=close_side,
+                            order_type="market",
+                        )
+                    except Exception:
+                        LOGGER.warning("Transition %s | %s failed", action, symbol, exc_info=True)
+                        counters["failed"] += 1
+                        continue
+                if action == OrderAction.LIQUIDATE.value:
+                    counters["liquidated"] += 1
+                else:
+                    counters["reduced"] += 1
+                LOGGER.info(
+                    "Transition %s | symbol=%s qty=%.2f side=%s",
+                    action.upper(), symbol, quantity, close_side,
+                )
+
+            else:
+                counters["skipped"] += 1
+        except Exception:
+            LOGGER.warning("Transition step failed | %s %s", symbol, action, exc_info=True)
+            counters["failed"] += 1
+
+    return counters
+
+
+# ── Point 11 : chargement des fingerprints de décision ───────────────────────
+
+def _load_decision_fingerprints(
+    *,
+    trade_date: date,
+    risk_run_id: str,
+) -> dict[str, str]:
+    """Charge les ``PositionDecisionFingerprint`` depuis le journal d'audit risque.
+
+    Returns un mapping ``{SYMBOL: fingerprint}`` pour injection dans les
+    ``OrderIntent`` (Point 11).
+    """
+    import json as _json
+    target = PROJECT_ROOT / "artifacts" / "risk_decision_audit" / f"{trade_date.isoformat()}_{risk_run_id}.json"
+    if not target.exists():
+        LOGGER.debug("Journal d'audit décision introuvable → pas de fingerprints.")
+        return {}
+    try:
+        data = _json.loads(target.read_text(encoding="utf-8"))
+    except Exception:
+        LOGGER.debug("Journal d'audit décision illisible.", exc_info=True)
+        return {}
+
+    fingerprints: dict[str, str] = {}
+    entries = data.get("entries", [])
+    for entry in entries:
+        sym = str(entry.get("symbol", "")).strip().upper()
+        pos_fp = entry.get("position_fingerprint") or entry.get("fingerprint") or ""
+        if sym and pos_fp:
+            fingerprints[sym] = str(pos_fp)
+    return fingerprints
+
+
 def run(
     mode: str,
     run_id: str | None,
@@ -1280,6 +1411,47 @@ def run(
             LOGGER.info(
                 "Pre-submission data wired: %d spreads, %d borrows, %d ADV, %d vol",
                 len(_pre_spreads), len(_pre_borrows), len(_pre_adv), len(_pre_vol),
+            )
+
+    # ── Point 10 : exécuter le plan de transition AVANT les nouvelles entrées ──
+    _transition_counters: dict[str, int] = {}
+    if run_id and trade_date_val and not config.dry_run:
+        _transition_plan = _load_transition_plan(
+            trade_date=trade_date_val,
+            risk_run_id=run_id,
+        )
+        if _transition_plan and _transition_plan.get("steps"):
+            print(f"{YELLOW}  [Transition] Exécution du plan de transition régime...{RESET}")
+            _transition_counters = _execute_transition_plan(
+                _transition_plan,
+                broker=broker,
+                exec_run_id=None,
+                dry_run=config.dry_run,
+            )
+            _tc = _transition_counters
+            LOGGER.warning(
+                "Transition plan executed | cancelled=%d liquidated=%d reduced=%d failed=%d",
+                _tc.get("cancelled", 0), _tc.get("liquidated", 0),
+                _tc.get("reduced", 0), _tc.get("failed", 0),
+            )
+            print(
+                f"{YELLOW}  [Transition] annulés={_tc.get('cancelled', 0)} "
+                f"liquidés={_tc.get('liquidated', 0)} "
+                f"réduits={_tc.get('reduced', 0)} "
+                f"échecs={_tc.get('failed', 0)}{RESET}"
+            )
+
+    # ── Point 11 : injecter les fingerprints de décision pour traçabilité ──
+    if run_id and trade_date_val:
+        _decision_fps = _load_decision_fingerprints(
+            trade_date=trade_date_val,
+            risk_run_id=run_id,
+        )
+        if _decision_fps:
+            executor.set_decision_fingerprints(_decision_fps)
+            LOGGER.info(
+                "Decision fingerprints loaded: %d symbols",
+                len(_decision_fps),
             )
 
     print(f"{BOLD}Execution en cours...{RESET}\n")

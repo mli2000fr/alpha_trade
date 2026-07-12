@@ -473,6 +473,42 @@ def _build_reconciliation_summary(
         return {"status": "error", "reason": "reconciliation_failed"}
 
 
+# ── Point 10 : persistance du plan de transition ─────────────────────────────
+
+def _persist_transition_plan_artifact(
+    transition_plan: object,
+    *,
+    trade_date: date,
+    risk_run_id: str,
+) -> str | None:
+    """Persiste le ``PositionTransitionPlan`` en JSON pour l'executor.
+
+    L'executor doit exécuter les annulations/liquidations AVANT les nouvelles entrées.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    try:
+        target_dir = _Path("artifacts/transition_plans")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filepath = target_dir / f"{trade_date.isoformat()}_{risk_run_id}.json"
+        payload = transition_plan.to_dict() if hasattr(transition_plan, "to_dict") else {}
+        payload["_meta"] = {
+            "trade_date": trade_date.isoformat(),
+            "risk_run_id": risk_run_id,
+            "persisted_at": datetime.now(timezone.utc).isoformat(),
+        }
+        filepath.write_text(
+            _json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        LOGGER.info("Plan de transition persisté → %s", filepath)
+        return str(filepath)
+    except Exception:
+        LOGGER.warning("Persistance du plan de transition échouée.", exc_info=True)
+        return None
+
+
 def _build_preflight_data_quality(
     *,
     trade_date: date,
@@ -1395,6 +1431,13 @@ def main(args: list[str] | None = None) -> None:
         except Exception:
             LOGGER.warning("Construction du plan de transition échouée.", exc_info=True)
             transition_plan = None
+    # ── Point 10 : persister le plan de transition pour l'executor ──
+    if transition_plan is not None and transition_plan.has_actions:
+        _persist_transition_plan_artifact(
+            transition_plan,
+            trade_date=trade_date,
+            risk_run_id=risk_run_id,
+        )
     requested_calibration_market_regime_mode = (
         str(getattr(regime_snapshot, "mode", "") or "").strip().lower() or "all"
     )

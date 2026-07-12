@@ -139,6 +139,8 @@ class OrderIntent:
     decision_price: float
     stop_price: float | None = None
     submission_key: str | None = None
+    # ── Point 11 : traçabilité décision → ordre → fill → protection ──
+    decision_fingerprint: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
