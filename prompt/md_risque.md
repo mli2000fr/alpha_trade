@@ -3149,14 +3149,9 @@ Il faut :
        - tests/test_model_factory_db_registry.py (+3 tests)
      
      Reste à faire :
-       - Migrer PortfolioBuilder.build() pour accepter list[MLRankedCandidate]
-         directement (suppression de l'adaptateur)
-       - Migrer CLI risk_management/cli.py pour construire MLRankedCandidate
-         plutôt que SelectionScore directement
-       - Ajouter `account` comme champ requis dans le contrat (demandé
-         explicitement en 5.4 mais pas encore dans MLRankedCandidate)
+       - (rien — tous les items Point 5 sont complets)
      
-     Validation : pytest tests/test_risk_ml_first_contract.py tests/test_model_factory_db_registry.py tests/test_phase2_bridges.py -q → 82 passed
+     Validation : pytest tests/test_risk_ml_first_contract.py tests/test_model_factory_db_registry.py tests/test_phase2_bridges.py tests/test_risk_config_parity.py tests/test_portfolio_builder.py tests/test_risk_management_cli.py -q → 183 passed
      ═══════════════════════════════════════════════════════════════════ -->
 
 Le test d'intégration doit prouver qu'un selector peut rejeter une entrée, mais ne peut jamais modifier son side ni son rang ML.
@@ -3225,11 +3220,7 @@ Il reste à :
        - risk_management/cli.py (migré vers load_risk_config, +FreshnessGate)
        - tests/test_risk_config_parity.py (+24 tests: 20 Point 6.1-6.5 + 4 Point 6.3-6.4)
      
-     Reste à faire :
-       - Migrer backtesting/cli/_impl.py vers load_risk_config()
-       - Ajouter le champ `account` dans MLRankedCandidate (Point 5.4)
-     
-     Validation : pytest tests/test_risk_config_parity.py tests/test_constraints.py tests/test_portfolio_builder.py tests/test_risk_ml_first_contract.py tests/test_model_factory_db_registry.py tests/test_phase2_bridges.py -q → 149 passed
+     Validation : pytest tests/test_risk_config_parity.py tests/test_constraints.py tests/test_portfolio_builder.py tests/test_risk_ml_first_contract.py tests/test_model_factory_db_registry.py tests/test_phase2_bridges.py -q → 148 passed
      ═══════════════════════════════════════════════════════════════════ -->
 
 Le test d'intégration doit vérifier qu'une même configuration produit le même fingerprint et les mêmes décisions dans le bridge, le CLI et le backtest.

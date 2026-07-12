@@ -6,7 +6,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
@@ -1129,6 +1129,7 @@ def main(args: list[str] | None = None) -> None:
     else:
         breakout_tracker = BreakoutConfirmationTracker(min_breakout_days=config.min_breakout_days)
 
+    resolved_capital_preset = resolve_capital_preset_for_equity(effective_equity)
     if resolved_capital_preset is None:
         raise SystemExit("Aucun preset capital ne permet de résoudre l'univers tradable live.")
     universe = repo.load_tradable_universe_asof(trade_date, resolved_capital_preset.key)
@@ -1137,31 +1138,12 @@ def main(args: list[str] | None = None) -> None:
             "L'univers tradable live doit être de qualité full; "
             f"grade reçu: {universe.data_quality_grade!r}."
         )
-    score_context = {entry.symbol: entry for entry in repo.load_score_context_asof(universe.symbols, trade_date)}
-    candidates = [
-        score_context.get(symbol, SelectionScore(symbol=symbol, sector="UNKNOWN", score_used=float("nan"), score_source="unavailable"))
-        for symbol in universe.symbols
-    ]
-    # ── Section 17 Point 2.2 : propager universe_run_id ─────────────────
-    from dataclasses import replace as _dc_replace
-
     universe_run_id = universe.universe_run_id
-    candidates: list[SelectionScore] = []
-    for symbol in universe.symbols:
-        existing = score_context.get(symbol)
-        if existing is not None:
-            candidates.append(_dc_replace(existing, universe_run_id=universe_run_id))
-        else:
-            candidates.append(
-                SelectionScore(
-                    symbol=symbol, sector="UNKNOWN",
-                    score_used=float("nan"), score_source="unavailable",
-                    universe_run_id=universe_run_id,
-                )
-            )
-    LOGGER.info("Univers tradable ML-first chargé: run=%s symbols=%d", universe_run_id, len(candidates))
+    universe_symbols = list(universe.symbols)
+    universe_symbol_count = len(universe_symbols)
+    LOGGER.info("Univers tradable ML-first chargé: run=%s symbols=%d", universe_run_id, universe_symbol_count)
     _emit_live_progress(
-        dict(progress_context, targeted_symbols=len(candidates)),
+        dict(progress_context, targeted_symbols=universe_symbol_count),
         current=2,
         total=progress_total_steps,
         label="🛡️ Progression risk management — chargement des candidats",
@@ -1191,14 +1173,18 @@ def main(args: list[str] | None = None) -> None:
             ml_gate_state.decision_id,
         )
 
-    symbols = [c.symbol for c in candidates]
+    # ── Point 5 : Construire MLRankedCandidate plutôt que SelectionScore ──
+    from risk_management.selection_contract import build_candidate_from_prediction, build_rankings as _ml_rank
+
+    candidates: list[MLRankedCandidate] = []
     ml_coverage_gate = MlCoverageGateDecision(enabled=False, allowed=True, reason="disabled")
     if entry_gate_allows_new_entries:
         LOGGER.info("Chargement des predictions ML…")
-        predictions = repo.load_predictions_asof(symbols, trade_date) if ml_gate_state.enabled else {}
+        predictions = repo.load_predictions_asof(universe_symbols, trade_date) if ml_gate_state.enabled else {}
         LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
+
         ml_coverage_gate = evaluate_ml_coverage_gate(
-            selection_count=len(candidates),
+            selection_count=universe_symbol_count,
             prediction_count=len(predictions),
             min_coverage_ratio=args.min_ml_coverage_ratio,
             regime_allows_new_entries=entry_gate_allows_new_entries,
@@ -1217,6 +1203,34 @@ def main(args: list[str] | None = None) -> None:
                 "Couverture ML insuffisante pour publier de nouvelles cibles live : "
                 f"{float(ml_coverage_gate.coverage_ratio or 0.0):.2%} < {float(ml_coverage_gate.required_ratio or 0.0):.2%}."
             )
+
+        # Construire les MLRankedCandidate depuis les prédictions (après coverage gate)
+        for symbol, pred in predictions.items():
+            try:
+                candidate = build_candidate_from_prediction(
+                    symbol=symbol,
+                    trade_date=trade_date,
+                    predicted_side=pred.predicted_side,
+                    proba_long=pred.proba_long,
+                    proba_flat=pred.proba_flat,
+                    proba_short=pred.proba_short,
+                    proba=pred.predicted_proba,
+                    model_run_id=pred.run_id,
+                    universe_run_id=universe_run_id,
+                    research_only=pred.research_only,
+                )
+            except (TypeError, ValueError) as exc:
+                LOGGER.warning("MLRankedCandidate construction failed for %s: %s", symbol, exc)
+                continue
+            if candidate.is_actionable():
+                candidates.append(candidate)
+        # Apply ML rankings (longs then shorts, each by p_side descending)
+        longs, shorts = _ml_rank(candidates)
+        candidates = [*longs, *shorts]
+        LOGGER.info("MLRankedCandidate construits: %d longs + %d shorts", len(longs), len(shorts))
+
+        # Symbols list for loading prices/win_rates/returns
+        symbols = [c.symbol for c in candidates]
 
         LOGGER.info("Chargement des prix et ATR…")
         prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
@@ -1365,8 +1379,6 @@ def main(args: list[str] | None = None) -> None:
         freshness_result = None
         if not config.dry_run:
             try:
-                from datetime import datetime, timezone
-
                 from risk_management.freshness_gate import FreshnessConfig, FreshnessGate
 
                 # Collecter les timestamps de fraîcheur disponibles
@@ -1412,7 +1424,13 @@ def main(args: list[str] | None = None) -> None:
                 "critical_data_stale",
             )
         else:
-            entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
+            entries = builder.build_from_ml_candidates(
+                candidates, prices,
+                win_rates=win_rates,
+                directional_win_rates=directional_win_rates,
+                return_matrix=return_matrix,
+                trade_date=trade_date,
+            )
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), built_entries=len(entries)),
             current=7,
@@ -1421,43 +1439,44 @@ def main(args: list[str] | None = None) -> None:
             phase="build_portfolio",
         )
     else:
-        regime_entries_blocked = len(candidates) if not regime_allow_new_entries else 0
-        mlops_entries_blocked = len(candidates) if not mlops_allows_new_entries else 0
+        regime_entries_blocked = universe_symbol_count if not regime_allow_new_entries else 0
+        mlops_entries_blocked = universe_symbol_count if not mlops_allows_new_entries else 0
+        candidates = []
         prices = {}
         predictions = {}
         win_rates = {}
         return_matrix = pd.DataFrame()
         entries = []
         ml_coverage_gate = evaluate_ml_coverage_gate(
-            selection_count=len(candidates),
+            selection_count=universe_symbol_count,
             prediction_count=0,
             min_coverage_ratio=args.min_ml_coverage_ratio,
             regime_allows_new_entries=entry_gate_allows_new_entries,
             ml_gate_enabled=ml_gate_state.enabled,
         )
         _emit_live_progress(
-            dict(progress_context, targeted_symbols=len(candidates), price_symbols=0),
+            dict(progress_context, targeted_symbols=universe_symbol_count, price_symbols=0),
             current=3,
             total=progress_total_steps,
             label="🛡️ Progression risk management — chargement prix & ATR",
             phase="load_prices",
         )
         _emit_live_progress(
-            dict(progress_context, targeted_symbols=len(candidates), prediction_symbols=0),
+            dict(progress_context, targeted_symbols=universe_symbol_count, prediction_symbols=0),
             current=4,
             total=progress_total_steps,
             label="🛡️ Progression risk management — chargement des prédictions ML",
             phase="load_predictions",
         )
         _emit_live_progress(
-            dict(progress_context, targeted_symbols=len(candidates), win_rate_symbols=0),
+            dict(progress_context, targeted_symbols=universe_symbol_count, win_rate_symbols=0),
             current=5,
             total=progress_total_steps,
             label="🛡️ Progression risk management — chargement des win rates",
             phase="load_win_rates",
         )
         _emit_live_progress(
-            dict(progress_context, targeted_symbols=len(candidates), return_matrix_rows=0, return_matrix_columns=0),
+            dict(progress_context, targeted_symbols=universe_symbol_count, return_matrix_rows=0, return_matrix_columns=0),
             current=6,
             total=progress_total_steps,
             label="🛡️ Progression risk management — chargement de la matrice de rendements",
@@ -1467,10 +1486,10 @@ def main(args: list[str] | None = None) -> None:
             "Les gates d'entrée bloquent les nouvelles cibles | regime_allowed=%s mlops_allowed=%s candidats_bloques=%d",
             regime_allow_new_entries,
             mlops_allows_new_entries,
-            len(candidates),
+            universe_symbol_count,
         )
         _emit_live_progress(
-            dict(progress_context, targeted_symbols=len(candidates), built_entries=0, entries_blocked_by_regime=regime_entries_blocked),
+            dict(progress_context, targeted_symbols=universe_symbol_count, built_entries=0, entries_blocked_by_regime=regime_entries_blocked),
             current=7,
             total=progress_total_steps,
             label="🛡️ Progression risk management — portefeuille construit",

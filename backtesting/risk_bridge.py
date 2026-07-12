@@ -249,13 +249,15 @@ def _build_ml_selection_inputs_from_day(
     day_scores: pd.DataFrame,
     predictions: dict[str, PredictionInfo],
     snapshot_date: date,
-) -> list[SelectionScore]:
-    """Adapt complete ternary ML predictions for the legacy builder boundary.
+) -> list[MLRankedCandidate]:
+    """Build ML-first candidates from predictions (Sprint Maître 5).
 
-    Nominal score, side and rank are derived solely from the ML prediction.
-    Selector columns are retained only as informational veto context.
+    Side, ranking and probabilities are derived solely from ML predictions.
+    Returns ``MLRankedCandidate`` directly — no ``SelectionScore`` adapter.
     """
-    candidates_by_symbol = {}
+    from risk_management.selection_contract import MLRankedCandidate
+
+    candidates_by_symbol: dict[str, MLRankedCandidate] = {}
     rows_by_symbol: dict[str, pd.Series] = {}
     for _, row in day_scores.iterrows():
         symbol = str(row.get("symbol") or "").strip().upper()
@@ -289,24 +291,14 @@ def _build_ml_selection_inputs_from_day(
             rows_by_symbol[symbol] = row
 
     long_ranked, short_ranked = build_rankings(list(candidates_by_symbol.values()))
-    inputs: list[SelectionScore] = []
+    # ── Earnings blackout vetos (selector context only, no side/rank change) ──
+    inputs: list[MLRankedCandidate] = []
     for candidate in [*long_ranked, *short_ranked]:
-        row = rows_by_symbol[candidate.symbol]
-        if bool(row.get("selector_earnings_blackout") or row.get("earnings_blackout")):
+        row = rows_by_symbol.get(candidate.symbol)
+        if row is not None and bool(row.get("selector_earnings_blackout") or row.get("earnings_blackout")):
             LOGGER.info("ML_FIRST_VETO earnings_blackout symbol=%s", candidate.symbol)
             continue
-        # ── Section 17 Point 5.2 : adapter canonique MLRankedCandidate → SelectionScore
-        from risk_management.selection_contract import to_selection_score as _to_ss
-
-        inputs.append(
-            _to_ss(
-                candidate,
-                sector=str(row.get("sector") or "Unknown"),
-                snapshot_date=snapshot_date,
-                selector_signal_mode=str(row.get("selector_signal_mode") or "ml_first"),
-                selection_explanation=str(row.get("selection_explanation") or "ML-ranked candidate"),
-            )
-        )
+        inputs.append(candidate)
     return inputs
 
 
@@ -531,14 +523,14 @@ def build_phase2_risk_result(
 
         predictions = _build_predictions(predictions_df, snapshot_date)
         selection_inputs = _build_ml_selection_inputs_from_day(day_scores, predictions, snapshot_date)
-        n_sells = sum(1 for selection in selection_inputs if selection.side == "sell")
+        n_sells = sum(1 for selection in selection_inputs if selection.side == "short")
         if n_sells > 0:
             LOGGER.info(
                 "Option C selections: date=%s total=%d shorts=%d symbols=%s",
                 snapshot_date,
                 len(selection_inputs),
                 n_sells,
-                [selection.symbol for selection in selection_inputs if selection.side == "sell"][:5],
+                [selection.symbol for selection in selection_inputs if selection.side == "short"][:5],
             )
         symbols = [selection.symbol for selection in selection_inputs]
         prices: dict[str, PriceInfo] = {}
@@ -608,7 +600,11 @@ def build_phase2_risk_result(
             factor_exposures=factor_exposures if factor_exposures else None,
             factor_covariance=factor_covariance,
         )
-        entries = builder.build(selection_inputs, prices, predictions=predictions, return_matrix=return_matrix)
+        entries = builder.build_from_ml_candidates(
+            selection_inputs, prices,
+            return_matrix=return_matrix,
+            trade_date=snapshot_date,
+        )
         model_run_ids = sorted({prediction.run_id for prediction in predictions.values() if prediction.run_id})
         model_run_id = "|".join(model_run_ids)
         regime_mode = str(getattr(snap, "mode", "normal") or "normal")

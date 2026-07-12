@@ -236,7 +236,7 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
             captured["config"] = config
             captured["pnl"] = pnl
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -335,29 +335,28 @@ def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypat
         def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
-            captured["selection_sides"] = {selection.symbol: selection.side for selection in candidates}
-            captured["prediction_sides"] = {
-                symbol: prediction.predicted_side for symbol, prediction in predictions.items()
-            }
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
+            # MLRankedCandidate: side is "long"/"short", sector not available
+            captured["selection_sides"] = {c.symbol: c.side for c in ml_candidates}
+            captured["prediction_sides"] = {c.symbol: c.side for c in ml_candidates}
             return [
                 PortfolioEntry(
-                    symbol=candidate.symbol,
-                    sector=candidate.sector,
-                    entry_price=prices[candidate.symbol].last_close,
-                    score_used=candidate.score_used,
-                    score_source=candidate.score_source,
-                    atr_20=prices[candidate.symbol].atr_20,
+                    symbol=c.symbol,
+                    sector="Unknown",
+                    entry_price=prices[c.symbol].last_close,
+                    score_used=c.p_side,
+                    score_source="ml_p_side",
+                    atr_20=prices[c.symbol].atr_20,
                     proposed_shares=10,
                     approved_shares=10,
                     target_notional=1_000.0,
                     target_weight=0.01,
                     decision=Decision.ACCEPTED,
                     decision_reason="OK",
-                    conviction_score=candidate.score_used,
-                    side=candidate.side,
+                    conviction_score=c.p_side,
+                    side="sell" if c.side == "short" else "buy",
                 )
-                for candidate in candidates
+                for c in ml_candidates
             ]
 
     import risk_management.regime_apply as regime_apply
@@ -395,7 +394,7 @@ def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypat
 
     cli.main(["--trade-date", "2026-05-01", "--dry-run"])
 
-    assert captured["selection_sides"] == {"AAPL": "buy", "MSFT": "buy"}
+    assert captured["selection_sides"] == {"AAPL": "short", "MSFT": "short"}
     assert captured["prediction_sides"] == {"AAPL": "short", "MSFT": "short"}
     assert captured["summary"]["regime_snapshot_applied"] is True
     assert captured["summary"]["regime_mode"] == "capital_preservation"
@@ -444,7 +443,7 @@ def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch)
             captured["config"] = config
             captured["pnl"] = pnl
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -508,7 +507,7 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
             captured["config"] = config
             captured["pnl"] = pnl
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -575,7 +574,7 @@ def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
         def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             captured["config"] = config
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -644,7 +643,7 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
             captured["config"] = config
             captured["pnl"] = pnl
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -711,7 +710,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
         def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             if callable(self.progress_callback):
                 self.progress_callback(
                     {
@@ -720,7 +719,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
                         "progress_total": 1,
                         "progress_phase": "build_portfolio",
                         "progress_label": "ðŸ›¡ï¸ Progression risk management â€” construction portefeuille",
-                        "targeted_symbols": len(candidates),
+                        "targeted_symbols": len(ml_candidates),
                     }
                 )
             return []
@@ -777,7 +776,7 @@ def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> Non
             captured["config"] = config
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -841,7 +840,7 @@ def test_cli_main_persists_market_macro_snapshot(monkeypatch) -> None:
         def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -908,7 +907,7 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
             captured["build_called"] = True
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             captured["build_called"] = True
             return []
 
@@ -1033,7 +1032,7 @@ def test_cli_main_applies_vol_targeting_and_exposes_summary(monkeypatch) -> None
             captured["config"] = config
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -1118,7 +1117,7 @@ def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -
         def __init__(self, config, pnl, circuit_breaker=None, **kwargs):
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return [
                 PortfolioEntry(
                     symbol="AAPL",
@@ -1234,7 +1233,7 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
             captured["config"] = config
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
@@ -1331,7 +1330,7 @@ def test_cli_main_does_not_apply_empirical_risk_calibration_when_blocked_by_gove
             captured["config"] = config
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
             return []
 
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)

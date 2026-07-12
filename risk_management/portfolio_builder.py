@@ -487,6 +487,130 @@ class PortfolioBuilder:
         )
         return enriched
 
+    # ── Point 5 : ML-first build path ──────────────────────────────────────
+
+    def _build_enriched_from_ml_candidates(
+        self,
+        ml_candidates: list[MLRankedCandidate],
+        win_rates: dict[str, WinRateInfo],
+    ) -> list[EnrichedSelection]:
+        """Build ``EnrichedSelection`` directly from ``MLRankedCandidate``.
+
+        Unlike ``_build_enriched_candidates()`` which merges
+        ``SelectionScore`` + ``PredictionInfo``, this method reads all
+        needed fields from ``MLRankedCandidate`` directly — ML is the
+        sole authority on side, ranking and probabilities.
+
+        No selector/quant fields are carried through; they are left at
+        their defaults (``None`` / ``0``).
+        """
+        enriched: list[EnrichedSelection] = []
+        for c in ml_candidates:
+            wr = win_rates.get(c.symbol)
+            historical_win_rate = wr.directional_accuracy if wr else 0.0
+            if c.side == "long":
+                side_legacy = "buy"
+                effective_proba = c.p_long
+                conviction = _fuse_conviction_long(
+                    quant_score=c.p_side,
+                    predicted_proba=c.p_long,
+                )
+            elif c.side == "short":
+                side_legacy = "sell"
+                effective_proba = c.p_short
+                conviction = _fuse_conviction_short(
+                    quant_score=c.p_side,
+                    predicted_proba_short=c.p_short,
+                )
+            else:
+                continue  # flat → skip
+            enriched.append(
+                EnrichedSelection(
+                    symbol=c.symbol,
+                    sector="Unknown",  # ML-first: no sector from selector
+                    score_used=c.p_side,  # ML probability becomes the score
+                    score_source="ml_p_side",
+                    predicted_proba=effective_proba,
+                    historical_win_rate=historical_win_rate,
+                    conviction_score=conviction,
+                    # All selector fields left at defaults
+                    side=side_legacy,
+                )
+            )
+        enriched.sort(
+            key=lambda entry: (
+                -entry.conviction_score,
+                entry.symbol,
+            )
+        )
+        return enriched
+
+    def build_from_ml_candidates(
+        self,
+        ml_candidates: list[MLRankedCandidate],
+        prices: dict[str, PriceInfo],
+        *,
+        win_rates: dict[str, WinRateInfo] | None = None,
+        directional_win_rates: Mapping[str | tuple[str, str], DirectionalWinRateInfo] | None = None,
+        return_matrix: DataFrame | None = None,
+        trade_date: date | None = None,
+    ) -> list[PortfolioEntry]:
+        """Build portfolio entries directly from ``MLRankedCandidate`` list.
+
+        This is the **canonical ML-first entry point** (Sprint Maître 5).
+        Unlike the legacy ``build()`` which requires ``SelectionScore`` +
+        ``PredictionInfo``, this method consumes ``MLRankedCandidate``
+        directly — ML is the sole authority on side, ranking, and
+        probabilities.
+
+        The method internally converts to legacy types and delegates to
+        ``build()``, ensuring zero divergence with the existing sizing,
+        correlation, factor and constraint logic.
+
+        Parameters
+        ----------
+        ml_candidates:
+            Ranked ML candidates (already sorted by ``side_rank``).
+        prices:
+            Price snapshots keyed by symbol.
+        win_rates:
+            Historical win-rate statistics.
+        directional_win_rates:
+            Directional OOS win-rate statistics for Kelly sizing.
+        return_matrix:
+            Returns matrix for correlation filter.
+        trade_date:
+            Decision date (defaults to today).
+        """
+        # ── Convert MLRankedCandidate → legacy SelectionScore + PredictionInfo ──
+        from risk_management.selection_contract import to_selection_score as _to_ss
+
+        candidates: list[SelectionScore] = []
+        predictions: dict[str, PredictionInfo] = {}
+        for c in ml_candidates:
+            candidates.append(_to_ss(c, sector="Unknown", snapshot_date=trade_date))
+            predictions[c.symbol] = PredictionInfo(
+                symbol=c.symbol,
+                predicted_proba=c.p_side,
+                predicted_class={"long": 2, "short": 0, "flat": 1}.get(c.side, 1),
+                run_id=c.model_run_id,
+                prediction_date=trade_date,
+                predicted_side=c.side,
+                proba_long=c.p_long,
+                proba_flat=c.p_flat,
+                proba_short=c.p_short,
+                research_only=c.research_only,
+                universe_run_id=c.universe_run_id,
+            )
+        return self.build(
+            candidates, prices,
+            predictions=predictions,
+            win_rates=win_rates,
+            return_matrix=return_matrix,
+            trade_date=trade_date,
+            directional_win_rates=directional_win_rates,
+        )
+
     def build(
         self,
         candidates: list[SelectionScore],

@@ -178,8 +178,9 @@ def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
     assert signal["symbol"] == "AAPL"
     assert bool(signal["selected"]) is True
     assert int(signal["selection_rank"]) == 1
-    assert signal["selector_signal_mode"] == "sector_neutralized"
-    assert signal["selection_explanation"] == "mode=sector_neutralized; rank=6"
+    # ── Point 5 : ML-first — selector fields are informational defaults ──
+    assert signal["selector_signal_mode"] == "ml_first"
+    assert signal["selection_explanation"] == "ML-ranked candidate"
     assert int(signal["selector_earnings_blackout"]) == 0
     assert int(signal.get("approved_shares", 0)) == int(entry.approved_shares)
 
@@ -382,31 +383,31 @@ def test_short_flow_selector_and_phase2_risk_bridge_keep_same_side_decisions(mon
         def __init__(self, config, rotation_state=None, factor_exposures=None, factor_covariance=None):
             self.progress_callback = None
 
-        def build(self, candidates, prices, predictions=None, return_matrix=None):
-            return [
-                PortfolioEntry(
-                    symbol=candidate.symbol,
-                    sector=candidate.sector,
-                    entry_price=prices[candidate.symbol].last_close,
-                    score_used=candidate.score_used,
-                    score_source=candidate.score_source,
-                    atr_20=prices[candidate.symbol].atr_20,
-                    proposed_shares=1.0,
-                    approved_shares=1.0,
-                    target_notional=prices[candidate.symbol].last_close,
-                    target_weight=0.01,
-                    decision=Decision.ACCEPTED,
-                    decision_reason="OK",
-                    conviction_score=candidate.score_used,
-                    predicted_proba=(
-                        predictions[candidate.symbol].predicted_proba
-                        if predictions and candidate.symbol in predictions
-                        else None
-                    ),
-                    side=candidate.side,
+        # ── Point 5 : ML-first — build_from_ml_candidates reçoit MLRankedCandidate ──
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
+            entries = []
+            for candidate in ml_candidates:
+                side_legacy = "sell" if candidate.side == "short" else "buy"
+                entries.append(
+                    PortfolioEntry(
+                        symbol=candidate.symbol,
+                        sector="Unknown",
+                        entry_price=prices[candidate.symbol].last_close,
+                        score_used=candidate.p_side,
+                        score_source="ml_p_side",
+                        atr_20=prices[candidate.symbol].atr_20,
+                        proposed_shares=1.0,
+                        approved_shares=1.0,
+                        target_notional=prices[candidate.symbol].last_close,
+                        target_weight=0.01,
+                        decision=Decision.ACCEPTED,
+                        decision_reason="OK",
+                        conviction_score=candidate.p_side,
+                        predicted_proba=candidate.p_side,
+                        side=side_legacy,
+                    )
                 )
-                for candidate in candidates
-            ]
+            return entries
 
     monkeypatch.setattr(market_service, "build_snapshot", fake_build_snapshot)
     monkeypatch.setattr("backtesting.risk_bridge.PortfolioBuilder", _FakeBuilder)
