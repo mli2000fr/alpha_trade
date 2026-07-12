@@ -394,6 +394,72 @@ def _wire_covariance_to_optimizer(
         LOGGER.debug("Transmission covariance à l'optimiseur ignorée.", exc_info=True)
 
 
+# ── Point 12 : vérification de compatibilité modèle ─────────────────────────
+
+def _check_model_compatibility(
+    predictions: dict[str, object],
+    *,
+    model_registry_path: str = "artifacts/model_registry.json",
+) -> dict[str, object]:
+    """Vérifie la compatibilité modèle/calibrateur/policy (Point 12).
+
+    Returns un dict avec :
+    - compatible: bool
+    - issues: list[str]
+    - champion_count: int
+    - model_versions: dict[symbol → version]
+    """
+    from risk_management.model_registry import ModelRegistry, ModelStatus
+
+    issues: list[str] = []
+    model_run_ids: set[str] = set()
+
+    for sym, pred in predictions.items():
+        model_run_id = getattr(pred, "model_run_id", None)
+        if model_run_id:
+            model_run_ids.add(str(model_run_id))
+
+    try:
+        registry = ModelRegistry.load_from_json(model_registry_path)
+        if registry is None:
+            # Premier run : registre vide → compatible par défaut
+            return {
+                "compatible": True,
+                "issues": ["model_registry_not_found — first run assumed compatible"],
+                "champion_count": 0,
+                "model_versions": {},
+            }
+
+        # Vérifier que les modèles utilisés ne sont pas RETIRED
+        for mid in model_run_ids:
+            entry = registry._entries.get(mid) if hasattr(registry, "_entries") else None
+            if entry and entry.status == ModelStatus.RETIRED:
+                issues.append(f"MODEL_RETIRED: {mid}")
+            elif entry and entry.status == ModelStatus.DEGRADED:
+                issues.append(f"MODEL_DEGRADED: {mid} — proceed with caution")
+
+        champion_count = registry.count_by_status().get("champion", 0)
+        model_versions = {
+            sym: registry.get_champion(sym).version
+            if registry.get_champion(sym) else 0
+            for sym in predictions
+        }
+
+        return {
+            "compatible": len([i for i in issues if "RETIRED" in i]) == 0,
+            "issues": issues,
+            "champion_count": champion_count,
+            "model_versions": model_versions,
+        }
+    except Exception:
+        return {
+            "compatible": True,
+            "issues": ["model_registry_load_failed — continuing"],
+            "champion_count": 0,
+            "model_versions": {},
+        }
+
+
 def _optional_quote_float(value: object) -> float | None:
     try:
         return float(value) if value not in (None, "") else None
@@ -1906,10 +1972,33 @@ def main(args: list[str] | None = None) -> None:
         )
         builder.progress_callback = emit_run_summary
 
+        # ── Point 12 : vérification compatibilité modèle ────────────
+        _compat = _check_model_compatibility(predictions)
+        if not _compat["compatible"]:
+            LOGGER.error(
+                "MODEL_INCOMPATIBLE issues=%s — blocage des entrées",
+                _compat["issues"],
+            )
+            entries = []
+            result["entry_gate_allows_new_entries"] = False
+            result["model_compatibility"] = _compat
+            _emit_live_progress(
+                dict(progress_context, targeted_symbols=0, built_entries=0),
+                current=8,
+                total=progress_total_steps,
+                label="🛡️ Progression risk management — portefeuille bloqué (modèle incompatible)",
+                phase="portfolio_blocked_model",
+                unit="positions",
+            )
+        else:
+            if _compat["issues"]:
+                for issue in _compat["issues"]:
+                    LOGGER.warning("Model compatibility issue: %s", issue)
+
         # ── Section 17 Point 6.4 : gate de fraîcheur avant entrées ───────
         freshness_blocked = False
         freshness_result = None
-        if not config.dry_run:
+        if not config.dry_run and _compat["compatible"]:
             try:
                 from risk_management.freshness_gate import FreshnessConfig, FreshnessGate
 
@@ -1925,6 +2014,14 @@ def main(args: list[str] | None = None) -> None:
                 ml_model_at = max(ml_timestamps) if ml_timestamps else None
                 if ml_model_at and not isinstance(ml_model_at, datetime):
                     ml_model_at = None
+                # ── Point 12 : enrichissement calibration timestamp ──
+                calibration_at = None  # type: ignore[assignment]
+                for p in predictions.values():
+                    cal_date = getattr(p, "calibration_date", None)
+                    if cal_date is not None:
+                        if isinstance(cal_date, datetime):
+                            if calibration_at is None or cal_date > calibration_at:
+                                calibration_at = cal_date
                 # Régime : snapshot du jour
                 regime_at = datetime.combine(trade_date, datetime.min.time(), tzinfo=timezone.utc) if trade_date else None
 
@@ -1935,7 +2032,7 @@ def main(args: list[str] | None = None) -> None:
                     earnings_at=None,  # pas encore de source PIT pour earnings
                     corporate_actions_at=None,
                     ml_model_at=ml_model_at,
-                    calibration_at=ml_model_at,  # calibration même timestamp que modèle
+                    calibration_at=calibration_at or ml_model_at,  # Point 12: calibration distincte
                     market_regime_at=regime_at,
                     borrow_at=None,  # pas encore de source PIT pour borrow
                     reference_time=now,
@@ -1949,12 +2046,18 @@ def main(args: list[str] | None = None) -> None:
             except Exception:
                 LOGGER.warning("FreshnessGate evaluation failed", exc_info=True)
 
-        if freshness_blocked:
+        if freshness_blocked or not _compat["compatible"]:
             entries = []
-            LOGGER.warning(
-                "PORTFOLIO_SKIPPED_FRESHNESS_GATE reason=%s",
-                "critical_data_stale",
-            )
+            if freshness_blocked:
+                LOGGER.warning(
+                    "PORTFOLIO_SKIPPED_FRESHNESS_GATE reason=%s",
+                    "critical_data_stale",
+                )
+            if not _compat["compatible"]:
+                LOGGER.error(
+                    "PORTFOLIO_SKIPPED_MODEL_INCOMPATIBLE issues=%s",
+                    _compat["issues"],
+                )
         else:
             entries = builder.build_from_ml_candidates(
                 candidates, prices,

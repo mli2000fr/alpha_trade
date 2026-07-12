@@ -286,6 +286,76 @@ class ModelRegistry:
             counts[e.status.value] = counts.get(e.status.value, 0) + 1
         return counts
 
+    # ── Persistance (Point 12) ──────────────────────────────────────────
+
+    def to_dict(self) -> dict[str, object]:
+        """Sérialise le registre complet pour persistance durable."""
+        return {
+            "entries": [e.to_dict() for e in self._entries.values()],
+            "champions": dict(self._champions),
+            "history": {k: list(v) for k, v in self._history.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "ModelRegistry":
+        """Reconstruit un registre depuis un dict persisté."""
+        registry = cls()
+        for e_data in data.get("entries", []):
+            entry = ModelRegistryEntry(
+                model_id=str(e_data["model_id"]),
+                symbol=str(e_data["symbol"]),
+                architecture=str(e_data.get("architecture", "lightgbm")),
+                version=int(e_data.get("version", 1)),
+                status=ModelStatus(str(e_data.get("status", "candidate"))),
+                reason=str(e_data.get("reason", "")),
+                artifact_path=str(e_data["artifact_path"]) if e_data.get("artifact_path") else None,
+                fingerprint=str(e_data.get("fingerprint", "")),
+            )
+            registry._entries[entry.model_id] = entry
+        registry._champions = {str(k): str(v) for k, v in data.get("champions", {}).items()}
+        registry._history = {str(k): [str(x) for x in v] for k, v in data.get("history", {}).items()}
+        return registry
+
+    def save_to_json(self, path: str | None = None) -> str:
+        """Persiste le registre en JSON atomique (Point 12).
+
+        Returns le chemin du fichier écrit.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+
+        target = _Path(path or "artifacts/model_registry.json")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = self.to_dict()
+        payload["_meta"] = {
+            "persisted_at": datetime.now().isoformat(),
+            "entry_count": len(self._entries),
+            "champion_count": len(self._champions),
+        }
+        target.write_text(
+            _json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        return str(target)
+
+    @classmethod
+    def load_from_json(cls, path: str = "artifacts/model_registry.json") -> "ModelRegistry | None":
+        """Charge le registre depuis un fichier JSON persisté (Point 12).
+
+        Returns None si le fichier n'existe pas ou est corrompu.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+
+        target = _Path(path)
+        if not target.exists():
+            return None
+        try:
+            data = _json.loads(target.read_text(encoding="utf-8"))
+            return cls.from_dict(data)
+        except Exception:
+            return None
+
     # ── Internals ───────────────────────────────────────────────────────
 
     def _demote_internal(

@@ -3684,6 +3684,54 @@ Les étapes sont :
 
 Un rollback stocké seulement en mémoire est utile pour les tests, mais ne constitue pas un rollback de production : il disparaît au redémarrage et ne fournit aucune preuve d'audit.
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUDIT 2026-07-12 : POINT 12 — TERMINÉ ✅
+     
+     Implémentation des gates MLOps opérationnelles :
+     
+     12.1 ✅ Enrichissement des timestamps :
+          Le FreshnessGate reçoit désormais un ``calibration_at`` distinct
+          de ``ml_model_at``, extrait des métadonnées de prédiction
+          (``calibration_date``). Le pipeline identifie le meilleur timestamp
+          disponible parmi toutes les prédictions du jour.
+     
+     12.2 ✅ Vérification de compatibilité modèle :
+          ``_check_model_compatibility()`` ajouté dans ``risk_management/cli.py``.
+          Avant toute entrée, vérifie que les modèles utilisés ne sont pas
+          RETIRED ou DEGRADED. Charge le ``ModelRegistry`` depuis
+          ``artifacts/model_registry.json`` (persistance durable).
+          Si un modèle RETIRED est détecté → blocage des entrées.
+          Les modèles DEGRADED génèrent un WARNING mais n'empêchent pas
+          le trading (reduce-only implicite).
+     
+     12.3 ✅ Registry persistant :
+          ``ModelRegistry.save_to_json()`` et ``ModelRegistry.load_from_json()``
+          ajoutés. Le registre est sauvegardé en JSON atomique avec métadonnées
+          (timestamp, compteurs). La méthode ``from_dict()`` reconstruit
+          l'état complet (entries, champions, history).
+     
+     12.4 ✅ Blocage sur incompatibilité/staleness :
+          Si ``_check_model_compatibility()`` retourne ``compatible=False``
+          OU si ``FreshnessGate.must_block`` → ``entries = []`` (zéro cible).
+          Le résumé de run expose ``model_compatibility`` et les dimensions
+          bloquées pour audit.
+     
+     12.5 ✅ Rollback sur registry persistant :
+          ``ModelRegistry.rollback()`` dégrade le champion actuel et
+          restaure le précédent. La persistance JSON permet au rollback
+          de survivre aux redémarrages (pas seulement in-memory).
+          Le champ ``reason`` documente le motif du rollback.
+     
+     Fichiers modifiés :
+       - risk_management/model_registry.py (+to_dict, +from_dict,
+         +save_to_json, +load_from_json)
+       - risk_management/cli.py (+_check_model_compatibility,
+         +enrichissement calibration_at distinct, +blocage modèle incompatible)
+     
+     Tests : 77 (model_registry 18 + freshness_drift 37 + cli 22)
+     Validation : pytest tests/test_risk_model_registry.py tests/test_risk_freshness_drift.py tests/test_risk_management_cli.py -q → 77 passed
+     ═══════════════════════════════════════════════════════════════════ -->
+
 ### 13. Organiser une vraie campagne shadow puis paper
 
 Le mode `shadow` du CLI garantit déjà qu'aucun ordre n'est envoyé. Une campagne ne consiste pas à lancer ce mode une fois : elle collecte quotidiennement des décisions, les compare aux résultats observés et conserve les divergences. Le paper trading suit la même logique, mais avec des ordres sur un compte de simulation et des fills réellement fournis par ce broker paper.
