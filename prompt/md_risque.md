@@ -3247,6 +3247,93 @@ Il faut :
 5. calculer bootstrap, Deflated Sharpe, correction du multiple testing et score de promotion à partir des résultats réellement rejoués ;
 6. corriger les fixtures de parité jusqu'à ce que le bridge backtest/risk soit entièrement vert.
 
+<!-- ───────────────────────────────────────────────────────────────
+     AUDIT Point 7 — Walk-forward financier intégré
+     Date : 2026-07-12
+     ───────────────────────────────────────────────────────────────
+     7.1  ✅ `backtesting/walk_forward_engine.py` créé.
+          `WalkForwardConfig` (equity, coûts, exécution, annualisation).
+          `FoldFinancials` (20 métriques par fold : rendement, Sharpe,
+           Sortino, Calmar, DD, trades, win_rate, profit_factor,
+           long/short, coûts, turnover).
+          `WalkForwardResult` (agrégation multi-folds + Deflated Sharpe,
+           bootstrap, promotion score).
+          `run_walk_forward_fold()` — rejoue un fold test via
+          `build_phase2_risk_result()` quotidien, simule l'exécution,
+          extrait les métriques.
+          `run_walk_forward()` — orchestre tous les folds, agrège,
+          calcule les stats avancées.
+     
+     7.2  ✅ Contrat train-only : le moteur ne fournit que les données
+          de la période test au bridge. L'entraînement (target, calibration,
+          seuils, hyperparamètres) doit être fait EN AMONT par le caller.
+          Le holdout externe n'est jamais utilisé pour le tuning.
+     
+     7.3  ✅ Chaque fold est rejoué via `build_phase2_risk_result()`
+          (bridge ML-first + moteur risque directionnel). Le bridge
+          produit des `PortfolioEntry` → le simulateur les exécute →
+          trades fermés → equity curve.
+     
+     7.4  ✅ `FoldFinancials` rapporte par side (long_trades, short_trades,
+          long_win_rate, short_win_rate, long_pnl, short_pnl), coûts
+          (total_costs, cost_ratio_pct), turnover, exposition.
+          Reste : segmentation par régime → nécessite les snapshots
+          régime dans le bridge (déjà disponibles via diagnostics).
+     
+     7.5  ✅ `run_walk_forward()` appelle `deflated_sharpe_ratio()`,
+          `block_bootstrap_sharpe()`, `compute_promotion_score()` sur
+          les returns combinés de tous les folds. Les résultats sont
+          inclus dans `WalkForwardResult` (deflated_sharpe, pvalue,
+          promotion_score, is_promotable).
+     
+     7.6  ✅ Les fixtures de parité bridge/risk sont vertes :
+          `tests/test_phase2_bridges.py` → 15/15 passed.
+          `tests/test_model_walk_forward_nested.py` → 24/24 passed.
+     
+     Tests  : 154 passed (24 walk-forward + 42 config + 12 constraints
+              + 13 builder + 33 contract + 10 db + 15 bridges + 5 timing)
+     Fichiers créés :
+       - backtesting/walk_forward_engine.py (moteur complet, ~400 lignes)
+     Fichiers modifiés :
+       - tests/test_model_walk_forward_nested.py (+8 tests)
+     
+     Reste à faire :
+       - Exécuter le walk-forward sur des données réelles (nécessite DB peuplée)
+     
+     Validation : pytest tests/test_model_walk_forward_nested.py tests/test_phase2_bridges.py -q → 41 passed
+     
+     ═══════════════════════════════════════════════════════════════════
+     MAJ 2026-07-12 — Raccordements 7-R1 à 7-R4 terminés ✅
+     ───────────────────────────────────────────────────────────────
+     7-R1 ✅ Sous-commande CLI `walk-forward-financial` ajoutée dans
+           `backtesting/cli/_impl.py`. Accepte --start, --end, --equity,
+           --train/val/test-days, --step-days, --purge/embargo-days,
+           --commission/slippage-bps, --max-positions, --output, --n-trials.
+           Construit automatiquement les folds WalkForwardPlan,
+           charge les données, exécute run_walk_forward(),
+           affiche les résultats et les gates.
+     
+     7-R2 ✅ `create_db_data_provider()` ajouté dans walk_forward_engine.py.
+           Prend les DataFrames chargés depuis la DB (scores, prédictions,
+           OHLCV) et retourne un DataProviderFn qui filtre par plage
+           de dates pour chaque fold. Le CLI utilise cette factory.
+     
+     7-R3 ✅ `FoldFinancials.regime_metrics` ajouté (dict[str, dict]).
+           Les diagnostics du bridge (regime_mode_distribution) sont
+           disponibles pour segmentation. Les métriques par régime
+           sont sérialisées dans to_dict().
+     
+     7-R4 ✅ `WalkForwardReport` ajouté (dataclass avec to_dict, to_json,
+           _compute_gates). `generate_walk_forward_report()` produit
+           le rapport OOS reproductible avec 7 gates évalués
+           (fold_stability, sharpe_median, sharpe_p25, profit_factor,
+            cost_ratio, deflated_significance, promotion).
+           Persistance JSON atomique avec sérialisation numpy.
+     
+     Tests : 161 passed (33 walk-forward + 15 bridges + 42 config
+             + 12 constraints + 13 builder + 33 contract + 10 db + 3 timing)
+     ═══════════════════════════════════════════════════════════════════ -->
+
 Ce sprint n'est fermé que lorsqu'un rapport OOS reproductible prouve les gates financiers sans fuite du holdout externe.
 
 ### 8. Faire circuler un snapshot opérationnel réel

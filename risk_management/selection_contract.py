@@ -82,8 +82,8 @@ class MLRankedCandidate:
     decision_cutoff: datetime | None = None
     lineage: dict[str, object] = field(default_factory=dict)
     # ── Sprint Maître 0 / Section 17 Point 4 ───────────────────────────
-    research_only: bool = False
-
+    research_only: bool = False    # ── Section 17 Point 5.4 : account obligatoire ─────────────────────
+    account: str = ""
     def __post_init__(self) -> None:
         if not self.symbol.strip():
             raise ValueError("symbol est obligatoire.")
@@ -123,6 +123,7 @@ class MLRankedCandidate:
             "universe_run_id": self.universe_run_id,
             "feature_cutoff": self.feature_cutoff.isoformat() if self.feature_cutoff else None,
             "decision_cutoff": self.decision_cutoff.isoformat() if self.decision_cutoff else None,
+            "account": self.account,
         }
 
 
@@ -526,6 +527,7 @@ def validate_payload_completeness(candidate: MLRankedCandidate) -> list[str]:
     - ``policy_version`` (≥ 1)
     - ``universe_run_id`` (non-None)
     - ``feature_cutoff`` (non-None)
+    - ``account`` (non-empty, Section 17 Point 5.4)
 
     Parameters
     ----------
@@ -550,5 +552,8 @@ def validate_payload_completeness(candidate: MLRankedCandidate) -> list[str]:
 
     if candidate.feature_cutoff is None:
         violations.append("missing:feature_cutoff")
+
+    if not candidate.account:
+        violations.append("missing:account")
 
     return violations

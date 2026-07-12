@@ -1413,6 +1413,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,  # déprécié, utiliser --capital-preset-keys
     )
 
+    # ── Section 17 Point 7-R1 : walk-forward financier ──────────────────
+    wf_fin_p = sub.add_parser(
+        "walk-forward-financial",
+        help="Walk-forward financier intégré : replay OOS avec bridge ML-first + risque directionnel.",
+    )
+    wf_fin_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
+    wf_fin_p.add_argument("--end", required=True, help="Date de fin (YYYY-MM-DD)")
+    wf_fin_p.add_argument("--equity", type=float, default=100_000, help="Capital initial ($)")
+    wf_fin_p.add_argument("--commission-bps", type=float, default=5.0, help="Commission (bps)")
+    wf_fin_p.add_argument("--slippage-bps", type=float, default=5.0, help="Slippage (bps)")
+    wf_fin_p.add_argument("--train-days", type=int, default=504, help="Jours de train par fold")
+    wf_fin_p.add_argument("--val-days", type=int, default=126, help="Jours de validation par fold")
+    wf_fin_p.add_argument("--test-days", type=int, default=126, help="Jours de test par fold")
+    wf_fin_p.add_argument("--step-days", type=int, default=126, help="Pas entre folds")
+    wf_fin_p.add_argument("--purge-days", type=int, default=5, help="Jours de purge entre train et val")
+    wf_fin_p.add_argument("--embargo-days", type=int, default=10, help="Jours d'embargo après val")
+    wf_fin_p.add_argument("--max-positions", type=int, default=20, help="Positions max")
+    wf_fin_p.add_argument("--output", default=None, help="Chemin du rapport JSON de sortie")
+    wf_fin_p.add_argument("--n-trials", type=int, default=100, help="Essais pour Deflated Sharpe")
+
     return parser
 
 
@@ -1952,32 +1972,34 @@ def _run_backtest(args: argparse.Namespace) -> None:
     )
     phase2_risk_config = None
     if phase2_mode != "off":
-        # Sprint S4 — propager les overrides du preset capital à la phase 2 risk
-        # (sinon ``min_position_notional``, drawdown, corrélation… retombent sur
-        # les défauts ``RiskConfig`` et ignorent silencieusement le preset).
-        risk_kwargs = build_risk_config_kwargs_from_preset(effective_preset)
-        risk_kwargs["account_equity"] = float(args.equity)
-        # ``args.max_positions`` peut déjà refléter le preset via
-        # ``apply_backtest_defaults_from_preset`` ; on conserve la valeur CLI/preset
-        # finale ici pour rester source unique de vérité côté simulateur.
-        risk_kwargs["max_positions"] = int(args.max_positions)
+        # ── Section 17 Point 6.1 : loader unifié ────────────────────────
+        # Priorité : defaults < config.yaml < capital_preset < CLI args
+        from risk_management.config import load_risk_config
+
         # Sprint 2 — short selling (Option C) : activé si le preset a un seuil short.
-        # Contourne config.yaml (potentiellement overridé par le vault).
         _preset_has_short_threshold = (
             float(effective_preset.values.get("risk_min_score_threshold_short", -1) or -1) >= 0
         )
-        risk_kwargs["short_selling_enabled"] = _preset_has_short_threshold
-        risk_kwargs["max_short_positions"] = 2
-        risk_kwargs["short_min_score"] = 0.0
-        risk_kwargs["short_rotation_required"] = True
+
+        phase2_risk_config = load_risk_config(
+            equity=float(args.equity),
+            cli_overrides={
+                "account_equity": float(args.equity),
+                "max_positions": int(args.max_positions),
+                "short_selling_enabled": _preset_has_short_threshold,
+                "max_short_positions": 2,
+                "short_min_score": 0.0,
+                "short_rotation_required": True,
+            },
+        )
+
         _safe_print(f"   short_selling_enabled={_preset_has_short_threshold} (preset={effective_preset.key})")
-        phase2_risk_config = RiskConfig(**risk_kwargs)
 
         # Flag CLI pour exclure les sélections sans ML.
         if getattr(args, "filter_no_ml", False):
-            # On doit contourner l'immuabilité de RiskConfig → on reconstruit
-            # avec object.__setattr__ car c'est un dataclass frozen
-            object.__setattr__(phase2_risk_config, "filter_unmodeled_selections", True)
+            phase2_risk_config = phase2_risk_config.with_overrides(
+                filter_unmodeled_selections=True,
+            )
             LOGGER.info("filter-no-ml activé : exclusion des sélections sans modèle ML entraîné")
 
     if phase3_mode != "off" and phase2_mode != "risk_execution":
@@ -3776,6 +3798,164 @@ def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
         _safe_print()
 
 
+def _run_walk_forward_financial(args: argparse.Namespace) -> None:
+    """Section 17 Point 7-R1 : walk-forward financier intégré."""
+    import logging
+    from datetime import date as dt_date
+
+    from backtesting.statistical_validation import WalkForwardPlan
+    from backtesting.walk_forward_engine import (
+        WalkForwardConfig,
+        create_db_data_provider,
+        generate_walk_forward_report,
+        run_walk_forward,
+    )
+    from risk_management.config import load_risk_config
+
+    LOGGER = logging.getLogger(__name__)
+
+    start = dt_date.fromisoformat(args.start)
+    end = dt_date.fromisoformat(args.end)
+
+    _safe_print(f"\n🔄 Walk-forward financier : {start} → {end}")
+    _safe_print(f"   equity={args.equity:.0f} train={args.train_days}j val={args.val_days}j test={args.test_days}j step={args.step_days}j")
+    _safe_print(f"   purge={args.purge_days}j embargo={args.embargo_days}j max_positions={args.max_positions}")
+
+    # 1. Construire les folds
+    plan_folds: list[WalkForwardPlan] = []
+    current = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    fold_idx = 0
+
+    while current + pd.Timedelta(days=args.train_days + args.val_days + args.test_days) <= end_ts:
+        train_start = current
+        train_end = train_start + pd.Timedelta(days=args.train_days)
+        val_start = train_end + pd.Timedelta(days=args.purge_days)
+        val_end = val_start + pd.Timedelta(days=args.val_days)
+        test_start = val_end + pd.Timedelta(days=args.embargo_days)
+        test_end = test_start + pd.Timedelta(days=args.test_days)
+
+        plan = WalkForwardPlan(
+            train_start=train_start.strftime("%Y-%m-%d"),
+            train_end=train_end.strftime("%Y-%m-%d"),
+            val_start=val_start.strftime("%Y-%m-%d"),
+            val_end=val_end.strftime("%Y-%m-%d"),
+            test_start=test_start.strftime("%Y-%m-%d"),
+            test_end=test_end.strftime("%Y-%m-%d"),
+            purge_days=args.purge_days,
+            embargo_days=args.embargo_days,
+            fold_index=fold_idx,
+        )
+        plan_folds.append(plan)
+        current += pd.Timedelta(days=args.step_days)
+        fold_idx += 1
+
+    _safe_print(f"   Folds planifiés : {len(plan_folds)}")
+
+    if not plan_folds:
+        _safe_print("   ⚠️ Aucun fold possible avec les paramètres donnés.")
+        return
+
+    # 2. Charger les données complètes
+    from common.database import get_engine
+
+    engine = get_engine()
+    try:
+        from backtesting.data_loader import load_scores, load_predictions, load_ohlcv
+
+        scores_df = load_scores(engine, start, end)
+        _safe_print(f"   Scores chargés : {len(scores_df)} lignes")
+    except Exception:
+        LOGGER.warning("Impossible de charger les scores", exc_info=True)
+        scores_df = pd.DataFrame()
+
+    try:
+        from backtesting.data_loader import load_predictions as _load_pred
+        predictions_df = _load_pred(engine, start, end)
+        _safe_print(f"   Prédictions chargées : {len(predictions_df)} lignes")
+    except Exception:
+        predictions_df = None
+
+    try:
+        ohlcv = load_ohlcv(engine, start, end)
+        close_df = ohlcv.get("close") if ohlcv is not None and isinstance(ohlcv, dict) else None
+        high_df = ohlcv.get("high") if ohlcv is not None and isinstance(ohlcv, dict) else None
+        low_df = ohlcv.get("low") if ohlcv is not None and isinstance(ohlcv, dict) else None
+        volume_df = ohlcv.get("volume") if ohlcv is not None and isinstance(ohlcv, dict) else None
+        _safe_print(f"   OHLCV chargé")
+    except Exception:
+        close_df = high_df = low_df = volume_df = None
+
+    # 3. Config risque unifiée
+    risk_config = load_risk_config(
+        equity=args.equity,
+        cli_overrides={
+            "account_equity": args.equity,
+            "max_positions": args.max_positions,
+            "dry_run": True,
+        },
+    )
+    _safe_print(f"   Config fingerprint : {risk_config.fingerprint}")
+
+    # 4. DataProvider
+    provider = create_db_data_provider(
+        scores_df=scores_df,
+        predictions_df=predictions_df,
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        volume_df=volume_df,
+    )
+
+    # 5. Exécuter le walk-forward
+    wf_config = WalkForwardConfig(
+        initial_equity=args.equity,
+        commission_bps=args.commission_bps,
+        slippage_bps=args.slippage_bps,
+    )
+
+    result = run_walk_forward(
+        plan_folds=plan_folds,
+        config=risk_config,
+        wf_config=wf_config,
+        data_provider=provider,
+        n_trials=args.n_trials,
+    )
+
+    _safe_print(f"\n📊 Résultats : {result.n_folds} folds, {result.n_folds_positive} positifs")
+    _safe_print(f"   Sharpe médian    : {result.median_sharpe:.3f}")
+    _safe_print(f"   Sharpe p25       : {result.percentile_25_sharpe:.3f}")
+    _safe_print(f"   Rendement médian : {result.median_return_pct:.1f}%")
+    _safe_print(f"   DD médian        : {result.median_max_dd_pct:.1f}%")
+    _safe_print(f"   Profit factor    : {result.median_profit_factor:.2f}")
+    _safe_print(f"   Stabilité folds  : {result.fold_stability_pct:.0f}%")
+    _safe_print(f"   Coûts/alpha      : {result.avg_cost_ratio_pct:.0f}%")
+    if result.deflated_sharpe is not None:
+        _safe_print(f"   Deflated Sharpe  : {result.deflated_sharpe:.3f} (p={result.deflated_sharpe_pvalue:.4f})")
+    if result.promotion_score is not None:
+        _safe_print(f"   Promotion score  : {result.promotion_score:.3f} ({'✅ PROMOTABLE' if result.is_promotable else '❌ NON PROMOTABLE'})")
+
+    # 6. Rapport
+    report = generate_walk_forward_report(
+        result=result,
+        config=risk_config,
+        plan_folds=plan_folds,
+        output_path=args.output,
+    )
+
+    gates = report._compute_gates()
+    passed = sum(1 for g in gates.values() if isinstance(g, dict) and g.get("passed"))
+    total = sum(1 for g in gates.values() if isinstance(g, dict))
+    _safe_print(f"\n🚦 Gates : {passed}/{total} passés")
+    for name, gate in gates.items():
+        if isinstance(gate, dict):
+            status = "✅" if gate["passed"] else "❌"
+            _safe_print(f"   {status} {name}: {gate['value']} (seuil: {gate['threshold']})")
+
+    if args.output:
+        _safe_print(f"\n📄 Rapport écrit : {args.output}")
+
+
 def main() -> None:
     configure_root_logging()
     parser = _build_parser()
@@ -3797,6 +3977,8 @@ def main() -> None:
         _run_walk_forward_conviction(args)
     elif args.command == "walk-forward-sentiment":
         _run_walk_forward_sentiment(args)
+    elif args.command == "walk-forward-financial":
+        _run_walk_forward_financial(args)
     else:
         parser.print_help()
         sys.exit(1)

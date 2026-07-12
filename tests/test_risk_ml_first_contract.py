@@ -303,6 +303,7 @@ def test_validate_payload_completeness_all_present() -> None:
         side="long", p_long=0.6, p_flat=0.3, p_short=0.1,
         p_side=0.6, model_run_id="run-001", policy_version=2,
         universe_run_id="univ-1", feature_cutoff=date(2026, 7, 10),
+        account="paper_trading",
     )
     violations = validate_payload_completeness(c)
     assert len(violations) == 0
@@ -319,6 +320,7 @@ def test_validate_payload_completeness_missing_symbol() -> None:
         side="long", p_long=0.6, p_flat=0.3, p_short=0.1,
         p_side=0.6, model_run_id="run-001",
         universe_run_id="univ-1", feature_cutoff=date(2026, 7, 10),
+        account="test",
     )
     violations = validate_payload_completeness(c)
     assert "missing:symbol" not in violations  # __post_init__ handles this
@@ -335,6 +337,7 @@ def test_validate_payload_completeness_missing_trade_date() -> None:
         side="long", p_long=0.6, p_flat=0.3, p_short=0.1,
         p_side=0.6, model_run_id="run-001",
         universe_run_id="univ-1", feature_cutoff=date(2026, 7, 10),
+        account="test",
     )
     object.__setattr__(c, "trade_date", None)
     violations = validate_payload_completeness(c)
@@ -349,6 +352,7 @@ def test_validate_payload_completeness_missing_universe_run_id() -> None:
         side="long", p_long=0.6, p_flat=0.3, p_short=0.1,
         p_side=0.6, model_run_id="run-001",
         universe_run_id=None, feature_cutoff=date(2026, 7, 10),
+        account="test",
     )
     violations = validate_payload_completeness(c)
     assert "missing:universe_run_id" in violations
@@ -362,6 +366,7 @@ def test_validate_payload_completeness_missing_feature_cutoff() -> None:
         side="long", p_long=0.6, p_flat=0.3, p_short=0.1,
         p_side=0.6, model_run_id="run-001",
         universe_run_id="univ-1", feature_cutoff=None,
+        account="test",
     )
     violations = validate_payload_completeness(c)
     assert "missing:feature_cutoff" in violations
@@ -375,11 +380,28 @@ def test_validate_payload_completeness_multiple_violations() -> None:
         side="long", p_long=0.6, p_flat=0.3, p_short=0.1,
         p_side=0.6, model_run_id="run-001",
         universe_run_id=None, feature_cutoff=None,
+        account="",
     )
     violations = validate_payload_completeness(c)
     assert "missing:universe_run_id" in violations
     assert "missing:feature_cutoff" in violations
-    assert len(violations) >= 2  # universe_run_id + feature_cutoff
+    assert "missing:account" in violations
+    assert len(violations) >= 3  # universe_run_id + feature_cutoff + account
+
+
+def test_validate_payload_completeness_missing_account() -> None:
+    """Point 5.4 : account vide/absent → violation."""
+    from risk_management.selection_contract import validate_payload_completeness
+
+    c = MLRankedCandidate(
+        symbol="AAPL", trade_date=date(2026, 7, 10),
+        side="long", p_long=0.6, p_flat=0.3, p_short=0.1,
+        p_side=0.6, model_run_id="run-001",
+        universe_run_id="univ-1", feature_cutoff=date(2026, 7, 10),
+        account="",
+    )
+    violations = validate_payload_completeness(c)
+    assert "missing:account" in violations
 
 
 # ── Section 17 Point 5.5 : bridge/CLI common fixture parity ─────────────────
