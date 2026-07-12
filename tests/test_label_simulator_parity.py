@@ -457,3 +457,70 @@ class TestCostConsistency:
         assert edge.borrow_fee_annual == costs.borrow_fee_annual
         assert edge.total_cost_bps == costs.round_trip_cost_bps
         assert edge.cost_pct == costs.round_trip_cost_pct
+
+
+# ── Simulator ↔ TradingCostModel integration (Point 3 / Sprint 12) ──────────
+
+class TestSimulatorCostModelIntegration:
+    """Le simulateur backtest peut utiliser TradingCostModel au lieu des champs legacy."""
+
+    def test_backtest_config_accepts_cost_model(self):
+        """BacktestConfig accepte un trading_cost_model optionnel."""
+        from backtesting.simulator import BacktestConfig
+        from datetime import date
+
+        cfg = BacktestConfig(
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 6, 30),
+            trading_cost_model=DEFAULT_COST_MODEL,
+        )
+        assert cfg.trading_cost_model is DEFAULT_COST_MODEL
+
+    def test_use_canonical_costs_flag(self):
+        """use_canonical_costs=True active DEFAULT_COST_MODEL."""
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from datetime import date
+
+        cfg = BacktestConfig(
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 6, 30),
+            use_canonical_costs=True,
+        )
+        model = BacktestEngine._resolve_cost_model(cfg)
+        assert model.spread_bps == DEFAULT_COST_MODEL.spread_bps
+        assert model.commission_bps == DEFAULT_COST_MODEL.commission_bps
+        assert model.slippage_bps == DEFAULT_COST_MODEL.slippage_bps
+        assert model.borrow_fee_annual == DEFAULT_COST_MODEL.borrow_fee_annual
+
+    def test_legacy_fields_still_work(self):
+        """Sans cost_model ni use_canonical_costs, les champs legacy sont utilisés."""
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from datetime import date
+
+        cfg = BacktestConfig(
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 6, 30),
+            commission_bps=8.0,
+            slippage_bps=3.0,
+        )
+        model = BacktestEngine._resolve_cost_model(cfg)
+        assert model.commission_bps == 8.0
+        assert model.slippage_bps == 3.0
+        assert model.spread_bps == 0.0  # spread géré séparément par _get_spread_bps
+
+    def test_borrow_cost_computation(self):
+        """La borrow fee est calculée proportionnellement à la durée."""
+        costs = DEFAULT_COST_MODEL
+        # 10 jours de holding → 0.003 * 10/252 ≈ 0.000119
+        cost_10d = costs.borrow_cost_for_holding(10, sessions_per_year=252)
+        cost_20d = costs.borrow_cost_for_holding(20, sessions_per_year=252)
+        assert cost_10d > 0
+        assert cost_20d == pytest.approx(cost_10d * 2.0, rel=0.01)
+
+    def test_effective_cost_short_includes_borrow(self):
+        """Le coût effectif d'un short inclut la borrow fee."""
+        costs = DEFAULT_COST_MODEL
+        net_long = costs.effective_cost_for_trade(0.05, "long", holding_sessions=10)
+        net_short = costs.effective_cost_for_trade(0.05, "short", holding_sessions=10)
+        # Le short doit avoir un rendement net plus faible à cause du borrow
+        assert net_short < net_long

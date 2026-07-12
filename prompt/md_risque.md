@@ -3040,10 +3040,11 @@ Le test d'intégration doit couvrir gap, double-touch, halt et short, puis exige
          validate_fold_isolation() + FoldIsolationReport
          Purge + embargo empêchent toute fuite inter-fold → 16 tests
      
-     Total Sprint 3 : 113 tests, 0 échec
-     Reste : simulateur backtest (backtesting/simulator.py) n'utilise pas
-            encore TradingCostModel → intégration au Sprint 12
-     Validation : pytest tests/test_label_simulator_parity.py tests/test_model_factory_target_optimization.py tests/test_model_factory_dataset.py tests/test_model_factory_labeling.py tests/test_model_factory_config.py --no-cov -q → 113 passed
+     Total Sprint 3 : 119 tests, 0 échec
+     Reste : ✅ simulateur backtest utilise désormais TradingCostModel
+            (spread=5bps, comm=1bps, slippage=2bps, borrow=0.3%/an).
+            → Intégré au Sprint 12 (parité label/simulateur).
+     Validation : pytest tests/test_label_simulator_parity.py tests/test_model_factory_target_optimization.py tests/test_model_factory_dataset.py tests/test_model_factory_labeling.py tests/test_model_factory_config.py --no-cov -q → 119 passed
      ═══════════════════════════════════════════════════════════════════ -->
 
 ### 4. Achever le benchmark et la promotion de modèle

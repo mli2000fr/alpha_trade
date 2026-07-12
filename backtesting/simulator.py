@@ -27,6 +27,7 @@ from backtesting.microstructure import (
 )
 from backtesting.risk_overlay import RiskOverlayConfig, compute_portfolio_vol_scaler
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
+from common.trading_costs import TradingCostModel, DEFAULT_COST_MODEL
 from core.direction import (
     compute_gross_notional,
     compute_pullback_limit_price,
@@ -75,6 +76,20 @@ class BacktestConfig:
     # P3 — commission tiered (TieredCommissionConfig) : remplace le commission_bps
     # plat quand activé. Le fees_pct est alors recalculé = slippage_bps/10000 + tiered.
     use_tiered_commission: bool = False
+    # ── Sprint 3 / Point 12 : modèle de coûts canonique ──────────────
+    # Quand ``trading_cost_model`` est fourni, ses valeurs (spread, commission,
+    # slippage, borrow_fee_annual) sont utilisées pour le calcul des coûts
+    # d'entrée/sortie et le borrow fee des shorts. Sinon, les champs legacy
+    # ci-dessus sont utilisés (rétrocompatibilité).
+    # Le labeler (``TripleBarrierConfig``) partage le même modèle → parité
+    # label/simulateur garantie.
+    trading_cost_model: TradingCostModel | None = None
+    # ── Parité label/simulateur ──────────────────────────────────────
+    # Si True, utilise DEFAULT_COST_MODEL (spread=5bps, comm=1bps,
+    # slippage=2bps, borrow=0.3%/an, round-trip=16bps) au lieu des
+    # champs legacy. Active automatiquement la déduction du borrow fee
+    # pour les shorts.
+    use_canonical_costs: bool = False
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
     execution_replay_mode: str = "off"
@@ -380,6 +395,8 @@ class BacktestEngine:
 
     def __init__(self, config: BacktestConfig) -> None:
         self.config = config
+        # ── Sprint 3 / Point 12 : modèle de coûts canonique ──────────
+        self._cost_model = self._resolve_cost_model(config)
         # Concentration filters (Priorité 4)
         self._concentration_trade_tracker = SymbolTradeTracker(
             max_trades=config.concentration_max_trades_per_symbol,
@@ -392,6 +409,27 @@ class BacktestEngine:
         # Anti-faux-départs (Quick Win 1)
         self._breakout_tracker = BreakoutConfirmationTracker(
             min_breakout_days=config.min_breakout_days,
+        )
+
+    @staticmethod
+    def _resolve_cost_model(config: BacktestConfig) -> TradingCostModel:
+        """Résout le modèle de coûts effectif pour le simulateur.
+
+        Priorité :
+        1. ``trading_cost_model`` explicitement fourni
+        2. ``use_canonical_costs=True`` → ``DEFAULT_COST_MODEL``
+        3. Champs legacy (``commission_bps``, ``slippage_bps``, ``fees_pct``)
+        """
+        if config.trading_cost_model is not None:
+            return config.trading_cost_model
+        if config.use_canonical_costs:
+            return DEFAULT_COST_MODEL
+        # Rétrocompatibilité : construire depuis les champs legacy
+        return TradingCostModel(
+            spread_bps=0.0,  # le spread réel est géré séparément via _get_spread_bps
+            commission_bps=float(config.commission_bps),
+            slippage_bps=float(config.slippage_bps),
+            borrow_fee_annual=0.003,  # défaut standard
         )
 
     # ------------------------------------------------------------------
@@ -1942,6 +1980,23 @@ class BacktestEngine:
             return_pct = compute_return_pct(side, position.entry_price, exit_price)
             holding_days = int((trade_day - position.entry_date).days)
 
+            # ── Sprint 3 / Point 12 : borrow fee pour shorts ──────────
+            borrow_cost = 0.0
+            if short and self._cost_model.borrow_fee_annual > 0 and holding_days > 0:
+                holding_sessions = max(1, holding_days)  # ~1 session par jour calendaire
+                borrow_cost_pct = self._cost_model.borrow_cost_for_holding(
+                    holding_sessions, sessions_per_year=252,
+                )
+                # Coût du borrow sur le notional de la position
+                entry_notional = abs_qty * position.entry_price
+                borrow_cost = entry_notional * borrow_cost_pct
+                pnl -= borrow_cost
+                # Déduire aussi du cash settled
+                if constraints.use_settled_cash_only:
+                    state.unsettled_cash -= borrow_cost
+                else:
+                    state.settled_cash -= borrow_cost
+
             is_day_trade = is_same_day
             if is_day_trade:
                 diagnostics.executed_day_trades += 1
@@ -1962,6 +2017,7 @@ class BacktestEngine:
                     "pnl": pnl,
                     "return_pct": return_pct,
                     "holding_days": holding_days,
+                    "borrow_cost": borrow_cost,  # Sprint 3 / Point 12
                     "exit_reason": exit_reason,
                     "exit_source": "explicit_replay" if explicit_resolution is not None else "intrabar_resolution",
                     "exit_intent_role": position.explicit_exit_intent_role,
