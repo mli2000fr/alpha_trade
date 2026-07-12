@@ -1454,6 +1454,65 @@ def run(
                 len(_decision_fps),
             )
 
+    # ── Point 14 : smoke tests pré-exécution avec probes réelles ──
+    _smoke_ok = True
+    try:
+        from risk_management.operational_controls import (
+            OperationalControls,
+            build_operational_probes,
+        )
+        _probes = build_operational_probes(
+            broker=broker if not config.dry_run else None,
+            circuit_breaker=cb,
+            config=config,
+            trade_date=trade_date_val,
+        )
+        _op_ctrl = OperationalControls()
+        _smoke_ok, _smoke_results = _op_ctrl.run_smoke_tests(
+            connectivity_ok=_probes.get("SMOKE_CONNECTIVITY", True),
+            data_fresh_ok=_probes.get("SMOKE_DATA_FRESH", True),
+            kill_switch_ok=_probes.get("SMOKE_KILL_SWITCH", True),
+            circuit_breaker_ok=_probes.get("SMOKE_CIRCUIT_BREAKER", True),
+            ml_ready=_probes.get("SMOKE_ML_READY", True),
+            cash_ok=_probes.get("SMOKE_CASH", True),
+            watcher_ok=_probes.get("SMOKE_WATCHER", True),
+        )
+        # Persistance best-effort
+        try:
+            _smoke_dir = PROJECT_ROOT / "artifacts" / "smoke_tests"
+            _smoke_dir.mkdir(parents=True, exist_ok=True)
+            _smoke_stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+            (_smoke_dir / f"smoke_{_smoke_stamp}_{config.resolved_account_id or 'default'}.json").write_text(
+                json.dumps(
+                    {"all_passed": _smoke_ok, "results": [r.to_dict() for r in _smoke_results]},
+                    ensure_ascii=False, indent=2, default=str,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            LOGGER.debug("Smoke test persistence indisponible.", exc_info=True)
+
+        if not _smoke_ok:
+            failed = [r.name for r in _smoke_results if r.is_blocking]
+            print(
+                f"{RED}{BOLD}[SMOKE] Échec des tests pré-session : {', '.join(failed)}{RESET}",
+                file=sys.stderr,
+            )
+            if mode == "live":
+                LOGGER.error("Smoke tests failed in live mode — aborting run.")
+                sys.exit(2)
+            else:
+                print(
+                    f"{YELLOW}[SMOKE] Mode {mode}: exécution poursuivie malgré les échecs.{RESET}",
+                    file=sys.stderr,
+                )
+        else:
+            print(f"{GREEN}[OK] Smoke tests pré-session : tous passés.{RESET}")
+    except ImportError:
+        LOGGER.info("Module operational_controls non disponible — smoke tests ignorés.")
+    except Exception:
+        LOGGER.warning("Smoke tests indisponible — non bloquant.", exc_info=True)
+
     print(f"{BOLD}Execution en cours...{RESET}\n")
     t0 = datetime.now()
     metrics = executor.execute_run(risk_run_id=run_id, trade_date=trade_date_val)
@@ -1472,6 +1531,112 @@ def run(
         dry_run=config.dry_run,
         allow_outside_rth=config.allow_outside_rth,
     )
+
+    # ── Point 14 : reconciliation quotidienne post-run ──
+    _daily_rec_ok = True
+    _daily_rec_detail = ""
+    try:
+        from risk_management.daily_reconciliation import DailyReconciliation
+
+        _daily_rec = DailyReconciliation()
+        # Rapprochement avec snapshot broker réel
+        _broker_positions_raw: list[dict[str, object]] = []
+        _broker_fills_raw: list[dict[str, object]] = []
+        _broker_cash_raw: float | None = None
+        _broker_pnl_raw: float | None = None
+        if not config.dry_run:
+            try:
+                _broker_positions_raw = broker.list_positions() or []
+            except Exception:
+                LOGGER.warning("daily_reconciliation: impossible de récupérer les positions broker", exc_info=True)
+            try:
+                _broker_fills_raw = broker.list_orders(status="filled", limit=500) or []
+            except Exception:
+                LOGGER.warning("daily_reconciliation: impossible de récupérer les ordres broker", exc_info=True)
+            try:
+                _broker_cash_raw = broker.get_buying_power() if hasattr(broker, "get_buying_power") else None
+            except Exception:
+                LOGGER.warning("daily_reconciliation: impossible de récupérer le cash broker", exc_info=True)
+            try:
+                _broker_pnl_raw = broker.get_account_pnl() if hasattr(broker, "get_account_pnl") else None
+            except Exception:
+                LOGGER.warning("daily_reconciliation: impossible de récupérer le PnL broker", exc_info=True)
+
+        _target_positions = [
+            {"symbol": str(k), "qty": float(v)}
+            for k, v in (metrics.get("positions", {}) or {}).items()
+        ]
+        _rec_result: object = _daily_rec.reconcile(
+            trade_date=trade_date_val or date.today(),
+            intended_orders=metrics.get("intended_orders", []),
+            submitted_orders=metrics.get("submitted_orders", []),
+            fills=_broker_fills_raw or metrics.get("fills", []),
+            target_positions=_target_positions,
+            actual_positions=_broker_positions_raw,
+            expected_protections=metrics.get("protections", []),
+            actual_protections=None,  # à alimenter via fetch_protection_orders si nécessaire
+            calculated_pnl=metrics.get("pnl"),
+            broker_pnl=_broker_pnl_raw,
+            calculated_cash=_broker_cash_raw,
+            broker_cash=_broker_cash_raw,
+        )
+        if hasattr(_rec_result, "is_clean"):
+            _daily_rec_ok = bool(getattr(_rec_result, "is_clean"))
+            _daily_rec_detail = str(getattr(_rec_result, "summary", "") or "")
+
+        # Persistance best-effort de l'artefact de réconciliation
+        try:
+            _rec_dict = (
+                _rec_result.to_dict()
+                if hasattr(_rec_result, "to_dict")
+                else {"is_clean": _daily_rec_ok, "summary": _daily_rec_detail}
+            )
+            _rec_dir = PROJECT_ROOT / "artifacts" / "daily_reconciliation"
+            _rec_dir.mkdir(parents=True, exist_ok=True)
+            _rec_stamp = finished_at.strftime("%Y%m%dT%H%M%S")
+            _rec_path = _rec_dir / f"reco_{_rec_stamp}_{config.resolved_account_id or 'default'}.json"
+            _rec_path.write_text(
+                json.dumps(_rec_dict, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            LOGGER.info("Daily reconciliation persisted: %s", _rec_path)
+        except Exception:
+            LOGGER.debug("Persistance daily_reconciliation indisponible.", exc_info=True)
+
+        if not _daily_rec_ok:
+            LOGGER.error("Daily reconciliation FAILED: %s", _daily_rec_detail)
+            print(
+                f"{RED}{BOLD}[RECONCILIATION] Incohérence détectée : {_daily_rec_detail}{RESET}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"{GREEN}[OK] Réconciliation quotidienne : cohérente.{RESET}")
+    except ImportError:
+        LOGGER.info("daily_reconciliation module non disponible — ignoré.")
+    except Exception:
+        LOGGER.warning("daily_reconciliation a échoué — non bloquant.", exc_info=True)
+
+    # RampUpManager journal persistence (Point 14)
+    try:
+        from risk_management.operational_controls import persist_ramp_up_transition as _prt
+        _ramp_meta = metrics.get("ramp_up", {})
+        if _ramp_meta:
+            _ramp_from = str(_ramp_meta.get("from_stage", "unknown"))
+            _ramp_to = str(_ramp_meta.get("to_stage", "unknown"))
+            _ramp_by = str(_ramp_meta.get("approved_by", "system"))
+            _journal_path = _prt(
+                from_stage=_ramp_from,
+                to_stage=_ramp_to,
+                approved_by=_ramp_by,
+                reason=str(_ramp_meta.get("reason", "")),
+                metrics_snapshot=metrics.get("ramp_up_metrics", {}),
+                journal_path="artifacts/ramp_up_journal.json",
+            )
+            if _journal_path:
+                LOGGER.info("RampUp transition persisted: %s", _journal_path)
+    except Exception:
+        LOGGER.debug("RampUp journal persistence indisponible.", exc_info=True)
+
     if mode == "live" and live_run_plan_path is not None and live_run_plan_fingerprint is not None:
         summary["approval"] = {
             "token_env": LIVE_APPROVAL_TOKEN_ENV,

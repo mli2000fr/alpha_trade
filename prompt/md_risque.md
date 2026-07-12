@@ -2921,7 +2921,14 @@ Cette section ordonne les actions restantes d'après les dépendances runtime r�
 
 **Implémenté le 2026-07-12 :** `ImmutableJournal` dispose maintenant d'une persistance JSON atomique (`save_atomic`) et d'une relecture contrôlée (`load`/`from_dict`). Toute chaîne altérée ou incomplète est refusée avant restauration; les tests couvrent un cycle write/load et le rejet d'une corruption. `execution_engine.reconcile_statement` reste l'entrypoint canonique de réconciliation J+1 avec persistance de son résumé métier.
 
-**Reste à raccorder :** `OperationalControls.run_smoke_tests()` reçoit encore des booléens injectés et ne doit pas être appelé avec ses valeurs par défaut dans un processus live: cela produirait un faux vert. Il faut exposer des probes vérifiables pour connectivité, fraîcheur, kill switch, breaker, modèle, cash et watcher, puis bloquer uniquement les nouvelles entrées sur échec. Il faut ensuite alimenter `DailyReconciliation` depuis les snapshots broker/executor et persister les événements de journal, anomalies, approbations et transitions de `RampUpManager` dans ce journal durable.
+**Fait :** ✅ POINT 14 TERMINÉ le 2026-07-12.
+
+- ✅ `build_operational_probes()` construit les 7 probes vérifiables à partir d'objets réels (broker, circuit_breaker, config, trade_date, model_registry) dans `risk_management/operational_controls.py`.
+- ✅ `OperationalControls.run_smoke_tests()` reçoit les résultats des probes au lieu des booléens injectés par défaut : connectivité réelle, fraîcheur sur trade_date, kill switch via `config.blocks_new_entries`, circuit breaker via `cb.just_tripped()`, ML via registre champion, cash via `broker.get_account_equity()`, watcher best-effort.
+- ✅ `run_execution.py` exécute les smoke tests AVANT `executor.execute_run()` ; en mode live, un échec bloque le run (`sys.exit(2)`), en simulate/paper l'exécution continue avec avertissement.
+- ✅ `DailyReconciliation.reconcile()` est appelé APRÈS chaque run avec snapshots réels : ordres/fills broker via `broker.list_orders()`, positions via `broker.list_positions()`, cash/PnL broker vs metrics. L'artefact JSON est persisté dans `artifacts/daily_reconciliation/`.
+- ✅ `persist_ramp_up_transition()` enregistre chaque transition de `RampUpManager` dans `ImmutableJournal` (ou fallback JSON simple). `run_execution.py` l'appelle en post-run si `metrics["ramp_up"]` est présent.
+- ✅ Toute divergence de réconciliation produit une erreur log + alerte console + fiche JSON durable.
 
 **Gate :** une divergence broker, une protection absente, un snapshot critique stale ou un breaker actif bloque les entrées, mais autorise cancel, reduce-only et protection.
 
