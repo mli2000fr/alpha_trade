@@ -1135,6 +1135,20 @@ def main(args: list[str] | None = None) -> None:
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
     raw_account_id = (args.account or "").strip() or None
     requested_equity = float(args.account_equity)
+    # ── Initialisation des variables de résumé ───────────────────────
+    daily_quality_report_path: str | None = None
+    spread_snapshots: dict[str, object] = {}
+    borrow_snapshots: dict[str, object] = {}
+    liquidity_gate: object | None = None
+    transition_plan: object | None = None
+    operational_snapshot: object | None = None
+    retained_entries: list[object] = []
+    preflight_data_quality: dict[str, object] = {}
+    decision_audit_path: str | None = None
+    conviction_weights_calibration: dict[str, object] = {}
+    empirical_risk_calibration: dict[str, object] = {}
+    shadow_compare_summary: dict[str, object] | None = None
+    postmortem_artifacts: list[object] = []
     # L'IHM transmet systématiquement `--account default`. On considère cette
     # valeur comme un compte implicite : si aucun snapshot n'est disponible, on
     # fallback sur `--account-equity` plutôt que de bloquer le pipeline.
@@ -1653,6 +1667,63 @@ def main(args: list[str] | None = None) -> None:
             phase="load_return_matrix",
         )
 
+        # ── Section 17 Point 2.4 : rapport quotidien de qualité des données ──
+        daily_quality_report_path: str | None = None
+        try:
+            from common.data_availability import (
+                DataAvailabilityInfo,
+                make_availability_from_bar_date,
+            )
+            from common.daily_quality_report import build_and_persist_daily_report
+            from datetime import timezone as _tz
+
+            # Construire la map de disponibilité par symbole depuis les prix chargés
+            availability_map: dict[str, object] = {}
+            decision_cutoff = datetime(trade_date.year, trade_date.month, trade_date.day, 21, 0, 0, tzinfo=_tz.utc)
+            for sym in symbols:
+                price_info = prices.get(sym)
+                if price_info is not None and price_info.price_asof_date is not None:
+                    avail = make_availability_from_bar_date(
+                        bar_date=price_info.price_asof_date,
+                        source="repository",
+                        decision_cutoff=decision_cutoff,
+                    )
+                else:
+                    # Symbole sans prix → MISSING_NO_SOURCE
+                    from common.data_availability import QualityState
+                    avail = DataAvailabilityInfo(
+                        event_time=decision_cutoff,
+                        available_at=decision_cutoff,
+                        source="repository",
+                        quality=QualityState.MISSING_NO_SOURCE,
+                    )
+                availability_map[sym] = avail
+
+            combined = build_and_persist_daily_report(
+                trade_date=trade_date,
+                symbols=list(symbols),
+                availability_map=availability_map,
+                decision_cutoff=decision_cutoff,
+            )
+            daily_quality_report_path = combined.report_path
+            if combined.quality.alerts:
+                LOGGER.warning(
+                    "Rapport qualité quotidien : %d alertes — couverture=%.1f%%",
+                    len(combined.quality.alerts),
+                    combined.quality.coverage_ratio * 100,
+                )
+                for alert in combined.quality.alerts[:5]:
+                    LOGGER.warning("  ⚠️  %s", alert)
+            else:
+                LOGGER.info(
+                    "Rapport qualité quotidien OK : couverture=%.1f%% (%d/%d symboles)",
+                    combined.quality.coverage_ratio * 100,
+                    combined.quality.symbols_with_data,
+                    combined.quality.total_symbols,
+                )
+        except Exception:
+            LOGGER.debug("Rapport qualité quotidien indisponible.", exc_info=True)
+
         liquidity_gate = None
         if not config.dry_run:
             from risk_management.liquidity import LiquidityGate
@@ -2154,6 +2225,8 @@ def main(args: list[str] | None = None) -> None:
             operational_snapshot=operational_snapshot,
             target_entries=retained_entries,
         ),
+        # ── Section 17 Point 2.4 : rapport qualité quotidien ────────────
+        "daily_quality_report_path": daily_quality_report_path,
         "preflight_data_quality": preflight_data_quality,
         # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
         "account_equity_breakdown": equity_breakdown,

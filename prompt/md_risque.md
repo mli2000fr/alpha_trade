@@ -2997,13 +2997,21 @@ Le test d'intégration doit démontrer qu'une observation arrivée après le cut
          Split-only documenté, EODHD adjusted_close rejeté → 12 tests
      2.4 Rapport quotidien : build_and_persist_daily_report() +
          detect_universe_anomalies() → JSON atomique artifacts/daily_quality/
-         → 13 tests
+         → 13 tests. **Schedulé dans le CLI live** (``risk_management/cli.py``)
+         après chargement des prix/retours, avant construction du portefeuille.
+         Le chemin du rapport est inclus dans le résumé de run
+         (``daily_quality_report_path``). Les alertes (couverture < 90%,
+         données futures, stale) sont loggées en WARNING.
      2.5 Gate données critiques : EntryDataGate + check_entry_data_readiness()
          Bloque entrée si prix/ADV absent/future/stale → 20 tests
      
      Total : 67 tests
-     Reste : rapport quotidien non schedulé (→ Sprint 13), borrow/quote
-            temps réel non câblé dans le CLI live
+     Fait : ✅ Rapport quotidien schedulé dans le pipeline live (Point 2.4)
+           ✅ Borrow/quote temps réel câblé via Point 9
+            (``_load_live_borrow_snapshots``, ``_load_live_spread_snapshots``)
+     Fichiers modifiés :
+       - risk_management/cli.py (+daily_quality_report_path dans le résumé,
+         +build_and_persist_daily_report après chargement return_matrix)
      Validation : pytest tests/test_pit_loader_enrichment.py tests/test_universe_lineage_propagation.py tests/test_price_convention_contract.py tests/test_daily_quality_report.py tests/test_entry_data_gate.py --no-cov -q → 67 passed
      ═══════════════════════════════════════════════════════════════════ -->
 
@@ -3041,7 +3049,7 @@ Le test d'intégration doit couvrir gap, double-touch, halt et short, puis exige
          Purge + embargo empêchent toute fuite inter-fold → 16 tests
      
      Total Sprint 3 : 119 tests, 0 échec
-     Reste : ✅ simulateur backtest utilise désormais TradingCostModel
+     Fait : ✅ simulateur backtest utilise désormais TradingCostModel
             (spread=5bps, comm=1bps, slippage=2bps, borrow=0.3%/an).
             → Intégré au Sprint 12 (parité label/simulateur).
      Validation : pytest tests/test_label_simulator_parity.py tests/test_model_factory_target_optimization.py tests/test_model_factory_dataset.py tests/test_model_factory_labeling.py tests/test_model_factory_config.py --no-cov -q → 119 passed
