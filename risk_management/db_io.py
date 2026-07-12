@@ -421,7 +421,12 @@ class RiskRepository:
         return self.load_prices_asof(symbols, trade_date or date.today(), atr_window=atr_window)
 
     def load_prices_asof(self, symbols: list[str], trade_date: date, atr_window: int = 20) -> dict[str, PriceInfo]:
-        """Charge le dernier close, l'ATR et l'ADV 20j depuis stock_bars_daily à la date de trade."""
+        """Charge le dernier close, l'ATR et l'ADV 20j depuis stock_bars_daily à la date de trade.
+
+        Convention (Section 17 Point 2.3) : prix EXECUTABLE — close brut,
+        jamais ajusté pour les dividendes. Les dividendes sont dans
+        portfolio_cash_ledger.
+        """
         if not symbols:
             return {}
         placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))

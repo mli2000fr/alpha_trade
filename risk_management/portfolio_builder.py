@@ -869,6 +869,10 @@ class PortfolioBuilder:
                     p_short=float(prediction.proba_short or 0.0),
                     p_side=float(ec.predicted_proba or 0.0),
                     model_run_id=prediction.run_id,
+                    universe_run_id=(
+                        getattr(prediction, "universe_run_id", None)
+                        or getattr(ec, "universe_run_id", None)
+                    ),
                 )
                 abstention = abstention_policy.evaluate(
                     decision_input,

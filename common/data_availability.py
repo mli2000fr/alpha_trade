@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone as _tz
 from enum import Enum
 from typing import Any
 
@@ -95,11 +95,11 @@ class DataAvailabilityInfo:
         if not self.source.strip():
             raise ValueError("source est obligatoire.")
         if self.available_at.tzinfo is None:
-            object.__setattr__(self, "available_at", self.available_at.replace(tzinfo=timezone.utc))
+            object.__setattr__(self, "available_at", self.available_at.replace(tzinfo=_tz.utc))
         if self.event_time.tzinfo is None:
-            object.__setattr__(self, "event_time", self.event_time.replace(tzinfo=timezone.utc))
+            object.__setattr__(self, "event_time", self.event_time.replace(tzinfo=_tz.utc))
         if self.ingested_at is not None and self.ingested_at.tzinfo is None:
-            object.__setattr__(self, "ingested_at", self.ingested_at.replace(tzinfo=timezone.utc))
+            object.__setattr__(self, "ingested_at", self.ingested_at.replace(tzinfo=_tz.utc))
         if self.available_at < self.event_time:
             raise ValueError(
                 f"available_at ({self.available_at}) ne peut pas être "
@@ -128,7 +128,7 @@ class StaleDataError(RuntimeError):
         self.availability = availability
         self.max_age_hours = max_age_hours
         super().__init__(
-            f"Donnée stale : age={(datetime.now(timezone.utc) - availability.available_at).total_seconds() / 3600:.1f}h "
+            f"Donnée stale : age={(datetime.now(_tz.utc) - availability.available_at).total_seconds() / 3600:.1f}h "
             f"> max={max_age_hours}h (source={availability.source})"
         )
 
@@ -320,6 +320,168 @@ def build_daily_quality_report(
     )
 
 
+# ── Universal PIT enrichment helper (Section 17 Point 2.1) ─────────────────
+
+def enrich_dataframe_with_pit(
+    df: "pd.DataFrame",
+    *,
+    source: str,
+    event_time_col: str | None = None,
+    available_at_col: str | None = None,
+    default_available_at: datetime | None = None,
+    source_revision: str | None = None,
+    ingested_at: datetime | None = None,
+    tz_name: str = "America/New_York",
+    quality: QualityState = QualityState.PRESENT,
+    date_col: str = "date",
+    available_at_hour_utc: int = 21,
+) -> "pd.DataFrame":
+    """Enrichit un DataFrame avec les colonnes PIT canoniques.
+
+    Conçu pour être appelé par TOUS les loaders de données afin que chaque
+    DataFrame porte systématiquement les métadonnées temporelles requises
+    par le contrat PIT (Sprint Maître 2 / Section 17 Point 2.1).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame à enrichir (modifié par copie).
+    source : str
+        Identifiant de la source (``"eodhd"``, ``"finnhub"``, ``"alpaca"``, …).
+    event_time_col : str | None
+        Colonne à utiliser comme ``event_time``. Si None, utilise ``date_col``
+        avec l'heure ``available_at_hour_utc``.
+    available_at_col : str | None
+        Colonne à utiliser comme ``available_at``. Si None, utilise
+        ``date_col`` + ``available_at_hour_utc`` UTC.
+    default_available_at : datetime | None
+        Valeur fixe si aucune colonne n'est disponible.
+    source_revision : str | None
+        Révision/version de la source.
+    ingested_at : datetime | None
+        Horodatage d'ingestion.
+    tz_name : str
+        Timezone IANA.
+    quality : QualityState
+        État de qualité.
+    date_col : str
+        Colonne de date à utiliser si ``event_time_col``/``available_at_col``
+        ne sont pas fournies.
+    available_at_hour_utc : int
+        Heure UTC à laquelle la donnée devient disponible (défaut 21h = 16h EST).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame enrichi (copie).
+    """
+    import pandas as pd
+
+    df = df.copy()
+
+    # ── event_time ──────────────────────────────────────────────────────
+    if event_time_col is not None and event_time_col in df.columns:
+        df["event_time"] = pd.to_datetime(df[event_time_col], utc=True)
+    elif date_col in df.columns:
+        df["event_time"] = pd.to_datetime(df[date_col], utc=True) + pd.Timedelta(
+            hours=available_at_hour_utc
+        )
+    else:
+        df["event_time"] = pd.NaT  # type: ignore[assignment]
+
+    # ── available_at ────────────────────────────────────────────────────
+    if available_at_col is not None and available_at_col in df.columns:
+        df["available_at"] = pd.to_datetime(df[available_at_col], utc=True)
+    elif date_col in df.columns:
+        df["available_at"] = pd.to_datetime(df[date_col], utc=True) + pd.Timedelta(
+            hours=available_at_hour_utc
+        )
+    elif default_available_at is not None:
+        df["available_at"] = default_available_at
+    else:
+        df["available_at"] = pd.NaT  # type: ignore[assignment]
+
+    # ── Métadonnées scalaires ───────────────────────────────────────────
+    df["data_source"] = source
+    df["source_revision"] = source_revision
+    from datetime import timezone as _dt_timezone
+
+    df["ingested_at"] = ingested_at or datetime.now(_dt_timezone.utc)
+    df["data_timezone"] = tz_name
+    df["data_quality"] = quality.value
+
+    return df
+
+
+def build_availability_from_row(
+    row: "pd.Series",
+    *,
+    fallback_source: str = "unknown",
+) -> DataAvailabilityInfo:
+    """Construit un ``DataAvailabilityInfo`` à partir d'une ligne DataFrame enrichie.
+
+    Attend les colonnes produites par :func:`enrich_dataframe_with_pit`.
+
+    Parameters
+    ----------
+    row : pd.Series
+        Ligne du DataFrame enrichi.
+    fallback_source : str
+        Source par défaut si ``data_source`` est absent.
+
+    Returns
+    -------
+    DataAvailabilityInfo
+    """
+    from datetime import datetime as dt
+    import pandas as pd
+
+    event_time = row.get("event_time")
+    available_at = row.get("available_at")
+    source = str(row.get("data_source", fallback_source) or fallback_source)
+    source_revision = row.get("source_revision")
+    ingested_at = row.get("ingested_at")
+    tz = str(row.get("data_timezone", "America/New_York") or "America/New_York")
+    quality_raw = row.get("data_quality", "present")
+    try:
+        quality = QualityState(str(quality_raw))
+    except ValueError:
+        quality = QualityState.PRESENT
+
+    # Conversion des timestamps
+    _na_strings = {"NaT", "nat", "NAT", "None", ""}
+    if isinstance(event_time, str):
+        if event_time not in _na_strings:
+            event_time = dt.fromisoformat(event_time)
+        else:
+            event_time = None
+    if isinstance(available_at, str):
+        if available_at not in _na_strings:
+            available_at = dt.fromisoformat(available_at)
+        else:
+            available_at = None
+    if isinstance(ingested_at, str):
+        if ingested_at not in _na_strings:
+            ingested_at = dt.fromisoformat(ingested_at)
+        else:
+            ingested_at = None
+
+    if event_time is None or (isinstance(event_time, (dt, pd.Timestamp)) and pd.isna(event_time)):
+        event_time = dt.now(_tz.utc)
+    if available_at is None or (isinstance(available_at, (dt, pd.Timestamp)) and pd.isna(available_at)):
+        available_at = dt.now(_tz.utc)
+
+    return DataAvailabilityInfo(
+        event_time=event_time,  # type: ignore[arg-type]
+        available_at=available_at,  # type: ignore[arg-type]
+        source=source,
+        source_revision=str(source_revision) if source_revision is not None and not pd.isna(source_revision) else None,  # type: ignore[arg-type]
+        ingested_at=ingested_at if ingested_at is not None and not pd.isna(ingested_at) else None,  # type: ignore[arg-type]
+        timezone=tz,
+        quality=quality,
+    )
+
+
 # ── Helpers pour l'intégration ──────────────────────────────────────────────
 
 def make_availability_from_bar_date(
@@ -351,8 +513,8 @@ def make_availability_from_bar_date(
         )
 
     return DataAvailabilityInfo(
-        event_time=event_dt.replace(tzinfo=timezone.utc),
-        available_at=available_dt.replace(tzinfo=timezone.utc),
+        event_time=event_dt.replace(tzinfo=_tz.utc),
+        available_at=available_dt.replace(tzinfo=_tz.utc),
         source=source,
         timezone="America/New_York",
     )

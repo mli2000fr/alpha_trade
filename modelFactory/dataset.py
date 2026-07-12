@@ -53,10 +53,26 @@ def _validate_ordered_frame(df: pd.DataFrame, *, date_column: str | None = None)
 
 
 def _purged_bounds(*, start: int, end: int, purge_tail: int) -> tuple[int, int]:
+    """Retire les ``purge_tail`` dernières lignes d'un intervalle [start, end[.
+
+    Cela empêche une target calculée sur ``t + horizon`` de traverser
+    la frontière vers le fold suivant (Sprint 3 Point 3.4).
+    """
     purge_tail = max(int(purge_tail), 0)
     if purge_tail == 0:
         return start, end
     return start, max(start, end - purge_tail)
+
+
+def _embargoed_start(*, val_end: int, embargo_rows: int) -> int:
+    """Décale le début du test de ``embargo_rows`` après la fin de la validation.
+
+    L'embargo empêche le test de contenir des observations trop proches
+    temporellement de la validation, ce qui pourrait créer une corrélation
+    fallacieuse entre les folds (Sprint 3 Point 3.4).
+    """
+    embargo_rows = max(int(embargo_rows), 0)
+    return val_end + embargo_rows
 
 
 def _purge_by_dates(
@@ -80,13 +96,17 @@ def chrono_split(
     val_ratio: float,
     *,
     forecast_horizon: int = 0,
+    embargo_rows: int = 0,
     date_column: str | None = "date",
 ) -> ChronoSplit:
-    """Split chronologique sans shuffle avec purge anti-lookahead aux frontières.
+    """Split chronologique sans shuffle avec purge anti-lookahead et embargo.
 
     Les ``forecast_horizon`` dernières lignes du train et de la validation sont
     retirées afin d'éviter qu'une target calculée sur ``t + horizon`` traverse la
     frontière vers le split suivant.
+
+    Un embargo de ``embargo_rows`` lignes est inséré entre la validation et le
+    test pour garantir l'indépendance temporelle des folds (Sprint 3 Point 3.4).
     """
     _validate_ordered_frame(df, date_column=date_column)
     n = len(df)
@@ -94,10 +114,15 @@ def chrono_split(
     i_val = i_train + int(n * val_ratio)
     train_start, train_end = _purged_bounds(start=0, end=i_train, purge_tail=forecast_horizon)
     val_start, val_end = _purged_bounds(start=i_train, end=i_val, purge_tail=forecast_horizon)
+    # L'embargo s'applique APRES la frontière non-purgée i_val,
+    # pas après val_end (les lignes purgées entre val_end et i_val
+    # sont intentionnellement exclues de tous les folds).
+    test_start = _embargoed_start(val_end=i_val, embargo_rows=embargo_rows)
+    test_start = min(test_start, n)  # clamp si embargo dépasse la fin
     return ChronoSplit(
         train=df.iloc[train_start:train_end].reset_index(drop=True),
         val=df.iloc[val_start:val_end].reset_index(drop=True),
-        test=df.iloc[i_val:].reset_index(drop=True),
+        test=df.iloc[test_start:].reset_index(drop=True),
     )
 
 
@@ -110,9 +135,10 @@ def generate_walk_forward_splits(
     step_size: int,
     max_splits: int,
     forecast_horizon: int = 0,
+    embargo_rows: int = 0,
     date_column: str | None = "date",
 ) -> list[WalkForwardSplit]:
-    """Construit des splits walk-forward en fenêtre expanding avec purge anti-lookahead."""
+    """Construit des splits walk-forward en fenêtre expanding avec purge et embargo."""
     _validate_ordered_frame(df, date_column=date_column)
     splits: list[WalkForwardSplit] = []
     train_end = min_train_size
@@ -121,17 +147,26 @@ def generate_walk_forward_splits(
 
     while split_index < max_splits:
         val_end = train_end + val_size
-        test_end = val_end + test_size
+        test_start_raw = val_end
+        test_end = test_start_raw + test_size
         if test_end > n:
             break
         train_start, purged_train_end = _purged_bounds(start=0, end=train_end, purge_tail=forecast_horizon)
         val_start, purged_val_end = _purged_bounds(start=train_end, end=val_end, purge_tail=forecast_horizon)
+        # Embargo après la frontière non-purgée val_end (les lignes purgées
+        # entre purged_val_end et val_end sont exclues de tous les folds).
+        test_start = _embargoed_start(val_end=val_end, embargo_rows=embargo_rows)
+        test_start = min(test_start, n)
+        test_end = min(test_start + test_size, n)
+        if test_start >= test_end:
+            # L'embargo a consommé tout le test — on arrête
+            break
         splits.append(
             WalkForwardSplit(
                 split_index=split_index,
                 train=df.iloc[train_start:purged_train_end].reset_index(drop=True),
                 val=df.iloc[val_start:purged_val_end].reset_index(drop=True),
-                test=df.iloc[val_end:test_end].reset_index(drop=True),
+                test=df.iloc[test_start:test_end].reset_index(drop=True),
             )
         )
         split_index += 1
@@ -146,9 +181,14 @@ def chrono_split_by_dates(
     train_ratio: float,
     val_ratio: float,
     forecast_horizon: int = 0,
+    embargo_dates: int = 0,
     date_column: str = "date",
 ) -> ChronoSplit:
-    """Split chronologique par dates uniques avec purge des dernières dates train/val."""
+    """Split chronologique par dates uniques avec purge et embargo.
+
+    L'embargo de ``embargo_dates`` jours est inséré entre la validation
+    et le test (Sprint 3 Point 3.4).
+    """
     if date_column not in df.columns:
         raise ValueError(f"Colonne date absente: {date_column}")
     _validate_ordered_frame(df, date_column=date_column)
@@ -160,9 +200,160 @@ def chrono_split_by_dates(
     i_val = i_train + int(n_dates * val_ratio)
     train = _purge_by_dates(dated, start_dates=unique_dates[:i_train], purge_tail_dates=forecast_horizon, date_column=date_column)
     val = _purge_by_dates(dated, start_dates=unique_dates[i_train:i_val], purge_tail_dates=forecast_horizon, date_column=date_column)
-    test_dates = unique_dates[i_val:]
+    # Embargo : sauter ``embargo_dates`` dates après la fin de val
+    embargo_dates = max(int(embargo_dates), 0)
+    test_date_start = i_val + embargo_dates
+    test_dates = unique_dates[test_date_start:]
     test = dated[dated[date_column].isin(set(test_dates))].reset_index(drop=True)
     return ChronoSplit(train=train, val=val, test=test)
+
+
+# ---------------------------------------------------------------------------
+# Validation d'isolation des folds (Sprint 3 Point 3.4)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class FoldIsolationReport:
+    """Rapport de vérification d'isolation train/validation/test."""
+
+    is_valid: bool
+    folds_disjoint: bool
+    purge_adequate: bool
+    embargo_present: bool
+    train_val_overlap: int
+    val_test_overlap: int
+    train_test_overlap: int
+    purge_rows: int
+    embargo_rows: int
+    label_horizon: int
+    violations: list[str]
+
+
+def validate_fold_isolation(
+    split: ChronoSplit,
+    *,
+    label_horizon: int = 0,
+    embargo_rows: int = 0,
+    date_column: str | None = "date",
+) -> FoldIsolationReport:
+    """Vérifie qu'aucun label ou paramètre ne traverse les frontières de fold.
+
+    Cette fonction contrôle les 3 propriétés d'isolation :
+    1. **Disjointness** : train ∩ val = ∅, val ∩ test = ∅, train ∩ test = ∅
+       (vérifié par contenu si ``date_column`` est fourni, sinon par index)
+    2. **Purge** : les ``label_horizon`` dernières lignes de train et val sont
+       exclues pour empêcher une target forward-looking de chevaucher le fold suivant
+    3. **Embargo** : un gap de ``embargo_rows`` lignes existe entre val et test
+
+    Parameters
+    ----------
+    split : ChronoSplit
+        Le split à valider.
+    label_horizon : int
+        Horizon maximal du label (``forecast_horizon`` pour fixed-horizon,
+        ``max_sessions`` pour triple-barrier).
+    embargo_rows : int
+        Nombre de lignes d'embargo attendues entre val et test.
+    date_column : str | None
+        Colonne de date pour la vérification temporelle.
+
+    Returns
+    -------
+    FoldIsolationReport
+    """
+    violations: list[str] = []
+
+    # ── 1. Disjointness (par contenu si date_column dispo) ──────────────
+    train_val_overlap = 0
+    val_test_overlap = 0
+    train_test_overlap = 0
+
+    if date_column and date_column in split.train.columns:
+        # Comparaison par dates (plus robuste que les index reset)
+        train_dates = set(pd.to_datetime(split.train[date_column]).dt.date)
+        val_dates = set(pd.to_datetime(split.val[date_column]).dt.date)
+        test_dates = set(pd.to_datetime(split.test[date_column]).dt.date)
+        train_val_overlap = len(train_dates & val_dates)
+        val_test_overlap = len(val_dates & test_dates)
+        train_test_overlap = len(train_dates & test_dates)
+    else:
+        # Fallback : comparaison par index (moins fiable car reset_index)
+        train_idx = set(split.train.index)
+        val_idx = set(split.val.index)
+        test_idx = set(split.test.index)
+        # Attention : après reset_index(drop=True), les index peuvent se chevaucher
+        # même si les données sont disjointes. On vérifie quand même.
+        train_val_overlap = len(train_idx & val_idx)
+        val_test_overlap = len(val_idx & test_idx)
+        train_test_overlap = len(train_idx & test_idx)
+
+    folds_disjoint = (train_val_overlap == 0 and val_test_overlap == 0 and train_test_overlap == 0)
+
+    if not folds_disjoint:
+        details = []
+        if train_val_overlap > 0:
+            details.append(f"train∩val={train_val_overlap}")
+        if val_test_overlap > 0:
+            details.append(f"val∩test={val_test_overlap}")
+        if train_test_overlap > 0:
+            details.append(f"train∩test={train_test_overlap}")
+        violations.append(f"Folds non disjoints: {', '.join(details)}")
+
+    # ── 2. Purge adequacy ───────────────────────────────────────────────
+    purge_adequate = True
+    if label_horizon > 0 and date_column and date_column in split.train.columns:
+        train_dates = pd.to_datetime(split.train[date_column])
+        val_dates = pd.to_datetime(split.val[date_column])
+        test_dates = pd.to_datetime(split.test[date_column])
+        if not train_dates.empty and not val_dates.empty:
+            last_train = train_dates.max()
+            first_val = val_dates.min()
+            gap_train_val = (first_val - last_train).days
+            if gap_train_val < label_horizon:
+                violations.append(
+                    f"Gap train→val insuffisant: {gap_train_val}j < {label_horizon}j (label_horizon)"
+                )
+                purge_adequate = False
+        if not val_dates.empty and not test_dates.empty:
+            last_val = val_dates.max()
+            first_test = test_dates.min()
+            gap_val_test = (first_test - last_val).days
+            if gap_val_test < label_horizon:
+                violations.append(
+                    f"Gap val→test insuffisant: {gap_val_test}j < {label_horizon}j (label_horizon)"
+                )
+                purge_adequate = False
+
+    # ── 3. Embargo ──────────────────────────────────────────────────────
+    embargo_present = embargo_rows > 0
+    if embargo_rows > 0 and date_column and date_column in split.val.columns and date_column in split.test.columns:
+        val_dates = pd.to_datetime(split.val[date_column])
+        test_dates = pd.to_datetime(split.test[date_column])
+        if not val_dates.empty and not test_dates.empty:
+            last_val = val_dates.max()
+            first_test = test_dates.min()
+            gap_val_test = (first_test - last_val).days
+            if gap_val_test < embargo_rows:
+                violations.append(
+                    f"Embargo val→test insuffisant: {gap_val_test}j < {embargo_rows}j"
+                )
+                embargo_present = False
+
+    is_valid = len(violations) == 0
+
+    return FoldIsolationReport(
+        is_valid=is_valid,
+        folds_disjoint=folds_disjoint,
+        purge_adequate=purge_adequate,
+        embargo_present=embargo_present,
+        train_val_overlap=train_val_overlap,
+        val_test_overlap=val_test_overlap,
+        train_test_overlap=train_test_overlap,
+        purge_rows=label_horizon,
+        embargo_rows=embargo_rows,
+        label_horizon=label_horizon,
+        violations=violations,
+    )
 
 
 # ---------------------------------------------------------------------------

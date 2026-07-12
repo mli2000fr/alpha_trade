@@ -449,7 +449,12 @@ def build_triple_barrier_labels(
         Colonnes : label, net_return_pct, holding_sessions, mae, mfe,
         exit_reason, entry_price, exit_price, gross_return, net_return.
     """
-    df = df_ohlc.copy().sort_values("date" if "date" in df_ohlc.columns else df_ohlc.index).reset_index(drop=True)
+    df = df_ohlc.copy()
+    if "date" in df.columns:
+        df = df.sort_values("date")
+    else:
+        df = df.sort_index()
+    df = df.reset_index(drop=True)
     prices = {
         "open": df["open"].to_numpy(float),
         "high": df["high"].to_numpy(float),

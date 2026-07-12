@@ -235,7 +235,26 @@ def load_macro_indicator_daily_asof(
     )
     with resolved_engine.begin() as conn:
         row = conn.execute(query).mappings().first()
-    return cast(dict[str, Any], dict(row)) if row is not None else None
+
+    result = cast(dict[str, Any], dict(row)) if row is not None else None
+    # ── PIT enrichment (Section 17 Point 2.1) ───────────────────────────
+    if result is not None:
+        from datetime import datetime, timezone as dt_timezone
+
+        trade_dt = result.get("trade_date")
+        if isinstance(trade_dt, date) and not isinstance(trade_dt, datetime):
+            trade_dt = datetime.combine(trade_dt, datetime.min.time())
+        if isinstance(trade_dt, datetime):
+            result["event_time"] = trade_dt.replace(tzinfo=dt_timezone.utc)
+            result["available_at"] = trade_dt.replace(
+                hour=21, minute=0, second=0, tzinfo=dt_timezone.utc
+            )
+        result["data_source"] = "macro_indicators"
+        result["source_revision"] = None
+        result["ingested_at"] = datetime.now(dt_timezone.utc)
+        result["data_timezone"] = "America/New_York"
+        result["data_quality"] = "present"
+    return result
 
 
 def load_macro_indicator_history_asof(

@@ -319,6 +319,9 @@ def load_symbol_bars(
         df["event_time"] = event_time
         df["available_at"] = event_time + pd.Timedelta(hours=21)
         df["data_source"] = "stock_bars_daily"
+        # ── Price convention (Section 17 Point 2.3) ────────────────────
+        from common.price_convention import PriceConvention, declare_price_convention
+        declare_price_convention(df, PriceConvention.ADJUSTED, source="stock_bars_daily")
     LOGGER.info("load_symbol_bars symbol=%s start_date=%s end_date=%s rows=%d", symbol, start_date, end_date, len(df))
     return df
 
@@ -430,6 +433,15 @@ def load_symbol_sentiment(
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params=params, parse_dates=["trade_date"])
     LOGGER.info("load_symbol_sentiment symbol=%s start_date=%s end_date=%s rows=%d", symbol, start_date, end_date, len(df))
+    # ── PIT enrichment (Section 17 Point 2.1) ───────────────────────────
+    if not df.empty:
+        from common.data_availability import enrich_dataframe_with_pit
+        df = enrich_dataframe_with_pit(
+            df,
+            source="event_sentiment",
+            date_col="trade_date",
+            available_at_hour_utc=21,
+        )
     return df
 
 
@@ -458,6 +470,15 @@ def load_symbols_sentiment(
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params=params, parse_dates=["trade_date"])
     LOGGER.info("load_symbols_sentiment symbols=%d start_date=%s end_date=%s rows=%d", len(symbols), start_date, end_date, len(df))
+    # ── PIT enrichment (Section 17 Point 2.1) ───────────────────────────
+    if not df.empty:
+        from common.data_availability import enrich_dataframe_with_pit
+        df = enrich_dataframe_with_pit(
+            df,
+            source="event_sentiment",
+            date_col="trade_date",
+            available_at_hour_utc=21,
+        )
     return df
 
 

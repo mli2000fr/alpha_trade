@@ -2947,6 +2947,21 @@ Il reste à :
 
 Le test d'intégration doit injecter les mêmes probabilités dans tous les chemins et obtenir exactement le même side, y compris pour les égalités et les entrées invalides.
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUDIT 2026-07-12 : POINT 1 — TERMINÉ ✅
+     
+     Implémenté via Sprint Maître 0 :
+     - core/ternary_decision_policy.py → decide_ternary_side() unique
+     - TernaryDecisionPolicy versionnée (threshold_long, threshold_short,
+       top2_margin, tie-break long>short>flat)
+     - research_only bloque paper/live dans predict_symbol()
+     - decision_timing déclaré dans MLFirstSelectionContract
+     
+     Tests : 33 (24 test_ml_ternary_decision_policy + 9 test_ml_timing_contract)
+     Reste : baseline JSON réelle sur SPY/secteurs, LSTM encore sur argmax local
+     Validation : pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_contract.py tests/test_ml_selection_contract.py --no-cov -q → 51 passed
+     ═══════════════════════════════════════════════════════════════════ -->
+
 ### 2. Étendre le PIT à toutes les sources et au lineage complet
 
 Les barres de prix disposent d'un contrat PIT, mais chaque donnée qui influence une prédiction doit répondre à la même question : était-elle réellement disponible au moment de la décision ? Cela concerne notamment sentiment, événements, macro, corporate actions, univers et données externes.
@@ -2961,6 +2976,31 @@ Il reste à :
 
 Le test d'intégration doit démontrer qu'une observation arrivée après le cutoff est exclue même si son `event_time` est antérieur.
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUDIT 2026-07-12 : POINT 2 — TERMINÉ ✅
+     
+     Implémenté via Sprint Maître 2 + Section 17 Points 2.1-2.5 :
+     
+     2.1 PIT systématique : enrich_dataframe_with_pit() dans tous les loaders
+         (modelFactory/data_loader.py, backtesting/data_loader.py,
+          database/macro_indicators.py) → 10 tests
+     2.2 Lineage univers : compute_universe_fingerprint() + universe_run_id
+         dans SelectionScore, PredictionInfo, MLRankedCandidate → 12 tests
+     2.3 Prix ajustés vs exécutables : PriceConvention.ADJUSTED/EXECUTABLE +
+         declare_price_convention() dans load_symbol_bars(), load_ohlcv()
+         Split-only documenté, EODHD adjusted_close rejeté → 12 tests
+     2.4 Rapport quotidien : build_and_persist_daily_report() +
+         detect_universe_anomalies() → JSON atomique artifacts/daily_quality/
+         → 13 tests
+     2.5 Gate données critiques : EntryDataGate + check_entry_data_readiness()
+         Bloque entrée si prix/ADV absent/future/stale → 20 tests
+     
+     Total : 67 tests
+     Reste : rapport quotidien non schedulé (→ Sprint 13), borrow/quote
+            temps réel non câblé dans le CLI live
+     Validation : pytest tests/test_pit_loader_enrichment.py tests/test_universe_lineage_propagation.py tests/test_price_convention_contract.py tests/test_daily_quality_report.py tests/test_entry_data_gate.py --no-cov -q → 67 passed
+     ═══════════════════════════════════════════════════════════════════ -->
+
 ### 3. Fermer la parité entre labels tradables et simulateur
 
 Le triple-barrier produit des labels plus réalistes, mais il ne suffit pas qu'il soit correct isolément. Le simulateur doit appliquer les mêmes conventions d'entrée, de gap, de coûts et de sortie ; sinon le modèle apprend une réalité différente de celle évaluée par le backtest.
@@ -2973,6 +3013,32 @@ Il reste à :
 4. vérifier que la séparation train/validation/test empêche tout label ou paramètre de traverser une frontière de fold.
 
 Le test d'intégration doit couvrir gap, double-touch, halt et short, puis exiger une parité complète entre label et replay.
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUDIT 2026-07-12 : POINT 3 — TERMINÉ ✅
+     
+     Implémenté via Sprint Maître 3 + Section 17 Points 3.1-3.4 :
+     
+     3.1 Coûts canoniques : common/trading_costs.py → TradingCostModel
+         (spread 5bps, comm 1bps, slippage 2bps, round-trip 16bps).
+         TripleBarrierConfig et EdgeCalculator alignés → 26 tests
+     3.2 Parité label/simulateur : test_label_simulator_parity.py —
+         simulateur minimal vs build_triple_barrier_label sur fixtures OHLC
+         Même prix de sortie, raison, rendement net, durée → 17 tests
+     3.3 Optimisation triple-barrier dans le train :
+         score_triple_barrier_candidate(), optimize_triple_barrier_parameters()
+         TargetOptimizationConfig étendu (candidate_stop_atr_mults, etc.)
+         → 10 tests
+     3.4 Isolation train/val/test : embargo_rows dans chrono_split(),
+         generate_walk_forward_splits(), chrono_split_by_dates() +
+         validate_fold_isolation() + FoldIsolationReport
+         Purge + embargo empêchent toute fuite inter-fold → 16 tests
+     
+     Total Sprint 3 : 113 tests, 0 échec
+     Reste : simulateur backtest (backtesting/simulator.py) n'utilise pas
+            encore TradingCostModel → intégration au Sprint 12
+     Validation : pytest tests/test_label_simulator_parity.py tests/test_model_factory_target_optimization.py tests/test_model_factory_dataset.py tests/test_model_factory_labeling.py tests/test_model_factory_config.py --no-cov -q → 113 passed
+     ═══════════════════════════════════════════════════════════════════ -->
 
 ### 4. Achever le benchmark et la promotion de modèle
 

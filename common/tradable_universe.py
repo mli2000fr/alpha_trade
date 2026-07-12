@@ -379,3 +379,45 @@ def load_tradable_universe_for_period(
 
     symbols = [str(symbol) for symbol in rows if symbol]
     return symbols
+
+
+# ── Universe fingerprint helper (Section 17 Point 2.2) ──────────────────────
+
+def compute_universe_fingerprint(
+    universe_run_id: str,
+    symbols: list[str],
+    snapshot_date: str | date | None = None,
+    capital_preset_key: str | None = None,
+) -> str:
+    """Produit un fingerprint déterministe d'un snapshot d'univers.
+
+    Le fingerprint est un hash SHA256/16 combinant le ``universe_run_id``,
+    la liste triée des symboles, et optionnellement la date de snapshot
+    et le preset capital. Deux snapshots identiques produisent le même
+    fingerprint, garantissant la reproductibilité cross-sectionnelle.
+
+    Parameters
+    ----------
+    universe_run_id : str
+        Identifiant canonique du run d'univers.
+    symbols : list[str]
+        Liste des symboles tradables (sera triée).
+    snapshot_date : str | date | None
+        Date du snapshot (optionnelle, renforce la spécificité).
+    capital_preset_key : str | None
+        Preset capital (optionnel).
+
+    Returns
+    -------
+    str
+        Hash hexadécimal de 16 caractères.
+    """
+    import hashlib
+
+    normalized_symbols = sorted({s.strip().upper() for s in symbols if s and s.strip()})
+    payload = f"{universe_run_id}|{','.join(normalized_symbols)}"
+    if snapshot_date is not None:
+        payload += f"|{snapshot_date}"
+    if capital_preset_key is not None:
+        payload += f"|{capital_preset_key}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]

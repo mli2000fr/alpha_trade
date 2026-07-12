@@ -248,6 +248,10 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
         )
     LOGGER.info("OHLCV chargé : %d lignes, %d symboles, [%s → %s]",
                 len(df), df["symbol"].nunique() if len(df) else 0, start, end)
+    # ── Price convention (Section 17 Point 2.3) ─────────────────────────
+    if not df.empty:
+        from common.price_convention import PriceConvention, declare_price_convention
+        declare_price_convention(df, PriceConvention.EXECUTABLE, source="stock_bars_daily")
     return df
 
 
@@ -599,6 +603,15 @@ def load_sentiment(engine: Engine, start: date, end: date, lookback_days: int = 
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params={"start": sentiment_start, "end": end}, parse_dates=["trade_date"])
     LOGGER.info("Sentiment chargé : %d lignes (lookback %dj)", len(df), lookback_days)
+    # ── PIT enrichment (Section 17 Point 2.1) ───────────────────────────
+    if not df.empty:
+        from common.data_availability import enrich_dataframe_with_pit
+        df = enrich_dataframe_with_pit(
+            df,
+            source="event_sentiment",
+            date_col="trade_date",
+            available_at_hour_utc=21,
+        )
     return df
 
 

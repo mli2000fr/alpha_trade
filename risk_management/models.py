@@ -57,6 +57,8 @@ class SelectionScore:
     selector_earnings_blackout: int | None = None
     # Sprint 1 short — direction canonique
     side: str = "buy"
+    # ── Section 17 Point 2.2 : lineage univers ─────────────────────────
+    universe_run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +156,8 @@ class PredictionInfo:
     proba_short: float | None = None
     # ── Sprint Maître 0 : statut research_only ─────────────────────────
     research_only: bool = False
+    # ── Section 17 Point 2.2 : lineage univers ─────────────────────────
+    universe_run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

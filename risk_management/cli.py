@@ -1180,7 +1180,24 @@ def main(args: list[str] | None = None) -> None:
         score_context.get(symbol, SelectionScore(symbol=symbol, sector="UNKNOWN", score_used=float("nan"), score_source="unavailable"))
         for symbol in universe.symbols
     ]
-    LOGGER.info("Univers tradable ML-first chargé: run=%s symbols=%d", universe.universe_run_id, len(candidates))
+    # ── Section 17 Point 2.2 : propager universe_run_id ─────────────────
+    from dataclasses import replace as _dc_replace
+
+    universe_run_id = universe.universe_run_id
+    candidates: list[SelectionScore] = []
+    for symbol in universe.symbols:
+        existing = score_context.get(symbol)
+        if existing is not None:
+            candidates.append(_dc_replace(existing, universe_run_id=universe_run_id))
+        else:
+            candidates.append(
+                SelectionScore(
+                    symbol=symbol, sector="UNKNOWN",
+                    score_used=float("nan"), score_source="unavailable",
+                    universe_run_id=universe_run_id,
+                )
+            )
+    LOGGER.info("Univers tradable ML-first chargé: run=%s symbols=%d", universe_run_id, len(candidates))
     _emit_live_progress(
         dict(progress_context, targeted_symbols=len(candidates)),
         current=2,

@@ -32,6 +32,7 @@ def tabular_split(
 	train_ratio: float,
 	val_ratio: float,
 	forecast_horizon: int = 0,
+	embargo_rows: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 	if "target" not in df.columns:
 		raise ValueError("La baseline tabulaire attend une colonne 'target'.")
@@ -41,6 +42,7 @@ def tabular_split(
 		train_ratio,
 		val_ratio,
 		forecast_horizon=forecast_horizon,
+		embargo_rows=embargo_rows,
 		date_column="date" if "date" in clean.columns else None,
 	)
 	return split.train, split.val, split.test

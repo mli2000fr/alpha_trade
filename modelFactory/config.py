@@ -174,17 +174,35 @@ class GlobalModelConfig:
 
 @dataclass(frozen=True, slots=True)
 class TargetOptimizationConfig:
-    """Paramètres d'optimisation de la target par horizon swing."""
+    """Paramètres d'optimisation de la target par horizon swing.
+
+    Pour ``label_method='fixed_horizon'``, optimise horizon, up_threshold, down_threshold.
+    Pour ``label_method='triple_barrier'``, optimise stop_atr_mult, tp_atr_mult, max_sessions
+    (et horizon si ``candidate_horizons`` est renseigné).
+
+    L'optimisation est TOUJOURS restreinte au fold train ; les données de validation
+    et de test ne sont jamais utilisées pour choisir les paramètres de target.
+    """
 
     enabled: bool = False
+    # ── Paramètres fixed_horizon ──────────────────────────────────────
     candidate_horizons: tuple[int, ...] = (3, 5, 10, 15)
     candidate_up_thresholds: tuple[float, ...] = (0.0, 0.01, 0.02)
     candidate_down_thresholds: tuple[float, ...] = (0.0, -0.005, -0.01)
+    # ── Paramètres triple_barrier (Sprint Maître 3 / Section 17 Point 3.3) ─
+    candidate_stop_atr_mults: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0)
+    candidate_tp_atr_mults: tuple[float, ...] = (2.0, 3.0, 4.0, 5.0)
+    candidate_max_sessions: tuple[int, ...] = (10, 15, 20, 30)
+    # ── Commun ────────────────────────────────────────────────────────
     min_trades_fraction: float = 0.15
 
     def __post_init__(self) -> None:
-        if not self.candidate_horizons:
-            raise ValueError("target_optimization.candidate_horizons ne doit pas être vide.")
+        has_triple_barrier_candidates = bool(self.candidate_stop_atr_mults or self.candidate_tp_atr_mults or self.candidate_max_sessions)
+        if not self.candidate_horizons and not has_triple_barrier_candidates:
+            raise ValueError(
+                "target_optimization.candidate_horizons ne doit pas être vide "
+                "si aucun candidat triple-barrier n'est fourni."
+            )
         if any(h < 1 for h in self.candidate_horizons):
             raise ValueError("Tous les candidate_horizons doivent être >= 1.")
         if not self.candidate_up_thresholds:
@@ -197,6 +215,16 @@ class TargetOptimizationConfig:
             )
         if not (0.0 < self.min_trades_fraction <= 1.0):
             raise ValueError("target_optimization.min_trades_fraction doit être dans ]0, 1].")
+        # Validation triple-barrier
+        if self.candidate_stop_atr_mults:
+            if any(m <= 0 for m in self.candidate_stop_atr_mults):
+                raise ValueError("Tous les candidate_stop_atr_mults doivent être > 0.")
+        if self.candidate_tp_atr_mults:
+            if any(m <= 0 for m in self.candidate_tp_atr_mults):
+                raise ValueError("Tous les candidate_tp_atr_mults doivent être > 0.")
+        if self.candidate_max_sessions:
+            if any(s < 1 for s in self.candidate_max_sessions):
+                raise ValueError("Tous les candidate_max_sessions doivent être >= 1.")
 
 
 @dataclass(frozen=True, slots=True)

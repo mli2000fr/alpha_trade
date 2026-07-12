@@ -100,8 +100,25 @@ def test_champion_selection_config_rejects_unknown_metric() -> None:
 
 
 def test_target_optimization_requires_candidate_horizons() -> None:
+    """candidate_horizons vide est accepté si des candidats triple-barrier sont fournis,
+    mais rejeté si aucun candidat (ni horizon ni triple-barrier) n'est présent."""
+    # Avec triple-barrier candidates → OK (pas d'erreur)
+    cfg = config.TargetOptimizationConfig(
+        candidate_horizons=(),
+        candidate_stop_atr_mults=(2.0,),
+        candidate_tp_atr_mults=(3.0,),
+        candidate_max_sessions=(20,),
+    )
+    assert cfg.candidate_horizons == ()
+
+    # Sans aucun candidat → doit lever
     with pytest.raises(ValueError, match="candidate_horizons"):
-        config.TargetOptimizationConfig(candidate_horizons=())
+        config.TargetOptimizationConfig(
+            candidate_horizons=(),
+            candidate_stop_atr_mults=(),
+            candidate_tp_atr_mults=(),
+            candidate_max_sessions=(),
+        )
 
 
 def test_target_optimization_accepts_partially_valid_threshold_grid() -> None:
