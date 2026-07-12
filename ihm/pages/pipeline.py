@@ -144,6 +144,8 @@ EARNINGS_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_earnings_calendar_symbol_sou
 TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY = "pipeline_publish_tradable_universe_period_start_date"
 TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY = "pipeline_publish_tradable_universe_period_end_date"
 TRADABLE_UNIVERSE_PUBLISH_PRESET_KEY = "pipeline_publish_tradable_universe_preset_key"
+TRADABLE_UNIVERSE_PUBLISH_MAX_QUOTE_AGE_KEY = "pipeline_publish_tradable_universe_max_quote_age_days"
+TRADABLE_UNIVERSE_PUBLISH_IGNORE_QUOTES_KEY = "pipeline_publish_tradable_universe_ignore_quotes"
 
 
 def _coerce_ui_date(value: object, *, fallback: date) -> date:
@@ -509,6 +511,28 @@ def _render_tradable_universe_publish_block(
         ),
     )
 
+    # ── Tolérance quotes ──
+    max_quote_age_days = st.number_input(
+        "Tolérance quote (jours)",
+        min_value=0,
+        max_value=30,
+        value=int(st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_MAX_QUOTE_AGE_KEY, 5)),
+        step=1,
+        key=TRADABLE_UNIVERSE_PUBLISH_MAX_QUOTE_AGE_KEY,
+        help=(
+            "Nombre de jours de tolérance pour la recherche de spread. "
+            "0 = quote exacte du jour uniquement. 5 (défaut) = utilise la quote la plus récente "
+            "dans [trade_date - 5, trade_date] si celle du jour est absente."
+        ),
+    )
+
+    ignore_quotes = st.checkbox(
+        "Ignorer les quotes (tous les symboles passent le filtre spread)",
+        value=bool(st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_IGNORE_QUOTES_KEY, False)),
+        key=TRADABLE_UNIVERSE_PUBLISH_IGNORE_QUOTES_KEY,
+        help="Si coché, le contrôle de spread est désactivé. Pratique si les quotes ne sont pas encore disponibles pour la période.",
+    )
+
     if selected_start > selected_end:
         st.error("Fenêtre invalide : la date de début doit être antérieure ou égale à la date de fin.")
         trading_days: list[date] = []
@@ -525,20 +549,23 @@ def _render_tradable_universe_publish_block(
             )
 
     st.caption("Commande du bouton ci-dessous :")
+    cmd_preview = [
+        "python",
+        "-m",
+        "common.publish_tradable_universe",
+        "--start-date",
+        selected_start.isoformat(),
+        "--end-date",
+        selected_end.isoformat(),
+        "--capital-preset-key",
+        selected_publish_preset_key,
+        "--max-quote-age-days",
+        str(max_quote_age_days),
+    ]
+    if ignore_quotes:
+        cmd_preview.append("--ignore-quotes")
     st.code(
-        format_command_for_display(
-            [
-                "python",
-                "-m",
-                "common.publish_tradable_universe",
-                "--start-date",
-                selected_start.isoformat(),
-                "--end-date",
-                selected_end.isoformat(),
-                "--capital-preset-key",
-                selected_publish_preset_key,
-            ]
-        ),
+        format_command_for_display(cmd_preview),
         language="powershell",
     )
 
@@ -563,6 +590,8 @@ def _render_tradable_universe_publish_block(
                     engine,
                     snapshot_date=session_date,
                     capital_preset_key=preset.key,
+                    max_quote_age_days=int(max_quote_age_days),
+                    ignore_quotes=bool(ignore_quotes),
                 )
                 success_count += 1
             except Exception:

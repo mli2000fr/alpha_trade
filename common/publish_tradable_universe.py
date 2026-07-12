@@ -79,6 +79,7 @@ def _load_objective_context(
     symbols: list[str],
     snapshot_date: date,
     blackout_days: int,
+    max_quote_age_days: int = 5,
 ) -> tuple[pd.DataFrame, pd.DataFrame, set[str]]:
     if not symbols:
         return pd.DataFrame(), pd.DataFrame(), set()
@@ -88,14 +89,24 @@ def _load_objective_context(
         quotes = pd.read_sql(
             text(
                 f"""
-                SELECT symbol, spread_bps
-                FROM stock_quote_snapshots
-                WHERE quote_date = :snapshot_date
-                  AND symbol IN ({placeholders})
+                SELECT q.symbol, q.spread_bps
+                FROM stock_quote_snapshots q
+                INNER JOIN (
+                    SELECT symbol, MAX(quote_date) AS max_date
+                    FROM stock_quote_snapshots
+                    WHERE quote_date BETWEEN :min_date AND :snapshot_date
+                      AND symbol IN ({placeholders})
+                      AND spread_bps IS NOT NULL
+                    GROUP BY symbol
+                ) latest ON q.symbol = latest.symbol AND q.quote_date = latest.max_date
                 """
             ),
             connection,
-            params={"snapshot_date": snapshot_date, **symbol_params},
+            params={
+                "snapshot_date": snapshot_date,
+                "min_date": snapshot_date - timedelta(days=max(max_quote_age_days, 0)),
+                **symbol_params,
+            },
         )
         metadata = pd.read_sql(
             text(
@@ -131,6 +142,8 @@ def publish_full_tradable_universe(
     *,
     snapshot_date: date,
     capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+    max_quote_age_days: int = 5,
+    ignore_quotes: bool = False,
 ) -> str:
     """Publish an immutable full-quality run from the exact screener run."""
     _require_tables(engine)
@@ -143,9 +156,13 @@ def publish_full_tradable_universe(
         symbols,
         snapshot_date,
         int(thresholds["earnings_blackout_days"]),
+        max_quote_age_days=max_quote_age_days,
     )
     quote_map = quotes.assign(symbol=quotes["symbol"].astype(str).str.upper()).set_index("symbol")["spread_bps"].to_dict() if not quotes.empty else {}
     market_cap_map = metadata.assign(symbol=metadata["symbol"].astype(str).str.upper()).set_index("symbol")["market_cap"].to_dict() if not metadata.empty else {}
+
+    # Si ignore_quotes, on désactive complètement le filtre spread
+    effective_max_spread_bps: float | None = float(thresholds["max_spread_bps"]) if not ignore_quotes else None
 
     members: list[UniverseMember] = []
     for row in scope.to_dict(orient="records"):
@@ -157,10 +174,10 @@ def publish_full_tradable_universe(
         earnings_blackout = symbol in earnings_blackout_symbols
         if not source_tradable:
             reason = str(row.get("tradability_reason_code") or "source_not_tradable")
-        elif pd.isna(spread):
+        elif not ignore_quotes and pd.isna(spread):
             reason = "quote_unavailable"
             reasons.append(reason)
-        elif float(spread) > float(thresholds["max_spread_bps"]):
+        elif effective_max_spread_bps is not None and float(spread) > effective_max_spread_bps:
             reason = "spread_above_maximum"
             reasons.append(reason)
         elif pd.isna(market_cap):
@@ -199,7 +216,7 @@ def publish_full_tradable_universe(
         "source_fingerprint": source_run["config_fingerprint"],
         "preset_key": preset.key,
         "thresholds": {
-            "max_spread_bps": thresholds["max_spread_bps"],
+            "max_spread_bps": thresholds["max_spread_bps"] if not ignore_quotes else None,
             "min_market_cap": thresholds["min_market_cap"],
             "earnings_blackout_days": thresholds["earnings_blackout_days"],
         },
@@ -227,6 +244,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start-date", type=date.fromisoformat, default=None)
     parser.add_argument("--end-date", type=date.fromisoformat, default=None)
     parser.add_argument("--capital-preset-key", default=DEFAULT_CAPITAL_PRESET_KEY)
+    parser.add_argument(
+        "--max-quote-age-days",
+        type=int,
+        default=5,
+        help="Tolérance en jours pour la recherche de spread : utilise la quote la plus récente dans [trade_date - N, trade_date]. Défaut 5.",
+    )
+    parser.add_argument(
+        "--ignore-quotes",
+        action="store_true",
+        help="Désactive complètement le contrôle de spread. Tous les symboles passent le filtre quote.",
+    )
     args = parser.parse_args(argv)
     if (args.start_date is None) != (args.end_date is None):
         parser.error("--start-date et --end-date doivent être fournis ensemble.")
@@ -248,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
                     engine,
                     snapshot_date=snapshot_date,
                     capital_preset_key=args.capital_preset_key,
+                    max_quote_age_days=args.max_quote_age_days,
+                    ignore_quotes=args.ignore_quotes,
                 )
             )
         except RuntimeError as exc:
