@@ -2,8 +2,8 @@
 
 > Référence des champs publiés dans `<output_dir>/report.json` après chaque
 > backtest. Cohérent avec le refactor Phases A → G (voir
-> [`refactor/backtesting/audit_plan.md`](../../refactor/backtesting/audit_plan.md)
-> et [`refactor/backtesting/audit_plan_resume.md`](../../refactor/backtesting/audit_plan_resume.md)).
+> [`refactor/backtesting/audit_plan.md`](../../prompt/refactor/backtesting/audit_plan.md)
+> et [`refactor/backtesting/audit_plan_resume.md`](../../prompt/refactor/backtesting/audit_plan_resume.md)).
 
 ## Structure top-level
 

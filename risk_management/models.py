@@ -33,7 +33,14 @@ class FactorExposures:
 
 @dataclass(frozen=True, slots=True)
 class SelectionScore:
-    """Score exploitable lu depuis un snapshot de scores."""
+    """Score exploitable lu depuis un snapshot de scores.
+
+    .. deprecated:: 2026-07-12
+        Utiliser ``MLRankedCandidate`` de ``risk_management.selection_contract``
+        pour le chemin nominal. ``SelectionScore`` est conservé pour
+        rétrocompatibilité avec les consommateurs legacy (``PortfolioBuilder``,
+        ``cli.py``). La conversion se fait via ``SelectionScoreAdapter``.
+    """
     symbol: str
     sector: str
     score_used: float
@@ -143,7 +150,15 @@ class PortfolioEntry:
 
 @dataclass(frozen=True, slots=True)
 class PredictionInfo:
-    """Dernière prédiction ML pour un symbole."""
+    """Dernière prédiction ML pour un symbole.
+
+    .. deprecated:: 2026-07-12
+        Utiliser ``MLRankedCandidate`` de ``risk_management.selection_contract``
+        pour le chemin nominal. ``PredictionInfo`` est conservé pour
+        rétrocompatibilité avec les loaders DB (``load_predictions_asof``)
+        et le bridge backtest. La conversion se fait via
+        ``build_candidate_from_prediction()``.
+    """
     symbol: str
     predicted_proba: float
     predicted_class: int

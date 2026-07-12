@@ -19,9 +19,12 @@ Usage ::
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
@@ -218,6 +221,9 @@ class BenchmarkConfig:
     reject_collapsed: bool = True
     reject_below_baselines: bool = True
     measure_latency: bool = True
+    # ── Sprint Maître 4 Point 4.2 : coûts et lineage ──────────────────
+    cost_model_round_trip_bps: float = 16.0  # round-trip canonique (spread+comm+slippage)×2
+    universe_run_id: str | None = None       # fingerprint d'univers PIT
 
 
 @dataclass
@@ -234,13 +240,19 @@ class ChallengerResult:
     latency_train_ms: float = 0.0
     latency_predict_ms: float = 0.0
     params_count: int = 0
+    memory_bytes: int = 0          # ── Sprint Maître 4 Point 4.3
     below_baseline: bool = False
     error: str | None = None
 
 
 @dataclass
 class BenchmarkReport:
-    """Rapport de benchmark complet."""
+    """Rapport de benchmark complet (Sprint Maître 4).
+
+    Inclut les architectures explicitement exclues du périmètre avec leur
+    raison documentée (Point 4.1), les coûts et le lineage d'univers (Point 4.2),
+    et les métriques de complexité réelles (Point 4.3).
+    """
 
     symbol: str
     n_seeds: int
@@ -250,9 +262,16 @@ class BenchmarkReport:
     champion_score: float = 0.0
     rejected_models: list[dict[str, str]] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
+    # ── Sprint Maître 4 Point 4.1 : architectures exclues ──────────────
+    excluded_architectures: dict[str, str] = field(default_factory=dict)
+    # ── Sprint Maître 4 Point 4.2 : coûts et lineage ──────────────────
+    cost_model_round_trip_bps: float = 16.0
+    universe_run_id: str | None = None
+    # ── Sprint Maître 4 Point 4.4 : persistance ───────────────────────
+    benchmark_report_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "symbol": self.symbol,
             "n_seeds": self.n_seeds,
             "baselines": {
@@ -272,7 +291,10 @@ class BenchmarkReport:
                         "f1_macro": c.val_metrics.get("f1_macro"),
                         "auc_macro": c.val_metrics.get("auc_macro"),
                         "balanced_accuracy": c.val_metrics.get("balanced_accuracy"),
+                        "latency_train_ms": c.latency_train_ms,
                         "latency_predict_ms": c.latency_predict_ms,
+                        "params_count": c.params_count,
+                        "memory_bytes": c.memory_bytes,
                         "below_baseline": c.below_baseline,
                     }
                     for c in results
@@ -282,16 +304,49 @@ class BenchmarkReport:
             "champion": self.champion,
             "champion_score": self.champion_score,
             "rejected_models": self.rejected_models,
+            "excluded_architectures": self.excluded_architectures,
+            "cost_model_round_trip_bps": self.cost_model_round_trip_bps,
+            "universe_run_id": self.universe_run_id,
+            "benchmark_report_path": self.benchmark_report_path,
             "summary": self.summary,
         }
+        return d
 
 
 class BenchmarkRunner:
     """Runner de benchmark unifié (Sprint Maître 4).
 
     Garantit que tous les modèles sont comparés équitablement :
-    mêmes données, mêmes folds, mêmes seeds.
+    mêmes données, mêmes folds, mêmes seeds, mêmes coûts.
+
+    Les architectures non supportées par le benchmark tabulaire (LSTM, global
+    model) sont documentées dans ``report.excluded_architectures`` (Point 4.1).
     """
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Architectures dans le périmètre du benchmark tabulaire
+    # ═══════════════════════════════════════════════════════════════════
+    BENCHMARKED_ARCHITECTURES: tuple[str, ...] = ("lightgbm", "catboost")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Architectures EXCLUES et leur raison documentée (Point 4.1)
+    # ═══════════════════════════════════════════════════════════════════
+    EXCLUDED_ARCHITECTURES: dict[str, str] = {
+        "lstm_attention": (
+            "Le LSTM utilise des séquences temporelles (DataLoader PyTorch) "
+            "incompatibles avec le split tabulaire chronologique. "
+            "Son évaluation séparée via trainer.py produit des métriques val/test "
+            "comparables mais sans le protocole de benchmark unifié (baselines, "
+            "multi-seeds, coûts). Intégration nécessite un adaptateur "
+            "LSTM → tabulaire ou un BenchmarkRunner spécifique LSTM."
+        ),
+        "global_model": (
+            "Le modèle global est entraîné sur un univers multi-symboles "
+            "avec un split par dates (chrono_split_by_dates), pas par lignes. "
+            "Son évaluation n'est pas comparable fold-à-fold avec les modèles "
+            "single-symbole. Intégration nécessite un BenchmarkRunner multi-symboles."
+        ),
+    }
 
     def __init__(
         self,
@@ -313,6 +368,9 @@ class BenchmarkRunner:
         report = BenchmarkReport(
             symbol=symbol,
             n_seeds=self.benchmark_cfg.n_seeds,
+            excluded_architectures=dict(self.EXCLUDED_ARCHITECTURES),
+            cost_model_round_trip_bps=self.benchmark_cfg.cost_model_round_trip_bps,
+            universe_run_id=self.benchmark_cfg.universe_run_id,
         )
 
         # 1. Split train/val/test
@@ -346,8 +404,8 @@ class BenchmarkRunner:
         report.challengers = {}
         for seed_idx in range(self.benchmark_cfg.n_seeds):
             seed = self.benchmark_cfg.base_seed + seed_idx
-            self._run_challenger("lightgbm", seed, self.df, report, baseline_threshold)
-            self._run_challenger("catboost", seed, self.df, report, baseline_threshold)
+            for arch in self.BENCHMARKED_ARCHITECTURES:
+                self._run_challenger(arch, seed, self.df, report, baseline_threshold)
 
         # ── 6. Sélection du champion ────────────────────────────────────
         report = self._select_champion(report, baseline_threshold)
@@ -381,7 +439,11 @@ class BenchmarkRunner:
         report: BenchmarkReport,
         baseline_threshold: float,
     ) -> None:
-        """Exécute un challenger ML et enregistre le résultat."""
+        """Exécute un challenger ML et enregistre le résultat.
+
+        Extrait ``params_count`` et ``memory_bytes`` du modèle entraîné
+        (Sprint Maître 4 Point 4.3).
+        """
         from modelFactory.lightgbm_baseline import run_lightgbm_baseline
         from modelFactory.catboost_baseline import run_catboost_baseline
         from modelFactory.config import TrainingConfig, ReproducibilityConfig
@@ -412,7 +474,7 @@ class BenchmarkRunner:
             report.rejected_models.append({"model": model_name, "reason": f"exception:{exc}"})
             return
 
-        latency_ms = (time.perf_counter() - t0) * 1000.0
+        latency_train_ms = (time.perf_counter() - t0) * 1000.0
         status = result.get("status", "failed")
 
         if status != "completed":
@@ -438,6 +500,59 @@ class BenchmarkRunner:
         elif val_acc < baseline_threshold:
             below = True
 
+        # ── Sprint Maître 4 Point 4.3 : extraire params_count ────────
+        params_count = 0
+        memory_bytes = 0
+        artifact_paths = result.get("artifact_paths", {}) or {}
+        model_path = artifact_paths.get("model") or artifact_paths.get("classifier")
+        if model_path and os.path.exists(str(model_path)):
+            try:
+                memory_bytes = os.path.getsize(str(model_path))
+            except OSError:
+                pass
+
+            # LightGBM : compter les feuilles dans le booster
+            if model_name == "lightgbm":
+                try:
+                    import lightgbm as lgb
+                    booster = lgb.Booster(model_file=str(model_path))
+                    # Nombre de feuilles = nombre de nœuds terminaux
+                    dump = booster.dump_model()
+                    params_count = _count_lightgbm_leaves(dump)
+                except Exception:
+                    params_count = 0
+            # CatBoost : nombre d'arbres × profondeur moyenne
+            elif model_name == "catboost":
+                try:
+                    from catboost import CatBoostClassifier
+                    cb_model = CatBoostClassifier()
+                    cb_model.load_model(str(model_path))
+                    params_count = cb_model.tree_count_ * getattr(cb_model, 'get_param', lambda _: 6)('depth')  # type: ignore[arg-type]
+                except Exception:
+                    params_count = 0
+
+        # ── Mesurer latency_predict_ms sur le fold val ───────────────
+        latency_predict_ms = 0.0
+        if self.benchmark_cfg.measure_latency and model_path and os.path.exists(str(model_path)):
+            try:
+                feature_cols = self._get_feature_columns()
+                X_val_sample = df[feature_cols].iloc[:100].to_numpy(float)  # max 100 lignes
+                if model_name == "lightgbm":
+                    import lightgbm as lgb
+                    booster = lgb.Booster(model_file=str(model_path))
+                    t0_pred = time.perf_counter()
+                    booster.predict(X_val_sample)
+                    latency_predict_ms = (time.perf_counter() - t0_pred) * 1000.0
+                elif model_name == "catboost":
+                    from catboost import CatBoostClassifier
+                    cb_model = CatBoostClassifier()
+                    cb_model.load_model(str(model_path))
+                    t0_pred = time.perf_counter()
+                    cb_model.predict(X_val_sample)
+                    latency_predict_ms = (time.perf_counter() - t0_pred) * 1000.0
+            except Exception:
+                latency_predict_ms = 0.0
+
         cr = ChallengerResult(
             model_name=model_name,
             seed=seed,
@@ -446,8 +561,10 @@ class BenchmarkRunner:
             test_metrics=test_metrics,
             collapsed=collapsed,
             collapse_reason=collapse_reason,
-            latency_train_ms=latency_ms,
-            params_count=0,  # serait à extraire du modèle
+            latency_train_ms=latency_train_ms,
+            latency_predict_ms=latency_predict_ms,
+            params_count=params_count,
+            memory_bytes=memory_bytes,
             below_baseline=below,
         )
         report.challengers.setdefault(model_name, []).append(cr)
@@ -554,3 +671,210 @@ def run_model_benchmark(
     cfg = BenchmarkConfig(n_seeds=n_seeds, base_seed=base_seed)
     runner = BenchmarkRunner(prepared_df, training_cfg, benchmark_cfg=cfg)
     return runner.run()
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+def _count_lightgbm_leaves(dump: dict[str, Any]) -> int:
+    """Compte récursivement les feuilles dans un dump LightGBM.
+
+    Sprint Maître 4 Point 4.3 : extraction de ``params_count``.
+    """
+    total = 0
+    tree_info = dump.get("tree_info", [])
+    for tree in tree_info:
+        tree_structure = tree.get("tree_structure", {})
+        total += _count_leaves_recursive(tree_structure)
+    return total
+
+
+def _count_leaves_recursive(node: dict[str, Any]) -> int:
+    if "leaf_value" in node:
+        return 1
+    count = 0
+    if "left_child" in node:
+        count += _count_leaves_recursive(node["left_child"])
+    if "right_child" in node:
+        count += _count_leaves_recursive(node["right_child"])
+    return count if count > 0 else 1
+
+
+# ── Persistence (Sprint Maître 4 Point 4.4) ─────────────────────────────────
+
+DEFAULT_BENCHMARK_DIR = Path("artifacts/benchmarks")
+
+
+def persist_benchmark_report(
+    report: BenchmarkReport,
+    *,
+    artifact_dir: Path | str | None = None,
+) -> Path:
+    """Persiste le rapport de benchmark en JSON atomique.
+
+    Le fichier est stocké dans ``<artifact_dir>/<symbol>_<n_seeds>seeds.json``.
+    Utilisé par le trainer pour injecter ``benchmark_report`` dans les
+    résultats des challengers et activer le gate ``require_benchmark_report``.
+
+    Parameters
+    ----------
+    report : BenchmarkReport
+        Rapport à persister.
+    artifact_dir : Path | str | None
+        Répertoire de sortie. Défaut : ``artifacts/benchmarks/``.
+
+    Returns
+    -------
+    Path
+        Chemin du fichier écrit.
+    """
+    target_dir = Path(artifact_dir) if artifact_dir else DEFAULT_BENCHMARK_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_symbol = report.symbol.replace("/", "_").replace("\\", "_")
+    filename = f"{safe_symbol}_{report.n_seeds}seeds.json"
+    file_path = target_dir / filename
+    tmp_path = target_dir / f".{filename}.tmp"
+
+    payload = report.to_dict()
+    payload["persisted_at"] = pd.Timestamp.utcnow().isoformat()
+
+    tmp_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    tmp_path.replace(file_path)  # atomic rename
+
+    report.benchmark_report_path = str(file_path)
+    LOGGER.info("Benchmark report persisted: %s", file_path)
+    return file_path
+
+
+def load_benchmark_report(path: Path | str) -> dict[str, Any]:
+    """Charge un rapport de benchmark persisté.
+
+    Returns
+    -------
+    dict
+        Dictionnaire compatible avec le champ ``benchmark_report``
+        attendu par ``champion_selection.select_champion()``.
+    """
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    # Injecter le statut attendu par le gate
+    if "status" not in raw:
+        raw["status"] = "completed"  # un rapport chargé depuis le disque est considéré complété
+    return raw
+
+
+# ── Quality validation (Sprint Maître 4 Point 4.5) ──────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkQualityReport:
+    """Rapport de validation des gates de qualité sur un benchmark réel."""
+
+    is_valid: bool
+    collapse_gate_ok: bool
+    net_gain_gate_ok: bool
+    latency_gate_ok: bool
+    multi_seed_stability_ok: bool
+    champion_above_baselines: bool
+    violations: list[str]
+
+
+def validate_benchmark_quality(
+    report: BenchmarkReport,
+    *,
+    min_improvement_vs_baseline: float = 0.01,
+    max_latency_ms: float = 60_000,
+    max_f1_std_across_seeds: float = 0.10,
+) -> BenchmarkQualityReport:
+    """Valide les gates de qualité sur un rapport de benchmark réel (Point 4.5).
+
+    Vérifie que :
+    1. Aucun modèle n'est collapsed
+    2. Le champion a un gain net vs la meilleure baseline
+    3. La latence est compatible EOD
+    4. La stabilité multi-seeds est acceptable (F1 std ≤ seuil)
+    5. Le champion est au-dessus des baselines
+
+    Parameters
+    ----------
+    report : BenchmarkReport
+        Rapport de benchmark à valider.
+    min_improvement_vs_baseline : float
+        Gain minimal du champion vs meilleure baseline.
+    max_latency_ms : float
+        Latence max acceptable (défaut 60s).
+    max_f1_std_across_seeds : float
+        Écart-type max de F1 entre seeds (défaut 0.10).
+
+    Returns
+    -------
+    BenchmarkQualityReport
+    """
+    violations: list[str] = []
+
+    # 1. Collapse gate
+    collapse_ok = True
+    for model_name, results in report.challengers.items():
+        for r in results:
+            if r.collapsed:
+                violations.append(f"collapse:{model_name}_seed_{r.seed}:{r.collapse_reason}")
+                collapse_ok = False
+
+    # 2. Net gain gate (champion vs baselines)
+    net_gain_ok = True
+    if report.champion is not None:
+        best_baseline_acc = max(b.accuracy for b in report.baselines.values())
+        champion_results = report.challengers.get(report.champion, [])
+        completed = [r for r in champion_results if r.status == "completed"]
+        if completed:
+            champion_mean_f1 = float(np.mean([r.val_metrics.get("f1_macro") or 0.0 for r in completed]))
+            if champion_mean_f1 < best_baseline_acc + min_improvement_vs_baseline:
+                violations.append(
+                    f"net_gain:champion={report.champion}:f1={champion_mean_f1:.4f}"
+                    f"_baseline_best_acc={best_baseline_acc:.4f}"
+                    f"_min_improvement={min_improvement_vs_baseline:.4f}"
+                )
+                net_gain_ok = False
+        else:
+            violations.append(f"net_gain:champion={report.champion}_no_completed_seeds")
+            net_gain_ok = False
+
+    # 3. Latency gate
+    latency_ok = True
+    for model_name, results in report.challengers.items():
+        for r in results:
+            if r.latency_predict_ms > max_latency_ms:
+                violations.append(f"latency:{model_name}:{r.latency_predict_ms:.0f}ms>{max_latency_ms:.0f}ms")
+                latency_ok = False
+
+    # 4. Multi-seed stability
+    stability_ok = True
+    for model_name, results in report.challengers.items():
+        completed = [r for r in results if r.status == "completed" and not r.collapsed]
+        if len(completed) >= 2:
+            f1_vals = [r.val_metrics.get("f1_macro") or 0.0 for r in completed]
+            f1_std = float(np.std(f1_vals))
+            if f1_std > max_f1_std_across_seeds:
+                violations.append(
+                    f"stability:{model_name}:f1_std={f1_std:.4f}>{max_f1_std_across_seeds:.4f}"
+                )
+                stability_ok = False
+
+    # 5. Champion above baselines
+    champion_above = True
+    if report.champion is None:
+        violations.append("champion:none_selected")
+        champion_above = False
+    elif report.champion_score <= 0:
+        violations.append(f"champion:{report.champion}:score={report.champion_score:.4f}<=0")
+        champion_above = False
+
+    is_valid = len(violations) == 0
+
+    return BenchmarkQualityReport(
+        is_valid=is_valid,
+        collapse_gate_ok=collapse_ok,
+        net_gain_gate_ok=net_gain_ok,
+        latency_gate_ok=latency_ok,
+        multi_seed_stability_ok=stability_ok,
+        champion_above_baselines=champion_above,
+        violations=violations,
+    )

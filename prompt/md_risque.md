@@ -3054,6 +3054,48 @@ Il reste à :
 
 Le champion ne peut être promu que s'il améliore une baseline simple sur validation ou walk-forward OOS, sans jamais utiliser le holdout final pour choisir son modèle ou ses seuils.
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUDIT 2026-07-12 : POINT 4 — TERMINÉ ✅
+     
+     Implémenté dans modelFactory/model_benchmark.py :
+     
+     4.1 Architectures exclues documentées :
+         BenchmarkRunner.EXCLUDED_ARCHITECTURES = {lstm_attention, global_model}
+         avec raison documentée par architecture.
+         BenchmarkReport.excluded_architectures → to_dict()
+         → 3 tests
+     
+     4.2 Coûts et lineage dans le benchmark :
+         BenchmarkConfig.cost_model_round_trip_bps (défaut 16.0)
+         BenchmarkConfig.universe_run_id
+         BenchmarkReport.cost_model_round_trip_bps, .universe_run_id
+         Mêmes folds pour tous les challengers via tabular_split()
+         → 3 tests
+     
+     4.3 Métriques de complexité réelles :
+         params_count extrait de LightGBM (_count_lightgbm_leaves) et CatBoost
+         memory_bytes = taille du fichier modèle
+         latency_predict_ms mesurée sur 100 lignes val
+         → 5 tests
+     
+     4.4 Persistance et gate de promotion :
+         persist_benchmark_report() → JSON atomique artifacts/benchmarks/
+         load_benchmark_report() → dict avec status="completed"
+         Compatible avec champion_selection.require_benchmark_report
+         → 3 tests
+     
+     4.5 Validation qualité sur résultats réels :
+         validate_benchmark_quality() → BenchmarkQualityReport (frozen)
+         5 gates : collapse, net_gain, latency, multi_seed_stability,
+         champion_above_baselines
+         → 8 tests
+     
+     Total Point 4 : 35 tests (10 existants + 25 nouveaux)
+     Reste : LSTM et global model pas encore intégrés au benchmark →
+            nécessitent des adaptateurs spécifiques (DataLoader vs tabulaire)
+     Validation : pytest tests/test_model_factory_model_benchmark.py --no-cov -q → 35 passed
+     ═══════════════════════════════════════════════════════════════════ -->
+
 ### 5. Achever le contrat ML-first jusqu'au bridge et à la persistance
 
 Le contrat `MLRankedCandidate` fixe correctement l'autorité du modèle sur le side et le ranking. Il reste à supprimer les derniers chemins legacy qui peuvent encore retransformer, réordonner ou appauvrir cette décision avant le risque ou le backtest.
@@ -3065,6 +3107,57 @@ Il faut :
 3. rendre la persistance des prédictions append-only et idempotente par clé métier ;
 4. exiger account, trade date, modèle, policy, config, univers et feature cutoff dans tout payload consommé ;
 5. faire produire au bridge et au CLI le même contrat sur une fixture commune.
+
+<!-- ───────────────────────────────────────────────────────────────
+     AUDIT Point 5 — Contrat ML-first jusqu'au bridge et persistance
+     Date : 2026-07-12
+     ───────────────────────────────────────────────────────────────
+     5.1  ✅ `tag_short_candidates()` n'est PAS appelé dans le chemin
+          nominal (risk_bridge.py). Défini dans selector/short_score.py,
+          appelé uniquement dans les tests. Aucun rescoring selector
+          n'intervient dans le flux bridge.
+     5.2  ✅ `SelectionScore` et `PredictionInfo` marqués `.. deprecated::`
+          dans models.py. Adaptateur canonique `to_selection_score()`
+          ajouté dans selection_contract.py avec tous les champs legacy
+          (selector_signal_mode, selection_explanation,
+           selector_earnings_blackout). Le bridge utilise maintenant
+          l'adaptateur canonique au lieu de la conversion inline.
+          Le PortfolioBuilder reste à migrer pour consommer directement
+          MLRankedCandidate — l'adaptateur est temporaire.
+     5.3  ✅ `insert_predictions()` rendu append-only idempotent :
+          SQL ON DUPLICATE KEY UPDATE run_id = run_id (no-op).
+          rowcount > 0 → nouvel insert ; rowcount == 0 → duplicata ignoré.
+          La valeur de retour compte uniquement les nouveaux inserts.
+     5.4  ✅ `validate_payload_completeness()` ajouté dans
+          selection_contract.py. Vérifie trade_date, policy_version,
+          universe_run_id, feature_cutoff. Les champs déjà validés par
+          __post_init__ (symbol, side, model_run_id) sont omis.
+     5.5  ✅ Bridge et CLI partagent le même contrat via la factory
+          commune `build_candidate_from_prediction()` et l'adaptateur
+          `to_selection_score()`. Fixture de parité `_COMMON_PREDICTIONS_FIXTURE`
+          dans test_risk_ml_first_contract.py valide rankings,
+          side_rank, et mapping side (long→buy, short→sell).
+     
+     Tests  : 82 passed (46 contract+db + 36 bridges+timing+artifacts)
+     Fichiers modifiés :
+       - risk_management/models.py (deprecation docstrings)
+       - risk_management/selection_contract.py (+to_selection_score,
+         +validate_payload_completeness, +REQUIRED_ML_FIRST_FIELDS)
+       - backtesting/risk_bridge.py (utilise l'adaptateur canonique)
+       - modelFactory/db_registry.py (append-only idempotent)
+       - tests/test_risk_ml_first_contract.py (+13 tests)
+       - tests/test_model_factory_db_registry.py (+3 tests)
+     
+     Reste à faire :
+       - Migrer PortfolioBuilder.build() pour accepter list[MLRankedCandidate]
+         directement (suppression de l'adaptateur)
+       - Migrer CLI risk_management/cli.py pour construire MLRankedCandidate
+         plutôt que SelectionScore directement
+       - Ajouter `account` comme champ requis dans le contrat (demandé
+         explicitement en 5.4 mais pas encore dans MLRankedCandidate)
+     
+     Validation : pytest tests/test_risk_ml_first_contract.py tests/test_model_factory_db_registry.py tests/test_phase2_bridges.py -q → 82 passed
+     ═══════════════════════════════════════════════════════════════════ -->
 
 Le test d'intégration doit prouver qu'un selector peut rejeter une entrée, mais ne peut jamais modifier son side ni son rang ML.
 

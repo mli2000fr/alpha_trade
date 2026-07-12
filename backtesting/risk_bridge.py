@@ -295,18 +295,16 @@ def _build_ml_selection_inputs_from_day(
         if bool(row.get("selector_earnings_blackout") or row.get("earnings_blackout")):
             LOGGER.info("ML_FIRST_VETO earnings_blackout symbol=%s", candidate.symbol)
             continue
+        # ── Section 17 Point 5.2 : adapter canonique MLRankedCandidate → SelectionScore
+        from risk_management.selection_contract import to_selection_score as _to_ss
+
         inputs.append(
-            SelectionScore(
-                symbol=candidate.symbol,
+            _to_ss(
+                candidate,
                 sector=str(row.get("sector") or "Unknown"),
-                score_used=candidate.p_side,
-                score_source="ml_p_side",
                 snapshot_date=snapshot_date,
-                selection_rank=candidate.side_rank,
                 selector_signal_mode=str(row.get("selector_signal_mode") or "ml_first"),
                 selection_explanation=str(row.get("selection_explanation") or "ML-ranked candidate"),
-                selector_earnings_blackout=0,
-                side="sell" if candidate.side == "short" else "buy",
             )
         )
     return inputs

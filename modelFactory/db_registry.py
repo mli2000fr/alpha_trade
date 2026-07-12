@@ -599,7 +599,11 @@ def replace_model_governance(
 # ---------------------------------------------------------------------------
 
 def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
-    """Insert prediction rows sur le schéma courant.
+    """Insert prediction rows sur le schéma courant — APPEND-ONLY idempotent.
+
+    La persistance est **append-only** par clé métier
+    ``(symbol, prediction_date, run_id)`` : si une ligne existe déjà,
+    elle est ignorée silencieusement (idempotence) — jamais écrasée.
 
     Colonnes supportées côté DataFrame :
     - symbol
@@ -627,16 +631,7 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
             ":sym, :pd, :pp, :pc, :ps, :pl, :pf, :psh, "
             ":rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
             ") ON DUPLICATE KEY UPDATE "
-            "predicted_proba = VALUES(predicted_proba), "
-            "predicted_class = VALUES(predicted_class), "
-            "predicted_side = VALUES(predicted_side), "
-            "proba_long = VALUES(proba_long), "
-            "proba_flat = VALUES(proba_flat), "
-            "proba_short = VALUES(proba_short), "
-            "selected_model = VALUES(selected_model), "
-            "decision_threshold = VALUES(decision_threshold), "
-            "signal_label = VALUES(signal_label), "
-            "calibration_method = VALUES(calibration_method)"
+            "run_id = run_id"
         )
     else:
         stmt_v2 = text(
@@ -646,13 +641,9 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
             ") VALUES ("
             ":sym, :pd, :pp, :pc, :rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
             ") ON DUPLICATE KEY UPDATE "
-            "predicted_proba = VALUES(predicted_proba), "
-            "predicted_class = VALUES(predicted_class), "
-            "selected_model = VALUES(selected_model), "
-            "decision_threshold = VALUES(decision_threshold), "
-            "signal_label = VALUES(signal_label), "
-            "calibration_method = VALUES(calibration_method)"
+            "run_id = run_id"
         )
+    inserted = 0
     with engine.begin() as conn:
         for _, row in predictions.iterrows():
             params = {
@@ -671,9 +662,15 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
                 params["pl"] = float(row.get("proba_long")) if pd.notna(row.get("proba_long")) else None
                 params["pf"] = float(row.get("proba_flat")) if pd.notna(row.get("proba_flat")) else None
                 params["psh"] = float(row.get("proba_short")) if pd.notna(row.get("proba_short")) else None
-            conn.execute(stmt_v2, params)
-    LOGGER.info("insert_predictions rows=%d", len(predictions))
-    return len(predictions)
+            result = conn.execute(stmt_v2, params)
+            if result.rowcount and result.rowcount > 0:
+                inserted += 1
+    skipped = len(predictions) - inserted
+    if skipped > 0:
+        LOGGER.info("insert_predictions inserted=%d skipped=%d (duplicate keys idempotent)", inserted, skipped)
+    else:
+        LOGGER.info("insert_predictions rows=%d", inserted)
+    return inserted
 
 
 # ---------------------------------------------------------------------------

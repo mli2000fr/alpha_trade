@@ -446,3 +446,109 @@ def assert_valid_entry_timing(
             f"Violation du contrat decision_cutoff→entry J+1 pour "
             f"{candidate.symbol}: " + "; ".join(violations)
         )
+
+
+# ── Adapter Legacy → MLFirst (Section 17 Point 5.2) ─────────────────────────
+
+def to_selection_score(
+    candidate: MLRankedCandidate,
+    *,
+    sector: str = "Unknown",
+    snapshot_date: date | None = None,
+    selector_signal_mode: str | None = None,
+    selection_explanation: str | None = None,
+    selector_earnings_blackout: int = 0,
+) -> Any:  # SelectionScore (import lazy pour éviter le couplage dur)
+    """Convertit un ``MLRankedCandidate`` en ``SelectionScore`` legacy.
+
+    **ADAPTATEUR DE COMPATIBILITÉ TEMPORAIRE.**
+    Cette fonction existe UNIQUEMENT pour permettre au ``PortfolioBuilder``
+    et aux consommateurs legacy de continuer à fonctionner pendant la
+    transition vers le contrat ML-first natif.
+
+    .. deprecated:: 2026-07-12
+        Le ``PortfolioBuilder`` doit être migré pour consommer directement
+        ``MLRankedCandidate``. Cet adaptateur sera supprimé quand le
+        ``PortfolioBuilder.build()`` acceptera ``list[MLRankedCandidate]``.
+
+    Règles de mapping :
+    - ``MLRankedCandidate.p_side`` → ``SelectionScore.score_used``
+    - ``MLRankedCandidate.side`` → ``SelectionScore.side`` (remappé : short→sell, long→buy)
+    - ``MLRankedCandidate.side_rank`` → ``SelectionScore.selection_rank``
+    - ``MLRankedCandidate.model_run_id`` → ``SelectionScore.calibration_run_id``
+    - ``"ml_p_side"`` → ``SelectionScore.score_source`` (trace que le ML est l'autorité)
+    """
+    from risk_management.models import SelectionScore
+
+    side_legacy: str = "sell" if candidate.side == "short" else "buy"
+
+    return SelectionScore(
+        symbol=candidate.symbol,
+        sector=sector,
+        score_used=candidate.p_side,
+        score_source="ml_p_side",
+        snapshot_date=snapshot_date,
+        selection_rank=candidate.side_rank,
+        side=side_legacy,
+        calibration_run_id=candidate.model_run_id,
+        universe_run_id=candidate.universe_run_id,
+        selector_signal_mode=selector_signal_mode or "ml_first",
+        selection_explanation=selection_explanation or "ML-ranked candidate",
+        selector_earnings_blackout=selector_earnings_blackout,
+    )
+
+
+# ── Payload completeness validation (Section 17 Point 5.4) ──────────────────
+
+# Champs OBLIGATOIRES pour tout payload ML-first consommé par le bridge ou le CLI.
+REQUIRED_ML_FIRST_FIELDS: tuple[str, ...] = (
+    "symbol",
+    "trade_date",
+    "side",
+    "model_run_id",
+    "policy_version",
+    "universe_run_id",
+    "feature_cutoff",
+)
+
+
+def validate_payload_completeness(candidate: MLRankedCandidate) -> list[str]:
+    """Valide que le payload ``MLRankedCandidate`` contient tous les champs
+    obligatoires exigés par le contrat ML-first (Section 17 Point 5.4).
+
+    Les champs déjà validés par ``MLRankedCandidate.__post_init__``
+    (symbol, side, model_run_id) sont omis ici pour éviter la redondance.
+    Cette fonction vérifie les champs de lineage et timing qui ne sont
+    pas couverts par le constructeur.
+
+    Champs vérifiés :
+    - ``trade_date`` (non-None)
+    - ``policy_version`` (≥ 1)
+    - ``universe_run_id`` (non-None)
+    - ``feature_cutoff`` (non-None)
+
+    Parameters
+    ----------
+    candidate : MLRankedCandidate
+        Le candidat à valider.
+
+    Returns
+    -------
+    list[str]
+        Liste des violations (vide = payload complet).
+    """
+    violations: list[str] = []
+
+    if candidate.trade_date is None:
+        violations.append("missing:trade_date")
+
+    if candidate.policy_version < 1:
+        violations.append("invalid:policy_version")
+
+    if candidate.universe_run_id is None:
+        violations.append("missing:universe_run_id")
+
+    if candidate.feature_cutoff is None:
+        violations.append("missing:feature_cutoff")
+
+    return violations

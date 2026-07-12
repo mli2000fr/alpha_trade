@@ -1,7 +1,7 @@
 # Synthèse de l'implémentation — Refactor `backtesting/`
 
 > Date : 2026-04-30
-> Référence plan : [`audit_plan.md`](./audit_plan.md)
+> Référence plan : [`audit_plan.md`](audit_plan.md)
 > Auteur : audit & implémentation automatisés (GitHub Copilot, mode Agent)
 
 ---

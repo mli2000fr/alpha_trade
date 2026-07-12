@@ -122,6 +122,9 @@ def test_insert_predictions_uses_current_schema_columns_only():
     mock_conn = MagicMock()
     mock_engine.begin.return_value.__enter__.return_value = mock_conn
     mock_engine.begin.return_value.__exit__.return_value = False
+    mock_result = MagicMock()
+    mock_result.rowcount = 1
+    mock_conn.execute.return_value = mock_result
 
     predictions = pd.DataFrame(
         [
@@ -262,3 +265,136 @@ def test_tradable_universe_source_requires_trade_date() -> None:
         db_registry.load_symbols_for_source(cast(Engine, object()), "tradable-universe")
 
 
+# ── Section 17 Point 5.3 : append-only idempotent predictions ───────────────
+
+def test_insert_predictions_append_only_skips_duplicate_keys() -> None:
+    """Une ré-insertion avec la même clé métier (symbol, prediction_date,
+    run_id) doit être ignorée silencieusement (rowcount=0), sans erreur."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.begin.return_value.__enter__.return_value = mock_conn
+    mock_engine.begin.return_value.__exit__.return_value = False
+
+    # Simulation : première ligne insérée (rowcount=1), deuxième ligne
+    # dupliquée (rowcount=0 car ON DUPLICATE KEY UPDATE run_id = run_id
+    # est un no-op).
+    mock_result_1 = MagicMock()
+    mock_result_1.rowcount = 1  # nouvel insert
+    mock_result_2 = MagicMock()
+    mock_result_2.rowcount = 0  # clé dupliquée → ignoré
+    mock_conn.execute.side_effect = [mock_result_1, mock_result_2]
+
+    predictions = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "prediction_date": "2026-07-10",
+                "predicted_proba": 0.77,
+                "predicted_class": 1,
+                "run_id": "run-1",
+                "selected_model": "lightgbm",
+                "decision_threshold": 0.61,
+                "signal_label": "long",
+                "calibration_method": "platt",
+            },
+            {
+                "symbol": "AAPL",  # même clé que ci-dessus
+                "prediction_date": "2026-07-10",
+                "predicted_proba": 0.80,
+                "predicted_class": 1,
+                "run_id": "run-1",
+                "selected_model": "lightgbm",
+                "decision_threshold": 0.61,
+                "signal_label": "long",
+                "calibration_method": "platt",
+            },
+        ]
+    )
+
+    inserted = db_registry.insert_predictions(mock_engine, predictions)
+    assert inserted == 1, (
+        f"Append-only: seule la première ligne doit être insérée (1), "
+        f"la seconde est un duplicata ignoré. Obtenu: {inserted}"
+    )
+    assert mock_conn.execute.call_count == 2
+
+
+def test_insert_predictions_append_only_all_duplicates_returns_zero() -> None:
+    """Si toutes les lignes sont des duplicatas, inserted=0."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.begin.return_value.__enter__.return_value = mock_conn
+    mock_engine.begin.return_value.__exit__.return_value = False
+
+    mock_result = MagicMock()
+    mock_result.rowcount = 0  # duplicata
+    mock_conn.execute.return_value = mock_result
+
+    predictions = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "prediction_date": "2026-07-10",
+                "predicted_proba": 0.77,
+                "predicted_class": 1,
+                "run_id": "run-1",
+                "selected_model": "lightgbm",
+                "decision_threshold": 0.61,
+                "signal_label": "long",
+                "calibration_method": "platt",
+            },
+        ]
+    )
+
+    inserted = db_registry.insert_predictions(mock_engine, predictions)
+    assert inserted == 0, "Toutes les lignes étant des duplicatas, inserted doit être 0"
+
+
+def test_insert_predictions_on_duplicate_key_is_noop() -> None:
+    """Vérifie que le SQL utilise ON DUPLICATE KEY UPDATE run_id = run_id
+    (no-op) et non un UPDATE réel qui écraserait les données."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.begin.return_value.__enter__.return_value = mock_conn
+    mock_engine.begin.return_value.__exit__.return_value = False
+
+    mock_result = MagicMock()
+    mock_result.rowcount = 1
+    mock_conn.execute.return_value = mock_result
+
+    predictions = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "prediction_date": "2026-07-10",
+                "predicted_proba": 0.77,
+                "predicted_class": 1,
+                "run_id": "run-1",
+                "selected_model": "lightgbm",
+                "decision_threshold": 0.61,
+                "signal_label": "long",
+                "calibration_method": "platt",
+            },
+        ]
+    )
+
+    db_registry.insert_predictions(mock_engine, predictions)
+
+    stmt, _params = mock_conn.execute.call_args.args
+    sql_text = str(stmt)
+    # Le ON DUPLICATE KEY UPDATE doit être un no-op: run_id = run_id
+    assert "ON DUPLICATE KEY UPDATE" in sql_text
+    assert "run_id = run_id" in sql_text, (
+        f"Attendu 'ON DUPLICATE KEY UPDATE run_id = run_id' (no-op idempotent). "
+        f"SQL obtenu: {sql_text[:200]}"
+    )
+    # Aucune colonne métier ne doit être mise à jour
+    for forbidden in [
+        "predicted_proba = VALUES(predicted_proba)",
+        "predicted_class = VALUES(predicted_class)",
+        "selected_model = VALUES(selected_model)",
+    ]:
+        assert forbidden not in sql_text, (
+            f"L'upsert ne doit PAS écraser {forbidden.split('=')[0].strip()}. "
+            f"Persistance append-only obligatoire."
+        )

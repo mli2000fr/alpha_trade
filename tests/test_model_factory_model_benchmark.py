@@ -17,12 +17,15 @@ from modelFactory.config import (
 )
 from modelFactory.model_benchmark import (
     BenchmarkConfig,
+    BenchmarkQualityReport,
     BenchmarkReport,
     BenchmarkRunner,
     ChallengerResult,
     SimpleBaselineResult,
     SimpleBaselines,
+    persist_benchmark_report,
     run_model_benchmark,
+    validate_benchmark_quality,
 )
 
 
@@ -210,3 +213,335 @@ def test_collapsed_model_not_selected_as_champion() -> None:
     completed = [r for r in report.challengers.get("bad_model", [])
                  if r.status == "completed" and not r.collapsed and not r.below_baseline]
     assert len(completed) == 0  # Aucun modèle valide → pas de champion
+
+
+# ── Sprint Maître 4 Point 4.1 : Architectures exclues ───────────────────────
+
+class TestExcludedArchitectures:
+    """Les architectures hors périmètre sont documentées, pas silencieusement ignorées."""
+
+    def test_excluded_architectures_in_report(self) -> None:
+        """BenchmarkReport documente les architectures exclues (Point 4.1)."""
+        report = BenchmarkReport(symbol="TEST", n_seeds=1)
+        report.excluded_architectures = dict(BenchmarkRunner.EXCLUDED_ARCHITECTURES)
+        d = report.to_dict()
+        assert "excluded_architectures" in d
+        assert "lstm_attention" in d["excluded_architectures"]
+        assert "global_model" in d["excluded_architectures"]
+        # Chaque exclusion doit avoir une raison non vide
+        for arch, reason in d["excluded_architectures"].items():
+            assert len(reason) > 20, f"Reason for {arch} is too short: {reason}"
+
+    def test_benchmarked_architectures_are_explicit(self) -> None:
+        """Les architectures benchmarkées sont déclarées explicitement."""
+        assert "lightgbm" in BenchmarkRunner.BENCHMARKED_ARCHITECTURES
+        assert "catboost" in BenchmarkRunner.BENCHMARKED_ARCHITECTURES
+        assert len(BenchmarkRunner.BENCHMARKED_ARCHITECTURES) >= 2
+
+    def test_excluded_not_in_benchmarked(self) -> None:
+        """Aucune architecture exclue ne doit être dans les benchmarkées."""
+        for arch in BenchmarkRunner.EXCLUDED_ARCHITECTURES:
+            assert arch not in BenchmarkRunner.BENCHMARKED_ARCHITECTURES, (
+                f"{arch} is excluded but also in benchmarked!"
+            )
+
+
+# ── Sprint Maître 4 Point 4.2 : Coûts et lineage ────────────────────────────
+
+class TestCostModelAndLineage:
+    """Les coûts et le lineage d'univers sont propagés dans le rapport."""
+
+    def test_cost_model_in_config(self) -> None:
+        cfg = BenchmarkConfig(cost_model_round_trip_bps=16.0)
+        assert cfg.cost_model_round_trip_bps == 16.0
+
+    def test_universe_run_id_in_config(self) -> None:
+        cfg = BenchmarkConfig(universe_run_id="universe-run-42")
+        assert cfg.universe_run_id == "universe-run-42"
+
+    def test_cost_and_lineage_in_report_to_dict(self) -> None:
+        report = BenchmarkReport(
+            symbol="AAPL", n_seeds=2,
+            cost_model_round_trip_bps=16.0,
+            universe_run_id="universe-run-42",
+        )
+        d = report.to_dict()
+        assert d["cost_model_round_trip_bps"] == 16.0
+        assert d["universe_run_id"] == "universe-run-42"
+
+
+# ── Sprint Maître 4 Point 4.3 : Métriques de complexité ─────────────────────
+
+class TestComplexityMetrics:
+    """Latence, params_count et memory_bytes sont mesurés (Point 4.3)."""
+
+    def test_challenger_result_has_memory_bytes(self) -> None:
+        cr = ChallengerResult(model_name="test", seed=42, status="completed", memory_bytes=12345)
+        assert cr.memory_bytes == 12345
+
+    def test_challenger_result_has_params_count(self) -> None:
+        cr = ChallengerResult(model_name="test", seed=42, status="completed", params_count=500)
+        assert cr.params_count == 500
+
+    def test_challenger_result_has_latency_predict(self) -> None:
+        cr = ChallengerResult(model_name="test", seed=42, status="completed", latency_predict_ms=15.5)
+        assert cr.latency_predict_ms == 15.5
+
+    def test_to_dict_includes_complexity_fields(self) -> None:
+        cr = ChallengerResult(
+            model_name="test", seed=42, status="completed",
+            latency_predict_ms=12.3, params_count=256, memory_bytes=8192,
+        )
+        report = BenchmarkReport(symbol="TEST", n_seeds=1)
+        report.challengers["test"] = [cr]
+        d = report.to_dict()
+        c = d["challengers"]["test"][0]
+        assert c["latency_predict_ms"] == 12.3
+        assert c["params_count"] == 256
+        assert c["memory_bytes"] == 8192
+
+    def test_count_lightgbm_leaves(self) -> None:
+        """_count_lightgbm_leaves compte correctement un dump synthétique."""
+        from modelFactory.model_benchmark import _count_lightgbm_leaves
+
+        dump = {
+            "tree_info": [
+                {
+                    "tree_structure": {
+                        "split_feature": 0,
+                        "left_child": {"leaf_value": 0.1},
+                        "right_child": {
+                            "split_feature": 1,
+                            "left_child": {"leaf_value": -0.2},
+                            "right_child": {"leaf_value": 0.3},
+                        },
+                    }
+                }
+            ]
+        }
+        assert _count_lightgbm_leaves(dump) == 3  # 3 feuilles
+
+
+# ── Sprint Maître 4 Point 4.4 : Persistance ─────────────────────────────────
+
+class TestPersistBenchmarkReport:
+    """Le rapport peut être persisté et rechargé pour le gate require_benchmark_report."""
+
+    def test_persist_creates_file(self, tmp_path) -> None:
+        report = BenchmarkReport(symbol="AAPL", n_seeds=2)
+        report.baselines["always_flat"] = SimpleBaselineResult(
+            name="always_flat", accuracy=0.55, f1_macro=None,
+            balanced_accuracy=None, action_rate=0.0,
+        )
+        report.champion = "lightgbm"
+        report.champion_score = 0.72
+
+        path = persist_benchmark_report(report, artifact_dir=tmp_path)
+        assert path.exists()
+        assert report.benchmark_report_path == str(path)
+
+    def test_persisted_report_is_valid_json(self, tmp_path) -> None:
+        import json
+        report = BenchmarkReport(symbol="MSFT", n_seeds=1)
+        report.champion = "catboost"
+        path = persist_benchmark_report(report, artifact_dir=tmp_path)
+        data = json.loads(path.read_text())
+        assert data["symbol"] == "MSFT"
+        assert data["champion"] == "catboost"
+        assert "persisted_at" in data
+
+    def test_load_benchmark_report_has_status(self, tmp_path) -> None:
+        from modelFactory.model_benchmark import load_benchmark_report
+
+        report = BenchmarkReport(symbol="TEST", n_seeds=1)
+        report.champion = "lightgbm"
+        path = persist_benchmark_report(report, artifact_dir=tmp_path)
+        loaded = load_benchmark_report(path)
+        assert loaded["status"] == "completed"
+        assert loaded["champion"] == "lightgbm"
+
+
+# ── Sprint Maître 4 Point 4.5 : Validation qualité ──────────────────────────
+
+class TestValidateBenchmarkQuality:
+    """Les gates de collapse et de gain net sont validés sur résultats réels."""
+
+    def test_valid_report_passes(self) -> None:
+        report = BenchmarkReport(symbol="AAPL", n_seeds=2)
+        report.baselines["always_flat"] = SimpleBaselineResult(
+            name="always_flat", accuracy=0.50, f1_macro=None,
+            balanced_accuracy=None, action_rate=0.0,
+        )
+        cr = ChallengerResult(
+            model_name="lightgbm", seed=42, status="completed",
+            val_metrics={"f1_macro": 0.60},
+            collapsed=False, latency_predict_ms=100.0,
+        )
+        report.challengers["lightgbm"] = [cr]
+        report.champion = "lightgbm"
+        report.champion_score = 0.60
+
+        qr = validate_benchmark_quality(report, min_improvement_vs_baseline=0.01)
+        assert qr.is_valid
+        assert qr.collapse_gate_ok
+        assert qr.net_gain_gate_ok
+        assert qr.champion_above_baselines
+
+    def test_collapsed_detected(self) -> None:
+        report = BenchmarkReport(symbol="TEST", n_seeds=1)
+        report.baselines["always_flat"] = SimpleBaselineResult(
+            name="always_flat", accuracy=0.50, f1_macro=None,
+            balanced_accuracy=None, action_rate=0.0,
+        )
+        cr = ChallengerResult(
+            model_name="bad", seed=42, status="completed",
+            collapsed=True, collapse_reason="single_class_dominant",
+            val_metrics={"f1_macro": 0.0},
+        )
+        report.challengers["bad"] = [cr]
+        report.champion = "bad"
+        report.champion_score = 0.0
+
+        qr = validate_benchmark_quality(report)
+        assert not qr.is_valid
+        assert not qr.collapse_gate_ok
+        assert any("collapse" in v for v in qr.violations)
+
+    def test_below_baseline_detected(self) -> None:
+        """Champion en dessous de la baseline → net_gain gate échoue."""
+        report = BenchmarkReport(symbol="TEST", n_seeds=1)
+        report.baselines["always_flat"] = SimpleBaselineResult(
+            name="always_flat", accuracy=0.70, f1_macro=None,
+            balanced_accuracy=None, action_rate=0.0,
+        )
+        cr = ChallengerResult(
+            model_name="weak", seed=42, status="completed",
+            val_metrics={"f1_macro": 0.55},  # < 0.70 + 0.01
+            collapsed=False,
+        )
+        report.challengers["weak"] = [cr]
+        report.champion = "weak"
+        report.champion_score = 0.55
+
+        qr = validate_benchmark_quality(report, min_improvement_vs_baseline=0.01)
+        assert not qr.net_gain_gate_ok
+        assert any("net_gain" in v for v in qr.violations)
+
+    def test_no_champion_detected(self) -> None:
+        report = BenchmarkReport(symbol="TEST", n_seeds=1)
+        report.baselines["always_flat"] = SimpleBaselineResult(
+            name="always_flat", accuracy=0.50, f1_macro=None,
+            balanced_accuracy=None, action_rate=0.0,
+        )
+        report.champion = None  # pas de champion
+
+        qr = validate_benchmark_quality(report)
+        assert not qr.champion_above_baselines
+        assert any("champion" in v for v in qr.violations)
+
+    def test_multi_seed_stability_ok(self) -> None:
+        """Deux seeds avec F1 proches → stabilité OK."""
+        report = BenchmarkReport(symbol="TEST", n_seeds=2)
+        report.baselines["always_flat"] = SimpleBaselineResult(
+            name="always_flat", accuracy=0.50, f1_macro=None,
+            balanced_accuracy=None, action_rate=0.0,
+        )
+        cr1 = ChallengerResult(
+            model_name="stable", seed=42, status="completed",
+            val_metrics={"f1_macro": 0.60}, collapsed=False,
+        )
+        cr2 = ChallengerResult(
+            model_name="stable", seed=43, status="completed",
+            val_metrics={"f1_macro": 0.62}, collapsed=False,
+        )
+        report.challengers["stable"] = [cr1, cr2]
+        report.champion = "stable"
+        report.champion_score = 0.61
+
+        qr = validate_benchmark_quality(report, max_f1_std_across_seeds=0.10)
+        assert qr.multi_seed_stability_ok
+
+    def test_multi_seed_instability_detected(self) -> None:
+        """Deux seeds avec F1 très différentes → instabilité détectée."""
+        report = BenchmarkReport(symbol="TEST", n_seeds=2)
+        report.baselines["always_flat"] = SimpleBaselineResult(
+            name="always_flat", accuracy=0.50, f1_macro=None,
+            balanced_accuracy=None, action_rate=0.0,
+        )
+        cr1 = ChallengerResult(
+            model_name="unstable", seed=42, status="completed",
+            val_metrics={"f1_macro": 0.80}, collapsed=False,
+        )
+        cr2 = ChallengerResult(
+            model_name="unstable", seed=43, status="completed",
+            val_metrics={"f1_macro": 0.30}, collapsed=False,  # écart énorme
+        )
+        report.challengers["unstable"] = [cr1, cr2]
+        report.champion = "unstable"
+        report.champion_score = 0.55
+
+        qr = validate_benchmark_quality(report, max_f1_std_across_seeds=0.10)
+        assert not qr.multi_seed_stability_ok
+        assert any("stability" in v for v in qr.violations)
+
+    def test_quality_report_is_frozen(self) -> None:
+        qr = BenchmarkQualityReport(
+            is_valid=True, collapse_gate_ok=True, net_gain_gate_ok=True,
+            latency_gate_ok=True, multi_seed_stability_ok=True,
+            champion_above_baselines=True, violations=[],
+        )
+        with pytest.raises(Exception):
+            qr.is_valid = False  # type: ignore[misc]
+
+    def test_latency_exceeded_detected(self) -> None:
+        report = BenchmarkReport(symbol="TEST", n_seeds=1)
+        report.baselines["always_flat"] = SimpleBaselineResult(
+            name="always_flat", accuracy=0.50, f1_macro=None,
+            balanced_accuracy=None, action_rate=0.0,
+        )
+        cr = ChallengerResult(
+            model_name="slow", seed=42, status="completed",
+            val_metrics={"f1_macro": 0.60},
+            latency_predict_ms=120_000,  # 120 secondes > 60s max
+            collapsed=False,
+        )
+        report.challengers["slow"] = [cr]
+        report.champion = "slow"
+        report.champion_score = 0.60
+
+        qr = validate_benchmark_quality(report, max_latency_ms=60_000)
+        assert not qr.latency_gate_ok
+        assert any("latency" in v for v in qr.violations)
+
+
+# ── BenchmarkRunner contract (Sprint Maître 4) ──────────────────────────────
+
+class TestBenchmarkRunnerContract:
+    """Le BenchmarkRunner respecte le contrat documenté."""
+
+    def test_runner_exposes_excluded_architectures(self) -> None:
+        """Les architectures exclues sont accessibles comme attribut de classe."""
+        assert hasattr(BenchmarkRunner, "EXCLUDED_ARCHITECTURES")
+        assert isinstance(BenchmarkRunner.EXCLUDED_ARCHITECTURES, dict)
+        assert len(BenchmarkRunner.EXCLUDED_ARCHITECTURES) >= 2
+
+    def test_runner_exposes_benchmarked_architectures(self) -> None:
+        assert hasattr(BenchmarkRunner, "BENCHMARKED_ARCHITECTURES")
+        assert len(BenchmarkRunner.BENCHMARKED_ARCHITECTURES) >= 2
+
+    def test_report_includes_all_new_fields_in_to_dict(self, toy_df, training_cfg_binary) -> None:
+        """Le dict du rapport inclut bien les champs des Points 4.1-4.4."""
+        report = BenchmarkReport(
+            symbol="TEST", n_seeds=1,
+            excluded_architectures={"lstm": "not integrated yet"},
+            cost_model_round_trip_bps=16.0,
+            universe_run_id="run-42",
+            benchmark_report_path="/tmp/test.json",
+        )
+        d = report.to_dict()
+        assert "excluded_architectures" in d
+        assert "cost_model_round_trip_bps" in d
+        assert "universe_run_id" in d
+        assert "benchmark_report_path" in d
+        assert "challengers" in d
+        assert "summary" in d
