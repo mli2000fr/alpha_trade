@@ -1,10 +1,22 @@
 import pandas as pd
+import numpy as np
 
 from modelFactory import dataset
 from modelFactory import global_model, tabular_baseline
 
 def test_dataset_importable():
     assert hasattr(dataset, "__doc__")
+
+
+def test_build_sequences_builds_windows_and_skips_non_finite_targets() -> None:
+    features = np.arange(10, dtype=float).reshape(5, 2)
+    targets = np.array([0.0, 1.0, 2.0, np.nan, 1.0])
+
+    sequences, labels = dataset.build_sequences(features, targets, seq_len=3)
+
+    assert sequences.shape == (2, 3, 2)
+    assert sequences.tolist() == [features[0:3].tolist(), features[2:5].tolist()]
+    assert labels.tolist() == [2.0, 1.0]
 
 
 def test_generate_walk_forward_splits_is_chronological() -> None:
