@@ -353,3 +353,154 @@ def decide_ternary_side_batch(
 
     return sides
 
+
+# ── Baseline pour Point 1 ────────────────────────────────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class BaselineArtifact:
+    """Balise JSON d'une baseline de référence (SPY / secteurs).
+
+    Contient les métriques par side, l'identité du code et de la config.
+    """
+    artifact_id: str
+    created_utc: str
+    period_start: str
+    period_end: str
+    universe: list[str]
+    seed: int
+    code_sha: str
+    config_fingerprint: str
+    data_fingerprint: str
+    policy_dict: dict[str, object]
+    metrics_by_side: dict[str, dict[str, float]]
+
+
+def produce_baseline_artifact(
+    *,
+    period_start: str,
+    period_end: str,
+    universe: list[str],
+    metrics_by_side: dict[str, dict[str, float]],
+    seed: int = 42,
+    code_sha: str | None = None,
+    config_fingerprint: str | None = None,
+    data_fingerprint: str | None = None,
+    policy: TernaryDecisionPolicy | None = None,
+    artifact_id: str | None = None,
+) -> BaselineArtifact:
+    """Produit un artefact baseline JSON immutable.
+
+    Le caller doit fournir les métriques par side (précision, rappel, f1, hit rate,
+    etc.) calculées en amont sur la période et l'univers choisis.
+
+    Parameters
+    ----------
+    period_start : str
+        ISO 8601 start (ex. "2022-01-01").
+    period_end : str
+        ISO 8601 end (ex. "2024-01-31").
+    universe : list[str]
+        Liste des tickers (ex. ["SPY", "XLF", "XLK", ...]).
+    metrics_by_side : dict[str, dict[str, float]]
+        Métriques par side, ex.
+        ``{"long": {"precision": 0.55, "recall": 0.48, ...},
+        "short": {...}, "flat": {...}}``.
+    seed : int
+        Seed de reproductibilité.
+    code_sha : str | None
+        SHA du commit. Si None, tente un auto-detect via git.
+    config_fingerprint : str | None
+        Hash de la config. Si None, tente ``DEFAULT_TERNARY_POLICY.to_dict()``.
+    data_fingerprint : str | None
+        Hash du dataset. Si None → "unknown".
+    policy : TernaryDecisionPolicy | None
+        Policy utilisée. Si None → ``DEFAULT_TERNARY_POLICY``.
+    artifact_id : str | None
+        Identifiant unique. Si None, généré automatiquement.
+
+    Returns
+    -------
+    BaselineArtifact
+    """
+    import datetime as _dt
+    import hashlib
+    import json
+    import uuid
+    import subprocess
+
+    pol = policy if policy is not None else DEFAULT_TERNARY_POLICY
+
+    # Auto-detect code SHA
+    if code_sha is None:
+        try:
+            code_sha = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                text=True,
+            ).strip()
+        except Exception:
+            code_sha = "unknown"
+
+    # Config fingerprint
+    if config_fingerprint is None:
+        cfg_bytes = json.dumps(pol.to_dict(), sort_keys=True).encode()
+        config_fingerprint = hashlib.sha256(cfg_bytes).hexdigest()[:12]
+
+    if data_fingerprint is None:
+        data_fingerprint = "unknown"
+
+    if artifact_id is None:
+        artifact_id = f"baseline_{_dt.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
+
+    return BaselineArtifact(
+        artifact_id=artifact_id,
+        created_utc=_dt.datetime.utcnow().isoformat() + "Z",
+        period_start=period_start,
+        period_end=period_end,
+        universe=sorted(universe),
+        seed=seed,
+        code_sha=code_sha,
+        config_fingerprint=config_fingerprint,
+        data_fingerprint=data_fingerprint,
+        policy_dict=pol.to_dict(),
+        metrics_by_side=metrics_by_side,
+    )
+
+
+# ── Persistence des baselines ────────────────────────────────────────────────
+
+def save_baseline_artifact(
+    artifact: BaselineArtifact,
+    base_dir: str = "artifacts/baselines",
+) -> str:
+    """Persiste un BaselineArtifact dans ``base_dir`` et retourne le chemin.
+
+    Le fichier est nommé ``{artifact_id}.json``.
+    """
+    from datetime import datetime as _dt
+    import os
+    import json
+
+    target_dir = os.path.join(base_dir)
+    os.makedirs(target_dir, exist_ok=True)
+
+    filepath = os.path.join(target_dir, f"{artifact.artifact_id}.json")
+
+    payload = {
+        "artifact_id": artifact.artifact_id,
+        "created_utc": artifact.created_utc,
+        "period_start": artifact.period_start,
+        "period_end": artifact.period_end,
+        "universe": artifact.universe,
+        "seed": artifact.seed,
+        "code_sha": artifact.code_sha,
+        "config_fingerprint": artifact.config_fingerprint,
+        "data_fingerprint": artifact.data_fingerprint,
+        "policy": artifact.policy_dict,
+        "metrics_by_side": artifact.metrics_by_side,
+    }
+
+    with open(filepath, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, ensure_ascii=False, sort_keys=True)
+
+    return filepath
+

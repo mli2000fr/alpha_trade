@@ -2964,8 +2964,19 @@ Le test d'intégration doit injecter les mêmes probabilités dans tous les chem
      - decision_timing déclaré dans MLFirstSelectionContract
      
      Tests : 33 (24 test_ml_ternary_decision_policy + 9 test_ml_timing_contract)
-     Reste : baseline JSON réelle sur SPY/secteurs, LSTM encore sur argmax local
      Validation : pytest tests/test_ml_ternary_decision_policy.py tests/test_ml_timing_contract.py tests/test_ml_selection_contract.py --no-cov -q → 51 passed
+     
+     Fait (résolu 2026-07-12) :
+     ✅ LSTM argmax : les deux chemins (tabular ligne 1084, LSTM ligne 1508)
+        dans modelFactory/predictor.py utilisent déjà decide_ternary_side().
+        Le seul argmax restant est dans model.py:148 (training metrics only,
+        MulticlassAccuracy) et evaluation.py:184,313 (diagnostic utilities,
+        pas sur le chemin de prédiction critique). Aucun changement nécessaire.
+     ✅ Baseline JSON : core/ternary_decision_policy.py → produce_baseline_artifact()
+        + save_baseline_artifact() + scripts/produce_baseline_artifact.py.
+        Fichier produit dans artifacts/baselines/. Contient : artifact_id,
+        created_utc, period_start/end, universe, seed, code_sha,
+        config_fingerprint, data_fingerprint, policy_dict, metrics_by_side.
      ═══════════════════════════════════════════════════════════════════ -->
 
 ### 2. Étendre le PIT à toutes les sources et au lineage complet
@@ -3495,12 +3506,25 @@ Si le borrow d'un short, l'ADV, la quote ou la covariance requise manque, la bon
           ``ProductionExecutor.set_pre_submission_data()`` avant
           ``execute_run()``.
      
-     Reste à faire :
-       - Appeler ``set_pre_submission_data()`` depuis le CLI d'exécution
-         avec les vrais snapshots Alpaca (spread + borrow)
-       - Charger l'ADV et la vol par symbole depuis une source PIT
+     Fait (résolu 2026-07-12) :
+       ✅ ``set_pre_submission_data()`` appelé dans ``run_execution.py`` avant
+          ``executor.execute_run()``. Les fonctions ``_load_pre_submission_spreads()``,
+          ``_load_pre_submission_borrows()``, ``_load_pre_submission_adv_vol()``
+          et ``_resolve_pre_submission_symbols()`` chargent les snapshots live :
+          - spreads → ``fetch_latest_quotes()`` (Alpaca REST v2)
+          - borrows → ``fetch_asset_by_symbol()`` (Alpaca REST v2, fallback ETB)
+          - ADV + vol → ``RiskDbIo.load_prices_asof()`` (MySQL, PIT)
+          Les données sont injectées via ``executor.set_pre_submission_data()``
+          uniquement en mode non-dry-run (paper/live). En dry-run (simulate),
+          le gate pré-soumission reste inactif (pas de soumission broker).
+       ✅ ADV et volatilité chargés depuis la source PIT ``stock_bars_daily``
+          via ``RiskDbIo.load_prices_asof()``. L'ATR 20j et l'ADV 20j sont
+          calculés sur les barres ≤ trade_date (pas de look-ahead).
      
      Fichiers modifiés :
+       - run_execution.py (+LOGGER, +_load_pre_submission_spreads,
+         +_load_pre_submission_borrows, +_load_pre_submission_adv_vol,
+         +_resolve_pre_submission_symbols, +set_pre_submission_data call)
        - risk_management/liquidity.py (+PreSubmissionGate,
          +PreSubmissionResult, +check_pre_submission, +_borrow_degraded)
        - execution_engine/executor.py (+set_pre_submission_data,

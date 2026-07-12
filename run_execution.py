@@ -43,6 +43,8 @@ from database.run_business_summaries import emit_run_summary, persist_run_busine
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
+LOGGER = logging.getLogger(__name__)
+
 # active les sequences ANSI sur Windows
 os.system("")
 
@@ -600,6 +602,176 @@ def _persist_market_macro_snapshot(*, trade_date: date, macro_payload: object) -
     )
 
 
+# ── Point 9.6 : chargement des snapshots pré-soumission ─────────────────────
+
+def _load_pre_submission_spreads(
+    symbols: list[str],
+    *,
+    account_id: str,
+) -> dict[str, object]:
+    """Charge les spreads live (bid/ask) depuis l'API Alpaca pour le gate pré-soumission."""
+    from risk_management.liquidity import SpreadSnapshot
+    from service.alpaca.clientAlpaca import fetch_latest_quotes
+
+    if not symbols:
+        return {}
+    try:
+        raw_quotes = fetch_latest_quotes(symbols, account_id=account_id)
+    except Exception:
+        LOGGER.warning("Pre-submission spreads indisponibles (API Alpaca quotes).", exc_info=True)
+        return {}
+
+    snapshots: dict[str, SpreadSnapshot] = {}
+    for sym, quote in raw_quotes.items():
+        if not isinstance(quote, dict):
+            continue
+        quote_time_str = quote.get("t")
+        quote_time = None
+        if quote_time_str:
+            try:
+                from dateutil.parser import isoparse as _isoparse
+                quote_time = _isoparse(str(quote_time_str))
+            except Exception:
+                pass
+        bid = None
+        ask = None
+        try:
+            bid = float(quote.get("bp", quote.get("bid_price", 0)))
+            ask = float(quote.get("ap", quote.get("ask_price", 0)))
+        except (TypeError, ValueError):
+            pass
+        snapshots[str(sym).strip().upper()] = SpreadSnapshot(
+            symbol=str(sym).strip().upper(),
+            bid=bid if bid and bid > 0 else None,
+            ask=ask if ask and ask > 0 else None,
+            quote_time=quote_time,
+            source="alpaca",
+        )
+    return snapshots
+
+
+def _load_pre_submission_borrows(
+    symbols: list[str],
+    *,
+    account_id: str,
+    trade_date: date,
+) -> dict[str, object]:
+    """Charge les statuts de borrow (ETB/HTB/NOT_SHORTABLE) depuis l'API Alpaca."""
+    from datetime import datetime as _dt, timezone as _tz
+    from risk_management.liquidity import BorrowSnapshot, BorrowStatus
+    from service.alpaca.clientAlpaca import fetch_asset_by_symbol
+
+    if not symbols:
+        return {}
+    as_of = _dt.now(_tz.utc)
+    snapshots: dict[str, BorrowSnapshot] = {}
+
+    for symbol in symbols:
+        sym = str(symbol).strip().upper()
+        try:
+            asset = fetch_asset_by_symbol(sym, account_id=account_id)
+        except Exception:
+            # Fallback ETB conservateur par symbole
+            LOGGER.debug("Borrow indisponible pour %s — fallback ETB.", sym)
+            snapshots[sym] = BorrowSnapshot(
+                symbol=sym,
+                status=BorrowStatus.EASY_TO_BORROW,
+                fee_annual=0.003,
+                quantity_available=None,
+                locate_required=False,
+                as_of=as_of,
+                source="alpaca_asset_fallback_etb",
+            )
+            continue
+
+        shortable = bool(asset.get("shortable", True))
+        easy_to_borrow = bool(asset.get("easy_to_borrow", True))
+
+        if not shortable:
+            status = BorrowStatus.NOT_SHORTABLE
+            fee = float("inf")
+            locate_required = False
+        elif not easy_to_borrow:
+            status = BorrowStatus.HARD_TO_BORROW
+            fee = 0.05
+            locate_required = True
+        else:
+            status = BorrowStatus.EASY_TO_BORROW
+            fee = 0.003
+            locate_required = False
+
+        snapshots[sym] = BorrowSnapshot(
+            symbol=sym,
+            status=status,
+            fee_annual=fee,
+            quantity_available=None,
+            locate_required=locate_required,
+            as_of=as_of,
+            source="alpaca_asset",
+        )
+
+    return snapshots
+
+
+def _load_pre_submission_adv_vol(
+    symbols: list[str],
+    *,
+    trade_date: date,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Charge ADV (USD) et volatilité quotidienne (%) depuis la DB.
+
+    Returns (adv_dict, daily_vol_dict).
+    """
+    from risk_management.db_io import RiskDbIo
+
+    if not symbols:
+        return {}, {}
+    try:
+        repo = RiskDbIo()
+        prices = repo.load_prices_asof(symbols=symbols, trade_date=trade_date, atr_window=20)
+    except Exception:
+        LOGGER.warning("Pre-submission ADV/vol indisponibles (DB).", exc_info=True)
+        return {}, {}
+
+    adv: dict[str, float] = {}
+    daily_vol: dict[str, float] = {}
+    for sym, pi in prices.items():
+        if pi.adv_usd is not None and pi.adv_usd > 0:
+            adv[sym] = float(pi.adv_usd)
+        if pi.atr_20 is not None and pi.last_close > 0:
+            daily_vol[sym] = float(pi.atr_20 / pi.last_close)
+    return adv, daily_vol
+
+
+def _resolve_pre_submission_symbols(
+    repo: object,
+    *,
+    risk_run_id: str | None,
+    trade_date: date | None,
+    account_id: str | None,
+) -> list[str]:
+    """Résout les symboles concernés par le run d'exécution depuis portfolio_targets."""
+    try:
+        targets = repo.load_portfolio_targets(  # type: ignore[union-attr]
+            risk_run_id=risk_run_id,
+            trade_date=trade_date,
+            account_id=account_id,
+        )
+        if not targets:
+            return []
+        symbols: list[str] = []
+        seen: set[str] = set()
+        for t in targets:
+            sym = str(t.symbol).strip().upper()
+            if sym and sym not in seen:
+                symbols.append(sym)
+                seen.add(sym)
+        return symbols
+    except Exception:
+        LOGGER.debug("Impossible de résoudre les symboles pré-soumission.", exc_info=True)
+        return []
+
+
 def run(
     mode: str,
     run_id: str | None,
@@ -1076,6 +1248,39 @@ def run(
         logging.getLogger(__name__).warning(
             "market_regime preflight indisponible — fallback neutre.", exc_info=True
         )
+
+    # ── Point 9.6 : chargement des données de pré-soumission (spread + borrow + ADV + vol) ──
+    _pre_sub_symbols = _resolve_pre_submission_symbols(
+        repo,
+        risk_run_id=run_id,
+        trade_date=trade_date_val,
+        account_id=config.resolved_account_id,
+    )
+    if _pre_sub_symbols and not config.dry_run:
+        _pre_spreads = _load_pre_submission_spreads(
+            _pre_sub_symbols,
+            account_id=config.resolved_account_id or "default",
+        )
+        _pre_borrows = _load_pre_submission_borrows(
+            _pre_sub_symbols,
+            account_id=config.resolved_account_id or "default",
+            trade_date=trade_date_val,
+        )
+        _pre_adv, _pre_vol = _load_pre_submission_adv_vol(
+            _pre_sub_symbols,
+            trade_date=trade_date_val,
+        )
+        if _pre_spreads or _pre_borrows or _pre_adv or _pre_vol:
+            executor.set_pre_submission_data(
+                spreads=_pre_spreads if _pre_spreads else None,
+                borrows=_pre_borrows if _pre_borrows else None,
+                adv=_pre_adv if _pre_adv else None,
+                daily_vol=_pre_vol if _pre_vol else None,
+            )
+            LOGGER.info(
+                "Pre-submission data wired: %d spreads, %d borrows, %d ADV, %d vol",
+                len(_pre_spreads), len(_pre_borrows), len(_pre_adv), len(_pre_vol),
+            )
 
     print(f"{BOLD}Execution en cours...{RESET}\n")
     t0 = datetime.now()
