@@ -11,6 +11,8 @@ import pandas as pd
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
+
 UniverseRunStatus = Literal["running", "completed", "failed"]
 
 
@@ -321,3 +323,59 @@ def resolve_universe_asof(
         rows_expected=int(run["rows_expected"]),
         rows_written=int(run["rows_written"]),
     )
+
+
+def load_tradable_universe_for_period(
+    engine: Engine,
+    start_date: date,
+    end_date: date,
+    capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+    *,
+    tradable_only: bool = True,
+) -> list[str]:
+    """Retourne l'union des symboles tradables sur une période.
+
+    Interroge tous les snapshots canoniques complétés entre *start_date* et
+    *end_date* (inclus) et retourne la liste triée et dédupliquée des symboles
+    qui étaient tradables à au moins une date de la période.
+
+    Args:
+        engine: Connexion SQLAlchemy.
+        start_date: Début de la période (inclus).
+        end_date: Fin de la période (inclus).
+        capital_preset_key: Preset capital utilisé pour filtrer les runs.
+        tradable_only: Si True (défaut), ne retourne que les symboles
+            ``is_tradable = 1``. Si False, tous les symboles des snapshots.
+
+    Returns:
+        Liste triée de symboles uniques.
+    """
+    if end_date < start_date:
+        return []
+
+    tradable_clause = "AND h.is_tradable = 1" if tradable_only else ""
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                f"""
+                SELECT DISTINCT UPPER(TRIM(h.symbol)) AS symbol
+                FROM tradable_universe_history h
+                JOIN tradable_universe_runs r ON r.universe_run_id = h.universe_run_id
+                WHERE r.capital_preset_key = :preset_key
+                  AND r.snapshot_date BETWEEN :start_date AND :end_date
+                  AND r.status = 'completed'
+                  AND r.is_canonical = 1
+                  AND r.rows_written = r.rows_expected
+                  {tradable_clause}
+                ORDER BY symbol
+                """
+            ),
+            {
+                "preset_key": capital_preset_key,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        ).scalars().all()
+
+    symbols = [str(symbol) for symbol in rows if symbol]
+    return symbols

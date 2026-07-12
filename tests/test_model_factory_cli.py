@@ -1,12 +1,56 @@
 from datetime import date
+import json
 
 import pandas as pd
 import pytest
 
 from modelFactory import cli
 
+
+def test_publish_tradable_universe_cli_accepts_a_complete_date_range(monkeypatch) -> None:
+    from common import publish_tradable_universe
+
+    published_dates: list[date] = []
+    monkeypatch.setattr(publish_tradable_universe, "nyse_session_dates", lambda start, end: [start, end])
+    monkeypatch.setattr(publish_tradable_universe, "get_sqlalchemy_engine", lambda: object())
+    monkeypatch.setattr(
+        publish_tradable_universe,
+        "publish_full_tradable_universe",
+        lambda _engine, *, snapshot_date, capital_preset_key: published_dates.append(snapshot_date) or f"run-{snapshot_date}",
+    )
+
+    assert publish_tradable_universe.main(["--start-date", "2024-01-02", "--end-date", "2024-01-03"]) == 0
+    assert published_dates == [date(2024, 1, 2), date(2024, 1, 3)]
+
+
+def test_publish_tradable_universe_cli_reports_missing_screener_snapshots(monkeypatch, capsys) -> None:
+    from common import publish_tradable_universe
+
+    monkeypatch.setattr(publish_tradable_universe, "nyse_session_dates", lambda start, end: [start, end])
+    monkeypatch.setattr(publish_tradable_universe, "get_sqlalchemy_engine", lambda: object())
+
+    def _raise_for_first_day(_engine, *, snapshot_date, capital_preset_key):
+        if snapshot_date == date(2024, 1, 2):
+            raise RuntimeError("Aucun snapshot screener complet exact pour preset=small date=2024-01-02.")
+        return "run-2024-01-03"
+
+    monkeypatch.setattr(publish_tradable_universe, "publish_full_tradable_universe", _raise_for_first_day)
+
+    assert publish_tradable_universe.main(["--start-date", "2024-01-02", "--end-date", "2024-01-03"]) == 2
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "incomplete_missing_screener_snapshots"
+    assert output["missing_screener_snapshot_dates"] == ["2024-01-02"]
+
 def test_cli_importable():
     assert hasattr(cli, "__doc__")
+
+
+def test_cli_parser_accepts_stock_bars_daily_symbol_source() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args(["--mode", "train", "--symbol-source", "stock-bars-daily"])
+
+    assert opts.symbol_source == "stock-bars-daily"
 
 
 def test_cli_parser_accepts_threshold_optimization_options() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from datetime import date, timedelta
 
 import pandas as pd
@@ -15,6 +16,7 @@ from common.capital_presets import (
     build_selector_config_kwargs_from_preset,
     require_capital_preset,
 )
+from common.market_calendar import nyse_session_dates
 from common.tradable_universe import UniverseMember, begin_universe_run, fail_universe_run, publish_universe_run
 from database.connection import get_sqlalchemy_engine
 
@@ -221,15 +223,57 @@ def publish_full_tradable_universe(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Publie l'univers tradable PIT complet après quotes et earnings.")
-    parser.add_argument("--trade-date", type=date.fromisoformat, default=date.today())
+    parser.add_argument("--trade-date", type=date.fromisoformat, default=None)
+    parser.add_argument("--start-date", type=date.fromisoformat, default=None)
+    parser.add_argument("--end-date", type=date.fromisoformat, default=None)
     parser.add_argument("--capital-preset-key", default=DEFAULT_CAPITAL_PRESET_KEY)
     args = parser.parse_args(argv)
-    run_id = publish_full_tradable_universe(
-        get_sqlalchemy_engine(),
-        snapshot_date=args.trade_date,
-        capital_preset_key=args.capital_preset_key,
+    if (args.start_date is None) != (args.end_date is None):
+        parser.error("--start-date et --end-date doivent être fournis ensemble.")
+    if args.trade_date is not None and args.start_date is not None:
+        parser.error("Utilisez soit --trade-date, soit --start-date/--end-date.")
+
+    snapshot_dates = (
+        nyse_session_dates(args.start_date, args.end_date)
+        if args.start_date is not None and args.end_date is not None
+        else [args.trade_date or date.today()]
     )
-    print(json.dumps({"status": "completed", "universe_run_id": run_id, "data_quality_grade": "full"}))
+    engine = get_sqlalchemy_engine()
+    run_ids: list[str] = []
+    missing_source_dates: list[str] = []
+    for snapshot_date in snapshot_dates:
+        try:
+            run_ids.append(
+                publish_full_tradable_universe(
+                    engine,
+                    snapshot_date=snapshot_date,
+                    capital_preset_key=args.capital_preset_key,
+                )
+            )
+        except RuntimeError as exc:
+            if not str(exc).startswith("Aucun snapshot screener complet exact"):
+                raise
+            missing_source_dates.append(snapshot_date.isoformat())
+
+    status = "completed" if not missing_source_dates else "incomplete_missing_screener_snapshots"
+    print(
+        json.dumps(
+            {
+                "status": status,
+                "snapshots_published": len(run_ids),
+                "universe_run_ids": run_ids,
+                "missing_screener_snapshot_dates": missing_source_dates,
+                "data_quality_grade": "full",
+            }
+        )
+    )
+    if missing_source_dates:
+        print(
+            "Publication incomplète : exécutez d'abord le Stock Screener PIT pour les dates manquantes, "
+            "par exemple `python -m screener.stock_screener --trade-date YYYY-MM-DD`.",
+            file=sys.stderr,
+        )
+        return 2
     return 0
 
 

@@ -760,7 +760,9 @@ def load_symbols_for_source(
             trade_date=trade_date,
             capital_preset_key=capital_preset_key,
         )
-    raise ValueError(f"Source ML non admise: {normalized_source}. Utilisez tradable-universe.")
+    if normalized_source in {"stock-bars-daily", "stock_bars_daily"}:
+        return load_stock_bars_daily_symbols(engine)
+    raise ValueError(f"Source ML non admise: {normalized_source}. Utilisez tradable-universe ou stock-bars-daily.")
 
 
 def load_tradable_universe_symbols(

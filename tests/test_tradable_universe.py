@@ -8,6 +8,7 @@ from common.tradable_universe import (
     UniverseSnapshotNotFoundError,
     begin_universe_run,
     fail_universe_run,
+    load_tradable_universe_for_period,
     publish_universe_run,
     resolve_universe_asof,
 )
@@ -111,6 +112,27 @@ def test_resolve_universe_asof_returns_complete_tradable_scope(engine) -> None:
     assert resolution.snapshot_date == date(2025, 1, 2)
     assert resolution.symbols == ["AAPL"]
     assert resolution.rows_expected == resolution.rows_written == 2
+
+
+def test_load_tradable_universe_for_period_returns_the_union_of_completed_snapshots(engine) -> None:
+    _publish(engine, "run-1", date(2025, 1, 2))
+    begin_universe_run(
+        engine,
+        universe_run_id="run-2",
+        snapshot_date=date(2025, 1, 3),
+        capital_preset_key="small",
+        config_fingerprint="config-run-2",
+        rows_expected=1,
+        data_quality_grade="full",
+    )
+    publish_universe_run(engine, "run-2", [UniverseMember("MSFT", True, "tradable")])
+
+    assert load_tradable_universe_for_period(
+        engine,
+        date(2025, 1, 2),
+        date(2025, 1, 3),
+        capital_preset_key="small",
+    ) == ["AAPL", "MSFT"]
 
 
 def test_resolve_can_include_rejected_symbols_with_reasons(engine) -> None:

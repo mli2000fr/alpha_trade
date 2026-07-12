@@ -1019,8 +1019,8 @@ def test_render_ml_train_scope_block_launches_selected_symbol_source(monkeypatch
 
     def _fake_selectbox(_label, *args, **kwargs):
         key = str(kwargs.get("key") or "")
-        session_state[key] = "stock_scores_all"
-        return "stock_scores_all"
+        session_state[key] = "stock-bars-daily"
+        return "stock-bars-daily"
 
     monkeypatch.setattr(pipeline.st, "selectbox", _fake_selectbox)
     monkeypatch.setattr(
@@ -1055,8 +1055,8 @@ def test_render_ml_train_scope_block_launches_selected_symbol_source(monkeypatch
     assert len(launch_calls) == 1
     step_key, step_label, options = launch_calls[0]
     assert step_key == "ml_train"
-    assert "Univers tradable PIT canonique" in step_label
-    assert options.ml_train_symbol_source == "tradable-universe"
+    assert "Symboles avec barres daily" in step_label
+    assert options.ml_train_symbol_source == "stock-bars-daily"
 
 
 def test_render_ml_train_scope_block_displays_historical_window_caption(monkeypatch) -> None:
@@ -1068,7 +1068,7 @@ def test_render_ml_train_scope_block_displays_historical_window_caption(monkeypa
     monkeypatch.setattr(pipeline.st, "warning", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
-    monkeypatch.setattr(pipeline.st, "selectbox", lambda _label, *args, **kwargs: "candidates")
+    monkeypatch.setattr(pipeline.st, "selectbox", lambda _label, *args, **kwargs: "tradable-universe")
     monkeypatch.setattr(
         pipeline,
         "_resolve_ml_train_scope_preview",
@@ -1097,7 +1097,7 @@ def test_render_ml_train_scope_block_displays_historical_window_caption(monkeypa
 
 def test_render_ml_train_scope_block_uses_latest_widget_session_state_for_preview_and_launch(monkeypatch) -> None:
     session_state: dict[str, object] = {
-        "pipeline_ml_train_symbol_source": "stock_scores_all",
+        "pipeline_ml_train_symbol_source": "stock-bars-daily",
     }
     launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
     codes: list[str] = []
@@ -1111,7 +1111,7 @@ def test_render_ml_train_scope_block_uses_latest_widget_session_state_for_previe
     monkeypatch.setattr(
         pipeline.st,
         "selectbox",
-        lambda _label, *args, **kwargs: "candidates",
+        lambda _label, *args, **kwargs: "stock-bars-daily",
     )
     monkeypatch.setattr(
         pipeline,
@@ -1148,12 +1148,12 @@ def test_render_ml_train_scope_block_uses_latest_widget_session_state_for_previe
         all_runs=[],
     )
 
-    assert any("ml_train tradable-universe" in value for value in codes)
+    assert any("ml_train stock-bars-daily" in value for value in codes)
     assert len(launch_calls) == 1
     step_key, step_label, options = launch_calls[0]
     assert step_key == "ml_train"
-    assert "Univers tradable PIT canonique" in step_label
-    assert options.ml_train_symbol_source == "tradable-universe"
+    assert "Symboles avec barres daily" in step_label
+    assert options.ml_train_symbol_source == "stock-bars-daily"
 
 
 def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_historical_range(monkeypatch) -> None:
@@ -1168,8 +1168,8 @@ def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_hist
 
     def _fake_selectbox(_label, *args, **kwargs):
         key = str(kwargs.get("key") or "")
-        session_state[key] = "stock_scores_history"
-        return "stock_scores_history"
+        session_state[key] = "tradable-universe"
+        return "tradable-universe"
 
     monkeypatch.setattr(pipeline.st, "selectbox", _fake_selectbox)
     monkeypatch.setattr(
@@ -1214,7 +1214,7 @@ def test_render_ml_predict_scope_block_launches_selected_symbol_source_with_hist
 
 def test_render_ml_predict_scope_block_uses_latest_widget_session_state_for_preview_and_launch(monkeypatch) -> None:
     session_state: dict[str, object] = {
-        "pipeline_ml_predict_symbol_source": "stock_scores_history",
+        "pipeline_ml_predict_symbol_source": "tradable-universe",
     }
     launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
     codes: list[str] = []
@@ -1228,7 +1228,7 @@ def test_render_ml_predict_scope_block_uses_latest_widget_session_state_for_prev
     monkeypatch.setattr(
         pipeline.st,
         "selectbox",
-        lambda _label, *args, **kwargs: "candidates",
+        lambda _label, *args, **kwargs: "tradable-universe",
     )
     monkeypatch.setattr(
         pipeline,
@@ -1291,7 +1291,7 @@ def test_render_ml_predict_scope_block_displays_manual_command_preview(monkeypat
     monkeypatch.setattr(
         pipeline.st,
         "selectbox",
-        lambda _label, *args, **kwargs: "stock_scores_history",
+        lambda _label, *args, **kwargs: "tradable-universe",
     )
     monkeypatch.setattr(
         pipeline,
@@ -1328,6 +1328,37 @@ def test_render_ml_predict_scope_block_displays_manual_command_preview(monkeypat
     )
 
     assert any("ml_predict tradable-universe True 2022-01-01 2022-01-31" in value for value in codes)
+
+
+def test_render_tradable_universe_publish_block_displays_period_command(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        pipeline.TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY: dt_date(2024, 1, 2),
+        pipeline.TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY: dt_date(2024, 1, 3),
+    }
+    codes: list[str] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "divider", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "date_input", lambda _label, *, value, **kwargs: value)
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "code", lambda value, *args, **kwargs: codes.append(str(value)))
+    monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: False)
+    monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
+
+    pipeline._render_tradable_universe_publish_block(
+        pipeline.PipelineLaunchOptions(),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert any(
+        "common.publish_tradable_universe --start-date 2024-01-02 --end-date 2024-01-03" in value
+        for value in codes
+    )
 
 
 def test_render_period_sync_block_launches_quotes_history_with_selected_window(monkeypatch) -> None:

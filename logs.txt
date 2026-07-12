@@ -44,4 +44,10 @@ todo:
     ml 2018 2023, predit 2018 2025
 
 
-    ml, module risque / décision, 
+    ml, module risque / décision,
+
+
+
+
+    _________________
+    Comment l'univers tradable est calculé et stocké

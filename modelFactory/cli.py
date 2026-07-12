@@ -41,6 +41,7 @@ RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
 SYMBOL_SOURCES = (
     "tradable-universe",
+    "stock-bars-daily",
 )
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 
@@ -143,7 +144,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default="tradable-universe",
         choices=list(SYMBOL_SOURCES),
-        help="Source nominale quand --symbols n'est pas fourni : tradable-universe",
+        help="Source nominale quand --symbols n'est pas fourni.",
     )
     p.add_argument(
         "--universe-date",

@@ -14,6 +14,7 @@ from typing import Any, cast
 
 import streamlit as st
 from dataIntegrityEngine.sync_latest_quotes import estimate_sync_latest_quotes_cost
+from common.tradable_universe import load_tradable_universe_for_period
 from database.connection import get_sqlalchemy_engine
 from database.selector_reference import list_symbols_for_source, normalize_start_symbol
 from modelFactory.db_registry import load_symbols_for_source
@@ -104,13 +105,15 @@ from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
 from ihm.services.queries import get_execution_live_guard
 
 
-ML_TRAIN_SYMBOL_SOURCE_OPTIONS = ("tradable-universe",)
+ML_TRAIN_SYMBOL_SOURCE_OPTIONS = ("stock-bars-daily", "tradable-universe")
 
 ML_TRAIN_SYMBOL_SOURCE_LABELS = {
+    "stock-bars-daily": "Symboles avec barres daily (stock_bars_daily)",
     "tradable-universe": "Univers tradable PIT canonique",
 }
 
 ML_TRAIN_SYMBOL_SOURCE_TO_CLI = {
+    "stock-bars-daily": "stock-bars-daily",
     "tradable-universe": "tradable-universe",
 }
 
@@ -137,6 +140,8 @@ QUOTE_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_latest_quotes_symbol_source"
 QUOTE_HISTORY_START_SYMBOL_KEY = "pipeline_sync_latest_quotes_start_symbol"
 QUOTE_HISTORY_CONFIRM_LARGE_RUN_KEY = "pipeline_sync_latest_quotes_confirm_large_run"
 EARNINGS_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_earnings_calendar_symbol_source"
+TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY = "pipeline_publish_tradable_universe_period_start_date"
+TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY = "pipeline_publish_tradable_universe_period_end_date"
 
 
 def _coerce_ui_date(value: object, *, fallback: date) -> date:
@@ -416,6 +421,148 @@ def _render_period_sync_block(
         )
 
 
+def _render_tradable_universe_publish_block(
+    options: PipelineLaunchOptions,
+    *,
+    workflow_active: bool,
+    active_for_step: list[dict[str, object]],
+    db_config: dict[str, str | None],
+    all_runs: list[dict[str, object]],
+) -> None:
+    """Bloc de publication historique de l'univers tradable sur une période.
+
+    Permet de publier un snapshot PIT canonique pour chaque jour de bourse
+    entre deux dates, afin d'alimenter les tables ``tradable_universe_runs``
+    et ``tradable_universe_history`` pour le backtesting.
+    """
+    from common.market_calendar import nyse_session_dates
+
+    disabled = workflow_active or bool(active_for_step)
+    st.divider()
+    st.markdown("##### 📅 Publication historique sur période (backtest)")
+    st.caption(
+        "Publie l'univers tradable PIT canonique pour **chaque jour de bourse NYSE** "
+        "entre la date de début et la date de fin. Les snapshots sont stockés dans "
+        "`tradable_universe_runs` et `tradable_universe_history` et seront utilisés "
+        "par le backtest pour résoudre l'univers as-of chaque date. Un snapshot PIT complet du "
+        "**Stock Screener** doit déjà exister pour chaque séance demandée."
+    )
+    if workflow_active:
+        st.caption("Workflow complet en cours : la publication historique est temporairement désactivée.")
+    elif active_for_step:
+        st.caption("Un run de cette étape est déjà actif : la publication historique attend sa fin.")
+
+    end_default = _trade_date_or_today(options)
+    start_default = end_default - timedelta(days=365)
+
+    period_col1, period_col2 = st.columns(2)
+    with period_col1:
+        start_picker = st.date_input(
+            "Date de début",
+            value=_coerce_ui_date(
+                st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY),
+                fallback=start_default,
+            ),
+            key=TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY,
+            format="YYYY-MM-DD",
+        )
+    with period_col2:
+        end_picker = st.date_input(
+            "Date de fin",
+            value=_coerce_ui_date(
+                st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY),
+                fallback=end_default,
+            ),
+            key=TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY,
+            format="YYYY-MM-DD",
+        )
+
+    selected_start = _coerce_ui_date(
+        st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY, start_picker),
+        fallback=start_default,
+    )
+    selected_end = _coerce_ui_date(
+        st.session_state.get(TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY, end_picker),
+        fallback=end_default,
+    )
+
+    if selected_start > selected_end:
+        st.error("Fenêtre invalide : la date de début doit être antérieure ou égale à la date de fin.")
+        trading_days: list[date] = []
+    else:
+        trading_days = nyse_session_dates(selected_start, selected_end)
+        st.caption(
+            f"Fenêtre demandée : `{selected_start.isoformat()}` → `{selected_end.isoformat()}`. "
+            f"**{len(trading_days)}** jour(s) de bourse NYSE seront publiés."
+        )
+        if trading_days:
+            st.caption(
+                f"Premier jour : `{trading_days[0].isoformat()}` — "
+                f"Dernier jour : `{trading_days[-1].isoformat()}`"
+            )
+
+    st.caption("Commande du bouton ci-dessous :")
+    st.code(
+        format_command_for_display(
+            [
+                "python",
+                "-m",
+                "common.publish_tradable_universe",
+                "--start-date",
+                selected_start.isoformat(),
+                "--end-date",
+                selected_end.isoformat(),
+            ]
+        ),
+        language="powershell",
+    )
+
+    launch_label = "6. Publish Tradable Universe — historique"
+    if st.button(
+        "🗓️ Publier l'univers tradable sur la période",
+        key="publish_tradable_universe_historical_period_launch",
+        use_container_width=True,
+        disabled=disabled or not trading_days,
+    ):
+        from common.publish_tradable_universe import publish_full_tradable_universe
+        from common.capital_presets import (
+            DEFAULT_CAPITAL_PRESET_KEY,
+            require_capital_preset,
+        )
+
+        preset = require_capital_preset(DEFAULT_CAPITAL_PRESET_KEY)
+        engine = get_sqlalchemy_engine()
+        success_count = 0
+        error_count = 0
+        progress_bar = st.progress(0, text="Publication en cours…")
+        for idx, session_date in enumerate(trading_days):
+            try:
+                run_id = publish_full_tradable_universe(
+                    engine,
+                    snapshot_date=session_date,
+                    capital_preset_key=preset.key,
+                )
+                success_count += 1
+            except Exception:
+                error_count += 1
+            progress_bar.progress(
+                (idx + 1) / len(trading_days),
+                text=f"Publication en cours… {idx + 1}/{len(trading_days)} ({session_date.isoformat()})",
+            )
+        progress_bar.empty()
+        if error_count == 0:
+            st.success(
+                f"✅ **{success_count}** snapshots publiés avec succès "
+                f"du `{selected_start.isoformat()}` au `{selected_end.isoformat()}`."
+            )
+        else:
+            st.warning(
+                f"⚠️ **{success_count}** snapshots publiés, **{error_count}** erreurs. "
+                f"Consultez les logs pour plus de détails."
+            )
+        _rerun_app()
+
+
 def _build_execution_mode_banner_payload(
     options: PipelineLaunchOptions,
     *,
@@ -685,10 +832,18 @@ def _render_ml_inspection_link(step_key: str) -> None:
 @st.cache_data(ttl=60, show_spinner=False)
 def _resolve_ml_train_scope_preview(
     symbol_source: str,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> dict[str, object]:
     engine = get_sqlalchemy_engine()
     cli_symbol_source = ML_TRAIN_SYMBOL_SOURCE_TO_CLI.get(symbol_source, "tradable-universe")
-    resolved_symbols = load_symbols_for_source(engine, cli_symbol_source)
+    if cli_symbol_source == "tradable-universe":
+        if start_date is None or end_date is None:
+            raise ValueError("La fenêtre historique est obligatoire pour la source tradable-universe.")
+        resolved_symbols = load_tradable_universe_for_period(engine, start_date, end_date)
+    else:
+        resolved_symbols = load_symbols_for_source(engine, cli_symbol_source)
     return {
         "symbol_count": len(resolved_symbols),
         "raw_symbol_count": len(resolved_symbols),
@@ -718,9 +873,28 @@ def _render_ml_scope_block(
     elif active_for_step:
         st.caption(f"Un run `{label_prefix}` est déjà actif : le lancement ML ciblé attend la fin de ce run.")
 
-    selected_symbol_source = "tradable-universe"
+    current_source = str(
+        st.session_state.get(selectbox_key, getattr(options, source_attr, "tradable-universe") or "tradable-universe")
+    ).strip().lower()
+    if current_source not in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
+        current_source = "tradable-universe"
+        st.session_state[selectbox_key] = current_source
+
+    selected_symbol_source = str(
+        st.selectbox(
+            "Univers de symboles",
+            options=ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
+            index=ML_TRAIN_SYMBOL_SOURCE_OPTIONS.index(current_source),
+            key=selectbox_key,
+            format_func=lambda value: ML_TRAIN_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
+            help=(
+                "`stock-bars-daily` = tous les symboles avec des barres daily (recommandé pour l'entraînement historique). "
+                "`tradable-universe` = union des snapshots PIT canoniques publiés sur toute la fenêtre historique."
+            ),
+        )
+    )
     st.caption(
-        "Le scope ML est l'univers tradable PIT canonique. Les scores techniques enrichissent les features ou servent de veto; ils ne déterminent pas les symboles entraînés ou prédits."
+        "`stock-bars-daily` = tous les symboles ayant des données OHLCV ; `tradable-universe` = snapshot PIT canonique filtré."
     )
 
     # --- Start symbol (ML Train only) ---
@@ -741,7 +915,19 @@ def _render_ml_scope_block(
             st.caption(f"Filtre de démarrage appliqué : symboles `>= {normalized_start_symbol}`.")
 
     try:
-        scope_preview = _resolve_ml_train_scope_preview(selected_symbol_source)
+        training_start = _coerce_ui_date(
+            getattr(options, "ml_training_start_date", None),
+            fallback=date(2020, 1, 1),
+        )
+        training_end = _coerce_ui_date(
+            getattr(options, "ml_training_end_date", None),
+            fallback=_trade_date_or_today(options),
+        )
+        scope_preview = _resolve_ml_train_scope_preview(
+            selected_symbol_source,
+            start_date=training_start,
+            end_date=training_end,
+        )
     except Exception as exc:
         st.warning(f"Impossible de prévisualiser l'univers ML : {exc}")
         scope_preview = None
@@ -1077,6 +1263,15 @@ def _render_launchable_step_panel(
         if step.key in {"sync_latest_quotes", "sync_earnings_calendar"}:
             _render_period_sync_block(
                 step.key,
+                options,
+                workflow_active=workflow_active,
+                active_for_step=active_for_step,
+                db_config=db_config,
+                all_runs=all_runs,
+            )
+
+        if step.key == "publish_tradable_universe":
+            _render_tradable_universe_publish_block(
                 options,
                 workflow_active=workflow_active,
                 active_for_step=active_for_step,

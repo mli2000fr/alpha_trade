@@ -34,6 +34,7 @@ from modelFactory.db_registry import (
     load_symbols_for_source,
     replace_model_governance,
 )
+from common.tradable_universe import load_tradable_universe_for_period
 from modelFactory.global_model import train_global_model
 from modelFactory.runtime_status import update_runtime_status
 from modelFactory.trainer import TrainResult, train_symbol
@@ -42,6 +43,7 @@ from database.selector_reference import filter_symbols_from_start, normalize_sta
 LOGGER = logging.getLogger(__name__)
 SymbolSource = Literal[
     "tradable-universe",
+    "stock-bars-daily",
 ]
 
 
@@ -372,7 +374,7 @@ def run_training_batch(
     universe_date: date | None = None,
     start_symbol: str | None = None,
 ) -> list[TrainResult]:
-    """Entraîne tous les symboles de l'univers tradable PIT en parallèle.
+    """Entraîne tous les symboles de l'univers sélectionné en parallèle.
 
     Args:
         cfg: Configuration d'entraînement.
@@ -381,8 +383,8 @@ def run_training_batch(
         mode: Phase 4.2.g — ``rebuild-all`` (défaut), ``rebuild-missing``
             (skippe les symboles déjà entraînés au feature_fingerprint
             courant), ou ``refresh-stale``.
-        symbol_source: Source nominale ``tradable-universe`` si ``symbols`` n'est pas fourni.
-        universe_date: Date PIT obligatoire pour résoudre l'univers nominal.
+        symbol_source: Source nominale si ``symbols`` n'est pas fourni.
+        universe_date: Date PIT utilisée pour les sources ponctuelles.
         start_symbol: Si renseigné, filtre les symboles pour ne garder que ceux
             alphabétiquement >= à cette valeur. Exemple: ``HGI`` démarre à HGI.
 
@@ -390,13 +392,21 @@ def run_training_batch(
         Liste de TrainResult.
     """
     if symbols is None:
-        if universe_date is None:
-            raise ValueError("universe_date est obligatoire quand symbols n'est pas fourni.")
-        symbols = load_symbols_for_source(
-            engine,
-            symbol_source,
-            trade_date=universe_date,
-        )
+        if symbol_source == "tradable-universe":
+            period_start = cfg.data.training_start_date
+            period_end = cfg.data.training_end_date or universe_date
+            if period_start is None or period_end is None:
+                raise ValueError(
+                    "training_start_date et training_end_date ou universe_date sont obligatoires "
+                    "pour la source tradable-universe."
+                )
+            symbols = load_tradable_universe_for_period(
+                engine,
+                period_start,
+                period_end,
+            )
+        else:
+            symbols = load_symbols_for_source(engine, symbol_source)
 
     if start_symbol is not None:
         normalized_start = normalize_start_symbol(start_symbol)

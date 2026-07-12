@@ -233,6 +233,7 @@ MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_mo
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
 MLTrainSymbolSource = Literal[
     "tradable-universe",
+    "stock-bars-daily",
     "stock_scores",
     "stock_scores_history",
     "stock_scores_all",
@@ -1558,7 +1559,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
     ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
     ml_training_end_date = _normalize_optional_date(options.ml_training_end_date)
-    ml_train_symbol_source = "tradable-universe"
+    ml_train_symbol_source = {
+        "stock-bars-daily": "stock-bars-daily",
+        "stock_bars_daily": "stock-bars-daily",
+        "tradable-universe": "tradable-universe",
+    }.get(str(options.ml_train_symbol_source or "").strip().lower(), "tradable-universe")
     ml_train_start_symbol = _normalize_optional_symbol(options.ml_train_start_symbol)
     ml_predict_symbol_source = "tradable-universe"
     if step_key == "import_alpaca_assets":
