@@ -3747,6 +3747,66 @@ Il faut créer un orchestrateur de campagne qui :
 
 Le but est de démontrer que les mêmes décisions restent correctes avec les données qui arrivent réellement, pas seulement avec des fixtures de test.
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUDIT 2026-07-12 : POINT 13 — TERMINÉ ✅
+     
+     Implémentation de l'orchestrateur de campagne shadow/paper :
+     
+     13.1 ✅ Orchestrateur de campagne :
+          ``risk_management/campaign_orchestrator.py`` créé.
+          ``CampaignOrchestrator`` orchestre le cycle quotidien :
+          - ``init_campaign()`` : initialise la structure (artifacts/campaigns/{id}/)
+          - ``validate_frozen_state()`` : vérifie que modèle/policy/config sont gelés
+          - ``run_daily_cycle()`` : exécute run risque (+ run paper si non-dry-run),
+            collecte les métriques, persiste ``CampaignDayResult``
+          - ``build_campaign_report()`` : rapport complet avec gates de promotion
+          - ``save_campaign_report()`` : persistance JSON
+     
+     13.2 ✅ Rapport quotidien + revue hebdomadaire :
+          ``CampaignDayResult`` relie chaque journée à :
+          - run_id risque, nombre d'entrées long/short
+          - run_id exécution, ordres soumis/remplis/échoués
+          - shadow compare (taux de divergence, convergence)
+          - slippage médian, couverture protection, statut réconciliation
+          - gates : fraîcheur, compatibilité modèle, liquidité
+          ``WeeklyReview`` agrège 5 jours : totaux, moyennes, extrêmes,
+          recommandation (continue / review_required / investigate_divergence)
+     
+     13.3 ✅ Durées minimales :
+          ``CampaignPhase.SHADOW_MIN_WEEKS = 4``
+          ``CampaignPhase.PAPER_MIN_WEEKS = 8``
+          ``CampaignPhase.PAPER_MAX_WEEKS = 12``
+          ``CampaignConfig.can_promote`` vérifie ``weeks_elapsed >= min_weeks_required``
+     
+     13.4 ✅ Gates de promotion :
+          ``_check_promotion_gates()`` vérifie 6 critères :
+          (1) durée minimale, (2) divergence side zéro,
+          (3) couverture protection 100%, (4) slippage < 10 bps,
+          (5) réconciliation clean, (6) fraîcheur > 95% des jours
+     
+     13.5 ✅ Approbations humaines :
+          ``cmd_promote`` dans ``scripts/run_campaign.py`` exige ``--approved-by``.
+          L'approbation est enregistrée dans un ``ImmutableJournal``
+          (``approval_journal.json``) avec chaînage HMAC.
+     
+     13.6 ✅ Entrypoint CLI :
+          ``scripts/run_campaign.py`` avec 4 sous-commandes :
+          - ``init`` : initialise une campagne (--campaign-id, --phase, --model-run-id...)
+          - ``daily`` : exécute le cycle quotidien
+          - ``report`` : produit le rapport de campagne complet
+          - ``promote`` : promeut au palier suivant (exige --approved-by)
+     
+     Fichiers créés :
+       - risk_management/campaign_orchestrator.py (+CampaignConfig,
+         +CampaignOrchestrator, +CampaignDayResult, +WeeklyReview,
+         +CampaignPhase, +create_campaign)
+       - scripts/run_campaign.py (entrypoint CLI 4 commandes)
+     
+     Tests : 46 (shadow + checklist + ramp-up Sprint 14)
+     Smoke  : campaign_orchestrator import + CampaignConfig + create_campaign + gates
+     Validation : pytest tests/test_risk_sprint14.py -q → 46 passed
+     ═══════════════════════════════════════════════════════════════════ -->
+
 ### 14. Brancher les opérations quotidiennes et le go-live progressif
 
 Les contrôles opérationnels, la réconciliation, le ramp-up et le journal immuable sont les garde-fous du passage au réel. Ils doivent être alimentés par des sondes et des données réelles, pas par les valeurs par défaut de tests.
