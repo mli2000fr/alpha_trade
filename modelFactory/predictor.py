@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+from collections import OrderedDict
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any, Optional
 
 import numpy as np
@@ -39,6 +41,13 @@ from modelFactory.model import LSTMAttentionModule
 from modelFactory.runtime_status import increment_runtime_counter, update_runtime_status
 
 LOGGER = logging.getLogger(__name__)
+
+_BENCHMARK_FRAME_CACHE_MAX_ENTRIES = 8
+_benchmark_frame_cache: OrderedDict[tuple[int, str, str | None], pd.DataFrame] = OrderedDict()
+_benchmark_frame_cache_lock = Lock()
+_CROSS_SECTIONAL_FRAME_CACHE_MAX_ENTRIES = 8
+_cross_sectional_frame_cache: OrderedDict[tuple[object, ...], pd.DataFrame] = OrderedDict()
+_cross_sectional_frame_cache_lock = Lock()
 
 
 class ArtifactIntegrityError(RuntimeError):
@@ -638,6 +647,92 @@ def clear_model_cache() -> None:
     _cached_lstm_module.cache_clear()
 
 
+def clear_prediction_data_cache() -> None:
+    """Vide le cache des données immuables réutilisées entre symboles."""
+    with _benchmark_frame_cache_lock:
+        _benchmark_frame_cache.clear()
+    with _cross_sectional_frame_cache_lock:
+        _cross_sectional_frame_cache.clear()
+
+
+def _load_benchmark_bars_cached(
+    engine: "Engine",  # type: ignore[name-defined]
+    benchmark_symbol: str,
+    *,
+    cutoff_date: date | None,
+) -> pd.DataFrame:
+    """Charge une fois les barres benchmark par cutoff pour tout un batch.
+
+    Les prédictions LSTM sont servies symbole par symbole. Sans ce cache, les
+    mêmes barres SPY sont lues depuis SQL pour chaque symbole. Une copie
+    défensive est toujours rendue car ``compute_features`` peut enrichir son
+    entrée.
+    """
+    cache_key = (id(engine), benchmark_symbol.upper(), cutoff_date.isoformat() if cutoff_date else None)
+    with _benchmark_frame_cache_lock:
+        cached = _benchmark_frame_cache.get(cache_key)
+        if cached is not None:
+            _benchmark_frame_cache.move_to_end(cache_key)
+            return cached.copy(deep=True)
+
+        benchmark_frame = load_benchmark_bars(engine, benchmark_symbol, end_date=cutoff_date)
+        _benchmark_frame_cache[cache_key] = benchmark_frame.copy(deep=True)
+        _benchmark_frame_cache.move_to_end(cache_key)
+        while len(_benchmark_frame_cache) > _BENCHMARK_FRAME_CACHE_MAX_ENTRIES:
+            _benchmark_frame_cache.popitem(last=False)
+        return benchmark_frame.copy(deep=True)
+
+def _load_cross_sectional_features_cached(
+    engine: "Engine",  # type: ignore[name-defined]
+    *,
+    required_symbol: str,
+    cutoff_date: date | None,
+    benchmark_symbol: str,
+    benchmark_df: pd.DataFrame | None,
+    min_universe_size: int,
+) -> pd.DataFrame:
+    """Construit une fois le snapshot cross-sectionnel PIT d'une séance.
+
+    Les rangs cross-sectionnels sont identiques quel que soit le symbole servi
+    à une même date. Le cache évite donc de recharger l'univers complet et de
+    recalculer ses rangs pour chaque ``predict_symbol``. La clé inclut le
+    cutoff, le benchmark et le seuil de l'univers, ce qui préserve le contrat
+    PIT et sépare les configurations pouvant produire des rangs différents.
+    """
+    cache_key: tuple[object, ...] = (
+        id(engine),
+        cutoff_date.isoformat() if cutoff_date else None,
+        benchmark_symbol.upper(),
+        int(min_universe_size),
+    )
+    with _cross_sectional_frame_cache_lock:
+        cached = _cross_sectional_frame_cache.get(cache_key)
+        if cached is not None and required_symbol in set(cached.get("symbol", pd.Series(dtype=str)).astype(str)):
+            _cross_sectional_frame_cache.move_to_end(cache_key)
+            return cached.copy(deep=True)
+
+        universe_symbols = load_tradable_universe_symbols(engine, trade_date=cutoff_date)
+        if required_symbol not in universe_symbols:
+            cache_key = (*cache_key, required_symbol.upper())
+            cached = _cross_sectional_frame_cache.get(cache_key)
+            if cached is not None:
+                _cross_sectional_frame_cache.move_to_end(cache_key)
+                return cached.copy(deep=True)
+        if required_symbol not in universe_symbols:
+            universe_symbols.append(required_symbol)
+        universe_df = load_universe_bars(engine, universe_symbols, end_date=cutoff_date)
+        cross_sectional_df, _ = build_cross_sectional_features(
+            universe_df,
+            benchmark_df=benchmark_df,
+            min_universe_size=min_universe_size,
+        )
+        _cross_sectional_frame_cache[cache_key] = cross_sectional_df.copy(deep=True)
+        _cross_sectional_frame_cache.move_to_end(cache_key)
+        while len(_cross_sectional_frame_cache) > _CROSS_SECTIONAL_FRAME_CACHE_MAX_ENTRIES:
+            _cross_sectional_frame_cache.popitem(last=False)
+        return cross_sectional_df.copy(deep=True)
+
+
 def _resolve_selected_model_route(
     cfg_data: dict,
     ckpt_path: Path,
@@ -778,7 +873,11 @@ def _prepare_prediction_frame(
     benchmark_df = None
     if data_cfg.feature_set == "expert" or data_cfg.enable_cross_sectional_features:
         try:
-            benchmark_df = load_benchmark_bars(engine, data_cfg.benchmark_symbol, end_date=cutoff_date)
+            benchmark_df = _load_benchmark_bars_cached(
+                engine,
+                data_cfg.benchmark_symbol,
+                cutoff_date=cutoff_date,
+            )
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("predict_symbol db_read_failed symbol=%s stage=load_benchmark_bars error=%s", symbol, exc)
             _record_db_issue(operation="load_benchmark_bars", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
@@ -812,23 +911,19 @@ def _prepare_prediction_frame(
         return pd.DataFrame()
     if data_cfg.enable_cross_sectional_features:
         try:
-            universe_symbols = load_tradable_universe_symbols(
+            cross_sectional_df = _load_cross_sectional_features_cached(
                 engine,
-                trade_date=cutoff_date,
+                required_symbol=symbol,
+                cutoff_date=cutoff_date,
+                benchmark_symbol=data_cfg.benchmark_symbol,
+                benchmark_df=benchmark_df,
+                min_universe_size=data_cfg.cross_sectional_min_universe,
             )
-            if symbol not in universe_symbols:
-                universe_symbols.append(symbol)
-            universe_df = load_universe_bars(engine, universe_symbols, end_date=cutoff_date)
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("predict_symbol db_read_failed symbol=%s stage=load_cross_sectional_inputs error=%s", symbol, exc)
             _record_db_issue(operation="load_universe_bars", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
             return pd.DataFrame()
         try:
-            cross_sectional_df, _ = build_cross_sectional_features(
-                universe_df,
-                benchmark_df=benchmark_df,
-                min_universe_size=data_cfg.cross_sectional_min_universe,
-            )
             df = merge_cross_sectional_features(df, cross_sectional_df)
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("predict_symbol feature_build_failed symbol=%s stage=cross_sectional error=%s", symbol, exc)

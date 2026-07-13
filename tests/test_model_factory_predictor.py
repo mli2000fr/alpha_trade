@@ -331,6 +331,75 @@ def test_predict_batch_skips_missing_predictions(monkeypatch, tmp_path: Path) ->
     assert rows[0]["symbol"] == "AAPL"
 
 
+def test_benchmark_frame_cache_reuses_query_and_returns_independent_copies(monkeypatch) -> None:
+    calls: list[tuple[str, date | None]] = []
+    frame = pd.DataFrame({"date": [pd.Timestamp("2026-04-21")], "close": [500.0]})
+
+    def _load(engine, symbol, end_date=None):
+        calls.append((symbol, end_date))
+        return frame
+
+    predictor.clear_prediction_data_cache()
+    monkeypatch.setattr(predictor, "load_benchmark_bars", _load)
+    engine = object()
+
+    first = predictor._load_benchmark_bars_cached(engine, "SPY", cutoff_date=date(2026, 4, 21))
+    first.loc[0, "close"] = 0.0
+    second = predictor._load_benchmark_bars_cached(engine, "SPY", cutoff_date=date(2026, 4, 21))
+
+    assert calls == [("SPY", date(2026, 4, 21))]
+    assert second.loc[0, "close"] == 500.0
+
+
+def test_cross_sectional_cache_builds_one_snapshot_per_date(monkeypatch) -> None:
+    calls = {"universe": 0, "bars": 0, "build": 0}
+    engine = object()
+    cross_sectional = pd.DataFrame(
+        {
+            "symbol": ["AAPL", "MSFT"],
+            "date": [pd.Timestamp("2026-04-21"), pd.Timestamp("2026-04-21")],
+            "ret_20_rank": [0.25, 0.75],
+        }
+    )
+
+    def _symbols(db_engine, *, trade_date):
+        calls["universe"] += 1
+        return ["AAPL", "MSFT"]
+
+    def _bars(db_engine, symbols, end_date=None):
+        calls["bars"] += 1
+        return pd.DataFrame({"symbol": symbols, "date": [pd.Timestamp("2026-04-21")] * len(symbols)})
+
+    def _build(universe_df, *, benchmark_df=None, min_universe_size=20):
+        calls["build"] += 1
+        return cross_sectional.copy(), {"enabled": True}
+
+    predictor.clear_prediction_data_cache()
+    monkeypatch.setattr(predictor, "load_tradable_universe_symbols", _symbols)
+    monkeypatch.setattr(predictor, "load_universe_bars", _bars)
+    monkeypatch.setattr(predictor, "build_cross_sectional_features", _build)
+
+    first = predictor._load_cross_sectional_features_cached(
+        engine,
+        required_symbol="AAPL",
+        cutoff_date=date(2026, 4, 21),
+        benchmark_symbol="SPY",
+        benchmark_df=None,
+        min_universe_size=20,
+    )
+    second = predictor._load_cross_sectional_features_cached(
+        engine,
+        required_symbol="MSFT",
+        cutoff_date=date(2026, 4, 21),
+        benchmark_symbol="SPY",
+        benchmark_df=None,
+        min_universe_size=20,
+    )
+
+    assert calls == {"universe": 1, "bars": 1, "build": 1}
+    assert first.equals(second)
+
+
 def test_predict_symbol_returns_none_when_required_artifact_signature_mismatches(tmp_path: Path, monkeypatch) -> None:
     symbol = "AAPL"
     symbol_dir = tmp_path / symbol
