@@ -185,6 +185,26 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
     assert any(entry.table_name == "custom_table" for entry in grouped["Autres / non classées"])
 
 
+def test_all_sql_defined_tables_are_assigned_to_a_functionality_group() -> None:
+    grouped = list_grouped_tables(
+        DatabaseTableSnapshot(existing_tables=(), row_estimates={}, foreign_key_pairs=())
+    )
+    entries_by_table = {
+        entry.table_name: entry
+        for entries in grouped.values()
+        for entry in entries
+    }
+
+    discovered_tables = discover_tables_from_sql_directory()
+
+    assert discovered_tables
+    assert set(entries_by_table) >= discovered_tables
+    assert all(
+        entries_by_table[table_name].functionality_group != "Autres / non classées"
+        for table_name in discovered_tables
+    )
+
+
 def test_build_table_purge_plan_allows_stock_macro_indicators_daily_like_other_non_protected_tables() -> None:
     snapshot = DatabaseTableSnapshot(
         existing_tables=("stock_macro_indicators_daily",),
