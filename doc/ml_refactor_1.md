@@ -105,6 +105,141 @@ Interpretation :
 - `pred_short_pct` eleve mais `f1_short` faible : les signaux short sont bruyants ou
   les seuils de decision sont trop permissifs.
 
+### 3.4 Diagnostiquer les regimes de marche avant de modifier le modele
+
+La periode d'entrainement 2018-2025 contient des regimes de marche incompatibles :
+correction de 2018, crash et rebond de 2020, marche haussier de 2021, bear market de 2022,
+puis marche recent concentre sur certains secteurs. Un ecart entre `val`, `test` et `wf`
+peut donc etre une vraie mesure de changement de regime, et non un bug du walk-forward.
+
+Ne pas conclure que le modele est bon ou mauvais a partir de la seule moyenne `wf`.
+Identifier les dates exactes de chaque fold, puis construire un tableau par periode :
+
+| Periode OOS | Regime | F1 macro | F1 short | F1 long | Taux action | Decision |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 2020-Q1 | crash | ... | ... | ... | ... | rechercher une protection / abstention |
+| 2020-Q2 a Q4 | rebond | ... | ... | ... | ... | evaluer long et short separement |
+| 2022 | bear / taux | ... | ... | ... | ... | tester la robustesse short |
+| 2023-2024 | bull concentre | ... | ... | ... | ... | verifier le risque de short excessif |
+| 2025 | holdout recent | ... | ... | ... | ... | reference de decision actuelle |
+
+Pour chaque fold, conserver dans `metrics.json` :
+
+- les bornes de dates `train`, `val` et `test`;
+- `f1_macro`, `f1_short`, `f1_flat`, `f1_long`;
+- les distributions vraies et predites des trois classes;
+- le taux d'action global, long et short;
+- hit-rate, payoff et perte maximale par cote, apres couts;
+- rendement de SPY, niveau moyen de VIX et volatilite du fold.
+
+Classification initiale simple des regimes :
+
+- `bear_high_vol` : rendement SPY negatif et VIX au-dessus de son niveau median;
+- `bull` : rendement SPY positif hors condition `bear_high_vol`;
+- `range_high_vol` : rendement SPY faible et VIX eleve;
+- `range_low_vol` : tous les autres cas.
+
+Cette classification doit etre calculee exclusivement a partir des donnees observees dans
+le fold OOS. Elle sert a interpreter les resultats et, plus tard, a conditionner la
+politique de risque. Elle ne doit pas utiliser les rendements futurs pour choisir une
+prediction au sein du fold.
+
+### 3.5 Distinguer train, validation, test et holdout recent
+
+Pour une etude allant de 2018 a 2025, utiliser quatre niveaux distincts :
+
+1. `train` : ajuster les poids du modele.
+2. `val` : choisir labels, seuils, calibrage et autres hyperparametres.
+3. `walk-forward` : repeter train/val/OOS dans plusieurs periodes historiques pour
+     mesurer la robustesse entre regimes.
+4. `holdout recent` : reserver la derniere annee complete, par exemple 2025, et ne jamais
+     l'utiliser pour choisir les parametres ni le champion.
+
+Le `test` final et le holdout recent doivent etre definis avant de lancer les comparaisons.
+Leur resultat est une mesure, pas une source de reglage. Si 2025 est deja inclus dans les
+choix de configuration, le renommer `test recent` plutot que `holdout` et reserver une
+periode plus recente pour une evaluation vraiment independante.
+
+La question utile n'est pas "le modele gagne-t-il sur toutes les annees ?". Un objectif
+plus realiste est de savoir :
+
+- dans quels regimes il conserve une qualite directionnelle exploitable;
+- dans quels regimes il doit etre bloque, limite a `flat`, ou associe a une taille de
+    position reduite;
+- s'il reste suffisamment performant sur le regime recent pour etre servi aujourd'hui.
+
+### 3.6 Verifier puis comparer le contexte de regime deja disponible
+
+Le projet possede deja un contexte de marche utilisable par le modele, mais il n'est pas
+active dans la configuration standard. Le jeu de features `v1` est le defaut et ne contient
+que les indicateurs derives du titre. Le jeu `expert`, active avec `--feature-set expert`,
+ajoute les variables suivantes, calculees a partir de `SPY` :
+
+```text
+market_return_20
+market_volatility_20
+market_trend_strength_50
+relative_strength_20
+relative_strength_60
+regime_bull_market
+regime_risk_off
+```
+
+Il ne s'agit pas d'entrainer un modele distinct par regime. C'est un unique modele par
+symbole, entraine sur tout l'historique, auquel le contexte courant de marche est fourni
+a chaque pas de la sequence. Cette solution conserve les episodes rares comme COVID dans
+le train global au lieu de tenter d'apprendre un reseau avec seulement un ou deux ans de
+donnees de crise.
+
+Avant toute campagne `expert`, effectuer ce controle :
+
+1. Verifier que `stock_bars_daily` contient les barres ajustees de `SPY` sur toute la
+    periode d'entrainement et les periodes OOS.
+2. Verifier que la valeur de `benchmark_symbol` est bien `SPY` pour les deux campagnes.
+3. Executer le test unitaire existant qui controle la creation des colonnes de marche :
+
+```powershell
+python -m pytest tests/test_model_factory_features.py -k expert -q
+```
+
+4. Lancer une campagne courte sur un echantillon fixe de symboles et lire
+    `run_summary.json` ou `config.json`. La liste `feature_columns` doit contenir
+    `regime_bull_market` et `regime_risk_off`. Si elles sont absentes, ne pas lancer la
+    campagne complete : le contexte n'est pas entre dans le modele.
+
+Ensuite, comparer deux campagnes strictement identiques :
+
+```powershell
+# A : reference sans contexte de marche explicite (jeu v1, defaut)
+python -m modelFactory --feature-set v1 --training-start-date 2020-01-01 --walkforward
+
+# B : meme configuration, avec les features marche/regime existantes
+python -m modelFactory --feature-set expert --benchmark-symbol SPY --training-start-date 2020-01-01 --walkforward
+```
+
+Completer chaque commande avec le meme univers, les memes labels, le meme seed, les memes
+dates de fin et les memes parametres walk-forward. Ne changer aucun autre flag entre A et
+B. Noter les deux `batch_id` et verifier dans leurs artefacts que le nombre de colonnes de
+features est different comme attendu.
+
+Comparer ensuite, par regime et non uniquement en moyenne :
+
+- la mediane et le pire `wf.f1_macro`;
+- `wf.f1_short` dans `bear_high_vol`;
+- `wf.f1_long` dans `bull`;
+- le taux d'action long et short par regime;
+- le holdout recent, qui reste hors de tout choix de configuration.
+
+Garder `expert` seulement si son gain est stable sur plusieurs folds et n'empire pas un
+regime critique. Si `expert` est neutre ou degrade le holdout, garder `v1` : davantage de
+features ne constitue pas une amelioration en soi.
+
+La couche `market_regimes` active dans `config.yaml` est distincte. Elle pilote le risque
+et l'execution a l'execution; elle ne place pas automatiquement ses informations dans les
+tenseurs d'entrainement. Les options macro (`--include-macro-vix`, `--include-macro-vxn`,
+`--include-macro-vix3m`, `--include-macro-move`) forment une experience ulterieure : ne
+les activer qu'apres avoir decide entre `v1` et `expert`, une famille de features a la fois.
+
 ## 4. Priorite 1 - Corriger et comparer les labels
 
 ### 4.1 Problematique
@@ -324,6 +459,26 @@ WalkForwardConfig(
 Cette etape ne vise pas encore a monter le score. Elle permet de voir si les performances
 faibles sont concentrees dans certains regimes de marche.
 
+Utiliser une fenetre d'entrainement expanding pour l'evaluation historique : chaque nouveau
+fold ajoute le passe disponible au train et mesure la periode suivante hors echantillon.
+Ne pas melanger les lignes d'un regime futur dans le train d'un fold plus ancien.
+
+### 7.1.1 Comparer la longueur de l'historique d'entrainement
+
+Un historique complet apporte des crises rares, mais peut diluer le regime actuel. Ne pas
+choisir intuitivement entre ces deux options : executer les trois campagnes suivantes avec
+les memes labels, hyperparametres, splits OOS et univers :
+
+| Variante | Debut des donnees | Question posee |
+| --- | --- | --- |
+| longue | 2018 | Le modele apprend-il une robustesse utile aux crises ? |
+| intermediaire | 2020 | Le modele garde-t-il le crash/rebond sans les regimes plus anciens ? |
+| recente | 2022 | Le modele s'adapte-t-il mieux au regime actuel ? |
+
+Comparer ces variantes sur la mediane des folds walk-forward, le pire fold, les regimes
+`bear_high_vol` et la periode holdout recente. Ne pas choisir la variante qui maximise
+seulement `val` ou la moyenne globale.
+
 ### 7.2 Rapport a produire par fold
 
 Pour chaque fold, sauvegarder et comparer :
@@ -338,6 +493,39 @@ Pour chaque fold, sauvegarder et comparer :
 Un mauvais score concentre pendant les regimes de hausse forte peut expliquer une faiblesse
 short. Dans ce cas, il faut ajouter des features de regime ou reduire l'exposition short
 dans ce regime, pas forcer une hausse artificielle de son F1.
+
+### 7.3 Criteres d'evaluation d'un modele entraine
+
+Un candidat ne doit pas etre juge par un unique score moyen. Produire au minimum :
+
+```text
+median_wf_f1_macro
+worst_wf_f1_macro
+wf_f1_macro_par_regime
+wf_f1_short_par_regime
+wf_f1_long_par_regime
+holdout_recent_f1_macro
+holdout_recent_f1_short
+holdout_recent_f1_long
+action_rate_par_regime
+```
+
+Points de depart pour une gate de promotion :
+
+```text
+median_wf_f1_macro >= 0.25
+holdout_recent_f1_macro >= 0.25
+wf_f1_short en bear_high_vol >= 0.15
+wf_f1_long en bull >= 0.20
+action_rate entre 0.03 et 0.35
+au moins 4 folds walk-forward exploitables
+aucun fold critique faible sans une politique d'abstention explicite
+```
+
+Ces seuils sont des hypotheses initiales. Les reviser apres deux ou trois campagnes
+strictement comparables, en tenant compte du rendement net et du risque reel de la
+strategie. Une bonne moyenne ne compense pas un fold de crise qui produit des signaux
+directionnels dangereux.
 
 ## 8. Priorite 5 - Comparer les modeles et changer la promotion
 
@@ -376,12 +564,14 @@ actuel et enregistrer la raison de rejet.
 | Campagne | Seul changement majeur | Decision apres la campagne |
 | --- | --- | --- |
 | A | Reference actuelle, avec `batch_id` | Etablir la base de comparaison |
-| B | Labels ternaires fixes a `+/-1%` | Garder seulement si WF progresse |
-| C | Labels ternaires fixes a `+/-2%` | Comparer B, C et A |
-| D | Triple barrier avec grille compacte | Retenir la meilleure famille de labels |
-| E | Decision ternaire optimisee sur val | Verifier F1 short/long et taux d'action |
-| F | Poids de classes dynamiques | Garder seulement si precision et WF restent stables |
-| G | LightGBM, CatBoost et modele global | Promouvoir uniquement avec les gates WF |
+| B | `v1` contre `expert`, toutes choses egales | Garder seulement si le gain est stable par regime |
+| C | Labels ternaires fixes a `+/-1%` | Garder seulement si WF progresse |
+| D | Labels ternaires fixes a `+/-2%` | Comparer C, D et A |
+| E | Triple barrier avec grille compacte | Retenir la meilleure famille de labels |
+| F | Decision ternaire optimisee sur val | Verifier F1 short/long et taux d'action |
+| G | Poids de classes dynamiques | Garder seulement si precision et WF restent stables |
+| H | LightGBM, CatBoost et modele global | Promouvoir uniquement avec les gates WF |
+| I | Comparaison des fenetres 2018, 2020 et 2022 | Retenir le meilleur compromis robustesse/regime recent |
 
 Ne pas passer a la campagne suivante si les artefacts, le `batch_id` ou les metriques par
 split ne sont pas disponibles. Une campagne non comparable ne fournit pas de signal utile.
@@ -398,3 +588,5 @@ Le refactor est considere termine quand :
 5. Le champion est bloque quand ses criteres walk-forward ne sont pas satisfaits.
 6. Une campagne candidate bat la reference sur le walk-forward de maniere stable, pas
    seulement sur la validation.
+7. La decision de promotion est justifiee par les resultats par regime et par le holdout
+    recent, pas par une moyenne agregee seule.
