@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS alpha_trade.model_training_run (
     run_id          VARCHAR(64)     NOT NULL  COMMENT 'UUID ou hash unique du run',
+    batch_id        VARCHAR(64)     DEFAULT NULL COMMENT 'Identifiant partagé de la campagne d entraînement',
     registry_id     BIGINT UNSIGNED NOT NULL,
     symbol          VARCHAR(20)     NOT NULL,
     status          VARCHAR(20)     NOT NULL  COMMENT 'pending|running|completed|failed|skipped',
@@ -15,6 +16,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_run (
     config_path     VARCHAR(500)    DEFAULT NULL,
     created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (run_id),
+    INDEX idx_batch_status (batch_id, status),
     INDEX idx_symbol_status (symbol, status),
     INDEX idx_registry (registry_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Historique des runs d entrainement ML';

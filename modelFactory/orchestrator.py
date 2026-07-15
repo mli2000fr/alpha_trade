@@ -1,12 +1,13 @@
 """modelFactory/orchestrator.py — Orchestrateur distribué multi-symboles."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 import json
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Literal, Optional
+from uuid import uuid4
 
 import torch
 from sqlalchemy.engine import Engine
@@ -295,6 +296,7 @@ def _train_worker(
     universe_symbols: list[str] | None = None,
     *,
     cross_sectional_cache: pd.DataFrame | None = None,
+    batch_id: str | None = None,
 ) -> TrainResult:
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
     from database.connection import get_sqlalchemy_engine
@@ -361,6 +363,7 @@ def _train_worker(
         universe_df=None,  # not used when cross_sectional_df is provided
         selector_df=selector_df,
         cross_sectional_df=cross_sectional_df,
+        batch_id=batch_id,
     )
 
 
@@ -373,6 +376,7 @@ def run_training_batch(
     symbol_source: SymbolSource = "tradable-universe",
     universe_date: date | None = None,
     start_symbol: str | None = None,
+    batch_id: str | None = None,
 ) -> list[TrainResult]:
     """Entraîne tous les symboles de l'univers sélectionné en parallèle.
 
@@ -387,10 +391,13 @@ def run_training_batch(
         universe_date: Date PIT utilisée pour les sources ponctuelles.
         start_symbol: Si renseigné, filtre les symboles pour ne garder que ceux
             alphabétiquement >= à cette valeur. Exemple: ``HGI`` démarre à HGI.
+        batch_id: Identifiant partagé par les runs créés pendant cette campagne.
 
     Returns:
         Liste de TrainResult.
     """
+    batch_id = batch_id or f"model-factory-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid4().hex[:6]}"
+
     if symbols is None:
         if symbol_source == "tradable-universe":
             period_start = cfg.data.training_start_date
@@ -509,9 +516,9 @@ def run_training_batch(
                     progress_item=sym,
                 )
                 if cfg.data.enable_cross_sectional_features:
-                    result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache)
+                    result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache, batch_id=batch_id)
                 else:
-                    result = _train_worker(sym, cfg)
+                    result = _train_worker(sym, cfg, batch_id=batch_id)
                 results.append(result)
                 update_runtime_status(
                     progress_current=len(results),
@@ -539,9 +546,9 @@ def run_training_batch(
             # Cross-sectional cache NOT passed to subprocess (pickling overhead).
             # Each worker falls back to symbol-by-symbol DB loading.
             if cfg.data.enable_cross_sectional_features:
-                futures = {pool.submit(_train_worker, sym, cfg, symbols): sym for sym in symbols}
+                futures = {pool.submit(_train_worker, sym, cfg, symbols, batch_id=batch_id): sym for sym in symbols}
             else:
-                futures = {pool.submit(_train_worker, sym, cfg): sym for sym in symbols}
+                futures = {pool.submit(_train_worker, sym, cfg, batch_id=batch_id): sym for sym in symbols}
             for future in as_completed(futures):
                 sym = futures[future]
                 try:

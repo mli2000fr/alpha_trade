@@ -335,16 +335,17 @@ def insert_training_run(
     status: str = "pending",
     train_start_date: date | None = None,
     train_end_date: date | None = None,
+    batch_id: str | None = None,
 ) -> None:
     with engine.begin() as conn:
         conn.execute(
             text(
                 "INSERT INTO model_training_run "
-                "(run_id, registry_id, symbol, status, started_at, train_start_date, train_end_date) "
-                "VALUES (:rid, :reg, :sym, :st, :now, :tsd, :ted)"
+                "(run_id, batch_id, registry_id, symbol, status, started_at, train_start_date, train_end_date) "
+                "VALUES (:rid, :bid, :reg, :sym, :st, :now, :tsd, :ted)"
             ),
             {
-                "rid": run_id, "reg": registry_id, "sym": symbol, "st": status,
+                "rid": run_id, "bid": batch_id, "reg": registry_id, "sym": symbol, "st": status,
                 "now": datetime.now(UTC),
                 "tsd": train_start_date, "ted": train_end_date,
             },

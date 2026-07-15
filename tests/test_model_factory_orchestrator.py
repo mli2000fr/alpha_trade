@@ -29,7 +29,7 @@ def test_run_training_batch_loads_tradable_universe_symbols(monkeypatch, tmp_pat
     monkeypatch.setattr(
         orchestrator,
         "_train_worker",
-        lambda symbol, cfg: orchestrator.TrainResult(symbol, f"run-{symbol}", "completed"),
+        lambda symbol, cfg, **kwargs: orchestrator.TrainResult(symbol, f"run-{symbol}", "completed"),
     )
 
     results = orchestrator.run_training_batch(
@@ -40,6 +40,34 @@ def test_run_training_batch_loads_tradable_universe_symbols(monkeypatch, tmp_pat
     )
 
     assert [result.symbol for result in results] == ["AAPL", "MSFT"]
+
+
+def test_run_training_batch_passes_shared_batch_id_to_workers(monkeypatch, tmp_path) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    batch_ids: list[str] = []
+
+    def fake_train_worker(symbol, cfg, **kwargs):
+        batch_ids.append(kwargs["batch_id"])
+        return orchestrator.TrainResult(symbol, f"run-{symbol}", "completed")
+
+    monkeypatch.setattr(orchestrator, "_train_worker", fake_train_worker)
+
+    results = orchestrator.run_training_batch(
+        cfg,
+        engine=object(),
+        symbols=["AAPL", "MSFT"],
+        batch_id="campaign-20260715",
+    )
+
+    assert [result.symbol for result in results] == ["AAPL", "MSFT"]
+    assert len(set(batch_ids)) == 1
+    assert batch_ids == ["campaign-20260715", "campaign-20260715"]
 
 
 def test_run_training_batch_requires_pit_date_without_explicit_symbols(tmp_path) -> None:
@@ -82,6 +110,7 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
         universe_df=None,
         selector_df=None,
         cross_sectional_df=None,
+        batch_id=None,
     ):
         captured["symbol"] = symbol
         captured["cross_sectional_df"] = cross_sectional_df
@@ -129,6 +158,7 @@ def test_train_worker_loads_selector_context_when_enabled(monkeypatch) -> None:
         universe_df=None,
         selector_df=None,
         cross_sectional_df=None,
+        batch_id=None,
     ):
         captured["symbol"] = symbol
         captured["selector_df"] = selector_df
@@ -166,7 +196,7 @@ def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypat
         accelerator="cpu",
     )
 
-    def fake_train_worker(symbol, cfg):
+    def fake_train_worker(symbol, cfg, **kwargs):
         symbol_dir = tmp_path / symbol
         symbol_dir.mkdir(parents=True, exist_ok=True)
         with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
@@ -218,7 +248,7 @@ def test_run_training_batch_can_auto_select_global_model(monkeypatch, tmp_path) 
         accelerator="cpu",
     )
 
-    def fake_train_worker(symbol, cfg):
+    def fake_train_worker(symbol, cfg, **kwargs):
         symbol_dir = tmp_path / symbol
         symbol_dir.mkdir(parents=True, exist_ok=True)
         with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:

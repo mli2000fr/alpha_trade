@@ -445,6 +445,7 @@ def main(args: list[str] | None = None) -> None:
                 symbol_source=opts.symbol_source,
                 universe_date=universe_date,
                 start_symbol=opts.start_symbol,
+                batch_id=run_id,
             )
         completed = sum(1 for r in results if r.status == "completed")
         skipped = sum(1 for r in results if r.status == "skipped")
