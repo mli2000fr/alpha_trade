@@ -4,7 +4,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
+import sys
 import threading
+from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -44,6 +47,35 @@ SYMBOL_SOURCES = (
     "stock-bars-daily",
 )
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
+
+
+def _build_training_batch_command(raw_args: list[str]) -> tuple[str, str]:
+    argv = ["python", "-m", "modelFactory", *raw_args]
+    return subprocess.list2cmdline(argv), json.dumps(raw_args, ensure_ascii=False)
+
+
+def _build_training_batch_metadata(opts: argparse.Namespace, cfg: TrainingConfig) -> str:
+    feature_columns = get_feature_columns(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_selector_context=cfg.data.include_selector_context_features,
+        include_short_score=cfg.data.include_short_score_features,
+        include_macro_vix=cfg.data.include_macro_vix_features,
+        include_macro_vxn=cfg.data.include_macro_vxn_features,
+        include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+        include_macro_move=cfg.data.include_macro_move_features,
+    )
+    return json.dumps(
+        {
+            "cli_options": vars(opts),
+            "training_config": asdict(cfg),
+            "feature_columns": feature_columns,
+        },
+        default=str,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
 
 
 def _parse_selector_signal_modes_arg(values: list[str] | None) -> tuple[str, ...]:
@@ -293,7 +325,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(args: list[str] | None = None) -> None:
     parser = build_arg_parser()
-    opts = parser.parse_args(args)
+    raw_args = list(args) if args is not None else sys.argv[1:]
+    opts = parser.parse_args(raw_args)
     if opts.label_method == "triple_barrier" and (opts.target_mode != "ternary" or opts.num_classes != 3):
         parser.error("--label-method triple_barrier requiert --target-mode ternary et --num-classes 3")
 
@@ -428,25 +461,51 @@ def main(args: list[str] | None = None) -> None:
     )
 
     if opts.mode == "train":
+        from modelFactory.db_registry import insert_training_batch, update_training_batch
         from modelFactory.orchestrator import run_training_batch
+
+        command_line, command_argv_json = _build_training_batch_command(raw_args)
+        insert_training_batch(
+            engine,
+            batch_id=run_id,
+            command_line=command_line,
+            command_argv_json=command_argv_json,
+            metadata_json=_build_training_batch_metadata(opts, cfg),
+            symbol_source=opts.symbol_source,
+            universe_date=universe_date,
+            requested_symbol_count=len(opts.symbols) if opts.symbols else None,
+            training_start_date=cfg.data.training_start_date,
+            training_end_date=cfg.data.training_end_date,
+            started_at=started_at,
+        )
         update_runtime_status(current_phase="batch_dispatch")
-        with _LiveRunSummaryEmitter(
-            run_id=run_id,
-            mode="train",
-            heartbeat_interval_seconds=opts.heartbeat_interval_seconds,
-            watchdog_timeout_seconds=opts.watchdog_timeout_seconds,
-            debug_train=opts.debug_train,
-        ):
-            results = run_training_batch(
-                cfg,
+        try:
+            with _LiveRunSummaryEmitter(
+                run_id=run_id,
+                mode="train",
+                heartbeat_interval_seconds=opts.heartbeat_interval_seconds,
+                watchdog_timeout_seconds=opts.watchdog_timeout_seconds,
+                debug_train=opts.debug_train,
+            ):
+                results = run_training_batch(
+                    cfg,
+                    engine,
+                    symbols=opts.symbols,
+                    mode=opts.ml_mode,
+                    symbol_source=opts.symbol_source,
+                    universe_date=universe_date,
+                    start_symbol=opts.start_symbol,
+                    batch_id=run_id,
+                )
+        except Exception as exc:
+            update_training_batch(
                 engine,
-                symbols=opts.symbols,
-                mode=opts.ml_mode,
-                symbol_source=opts.symbol_source,
-                universe_date=universe_date,
-                start_symbol=opts.start_symbol,
-                batch_id=run_id,
+                run_id,
+                status="failed",
+                finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                failure_reason=str(exc),
             )
+            raise
         completed = sum(1 for r in results if r.status == "completed")
         skipped = sum(1 for r in results if r.status == "skipped")
         failed = sum(1 for r in results if r.status == "failed")
@@ -456,6 +515,15 @@ def main(args: list[str] | None = None) -> None:
             and r.metrics.get("champion_quarantine") is True
         )
         finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        update_training_batch(
+            engine,
+            run_id,
+            status="completed",
+            finished_at=finished_at,
+            symbols_completed=completed,
+            symbols_skipped=skipped,
+            symbols_failed=failed,
+        )
         update_runtime_status(
             current_phase="cli_completed",
             progress_live=False,

@@ -324,8 +324,69 @@ def ensure_registry_entry(engine: Engine, symbol: str, architecture: str = "lstm
 
 
 # ---------------------------------------------------------------------------
-# Training run
+# Training batch and run
 # ---------------------------------------------------------------------------
+
+_TRAINING_BATCH_MUTABLE_FIELDS = {
+    "status",
+    "finished_at",
+    "symbols_completed",
+    "symbols_skipped",
+    "symbols_failed",
+    "failure_reason",
+}
+
+
+def insert_training_batch(
+    engine: Engine,
+    *,
+    batch_id: str,
+    command_line: str,
+    command_argv_json: str,
+    metadata_json: str,
+    symbol_source: str,
+    universe_date: date | None,
+    requested_symbol_count: int | None,
+    training_start_date: date | None,
+    training_end_date: date | None,
+    started_at: datetime,
+) -> None:
+    """Persist one immutable metadata record for a training campaign."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO model_training_batch "
+                "(batch_id, status, command_line, command_argv_json, metadata_json, symbol_source, "
+                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at) "
+                "VALUES (:bid, 'running', :command_line, :command_argv_json, :metadata_json, :symbol_source, "
+                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at)"
+            ),
+            {
+                "bid": batch_id,
+                "command_line": command_line,
+                "command_argv_json": command_argv_json,
+                "metadata_json": metadata_json,
+                "symbol_source": symbol_source,
+                "universe_date": universe_date,
+                "requested_symbol_count": requested_symbol_count,
+                "training_start_date": training_start_date,
+                "training_end_date": training_end_date,
+                "started_at": started_at,
+            },
+        )
+
+
+def update_training_batch(engine: Engine, batch_id: str, **kwargs: Any) -> None:
+    """Update terminal campaign state without allowing metadata to be overwritten."""
+    if not kwargs:
+        return
+    invalid_fields = sorted(set(kwargs).difference(_TRAINING_BATCH_MUTABLE_FIELDS))
+    if invalid_fields:
+        raise ValueError(f"model_training_batch immutable or unknown fields: {', '.join(invalid_fields)}")
+    set_clause = ", ".join(f"{field} = :{field}" for field in kwargs)
+    params: dict[str, Any] = {**kwargs, "bid": batch_id}
+    with engine.begin() as conn:
+        conn.execute(text(f"UPDATE model_training_batch SET {set_clause} WHERE batch_id = :bid"), params)
 
 def insert_training_run(
     engine: Engine,

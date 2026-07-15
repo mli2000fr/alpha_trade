@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS alpha_trade.model_training_batch (
+    batch_id               VARCHAR(64)  NOT NULL COMMENT 'Identifiant partage de la campagne d entrainement',
+    status                 VARCHAR(20)  NOT NULL DEFAULT 'running' COMMENT 'running|completed|failed',
+    command_line           TEXT         NOT NULL COMMENT 'Commande Model Factory reconstruite depuis argv',
+    command_argv_json      TEXT         NOT NULL COMMENT 'Arguments CLI exacts recus par le processus',
+    metadata_json          TEXT         NOT NULL COMMENT 'Options CLI et configuration effective serializees',
+    symbol_source          VARCHAR(32)  NOT NULL,
+    universe_date          DATE         DEFAULT NULL,
+    requested_symbol_count INT UNSIGNED DEFAULT NULL,
+    training_start_date    DATE         DEFAULT NULL,
+    training_end_date      DATE         DEFAULT NULL,
+    started_at             DATETIME     NOT NULL,
+    finished_at            DATETIME     DEFAULT NULL,
+    symbols_completed      INT UNSIGNED NOT NULL DEFAULT 0,
+    symbols_skipped        INT UNSIGNED NOT NULL DEFAULT 0,
+    symbols_failed         INT UNSIGNED NOT NULL DEFAULT 0,
+    failure_reason         TEXT         DEFAULT NULL,
+    created_at             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (batch_id),
+    INDEX idx_model_training_batch_status_started (status, started_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Metadonnees par campagne d entrainement ML';

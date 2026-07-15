@@ -13,8 +13,9 @@ DELETE FROM alpha_trade.model_predictions;
 DELETE FROM alpha_trade.champion_history;
 DELETE FROM alpha_trade.ml_drift_runs;
 
--- Runs puis registre des modeles.
+-- Runs, campagnes puis registre des modeles.
 DELETE FROM alpha_trade.model_training_run;
+DELETE FROM alpha_trade.model_training_batch;
 DELETE FROM alpha_trade.model_registry;
 
 -- Repartir avec des identifiants numeriques propres.

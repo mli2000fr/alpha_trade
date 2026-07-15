@@ -65,6 +65,7 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
     ),
     "ML / Modèles": (
         "model_registry",
+        "model_training_batch",
         "model_training_run",
         "model_metrics",
         "model_metrics_full",

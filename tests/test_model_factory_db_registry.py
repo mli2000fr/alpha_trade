@@ -13,6 +13,48 @@ def test_db_registry_importable():
     assert hasattr(db_registry, "__doc__")
 
 
+def test_training_batch_registry_persists_metadata_and_only_updates_terminal_fields() -> None:
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.begin.return_value.__enter__.return_value = mock_conn
+    mock_engine.begin.return_value.__exit__.return_value = False
+
+    started_at = pd.Timestamp("2026-07-16T10:15:00").to_pydatetime()
+    db_registry.insert_training_batch(
+        mock_engine,
+        batch_id="model-factory-20260716101500-abc123",
+        command_line="python -m modelFactory --mode train",
+        command_argv_json='["--mode", "train"]',
+        metadata_json='{"feature_columns": ["daily_return"]}',
+        symbol_source="tradable-universe",
+        universe_date=date(2026, 7, 16),
+        requested_symbol_count=2,
+        training_start_date=date(2020, 1, 1),
+        training_end_date=None,
+        started_at=started_at,
+    )
+    db_registry.update_training_batch(
+        mock_engine,
+        "model-factory-20260716101500-abc123",
+        status="completed",
+        symbols_completed=2,
+        symbols_skipped=0,
+        symbols_failed=0,
+    )
+
+    insert_stmt, insert_params = mock_conn.execute.call_args_list[0].args
+    assert "INSERT INTO model_training_batch" in str(insert_stmt)
+    assert insert_params["bid"] == "model-factory-20260716101500-abc123"
+    assert insert_params["command_argv_json"] == '["--mode", "train"]'
+
+    update_stmt, update_params = mock_conn.execute.call_args_list[1].args
+    assert "UPDATE model_training_batch" in str(update_stmt)
+    assert update_params["symbols_completed"] == 2
+
+    with pytest.raises(ValueError, match="immutable"):
+        db_registry.update_training_batch(mock_engine, "batch", metadata_json="{}")
+
+
 def test_upsert_directional_oos_metrics_keeps_only_complete_empirical_sides() -> None:
     mock_engine = MagicMock()
     mock_conn = MagicMock()

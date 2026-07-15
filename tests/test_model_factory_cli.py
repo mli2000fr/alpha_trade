@@ -379,3 +379,56 @@ def test_cli_parser_accepts_seed_and_no_deterministic() -> None:
     assert opts.deterministic is False
 
 
+def test_cli_train_persists_one_batch_record_with_command_and_final_counts(monkeypatch, tmp_path) -> None:
+    from modelFactory import db_registry, orchestrator
+
+    inserted_batches: list[dict[str, object]] = []
+    updated_batches: list[dict[str, object]] = []
+    emitted_summaries: list[dict[str, object]] = []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "apply_reproducibility", lambda *args, **kwargs: {"seed": 42, "deterministic_applied": True, "deterministic_requested": True})
+    monkeypatch.setattr(cli, "get_sqlalchemy_engine", lambda: object())
+    monkeypatch.setattr(cli, "_emit_run_summary", lambda summary: emitted_summaries.append(summary))
+    monkeypatch.setattr(
+        db_registry,
+        "insert_training_batch",
+        lambda engine, **kwargs: inserted_batches.append(kwargs),
+    )
+    monkeypatch.setattr(
+        db_registry,
+        "update_training_batch",
+        lambda engine, batch_id, **kwargs: updated_batches.append({"batch_id": batch_id, **kwargs}),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "run_training_batch",
+        lambda *args, **kwargs: [
+            orchestrator.TrainResult("AAPL", "run-aapl", "completed"),
+            orchestrator.TrainResult("MSFT", "run-msft", "skipped"),
+        ],
+    )
+
+    cli.main([
+        "--mode", "train",
+        "--symbols", "AAPL", "MSFT",
+        "--artifacts-dir", str(tmp_path),
+        "--feature-set", "expert",
+    ])
+
+    assert len(inserted_batches) == 1
+    batch = inserted_batches[0]
+    assert batch["command_line"].endswith("--feature-set expert")
+    assert json.loads(str(batch["command_argv_json"])) == [
+        "--mode", "train", "--symbols", "AAPL", "MSFT", "--artifacts-dir", str(tmp_path), "--feature-set", "expert",
+    ]
+    metadata = json.loads(str(batch["metadata_json"]))
+    assert "regime_bull_market" in metadata["feature_columns"]
+    assert len(updated_batches) == 1
+    assert updated_batches[0]["batch_id"] == batch["batch_id"]
+    assert updated_batches[0]["status"] == "completed"
+    assert updated_batches[0]["symbols_completed"] == 1
+    assert updated_batches[0]["symbols_skipped"] == 1
+    assert emitted_summaries[-1]["symbols_completed"] == 1
+
+
