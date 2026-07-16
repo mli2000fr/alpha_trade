@@ -461,8 +461,12 @@ def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, me
     if has_ternary:
         sql = text(
             "INSERT INTO model_metrics (run_id, symbol, model_name, split_name, loss, directional_accuracy, `precision`, recall, auc, "
-            "f1_macro, f1_short, f1_flat, f1_long) "
-            "VALUES (:rid, :sym, :mn, :split, :loss, :da, :prec, :rec, :auc, :f1m, :f1s, :f1f, :f1l)"
+            "f1_macro, f1_short, f1_flat, f1_long, "
+            "true_short_pct, true_flat_pct, true_long_pct, "
+            "pred_short_pct, pred_flat_pct, pred_long_pct) "
+            "VALUES (:rid, :sym, :mn, :split, :loss, :da, :prec, :rec, :auc, "
+            ":f1m, :f1s, :f1f, :f1l, "
+            ":tsp, :tfp, :tlp, :psp, :pfp, :plp)"
         )
     else:
         sql = text(
@@ -482,6 +486,12 @@ def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, me
         params["f1s"] = metrics.get("f1_short")
         params["f1f"] = metrics.get("f1_flat")
         params["f1l"] = metrics.get("f1_long")
+        params["tsp"] = metrics.get("true_short_pct")
+        params["tfp"] = metrics.get("true_flat_pct")
+        params["tlp"] = metrics.get("true_long_pct")
+        params["psp"] = metrics.get("pred_short_pct")
+        params["pfp"] = metrics.get("pred_flat_pct")
+        params["plp"] = metrics.get("pred_long_pct")
     with engine.begin() as conn:
         conn.execute(sql, params)
 

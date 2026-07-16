@@ -1,6 +1,8 @@
 """ihm/pages/ml_diagnostics.py — Diagnostic ML (Analyse & Recherche)."""
 from __future__ import annotations
 
+import json as _json
+
 import pandas as pd
 import streamlit as st
 
@@ -84,7 +86,7 @@ TOP5_BEST_F1_QUERY = """
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
     ORDER BY mm.f1_macro DESC
-    LIMIT 5
+    LIMIT 10
 """
 
 TOP5_WORST_F1_QUERY = """
@@ -101,7 +103,7 @@ TOP5_WORST_F1_QUERY = """
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
     ORDER BY mm.f1_macro ASC
-    LIMIT 5
+    LIMIT 10
 """
 
 ZERO_F1_SHORT_QUERY = """
@@ -118,7 +120,43 @@ ZERO_F1_SHORT_QUERY = """
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
       AND mm.f1_short = 0
-    LIMIT 5
+    LIMIT 10
+"""
+
+SYMBOL_METRICS_QUERY = """
+    SELECT
+        mm.split_name,
+        ROUND(mm.true_short_pct, 3) AS true_short_pct,
+        ROUND(mm.true_flat_pct, 3) AS true_flat_pct,
+        ROUND(mm.true_long_pct, 3) AS true_long_pct,
+        ROUND(mm.pred_short_pct, 3) AS pred_short_pct,
+        ROUND(mm.pred_flat_pct, 3) AS pred_flat_pct,
+        ROUND(mm.pred_long_pct, 3) AS pred_long_pct,
+        ROUND(mm.f1_short, 3) AS f1_short,
+        ROUND(mm.f1_flat, 3) AS f1_flat,
+        ROUND(mm.f1_long, 3) AS f1_long,
+        ROUND(mm.f1_macro, 3) AS f1_macro
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.symbol = :symbol
+    ORDER BY FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+"""
+
+SYMBOL_WF_JSON_QUERY = """
+    SELECT
+        mmf.metrics_json,
+        mtr.train_start_date,
+        mtr.train_end_date
+    FROM alpha_trade.model_metrics_full AS mmf
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mmf.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mmf.symbol = :symbol
+    LIMIT 1
 """
 
 
@@ -127,6 +165,9 @@ ZERO_F1_SHORT_QUERY = """
 # ---------------------------------------------------------------------------
 
 BATCH_TABLE_KEY = "ml_diagnostics_batch_table"
+BEST_TABLE_KEY = "ml_diagnostics_best_table"
+WORST_TABLE_KEY = "ml_diagnostics_worst_table"
+ZERO_TABLE_KEY = "ml_diagnostics_zero_table"
 
 
 def _selected_row_index(table_key: str) -> int | None:
@@ -152,6 +193,53 @@ def _status_badge(status: str) -> str:
         "failed": "🔴 Échec",
     }
     return mapping.get(str(status).strip().lower(), str(status))
+
+
+def _render_symbol_detail(batch_id: str, symbol: str) -> None:
+    """Affiche le détail des métriques par split pour un symbole."""
+    st.subheader(f"🔍 Détail symbole : `{symbol}`")
+
+    # ── Métriques par split ──
+    sym_df = safe_query(SYMBOL_METRICS_QUERY, {"batch_id": batch_id, "symbol": symbol})
+    if sym_df.empty:
+        st.info(f"Aucune métrique détaillée trouvée pour `{symbol}` dans ce batch.")
+        return
+
+    st.markdown("**Métriques par split**")
+    st.dataframe(sym_df, use_container_width=True, hide_index=True)
+
+    # ── Walk-Forward : n_splits et dates ──
+    wf_row = safe_query(SYMBOL_WF_JSON_QUERY, {"batch_id": batch_id, "symbol": symbol})
+    if not wf_row.empty:
+        row = wf_row.iloc[0]
+        train_start = row.get("train_start_date", "—")
+        train_end = row.get("train_end_date", "—")
+        metrics_blob = row.get("metrics_json")
+        n_splits: int | None = None
+        if metrics_blob is not None:
+            try:
+                if isinstance(metrics_blob, bytes):
+                    metrics_blob = metrics_blob.decode("utf-8")
+                wf_data = (_json.loads(metrics_blob) if isinstance(metrics_blob, str) else metrics_blob).get("walk_forward", {})
+                n_splits = wf_data.get("n_splits") if isinstance(wf_data, dict) else None
+            except Exception:
+                n_splits = None
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Splits WF", str(n_splits) if n_splits is not None else "—")
+        with c2:
+            st.metric("Début training", str(train_start) if train_start and str(train_start) not in ("None", "nan", "") else "—")
+        with c3:
+            st.metric("Fin training", str(train_end) if train_end and str(train_end) not in ("None", "nan", "") else "—")
+
+    # ── Interprétation ──
+    with st.expander("ℹ️ Aide à l'interprétation", expanded=False):
+        st.markdown("""
+- **Peu de `true_short_pct`** : le label est trop rare ou mal défini pour ce symbole.
+- **`true_short_pct` normal mais `pred_short_pct` proche de zéro** : le modèle évite la classe `short`.
+- **`pred_short_pct` élevé mais `f1_short` faible** : les signaux short sont bruyants ou les seuils de décision sont trop permissifs.
+""")
 
 
 def _render_batch_detail(batch: pd.Series) -> None:
@@ -219,23 +307,52 @@ def _render_batch_detail(batch: pd.Series) -> None:
     # ── Top 5 / Flop 5 / F1 short = 0 ──
     st.subheader("🏆 Top / Flop symboles — Walk-Forward")
 
+    best_df = pd.DataFrame()
+    worst_df = pd.DataFrame()
+    zero_df = pd.DataFrame()
+
+    # ── Exclusion mutuelle : une seule sélection parmi les 3 tableaux ──
+    _ALL_SYMBOL_TABLE_KEYS = (BEST_TABLE_KEY, WORST_TABLE_KEY, ZERO_TABLE_KEY)
+    _active_key: str | None = None
+    for _tk in _ALL_SYMBOL_TABLE_KEYS:
+        if _selected_row_index(_tk) is not None:
+            _active_key = _tk
+            break
+
     col_best, col_worst, col_zero = st.columns(3)
 
     with col_best:
-        st.markdown("**🥇 5 meilleurs `f1_macro`**")
+        st.markdown("**🥇 10 meilleurs `f1_macro`**")
         best_df = safe_query(TOP5_BEST_F1_QUERY, {"batch_id": batch["batch_id"]})
         if best_df.empty:
             st.caption("Aucune donnée.")
         else:
-            st.dataframe(best_df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                best_df, use_container_width=True, hide_index=True,
+                on_select="rerun", selection_mode="single-row", key=BEST_TABLE_KEY,
+            )
+            # Désélectionner les autres si celui-ci vient d'être sélectionné
+            if _selected_row_index(BEST_TABLE_KEY) is not None and _active_key != BEST_TABLE_KEY:
+                for _tk in _ALL_SYMBOL_TABLE_KEYS:
+                    if _tk != BEST_TABLE_KEY and _tk in st.session_state:
+                        del st.session_state[_tk]
+                st.rerun()
 
     with col_worst:
-        st.markdown("**🥉 5 plus mauvais `f1_macro`**")
+        st.markdown("**🥉 10 plus mauvais `f1_macro`**")
         worst_df = safe_query(TOP5_WORST_F1_QUERY, {"batch_id": batch["batch_id"]})
         if worst_df.empty:
             st.caption("Aucune donnée.")
         else:
-            st.dataframe(worst_df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                worst_df, use_container_width=True, hide_index=True,
+                on_select="rerun", selection_mode="single-row", key=WORST_TABLE_KEY,
+            )
+            if _selected_row_index(WORST_TABLE_KEY) is not None and _active_key != WORST_TABLE_KEY:
+                for _tk in _ALL_SYMBOL_TABLE_KEYS:
+                    if _tk != WORST_TABLE_KEY and _tk in st.session_state:
+                        del st.session_state[_tk]
+                st.rerun()
 
     with col_zero:
         st.markdown("**⚪ `f1_short = 0`**")
@@ -243,15 +360,35 @@ def _render_batch_detail(batch: pd.Series) -> None:
         if zero_df.empty:
             st.caption("Aucun symbole avec f1_short = 0.")
         else:
-            st.dataframe(zero_df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                zero_df, use_container_width=True, hide_index=True,
+                on_select="rerun", selection_mode="single-row", key=ZERO_TABLE_KEY,
+            )
+            if _selected_row_index(ZERO_TABLE_KEY) is not None and _active_key != ZERO_TABLE_KEY:
+                for _tk in _ALL_SYMBOL_TABLE_KEYS:
+                    if _tk != ZERO_TABLE_KEY and _tk in st.session_state:
+                        del st.session_state[_tk]
+                st.rerun()
 
-    # ── Interprétation ──
-    with st.expander("ℹ️ Aide à l'interprétation", expanded=False):
-        st.markdown("""
-- **Peu de `true_short_pct`** : le label est trop rare ou mal défini pour ce symbole.
-- **`true_short_pct` normal mais `pred_short_pct` proche de zéro** : le modèle évite la classe `short`.
-- **`pred_short_pct` élevé mais `f1_short` faible** : les signaux short sont bruyants ou les seuils de décision sont trop permissifs.
-""")
+    # ── Détail symbole sélectionné ──
+    selected_symbol: str | None = None
+    for table_key in _ALL_SYMBOL_TABLE_KEYS:
+        idx = _selected_row_index(table_key)
+        if idx is None:
+            continue
+        if table_key == BEST_TABLE_KEY:
+            lookup_df = best_df
+        elif table_key == WORST_TABLE_KEY:
+            lookup_df = worst_df
+        else:
+            lookup_df = zero_df
+        if not lookup_df.empty and idx < len(lookup_df):
+            selected_symbol = str(lookup_df.iloc[idx]["symbol"])
+            break
+
+    if selected_symbol:
+        st.divider()
+        _render_symbol_detail(str(batch["batch_id"]), selected_symbol)
 
 
 # ---------------------------------------------------------------------------
