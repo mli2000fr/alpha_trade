@@ -835,6 +835,37 @@ def _load_ticket_recherche_symbols() -> list[str]:
     return sorted(set(symbols))
 
 
+# ---------------------------------------------------------------------------
+# Serving batch — campagne ML promue pour le serving
+# ---------------------------------------------------------------------------
+
+_SERVING_BATCH_SCOPE = "default"
+
+
+def get_serving_batch(engine: Engine) -> str | None:
+    """Retourne le ``batch_id`` de la campagne ML actuellement promue pour le serving, ou None."""
+    sql = text(
+        "SELECT batch_id FROM model_serving_batch WHERE scope = :scope ORDER BY promoted_at DESC LIMIT 1"
+    )
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"scope": _SERVING_BATCH_SCOPE}).mappings().first()
+        return str(row["batch_id"]) if row else None
+    except Exception:
+        return None
+
+
+def set_serving_batch(engine: Engine, *, batch_id: str) -> None:
+    """Promeut une campagne ML comme source de serving (UPSERT sur le scope)."""
+    sql = text(
+        "INSERT INTO model_serving_batch (scope, batch_id, promoted_at) "
+        "VALUES (:scope, :bid, CURRENT_TIMESTAMP) "
+        "ON DUPLICATE KEY UPDATE batch_id = VALUES(batch_id), promoted_at = CURRENT_TIMESTAMP"
+    )
+    with engine.begin() as conn:
+        conn.execute(sql, {"scope": _SERVING_BATCH_SCOPE, "bid": batch_id})
+
+
 def load_symbols_for_source(
     engine: Engine,
     symbol_source: str,
