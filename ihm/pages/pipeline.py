@@ -95,11 +95,7 @@ from ihm.pages._workflow import (
     _render_workflow_launcher,
 )
 from ihm.services.db import get_runtime_db_config
-from ihm.services.ml_artifacts import (
-    get_model_artifacts_dir,
-    list_ml_artifact_batches,
-    list_ml_artifact_symbols,
-)
+from ihm.services.ml_artifacts import list_ml_artifact_symbols
 from ihm.services.pipeline_runner import (
     build_pipeline_command,
     format_command_for_display,
@@ -107,7 +103,7 @@ from ihm.services.pipeline_runner import (
 )
 from ihm.services.process_registry import stop_pipeline_run
 from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
-from ihm.services.queries import get_completed_ml_training_batches, get_execution_live_guard
+from ihm.services.queries import get_execution_live_guard
 
 
 ML_TRAIN_SYMBOL_SOURCE_OPTIONS = ("stock-bars-daily", "tradable-universe", "ticket-recherche")
@@ -869,15 +865,7 @@ def _build_swing_only_banner_payload(options: PipelineLaunchOptions) -> tuple[st
 def _render_ml_inspection_link(step_key: str) -> None:
     if step_key not in {"ml_train", "ml_predict"}:
         return
-    artifacts_root = get_model_artifacts_dir()
-    artifact_batches = list_ml_artifact_batches(artifacts_root)
-    selected_batch_id: str | None = None
-    if artifact_batches:
-        requested_batch_id = str(st.session_state.get("pipeline_ml_predict_batch_id") or "").strip()
-        selected_batch_id = requested_batch_id if requested_batch_id in artifact_batches else artifact_batches[0]
-        symbols = list_ml_artifact_symbols(artifacts_root / selected_batch_id)
-    else:
-        symbols = list_ml_artifact_symbols(artifacts_root)
+    symbols = list_ml_artifact_symbols()
     if not symbols:
         st.caption("Aucun artefact ML détecté pour proposer une navigation ciblée vers la page ML.")
         return
@@ -890,8 +878,6 @@ def _render_ml_inspection_link(step_key: str) -> None:
     )
     if st.button("🔎 Ouvrir dans la page ML", key=f"pipeline_open_ml_{step_key}", use_container_width=True):
         st.session_state[ML_PENDING_SELECTED_SYMBOL_KEY] = selected_symbol
-        if selected_batch_id is not None:
-            st.session_state["ihm_ml_selected_artifact_batch"] = selected_batch_id
         st.session_state[NAVIGATION_TARGET_PAGE_KEY] = "ml"
         st.rerun()
 
@@ -940,41 +926,6 @@ def _render_ml_scope_block(
         st.caption("Workflow complet en cours : le lancement ML ciblé est temporairement désactivé.")
     elif active_for_step:
         st.caption(f"Un run `{label_prefix}` est déjà actif : le lancement ML ciblé attend la fin de ce run.")
-
-    selected_prediction_batch_id: str | None = None
-    if step_key == "ml_predict":
-        completed_batches = get_completed_ml_training_batches()
-        batch_ids = [
-            str(value).strip()
-            for value in (completed_batches["batch_id"].tolist() if "batch_id" in completed_batches.columns else [])
-            if str(value).strip()
-        ]
-        if not batch_ids:
-            disabled = True
-            st.warning("Aucun batch ML terminé avec au moins un modèle n'est disponible pour la prédiction.")
-        else:
-            default_batch_id = str(getattr(options, "ml_predict_batch_id", "") or "").strip()
-            if default_batch_id not in batch_ids:
-                default_batch_id = batch_ids[0]
-            batch_details = {
-                str(row.batch_id): (
-                    f"{row.batch_id} | {row.finished_at or 'date inconnue'}"
-                    + (f" | {row.comment}" if getattr(row, "comment", None) else "")
-                )
-                for row in completed_batches.itertuples(index=False)
-                if str(getattr(row, "batch_id", "")).strip()
-            }
-            chosen_batch_id = st.selectbox(
-                "Batch de modèles à utiliser",
-                options=batch_ids,
-                index=batch_ids.index(default_batch_id),
-                format_func=lambda value: batch_details.get(str(value), str(value)),
-                key="pipeline_ml_predict_batch_id",
-            )
-            selected_prediction_batch_id = str(chosen_batch_id).strip()
-            if selected_prediction_batch_id not in batch_ids:
-                selected_prediction_batch_id = default_batch_id
-            st.caption(f"Prédiction strictement limitée au batch `{selected_prediction_batch_id}`.")
 
     current_source = str(
         st.session_state.get(selectbox_key, getattr(options, source_attr, "tradable-universe") or "tradable-universe")
@@ -1082,7 +1033,6 @@ def _render_ml_scope_block(
         command_preview_overrides[start_symbol_attr] = normalized_start_symbol
     if step_key == "ml_predict":
         command_preview_overrides["ml_predict_use_historical_range"] = historical_range
-        command_preview_overrides["ml_predict_batch_id"] = selected_prediction_batch_id
     if ml_comment is not None:
         command_preview_overrides["ml_comment"] = ml_comment
     command_preview_options = replace(options, **command_preview_overrides)
@@ -1103,7 +1053,6 @@ def _render_ml_scope_block(
             overrides[start_symbol_attr] = normalized_start_symbol
         if step_key == "ml_predict":
             overrides["ml_predict_use_historical_range"] = historical_range
-            overrides["ml_predict_batch_id"] = selected_prediction_batch_id
         if ml_comment is not None:
             overrides["ml_comment"] = ml_comment
         _launch_pipeline_step(

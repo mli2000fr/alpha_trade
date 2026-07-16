@@ -1760,23 +1760,39 @@ def _build_run_options() -> BacktestRunOptions:
         help="Dossier contenant les checkpoints/scalers/configs de modèles pour `--ml-mode rebuild-missing`.",
     )
     completed_batches = get_completed_ml_training_batches()
-    batch_ids = completed_batches["batch_id"].dropna().astype(str).tolist() if not completed_batches.empty else []
+    batch_options: dict[str, str] = {}
+    if not completed_batches.empty:
+        for _, row in completed_batches.iterrows():
+            bid = str(row["batch_id"])
+            finished = row.get("finished_at")
+            finished_str = str(finished)[:19] if finished and str(finished) not in ("None", "nan", "") else "—"
+            comment = row.get("comment")
+            comment_str = str(comment)[:60] if comment and str(comment) not in ("None", "nan", "") else "—"
+            label = f"{bid} | {finished_str} | {comment_str}"
+            batch_options[label] = bid
     selected_ml_batch_id: str | None = None
     if ml_mode != "off":
-        if not batch_ids:
+        if not batch_options:
             st.error("Aucune campagne ML terminée disponible : les prédictions ML du backtest ne peuvent pas être attribuées à une campagne reproductible.")
         else:
+            labels = list(batch_options.keys())
             requested_batch = str(st.session_state.get("bt_run_ml_batch_id", "") or "")
-            batch_index = batch_ids.index(requested_batch) if requested_batch in batch_ids else 0
-            selected_ml_batch_id = cast(
+            # Retrouver le label correspondant au batch_id stocké
+            default_label = labels[0]
+            for lbl, bid in batch_options.items():
+                if bid == requested_batch:
+                    default_label = lbl
+                    break
+            selected_label = cast(
                 str,
                 st.selectbox(
                     "Campagne ML utilisée par le backtest",
-                    options=batch_ids,
-                    index=batch_index,
+                    options=labels,
+                    index=labels.index(default_label) if default_label in labels else 0,
                     key="bt_run_ml_batch_id",
                 ),
             )
+            selected_ml_batch_id = batch_options[selected_label]
 
     extra_col1, extra_col2 = st.columns(2)
     with extra_col1:

@@ -86,50 +86,6 @@ def _normalize_signal_modes(signal_modes: tuple[str, ...] | list[str] | None) ->
     return tuple(normalized)
 
 
-def get_serving_batch(engine: Engine, *, scope: str = "default") -> str | None:
-    """Retourne la campagne ML explicitement promue pour le serving."""
-    try:
-        with engine.connect() as conn:
-            batch_id = conn.execute(
-                text("SELECT batch_id FROM model_serving_batch WHERE scope = :scope"),
-                {"scope": scope},
-            ).scalar_one_or_none()
-    except Exception as exc:  # table absente avant migration ou DB indisponible
-        LOGGER.warning("get_serving_batch unavailable scope=%s error=%s", scope, exc)
-        return None
-    return str(batch_id).strip() if batch_id else None
-
-
-def set_serving_batch(engine: Engine, *, batch_id: str, scope: str = "default") -> None:
-    """Promeut une campagne terminée comme unique source de serving."""
-    normalized_batch_id = _required_text(batch_id, field_name="batch_id")
-    normalized_scope = _required_text(scope, field_name="scope")
-    with engine.begin() as conn:
-        eligible = conn.execute(
-            text(
-                """
-                SELECT 1 FROM model_training_batch
-                WHERE batch_id = :batch_id
-                  AND status = 'completed'
-                  AND COALESCE(symbols_completed, 0) > 0
-                """
-            ),
-            {"batch_id": normalized_batch_id},
-        ).scalar_one_or_none()
-        if eligible is None:
-            raise ValueError("Seule une campagne ML terminée avec des modèles peut être promue.")
-        conn.execute(
-            text(
-                """
-                INSERT INTO model_serving_batch (scope, batch_id, promoted_at)
-                VALUES (:scope, :batch_id, CURRENT_TIMESTAMP)
-                ON DUPLICATE KEY UPDATE batch_id = VALUES(batch_id), promoted_at = CURRENT_TIMESTAMP
-                """
-            ),
-            {"scope": normalized_scope, "batch_id": normalized_batch_id},
-        )
-
-
 def _load_distinct_symbols(engine: Engine, query: str) -> list[str]:
     with engine.connect() as conn:
         rows = conn.execute(text(query)).scalars().all()
@@ -469,15 +425,8 @@ def update_training_run(engine: Engine, run_id: str, **kwargs: Any) -> None:
         conn.execute(text(f"UPDATE model_training_run SET {set_clause} WHERE run_id = :rid"), params)
 
 
-def load_training_run(
-    engine: Engine,
-    symbol: str,
-    run_id: str | None = None,
-    batch_id: str | None = None,
-) -> dict[str, Any] | None:
-    """Charge un run explicite, une campagne, ou le dernier run complété d'un symbole."""
-    if run_id and batch_id:
-        raise ValueError("run_id and batch_id cannot be selected together.")
+def load_training_run(engine: Engine, symbol: str, run_id: str | None = None) -> dict[str, Any] | None:
+    """Charge le run demandé, ou le dernier run complété disponible pour un symbole."""
     if run_id:
         sql = (
             "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "
@@ -486,16 +435,6 @@ def load_training_run(
             "LIMIT 1"
         )
         params = {"sym": symbol, "rid": run_id}
-    elif batch_id:
-        sql = (
-            "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "
-            "FROM model_training_run "
-            "WHERE symbol = :sym AND batch_id = :bid AND status = 'completed' "
-            "AND checkpoint_path IS NOT NULL AND scaler_path IS NOT NULL AND config_path IS NOT NULL "
-            "ORDER BY COALESCE(finished_at, started_at) DESC, started_at DESC "
-            "LIMIT 1"
-        )
-        params = {"sym": symbol, "bid": batch_id}
     else:
         sql = (
             "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "

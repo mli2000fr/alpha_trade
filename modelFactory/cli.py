@@ -41,6 +41,7 @@ from modelFactory.runtime_status import increment_runtime_counter, reset_runtime
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
 SYMBOL_SOURCES = (
     "tradable-universe",
     "stock-bars-daily",
@@ -214,8 +215,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--num-classes", type=int, default=2,
                    help="Nombre de classes : 2=binaire, 3=ternaire long/flat/short")
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
-    p.add_argument("--batch-id", type=str, default=None,
-                   help="Campagne ML à utiliser pour la prédiction (batch terminé explicite)")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
     p.add_argument("--include-score-context", "--include-selector-context",
@@ -257,6 +256,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Active une évaluation walk-forward avant l'entraînement final (défaut: ON Phase 4.2.g)",
+    )
+    p.add_argument(
+        "--ml-mode",
+        type=str,
+        default="rebuild-all",
+        choices=list(ML_MODES),
+        help="Stratégie d'entraînement (Phase 4.2.g) : rebuild-all | rebuild-missing | refresh-stale",
     )
     p.add_argument("--wf-min-train-size", type=int, default=504)
     p.add_argument("--wf-val-size", type=int, default=126)
@@ -324,8 +330,6 @@ def main(args: list[str] | None = None) -> None:
     parser = build_arg_parser()
     raw_args = list(args) if args is not None else sys.argv[1:]
     opts = parser.parse_args(raw_args)
-    if opts.batch_id is not None and (not opts.batch_id.strip() or Path(opts.batch_id).name != opts.batch_id):
-        parser.error("--batch-id doit être un nom de dossier non vide.")
     if opts.label_method == "triple_barrier" and (opts.target_mode != "ternary" or opts.num_classes != 3):
         parser.error("--label-method triple_barrier requiert --target-mode ternary et --num-classes 3")
 
@@ -491,7 +495,7 @@ def main(args: list[str] | None = None) -> None:
                     cfg,
                     engine,
                     symbols=opts.symbols,
-                    mode="rebuild-all",
+                    mode=opts.ml_mode,
                     symbol_source=opts.symbol_source,
                     universe_date=universe_date,
                     start_symbol=opts.start_symbol,
@@ -568,7 +572,6 @@ def main(args: list[str] | None = None) -> None:
         )
         historical_predict_enabled = cfg.data.training_end_date is not None
         persisted_incrementally = False
-        prediction_batch_kwargs = {"batch_id": opts.batch_id} if opts.batch_id else {}
 
         def _persist_predictions_chunk(
             chunk: pd.DataFrame,
@@ -630,7 +633,6 @@ def main(args: list[str] | None = None) -> None:
                     persist=False,
                     accelerator=opts.accelerator,
                     max_workers=opts.max_workers,
-                    **prediction_batch_kwargs,
                 )
                 if not part.empty:
                     prediction_parts.append(part)
@@ -652,14 +654,7 @@ def main(args: list[str] | None = None) -> None:
                 )
             )
         else:
-            preds = predict_batch(
-                symbols,
-                Path(opts.artifacts_dir),
-                engine,
-                persist=False,
-                accelerator=opts.accelerator,
-                **prediction_batch_kwargs,
-            )
+            preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, accelerator=opts.accelerator)
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None
