@@ -62,6 +62,17 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert "--filter-no-ml" not in command
 
 
+def test_build_backtesting_run_command_includes_ml_batch_id():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(start="2025-01-01", ml_batch_id="model-factory-20260716-v1"),
+	)
+
+	assert command[command.index("--ml-batch-id") + 1] == "model-factory-20260716-v1"
+
+
 def test_build_backtesting_run_command_includes_capital_preset_key():
 	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
 

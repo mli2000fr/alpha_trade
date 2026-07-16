@@ -621,6 +621,47 @@ class TestDataLoader:
         assert not df.empty
         assert "prediction_date AS trade_date" in captured["sql"]
 
+    def test_load_predictions_filters_and_exposes_selected_batch(self, monkeypatch):
+        from backtesting import data_loader
+
+        captured = {}
+
+        def fake_columns(_engine, table_name, *, required=False):
+            if table_name == "model_predictions":
+                return {"symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"}
+            if table_name == "model_training_run":
+                return {"run_id", "symbol", "batch_id"}
+            return set()
+
+        def fake_read_sql(query, conn, params=None, parse_dates=None):
+            captured["sql"] = str(query)
+            captured["params"] = params
+            return pd.DataFrame(
+                {
+                    "symbol": ["AAPL"],
+                    "trade_date": pd.to_datetime(["2025-01-02"]),
+                    "predicted_proba": [0.66],
+                    "predicted_class": [1],
+                    "run_id": ["run-v1-aapl"],
+                    "batch_id": ["model-factory-v1"],
+                }
+            )
+
+        monkeypatch.setattr(data_loader, "_get_table_columns", fake_columns)
+        monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
+
+        df = data_loader.load_predictions(
+            cast(Engine, self._FakeEngine()),
+            date(2025, 1, 1),
+            date(2025, 1, 31),
+            batch_id="model-factory-v1",
+        )
+
+        assert "JOIN model_training_run training_run" in captured["sql"]
+        assert "training_run.batch_id = :batch_id" in captured["sql"]
+        assert captured["params"]["batch_id"] == "model-factory-v1"
+        assert df.iloc[0]["batch_id"] == "model-factory-v1"
+
     def test_load_sentiment_supports_1d_columns(self, monkeypatch):
         from backtesting import data_loader
 

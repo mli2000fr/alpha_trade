@@ -1762,16 +1762,16 @@ def _build_run_options() -> BacktestRunOptions:
     completed_batches = get_completed_ml_training_batches()
     batch_ids = completed_batches["batch_id"].dropna().astype(str).tolist() if not completed_batches.empty else []
     selected_ml_batch_id: str | None = None
-    if ml_mode == "rebuild-missing":
+    if ml_mode != "off":
         if not batch_ids:
-            st.error("Aucune campagne ML terminée disponible : la reconstruction de prédictions ne peut pas être reproductible.")
+            st.error("Aucune campagne ML terminée disponible : les prédictions ML du backtest ne peuvent pas être attribuées à une campagne reproductible.")
         else:
             requested_batch = str(st.session_state.get("bt_run_ml_batch_id", "") or "")
             batch_index = batch_ids.index(requested_batch) if requested_batch in batch_ids else 0
             selected_ml_batch_id = cast(
                 str,
                 st.selectbox(
-                    "Campagne ML pour reconstruire les prédictions",
+                    "Campagne ML utilisée par le backtest",
                     options=batch_ids,
                     index=batch_index,
                     key="bt_run_ml_batch_id",
@@ -4405,15 +4405,18 @@ def render() -> None:
     )
     with run_tab:
         run_options = _build_run_options()
+        missing_ml_batch = run_options.ml_mode != "off" and not run_options.ml_batch_id
         if active_backtest_runs:
             active_run_id = str(active_backtest_runs[0].get("run_id", ""))
             st.info(f"Un backtest est déjà en cours (`{active_run_id}`). Arrête-le ou attends sa fin pour relancer.")
+        if missing_ml_batch:
+            st.warning("Sélectionne une campagne ML terminée ou désactive la composante ML avant de lancer le backtest.")
         launch_backtest_clicked = st.button(
             "🚀 Lancer le backtest",
             key="launch_backtest_run",
             type="primary",
             use_container_width=True,
-            disabled=bool(active_backtest_runs),
+            disabled=bool(active_backtest_runs) or missing_ml_batch,
         )
         if launch_backtest_clicked:
             try:

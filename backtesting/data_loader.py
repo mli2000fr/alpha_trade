@@ -621,6 +621,7 @@ def load_predictions(
     end: date,
     *,
     symbols: list[str] | None = None,
+    batch_id: str | None = None,
 ) -> pd.DataFrame:
     """Charge les prédictions ML.
 
@@ -631,12 +632,12 @@ def load_predictions(
     columns = _get_table_columns(engine, "model_predictions")
     if not columns:
         LOGGER.warning("model_predictions introuvable — prédictions ML ignorées.")
-        return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class", "run_id", "created_at"])
+        return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class", "run_id", "batch_id", "created_at"])
 
     date_col = "trade_date" if "trade_date" in columns else "prediction_date" if "prediction_date" in columns else None
     if date_col is None:
         LOGGER.warning("Aucune colonne date compatible dans model_predictions — prédictions ML ignorées.")
-        return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class", "run_id", "created_at"])
+        return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class", "run_id", "batch_id", "created_at"])
 
     params: dict[str, object] = {"start": start, "end": end}
     where_symbols = ""
@@ -644,33 +645,56 @@ def load_predictions(
         unique_symbols = sorted({s for s in symbols if isinstance(s, str) and s})
         if unique_symbols:
             placeholders = ",".join(f":sym_{i}" for i in range(len(unique_symbols)))
-            where_symbols = f" AND symbol IN ({placeholders})"
+            where_symbols = f" AND prediction.symbol IN ({placeholders})"
             params.update({f"sym_{i}": sym for i, sym in enumerate(unique_symbols)})
 
+    batch_join = ""
+    batch_condition = ""
+    if batch_id:
+        training_run_columns = _get_table_columns(engine, "model_training_run")
+        if "batch_id" not in training_run_columns:
+            raise RuntimeError("Le filtrage par batch ML exige model_training_run.batch_id.")
+        batch_join = """
+            JOIN model_training_run training_run
+              ON training_run.run_id = prediction.run_id
+             AND training_run.symbol = prediction.symbol
+        """
+        batch_condition = "AND training_run.batch_id = :batch_id"
+        params["batch_id"] = batch_id
+
     def _optional_select(columns: set[str], column: str) -> str:  # noqa: redefinition-ok
-        return column if column in columns else f"NULL AS {column}"
+        return f"prediction.{column}" if column in columns else f"NULL AS {column}"
+
+    selected_batch = "training_run.batch_id AS batch_id" if batch_id else "NULL AS batch_id"
 
     query = text(f"""
-        SELECT symbol,
-               {date_col} AS trade_date,
-               predicted_proba,
-               predicted_class,
+        SELECT prediction.symbol,
+               prediction.{date_col} AS trade_date,
+               prediction.predicted_proba,
+               prediction.predicted_class,
                {_optional_select(columns, 'predicted_side')},
                {_optional_select(columns, 'proba_long')},
                {_optional_select(columns, 'proba_flat')},
                {_optional_select(columns, 'proba_short')},
                {_optional_select(columns, 'run_id')},
-               {_optional_select(columns, 'created_at')}
-        FROM model_predictions
-        WHERE {date_col} BETWEEN :start AND :end{where_symbols}
-        ORDER BY {date_col}, symbol
+               {_optional_select(columns, 'created_at')},
+               {selected_batch}
+        FROM model_predictions prediction
+        {batch_join}
+        WHERE prediction.{date_col} BETWEEN :start AND :end{where_symbols}{batch_condition}
+        ORDER BY prediction.{date_col}, prediction.symbol
     """)
     with engine.connect() as conn:
         parse_dates = ["trade_date"]
         if "created_at" in columns:
             parse_dates.append("created_at")
         df = pd.read_sql(query, conn, params=params, parse_dates=parse_dates)
-    LOGGER.info("Prédictions ML chargées : %d lignes (filter symbols=%s)", len(df), bool(symbols))
+    LOGGER.info(
+        "Prédictions ML chargées : %d lignes (filter symbols=%s batch_id=%s)",
+        len(df),
+        bool(symbols),
+        batch_id or "none",
+    )
     return df
 
 

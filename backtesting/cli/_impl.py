@@ -2349,7 +2349,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         sentiment_diagnostics = None
 
     _safe_print("🤖 Chargement prédictions ML...")
-    preds_df = load_predictions(engine, start, end)
+    preds_df = load_predictions(engine, start, end, batch_id=args.ml_batch_id)
     try:
         prepared_predictions = prepare_predictions_for_ml_mode(
             engine,
@@ -4125,6 +4125,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "run":
+        if args.ml_mode != "off" and not str(args.ml_batch_id or "").strip():
+            parser.error("--ml-batch-id est obligatoire lorsque --ml-mode n'est pas off.")
         _run_backtest(args)
     elif args.command == "backfill-scores-history":
         _run_backfill_scores_history(args)
