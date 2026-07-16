@@ -175,6 +175,11 @@ def test_cli_parses_walkforward_default_on_and_no_walkforward() -> None:
     assert opts_default.walkforward is True
     assert opts_default.ml_mode == "rebuild-all"
     assert opts_default.training_start_date == date(2020, 1, 1)
+    assert opts_default.wf_min_train_size == 504
+    assert opts_default.wf_val_size == 126
+    assert opts_default.wf_test_size == 126
+    assert opts_default.wf_step_size == 126
+    assert opts_default.wf_max_splits == 11
 
     opts_off = parser.parse_args(["--mode", "train", "--no-walkforward", "--ml-mode", "rebuild-missing", "--training-start-date", "2018-01-01"])
     assert opts_off.walkforward is False

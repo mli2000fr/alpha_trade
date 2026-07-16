@@ -267,7 +267,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--wf-val-size", type=int, default=126)
     p.add_argument("--wf-test-size", type=int, default=126)
     p.add_argument("--wf-step-size", type=int, default=126)
-    p.add_argument("--wf-max-splits", type=int, default=3)
+    p.add_argument("--wf-max-splits", type=int, default=11)
     p.add_argument("--compare-lightgbm", action="store_true", default=False,
                    help="Entraîne aussi une baseline LightGBM et compare ses métriques")
     p.add_argument("--enable-catboost", action="store_true", default=False,

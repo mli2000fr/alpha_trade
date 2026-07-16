@@ -109,7 +109,7 @@ class WalkForwardConfig:
     val_size: int = 126
     test_size: int = 126
     step_size: int = 126
-    max_splits: int = 3
+    max_splits: int = 11
 
     def __post_init__(self) -> None:
         if self.min_train_size < 2:

@@ -451,13 +451,15 @@ WalkForwardConfig(
     min_train_size=504,
     val_size=126,
     test_size=126,
-    step_size=63,
-    max_splits=6,
+    step_size=126,
+    max_splits=11,
 )
 ```
 
 Cette etape ne vise pas encore a monter le score. Elle permet de voir si les performances
-faibles sont concentrees dans certains regimes de marche.
+faibles sont concentrees dans certains regimes de marche. Les tests OOS ne se chevauchent
+pas et les onze folds couvrent approximativement des semestres consecutifs de 2020 a 2025
+pour un historique complet debutant en 2018.
 
 Utiliser une fenetre d'entrainement expanding pour l'evaluation historique : chaque nouveau
 fold ajoute le passe disponible au train et mesure la periode suivante hors echantillon.

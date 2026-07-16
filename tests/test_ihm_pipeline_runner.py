@@ -903,6 +903,11 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--ml-mode") + 1] == pipeline_runner.DEFAULT_ML_MODE
     assert train_cmd[train_cmd.index("--training-start-date") + 1] == pipeline_runner.DEFAULT_ML_TRAINING_START_DATE
     assert train_cmd[train_cmd.index("--symbol-source") + 1] == "tradable-universe"
+    assert train_cmd[train_cmd.index("--wf-min-train-size") + 1] == "504"
+    assert train_cmd[train_cmd.index("--wf-val-size") + 1] == "126"
+    assert train_cmd[train_cmd.index("--wf-test-size") + 1] == "126"
+    assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "126"
+    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "11"
 
     # Drapeaux booléens activés par défaut (swing prod)
     for flag in (
