@@ -71,3 +71,4 @@ sqlalchemy[asyncio]>=2.0
 #   pip install triton==2.0.0 --index-url https://download.pytorch.org/whl/triton
 
 pytest
+tabulate

@@ -480,18 +480,119 @@ def _render_regime_table(batch_id: str) -> None:
     st.caption(f"Classification basée sur la médiane VIX = {median_vix:.1f} | SPY < 0 & VIX > médiane → bear_high_vol | SPY > 0 & VIX ≤ médiane → bull")
 
 
+def _df_to_md(df: pd.DataFrame) -> str:
+    """Convertit un DataFrame en tableau Markdown."""
+    if df.empty:
+        return "_Aucune donnée._\n"
+    return df.to_markdown(index=False) + "\n"
+
+
+def _build_batch_markdown(
+    batch_id: str,
+    detail: pd.DataFrame,
+    f1_df: pd.DataFrame,
+    tp_df: pd.DataFrame,
+    bucket_df: pd.DataFrame,
+    best_df: pd.DataFrame,
+    worst_df: pd.DataFrame,
+    zero_df: pd.DataFrame,
+) -> str:
+    """Construit un rapport Markdown complet pour un batch."""
+    lines: list[str] = []
+    lines.append(f"# Diagnostic ML — Batch `{batch_id}`")
+    lines.append("")
+
+    # ── Détail du batch ──
+    lines.append("## 📋 Détail du batch")
+    lines.append("")
+    if not detail.empty:
+        row = detail.iloc[0]
+        lines.append(f"- **Batch ID** : `{row.get('batch_id', '—')}`")
+        lines.append(f"- **Statut** : {row.get('status', '—')}")
+        lines.append(f"- **Source symboles** : {row.get('symbol_source', '—')}")
+        comment = row.get("comment")
+        if comment and str(comment) not in ("None", "nan", ""):
+            lines.append(f"- **Commentaire** : {comment}")
+        lines.append(f"- **Date début training** : {row.get('training_start_date', '—')}")
+        lines.append(f"- **Date fin training** : {row.get('training_end_date', '—')}")
+        lines.append(f"- **Date univers** : {row.get('universe_date', '—')}")
+        lines.append(f"- **Nb symboles demandés** : {row.get('requested_symbol_count', '—')}")
+        lines.append(f"- **Démarré le** : {row.get('started_at', '—')}")
+        lines.append(f"- **Terminé le** : {row.get('finished_at', '—')}")
+        lines.append(f"- **Complétés / Skippés / Échecs** : {row.get('symbols_completed', 0)} / {row.get('symbols_skipped', 0)} / {row.get('symbols_failed', 0)}")
+        failure = row.get("failure_reason")
+        if failure and str(failure) not in ("None", "nan", ""):
+            lines.append(f"- **Raison échec** : {failure}")
+        cmd = row.get("command_line")
+        if cmd and str(cmd) not in ("None", "nan", ""):
+            lines.append("")
+            lines.append("### Commande exécutée")
+            lines.append("```powershell")
+            lines.append(str(cmd))
+            lines.append("```")
+    lines.append("")
+
+    # ── Métriques F1 par split ──
+    lines.append("## 📊 Métriques F1 par split")
+    lines.append("")
+    lines.append(_df_to_md(f1_df))
+
+    # ── Distribution true / pred par split ──
+    lines.append("## 📊 Distribution true / pred par split")
+    lines.append("")
+    lines.append(_df_to_md(tp_df))
+
+    # ── Distribution F1 macro WF ──
+    lines.append("## 📈 Distribution F1 macro — Walk-Forward")
+    lines.append("")
+    lines.append(_df_to_md(bucket_df))
+
+    # ── Top / Flop ──
+    lines.append("## 🏆 Top 10 meilleurs `f1_macro` (WF)")
+    lines.append("")
+    lines.append(_df_to_md(best_df))
+
+    lines.append("## 🥉 Top 10 plus mauvais `f1_macro` (WF)")
+    lines.append("")
+    lines.append(_df_to_md(worst_df))
+
+    lines.append("## ⚪ `f1_short = 0` (WF)")
+    lines.append("")
+    lines.append(_df_to_md(zero_df))
+
+    return "\n".join(lines)
+
+
 def _render_batch_detail(batch: pd.Series) -> None:
     """Affiche le détail complet d'un batch."""
+    batch_id = str(batch["batch_id"])
     st.subheader("📋 Détail du batch")
 
-    detail_df = safe_query(BATCH_DETAIL_QUERY, {"batch_id": batch["batch_id"]})
+    # ── Requêtes préparatoires (toutes exécutées avant l'UI) ──
+    detail_df = safe_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
     if detail_df.empty:
         st.warning("Impossible de charger le détail du batch.")
         return
+    f1_df = safe_query(F1_BY_SPLIT_QUERY, {"batch_id": batch_id})
+    tp_df = safe_query(TRUE_PRED_AGG_QUERY, {"batch_id": batch_id})
+    bucket_df = safe_query(F1_BUCKET_QUERY, {"batch_id": batch_id})
+    best_df = safe_query(TOP5_BEST_F1_QUERY, {"batch_id": batch_id})
+    worst_df = safe_query(TOP5_WORST_F1_QUERY, {"batch_id": batch_id})
+    zero_df = safe_query(ZERO_F1_SHORT_QUERY, {"batch_id": batch_id})
+
+    # ── Bouton téléchargement ──
+    safe_bid = batch_id.replace("/", "_").replace("\\", "_")[:64]
+    st.download_button(
+        label="📥 Télécharger le rapport (.md)",
+        data=_build_batch_markdown(batch_id, detail_df, f1_df, tp_df, bucket_df, best_df, worst_df, zero_df),
+        file_name=f"{safe_bid}.md",
+        mime="text/markdown",
+        key=f"dl_{safe_bid}",
+    )
 
     row = detail_df.iloc[0]
-    col1, col2, col3 = st.columns(3)
 
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Batch ID", str(row.get("batch_id", ""))[:32] + "…" if len(str(row.get("batch_id", ""))) > 32 else str(row.get("batch_id", "")))
         st.metric("Statut", _status_badge(str(row.get("status", ""))))
@@ -517,7 +618,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.markdown("")
     # ── Bloc F1 par split ──
     st.subheader("📊 Métriques F1 par split")
-    f1_df = safe_query(F1_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})
     if f1_df.empty:
         st.info("Aucune métrique F1 disponible pour ce batch (vérifiez que les runs sont `completed`).")
     else:
@@ -531,7 +631,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.markdown("")
     # ── Bloc distribution true / pred par split ──
     st.subheader("📊 Distribution true / pred par split")
-    tp_df = safe_query(TRUE_PRED_AGG_QUERY, {"batch_id": batch["batch_id"]})
     if tp_df.empty:
         st.info("Aucune donnée true_*_pct / pred_*_pct disponible (vérifiez que le mode ternaire est activé).")
     else:
@@ -567,7 +666,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.markdown("")
     # ── Bloc distribution F1 macro (walk-forward) ──
     st.subheader("📈 Distribution F1 macro — Walk-Forward")
-    bucket_df = safe_query(F1_BUCKET_QUERY, {"batch_id": batch["batch_id"]})
     if bucket_df.empty:
         st.info("Aucune métrique walk-forward disponible pour ce batch.")
     else:
@@ -600,15 +698,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.rerun()
         return _cb
 
-    best_df = pd.DataFrame()
-    worst_df = pd.DataFrame()
-    zero_df = pd.DataFrame()
-
     col_best, col_worst, col_zero = st.columns(3)
 
     with col_best:
         st.markdown("**🥇 10 meilleurs `f1_macro`**")
-        best_df = safe_query(TOP5_BEST_F1_QUERY, {"batch_id": batch["batch_id"]})
         if best_df.empty:
             st.caption("Aucune donnée.")
         else:
@@ -620,7 +713,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_worst:
         st.markdown("**🥉 10 plus mauvais `f1_macro`**")
-        worst_df = safe_query(TOP5_WORST_F1_QUERY, {"batch_id": batch["batch_id"]})
         if worst_df.empty:
             st.caption("Aucune donnée.")
         else:
@@ -632,7 +724,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_zero:
         st.markdown("**⚪ `f1_short = 0`**")
-        zero_df = safe_query(ZERO_F1_SHORT_QUERY, {"batch_id": batch["batch_id"]})
         if zero_df.empty:
             st.caption("Aucun symbole avec f1_short = 0.")
         else:
