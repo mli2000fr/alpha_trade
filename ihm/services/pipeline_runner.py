@@ -349,6 +349,7 @@ class PipelineLaunchOptions:
     ml_training_end_date: str = DEFAULT_ML_TRAINING_END_DATE
     ml_train_symbol_source: MLTrainSymbolSource = "tradable-universe"
     ml_train_start_symbol: str | None = None
+    ml_comment: str | None = None
     ml_predict_symbol_source: MLTrainSymbolSource = "tradable-universe"
     ml_predict_use_historical_range: bool = False
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
@@ -2179,6 +2180,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--wf-max-splits",
                 str(options.ml_wf_max_splits),
             ])
+        if options.ml_comment:
+            command.extend(["--comment", options.ml_comment])
         return command
 
     if step_key == "ml_predict":

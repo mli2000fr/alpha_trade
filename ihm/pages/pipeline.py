@@ -917,6 +917,7 @@ def _render_ml_scope_block(
     source_attr: str,
     start_symbol_attr: str | None = None,
     historical_range: bool = False,
+    comment_session_key: str | None = None,
 ) -> None:
     disabled = workflow_active or bool(active_for_step)
     if workflow_active:
@@ -1025,6 +1026,18 @@ def _render_ml_scope_block(
         language="powershell",
     )
 
+    # ── Commentaire optionnel (ML Train uniquement) ──
+    ml_comment: str | None = None
+    if comment_session_key is not None:
+        ml_comment = st.text_input(
+            "Commentaire (optionnel)",
+            value=str(st.session_state.get(comment_session_key, "") or ""),
+            key=comment_session_key,
+            max_chars=200,
+            placeholder="Ex: test nouvelle feature VIX, recalibration post-earnings...",
+            help="Ce commentaire sera sauvegardé dans la table model_training_batch pour traçabilité (max 200 caractères).",
+        ).strip() or None
+
     if st.button(
         button_label,
         key=button_key,
@@ -1036,6 +1049,8 @@ def _render_ml_scope_block(
             overrides[start_symbol_attr] = normalized_start_symbol
         if step_key == "ml_predict":
             overrides["ml_predict_use_historical_range"] = historical_range
+        if ml_comment is not None:
+            overrides["ml_comment"] = ml_comment
         _launch_pipeline_step(
             step_key,
             f"{label_prefix} — {ML_TRAIN_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)}",
@@ -1067,6 +1082,7 @@ def _render_ml_train_scope_block(
         source_attr="ml_train_symbol_source",
         start_symbol_attr="ml_train_start_symbol",
         historical_range=True,
+        comment_session_key="pipeline_ml_train_comment",
     )
 
 

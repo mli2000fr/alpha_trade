@@ -317,6 +317,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Mode debug ML train : logs plus détaillés et exécution plus déterministe côté orchestrateur")
     p.add_argument("--heartbeat-interval-seconds", type=float, default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
                    help="Intervalle d'émission des heartbeats structurés consommés par l'IHM")
+    p.add_argument("--comment", type=str, default=None,
+                   help="Commentaire libre saisi depuis l'IHM, sauvegardé dans model_training_batch")
     p.add_argument("--watchdog-timeout-seconds", type=int, default=0,
                    help="Timeout heartbeat côté IHM (0 = alerte seule, >0 = échec si heartbeat stale trop longtemps)")
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -477,6 +479,7 @@ def main(args: list[str] | None = None) -> None:
             training_start_date=cfg.data.training_start_date,
             training_end_date=cfg.data.training_end_date,
             started_at=started_at,
+            comment=opts.comment,
         )
         update_runtime_status(current_phase="batch_dispatch")
         try:

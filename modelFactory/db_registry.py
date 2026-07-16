@@ -350,6 +350,7 @@ def insert_training_batch(
     training_start_date: date | None,
     training_end_date: date | None,
     started_at: datetime,
+    comment: str | None = None,
 ) -> None:
     """Persist one immutable metadata record for a training campaign."""
     with engine.begin() as conn:
@@ -357,9 +358,9 @@ def insert_training_batch(
             text(
                 "INSERT INTO model_training_batch "
                 "(batch_id, status, command_line, command_argv_json, metadata_json, symbol_source, "
-                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at) "
+                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at, comment) "
                 "VALUES (:bid, 'running', :command_line, :command_argv_json, :metadata_json, :symbol_source, "
-                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at)"
+                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at, :comment)"
             ),
             {
                 "bid": batch_id,
@@ -372,6 +373,7 @@ def insert_training_batch(
                 "training_start_date": training_start_date,
                 "training_end_date": training_end_date,
                 "started_at": started_at,
+                "comment": comment,
             },
         )
 

@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_batch (
     command_line           TEXT         NOT NULL COMMENT 'Commande Model Factory reconstruite depuis argv',
     command_argv_json      TEXT         NOT NULL COMMENT 'Arguments CLI exacts recus par le processus',
     metadata_json          TEXT         NOT NULL COMMENT 'Options CLI et configuration effective serializees',
+    comment                VARCHAR(200)  NOT NULL COMMENT 'Commentaire saisi par l utilisateur dans IHM',
     symbol_source          VARCHAR(32)  NOT NULL,
     universe_date          DATE         DEFAULT NULL,
     requested_symbol_count INT UNSIGNED DEFAULT NULL,
