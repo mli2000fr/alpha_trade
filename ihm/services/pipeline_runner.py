@@ -68,7 +68,6 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_MIN_ACTION_RATE,
     DEFAULT_ML_MIN_PRECISION_LONG,
     DEFAULT_ML_MIN_TRADES_FRACTION,
-    DEFAULT_ML_MODE,
     DEFAULT_ML_SEQUENCE_LENGTH,
     DEFAULT_ML_TARGET_DOWN_THRESHOLD,
     DEFAULT_ML_TARGET_MODE,
@@ -230,7 +229,6 @@ MLTargetMode = Literal["binary", "swing_cash", "ternary"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
-MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
 MLTrainSymbolSource = Literal[
     "tradable-universe",
     "stock-bars-daily",
@@ -345,7 +343,6 @@ class PipelineLaunchOptions:
     ml_sequence_length: int = DEFAULT_ML_SEQUENCE_LENGTH
     ml_batch_size: int = DEFAULT_ML_BATCH_SIZE
     ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
-    ml_mode: MLMode = DEFAULT_ML_MODE
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
     ml_training_end_date: str = DEFAULT_ML_TRAINING_END_DATE
     ml_train_symbol_source: MLTrainSymbolSource = "tradable-universe"
@@ -2079,8 +2076,6 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_batch_size),
             "--hidden-size",
             str(options.ml_hidden_size),
-            "--ml-mode",
-            options.ml_mode,
             "--training-start-date",
             options.ml_training_start_date,
             "--symbol-source",

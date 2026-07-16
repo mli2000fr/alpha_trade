@@ -49,7 +49,11 @@ from ihm.services.fractional_trading_preferences import (
     load_persisted_fractional_trading_preferences,
     save_persisted_fractional_trading_preferences,
 )
-from ihm.services.queries import get_backtesting_ml_coverage_diagnostic, get_backtesting_pit_history_diagnostic
+from ihm.services.queries import (
+    get_backtesting_ml_coverage_diagnostic,
+    get_backtesting_pit_history_diagnostic,
+    get_completed_ml_training_batches,
+)
 from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
     build_screener_artifact_history_rows,
@@ -1755,6 +1759,24 @@ def _build_run_options() -> BacktestRunOptions:
         key="bt_run_artifacts_dir",
         help="Dossier contenant les checkpoints/scalers/configs de modèles pour `--ml-mode rebuild-missing`.",
     )
+    completed_batches = get_completed_ml_training_batches()
+    batch_ids = completed_batches["batch_id"].dropna().astype(str).tolist() if not completed_batches.empty else []
+    selected_ml_batch_id: str | None = None
+    if ml_mode == "rebuild-missing":
+        if not batch_ids:
+            st.error("Aucune campagne ML terminée disponible : la reconstruction de prédictions ne peut pas être reproductible.")
+        else:
+            requested_batch = str(st.session_state.get("bt_run_ml_batch_id", "") or "")
+            batch_index = batch_ids.index(requested_batch) if requested_batch in batch_ids else 0
+            selected_ml_batch_id = cast(
+                str,
+                st.selectbox(
+                    "Campagne ML pour reconstruire les prédictions",
+                    options=batch_ids,
+                    index=batch_index,
+                    key="bt_run_ml_batch_id",
+                ),
+            )
 
     extra_col1, extra_col2 = st.columns(2)
     with extra_col1:
@@ -1870,6 +1892,7 @@ def _build_run_options() -> BacktestRunOptions:
         fidelity_baseline_id=fidelity_baseline_id.strip() or None,
         fidelity_baseline_catalog=fidelity_baseline_catalog.strip() or None,
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
+        ml_batch_id=selected_ml_batch_id,
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),

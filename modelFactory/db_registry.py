@@ -86,6 +86,50 @@ def _normalize_signal_modes(signal_modes: tuple[str, ...] | list[str] | None) ->
     return tuple(normalized)
 
 
+def get_serving_batch(engine: Engine, *, scope: str = "default") -> str | None:
+    """Retourne la campagne ML explicitement promue pour le serving."""
+    try:
+        with engine.connect() as conn:
+            batch_id = conn.execute(
+                text("SELECT batch_id FROM model_serving_batch WHERE scope = :scope"),
+                {"scope": scope},
+            ).scalar_one_or_none()
+    except Exception as exc:  # table absente avant migration ou DB indisponible
+        LOGGER.warning("get_serving_batch unavailable scope=%s error=%s", scope, exc)
+        return None
+    return str(batch_id).strip() if batch_id else None
+
+
+def set_serving_batch(engine: Engine, *, batch_id: str, scope: str = "default") -> None:
+    """Promeut une campagne terminée comme unique source de serving."""
+    normalized_batch_id = _required_text(batch_id, field_name="batch_id")
+    normalized_scope = _required_text(scope, field_name="scope")
+    with engine.begin() as conn:
+        eligible = conn.execute(
+            text(
+                """
+                SELECT 1 FROM model_training_batch
+                WHERE batch_id = :batch_id
+                  AND status = 'completed'
+                  AND COALESCE(symbols_completed, 0) > 0
+                """
+            ),
+            {"batch_id": normalized_batch_id},
+        ).scalar_one_or_none()
+        if eligible is None:
+            raise ValueError("Seule une campagne ML terminée avec des modèles peut être promue.")
+        conn.execute(
+            text(
+                """
+                INSERT INTO model_serving_batch (scope, batch_id, promoted_at)
+                VALUES (:scope, :batch_id, CURRENT_TIMESTAMP)
+                ON DUPLICATE KEY UPDATE batch_id = VALUES(batch_id), promoted_at = CURRENT_TIMESTAMP
+                """
+            ),
+            {"scope": normalized_scope, "batch_id": normalized_batch_id},
+        )
+
+
 def _load_distinct_symbols(engine: Engine, query: str) -> list[str]:
     with engine.connect() as conn:
         rows = conn.execute(text(query)).scalars().all()

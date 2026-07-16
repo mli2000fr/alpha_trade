@@ -119,9 +119,11 @@ def _rebuild_prediction_frame(
     symbol: str,
     trade_date: date,
     artifacts_dir: Path,
+    batch_id: str | None,
     engine: Engine,
     persist: bool,
 ) -> pd.DataFrame:
+    prediction_kwargs = {"batch_id": batch_id} if batch_id else {}
     prediction = predict_symbol(
         symbol=symbol,
         artifacts_dir=artifacts_dir,
@@ -129,6 +131,7 @@ def _rebuild_prediction_frame(
         prediction_date=trade_date,
         as_of_date=trade_date,
         persist=persist,
+        **prediction_kwargs,
     )
     pred_df = _ensure_dataframe(prediction) if prediction is not None else pd.DataFrame()
     if not pred_df.empty and "prediction_date" in pred_df.columns:
@@ -141,9 +144,11 @@ def _rebuild_prediction_batch_frame(
     symbols: list[str],
     trade_date: date,
     artifacts_dir: Path,
+    batch_id: str | None,
     engine: Engine,
     persist: bool,
 ) -> pd.DataFrame:
+    prediction_kwargs = {"batch_id": batch_id} if batch_id else {}
     prediction = predict_batch(
         symbols=symbols,
         artifacts_dir=artifacts_dir,
@@ -151,6 +156,7 @@ def _rebuild_prediction_batch_frame(
         prediction_date=trade_date,
         as_of_date=trade_date,
         persist=persist,
+        **prediction_kwargs,
     )
     pred_df = _ensure_dataframe(prediction) if prediction is not None else pd.DataFrame()
     if not pred_df.empty and "prediction_date" in pred_df.columns:
@@ -372,6 +378,7 @@ def prepare_predictions_for_ml_mode(
     *,
     ml_mode: MLMode,
     artifacts_dir: Path,
+    batch_id: str | None = None,
     engine_mode: str = "research",
     ml_pit_strategy: str = "auto",
     return_diagnostics: bool = False,
@@ -501,6 +508,7 @@ def prepare_predictions_for_ml_mode(
                 symbols=batch_symbols,
                 trade_date=normalized_trade_date,
                 artifacts_dir=artifacts_dir,
+                batch_id=batch_id,
                 engine=engine,
                 persist=diagnostics.persist_enabled,
             )

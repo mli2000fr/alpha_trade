@@ -1907,7 +1907,8 @@ def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> 
 def test_render_ml_inspection_link_uses_pending_symbol_for_cross_page_navigation(monkeypatch) -> None:
     session_state: dict[str, object] = {}
     monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
-    monkeypatch.setattr(pipeline, "list_ml_artifact_symbols", lambda: ["AAPL", "MSFT"])
+    monkeypatch.setattr(pipeline, "list_ml_artifact_batches", lambda _root: [])
+    monkeypatch.setattr(pipeline, "list_ml_artifact_symbols", lambda _root: ["AAPL", "MSFT"])
     monkeypatch.setattr(pipeline.st, "selectbox", lambda *args, **kwargs: "MSFT")
     monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: True)
     monkeypatch.setattr(pipeline.st, "rerun", lambda: None)
@@ -1917,6 +1918,28 @@ def test_render_ml_inspection_link_uses_pending_symbol_for_cross_page_navigation
     assert session_state[pipeline.ML_PENDING_SELECTED_SYMBOL_KEY] == "MSFT"
     assert session_state[pipeline.NAVIGATION_TARGET_PAGE_KEY] == "ml"
     assert "ihm_ml_selected_symbol" not in session_state
+
+
+def test_render_ml_inspection_link_uses_selected_prediction_batch(monkeypatch, tmp_path) -> None:
+    session_state: dict[str, object] = {"pipeline_ml_predict_batch_id": "batch-expert"}
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline, "get_model_artifacts_dir", lambda: tmp_path)
+    monkeypatch.setattr(pipeline, "list_ml_artifact_batches", lambda _root: ["batch-expert", "batch-v1"])
+    observed_dirs: list[object] = []
+
+    def list_symbols(artifacts_dir):
+        observed_dirs.append(artifacts_dir)
+        return ["AAPL"]
+
+    monkeypatch.setattr(pipeline, "list_ml_artifact_symbols", list_symbols)
+    monkeypatch.setattr(pipeline.st, "selectbox", lambda *args, **kwargs: "AAPL")
+    monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: True)
+    monkeypatch.setattr(pipeline.st, "rerun", lambda: None)
+
+    pipeline._render_ml_inspection_link("ml_predict")
+
+    assert observed_dirs == [tmp_path / "batch-expert"]
+    assert session_state["ihm_ml_selected_artifact_batch"] == "batch-expert"
 
 
 def test_build_workflow_scope_help_lines_explains_1_to_12_3_to_12_and_13_14() -> None:

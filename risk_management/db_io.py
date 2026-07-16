@@ -510,7 +510,7 @@ class RiskRepository:
         return self.load_predictions_asof(symbols, trade_date)
 
     def load_predictions_asof(
-        self, symbols: list[str], trade_date: date,
+        self, symbols: list[str], trade_date: date, *, batch_id: str | None = None,
     ) -> dict[str, PredictionInfo]:
         """Charge la dernière prédiction ML par symbole à la date de trade.
 
@@ -520,6 +520,10 @@ class RiskRepository:
         """
         if not symbols:
             return {}
+        if batch_id is None:
+            from modelFactory.db_registry import get_serving_batch
+
+            batch_id = get_serving_batch(self.engine)
         gate = resolve_ml_gate_state(self.engine)
         if not gate.enabled:
             LOGGER.warning(
@@ -531,6 +535,16 @@ class RiskRepository:
         placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))
         params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
         params["trade_date"] = trade_date
+        batch_join = ""
+        batch_condition = ""
+        if batch_id:
+            batch_join = """
+                JOIN model_training_run training_run
+                  ON training_run.run_id = prediction.run_id
+                 AND training_run.symbol = prediction.symbol
+            """
+            batch_condition = "AND training_run.batch_id = :batch_id"
+            params["batch_id"] = batch_id
         query = text(f"""
                  SELECT symbol, predicted_proba, predicted_class, predicted_side,
                      proba_long, proba_flat, proba_short, run_id, prediction_date
@@ -541,14 +555,16 @@ class RiskRepository:
                            PARTITION BY symbol
                            ORDER BY prediction_date DESC, created_at DESC, run_id DESC
                        ) AS rn
-                FROM model_predictions
-                WHERE symbol IN ({placeholders})
+                                FROM model_predictions prediction
+                                {batch_join}
+                                WHERE prediction.symbol IN ({placeholders})
                   AND prediction_date <= :trade_date
                   AND predicted_proba IS NOT NULL
                   AND predicted_side IN ('long', 'flat', 'short')
                   AND proba_long IS NOT NULL
                   AND proba_flat IS NOT NULL
                   AND proba_short IS NOT NULL
+                                    {batch_condition}
             ) ranked
             WHERE rn = 1
         """)

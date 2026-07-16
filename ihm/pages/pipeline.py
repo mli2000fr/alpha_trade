@@ -95,7 +95,11 @@ from ihm.pages._workflow import (
     _render_workflow_launcher,
 )
 from ihm.services.db import get_runtime_db_config
-from ihm.services.ml_artifacts import list_ml_artifact_symbols
+from ihm.services.ml_artifacts import (
+    get_model_artifacts_dir,
+    list_ml_artifact_batches,
+    list_ml_artifact_symbols,
+)
 from ihm.services.pipeline_runner import (
     build_pipeline_command,
     format_command_for_display,
@@ -865,7 +869,15 @@ def _build_swing_only_banner_payload(options: PipelineLaunchOptions) -> tuple[st
 def _render_ml_inspection_link(step_key: str) -> None:
     if step_key not in {"ml_train", "ml_predict"}:
         return
-    symbols = list_ml_artifact_symbols()
+    artifacts_root = get_model_artifacts_dir()
+    artifact_batches = list_ml_artifact_batches(artifacts_root)
+    selected_batch_id: str | None = None
+    if artifact_batches:
+        requested_batch_id = str(st.session_state.get("pipeline_ml_predict_batch_id") or "").strip()
+        selected_batch_id = requested_batch_id if requested_batch_id in artifact_batches else artifact_batches[0]
+        symbols = list_ml_artifact_symbols(artifacts_root / selected_batch_id)
+    else:
+        symbols = list_ml_artifact_symbols(artifacts_root)
     if not symbols:
         st.caption("Aucun artefact ML détecté pour proposer une navigation ciblée vers la page ML.")
         return
@@ -878,6 +890,8 @@ def _render_ml_inspection_link(step_key: str) -> None:
     )
     if st.button("🔎 Ouvrir dans la page ML", key=f"pipeline_open_ml_{step_key}", use_container_width=True):
         st.session_state[ML_PENDING_SELECTED_SYMBOL_KEY] = selected_symbol
+        if selected_batch_id is not None:
+            st.session_state["ihm_ml_selected_artifact_batch"] = selected_batch_id
         st.session_state[NAVIGATION_TARGET_PAGE_KEY] = "ml"
         st.rerun()
 

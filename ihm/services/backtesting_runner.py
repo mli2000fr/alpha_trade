@@ -57,6 +57,7 @@ class BacktestRunOptions:
     fidelity_baseline_id: str | None = None
     fidelity_baseline_catalog: str | None = None
     artifacts_dir: str = "artifacts/models"
+    ml_batch_id: str | None = None
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     disable_walk_forward: bool = False
@@ -259,6 +260,8 @@ def build_backtesting_command(
             "--artifacts-dir", options.artifacts_dir,
             "--score-column", options.score_column,
         ])
+        if options.ml_batch_id:
+            command.extend(["--ml-batch-id", options.ml_batch_id])
         if options.use_live_protection_logic:
             command.append("--use-live-protection-logic")
         else:

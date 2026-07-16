@@ -416,6 +416,7 @@ def _build_backtest_common_params(
         "allow_fractional_shares": bool(getattr(args, "allow_fractional_shares", False)),
         "sentiment_lookback": args.sentiment_lookback,
         "ml_mode": args.ml_mode,
+        "ml_batch_id": args.ml_batch_id,
         "sentiment_mode": args.sentiment_mode,
         "artifacts_dir": args.artifacts_dir,
         "config_path": getattr(args, "config_path", None),
@@ -809,6 +810,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--artifacts-dir",
         default="artifacts/models",
         help="Répertoire des artefacts modèles pour reconstruire les prédictions ML",
+    )
+    run_p.add_argument(
+        "--ml-batch-id",
+        default=None,
+        help="Campagne ML explicitement utilisée pour --ml-mode rebuild-missing.",
     )
     run_p.add_argument(
         "--config-path",
@@ -2351,6 +2357,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             preds_df,
             ml_mode=args.ml_mode,
             artifacts_dir=Path(args.artifacts_dir),
+            batch_id=args.ml_batch_id,
             engine_mode=engine_mode,
             ml_pit_strategy=ml_pit_strategy,
             return_diagnostics=True,

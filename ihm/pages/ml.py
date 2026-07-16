@@ -33,6 +33,8 @@ from ihm.services.queries import (
     get_training_runs,
 )
 from ihm.services.run_summary import get_run_summary
+from database.connection import get_sqlalchemy_engine
+from modelFactory.db_registry import get_serving_batch, set_serving_batch
 
 ML_AUDIT_FILTER_SOURCE_LIMIT = 500
 ML_SELECTED_AUDIT_NAVIGATION_KEY = "ihm_ml_selected_audit_navigation"
@@ -464,6 +466,16 @@ def render() -> None:
     st.caption(
         f"Cette section lit directement les artefacts `modelFactory` sous `{artifacts_dir}` afin d'exposer le champion servi, les challengers et les routes d'inférence."
     )
+    if db_available() and artifact_batches:
+        serving_batch = get_serving_batch(get_sqlalchemy_engine())
+        promotion_col, serving_status_col = st.columns([1, 2])
+        if promotion_col.button("Promouvoir cette campagne pour le serving", key="ml_promote_serving_batch"):
+            try:
+                set_serving_batch(get_sqlalchemy_engine(), batch_id=selected_batch)
+                st.success(f"Campagne de serving active : `{selected_batch}`")
+            except Exception as exc:
+                st.error(f"Promotion de campagne impossible : {exc}")
+        serving_status_col.caption(f"Campagne de serving active : `{serving_batch or 'aucune (fallback historique)'}`")
 
     artifact_symbols = list_ml_artifact_symbols(artifacts_dir)
     db_symbols = get_prediction_symbols() if db_available() else []

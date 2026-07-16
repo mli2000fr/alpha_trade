@@ -41,7 +41,6 @@ from modelFactory.runtime_status import increment_runtime_counter, reset_runtime
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
-ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
 SYMBOL_SOURCES = (
     "tradable-universe",
     "stock-bars-daily",
@@ -258,13 +257,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Active une évaluation walk-forward avant l'entraînement final (défaut: ON Phase 4.2.g)",
-    )
-    p.add_argument(
-        "--ml-mode",
-        type=str,
-        default="rebuild-all",
-        choices=list(ML_MODES),
-        help="Stratégie d'entraînement (Phase 4.2.g) : rebuild-all | rebuild-missing | refresh-stale",
     )
     p.add_argument("--wf-min-train-size", type=int, default=504)
     p.add_argument("--wf-val-size", type=int, default=126)
@@ -499,7 +491,7 @@ def main(args: list[str] | None = None) -> None:
                     cfg,
                     engine,
                     symbols=opts.symbols,
-                    mode=opts.ml_mode,
+                    mode="rebuild-all",
                     symbol_source=opts.symbol_source,
                     universe_date=universe_date,
                     start_symbol=opts.start_symbol,

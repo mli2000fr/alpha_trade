@@ -140,7 +140,6 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_LOG_LEVEL,
     DEFAULT_ML_MAX_ACTION_RATE,
     DEFAULT_ML_MAX_EPOCHS,
-    DEFAULT_ML_MODE,
     DEFAULT_ML_MAX_WORKERS,
     DEFAULT_ML_MIN_ACTION_RATE,
     DEFAULT_ML_MIN_PRECISION_LONG,
@@ -3088,26 +3087,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
 
-        ml_scope_col1, ml_scope_col2, ml_scope_col3 = st.columns(3)
+        ml_scope_col1, ml_scope_col2 = st.columns(2)
         with ml_scope_col1:
-            ml_mode = cast(
-                str,
-                st.selectbox(
-                    "Mode de reconstruction ML",
-                    options=["rebuild-all", "rebuild-missing", "refresh-stale"],
-                    index=["rebuild-all", "rebuild-missing", "refresh-stale"].index(
-                        cast(str, st.session_state.get("pipeline_ml_mode", DEFAULT_ML_MODE))
-                        if st.session_state.get("pipeline_ml_mode", DEFAULT_ML_MODE) in {"rebuild-all", "rebuild-missing", "refresh-stale"}
-                        else DEFAULT_ML_MODE
-                    ),
-                    key="pipeline_ml_mode",
-                    help=(
-                        "`rebuild-all` réentraîne tout. `rebuild-missing` n'entraîne que les symboles sans artefacts. "
-                        "`refresh-stale` réentraîne les modèles manquants, incompatibles avec la config courante ou en retard sur les dernières barres disponibles."
-                    ),
-                ),
-            )
-        with ml_scope_col2:
             ml_training_start_date = cast(
                 date,
                 st.date_input(
@@ -3121,7 +3102,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     help="Date minimale des barres daily transmises au backend Model Factory. Le défaut `2020-01-01` permet de cadrer le training sur l'historique récent utile.",
                 ),
             )
-        with ml_scope_col3:
+        with ml_scope_col2:
             ml_training_end_date = cast(
                 date,
                 st.date_input(
@@ -3136,10 +3117,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ),
             )
 
-        st.caption(
-            "Rappel modes ML : `rebuild-all` = tout reconstruire ; `rebuild-missing` = seulement les symboles sans modèle ; "
-            "`refresh-stale` = reconstruire si le modèle est absent, obsolète ou hors contrat de features / date de début d'historique."
-        )
+        st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
         ml_train_symbol_source = "tradable-universe"
         ml_predict_symbol_source = "tradable-universe"
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
@@ -3640,7 +3618,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "Répertoire d'artefacts ML",
                         value=str(st.session_state.get("pipeline_ml_artifacts_dir", DEFAULT_ML_ARTIFACTS_DIR)),
                         key="pipeline_ml_artifacts_dir",
-                        help="Partagé entre `ml_train` et `ml_predict`. Défaut : `artifacts/models`.",
+                        help="Racine partagée entre `ml_train` et `ml_predict` : laissez `artifacts/models`. Chaque campagne est créée sous cette racine et se choisit séparément pour la prédiction.",
                     ),
                 )
                 ml_benchmark_symbol = cast(
@@ -4006,7 +3984,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_sequence_length=int(ml_sequence_length),
             ml_batch_size=int(ml_batch_size),
             ml_hidden_size=int(ml_hidden_size),
-            ml_mode=cast(Any, ml_mode),
             ml_training_start_date=ml_training_start_date.isoformat(),
             ml_training_end_date=ml_training_end_date.isoformat(),
             ml_train_symbol_source=cast(Any, ml_train_symbol_source),

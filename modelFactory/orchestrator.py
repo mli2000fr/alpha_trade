@@ -444,10 +444,7 @@ def run_training_batch(
         return []
 
     if mode != "rebuild-all":
-        symbols = _filter_symbols_by_mode(engine, symbols, mode=mode, cfg=cfg)
-        if not symbols:
-            LOGGER.info("run_training_batch all_symbols_skipped mode=%s", mode)
-            return []
+        raise ValueError("Seul le mode de campagne 'rebuild-all' est supporté.")
 
     use_gpu = _gpu_requested_or_available(cfg)
     effective_workers = 1 if use_gpu else cfg.max_workers

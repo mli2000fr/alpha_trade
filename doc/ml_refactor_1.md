@@ -28,6 +28,25 @@ quasi permanente de `flat`.
 5. Conserver le modele actuellement servi tant qu'une nouvelle campagne ne passe pas les
    criteres de promotion definis dans ce document.
 
+### Isolation des campagnes et serving
+
+Les artefacts d'une campagne sont isoles sous `artifacts/models/<batch_id>/`.
+Le chemin configure reste la racine `artifacts/models`, jamais le sous-dossier
+d'une campagne. La prediction et le backtesting `rebuild-missing` doivent
+selectionner explicitement un `batch_id` termine.
+
+Une campagne ne devient pas servie automatiquement : dans la page ML, promouvoir
+une campagne terminee comme campagne de serving. Risk ne consomme alors que les
+predictions dont les runs appartiennent a ce batch. Sans campagne promue, le
+comportement historique reste actif temporairement; il doit etre traite comme un
+etat de migration, pas comme une politique de production.
+
+ML Train ne propose qu'un unique comportement : `rebuild-all`. Chaque lancement
+cree une campagne complete et isolee; une mise a jour incrementale d'une campagne
+precedente n'est pas supportee. Le `rebuild-missing` du backtesting reste un
+comportement distinct, limite a la reconstruction de predictions historiques a
+partir d'un batch explicitement choisi.
+
 ## 3. Etape zero - Etablir le diagnostic de reference
 
 ### 3.1 Executer une campagne de reference
