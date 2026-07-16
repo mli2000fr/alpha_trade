@@ -145,6 +145,25 @@ SYMBOL_METRICS_QUERY = """
     ORDER BY FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
 """
 
+TRUE_PRED_AGG_QUERY = """
+    SELECT
+        mm.split_name,
+        COUNT(DISTINCT mm.symbol) AS nb_symbols,
+        ROUND(AVG(mm.true_short_pct), 3) AS avg_true_short_pct,
+        ROUND(AVG(mm.true_flat_pct), 3) AS avg_true_flat_pct,
+        ROUND(AVG(mm.true_long_pct), 3) AS avg_true_long_pct,
+        ROUND(AVG(mm.pred_short_pct), 3) AS avg_pred_short_pct,
+        ROUND(AVG(mm.pred_flat_pct), 3) AS avg_pred_flat_pct,
+        ROUND(AVG(mm.pred_long_pct), 3) AS avg_pred_long_pct
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+    GROUP BY mm.split_name
+    ORDER BY FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+"""
+
 SYMBOL_WF_JSON_QUERY = """
     SELECT
         mmf.metrics_json,
@@ -507,6 +526,42 @@ def _render_batch_detail(batch: pd.Series) -> None:
         for col in ["avg_f1_macro", "avg_f1_short", "avg_f1_flat", "avg_f1_long"]:
             if col in styled.columns:
                 styled[col] = styled[col].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    st.markdown("")
+    # ── Bloc distribution true / pred par split ──
+    st.subheader("📊 Distribution true / pred par split")
+    tp_df = safe_query(TRUE_PRED_AGG_QUERY, {"batch_id": batch["batch_id"]})
+    if tp_df.empty:
+        st.info("Aucune donnée true_*_pct / pred_*_pct disponible (vérifiez que le mode ternaire est activé).")
+    else:
+        # Ligne Total (moyenne globale toutes splits confondues)
+        total_row = {
+            "split_name": "TOTAL",
+            "nb_symbols": tp_df["nb_symbols"].sum() if "nb_symbols" in tp_df.columns else 0,
+        }
+        for col in ["avg_true_short_pct", "avg_true_flat_pct", "avg_true_long_pct",
+                     "avg_pred_short_pct", "avg_pred_flat_pct", "avg_pred_long_pct"]:
+            if col in tp_df.columns:
+                total_row[col] = round(float(tp_df[col].mean()), 3) if not tp_df[col].isna().all() else None
+        total_df_row = pd.DataFrame([total_row])
+        display_df = pd.concat([tp_df, total_df_row], ignore_index=True)
+
+        styled = display_df.copy()
+        for col in ["avg_true_short_pct", "avg_true_flat_pct", "avg_true_long_pct",
+                     "avg_pred_short_pct", "avg_pred_flat_pct", "avg_pred_long_pct"]:
+            if col in styled.columns:
+                styled[col] = styled[col].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+        styled = styled.rename(columns={
+            "split_name": "Split",
+            "nb_symbols": "Nb symboles",
+            "avg_true_short_pct": "true short %",
+            "avg_true_flat_pct": "true flat %",
+            "avg_true_long_pct": "true long %",
+            "avg_pred_short_pct": "pred short %",
+            "avg_pred_flat_pct": "pred flat %",
+            "avg_pred_long_pct": "pred long %",
+        })
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
     st.markdown("")

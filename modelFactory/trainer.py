@@ -833,6 +833,13 @@ def _aggregate_walk_forward_metrics(split_metrics: list[dict[str, Any]]) -> dict
         "f1_short",
         "f1_flat",
         "f1_long",
+        # Distribution true / pred (ternaire)
+        "true_short_pct",
+        "true_flat_pct",
+        "true_long_pct",
+        "pred_short_pct",
+        "pred_flat_pct",
+        "pred_long_pct",
     ]
     mean_metrics: dict[str, float | None] = {}
     std_metrics: dict[str, float | None] = {}
