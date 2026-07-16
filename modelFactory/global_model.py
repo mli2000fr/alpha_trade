@@ -134,6 +134,8 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
         random_seed=resolved_seed,
         loss_function="MultiClass" if is_ternary else "Logloss",
         verbose=False,
+        train_dir=str(Path(cfg.catboost_artifacts_dir) / cfg.global_model.artifact_symbol / f"seed_{resolved_seed}"),
+        allow_writing_files=True,
     )
 
 
@@ -399,6 +401,8 @@ def train_global_model(
         "cross_sectional_feature_columns": [col for col in feature_columns if col in (cross_sectional_df.columns if cross_sectional_df is not None and not cross_sectional_df.empty else [])],
         "cross_sectional_diagnostics": cross_sectional_diagnostics,
         "artifact_symbol": cfg.global_model.artifact_symbol,
+        "batch_id": cfg.batch_id,
+        "artifacts_dir": str(artifacts_dir),
         "model_name": "global_model",
         "backend_model_name": backend_model_name,
         "model_path": str(model_path),

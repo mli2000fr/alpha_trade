@@ -3,7 +3,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ihm.services.ml_artifacts import list_ml_artifact_symbols, load_ml_artifact_report
+from ihm.services.ml_artifacts import list_ml_artifact_batches, list_ml_artifact_symbols, load_ml_artifact_report
+
+
+def test_list_ml_artifact_batches_detects_campaign_directories(tmp_path: Path) -> None:
+    for batch_id in ("campaign-old", "campaign-new"):
+        symbol_dir = tmp_path / batch_id / "AAPL"
+        symbol_dir.mkdir(parents=True)
+        (symbol_dir / "config.json").write_text("{}", encoding="utf-8")
+    legacy_symbol_dir = tmp_path / "MSFT"
+    legacy_symbol_dir.mkdir()
+    (legacy_symbol_dir / "config.json").write_text("{}", encoding="utf-8")
+
+    assert list_ml_artifact_batches(tmp_path) == ["campaign-old", "campaign-new"]
 
 
 def test_list_ml_artifact_symbols_returns_sorted_symbol_directories(tmp_path: Path) -> None:

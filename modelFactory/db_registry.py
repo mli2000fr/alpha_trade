@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -424,8 +425,15 @@ def update_training_run(engine: Engine, run_id: str, **kwargs: Any) -> None:
         conn.execute(text(f"UPDATE model_training_run SET {set_clause} WHERE run_id = :rid"), params)
 
 
-def load_training_run(engine: Engine, symbol: str, run_id: str | None = None) -> dict[str, Any] | None:
-    """Charge le run demandé, ou le dernier run complété disponible pour un symbole."""
+def load_training_run(
+    engine: Engine,
+    symbol: str,
+    run_id: str | None = None,
+    batch_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Charge un run explicite, une campagne, ou le dernier run complété d'un symbole."""
+    if run_id and batch_id:
+        raise ValueError("run_id and batch_id cannot be selected together.")
     if run_id:
         sql = (
             "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "
@@ -434,6 +442,16 @@ def load_training_run(engine: Engine, symbol: str, run_id: str | None = None) ->
             "LIMIT 1"
         )
         params = {"sym": symbol, "rid": run_id}
+    elif batch_id:
+        sql = (
+            "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "
+            "FROM model_training_run "
+            "WHERE symbol = :sym AND batch_id = :bid AND status = 'completed' "
+            "AND checkpoint_path IS NOT NULL AND scaler_path IS NOT NULL AND config_path IS NOT NULL "
+            "ORDER BY COALESCE(finished_at, started_at) DESC, started_at DESC "
+            "LIMIT 1"
+        )
+        params = {"sym": symbol, "bid": batch_id}
     else:
         sql = (
             "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "
@@ -814,6 +832,26 @@ def load_stock_scores_all_symbols(engine: Engine) -> list[str]:
     return symbols
 
 
+TICKET_RECHERCHE_PATH = Path("config/ticket_recherche.txt")
+
+
+def _load_ticket_recherche_symbols() -> list[str]:
+    """Charge les symboles depuis ``config/ticket_recherche.txt`` (un par ligne ou séparés par des virgules)."""
+    if not TICKET_RECHERCHE_PATH.exists():
+        raise FileNotFoundError(f"Fichier introuvable : {TICKET_RECHERCHE_PATH}")
+    raw = TICKET_RECHERCHE_PATH.read_text(encoding="utf-8").strip()
+    if not raw:
+        return []
+    # Supporte les deux formats : une ligne avec des virgules, ou un symbole par ligne
+    symbols: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        symbols.extend(s.strip().upper() for s in line.split(",") if s.strip())
+    return sorted(set(symbols))
+
+
 def load_symbols_for_source(
     engine: Engine,
     symbol_source: str,
@@ -833,7 +871,9 @@ def load_symbols_for_source(
         )
     if normalized_source in {"stock-bars-daily", "stock_bars_daily"}:
         return load_stock_bars_daily_symbols(engine)
-    raise ValueError(f"Source ML non admise: {normalized_source}. Utilisez tradable-universe ou stock-bars-daily.")
+    if normalized_source == "ticket-recherche":
+        return _load_ticket_recherche_symbols()
+    raise ValueError(f"Source ML non admise: {normalized_source}. Utilisez tradable-universe, stock-bars-daily ou ticket-recherche.")
 
 
 def load_tradable_universe_symbols(

@@ -103,19 +103,21 @@ from ihm.services.pipeline_runner import (
 )
 from ihm.services.process_registry import stop_pipeline_run
 from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
-from ihm.services.queries import get_execution_live_guard
+from ihm.services.queries import get_completed_ml_training_batches, get_execution_live_guard
 
 
-ML_TRAIN_SYMBOL_SOURCE_OPTIONS = ("stock-bars-daily", "tradable-universe")
+ML_TRAIN_SYMBOL_SOURCE_OPTIONS = ("stock-bars-daily", "tradable-universe", "ticket-recherche")
 
 ML_TRAIN_SYMBOL_SOURCE_LABELS = {
     "stock-bars-daily": "Symboles avec barres daily (stock_bars_daily)",
     "tradable-universe": "Univers tradable PIT canonique",
+    "ticket-recherche": "200 tickets recherche (config/ticket_recherche.txt)",
 }
 
 ML_TRAIN_SYMBOL_SOURCE_TO_CLI = {
     "stock-bars-daily": "stock-bars-daily",
     "tradable-universe": "tradable-universe",
+    "ticket-recherche": "ticket-recherche",
 }
 
 DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS = (
@@ -925,6 +927,41 @@ def _render_ml_scope_block(
     elif active_for_step:
         st.caption(f"Un run `{label_prefix}` est déjà actif : le lancement ML ciblé attend la fin de ce run.")
 
+    selected_prediction_batch_id: str | None = None
+    if step_key == "ml_predict":
+        completed_batches = get_completed_ml_training_batches()
+        batch_ids = [
+            str(value).strip()
+            for value in (completed_batches["batch_id"].tolist() if "batch_id" in completed_batches.columns else [])
+            if str(value).strip()
+        ]
+        if not batch_ids:
+            disabled = True
+            st.warning("Aucun batch ML terminé avec au moins un modèle n'est disponible pour la prédiction.")
+        else:
+            default_batch_id = str(getattr(options, "ml_predict_batch_id", "") or "").strip()
+            if default_batch_id not in batch_ids:
+                default_batch_id = batch_ids[0]
+            batch_details = {
+                str(row.batch_id): (
+                    f"{row.batch_id} | {row.finished_at or 'date inconnue'}"
+                    + (f" | {row.comment}" if getattr(row, "comment", None) else "")
+                )
+                for row in completed_batches.itertuples(index=False)
+                if str(getattr(row, "batch_id", "")).strip()
+            }
+            chosen_batch_id = st.selectbox(
+                "Batch de modèles à utiliser",
+                options=batch_ids,
+                index=batch_ids.index(default_batch_id),
+                format_func=lambda value: batch_details.get(str(value), str(value)),
+                key="pipeline_ml_predict_batch_id",
+            )
+            selected_prediction_batch_id = str(chosen_batch_id).strip()
+            if selected_prediction_batch_id not in batch_ids:
+                selected_prediction_batch_id = default_batch_id
+            st.caption(f"Prédiction strictement limitée au batch `{selected_prediction_batch_id}`.")
+
     current_source = str(
         st.session_state.get(selectbox_key, getattr(options, source_attr, "tradable-universe") or "tradable-universe")
     ).strip().lower()
@@ -1031,6 +1068,7 @@ def _render_ml_scope_block(
         command_preview_overrides[start_symbol_attr] = normalized_start_symbol
     if step_key == "ml_predict":
         command_preview_overrides["ml_predict_use_historical_range"] = historical_range
+        command_preview_overrides["ml_predict_batch_id"] = selected_prediction_batch_id
     if ml_comment is not None:
         command_preview_overrides["ml_comment"] = ml_comment
     command_preview_options = replace(options, **command_preview_overrides)
@@ -1051,6 +1089,7 @@ def _render_ml_scope_block(
             overrides[start_symbol_attr] = normalized_start_symbol
         if step_key == "ml_predict":
             overrides["ml_predict_use_historical_range"] = historical_range
+            overrides["ml_predict_batch_id"] = selected_prediction_batch_id
         if ml_comment is not None:
             overrides["ml_comment"] = ml_comment
         _launch_pipeline_step(

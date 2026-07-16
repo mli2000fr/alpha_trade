@@ -159,6 +159,30 @@ SYMBOL_WF_JSON_QUERY = """
     LIMIT 1
 """
 
+ALL_WF_JSON_QUERY = """
+    SELECT
+        mmf.symbol,
+        mmf.metrics_json
+    FROM alpha_trade.model_metrics_full AS mmf
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mmf.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+"""
+
+SPY_QUERY = """
+    SELECT `date`, adj_close
+    FROM alpha_trade.stock_bars_daily
+    WHERE symbol = 'SPY'
+    ORDER BY `date`
+"""
+
+VIX_QUERY = """
+    SELECT trade_date, vix
+    FROM alpha_trade.stock_macro_indicators_daily
+    ORDER BY trade_date
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -208,6 +232,7 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
     st.markdown("**Métriques par split**")
     st.dataframe(sym_df, use_container_width=True, hide_index=True)
 
+    st.markdown("")
     # ── Walk-Forward : splits et dates par fold ──
     st.markdown("**📅 Splits Walk-Forward**")
     wf_row = safe_query(SYMBOL_WF_JSON_QUERY, {"batch_id": batch_id, "symbol": symbol})
@@ -268,6 +293,7 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
             else:
                 st.caption("Détail des folds non disponible (métriques antérieures à la mise à jour).")
 
+    st.markdown("")
     # ── Interprétation ──
     with st.expander("ℹ️ Aide à l'interprétation", expanded=False):
         st.markdown("""
@@ -275,6 +301,164 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
 - **`true_short_pct` normal mais `pred_short_pct` proche de zéro** : le modèle évite la classe `short`.
 - **`pred_short_pct` élevé mais `f1_short` faible** : les signaux short sont bruyants ou les seuils de décision sont trop permissifs.
 """)
+
+
+def _classify_regime(spy_return_pct: float, vix: float, median_vix: float) -> str:
+    """Classifie le régime de marché d'une période OOS."""
+    if spy_return_pct < 0 and vix > median_vix:
+        return "bear_high_vol"
+    if spy_return_pct > 0 and vix <= median_vix:
+        return "bull"
+    if abs(spy_return_pct) < 2 and vix > median_vix:
+        return "range_high_vol"
+    return "range_low_vol"
+
+
+_REGIME_LABELS: dict[str, str] = {
+    "bear_high_vol": "🔴 Bear high vol",
+    "bull": "🟢 Bull",
+    "range_high_vol": "🟠 Range high vol",
+    "range_low_vol": "🔵 Range low vol",
+}
+
+
+def _render_regime_table(batch_id: str) -> None:
+    """Affiche le tableau de diagnostic par régime (§3.4 du plan ML)."""
+    st.subheader("📅 Diagnostic par régime de marché — Walk-Forward")
+
+    # ── 1. Récupérer tous les metrics_json du batch ──
+    all_json_df = safe_query(ALL_WF_JSON_QUERY, {"batch_id": batch_id})
+    if all_json_df.empty:
+        st.info("Aucune donnée walk-forward détaillée disponible pour ce batch.")
+        return
+
+    # ── 2. Parser les folds ──
+    folds_data: list[dict] = []
+    for _, row in all_json_df.iterrows():
+        blob = row.get("metrics_json")
+        if blob is None:
+            continue
+        try:
+            if isinstance(blob, bytes):
+                blob = blob.decode("utf-8")
+            wf_data = (_json.loads(blob) if isinstance(blob, str) else blob).get("walk_forward", {})
+            splits = wf_data.get("splits", []) if isinstance(wf_data, dict) else []
+        except Exception:
+            continue
+        for s in splits:
+            oos_start = s.get("test_start_date")
+            oos_end = s.get("test_end_date")
+            if not oos_start or not oos_end:
+                continue
+            folds_data.append({
+                "split_index": s.get("split_index"),
+                "oos_start": str(oos_start),
+                "oos_end": str(oos_end),
+                "f1_macro": s.get("f1_macro"),
+                "f1_short": s.get("f1_short"),
+                "f1_flat": s.get("f1_flat"),
+                "f1_long": s.get("f1_long"),
+                "action_rate": s.get("action_rate"),
+            })
+
+    if not folds_data:
+        st.info("Aucun fold OOS avec dates trouvé (les métriques datent peut-être d'avant la mise à jour).")
+        return
+
+    folds_df = pd.DataFrame(folds_data)
+
+    # ── 3. Agréger par split_index ──
+    agg = folds_df.groupby(["split_index", "oos_start", "oos_end"], dropna=False).agg(
+        nb_symbols=("f1_macro", "count"),
+        f1_macro=("f1_macro", "mean"),
+        f1_short=("f1_short", "mean"),
+        f1_flat=("f1_flat", "mean"),
+        f1_long=("f1_long", "mean"),
+        action_rate=("action_rate", "mean"),
+    ).reset_index().sort_values("oos_start")
+
+    if agg.empty:
+        st.info("Agrégation vide.")
+        return
+
+    # ── 4. Récupérer SPY et VIX ──
+    spy_df = safe_query(SPY_QUERY)
+    vix_df = safe_query(VIX_QUERY)
+
+    def _spy_return(start: str, end: str) -> float | None:
+        if spy_df.empty or "date" not in spy_df.columns:
+            return None
+        spy_df["date"] = pd.to_datetime(spy_df["date"])
+        mask = (spy_df["date"] >= pd.Timestamp(start)) & (spy_df["date"] <= pd.Timestamp(end))
+        window = spy_df.loc[mask].sort_values("date")
+        if len(window) < 2:
+            return None
+        p0 = window["adj_close"].iloc[0]
+        p1 = window["adj_close"].iloc[-1]
+        return float(100 * (p1 / p0 - 1)) if p0 and p0 > 0 else None
+
+    def _avg_vix(start: str, end: str) -> float | None:
+        if vix_df.empty or "trade_date" not in vix_df.columns:
+            return None
+        vix_df["trade_date"] = pd.to_datetime(vix_df["trade_date"])
+        mask = (vix_df["trade_date"] >= pd.Timestamp(start)) & (vix_df["trade_date"] <= pd.Timestamp(end))
+        vals = vix_df.loc[mask, "vix"].dropna()
+        return float(vals.mean()) if len(vals) > 0 else None
+
+    spy_returns = []
+    vix_values = []
+    for _, r in agg.iterrows():
+        sr = _spy_return(str(r["oos_start"]), str(r["oos_end"]))
+        vx = _avg_vix(str(r["oos_start"]), str(r["oos_end"]))
+        spy_returns.append(sr)
+        vix_values.append(vx)
+
+    agg["spy_return_pct"] = spy_returns
+    agg["avg_vix"] = vix_values
+
+    # ── 5. Classifier les régimes ──
+    valid_vix = [v for v in vix_values if v is not None]
+    median_vix = float(pd.Series(valid_vix).median()) if valid_vix else 20.0
+
+    def _safe_regime(sr: float | None, vx: float | None) -> str:
+        if sr is None or vx is None:
+            return "—"
+        return _REGIME_LABELS.get(_classify_regime(sr, vx, median_vix), _classify_regime(sr, vx, median_vix))
+
+    agg["regime"] = [_safe_regime(sr, vx) for sr, vx in zip(spy_returns, vix_values)]
+
+    # ── 6. Affichage ──
+    display = agg.rename(columns={
+        "split_index": "Split",
+        "oos_start": "Début OOS",
+        "oos_end": "Fin OOS",
+        "nb_symbols": "Nb symboles",
+        "f1_macro": "F1 macro",
+        "f1_short": "F1 short",
+        "f1_flat": "F1 flat",
+        "f1_long": "F1 long",
+        "action_rate": "Taux action",
+        "spy_return_pct": "SPY %",
+        "avg_vix": "VIX moy",
+        "regime": "Régime",
+    })
+
+    # Formater
+    for col in ["F1 macro", "F1 short", "F1 flat", "F1 long"]:
+        if col in display.columns:
+            display[col] = display[col].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+    if "Taux action" in display.columns:
+        display["Taux action"] = display["Taux action"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+    if "SPY %" in display.columns:
+        display["SPY %"] = display["SPY %"].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—")
+    if "VIX moy" in display.columns:
+        display["VIX moy"] = display["VIX moy"].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—")
+
+    cols = ["Split", "Début OOS", "Fin OOS", "Régime", "F1 macro", "F1 short", "F1 flat", "F1 long", "Taux action", "SPY %", "VIX moy", "Nb symboles"]
+    display = display[[c for c in cols if c in display.columns]]
+
+    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.caption(f"Classification basée sur la médiane VIX = {median_vix:.1f} | SPY < 0 & VIX > médiane → bear_high_vol | SPY > 0 & VIX ≤ médiane → bull")
 
 
 def _render_batch_detail(batch: pd.Series) -> None:
@@ -311,6 +495,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
         if failure and str(failure) != "None" and str(failure) != "nan":
             st.metric("Raison échec", str(failure)[:100] + "…" if len(str(failure)) > 100 else str(failure))
 
+    st.markdown("")
     # ── Bloc F1 par split ──
     st.subheader("📊 Métriques F1 par split")
     f1_df = safe_query(F1_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})
@@ -324,6 +509,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
                 styled[col] = styled[col].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
+    st.markdown("")
     # ── Bloc distribution F1 macro (walk-forward) ──
     st.subheader("📈 Distribution F1 macro — Walk-Forward")
     bucket_df = safe_query(F1_BUCKET_QUERY, {"batch_id": batch["batch_id"]})
@@ -339,6 +525,11 @@ def _render_batch_detail(batch: pd.Series) -> None:
         with col_table:
             st.dataframe(bucket_df, use_container_width=True, hide_index=True)
 
+    st.markdown("")
+    # ── Diagnostic par régime (§3.4) ──
+    _render_regime_table(str(batch["batch_id"]))
+
+    st.markdown("")
     # ── Top 10 / Flop 10 / F1 short = 0 ──
     st.subheader("🏆 Top / Flop symboles — Walk-Forward")
 

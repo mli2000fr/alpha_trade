@@ -1,6 +1,7 @@
 from datetime import date as dt_date, datetime, time as dt_time, timedelta
 from typing import cast
 
+import pandas as pd
 import pytest
 
 from ihm.pages import _data_integrity as data_integrity_page, _watcher_block as watcher_block, _workflow as workflow_page, pipeline
@@ -1275,6 +1276,63 @@ def test_render_ml_predict_scope_block_uses_latest_widget_session_state_for_prev
     assert "Univers tradable PIT canonique" in step_label
     assert options.ml_predict_symbol_source == "tradable-universe"
     assert options.ml_predict_use_historical_range is True
+
+
+def test_render_ml_predict_scope_block_defaults_to_newest_completed_batch(monkeypatch) -> None:
+    session_state: dict[str, object] = {}
+    launch_calls: list[pipeline.PipelineLaunchOptions] = []
+
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(pipeline.st, "code", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        pipeline,
+        "get_completed_ml_training_batches",
+        lambda: pd.DataFrame(
+            [
+                {"batch_id": "batch-new", "finished_at": "2026-07-16 12:00:00", "comment": "expert"},
+                {"batch_id": "batch-old", "finished_at": "2026-07-15 12:00:00", "comment": "v1"},
+            ]
+        ),
+    )
+
+    def selectbox(label, *args, **kwargs):
+        if label == "Batch de modèles à utiliser":
+            return kwargs["options"][0]
+        return "tradable-universe"
+
+    monkeypatch.setattr(pipeline.st, "selectbox", selectbox)
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_ml_train_scope_preview",
+        lambda *args, **kwargs: {"raw_symbol_count": 2, "symbol_count": 2, "sample_symbols": ["AAPL", "MSFT"]},
+    )
+    monkeypatch.setattr(pipeline, "build_pipeline_command", lambda *args, **kwargs: ["modelFactory"])
+    monkeypatch.setattr(pipeline, "format_command_for_display", lambda command: " ".join(command))
+    monkeypatch.setattr(
+        pipeline.st,
+        "button",
+        lambda _label, *args, **kwargs: str(kwargs.get("key") or "") == "run_pipeline_step_ml_predict_scoped",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_pipeline_step",
+        lambda _step_key, _step_label, options, _db_config, _all_runs: launch_calls.append(options),
+    )
+
+    pipeline._render_ml_predict_scope_block(
+        pipeline.PipelineLaunchOptions(),
+        workflow_active=False,
+        active_for_step=[],
+        db_config={},
+        all_runs=[],
+    )
+
+    assert len(launch_calls) == 1
+    assert launch_calls[0].ml_predict_batch_id == "batch-new"
 
 
 def test_render_ml_predict_scope_block_displays_manual_command_preview(monkeypatch) -> None:

@@ -134,6 +134,48 @@ def test_resolve_artifact_paths_prefers_registry_when_files_exist(tmp_path: Path
     assert resolved == (ckpt, scaler, config, "run-registry")
 
 
+def test_resolve_artifact_paths_uses_selected_batch_for_registry_and_disk_fallback(tmp_path: Path, monkeypatch) -> None:
+    calls: list[dict[str, str | None]] = []
+
+    def fake_load_training_run(engine, symbol, run_id=None, batch_id=None):
+        calls.append({"symbol": symbol, "run_id": run_id, "batch_id": batch_id})
+        return None
+
+    monkeypatch.setattr(predictor, "load_training_run", fake_load_training_run)
+
+    resolved = predictor._resolve_artifact_paths(
+        "AAPL",
+        tmp_path,
+        cast(Engine, object()),
+        run_id=None,
+        batch_id="model-factory-20260716-expert",
+    )
+
+    expected_dir = tmp_path / "model-factory-20260716-expert" / "AAPL"
+    assert calls == [{"symbol": "AAPL", "run_id": None, "batch_id": "model-factory-20260716-expert"}]
+    assert resolved == (expected_dir / "best.ckpt", expected_dir / "scaler.pkl", expected_dir / "config.json", None)
+
+
+def test_predict_batch_forwards_selected_batch_to_every_symbol(tmp_path: Path, monkeypatch) -> None:
+    received_batch_ids: list[str | None] = []
+
+    def fake_predict_symbol(symbol, *args, batch_id=None, **kwargs):
+        received_batch_ids.append(batch_id)
+        return pd.DataFrame([{"symbol": symbol}])
+
+    monkeypatch.setattr(predictor, "predict_symbol", fake_predict_symbol)
+
+    result = predictor.predict_batch(
+        ["AAPL", "MSFT"],
+        tmp_path,
+        cast(Engine, object()),
+        batch_id="campaign-expert",
+    )
+
+    assert received_batch_ids == ["campaign-expert", "campaign-expert"]
+    assert list(result["symbol"]) == ["AAPL", "MSFT"]
+
+
 def test_resolve_selected_model_route_uses_routing_block(tmp_path: Path) -> None:
     routed_ckpt = tmp_path / "routed.ckpt"
     routed_scaler = tmp_path / "routed.pkl"

@@ -17,7 +17,12 @@ from ihm.components.db_controls import render_db_connection_form, render_query_d
 from ihm.components.tables import show_dataframe
 from ihm.components.symbol_table import render_symbol_table
 from ihm.services.db import db_available
-from ihm.services.ml_artifacts import get_model_artifacts_dir, list_ml_artifact_symbols, load_ml_artifact_report
+from ihm.services.ml_artifacts import (
+    get_model_artifacts_dir,
+    list_ml_artifact_batches,
+    list_ml_artifact_symbols,
+    load_ml_artifact_report,
+)
 from ihm.services.queries import (
     get_model_governance,
     get_model_metrics,
@@ -31,6 +36,7 @@ from ihm.services.run_summary import get_run_summary
 
 ML_AUDIT_FILTER_SOURCE_LIMIT = 500
 ML_SELECTED_AUDIT_NAVIGATION_KEY = "ihm_ml_selected_audit_navigation"
+ML_SELECTED_ARTIFACT_BATCH_KEY = "ihm_ml_selected_artifact_batch"
 
 
 def _sorted_non_empty_strings(values: list[object], *, reverse: bool = False) -> list[str]:
@@ -444,14 +450,24 @@ def render() -> None:
     )
 
     st.subheader("🧭 Gouvernance & artefacts de serving")
-    artifacts_dir = get_model_artifacts_dir()
+    artifacts_root = get_model_artifacts_dir()
+    artifact_batches = list_ml_artifact_batches(artifacts_root)
+    if artifact_batches:
+        selected_batch = st.selectbox(
+            "Campagne d'artefacts",
+            options=artifact_batches,
+            key=ML_SELECTED_ARTIFACT_BATCH_KEY,
+        )
+        artifacts_dir = artifacts_root / selected_batch
+    else:
+        artifacts_dir = artifacts_root
     st.caption(
         f"Cette section lit directement les artefacts `modelFactory` sous `{artifacts_dir}` afin d'exposer le champion servi, les challengers et les routes d'inférence."
     )
 
-    artifact_symbols = list_ml_artifact_symbols()
+    artifact_symbols = list_ml_artifact_symbols(artifacts_dir)
     db_symbols = get_prediction_symbols() if db_available() else []
-    symbols = sorted(set(artifact_symbols) | set(db_symbols), key=lambda sym: (sym.startswith("__"), sym))
+    symbols = artifact_symbols or sorted(set(db_symbols), key=lambda sym: (sym.startswith("__"), sym))
     if not symbols:
         st.info("Aucun artefact `modelFactory` détecté pour le moment. Lancez d'abord `ML Train` ou vérifiez le dossier des artefacts.")
         report = None
@@ -463,7 +479,7 @@ def render() -> None:
             format_func=lambda sym: f"{sym} — modèle global" if sym.startswith("__") else sym,
             key=ML_SELECTED_SYMBOL_KEY,
         )
-        report = load_ml_artifact_report(selected_symbol)
+        report = load_ml_artifact_report(selected_symbol, artifacts_dir)
         for error in report["errors"]:
             st.warning(error)
 

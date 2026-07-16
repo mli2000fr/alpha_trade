@@ -1457,6 +1457,8 @@ def train_symbol(
             },
             "symbol": symbol,
             "run_id": run_id,
+            "batch_id": batch_id,
+            "artifacts_dir": str(cfg.artifacts_dir),
             "feature_columns": dm.scaler.feature_names,
             "feature_contract": feature_contract,
             "cross_sectional_feature_columns": cross_sectional_feature_columns,

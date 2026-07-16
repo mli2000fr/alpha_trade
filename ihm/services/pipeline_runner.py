@@ -234,6 +234,7 @@ MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
 MLTrainSymbolSource = Literal[
     "tradable-universe",
     "stock-bars-daily",
+    "ticket-recherche",
     "stock_scores",
     "stock_scores_history",
     "stock_scores_all",
@@ -352,6 +353,7 @@ class PipelineLaunchOptions:
     ml_comment: str | None = None
     ml_predict_symbol_source: MLTrainSymbolSource = "tradable-universe"
     ml_predict_use_historical_range: bool = False
+    ml_predict_batch_id: str | None = None
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
     ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
@@ -1564,6 +1566,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         "stock-bars-daily": "stock-bars-daily",
         "stock_bars_daily": "stock-bars-daily",
         "tradable-universe": "tradable-universe",
+        "ticket-recherche": "ticket-recherche",
     }.get(str(options.ml_train_symbol_source or "").strip().lower(), "tradable-universe")
     ml_train_start_symbol = _normalize_optional_symbol(options.ml_train_start_symbol)
     ml_predict_symbol_source = "tradable-universe"
@@ -2210,6 +2213,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
             if ml_training_end_date:
                 command.extend(["--training-end-date", ml_training_end_date])
+        if options.ml_predict_batch_id:
+            command.extend(["--batch-id", options.ml_predict_batch_id])
         return command
 
     if step_key == "risk_management":

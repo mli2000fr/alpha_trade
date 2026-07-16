@@ -1990,6 +1990,19 @@ def get_training_runs(limit: int = 20) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def get_completed_ml_training_batches(limit: int = 100) -> pd.DataFrame:
+    return safe_query(f"""
+        SELECT batch_id, comment, symbol_source, training_start_date, training_end_date,
+               finished_at, symbols_completed
+        FROM model_training_batch
+        WHERE status = 'completed'
+          AND COALESCE(symbols_completed, 0) > 0
+        ORDER BY finished_at DESC, started_at DESC
+        LIMIT {int(limit)}
+    """)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def get_model_metrics() -> pd.DataFrame:
     return safe_query("SELECT * FROM model_metrics ORDER BY symbol, split_name")
 

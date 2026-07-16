@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.config import BaselineConfig, CalibrationConfig, DataConfig, TargetOptimizationConfig, TrainingConfig, WalkForwardConfig
@@ -98,7 +99,14 @@ def test_run_catboost_baseline_returns_metrics(monkeypatch) -> None:
 
 
 def test_run_catboost_baseline_can_persist_local_artifacts(monkeypatch, tmp_path) -> None:
-	monkeypatch.setattr("modelFactory.catboost_baseline._import_catboost", lambda: FakePickleableCatBoostModel)
+	created_models: list[FakePickleableCatBoostModel] = []
+
+	def build_model(**kwargs):
+		model = FakePickleableCatBoostModel(**kwargs)
+		created_models.append(model)
+		return model
+
+	monkeypatch.setattr("modelFactory.catboost_baseline._import_catboost", lambda: build_model)
 
 	cfg = TrainingConfig(
 		data=DataConfig(),
@@ -106,15 +114,20 @@ def test_run_catboost_baseline_can_persist_local_artifacts(monkeypatch, tmp_path
 		walk_forward=WalkForwardConfig(),
 		baseline=BaselineConfig(enabled=True, enable_catboost=True),
 		target_optimization=TargetOptimizationConfig(),
+		catboost_artifacts_dir=tmp_path / "catboost_info" / "campaign-20260716",
+		batch_id="campaign-20260716",
 	)
 
-	result = run_catboost_baseline(_prepared_df(), cfg, artifact_dir=tmp_path)
+	model_artifact_dir = tmp_path / "models" / "campaign-20260716" / "AAPL"
+	result = run_catboost_baseline(_prepared_df(), cfg, artifact_dir=model_artifact_dir)
 
 	assert result["inference_backend"] == "catboost_tabular"
 	# Phase 4.2.c — format natif (.cbm)
 	assert result["artifact_paths"]["model_path"].endswith("catboost_model.cbm")
 	assert result["artifact_paths"]["model_format"] == "cbm"
-	assert (tmp_path / "catboost_model.cbm").exists()
-	assert not (tmp_path / "catboost_model.pkl").exists()
+	assert (model_artifact_dir / "catboost_model.cbm").exists()
+	assert not (model_artifact_dir / "catboost_model.pkl").exists()
+	assert len(created_models) == 1
+	assert Path(created_models[0].kwargs["train_dir"]).parent == cfg.catboost_artifacts_dir / "AAPL"
 
 

@@ -21,6 +21,24 @@ def _symbol_sort_key(symbol: str) -> tuple[bool, str]:
     return (symbol.startswith("__"), symbol)
 
 
+def list_ml_artifact_batches(artifacts_dir: Path | None = None) -> list[str]:
+    """Return artifact campaign directories that contain at least one symbol."""
+    root = get_model_artifacts_dir(artifacts_dir)
+    if not root.exists() or not root.is_dir():
+        return []
+    batches: list[str] = []
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        if any(
+            grandchild.is_dir()
+            and ((grandchild / "config.json").exists() or (grandchild / "metrics.json").exists())
+            for grandchild in child.iterdir()
+        ):
+            batches.append(child.name)
+    return sorted(batches, reverse=True)
+
+
 def list_ml_artifact_symbols(artifacts_dir: Path | None = None) -> list[str]:
     root = get_model_artifacts_dir(artifacts_dir)
     if not root.exists() or not root.is_dir():

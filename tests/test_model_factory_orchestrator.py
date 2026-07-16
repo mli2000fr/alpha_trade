@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
@@ -51,9 +52,19 @@ def test_run_training_batch_passes_shared_batch_id_to_workers(monkeypatch, tmp_p
         accelerator="cpu",
     )
     batch_ids: list[str] = []
+    artifact_dirs: list[tuple[object, object, object, object, object]] = []
 
     def fake_train_worker(symbol, cfg, **kwargs):
         batch_ids.append(kwargs["batch_id"])
+        artifact_dirs.append(
+            (
+                cfg.artifacts_dir,
+                cfg.benchmark_artifacts_dir,
+                cfg.global_benchmark_artifacts_dir,
+                cfg.catboost_artifacts_dir,
+                cfg.batch_id,
+            )
+        )
         return orchestrator.TrainResult(symbol, f"run-{symbol}", "completed")
 
     monkeypatch.setattr(orchestrator, "_train_worker", fake_train_worker)
@@ -68,6 +79,14 @@ def test_run_training_batch_passes_shared_batch_id_to_workers(monkeypatch, tmp_p
     assert [result.symbol for result in results] == ["AAPL", "MSFT"]
     assert len(set(batch_ids)) == 1
     assert batch_ids == ["campaign-20260715", "campaign-20260715"]
+    expected_artifact_dirs = (
+        tmp_path / "campaign-20260715",
+        Path("artifacts/benchmarks") / "campaign-20260715",
+        Path("artifacts/global_benchmark") / "campaign-20260715",
+        Path("catboost_info") / "campaign-20260715",
+        "campaign-20260715",
+    )
+    assert artifact_dirs == [expected_artifact_dirs, expected_artifact_dirs]
 
 
 def test_run_training_batch_requires_pit_date_without_explicit_symbols(tmp_path) -> None:
@@ -176,6 +195,7 @@ def test_train_worker_loads_selector_context_when_enabled(monkeypatch) -> None:
 
 
 def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypatch, tmp_path) -> None:
+    batch_id = "campaign-global"
     cfg = TrainingConfig(
         data=DataConfig(),
         model=ModelConfig(max_epochs=1),
@@ -197,7 +217,7 @@ def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypat
     )
 
     def fake_train_worker(symbol, cfg, **kwargs):
-        symbol_dir = tmp_path / symbol
+        symbol_dir = cfg.artifacts_dir / symbol
         symbol_dir.mkdir(parents=True, exist_ok=True)
         with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
             json.dump({
@@ -218,7 +238,7 @@ def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypat
         "status": "completed",
         "artifact_symbol": "__GLOBAL__",
         "backend_model_name": "lightgbm",
-        "artifact_paths": {"model_path": str(tmp_path / "__GLOBAL__" / "global_model.pkl"), "config_path": str(tmp_path / "__GLOBAL__" / "config.json"), "calibrator_path": None},
+        "artifact_paths": {"model_path": str(artifacts_dir / "__GLOBAL__" / "global_model.pkl"), "config_path": str(artifacts_dir / "__GLOBAL__" / "config.json"), "calibrator_path": None},
         "selection_score": 0.7,
         "by_symbol": {
             "AAPL": {"status": "completed", "model_name": "global_model", "selection_score": 0.7, "test": {"auc": 0.7}},
@@ -226,18 +246,19 @@ def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypat
         },
     })
 
-    results = orchestrator.run_training_batch(cfg, engine=object(), symbols=["AAPL", "MSFT"])
+    results = orchestrator.run_training_batch(cfg, engine=object(), symbols=["AAPL", "MSFT"], batch_id=batch_id)
 
     assert len(results) == 2
-    with open(tmp_path / "AAPL" / "config.json", encoding="utf-8") as fh:
+    with open(tmp_path / batch_id / "AAPL" / "config.json", encoding="utf-8") as fh:
         config_data = json.load(fh)
-    with open(tmp_path / "AAPL" / "metrics.json", encoding="utf-8") as fh:
+    with open(tmp_path / batch_id / "AAPL" / "metrics.json", encoding="utf-8") as fh:
         metrics = json.load(fh)
     assert config_data["artifact_routes"]["models"]["global_model"]["inference_backend"] == "global_tabular"
     assert metrics["challengers"]["global_model"]["model_name"] == "global_model"
 
 
 def test_run_training_batch_can_auto_select_global_model(monkeypatch, tmp_path) -> None:
+    batch_id = "campaign-auto-global"
     cfg = TrainingConfig(
         data=DataConfig(),
         model=ModelConfig(max_epochs=1),
@@ -249,7 +270,7 @@ def test_run_training_batch_can_auto_select_global_model(monkeypatch, tmp_path) 
     )
 
     def fake_train_worker(symbol, cfg, **kwargs):
-        symbol_dir = tmp_path / symbol
+        symbol_dir = cfg.artifacts_dir / symbol
         symbol_dir.mkdir(parents=True, exist_ok=True)
         with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
             json.dump({
@@ -273,18 +294,18 @@ def test_run_training_batch_can_auto_select_global_model(monkeypatch, tmp_path) 
         "status": "completed",
         "artifact_symbol": "__GLOBAL__",
         "backend_model_name": "lightgbm",
-        "artifact_paths": {"model_path": str(tmp_path / "__GLOBAL__" / "global_model.pkl"), "config_path": str(tmp_path / "__GLOBAL__" / "config.json"), "calibrator_path": None},
+        "artifact_paths": {"model_path": str(artifacts_dir / "__GLOBAL__" / "global_model.pkl"), "config_path": str(artifacts_dir / "__GLOBAL__" / "config.json"), "calibrator_path": None},
         "selection_score": 0.85,
         "by_symbol": {
             "AAPL": {"status": "completed", "model_name": "global_model", "selection_score": 0.85, "test": {"auc": 0.85}},
         },
     })
 
-    orchestrator.run_training_batch(cfg, engine=object(), symbols=["AAPL"])
+    orchestrator.run_training_batch(cfg, engine=object(), symbols=["AAPL"], batch_id=batch_id)
 
-    with open(tmp_path / "AAPL" / "config.json", encoding="utf-8") as fh:
+    with open(tmp_path / batch_id / "AAPL" / "config.json", encoding="utf-8") as fh:
         config_data = json.load(fh)
-    with open(tmp_path / "AAPL" / "metrics.json", encoding="utf-8") as fh:
+    with open(tmp_path / batch_id / "AAPL" / "metrics.json", encoding="utf-8") as fh:
         metrics = json.load(fh)
 
     assert config_data["architecture_selected"] == "global_model"

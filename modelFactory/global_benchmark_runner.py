@@ -205,7 +205,9 @@ class GlobalBenchmarkRunner:
         """
         self.symbols = list(symbols)
         self.training_cfg = training_cfg
-        self.benchmark_cfg = benchmark_cfg or GlobalBenchmarkConfig()
+        self.benchmark_cfg = benchmark_cfg or GlobalBenchmarkConfig(
+            artifacts_dir=Path(training_cfg.global_benchmark_artifacts_dir),
+        )
         self.engine = engine
         self.data_provider = data_provider
         self.is_ternary = training_cfg.data.target_mode == "ternary"
@@ -362,6 +364,11 @@ class GlobalBenchmarkRunner:
             ),
             champion_selection=self.training_cfg.champion_selection,
             global_model=self.training_cfg.global_model,
+            artifacts_dir=self.training_cfg.artifacts_dir,
+            benchmark_artifacts_dir=self.training_cfg.benchmark_artifacts_dir,
+            global_benchmark_artifacts_dir=self.training_cfg.global_benchmark_artifacts_dir,
+            catboost_artifacts_dir=self.training_cfg.catboost_artifacts_dir,
+            batch_id=self.training_cfg.batch_id,
         )
 
         try:

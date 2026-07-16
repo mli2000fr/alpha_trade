@@ -445,6 +445,11 @@ class BenchmarkRunner:
                 threshold_optimization=self.training_cfg.threshold_optimization,
                 reproducibility=ReproducibilityConfig(seed=seed, deterministic=self.training_cfg.reproducibility.deterministic),
                 champion_selection=self.training_cfg.champion_selection,
+                artifacts_dir=self.training_cfg.artifacts_dir,
+                benchmark_artifacts_dir=self.training_cfg.benchmark_artifacts_dir,
+                global_benchmark_artifacts_dir=self.training_cfg.global_benchmark_artifacts_dir,
+                catboost_artifacts_dir=self.training_cfg.catboost_artifacts_dir,
+                batch_id=self.training_cfg.batch_id,
             )
             if model_name == "lightgbm":
                 result = run_lightgbm_baseline(df, cfg)
@@ -673,7 +678,10 @@ def run_model_benchmark(
     """
     cfg = BenchmarkConfig(n_seeds=n_seeds, base_seed=base_seed)
     runner = BenchmarkRunner(prepared_df, training_cfg, benchmark_cfg=cfg)
-    return runner.run()
+    report = runner.run()
+    if training_cfg.batch_id is not None:
+        persist_benchmark_report(report, artifact_dir=training_cfg.benchmark_artifacts_dir)
+    return report
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

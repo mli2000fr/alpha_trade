@@ -250,7 +250,13 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
         },
     )
 
-    result = trainer.train_symbol("AAPL", pd.DataFrame({"close": list(range(12))}), cfg, engine=None)
+    result = trainer.train_symbol(
+        "AAPL",
+        pd.DataFrame({"close": list(range(12))}),
+        cfg,
+        engine=None,
+        batch_id="campaign-20260716",
+    )
 
     assert result.status == "completed"
     with open(tmp_path / "AAPL" / "config.json", encoding="utf-8") as fh:
@@ -259,6 +265,8 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
         metrics = json.load(fh)
 
     assert config_data["architecture_selected"] == "lstm_attention"
+    assert config_data["batch_id"] == "campaign-20260716"
+    assert config_data["artifacts_dir"] == str(tmp_path)
     assert config_data["artifact_routes"]["selected_model"] == "lstm_attention"
     assert config_data["feature_contract"]["feature_columns"] == ["feat1"]
     assert config_data["feature_contract"]["scaler_feature_names"] == ["feat1"]

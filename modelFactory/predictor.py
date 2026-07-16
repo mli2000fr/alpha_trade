@@ -489,15 +489,20 @@ def _resolve_artifact_paths(
     artifacts_dir: Path,
     engine: "Engine",  # type: ignore[name-defined]
     run_id: Optional[str],
+    batch_id: Optional[str] = None,
 ) -> tuple[Path, Path, Path, Optional[str]]:
-    """Résout les artefacts depuis le registre DB, sinon via le dossier canonique du symbole."""
+    """Résout les artefacts depuis le registre DB, sinon via le dossier de campagne du symbole."""
     try:
-        selected_run = load_training_run(engine, symbol, run_id=run_id)
+        if batch_id is not None:
+            selected_run = load_training_run(engine, symbol, run_id=run_id, batch_id=batch_id)
+        else:
+            selected_run = load_training_run(engine, symbol, run_id=run_id)
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning(
-            "predict_symbol registry_lookup_failed symbol=%s run_id=%s fallback=canonical_dir error=%s",
+            "predict_symbol registry_lookup_failed symbol=%s run_id=%s batch_id=%s fallback=artifact_dir error=%s",
             symbol,
             run_id,
+            batch_id,
             exc,
         )
         _record_db_issue(operation="load_training_run", symbol=symbol, reason=f"registry_lookup_failed:{type(exc).__name__}")
@@ -514,7 +519,7 @@ def _resolve_artifact_paths(
             selected_run.get("run_id"),
         )
 
-    sym_dir = artifacts_dir / symbol
+    sym_dir = artifacts_dir / batch_id / symbol if batch_id is not None else artifacts_dir / symbol
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
 
 
@@ -1248,6 +1253,7 @@ def predict_symbol(
     engine: "Engine",  # type: ignore[name-defined]
     prediction_date: Optional[date] = None,
     run_id: Optional[str] = None,
+    batch_id: Optional[str] = None,
     as_of_date: Optional[date] = None,
     persist: bool = True,
     accelerator: str = "auto",
@@ -1258,7 +1264,13 @@ def predict_symbol(
         DataFrame avec colonnes: symbol, prediction_date, predicted_proba, predicted_class, run_id
         ou None si artefacts manquants.
     """
-    ckpt_path, scaler_path, config_path, selected_run_id = _resolve_artifact_paths(symbol, artifacts_dir, engine, run_id)
+    ckpt_path, scaler_path, config_path, selected_run_id = _resolve_artifact_paths(
+        symbol,
+        artifacts_dir,
+        engine,
+        run_id,
+        batch_id=batch_id,
+    )
 
     if not config_path.exists():
         LOGGER.warning("predict_symbol no_artifacts symbol=%s path=%s", symbol, config_path)
@@ -1674,6 +1686,7 @@ def predict_batch(
     artifacts_dir: Path,
     engine: "Engine",  # type: ignore[name-defined]
     prediction_date: Optional[date] = None,
+    batch_id: Optional[str] = None,
     as_of_date: Optional[date] = None,
     persist: bool = True,
     accelerator: str = "auto",
@@ -1720,6 +1733,7 @@ def predict_batch(
                 artifacts_dir,
                 engine,
                 prediction_date,
+                batch_id=batch_id,
                 as_of_date=as_of_date,
                 persist=persist,
                 accelerator=accelerator,
@@ -1768,6 +1782,7 @@ def predict_batch(
             artifacts_dir,
             engine,
             prediction_date,
+            batch_id=batch_id,
             as_of_date=as_of_date,
             persist=persist,
             accelerator=accelerator,

@@ -1,6 +1,7 @@
 """modelFactory/orchestrator.py — Orchestrateur distribué multi-symboles."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timezone
 import json
 import logging
@@ -45,7 +46,23 @@ LOGGER = logging.getLogger(__name__)
 SymbolSource = Literal[
     "tradable-universe",
     "stock-bars-daily",
+    "ticket-recherche",
 ]
+
+
+def _with_batch_artifacts_dir(cfg: TrainingConfig, batch_id: str) -> TrainingConfig:
+    """Return the immutable configuration scoped to one artifact campaign."""
+    normalized_batch_id = str(batch_id).strip()
+    if not normalized_batch_id or Path(normalized_batch_id).name != normalized_batch_id:
+        raise ValueError("batch_id must be a single non-empty directory name.")
+    return replace(
+        cfg,
+        artifacts_dir=Path(cfg.artifacts_dir) / normalized_batch_id,
+        benchmark_artifacts_dir=Path(cfg.benchmark_artifacts_dir) / normalized_batch_id,
+        global_benchmark_artifacts_dir=Path(cfg.global_benchmark_artifacts_dir) / normalized_batch_id,
+        catboost_artifacts_dir=Path(cfg.catboost_artifacts_dir) / normalized_batch_id,
+        batch_id=normalized_batch_id,
+    )
 
 
 def _inject_global_model_into_symbol_artifacts(
@@ -397,6 +414,7 @@ def run_training_batch(
         Liste de TrainResult.
     """
     batch_id = batch_id or f"model-factory-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid4().hex[:6]}"
+    cfg = _with_batch_artifacts_dir(cfg, batch_id)
 
     if symbols is None:
         if symbol_source == "tradable-universe":

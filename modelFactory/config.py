@@ -336,6 +336,10 @@ class TrainingConfig:
     champion_selection: ChampionSelectionConfig = field(default_factory=ChampionSelectionConfig)
     reproducibility: ReproducibilityConfig = field(default_factory=ReproducibilityConfig)
     artifacts_dir: Path = Path("artifacts/models")
+    benchmark_artifacts_dir: Path = Path("artifacts/benchmarks")
+    global_benchmark_artifacts_dir: Path = Path("artifacts/global_benchmark")
+    catboost_artifacts_dir: Path = Path("catboost_info")
+    batch_id: str | None = None
     max_workers: int = 4
     accelerator: str = "auto"  # auto | cpu | gpu
     debug_train: bool = False
@@ -343,4 +347,6 @@ class TrainingConfig:
     def __post_init__(self) -> None:
         if self.max_workers < 1:
             raise ValueError("max_workers doit être >= 1.")
+        if self.batch_id is not None and (not self.batch_id.strip() or Path(self.batch_id).name != self.batch_id):
+            raise ValueError("batch_id doit être un nom de dossier non vide.")
 

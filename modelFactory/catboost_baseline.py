@@ -34,6 +34,9 @@ def run_catboost_baseline(
 		LOGGER.warning("CatBoost indisponible: baseline ignorée")
 		return {"status": "unavailable", "model_name": "catboost", "reason": "catboost_not_installed"}
 
+	artifact_scope = artifact_dir.name if artifact_dir is not None else "__BENCHMARK__"
+	catboost_run_root = Path(cfg.catboost_artifacts_dir) / artifact_scope
+
 	return run_tabular_baseline(
 		prepared_df,
 		cfg,
@@ -45,6 +48,8 @@ def run_catboost_baseline(
 			random_seed=resolved_seed,
 			loss_function="MultiClass" if cfg.data.target_mode == "ternary" else "Logloss",
 			verbose=False,
+			train_dir=str(catboost_run_root / f"seed_{resolved_seed}"),
+			allow_writing_files=True,
 		),
 		artifact_dir=artifact_dir,
 		# Phase 4.2.c — format natif CatBoost (.cbm). Plus de pickle.

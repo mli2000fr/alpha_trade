@@ -954,6 +954,16 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert predict_cmd[predict_cmd.index("--accelerator") + 1] == "gpu"
     assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == "tradable-universe"
     assert "--artifacts-dir" in predict_cmd
+    assert "--batch-id" not in predict_cmd
+
+
+def test_build_pipeline_command_ml_predict_uses_selected_batch() -> None:
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(ml_predict_batch_id="model-factory-20260716-expert"),
+    )
+
+    assert command[command.index("--batch-id") + 1] == "model-factory-20260716-expert"
 
 
 def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options() -> None:
