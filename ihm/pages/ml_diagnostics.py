@@ -70,6 +70,57 @@ F1_BUCKET_QUERY = """
     ORDER BY wf_f1_macro_bucket
 """
 
+TOP5_BEST_F1_QUERY = """
+    SELECT
+        mm.symbol,
+        ROUND(mm.f1_macro, 3) AS f1_macro,
+        ROUND(mm.f1_long, 3) AS f1_long,
+        ROUND(mm.f1_short, 3) AS f1_short,
+        ROUND(mm.f1_flat, 3) AS f1_flat
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+    ORDER BY mm.f1_macro DESC
+    LIMIT 5
+"""
+
+TOP5_WORST_F1_QUERY = """
+    SELECT
+        mm.symbol,
+        ROUND(mm.f1_macro, 3) AS f1_macro,
+        ROUND(mm.f1_long, 3) AS f1_long,
+        ROUND(mm.f1_short, 3) AS f1_short,
+        ROUND(mm.f1_flat, 3) AS f1_flat
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+    ORDER BY mm.f1_macro ASC
+    LIMIT 5
+"""
+
+ZERO_F1_SHORT_QUERY = """
+    SELECT
+        mm.symbol,
+        ROUND(mm.f1_macro, 3) AS f1_macro,
+        ROUND(mm.f1_long, 3) AS f1_long,
+        ROUND(mm.f1_short, 3) AS f1_short,
+        ROUND(mm.f1_flat, 3) AS f1_flat
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+      AND mm.f1_short = 0
+    LIMIT 5
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -164,6 +215,43 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.bar_chart(chart_df["nb_symbols"], y_label="Nb symboles", x_label="Bucket F1 macro")
         with col_table:
             st.dataframe(bucket_df, use_container_width=True, hide_index=True)
+
+    # ── Top 5 / Flop 5 / F1 short = 0 ──
+    st.subheader("🏆 Top / Flop symboles — Walk-Forward")
+
+    col_best, col_worst, col_zero = st.columns(3)
+
+    with col_best:
+        st.markdown("**🥇 5 meilleurs `f1_macro`**")
+        best_df = safe_query(TOP5_BEST_F1_QUERY, {"batch_id": batch["batch_id"]})
+        if best_df.empty:
+            st.caption("Aucune donnée.")
+        else:
+            st.dataframe(best_df, use_container_width=True, hide_index=True)
+
+    with col_worst:
+        st.markdown("**🥉 5 plus mauvais `f1_macro`**")
+        worst_df = safe_query(TOP5_WORST_F1_QUERY, {"batch_id": batch["batch_id"]})
+        if worst_df.empty:
+            st.caption("Aucune donnée.")
+        else:
+            st.dataframe(worst_df, use_container_width=True, hide_index=True)
+
+    with col_zero:
+        st.markdown("**⚪ `f1_short = 0`**")
+        zero_df = safe_query(ZERO_F1_SHORT_QUERY, {"batch_id": batch["batch_id"]})
+        if zero_df.empty:
+            st.caption("Aucun symbole avec f1_short = 0.")
+        else:
+            st.dataframe(zero_df, use_container_width=True, hide_index=True)
+
+    # ── Interprétation ──
+    with st.expander("ℹ️ Aide à l'interprétation", expanded=False):
+        st.markdown("""
+- **Peu de `true_short_pct`** : le label est trop rare ou mal défini pour ce symbole.
+- **`true_short_pct` normal mais `pred_short_pct` proche de zéro** : le modèle évite la classe `short`.
+- **`pred_short_pct` élevé mais `f1_short` faible** : les signaux short sont bruyants ou les seuils de décision sont trop permissifs.
+""")
 
 
 # ---------------------------------------------------------------------------
