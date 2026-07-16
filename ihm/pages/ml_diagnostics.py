@@ -304,20 +304,24 @@ def _render_batch_detail(batch: pd.Series) -> None:
         with col_table:
             st.dataframe(bucket_df, use_container_width=True, hide_index=True)
 
-    # ── Top 5 / Flop 5 / F1 short = 0 ──
+    # ── Top 10 / Flop 10 / F1 short = 0 ──
     st.subheader("🏆 Top / Flop symboles — Walk-Forward")
+
+    _ALL_SYMBOL_TABLE_KEYS = (BEST_TABLE_KEY, WORST_TABLE_KEY, ZERO_TABLE_KEY)
+
+    def _make_exclusive_callback(own_key: str):
+        """Callback : efface les sélections des 2 autres tableaux puis rerun."""
+        def _cb() -> None:
+            _empty = {"selection": {"rows": [], "columns": [], "cells": []}}
+            for _tk in _ALL_SYMBOL_TABLE_KEYS:
+                if _tk != own_key and _tk in st.session_state:
+                    st.session_state[_tk] = _empty
+            st.rerun()
+        return _cb
 
     best_df = pd.DataFrame()
     worst_df = pd.DataFrame()
     zero_df = pd.DataFrame()
-
-    # ── Exclusion mutuelle : une seule sélection parmi les 3 tableaux ──
-    _ALL_SYMBOL_TABLE_KEYS = (BEST_TABLE_KEY, WORST_TABLE_KEY, ZERO_TABLE_KEY)
-    _active_key: str | None = None
-    for _tk in _ALL_SYMBOL_TABLE_KEYS:
-        if _selected_row_index(_tk) is not None:
-            _active_key = _tk
-            break
 
     col_best, col_worst, col_zero = st.columns(3)
 
@@ -329,14 +333,9 @@ def _render_batch_detail(batch: pd.Series) -> None:
         else:
             st.dataframe(
                 best_df, use_container_width=True, hide_index=True,
-                on_select="rerun", selection_mode="single-row", key=BEST_TABLE_KEY,
+                on_select=_make_exclusive_callback(BEST_TABLE_KEY),
+                selection_mode="single-row", key=BEST_TABLE_KEY,
             )
-            # Désélectionner les autres si celui-ci vient d'être sélectionné
-            if _selected_row_index(BEST_TABLE_KEY) is not None and _active_key != BEST_TABLE_KEY:
-                for _tk in _ALL_SYMBOL_TABLE_KEYS:
-                    if _tk != BEST_TABLE_KEY and _tk in st.session_state:
-                        del st.session_state[_tk]
-                st.rerun()
 
     with col_worst:
         st.markdown("**🥉 10 plus mauvais `f1_macro`**")
@@ -346,13 +345,9 @@ def _render_batch_detail(batch: pd.Series) -> None:
         else:
             st.dataframe(
                 worst_df, use_container_width=True, hide_index=True,
-                on_select="rerun", selection_mode="single-row", key=WORST_TABLE_KEY,
+                on_select=_make_exclusive_callback(WORST_TABLE_KEY),
+                selection_mode="single-row", key=WORST_TABLE_KEY,
             )
-            if _selected_row_index(WORST_TABLE_KEY) is not None and _active_key != WORST_TABLE_KEY:
-                for _tk in _ALL_SYMBOL_TABLE_KEYS:
-                    if _tk != WORST_TABLE_KEY and _tk in st.session_state:
-                        del st.session_state[_tk]
-                st.rerun()
 
     with col_zero:
         st.markdown("**⚪ `f1_short = 0`**")
@@ -362,13 +357,9 @@ def _render_batch_detail(batch: pd.Series) -> None:
         else:
             st.dataframe(
                 zero_df, use_container_width=True, hide_index=True,
-                on_select="rerun", selection_mode="single-row", key=ZERO_TABLE_KEY,
+                on_select=_make_exclusive_callback(ZERO_TABLE_KEY),
+                selection_mode="single-row", key=ZERO_TABLE_KEY,
             )
-            if _selected_row_index(ZERO_TABLE_KEY) is not None and _active_key != ZERO_TABLE_KEY:
-                for _tk in _ALL_SYMBOL_TABLE_KEYS:
-                    if _tk != ZERO_TABLE_KEY and _tk in st.session_state:
-                        del st.session_state[_tk]
-                st.rerun()
 
     # ── Détail symbole sélectionné ──
     selected_symbol: str | None = None
