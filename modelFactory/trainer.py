@@ -963,6 +963,9 @@ def _run_walk_forward_validation(
                 learning_rate=cfg.model.learning_rate,
                 weight_decay=cfg.model.weight_decay,
                 num_classes=cfg.model.num_classes,
+                ternary_weight_short=cfg.model.ternary_weight_short,
+                ternary_weight_flat=cfg.model.ternary_weight_flat,
+                ternary_weight_long=cfg.model.ternary_weight_long,
             )
             trainer = L.Trainer(
                 max_epochs=cfg.model.max_epochs,
@@ -1248,6 +1251,9 @@ def train_symbol(
             learning_rate=effective_cfg.model.learning_rate,
             weight_decay=effective_cfg.model.weight_decay,
             num_classes=effective_cfg.model.num_classes,
+            ternary_weight_short=effective_cfg.model.ternary_weight_short,
+            ternary_weight_flat=effective_cfg.model.ternary_weight_flat,
+            ternary_weight_long=effective_cfg.model.ternary_weight_long,
         )
 
         ckpt_callback = ModelCheckpoint(

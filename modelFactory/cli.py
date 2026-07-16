@@ -214,6 +214,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--hidden-size", type=int, default=128)
     p.add_argument("--num-classes", type=int, default=2,
                    help="Nombre de classes : 2=binaire, 3=ternaire long/flat/short")
+    p.add_argument("--ternary-weight-short", type=float, default=1.0,
+                   help="Poids de la classe short dans la loss ternaire (défaut: 1.0)")
+    p.add_argument("--ternary-weight-flat", type=float, default=1.5,
+                   help="Poids de la classe flat dans la loss ternaire (défaut: 1.5)")
+    p.add_argument("--ternary-weight-long", type=float, default=1.0,
+                   help="Poids de la classe long dans la loss ternaire (défaut: 1.0)")
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
@@ -367,7 +373,15 @@ def main(args: list[str] | None = None) -> None:
             triple_barrier_max_sessions=opts.triple_barrier_max_sessions,
             decision_threshold=opts.decision_threshold,
         ),
-        model=ModelConfig(batch_size=opts.batch_size, hidden_size=opts.hidden_size, max_epochs=opts.max_epochs, num_classes=opts.num_classes),
+        model=ModelConfig(
+            batch_size=opts.batch_size,
+            hidden_size=opts.hidden_size,
+            max_epochs=opts.max_epochs,
+            num_classes=opts.num_classes,
+            ternary_weight_short=opts.ternary_weight_short,
+            ternary_weight_flat=opts.ternary_weight_flat,
+            ternary_weight_long=opts.ternary_weight_long,
+        ),
         calibration=CalibrationConfig(
             method=opts.calibration_method,
             min_samples=opts.calibration_min_samples,

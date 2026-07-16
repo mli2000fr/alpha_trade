@@ -151,6 +151,9 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_TARGET_DOWN_THRESHOLD,
     DEFAULT_ML_TARGET_MODE,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
+    DEFAULT_ML_TERNARY_WEIGHT_SHORT,
+    DEFAULT_ML_TERNARY_WEIGHT_FLAT,
+    DEFAULT_ML_TERNARY_WEIGHT_LONG,
     DEFAULT_ML_WALKFORWARD,
     DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS,
     DEFAULT_ML_WF_MAX_SPLITS,
@@ -3339,6 +3342,48 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ),
             )
 
+        st.markdown("##### Poids ternaires (short / flat / long)")
+        _tw_col1, _tw_col2, _tw_col3 = st.columns(3)
+        with _tw_col1:
+            ml_ternary_weight_short = float(
+                st.number_input(
+                    "Poids short",
+                    min_value=0.1,
+                    max_value=5.0,
+                    value=_session_state_float("pipeline_ml_ternary_weight_short", DEFAULT_ML_TERNARY_WEIGHT_SHORT),
+                    step=0.1,
+                    format="%.1f",
+                    key="pipeline_ml_ternary_weight_short",
+                    help="Poids de la classe short dans la CrossEntropyLoss ternaire (défaut: 1.0).",
+                )
+            )
+        with _tw_col2:
+            ml_ternary_weight_flat = float(
+                st.number_input(
+                    "Poids flat",
+                    min_value=0.1,
+                    max_value=5.0,
+                    value=_session_state_float("pipeline_ml_ternary_weight_flat", DEFAULT_ML_TERNARY_WEIGHT_FLAT),
+                    step=0.1,
+                    format="%.1f",
+                    key="pipeline_ml_ternary_weight_flat",
+                    help="Poids de la classe flat dans la CrossEntropyLoss ternaire (défaut: 1.5).",
+                )
+            )
+        with _tw_col3:
+            ml_ternary_weight_long = float(
+                st.number_input(
+                    "Poids long",
+                    min_value=0.1,
+                    max_value=5.0,
+                    value=_session_state_float("pipeline_ml_ternary_weight_long", DEFAULT_ML_TERNARY_WEIGHT_LONG),
+                    step=0.1,
+                    format="%.1f",
+                    key="pipeline_ml_ternary_weight_long",
+                    help="Poids de la classe long dans la CrossEntropyLoss ternaire (défaut: 1.0).",
+                )
+            )
+
         st.markdown("##### Walk-forward")
         ml_wf_col1, ml_wf_col2 = st.columns([1, 4])
         with ml_wf_col1:
@@ -3963,6 +4008,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_forecast_horizon=int(ml_forecast_horizon),
             ml_target_up_threshold=float(ml_target_up_threshold),
             ml_target_down_threshold=float(ml_target_down_threshold),
+            ml_ternary_weight_short=float(ml_ternary_weight_short),
+            ml_ternary_weight_flat=float(ml_ternary_weight_flat),
+            ml_ternary_weight_long=float(ml_ternary_weight_long),
             ml_decision_threshold=float(ml_decision_threshold),
             ml_calibration_method=cast(Any, ml_calibration_method),
             ml_feature_set=cast(Any, ml_feature_set),

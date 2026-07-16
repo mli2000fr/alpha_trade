@@ -95,6 +95,9 @@ class LSTMAttentionModule(L.LightningModule):
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-5,
         num_classes: int = 2,
+        ternary_weight_short: float = 1.0,
+        ternary_weight_flat: float = 1.5,
+        ternary_weight_long: float = 1.0,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -104,8 +107,10 @@ class LSTMAttentionModule(L.LightningModule):
         # Class weights for imbalanced ternary targets
         class_weights = None
         if num_classes == 3:
-            # Give more weight to minority classes (short=1.5, long=1.5) vs flat=1.0
-            class_weights = torch.tensor([1.5, 1.0, 1.5], dtype=torch.float32)  # short, flat, long
+            class_weights = torch.tensor(
+                [ternary_weight_short, ternary_weight_flat, ternary_weight_long],
+                dtype=torch.float32,
+            )  # short, flat, long
         self.criterion = nn.CrossEntropyLoss(weight=class_weights)
 
         # Metrics — adaptés au nombre de classes

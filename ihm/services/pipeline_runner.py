@@ -73,6 +73,9 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_TARGET_DOWN_THRESHOLD,
     DEFAULT_ML_TARGET_MODE,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
+    DEFAULT_ML_TERNARY_WEIGHT_SHORT,
+    DEFAULT_ML_TERNARY_WEIGHT_FLAT,
+    DEFAULT_ML_TERNARY_WEIGHT_LONG,
     DEFAULT_ML_TRAINING_END_DATE,
     DEFAULT_ML_TRAINING_START_DATE,
     DEFAULT_ML_WALKFORWARD,
@@ -323,6 +326,9 @@ class PipelineLaunchOptions:
     ml_forecast_horizon: int = DEFAULT_ML_FORECAST_HORIZON
     ml_target_up_threshold: float = DEFAULT_ML_TARGET_UP_THRESHOLD
     ml_target_down_threshold: float = DEFAULT_ML_TARGET_DOWN_THRESHOLD
+    ml_ternary_weight_short: float = DEFAULT_ML_TERNARY_WEIGHT_SHORT
+    ml_ternary_weight_flat: float = DEFAULT_ML_TERNARY_WEIGHT_FLAT
+    ml_ternary_weight_long: float = DEFAULT_ML_TERNARY_WEIGHT_LONG
     ml_decision_threshold: float = DEFAULT_ML_DECISION_THRESHOLD
     ml_calibration_method: MLCalibrationMethod = DEFAULT_ML_CALIBRATION_METHOD  # type: ignore[assignment]
     ml_feature_set: MLFeatureSet = DEFAULT_ML_FEATURE_SET  # type: ignore[assignment]
@@ -2053,6 +2059,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         # ML Sprint 1 — ajouter num-classes pour mode ternaire
         if options.ml_target_mode == "ternary":
             command.extend(["--num-classes", "3"])
+            command.extend([
+                "--ternary-weight-short", str(options.ml_ternary_weight_short),
+                "--ternary-weight-flat", str(options.ml_ternary_weight_flat),
+                "--ternary-weight-long", str(options.ml_ternary_weight_long),
+            ])
         command.extend([
             "--forecast-horizon",
             str(options.ml_forecast_horizon),

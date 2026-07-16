@@ -69,6 +69,12 @@ class DataConfig:
             raise ValueError("decision_threshold doit être dans ]0, 1[.")
         if self.target_down_threshold > self.target_up_threshold:
             raise ValueError("target_down_threshold doit être <= target_up_threshold.")
+        if self.target_mode == "ternary" and (
+            self.target_up_threshold <= 0.0 or self.target_down_threshold >= 0.0
+        ):
+            raise ValueError(
+                "target_mode='ternary' requiert target_up_threshold > 0 et target_down_threshold < 0."
+            )
         if not self.benchmark_symbol.strip():
             raise ValueError("benchmark_symbol ne doit pas être vide.")
         if self.training_start_date is not None and not isinstance(self.training_start_date, date):
@@ -293,6 +299,9 @@ class ModelConfig:
     max_epochs: int = 50
     patience: int = 7
     num_classes: int = 2
+    ternary_weight_short: float = 1.0
+    ternary_weight_flat: float = 1.5
+    ternary_weight_long: float = 1.0
 
     def __post_init__(self) -> None:
         if self.hidden_size < 1:
@@ -307,6 +316,12 @@ class ModelConfig:
             raise ValueError("batch_size doit être >= 1.")
         if self.max_epochs < 1:
             raise ValueError("max_epochs doit être >= 1.")
+        if self.ternary_weight_short <= 0:
+            raise ValueError("ternary_weight_short doit être > 0.")
+        if self.ternary_weight_flat <= 0:
+            raise ValueError("ternary_weight_flat doit être > 0.")
+        if self.ternary_weight_long <= 0:
+            raise ValueError("ternary_weight_long doit être > 0.")
 
 
 @dataclass(frozen=True, slots=True)

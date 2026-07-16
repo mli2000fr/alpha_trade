@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 import json
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal, Optional
 from uuid import uuid4
@@ -47,6 +48,18 @@ SymbolSource = Literal[
     "stock-bars-daily",
     "ticket-recherche",
 ]
+
+
+def _with_batch_artifacts_dir(cfg: TrainingConfig, batch_id: str) -> TrainingConfig:
+    """Scopes durable training artifacts under one immutable campaign directory."""
+    return replace(
+        cfg,
+        artifacts_dir=Path(cfg.artifacts_dir) / batch_id,
+        benchmark_artifacts_dir=Path(cfg.benchmark_artifacts_dir) / batch_id,
+        global_benchmark_artifacts_dir=Path(cfg.global_benchmark_artifacts_dir) / batch_id,
+        catboost_artifacts_dir=Path(cfg.catboost_artifacts_dir) / batch_id,
+        batch_id=batch_id,
+    )
 
 
 def _inject_global_model_into_symbol_artifacts(
@@ -398,6 +411,7 @@ def run_training_batch(
         Liste de TrainResult.
     """
     batch_id = batch_id or f"model-factory-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid4().hex[:6]}"
+    cfg = _with_batch_artifacts_dir(cfg, batch_id)
 
     if symbols is None:
         if symbol_source == "tradable-universe":

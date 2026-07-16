@@ -12,11 +12,15 @@ DEFAULT_ML_TARGET_MODE = "ternary"
 DEFAULT_ML_FORECAST_HORIZON = 10              # 10 jours = horizon swing étendu (TODO-5)
 DEFAULT_ML_TARGET_UP_THRESHOLD = 0.02        # +2.0 % cible long (P2 2026-07-01 : équilibre ~30% long / 40% flat / 30% short)
 DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.02     # -2.0 % cible short (P2 2026-07-01 : équilibre ~30% long / 40% flat / 30% short)
+DEFAULT_ML_TERNARY_WEIGHT_SHORT = 1.0
+DEFAULT_ML_TERNARY_WEIGHT_FLAT = 1.5
+DEFAULT_ML_TERNARY_WEIGHT_LONG = 1.0
 DEFAULT_ML_DECISION_THRESHOLD = 0.55
 DEFAULT_ML_CALIBRATION_METHOD = "platt"
 DEFAULT_ML_FEATURE_SET = "expert"
 DEFAULT_ML_MAX_WORKERS = 4
 DEFAULT_ML_MAX_EPOCHS = 100
+DEFAULT_ML_MODE = "rebuild-all"
 DEFAULT_ML_WALKFORWARD = True                # walk-forward activé par défaut en swing prod
 DEFAULT_ML_WF_MIN_TRAIN_SIZE = 504
 DEFAULT_ML_WF_VAL_SIZE = 126
