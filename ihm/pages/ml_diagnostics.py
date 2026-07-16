@@ -208,30 +208,65 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
     st.markdown("**Métriques par split**")
     st.dataframe(sym_df, use_container_width=True, hide_index=True)
 
-    # ── Walk-Forward : n_splits et dates ──
+    # ── Walk-Forward : splits et dates par fold ──
+    st.markdown("**📅 Splits Walk-Forward**")
     wf_row = safe_query(SYMBOL_WF_JSON_QUERY, {"batch_id": batch_id, "symbol": symbol})
-    if not wf_row.empty:
+    if wf_row.empty:
+        st.caption("Aucune donnée walk-forward.")
+    else:
         row = wf_row.iloc[0]
-        train_start = row.get("train_start_date", "—")
-        train_end = row.get("train_end_date", "—")
         metrics_blob = row.get("metrics_json")
+        wf_splits: list[dict] = []
         n_splits: int | None = None
         if metrics_blob is not None:
             try:
                 if isinstance(metrics_blob, bytes):
                     metrics_blob = metrics_blob.decode("utf-8")
                 wf_data = (_json.loads(metrics_blob) if isinstance(metrics_blob, str) else metrics_blob).get("walk_forward", {})
-                n_splits = wf_data.get("n_splits") if isinstance(wf_data, dict) else None
+                if isinstance(wf_data, dict):
+                    n_splits = wf_data.get("n_splits")
+                    wf_splits = wf_data.get("splits", []) or []
             except Exception:
-                n_splits = None
+                pass
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Splits WF", str(n_splits) if n_splits is not None else "—")
-        with c2:
-            st.metric("Début training", str(train_start) if train_start and str(train_start) not in ("None", "nan", "") else "—")
-        with c3:
-            st.metric("Fin training", str(train_end) if train_end and str(train_end) not in ("None", "nan", "") else "—")
+        if n_splits is not None:
+            st.metric("Nombre de splits", n_splits)
+
+        _has_fold_dates = any(
+            s.get("train_start_date") or s.get("val_start_date") or s.get("test_start_date")
+            for s in wf_splits
+        ) if wf_splits else False
+
+        if wf_splits and _has_fold_dates:
+            folds_df = pd.DataFrame([
+                {
+                    "Split": s.get("split_index", "—"),
+                    "Début train": s.get("train_start_date", "—"),
+                    "Fin train": s.get("train_end_date", "—"),
+                    "Début val": s.get("val_start_date", "—"),
+                    "Fin val": s.get("val_end_date", "—"),
+                    "Début test": s.get("test_start_date", "—"),
+                    "Fin test": s.get("test_end_date", "—"),
+                    "Lignes train": s.get("train_rows", "—"),
+                    "Lignes val": s.get("val_rows", "—"),
+                    "Lignes test": s.get("test_rows", "—"),
+                }
+                for s in wf_splits
+            ])
+            st.dataframe(folds_df, use_container_width=True, hide_index=True)
+        else:
+            # Fallback : dates globales du training run
+            train_start = row.get("train_start_date", "—")
+            train_end = row.get("train_end_date", "—")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric("Début training (global)", str(train_start) if train_start and str(train_start) not in ("None", "nan", "") else "—")
+            with c2:
+                st.metric("Fin training (global)", str(train_end) if train_end and str(train_end) not in ("None", "nan", "") else "—")
+            if wf_splits:
+                st.caption("ℹ️ Les dates par fold seront disponibles après le prochain entraînement de ce symbole.")
+            else:
+                st.caption("Détail des folds non disponible (métriques antérieures à la mise à jour).")
 
     # ── Interprétation ──
     with st.expander("ℹ️ Aide à l'interprétation", expanded=False):

@@ -1033,11 +1033,20 @@ def _run_walk_forward_validation(
                 cfg=cfg,
             )
             if test_metrics:
+                _train_dates = split.train["date"] if "date" in split.train.columns else None
+                _val_dates = split.val["date"] if "date" in split.val.columns else None
+                _test_dates = split.test["date"] if "date" in split.test.columns else None
                 fold_metrics.append({
                     "split_index": split.split_index,
                     "train_rows": len(split.train),
                     "val_rows": len(split.val),
                     "test_rows": len(split.test),
+                    "train_start_date": str(_train_dates.min().date()) if _train_dates is not None and not _train_dates.empty else None,
+                    "train_end_date": str(_train_dates.max().date()) if _train_dates is not None and not _train_dates.empty else None,
+                    "val_start_date": str(_val_dates.min().date()) if _val_dates is not None and not _val_dates.empty else None,
+                    "val_end_date": str(_val_dates.max().date()) if _val_dates is not None and not _val_dates.empty else None,
+                    "test_start_date": str(_test_dates.min().date()) if _test_dates is not None and not _test_dates.empty else None,
+                    "test_end_date": str(_test_dates.max().date()) if _test_dates is not None and not _test_dates.empty else None,
                     "calibration_method": calibrator.method if calibrator is not None and calibrator.fitted else "none",
                     "threshold_optimization": threshold_summary,
                     **test_metrics,
