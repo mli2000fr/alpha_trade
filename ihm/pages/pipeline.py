@@ -1014,18 +1014,6 @@ def _render_ml_scope_block(
         if start_date and end_date:
             st.caption(f"Fenêtre historique appliquée : `{start_date}` → `{end_date}`.")
 
-    command_preview_overrides: dict[str, object] = {source_attr: cast(Any, selected_symbol_source)}
-    if start_symbol_attr is not None:
-        command_preview_overrides[start_symbol_attr] = normalized_start_symbol
-    if step_key == "ml_predict":
-        command_preview_overrides["ml_predict_use_historical_range"] = historical_range
-    command_preview_options = replace(options, **command_preview_overrides)
-    st.caption("Commande du bouton ci-dessous :")
-    st.code(
-        format_command_for_display(build_pipeline_command(step_key, command_preview_options)),
-        language="powershell",
-    )
-
     # ── Commentaire optionnel (ML Train uniquement) ──
     ml_comment: str | None = None
     if comment_session_key is not None:
@@ -1037,6 +1025,20 @@ def _render_ml_scope_block(
             placeholder="Ex: test nouvelle feature VIX, recalibration post-earnings...",
             help="Ce commentaire sera sauvegardé dans la table model_training_batch pour traçabilité (max 200 caractères).",
         ).strip() or None
+
+    command_preview_overrides: dict[str, object] = {source_attr: cast(Any, selected_symbol_source)}
+    if start_symbol_attr is not None:
+        command_preview_overrides[start_symbol_attr] = normalized_start_symbol
+    if step_key == "ml_predict":
+        command_preview_overrides["ml_predict_use_historical_range"] = historical_range
+    if ml_comment is not None:
+        command_preview_overrides["ml_comment"] = ml_comment
+    command_preview_options = replace(options, **command_preview_overrides)
+    st.caption("Commande du bouton ci-dessous :")
+    st.code(
+        format_command_for_display(build_pipeline_command(step_key, command_preview_options)),
+        language="powershell",
+    )
 
     if st.button(
         button_label,
