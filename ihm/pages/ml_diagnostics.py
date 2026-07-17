@@ -252,6 +252,40 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
     st.markdown("**Métriques par split**")
     st.dataframe(sym_df, use_container_width=True, hide_index=True)
 
+    # ── Probas moyennes par split (depuis metrics.json) ──
+    st.markdown("")
+    st.markdown("**🎯 Probas moyennes par split (brutes → calibrées)**")
+    probas_rows: list[dict] = []
+    sym_wf = safe_query(SYMBOL_WF_JSON_QUERY, {"batch_id": batch_id, "symbol": symbol})
+    if not sym_wf.empty:
+        blob = sym_wf.iloc[0].get("metrics_json")
+        if blob is not None:
+            try:
+                if isinstance(blob, bytes):
+                    blob = blob.decode("utf-8")
+                all_m = _json.loads(blob) if isinstance(blob, str) else blob
+                for split_name in ("val", "test", "walk_forward"):
+                    split_data = all_m.get(split_name, {})
+                    if isinstance(split_data, dict):
+                        row_p = {
+                            "Split": split_name if split_name != "walk_forward" else "wf",
+                            "brut short": round(split_data.get("avg_prob_short", 0) or 0, 3),
+                            "brut flat": round(split_data.get("avg_prob_flat", 0) or 0, 3),
+                            "brut long": round(split_data.get("avg_prob_long", 0) or 0, 3),
+                            "calib short": round(split_data.get("avg_calib_prob_short", 0) or 0, 3),
+                            "calib flat": round(split_data.get("avg_calib_prob_flat", 0) or 0, 3),
+                            "calib long": round(split_data.get("avg_calib_prob_long", 0) or 0, 3),
+                        }
+                        if any(v != 0 for v in [row_p["brut short"], row_p["brut flat"], row_p["brut long"]]):
+                            probas_rows.append(row_p)
+            except Exception:
+                pass
+    if probas_rows:
+        probas_df = pd.DataFrame(probas_rows)
+        st.dataframe(probas_df, use_container_width=True, hide_index=True)
+    else:
+        st.caption("Probas non disponibles (seront renseignées au prochain entraînement).")
+
     st.markdown("")
     # ── Walk-Forward : splits et dates par fold ──
     st.markdown("**📅 Splits Walk-Forward**")
@@ -582,6 +616,31 @@ def _render_batch_detail(batch: pd.Series) -> None:
             "avg_pred_long_pct": "pred long %",
         })
         st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    st.markdown("")
+    # ── Politique de décision ternaire ──
+    with st.expander("⚙️ Politique de décision ternaire (pourquoi autant de `flat` ?)", expanded=False):
+        st.markdown("""
+La décision `short` / `flat` / `long` est prise par `TernaryDecisionPolicy` avec les seuils suivants :
+
+| Paramètre | Valeur | Effet |
+|---|---:|---|
+| `threshold_short` | **0.45** | p_short doit dépasser 0.45 pour qu'un `short` soit autorisé |
+| `threshold_long` | **0.45** | p_long doit dépasser 0.45 pour qu'un `long` soit autorisé |
+| `top2_margin` | **0.05** | L'écart entre la 1ʳᵉ et la 2ᵉ probabilité doit être ≥ 0.05 |
+
+**Si aucune condition n'est remplie → `flat`.**
+
+Concrètement, si le modèle sort `[0.35, 0.30, 0.35]` :
+- short : 0.35 < 0.45 → ❌
+- long : 0.35 < 0.45 → ❌
+- Résultat : **flat** (même si short et long sont ex-aequo en tête !)
+
+C'est probablement la cause principale du `pred_flat_pct` à ~34% alors que `true_flat_pct` n'est que ~12%.
+Les probas calibrées du modèle restent en dessous de 0.45, donc tout tombe dans `flat`.
+
+**Piste d'amélioration** : baisser `threshold_short`/`threshold_long` à 0.35, ou `top2_margin` à 0.02.
+""")
 
     st.markdown("")
     # ── Bloc distribution F1 macro (walk-forward) ──

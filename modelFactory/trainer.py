@@ -26,7 +26,16 @@ except ImportError:  # pragma: no cover
 
 from sqlalchemy.engine import Engine
 
-from core.ternary_decision_policy import decide_ternary_side_batch
+from core.ternary_decision_policy import TernaryDecisionPolicy, decide_ternary_side_batch
+
+
+def _build_ternary_policy(cfg: TrainingConfig) -> TernaryDecisionPolicy:
+    """Construit une TernaryDecisionPolicy à partir de la config d'entraînement."""
+    return TernaryDecisionPolicy(
+        threshold_short=float(cfg.model.ternary_threshold_short),
+        threshold_long=float(cfg.model.ternary_threshold_long),
+        top2_margin=float(cfg.model.ternary_top2_margin),
+    )
 from modelFactory.calibration import PlattCalibrator, TemperatureScaler, margin_from_logits
 from modelFactory.champion_selection import (
     build_challenger_ranking,
@@ -568,6 +577,7 @@ def _compute_metrics(
     decision_threshold: float,
     calibrator: PlattCalibrator | TemperatureScaler | None = None,
     future_returns: np.ndarray | None = None,
+    ternary_policy: "TernaryDecisionPolicy | None" = None,
 ) -> dict[str, Any]:
     labels = outputs["labels"]
     logits = outputs["logits"]
@@ -582,7 +592,8 @@ def _compute_metrics(
             if isinstance(calibrator, TemperatureScaler) and calibrator.fitted
             else outputs["raw_proba"]
         )
-        preds = decide_ternary_side_batch(probs)  # {0=short, 1=flat, 2=long}
+        _pol = ternary_policy if ternary_policy is not None else TernaryDecisionPolicy()
+        preds = decide_ternary_side_batch(probs, policy=_pol)  # {0=short, 1=flat, 2=long}
         # Décale labels {-1, 0, 1} → {0, 1, 2}
         labels_shifted = labels + 1
         accuracy = float((preds == labels_shifted).mean())
@@ -612,6 +623,20 @@ def _compute_metrics(
             "true_flat_pct": float((labels_shifted == 1).mean() * 100),
             "true_long_pct": float((labels_shifted == 2).mean() * 100),
         }
+        # Probas moyennes brutes (avant calibration) et calibrées
+        raw = outputs.get("raw_proba")
+        avg_prob_dist: dict[str, float | None] = {
+            "avg_prob_short": None, "avg_prob_flat": None, "avg_prob_long": None,
+            "avg_calib_prob_short": None, "avg_calib_prob_flat": None, "avg_calib_prob_long": None,
+        }
+        if raw is not None and len(raw) > 0:
+            avg_prob_dist["avg_prob_short"] = float(np.mean(raw[:, 0]))
+            avg_prob_dist["avg_prob_flat"] = float(np.mean(raw[:, 1]))
+            avg_prob_dist["avg_prob_long"] = float(np.mean(raw[:, 2]))
+        if probs is not None and len(probs) > 0:
+            avg_prob_dist["avg_calib_prob_short"] = float(np.mean(probs[:, 0]))
+            avg_prob_dist["avg_calib_prob_flat"] = float(np.mean(probs[:, 1]))
+            avg_prob_dist["avg_calib_prob_long"] = float(np.mean(probs[:, 2]))
 
         # F1 macro (moyenne des 3 classes)
         f1_values = [v for k, v in f1_per_class.items() if v is not None]
@@ -646,6 +671,7 @@ def _compute_metrics(
             **f1_per_class,
             **pred_dist,
             **label_dist,
+            **avg_prob_dist,
         }
         if future_returns is not None:
             metrics["directional_oos_metrics"] = compute_directional_oos_metrics(
@@ -732,6 +758,7 @@ def _evaluate_best_checkpoint(
     val_frame: "pd.DataFrame | None",
     test_frame: "pd.DataFrame | None",
     cfg: TrainingConfig,
+    ternary_policy: "TernaryDecisionPolicy | None" = None,
  ) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | TemperatureScaler | None, dict[str, Any], float]:
     model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
     device = torch.device("cpu")
@@ -778,6 +805,7 @@ def _evaluate_best_checkpoint(
         decision_threshold=selected_decision_threshold,
         calibrator=calibrator,
         future_returns=val_future_returns,
+        ternary_policy=ternary_policy,
     )
 
     test_metrics: dict[str, Any] = {}
@@ -797,6 +825,7 @@ def _evaluate_best_checkpoint(
             decision_threshold=selected_decision_threshold,
             calibrator=calibrator,
             future_returns=test_frame["future_return"].to_numpy() if test_frame is not None and "future_return" in test_frame else None,
+            ternary_policy=ternary_policy,
         )
     return val_metrics, test_metrics, calibrator, threshold_optimization_summary, selected_decision_threshold
 
@@ -1041,6 +1070,7 @@ def _run_walk_forward_validation(
                 val_frame=align_sequence_rows(split.val, cfg.data.sequence_length),
                 test_frame=align_sequence_rows(split.test, cfg.data.sequence_length),
                 cfg=cfg,
+                ternary_policy=_build_ternary_policy(cfg),
             )
             if test_metrics:
                 _train_dates = split.train["date"] if "date" in split.train.columns else None
@@ -1342,6 +1372,7 @@ def train_symbol(
             val_frame=val_frame,
             test_frame=test_frame,
             cfg=effective_cfg,
+            ternary_policy=_build_ternary_policy(effective_cfg),
         )
         if selected_decision_threshold != effective_cfg.data.decision_threshold:
             effective_cfg = replace(

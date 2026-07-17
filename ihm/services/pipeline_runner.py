@@ -76,6 +76,9 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_TERNARY_WEIGHT_SHORT,
     DEFAULT_ML_TERNARY_WEIGHT_FLAT,
     DEFAULT_ML_TERNARY_WEIGHT_LONG,
+    DEFAULT_ML_TERNARY_THRESHOLD_SHORT,
+    DEFAULT_ML_TERNARY_THRESHOLD_LONG,
+    DEFAULT_ML_TERNARY_TOP2_MARGIN,
     DEFAULT_ML_TRAINING_END_DATE,
     DEFAULT_ML_TRAINING_START_DATE,
     DEFAULT_ML_WALKFORWARD,
@@ -329,6 +332,9 @@ class PipelineLaunchOptions:
     ml_ternary_weight_short: float = DEFAULT_ML_TERNARY_WEIGHT_SHORT
     ml_ternary_weight_flat: float = DEFAULT_ML_TERNARY_WEIGHT_FLAT
     ml_ternary_weight_long: float = DEFAULT_ML_TERNARY_WEIGHT_LONG
+    ml_ternary_threshold_short: float = DEFAULT_ML_TERNARY_THRESHOLD_SHORT
+    ml_ternary_threshold_long: float = DEFAULT_ML_TERNARY_THRESHOLD_LONG
+    ml_ternary_top2_margin: float = DEFAULT_ML_TERNARY_TOP2_MARGIN
     ml_decision_threshold: float = DEFAULT_ML_DECISION_THRESHOLD
     ml_calibration_method: MLCalibrationMethod = DEFAULT_ML_CALIBRATION_METHOD  # type: ignore[assignment]
     ml_feature_set: MLFeatureSet = DEFAULT_ML_FEATURE_SET  # type: ignore[assignment]
@@ -2063,6 +2069,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--ternary-weight-short", str(options.ml_ternary_weight_short),
                 "--ternary-weight-flat", str(options.ml_ternary_weight_flat),
                 "--ternary-weight-long", str(options.ml_ternary_weight_long),
+                "--ternary-threshold-short", str(options.ml_ternary_threshold_short),
+                "--ternary-threshold-long", str(options.ml_ternary_threshold_long),
+                "--ternary-top2-margin", str(options.ml_ternary_top2_margin),
             ])
         command.extend([
             "--forecast-horizon",

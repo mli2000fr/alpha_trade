@@ -236,6 +236,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Poids de la classe flat dans la loss ternaire (défaut: 1.5)")
     p.add_argument("--ternary-weight-long", type=float, default=1.0,
                    help="Poids de la classe long dans la loss ternaire (défaut: 1.0)")
+    p.add_argument("--ternary-threshold-short", type=float, default=0.45,
+                   help="Seuil minimum de p_short pour autoriser un signal short (défaut: 0.45)")
+    p.add_argument("--ternary-threshold-long", type=float, default=0.45,
+                   help="Seuil minimum de p_long pour autoriser un signal long (défaut: 0.45)")
+    p.add_argument("--ternary-top2-margin", type=float, default=0.05,
+                   help="Marge minimale entre la 1ère et 2ème proba pour éviter une décision ambiguë (défaut: 0.05)")
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
@@ -397,6 +403,9 @@ def main(args: list[str] | None = None) -> None:
             ternary_weight_short=opts.ternary_weight_short,
             ternary_weight_flat=opts.ternary_weight_flat,
             ternary_weight_long=opts.ternary_weight_long,
+            ternary_threshold_short=opts.ternary_threshold_short,
+            ternary_threshold_long=opts.ternary_threshold_long,
+            ternary_top2_margin=opts.ternary_top2_margin,
         ),
         calibration=CalibrationConfig(
             method=opts.calibration_method,

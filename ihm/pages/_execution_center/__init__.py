@@ -154,6 +154,9 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_TERNARY_WEIGHT_SHORT,
     DEFAULT_ML_TERNARY_WEIGHT_FLAT,
     DEFAULT_ML_TERNARY_WEIGHT_LONG,
+    DEFAULT_ML_TERNARY_THRESHOLD_SHORT,
+    DEFAULT_ML_TERNARY_THRESHOLD_LONG,
+    DEFAULT_ML_TERNARY_TOP2_MARGIN,
     DEFAULT_ML_WALKFORWARD,
     DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS,
     DEFAULT_ML_WF_MAX_SPLITS,
@@ -3384,6 +3387,48 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 )
             )
 
+        st.markdown("##### Seuils de décision ternaire (short / long / marge)")
+        _td_col1, _td_col2, _td_col3 = st.columns(3)
+        with _td_col1:
+            ml_ternary_threshold_short = float(
+                st.number_input(
+                    "Seuil short",
+                    min_value=0.10,
+                    max_value=0.90,
+                    value=_session_state_float("pipeline_ml_ternary_threshold_short", DEFAULT_ML_TERNARY_THRESHOLD_SHORT),
+                    step=0.05,
+                    format="%.2f",
+                    key="pipeline_ml_ternary_threshold_short",
+                    help="p_short minimum pour autoriser un signal short (défaut: 0.45). Baisser pour réduire le flat.",
+                )
+            )
+        with _td_col2:
+            ml_ternary_threshold_long = float(
+                st.number_input(
+                    "Seuil long",
+                    min_value=0.10,
+                    max_value=0.90,
+                    value=_session_state_float("pipeline_ml_ternary_threshold_long", DEFAULT_ML_TERNARY_THRESHOLD_LONG),
+                    step=0.05,
+                    format="%.2f",
+                    key="pipeline_ml_ternary_threshold_long",
+                    help="p_long minimum pour autoriser un signal long (défaut: 0.45). Baisser pour réduire le flat.",
+                )
+            )
+        with _td_col3:
+            ml_ternary_top2_margin = float(
+                st.number_input(
+                    "Marge top-2",
+                    min_value=0.00,
+                    max_value=0.50,
+                    value=_session_state_float("pipeline_ml_ternary_top2_margin", DEFAULT_ML_TERNARY_TOP2_MARGIN),
+                    step=0.01,
+                    format="%.2f",
+                    key="pipeline_ml_ternary_top2_margin",
+                    help="Écart minimum entre la 1ère et 2ème proba (défaut: 0.05). 0 = pas de marge exigée.",
+                )
+            )
+
         st.markdown("##### Walk-forward")
         ml_wf_col1, ml_wf_col2 = st.columns([1, 4])
         with ml_wf_col1:
@@ -4011,6 +4056,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_ternary_weight_short=float(ml_ternary_weight_short),
             ml_ternary_weight_flat=float(ml_ternary_weight_flat),
             ml_ternary_weight_long=float(ml_ternary_weight_long),
+            ml_ternary_threshold_short=float(ml_ternary_threshold_short),
+            ml_ternary_threshold_long=float(ml_ternary_threshold_long),
+            ml_ternary_top2_margin=float(ml_ternary_top2_margin),
             ml_decision_threshold=float(ml_decision_threshold),
             ml_calibration_method=cast(Any, ml_calibration_method),
             ml_feature_set=cast(Any, ml_feature_set),

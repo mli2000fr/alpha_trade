@@ -302,6 +302,9 @@ class ModelConfig:
     ternary_weight_short: float = 1.0
     ternary_weight_flat: float = 1.5
     ternary_weight_long: float = 1.0
+    ternary_threshold_short: float = 0.45
+    ternary_threshold_long: float = 0.45
+    ternary_top2_margin: float = 0.05
 
     def __post_init__(self) -> None:
         if self.hidden_size < 1:
@@ -322,6 +325,12 @@ class ModelConfig:
             raise ValueError("ternary_weight_flat doit être > 0.")
         if self.ternary_weight_long <= 0:
             raise ValueError("ternary_weight_long doit être > 0.")
+        if not (0.0 < self.ternary_threshold_short < 1.0):
+            raise ValueError("ternary_threshold_short doit être dans ]0, 1[.")
+        if not (0.0 < self.ternary_threshold_long < 1.0):
+            raise ValueError("ternary_threshold_long doit être dans ]0, 1[.")
+        if not (0.0 <= self.ternary_top2_margin < 1.0):
+            raise ValueError("ternary_top2_margin doit être dans [0, 1[.")
 
 
 @dataclass(frozen=True, slots=True)
