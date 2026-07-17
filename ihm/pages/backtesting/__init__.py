@@ -2355,11 +2355,23 @@ def _build_calibrate_sentiment_options() -> "CalibrateSentimentWeightsOptions":
             key="bt_calibrate_horizons",
         )
     with col5:
-        all_symbols = st.checkbox(
-            "Univers entier (`--all-symbols`)",
-            value=bool(st.session_state.get("bt_calibrate_all_symbols", False)),
-            key="bt_calibrate_all_symbols",
-            help="Sinon limité aux candidats historiques.",
+        # Univers de symboles
+        sentiment_source = st.selectbox(
+            "Univers de symboles",
+            options=("all", "tradable-universe", "stock-bars-daily", "ticket-recherche"),
+            index=("all", "tradable-universe", "stock-bars-daily", "ticket-recherche").index(
+                str(st.session_state.get("bt_calibrate_symbol_source", "all"))
+                if st.session_state.get("bt_calibrate_symbol_source", "all") in ("all", "tradable-universe", "stock-bars-daily", "ticket-recherche")
+                else "all"
+            ),
+            key="bt_calibrate_symbol_source",
+            format_func=lambda v: {
+                "all": "Tous les symboles (all-symbols)",
+                "tradable-universe": "Univers tradable PIT canonique",
+                "stock-bars-daily": "Symboles avec barres daily",
+                "ticket-recherche": "200 tickets recherche (config/ticket_recherche.txt)",
+            }.get(str(v), str(v)),
+            help="Univers de symboles pour la calibration sentiment.",
         )
 
     output_dir = "artifacts/sentiment_calibration"
@@ -2370,8 +2382,9 @@ def _build_calibrate_sentiment_options() -> "CalibrateSentimentWeightsOptions":
         top_n=int(top_n),
         horizons=horizons.strip() or "5,10,20",
         output_dir=output_dir,
-        all_symbols=bool(all_symbols),
+        all_symbols=(sentiment_source == "all"),
         capital_preset_key=None,
+        symbol_source=sentiment_source if sentiment_source != "all" else None,
     )
     st.code(
         format_command_for_display(build_backtesting_command("calibrate-sentiment-weights", options)),
@@ -2755,10 +2768,22 @@ def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
 
     col13, col14, col15 = st.columns(3)
     with col13:
-        all_symbols_wf = st.checkbox(
-            "Univers entier (`--all-symbols`)",
-            value=bool(st.session_state.get("bt_wfs_all_symbols", False)),
-            key="bt_wfs_all_symbols",
+        wfs_source = st.selectbox(
+            "Univers de symboles",
+            options=("all", "tradable-universe", "stock-bars-daily", "ticket-recherche"),
+            index=("all", "tradable-universe", "stock-bars-daily", "ticket-recherche").index(
+                str(st.session_state.get("bt_wfs_symbol_source", "all"))
+                if st.session_state.get("bt_wfs_symbol_source", "all") in ("all", "tradable-universe", "stock-bars-daily", "ticket-recherche")
+                else "all"
+            ),
+            key="bt_wfs_symbol_source",
+            format_func=lambda v: {
+                "all": "Tous les symboles (all-symbols)",
+                "tradable-universe": "Univers tradable PIT canonique",
+                "stock-bars-daily": "Symboles avec barres daily",
+                "ticket-recherche": "200 tickets recherche (config/ticket_recherche.txt)",
+            }.get(str(v), str(v)),
+            help="Univers de symboles pour le walk-forward sentiment.",
         )
 
     output_dir = "artifacts/sentiment_walk_forward"
@@ -2777,8 +2802,9 @@ def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
         atr_ts=float(atr_ts),
         fees=float(fees),
         output_dir=output_dir,
-        all_symbols=bool(all_symbols_wf),
+        all_symbols=(wfs_source == "all"),
         capital_preset_key=None,
+        symbol_source=wfs_source if wfs_source != "all" else None,
     )
     st.code(
         format_command_for_display(build_backtesting_command("walk-forward-sentiment", options)),

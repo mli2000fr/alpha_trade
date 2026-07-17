@@ -1383,11 +1383,11 @@ def train_symbol(
         baseline_metrics: dict[str, Any] = {}
         if prepared_df is not None and effective_cfg.baseline.enabled:
             update_runtime_status(current_phase="baseline_lightgbm", current_symbol=symbol, progress_item=symbol)
-            baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir)
+            baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir, ternary_policy=_build_ternary_policy(effective_cfg))
         catboost_metrics: dict[str, Any] = {}
         if prepared_df is not None and effective_cfg.baseline.enable_catboost:
             update_runtime_status(current_phase="baseline_catboost", current_symbol=symbol, progress_item=symbol)
-            catboost_metrics = run_catboost_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir)
+            catboost_metrics = run_catboost_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir, ternary_policy=_build_ternary_policy(effective_cfg))
 
         best_ckpt = sym_dir / "best.ckpt"
         if best_source.exists() and best_source.resolve() != best_ckpt.resolve():

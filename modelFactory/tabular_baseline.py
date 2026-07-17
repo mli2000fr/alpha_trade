@@ -23,7 +23,7 @@ from modelFactory.features import build_feature_contract
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import get_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
-from core.ternary_decision_policy import decide_ternary_side_batch
+from core.ternary_decision_policy import TernaryDecisionPolicy, decide_ternary_side_batch
 
 
 def tabular_split(
@@ -91,6 +91,7 @@ def compute_tabular_metrics(
 	raw_proba_all: np.ndarray | None = None,
 	target_raw: np.ndarray | None = None,
 	is_ternary: bool = False,
+	ternary_policy: "TernaryDecisionPolicy | None" = None,
 ) -> dict[str, Any]:
 	"""Métriques tabulaires complètes (Sprint Maître 1 : multiclasses ajouté)."""
 	labels = np.asarray(labels, dtype=np.int64)
@@ -122,7 +123,8 @@ def compute_tabular_metrics(
 
 		if probs_all.ndim == 2 and probs_all.shape[1] >= 3 and len(targets) == probs_all.shape[0]:
 			# ── Sprint Maître 0 : décision via la policy partagée ─
-			preds_multi = decide_ternary_side_batch(probs_all[:, :3])  # {0=short, 1=flat, 2=long}
+			_pol = ternary_policy if ternary_policy is not None else TernaryDecisionPolicy()
+			preds_multi = decide_ternary_side_batch(probs_all[:, :3], policy=_pol)  # {0=short, 1=flat, 2=long}
 			labels_shifted = targets + 1  # {-1,0,1} -> {0,1,2}
 
 			# ── Sprint Maître 1 : métriques multiclasses complètes ─
@@ -240,6 +242,7 @@ def run_tabular_baseline(
 	artifact_dir: Path | None = None,
 	save_callback: Callable[[Any, Path], None] | None = None,
 	model_extension: str = ".pkl",
+	ternary_policy: "TernaryDecisionPolicy | None" = None,
 ) -> dict[str, Any]:
 	feature_columns = get_feature_columns(
 		include_sentiment=cfg.data.include_sentiment_features,
@@ -359,6 +362,7 @@ def run_tabular_baseline(
 		raw_proba_all=raw_proba_all if is_ternary else None,
 		target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
 		is_ternary=is_ternary,
+		ternary_policy=ternary_policy,
 	)
 	test_metrics = compute_tabular_metrics(
 		test_labels,
@@ -368,6 +372,7 @@ def run_tabular_baseline(
 		raw_proba_all=test_raw_all if is_ternary else None,
 		target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
 		is_ternary=is_ternary,
+		ternary_policy=ternary_policy,
 	)
 	# ── Sprint Maître 1 : selection_score depuis val uniquement ──────
 	selection_score = float(

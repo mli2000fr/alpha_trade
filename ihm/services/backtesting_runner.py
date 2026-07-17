@@ -161,6 +161,7 @@ class CalibrateSentimentWeightsOptions:
     output_dir: str = "artifacts/sentiment_calibration"
     all_symbols: bool = False
     capital_preset_key: str | None = None
+    symbol_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +220,7 @@ class WalkForwardSentimentOptions:
     output_dir: str = "artifacts/sentiment_walk_forward"
     all_symbols: bool = False
     capital_preset_key: str | None = None
+    symbol_source: str | None = None
 
 
 def build_backtesting_command(
@@ -433,6 +435,8 @@ def build_backtesting_command(
             command.append("--all-symbols")
         if options.capital_preset_key:
             command.extend(["--capital-preset-key", options.capital_preset_key])
+        if options.symbol_source:
+            command.extend(["--symbol-source", options.symbol_source])
         return command
 
     if kind == "calibrate-conviction-weights":
@@ -483,6 +487,8 @@ def build_backtesting_command(
             command.append("--all-symbols")
         if options.capital_preset_key:
             command.extend(["--capital-preset-key", options.capital_preset_key])
+        if options.symbol_source:
+            command.extend(["--symbol-source", options.symbol_source])
         return command
 
     if kind == "walk-forward-conviction":

@@ -35,6 +35,21 @@ RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 STEP_KEY = "backtesting_sentiment_calibration"
 
 
+def _resolve_symbol_source(engine: Engine, symbol_source: str) -> list[str]:
+    """Résout une source de symboles en liste (cf. modelFactory/db_registry)."""
+    if symbol_source == "ticket-recherche":
+        from modelFactory.db_registry import _load_ticket_recherche_symbols
+        return _load_ticket_recherche_symbols()
+    if symbol_source in ("stock-bars-daily", "stock_bars_daily"):
+        from modelFactory.db_registry import load_stock_bars_daily_symbols
+        return load_stock_bars_daily_symbols(engine)
+    if symbol_source == "tradable-universe":
+        from modelFactory.db_registry import load_tradable_universe_symbols
+        from datetime import date as _date
+        return load_tradable_universe_symbols(engine, trade_date=_date.today())
+    return []
+
+
 def _normalize_preset_keys(
     keys: str | list[str] | None,
 ) -> list[str] | None:
@@ -159,6 +174,7 @@ class SentimentWeightCalibrator:
         horizons: tuple[int, ...] = (5, 10, 20),
         selected_only: bool = True,
         capital_preset_keys: str | list[str] | None = None,
+        symbol_source: str | None = None,
     ) -> pd.DataFrame:
         """Charge le dataset scores + forward returns.
 
@@ -174,6 +190,7 @@ class SentimentWeightCalibrator:
             end_date=end_date,
             selected_only=selected_only,
             capital_preset_keys=capital_preset_keys,
+            symbol_source=symbol_source,
         )
         if not symbols:
             return pd.DataFrame()
@@ -240,6 +257,7 @@ class SentimentWeightCalibrator:
         end_date: date,
         selected_only: bool = True,
         capital_preset_keys: str | list[str] | None = None,
+        symbol_source: str | None = None,
     ) -> list[str]:
         """Retourne la liste des symboles distincts sur la période."""
         preset_clause = ""
@@ -264,7 +282,15 @@ class SentimentWeightCalibrator:
         )
         with self.engine.connect() as conn:
             rows = conn.execute(query, params).scalars().all()
-        return [str(r) for r in rows]
+        symbols = [str(r) for r in rows]
+
+        # Filtrer par source si spécifiée
+        if symbol_source:
+            source_symbols = _resolve_symbol_source(self.engine, symbol_source)
+            if source_symbols:
+                source_set = set(s.upper() for s in source_symbols)
+                symbols = [s for s in symbols if s.upper() in source_set]
+        return symbols
 
     def _load_dataset_batch_sql(
         self,
@@ -827,9 +853,10 @@ class SentimentWeightCalibrator:
         selected_only: bool = True,
         output_dir: Path | None = None,
         capital_preset_keys: str | list[str] | None = None,
+        symbol_source: str | None = None,
     ) -> tuple[SentimentCalibrationResult, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
-        dataset = self.load_dataset(start_date, end_date, horizons=horizons, selected_only=selected_only, capital_preset_keys=capital_preset_keys)
+        dataset = self.load_dataset(start_date, end_date, horizons=horizons, selected_only=selected_only, capital_preset_keys=capital_preset_keys, symbol_source=symbol_source)
         result_df = self.evaluate_scenarios(dataset, scenario_list, horizons=horizons, top_n=top_n)
         artifacts: dict[str, str] = {}
         if output_dir is not None:
@@ -875,9 +902,10 @@ class SentimentWeightCalibrator:
         output_dir: Path | None = None,
         capital_preset_keys: str | list[str] | None = None,
         atr_trailing_stop_multiplier: float = 0.0,
+        symbol_source: str | None = None,
     ) -> tuple[WalkForwardCalibrationResult, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         scenario_list = list(scenarios or self.default_scenarios())
-        dataset = self.load_dataset(start_date, end_date, horizons=horizons, selected_only=selected_only, capital_preset_keys=capital_preset_keys)
+        dataset = self.load_dataset(start_date, end_date, horizons=horizons, selected_only=selected_only, capital_preset_keys=capital_preset_keys, symbol_source=symbol_source)
         windows = self.build_walk_forward_windows(
             dataset.get("snapshot_date", pd.Series(dtype="datetime64[ns]")),
             min_train_days=min_train_days,

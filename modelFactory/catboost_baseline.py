@@ -24,6 +24,7 @@ def run_catboost_baseline(
 	cfg: TrainingConfig,
 	*,
 	artifact_dir: Path | None = None,
+	ternary_policy: "TernaryDecisionPolicy | None" = None,
 ) -> dict[str, Any]:
 	if not cfg.baseline.enable_catboost:
 		return {}
@@ -55,6 +56,7 @@ def run_catboost_baseline(
 		# Phase 4.2.c — format natif CatBoost (.cbm). Plus de pickle.
 		save_callback=lambda model, path: model.save_model(str(path)),
 		model_extension=".cbm",
+		ternary_policy=ternary_policy,
 	)
 
 

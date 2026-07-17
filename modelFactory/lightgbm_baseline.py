@@ -24,6 +24,7 @@ def run_lightgbm_baseline(
     cfg: TrainingConfig,
     *,
     artifact_dir: Path | None = None,
+    ternary_policy: "TernaryDecisionPolicy | None" = None,
 ) -> dict[str, Any]:
     if not cfg.baseline.enabled:
         return {}
@@ -52,5 +53,6 @@ def run_lightgbm_baseline(
         # Phase 4.2.c — format natif LightGBM (.txt). Plus de pickle.
         save_callback=lambda model, path: model.booster_.save_model(str(path)),
         model_extension=".txt",
+        ternary_policy=ternary_policy,
     )
 

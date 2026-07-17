@@ -3101,7 +3101,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Date de début du training ML",
                     value=_coerce_session_date(
                         st.session_state.get("pipeline_ml_training_start_date", DEFAULT_ML_TRAINING_START_DATE),
-                        default=date(2020, 1, 1),
+                        default=date(2018, 1, 1),
                     ),
                     key="pipeline_ml_training_start_date",
                     format="YYYY-MM-DD",

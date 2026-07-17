@@ -1307,6 +1307,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Utiliser tout l'univers historisé et pas seulement les candidats",
     )
     calibrate_p.add_argument(
+        "--symbol-source",
+        default=None,
+        help="Source de l'univers (tradable-universe, stock-bars-daily, ticket-recherche). "
+             "Si non renseigné, utilise le comportement par défaut (--all-symbols ou candidats).",
+    )
+    calibrate_p.add_argument(
         "--capital-preset-key",
         default=None,
         help="Preset capital à utiliser pour filtrer stock_scores_history (ex: capital_0_2000). Si absent, tous les presets sont mélangés.",
@@ -1417,6 +1423,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--all-symbols",
         action="store_true",
         help="Utiliser tout l'univers historisé et pas seulement les candidats",
+    )
+    walk_forward_p.add_argument(
+        "--symbol-source",
+        default=None,
+        help="Source de l'univers (tradable-universe, stock-bars-daily, ticket-recherche). "
+             "Si non renseigné, utilise le comportement par défaut (--all-symbols ou candidats).",
     )
     walk_forward_p.add_argument(
         "--capital-preset-keys",
@@ -3712,6 +3724,7 @@ def _run_calibrate_sentiment_weights(args: argparse.Namespace) -> None:
         selected_only=not args.all_symbols,
         output_dir=Path(args.output_dir),
         capital_preset_keys=args.capital_preset_key,
+        symbol_source=getattr(args, "symbol_source", None) or None,
     )
 
     _safe_print("✅ Calibration terminée")
@@ -3925,6 +3938,7 @@ def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
         output_dir=Path(args.output_dir),
         capital_preset_keys=preset_keys,
         atr_trailing_stop_multiplier=args.atr_ts,
+        symbol_source=getattr(args, "symbol_source", None) or None,
     )
 
     _safe_print("✅ Walk-forward terminé")
