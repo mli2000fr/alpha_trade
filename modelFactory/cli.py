@@ -48,6 +48,22 @@ SYMBOL_SOURCES = (
     "ticket-recherche",
 )
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
+_REPORT_DIR = Path("artifacts/rapport_ml")
+
+
+def _generate_and_save_batch_report(engine: Engine, batch_id: str) -> None:
+    """Génère et sauvegarde le rapport Markdown du batch dans artifacts/rapport_ml/."""
+    from modelFactory.report import generate_batch_report
+
+    try:
+        _REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        md_content = generate_batch_report(engine, batch_id)
+        safe_name = batch_id.replace("/", "_").replace("\\", "_")[:100]
+        report_path = _REPORT_DIR / f"{safe_name}.md"
+        report_path.write_text(md_content, encoding="utf-8")
+        LOGGER.info("Rapport batch sauvegardé : %s", report_path)
+    except Exception as exc:
+        LOGGER.warning("Échec génération rapport batch %s : %s", batch_id, exc)
 
 
 def _build_training_batch_command(raw_args: list[str]) -> tuple[str, str]:
@@ -542,6 +558,10 @@ def main(args: list[str] | None = None) -> None:
             symbols_skipped=skipped,
             symbols_failed=failed,
         )
+
+        # ── Génération automatique du rapport Markdown ──
+        _generate_and_save_batch_report(engine, run_id)
+
         update_runtime_status(
             current_phase="cli_completed",
             progress_live=False,
