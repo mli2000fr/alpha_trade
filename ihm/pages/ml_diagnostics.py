@@ -528,6 +528,11 @@ def _render_batch_detail(batch: pd.Series) -> None:
         if failure and str(failure) != "None" and str(failure) != "nan":
             st.metric("Raison échec", str(failure)[:100] + "…" if len(str(failure)) > 100 else str(failure))
 
+    cmd = row.get("command_line")
+    if cmd and str(cmd) not in ("None", "nan", ""):
+        with st.expander("💻 Commande exécutée", expanded=False):
+            st.code(str(cmd), language="powershell")
+
     st.markdown("")
     # ── Bloc F1 par split ──
     st.subheader("📊 Métriques F1 par split")
