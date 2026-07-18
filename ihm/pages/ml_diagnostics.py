@@ -622,31 +622,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
     st.markdown("")
-    # ── Politique de décision ternaire ──
-    with st.expander("⚙️ Politique de décision ternaire (pourquoi autant de `flat` ?)", expanded=False):
-        st.markdown("""
-La décision `short` / `flat` / `long` est prise par `TernaryDecisionPolicy` avec les seuils suivants :
-
-| Paramètre | Valeur | Effet |
-|---|---:|---|
-| `threshold_short` | **0.45** | p_short doit dépasser 0.45 pour qu'un `short` soit autorisé |
-| `threshold_long` | **0.45** | p_long doit dépasser 0.45 pour qu'un `long` soit autorisé |
-| `top2_margin` | **0.05** | L'écart entre la 1ʳᵉ et la 2ᵉ probabilité doit être ≥ 0.05 |
-
-**Si aucune condition n'est remplie → `flat`.**
-
-Concrètement, si le modèle sort `[0.35, 0.30, 0.35]` :
-- short : 0.35 < 0.45 → ❌
-- long : 0.35 < 0.45 → ❌
-- Résultat : **flat** (même si short et long sont ex-aequo en tête !)
-
-C'est probablement la cause principale du `pred_flat_pct` à ~34% alors que `true_flat_pct` n'est que ~12%.
-Les probas calibrées du modèle restent en dessous de 0.45, donc tout tombe dans `flat`.
-
-**Piste d'amélioration** : baisser `threshold_short`/`threshold_long` à 0.35, ou `top2_margin` à 0.02.
-""")
-
-    st.markdown("")
     # ── Bloc distribution F1 macro (walk-forward) ──
     st.subheader("📈 Distribution F1 macro — Walk-Forward")
     bucket_df = safe_query(F1_BUCKET_QUERY, {"batch_id": batch["batch_id"]})

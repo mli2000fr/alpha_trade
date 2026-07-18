@@ -200,21 +200,6 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     lines.append("")
     lines.append(_df_to_md(tp_df))
 
-    # ── Politique de décision ──
-    lines.append("## ⚙️ Politique de décision ternaire")
-    lines.append("")
-    lines.append("La décision `short` / `flat` / `long` utilise `TernaryDecisionPolicy` :")
-    lines.append("")
-    lines.append("| Paramètre | Valeur |")
-    lines.append("|---|---|")
-    lines.append("| `threshold_short` | 0.45 |")
-    lines.append("| `threshold_long` | 0.45 |")
-    lines.append("| `top2_margin` | 0.05 |")
-    lines.append("")
-    lines.append("Si aucune condition n'est remplie → `flat`. ")
-    lines.append("Si `pred_flat_pct` ≫ `true_flat_pct`, les probas calibrées restent probablement sous 0.45 → baisser les seuils à 0.35 ou la marge à 0.02.")
-    lines.append("")
-
     # ── Distribution F1 macro WF ──
     lines.append("## 📈 Distribution F1 macro — Walk-Forward")
     lines.append("")
