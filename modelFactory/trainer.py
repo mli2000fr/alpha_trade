@@ -363,6 +363,9 @@ def _run_training_registry_writes(
         lgbm_test = lgbm_metrics.get("test")
         if isinstance(lgbm_test, dict):
             insert_metrics(engine, run_id, symbol, "test", lgbm_test, model_name="lightgbm")
+        lgbm_wf = lgbm_metrics.get("wf")
+        if isinstance(lgbm_wf, dict):
+            insert_metrics(engine, run_id, symbol, "wf", lgbm_wf, model_name="lightgbm")
 
     # ── CatBoost challenger metrics ──
     cb_metrics = challengers.get("catboost") if isinstance(challengers, dict) else None
@@ -373,6 +376,9 @@ def _run_training_registry_writes(
         cb_test = cb_metrics.get("test")
         if isinstance(cb_test, dict):
             insert_metrics(engine, run_id, symbol, "test", cb_test, model_name="catboost")
+        cb_wf = cb_metrics.get("wf")
+        if isinstance(cb_wf, dict):
+            insert_metrics(engine, run_id, symbol, "wf", cb_wf, model_name="catboost")
 
     upsert_metrics_full(engine, run_id=run_id, symbol=symbol, metrics=all_metrics)
     replace_model_governance(
@@ -1384,10 +1390,48 @@ def train_symbol(
         if prepared_df is not None and effective_cfg.baseline.enabled:
             update_runtime_status(current_phase="baseline_lightgbm", current_symbol=symbol, progress_item=symbol)
             baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir, ternary_policy=_build_ternary_policy(effective_cfg))
+            # LightGBM walk-forward
+            if effective_cfg.walk_forward.enabled and baseline_metrics.get("status") == "completed":
+                from modelFactory.tabular_baseline import run_tabular_walk_forward
+                lgbm_wf = run_tabular_walk_forward(
+                    prepared_df, effective_cfg,
+                    model_name="lightgbm",
+                    model_builder=lambda seed: __import__("lightgbm").LGBMClassifier(
+                        objective="multiclass" if effective_cfg.data.target_mode == "ternary" else "binary",
+                        num_class=3 if effective_cfg.data.target_mode == "ternary" else 1,
+                        max_depth=effective_cfg.baseline.max_depth,
+                        n_estimators=effective_cfg.baseline.n_estimators,
+                        learning_rate=effective_cfg.baseline.learning_rate,
+                        random_state=seed, verbosity=-1,
+                    ),
+                    ternary_policy=_build_ternary_policy(effective_cfg),
+                )
+                if lgbm_wf.get("status") == "completed" and lgbm_wf.get("mean"):
+                    baseline_metrics["wf"] = lgbm_wf["mean"]
+                    baseline_metrics["walk_forward"] = lgbm_wf
         catboost_metrics: dict[str, Any] = {}
         if prepared_df is not None and effective_cfg.baseline.enable_catboost:
             update_runtime_status(current_phase="baseline_catboost", current_symbol=symbol, progress_item=symbol)
             catboost_metrics = run_catboost_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir, ternary_policy=_build_ternary_policy(effective_cfg))
+            # CatBoost walk-forward
+            if effective_cfg.walk_forward.enabled and catboost_metrics.get("status") == "completed":
+                from modelFactory.tabular_baseline import run_tabular_walk_forward
+                cb_wf = run_tabular_walk_forward(
+                    prepared_df, effective_cfg,
+                    model_name="catboost",
+                    model_builder=lambda seed: __import__("catboost").CatBoostClassifier(
+                        depth=effective_cfg.baseline.catboost_depth,
+                        iterations=effective_cfg.baseline.catboost_iterations,
+                        learning_rate=effective_cfg.baseline.catboost_learning_rate,
+                        random_seed=seed,
+                        loss_function="MultiClass" if effective_cfg.data.target_mode == "ternary" else "Logloss",
+                        verbose=False, allow_writing_files=False,
+                    ),
+                    ternary_policy=_build_ternary_policy(effective_cfg),
+                )
+                if cb_wf.get("status") == "completed" and cb_wf.get("mean"):
+                    catboost_metrics["wf"] = cb_wf["mean"]
+                    catboost_metrics["walk_forward"] = cb_wf
 
         best_ckpt = sym_dir / "best.ckpt"
         if best_source.exists() and best_source.resolve() != best_ckpt.resolve():

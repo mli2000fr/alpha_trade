@@ -549,3 +549,135 @@ def save_baseline_artifact(
 
 	return path
 
+
+# ---------------------------------------------------------------------------
+# Walk-forward tabulaire (Sprint Maître 1 Ter)
+# ---------------------------------------------------------------------------
+
+def run_tabular_walk_forward(
+	prepared_df: pd.DataFrame,
+	cfg: TrainingConfig,
+	*,
+	model_name: str,
+	model_builder: Callable[[int], Any],
+	ternary_policy: "TernaryDecisionPolicy | None" = None,
+) -> dict[str, Any]:
+	"""Évalue un modèle tabulaire en walk-forward (mêmes splits que le LSTM)."""
+	from modelFactory.dataset import generate_walk_forward_splits
+	from modelFactory.features import get_feature_columns as _get_fc
+
+	if not cfg.walk_forward.enabled:
+		return {}
+
+	splits = generate_walk_forward_splits(
+		prepared_df,
+		min_train_size=cfg.walk_forward.min_train_size,
+		val_size=cfg.walk_forward.val_size,
+		test_size=cfg.walk_forward.test_size,
+		step_size=cfg.walk_forward.step_size,
+		max_splits=cfg.walk_forward.max_splits,
+		forecast_horizon=cfg.data.forecast_horizon,
+	)
+	if not splits:
+		return {"status": "skipped", "reason": "no_valid_split"}
+
+	is_ternary = cfg.data.target_mode == "ternary"
+	feature_cols = _get_fc(
+		include_sentiment=cfg.data.include_sentiment_features,
+		feature_set=cfg.data.feature_set,
+		include_cross_sectional=cfg.data.enable_cross_sectional_features,
+		include_selector_context=cfg.data.include_selector_context_features,
+		include_short_score=cfg.data.include_short_score_features,
+	)
+
+	symbol_tag = "__BATCH__"
+	if "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
+		symbol_tag = str(prepared_df["symbol"].iloc[0])
+
+	fold_metrics: list[dict[str, Any]] = []
+	wf_seed = derive_seed(cfg.reproducibility.seed, "tabular_walk_forward", model_name, symbol_tag)
+
+	for split in splits:
+		split_seed = derive_seed(wf_seed, split.split_index)
+		apply_reproducibility(
+			ReproducibilityConfig(seed=split_seed, deterministic=cfg.reproducibility.deterministic),
+			context=f"tabular_wf:{model_name}:{symbol_tag}:split_{split.split_index}",
+		)
+		model = model_builder(split_seed)
+		train_targets = split.train["target"].astype(int)
+		if is_ternary:
+			train_targets = train_targets + 1
+		unique_train = train_targets.unique()
+		if len(unique_train) < 2:
+			continue
+
+		model.fit(split.train[feature_cols], train_targets)
+
+		raw_proba_all = model.predict_proba(split.test[feature_cols])
+		test_targets = split.test["target"].astype(int)
+		test_labels = test_targets.to_numpy()
+		if is_ternary:
+			test_labels_shifted = test_labels + 1
+			preds = decide_ternary_side_batch(
+				raw_proba_all[:, :3],
+				policy=ternary_policy if ternary_policy is not None else TernaryDecisionPolicy(),
+			)
+			n = len(preds)
+			fold_m: dict[str, Any] = {
+				"split_index": split.split_index,
+				"train_rows": len(split.train),
+				"test_rows": len(split.test),
+				"f1_macro": 0.0,
+				"f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
+				"true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
+				"pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0,
+			}
+			if n > 0:
+				for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+					tp = int(((preds == cls_idx) & (test_labels_shifted == cls_idx)).sum())
+					fp = int(((preds == cls_idx) & (test_labels_shifted != cls_idx)).sum())
+					fn = int(((preds != cls_idx) & (test_labels_shifted == cls_idx)).sum())
+					prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+					rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+					fold_m[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
+					fold_m[f"true_{cls_name}_pct"] = float((test_labels_shifted == cls_idx).mean() * 100)
+					fold_m[f"pred_{cls_name}_pct"] = float((preds == cls_idx).mean() * 100)
+				f1_vals = [fold_m[f"f1_{c}"] for c in ["short", "flat", "long"]]
+				fold_m["f1_macro"] = float(np.mean(f1_vals)) if f1_vals else 0.0
+			# Ajouter les dates du fold
+			if "date" in split.train.columns:
+				fold_m["train_start_date"] = str(split.train["date"].min().date())
+				fold_m["train_end_date"] = str(split.train["date"].max().date())
+			if "date" in split.test.columns:
+				fold_m["test_start_date"] = str(split.test["date"].min().date())
+				fold_m["test_end_date"] = str(split.test["date"].max().date())
+			fold_metrics.append(fold_m)
+		else:
+			# Binaire
+			test_proba = raw_proba_all[:, -1]
+			acc = float((test_proba >= 0.5).astype(int) == test_labels).mean()
+			fold_metrics.append({
+				"split_index": split.split_index,
+				"train_rows": len(split.train),
+				"test_rows": len(split.test),
+				"accuracy": acc,
+			})
+
+	if not fold_metrics:
+		return {"status": "skipped", "reason": "all_folds_empty"}
+
+	# ── Agrégation ──
+	keys = ["f1_macro", "f1_short", "f1_flat", "f1_long",
+			"true_short_pct", "true_flat_pct", "true_long_pct",
+			"pred_short_pct", "pred_flat_pct", "pred_long_pct"]
+	mean_metrics: dict[str, float | None] = {}
+	for key in keys:
+		vals = [m[key] for m in fold_metrics if m.get(key) is not None]
+		mean_metrics[key] = float(np.mean(vals)) if vals else None
+
+	return {
+		"status": "completed",
+		"n_splits": len(fold_metrics),
+		"mean": mean_metrics,
+		"splits": fold_metrics,
+	}
