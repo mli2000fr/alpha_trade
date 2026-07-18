@@ -38,6 +38,7 @@ BATCH_DETAIL_QUERY = """
 
 F1_BY_SPLIT_QUERY = """
     SELECT
+        mm.model_name,
         mm.split_name,
         COUNT(DISTINCT mm.symbol) AS nb_symbols,
         ROUND(AVG(mm.f1_macro), 3) AS avg_f1_macro,
@@ -49,8 +50,8 @@ F1_BY_SPLIT_QUERY = """
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
-    GROUP BY mm.split_name
-    ORDER BY FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+    GROUP BY mm.model_name, mm.split_name
+    ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
 """
 
 F1_BUCKET_QUERY = """
@@ -148,6 +149,7 @@ SYMBOL_METRICS_QUERY = """
 
 TRUE_PRED_AGG_QUERY = """
     SELECT
+        mm.model_name,
         mm.split_name,
         COUNT(DISTINCT mm.symbol) AS nb_symbols,
         ROUND(AVG(mm.true_short_pct), 3) AS avg_true_short_pct,
@@ -161,8 +163,8 @@ TRUE_PRED_AGG_QUERY = """
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
-    GROUP BY mm.split_name
-    ORDER BY FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+    GROUP BY mm.model_name, mm.split_name
+    ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
 """
 
 SYMBOL_WF_JSON_QUERY = """
@@ -588,9 +590,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
     if tp_df.empty:
         st.info("Aucune donnée true_*_pct / pred_*_pct disponible (vérifiez que le mode ternaire est activé).")
     else:
-        # Ligne Total (moyenne globale toutes splits confondues)
-        total_row = {
-            "split_name": "TOTAL",
+        # Ligne Total (moyenne globale toutes splits/modeles confondus)
+        total_row: dict[str, object] = {
+            "model_name": "TOTAL",
+            "split_name": "",
             "nb_symbols": tp_df["nb_symbols"].sum() if "nb_symbols" in tp_df.columns else 0,
         }
         for col in ["avg_true_short_pct", "avg_true_flat_pct", "avg_true_long_pct",
@@ -606,6 +609,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             if col in styled.columns:
                 styled[col] = styled[col].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
         styled = styled.rename(columns={
+            "model_name": "Modèle",
             "split_name": "Split",
             "nb_symbols": "Nb symboles",
             "avg_true_short_pct": "true short %",

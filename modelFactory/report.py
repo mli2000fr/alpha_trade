@@ -16,6 +16,7 @@ BATCH_DETAIL_QUERY = """
 
 F1_BY_SPLIT_QUERY = """
     SELECT
+        mm.model_name,
         mm.split_name,
         COUNT(DISTINCT mm.symbol) AS nb_symbols,
         ROUND(AVG(mm.f1_macro), 3) AS avg_f1_macro,
@@ -27,12 +28,13 @@ F1_BY_SPLIT_QUERY = """
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
-    GROUP BY mm.split_name
-    ORDER BY FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+    GROUP BY mm.model_name, mm.split_name
+    ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
 """
 
 TRUE_PRED_AGG_QUERY = """
     SELECT
+        mm.model_name,
         mm.split_name,
         COUNT(DISTINCT mm.symbol) AS nb_symbols,
         ROUND(AVG(mm.true_short_pct), 3) AS avg_true_short_pct,
@@ -46,8 +48,8 @@ TRUE_PRED_AGG_QUERY = """
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
-    GROUP BY mm.split_name
-    ORDER BY FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+    GROUP BY mm.model_name, mm.split_name
+    ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
 """
 
 F1_BUCKET_QUERY = """

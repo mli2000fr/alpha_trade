@@ -36,7 +36,8 @@ def run_catboost_baseline(
 		return {"status": "unavailable", "model_name": "catboost", "reason": "catboost_not_installed"}
 
 	artifact_scope = artifact_dir.name if artifact_dir is not None else "__BENCHMARK__"
-	catboost_run_root = Path(cfg.catboost_artifacts_dir) / artifact_scope
+	catboost_run_root = (Path(cfg.catboost_artifacts_dir) / artifact_scope).resolve()
+	catboost_run_root.mkdir(parents=True, exist_ok=True)
 
 	return run_tabular_baseline(
 		prepared_df,

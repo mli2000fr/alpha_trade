@@ -146,6 +146,12 @@ def compute_tabular_metrics(
 			f1_vals = [v for k, v in result.items() if k.startswith("f1_") and v is not None]
 			result["f1_macro"] = float(np.mean(f1_vals)) if f1_vals else 0.0
 
+			# ── Distribution true / pred (compatible LSTM) ──
+			n = len(labels_shifted)
+			for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+				result[f"true_{cls_name}_pct"] = float((labels_shifted == cls_idx).mean() * 100) if n > 0 else 0.0
+				result[f"pred_{cls_name}_pct"] = float((preds_multi == cls_idx).mean() * 100) if n > 0 else 0.0
+
 			# ── Sprint Maître 1 : détection de collapse ─
 			collapsed, collapse_reason = check_model_collapse(probs_all[:, :3])
 			result["collapsed"] = collapsed
