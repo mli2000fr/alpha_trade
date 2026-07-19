@@ -76,6 +76,7 @@ F1_BUCKET_QUERY = """
 
 TOP5_BEST_F1_QUERY = """
     SELECT
+        mm.model_name,
         mm.symbol,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
@@ -93,6 +94,7 @@ TOP5_BEST_F1_QUERY = """
 
 TOP5_WORST_F1_QUERY = """
     SELECT
+        mm.model_name,
         mm.symbol,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
@@ -110,6 +112,7 @@ TOP5_WORST_F1_QUERY = """
 
 ZERO_F1_SHORT_QUERY = """
     SELECT
+        mm.model_name,
         mm.symbol,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
