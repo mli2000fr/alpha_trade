@@ -521,20 +521,24 @@ class SymbolDataModule(L.LightningDataModule):
         self.cross_sectional_diagnostics: dict[str, object] = {}
         self._pin_memory = torch.cuda.is_available()
         default_num_workers = min(os.cpu_count() or 0, 4)
-        # Python 3.14+ / Windows : lambdas ne sont plus picklables par le
-        # multiprocessing 'spawn'. On remplace par functools.partial (picklable).
-        # On garde le forced-single-process uniquement si CUDA n'est pas dispo
-        # (le path Windows+CUDA utilise persistent_workers=True pour éviter les
-        # crashes de teardown).
-        _py314_win_no_cuda = os.name == "nt" and sys.version_info >= (3, 14) and not self._pin_memory
-        self._force_single_process_dataloader = (os.name == "nt" and self._pin_memory) or _py314_win_no_cuda
+        # Sur Windows, le multiprocessing utilise 'spawn' (pas 'fork').
+        # Lancer des DataLoader workers (>0) depuis un ProcessPoolExecutor
+        # (orchestrateur multi-symboles) provoque des crashes worker
+        # (RuntimeError: DataLoader worker exited unexpectedly) et des
+        # deadlocks car Lightning ne récupère pas toujours l'erreur.
+        # On force donc num_workers=0 sur tout Windows, avec ou sans CUDA.
+        # Le gain de parallélisme DataLoader est négligeable sans GPU
+        # (pin_memory=False de toute façon) et le SequenceDataset est
+        # trivial (indexation de tenseurs en mémoire).
+        self._force_single_process_dataloader = os.name == "nt"
         self._num_workers = 0 if self._force_single_process_dataloader else default_num_workers
         if self._force_single_process_dataloader:
             LOGGER.info(
                 "forcing dataloader num_workers=0 persistent_workers=False "
-                "(windows+cuda=%s py314_no_cuda=%s)",
+                "(windows os.name=%s cuda=%s py_ver=%s)",
+                os.name,
                 self._pin_memory,
-                _py314_win_no_cuda,
+                sys.version_info[:2],
             )
 
     def setup(self, stage: Optional[str] = None) -> None:
