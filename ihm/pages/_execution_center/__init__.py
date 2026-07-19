@@ -3104,7 +3104,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ),
                     key="pipeline_ml_training_start_date",
                     format="YYYY-MM-DD",
-                    help="Date minimale des barres daily transmises au backend Model Factory. Le défaut `2020-01-01` permet de cadrer le training sur l'historique récent utile.",
+                    help="Date minimale des barres daily transmises au backend Model Factory. Le défaut `2018-01-01` permet de cadrer le training sur l'historique récent utile.",
                 ),
             )
         with ml_scope_col2:
