@@ -144,12 +144,10 @@ def test_cli_parser_accepts_champion_selection_options() -> None:
         "--mode", "train",
         "--select-champion",
         "--default-champion", "global_model",
-        "--champion-selection-metric", "business_score",
     ])
 
     assert opts.select_champion is True
     assert opts.default_champion == "global_model"
-    assert opts.champion_selection_metric == "business_score"
 
 
 def test_cli_parser_defaults_to_tradable_universe_and_rejects_legacy_source() -> None:

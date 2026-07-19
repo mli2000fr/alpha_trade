@@ -123,6 +123,19 @@ ZERO_F1_SHORT_QUERY = """
     LIMIT 10
 """
 
+CHAMPION_MODE_QUERY = """
+    SELECT
+        mg.selection_mode,
+        COUNT(DISTINCT mg.symbol) AS nb_symbols
+    FROM alpha_trade.model_governance AS mg
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mg.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mg.is_selected_model = 1
+    GROUP BY mg.selection_mode
+    ORDER BY mg.selection_mode
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -146,6 +159,39 @@ def _df_to_md(df: pd.DataFrame) -> str:
 # Génération du rapport
 # ---------------------------------------------------------------------------
 
+def _append_champion_status(lines: list[str], champion_df: pd.DataFrame) -> None:
+    """Ajoute la section statut champion (⚠️ fallback ou ✅ OK)."""
+    if champion_df.empty:
+        return
+
+    mode_map: dict[str, int] = {}
+    for _, row in champion_df.iterrows():
+        mode_map[str(row["selection_mode"])] = int(row["nb_symbols"])
+
+    total = sum(mode_map.values())
+    auto_count = mode_map.get("auto_selected_champion", 0)
+    fallback_count = mode_map.get("fallback_default_champion", 0)
+    default_count = mode_map.get("default_champion", 0)
+    problem_count = fallback_count + default_count
+
+    lines.append("## 🏆 Sélection du champion")
+    lines.append("")
+    if problem_count == 0 and auto_count > 0:
+        lines.append(f"✅ **Tout va bien** — {auto_count} champions sélectionnés automatiquement sur {total} symboles.")
+    else:
+        lines.append(f"⚠️ **{problem_count} symboles en fallback** sur {total} :")
+        lines.append("")
+        lines.append("| Mode | Nb symboles |")
+        lines.append("|---|---|")
+        if auto_count > 0:
+            lines.append(f"| ✅ `auto_selected_champion` | {auto_count} |")
+        if fallback_count > 0:
+            lines.append(f"| ⚠️ `fallback_default_champion` | {fallback_count} |")
+        if default_count > 0:
+            lines.append(f"| ⚠️ `default_champion` | {default_count} |")
+    lines.append("")
+
+
 def generate_batch_report(engine: Engine, batch_id: str) -> str:
     """Génère un rapport Markdown complet pour un batch d'entraînement."""
     detail_df = _safe_query(engine, BATCH_DETAIL_QUERY, {"batch_id": batch_id})
@@ -155,6 +201,7 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     best_df = _safe_query(engine, TOP5_BEST_F1_QUERY, {"batch_id": batch_id})
     worst_df = _safe_query(engine, TOP5_WORST_F1_QUERY, {"batch_id": batch_id})
     zero_df = _safe_query(engine, ZERO_F1_SHORT_QUERY, {"batch_id": batch_id})
+    champion_df = _safe_query(engine, CHAMPION_MODE_QUERY, {"batch_id": batch_id})
 
     lines: list[str] = []
     lines.append(f"# Diagnostic ML — Batch `{batch_id}`")
@@ -189,6 +236,9 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
             lines.append(str(cmd))
             lines.append("```")
     lines.append("")
+
+    # ── Statut champion ──
+    _append_champion_status(lines, champion_df)
 
     # ── Métriques F1 par split ──
     lines.append("## 📊 Métriques F1 par split")

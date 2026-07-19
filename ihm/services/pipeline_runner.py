@@ -55,7 +55,6 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_GLOBAL_MODEL_NAME,
     DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
     DEFAULT_ML_SELECT_CHAMPION,
-    DEFAULT_ML_CHAMPION_SELECTION_METRIC,
     DEFAULT_ML_OPTIMIZE_THRESHOLDS,
     DEFAULT_ML_OPTIMIZE_TARGET,
     DEFAULT_ML_LGBM_LEARNING_RATE,
@@ -231,7 +230,6 @@ DEFAULT_CA_BATCH_SIZE = 25
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
 MLGlobalModelName = Literal["catboost", "lightgbm"]
-MLChampionMetric = Literal["selection_score", "business_score", "auc"]
 MLTargetMode = Literal["binary", "swing_cash", "ternary"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
@@ -321,7 +319,6 @@ class PipelineLaunchOptions:
     ml_global_model_name: MLGlobalModelName = "catboost"
     ml_enable_cross_sectional: bool = False
     ml_select_champion: bool = True
-    ml_champion_selection_metric: MLChampionMetric = "auc"
     ml_optimize_thresholds: bool = True
     ml_optimize_target: bool = False
     # ML — cible swing cash + horizon + walk-forward (P1)
@@ -2162,7 +2159,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")
         if options.ml_select_champion:
-            command.extend(["--select-champion", "--champion-selection-metric", options.ml_champion_selection_metric])
+            command.append("--select-champion")
         if options.ml_optimize_thresholds:
             command.extend([
                 "--optimize-thresholds",

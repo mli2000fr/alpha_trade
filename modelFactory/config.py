@@ -265,7 +265,7 @@ class ChampionSelectionConfig:
     enabled: bool = False
     allow_auto_selection: bool = False
     default_champion: str = "lstm_attention"
-    selection_metric: str = "selection_score"  # selection_score | business_score | auc
+    selection_metric: str = "selection_score"  # f1_macro (wf > val) par défaut
     require_benchmark_report: bool = False
     # Phase 4.2.e — Quarantaine d'un nouveau champion :
     # tant qu'il n'a pas atteint `min_runs` runs walk-forward complétés OU

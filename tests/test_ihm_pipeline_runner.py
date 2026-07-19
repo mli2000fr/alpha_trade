@@ -919,8 +919,6 @@ def test_build_pipeline_command_ml_steps() -> None:
         "--walkforward",  # walk-forward activé par défaut en swing
     ):
         assert flag in train_cmd, f"Flag attendu manquant : {flag}"
-    assert "--champion-selection-metric" in train_cmd
-    assert train_cmd[train_cmd.index("--champion-selection-metric") + 1] == "selection_score"
 
     # Cible swing cash
     assert train_cmd[train_cmd.index("--target-mode") + 1] == "swing_cash"

@@ -570,6 +570,34 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.code(str(cmd), language="powershell")
 
     st.markdown("")
+    # ── Statut sélection du champion ──
+    champion_df = safe_query(
+        """SELECT mg.selection_mode, COUNT(DISTINCT mg.symbol) AS nb_symbols
+           FROM alpha_trade.model_governance AS mg
+           JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mg.run_id
+           WHERE mtr.batch_id = :batch_id AND mg.is_selected_model = 1
+           GROUP BY mg.selection_mode""",
+        {"batch_id": batch["batch_id"]},
+    )
+    if not champion_df.empty:
+        mode_map: dict[str, int] = {}
+        for _, crow in champion_df.iterrows():
+            mode_map[str(crow["selection_mode"])] = int(crow["nb_symbols"])
+        auto_count = mode_map.get("auto_selected_champion", 0)
+        fallback_count = mode_map.get("fallback_default_champion", 0)
+        default_count = mode_map.get("default_champion", 0)
+        problem_count = fallback_count + default_count
+        total = sum(mode_map.values())
+
+        if problem_count == 0 and auto_count > 0:
+            st.success(f"✅ Sélection du champion : {auto_count}/{total} symboles en `auto_selected_champion` — tout va bien.")
+        elif problem_count > 0:
+            st.error(
+                f"⚠️ Sélection du champion : **{problem_count} fallback(s)** sur {total} symboles "
+                f"(auto={auto_count}, fallback_default={fallback_count}, default={default_count}). "
+                f"Vérifiez les logs pour les raisons d'inéligibilité."
+            )
+
     # ── Bloc F1 par split ──
     st.subheader("📊 Métriques F1 par split")
     f1_df = safe_query(F1_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})

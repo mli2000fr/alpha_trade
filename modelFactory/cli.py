@@ -309,8 +309,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Active la sélection automatique du champion parmi les modèles éligibles à l’inférence")
     p.add_argument("--default-champion", type=str, default="lstm_attention",
                    choices=["lstm_attention", "lightgbm", "catboost", "global_model"])
-    p.add_argument("--champion-selection-metric", type=str, default="selection_score",
-                   choices=["selection_score", "business_score", "auc"])
     # Phase 4.2.e — Quarantaine champion.
     p.add_argument("--champion-min-runs", type=int, default=0,
                    help="Nb min de runs walk-forward complétés avant qu'un nouveau champion soit servi")
@@ -442,7 +440,7 @@ def main(args: list[str] | None = None) -> None:
             enabled=opts.select_champion,
             allow_auto_selection=opts.select_champion,
             default_champion=opts.default_champion,
-            selection_metric=opts.champion_selection_metric,
+            selection_metric="selection_score",
             min_runs=int(opts.champion_min_runs),
             min_days=int(opts.champion_min_days),
         ),

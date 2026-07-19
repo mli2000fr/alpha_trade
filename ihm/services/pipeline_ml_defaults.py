@@ -10,8 +10,8 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 DEFAULT_ML_TARGET_MODE = "ternary"
 DEFAULT_ML_FORECAST_HORIZON = 10              # 10 jours = horizon swing étendu (TODO-5)
-DEFAULT_ML_TARGET_UP_THRESHOLD = 0.03        # +2.0 % cible long
-DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.03     # -2.0 % cible short
+DEFAULT_ML_TARGET_UP_THRESHOLD = 0.02        # +2.0 % cible long
+DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.02     # -2.0 % cible short
 DEFAULT_ML_TERNARY_WEIGHT_SHORT = 1.0
 DEFAULT_ML_TERNARY_WEIGHT_FLAT = 0.75
 DEFAULT_ML_TERNARY_WEIGHT_LONG = 1.0
@@ -93,7 +93,6 @@ DEFAULT_ML_ENABLE_GLOBAL_MODEL = False        # GlobalModel désactivé par déf
 DEFAULT_ML_GLOBAL_MODEL_NAME = "catboost"     # type de GlobalModel par défaut
 DEFAULT_ML_ENABLE_CROSS_SECTIONAL = False     # features cross-sectionnelles
 DEFAULT_ML_SELECT_CHAMPION = True             # champion selection activée
-DEFAULT_ML_CHAMPION_SELECTION_METRIC = "auc"
 DEFAULT_ML_OPTIMIZE_THRESHOLDS = True         # optimization des seuils de décision
 DEFAULT_ML_OPTIMIZE_TARGET = False            # target optimization (supervisée)
 DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20

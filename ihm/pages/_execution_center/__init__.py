@@ -129,7 +129,6 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_GLOBAL_MODEL_NAME,
     DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
     DEFAULT_ML_SELECT_CHAMPION,
-    DEFAULT_ML_CHAMPION_SELECTION_METRIC,
     DEFAULT_ML_OPTIMIZE_THRESHOLDS,
     DEFAULT_ML_OPTIMIZE_TARGET,
     DEFAULT_ML_LGBM_LEARNING_RATE,
@@ -3190,20 +3189,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_select_champion",
                 help="Ajoute `--select-champion` et permet de servir automatiquement le meilleur modèle éligible.",
             )
-            ml_champion_selection_metric = cast(
-                str,
-                st.selectbox(
-                    "Métrique de sélection du champion",
-                    options=["selection_score", "business_score", "auc"],
-                    index=["selection_score", "business_score", "auc"].index(
-                        cast(str, st.session_state.get("pipeline_ml_champion_selection_metric", "auc"))
-                        if st.session_state.get("pipeline_ml_champion_selection_metric", "auc") in {"selection_score", "business_score", "auc"}
-                        else "auc"
-                    ),
-                    key="pipeline_ml_champion_selection_metric",
-                    disabled=not ml_select_champion,
-                ),
-            )
             ml_optimize_thresholds = st.checkbox(
                 "Optimiser le seuil de décision (pour le mode binaire)",
                 value=_session_state_bool("pipeline_ml_optimize_thresholds", False),
@@ -3233,7 +3218,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
             ml_enable_cross_sectional = st.checkbox(
                 "Activer les features cross-sectionnelles",
-                value=_session_state_bool("pipeline_ml_enable_cross_sectional", True),
+                value=_session_state_bool("pipeline_ml_enable_cross_sectional", DEFAULT_ML_ENABLE_CROSS_SECTIONAL),
                 key="pipeline_ml_enable_cross_sectional",
                 help="Ajoute `--enable-cross-sectional` pour enrichir les features séquentielles et le modèle global.",
             )
@@ -4046,7 +4031,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_global_model_name=cast(Any, ml_global_model_name),
             ml_enable_cross_sectional=bool(ml_enable_cross_sectional),
             ml_select_champion=bool(ml_select_champion),
-            ml_champion_selection_metric=cast(Any, ml_champion_selection_metric),
             ml_optimize_thresholds=bool(ml_optimize_thresholds),
             ml_optimize_target=bool(ml_optimize_target),
             ml_target_mode=cast(Any, ml_target_mode),

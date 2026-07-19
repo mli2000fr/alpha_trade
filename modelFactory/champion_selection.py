@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from modelFactory.config import ChampionSelectionConfig
 from modelFactory.evaluation import check_model_collapse
+
+LOGGER = logging.getLogger(__name__)
 
 
 # Phase 4.2.e — quarantaine champion.
@@ -194,30 +197,48 @@ def selection_score_from_result(result: dict[str, Any], metric: str = "selection
     """Calcule le score de sélection SANS lire le holdout final (Sprint Maître 1).
 
     RÈGLE STRICTE : les partitions autorisées pour la sélection sont
-    ``val`` et ``walk_forward_oos``. La partition ``test`` / ``final_holdout``
+    ``val`` et ``walk_forward``. La partition ``test`` / ``final_holdout``
     ne doit JAMAIS influencer le choix du champion.
 
     Si la métrique demandée est absente des partitions autorisées,
     retourne ``-inf`` (ne sélectionne jamais ce modèle).
+
+    Métrique par défaut (``"selection_score"``) → ``f1_macro`` walk-forward
+    prioritaire, avec fallback ``f1_macro`` val puis ``auc`` val.
     """
     if not result or result.get("status") != "completed":
         return float("-inf")
 
     # ── Partitions autorisées pour la sélection (Sprint Maître 1) ──
     val = result.get("val") if isinstance(result.get("val"), dict) else {}
-    wf_oos = result.get("walk_forward_oos") if isinstance(result.get("walk_forward_oos"), dict) else {}
+    _wf_raw = result.get("walk_forward") if isinstance(result.get("walk_forward"), dict) else {}
+    # Certains challengers utilisent "walk_forward_oos", d'autres "walk_forward".
+    wf = _wf_raw if _wf_raw else result.get("walk_forward_oos") if isinstance(result.get("walk_forward_oos"), dict) else {}
+    # Les métriques walk-forward sont souvent encapsulées dans un sous-dict "mean".
+    wf_mean = wf.get("mean") if isinstance(wf.get("mean"), dict) else {}
+
     if metric == "business_score":
-        values = (val.get("threshold_business_score"), wf_oos.get("threshold_business_score"))
-    if metric == "auc":
-        values = (val.get("auc"), wf_oos.get("auc"), val.get("auc_macro"), wf_oos.get("auc_macro"))
-    elif metric not in {"business_score", "auc"}:
         values = (
-            val.get("selection_score"),
-            wf_oos.get("selection_score"),
+            wf_mean.get("threshold_business_score"),
+            wf.get("threshold_business_score"),
             val.get("threshold_business_score"),
-            wf_oos.get("threshold_business_score"),
+        )
+    elif metric == "auc":
+        values = (
+            wf_mean.get("auc"),
+            wf.get("auc"),
             val.get("auc"),
-            wf_oos.get("auc"),
+            wf_mean.get("auc_macro"),
+            val.get("auc_macro"),
+        )
+    else:
+        # Par défaut → f1_macro walk-forward (mean) puis val, fallback auc
+        values = (
+            wf_mean.get("f1_macro"),
+            wf.get("f1_macro"),
+            val.get("f1_macro"),
+            wf_mean.get("auc"),
+            val.get("auc"),
         )
 
     for value in values:
@@ -413,6 +434,11 @@ def select_champion(
                     result["eligibility_reason"] = f"quarantine:{reason}"
 
     if not champion_cfg.enabled or not champion_cfg.allow_auto_selection:
+        LOGGER.warning(
+            "champion_selection fallback=default_champion symbol=%s reason=%s",
+            symbol or "?",
+            "disabled" if not champion_cfg.enabled else "auto_selection_not_allowed",
+        )
         return {
             "selected_model": default_model if default_exists else "lstm_attention",
             "selection_mode": "default_champion",
@@ -428,6 +454,19 @@ def select_champion(
     ]
     if not eligible:
         selected_model = default_model if default_exists else "lstm_attention"
+        ineligible_reasons = {
+            mn: r.get("eligibility_reason", "unknown")
+            for mn, r in annotated.items()
+            if r.get("status") == "completed" and not r.get("selection_eligible")
+        }
+        LOGGER.warning(
+            "champion_selection fallback=fallback_default_champion symbol=%s "
+            "eligible=0 total=%d default=%s reasons=%s",
+            symbol or "?",
+            len(annotated),
+            selected_model,
+            ineligible_reasons,
+        )
         return {
             "selected_model": selected_model,
             "selection_mode": "fallback_default_champion",
