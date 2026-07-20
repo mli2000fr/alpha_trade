@@ -23,7 +23,7 @@ class DataConfig:
     include_macro_vxn_features: bool = False     # VXN (Nasdaq-100 vol)
     include_macro_vix3m_features: bool = False   # VIX3M + term structure ratio
     include_macro_move_features: bool = False    # MOVE (bond volatility)
-    enable_cross_sectional_features: bool = False
+    enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert
     benchmark_symbol: str = "SPY"

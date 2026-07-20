@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import streamlit as st
+
 from ihm.services.pipeline_runner import PROJECT_ROOT
 
 PREFERENCES_DIR = PROJECT_ROOT / "artifacts" / "ihm_preferences"
@@ -30,6 +32,7 @@ class FractionalTradingPreferences:
         }
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_persisted_fractional_trading_preferences() -> FractionalTradingPreferences:
     path = FRACTIONAL_TRADING_PREFERENCES_PATH
     if not path.exists() or not path.is_file():

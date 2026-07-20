@@ -1,4 +1,4 @@
-﻿"""Services d'orchestration légère des pipelines depuis l'IHM Streamlit."""
+"""Services d'orchestration légère des pipelines depuis l'IHM Streamlit."""
 from __future__ import annotations
 
 import os

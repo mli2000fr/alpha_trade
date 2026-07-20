@@ -1,16 +1,20 @@
-"""modelFactory/cross_sectional.py — Features cross-sectionnelles PIT-safe.
+"""modelFactory/cross_sectional.py — Features cross-sectionnelles et sectorielles PIT-safe.
 
 Refactored to load bars symbol-by-symbol instead of all at once,
 avoiding massive MySQL queries that exceed max_allowed_packet.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from sqlalchemy import Table, MetaData, select
 
 from modelFactory.features import _build_adjusted_price_frame, _range_position
+
+LOGGER = logging.getLogger(__name__)
 
 CROSS_SECTIONAL_FEATURE_COLUMNS: list[str] = [
     "ret_20_rank",
@@ -21,6 +25,17 @@ CROSS_SECTIONAL_FEATURE_COLUMNS: list[str] = [
     "dollar_volume_20_rank",
     "volume_ratio_20_rank_xs",
     "range_position_20_rank",
+]
+
+SECTOR_FEATURE_COLUMNS: list[str] = [
+    "sector_ret_20",
+    "sector_ret_60",
+    "sector_vol_20",
+    "sector_relative_strength_20",
+    "sector_dollar_volume_20",
+    "sector_symbol_count",
+    "stock_vs_sector_ret_20",
+    "stock_vs_sector_ret_60",
 ]
 
 RAW_CROSS_SECTIONAL_COLUMNS_MAP: dict[str, str] = {
@@ -88,6 +103,144 @@ def _build_benchmark_returns(
     return out
 
 
+def _load_sector_mapping(engine) -> dict[str, str]:
+    """Charge le mapping symbole -> secteur depuis ``stock_metadata``.
+
+    Returns
+    -------
+    dict[str, str]
+        ``{symbol: sector_name}``, symboles uppercase, secteurs stripped.
+    """
+    try:
+        meta = MetaData()
+        stock_metadata = Table("stock_metadata", meta, autoload_with=engine)
+        sector_col = None
+        for candidate in ("provider_sector", "sector"):
+            if candidate in stock_metadata.c:
+                sector_col = stock_metadata.c[candidate]
+                break
+        if sector_col is None:
+            LOGGER.warning("_load_sector_mapping: no sector column found in stock_metadata")
+            return {}
+
+        stmt = select(stock_metadata.c.symbol, sector_col).where(
+            sector_col.isnot(None),
+            sector_col != "",
+        )
+        with engine.connect() as conn:
+            rows = conn.execute(stmt).fetchall()
+
+        mapping: dict[str, str] = {}
+        for sym, sec in rows:
+            sym_str = str(sym).strip().upper()
+            sec_str = str(sec).strip()
+            if sym_str and sec_str:
+                mapping[sym_str] = sec_str
+        LOGGER.info("_load_sector_mapping: loaded %d symbols in %d sectors",
+                     len(mapping), len(set(mapping.values())))
+        return mapping
+    except Exception:
+        LOGGER.warning("_load_sector_mapping: failed to load sector mapping", exc_info=True)
+        return {}
+
+
+def _compute_sector_features(
+    raw_panel: pd.DataFrame,
+    sector_map: dict[str, str],
+    *,
+    min_symbols_per_sector: int = 3,
+) -> pd.DataFrame:
+    """Calcule les features sectorielles depuis le raw_panel cross-sectional.
+
+    Pour chaque (date, secteur) agrège les valeurs brutes de tous les titres
+    du secteur, puis réinjecte dans chaque ligne (symbol, date).
+
+    Parameters
+    ----------
+    raw_panel : pd.DataFrame
+        Doit contenir ``symbol``, ``date`` et les colonnes de RAW_CROSS_SECTIONAL_COLS.
+    sector_map : dict[str, str]
+        Mapping ``{symbol: sector_name}``.
+    min_symbols_per_sector : int
+        Nombre minimum de symboles dans un secteur pour que l'agrégat soit valide
+        (sinon → NaN, puis forward-fillé).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame avec colonnes ``[symbol, date, *SECTOR_FEATURE_COLUMNS]``.
+    """
+    if not sector_map or raw_panel.empty:
+        return pd.DataFrame(columns=["symbol", "date", *SECTOR_FEATURE_COLUMNS])
+
+    panel = raw_panel.copy()
+    panel["sector"] = panel["symbol"].astype(str).str.upper().map(sector_map)
+    panel = panel.dropna(subset=["sector"])
+    if panel.empty:
+        return pd.DataFrame(columns=["symbol", "date", *SECTOR_FEATURE_COLUMNS])
+
+    # Compte le nombre de symboles distincts par (date, secteur)
+    sector_counts = panel.groupby(["date", "sector"])["symbol"].transform("nunique")
+    valid_mask = sector_counts >= min_symbols_per_sector
+
+    # Agrégats sectoriels par (date, secteur)
+    agg_map: dict[str, str | callable] = {
+        "ret_20": "mean",
+        "ret_60": "mean",
+        "volatility_20": "mean",
+        "dollar_volume_20": "sum",
+    }
+    available_aggs = {k: v for k, v in agg_map.items() if k in panel.columns}
+    sector_agg = panel.groupby(["date", "sector"], sort=False).agg(available_aggs).reset_index()
+    sector_agg.rename(
+        columns={
+            "ret_20": "sector_ret_20",
+            "ret_60": "sector_ret_60",
+            "volatility_20": "sector_vol_20",
+            "dollar_volume_20": "sector_dollar_volume_20",
+        },
+        inplace=True,
+    )
+
+    # Secteur relative strength vs benchmark
+    if "benchmark_return_20" in panel.columns:
+        bench_by_date = panel.groupby("date")["benchmark_return_20"].first().reset_index()
+        sector_agg = sector_agg.merge(bench_by_date, on="date", how="left")
+        sector_agg["sector_relative_strength_20"] = (
+            sector_agg["sector_ret_20"] - sector_agg["benchmark_return_20"]
+        )
+    else:
+        sector_agg["sector_relative_strength_20"] = sector_agg["sector_ret_20"]
+
+    # Nombre de symboles par secteur
+    symbol_counts = panel.groupby(["date", "sector"])["symbol"].nunique().reset_index(name="sector_symbol_count")
+    sector_agg = sector_agg.merge(symbol_counts, on=["date", "sector"], how="left")
+
+    # Merge back to per-symbol level
+    result = panel[["symbol", "date", "sector", "ret_20", "ret_60"]].merge(
+        sector_agg, on=["date", "sector"], how="left"
+    )
+
+    # Stock vs secteur (alpha individuel)
+    result["stock_vs_sector_ret_20"] = result["ret_20"] - result["sector_ret_20"]
+    result["stock_vs_sector_ret_60"] = result["ret_60"] - result["sector_ret_60"]
+
+    # Invalider les agrégats quand le secteur a trop peu de symboles
+    result.loc[~valid_mask, SECTOR_FEATURE_COLUMNS] = np.nan
+
+    # Forward-fill les NaN au sein de chaque (symbol, secteur) pour les dates sans agrégat
+    result = result.sort_values(["symbol", "date"]).reset_index(drop=True)
+    fill_cols = [c for c in SECTOR_FEATURE_COLUMNS if c in result.columns]
+    result[fill_cols] = result.groupby("symbol", sort=False)[fill_cols].ffill()
+
+    # Remplir les NaN restants par 0 (début de série sans historique sectoriel)
+    for col in SECTOR_FEATURE_COLUMNS:
+        if col in result.columns:
+            result[col] = result[col].fillna(0.0)
+
+    return result[["symbol", "date", *SECTOR_FEATURE_COLUMNS]].copy()
+
+
 def build_cross_sectional_features_from_db(
     engine,
     symbols: list[str],
@@ -96,22 +249,31 @@ def build_cross_sectional_features_from_db(
     min_universe_size: int = 20,
     start_date=None,
     end_date=None,
+    sector_map: dict[str, str] | None = None,
+    min_symbols_per_sector: int = 3,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Build cross-sectional features by loading bars symbol-by-symbol.
+    """Build cross-sectional (+ optional sector) features by loading bars symbol-by-symbol.
 
     Avoids loading all symbols at once -- queries one symbol's bars at a time,
     accumulates raw values, then computes percentile ranks per date.
+
+    If ``sector_map`` is provided, also computes sector-level aggregate features
+    and appends them to the returned DataFrame.
 
     This replaces the old approach of loading all universe bars in a single
     massive MySQL query that exceeded max_allowed_packet.
     """
     from modelFactory.data_loader import load_symbol_bars
 
+    all_feature_cols = list(CROSS_SECTIONAL_FEATURE_COLUMNS)
+    if sector_map:
+        all_feature_cols.extend(SECTOR_FEATURE_COLUMNS)
+
     if not symbols:
-        return pd.DataFrame(columns=["symbol", "date", *CROSS_SECTIONAL_FEATURE_COLUMNS]), {
+        return pd.DataFrame(columns=["symbol", "date", *all_feature_cols]), {
             "enabled": False,
             "reason": "empty_symbols_list",
-            "feature_columns": list(CROSS_SECTIONAL_FEATURE_COLUMNS),
+            "feature_columns": all_feature_cols,
         }
 
     benchmark_returns = _build_benchmark_returns(benchmark_df)
@@ -136,10 +298,10 @@ def build_cross_sectional_features_from_db(
         loaded_count += 1
 
     if not all_raw_parts:
-        return pd.DataFrame(columns=["symbol", "date", *CROSS_SECTIONAL_FEATURE_COLUMNS]), {
+        return pd.DataFrame(columns=["symbol", "date", *all_feature_cols]), {
             "enabled": True,
             "reason": "no_valid_symbols",
-            "feature_columns": list(CROSS_SECTIONAL_FEATURE_COLUMNS),
+            "feature_columns": all_feature_cols,
             "loaded_count": loaded_count,
             "skipped_count": skipped_count,
         }
@@ -156,7 +318,8 @@ def build_cross_sectional_features_from_db(
         raw_panel[rank_col] = rank_series.astype(float)
 
     feature_frame = raw_panel[["symbol", "date", *CROSS_SECTIONAL_FEATURE_COLUMNS]].copy()
-    diagnostics = {
+
+    diagnostics: dict[str, Any] = {
         "enabled": True,
         "feature_columns": list(CROSS_SECTIONAL_FEATURE_COLUMNS),
         "output_rows": int(len(feature_frame)),
@@ -167,6 +330,25 @@ def build_cross_sectional_features_from_db(
         "loaded_count": loaded_count,
         "skipped_count": skipped_count,
     }
+
+    # ── Sector features (optional) ──
+    if sector_map:
+        sector_frame = _compute_sector_features(
+            raw_panel, sector_map, min_symbols_per_sector=min_symbols_per_sector,
+        )
+        if not sector_frame.empty:
+            feature_frame = feature_frame.merge(sector_frame, on=["symbol", "date"], how="left")
+            for col in SECTOR_FEATURE_COLUMNS:
+                if col not in feature_frame.columns:
+                    feature_frame[col] = 0.0
+        else:
+            for col in SECTOR_FEATURE_COLUMNS:
+                feature_frame[col] = 0.0
+        diagnostics["feature_columns"] = all_feature_cols
+        diagnostics["sector_features_enabled"] = True
+        diagnostics["sector_count"] = len(set(sector_map.values()))
+        diagnostics["sector_symbol_mapped"] = len(sector_map)
+
     return feature_frame, diagnostics
 
 
@@ -237,16 +419,17 @@ def merge_cross_sectional_features(
     symbol_df: pd.DataFrame,
     cross_sectional_df: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    """Merge cross-sectional features on (symbol, date) PIT-safe."""
+    """Merge cross-sectional (+ optional sector) features on (symbol, date) PIT-safe."""
+    all_cols = list(CROSS_SECTIONAL_FEATURE_COLUMNS) + list(SECTOR_FEATURE_COLUMNS)
     if cross_sectional_df is None or cross_sectional_df.empty:
         merged = symbol_df.copy()
-        for col in CROSS_SECTIONAL_FEATURE_COLUMNS:
+        for col in all_cols:
             if col not in merged.columns:
-                merged[col] = 0.5
+                merged[col] = 0.5 if col in CROSS_SECTIONAL_FEATURE_COLUMNS else 0.0
         return merged
 
     merged = symbol_df.merge(cross_sectional_df, on=["symbol", "date"], how="left")
-    for col in CROSS_SECTIONAL_FEATURE_COLUMNS:
+    for col in all_cols:
         if col not in merged.columns:
-            merged[col] = 0.5
+            merged[col] = 0.5 if col in CROSS_SECTIONAL_FEATURE_COLUMNS else 0.0
     return merged

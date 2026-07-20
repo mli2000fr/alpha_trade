@@ -135,6 +135,36 @@ def test_get_feature_columns_can_include_screener_scores() -> None:
     assert "selector_mode_sector_neutralized" in cols
 
 
+def test_get_feature_columns_can_include_sector_features() -> None:
+    """Sector features are included automatically with cross-sectional features."""
+    cols = features.get_feature_columns(include_cross_sectional=True)
+
+    assert "sector_ret_20" in cols
+    assert "sector_ret_60" in cols
+    assert "sector_vol_20" in cols
+    assert "sector_relative_strength_20" in cols
+    assert "sector_dollar_volume_20" in cols
+    assert "sector_symbol_count" in cols
+    assert "stock_vs_sector_ret_20" in cols
+    assert "stock_vs_sector_ret_60" in cols
+
+
+def test_get_feature_columns_sector_features_default_off() -> None:
+    """By default (no cross-sectional), sector features should NOT be included."""
+    cols = features.get_feature_columns()
+    assert "sector_ret_20" not in cols
+    assert "sector_vol_20" not in cols
+
+
+def test_get_feature_columns_cross_sectional_includes_sector() -> None:
+    """Cross-sectional now includes both percentile ranks AND sector features."""
+    cols = features.get_feature_columns(include_cross_sectional=True)
+    assert "ret_20_rank" in cols  # cross-sectional percentile
+    assert "sector_ret_20" in cols  # sector feature
+    # Both should be present without conflict
+    assert len(cols) == len(set(cols))  # no duplicates
+
+
 def test_compute_features_merges_selector_context_pit_safely() -> None:
     n = 90
     dates = pd.date_range("2020-01-01", periods=n, freq="D")

@@ -163,14 +163,20 @@ def get_feature_columns(
     include_macro_vix3m: bool = False,
     include_macro_move: bool = False,
 ) -> list[str]:
-    """Retourne la liste complète des colonnes features (OHLCV + optionnels)."""
+    """Retourne la liste complète des colonnes features (OHLCV + optionnels).
+
+    ``include_cross_sectional`` active à la fois les rangs percentiles
+    cross-sectionnels ET les features sectorielles dynamiques (momentum,
+    volatilité, alpha intra-secteur).
+    """
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
         cols.extend(EXPERT_FEATURE_COLUMNS)
     if include_cross_sectional:
-        from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS
+        from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, SECTOR_FEATURE_COLUMNS
 
         cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)
+        cols.extend(SECTOR_FEATURE_COLUMNS)
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
     if include_screener_scores:

@@ -553,6 +553,7 @@ def _serialize_backtesting_ml_missing_days(df: pd.DataFrame) -> list[dict[str, o
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def get_live_ml_first_diagnostic() -> dict[str, object]:
     """Résume le dernier scope live ML-first publié pour l'Execution Center."""
     universe_df = safe_query(

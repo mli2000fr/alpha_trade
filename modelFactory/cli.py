@@ -259,7 +259,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-macro-move", action="store_true", default=False,
                    help="Inclure les features MOVE (volatilité obligataire ICE BofA) dans le modèle")
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
-                   help="Active les features cross-sectionnelles PIT-safe calculées depuis l'univers historique")
+                   help="Active les features cross-sectionnelles PIT-safe (rangs percentiles + features sectorielles dynamiques)")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
                    help="Nombre minimum de symboles disponibles par date pour calculer des ranks cross-sectionnels fiables")
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])

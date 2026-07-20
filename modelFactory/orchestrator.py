@@ -351,7 +351,8 @@ def _train_worker(
             start_date=history_start_date,
         )
     cross_sectional_df = None
-    if cfg.data.enable_cross_sectional_features:
+    _needs_cross_sectional = cfg.data.enable_cross_sectional_features
+    if _needs_cross_sectional:
         if cross_sectional_cache is not None and not cross_sectional_cache.empty:
             # Filter pre-computed cache to this symbol's rows
             cross_sectional_df = cross_sectional_cache[cross_sectional_cache["symbol"] == symbol].copy()
@@ -490,10 +491,11 @@ def run_training_batch(
     # Pre-compute cross-sectional features ONCE for all symbols.
     # Each symbol only needs its own (symbol, date) rows, which we look up
     # by symbol in _train_worker.  This avoids loading the entire universe
-    # 12k times.
+    # 12k times.  Sector features piggyback on the same raw panel.
     cross_sectional_cache: pd.DataFrame | None = None
-    if cfg.data.enable_cross_sectional_features and symbols:
-        from modelFactory.cross_sectional import build_cross_sectional_features_from_db
+    _needs_cross_sectional = cfg.data.enable_cross_sectional_features
+    if _needs_cross_sectional and symbols:
+        from modelFactory.cross_sectional import build_cross_sectional_features_from_db, _load_sector_mapping
         from modelFactory.data_loader import load_benchmark_bars, load_symbol_latest_bar_date
         LOGGER.info("run_training_batch pre-computing cross-sectional features for %d symbols", len(symbols))
         bench_df = None
@@ -507,6 +509,14 @@ def run_training_batch(
                 )
             except Exception:
                 pass
+
+        sector_map: dict[str, str] | None = _load_sector_mapping(engine)
+        if sector_map:
+            LOGGER.info("run_training_batch sector features enabled: %d symbols mapped to %d sectors",
+                        len(sector_map), len(set(sector_map.values())))
+        else:
+            LOGGER.warning("run_training_batch sector features enabled but no sector mapping loaded")
+
         cross_sectional_cache, _ = build_cross_sectional_features_from_db(
             engine,
             symbols,
@@ -514,6 +524,7 @@ def run_training_batch(
             min_universe_size=cfg.data.cross_sectional_min_universe,
             start_date=cfg.data.training_start_date,
             end_date=cfg.data.training_end_date,
+            sector_map=sector_map,
         )
         LOGGER.info(
             "run_training_batch cross-sectional cache ready rows=%d symbols=%d",
@@ -530,7 +541,7 @@ def run_training_batch(
                     current_symbol_index=index,
                     progress_item=sym,
                 )
-                if cfg.data.enable_cross_sectional_features:
+                if _needs_cross_sectional:
                     result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache, batch_id=batch_id)
                 else:
                     result = _train_worker(sym, cfg, batch_id=batch_id)
@@ -560,7 +571,7 @@ def run_training_batch(
         with ProcessPoolExecutor(max_workers=effective_workers) as pool:
             # Cross-sectional cache NOT passed to subprocess (pickling overhead).
             # Each worker falls back to symbol-by-symbol DB loading.
-            if cfg.data.enable_cross_sectional_features:
+            if _needs_cross_sectional:
                 futures = {pool.submit(_train_worker, sym, cfg, symbols, batch_id=batch_id): sym for sym in symbols}
             else:
                 futures = {pool.submit(_train_worker, sym, cfg, batch_id=batch_id): sym for sym in symbols}

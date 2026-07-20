@@ -3216,11 +3216,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     disabled=not ml_enable_global_model,
                 ),
             )
+            # Checkbox unique : active à la fois les rangs percentiles ET les features sectorielles
             ml_enable_cross_sectional = st.checkbox(
-                "Activer les features cross-sectionnelles",
+                "🌐 Features cross-sectionnelles & sectorielles (rangs percentiles + momentum intra-secteur)",
                 value=_session_state_bool("pipeline_ml_enable_cross_sectional", DEFAULT_ML_ENABLE_CROSS_SECTIONAL),
                 key="pipeline_ml_enable_cross_sectional",
-                help="Ajoute `--enable-cross-sectional` pour enrichir les features séquentielles et le modèle global.",
+                help="Ajoute `--enable-cross-sectional`. Calcule les rangs percentiles PIT-safe ET les features sectorielles dynamiques (momentum, volatilité, alpha intra-secteur GICS).",
             )
 
         ml_adv_col1, ml_adv_col2 = st.columns(2)

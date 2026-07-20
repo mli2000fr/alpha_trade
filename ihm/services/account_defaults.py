@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+import streamlit as st
+
 from service.alpaca.accounts import AccountRegistry
 from service.alpaca.trading_client import AlpacaTradingClient
 
@@ -47,9 +49,14 @@ def get_pipeline_execution_defaults(account_id: str | None) -> PipelineExecution
     """Retourne des valeurs par défaut si elles sont déductibles de manière fiable.
 
     Règles produit :
-    - `account_type` est prérempli seulement si le broker le rend explicite ou déductible.
-    - `swing_only` reste manuel : ce choix relève d'une préférence d'exécution, pas d'un simple montant.
+    - ``account_type`` est prérempli seulement si le broker le rend explicite.
+    - ``swing_only`` reste manuel.
     """
+    return _get_pipeline_execution_defaults_impl(account_id)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_pipeline_execution_defaults_impl(account_id: str | None) -> PipelineExecutionDefaults | None:
 
     cleaned_account_id = (account_id or "").strip()
     if not cleaned_account_id:
