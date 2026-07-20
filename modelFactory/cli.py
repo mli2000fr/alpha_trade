@@ -82,6 +82,7 @@ def _build_training_batch_metadata(opts: argparse.Namespace, cfg: TrainingConfig
         include_macro_vxn=cfg.data.include_macro_vxn_features,
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
+        include_global_stacking=cfg.global_model.stacking_enabled,
     )
     return json.dumps(
         {
@@ -303,6 +304,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi une baseline CatBoost et compare ses métriques")
     p.add_argument("--enable-global-model", action="store_true", default=False,
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
+    p.add_argument("--enable-global-stacking", action="store_true", default=False,
+                   help="Utilise la prédiction du Global Model comme feature (Approche 2 — Stacking)")
+    p.add_argument("--enable-global-challenger", action="store_true", default=False,
+                   help="Inclut le Global Model comme 4ème challenger dans la sélection champion")
     p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm"])
     p.add_argument("--global-artifact-symbol", type=str, default="__GLOBAL__")
     p.add_argument("--select-champion", action="store_true", default=False,
@@ -432,6 +437,8 @@ def main(args: list[str] | None = None) -> None:
         ),
         global_model=GlobalModelConfig(
             enabled=opts.enable_global_model,
+            stacking_enabled=opts.enable_global_stacking,
+            challenger_enabled=opts.enable_global_challenger,
             model_name=opts.global_model_name,
             artifact_symbol=opts.global_artifact_symbol,
             use_cross_sectional_features=opts.enable_cross_sectional,

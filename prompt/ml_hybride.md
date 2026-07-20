@@ -318,36 +318,42 @@ if cfg.global_model.enabled and cfg.global_model.challenger_enabled:
 
 Les deux sous-checkboxes sont **grisées** tant que la première n'est pas cochée.
 
-### 📁 Fichiers à modifier
+### 📁 Fichiers modifiés (Sprint 2026-07 — Approche 2)
 
 | Fichier | Changement |
 |---|---|
-| `modelFactory/config.py` | +`stacking_enabled`, +`challenger_enabled` dans `GlobalModelConfig` |
-| `modelFactory/global_model.py` | +`_train_global_walk_forward()` — WF 11 splits, +`by_symbol` avec `wf` per-symbol |
-| `modelFactory/cross_sectional.py` | +`GLOBAL_PRED_FEATURE_COLUMNS`, merge dans `merge_cross_sectional_features` (gated par FLAG B) |
-| `modelFactory/features.py` | `get_feature_columns()` inclut `global_pred_long` si FLAG A+B |
-| `modelFactory/orchestrator.py` | Phase 1 AVANT per-symbol (FLAG A). `global_pred` dans `cross_sectional_cache` (FLAG B). Phase 3 : challenger injection (FLAG C) |
-| `modelFactory/dataset.py` | `DataModule` reçoit `global_pred_long` du cache |
-| `modelFactory/cli.py` | +`--enable-global-stacking`, +`--enable-global-challenger` |
+| `modelFactory/config.py` | `GlobalModelConfig` : +`stacking_enabled`, +`challenger_enabled` |
+| `modelFactory/global_model.py` | +`train_global_model_wf()` : WF 11 splits, +`_aggregate_wf_per_symbol_metrics()`, `_compute_by_symbol_metrics()` signature enrichie `partition_name` |
+| `modelFactory/cross_sectional.py` | +`GLOBAL_PRED_FEATURE_COLUMNS`, `merge_cross_sectional_features()` gère 3 familles + fillna NaN |
+| `modelFactory/features.py` | `get_feature_columns()`, `fingerprint()`, `build_feature_contract()`, `validate_feature_contract()` : +`include_global_stacking` |
+| `modelFactory/orchestrator.py` | Phase 1 AVANT per-symbol, merge `global_pred` dans cache, Phase 3 gated par FLAG C |
+| `modelFactory/dataset.py` | `SymbolDataModule` + `prepare_symbol_frame()` : +`include_global_stacking` |
+| `modelFactory/trainer.py` | `_run_walk_forward_validation()` : +`include_global_stacking` + `datamodule_kwargs` |
+| `modelFactory/tabular_baseline.py` | `run_tabular_baseline()` + `run_tabular_walk_forward()` : +`include_global_stacking` |
+| `modelFactory/predictor.py` | 2 call sites : `include_global_stacking=False` (pas de global à l'inférence) |
+| `modelFactory/model_benchmark.py` | `_get_feature_columns()` : +`include_global_stacking` |
+| `modelFactory/global_benchmark_runner.py` | +`include_global_stacking` |
+| `modelFactory/lstm_benchmark_adapter.py` | +`include_global_stacking` |
+| `modelFactory/cli.py` | +`--enable-global-stacking` (FLAG B), +`--enable-global-challenger` (FLAG C) |
 | `ihm/services/pipeline_ml_defaults.py` | +`DEFAULT_ML_ENABLE_GLOBAL_STACKING`, +`DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER` |
-| `ihm/services/pipeline_runner.py` | +`ml_enable_global_stacking`, +`ml_enable_global_challenger` dans `PipelineLaunchOptions`, flags CLI |
-| `ihm/pages/_execution_center/__init__.py` | 3 checkboxes hiérarchiques (A, B, C) |
+| `ihm/services/pipeline_runner.py` | `PipelineLaunchOptions` : +`ml_enable_global_stacking`, +`ml_enable_global_challenger`. Command builder : flags CLI. |
+| `ihm/pages/_execution_center/__init__.py` | 3 checkboxes hiérarchiques (A maître, B/C subordonnées grisées) |
 
-### 📋 Plan d'action (ordre d'implémentation)
+### 📋 Plan d'action — Statut final
 
-| Étape | Fichier | Action | Difficulté |
-|:-----:|---------|--------|:----------:|
-| **1** | `modelFactory/config.py` | Ajouter `stacking_enabled: bool = False` et `challenger_enabled: bool = False` dans `GlobalModelConfig` | ⭐ |
-| **2** | `modelFactory/global_model.py` | `_train_global_walk_forward()` : 11 splits WF, produit `global_pred(symbol, date)` + `by_symbol` avec `wf.f1_macro` par symbole. Gater par `cfg.global_model.enabled`. | ⭐⭐⭐ |
-| **3** | `modelFactory/cross_sectional.py` | `GLOBAL_PRED_FEATURE_COLUMNS = ["global_pred_long"]`, merge automatique dans `merge_cross_sectional_features()`. Gater par `cfg.global_model.stacking_enabled`. | ⭐ |
-| **4** | `modelFactory/features.py` | `get_feature_columns()` : ajouter `global_pred_long` si `include_cross_sectional=True` ET `stacking_enabled=True`. `fingerprint()`, `build_feature_contract()`, `validate_feature_contract()` idem. | ⭐ |
-| **5** | `modelFactory/orchestrator.py` | (a) Déplacer Phase 1 AVANT boucle per-symbol (FLAG A). (b) Injecter `global_pred` dans `cross_sectional_cache` (FLAG B). (c) Phase 3 : `_inject_global_model_into_symbol_artifacts()` comme 4ème challenger (FLAG C). | ⭐⭐ |
-| **6** | `modelFactory/dataset.py` | `DataModule` merge `global_pred_long` depuis le cache cross-sectional (même mécanisme que les rangs) | ⭐ |
-| **7** | `modelFactory/cli.py` | Ajouter `--enable-global-stacking` (FLAG B) et `--enable-global-challenger` (FLAG C) | ⭐ |
-| **8** | `ihm/services/pipeline_ml_defaults.py` | +`DEFAULT_ML_ENABLE_GLOBAL_STACKING`, +`DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER` | ⭐ |
-| **9** | `ihm/services/pipeline_runner.py` | +`ml_enable_global_stacking`, +`ml_enable_global_challenger` dans `PipelineLaunchOptions` + flags dans `_build_ml_train_command()` | ⭐ |
-| **10** | `ihm/pages/_execution_center/__init__.py` | 3 checkboxes hiérarchiques avec grisage conditionnel | ⭐⭐ |
-| **11** | `tests/` | `test_global_model_wf.py` : PIT-safe, 11 splits, wf.f1_macro cohérent. `test_stacking.py` : LSTM enrichi > LSTM seul. `test_global_flags.py` : matrice A/B/C. | ⭐⭐ |
+| Étape | Fichier | Action | Statut |
+|:-----:|---------|--------|:------:|
+| **1** | `modelFactory/config.py` | `GlobalModelConfig` +2 flags | ✅ |
+| **2** | `modelFactory/global_model.py` | `train_global_model_wf()` WF 11 splits | ✅ |
+| **3** | `modelFactory/cross_sectional.py` | `GLOBAL_PRED_FEATURE_COLUMNS` + merge + fillna | ✅ |
+| **4** | `modelFactory/features.py` | `include_global_stacking` param | ✅ |
+| **5** | `modelFactory/orchestrator.py` | 3 phases restructurées | ✅ |
+| **6** | `modelFactory/dataset.py` + propagation | `DataModule` + 6 fichiers (trainer, tabular, predictor, etc.) | ✅ |
+| **7** | `modelFactory/cli.py` | `--enable-global-stacking`, `--enable-global-challenger` | ✅ |
+| **8** | `ihm/services/pipeline_ml_defaults.py` | 2 constantes | ✅ |
+| **9** | `ihm/services/pipeline_runner.py` | `PipelineLaunchOptions` + command builder | ✅ |
+| **10** | `ihm/pages/_execution_center/__init__.py` | 3 checkboxes hiérarchiques | ✅ |
+| **11** | `tests/` | 87 tests : `test_global_model_wf.py` (16), `test_stacking.py` (16), `test_global_flags.py` (23) + existants (32) | ✅ |
 
 ### 🚀 Comment activer ?
 

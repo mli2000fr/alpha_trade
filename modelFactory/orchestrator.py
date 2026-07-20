@@ -7,9 +7,10 @@ import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import uuid4
 
+import numpy as np
 import torch
 from sqlalchemy.engine import Engine
 
@@ -37,7 +38,7 @@ from modelFactory.db_registry import (
     replace_model_governance,
 )
 from common.tradable_universe import load_tradable_universe_for_period
-from modelFactory.global_model import train_global_model
+from modelFactory.global_model import train_global_model, train_global_model_wf
 from modelFactory.runtime_status import update_runtime_status
 from modelFactory.trainer import TrainResult, train_symbol
 from database.selector_reference import filter_symbols_from_start, normalize_start_symbol
@@ -532,6 +533,41 @@ def run_training_batch(
             cross_sectional_cache["symbol"].nunique() if not cross_sectional_cache.empty else 0,
         )
 
+    # ── Approche 2 — Phase 1 : Global Model Walk-Forward (FLAG A) ──
+    global_result_wf: dict[str, Any] | None = None
+    _needs_global = cfg.global_model.enabled
+    if _needs_global and symbols:
+        update_runtime_status(current_phase="global_model_wf", progress_item="__GLOBAL__")
+        LOGGER.info("run_training_batch global_model_wf start symbols=%d", len(symbols))
+        global_result_wf = train_global_model_wf(
+            symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
+        )
+        LOGGER.info(
+            "run_training_batch global_model_wf status=%s symbols_with_wf=%d",
+            global_result_wf.get("status"),
+            global_result_wf.get("walk_forward", {}).get("symbols_with_metrics", 0),
+        )
+
+        # ── Phase 2 : merge global_pred into cross-sectional cache (FLAG B) ──
+        global_pred_df = global_result_wf.get("global_pred_df") if isinstance(global_result_wf, dict) else None
+        if cfg.global_model.stacking_enabled and global_pred_df is not None and not global_pred_df.empty:
+            if cross_sectional_cache is not None and not cross_sectional_cache.empty:
+                cross_sectional_cache = cross_sectional_cache.merge(
+                    global_pred_df, on=["symbol", "date"], how="left",
+                )
+                cross_sectional_cache["global_pred_long"] = (
+                    cross_sectional_cache["global_pred_long"].fillna(0.5).astype(np.float64)
+                )
+            else:
+                # Pas de cache cross-sectional → créer un cache minimal avec global_pred
+                cross_sectional_cache = global_pred_df.copy()
+            LOGGER.info(
+                "run_training_batch stacking enabled: global_pred_long merged into cache rows=%d",
+                len(cross_sectional_cache),
+            )
+        elif cfg.global_model.stacking_enabled:
+            LOGGER.warning("run_training_batch stacking enabled but no global_pred_df produced")
+
     if effective_workers == 1:
         for index, sym in enumerate(symbols, start=1):
             try:
@@ -608,15 +644,23 @@ def run_training_batch(
     skipped = sum(1 for r in results if r.status == "skipped")
     failed = sum(1 for r in results if r.status == "failed")
 
-    if cfg.global_model.enabled and symbols:
-        update_runtime_status(current_phase="global_model_training", progress_item="__GLOBAL__")
-        global_result = train_global_model(symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine)
-        LOGGER.info("run_training_batch global_model status=%s", global_result.get("status"))
+    # ── Approche 2 — Phase 3 : Global Model comme challenger (FLAG C) ──
+    if cfg.global_model.enabled and cfg.global_model.challenger_enabled and symbols and global_result_wf:
+        update_runtime_status(current_phase="global_model_challenger_injection", progress_item="__GLOBAL__")
+        LOGGER.info(
+            "run_training_batch injecting global_model as challenger for %d completed symbols",
+            completed,
+        )
         for result in results:
             if result.status != "completed":
                 continue
-            _inject_global_model_into_symbol_artifacts(result.symbol, cfg, global_result, engine)
-            result.metrics["global_model"] = global_result.get("by_symbol", {}).get(result.symbol, global_result)
+            _inject_global_model_into_symbol_artifacts(
+                result.symbol, cfg, global_result_wf, engine,
+            )
+            # Ajouter les métriques WF du global pour ce symbole
+            by_symbol = global_result_wf.get("by_symbol", {}) if isinstance(global_result_wf, dict) else {}
+            result.metrics["global_model"] = by_symbol.get(result.symbol, global_result_wf)
+
     update_runtime_status(
         current_phase="batch_completed",
         progress_current=len(results),

@@ -38,6 +38,9 @@ SECTOR_FEATURE_COLUMNS: list[str] = [
     "stock_vs_sector_ret_60",
 ]
 
+# ── Approche 2 — Stacking : prédiction du Global Model comme feature ──
+GLOBAL_PRED_FEATURE_COLUMNS: list[str] = ["global_pred_long"]
+
 RAW_CROSS_SECTIONAL_COLUMNS_MAP: dict[str, str] = {
     "ret_20": "ret_20_rank",
     "ret_60": "ret_60_rank",
@@ -419,17 +422,51 @@ def merge_cross_sectional_features(
     symbol_df: pd.DataFrame,
     cross_sectional_df: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    """Merge cross-sectional (+ optional sector) features on (symbol, date) PIT-safe."""
-    all_cols = list(CROSS_SECTIONAL_FEATURE_COLUMNS) + list(SECTOR_FEATURE_COLUMNS)
+    """Merge cross-sectional (+ optional sector + optional global_pred) features on (symbol, date) PIT-safe.
+
+    Gère trois familles de features :
+    - Rangs percentiles (``CROSS_SECTIONAL_FEATURE_COLUMNS``) → fillna(0.5)
+    - Sectorielles (``SECTOR_FEATURE_COLUMNS``) → fillna(0.0)
+    - Global stacking (``GLOBAL_PRED_FEATURE_COLUMNS``) → fillna(0.5) si présent dans le cache
+    """
+    all_cols = (
+        list(CROSS_SECTIONAL_FEATURE_COLUMNS)
+        + list(SECTOR_FEATURE_COLUMNS)
+        + list(GLOBAL_PRED_FEATURE_COLUMNS)
+    )
     if cross_sectional_df is None or cross_sectional_df.empty:
         merged = symbol_df.copy()
         for col in all_cols:
             if col not in merged.columns:
-                merged[col] = 0.5 if col in CROSS_SECTIONAL_FEATURE_COLUMNS else 0.0
+                if col in CROSS_SECTIONAL_FEATURE_COLUMNS or col in GLOBAL_PRED_FEATURE_COLUMNS:
+                    merged[col] = 0.5
+                else:
+                    merged[col] = 0.0
         return merged
 
-    merged = symbol_df.merge(cross_sectional_df, on=["symbol", "date"], how="left")
+    # Ne merger que les colonnes effectivement présentes dans le cache
+    available_cols = [c for c in all_cols if c in cross_sectional_df.columns]
+    if not available_cols:
+        merged = symbol_df.copy()
+        for col in all_cols:
+            if col not in merged.columns:
+                if col in CROSS_SECTIONAL_FEATURE_COLUMNS or col in GLOBAL_PRED_FEATURE_COLUMNS:
+                    merged[col] = 0.5
+                else:
+                    merged[col] = 0.0
+        return merged
+
+    merge_df = cross_sectional_df[["symbol", "date", *available_cols]]
+    merged = symbol_df.merge(merge_df, on=["symbol", "date"], how="left")
     for col in all_cols:
         if col not in merged.columns:
-            merged[col] = 0.5 if col in CROSS_SECTIONAL_FEATURE_COLUMNS else 0.0
+            if col in CROSS_SECTIONAL_FEATURE_COLUMNS or col in GLOBAL_PRED_FEATURE_COLUMNS:
+                merged[col] = 0.5
+            else:
+                merged[col] = 0.0
+        else:
+            # Colonne présente (issue du merge) mais peut contenir NaN
+            # (symbole absent du cache → left join → NaN)
+            default_val = 0.5 if (col in CROSS_SECTIONAL_FEATURE_COLUMNS or col in GLOBAL_PRED_FEATURE_COLUMNS) else 0.0
+            merged[col] = merged[col].fillna(default_val).astype(float)
     return merged

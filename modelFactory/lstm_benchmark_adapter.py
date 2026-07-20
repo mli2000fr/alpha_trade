@@ -158,6 +158,7 @@ def run_lstm_benchmark(
         include_cross_sectional=getattr(data_cfg, "enable_cross_sectional_features", False),
         include_screener_scores=getattr(data_cfg, "include_screener_scores", False),
         include_short_score=getattr(data_cfg, "include_short_score_features", False),
+        include_global_stacking=getattr(cfg.global_model, "stacking_enabled", False),
     )
     available_cols = [c for c in feature_cols if c in prepared_df.columns]
     if not available_cols:

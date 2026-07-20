@@ -1,4 +1,11 @@
-"""modelFactory/global_model.py — Modèle global tabulaire multi-symboles."""
+"""modelFactory/global_model.py — Modèle global tabulaire multi-symboles.
+
+Approche 2 — Stacking (Sprint 2026-07) :
+- ``train_global_model()`` : entraînement single-split (legacy, conservé
+  pour backward compat).
+- ``train_global_model_wf()`` : walk-forward 11 splits → produit
+  ``global_pred_long(symbol, date)`` PIT-safe + métriques WF par symbole.
+"""
 from __future__ import annotations
 
 import json
@@ -13,7 +20,8 @@ import pandas as pd
 
 from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
-from modelFactory.dataset import chrono_split_by_dates
+from modelFactory.cross_sectional import GLOBAL_PRED_FEATURE_COLUMNS  # noqa: F401  # re-export
+from modelFactory.dataset import chrono_split_by_dates, generate_walk_forward_splits
 from modelFactory.data_loader import (
     load_benchmark_bars,
     load_symbols_selector_context,
@@ -144,7 +152,16 @@ def _compute_by_symbol_metrics(
     probabilities: np.ndarray,
     *,
     decision_threshold: float,
+    partition_name: str = "test",
 ) -> dict[str, dict[str, Any]]:
+    """Calcule les métriques par symbole sur une partition (train/val/test).
+
+    Parameters
+    ----------
+    partition_name : str
+        Nom de la clé sous laquelle stocker les métriques dans le résultat
+        (ex: ``"val"``, ``"test"``, ``"walk_forward"``).
+    """
     rows: dict[str, dict[str, Any]] = {}
     probs = np.asarray(probabilities, dtype=np.float64)
     for symbol, part in df.groupby("symbol", sort=False):
@@ -159,10 +176,60 @@ def _compute_by_symbol_metrics(
             "status": "completed",
             "model_name": "global_model",
             "backend_model_name": None,
-            "test": metrics,
+            partition_name: metrics,
             "selection_score": float(metrics.get("threshold_business_score") or metrics.get("auc") or 0.0),
         }
     return rows
+
+
+def _aggregate_wf_per_symbol_metrics(
+    fold_metrics_by_symbol: dict[str, list[dict[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    """Agrège les métriques walk-forward par symbole (mean/std sur les splits).
+
+    Pour chaque symbole, collecte les métriques ``val`` de chaque split WF
+    et produit une entrée ``walk_forward`` avec ``{mean: {...}, std: {...}}``.
+    """
+    metric_keys = [
+        "auc", "f1_macro", "f1_short", "f1_flat", "f1_long",
+        "threshold_business_score", "action_rate", "precision",
+        "recall", "directional_accuracy", "brier_score",
+    ]
+    aggregated: dict[str, dict[str, Any]] = {}
+    for symbol, fold_list in fold_metrics_by_symbol.items():
+        if not fold_list:
+            continue
+        mean_metrics: dict[str, float | None] = {}
+        std_metrics: dict[str, float | None] = {}
+        for key in metric_keys:
+            vals = []
+            for fold in fold_list:
+                val_metrics = fold.get("val") if isinstance(fold.get("val"), dict) else {}
+                v = val_metrics.get(key)
+                if v is not None:
+                    try:
+                        vals.append(float(v))
+                    except (TypeError, ValueError):
+                        pass
+            mean_metrics[key] = float(np.mean(vals)) if vals else None
+            std_metrics[key] = float(np.std(vals)) if vals else None
+        selection_score = float(
+            mean_metrics.get("f1_macro")
+            or mean_metrics.get("threshold_business_score")
+            or mean_metrics.get("auc")
+            or 0.0
+        )
+        aggregated[symbol] = {
+            "status": "completed",
+            "model_name": "global_model",
+            "walk_forward": {
+                "n_splits": len(fold_list),
+                "mean": mean_metrics,
+                "std": std_metrics,
+            },
+            "selection_score": selection_score,
+        }
+    return aggregated
 
 
 def train_global_model(
@@ -373,7 +440,7 @@ def train_global_model(
         is_ternary=is_ternary,
     )
 
-    by_symbol = _compute_by_symbol_metrics(test_df, test_proba, decision_threshold=selected_threshold)
+    by_symbol = _compute_by_symbol_metrics(test_df, test_proba, decision_threshold=selected_threshold, partition_name="test")
     artifact_dir = (artifacts_dir / cfg.global_model.artifact_symbol).resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)
     model_path = artifact_dir / "global_model.pkl"
@@ -451,3 +518,249 @@ def train_global_model(
     return result
 
 
+def train_global_model_wf(
+    symbols: list[str],
+    cfg: TrainingConfig,
+    *,
+    artifacts_dir: Path,
+    engine: Any,
+) -> dict[str, Any]:
+    """Entraîne le Global Model en walk-forward (Phase 1 — Approche 2).
+
+    Produit deux artefacts :
+    1. ``global_pred_df`` : DataFrame ``[symbol, date, global_pred_long]``
+       PIT-safe, à merger dans le cache cross-sectional pour le stacking.
+    2. ``by_symbol`` : métriques WF par symbole avec ``walk_forward.mean.f1_macro``,
+       utilisable par ``select_champion()`` (Phase 3).
+
+    Returns
+    -------
+    dict avec les clés :
+    - ``global_pred_df`` : pd.DataFrame | None
+    - ``by_symbol`` : dict[str, dict] — métriques WF par symbole
+    - ``status``, ``model_name``, ``feature_columns``, etc.
+    """
+    if not cfg.global_model.enabled:
+        return {"status": "skipped", "model_name": "global_model", "reason": "disabled"}
+    if len(symbols) < 2:
+        return {"status": "skipped", "model_name": "global_model", "reason": "insufficient_symbols"}
+
+    effective_data_cfg = replace(
+        cfg.data,
+        enable_cross_sectional_features=(
+            cfg.data.enable_cross_sectional_features and cfg.global_model.use_cross_sectional_features
+        ),
+    )
+    history_end_date = load_universe_latest_bar_date(
+        engine, symbols, end_date=effective_data_cfg.training_end_date,
+    )
+    history_start_date = resolve_training_start_date(history_end_date, effective_data_cfg.training_start_date)
+    universe_df = load_universe_bars(engine, symbols, end_date=history_end_date, start_date=history_start_date)
+    if universe_df.empty:
+        return {"status": "skipped", "model_name": "global_model", "reason": "empty_universe"}
+
+    # ── Chargement des données auxiliaires (benchmark, sentiment, selector, cross-sectional) ──
+    benchmark_df = None
+    if effective_data_cfg.feature_set == "expert" or effective_data_cfg.enable_cross_sectional_features:
+        benchmark_df = load_benchmark_bars(
+            engine, effective_data_cfg.benchmark_symbol,
+            end_date=history_end_date, start_date=history_start_date,
+        )
+    sentiment_df = None
+    if effective_data_cfg.include_sentiment_features:
+        sentiment_df = load_symbols_sentiment(engine, symbols, end_date=history_end_date, start_date=history_start_date)
+    selector_context_df = None
+    if effective_data_cfg.include_screener_scores or effective_data_cfg.include_short_score_features:
+        selector_context_df = load_symbols_selector_context(engine, symbols, end_date=history_end_date, start_date=history_start_date)
+
+    cross_sectional_df = None
+    cross_sectional_diagnostics: dict[str, Any] = {}
+    if effective_data_cfg.enable_cross_sectional_features:
+        cross_sectional_df, cross_sectional_diagnostics = build_cross_sectional_features(
+            universe_df, benchmark_df=benchmark_df,
+            min_universe_size=effective_data_cfg.cross_sectional_min_universe,
+        )
+
+    # ── Préparation du DataFrame poolé (même logique que train_global_model) ──
+    prepared_parts: list[pd.DataFrame] = []
+    for symbol in symbols:
+        bars_df = universe_df[universe_df["symbol"] == symbol].copy().sort_values("date").reset_index(drop=True)
+        if len(bars_df) < effective_data_cfg.min_history_days:
+            continue
+        symbol_sentiment = None
+        if sentiment_df is not None and not sentiment_df.empty:
+            symbol_sentiment = sentiment_df[sentiment_df["symbol"] == symbol].copy().reset_index(drop=True)
+        symbol_selector_df = None
+        if selector_context_df is not None and not selector_context_df.empty:
+            symbol_selector_df = selector_context_df[selector_context_df["symbol"] == symbol].copy().reset_index(drop=True)
+        prepared = _prepare_global_symbol_frame(
+            bars_df, cfg=replace(cfg, data=effective_data_cfg),
+            benchmark_df=benchmark_df, sentiment_df=symbol_sentiment,
+            cross_sectional_df=cross_sectional_df, selector_df=symbol_selector_df,
+        )
+        if prepared.empty:
+            continue
+        prepared_parts.append(prepared)
+
+    if not prepared_parts:
+        return {"status": "skipped", "model_name": "global_model", "reason": "no_prepared_rows"}
+
+    global_df = pd.concat(prepared_parts, ignore_index=True).sort_values(["date", "symbol"]).reset_index(drop=True)
+
+    # ── Feature columns (sans global_pred_long — pas de récursion) ──
+    feature_columns = get_feature_columns(
+        effective_data_cfg.include_sentiment_features,
+        feature_set=effective_data_cfg.feature_set,
+        include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
+        include_screener_scores=effective_data_cfg.include_screener_scores,
+        include_short_score=effective_data_cfg.include_short_score_features,
+    )
+
+    # ── Walk-Forward splits ──
+    wf_splits = generate_walk_forward_splits(
+        global_df,
+        min_train_size=cfg.walk_forward.min_train_size,
+        val_size=cfg.walk_forward.val_size,
+        test_size=cfg.walk_forward.test_size,
+        step_size=cfg.walk_forward.step_size,
+        max_splits=cfg.walk_forward.max_splits,
+        forecast_horizon=effective_data_cfg.forecast_horizon,
+        date_column="date",
+    )
+    if not wf_splits:
+        return {"status": "skipped", "model_name": "global_model", "reason": "no_valid_wf_split"}
+
+    LOGGER.info(
+        "train_global_model_wf start symbols=%d splits=%d feature_cols=%d",
+        len(symbols), len(wf_splits), len(feature_columns),
+    )
+
+    resolved_seed = derive_seed(cfg.reproducibility.seed, "global_model_wf", cfg.global_model.model_name)
+    apply_reproducibility(
+        ReproducibilityConfig(seed=resolved_seed, deterministic=cfg.reproducibility.deterministic),
+        context=f"global_model_wf:{cfg.global_model.model_name}",
+    )
+
+    is_ternary = effective_data_cfg.target_mode == "ternary"
+
+    # ── Accumulateurs ──
+    global_pred_parts: list[pd.DataFrame] = []
+    fold_metrics_by_symbol: dict[str, list[dict[str, Any]]] = {}
+
+    for split in wf_splits:
+        split_seed = derive_seed(resolved_seed, split.split_index)
+        apply_reproducibility(
+            ReproducibilityConfig(seed=split_seed, deterministic=cfg.reproducibility.deterministic),
+            context=f"global_model_wf:split_{split.split_index}",
+        )
+
+        try:
+            backend_model_name, model = _build_global_estimator(cfg, resolved_seed=split_seed)
+        except ImportError:
+            return {
+                "status": "unavailable", "model_name": "global_model",
+                "backend_model_name": cfg.global_model.model_name,
+                "reason": f"{cfg.global_model.model_name}_not_installed",
+            }
+
+        train_df = split.train
+        val_df_split = split.val
+        if train_df.empty or val_df_split.empty:
+            LOGGER.warning("train_global_model_wf split=%d empty train or val", split.split_index)
+            continue
+
+        train_targets = train_df["target"].astype(int)
+        if is_ternary:
+            train_targets = train_targets + 1  # shift: -1→0, 0→1, +1→2
+        unique_train = train_targets.unique()
+        if len(unique_train) < 2:
+            LOGGER.warning("train_global_model_wf split=%d single_class", split.split_index)
+            continue
+
+        # ── Fit ──
+        model.fit(train_df[feature_columns], train_targets)
+
+        # ── Predict on val (per-symbol, PIT-safe) ──
+        raw_val_all = model.predict_proba(val_df_split[feature_columns])
+        num_val_cols = raw_val_all.shape[1]
+        if is_ternary and num_val_cols >= 3:
+            long_col = 2
+        else:
+            long_col = num_val_cols - 1
+        val_proba_global = raw_val_all[:, long_col]
+
+        # ── Stocker global_pred pour le stacking ──
+        pred_part = val_df_split[["symbol", "date"]].copy()
+        pred_part["global_pred_long"] = val_proba_global.astype(np.float64)
+        global_pred_parts.append(pred_part)
+
+        # ── Métriques par symbole sur ce split ──
+        split_by_symbol = _compute_by_symbol_metrics(
+            val_df_split, val_proba_global,
+            decision_threshold=float(effective_data_cfg.decision_threshold),
+            partition_name="val",
+        )
+        for sym, metrics_entry in split_by_symbol.items():
+            fold_metrics_by_symbol.setdefault(sym, []).append(metrics_entry)
+
+        LOGGER.info(
+            "train_global_model_wf split=%d/%d train_rows=%d val_rows=%d symbols_in_val=%d",
+            split.split_index + 1, len(wf_splits),
+            len(train_df), len(val_df_split), len(split_by_symbol),
+        )
+
+    # ── Agrégation WF par symbole ──
+    by_symbol = _aggregate_wf_per_symbol_metrics(fold_metrics_by_symbol)
+
+    # ── Assemblage du global_pred_df ──
+    global_pred_df: pd.DataFrame | None = None
+    if global_pred_parts:
+        global_pred_df = pd.concat(global_pred_parts, ignore_index=True)
+        global_pred_df = global_pred_df.sort_values(["symbol", "date"]).reset_index(drop=True)
+        LOGGER.info(
+            "train_global_model_wf done pred_rows=%d symbols=%d dates=%d",
+            len(global_pred_df),
+            global_pred_df["symbol"].nunique() if not global_pred_df.empty else 0,
+            global_pred_df["date"].nunique() if not global_pred_df.empty else 0,
+        )
+    else:
+        LOGGER.warning("train_global_model_wf done but no predictions generated")
+
+    # ── Build feature contract ──
+    feature_contract = build_feature_contract(
+        include_sentiment=effective_data_cfg.include_sentiment_features,
+        feature_set=effective_data_cfg.feature_set,
+        include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
+        include_screener_scores=effective_data_cfg.include_screener_scores,
+        include_short_score=effective_data_cfg.include_short_score_features,
+        feature_columns=feature_columns,
+        scaler_feature_names=feature_columns,
+    )
+
+    wf_symbols_with_metrics = len(by_symbol)
+    LOGGER.info(
+        "train_global_model_wf completed splits=%d symbols_with_wf=%d",
+        len(wf_splits), wf_symbols_with_metrics,
+    )
+
+    return {
+        "status": "completed",
+        "model_name": "global_model",
+        "backend_model_name": cfg.global_model.model_name,
+        "feature_columns": feature_columns,
+        "feature_contract": feature_contract,
+        "feature_fingerprint": feature_contract.get("feature_fingerprint"),
+        "cross_sectional_diagnostics": cross_sectional_diagnostics,
+        "global_pred_df": global_pred_df,
+        "by_symbol": by_symbol,
+        "selection_score": float(
+            np.mean([
+                entry.get("selection_score", 0.0)
+                for entry in by_symbol.values()
+            ]) if by_symbol else 0.0
+        ),
+        "walk_forward": {
+            "n_splits": len(wf_splits),
+            "symbols_with_metrics": wf_symbols_with_metrics,
+        },
+    }

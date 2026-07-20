@@ -944,6 +944,7 @@ def _prepare_prediction_frame(
             include_macro_vxn=data_cfg.include_macro_vxn_features,
             include_macro_vix3m=data_cfg.include_macro_vix3m_features,
             include_macro_move=data_cfg.include_macro_move_features,
+            include_global_stacking=False,
         )
         df = df.dropna(subset=active_features).reset_index(drop=True)
     return df
@@ -1012,6 +1013,7 @@ def _predict_with_tabular_model(
         include_macro_vxn=data_cfg.include_macro_vxn_features,
         include_macro_vix3m=data_cfg.include_macro_vix3m_features,
         include_macro_move=data_cfg.include_macro_move_features,
+        include_global_stacking=False,
     ))
     if df.empty or len(df) == 0:
         return None

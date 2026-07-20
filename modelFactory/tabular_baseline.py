@@ -256,6 +256,7 @@ def run_tabular_baseline(
 		include_cross_sectional=cfg.data.enable_cross_sectional_features,
 		include_screener_scores=cfg.data.include_screener_scores,
 		include_short_score=cfg.data.include_short_score_features,
+		include_global_stacking=cfg.global_model.stacking_enabled,
 	)
 	train_df, val_df, test_df = tabular_split(
 		prepared_df,
@@ -588,6 +589,7 @@ def run_tabular_walk_forward(
 		include_cross_sectional=cfg.data.enable_cross_sectional_features,
 		include_screener_scores=cfg.data.include_screener_scores,
 		include_short_score=cfg.data.include_short_score_features,
+		include_global_stacking=cfg.global_model.stacking_enabled,
 	)
 
 	symbol_tag = "__BATCH__"

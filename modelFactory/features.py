@@ -162,12 +162,18 @@ def get_feature_columns(
     include_macro_vxn: bool = False,
     include_macro_vix3m: bool = False,
     include_macro_move: bool = False,
+    include_global_stacking: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnels).
 
     ``include_cross_sectional`` active à la fois les rangs percentiles
     cross-sectionnels ET les features sectorielles dynamiques (momentum,
     volatilité, alpha intra-secteur).
+
+    ``include_global_stacking`` (Approche 2) ajoute ``global_pred_long``,
+    la prédiction PIT-safe du Global Model comme feature supplémentaire.
+    Nécessite ``include_cross_sectional=True`` pour avoir un effet
+    (la colonne est mergée via le cache cross-sectional).
     """
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
@@ -177,6 +183,10 @@ def get_feature_columns(
 
         cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)
         cols.extend(SECTOR_FEATURE_COLUMNS)
+        if include_global_stacking:
+            from modelFactory.cross_sectional import GLOBAL_PRED_FEATURE_COLUMNS
+
+            cols.extend(GLOBAL_PRED_FEATURE_COLUMNS)
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
     if include_screener_scores:
@@ -213,6 +223,7 @@ def fingerprint(
     include_macro_vxn: bool = False,
     include_macro_vix3m: bool = False,
     include_macro_move: bool = False,
+    include_global_stacking: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -232,6 +243,7 @@ def fingerprint(
         include_macro_vxn=include_macro_vxn,
         include_macro_vix3m=include_macro_vix3m,
         include_macro_move=include_macro_move,
+        include_global_stacking=include_global_stacking,
     ))
     payload = {
         "columns": columns,
@@ -244,6 +256,7 @@ def fingerprint(
         "include_macro_vxn": bool(include_macro_vxn),
         "include_macro_vix3m": bool(include_macro_vix3m),
         "include_macro_move": bool(include_macro_move),
+        "include_global_stacking": bool(include_global_stacking),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -265,6 +278,7 @@ def build_feature_contract(
     include_cross_sectional: bool = False,
     include_screener_scores: bool = False,
     include_short_score: bool = False,
+    include_global_stacking: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -275,6 +289,7 @@ def build_feature_contract(
         include_cross_sectional=include_cross_sectional,
         include_screener_scores=include_screener_scores,
         include_short_score=include_short_score,
+        include_global_stacking=include_global_stacking,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -286,6 +301,7 @@ def build_feature_contract(
             include_cross_sectional=include_cross_sectional,
             include_screener_scores=include_screener_scores,
             include_short_score=include_short_score,
+            include_global_stacking=include_global_stacking,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
@@ -304,6 +320,7 @@ def validate_feature_contract(
     include_cross_sectional: bool = False,
     include_screener_scores: bool = False,
     include_short_score: bool = False,
+    include_global_stacking: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -318,6 +335,7 @@ def validate_feature_contract(
         include_cross_sectional=include_cross_sectional,
         include_screener_scores=include_screener_scores,
         include_short_score=include_short_score,
+        include_global_stacking=include_global_stacking,
     )
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
@@ -325,6 +343,7 @@ def validate_feature_contract(
         include_cross_sectional=include_cross_sectional,
         include_screener_scores=include_screener_scores,
         include_short_score=include_short_score,
+        include_global_stacking=include_global_stacking,
         feature_columns=expected_columns,
     )
 
@@ -346,6 +365,8 @@ def validate_feature_contract(
             feature_set=feature_set,
             include_cross_sectional=include_cross_sectional,
             include_screener_scores=include_screener_scores,
+            include_short_score=include_short_score,
+            include_global_stacking=include_global_stacking,
             feature_columns=contract_columns,
         )
     else:

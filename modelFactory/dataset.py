@@ -488,6 +488,7 @@ class SymbolDataModule(L.LightningDataModule):
         reproducibility_seed: int = 42,
         *,
         cross_sectional_df: pd.DataFrame | None = None,
+        include_global_stacking: bool = False,
     ) -> None:
         super().__init__()
         self.bars_df = bars_df
@@ -499,6 +500,7 @@ class SymbolDataModule(L.LightningDataModule):
         self.selector_df = selector_df
         self.cross_sectional_df = cross_sectional_df
         self.reproducibility_seed = int(reproducibility_seed)
+        self._include_global_stacking = bool(include_global_stacking)
         self._feature_cols = get_feature_columns(
             data_cfg.include_sentiment_features,
             feature_set=data_cfg.feature_set,
@@ -509,6 +511,7 @@ class SymbolDataModule(L.LightningDataModule):
             include_macro_vxn=data_cfg.include_macro_vxn_features,
             include_macro_vix3m=data_cfg.include_macro_vix3m_features,
             include_macro_move=data_cfg.include_macro_move_features,
+            include_global_stacking=self._include_global_stacking,
         )
         self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
@@ -550,6 +553,7 @@ class SymbolDataModule(L.LightningDataModule):
             universe_df=self.universe_df,
             selector_df=self.selector_df,
             cross_sectional_df=self.cross_sectional_df,
+            include_global_stacking=self._include_global_stacking,
         )
         self.prepared_df = df
         self.cross_sectional_diagnostics = dict(df.attrs.get("cross_sectional_diagnostics", {}))
@@ -611,6 +615,7 @@ def prepare_symbol_frame(
     selector_df: pd.DataFrame | None = None,
     *,
     cross_sectional_df: pd.DataFrame | None = None,
+    include_global_stacking: bool = False,
 ) -> pd.DataFrame:
     """Prepare le DataFrame final features + target pour un symbole.
 
@@ -674,6 +679,7 @@ def prepare_symbol_frame(
         include_macro_vxn=data_cfg.include_macro_vxn_features,
         include_macro_vix3m=data_cfg.include_macro_vix3m_features,
         include_macro_move=data_cfg.include_macro_move_features,
+        include_global_stacking=include_global_stacking,
     )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics

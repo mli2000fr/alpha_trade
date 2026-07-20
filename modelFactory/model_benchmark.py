@@ -416,6 +416,7 @@ class BenchmarkRunner:
             include_cross_sectional=self.training_cfg.data.enable_cross_sectional_features,
             include_screener_scores=self.training_cfg.data.include_screener_scores,
             include_short_score=self.training_cfg.data.include_short_score_features,
+            include_global_stacking=self.training_cfg.global_model.stacking_enabled,
         )
 
     def _run_challenger(

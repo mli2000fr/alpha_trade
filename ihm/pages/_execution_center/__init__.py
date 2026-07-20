@@ -126,6 +126,8 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_ENABLE_LIGHTGBM,
     DEFAULT_ML_ENABLE_CATBOOST,
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
+    DEFAULT_ML_ENABLE_GLOBAL_STACKING,
+    DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER,
     DEFAULT_ML_GLOBAL_MODEL_NAME,
     DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
     DEFAULT_ML_SELECT_CHAMPION,
@@ -3196,11 +3198,27 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--optimize-thresholds` pour sélectionner le meilleur `decision_threshold` sur validation.",
             )
         with ml_opt_col3:
+            # ── Approche 2 : 3 checkboxes hiérarchiques ──
             ml_enable_global_model = st.checkbox(
                 "Entraîner aussi un modèle global multi-symboles",
                 value=_session_state_bool("pipeline_ml_enable_global_model", False),
                 key="pipeline_ml_enable_global_model",
-                help="Ajoute `--enable-global-model`.",
+                help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
+            )
+            st.caption("Les deux options ci-dessous nécessitent que le modèle global soit activé.")
+            ml_enable_global_stacking = st.checkbox(
+                "📥 Utiliser la prédiction globale comme feature (Stacking)",
+                value=_session_state_bool("pipeline_ml_enable_global_stacking", False),
+                key="pipeline_ml_enable_global_stacking",
+                disabled=not ml_enable_global_model,
+                help="Ajoute `--enable-global-stacking`. Injecte `global_pred_long` comme feature dans les modèles per-symbol (LSTM/LGBM/CatBoost). Le modèle apprend à pondérer le signal transverse.",
+            )
+            ml_enable_global_challenger = st.checkbox(
+                "🏆 Inclure le modèle global dans la sélection champion",
+                value=_session_state_bool("pipeline_ml_enable_global_challenger", False),
+                key="pipeline_ml_enable_global_challenger",
+                disabled=not ml_enable_global_model,
+                help="Ajoute `--enable-global-challenger`. Le Global Model devient un 4ème challenger avec métriques walk-forward comparables (wf.f1_macro).",
             )
             ml_global_model_name = cast(
                 str,
@@ -4029,6 +4047,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),
+            ml_enable_global_stacking=bool(ml_enable_global_stacking),
+            ml_enable_global_challenger=bool(ml_enable_global_challenger),
             ml_global_model_name=cast(Any, ml_global_model_name),
             ml_enable_cross_sectional=bool(ml_enable_cross_sectional),
             ml_select_champion=bool(ml_select_champion),

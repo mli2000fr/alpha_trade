@@ -937,6 +937,7 @@ def _run_walk_forward_validation(
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
+        include_global_stacking=cfg.global_model.stacking_enabled,
     )
     fold_metrics: list[dict[str, Any]] = []
     walk_forward_seed = derive_seed(cfg.reproducibility.seed, "walk_forward", symbol)
@@ -1259,6 +1260,8 @@ def train_symbol(
         datamodule_signature = inspect.signature(SymbolDataModule)
         if "reproducibility_seed" in datamodule_signature.parameters:
             datamodule_kwargs["reproducibility_seed"] = derive_seed(symbol_seed, "symbol_datamodule")
+        if "include_global_stacking" in datamodule_signature.parameters:
+            datamodule_kwargs["include_global_stacking"] = effective_cfg.global_model.stacking_enabled
         dm = SymbolDataModule(
             bars_df,
             effective_cfg.data,

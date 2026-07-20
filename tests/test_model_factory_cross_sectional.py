@@ -5,6 +5,7 @@ import pandas as pd
 
 from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, build_cross_sectional_features, merge_cross_sectional_features
 from modelFactory.cross_sectional import (
+    GLOBAL_PRED_FEATURE_COLUMNS,
     SECTOR_FEATURE_COLUMNS,
     _compute_sector_features,
     _load_sector_mapping,
@@ -246,3 +247,64 @@ def test_compute_sector_features_sector_symbol_count() -> None:
     fin_count = result[result["symbol"] == "JPM"]["sector_symbol_count"].iloc[-1]
     assert tech_count == 2.0
     assert fin_count == 2.0
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Approche 2 — Stacking : GLOBAL_PRED_FEATURE_COLUMNS
+# ─────────────────────────────────────────────────────────────────────
+
+def test_global_pred_feature_columns_defined() -> None:
+    """GLOBAL_PRED_FEATURE_COLUMNS must contain the expected column."""
+    assert GLOBAL_PRED_FEATURE_COLUMNS == ["global_pred_long"]
+
+
+def test_merge_cross_sectional_features_handles_global_pred() -> None:
+    """merge_cross_sectional_features should handle global_pred_long if present in cache."""
+    symbol_df = pd.DataFrame({
+        "symbol": ["AAPL", "MSFT"],
+        "date": [pd.Timestamp("2022-06-15"), pd.Timestamp("2022-06-15")],
+        "daily_return": [0.01, -0.005],
+    })
+    cs_df = pd.DataFrame({
+        "symbol": ["AAPL", "MSFT"],
+        "date": [pd.Timestamp("2022-06-15"), pd.Timestamp("2022-06-15")],
+        "ret_20_rank": [0.65, 0.45],
+        "global_pred_long": [0.72, 0.48],
+    })
+    merged = merge_cross_sectional_features(symbol_df, cs_df)
+
+    assert "global_pred_long" in merged.columns
+    assert merged.loc[merged["symbol"] == "AAPL", "global_pred_long"].iloc[0] == 0.72
+    assert merged.loc[merged["symbol"] == "MSFT", "global_pred_long"].iloc[0] == 0.48
+
+
+def test_merge_cross_sectional_features_fills_missing_global_pred() -> None:
+    """When global_pred_long is NOT in cache, it should default to 0.5 (neutral)."""
+    symbol_df = pd.DataFrame({
+        "symbol": ["AAPL"],
+        "date": [pd.Timestamp("2022-01-01")],
+        "daily_return": [0.01],
+    })
+    # Cache without global_pred_long
+    cs_df = pd.DataFrame({
+        "symbol": ["AAPL"],
+        "date": [pd.Timestamp("2022-01-01")],
+        "ret_20_rank": [0.55],
+    })
+    merged = merge_cross_sectional_features(symbol_df, cs_df)
+
+    assert "global_pred_long" in merged.columns
+    assert merged["global_pred_long"].iloc[0] == 0.5
+
+
+def test_merge_cross_sectional_features_global_pred_no_cache() -> None:
+    """When cache is None, global_pred_long defaults to 0.5 like other rank columns."""
+    symbol_df = pd.DataFrame({
+        "symbol": ["AAPL"],
+        "date": [pd.Timestamp("2022-01-01")],
+        "daily_return": [0.01],
+    })
+    merged = merge_cross_sectional_features(symbol_df, None)
+
+    assert "global_pred_long" in merged.columns
+    assert merged["global_pred_long"].iloc[0] == 0.5

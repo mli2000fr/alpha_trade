@@ -502,6 +502,7 @@ class GlobalBenchmarkRunner:
             include_cross_sectional=getattr(cfg.data, "enable_cross_sectional_features", False),
             include_screener_scores=cfg.data.include_screener_scores,
             include_short_score=cfg.data.include_short_score_features,
+            include_global_stacking=cfg.global_model.stacking_enabled,
         )
         available_cols = [c for c in feature_cols if c in df.columns]
         if not available_cols:

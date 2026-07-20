@@ -165,6 +165,54 @@ def test_get_feature_columns_cross_sectional_includes_sector() -> None:
     assert len(cols) == len(set(cols))  # no duplicates
 
 
+# ── Approche 2 — Stacking : include_global_stacking ──
+
+def test_get_feature_columns_global_stacking_adds_column() -> None:
+    """include_global_stacking=True adds global_pred_long to cross-sectional features."""
+    cols = features.get_feature_columns(
+        include_cross_sectional=True, include_global_stacking=True,
+    )
+    assert "global_pred_long" in cols
+    assert "ret_20_rank" in cols  # still present
+    assert "sector_ret_20" in cols  # still present
+
+
+def test_get_feature_columns_global_stacking_requires_cross_sectional() -> None:
+    """include_global_stacking=True sans include_cross_sectional n'ajoute RIEN."""
+    cols = features.get_feature_columns(include_global_stacking=True)
+    assert "global_pred_long" not in cols
+
+
+def test_get_feature_columns_global_stacking_default_off() -> None:
+    """Par défaut, global_pred_long n'est PAS inclus."""
+    cols = features.get_feature_columns(include_cross_sectional=True)
+    assert "global_pred_long" not in cols
+
+
+def test_fingerprint_differs_with_global_stacking() -> None:
+    """Le fingerprint change quand include_global_stacking passe de False à True."""
+    fp_off = features.fingerprint(
+        include_cross_sectional=True, include_global_stacking=False,
+    )
+    fp_on = features.fingerprint(
+        include_cross_sectional=True, include_global_stacking=True,
+    )
+    assert fp_off != fp_on
+    assert len(fp_off) == 16
+    assert len(fp_on) == 16
+
+
+def test_fingerprint_stable_global_stacking() -> None:
+    """Le fingerprint est stable (déterministe) pour include_global_stacking=True."""
+    fp1 = features.fingerprint(
+        feature_set="expert", include_cross_sectional=True, include_global_stacking=True,
+    )
+    fp2 = features.fingerprint(
+        feature_set="expert", include_cross_sectional=True, include_global_stacking=True,
+    )
+    assert fp1 == fp2
+
+
 def test_compute_features_merges_selector_context_pit_safely() -> None:
     n = 90
     dates = pd.date_range("2020-01-01", periods=n, freq="D")

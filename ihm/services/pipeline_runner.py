@@ -52,6 +52,8 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_ENABLE_LIGHTGBM,
     DEFAULT_ML_ENABLE_CATBOOST,
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
+    DEFAULT_ML_ENABLE_GLOBAL_STACKING,
+    DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER,
     DEFAULT_ML_GLOBAL_MODEL_NAME,
     DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
     DEFAULT_ML_SELECT_CHAMPION,
@@ -316,6 +318,8 @@ class PipelineLaunchOptions:
     ml_enable_lightgbm: bool = True
     ml_enable_catboost: bool = True
     ml_enable_global_model: bool = False
+    ml_enable_global_stacking: bool = False    # Approche 2 — FLAG B
+    ml_enable_global_challenger: bool = False  # Approche 2 — FLAG C
     ml_global_model_name: MLGlobalModelName = "catboost"
     ml_enable_cross_sectional: bool = False
     ml_select_champion: bool = True
@@ -2156,6 +2160,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--enable-catboost")
         if options.ml_enable_global_model:
             command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
+        if options.ml_enable_global_stacking:
+            command.append("--enable-global-stacking")
+        if options.ml_enable_global_challenger:
+            command.append("--enable-global-challenger")
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")
         if options.ml_select_champion:
