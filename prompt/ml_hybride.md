@@ -129,3 +129,259 @@ run_training_batch sector features enabled: 487 symbols mapped to 11 sectors
 | `ihm/services/pipeline_ml_defaults.py` | -DEFAULT_ML_INCLUDE_SECTOR_FEATURES |
 | `ihm/services/pipeline_runner.py` | -ml_include_sector_features, ---include-sector-features |
 | `ihm/pages/_execution_center/__init__.py` | 1 checkbox fusionné "cross-sectional & sectoriel" |
+
+---
+
+## 🧠 Approche 2 — Stacking : Global Model comme Feature enrichissante
+
+### 📌 Pourquoi ce changement ?
+
+Le Global Model (`--enable-global-model`) est aujourd'hui un challenger **fantôme** : il participe à la sélection champion mais ne peut jamais gagner car :
+
+- `selection_score_from_result()` cherche `walk_forward.f1_macro` — le Global Model n'a pas de WF per-symbol
+- Même si on lui ajoutait `val`, comparer `val` à `wf` n'est pas robuste (1 split vs 11 splits)
+
+L'**Approche 2 (Stacking)** résout ça élégamment : le Global Model ne remplace **pas** les modèles per-symbol, il les **enrichit** avec une feature apprise non-linéaire (`global_pred`), PIT-safe.
+
+C'est le prolongement naturel des features sectorielles : au lieu d'injecter `sector_ret_20` (agrégat statique), on injecte la **prédiction entraînée du Global Model** (signal transverse appris). Même principe, version ML.
+
+### 🎯 Les 3 flags (A/B testing indépendant)
+
+Le Global Model est découpé en **3 flags orthogonaux** pour permettre l'A/B testing :
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ FLAG A : --enable-global-model                                      │
+│ ☐ Entraîner un modèle global multi-symboles                        │
+│                                                                     │
+│ → Phase 1 : WF 11 splits, produit global_pred(symbol, date)         │
+│ → Si décoché : rien ne se passe (comportement actuel)               │
+│ → Si coché mais B et C décochés : global entraîné mais inutilisé    │
+│   (utile pour debug / inspection des prédictions globales)          │
+├─────────────────────────────────────────────────────────────────────┤
+│ FLAG B : --enable-global-stacking                                   │
+│ ☐ Utiliser la prédiction globale comme feature (Stacking)           │
+│                                                                     │
+│ → Phase 2 : global_pred_long ajouté aux features per-symbol         │
+│ → Nécessite FLAG A (sinon pas de global_pred à injecter)            │
+│ → Indépendant de C : stacking sans challenger, c'est OK             │
+├─────────────────────────────────────────────────────────────────────┤
+│ FLAG C : --enable-global-challenger                                 │
+│ ☐ Inclure le modèle global dans la sélection champion               │
+│                                                                     │
+│ → Phase 3 : 4 challengers (lstm, lgbm, catboost, global)            │
+│ → Nécessite FLAG A (sinon pas de métriques WF pour le global)       │
+│ → Indépendant de B : challenger sans stacking, c'est OK             │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 🧪 Matrice d'A/B testing
+
+| A | B | C | Comportement | Ce qu'on teste |
+|---|---|---|------|-------------|
+| ☐ | ☐ | ☐ | **Baseline** : LSTM/LGBM/CatBoost, 3 challengers, pas de global | Référence actuelle |
+| ☑ | ☐ | ☐ | Global entraîné (WF), pas utilisé | Debug : inspecter `global_pred` |
+| ☑ | ☑ | ☐ | **Test 1** : Stacking pur — `global_pred` enrichit les 3 modèles, champion parmi 3 | Le stacking améliore-t-il le LSTM ? |
+| ☑ | ☐ | ☑ | **Test 2** : Global challenger standalone — le global affronte les 3 modèles NON enrichis | Le global bat-il les per-symbol ? |
+| ☑ | ☑ | ☑ | **Test 3** : Full — stacking + 4 challengers (les 3 enrichis + global standalone) | Les deux combinés > chaque isolé ? |
+
+### 🏗️ Architecture des 3 phases
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 1 : Global Model avec Walk-Forward (FLAG A)               │
+│                                                                 │
+│ WF Split 1  : train global sur TOUS [2018-2021]                 │
+│              → predict per-symbol sur [2022] → global_pred      │
+│ WF Split 2  : train global sur TOUS [2018-2022]                 │
+│              → predict per-symbol sur [2023] → global_pred      │
+│ ... (11 splits)                                                 │
+│                                                                 │
+│ → Sauvegarde global_pred(symbol, date) PIT-safe                 │
+│ → Coût : ~1 minute (11 × LGBM.fit() sur poolé)                  │
+│ → Stocké dans cross_sectional_cache (comme les rangs today)     │
+│ → by_symbol avec wf.f1_macro (pour Phase 3 si FLAG C)           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 2 : Per-Symbol Enrichi — Stacking (FLAG B, si A+B)       │
+│                                                                 │
+│ Chaque LSTM / LightGBM / CatBoost reçoit :                      │
+│   • Features existantes (OHLCV + cross-sectional + sector)      │
+│   • + global_pred_long  ← feature apprise non-linéaire          │
+│                                                                 │
+│ Le LSTM peut apprendre :                                        │
+│   "Quand global_pred > 0.7 ET momentum aligné → confiance haute"│
+│   "Quand global_pred = 0.5 → j'ignore, je suis mes patterns"    │
+│                                                                 │
+│ → WF per-symbol normal, tous les modèles restent comparables    │
+│ → Si FLAG B = False : pas de global_pred, per-symbol standard   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 3 : Champion Selection avec 4 challengers (FLAG C, si A+C)│
+│                                                                 │
+│ Puisque le Global Model a maintenant wf.f1_macro par symbole    │
+│ (produit en Phase 1), il devient un VRAI challenger :           │
+│                                                                 │
+│   select_champion({lstm, lgbm, catboost, global})               │
+│                                                                 │
+│ → Tous comparables via wf.f1_macro (même métrique, même échelle)│
+│ → Si global gagne → pas de stacking pour ce symbole             │
+│ → Si per-symbol gagne → stacking appliqué si FLAG B actif       │
+│ → Si FLAG C = False : champion selection standard (3 way)       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 🔬 Détails techniques — Phase 1 (Global Model WF)
+
+**Algorithme** :
+1. Définir les 11 fenêtres WF (mêmes paramètres que le WF per-symbol : `wf_min_train_size`, `wf_val_size`, `wf_step_size`)
+2. Pour chaque split `i` :
+   - `train_dates` = [start, split_end - 2 × val_size]
+   - `val_dates` = [split_end - 2 × val_size, split_end - val_size]
+   - Charger les barres de tous les symboles sur `train_dates` → `train_df` poolé
+   - `.fit()` LightGBM/CatBoost sur `train_df`
+   - `.predict_proba()` sur chaque symbole pour `val_dates` → `global_pred(symbol, date)`
+3. Concaténer tous les `global_pred` → DataFrame `[symbol, date, global_pred]`
+4. Stocker dans le cache cross-sectional (merge automatique dans `merge_cross_sectional_features`)
+5. `by_symbol` produit `wf.f1_macro` par symbole (agrégé sur les 11 splits)
+
+**Feature dans le contrat** :
+- `GLOBAL_PRED_FEATURE = "global_pred_long"` — ajoutée à `get_feature_columns()` quand FLAG A + FLAG B sont actifs
+- Le fingerprint inclut cette colonne → pas de breaking change pour les modèles existants sans global
+
+**Performance** :
+- 11 × LGBM.fit() sur poolé → ~3s chacun → ~35 secondes
+- 500 symboles × 11 splits × predict_proba() → ~10 secondes
+- **Total : < 1 minute** (contre ~heures pour les LSTM per-symbol)
+
+### 🔬 Détails techniques — Phase 2 (Stacking)
+
+- `global_pred_long` est mergé dans le DataFrame du symbole au même titre que les rangs percentiles (via `merge_cross_sectional_features`)
+- Le `feature_contract` et le `fingerprint` incluent automatiquement `global_pred_long` quand FLAG A + FLAG B
+- Les modèles per-symbol ne changent pas — ils reçoivent juste une colonne de plus
+- Si `global_pred_long` est NaN (début de série, pas encore de WF global pour cette date) → fillna(0.5)
+
+### 🔬 Détails techniques — Phase 3 (Champion Selection)
+
+- `_compute_by_symbol_metrics()` produit maintenant `walk_forward` en plus de `test` pour le Global Model
+- `selection_score_from_result()` fonctionne normalement (même code, même métrique wf.f1_macro)
+- Aucune modification de `select_champion()` — le Global Model est juste un 4ème challenger avec des métriques WF comparables
+
+### ⚙️ Configuration
+
+```python
+@dataclass(frozen=True, slots=True)
+class GlobalModelConfig:
+    enabled: bool = False             # FLAG A : entraîne le global (Phase 1)
+    stacking_enabled: bool = False    # FLAG B : global_pred comme feature (Phase 2)
+    challenger_enabled: bool = False  # FLAG C : global dans champion selection (Phase 3)
+    model_name: str = "catboost"
+    artifact_symbol: str = "__GLOBAL__"
+    use_cross_sectional_features: bool = True
+```
+
+**Gating logique** :
+```python
+# Phase 1 (orchestrator) — FLAG A
+if cfg.global_model.enabled:
+    global_result = train_global_model_wf(...)
+
+# Phase 2 (features.py) — FLAG A + B
+if cfg.global_model.enabled and cfg.global_model.stacking_enabled:
+    cols.append("global_pred_long")
+
+# Phase 3 (orchestrator) — FLAG A + C
+if cfg.global_model.enabled and cfg.global_model.challenger_enabled:
+    _inject_global_model_into_symbol_artifacts(...)
+```
+
+### 🖥️ IHM : 3 checkboxes hiérarchiques
+
+```
+┌─ Options Global Model ─────────────────────────────────────────────┐
+│                                                                     │
+│ ☐ Entraîner un modèle global multi-symboles                        │
+│   └─ Requis pour les deux options ci-dessous                       │
+│                                                                     │
+│   ☐ Utiliser la prédiction globale comme feature (Stacking)         │
+│      └─ Ajoute global_pred_long aux features per-symbol             │
+│                                                                     │
+│   ☐ Inclure le modèle global dans la sélection champion            │
+│      └─ 4ème challenger avec wf.f1_macro comparable                 │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Les deux sous-checkboxes sont **grisées** tant que la première n'est pas cochée.
+
+### 📁 Fichiers à modifier
+
+| Fichier | Changement |
+|---|---|
+| `modelFactory/config.py` | +`stacking_enabled`, +`challenger_enabled` dans `GlobalModelConfig` |
+| `modelFactory/global_model.py` | +`_train_global_walk_forward()` — WF 11 splits, +`by_symbol` avec `wf` per-symbol |
+| `modelFactory/cross_sectional.py` | +`GLOBAL_PRED_FEATURE_COLUMNS`, merge dans `merge_cross_sectional_features` (gated par FLAG B) |
+| `modelFactory/features.py` | `get_feature_columns()` inclut `global_pred_long` si FLAG A+B |
+| `modelFactory/orchestrator.py` | Phase 1 AVANT per-symbol (FLAG A). `global_pred` dans `cross_sectional_cache` (FLAG B). Phase 3 : challenger injection (FLAG C) |
+| `modelFactory/dataset.py` | `DataModule` reçoit `global_pred_long` du cache |
+| `modelFactory/cli.py` | +`--enable-global-stacking`, +`--enable-global-challenger` |
+| `ihm/services/pipeline_ml_defaults.py` | +`DEFAULT_ML_ENABLE_GLOBAL_STACKING`, +`DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER` |
+| `ihm/services/pipeline_runner.py` | +`ml_enable_global_stacking`, +`ml_enable_global_challenger` dans `PipelineLaunchOptions`, flags CLI |
+| `ihm/pages/_execution_center/__init__.py` | 3 checkboxes hiérarchiques (A, B, C) |
+
+### 📋 Plan d'action (ordre d'implémentation)
+
+| Étape | Fichier | Action | Difficulté |
+|:-----:|---------|--------|:----------:|
+| **1** | `modelFactory/config.py` | Ajouter `stacking_enabled: bool = False` et `challenger_enabled: bool = False` dans `GlobalModelConfig` | ⭐ |
+| **2** | `modelFactory/global_model.py` | `_train_global_walk_forward()` : 11 splits WF, produit `global_pred(symbol, date)` + `by_symbol` avec `wf.f1_macro` par symbole. Gater par `cfg.global_model.enabled`. | ⭐⭐⭐ |
+| **3** | `modelFactory/cross_sectional.py` | `GLOBAL_PRED_FEATURE_COLUMNS = ["global_pred_long"]`, merge automatique dans `merge_cross_sectional_features()`. Gater par `cfg.global_model.stacking_enabled`. | ⭐ |
+| **4** | `modelFactory/features.py` | `get_feature_columns()` : ajouter `global_pred_long` si `include_cross_sectional=True` ET `stacking_enabled=True`. `fingerprint()`, `build_feature_contract()`, `validate_feature_contract()` idem. | ⭐ |
+| **5** | `modelFactory/orchestrator.py` | (a) Déplacer Phase 1 AVANT boucle per-symbol (FLAG A). (b) Injecter `global_pred` dans `cross_sectional_cache` (FLAG B). (c) Phase 3 : `_inject_global_model_into_symbol_artifacts()` comme 4ème challenger (FLAG C). | ⭐⭐ |
+| **6** | `modelFactory/dataset.py` | `DataModule` merge `global_pred_long` depuis le cache cross-sectional (même mécanisme que les rangs) | ⭐ |
+| **7** | `modelFactory/cli.py` | Ajouter `--enable-global-stacking` (FLAG B) et `--enable-global-challenger` (FLAG C) | ⭐ |
+| **8** | `ihm/services/pipeline_ml_defaults.py` | +`DEFAULT_ML_ENABLE_GLOBAL_STACKING`, +`DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER` | ⭐ |
+| **9** | `ihm/services/pipeline_runner.py` | +`ml_enable_global_stacking`, +`ml_enable_global_challenger` dans `PipelineLaunchOptions` + flags dans `_build_ml_train_command()` | ⭐ |
+| **10** | `ihm/pages/_execution_center/__init__.py` | 3 checkboxes hiérarchiques avec grisage conditionnel | ⭐⭐ |
+| **11** | `tests/` | `test_global_model_wf.py` : PIT-safe, 11 splits, wf.f1_macro cohérent. `test_stacking.py` : LSTM enrichi > LSTM seul. `test_global_flags.py` : matrice A/B/C. | ⭐⭐ |
+
+### 🚀 Comment activer ?
+
+```powershell
+# Test 1 : Stacking pur (A+B)
+python -m modelFactory --mode train \
+    --enable-cross-sectional \
+    --enable-global-model \
+    --enable-global-stacking \
+    ...autres flags...
+
+# Test 2 : Global challenger standalone (A+C)
+python -m modelFactory --mode train \
+    --enable-cross-sectional \
+    --enable-global-model \
+    --enable-global-challenger \
+    ...autres flags...
+
+# Test 3 : Full (A+B+C)
+python -m modelFactory --mode train \
+    --enable-cross-sectional \
+    --enable-global-model \
+    --enable-global-stacking \
+    --enable-global-challenger \
+    ...autres flags...
+```
+
+### Vérification
+
+Dans les logs :
+```
+run_training_batch global_model_wf start splits=11 flags=A
+run_training_batch global_model_wf split=1/11 train_rows=120000 val_dates=252
+...
+run_training_batch global_model_wf done cache_rows=55000 pred_feature=global_pred_long
+run_training_batch per-symbol start symbols=500 stacking=True challenger_global=False
+```
