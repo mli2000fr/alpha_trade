@@ -43,7 +43,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_FORECAST_HORIZON,
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
-    DEFAULT_ML_INCLUDE_SCORE_CONTEXT,
+    DEFAULT_ML_INCLUDE_SCREENER_SCORES,
     DEFAULT_ML_INCLUDE_SHORT_SCORE,
     DEFAULT_ML_INCLUDE_MACRO_VIX,
     DEFAULT_ML_INCLUDE_MACRO_VIX3M,
@@ -307,7 +307,7 @@ class PipelineLaunchOptions:
     execution_debug: bool = DEFAULT_EXEC_DEBUG
     ml_accelerator: MLAccelerator = "auto"
     ml_include_sentiment: bool = False
-    ml_include_score_context: bool = DEFAULT_ML_INCLUDE_SCORE_CONTEXT
+    ml_include_screener_scores: bool = DEFAULT_ML_INCLUDE_SCREENER_SCORES
     ml_include_short_score: bool = DEFAULT_ML_INCLUDE_SHORT_SCORE
     ml_include_macro_vix: bool = False   # VIX/VIX9D — nécessite backfill stock_macro_indicators_daily
     ml_include_macro_vxn: bool = False   # VXN — Nasdaq-100 volatility
@@ -2136,8 +2136,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--start-symbol", ml_train_start_symbol])
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
-        if options.ml_include_score_context:
-            command.append("--include-score-context")
+        if options.ml_include_screener_scores:
+            command.append("--include-screener-scores")
         if options.ml_include_short_score:
             command.append("--include-short-score")
         if options.ml_include_macro_vix:

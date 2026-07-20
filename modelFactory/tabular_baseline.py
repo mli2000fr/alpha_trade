@@ -254,7 +254,7 @@ def run_tabular_baseline(
 		include_sentiment=cfg.data.include_sentiment_features,
 		feature_set=cfg.data.feature_set,
 		include_cross_sectional=cfg.data.enable_cross_sectional_features,
-		include_selector_context=cfg.data.include_selector_context_features,
+		include_screener_scores=cfg.data.include_screener_scores,
 		include_short_score=cfg.data.include_short_score_features,
 	)
 	train_df, val_df, test_df = tabular_split(
@@ -391,7 +391,7 @@ def run_tabular_baseline(
 		include_sentiment=cfg.data.include_sentiment_features,
 		feature_set=cfg.data.feature_set,
 		include_cross_sectional=cfg.data.enable_cross_sectional_features,
-		include_selector_context=cfg.data.include_selector_context_features,
+		include_screener_scores=cfg.data.include_screener_scores,
 		include_short_score=cfg.data.include_short_score_features,
 		feature_columns=feature_columns,
 		scaler_feature_names=feature_columns,
@@ -406,7 +406,7 @@ def run_tabular_baseline(
 			include_sentiment=cfg.data.include_sentiment_features,
 			feature_set=cfg.data.feature_set,
 			include_cross_sectional=cfg.data.enable_cross_sectional_features,
-			include_selector_context=cfg.data.include_selector_context_features,
+			include_screener_scores=cfg.data.include_screener_scores,
 			include_short_score=cfg.data.include_short_score_features,
 			feature_columns=feature_columns,
 		),
@@ -586,7 +586,7 @@ def run_tabular_walk_forward(
 		include_sentiment=cfg.data.include_sentiment_features,
 		feature_set=cfg.data.feature_set,
 		include_cross_sectional=cfg.data.enable_cross_sectional_features,
-		include_selector_context=cfg.data.include_selector_context_features,
+		include_screener_scores=cfg.data.include_screener_scores,
 		include_short_score=cfg.data.include_short_score_features,
 	)
 

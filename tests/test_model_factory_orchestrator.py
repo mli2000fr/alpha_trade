@@ -154,7 +154,7 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
 
 def test_train_worker_loads_selector_context_when_enabled(monkeypatch) -> None:
     cfg = TrainingConfig(
-        data=DataConfig(include_selector_context_features=True),
+        data=DataConfig(include_screener_scores=True),
         model=ModelConfig(max_epochs=1),
         accelerator="cpu",
     )

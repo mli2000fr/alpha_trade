@@ -156,7 +156,7 @@ def get_feature_columns(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
-    include_selector_context: bool = False,
+    include_screener_scores: bool = False,
     include_short_score: bool = False,
     include_macro_vix: bool = False,
     include_macro_vxn: bool = False,
@@ -173,7 +173,7 @@ def get_feature_columns(
         cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
-    if include_selector_context:
+    if include_screener_scores:
         cols.extend(SELECTOR_CONTEXT_FEATURE_COLUMNS)
     if include_short_score and "selector_short_score" not in cols:
         cols.append("selector_short_score")
@@ -201,7 +201,7 @@ def fingerprint(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
-    include_selector_context: bool = False,
+    include_screener_scores: bool = False,
     include_short_score: bool = False,
     include_macro_vix: bool = False,
     include_macro_vxn: bool = False,
@@ -220,7 +220,7 @@ def fingerprint(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
-        include_selector_context=include_selector_context,
+        include_screener_scores=include_screener_scores,
         include_short_score=include_short_score,
         include_macro_vix=include_macro_vix,
         include_macro_vxn=include_macro_vxn,
@@ -232,7 +232,7 @@ def fingerprint(
         "feature_set": feature_set,
         "include_sentiment": bool(include_sentiment),
         "include_cross_sectional": bool(include_cross_sectional),
-        "include_selector_context": bool(include_selector_context),
+        "include_screener_scores": bool(include_screener_scores),
         "include_short_score": bool(include_short_score),
         "include_macro_vix": bool(include_macro_vix),
         "include_macro_vxn": bool(include_macro_vxn),
@@ -257,7 +257,7 @@ def build_feature_contract(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
-    include_selector_context: bool = False,
+    include_screener_scores: bool = False,
     include_short_score: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
@@ -267,7 +267,7 @@ def build_feature_contract(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
-        include_selector_context=include_selector_context,
+        include_screener_scores=include_screener_scores,
         include_short_score=include_short_score,
     ))
     contract: dict[str, object] = {
@@ -278,7 +278,7 @@ def build_feature_contract(
             include_sentiment=include_sentiment,
             feature_set=feature_set,
             include_cross_sectional=include_cross_sectional,
-            include_selector_context=include_selector_context,
+            include_screener_scores=include_screener_scores,
             include_short_score=include_short_score,
             feature_columns=resolved_columns,
         ),
@@ -296,7 +296,7 @@ def validate_feature_contract(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
-    include_selector_context: bool = False,
+    include_screener_scores: bool = False,
     include_short_score: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
@@ -310,14 +310,14 @@ def validate_feature_contract(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
-        include_selector_context=include_selector_context,
+        include_screener_scores=include_screener_scores,
         include_short_score=include_short_score,
     )
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
-        include_selector_context=include_selector_context,
+        include_screener_scores=include_screener_scores,
         include_short_score=include_short_score,
         feature_columns=expected_columns,
     )
@@ -339,7 +339,7 @@ def validate_feature_contract(
             include_sentiment=include_sentiment,
             feature_set=feature_set,
             include_cross_sectional=include_cross_sectional,
-            include_selector_context=include_selector_context,
+            include_screener_scores=include_screener_scores,
             feature_columns=contract_columns,
         )
     else:
@@ -563,7 +563,7 @@ def compute_features(
     benchmark_df: pd.DataFrame | None = None,
     feature_set: str = "v1",
     selector_df: pd.DataFrame | None = None,
-    include_selector_context: bool = False,
+    include_screener_scores: bool = False,
     include_short_score: bool = False,
     include_macro_vix: bool = False,
     include_macro_vxn: bool = False,
@@ -714,7 +714,7 @@ def compute_features(
             else:
                 df[col] = df[col].fillna(0.0).astype(float)
 
-    if include_selector_context or include_short_score:
+    if include_screener_scores or include_short_score:
         if selector_df is not None and not selector_df.empty:
             selector = selector_df.copy()
             if "snapshot_date" in selector.columns and "date" not in selector.columns:
@@ -763,7 +763,7 @@ def compute_features(
     active_features = get_feature_columns(
         include_sentiment,
         feature_set=feature_set,
-        include_selector_context=include_selector_context,
+        include_screener_scores=include_screener_scores,
         include_short_score=include_short_score,
         include_macro_vix=include_macro_vix,
         include_macro_vxn=include_macro_vxn,

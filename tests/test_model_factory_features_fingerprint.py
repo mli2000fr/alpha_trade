@@ -45,8 +45,8 @@ def test_fingerprint_changes_with_cross_sectional() -> None:
 
 
 def test_fingerprint_changes_with_selector_context() -> None:
-    fp_no = fingerprint(include_selector_context=False)
-    fp_yes = fingerprint(include_selector_context=True)
+    fp_no = fingerprint(include_screener_scores=False)
+    fp_yes = fingerprint(include_screener_scores=True)
     assert fp_no != fp_yes
 
 

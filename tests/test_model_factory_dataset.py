@@ -557,7 +557,7 @@ def test_prepare_symbol_frame_merges_selector_context_features() -> None:
             "selector_signal_mode": ["sector_neutralized"],
         }
     )
-    cfg = dataset.DataConfig(include_selector_context_features=True)
+    cfg = dataset.DataConfig(include_screener_scores=True)
 
     prepared = dataset.prepare_symbol_frame(bars, cfg, selector_df=selector_df)
 

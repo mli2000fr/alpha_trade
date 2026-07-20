@@ -500,7 +500,7 @@ class GlobalBenchmarkRunner:
             include_sentiment=cfg.data.include_sentiment_features,
             feature_set=getattr(cfg.data, "feature_set", None),
             include_cross_sectional=getattr(cfg.data, "enable_cross_sectional_features", False),
-            include_selector_context=cfg.data.include_selector_context_features,
+            include_screener_scores=cfg.data.include_screener_scores,
             include_short_score=cfg.data.include_short_score_features,
         )
         available_cols = [c for c in feature_cols if c in df.columns]

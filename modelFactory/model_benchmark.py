@@ -414,7 +414,7 @@ class BenchmarkRunner:
             include_sentiment=self.training_cfg.data.include_sentiment_features,
             feature_set=self.training_cfg.data.feature_set,
             include_cross_sectional=self.training_cfg.data.enable_cross_sectional_features,
-            include_selector_context=self.training_cfg.data.include_selector_context_features,
+            include_screener_scores=self.training_cfg.data.include_screener_scores,
             include_short_score=self.training_cfg.data.include_short_score_features,
         )
 

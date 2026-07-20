@@ -117,7 +117,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_FORECAST_HORIZON,
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
-    DEFAULT_ML_INCLUDE_SCORE_CONTEXT,
+    DEFAULT_ML_INCLUDE_SCREENER_SCORES,
     DEFAULT_ML_INCLUDE_SHORT_SCORE,
     DEFAULT_ML_INCLUDE_MACRO_VIX,
     DEFAULT_ML_INCLUDE_MACRO_VXN,
@@ -3133,11 +3133,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_sentiment",
                 help="Ajoute `--include-sentiment` à `ml_train`.",
             )
-            ml_include_score_context = st.checkbox(
-                "Inclure les features contexte score",
-                value=_session_state_bool("pipeline_ml_include_score_context", DEFAULT_ML_INCLUDE_SCORE_CONTEXT),
-                key="pipeline_ml_include_score_context",
-                help="Ajoute `--include-score-context` pour enrichir le dataset ML avec le contexte PIT-safe des scores techniques.",
+            ml_include_screener_scores = st.checkbox(
+                "Inclure les scores du screener (trend, VCP, final_score…)",
+                value=_session_state_bool("pipeline_ml_include_screener_scores", DEFAULT_ML_INCLUDE_SCREENER_SCORES),
+                key="pipeline_ml_include_screener_scores",
+                help="Ajoute `--include-screener-scores` pour enrichir le dataset ML avec les scores PIT-safe du screener (trend_score, vcp_score, final_score, market_cap, beta, etc.).",
             )
             ml_include_short_score = st.checkbox(
                 "Inclure le short_score dédié (score baissier)",
@@ -4018,7 +4018,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_debug=bool(execution_debug),
             ml_accelerator=cast(Any, ml_accelerator),
             ml_include_sentiment=bool(ml_include_sentiment),
-            ml_include_score_context=bool(ml_include_score_context),
+            ml_include_screener_scores=bool(ml_include_screener_scores),
             ml_include_short_score=bool(ml_include_short_score),
             ml_include_macro_vix=bool(ml_include_macro_vix),
             ml_include_macro_vxn=bool(ml_include_macro_vxn),

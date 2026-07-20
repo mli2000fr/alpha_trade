@@ -1074,11 +1074,11 @@ def test_build_pipeline_command_ml_train_exposes_score_context_without_selector_
     command = build_pipeline_command(
         "ml_train",
         PipelineLaunchOptions(
-            ml_include_score_context=True,
+            ml_include_screener_scores=True,
         ),
     )
 
-    assert "--include-score-context" in command
+    assert "--include-screener-scores" in command
     assert "--include-selector-context" not in command
     assert "--selector-universe-signal-modes" not in command
     assert "--selector-universe-max-candidate-rank" not in command

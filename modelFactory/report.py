@@ -139,6 +139,19 @@ CHAMPION_MODE_QUERY = """
     ORDER BY mg.selection_mode
 """
 
+CHAMPION_BY_MODEL_QUERY = """
+    SELECT
+        mg.model_name,
+        COUNT(DISTINCT mg.symbol) AS nb_symbols
+    FROM alpha_trade.model_governance AS mg
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mg.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mg.is_selected_model = 1
+    GROUP BY mg.model_name
+    ORDER BY nb_symbols DESC
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,8 +175,12 @@ def _df_to_md(df: pd.DataFrame) -> str:
 # Génération du rapport
 # ---------------------------------------------------------------------------
 
-def _append_champion_status(lines: list[str], champion_df: pd.DataFrame) -> None:
-    """Ajoute la section statut champion (⚠️ fallback ou ✅ OK)."""
+def _append_champion_status(
+    lines: list[str],
+    champion_df: pd.DataFrame,
+    champion_by_model_df: pd.DataFrame | None = None,
+) -> None:
+    """Ajoute la section statut champion (⚠️ fallback ou ✅ OK) + répartition par modèle."""
     if champion_df.empty:
         return
 
@@ -194,6 +211,12 @@ def _append_champion_status(lines: list[str], champion_df: pd.DataFrame) -> None
             lines.append(f"| ⚠️ `default_champion` | {default_count} |")
     lines.append("")
 
+    # ── Répartition par modèle ──
+    if champion_by_model_df is not None and not champion_by_model_df.empty:
+        lines.append("### 📊 Champions par modèle")
+        lines.append("")
+        lines.append(_df_to_md(champion_by_model_df))
+
 
 def generate_batch_report(engine: Engine, batch_id: str) -> str:
     """Génère un rapport Markdown complet pour un batch d'entraînement."""
@@ -205,6 +228,7 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     worst_df = _safe_query(engine, TOP5_WORST_F1_QUERY, {"batch_id": batch_id})
     zero_df = _safe_query(engine, ZERO_F1_SHORT_QUERY, {"batch_id": batch_id})
     champion_df = _safe_query(engine, CHAMPION_MODE_QUERY, {"batch_id": batch_id})
+    champion_by_model_df = _safe_query(engine, CHAMPION_BY_MODEL_QUERY, {"batch_id": batch_id})
 
     lines: list[str] = []
     lines.append(f"# Diagnostic ML — Batch `{batch_id}`")
@@ -241,7 +265,7 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     lines.append("")
 
     # ── Statut champion ──
-    _append_champion_status(lines, champion_df)
+    _append_champion_status(lines, champion_df, champion_by_model_df)
 
     # ── Métriques F1 par split ──
     lines.append("## 📊 Métriques F1 par split")

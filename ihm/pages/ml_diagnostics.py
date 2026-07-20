@@ -601,6 +601,26 @@ def _render_batch_detail(batch: pd.Series) -> None:
                 f"Vérifiez les logs pour les raisons d'inéligibilité."
             )
 
+        # ── Répartition champions par modèle ──
+        champion_by_model_df = safe_query(
+            """SELECT mg.model_name, COUNT(DISTINCT mg.symbol) AS nb_symbols
+               FROM alpha_trade.model_governance AS mg
+               JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mg.run_id
+               WHERE mtr.batch_id = :batch_id AND mg.is_selected_model = 1
+               GROUP BY mg.model_name
+               ORDER BY nb_symbols DESC""",
+            {"batch_id": batch["batch_id"]},
+        )
+        if not champion_by_model_df.empty:
+            st.markdown("**Champions par modèle :**")
+            cols_model = st.columns(len(champion_by_model_df))
+            for idx, (_, crow) in enumerate(champion_by_model_df.iterrows()):
+                model_label = str(crow["model_name"]).replace("_", " ").title()
+                count = int(crow["nb_symbols"])
+                pct = f"{100 * count / total:.0f}%" if total > 0 else "—"
+                with cols_model[idx]:
+                    st.metric(label=model_label, value=f"{count} ({pct})")
+
     # ── Bloc F1 par split ──
     st.subheader("📊 Métriques F1 par split")
     f1_df = safe_query(F1_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})

@@ -24,7 +24,7 @@ def _contract(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
-    include_selector_context: bool = False,
+    include_screener_scores: bool = False,
 ) -> dict:
     """Construit un feature_contract minimal valide pour les tests.
 
@@ -36,7 +36,7 @@ def _contract(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
-        include_selector_context=include_selector_context,
+        include_screener_scores=include_screener_scores,
         feature_columns=feature_columns,
     )
     return {
@@ -57,7 +57,7 @@ def _feature_frame_stub(frame: pd.DataFrame):
         benchmark_df=None,
         feature_set="v1",
         selector_df=None,
-        include_selector_context=False,
+        include_screener_scores=False,
         include_short_score=False,
         **_kwargs,
     ):
@@ -71,7 +71,7 @@ def _feature_columns_stub(columns: list[str]):
         include_sentiment=False,
         feature_set="v1",
         include_cross_sectional=False,
-        include_selector_context=False,
+        include_screener_scores=False,
         include_short_score=False,
         **_kwargs,
     ):
@@ -695,10 +695,10 @@ def test_predict_symbol_loads_selector_context_when_enabled(tmp_path: Path, monk
                     "sequence_length": 2,
                     "forecast_horizon": 1,
                     "include_sentiment_features": False,
-                    "include_selector_context_features": True,
+                    "include_screener_scores": True,
                 },
                 "run_id": "run-config",
-                "feature_contract": _contract(["feat1", "selector_trend_score"], include_selector_context=True),
+                "feature_contract": _contract(["feat1", "selector_trend_score"], include_screener_scores=True),
             }
         ),
         encoding="utf-8",

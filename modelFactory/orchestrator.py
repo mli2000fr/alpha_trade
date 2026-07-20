@@ -209,14 +209,14 @@ def _filter_symbols_by_mode(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
-        include_selector_context=cfg.data.include_selector_context_features,
+        include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
     )
     current_contract = build_feature_contract(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
-        include_selector_context=cfg.data.include_selector_context_features,
+        include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
     )
 
@@ -343,7 +343,7 @@ def _train_worker(
             start_date=history_start_date,
         )
     selector_df = None
-    if cfg.data.include_selector_context_features or cfg.data.include_short_score_features:
+    if cfg.data.include_screener_scores or cfg.data.include_short_score_features:
         selector_df = load_symbol_selector_context(
             engine,
             symbol,

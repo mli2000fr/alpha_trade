@@ -76,7 +76,7 @@ def _build_training_batch_metadata(opts: argparse.Namespace, cfg: TrainingConfig
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
-        include_selector_context=cfg.data.include_selector_context_features,
+        include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
         include_macro_vix=cfg.data.include_macro_vix_features,
         include_macro_vxn=cfg.data.include_macro_vxn_features,
@@ -245,9 +245,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
-    p.add_argument("--include-score-context", "--include-selector-context",
-                   dest="include_selector_context", action="store_true", default=False,
-                   help="Inclure le contexte score PIT-safe issu de stock_scores_history dans les features ML")
+    p.add_argument("--include-screener-scores",
+                   dest="include_screener_scores", action="store_true", default=False,
+                   help="Inclure les scores du screener PIT-safe (trend, VCP, final_score, etc.) comme features ML")
     p.add_argument("--include-short-score", action="store_true", default=False,
                    help="Inclure le score baissier composite (short_score) comme feature ML independante")
     p.add_argument("--include-macro-vix", action="store_true", default=False,
@@ -374,7 +374,7 @@ def main(args: list[str] | None = None) -> None:
             training_start_date=opts.training_start_date,
             training_end_date=opts.training_end_date,
             include_sentiment_features=opts.include_sentiment,
-            include_selector_context_features=opts.include_selector_context,
+            include_screener_scores=opts.include_screener_scores,
             include_short_score_features=opts.include_short_score,
             include_macro_vix_features=opts.include_macro_vix,
             include_macro_vxn_features=opts.include_macro_vxn,
@@ -810,7 +810,7 @@ def _build_run_summary(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
-        include_selector_context=cfg.data.include_selector_context_features,
+        include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
     )
     payload: dict[str, object] = {
@@ -849,7 +849,7 @@ def _build_run_summary(
             include_sentiment=cfg.data.include_sentiment_features,
             feature_set=cfg.data.feature_set,
             include_cross_sectional=cfg.data.enable_cross_sectional_features,
-            include_selector_context=cfg.data.include_selector_context_features,
+            include_screener_scores=cfg.data.include_screener_scores,
             include_short_score=cfg.data.include_short_score_features,
         )),
         "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),

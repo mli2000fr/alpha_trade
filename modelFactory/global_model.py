@@ -62,7 +62,7 @@ def _prepare_global_symbol_frame(
         benchmark_df=benchmark_df,
         feature_set=effective_data_cfg.feature_set,
         selector_df=selector_df,
-        include_selector_context=effective_data_cfg.include_selector_context_features,
+        include_screener_scores=effective_data_cfg.include_screener_scores,
         include_short_score=effective_data_cfg.include_short_score_features,
         include_macro_vix=effective_data_cfg.include_macro_vix_features,
         include_macro_vxn=effective_data_cfg.include_macro_vxn_features,
@@ -83,7 +83,7 @@ def _prepare_global_symbol_frame(
         effective_data_cfg.include_sentiment_features,
         feature_set=effective_data_cfg.feature_set,
         include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-        include_selector_context=effective_data_cfg.include_selector_context_features,
+        include_screener_scores=effective_data_cfg.include_screener_scores,
         include_short_score=effective_data_cfg.include_short_score_features,
         include_macro_vix=effective_data_cfg.include_macro_vix_features,
         include_macro_vxn=effective_data_cfg.include_macro_vxn_features,
@@ -211,7 +211,7 @@ def train_global_model(
         )
 
     selector_context_df = None
-    if effective_data_cfg.include_selector_context_features or effective_data_cfg.include_short_score_features:
+    if effective_data_cfg.include_screener_scores or effective_data_cfg.include_short_score_features:
         selector_context_df = load_symbols_selector_context(
             engine,
             symbols,
@@ -270,14 +270,14 @@ def train_global_model(
         effective_data_cfg.include_sentiment_features,
         feature_set=effective_data_cfg.feature_set,
         include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-        include_selector_context=effective_data_cfg.include_selector_context_features,
+        include_screener_scores=effective_data_cfg.include_screener_scores,
         include_short_score=effective_data_cfg.include_short_score_features,
     )
     feature_contract = build_feature_contract(
         include_sentiment=effective_data_cfg.include_sentiment_features,
         feature_set=effective_data_cfg.feature_set,
         include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-        include_selector_context=effective_data_cfg.include_selector_context_features,
+        include_screener_scores=effective_data_cfg.include_screener_scores,
         include_short_score=effective_data_cfg.include_short_score_features,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
@@ -416,7 +416,7 @@ def train_global_model(
             include_sentiment=effective_data_cfg.include_sentiment_features,
             feature_set=effective_data_cfg.feature_set,
             include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-            include_selector_context=effective_data_cfg.include_selector_context_features,
+            include_screener_scores=effective_data_cfg.include_screener_scores,
             include_short_score=effective_data_cfg.include_short_score_features,
             feature_columns=feature_columns,
         ),

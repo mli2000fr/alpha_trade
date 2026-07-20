@@ -118,8 +118,8 @@ def test_cli_parser_rejects_selector_universe_filter_options() -> None:
 def test_cli_parser_accepts_score_context_option_and_legacy_alias() -> None:
     parser = cli.build_arg_parser()
 
-    assert parser.parse_args(["--mode", "train", "--include-score-context"]).include_selector_context is True
-    assert parser.parse_args(["--mode", "train", "--include-selector-context"]).include_selector_context is True
+    assert parser.parse_args(["--mode", "train", "--include-screener-scores"]).include_screener_scores is True
+    assert parser.parse_args(["--mode", "train", "--include-selector-context"]).include_screener_scores is True
 
 
 def test_cli_parser_accepts_global_model_options() -> None:

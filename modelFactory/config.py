@@ -17,7 +17,7 @@ class DataConfig:
     val_ratio: float = 0.15
     # test = 1 - train - val
     include_sentiment_features: bool = False
-    include_selector_context_features: bool = False
+    include_screener_scores: bool = False
     include_short_score_features: bool = False
     include_macro_vix_features: bool = False     # VIX + VIX9D
     include_macro_vxn_features: bool = False     # VXN (Nasdaq-100 vol)

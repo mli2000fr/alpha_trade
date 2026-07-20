@@ -128,8 +128,8 @@ def test_get_feature_columns_can_include_cross_sectional_features() -> None:
     assert "ret_20_rank" in cols
 
 
-def test_get_feature_columns_can_include_selector_context_features() -> None:
-    cols = features.get_feature_columns(include_selector_context=True)
+def test_get_feature_columns_can_include_screener_scores() -> None:
+    cols = features.get_feature_columns(include_screener_scores=True)
 
     assert "selector_trend_score" in cols
     assert "selector_mode_sector_neutralized" in cols
@@ -168,7 +168,7 @@ def test_compute_features_merges_selector_context_pit_safely() -> None:
     result = features.compute_features(
         bars,
         selector_df=selector_df,
-        include_selector_context=True,
+        include_screener_scores=True,
     )
 
     assert not result.empty

@@ -531,7 +531,7 @@ def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -
             include_sentiment=bool(data_cfg.get("include_sentiment_features", False)),
             feature_set=str(data_cfg.get("feature_set", "v1")),
             include_cross_sectional=bool(data_cfg.get("enable_cross_sectional_features", False)),
-            include_selector_context=bool(data_cfg.get("include_selector_context_features", False)),
+            include_screener_scores=bool(data_cfg.get("include_screener_scores", False)),
             include_short_score=bool(data_cfg.get("include_short_score_features", False)),
             persisted_feature_columns=cfg_data.get("feature_columns"),
             persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
@@ -830,7 +830,7 @@ def _load_data_cfg_from_payload(cfg_data: dict) -> DataConfig:
         sequence_length=cfg_data["data"]["sequence_length"],
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
         include_sentiment_features=cfg_data["data"].get("include_sentiment_features", False),
-        include_selector_context_features=cfg_data["data"].get("include_selector_context_features", False),
+        include_screener_scores=cfg_data["data"].get("include_screener_scores", False),
         include_short_score_features=cfg_data["data"].get("include_short_score_features", False),
         enable_cross_sectional_features=cfg_data["data"].get("enable_cross_sectional_features", False),
         cross_sectional_min_universe=cfg_data["data"].get("cross_sectional_min_universe", 20),
@@ -888,7 +888,7 @@ def _prepare_prediction_frame(
             _record_db_issue(operation="load_benchmark_bars", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
             return pd.DataFrame()
     selector_df = None
-    if data_cfg.include_selector_context_features or data_cfg.include_short_score_features:
+    if data_cfg.include_screener_scores or data_cfg.include_short_score_features:
         try:
             selector_df = load_symbol_selector_context(engine, symbol, end_date=cutoff_date)
         except Exception as exc:  # noqa: BLE001
@@ -903,7 +903,7 @@ def _prepare_prediction_frame(
             benchmark_df=benchmark_df,
             feature_set=data_cfg.feature_set,
             selector_df=selector_df,
-            include_selector_context=data_cfg.include_selector_context_features,
+            include_screener_scores=data_cfg.include_screener_scores,
             include_short_score=data_cfg.include_short_score_features,
             include_macro_vix=data_cfg.include_macro_vix_features,
             include_macro_vxn=data_cfg.include_macro_vxn_features,
@@ -938,7 +938,7 @@ def _prepare_prediction_frame(
             data_cfg.include_sentiment_features,
             feature_set=data_cfg.feature_set,
             include_cross_sectional=True,
-            include_selector_context=data_cfg.include_selector_context_features,
+            include_screener_scores=data_cfg.include_screener_scores,
             include_short_score=data_cfg.include_short_score_features,
             include_macro_vix=data_cfg.include_macro_vix_features,
             include_macro_vxn=data_cfg.include_macro_vxn_features,
@@ -1006,7 +1006,7 @@ def _predict_with_tabular_model(
         data_cfg.include_sentiment_features,
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
-        include_selector_context=data_cfg.include_selector_context_features,
+        include_screener_scores=data_cfg.include_screener_scores,
         include_short_score=data_cfg.include_short_score_features,
         include_macro_vix=data_cfg.include_macro_vix_features,
         include_macro_vxn=data_cfg.include_macro_vxn_features,
@@ -1030,7 +1030,7 @@ def _predict_with_tabular_model(
         include_sentiment=data_cfg.include_sentiment_features,
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
-        include_selector_context=data_cfg.include_selector_context_features,
+        include_screener_scores=data_cfg.include_screener_scores,
         include_short_score=data_cfg.include_short_score_features,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
@@ -1456,7 +1456,7 @@ def predict_symbol(
         include_sentiment=data_cfg.include_sentiment_features,
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
-        include_selector_context=data_cfg.include_selector_context_features,
+        include_screener_scores=data_cfg.include_screener_scores,
         include_short_score=data_cfg.include_short_score_features,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),

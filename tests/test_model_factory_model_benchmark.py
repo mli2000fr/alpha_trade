@@ -71,7 +71,7 @@ def training_cfg_binary() -> TrainingConfig:
         data=DataConfig(
             target_mode="binary",
             forecast_horizon=5,
-            include_selector_context_features=False,
+            include_screener_scores=False,
             include_short_score_features=False,
         ),
         baseline=BaselineConfig(enabled=False),

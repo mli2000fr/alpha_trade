@@ -156,7 +156,7 @@ def run_lstm_benchmark(
         include_sentiment=data_cfg.include_sentiment_features,
         feature_set=getattr(data_cfg, "feature_set", None),
         include_cross_sectional=getattr(data_cfg, "enable_cross_sectional_features", False),
-        include_selector_context=getattr(data_cfg, "include_selector_context_features", False),
+        include_screener_scores=getattr(data_cfg, "include_screener_scores", False),
         include_short_score=getattr(data_cfg, "include_short_score_features", False),
     )
     available_cols = [c for c in feature_cols if c in prepared_df.columns]
