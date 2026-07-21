@@ -28,6 +28,7 @@ from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.cross_sectional import (
     build_cross_sectional_features,
     CROSS_SECTIONAL_FEATURE_COLUMNS,
+    GLOBAL_EXCLUSIVE_FEATURE_COLUMNS,
     GLOBAL_PRED_FEATURE_COLUMNS,  # noqa: F401  # re-export
     merge_cross_sectional_features,
     SECTOR_FEATURE_COLUMNS,
@@ -73,8 +74,9 @@ def _get_global_feature_columns(cfg: TrainingConfig) -> list[str]:
         and cfg.global_model.use_cross_sectional_features
     )
     if _use_cross_sectional:
-        cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)   # 8 rangs
-        cols.extend(SECTOR_FEATURE_COLUMNS)             # 8 secteur
+        cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)        # 8 rangs
+        cols.extend(SECTOR_FEATURE_COLUMNS)                  # 8 secteur
+        cols.extend(GLOBAL_EXCLUSIVE_FEATURE_COLUMNS)        # 6 cross-symbol exclusives
     # Macro features — activées individuellement
     if cfg.data.include_macro_vix_features:
         cols.extend(["vix_close", "vix_momentum_5j"])

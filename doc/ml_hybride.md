@@ -37,6 +37,7 @@ Les tests précédents ont montré que :
 - `_load_sector_mapping(engine)` → `dict[str, str]` : charge le mapping `symbol → sector` depuis `stock_metadata`
 - `_compute_sector_features(raw_panel, sector_map)` : agrège par `(date, secteur)` puis réinjecte
 - `build_cross_sectional_features_from_db()` : paramètre `sector_map` toujours fourni quand cross-sectional activé
+- `_compute_cross_symbol_features(raw_panel, sector_map)` 🆕 : calcule 6 features cross-symbol exclusives (breadth, dispersion, concentration, rang intra-secteur, ratio volatilité, momentum spread) — **réservées au Global Model**
 
 ### `modelFactory/config.py`
 
@@ -250,7 +251,7 @@ Le Global Model est découpé en **3 flags orthogonaux** pour permettre l'A/B te
 5. `by_symbol` produit `wf.f1_macro` par symbole (agrégé sur les 11 splits)
 
 **Features du Global Model** (principe d'orthogonalité) :
-- `_get_global_feature_columns(cfg)` : rangs cross-sectional (8) + secteur (8) = **16 features**
+- `_get_global_feature_columns(cfg)` : rangs cross-sectional (8) + secteur (8) + cross-symbol exclusives (6) = **22 features**
 - **Exclues** : OHLCV (13), expert (18), sentiment (4), screener (22), short_score (1)
 - Les features macro (VIX, VXN, VIX3M, MOVE) sont incluses si activées
 - `global_pred_long` n'est JAMAIS inclus (pas de récursion)
@@ -379,19 +380,21 @@ Les deux sous-checkboxes sont **grisées** tant que la première n'est pas coch�
 | 2 | Expert | 18 | `--feature-set expert` | *(toujours `expert`)* | ❌² | ✅ | ✅ |
 | 3 | Rangs cross-sectional | 8 | `--enable-cross-sectional` | 🌐 Features cross-sectionnelles & sectorielles | ✅ | ✅ | ✅ |
 | 4 | Secteur | 8 | *(avec `--enable-cross-sectional`)* | *(même checkbox)* | ✅ | ✅ | ✅ |
-| 5 | **global_pred_long** | 1 | `--enable-global-stacking` | 📥 Utiliser la prédiction globale comme feature | ❌¹ | ✅ | ✅ |
-| 6 | Sentiment | 4 | `--include-sentiment` | Inclure les features sentiment | ❌² | ✅ | ✅ |
-| 7 | Screener | 22 | `--include-screener-scores` | Inclure les scores du screener | ❌² | ✅ | ✅ |
-| 8 | Short score | 1 | `--include-short-score` | Inclure le short_score dédié | ❌² | ✅ | ✅ |
-| 9 | VIX/VIX9D | 2 | `--include-macro-vix` | 📊 VIX/VIX9D (volatilité S&P 500) | ✅ | ✅ | ✅ |
-| 10 | VXN | 2 | `--include-macro-vxn` | 📊 VXN (volatilité NASDAQ-100) | ✅ | ✅ | ✅ |
-| 11 | VIX3M + term structure | 3 | `--include-macro-vix3m` | 📊 VIX3M + ratio (term structure) | ✅ | ✅ | ✅ |
-| 12 | MOVE | 1 | `--include-macro-move` | 📊 MOVE (volatilité obligataire) | ✅ | ✅ | ✅ |
-| | **Total max** | **83** | | | 24 | 83 | 83 |
-| | **Avec config standard¹** | | | | 16 | 48 | 48 |
+| 5 | **Cross-symbol exclusives** 🆕 | 6 | *(avec `--enable-cross-sectional`)* | *(même checkbox)* | ✅ | ❌³ | ❌³ |
+| 6 | **global_pred_long** | 1 | `--enable-global-stacking` | 📥 Utiliser la prédiction globale comme feature | ❌¹ | ✅ | ✅ |
+| 7 | Sentiment | 4 | `--include-sentiment` | Inclure les features sentiment | ❌² | ✅ | ✅ |
+| 8 | Screener | 22 | `--include-screener-scores` | Inclure les scores du screener | ❌² | ✅ | ✅ |
+| 9 | Short score | 1 | `--include-short-score` | Inclure le short_score dédié | ❌² | ✅ | ✅ |
+| 10 | VIX/VIX9D | 2 | `--include-macro-vix` | 📊 VIX/VIX9D (volatilité S&P 500) | ✅ | ✅ | ✅ |
+| 11 | VXN | 2 | `--include-macro-vxn` | 📊 VXN (volatilité NASDAQ-100) | ✅ | ✅ | ✅ |
+| 12 | VIX3M + term structure | 3 | `--include-macro-vix3m` | 📊 VIX3M + ratio (term structure) | ✅ | ✅ | ✅ |
+| 13 | MOVE | 1 | `--include-macro-move` | 📊 MOVE (volatilité obligataire) | ✅ | ✅ | ✅ |
+| | **Total max** | **89** | | | 30 | 83 | 83 |
+| | **Avec config standard¹** | | | | 22 | 48 | 48 |
 
 > ¹ Pas de récursion : le Global Model n'utilise pas sa propre prédiction.  
-> ² Exclues du Global Model par principe d'orthogonalité : features locales au titre, déjà exploitées par les modèles per-symbol. Le Global apprend des patterns cross-symboles (rangs relatifs, dynamiques sectorielles, contexte macro) que le per-symbol ne peut pas déduire de ses seules données.
+> ² Exclues du Global Model par principe d'orthogonalité.  
+> ³ Exclusives au Global Model — le per-symbol ne peut pas les calculer seul (breadth, dispersion, concentration, rang intra-secteur).
 >
 > **Config standard** = `--feature-set expert --enable-cross-sectional --enable-global-stacking` (pas de flags macro/sentiment/screener).
 >

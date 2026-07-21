@@ -41,6 +41,19 @@ SECTOR_FEATURE_COLUMNS: list[str] = [
 # ── Approche 2 — Stacking : prédiction du Global Model comme feature ──
 GLOBAL_PRED_FEATURE_COLUMNS: list[str] = ["global_pred_long"]
 
+# ── Approche 2 (Sprint 2026-07-21) — Features cross-symbol exclusives ──
+# Ces features n'ont de sens qu'au niveau cross-symbol (agrégation intra-secteur).
+# Elles sont injectées UNIQUEMENT dans le Global Model (pas dans les per-symbol).
+# Le per-symbol ne peut pas les calculer seul — il lui faut la vision transverse.
+GLOBAL_EXCLUSIVE_FEATURE_COLUMNS: list[str] = [
+    "sector_breadth_20",              # % de titres du secteur avec ret_20 > 0
+    "sector_dispersion_20",           # écart-type des ret_20 intra-secteur
+    "sector_concentration_20",        # concentration du dollar volume (top-3 / total)
+    "symbol_rank_in_sector_20",       # rang percentil du ret_20 du titre dans son secteur
+    "stock_vs_sector_vol_ratio",      # volatilité du titre / volatilité moyenne du secteur
+    "sector_momentum_spread_20",      # spread momentum (top décile - bottom décile) intra-secteur
+]
+
 RAW_CROSS_SECTIONAL_COLUMNS_MAP: dict[str, str] = {
     "ret_20": "ret_20_rank",
     "ret_60": "ret_60_rank",
@@ -244,6 +257,121 @@ def _compute_sector_features(
     return result[["symbol", "date", *SECTOR_FEATURE_COLUMNS]].copy()
 
 
+def _compute_cross_symbol_features(
+    raw_panel: pd.DataFrame,
+    sector_map: dict[str, str],
+    *,
+    min_symbols_per_sector: int = 5,
+) -> pd.DataFrame:
+    """Calcule les features cross-symbol exclusives pour le Global Model.
+
+    Ces features capturent des patterns émergents qu'un modèle per-symbol
+    ne peut pas voir : breadth sectoriel, dispersion, concentration,
+    rang intra-secteur. Elles sont calculées sur le raw_panel existant
+    (coût marginal nul).
+
+    Parameters
+    ----------
+    raw_panel : pd.DataFrame
+        Doit contenir ``symbol``, ``date``, ``ret_20``, ``ret_60``,
+        ``volatility_20``, ``dollar_volume_20``.
+    sector_map : dict[str, str]
+        Mapping ``{symbol: sector_name}``.
+    min_symbols_per_sector : int
+        Seuil minimum de symboles par secteur pour des features valides.
+
+    Returns
+    -------
+    pd.DataFrame
+        ``[symbol, date, *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS]``.
+    """
+    if not sector_map or raw_panel.empty:
+        return pd.DataFrame(columns=["symbol", "date", *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS])
+
+    panel = raw_panel.copy()
+    panel["sector"] = panel["symbol"].astype(str).str.upper().map(sector_map)
+    panel = panel.dropna(subset=["sector"])
+    if panel.empty:
+        return pd.DataFrame(columns=["symbol", "date", *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS])
+
+    required = {"ret_20", "ret_60", "volatility_20", "dollar_volume_20"}
+    available = required.intersection(panel.columns)
+    if len(available) < 3:
+        return pd.DataFrame(columns=["symbol", "date", *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS])
+
+    # ── Agrégats par (date, secteur) ──
+    agg_parts: list[pd.DataFrame] = []
+
+    for (dt, sec), grp in panel.groupby(["date", "sector"], sort=False):
+        n_sym = grp["symbol"].nunique()
+        if n_sym < min_symbols_per_sector:
+            continue
+
+        row: dict[str, Any] = {"date": dt, "sector": sec}
+
+        # 1. Breadth : % de titres avec ret_20 > 0
+        if "ret_20" in grp.columns:
+            row["sector_breadth_20"] = float((grp["ret_20"] > 0).mean())
+
+        # 2. Dispersion : écart-type des ret_20
+        if "ret_20" in grp.columns:
+            row["sector_dispersion_20"] = float(grp["ret_20"].std())
+
+        # 3. Concentration : top-3 dollar volume / total
+        if "dollar_volume_20" in grp.columns:
+            dv = grp["dollar_volume_20"].dropna().sort_values(ascending=False)
+            total_dv = dv.sum()
+            top3_dv = dv.head(max(3, min(3, len(dv)))).sum() if len(dv) >= 3 else total_dv
+            row["sector_concentration_20"] = float(top3_dv / total_dv) if total_dv > 0 else 0.0
+
+        # 6. Momentum spread : top décile - bottom décile ret_20
+        if "ret_20" in grp.columns and len(grp) >= 10:
+            rets = grp["ret_20"].dropna().sort_values()
+            top_decile = rets.iloc[int(len(rets) * 0.9)]
+            bot_decile = rets.iloc[int(len(rets) * 0.1)]
+            row["sector_momentum_spread_20"] = float(top_decile - bot_decile)
+
+        agg_parts.append(pd.DataFrame([row]))
+
+    if not agg_parts:
+        out = panel[["symbol", "date", "sector"]].copy()
+        for col in GLOBAL_EXCLUSIVE_FEATURE_COLUMNS:
+            out[col] = 0.0
+        return out[["symbol", "date", *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS]]
+
+    sector_agg = pd.concat(agg_parts, ignore_index=True)
+
+    # ── Merge sur chaque symbole ──
+    result = panel[["symbol", "date", "sector", "ret_20", "ret_60", "volatility_20"]].merge(
+        sector_agg, on=["date", "sector"], how="left",
+    )
+
+    # 4. Rang intra-secteur du ret_20
+    result["symbol_rank_in_sector_20"] = result.groupby(
+        ["date", "sector"], sort=False
+    )["ret_20"].rank(pct=True).where(
+        result.groupby(["date", "sector"], sort=False)["symbol"].transform("nunique") >= min_symbols_per_sector,
+        0.5,
+    )
+
+    # 5. Ratio volatilité titre / secteur
+    result["stock_vs_sector_vol_ratio"] = np.where(
+        result["sector_dispersion_20"] > 0,
+        result["volatility_20"] / result["sector_dispersion_20"].clip(lower=0.001),
+        1.0,
+    )
+
+    # ── Nettoyage ──
+    result = result.sort_values(["symbol", "date"]).reset_index(drop=True)
+    for col in GLOBAL_EXCLUSIVE_FEATURE_COLUMNS:
+        if col in result.columns:
+            result[col] = result.groupby("symbol", sort=False)[col].ffill().fillna(0.0).astype(float)
+        else:
+            result[col] = 0.0
+
+    return result[["symbol", "date", *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS]].copy()
+
+
 def build_cross_sectional_features_from_db(
     engine,
     symbols: list[str],
@@ -271,6 +399,7 @@ def build_cross_sectional_features_from_db(
     all_feature_cols = list(CROSS_SECTIONAL_FEATURE_COLUMNS)
     if sector_map:
         all_feature_cols.extend(SECTOR_FEATURE_COLUMNS)
+        all_feature_cols.extend(GLOBAL_EXCLUSIVE_FEATURE_COLUMNS)
 
     if not symbols:
         return pd.DataFrame(columns=["symbol", "date", *all_feature_cols]), {
@@ -352,6 +481,18 @@ def build_cross_sectional_features_from_db(
         diagnostics["sector_count"] = len(set(sector_map.values()))
         diagnostics["sector_symbol_mapped"] = len(sector_map)
 
+        # ── Cross-symbol exclusive features (Global Model uniquement) ──
+        cross_symbol_frame = _compute_cross_symbol_features(
+            raw_panel, sector_map, min_symbols_per_sector=min_symbols_per_sector,
+        )
+        if not cross_symbol_frame.empty:
+            feature_frame = feature_frame.merge(cross_symbol_frame, on=["symbol", "date"], how="left")
+        for col in GLOBAL_EXCLUSIVE_FEATURE_COLUMNS:
+            if col not in feature_frame.columns:
+                feature_frame[col] = 0.0
+        diagnostics["cross_symbol_features_enabled"] = True
+        diagnostics["cross_symbol_feature_count"] = len(GLOBAL_EXCLUSIVE_FEATURE_COLUMNS)
+
     return feature_frame, diagnostics
 
 
@@ -422,17 +563,19 @@ def merge_cross_sectional_features(
     symbol_df: pd.DataFrame,
     cross_sectional_df: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    """Merge cross-sectional (+ optional sector + optional global_pred) features on (symbol, date) PIT-safe.
+    """Merge cross-sectional (+ optional sector + optional global_pred + optional cross-symbol) features on (symbol, date) PIT-safe.
 
-    Gère trois familles de features :
+    Gère quatre familles de features :
     - Rangs percentiles (``CROSS_SECTIONAL_FEATURE_COLUMNS``) → fillna(0.5)
     - Sectorielles (``SECTOR_FEATURE_COLUMNS``) → fillna(0.0)
     - Global stacking (``GLOBAL_PRED_FEATURE_COLUMNS``) → fillna(0.5) si présent dans le cache
+    - Cross-symbol exclusives (``GLOBAL_EXCLUSIVE_FEATURE_COLUMNS``) → fillna(0.0) si présent
     """
     all_cols = (
         list(CROSS_SECTIONAL_FEATURE_COLUMNS)
         + list(SECTOR_FEATURE_COLUMNS)
         + list(GLOBAL_PRED_FEATURE_COLUMNS)
+        + list(GLOBAL_EXCLUSIVE_FEATURE_COLUMNS)
     )
     if cross_sectional_df is None or cross_sectional_df.empty:
         merged = symbol_df.copy()

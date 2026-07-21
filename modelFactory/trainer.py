@@ -403,6 +403,11 @@ def _build_feature_contract_for_columns(cfg: TrainingConfig, feature_columns: li
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
+        include_macro_vix=cfg.data.include_macro_vix_features,
+        include_macro_vxn=cfg.data.include_macro_vxn_features,
+        include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+        include_macro_move=cfg.data.include_macro_move_features,
+        include_global_stacking=cfg.global_model.stacking_enabled,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
     )
