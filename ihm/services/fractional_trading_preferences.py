@@ -18,7 +18,7 @@ def _ensure_storage() -> None:
     PREFERENCES_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@dataclass(slots=True)
+@dataclass
 class FractionalTradingPreferences:
     """Préférences d'activation fractionnaire persistées côté IHM."""
 
