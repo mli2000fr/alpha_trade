@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import pickle
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -23,6 +24,8 @@ from modelFactory.features import build_feature_contract
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import get_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
+
+LOGGER = logging.getLogger(__name__)
 from core.ternary_decision_policy import TernaryDecisionPolicy, decide_ternary_side_batch
 
 
@@ -595,6 +598,14 @@ def run_tabular_walk_forward(
 	symbol_tag = "__BATCH__"
 	if "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
 		symbol_tag = str(prepared_df["symbol"].iloc[0])
+
+	_has_global_pred = "global_pred_long" in feature_cols
+	LOGGER.info(
+		"tabular_wf start symbol=%s model=%s splits=%d prepared_rows=%d "
+		"feature_cols=%d stacking=%s global_pred=%s",
+		symbol_tag, model_name, len(splits), len(prepared_df),
+		len(feature_cols), cfg.global_model.stacking_enabled, _has_global_pred,
+	)
 
 	fold_metrics: list[dict[str, Any]] = []
 	wf_seed = derive_seed(cfg.reproducibility.seed, "tabular_walk_forward", model_name, symbol_tag)
