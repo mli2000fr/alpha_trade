@@ -212,6 +212,11 @@ def _filter_symbols_by_mode(
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
+        include_macro_vix=cfg.data.include_macro_vix_features,
+        include_macro_vxn=cfg.data.include_macro_vxn_features,
+        include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+        include_macro_move=cfg.data.include_macro_move_features,
+        include_global_stacking=cfg.global_model.stacking_enabled,
     )
     current_contract = build_feature_contract(
         include_sentiment=cfg.data.include_sentiment_features,
@@ -219,6 +224,11 @@ def _filter_symbols_by_mode(
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
+        include_macro_vix=cfg.data.include_macro_vix_features,
+        include_macro_vxn=cfg.data.include_macro_vxn_features,
+        include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+        include_macro_move=cfg.data.include_macro_move_features,
+        include_global_stacking=cfg.global_model.stacking_enabled,
     )
 
     def _parse_iso_date(value: object) -> date | None:
