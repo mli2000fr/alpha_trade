@@ -609,6 +609,7 @@ def run_training_batch(
             # (quelques milliers de lignes) en parquet ; chaque worker le chargera
             # et le mergera localement.
             _global_pred_path = Path(cfg.artifacts_dir) / "_global_pred_cache.parquet"
+            _global_pred_path.parent.mkdir(parents=True, exist_ok=True)
             global_pred_df.to_parquet(_global_pred_path, index=False)
             LOGGER.info(
                 "run_training_batch global_pred persisted to %s rows=%d",
