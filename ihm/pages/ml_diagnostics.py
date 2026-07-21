@@ -13,6 +13,33 @@ from modelFactory.report import generate_batch_report
 
 
 # ---------------------------------------------------------------------------
+# Helper — mise en gras des lignes walk-forward dans les tableaux
+# ---------------------------------------------------------------------------
+
+def _bold_wf_rows(df: pd.DataFrame):
+    """Retourne un Styler pandas avec les lignes walk-forward en gras.
+
+    Détecte la colonne de split (``split_name`` ou ``Split``) et met
+    en gras les lignes dont la valeur est ``'wf'`` ou ``'walk_forward'``.
+    """
+    split_col = None
+    for candidate in ("split_name", "Split"):
+        if candidate in df.columns:
+            split_col = candidate
+            break
+    if split_col is None:
+        return df
+
+    def _row_style(row: pd.Series) -> list[str]:
+        val = str(row.get(split_col, ""))
+        if val in ("wf", "walk_forward"):
+            return ["font-weight: bold"] * len(row)
+        return [""] * len(row)
+
+    return df.style.apply(_row_style, axis=1)
+
+
+# ---------------------------------------------------------------------------
 # Requêtes SQL
 # ---------------------------------------------------------------------------
 
@@ -255,7 +282,7 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
         return
 
     st.markdown("**Métriques par split**")
-    st.dataframe(sym_df, use_container_width=True, hide_index=True)
+    st.dataframe(_bold_wf_rows(sym_df), use_container_width=True, hide_index=True)
 
     # ── Probas moyennes par split (depuis metrics.json) ──
     st.markdown("")
@@ -287,7 +314,7 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
                 pass
     if probas_rows:
         probas_df = pd.DataFrame(probas_rows)
-        st.dataframe(probas_df, use_container_width=True, hide_index=True)
+        st.dataframe(_bold_wf_rows(probas_df), use_container_width=True, hide_index=True)
     else:
         st.caption("Probas non disponibles (seront renseignées au prochain entraînement).")
 
@@ -632,7 +659,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
         for col in ["avg_f1_macro", "avg_f1_short", "avg_f1_flat", "avg_f1_long"]:
             if col in styled.columns:
                 styled[col] = styled[col].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(_bold_wf_rows(styled), use_container_width=True, hide_index=True)
 
     st.markdown("")
     # ── Bloc distribution true / pred par split ──
@@ -670,7 +697,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             "avg_pred_flat_pct": "pred flat %",
             "avg_pred_long_pct": "pred long %",
         })
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(_bold_wf_rows(styled), use_container_width=True, hide_index=True)
 
     st.markdown("")
     # ── Bloc distribution F1 macro (walk-forward) ──
