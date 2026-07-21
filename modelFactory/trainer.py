@@ -922,15 +922,6 @@ def _run_walk_forward_validation(
         walk_forward_splits=len(splits),
         current_split_index=0,
     )
-    LOGGER.info(
-        "walk_forward start symbol=%s splits=%d prepared_rows=%d max_epochs=%d accelerator=%s",
-        symbol,
-        len(splits),
-        len(prepared_df),
-        cfg.model.max_epochs,
-        cfg.accelerator,
-    )
-
     feature_cols = get_feature_columns(
         cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
@@ -938,6 +929,19 @@ def _run_walk_forward_validation(
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
         include_global_stacking=cfg.global_model.stacking_enabled,
+    )
+    _has_global_pred = "global_pred_long" in feature_cols
+    LOGGER.info(
+        "walk_forward start symbol=%s splits=%d prepared_rows=%d max_epochs=%d accelerator=%s "
+        "feature_cols=%d stacking=%s global_pred=%s",
+        symbol,
+        len(splits),
+        len(prepared_df),
+        cfg.model.max_epochs,
+        cfg.accelerator,
+        len(feature_cols),
+        cfg.global_model.stacking_enabled,
+        _has_global_pred,
     )
     fold_metrics: list[dict[str, Any]] = []
     walk_forward_seed = derive_seed(cfg.reproducibility.seed, "walk_forward", symbol)
