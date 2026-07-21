@@ -135,6 +135,8 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
         )
     CatBoostClassifier = _import_catboost()
     is_ternary = cfg.data.target_mode == "ternary"
+    train_dir = Path(cfg.catboost_artifacts_dir) / cfg.global_model.artifact_symbol / f"seed_{resolved_seed}"
+    train_dir.mkdir(parents=True, exist_ok=True)
     return model_name, CatBoostClassifier(
         depth=cfg.baseline.catboost_depth,
         iterations=cfg.baseline.catboost_iterations,
@@ -142,7 +144,7 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
         random_seed=resolved_seed,
         loss_function="MultiClass" if is_ternary else "Logloss",
         verbose=False,
-        train_dir=str(Path(cfg.catboost_artifacts_dir) / cfg.global_model.artifact_symbol / f"seed_{resolved_seed}"),
+        train_dir=str(train_dir),
         allow_writing_files=True,
     )
 
