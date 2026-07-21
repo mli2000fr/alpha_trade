@@ -66,6 +66,7 @@ def _get_global_feature_columns(cfg: TrainingConfig) -> list[str]:
 
     - Rangs percentiles : position relative dans l'univers
     - Secteur : momentum/volatilité agrégés par GICS
+    - Cross-symbol exclusives : breadth, dispersion, concentration, rang, ratio vol, momentum spread
     - Macro : VIX, VXN, VIX3M, MOVE (contexte de marché global)
     """
     cols: list[str] = []

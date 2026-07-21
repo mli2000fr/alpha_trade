@@ -332,8 +332,8 @@ Les deux sous-checkboxes sont **grisées** tant que la première n'est pas coch�
 | Fichier | Changement |
 |---|---|
 | `modelFactory/config.py` | `GlobalModelConfig` : +`stacking_enabled`, +`challenger_enabled` |
-| `modelFactory/global_model.py` | +`train_global_model_wf()` : WF 11 splits, +`_get_global_feature_columns()` : features cross-symbol uniquement (16 cols), `_aggregate_wf_per_symbol_metrics()`, `_compute_by_symbol_metrics()` |
-| `modelFactory/cross_sectional.py` | +`GLOBAL_PRED_FEATURE_COLUMNS`, `merge_cross_sectional_features()` gère 3 familles + fillna NaN |
+| `modelFactory/global_model.py` | +`train_global_model_wf()` : WF 11 splits, +`_get_global_feature_columns()` : features cross-symbol uniquement (22 cols), +`GLOBAL_EXCLUSIVE_FEATURE_COLUMNS`, `_aggregate_wf_per_symbol_metrics()`, `_compute_by_symbol_metrics()` |
+| `modelFactory/cross_sectional.py` | +`GLOBAL_PRED_FEATURE_COLUMNS`, +`GLOBAL_EXCLUSIVE_FEATURE_COLUMNS`, +`_compute_cross_symbol_features()`, `merge_cross_sectional_features()` gère 4 familles + fillna |
 | `modelFactory/features.py` | `get_feature_columns()`, `fingerprint()`, `build_feature_contract()`, `validate_feature_contract()` : +`include_global_stacking` |
 | `modelFactory/orchestrator.py` | Phase 1 AVANT per-symbol, merge `global_pred` dans cache + persistance parquet pour workers multiprocessing, Phase 3 gated par FLAG C, logging worker configuré |
 | `modelFactory/dataset.py` | `SymbolDataModule` + `prepare_symbol_frame()` : +`include_global_stacking` |
@@ -431,9 +431,9 @@ python -m modelFactory --mode train \
 
 Dans les logs :
 ```
-# Phase 1 — Global Model (16 features cross-symbol)
+# Phase 1 — Global Model (22 features cross-symbol)
 run_training_batch global_model_wf start symbols=200
-train_global_model_wf start symbols=200 splits=11 feature_cols=16
+train_global_model_wf start symbols=200 splits=11 feature_cols=22
 train_global_model_wf split=1/11 train_rows=494 val_rows=116
 ...
 train_global_model_wf done pred_rows=1276 symbols=176 dates=9

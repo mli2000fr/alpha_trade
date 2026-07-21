@@ -294,9 +294,9 @@ def _compute_cross_symbol_features(
     if panel.empty:
         return pd.DataFrame(columns=["symbol", "date", *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS])
 
-    required = {"ret_20", "ret_60", "volatility_20", "dollar_volume_20"}
+    required = {"ret_20", "dollar_volume_20"}
     available = required.intersection(panel.columns)
-    if len(available) < 3:
+    if "ret_20" not in available:
         return pd.DataFrame(columns=["symbol", "date", *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS])
 
     # ── Agrégats par (date, secteur) ──
@@ -320,8 +320,9 @@ def _compute_cross_symbol_features(
         # 3. Concentration : top-3 dollar volume / total
         if "dollar_volume_20" in grp.columns:
             dv = grp["dollar_volume_20"].dropna().sort_values(ascending=False)
-            total_dv = dv.sum()
-            top3_dv = dv.head(max(3, min(3, len(dv)))).sum() if len(dv) >= 3 else total_dv
+            total_dv = float(dv.sum())
+            top_n = min(3, len(dv))
+            top3_dv = float(dv.head(top_n).sum()) if top_n > 0 else 0.0
             row["sector_concentration_20"] = float(top3_dv / total_dv) if total_dv > 0 else 0.0
 
         # 6. Momentum spread : top décile - bottom décile ret_20
