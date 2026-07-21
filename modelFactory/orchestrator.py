@@ -11,6 +11,7 @@ from typing import Any, Literal, Optional
 from uuid import uuid4
 
 import numpy as np
+import pandas as pd
 import torch
 from sqlalchemy.engine import Engine
 
@@ -324,7 +325,17 @@ def _train_worker(
     batch_id: str | None = None,
 ) -> TrainResult:
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
+    from common.utils import configure_root_logging
     from database.connection import get_sqlalchemy_engine
+
+    # Les workers ProcessPoolExecutor (spawn) n'héritent pas de la config
+    # logging du processus parent. On la réapplique pour que les logs INFO
+    # (walk_forward, tabular_wf, etc.) soient visibles dans le fichier.
+    configure_root_logging(
+        level=logging.DEBUG if cfg.debug_train else logging.INFO,
+        log_path="./log/model_factory.log",
+        fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
 
     apply_reproducibility(
         cfg.reproducibility.__class__(
@@ -379,6 +390,23 @@ def _train_worker(
                 start_date=history_start_date,
                 end_date=history_end_date,
             )
+
+    # ── Approche 2 — Phase 2 (multiprocessing) : charger global_pred depuis disque ──
+    # Le cache cross-sectional complet n'est pas transmis aux workers
+    # (pickling trop lourd). On charge le global_pred_df sauvegardé en
+    # parquet par le processus parent et on le merge localement.
+    if cfg.global_model.stacking_enabled and cross_sectional_df is not None:
+        _global_pred_path = Path(cfg.artifacts_dir) / "_global_pred_cache.parquet"
+        if _global_pred_path.exists():
+            global_pred_df = pd.read_parquet(_global_pred_path)
+            if not global_pred_df.empty:
+                cross_sectional_df = cross_sectional_df.merge(
+                    global_pred_df, on=["symbol", "date"], how="left",
+                )
+                cross_sectional_df["global_pred_long"] = (
+                    cross_sectional_df["global_pred_long"].fillna(0.5).astype(np.float64)
+                )
+
     return train_symbol(
         symbol,
         bars,
@@ -574,6 +602,17 @@ def run_training_batch(
             LOGGER.info(
                 "run_training_batch stacking enabled: global_pred_long merged into cache rows=%d",
                 len(cross_sectional_cache),
+            )
+            # ── Persister global_pred_df sur disque pour les workers multiprocessing ──
+            # Le cache cross-sectional complet est trop volumineux pour être picklé
+            # vers les sous-processus. On sauvegarde uniquement global_pred_df
+            # (quelques milliers de lignes) en parquet ; chaque worker le chargera
+            # et le mergera localement.
+            _global_pred_path = Path(cfg.artifacts_dir) / "_global_pred_cache.parquet"
+            global_pred_df.to_parquet(_global_pred_path, index=False)
+            LOGGER.info(
+                "run_training_batch global_pred persisted to %s rows=%d",
+                _global_pred_path, len(global_pred_df),
             )
         elif cfg.global_model.stacking_enabled:
             LOGGER.warning("run_training_batch stacking enabled but no global_pred_df produced")
