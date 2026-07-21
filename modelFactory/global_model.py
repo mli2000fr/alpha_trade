@@ -5,6 +5,12 @@ Approche 2 — Stacking (Sprint 2026-07) :
   pour backward compat).
 - ``train_global_model_wf()`` : walk-forward 11 splits → produit
   ``global_pred_long(symbol, date)`` PIT-safe + métriques WF par symbole.
+
+Architecture des features (Sprint 2026-07-21) :
+Le Global Model n'utilise **que** les features cross-symboles (rangs
+percentiles, agrégats sectoriels, macro). Les features locales au titre
+(OHLCV, expert, sentiment, screener) sont **exclues** — elles sont
+redondantes avec le per-symbol et n'apportent aucun signal transverse.
 """
 from __future__ import annotations
 
@@ -19,8 +25,13 @@ import numpy as np
 import pandas as pd
 
 from modelFactory.config import ReproducibilityConfig, TrainingConfig
-from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
-from modelFactory.cross_sectional import GLOBAL_PRED_FEATURE_COLUMNS  # noqa: F401  # re-export
+from modelFactory.cross_sectional import (
+    build_cross_sectional_features,
+    CROSS_SECTIONAL_FEATURE_COLUMNS,
+    GLOBAL_PRED_FEATURE_COLUMNS,  # noqa: F401  # re-export
+    merge_cross_sectional_features,
+    SECTOR_FEATURE_COLUMNS,
+)
 from modelFactory.dataset import chrono_split_by_dates, generate_walk_forward_splits
 from modelFactory.data_loader import (
     load_benchmark_bars,
@@ -30,12 +41,50 @@ from modelFactory.data_loader import (
     load_universe_latest_bar_date,
     resolve_training_start_date,
 )
-from modelFactory.features import build_feature_contract, build_target, compute_features, compute_future_return, get_feature_columns
+from modelFactory.features import (
+    build_feature_contract,
+    build_target,
+    compute_features,
+    compute_future_return,
+    get_feature_columns,
+)
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.tabular_baseline import apply_tabular_calibration, compute_tabular_metrics, fit_tabular_calibrator
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _get_global_feature_columns(cfg: TrainingConfig) -> list[str]:
+    """Feature columns spécifiques au Global Model (cross-symbol uniquement).
+
+    Le Global Model ne doit PAS utiliser de features locales au titre
+    (OHLCV, expert, sentiment, screener) — elles sont déjà exploitées
+    par les modèles per-symbol. Le Global apprend des patterns émergents
+    que le per-symbol ne peut pas voir seul :
+
+    - Rangs percentiles : position relative dans l'univers
+    - Secteur : momentum/volatilité agrégés par GICS
+    - Macro : VIX, VXN, VIX3M, MOVE (contexte de marché global)
+    """
+    cols: list[str] = []
+    _use_cross_sectional = (
+        cfg.data.enable_cross_sectional_features
+        and cfg.global_model.use_cross_sectional_features
+    )
+    if _use_cross_sectional:
+        cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)   # 8 rangs
+        cols.extend(SECTOR_FEATURE_COLUMNS)             # 8 secteur
+    # Macro features — activées individuellement
+    if cfg.data.include_macro_vix_features:
+        cols.extend(["vix_close", "vix_momentum_5j"])
+    if cfg.data.include_macro_vxn_features:
+        cols.extend(["vxn_close", "vxn_spread_vix"])
+    if cfg.data.include_macro_vix3m_features:
+        cols.extend(["vix3m_close", "vix_term_structure_ratio", "vix_backwardation"])
+    if cfg.data.include_macro_move_features:
+        cols.append("move_close")
+    return cols
 
 
 def _import_lightgbm() -> Any:
@@ -87,17 +136,7 @@ def _prepare_global_symbol_frame(
         positive_threshold=effective_data_cfg.target_up_threshold,
         negative_threshold=effective_data_cfg.target_down_threshold,
     )
-    active_features = get_feature_columns(
-        effective_data_cfg.include_sentiment_features,
-        feature_set=effective_data_cfg.feature_set,
-        include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-        include_screener_scores=effective_data_cfg.include_screener_scores,
-        include_short_score=effective_data_cfg.include_short_score_features,
-        include_macro_vix=effective_data_cfg.include_macro_vix_features,
-        include_macro_vxn=effective_data_cfg.include_macro_vxn_features,
-        include_macro_vix3m=effective_data_cfg.include_macro_vix3m_features,
-        include_macro_move=effective_data_cfg.include_macro_move_features,
-    )
+    active_features = _get_global_feature_columns(cfg)
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df = df.loc[df["target"].notna() & df["future_return"].notna()].reset_index(drop=True)
     return df
@@ -335,19 +374,18 @@ def train_global_model(
     if train_df.empty or val_df.empty or test_df.empty:
         return {"status": "skipped", "model_name": "global_model", "reason": "insufficient_rows_after_date_split"}
 
-    feature_columns = get_feature_columns(
-        effective_data_cfg.include_sentiment_features,
-        feature_set=effective_data_cfg.feature_set,
-        include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-        include_screener_scores=effective_data_cfg.include_screener_scores,
-        include_short_score=effective_data_cfg.include_short_score_features,
-    )
+    feature_columns = _get_global_feature_columns(cfg)
     feature_contract = build_feature_contract(
-        include_sentiment=effective_data_cfg.include_sentiment_features,
-        feature_set=effective_data_cfg.feature_set,
-        include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-        include_screener_scores=effective_data_cfg.include_screener_scores,
-        include_short_score=effective_data_cfg.include_short_score_features,
+        include_sentiment=False,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_screener_scores=False,
+        include_short_score=False,
+        include_macro_vix=cfg.data.include_macro_vix_features,
+        include_macro_vxn=cfg.data.include_macro_vxn_features,
+        include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+        include_macro_move=cfg.data.include_macro_move_features,
+        include_global_stacking=False,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
     )
@@ -609,14 +647,8 @@ def train_global_model_wf(
 
     global_df = pd.concat(prepared_parts, ignore_index=True).sort_values(["date", "symbol"]).reset_index(drop=True)
 
-    # ── Feature columns (sans global_pred_long — pas de récursion) ──
-    feature_columns = get_feature_columns(
-        effective_data_cfg.include_sentiment_features,
-        feature_set=effective_data_cfg.feature_set,
-        include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-        include_screener_scores=effective_data_cfg.include_screener_scores,
-        include_short_score=effective_data_cfg.include_short_score_features,
-    )
+    # ── Feature columns (cross-symbol uniquement, sans global_pred_long) ──
+    feature_columns = _get_global_feature_columns(cfg)
 
     # ── Walk-Forward splits ──
     wf_splits = generate_walk_forward_splits(
@@ -730,11 +762,16 @@ def train_global_model_wf(
 
     # ── Build feature contract ──
     feature_contract = build_feature_contract(
-        include_sentiment=effective_data_cfg.include_sentiment_features,
-        feature_set=effective_data_cfg.feature_set,
-        include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
-        include_screener_scores=effective_data_cfg.include_screener_scores,
-        include_short_score=effective_data_cfg.include_short_score_features,
+        include_sentiment=False,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_screener_scores=False,
+        include_short_score=False,
+        include_macro_vix=cfg.data.include_macro_vix_features,
+        include_macro_vxn=cfg.data.include_macro_vxn_features,
+        include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+        include_macro_move=cfg.data.include_macro_move_features,
+        include_global_stacking=False,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
     )

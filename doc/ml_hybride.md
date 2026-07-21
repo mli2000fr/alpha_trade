@@ -246,16 +246,23 @@ Le Global Model est découpé en **3 flags orthogonaux** pour permettre l'A/B te
    - `.fit()` LightGBM/CatBoost sur `train_df`
    - `.predict_proba()` sur chaque symbole pour `val_dates` → `global_pred(symbol, date)`
 3. Concaténer tous les `global_pred` → DataFrame `[symbol, date, global_pred]`
-4. Stocker dans le cache cross-sectional (merge automatique dans `merge_cross_sectional_features`)
+4. Stocker dans le cache cross-sectional (merge automatique dans `merge_cross_sectional_features`) + fichier parquet pour les workers multiprocessing
 5. `by_symbol` produit `wf.f1_macro` par symbole (agrégé sur les 11 splits)
+
+**Features du Global Model** (principe d'orthogonalité) :
+- `_get_global_feature_columns(cfg)` : rangs cross-sectional (8) + secteur (8) = **16 features**
+- **Exclues** : OHLCV (13), expert (18), sentiment (4), screener (22), short_score (1)
+- Les features macro (VIX, VXN, VIX3M, MOVE) sont incluses si activées
+- `global_pred_long` n'est JAMAIS inclus (pas de récursion)
+- Le Global apprend des patterns cross-symboles que le per-symbol ne peut pas déduire
 
 **Feature dans le contrat** :
 - `GLOBAL_PRED_FEATURE = "global_pred_long"` — ajoutée à `get_feature_columns()` quand FLAG A + FLAG B sont actifs
 - Le fingerprint inclut cette colonne → pas de breaking change pour les modèles existants sans global
 
 **Performance** :
-- 11 × LGBM.fit() sur poolé → ~3s chacun → ~35 secondes
-- 500 symboles × 11 splits × predict_proba() → ~10 secondes
+- 11 × LGBM/CatBoost.fit() sur poolé avec ~16 features → ~2s chacun → ~25 secondes
+- 200 symboles × 11 splits × predict_proba() → ~5 secondes
 - **Total : < 1 minute** (contre ~heures pour les LSTM per-symbol)
 
 ### 🔬 Détails techniques — Phase 2 (Stacking)
@@ -264,6 +271,7 @@ Le Global Model est découpé en **3 flags orthogonaux** pour permettre l'A/B te
 - Le `feature_contract` et le `fingerprint` incluent automatiquement `global_pred_long` quand FLAG A + FLAG B
 - Les modèles per-symbol ne changent pas — ils reçoivent juste une colonne de plus
 - Si `global_pred_long` est NaN (début de série, pas encore de WF global pour cette date) → fillna(0.5)
+- **Multiprocessing** : le cache cross-sectional complet n'est pas picklé vers les workers. `global_pred_df` est sauvegardé en parquet (`_global_pred_cache.parquet`) dans le dossier du batch. Chaque worker le charge et le merge localement.
 
 ### 🔬 Détails techniques — Phase 3 (Champion Selection)
 
@@ -323,10 +331,10 @@ Les deux sous-checkboxes sont **grisées** tant que la première n'est pas coch�
 | Fichier | Changement |
 |---|---|
 | `modelFactory/config.py` | `GlobalModelConfig` : +`stacking_enabled`, +`challenger_enabled` |
-| `modelFactory/global_model.py` | +`train_global_model_wf()` : WF 11 splits, +`_aggregate_wf_per_symbol_metrics()`, `_compute_by_symbol_metrics()` signature enrichie `partition_name` |
+| `modelFactory/global_model.py` | +`train_global_model_wf()` : WF 11 splits, +`_get_global_feature_columns()` : features cross-symbol uniquement (16 cols), `_aggregate_wf_per_symbol_metrics()`, `_compute_by_symbol_metrics()` |
 | `modelFactory/cross_sectional.py` | +`GLOBAL_PRED_FEATURE_COLUMNS`, `merge_cross_sectional_features()` gère 3 familles + fillna NaN |
 | `modelFactory/features.py` | `get_feature_columns()`, `fingerprint()`, `build_feature_contract()`, `validate_feature_contract()` : +`include_global_stacking` |
-| `modelFactory/orchestrator.py` | Phase 1 AVANT per-symbol, merge `global_pred` dans cache, Phase 3 gated par FLAG C |
+| `modelFactory/orchestrator.py` | Phase 1 AVANT per-symbol, merge `global_pred` dans cache + persistance parquet pour workers multiprocessing, Phase 3 gated par FLAG C, logging worker configuré |
 | `modelFactory/dataset.py` | `SymbolDataModule` + `prepare_symbol_frame()` : +`include_global_stacking` |
 | `modelFactory/trainer.py` | `_run_walk_forward_validation()` : +`include_global_stacking` + `datamodule_kwargs` |
 | `modelFactory/tabular_baseline.py` | `run_tabular_baseline()` + `run_tabular_walk_forward()` : +`include_global_stacking` |
@@ -354,6 +362,41 @@ Les deux sous-checkboxes sont **grisées** tant que la première n'est pas coch�
 | **9** | `ihm/services/pipeline_runner.py` | `PipelineLaunchOptions` + command builder | ✅ |
 | **10** | `ihm/pages/_execution_center/__init__.py` | 3 checkboxes hiérarchiques | ✅ |
 | **11** | `tests/` | 87 tests : `test_global_model_wf.py` (16), `test_stacking.py` (16), `test_global_flags.py` (23) + existants (32) | ✅ |
+
+---
+
+## 📊 Tableau complet des features — par modèle et par flag IHM
+
+> **Principe d'orthogonalité (Sprint 2026-07-21)** : le Global Model n'utilise que des features
+> **cross-symboles** (rangs, secteur, macro). Les features locales au titre (OHLCV, expert,
+> sentiment, screener) sont **exclues** — elles sont redondantes avec le per-symbol.
+> Le Global doit apprendre des patterns émergents que le per-symbol ne peut pas voir seul.
+> `global_pred_long` encode ainsi un signal **non redondant**, pas une simple recombinaison.
+
+| # | Famille | Colonnes | Flag CLI | Checkbox IHM | Global | LSTM | LGBM/CB |
+|:--|:--|:--|:--|:--|:--:|:--:|:--:|
+| 1 | OHLCV | 13 | *(toujours actif)* | — | ❌² | ✅ | ✅ |
+| 2 | Expert | 18 | `--feature-set expert` | *(toujours `expert`)* | ❌² | ✅ | ✅ |
+| 3 | Rangs cross-sectional | 8 | `--enable-cross-sectional` | 🌐 Features cross-sectionnelles & sectorielles | ✅ | ✅ | ✅ |
+| 4 | Secteur | 8 | *(avec `--enable-cross-sectional`)* | *(même checkbox)* | ✅ | ✅ | ✅ |
+| 5 | **global_pred_long** | 1 | `--enable-global-stacking` | 📥 Utiliser la prédiction globale comme feature | ❌¹ | ✅ | ✅ |
+| 6 | Sentiment | 4 | `--include-sentiment` | Inclure les features sentiment | ❌² | ✅ | ✅ |
+| 7 | Screener | 22 | `--include-screener-scores` | Inclure les scores du screener | ❌² | ✅ | ✅ |
+| 8 | Short score | 1 | `--include-short-score` | Inclure le short_score dédié | ❌² | ✅ | ✅ |
+| 9 | VIX/VIX9D | 2 | `--include-macro-vix` | 📊 VIX/VIX9D (volatilité S&P 500) | ✅ | ✅ | ✅ |
+| 10 | VXN | 2 | `--include-macro-vxn` | 📊 VXN (volatilité NASDAQ-100) | ✅ | ✅ | ✅ |
+| 11 | VIX3M + term structure | 3 | `--include-macro-vix3m` | 📊 VIX3M + ratio (term structure) | ✅ | ✅ | ✅ |
+| 12 | MOVE | 1 | `--include-macro-move` | 📊 MOVE (volatilité obligataire) | ✅ | ✅ | ✅ |
+| | **Total max** | **83** | | | 24 | 83 | 83 |
+| | **Avec config standard¹** | | | | 16 | 48 | 48 |
+
+> ¹ Pas de récursion : le Global Model n'utilise pas sa propre prédiction.  
+> ² Exclues du Global Model par principe d'orthogonalité : features locales au titre, déjà exploitées par les modèles per-symbol. Le Global apprend des patterns cross-symboles (rangs relatifs, dynamiques sectorielles, contexte macro) que le per-symbol ne peut pas déduire de ses seules données.
+>
+> **Config standard** = `--feature-set expert --enable-cross-sectional --enable-global-stacking` (pas de flags macro/sentiment/screener).
+>
+> 🐛 **Corrigé Sprint 2026-07-21** : `run_tabular_baseline()`, `run_tabular_walk_forward()`, `_run_walk_forward_validation()` ne passaient pas les flags macro/sentiment/screener à `get_feature_columns()`. Corrigé.  
+> 🏗️ **Refactor Sprint 2026-07-21** : `_get_global_feature_columns()` — le Global Model utilise uniquement rangs + secteur + macro, excluant OHLCV/expert/sentiment/screener.
 
 ### 🚀 Comment activer ?
 
@@ -385,9 +428,18 @@ python -m modelFactory --mode train \
 
 Dans les logs :
 ```
-run_training_batch global_model_wf start splits=11 flags=A
-run_training_batch global_model_wf split=1/11 train_rows=120000 val_dates=252
+# Phase 1 — Global Model (16 features cross-symbol)
+run_training_batch global_model_wf start symbols=200
+train_global_model_wf start symbols=200 splits=11 feature_cols=16
+train_global_model_wf split=1/11 train_rows=494 val_rows=116
 ...
-run_training_batch global_model_wf done cache_rows=55000 pred_feature=global_pred_long
-run_training_batch per-symbol start symbols=500 stacking=True challenger_global=False
+train_global_model_wf done pred_rows=1276 symbols=176 dates=9
+
+# Phase 2 — Stacking
+run_training_batch stacking enabled: global_pred_long merged into cache rows=395826
+run_training_batch global_pred persisted to .../_global_pred_cache.parquet
+
+# Phase 3 — Per-symbol (48 features = 47 + global_pred_long)
+walk_forward start symbol=AAPL splits=11 ... feature_cols=48 stacking=True global_pred=True
+tabular_wf start symbol=AAPL model=lightgbm ... feature_cols=48 stacking=True global_pred=True
 ```
