@@ -101,6 +101,38 @@ F1_BUCKET_QUERY = """
     ORDER BY wf_f1_macro_bucket
 """
 
+# ── Variantes filtrées par champion (selected_model) ──
+# Jointure sur (symbol, model_name) + batch_id via model_training_run car
+# model_governance.run_id pointe vers le run LSTM, pas celui du champion.
+#
+# ⚠️ Attention : mg.run_id ≠ mm.run_id quand le champion n'est pas LSTM.
+# On joint donc sur (symbol, model_name) + is_selected_model = 1,
+# et on vérifie que le run de gouvernance appartient au même batch.
+
+F1_BUCKET_CHAMPION_QUERY = """
+    SELECT
+        CASE
+            WHEN mm.f1_macro < 0.10 THEN '0.00-0.09'
+            WHEN mm.f1_macro < 0.20 THEN '0.10-0.19'
+            WHEN mm.f1_macro < 0.30 THEN '0.20-0.29'
+            WHEN mm.f1_macro < 0.40 THEN '0.30-0.39'
+            ELSE '0.40+'
+        END AS wf_f1_macro_bucket,
+        COUNT(DISTINCT mm.symbol) AS nb_symbols
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    JOIN alpha_trade.model_governance AS mg
+        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+    JOIN alpha_trade.model_training_run AS mtr_gov
+        ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+    GROUP BY wf_f1_macro_bucket
+    ORDER BY wf_f1_macro_bucket
+"""
+
 TOP5_BEST_F1_QUERY = """
     SELECT
         mm.model_name,
@@ -148,6 +180,71 @@ ZERO_F1_SHORT_QUERY = """
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+      AND mm.f1_short = 0
+    LIMIT 10
+"""
+
+# ── Variantes champion pour les tableaux WF ──
+
+TOP5_BEST_CHAMPION_QUERY = """
+    SELECT
+        mm.symbol,
+        ROUND(mm.f1_macro, 3) AS f1_macro,
+        ROUND(mm.f1_long, 3) AS f1_long,
+        ROUND(mm.f1_short, 3) AS f1_short,
+        ROUND(mm.f1_flat, 3) AS f1_flat
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    JOIN alpha_trade.model_governance AS mg
+        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+    JOIN alpha_trade.model_training_run AS mtr_gov
+        ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+    ORDER BY mm.f1_macro DESC
+    LIMIT 10
+"""
+
+TOP5_WORST_CHAMPION_QUERY = """
+    SELECT
+        mm.symbol,
+        ROUND(mm.f1_macro, 3) AS f1_macro,
+        ROUND(mm.f1_long, 3) AS f1_long,
+        ROUND(mm.f1_short, 3) AS f1_short,
+        ROUND(mm.f1_flat, 3) AS f1_flat
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    JOIN alpha_trade.model_governance AS mg
+        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+    JOIN alpha_trade.model_training_run AS mtr_gov
+        ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+    ORDER BY mm.f1_macro ASC
+    LIMIT 10
+"""
+
+ZERO_F1_SHORT_CHAMPION_QUERY = """
+    SELECT
+        mm.symbol,
+        ROUND(mm.f1_macro, 3) AS f1_macro,
+        ROUND(mm.f1_long, 3) AS f1_long,
+        ROUND(mm.f1_short, 3) AS f1_short,
+        ROUND(mm.f1_flat, 3) AS f1_flat
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    JOIN alpha_trade.model_governance AS mg
+        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+    JOIN alpha_trade.model_training_run AS mtr_gov
+        ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
@@ -702,7 +799,21 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.markdown("")
     # ── Bloc distribution F1 macro (walk-forward) ──
     st.subheader("📈 Distribution F1 macro — Walk-Forward")
-    bucket_df = safe_query(F1_BUCKET_QUERY, {"batch_id": batch["batch_id"]})
+
+    champion_only_wf = st.checkbox(
+        "🏆 Afficher uniquement les champions (1 seul modèle par symbole)",
+        value=True,
+        key="ml_diag_champion_only_wf",
+        help="Si coché, seul le modèle sélectionné comme champion (selected_model) est retenu par symbole. "
+             "Sinon, tous les challengers (LSTM, LightGBM, CatBoost, Global) sont affichés — un même symbole peut apparaître plusieurs fois.",
+    )
+
+    _bucket_q = F1_BUCKET_CHAMPION_QUERY if champion_only_wf else F1_BUCKET_QUERY
+    _best_q = TOP5_BEST_CHAMPION_QUERY if champion_only_wf else TOP5_BEST_F1_QUERY
+    _worst_q = TOP5_WORST_CHAMPION_QUERY if champion_only_wf else TOP5_WORST_F1_QUERY
+    _zero_q = ZERO_F1_SHORT_CHAMPION_QUERY if champion_only_wf else ZERO_F1_SHORT_QUERY
+
+    bucket_df = safe_query(_bucket_q, {"batch_id": batch["batch_id"]})
     if bucket_df.empty:
         st.info("Aucune métrique walk-forward disponible pour ce batch.")
     else:
@@ -721,7 +832,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     st.markdown("")
     # ── Top 10 / Flop 10 / F1 short = 0 ──
-    st.subheader("🏆 Top / Flop symboles — Walk-Forward")
+    sub_label = "🏆 Top / Flop symboles — Walk-Forward"
+    if champion_only_wf:
+        sub_label += " (champions)"
+    st.subheader(sub_label)
 
     _ALL_SYMBOL_TABLE_KEYS = (BEST_TABLE_KEY, WORST_TABLE_KEY, ZERO_TABLE_KEY)
 
@@ -739,7 +853,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_best:
         st.markdown("**🥇 10 meilleurs `f1_macro`**")
-        best_df = safe_query(TOP5_BEST_F1_QUERY, {"batch_id": batch["batch_id"]})
+        best_df = safe_query(_best_q, {"batch_id": batch["batch_id"]})
         if best_df.empty:
             st.caption("Aucune donnée.")
         else:
@@ -751,7 +865,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_worst:
         st.markdown("**🥉 10 plus mauvais `f1_macro`**")
-        worst_df = safe_query(TOP5_WORST_F1_QUERY, {"batch_id": batch["batch_id"]})
+        worst_df = safe_query(_worst_q, {"batch_id": batch["batch_id"]})
         if worst_df.empty:
             st.caption("Aucune donnée.")
         else:
@@ -763,7 +877,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_zero:
         st.markdown("**⚪ `f1_short = 0`**")
-        zero_df = safe_query(ZERO_F1_SHORT_QUERY, {"batch_id": batch["batch_id"]})
+        zero_df = safe_query(_zero_q, {"batch_id": batch["batch_id"]})
         if zero_df.empty:
             st.caption("Aucun symbole avec f1_short = 0.")
         else:

@@ -65,6 +65,10 @@ F1_BUCKET_QUERY = """
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
+    JOIN alpha_trade.model_governance AS mg
+        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+    JOIN alpha_trade.model_training_run AS mtr_gov
+        ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
@@ -74,7 +78,6 @@ F1_BUCKET_QUERY = """
 
 TOP5_BEST_F1_QUERY = """
     SELECT
-        mm.model_name,
         mm.symbol,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
@@ -83,6 +86,10 @@ TOP5_BEST_F1_QUERY = """
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
+    JOIN alpha_trade.model_governance AS mg
+        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+    JOIN alpha_trade.model_training_run AS mtr_gov
+        ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
@@ -92,7 +99,6 @@ TOP5_BEST_F1_QUERY = """
 
 TOP5_WORST_F1_QUERY = """
     SELECT
-        mm.model_name,
         mm.symbol,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
@@ -101,6 +107,10 @@ TOP5_WORST_F1_QUERY = """
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
+    JOIN alpha_trade.model_governance AS mg
+        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+    JOIN alpha_trade.model_training_run AS mtr_gov
+        ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
@@ -110,7 +120,6 @@ TOP5_WORST_F1_QUERY = """
 
 ZERO_F1_SHORT_QUERY = """
     SELECT
-        mm.model_name,
         mm.symbol,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
@@ -119,6 +128,10 @@ ZERO_F1_SHORT_QUERY = """
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
+    JOIN alpha_trade.model_governance AS mg
+        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+    JOIN alpha_trade.model_training_run AS mtr_gov
+        ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'

@@ -27,6 +27,7 @@ from modelFactory.config import (
     CalibrationConfig,
     ChampionSelectionConfig,
     DataConfig,
+    DEFAULT_PATIENCE,
     GlobalModelConfig,
     ModelConfig,
     ReproducibilityConfig,
@@ -213,6 +214,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--max-epochs", type=int, default=50)
+    p.add_argument("--patience", type=int, default=DEFAULT_PATIENCE,
+                   help="Patience pour l'early stopping du LSTM (epochs sans amélioration).")
     p.add_argument("--sequence-length", type=int, default=60)
     p.add_argument("--forecast-horizon", type=int, default=10)
     p.add_argument(
@@ -402,6 +405,7 @@ def main(args: list[str] | None = None) -> None:
             batch_size=opts.batch_size,
             hidden_size=opts.hidden_size,
             max_epochs=opts.max_epochs,
+            patience=opts.patience,
             num_classes=opts.num_classes,
             ternary_weight_short=opts.ternary_weight_short,
             ternary_weight_flat=opts.ternary_weight_flat,

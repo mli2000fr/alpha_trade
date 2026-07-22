@@ -299,6 +299,10 @@ class ChampionSelectionConfig:
             raise ValueError("champion_selection.min_days doit être >= 0.")
 
 
+# ── Constantes partagées (source unique) ─────────────────────────────────
+DEFAULT_PATIENCE: int = 5
+
+
 @dataclass(frozen=True, slots=True)
 class ModelConfig:
     """Hyper-paramètres du modèle LSTM + attention."""
@@ -311,7 +315,7 @@ class ModelConfig:
     weight_decay: float = 1e-5
     batch_size: int = 32
     max_epochs: int = 50
-    patience: int = 7
+    patience: int = DEFAULT_PATIENCE
     num_classes: int = 2
     ternary_weight_short: float = 1.0
     ternary_weight_flat: float = 1.5

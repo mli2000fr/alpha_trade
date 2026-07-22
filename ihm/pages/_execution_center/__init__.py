@@ -141,6 +141,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_LOG_LEVEL,
     DEFAULT_ML_MAX_ACTION_RATE,
     DEFAULT_ML_MAX_EPOCHS,
+    DEFAULT_ML_PATIENCE,
     DEFAULT_ML_MAX_WORKERS,
     DEFAULT_ML_MIN_ACTION_RATE,
     DEFAULT_ML_MIN_PRECISION_LONG,
@@ -3547,6 +3548,20 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         key="pipeline_ml_max_epochs",
                     )
                 )
+                ml_patience = int(
+                    st.number_input(
+                        "ML — patience (early stopping LSTM)",
+                        min_value=2,
+                        max_value=20,
+                        value=_session_state_int(
+                            "pipeline_ml_patience",
+                            DEFAULT_ML_PATIENCE,
+                        ),
+                        step=1,
+                        key="pipeline_ml_patience",
+                        help="Nombre d'époques sans amélioration du val_loss avant arrêt anticipé.",
+                    )
+                )
                 ml_feature_set = cast(
                     str,
                     st.selectbox(
@@ -4069,6 +4084,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_feature_set=cast(Any, ml_feature_set),
             ml_max_workers=int(ml_max_workers),
             ml_max_epochs=int(ml_max_epochs),
+            ml_patience=int(ml_patience),
             ml_walkforward=bool(ml_walkforward),
             ml_wf_min_train_size=int(ml_wf_min_train_size),
             ml_wf_val_size=int(ml_wf_val_size),

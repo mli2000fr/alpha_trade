@@ -65,6 +65,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_LOG_LEVEL,
     DEFAULT_ML_MAX_ACTION_RATE,
     DEFAULT_ML_MAX_EPOCHS,
+    DEFAULT_ML_PATIENCE,
     DEFAULT_ML_MAX_WORKERS,
     DEFAULT_ML_MIN_ACTION_RATE,
     DEFAULT_ML_MIN_PRECISION_LONG,
@@ -341,6 +342,7 @@ class PipelineLaunchOptions:
     ml_feature_set: MLFeatureSet = DEFAULT_ML_FEATURE_SET  # type: ignore[assignment]
     ml_max_workers: int = DEFAULT_ML_MAX_WORKERS
     ml_max_epochs: int = DEFAULT_ML_MAX_EPOCHS
+    ml_patience: int = DEFAULT_ML_PATIENCE
     ml_walkforward: bool = DEFAULT_ML_WALKFORWARD
     ml_wf_min_train_size: int = DEFAULT_ML_WF_MIN_TRAIN_SIZE
     ml_wf_val_size: int = DEFAULT_ML_WF_VAL_SIZE
@@ -2111,6 +2113,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_max_workers),
             "--max-epochs",
             str(options.ml_max_epochs),
+            "--patience",
+            str(options.ml_patience),
             "--cross-sectional-min-universe",
             str(options.ml_cross_sectional_min_universe),
             "--lgbm-max-depth",
