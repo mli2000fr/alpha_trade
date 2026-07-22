@@ -328,9 +328,12 @@ def _compute_cross_symbol_features(
         # 6. Momentum spread : top décile - bottom décile ret_20
         if "ret_20" in grp.columns and len(grp) >= 10:
             rets = grp["ret_20"].dropna().sort_values()
-            top_decile = rets.iloc[int(len(rets) * 0.9)]
-            bot_decile = rets.iloc[int(len(rets) * 0.1)]
-            row["sector_momentum_spread_20"] = float(top_decile - bot_decile)
+            if len(rets) >= 10:
+                top_idx = max(0, min(len(rets) - 1, int(len(rets) * 0.9)))
+                bot_idx = max(0, min(len(rets) - 1, int(len(rets) * 0.1)))
+                top_decile = rets.iloc[top_idx]
+                bot_decile = rets.iloc[bot_idx]
+                row["sector_momentum_spread_20"] = float(top_decile - bot_decile)
 
         agg_parts.append(pd.DataFrame([row]))
 
