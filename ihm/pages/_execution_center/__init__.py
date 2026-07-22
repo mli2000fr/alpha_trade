@@ -3072,6 +3072,37 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 else:
                     st.caption("Tu peux réappliquer explicitement ce preset à tout moment si tu veux revenir aux valeurs recommandées.")
 
+        # ── Case à cocher "accélérer le batch" (recherche de paramètres) ──
+        def _apply_fast_search() -> None:
+            """Callback : applique ou révoque les valeurs accélérées."""
+            if st.session_state.get("pipeline_ml_fast_search", False):
+                st.session_state["pipeline_ml_max_epochs"] = 20
+                st.session_state["pipeline_ml_patience"] = 3
+                st.session_state["pipeline_ml_max_workers"] = 1
+                st.session_state["pipeline_ml_wf_max_splits"] = 3
+                st.session_state["pipeline_ml_sequence_length"] = 10
+                st.session_state["pipeline_ml_hidden_size"] = 128
+            else:
+                st.session_state["pipeline_ml_max_epochs"] = DEFAULT_ML_MAX_EPOCHS
+                st.session_state["pipeline_ml_patience"] = DEFAULT_ML_PATIENCE
+                st.session_state["pipeline_ml_max_workers"] = DEFAULT_ML_MAX_WORKERS
+                st.session_state["pipeline_ml_wf_max_splits"] = DEFAULT_ML_WF_MAX_SPLITS
+                st.session_state["pipeline_ml_sequence_length"] = DEFAULT_ML_SEQUENCE_LENGTH
+                st.session_state["pipeline_ml_hidden_size"] = DEFAULT_ML_HIDDEN_SIZE
+
+        ml_fast_search = st.checkbox(
+            "⚡ Accélérer le batch (recherche uniquement)",
+            value=_session_state_bool("pipeline_ml_fast_search", False),
+            key="pipeline_ml_fast_search",
+            on_change=_apply_fast_search,
+            help=(
+                "Applique des valeurs optimisées pour la vitesse : "
+                "WF 3 splits, LSTM max 20 epochs, patience 3, hidden_size 128, "
+                "sequence_length 10, max_workers 1. "
+                "⚠️ Ne pas utiliser pour le batch final de production."
+            ),
+        )
+
         ml_col1, ml_col2 = st.columns([2, 3])
         with ml_col1:
             ml_accelerator = cast(
@@ -3506,7 +3537,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                             max_value=20,
                             value=_session_state_int(
                                 "pipeline_ml_wf_max_splits",
-                                DEFAULT_ML_WF_MAX_SPLITS,
+                                3 if ml_fast_search else DEFAULT_ML_WF_MAX_SPLITS,
                             ),
                             step=1,
                             key="pipeline_ml_wf_max_splits",
@@ -3517,7 +3548,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ml_wf_val_size = int(st.session_state.get("pipeline_ml_wf_val_size", DEFAULT_ML_WF_VAL_SIZE))
                 ml_wf_test_size = int(st.session_state.get("pipeline_ml_wf_test_size", DEFAULT_ML_WF_TEST_SIZE))
                 ml_wf_step_size = int(st.session_state.get("pipeline_ml_wf_step_size", DEFAULT_ML_WF_STEP_SIZE))
-                ml_wf_max_splits = int(st.session_state.get("pipeline_ml_wf_max_splits", DEFAULT_ML_WF_MAX_SPLITS))
+                _wf_max_splits_default = 3 if ml_fast_search else DEFAULT_ML_WF_MAX_SPLITS
+                ml_wf_max_splits = int(st.session_state.get("pipeline_ml_wf_max_splits", _wf_max_splits_default))
 
         with st.expander("ML — Hyperparams & seuils d'optimisation (avancé)", expanded=False):
             ml_hp_col1, ml_hp_col2, ml_hp_col3 = st.columns(3)
@@ -3529,7 +3561,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         max_value=32,
                         value=_session_state_int(
                             "pipeline_ml_max_workers",
-                            DEFAULT_ML_MAX_WORKERS,
+                            1 if ml_fast_search else DEFAULT_ML_MAX_WORKERS,
                         ),
                         step=1,
                         key="pipeline_ml_max_workers",
@@ -3542,7 +3574,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         max_value=500,
                         value=_session_state_int(
                             "pipeline_ml_max_epochs",
-                            DEFAULT_ML_MAX_EPOCHS,
+                            20 if ml_fast_search else DEFAULT_ML_MAX_EPOCHS,
                         ),
                         step=5,
                         key="pipeline_ml_max_epochs",
@@ -3555,7 +3587,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         max_value=20,
                         value=_session_state_int(
                             "pipeline_ml_patience",
-                            DEFAULT_ML_PATIENCE,
+                            3 if ml_fast_search else DEFAULT_ML_PATIENCE,
                         ),
                         step=1,
                         key="pipeline_ml_patience",
@@ -3687,7 +3719,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         max_value=400,
                         value=_session_state_int(
                             "pipeline_ml_sequence_length",
-                            DEFAULT_ML_SEQUENCE_LENGTH,
+                            10 if ml_fast_search else DEFAULT_ML_SEQUENCE_LENGTH,
                         ),
                         step=5,
                         key="pipeline_ml_sequence_length",
@@ -3714,7 +3746,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         max_value=1024,
                         value=_session_state_int(
                             "pipeline_ml_hidden_size",
-                            DEFAULT_ML_HIDDEN_SIZE,
+                            128 if ml_fast_search else DEFAULT_ML_HIDDEN_SIZE,
                         ),
                         step=8,
                         key="pipeline_ml_hidden_size",
