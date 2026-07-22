@@ -3078,14 +3078,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             if st.session_state.get("pipeline_ml_fast_search", False):
                 st.session_state["pipeline_ml_max_epochs"] = 20
                 st.session_state["pipeline_ml_patience"] = 3
-                st.session_state["pipeline_ml_max_workers"] = 1
                 st.session_state["pipeline_ml_wf_max_splits"] = 3
                 st.session_state["pipeline_ml_sequence_length"] = 10
                 st.session_state["pipeline_ml_hidden_size"] = 128
             else:
                 st.session_state["pipeline_ml_max_epochs"] = DEFAULT_ML_MAX_EPOCHS
                 st.session_state["pipeline_ml_patience"] = DEFAULT_ML_PATIENCE
-                st.session_state["pipeline_ml_max_workers"] = DEFAULT_ML_MAX_WORKERS
                 st.session_state["pipeline_ml_wf_max_splits"] = DEFAULT_ML_WF_MAX_SPLITS
                 st.session_state["pipeline_ml_sequence_length"] = DEFAULT_ML_SEQUENCE_LENGTH
                 st.session_state["pipeline_ml_hidden_size"] = DEFAULT_ML_HIDDEN_SIZE
@@ -3098,7 +3096,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             help=(
                 "Applique des valeurs optimisées pour la vitesse : "
                 "WF 3 splits, LSTM max 20 epochs, patience 3, hidden_size 128, "
-                "sequence_length 10, max_workers 1. "
+                "sequence_length 10. "
                 "⚠️ Ne pas utiliser pour le batch final de production."
             ),
         )
@@ -3561,7 +3559,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         max_value=32,
                         value=_session_state_int(
                             "pipeline_ml_max_workers",
-                            1 if ml_fast_search else DEFAULT_ML_MAX_WORKERS,
+                            DEFAULT_ML_MAX_WORKERS,
                         ),
                         step=1,
                         key="pipeline_ml_max_workers",

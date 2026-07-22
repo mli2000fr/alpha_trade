@@ -337,6 +337,20 @@ def _train_worker(
         fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
+    # ── Limiter les threads PyTorch par worker ──
+    # Par défaut, PyTorch utilise tous les cœurs CPU (OpenMP/MKL). Avec
+    # N workers, chacun essaie de prendre tous les cœurs → N × cpu_count
+    # threads → oversubscription massive → ralentissement. On limite à
+    # cpu_count // max_workers threads par worker (2 par worker pour 6
+    # workers sur 12 cœurs). En single-worker, on garde le défaut.
+    if cfg.max_workers > 1:
+        import os
+        cpu_count = os.cpu_count() or 4
+        threads = max(1, cpu_count // cfg.max_workers)
+        torch.set_num_threads(threads)
+        LOGGER.debug("_train_worker symbol=%s torch_threads=%d (max_workers=%d cpu=%d)",
+                     symbol, threads, cfg.max_workers, cpu_count)
+
     apply_reproducibility(
         cfg.reproducibility.__class__(
             seed=derive_seed(cfg.reproducibility.seed, "orchestrator_worker", symbol),
