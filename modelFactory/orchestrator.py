@@ -15,6 +15,7 @@ import pandas as pd
 import torch
 from sqlalchemy.engine import Engine
 
+from modelFactory.batch_diagnostics import persist_batch_diagnostics
 from modelFactory.champion_selection import (
     build_challenger_ranking,
     persist_artifact_signature_manifest,
@@ -734,5 +735,20 @@ def run_training_batch(
         progress_item=None,
     )
     LOGGER.info("run_training_batch finished completed=%d skipped=%d failed=%d", completed, skipped, failed)
+
+    # ── Persister les diagnostics batch pour le live/backtest ──
+    if completed > 0:
+        try:
+            diag_count = persist_batch_diagnostics(engine, batch_id)
+            LOGGER.info(
+                "run_training_batch diagnostics persisted rows=%d batch_id=%s",
+                diag_count, batch_id,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "run_training_batch diagnostics persist failed batch_id=%s error=%s",
+                batch_id, exc,
+            )
+
     return results
 

@@ -393,6 +393,23 @@ eodhd:
     consecutive_failures: 5
     cooldown_minutes: 30
 
+# ---------------------------------------------------------------------------
+# Diagnostics batch ML — stockés dans model_batch_diagnostics à la fin de
+# chaque campagne d'entraînement.  Consommés par le live et le backtest pour
+# filtrer les symboles peu prédictibles ou incapables de shorter/longer.
+# ---------------------------------------------------------------------------
+batch_diagnostics:
+  # Nombre de symboles retenus dans le classement top / bottom F1 macro WF.
+  top_n: 10
+  bottom_n: 10
+
+  # Seuils pour les catégories weak_long / weak_short.
+  # Un symbole avec f1_long_wf < weak_long_threshold est marqué `weak_long`.
+  # Un symbole avec 0 < f1_short_wf < weak_short_threshold est marqué `weak_short`.
+  # Les symboles avec f1_short_wf = 0 sont marqués `zero_short` (indépendamment).
+  weak_long_threshold: 0.15
+  weak_short_threshold: 0.15
+
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
 conviction:
