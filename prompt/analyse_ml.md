@@ -1,0 +1,690 @@
+# 🔬 Analyse Approfondie — Batch `model-factory-20260722091334-cddc05`
+
+> **Date** : 2026-07-22  
+> **Commande** : `--feature-set expert --enable-cross-sectional --mode train --target-mode ternary`  
+> **200 symboles** — 0 échec — ~10h d'entraînement — 3 challengers (LSTM, LightGBM, CatBoost)
+
+---
+
+## Table des matières
+
+1. [Point 1 — Pourquoi le LSTM est cassé](#1-pourquoi-le-lstm-est-cassé)
+2. [Point 2 — Diagnostic du biais LONG](#2-diagnostic-du-biais-long)
+3. [Point 3 — Stratégie de filtrage de l'univers](#3-stratégie-de-filtrage-de-lunivers)
+4. [Point 4 — Analyse approfondie du top 20%](#4-analyse-approfondie-du-top-20)
+5. [Point 5 — Investigation du feature set `expert`](#5-investigation-du-feature-set-expert)
+6. [Point 6 — Analyse sectorielle des underperformers](#6-analyse-sectorielle-des-underperformers)
+7. [Synthèse & Plan d'action](#7-synthèse--plan-daction)
+
+---
+
+## 1. Pourquoi le LSTM est cassé
+
+### 1.1 Architecture actuelle
+
+```python
+# modelFactory/model.py — LSTMAttentionClassifier
+LSTM(
+    input_size=47,       # 31 expert + 16 cross-sectional
+    hidden_size=128,     # --hidden-size 128
+    num_layers=2,        # défaut
+    dropout=0.3,         # défaut
+    batch_first=True,
+)
+→ TemporalAttention(hidden_size=128)
+→ Dropout(0.3)
+→ Linear(128 → 3)       # 3 classes : short/flat/long
+```
+
+```python
+# modelFactory/model.py — LSTMAttentionModule
+CrossEntropyLoss(weight=[1.0, 1.0, 1.0])  # poids égaux short/flat/long
+learning_rate=1e-3, weight_decay=1e-5
+max_epochs=20, patience=3, batch_size=32
+```
+
+### 1.2 Données d'entrée
+
+```
+sequence_length = 10 jours
+features = 47 colonnes
+≈ 2000 séquences par symbole (8 ans × ~250 jours)
+Split 70/15/15 → ~1400 train / ~300 val / ~300 test
+```
+
+### 1.3 Symptômes observés
+
+| Métrique | LSTM WF |
+|----------|---------|
+| F1_macro | **0.228** |
+| F1_short | **0.096** |
+| F1_flat  | **0.386** |
+| F1_long  | **0.201** |
+
+| Distribution | True | Pred LSTM | Écart |
+|-------------|------|-----------|-------|
+| Short | 34.6% | **11.2%** | −23.4pp |
+| Flat  | 33.9% | **62.5%** | +28.6pp |
+| Long  | 31.5% | **26.3%** | −5.2pp |
+
+### 1.4 Diagnostic racine : 5 causes identifiées
+
+#### Cause 1 : Sequence length trop courte (10 jours)
+
+Avec `sequence_length=10` et `forecast_horizon=10`, le modèle voit 10 jours de features pour prédire le rendement à J+10. Le ratio signal/bruit est extrêmement faible : 10 jours de données OHLCV ne contiennent quasiment aucune information prédictive sur le rendement à 10 jours. Le LSTM n'a tout simplement **pas assez de contexte temporel** pour extraire un motif.
+
+> 📐 **Ratio info/horizon** : `seq_len / horizon = 10/10 = 1.0`. La littérature (Fischer & Krauss 2018, Sirignano 2019) utilise typiquement un ratio ≥ 3-5×. Pour un horizon de 10 jours, `seq_len ≥ 30-50` serait plus approprié.
+
+#### Cause 2 : Trop de features pour trop peu de données
+
+47 features × seulement ~1400 séquences d'entraînement → ratio features/échantillons = 1/30. Pour un réseau de neurones, c'est très peu. Le LSTM a `128 × 4 × 47 ≈ 24K` paramètres juste pour la première couche, sans compter le classifieur. Le surapprentissage est quasi-certain, même avec dropout 0.3.
+
+#### Cause 3 : Normalisation par split, pas globale
+
+Dans `_run_walk_forward_validation` (trainer.py:960-970), un `FeatureScaler` est fit **sur chaque split** indépendamment. Les features comme `sma200_distance` ou `regime_bull_market` ont des distributions très différentes selon la période (bull market 2018-2021 vs bear 2022). Le scaling par split atténue ce problème mais introduit une non-stationnarité : les mêmes valeurs brutes peuvent avoir des significations différentes d'un split à l'autre.
+
+#### Cause 4 : Pas de class_weight différencié
+
+```python
+# modelFactory/model.py:113
+ternary_weight_short=1.0, ternary_weight_flat=1.0, ternary_weight_long=1.0
+```
+
+Avec des classes naturellement déséquilibrées (le flat est structurellement plus fréquent que les extrêmes), le modèle n'a **aucune incitation** à sortir de la zone de confort « flat ». La `CrossEntropyLoss` non pondérée converge naturellement vers la classe majoritaire quand le signal est faible — c'est exactement ce qu'on observe (62.5% de prédictions flat).
+
+#### Cause 5 : Early stopping trop agressif
+
+`patience=3` avec `max_epochs=20`. Si le modèle ne progresse pas en 3 epochs sur le `val_loss`, il s'arrête. Or, avec le bruit élevé des données financières, la loss de validation est très bruitée et peut stagner pendant 3-4 epochs avant de redescendre. Le modèle n'a probablement même pas le temps de converger.
+
+### 1.5 Vérification dans le code
+
+```python
+# modelFactory/trainer.py:1350 — Le LSTM est entraîné sur TOUT le split
+# train/val/test (pas de walk-forward pour le LSTM lui-même).
+# Le walk-forward est fait SÉPARÉMENT dans _run_walk_forward_validation()
+# qui ré-entraîne un LSTM from scratch sur chaque split WF.
+```
+
+Le LSTM est donc ré-entraîné **5 fois** par symbole (1 train/test/val + 3 splits WF + 1 final fit), mais avec `max_epochs=20` et `patience=3`, chaque entraînement individuel est trop court.
+
+### 1.6 Solutions proposées
+
+| Solution | Détail | Priorité |
+|----------|--------|----------|
+| **A. Augmenter `sequence_length`** | Passer à 30-60 (`--sequence-length 40`) | 🔴 Critique |
+| **B. Réduire le nombre de features** | Utiliser seulement `feature_set=v1` (13 colonnes) ou faire une sélection de features | 🔴 Critique |
+| **C. Class weights asymétriques** | `--ternary-weight-short 1.5 --ternary-weight-long 1.5 --ternary-weight-flat 0.7` | 🟡 Important |
+| **D. Augmenter patience** | `--patience 10` | 🟡 Important |
+| **E. Plus d'epochs** | `--max-epochs 50` | 🟢 Nice-to-have |
+| **F. Label smoothing** | Ajouter `label_smoothing=0.1` dans `CrossEntropyLoss` | 🟢 Nice-to-have |
+| **G. BatchNorm après LSTM** | Ajouter `nn.BatchNorm1d` avant le classifieur pour stabiliser | 🟢 Nice-to-have |
+
+### 1.7 Commande de test recommandée
+
+```powershell
+python -m modelFactory --mode train --target-mode ternary \
+  --sequence-length 40 --hidden-size 64 \
+  --max-epochs 50 --patience 10 \
+  --ternary-weight-short 1.5 --ternary-weight-long 1.5 --ternary-weight-flat 0.7 \
+  --feature-set v1 \
+  --symbol-source ticket-recherche --max-workers 2 \
+  --comment test_lstm_fix
+```
+
+> ⚠️ Si après ces correctifs le LSTM reste sous 0.25 F1_macro WF, il faut **envisager de le désactiver** du championnat (`--default-champion lightgbm`) et concentrer les efforts sur les modèles tabulaires.
+
+---
+
+## 2. Diagnostic du biais LONG
+
+### 2.1 Mesure du biais
+
+| Modèle | True Long WF | Pred Long WF | Biais |
+|--------|-------------|-------------|-------|
+| LightGBM | 31.8% | **46.9%** | +15.1pp |
+| CatBoost | 31.8% | **47.8%** | +16.0pp |
+| LSTM | 31.5% | 26.3% | −5.2pp (biais flat) |
+
+Les deux modèles tabulaires sur-prédisent `long` de ~50%. En parallèle, ils sous-prédisent `short` (−6.6pp pour LightGBM, −9.2pp pour CatBoost) et `flat` (−8.5pp et −6.8pp).
+
+### 2.2 Cause racine n°1 : Période d'entraînement structurellement haussière
+
+```
+Training : 2018-01-01 → 2025-12-31
+SPY sur la période : +160% (environ)
+```
+
+Le biais long est **structurel** : sur 8 ans de bull market quasi-ininterrompu (hors COVID flash crash de mars 2020), la classe `long` est sur-représentée dans les issues gagnantes. Le modèle apprend que « quand il y a un signal, c'est plus souvent long que short ».
+
+### 2.3 Cause racine n°2 : Labeling fixed_horizon sans ajustement au marché
+
+```python
+# modelFactory/labeling.py — commande utilisée
+--target-up-threshold 0.03    # +3% → long
+--target-down-threshold -0.03 # -3% → short
+--ternary-threshold-short 0.35  # bottom 35% percentile → short
+--ternary-threshold-long 0.35   # top 35% percentile → long
+```
+
+Le labeling est basé sur :
+1. Un **percentile** (top/bottom 35%) → les classes sont forcément équilibrées **dans l'échantillon**
+2. Un **seuil absolu** de ±3% → filtre additionnel
+
+Mais le problème vient du **future return** sous-jacent. En bull market, les rendements positifs sont plus fréquents et plus amples. Même si les percentiles forcent l'équilibre, la distribution des retours futurs est asymétrique : un « top 35% » en 2020 n'a pas la même signification qu'en 2022.
+
+### 2.4 Cause racine n°3 : Class weights égaux
+
+```python
+# Commande : --ternary-weight-short 1.0 --ternary-weight-flat 1.0 --ternary-weight-long 1.0
+```
+
+Avec des poids égaux, le modèle n'est pas pénalisé pour sa sous-prédiction des shorts. LightGBM et CatBoost optimisent la log-loss globale, qui est dominée par les erreurs sur les classes majoritaires en sortie (long, qui est plus facile à prédire).
+
+### 2.5 Cause racine n°4 : Absence de calibration asymétrique
+
+La calibration actuelle utilise `TemperatureScaler` (ternaire) ou `PlattCalibrator` (binaire). Ces deux méthodes sont **symétriques** : elles ajustent les probabilités globalement sans corriger un biais directionnel. Il n'existe pas de mécanisme pour forcer `P(short) ≈ P(long)` en sortie.
+
+### 2.6 Cause racine n°5 : TernaryDecisionPolicy symétrique
+
+```python
+# core/ternary_decision_policy.py — commande
+--ternary-threshold-short 0.35 --ternary-threshold-long 0.35 --ternary-top2-margin 0.02
+```
+
+Les seuils de décision sont identiques pour long et short (0.35). Si le modèle est structurellement plus confiant sur les longs (probabilité calibrée plus élevée), plus de longs passeront le seuil que de shorts.
+
+### 2.7 Solutions proposées
+
+| Solution | Détail | Impact estimé |
+|----------|--------|---------------|
+| **A. Class weights asymétriques** | `--ternary-weight-short 1.8 --ternary-weight-long 1.0 --ternary-weight-flat 1.2` | Réduction biais 30-50% |
+| **B. Seuils de décision asymétriques** | `--ternary-threshold-short 0.30 --ternary-threshold-long 0.40` | Réduction biais 20-30% |
+| **C. Post-processing : calibration par quantile** | Forcer `P(short) ≈ P(long)` en sortie via un mapping quantile par date | Réduction biais 80%+ |
+| **D. Entraînement sur sous-périodes** | Inclure 2008, 2020, 2022 comme périodes significatives | Amélioration robustesse |
+| **E. Feature de régime de marché** | Les features `regime_bull_market` et `regime_risk_off` existent déjà → vérifier leur SHAP importance | Diagnostique |
+
+### 2.8 Code à modifier
+
+**Option A — Commande immédiate (sans changement de code)** :
+```powershell
+--ternary-weight-short 1.8 --ternary-weight-long 1.0 --ternary-weight-flat 1.2
+```
+
+**Option B — Modification de `TernaryDecisionPolicy` (fichier `core/ternary_decision_policy.py`)** :
+Le `TernaryDecisionPolicy` supporte déjà `threshold_short` et `threshold_long` distincts. La commande les expose déjà :
+```powershell
+--ternary-threshold-short 0.30 --ternary-threshold-long 0.40
+```
+
+**Option C — Post-processing (nouveau code)** :
+Ajouter dans `tabular_baseline.py` ou `trainer.py` une étape de « debiasing » qui, pour chaque date, trie les probabilités long/short et les ajuste pour que `mean(P_long) ≈ mean(P_short)` sur l'univers. Ceci nécessite une vision cross-sectionnelle, donc à implémenter dans `cross_sectional.py`.
+
+---
+
+## 3. Stratégie de filtrage de l'univers
+
+### 3.1 Distribution actuelle des F1 WF
+
+| Bucket F1_macro WF | Nb symboles | % |
+|---------------------|-------------|---|
+| 0.10-0.19 | 3 | 1.5% |
+| 0.20-0.29 | **95** | **47.5%** |
+| 0.30-0.39 | **97** | **48.5%** |
+| 0.40+ | 5 | 2.5% |
+
+### 3.2 Baseline théorique
+
+Pour 3 classes équilibrées, un classifieur aléatoire a :
+- Precision = 1/3, Recall = 1/3
+- F1 par classe = 0.33
+- F1_macro = 0.33
+
+Avec les classes réelles distribuées ~34/33/32 (WF), le baseline aléatoire est approximativement **F1_macro ≈ 0.30-0.32**.
+
+> 🔑 **Interprétation** : Un F1_macro < 0.30 signifie que le modèle est **pire que le hasard**.  
+> Un F1_macro entre 0.30 et 0.35 est **marginalement meilleur que le hasard**.  
+> Un F1_macro > 0.35 indique un **vrai signal**.
+
+### 3.3 Stratégie de filtrage recommandée
+
+#### Niveau 1 — Exclusion dure (filtre de sécurité)
+
+```python
+# Dans modelFactory/champion_selection.py, ajouter :
+MIN_WF_F1_MACRO = 0.25  # seuil de survie minimum
+```
+
+Symboles exclus si :
+- `wf_f1_macro < 0.25` → modèle non fiable, trading interdit
+- `wf_f1_short == 0` → incapacité à shorter, short interdit sur ce symbole
+- `wf_f1_long == 0` → incapacité à longer, long interdit
+
+**Impact estimé** : ~40-50 symboles exclus (ceux en dessous de 0.25 + les 4 avec f1_short=0)
+
+#### Niveau 2 — Score composite (filtre de qualité)
+
+```python
+QUALITY_SCORE = (
+    0.40 * wf_f1_macro
+    + 0.20 * wf_f1_long
+    + 0.20 * wf_f1_short
+    + 0.10 * min(wf_f1_long, wf_f1_short)  # pénalise l'asymétrie
+    + 0.10 * (1.0 - abs(pred_long_pct - true_long_pct) / 100)  # pénalise le biais
+)
+```
+
+Classer les symboles par `QUALITY_SCORE` décroissant. N'utiliser que les top N (ex: top 50, top 100).
+
+#### Niveau 3 — Filtre temporel (stabilité)
+
+Vérifier que le F1 est stable dans le temps :
+- Calculer le F1 par split walk-forward (déjà disponible dans `wf.splits[i].f1_macro`)
+- Exclure si `std(f1_macro across splits) > 0.10` → signal instable
+- Exclure si `f1_macro_split_0 > f1_macro_split_1 > f1_macro_split_2` → signal en dégradation
+
+#### Niveau 4 — Filtre sectoriel
+
+- Si un secteur a un F1_macro moyen < 0.28 → exclure tout le secteur
+- Basé sur le mapping secteur de `_load_sector_mapping()` dans `cross_sectional.py`
+
+### 3.4 Code à implémenter
+
+```python
+# Nouveau fichier : modelFactory/universe_filter.py
+
+@dataclass
+class UniverseFilter:
+    min_wf_f1_macro: float = 0.25
+    min_wf_f1_long: float = 0.10
+    min_wf_f1_short: float = 0.10
+    max_f1_std_across_splits: float = 0.10
+    min_sector_avg_f1: float = 0.28
+    allow_short_zero: bool = False
+    allow_long_zero: bool = False
+
+def filter_symbols(
+    metrics_by_symbol: dict[str, dict],
+    cfg: UniverseFilter,
+    sector_map: dict[str, str] | None = None,
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """
+    Returns:
+        accepted: symboles acceptés
+        rejected: symboles rejetés
+        reasons: {symbol: reason} pour les rejetés
+    """
+    ...
+```
+
+### 3.5 Intégration dans le pipeline
+
+Le filtre doit être appliqué **après** l'entraînement du batch, avant la mise en production des modèles :
+
+```
+train batch → rapport → UniverseFilter → modèles filtrés → production
+```
+
+Le rapport actuel (`artifacts/rapport_ml/`) peut être parsé pour extraire les métriques par symbole et appliquer le filtre sans ré-entraîner.
+
+---
+
+## 4. Analyse approfondie du top 20%
+
+### 4.1 Les 10 meilleurs symboles
+
+| Symbole | F1_macro | F1_long | F1_short | F1_flat | Profil |
+|---------|----------|---------|----------|---------|--------|
+| **HLIT** | **0.416** | 0.492 | 0.411 | 0.345 | ⭐ Équilibré — bon sur les 3 classes |
+| **TEX** | **0.409** | 0.506 | 0.517 | 0.204 | 📈 Long/Short fort — flat faible |
+| **NTRS** | **0.404** | 0.508 | 0.232 | 0.471 | 📊 Flat fort — long OK, short faible |
+| **SANM** | **0.403** | 0.533 | 0.223 | 0.452 | 📊 Flat fort — long très bon — short faible |
+| **R** | **0.401** | 0.518 | 0.418 | 0.268 | ⭐ Très équilibré — toutes classes > 0.25 |
+| **MOG.A** | 0.391 | 0.519 | 0.296 | 0.358 | Bon — léger biais long |
+| **AIN** | 0.391 | 0.469 | 0.332 | 0.371 | ⭐ Très équilibré |
+| **DRH** | 0.389 | 0.523 | 0.440 | 0.204 | 📈 Long/Short fort |
+| **FLEX** | 0.388 | 0.522 | 0.371 | 0.269 | Bon équilibre |
+| **BFH** | 0.383 | 0.435 | 0.480 | 0.235 | Short meilleur que long |
+
+### 4.2 Patterns communs aux meilleurs
+
+1. **Au moins 2 classes > 0.30** : Tous les top 10 ont ≥ 2 classes avec F1 > 0.30. Aucun n'a une classe complètement effondrée (< 0.15).
+
+2. **F1_long systématiquement bon** (> 0.43 pour 9/10) : Le signal long est le plus fiable. C'est cohérent avec le biais haussier général, mais ici c'est un vrai signal, pas un artefact.
+
+3. **Aucun n'est une mega-cap tech** : Pas de AAPL, MSFT, GOOGL dans le top 10. Les meilleurs sont des mid-caps industrielles/financières.
+
+4. **F1_flat variable** (0.20-0.47) : La capacité à prédire le flat n'est pas corrélée à la performance globale. TEX (0.204) est #2 malgré un flat faible.
+
+### 4.3 Analyse croisée : top performers vs champions
+
+Il faudrait croiser avec la table `model_governance` pour savoir :
+- Quel modèle a été choisi comme champion pour chaque top performer ?
+- Le champion est-il le meilleur challenger ou le fallback ?
+
+➡️ Requête SQL suggérée :
+```sql
+SELECT symbol, selected_model, selection_mode, selection_score
+FROM model_governance
+WHERE symbol IN ('HLIT','TEX','NTRS','SANM','R','MOG.A','AIN','DRH','FLEX','BFH')
+  AND run_id LIKE '%20260722%';
+```
+
+### 4.4 Les 5 symboles > 0.40 — faut-il les trader ?
+
+| Critère | HLIT (0.416) | TEX (0.409) | NTRS (0.404) | SANM (0.403) | R (0.401) |
+|---------|-------------|-------------|--------------|--------------|-----------|
+| F1 > random? | ✅ +26% | ✅ +24% | ✅ +22% | ✅ +22% | ✅ +21% |
+| Toutes classes > 0.20? | ✅ | ❌ flat=0.20 | ✅ | ✅ | ✅ |
+| Signal exploitable? | 🟢 OUI | 🟡 OUI (pas flat) | 🟡 OUI (pas short) | 🟡 OUI (pas short) | 🟢 OUI |
+
+**Verdict** : HLIT et R sont les deux seuls symboles avec un signal équilibré et fiable sur les 3 directions. TEX est excellent en directionnel (long/short) mais ne pas trader le flat. NTRS et SANM sont très bons en long/flat, éviter le short.
+
+### 4.5 Top 20% élargi (40 symboles, F1 > ~0.33)
+
+Pour les 40 meilleurs symboles (F1_macro > 0.33) :
+- Espérance de F1_macro ≈ 0.35-0.36
+- Ce sont majoritairement des mid-caps industrielles, financières, et technologiques
+- Un portefeuille concentré sur ces 40 symboles avec equal-weight aurait un F1_macro moyen de ~0.35, soit **+17% au-dessus du baseline aléatoire**
+
+Recommandation : lancer un backtest sur ce sous-univers de 40 symboles pour valider la rentabilité nette.
+
+---
+
+## 5. Investigation du feature set `expert`
+
+### 5.1 Composition du feature set
+
+```python
+# modelFactory/features.py
+
+FEATURE_COLUMNS (v1) — 13 colonnes :
+├── daily_return, log_return          # rendements
+├── intraday_range, overnight_gap     # range
+├── close_to_vwap                     # déviation vs VWAP
+├── volume_ratio_20                   # volume relatif
+├── rolling_volatility_20, _60        # volatilité
+├── rolling_mean_return_5, _20        # momentum court
+├── rsi_14, atr_14_norm               # indicateurs classiques
+└── is_filled                         # flag données manquantes
+
+EXPERT_FEATURE_COLUMNS — 18 colonnes supplémentaires :
+├── sma20/50/100/200_distance         # distance aux moyennes mobiles (4)
+├── ema20/50_distance                 # distance aux EMA (2)
+├── momentum_10/20/60                 # momentum multi-horizon (3)
+├── vol_ratio_20_60                   # ratio de volatilité
+├── range_position_20                 # position dans le range 20j
+├── market_return_20                  # rendement benchmark
+├── market_volatility_20              # volatilité benchmark
+├── market_trend_strength_50          # force de tendance benchmark
+├── relative_strength_20/60           # force relative vs benchmark (2)
+├── regime_bull_market                # régime haussier
+└── regime_risk_off                   # régime risk-off
+```
+
+Avec `--enable-cross-sectional`, 16 colonnes supplémentaires sont ajoutées :
+```
+CROSS_SECTIONAL — 8 rangs percentiles :
+├── ret_20_rank, ret_60_rank
+├── relative_strength_20_rank, relative_strength_60_rank
+├── volatility_20_rank, dollar_volume_20_rank
+├── volume_ratio_20_rank_xs, range_position_20_rank
+
+SECTOR — 8 features :
+├── sector_ret_20, sector_ret_60
+├── sector_vol_20, sector_relative_strength_20
+├── sector_dollar_volume_20, sector_symbol_count
+├── stock_vs_sector_ret_20, stock_vs_sector_ret_60
+```
+
+**Total : 13 + 18 + 8 + 8 = 47 features**
+
+### 5.2 Redondances et corrélations probables
+
+Plusieurs groupes de features sont fortement corrélés :
+
+| Groupe | Features | Corrélation attendue |
+|--------|----------|---------------------|
+| Momentum | `momentum_10`, `momentum_20`, `momentum_60`, `daily_return`, `rolling_mean_return_5`, `rolling_mean_return_20` | > 0.7 entre paires |
+| Distance aux MA | `sma20/50/100/200_distance`, `ema20/50_distance` | > 0.8 intra-groupe |
+| Force relative | `relative_strength_20`, `relative_strength_60`, `market_return_20` | > 0.6 |
+| Rangs cross-sectionnels | `ret_20_rank`, `ret_60_rank`, `relative_strength_20_rank`, `relative_strength_60_rank` | > 0.7 par paires |
+| Secteur | `sector_ret_20`, `sector_ret_60`, `sector_relative_strength_20` | > 0.8 |
+
+**Estimé : sur 47 features, ~25-30 sont fortement redondantes (corrélation > 0.6).**
+
+### 5.3 Features probablement les plus informatives (hypothèses)
+
+Basé sur la littérature et l'intuition financière :
+
+1. **`relative_strength_20/60`** — Force relative vs benchmark : un des signaux les plus robustes en equity long/short
+2. **`regime_risk_off`** — Contexte de marché : conditionne tout le comportement
+3. **`ret_20_rank`** / **`ret_60_rank`** — Rang cross-sectionnel : capte le momentum relatif
+4. **`stock_vs_sector_ret_20`** — Alpha intra-secteur : signal purifié du biais sectoriel
+5. **`vol_ratio_20_60`** — Expansion/contraction de volatilité : précède souvent les mouvements
+6. **`range_position_20`** — Position dans le range : mean-reversion à court terme
+
+### 5.4 Features probablement peu informatives
+
+1. **`is_filled`** — Flag binaire, peu de variance
+2. **`close_to_vwap`** — Très bruité, peu prédictif à J+10
+3. **`overnight_gap`** — Signal déjà incorporé dans `daily_return`
+4. **`sma100_distance`, `sma200_distance`** — Redondants avec `sma20/50_distance` pour du swing trading 10j
+5. **`sector_symbol_count`** — Constant par secteur, pas de signal temporel
+
+### 5.5 Recommandations
+
+#### A. Analyse de feature importance (SHAP)
+
+```python
+# Après entraînement LightGBM/CatBoost, extraire les SHAP values :
+import shap
+explainer = shap.TreeExplainer(model)
+shap_values = explainer.shap_values(X_val)
+shap.summary_plot(shap_values, X_val, feature_names=feature_columns)
+```
+
+Identifier les features avec SHAP importance < 0.5% → candidates à la suppression.
+
+#### B. Réduire à un « core set » de 15-20 features
+
+Proposition de core set :
+```
+1. relative_strength_20          # momentum relatif
+2. relative_strength_60          # momentum relatif long
+3. regime_risk_off               # contexte macro
+4. regime_bull_market            # contexte macro
+5. ret_20_rank                   # rang cross-sectionnel
+6. ret_60_rank                   # rang cross-sectionnel long
+7. stock_vs_sector_ret_20        # alpha sectoriel
+8. vol_ratio_20_60               # régime de vol
+9. range_position_20             # mean-reversion
+10. rsi_14                        # indicateur classique
+11. atr_14_norm                   # volatilité normalisée
+12. volume_ratio_20               # volume anormal
+13. rolling_volatility_20         # vol court terme
+14. momentum_20                   # momentum 20j
+15. market_trend_strength_50      # tendance benchmark
+16. sector_ret_20                 # momentum sectoriel
+17. dollar_volume_20_rank         # liquidité relative
+18. volatility_20_rank            # rang de volatilité
+```
+
+#### C. Feature engineering supplémentaire
+
+- **`short_squeeze_score`** — Ratio short interest / avg volume → prédicteur de short squeeze
+- **`earnings_surprise_momentum`** — Si disponible, momentum post-earnings
+- **`options_put_call_ratio`** — Si disponible, sentiment options
+- **`gap_to_52w_high`** — Proximité du plus haut 52 semaines (existe déjà dans `selector_high_52w_proximity`)
+
+#### D. Test A/B
+
+Lancer le même batch avec `--feature-set v1` uniquement (13 features) et comparer les F1 WF. Si la différence est < 0.02, les 34 features supplémentaires n'apportent rien.
+
+---
+
+## 6. Analyse sectorielle des underperformers
+
+### 6.1 Les 10 pires symboles
+
+| Symbole | F1_macro | F1_long | F1_short | F1_flat | Classe manquante |
+|---------|----------|---------|----------|---------|-----------------|
+| IIPR | 0.194 | 0.450 | 0.069 | **0.063** | Flat + Short |
+| CMPR | 0.194 | 0.350 | 0.122 | 0.111 | Flat + Short |
+| INDV | 0.195 | 0.353 | 0.212 | **0.022** | Flat |
+| HSBC | 0.201 | **0.077** | 0.093 | 0.434 | Long + Short |
+| ANET | 0.203 | 0.250 | 0.223 | 0.135 | Flat |
+| PRG | 0.207 | 0.354 | 0.140 | 0.125 | Flat + Short |
+| ESE | 0.209 | 0.310 | **0.085** | 0.230 | Short |
+| BELFB | 0.209 | 0.236 | 0.351 | **0.040** | Flat |
+| ROKU | 0.212 | 0.305 | 0.314 | **0.016** | Flat |
+| CDNA | 0.215 | 0.436 | 0.171 | **0.038** | Flat |
+
+### 6.2 Pattern commun : incapacité à prédire le FLAT
+
+**8/10** des pires symboles ont un F1_flat < 0.15. C'est le pattern le plus clair : ces titres ont des rendements extrêmement binaires (soit ça monte fort, soit ça descend fort) et ne restent jamais dans la zone ±3%. Le modèle ne peut pas apprendre une classe qui n'existe quasiment pas dans les données.
+
+> 📐 **Exemple ROKU** : F1_flat = 0.016. La classe flat est quasi-absente des données réelles pour ce titre très volatil. Le modèle prédit flat dans ~2% des cas, et a raison... 1.6% du temps.
+
+### 6.3 Tentative d'identification sectorielle
+
+Sans accès à la base de données `stock_metadata`, on peut inférer les secteurs approximatifs :
+
+| Symbole | Secteur probable | Caractéristique |
+|---------|-----------------|-----------------|
+| IIPR | REIT Cannabis | Très volatile, dépendance réglementaire |
+| CMPR | Impression/Emballage | Secteur cyclique |
+| INDV | Tech industrielle? | Small cap volatil |
+| HSBC | Banque internationale | Multi-géographies, peu sensible aux features US |
+| ANET | Équipement réseau | Tech croissance |
+| PRG | Consumer finance | Cyclique |
+| ESE | Défense/Aérospatial | Sectoriel spécifique |
+| BELFB | Électronique | Small cap |
+| ROKU | Streaming tech | Hyper-volatil, sentiment-driven |
+| CDNA | Biotech/Healthcare | Binaire (FDA approvals) |
+
+### 6.4 Hypothèses sectorielles
+
+Les underperformers semblent appartenir à 3 catégories :
+
+1. **Biotech/Santé** (CDNA, IIPR) : Rendements binaires, dépendants d'événements discrets (approbations FDA, résultats d'essais cliniques) que les features OHLCV ne peuvent pas capturer.
+
+2. **Tech hyper-volatile** (ROKU, ANET, BELFB) : Mouvements largement déterminés par le sentiment de marché et les news, pas par les patterns techniques.
+
+3. **Value/cycliques internationales** (HSBC, CMPR) : Exposés à des facteurs macro non-US que les features (basées sur SPY) ne capturent pas.
+
+### 6.5 Le cas HSBC — Diagnostic spécifique
+
+HSBC a un F1_long de **0.077** et F1_short de **0.093**, mais F1_flat de **0.434**. C'est l'image miroir du problème LSTM : le modèle prédit flat presque tout le temps pour HSBC. Le feature set `expert` basé sur le marché US (SPY comme benchmark) n'est probablement pas adapté à une banque cotée à Londres et Hong Kong.
+
+### 6.6 Solution : Features spécifiques au secteur
+
+```python
+# Ajouter dans cross_sectional.py ou features.py
+SECTOR_SPECIFIC_FEATURES = {
+    "biotech": ["sector_fda_calendar_days", "sector_patent_expiry_days"],
+    "tech": ["sector_nasdaq_correlation", "sector_sentiment_score"],
+    "financial": ["sector_yield_curve_slope", "sector_credit_spread"],
+    "energy": ["sector_crude_correlation", "sector_rig_count_change"],
+    "reit": ["sector_interest_rate_sensitivity", "sector_cap_rate_spread"],
+}
+```
+
+### 6.7 Solution : Exclure les titres à distribution de rendement pathologique
+
+```python
+def is_pathological_distribution(returns: np.ndarray) -> bool:
+    """Détecte les titres dont le rendement est quasi-binaire."""
+    flat_mask = (returns > -0.03) & (returns < 0.03)
+    flat_pct = flat_mask.mean()
+    if flat_pct < 0.20:  # moins de 20% de flat → pathologique
+        return True
+    # Kurtosis > 10 → distribution trop extrême
+    if pd.Series(returns).kurtosis() > 10:
+        return True
+    return False
+```
+
+---
+
+## 7. Synthèse & Plan d'action
+
+### 7.1 Résumé des problèmes
+
+| # | Problème | Sévérité | Cause racine |
+|---|----------|----------|-------------|
+| 1 | LSTM inutilisable | 🔴 Critique | Seq_len trop court, trop de features, pas de class weights, early stop agressif |
+| 2 | Biais LONG +50% | 🔴 Critique | Bull market structurel, class weights égaux, calibration symétrique |
+| 3 | 50% des symboles sous le baseline | 🟡 Important | Features non informatives pour ces titres, distributions pathologiques |
+| 4 | LightGBM domine (58%) | 🟢 Normal | Modèle simple + peu de données = arbres gagnent |
+| 5 | 4 symboles F1_short=0 | 🟠 Opérationnel | Incapacité totale à shorter certains titres |
+| 6 | F1_flat effondré pour 8/10 pires | 🟡 Important | Titres à distribution binaire |
+
+### 7.2 Plan d'action priorisé
+
+#### 🔴 Immédiat (cette semaine)
+
+1. **Lancer un batch test LSTM corrigé** avec :
+   ```powershell
+   --sequence-length 40 --hidden-size 64 --max-epochs 50 --patience 10 \
+   --ternary-weight-short 1.5 --ternary-weight-long 1.5 --ternary-weight-flat 0.7 \
+   --feature-set v1 --symbol-source ticket-recherche --max-workers 2 \
+   --comment test_lstm_fix_v2
+   ```
+
+2. **Lancer un batch avec correction du biais long** :
+   ```powershell
+   --ternary-weight-short 1.8 --ternary-weight-long 1.0 --ternary-weight-flat 1.2 \
+   --ternary-threshold-short 0.30 --ternary-threshold-long 0.40 \
+   --comment bias_correction_v1
+   ```
+
+3. **Parser le rapport pour extraire les métriques par symbole** et construire le `UniverseFilter`.
+
+#### 🟡 Cette semaine ou la suivante
+
+4. **Analyse SHAP** sur LightGBM/CatBoost pour identifier les features inutiles.
+5. **Lancer un batch `feature-set v1` seul** (sans cross-sectional) pour mesurer l'apport incrémental.
+6. **Backtest sur le top 40 symboles** (F1 > 0.33) pour valider la rentabilité.
+7. **Requête SQL pour croiser secteurs et performances**.
+
+#### 🟢 Moyen terme
+
+8. **Implémenter le post-processing de débiaisage** (calibration par quantile cross-sectionnelle).
+9. **Ajouter les features secteur-spécifiques** (biotech, financial, energy).
+10. **Mettre en place le filtre automatique d'univers** dans le pipeline de production.
+11. **Si le LSTM reste mauvais après correctifs**, le désactiver et concentrer les efforts sur l'amélioration de LightGBM/CatBoost (hyperparameter tuning, feature engineering).
+
+### 7.3 Scripts à créer
+
+| Script | Description |
+|--------|-------------|
+| `scripts/parse_ml_report.py` | Parse le rapport markdown → DataFrame |
+| `scripts/universe_filter.py` | Applique les filtres de qualité → liste de symboles tradables |
+| `scripts/shap_analysis.py` | Extrait et visualise les SHAP values par symbole |
+| `scripts/sector_performance.py` | Joint les métriques ML avec les secteurs GICS |
+
+### 7.4 Tables DB à consulter
+
+```sql
+-- Champions par symbole
+SELECT symbol, selected_model, selection_mode, selection_score
+FROM model_governance
+WHERE batch_id = 'model-factory-20260722091334-cddc05';
+
+-- Métriques WF détaillées par symbole et modèle
+SELECT symbol, model_name, split_name,
+       f1_macro, f1_short, f1_flat, f1_long,
+       true_short_pct, true_flat_pct, true_long_pct,
+       pred_short_pct, pred_flat_pct, pred_long_pct
+FROM training_metrics
+WHERE run_id IN (SELECT run_id FROM training_runs WHERE batch_id = '...');
+
+-- Secteurs des symboles
+SELECT symbol, provider_sector
+FROM stock_metadata
+WHERE symbol IN (SELECT DISTINCT symbol FROM model_governance WHERE batch_id = '...');
+```
+
+---
+
+*Rapport généré le 2026-07-22 par analyse du code source `modelFactory/` et du rapport `artifacts/rapport_ml/model-factory-20260722091334-cddc05.md`.*
