@@ -2391,7 +2391,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _bt_boosted_count = 0
     try:
         from modelFactory.batch_diagnostics import get_batch_filters, filter_predictions
-        _bt_filters = get_batch_filters(engine)
+        # Utilise le batch_id configuré pour le backtest (config.yaml → backtest_batch_id).
+        # Si vide, get_batch_filters utilise automatiquement le dernier batch.
+        _bt_batch_id: str | None = None
+        try:
+            import yaml as _yaml_bt_cfg
+            with open("config.yaml", encoding="utf-8") as _fh_bt_cfg:
+                _cfg_bt_cfg = _yaml_bt_cfg.safe_load(_fh_bt_cfg) or {}
+            _bt_batch_id = str(
+                (_cfg_bt_cfg.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
+            ).strip() or None
+        except Exception:
+            pass
+        _bt_filters = get_batch_filters(engine, batch_id=_bt_batch_id)
         if _bt_filters.batch_id and not preds_df.empty:
             # ── Étape 1 : exclure ──
             _bt_before = len(preds_df)

@@ -117,6 +117,7 @@ class BatchFilters:
     exclude_long: frozenset[str]   # symboles à exclure du long
     exclude_short: frozenset[str]  # symboles à exclure du short
     all_diagnostics: pd.DataFrame  # DataFrame complet pour analyse fine
+    batch_comment: str | None = None  # commentaire libre du batch (model_training_batch)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -318,17 +319,23 @@ def get_batch_filters(
 
     df = pd.DataFrame()
     batch_started_at: datetime | None = None
+    batch_comment: str | None = None
     try:
         with engine.connect() as conn:
             df = pd.read_sql_query(text(_LOAD_DIAG_QUERY), conn, params={"batch_id": batch_id})
-            if not df.empty:
-                # Récupérer batch_started_at depuis la première ligne
-                row = conn.execute(
-                    text("SELECT batch_started_at FROM alpha_trade.model_batch_diagnostics WHERE batch_id = :bid LIMIT 1"),
-                    {"bid": batch_id},
-                ).fetchone()
-                if row:
-                    batch_started_at = row[0]
+            # Récupérer batch_started_at + comment depuis model_training_batch
+            meta_row = conn.execute(
+                text(
+                    "SELECT mbd.batch_started_at, COALESCE(mtb.comment, '') "
+                    "FROM alpha_trade.model_batch_diagnostics AS mbd "
+                    "LEFT JOIN alpha_trade.model_training_batch AS mtb ON mtb.batch_id = mbd.batch_id "
+                    "WHERE mbd.batch_id = :bid LIMIT 1"
+                ),
+                {"bid": batch_id},
+            ).fetchone()
+            if meta_row:
+                batch_started_at = meta_row[0]
+                batch_comment = str(meta_row[1]).strip() or None
     except Exception as exc:
         LOGGER.warning("batch_diagnostics: get_batch_filters failed: %s", exc)
 
@@ -340,6 +347,7 @@ def get_batch_filters(
             exclude_long=frozenset(),
             exclude_short=frozenset(),
             all_diagnostics=df,
+            batch_comment=batch_comment,
         )
 
     prefer = frozenset(
@@ -359,6 +367,7 @@ def get_batch_filters(
         exclude_long=exclude_long,
         exclude_short=exclude_short,
         all_diagnostics=df,
+        batch_comment=batch_comment,
     )
 
 

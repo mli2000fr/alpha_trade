@@ -4144,8 +4144,11 @@ def _render_batch_diagnostics_block() -> None:
 
         batch_id = summary.get("batch_id", "—")
         batch_date = summary.get("batch_started_at", "—")
+        batch_comment = summary.get("batch_comment") or None
         total_symbols = summary.get("total_symbols", 0)
         st.caption(f"**Batch** : `{batch_id}` | **Date** : {batch_date} | **Symboles** : {total_symbols}")
+        if batch_comment:
+            st.caption(f"**Commentaire** : {batch_comment}")
 
         col1, col2 = st.columns(2)
 

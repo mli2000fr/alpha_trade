@@ -2492,6 +2492,16 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
     batch_id = str(latest["batch_id"].iloc[0])
     batch_started_at = str(latest["batch_started_at"].iloc[0])
 
+    # Récupérer le commentaire du batch depuis model_training_batch
+    batch_comment: str | None = None
+    comment_df = safe_query(
+        "SELECT comment FROM alpha_trade.model_training_batch WHERE batch_id = :bid LIMIT 1",
+        {"bid": batch_id},
+    )
+    if not comment_df.empty:
+        raw = str(comment_df["comment"].iloc[0] or "").strip()
+        batch_comment = raw or None
+
     df = safe_query(
         """
         SELECT symbol, rank_type, rank_position,
@@ -2516,6 +2526,7 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
             "available": True,
             "batch_id": batch_id,
             "batch_started_at": batch_started_at,
+            "batch_comment": batch_comment,
             "total_symbols": 0,
             "top": [],
             "bottom": [],
@@ -2567,6 +2578,7 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
         "available": True,
         "batch_id": batch_id,
         "batch_started_at": batch_started_at,
+        "batch_comment": batch_comment,
         "total_symbols": int(df["symbol"].nunique()),
         "top": top_rows,
         "bottom": bottom_rows,

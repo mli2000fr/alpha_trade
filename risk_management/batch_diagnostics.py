@@ -50,8 +50,16 @@ def apply_batch_diagnostics_to_entries(
         return entries, 0, 0, None
 
     # ── Charger les filtres ──
+    # Utilise le batch_id configuré pour le live (config.yaml → live_batch_id).
+    # Si vide, get_batch_filters utilise automatiquement le dernier batch.
+    _live_batch_id: str | None = None
     try:
-        filters: BatchFilters = get_batch_filters(engine)
+        _cfg = _load_config_defaults()
+        _live_batch_id = str(_cfg.get("live_batch_id", "") or "").strip() or None
+    except Exception:
+        pass
+    try:
+        filters: BatchFilters = get_batch_filters(engine, batch_id=_live_batch_id)
     except Exception as exc:
         LOGGER.warning(
             "risk batch_diagnostics: impossible de charger les filtres: %s",
@@ -122,7 +130,8 @@ def apply_batch_diagnostics_to_entries(
 
     # ── Résumé consolidé ──
     if excluded_count > 0 or boosted_count > 0:
-        _lines = [f"batch_diagnostics summary (batch={filters.batch_id}):"]
+        _comment_info = f" | comment={filters.batch_comment}" if filters.batch_comment else ""
+        _lines = [f"batch_diagnostics summary (batch={filters.batch_id}{_comment_info}):"]
         if excluded_long_syms:
             _lines.append(
                 f"  🚫 LONG filtrés  ({len(excluded_long_syms)}): "

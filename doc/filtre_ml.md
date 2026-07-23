@@ -103,13 +103,24 @@ batch_diagnostics:
   weak_short_threshold: 0.15        # Seuil f1_short pour weak_short
   prefer_top_n: 10                  # Nb de top effectivement boostés (≤ top_n)
   prefer_sizing_multiplier: 1.2     # Multiplicateur de sizing pour les prefer
+  live_batch_id: ""                 # Batch à utiliser en live (vide = dernier batch)
+  backtest_batch_id: ""             # Batch à utiliser en backtest (vide = dernier batch)
 ```
 
 - `top_n` / `bottom_n` : combien de symboles on persiste dans la table.
 - `prefer_top_n` : parmi les `top_n` stockés, combien on booste réellement
   en live/backtest (permet de stocker plus qu'on ne booste, pour analyses).
 - `prefer_sizing_multiplier` : facteur multiplicatif appliqué au sizing
-  (target_shares / target_notional en live, proba_long/proba_short en backtest).
+  (live → `approved_shares`/`target_notional`, backtest → `proba_long`/`proba_short`).
+- `live_batch_id` : batch de diagnostics à utiliser pour le live (étape 11 Risk).
+  Laisser vide pour utiliser automatiquement le dernier batch complété.
+  Renseigner un `batch_id` explicite (ex: le batch promu via `model_serving_batch`)
+  pour figer les filtres et éviter de changer de batch entre deux runs.
+- `backtest_batch_id` : batch de diagnostics à utiliser pour le backtest.
+  Laisser vide pour utiliser le dernier batch (⚠️ attention au look-ahead :
+  si le dernier batch est postérieur à la période backtestée, les diagnostics
+  utilisent de l'information future). Pour un backtest PIT-safe, renseigner
+  un `batch_id` dont la `training_end_date` est antérieure à la date simulée.
 
 ---
 
