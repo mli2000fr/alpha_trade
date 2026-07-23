@@ -289,18 +289,21 @@ def get_batch_filters(
     engine: Engine,
     batch_id: str | None = None,
     *,
-    top_n: int = 50,
+    prefer_top_n: int | None = None,
 ) -> BatchFilters:
     """Retourne les filtres live/backtest pour un batch donné.
 
     Args:
         engine: Engine SQLAlchemy.
         batch_id: Identifiant du batch. Si None, utilise le dernier batch.
-        top_n: Nombre de symboles à considérer dans le top (filtre rank_position).
+        prefer_top_n: Nombre de symboles du top à privilégier (filtre rank_position).
+            Défaut : config.yaml (batch_diagnostics.prefer_top_n) ou 50.
 
     Returns:
         BatchFilters avec les sets prefer / exclude_long / exclude_short.
     """
+    if prefer_top_n is None:
+        prefer_top_n = _load_config_defaults().get("prefer_top_n", 50)
     if batch_id is None:
         batch_id = _get_latest_completed_batch_id(engine)
     if batch_id is None:
@@ -340,7 +343,7 @@ def get_batch_filters(
         )
 
     prefer = frozenset(
-        df[(df["rank_type"] == RANK_TYPE_TOP) & (df["rank_position"] <= top_n)]["symbol"]
+        df[(df["rank_type"] == RANK_TYPE_TOP) & (df["rank_position"] <= prefer_top_n)]["symbol"]
     )
     exclude_long = frozenset(
         df[df["rank_type"].isin(EXCLUDE_LONG_RANK_TYPES)]["symbol"]
@@ -357,3 +360,93 @@ def get_batch_filters(
         exclude_short=exclude_short,
         all_diagnostics=df,
     )
+
+
+# ────────────────────────────────────────────────────────────────────
+# Convenience: filter a predictions DataFrame
+# ────────────────────────────────────────────────────────────────────
+
+def filter_predictions(
+    predictions: pd.DataFrame,
+    filters: BatchFilters,
+    *,
+    side_column: str = "predicted_side",
+    symbol_column: str = "symbol",
+    boost_prefer_sizing: bool = False,
+    prefer_multiplier: float | None = None,
+) -> pd.DataFrame:
+    """Filter a predictions DataFrame using batch diagnostics.
+
+    Removes rows where the predicted side conflicts with exclusion lists,
+    and optionally boosts a sizing column for preferred symbols.
+
+    Args:
+        predictions: DataFrame with columns ``symbol_column`` and ``side_column``.
+        filters: Result from ``get_batch_filters()``.
+        side_column: Name of the column containing "long" / "short" / "flat".
+        symbol_column: Name of the symbol column.
+        boost_prefer_sizing: If True, multiply ``sizing_mult`` column by
+            ``prefer_multiplier`` for symbols in ``filters.prefer``.
+        prefer_multiplier: Multiplier for preferred symbols.
+            Default: read from config.yaml (batch_diagnostics.prefer_sizing_multiplier) or 1.2.
+
+    Returns:
+        Filtered DataFrame (new copy).
+    """
+    if predictions.empty:
+        return predictions
+
+    # ── Résoudre le prefer_multiplier depuis config.yaml ──
+    if prefer_multiplier is None:
+        prefer_multiplier = 1.2
+        try:
+            import yaml
+            with open("config.yaml", encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+            prefer_multiplier = float(
+                (cfg.get("batch_diagnostics") or {}).get(
+                    "prefer_sizing_multiplier", 1.2
+                )
+            )
+        except Exception:
+            pass
+
+    df = predictions.copy()
+
+    if side_column not in df.columns:
+        return df
+
+    side_col = df[side_column].astype(str).str.lower().str.strip()
+    symbol_col = df[symbol_column].astype(str).str.upper().str.strip()
+
+    # ── Exclude long ──
+    exclude_long_mask = (side_col == "long") & symbol_col.isin(filters.exclude_long)
+    # ── Exclude short ──
+    exclude_short_mask = (side_col == "short") & symbol_col.isin(filters.exclude_short)
+
+    filtered = df[~(exclude_long_mask | exclude_short_mask)].copy()
+
+    n_excluded = len(df) - len(filtered)
+    if n_excluded > 0:
+        LOGGER.info(
+            "batch_diagnostics: filtered %d predictions (exclude_long=%d exclude_short=%d)",
+            n_excluded,
+            exclude_long_mask.sum(),
+            exclude_short_mask.sum(),
+        )
+
+    # ── Boost sizing for preferred symbols ──
+    if boost_prefer_sizing and "sizing_mult" in filtered.columns:
+        prefer_mask = symbol_col[filtered.index].isin(filters.prefer)
+        if prefer_mask.any():
+            filtered.loc[prefer_mask, "sizing_mult"] = (
+                filtered.loc[prefer_mask, "sizing_mult"] * prefer_multiplier
+            )
+            LOGGER.info(
+                "batch_diagnostics: boosted sizing for %d preferred symbols (×%.1f)",
+                prefer_mask.sum(),
+                prefer_multiplier,
+            )
+
+    return filtered
+

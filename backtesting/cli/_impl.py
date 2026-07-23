@@ -2383,6 +2383,66 @@ def _run_backtest(args: argparse.Namespace) -> None:
     else:
         preds_df = prepared_predictions
         ml_diagnostics = None
+
+    # ── Filtre batch diagnostics (ML quality gate) ──
+    # Exclut les prédictions dont le symbole est dans les listes
+    # exclude_long / exclude_short du dernier batch complété.
+    _bt_filtered_count = 0
+    _bt_boosted_count = 0
+    try:
+        from modelFactory.batch_diagnostics import get_batch_filters, filter_predictions
+        _bt_filters = get_batch_filters(engine)
+        if _bt_filters.batch_id and not preds_df.empty:
+            # ── Étape 1 : exclure ──
+            _bt_before = len(preds_df)
+            preds_df = filter_predictions(preds_df, _bt_filters)
+            _bt_filtered_count = _bt_before - len(preds_df)
+            if _bt_filtered_count > 0:
+                _safe_print(
+                    "   batch_diagnostics: filtered {}/{} predictions "
+                    "(batch={} exclude_long={} exclude_short={})\n".format(
+                        _bt_filtered_count, _bt_before,
+                        _bt_filters.batch_id,
+                        len(_bt_filters.exclude_long),
+                        len(_bt_filters.exclude_short),
+                    )
+                )
+
+            # ── Étape 2 : booster sizing pour les prefer (parité live) ──
+            if _bt_filters.prefer and not preds_df.empty:
+                _prefer_mult = 1.2
+                try:
+                    import yaml as _yaml_bt
+                    with open("config.yaml", encoding="utf-8") as _fh_bt:
+                        _cfg_bt = _yaml_bt.safe_load(_fh_bt) or {}
+                    _prefer_mult = float(
+                        (_cfg_bt.get("batch_diagnostics") or {}).get(
+                            "prefer_sizing_multiplier", 1.2
+                        )
+                    )
+                except Exception:
+                    pass
+                _prefer_mask = preds_df["symbol"].astype(str).str.upper().isin(_bt_filters.prefer)
+                if _prefer_mask.any():
+                    for _col in ("proba_long", "proba_short"):
+                        if _col in preds_df.columns:
+                            preds_df.loc[_prefer_mask, _col] = (
+                                preds_df.loc[_prefer_mask, _col] * _prefer_mult
+                            ).clip(upper=1.0)
+                    _bt_boosted_count = int(_prefer_mask.sum())
+                    _safe_print(
+                        "   batch_diagnostics: boosted {} prefer symbols "
+                        "x{:.1f} (batch={})\n".format(
+                            _bt_boosted_count, _prefer_mult,
+                            _bt_filters.batch_id,
+                        )
+                    )
+    except Exception as _bt_exc:
+        LOGGER.warning(
+            "batch_diagnostics backtest filter skipped (non-blocking): %s",
+            _bt_exc,
+        )
+
     _emit_backtest_missing_coverage_logs(
         sentiment_mode=str(args.sentiment_mode or "auto"),
         sentiment_diagnostics=sentiment_diagnostics,

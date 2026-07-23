@@ -67,6 +67,7 @@ from execution_engine.protection_transition import (
 from execution_engine.reconciliation import reconcile_execution_state
 from execution_engine.state_machine import is_terminal
 from execution_engine.tca import build_tca_summary, compute_implementation_shortfall, compute_slippage_bps
+from modelFactory.batch_diagnostics import get_batch_filters
 from service.alpaca.trading_client import BrokerApiError
 
 LOGGER = logging.getLogger(__name__)
@@ -267,6 +268,123 @@ class ProductionExecutor:
                         enriched_targets.append(replace(target, previous_close=float(previous_close)))
                     targets = enriched_targets
             loaded_targets_count = len(targets)
+
+            # ── Filtre batch diagnostics (ML quality gate) ──
+            # Exclut les targets dont le symbole est dans les listes
+            # exclude_long / exclude_short du dernier batch complété.
+            batch_filtered_count = 0
+            try:
+                from database.connection import get_sqlalchemy_engine as _get_engine_bt
+                _bt_engine = _get_engine_bt()
+                _bt_filters = get_batch_filters(_bt_engine)
+                if _bt_filters.exclude_long or _bt_filters.exclude_short:
+                    _filtered_targets = []
+                    for _t in targets:
+                        _sym = str(_t.symbol).strip().upper()
+                        _side = str(getattr(_t, "side", "buy") or "buy").strip().lower()
+                        if _side in ("sell", "short") and _sym in _bt_filters.exclude_short:
+                            batch_filtered_count += 1
+                            LOGGER.info(
+                                "batch_diagnostics live: excluding short target %s (batch=%s)",
+                                _sym, _bt_filters.batch_id,
+                            )
+                            continue
+                        if _side in ("buy", "long") and _sym in _bt_filters.exclude_long:
+                            batch_filtered_count += 1
+                            LOGGER.info(
+                                "batch_diagnostics live: excluding long target %s (batch=%s)",
+                                _sym, _bt_filters.batch_id,
+                            )
+                            continue
+                        _filtered_targets.append(_t)
+                    targets = _filtered_targets
+                    metrics["batch_diagnostics_batch_id"] = _bt_filters.batch_id
+                    metrics["batch_filtered_targets"] = batch_filtered_count
+                    if batch_filtered_count > 0:
+                        events.append(make_event(
+                            exec_run_id,
+                            EventType.PRECHECK_OK,
+                            f"Batch diagnostics filtered {batch_filtered_count}/{loaded_targets_count} targets "
+                            f"(batch={_bt_filters.batch_id})",
+                            payload={
+                                "batch_id": _bt_filters.batch_id,
+                                "filtered_count": batch_filtered_count,
+                                "total_before": loaded_targets_count,
+                            },
+                        ))
+                    if not targets:
+                        events.append(make_event(
+                            exec_run_id,
+                            EventType.PRECHECK_FAILED,
+                            "All targets filtered by batch diagnostics — aborting",
+                        ))
+                        metrics["status"] = "ABORTED"
+                        return metrics
+
+                # ── Boost sizing for preferred symbols (top N F1 macro WF) ──
+                _prefer_multiplier = 1.2
+                _prefer_top_n = 10
+                try:
+                    import yaml as _yaml_bt
+                    with open("config.yaml", encoding="utf-8") as _fh_bt:
+                        _cfg_bt = _yaml_bt.safe_load(_fh_bt) or {}
+                    _diag_cfg = _cfg_bt.get("batch_diagnostics") or {}
+                    _prefer_multiplier = float(_diag_cfg.get("prefer_sizing_multiplier", 1.2))
+                    _prefer_top_n = int(_diag_cfg.get("prefer_top_n", 10))
+                except Exception:
+                    pass
+                # Construire le set prefer limité à prefer_top_n
+                _prefer_set: frozenset[str] = frozenset()
+                if _bt_filters.prefer:
+                    _prefer_df = _bt_filters.all_diagnostics
+                    if not _prefer_df.empty and "rank_position" in _prefer_df.columns:
+                        _prefer_set = frozenset(
+                            _prefer_df[
+                                (_prefer_df["rank_type"] == "top")
+                                & (_prefer_df["rank_position"] <= _prefer_top_n)
+                            ]["symbol"]
+                        )
+                    else:
+                        _prefer_set = _bt_filters.prefer
+                if _prefer_set and _prefer_multiplier != 1.0:
+                    _boosted_targets = []
+                    _boosted_count = 0
+                    for _t in targets:
+                        _sym = str(_t.symbol).strip().upper()
+                        if _sym in _prefer_set:
+                            _boosted_count += 1
+                            _new_shares = float(getattr(_t, "target_shares", 0) or 0) * _prefer_multiplier
+                            _new_notional = float(getattr(_t, "target_notional", 0) or 0) * _prefer_multiplier
+                            _t = replace(
+                                _t,
+                                target_shares=_new_shares,
+                                target_notional=_new_notional,
+                            )
+                            LOGGER.info(
+                                "batch_diagnostics live: boosting %s sizing x%.1f (batch=%s)",
+                                _sym, _prefer_multiplier, _bt_filters.batch_id,
+                            )
+                        _boosted_targets.append(_t)
+                    targets = _boosted_targets
+                    metrics["batch_prefer_boosted"] = _boosted_count
+                    if _boosted_count > 0:
+                        events.append(make_event(
+                            exec_run_id,
+                            EventType.PRECHECK_OK,
+                            f"Batch diagnostics boosted {_boosted_count} targets x{_prefer_multiplier:.1f} "
+                            f"(batch={_bt_filters.batch_id})",
+                            payload={
+                                "batch_id": _bt_filters.batch_id,
+                                "boosted_count": _boosted_count,
+                                "prefer_multiplier": _prefer_multiplier,
+                            },
+                        ))
+            except Exception as _bt_exc:
+                LOGGER.warning(
+                    "batch_diagnostics live filter skipped (non-blocking): %s",
+                    _bt_exc,
+                )
+
             target_by_intent_id: dict[str, Any] = {}
 
             self._repo.insert_execution_run(

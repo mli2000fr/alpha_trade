@@ -410,6 +410,15 @@ batch_diagnostics:
   weak_long_threshold: 0.15
   weak_short_threshold: 0.15
 
+  # Multiplicateur de sizing pour les symboles du top N (rank_type=top).
+  # Appliqué dans le live ET le backtest. 1.0 = pas de boost.
+  prefer_sizing_multiplier: 1.2
+
+  # Parmi les top_n persistés, combien sont effectivement privilégiés
+  # (boost sizing).  Doit être <= top_n.
+  # Exemple : top_n=50, prefer_top_n=10 → seuls les 10 meilleurs sont boostés.
+  prefer_top_n: 10
+
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
 conviction:
