@@ -1,7 +1,8 @@
 """Tests unitaires pour risk_management/batch_diagnostics.py.
 
-Couvre ``apply_batch_diagnostics_to_entries`` qui applique exclusion + boost
-sur les ``PortfolioEntry`` dans l'étape 11 (Risk).
+Couvre :
+- ``boost_candidate_scores`` : boost p_side/p_long/p_short AVANT sizing
+- ``apply_batch_diagnostics_to_entries`` : exclusion uniquement
 """
 from __future__ import annotations
 
@@ -16,7 +17,10 @@ from modelFactory.batch_diagnostics import (
     RANK_TYPE_ZERO_SHORT,
     BatchFilters,
 )
-from risk_management.batch_diagnostics import apply_batch_diagnostics_to_entries
+from risk_management.batch_diagnostics import (
+    apply_batch_diagnostics_to_entries,
+    boost_candidate_scores,
+)
 from risk_management.models import PortfolioEntry
 
 
@@ -29,7 +33,6 @@ def _entry(
     target_notional: float = 15_000.0,
     target_weight: float = 0.05,
 ) -> PortfolioEntry:
-    """Construit un PortfolioEntry minimal pour les tests."""
     return PortfolioEntry(
         symbol=symbol,
         sector="Tech",
@@ -47,221 +50,177 @@ def _entry(
     )
 
 
-def _mock_engine_for_risk(
-    monkeypatch,
-    filters: BatchFilters | None = None,
-) -> MagicMock:
-    """Mock l'engine et get_batch_filters pour les tests Risk."""
-    if filters is None:
-        filters = BatchFilters(
-            batch_id="test-batch",
-            batch_started_at=None,
-            prefer=frozenset({"AAPL", "MSFT"}),
-            exclude_long=frozenset({"TSLA"}),
-            exclude_short=frozenset({"GME"}),
-            all_diagnostics=pd.DataFrame({
-                "symbol": ["AAPL", "MSFT", "TSLA", "GME"],
-                "rank_type": [RANK_TYPE_TOP, RANK_TYPE_TOP, RANK_TYPE_BOTTOM, RANK_TYPE_ZERO_SHORT],
-                "rank_position": [1, 2, 1, None],
-            }),
-        )
+class _FakeCandidate:
+    """Simule un MLRankedCandidate pour les tests de boost_candidate_scores."""
 
+    def __init__(
+        self,
+        symbol: str,
+        side: str = "long",
+        p_side: float = 0.6,
+        p_long: float = 0.5,
+        p_short: float = 0.2,
+    ):
+        self.symbol = symbol
+        self.side = side
+        self.p_side = p_side
+        self.p_long = p_long
+        self.p_short = p_short
+
+
+def _mock_filters(monkeypatch, **kwargs) -> MagicMock:
+    """Mock get_batch_filters pour les tests Risk."""
+    filters = BatchFilters(
+        batch_id="test-batch",
+        batch_started_at=None,
+        prefer=kwargs.get("prefer", frozenset({"AAPL", "MSFT"})),
+        exclude_long=kwargs.get("exclude_long", frozenset({"TSLA"})),
+        exclude_short=kwargs.get("exclude_short", frozenset({"GME"})),
+        all_diagnostics=kwargs.get("all_diagnostics", pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "rank_type": [RANK_TYPE_TOP, RANK_TYPE_TOP],
+            "rank_position": [1, 2],
+        })),
+        batch_comment=kwargs.get("batch_comment"),
+    )
     monkeypatch.setattr(
         "risk_management.batch_diagnostics.get_batch_filters",
-        lambda engine, **kwargs: filters,
+        lambda engine, **kw: filters,
     )
     monkeypatch.setattr(
         "risk_management.batch_diagnostics._load_config_defaults",
-        lambda: {"prefer_sizing_multiplier": 1.2, "prefer_top_n": 10},
+        lambda: {"prefer_sizing_multiplier": 1.5, "prefer_top_n": 10},
     )
-
     return MagicMock()
 
 
-# ── Tests ──────────────────────────────────────────────────────────
+# ── Tests boost_candidate_scores ────────────────────────────────────
+
+class TestBoostCandidateScores:
+
+    def test_boosts_p_side_for_prefer(self, monkeypatch):
+        engine = _mock_filters(monkeypatch)
+        candidates = [
+            _FakeCandidate("AAPL", side="long", p_side=0.5, p_long=0.4),
+            _FakeCandidate("GOOG", side="long", p_side=0.6, p_long=0.5),
+        ]
+        boosted, batch_id = boost_candidate_scores(candidates, engine)
+        assert boosted == 1
+        assert batch_id == "test-batch"
+        assert candidates[0].p_side == pytest.approx(0.75)  # 0.5 × 1.5
+        assert candidates[1].p_side == 0.6  # inchangé
+
+    def test_boosts_p_long_for_long_candidate(self, monkeypatch):
+        engine = _mock_filters(monkeypatch)
+        candidates = [_FakeCandidate("AAPL", side="long", p_side=0.5, p_long=0.4)]
+        boost_candidate_scores(candidates, engine)
+        assert candidates[0].p_long == pytest.approx(0.6)  # 0.4 × 1.5
+
+    def test_boosts_p_short_for_short_candidate(self, monkeypatch):
+        engine = _mock_filters(monkeypatch)
+        candidates = [_FakeCandidate("AAPL", side="short", p_side=0.5, p_short=0.3)]
+        boost_candidate_scores(candidates, engine)
+        assert candidates[0].p_short == pytest.approx(0.45)  # 0.3 × 1.5
+
+    def test_clips_at_one(self, monkeypatch):
+        engine = _mock_filters(monkeypatch)
+        candidates = [_FakeCandidate("AAPL", side="long", p_side=0.9, p_long=0.8)]
+        boost_candidate_scores(candidates, engine)
+        assert candidates[0].p_side == 1.0
+        assert candidates[0].p_long == 1.0
+
+    def test_no_boost_when_prefer_empty(self, monkeypatch):
+        engine = _mock_filters(monkeypatch, prefer=frozenset())
+        candidates = [_FakeCandidate("AAPL", side="long", p_side=0.5)]
+        boosted, _ = boost_candidate_scores(candidates, engine)
+        assert boosted == 0
+
+    def test_no_boost_empty_candidates(self, monkeypatch):
+        engine = _mock_filters(monkeypatch)
+        boosted, batch_id = boost_candidate_scores([], engine)
+        assert boosted == 0
+        assert batch_id is None
+
+    def test_no_boost_when_no_batch(self, monkeypatch):
+        monkeypatch.setattr(
+            "risk_management.batch_diagnostics.get_batch_filters",
+            lambda engine, **kw: BatchFilters(
+                batch_id="", batch_started_at=None,
+                prefer=frozenset(), exclude_long=frozenset(),
+                exclude_short=frozenset(), all_diagnostics=pd.DataFrame(),
+            ),
+        )
+        engine = MagicMock()
+        candidates = [_FakeCandidate("AAPL")]
+        boosted, batch_id = boost_candidate_scores(candidates, engine)
+        assert boosted == 0
+        assert batch_id is None
+
+
+# ── Tests apply_batch_diagnostics_to_entries (exclusion only) ───────
 
 class TestApplyBatchDiagnosticsToEntries:
 
     def test_excludes_long_entry(self, monkeypatch):
-        engine = _mock_engine_for_risk(monkeypatch)
+        engine = _mock_filters(monkeypatch)
         entries = [
             _entry("AAPL", side="buy"),
             _entry("TSLA", side="buy"),
             _entry("MSFT", side="buy"),
         ]
-        result, excluded, boosted, batch_id = apply_batch_diagnostics_to_entries(
-            entries, engine,
-        )
+        result, excluded, batch_id = apply_batch_diagnostics_to_entries(entries, engine)
         assert len(result) == 2
         assert excluded == 1
-        assert boosted == 2  # AAPL et MSFT sont dans prefer
         assert batch_id == "test-batch"
         assert {e.symbol for e in result} == {"AAPL", "MSFT"}
 
     def test_excludes_short_entry(self, monkeypatch):
-        engine = _mock_engine_for_risk(monkeypatch)
-        entries = [
-            _entry("AAPL", side="sell"),
-            _entry("GME", side="sell"),
-        ]
-        result, excluded, boosted, batch_id = apply_batch_diagnostics_to_entries(
-            entries, engine,
-        )
+        engine = _mock_filters(monkeypatch)
+        entries = [_entry("AAPL", side="sell"), _entry("GME", side="sell")]
+        result, excluded, _ = apply_batch_diagnostics_to_entries(entries, engine)
         assert len(result) == 1
         assert excluded == 1
         assert result[0].symbol == "AAPL"
 
-    def test_no_exclusion_when_no_batch_id(self, monkeypatch):
-        empty_filters = BatchFilters(
-            batch_id="", batch_started_at=None,
-            prefer=frozenset(), exclude_long=frozenset(),
-            exclude_short=frozenset(), all_diagnostics=pd.DataFrame(),
+    def test_no_exclusion_when_no_batch(self, monkeypatch):
+        monkeypatch.setattr(
+            "risk_management.batch_diagnostics.get_batch_filters",
+            lambda engine, **kw: BatchFilters(
+                batch_id="", batch_started_at=None,
+                prefer=frozenset(), exclude_long=frozenset({"TSLA"}),
+                exclude_short=frozenset(), all_diagnostics=pd.DataFrame(),
+            ),
         )
-        engine = _mock_engine_for_risk(monkeypatch, filters=empty_filters)
+        engine = MagicMock()
         entries = [_entry("TSLA", side="buy")]
-        result, excluded, boosted, batch_id = apply_batch_diagnostics_to_entries(
-            entries, engine,
-        )
+        result, excluded, batch_id = apply_batch_diagnostics_to_entries(entries, engine)
         assert len(result) == 1
         assert excluded == 0
-        assert boosted == 0
         assert batch_id is None
 
     def test_empty_entries_unchanged(self, monkeypatch):
-        engine = _mock_engine_for_risk(monkeypatch)
-        result, excluded, boosted, batch_id = apply_batch_diagnostics_to_entries(
-            [], engine,
-        )
+        engine = _mock_filters(monkeypatch)
+        result, excluded, _ = apply_batch_diagnostics_to_entries([], engine)
         assert result == []
         assert excluded == 0
-        assert boosted == 0
 
-    def test_boosts_prefer_approved_shares(self, monkeypatch):
-        engine = _mock_engine_for_risk(monkeypatch)
+    def test_boost_no_longer_applied(self, monkeypatch):
+        """Vérifie que le boost N'EST PLUS fait dans cette fonction."""
+        engine = _mock_filters(monkeypatch, prefer=frozenset({"AAPL"}))
         entries = [_entry("AAPL", side="buy", approved_shares=100.0, target_notional=15_000.0)]
-        result, excluded, boosted, _ = apply_batch_diagnostics_to_entries(
-            entries, engine, prefer_multiplier=1.5,
-        )
+        result, excluded, _ = apply_batch_diagnostics_to_entries(entries, engine)
         assert excluded == 0
-        assert boosted == 1
-        assert result[0].approved_shares == 150.0  # 100 × 1.5
-        assert result[0].target_notional == 22_500.0  # 15000 × 1.5
-
-    def test_boosts_only_prefer_symbols(self, monkeypatch):
-        engine = _mock_engine_for_risk(monkeypatch)
-        entries = [
-            _entry("AAPL", side="buy", approved_shares=100.0),
-            _entry("GOOG", side="buy", approved_shares=50.0),
-        ]
-        result, excluded, boosted, _ = apply_batch_diagnostics_to_entries(
-            entries, engine, prefer_multiplier=2.0,
-        )
-        assert excluded == 0
-        assert boosted == 1  # seul AAPL dans prefer
-        aapl = next(e for e in result if e.symbol == "AAPL")
-        goog = next(e for e in result if e.symbol == "GOOG")
-        assert aapl.approved_shares == 200.0
-        assert goog.approved_shares == 50.0  # inchangé
-
-    def test_no_boost_when_multiplier_is_one(self, monkeypatch):
-        engine = _mock_engine_for_risk(monkeypatch)
-        entries = [_entry("AAPL", side="buy", approved_shares=100.0)]
-        result, excluded, boosted, _ = apply_batch_diagnostics_to_entries(
-            entries, engine, prefer_multiplier=1.0,
-        )
-        assert excluded == 0
-        assert boosted == 0
-        assert result[0].approved_shares == 100.0  # inchangé
-
-    def test_prefer_top_n_respected(self, monkeypatch):
-        """Seuls les top N sont boostés."""
-        filters = BatchFilters(
-            batch_id="test",
-            batch_started_at=None,
-            prefer=frozenset({"A", "B", "C", "D", "E"}),
-            exclude_long=frozenset(),
-            exclude_short=frozenset(),
-            all_diagnostics=pd.DataFrame({
-                "symbol": ["A", "B", "C", "D", "E"],
-                "rank_type": [RANK_TYPE_TOP] * 5,
-                "rank_position": [1, 2, 3, 4, 5],
-            }),
-        )
-        engine = _mock_engine_for_risk(monkeypatch, filters=filters)
-
-        entries = [
-            _entry("A", side="buy", approved_shares=100.0),
-            _entry("B", side="buy", approved_shares=100.0),
-            _entry("C", side="buy", approved_shares=100.0),
-            _entry("D", side="buy", approved_shares=100.0),
-            _entry("E", side="buy", approved_shares=100.0),
-        ]
-        result, excluded, boosted, _ = apply_batch_diagnostics_to_entries(
-            entries, engine, prefer_multiplier=2.0, prefer_top_n=2,
-        )
-        assert excluded == 0
-        assert boosted == 2  # seuls A et B
-        for e in result:
-            if e.symbol in ("A", "B"):
-                assert e.approved_shares == 200.0
-            else:
-                assert e.approved_shares == 100.0
-
-    def test_combined_exclusion_and_boost(self, monkeypatch):
-        """Un symbole exclu n'est PAS boosté même s'il est prefer."""
-        filters = BatchFilters(
-            batch_id="test",
-            batch_started_at=None,
-            prefer=frozenset({"TSLA", "AAPL"}),
-            exclude_long=frozenset({"TSLA"}),
-            exclude_short=frozenset(),
-            all_diagnostics=pd.DataFrame({
-                "symbol": ["TSLA", "AAPL"],
-                "rank_type": [RANK_TYPE_TOP, RANK_TYPE_TOP],
-                "rank_position": [1, 2],
-            }),
-        )
-        engine = _mock_engine_for_risk(monkeypatch, filters=filters)
-
-        entries = [
-            _entry("TSLA", side="buy", approved_shares=100.0),
-            _entry("AAPL", side="buy", approved_shares=100.0),
-        ]
-        result, excluded, boosted, _ = apply_batch_diagnostics_to_entries(
-            entries, engine, prefer_multiplier=2.0,
-        )
-        assert excluded == 1  # TSLA exclu
-        assert boosted == 1  # seul AAPL boosté
-        assert len(result) == 1
-        assert result[0].symbol == "AAPL"
-        assert result[0].approved_shares == 200.0
+        assert result[0].approved_shares == 100.0  # INCHANGÉ
+        assert result[0].target_notional == 15_000.0  # INCHANGÉ
 
     def test_side_case_insensitive(self, monkeypatch):
-        engine = _mock_engine_for_risk(monkeypatch)
+        engine = _mock_filters(monkeypatch)
         entries = [
             _entry("TSLA", side="LONG"),
             _entry("GME", side="SELL"),
             _entry("AAPL", side="buy"),
         ]
-        result, excluded, boosted, _ = apply_batch_diagnostics_to_entries(
-            entries, engine,
-        )
-        assert excluded == 2  # TSLA (exclude_long) + GME (exclude_short)
+        result, excluded, _ = apply_batch_diagnostics_to_entries(entries, engine)
+        assert excluded == 2
         assert len(result) == 1
         assert result[0].symbol == "AAPL"
-
-    def test_exception_returns_unchanged(self, monkeypatch):
-        """Si get_batch_filters lève une exception, entries inchangées."""
-        monkeypatch.setattr(
-            "risk_management.batch_diagnostics.get_batch_filters",
-            MagicMock(side_effect=RuntimeError("DB down")),
-        )
-        engine = MagicMock()
-        entries = [_entry("AAPL", side="buy")]
-        result, excluded, boosted, batch_id = apply_batch_diagnostics_to_entries(
-            entries, engine,
-        )
-        assert len(result) == 1
-        assert excluded == 0
-        assert boosted == 0
-        assert batch_id is None

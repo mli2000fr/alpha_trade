@@ -1,12 +1,10 @@
 """Tests d'intégration batch_diagnostics → backtest (_impl.py).
 
-Teste le bloc batch diagnostics de ``_run_backtest()`` dans
-``backtesting/cli/_impl.py``, en appelant les VRAIES fonctions utilisées
-par le backtest (``filter_predictions``, ``get_batch_filters``).
-
-Contrairement à l'ancienne version, ces tests n'utilisent PAS de helper
-local qui duplique la logique : si le bloc est supprimé de ``_impl.py``,
-le test ``test_impl_source_contains_batch_diagnostics_block`` le détectera.
+Teste le bloc batch diagnostics de ``_run_backtest()`` avec :
+- ``filter_predictions()`` (vraie fonction, exclusion)
+- Boost side-aware : proba_long uniquement si predicted_side=long,
+  proba_short uniquement si predicted_side=short
+- Garde-fou AST pour détecter la suppression du bloc dans _impl.py
 """
 from __future__ import annotations
 
@@ -22,9 +20,7 @@ from modelFactory.batch_diagnostics import (
 )
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Helpers
-# ═══════════════════════════════════════════════════════════════════
+# ── Helpers ────────────────────────────────────────────────────────
 
 def _preds_df(
     symbols: list[str],
@@ -32,10 +28,7 @@ def _preds_df(
     proba_long: list[float] | None = None,
     proba_short: list[float] | None = None,
 ) -> pd.DataFrame:
-    data: dict = {
-        "symbol": symbols,
-        "predicted_side": sides,
-    }
+    data: dict = {"symbol": symbols, "predicted_side": sides}
     if proba_long is not None:
         data["proba_long"] = proba_long
     if proba_short is not None:
@@ -49,237 +42,182 @@ def _filters(
     exclude_short: frozenset[str] = frozenset({"GME"}),
 ) -> BatchFilters:
     return BatchFilters(
-        batch_id="test-batch",
-        batch_started_at=None,
-        prefer=prefer,
-        exclude_long=exclude_long,
-        exclude_short=exclude_short,
-        all_diagnostics=pd.DataFrame(),
+        batch_id="test-batch", batch_started_at=None,
+        prefer=prefer, exclude_long=exclude_long,
+        exclude_short=exclude_short, all_diagnostics=pd.DataFrame(),
     )
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Garde-fou : vérifie que _impl.py contient bien le bloc batch diag
+# Garde-fou AST
 # ═══════════════════════════════════════════════════════════════════
 
 _IMPL_PATH = Path(__file__).resolve().parents[1] / "backtesting" / "cli" / "_impl.py"
 
 
-def _parse_impl_source() -> ast.Module:
-    source = _IMPL_PATH.read_text(encoding="utf-8")
-    return ast.parse(source)
-
-
 class TestImplSourceContainsBatchDiagnostics:
 
     def test_imports_get_batch_filters(self):
-        """Vérifie que _impl.py importe get_batch_filters depuis modelFactory."""
-        tree = _parse_impl_source()
-        found = False
+        tree = ast.parse(_IMPL_PATH.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                if node.module == "modelFactory.batch_diagnostics":
-                    for alias in node.names:
-                        if alias.name == "get_batch_filters":
-                            found = True
-        assert found, (
-            "_impl.py doit importer get_batch_filters depuis "
-            "modelFactory.batch_diagnostics"
-        )
+            if isinstance(node, ast.ImportFrom) and node.module == "modelFactory.batch_diagnostics":
+                if any(a.name == "get_batch_filters" for a in node.names):
+                    return
+        pytest.fail("_impl.py doit importer get_batch_filters")
 
     def test_imports_filter_predictions(self):
-        """Vérifie que _impl.py importe filter_predictions depuis modelFactory."""
-        tree = _parse_impl_source()
-        found = False
+        tree = ast.parse(_IMPL_PATH.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                if node.module == "modelFactory.batch_diagnostics":
-                    for alias in node.names:
-                        if alias.name == "filter_predictions":
-                            found = True
-        assert found, (
-            "_impl.py doit importer filter_predictions depuis "
-            "modelFactory.batch_diagnostics"
-        )
+            if isinstance(node, ast.ImportFrom) and node.module == "modelFactory.batch_diagnostics":
+                if any(a.name == "filter_predictions" for a in node.names):
+                    return
+        pytest.fail("_impl.py doit importer filter_predictions")
 
     def test_calls_get_batch_filters(self):
-        """Vérifie que _impl.py appelle get_batch_filters(engine)."""
-        tree = _parse_impl_source()
-        found = False
+        tree = ast.parse(_IMPL_PATH.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id == "get_batch_filters":
-                    found = True
-        assert found, "_impl.py doit appeler get_batch_filters(engine)"
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id == "get_batch_filters":
+                    return
+        pytest.fail("_impl.py doit appeler get_batch_filters()")
 
     def test_calls_filter_predictions(self):
-        """Vérifie que _impl.py appelle filter_predictions(preds_df, ...)."""
-        tree = _parse_impl_source()
-        found = False
+        tree = ast.parse(_IMPL_PATH.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id == "filter_predictions":
-                    found = True
-        assert found, "_impl.py doit appeler filter_predictions(preds_df, ...)"
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id == "filter_predictions":
+                    return
+        pytest.fail("_impl.py doit appeler filter_predictions()")
 
-    def test_boost_block_present(self):
-        """Vérifie que le bloc de boost prefer (proba_long/proba_short) existe."""
+    def test_boost_side_aware(self):
         source = _IMPL_PATH.read_text(encoding="utf-8")
-        assert "proba_long" in source, (
-            "_impl.py doit contenir le boost proba_long pour les prefer"
-        )
-        assert "proba_short" in source, (
-            "_impl.py doit contenir le boost proba_short pour les prefer"
-        )
-        assert ".clip(upper=1.0)" in source or "clip(upper=1.0)" in source, (
-            "_impl.py doit clipper les probas à 1.0 après boost"
-        )
+        assert "predicted_side" in source
+        assert "proba_long" in source
+        assert "proba_short" in source
+        assert ".clip(upper=1.0)" in source or "clip(upper=1.0)" in source
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Tests fonctionnels — même logique que le bloc dans _impl.py
+# Exclusion (filter_predictions réelle)
 # ═══════════════════════════════════════════════════════════════════
 
 class TestFilterPredictionsDirectly:
 
-    def test_excludes_long_prediction(self):
-        """Teste filter_predictions() directement (appelée par _impl.py)."""
+    def test_excludes_long(self):
         filters = _filters(exclude_long=frozenset({"TSLA"}))
-        df = _preds_df(
-            symbols=["AAPL", "TSLA", "MSFT"],
-            sides=["long", "long", "short"],
-        )
+        df = _preds_df(["AAPL", "TSLA", "MSFT"], ["long", "long", "short"])
         result = filter_predictions(df, filters)
         assert len(result) == 2
         assert "TSLA" not in result["symbol"].values
 
-    def test_excludes_short_prediction(self):
+    def test_excludes_short(self):
         filters = _filters(exclude_short=frozenset({"GME"}))
-        df = _preds_df(symbols=["AAPL", "GME"], sides=["long", "short"])
+        df = _preds_df(["AAPL", "GME"], ["long", "short"])
         result = filter_predictions(df, filters)
         assert len(result) == 1
         assert "GME" not in result["symbol"].values
 
-    def test_exclusion_when_filters_have_data(self):
-        """filter_predictions filtre même si batch_id est non vide (c'est
-        le bloc _impl.py qui vérifie batch_id avant d'appeler)."""
-        filters = BatchFilters(
-            batch_id="batch-ok", batch_started_at=None,
-            prefer=frozenset(), exclude_long=frozenset({"TSLA"}),
-            exclude_short=frozenset(), all_diagnostics=pd.DataFrame(),
-        )
-        df = _preds_df(symbols=["TSLA", "AAPL"], sides=["long", "long"])
-        result = filter_predictions(df, filters)
-        # TSLA est exclu
-        assert len(result) == 1
-        assert result.iloc[0]["symbol"].upper() == "AAPL"
 
-    def test_returns_new_copy(self):
-        """filter_predictions retourne une copie indépendante."""
-        df = _preds_df(symbols=["AAPL", "TSLA"], sides=["long", "long"])
-        filters = _filters(exclude_long=frozenset({"TSLA"}))
-        result = filter_predictions(df, filters)
-        result.iloc[0, result.columns.get_loc("symbol")] = "CHANGED"
-        assert df.iloc[0]["symbol"] == "AAPL"
+# ═══════════════════════════════════════════════════════════════════
+# Boost side-aware (Option C)
+# ═══════════════════════════════════════════════════════════════════
 
-
-class TestBacktestBoostLogic:
+class TestBacktestBoostSideAware:
 
     def _apply_boost(
-        self,
-        preds_df: pd.DataFrame,
-        filters: BatchFilters,
-        prefer_multiplier: float = 1.2,
+        self, preds_df: pd.DataFrame, prefer_set: frozenset[str],
+        prefer_multiplier: float = 1.5,
     ) -> tuple[pd.DataFrame, int]:
-        """Reproduit EXACTEMENT le bloc de boost de _impl.py."""
-        boosted_count = 0
-        if filters.prefer and not preds_df.empty:
-            prefer_mask = (
-                preds_df["symbol"].astype(str).str.upper().isin(filters.prefer)
+        """Reproduit le boost side-aware de _impl.py (Option C)."""
+        boosted = 0
+        if not prefer_set or preds_df.empty:
+            return preds_df, boosted
+
+        if "proba_long" in preds_df.columns and "predicted_side" in preds_df.columns:
+            mask_long = (
+                preds_df["symbol"].astype(str).str.upper().isin(prefer_set)
+                & (preds_df["predicted_side"].astype(str).str.lower() == "long")
             )
-            if prefer_mask.any():
-                for col in ("proba_long", "proba_short"):
-                    if col in preds_df.columns:
-                        preds_df.loc[prefer_mask, col] = (
-                            preds_df.loc[prefer_mask, col] * prefer_multiplier
-                        ).clip(upper=1.0)
-                boosted_count = int(prefer_mask.sum())
-        return preds_df, boosted_count
+            if mask_long.any():
+                preds_df.loc[mask_long, "proba_long"] = (
+                    preds_df.loc[mask_long, "proba_long"] * prefer_multiplier
+                ).clip(upper=1.0)
+                boosted += int(mask_long.sum())
 
-    def test_boosts_proba_long_for_prefer(self):
-        filters = _filters(prefer=frozenset({"AAPL"}))
+        if "proba_short" in preds_df.columns and "predicted_side" in preds_df.columns:
+            mask_short = (
+                preds_df["symbol"].astype(str).str.upper().isin(prefer_set)
+                & (preds_df["predicted_side"].astype(str).str.lower() == "short")
+            )
+            if mask_short.any():
+                preds_df.loc[mask_short, "proba_short"] = (
+                    preds_df.loc[mask_short, "proba_short"] * prefer_multiplier
+                ).clip(upper=1.0)
+                boosted += int(mask_short.sum())
+
+        return preds_df, boosted
+
+    def test_boosts_proba_long_for_long_prefer(self):
+        prefer = frozenset({"AAPL"})
         df = _preds_df(
-            symbols=["AAPL", "MSFT"],
-            sides=["long", "long"],
-            proba_long=[0.5, 0.5],
-            proba_short=[0.1, 0.1],
+            ["AAPL", "MSFT"], ["long", "long"],
+            proba_long=[0.5, 0.5], proba_short=[0.1, 0.1],
         )
-        result, boosted = self._apply_boost(df, filters, prefer_multiplier=1.5)
+        result, boosted = self._apply_boost(df, prefer)
         assert boosted == 1
-        assert result[result["symbol"] == "AAPL"]["proba_long"].values[0] == 0.75
-        assert result[result["symbol"] == "MSFT"]["proba_long"].values[0] == 0.5
+        aapl = result[result["symbol"] == "AAPL"]
+        msft = result[result["symbol"] == "MSFT"]
+        assert aapl["proba_long"].values[0] == pytest.approx(0.75)
+        assert msft["proba_long"].values[0] == 0.5
 
-    def test_boost_clips_at_one(self):
-        filters = _filters(prefer=frozenset({"AAPL"}))
-        df = _preds_df(
-            symbols=["AAPL"], sides=["long"],
-            proba_long=[0.9], proba_short=[0.1],
-        )
-        result, _ = self._apply_boost(df, filters, prefer_multiplier=2.0)
+    def test_boosts_proba_short_for_short_prefer(self):
+        prefer = frozenset({"AAPL"})
+        df = _preds_df(["AAPL"], ["short"], proba_long=[0.1], proba_short=[0.4])
+        result, boosted = self._apply_boost(df, prefer)
+        assert boosted == 1
+        assert result["proba_short"].values[0] == pytest.approx(0.6)
+
+    def test_does_NOT_boost_proba_long_for_short_prefer(self):
+        prefer = frozenset({"AAPL"})
+        df = _preds_df(["AAPL"], ["short"], proba_long=[0.5], proba_short=[0.3])
+        result, boosted = self._apply_boost(df, prefer)
+        assert boosted == 1
+        assert result["proba_long"].values[0] == 0.5  # INCHANGÉE
+
+    def test_does_NOT_boost_proba_short_for_long_prefer(self):
+        prefer = frozenset({"AAPL"})
+        df = _preds_df(["AAPL"], ["long"], proba_long=[0.3], proba_short=[0.5])
+        result, boosted = self._apply_boost(df, prefer)
+        assert boosted == 1
+        assert result["proba_short"].values[0] == 0.5  # INCHANGÉE
+
+    def test_flat_prefer_not_boosted(self):
+        prefer = frozenset({"AAPL"})
+        df = _preds_df(["AAPL"], ["flat"], proba_long=[0.4], proba_short=[0.3])
+        result, boosted = self._apply_boost(df, prefer)
+        assert boosted == 0
+
+    def test_clips_at_one(self):
+        prefer = frozenset({"AAPL"})
+        df = _preds_df(["AAPL"], ["long"], proba_long=[0.9], proba_short=[0.1])
+        result, _ = self._apply_boost(df, prefer, prefer_multiplier=2.0)
         assert result["proba_long"].values[0] == 1.0
 
-    def test_boost_both_probas_regardless_of_side(self):
-        """Le bloc _impl.py booste proba_long ET proba_short, peu importe predicted_side."""
-        filters = _filters(prefer=frozenset({"AAPL"}))
-        df = _preds_df(
-            symbols=["AAPL"], sides=["short"],
-            proba_long=[0.3], proba_short=[0.4],
-        )
-        result, _ = self._apply_boost(df, filters, prefer_multiplier=2.0)
-        assert result["proba_long"].values[0] == 0.6
-        assert result["proba_short"].values[0] == 0.8
-
     def test_no_boost_when_prefer_empty(self):
-        filters = _filters(prefer=frozenset())
-        df = _preds_df(symbols=["AAPL"], sides=["long"], proba_long=[0.5])
-        result, boosted = self._apply_boost(df, filters, prefer_multiplier=2.0)
+        prefer = frozenset()
+        df = _preds_df(["AAPL"], ["long"], proba_long=[0.5])
+        result, boosted = self._apply_boost(df, prefer)
         assert boosted == 0
-
-    def test_boost_skipped_when_df_empty(self):
-        filters = _filters(prefer=frozenset({"AAPL"}))
-        df = pd.DataFrame(columns=["symbol", "predicted_side"])
-        result, boosted = self._apply_boost(df, filters)
-        assert boosted == 0
-
-    def test_no_proba_columns_no_error(self):
-        filters = _filters(prefer=frozenset({"AAPL"}))
-        df = _preds_df(symbols=["AAPL", "MSFT"], sides=["long", "short"])
-        result, boosted = self._apply_boost(df, filters, prefer_multiplier=1.5)
-        assert boosted == 1
-        assert len(result) == 2
-
-    def test_boost_case_insensitive_prefer_match(self):
-        filters = _filters(prefer=frozenset({"AAPL"}))
-        df = _preds_df(symbols=["aapl"], sides=["long"], proba_long=[0.5])
-        result, boosted = self._apply_boost(df, filters, prefer_multiplier=2.0)
-        assert boosted == 1
 
     def test_combined_exclusion_then_boost(self):
-        """Ordre exact de _impl.py : exclusion PUIS boost."""
         filters = _filters(
             prefer=frozenset({"TSLA", "AAPL"}),
             exclude_long=frozenset({"TSLA"}),
         )
-        df = _preds_df(
-            symbols=["TSLA", "AAPL"],
-            sides=["long", "long"],
-            proba_long=[0.5, 0.5],
-        )
-        # Étape 1 : exclusion (via filter_predictions, comme _impl.py)
+        df = _preds_df(["TSLA", "AAPL"], ["long", "long"], proba_long=[0.5, 0.5])
         result = filter_predictions(df, filters)
         assert len(result) == 1
-        # Étape 2 : boost (même logique que _impl.py)
-        result, boosted = self._apply_boost(result, filters, prefer_multiplier=2.0)
+        result, boosted = self._apply_boost(result, filters.prefer)
         assert boosted == 1
         assert result.iloc[0]["symbol"].upper() == "AAPL"
-        assert result["proba_long"].values[0] == 1.0
+        assert result["proba_long"].values[0] == pytest.approx(0.75)

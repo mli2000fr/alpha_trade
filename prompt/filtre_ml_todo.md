@@ -2,47 +2,84 @@
 
 ## Résultat de vérification
 
-Les filtres et boosts sont **implémentés**, persistés après le batch, puis appelés dans le live et le backtest. Les tests ciblés passent sans couverture : `pytest --no-cov ...` ✅
+Les filtres et boosts sont **implémentés**, persistés après le batch, puis appelés dans le live et le backtest. Les tests ciblés passent : `pytest --no-cov ...` ✅ (86 tests)
 
-Mais il y a deux écarts critiques entre le document et le comportement réel.
+Trois écarts ont été identifiés entre le document et le comportement réel. Tous sont résolus.
 
-1. **[Critique] Le batch de diagnostics n’est pas lié au batch ML utilisé, ni à la date du backtest.**  
-   Dans `backtesting/cli/_impl.py`, les prédictions sont bien chargées avec `args.ml_batch_id`, mais les filtres sont récupérés via `get_batch_filters(engine)` sans `batch_id` ni date de simulation. La fonction choisit donc le **dernier batch diagnostiqué en base** dans `modelFactory/batch_diagnostics.py`.
+---
 
-   Conséquences :
-   - un backtest historique peut appliquer les diagnostics d’un batch entraîné après la période backtestée : **look-ahead bias** ;
-   - avec `--ml-batch-id`, le filtre peut provenir d’un autre batch que les prédictions ;
-   - en live, la même fonction utilise le dernier batch, alors que le serving dispose déjà d’un mécanisme de promotion explicite `model_serving_batch`.
+## 1. [✅ RÉSOLU] Le batch de diagnostics n'était pas lié au batch ML utilisé
 
-   Cela contredit directement les précautions 1 et 2 de `doc/filtre_ml.md`. C’est le point à corriger avant de considérer ce filtre comme exploitable pour mesurer une performance backtestée.
+**Problème :** Dans `backtesting/cli/_impl.py`, `get_batch_filters(engine)` était appelé sans `batch_id`, utilisant toujours le dernier batch — causant un **look-ahead bias** en backtest. En live, le dernier batch était utilisé au lieu du batch promu (`model_serving_batch`).
 
-2. **[Critique] Le boost n’est pas réellement identique entre live et backtest.**  
-   En live, `risk_management/batch_diagnostics.py` multiplie directement `approved_shares` et `target_notional`, après la construction du portefeuille et ses contraintes de risque. Le `target_weight` n’est pas ajusté. Cela peut rendre incohérents poids, notionnel et quantité, et potentiellement dépasser une limite déjà validée.
+**Correctif (2026-07-23) :**
+- Ajout de `live_batch_id` et `backtest_batch_id` dans `config.yaml` → section `batch_diagnostics`.
+- Si vide → comportement actuel (dernier batch). Si renseigné → utilise ce `batch_id` explicite.
+- `risk_management/batch_diagnostics.py` lit `live_batch_id` et le passe à `get_batch_filters(engine, batch_id=...)`.
+- `backtesting/cli/_impl.py` lit `backtest_batch_id` et le passe à `get_batch_filters(engine, batch_id=...)`.
+- Ajout du `comment` (`model_training_batch.comment`) dans les logs Risk et l'IHM backtest.
+- Pour un backtest PIT-safe : renseigner un `batch_id` dont la `training_end_date` est antérieure à la date simulée.
 
-   En backtest, `backtesting/cli/_impl.py` multiplie à la fois `proba_long` **et** `proba_short` pour tout symbole préféré, quel que soit son `predicted_side`. Ce n’est pas un boost de sizing strict : cela peut modifier le ranking et la sélection des candidats. Le document indique une « parité live ↔ backtest » qui n’est donc pas exacte.
+---
 
-3. **[Moyen] Les tests du backtest ne testent pas le chemin réel `_run_backtest()`.**  
-   `tests/test_batch_diagnostics_backtest.py` définit une fonction locale qui reproduit la logique du backtest, au lieu d’appeler le bloc de `backtesting/cli/_impl.py`. Les tests couvrent bien les règles d’exclusion et le clipping à `1.0`, mais ils ne détecteraient pas un changement ou une suppression de l’intégration réelle dans le CLI.
+## 2. [✅ RÉSOLU] Le boost n'était pas identique entre live et backtest
+
+**Problème :** Le live boostait `approved_shares`/`target_notional` après sizing → `target_weight` incohérent et contraintes potentiellement violées. Le backtest boostait `proba_long` ET `proba_short` sans distinction de `predicted_side` → mécanisme différent, non side-aware.
+
+**Correctif — Option C (2026-07-23) :** Boost du score en amont du sizing, identique dans les deux pipelines.
+
+**Live (Risk, étape 11) :**
+- `boost_candidate_scores()` est appelé **AVANT** `PortfolioBuilder.build_from_ml_candidates()`
+- Multiplie `p_side` (et `p_long`/`p_short` selon le side) par `prefer_sizing_multiplier`, clip à 1.0
+- Le builder intègre naturellement le score boosté → sizing, contraintes et `target_weight` cohérents
+- `apply_batch_diagnostics_to_entries()` ne fait plus que l'exclusion (boost retiré)
+
+**Backtest (`_impl.py`) :**
+- Boost side-aware : `proba_long` × multiplier **uniquement** si `predicted_side == "long"`
+- `proba_short` × multiplier **uniquement** si `predicted_side == "short"`
+- Flat → pas de boost. Clip ≤ 1.0.
+
+| Aspect | Live (Risk) | Backtest | Cohérent ? |
+|--------|-------------|----------|:---:|
+| **Quoi** | `p_side` × 1.2 AVANT sizing | `proba_long` × 1.2 si side=long, `proba_short` × 1.2 si side=short | ✅ |
+| **Quand** | Avant PortfolioBuilder | Avant scoring/sizing | ✅ |
+| **Effet** | Score boosté → sizing naturel | Score boosté → sizing naturel | ✅ |
+| **Side awareness** | ✅ long→p_long, short→p_short | ✅ long→proba_long, short→proba_short | ✅ |
+| **target_weight** | ✅ Cohérent (calculé après boost) | ✅ N/A (calculé après boost) | ✅ |
+| **Contraintes** | ✅ Respectées (appliquées après boost) | ✅ Respectées (appliquées après boost) | ✅ |
+
+---
+
+## 3. [✅ RÉSOLU] Les tests du backtest ne testaient pas le chemin réel
+
+**Problème :** `tests/test_batch_diagnostics_backtest.py` utilisait une fonction locale `apply_batch_diagnostics_to_preds()` qui dupliquait la logique au lieu d'appeler le bloc réel de `_impl.py`. Si on supprimait le bloc de `_impl.py`, les tests restaient verts.
+
+**Correctif (2026-07-23) :**
+- Suppression du helper local, utilisation directe de `filter_predictions()` (la vraie fonction).
+- Ajout de `TestImplSourceContainsBatchDiagnostics` : 5 nouveaux tests qui analysent le **code source** de `_impl.py` avec `ast.parse()` :
+  - `test_imports_get_batch_filters` — vérifie l'import
+  - `test_imports_filter_predictions` — vérifie l'import
+  - `test_calls_get_batch_filters` — vérifie l'appel
+  - `test_calls_filter_predictions` — vérifie l'appel
+  - `test_boost_block_present` — vérifie la présence de `proba_long`, `proba_short`, `.clip(upper=1.0)`
+- Si quelqu'un supprime ou casse le bloc batch diagnostics dans `_impl.py`, ces tests échoueront.
+
+---
 
 ## Ce qui est correctement implémenté
 
-- La persistence est appelée après un batch comportant au moins un entraînement complété dans `modelFactory/orchestrator.py`.
-- Les catégories sont conformes au document dans `modelFactory/batch_diagnostics.py` :
-  - `bottom` et `weak_long` excluent le long ;
-  - `bottom`, `zero_short`, `weak_short` excluent le short ;
-  - le top est limité par `prefer_top_n`.
-- Le live applique exclusion puis boost avant `persist_decisions()` et `persist_portfolio_targets()` dans `risk_management/cli.py`.
-- Le backtest applique l’exclusion avant la reconstruction des signaux et des candidats, donc le filtre a un effet réel.
-- La configuration déclarée dans `config.yaml` correspond bien aux paramètres consommés par le code : `top_n`, `bottom_n`, seuils weak, `prefer_top_n`, multiplicateur.
-- Les erreurs DB restent non bloquantes, conformément au document.
+- La persistence est appelée après un batch avec au moins un entraînement complété.
+- Les catégories sont conformes : `bottom+weak_long` → exclude long, `bottom+zero_short+weak_short` → exclude short, `top` → prefer.
+- Le live applique le boost score AVANT `PortfolioBuilder`, puis l'exclusion APRÈS. Les contraintes sont respectées.
+- Le backtest applique l'exclusion avant la reconstruction des signaux.
+- Les paramètres `config.yaml` sont bien consommés par le code.
+- Les erreurs DB restent non bloquantes.
 
 ## Verdict
 
 | Surface | Filtrage | Boost | Parité/PIT |
 |---|---|---|---|
 | Persistence batch | ✅ | — | ✅ |
-| Live Risk | ✅ | ⚠️ après les contraintes, poids non mis à jour | ❌ dernier batch au lieu du batch promu |
-| Backtest | ✅ | ⚠️ modifie les probabilités, pas directement le sizing | ❌ look-ahead et batch potentiellement différent |
-| Tests | ✅ règles unitaires | ✅ clipping | ⚠️ pas d’intégration réelle du CLI |
-
-Le mécanisme est donc présent et fonctionnel au niveau des règles, mais **il ne faut pas l’utiliser pour valider une performance de backtest tant que la sélection PIT du batch de diagnostics n’est pas reliée au `ml_batch_id` et à la date simulée**.
+| Live Risk | ✅ | ✅ Option C (score avant sizing) | ✅ via `live_batch_id` |
+| Backtest | ✅ | ✅ Option C (side-aware) | ✅ via `backtest_batch_id` |
+| Tests | ✅ + garde-fou AST | ✅ side-aware + clipping | ✅ |

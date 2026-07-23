@@ -2420,7 +2420,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     )
                 )
 
-            # ── Étape 2 : booster sizing pour les prefer (parité live) ──
+            # ── Étape 2 : booster score prefer (side-aware, parité live) ──
+            # Boost uniquement la proba correspondant au predicted_side,
+            # et seulement pour les symboles dans le top N (prefer).
+            # Cela impacte le selection_score → sizing, en amont des
+            # contraintes de risque, comme dans le live (Option C).
             if _bt_filters.prefer and not preds_df.empty:
                 _prefer_mult = 1.2
                 try:
@@ -2434,14 +2438,32 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     )
                 except Exception:
                     pass
-                _prefer_mask = preds_df["symbol"].astype(str).str.upper().isin(_bt_filters.prefer)
-                if _prefer_mask.any():
-                    for _col in ("proba_long", "proba_short"):
-                        if _col in preds_df.columns:
-                            preds_df.loc[_prefer_mask, _col] = (
-                                preds_df.loc[_prefer_mask, _col] * _prefer_mult
-                            ).clip(upper=1.0)
-                    _bt_boosted_count = int(_prefer_mask.sum())
+                _prefer_set = _bt_filters.prefer
+                _boosted = 0
+                # Boost proba_long uniquement pour les prefer prédits long
+                if "proba_long" in preds_df.columns and "predicted_side" in preds_df.columns:
+                    _mask_long = (
+                        preds_df["symbol"].astype(str).str.upper().isin(_prefer_set)
+                        & (preds_df["predicted_side"].astype(str).str.lower() == "long")
+                    )
+                    if _mask_long.any():
+                        preds_df.loc[_mask_long, "proba_long"] = (
+                            preds_df.loc[_mask_long, "proba_long"] * _prefer_mult
+                        ).clip(upper=1.0)
+                        _boosted += int(_mask_long.sum())
+                # Boost proba_short uniquement pour les prefer prédits short
+                if "proba_short" in preds_df.columns and "predicted_side" in preds_df.columns:
+                    _mask_short = (
+                        preds_df["symbol"].astype(str).str.upper().isin(_prefer_set)
+                        & (preds_df["predicted_side"].astype(str).str.lower() == "short")
+                    )
+                    if _mask_short.any():
+                        preds_df.loc[_mask_short, "proba_short"] = (
+                            preds_df.loc[_mask_short, "proba_short"] * _prefer_mult
+                        ).clip(upper=1.0)
+                        _boosted += int(_mask_short.sum())
+                _bt_boosted_count = _boosted
+                if _bt_boosted_count > 0:
                     _safe_print(
                         "   batch_diagnostics: boosted {} prefer symbols "
                         "x{:.1f} (batch={})\n".format(

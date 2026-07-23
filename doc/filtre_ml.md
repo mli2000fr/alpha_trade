@@ -174,29 +174,36 @@ preds_df = filter_predictions(preds_df, filters)
 
 ### Live — Risk Management (`risk_management/cli.py`)
 
-Intégré dans l'étape 11 (Risk), juste avant la persistance des `portfolio_targets` :
+Intégré dans l'étape 11 (Risk) en deux temps :
 
 ```
-1. PortfolioBuilder → entries (list[PortfolioEntry])
-2. FILTRE BATCH (non-bloquant, try/except) :
-   ├─ get_batch_filters(engine) → dernier batch
-   ├─ Exclusion : si side ∈ {sell, short} ET symbole ∈ exclude_short → retirer
-   │              si side ∈ {buy, long}   ET symbole ∈ exclude_long  → retirer
-   └─ Boost prefer : approved_shares *= prefer_sizing_multiplier
-                     target_notional *= prefer_sizing_multiplier
-                     pour les symboles dans prefer (top prefer_top_n)
-3. persist_portfolio_targets() → DB (filtrées et boostées)
-4. Étape 12 (Execution) → charge les targets déjà filtrées
+1. MLRankedCandidate → boost_candidate_scores()  ← BOOST SCORE AVANT sizing
+   └─ p_side *= prefer_sizing_multiplier (clip 1.0) pour les prefer
+      → le PortfolioBuilder intègre naturellement ce boost dans le sizing,
+        les contraintes et les target_weight → cohérence parfaite
+2. PortfolioBuilder.build_from_ml_candidates() → entries
+3. apply_batch_diagnostics_to_entries()  ← EXCLUSION uniquement
+   ├─ Exclusion long/short
+   └─ Plus de boost ici (déjà fait en étape 1)
+4. persist_portfolio_targets() → DB
 ```
 
 Code réel (simplifié) :
 
 ```python
-from risk_management.batch_diagnostics import apply_batch_diagnostics_to_entries
-
-entries, excluded, boosted, batch_id = apply_batch_diagnostics_to_entries(
-    entries, repo.engine,
+from risk_management.batch_diagnostics import (
+    boost_candidate_scores,
+    apply_batch_diagnostics_to_entries,
 )
+
+# AVANT le builder : boost score prefer
+boost_candidate_scores(candidates, repo.engine)
+
+# Builder normal (intègre le score boosté)
+entries = builder.build_from_ml_candidates(candidates, prices, ...)
+
+# APRÈS le builder : exclusion uniquement
+entries, excluded, batch_id = apply_batch_diagnostics_to_entries(entries, repo.engine)
 ```
 
 ### Backtest (`backtesting/cli/_impl.py`)
@@ -206,13 +213,13 @@ Intégré dans `_run_backtest()`, après chargement de `preds_df` :
 ```
 1. Chargement preds_df (ML predictions PIT-safe)
 2. FILTRE BATCH (non-bloquant, try/except) :
-   ├─ get_batch_filters(engine) → dernier batch
+   ├─ get_batch_filters(engine) → batch configuré
    ├─ Étape 1 — Exclusion : filter_predictions(preds_df, filters)
-   │   Retire les lignes où predicted_side = "long"  ET symbole ∈ exclude_long
-   │                 ou predicted_side = "short" ET symbole ∈ exclude_short
-   └─ Étape 2 — Boost prefer : proba_long  *= prefer_sizing_multiplier (clip ≤ 1.0)
-                                proba_short *= prefer_sizing_multiplier (clip ≤ 1.0)
-                                → cascade vers selection_score → sizing
+   └─ Étape 2 — Boost prefer side-aware (Option C) :
+        proba_long *= prefer_sizing_multiplier UNIQUEMENT si predicted_side="long"
+        proba_short *= prefer_sizing_multiplier UNIQUEMENT si predicted_side="short"
+        (clip ≤ 1.0, flat = pas de boost)
+        → cascade vers selection_score → sizing
 3. RISK (PIT)
 4. EXECUTION (simulée)
 ```
@@ -227,25 +234,29 @@ _bt_filters = get_batch_filters(engine)
 # Étape 1 : exclusion
 preds_df = filter_predictions(preds_df, _bt_filters)
 
-# Étape 2 : boost prefer (Option B — sizing boost)
-_prefer_mask = preds_df["symbol"].str.upper().isin(_bt_filters.prefer)
-for _col in ("proba_long", "proba_short"):
-    preds_df.loc[_prefer_mask, _col] = (
-        preds_df.loc[_prefer_mask, _col] * prefer_sizing_multiplier
-    ).clip(upper=1.0)
+# Étape 2 : boost prefer side-aware (Option C)
+_prefer_set = _bt_filters.prefer
+# Boost proba_long uniquement pour les prefer prédits long
+_mask_long = preds_df["symbol"].str.upper().isin(_prefer_set) & (preds_df["predicted_side"] == "long")
+preds_df.loc[_mask_long, "proba_long"] = (preds_df.loc[_mask_long, "proba_long"] * multiplier).clip(upper=1.0)
+# Boost proba_short uniquement pour les prefer prédits short
+_mask_short = preds_df["symbol"].str.upper().isin(_prefer_set) & (preds_df["predicted_side"] == "short")
+preds_df.loc[_mask_short, "proba_short"] = (preds_df.loc[_mask_short, "proba_short"] * multiplier).clip(upper=1.0)
 ```
 
 ### Parité live ↔ backtest
 
-Les deux pipelines utilisent la **même logique** (Option B = sizing boost) :
+Les deux pipelines utilisent désormais la **même logique** (Option C = boost de score en amont du sizing) :
 
 | Aspect | Live (Risk étape 11) | Backtest |
 |--------|----------------------|----------|
 | Exclusion long | `side ∈ {buy,long} ∧ sym ∈ exclude_long` | `predicted_side="long" ∧ sym ∈ exclude_long` |
 | Exclusion short | `side ∈ {sell,short} ∧ sym ∈ exclude_short` | `predicted_side="short" ∧ sym ∈ exclude_short` |
-| Boost prefer | `approved_shares` × multiplier | `proba_long/proba_short` × multiplier (clip 1.0) |
+| Boost prefer | `p_side` × multiplier (AVANT sizing) | `proba_long` × multiplier si side=long, `proba_short` × multiplier si side=short (AVANT sizing) |
+| Side-awareness | ✅ side respecté | ✅ side respecté (long→proba_long, short→proba_short) |
 | Multiplier | `prefer_sizing_multiplier` (1.2) | `prefer_sizing_multiplier` (1.2) |
 | Prefer set | top N `prefer_top_n` (10) | top N `prefer_top_n` (10) |
+| Clip | p_side ≤ 1.0 | proba ≤ 1.0 |
 | Non-bloquant | ✅ try/except | ✅ try/except |
 | Module | `risk_management/batch_diagnostics.py` | `backtesting/cli/_impl.py` (inline) |
 

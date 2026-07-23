@@ -1,14 +1,15 @@
 """risk_management/batch_diagnostics.py — Filtrage ML batch diagnostics dans Risk.
 
-Appliqué dans l'étape 11 (Risk Management) AVANT la persistance des
-``portfolio_targets``, pour que les décisions de filtrage soient auditées
-dans ``risk_decisions`` et que l'étape 12 (Execution) n'ait plus qu'un
-rôle de filet de sécurité (exclusion uniquement, sans boost).
+Appliqué dans l'étape 11 (Risk Management) :
+- **Avant** le PortfolioBuilder : boost du score de conviction pour les
+  symboles prefer (top N). Le builder intègre naturellement ce boost
+  dans le sizing, les contraintes et les poids → cohérence parfaite.
+- **Après** le PortfolioBuilder : exclusion des entries dont le side
+  est incompatible avec les listes exclude_long / exclude_short.
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
 from typing import Any
 
 from modelFactory.batch_diagnostics import (
@@ -21,37 +22,10 @@ from risk_management.models import PortfolioEntry
 LOGGER = logging.getLogger(__name__)
 
 
-def apply_batch_diagnostics_to_entries(
-    entries: list[PortfolioEntry],
-    engine: Any,
-    *,
-    prefer_multiplier: float | None = None,
-    prefer_top_n: int | None = None,
-) -> tuple[list[PortfolioEntry], int, int, str | None]:
-    """Applique le filtre batch diagnostics aux entries du Risk.
+# ── Helpers ────────────────────────────────────────────────────────
 
-    Étape 1 — Exclusion : retire les entries dont le side est incompatible
-              avec les listes exclude_long / exclude_short.
-    Étape 2 — Boost prefer : multiplie ``approved_shares`` et ``target_notional``
-              pour les symboles du top N.
-
-    Args:
-        entries: Liste des PortfolioEntry produites par le PortfolioBuilder.
-        engine: Engine SQLAlchemy pour interroger model_batch_diagnostics.
-        prefer_multiplier: Multiplicateur de sizing pour les prefer.
-            Défaut : config.yaml (prefer_sizing_multiplier) ou 1.2.
-        prefer_top_n: Nombre de symboles du top à booster.
-            Défaut : config.yaml (prefer_top_n) ou 10.
-
-    Returns:
-        (filtered_entries, excluded_count, boosted_count, batch_id)
-    """
-    if not entries:
-        return entries, 0, 0, None
-
-    # ── Charger les filtres ──
-    # Utilise le batch_id configuré pour le live (config.yaml → live_batch_id).
-    # Si vide, get_batch_filters utilise automatiquement le dernier batch.
+def _load_filters(engine: Any) -> BatchFilters | None:
+    """Charge les BatchFilters pour le live (respecte live_batch_id config)."""
     _live_batch_id: str | None = None
     try:
         _cfg = _load_config_defaults()
@@ -62,25 +36,18 @@ def apply_batch_diagnostics_to_entries(
         filters: BatchFilters = get_batch_filters(engine, batch_id=_live_batch_id)
     except Exception as exc:
         LOGGER.warning(
-            "risk batch_diagnostics: impossible de charger les filtres: %s",
-            exc,
+            "risk batch_diagnostics: impossible de charger les filtres: %s", exc
         )
-        return entries, 0, 0, None
-
+        return None
     if not filters.batch_id:
         LOGGER.info("risk batch_diagnostics: aucun batch complété, skip.")
-        return entries, 0, 0, None
+        return None
+    return filters
 
-    # ── Résoudre les paramètres ──
-    if prefer_multiplier is None or prefer_top_n is None:
-        cfg = _load_config_defaults()
-        if prefer_multiplier is None:
-            prefer_multiplier = float(cfg.get("prefer_sizing_multiplier", 1.2))
-        if prefer_top_n is None:
-            prefer_top_n = int(cfg.get("prefer_top_n", 10))
 
-    # ── Construire le prefer set limité à prefer_top_n ──
-    prefer_set: frozenset[str] = filters.prefer  # déjà filtré par get_batch_filters
+def _resolve_prefer_set(filters: BatchFilters, prefer_top_n: int) -> frozenset[str]:
+    """Construit le set des symboles prefer limité à prefer_top_n."""
+    prefer_set: frozenset[str] = filters.prefer
     if filters.prefer:
         prefer_df = filters.all_diagnostics
         if not prefer_df.empty and "rank_position" in prefer_df.columns:
@@ -90,8 +57,107 @@ def apply_batch_diagnostics_to_entries(
                     & (prefer_df["rank_position"] <= prefer_top_n)
                 ]["symbol"]
             )
+    return prefer_set
 
-    # ── Étape 1 : Exclusion ──
+
+# ── API publique ────────────────────────────────────────────────────
+
+def boost_candidate_scores(
+    candidates: list[Any],
+    engine: Any,
+    *,
+    prefer_multiplier: float | None = None,
+    prefer_top_n: int | None = None,
+) -> tuple[int, str | None]:
+    """Augmente le score de conviction (p_side) des candidats prefer AVANT le sizing.
+
+    Doit être appelé AVANT ``PortfolioBuilder.build_from_ml_candidates()``.
+    Le builder intègre naturellement le score boosté dans le sizing,
+    les contraintes et les target_weight → cohérence parfaite live/backtest.
+
+    Args:
+        candidates: Liste de ``MLRankedCandidate``.
+        engine: Engine SQLAlchemy.
+        prefer_multiplier: Multiplicateur de score. Défaut : config.yaml (1.2).
+        prefer_top_n: Nombre de symboles du top à booster. Défaut : config.yaml (10).
+
+    Returns:
+        (boosted_count, batch_id)
+    """
+    if not candidates:
+        return 0, None
+
+    filters = _load_filters(engine)
+    if filters is None:
+        return 0, None
+
+    if prefer_multiplier is None or prefer_top_n is None:
+        cfg = _load_config_defaults()
+        if prefer_multiplier is None:
+            prefer_multiplier = float(cfg.get("prefer_sizing_multiplier", 1.2))
+        if prefer_top_n is None:
+            prefer_top_n = int(cfg.get("prefer_top_n", 10))
+
+    prefer_set = _resolve_prefer_set(filters, prefer_top_n)
+    if not prefer_set or prefer_multiplier == 1.0:
+        return 0, filters.batch_id
+
+    boosted_count = 0
+    boosted_syms: list[str] = []
+    for c in candidates:
+        sym = str(getattr(c, "symbol", "")).strip().upper()
+        if sym in prefer_set:
+            boosted_count += 1
+            boosted_syms.append(sym)
+            # Booster p_side → impacte le conviction_score → sizing naturel
+            old_p_side = float(getattr(c, "p_side", 0) or 0)
+            c.p_side = min(old_p_side * prefer_multiplier, 1.0)
+            # Booster aussi la proba directionnelle correspondante
+            side = str(getattr(c, "side", "")).strip().lower()
+            if side == "long":
+                old_p = float(getattr(c, "p_long", 0) or 0)
+                c.p_long = min(old_p * prefer_multiplier, 1.0)
+            elif side == "short":
+                old_p = float(getattr(c, "p_short", 0) or 0)
+                c.p_short = min(old_p * prefer_multiplier, 1.0)
+
+    if boosted_count > 0:
+        _comment_info = f" | comment={filters.batch_comment}" if filters.batch_comment else ""
+        LOGGER.info(
+            "batch_diagnostics score boost (batch=%s%s): "
+            "⭐ BOOSTÉS x%.1f (%d): %s",
+            filters.batch_id, _comment_info,
+            prefer_multiplier, boosted_count,
+            ", ".join(sorted(boosted_syms)),
+        )
+
+    return boosted_count, filters.batch_id
+
+
+def apply_batch_diagnostics_to_entries(
+    entries: list[PortfolioEntry],
+    engine: Any,
+) -> tuple[list[PortfolioEntry], int, str | None]:
+    """Exclut les entries dont le side est incompatible avec les listes
+    exclude_long / exclude_short.
+
+    Le boost prefer est désormais fait EN AMONT via ``boost_candidate_scores()``,
+    avant le PortfolioBuilder. Cette fonction ne fait QUE l'exclusion.
+
+    Args:
+        entries: Liste des PortfolioEntry produites par le PortfolioBuilder.
+        engine: Engine SQLAlchemy.
+
+    Returns:
+        (filtered_entries, excluded_count, batch_id)
+    """
+    if not entries:
+        return entries, 0, None
+
+    filters = _load_filters(engine)
+    if filters is None:
+        return entries, 0, None
+
     excluded_count = 0
     excluded_long_syms: list[str] = []
     excluded_short_syms: list[str] = []
@@ -110,28 +176,9 @@ def apply_batch_diagnostics_to_entries(
             continue
         filtered_entries.append(entry)
 
-    # ── Étape 2 : Boost prefer ──
-    boosted_count = 0
-    boosted_syms: list[str] = []
-    if prefer_set and prefer_multiplier != 1.0:
-        boosted_entries: list[PortfolioEntry] = []
-        for entry in filtered_entries:
-            sym = str(entry.symbol).strip().upper()
-            if sym in prefer_set:
-                boosted_count += 1
-                boosted_syms.append(sym)
-                entry = replace(
-                    entry,
-                    approved_shares=entry.approved_shares * prefer_multiplier,
-                    target_notional=entry.target_notional * prefer_multiplier,
-                )
-            boosted_entries.append(entry)
-        filtered_entries = boosted_entries
-
-    # ── Résumé consolidé ──
-    if excluded_count > 0 or boosted_count > 0:
+    if excluded_count > 0:
         _comment_info = f" | comment={filters.batch_comment}" if filters.batch_comment else ""
-        _lines = [f"batch_diagnostics summary (batch={filters.batch_id}{_comment_info}):"]
+        _lines = [f"batch_diagnostics exclusion (batch={filters.batch_id}{_comment_info}):"]
         if excluded_long_syms:
             _lines.append(
                 f"  🚫 LONG filtrés  ({len(excluded_long_syms)}): "
@@ -142,15 +189,9 @@ def apply_batch_diagnostics_to_entries(
                 f"  🚫 SHORT filtrés ({len(excluded_short_syms)}): "
                 + ", ".join(sorted(excluded_short_syms))
             )
-        if boosted_syms:
-            _lines.append(
-                f"  ⭐ BOOSTÉS x{prefer_multiplier:.1f} ({len(boosted_syms)}): "
-                + ", ".join(sorted(boosted_syms))
-            )
         _lines.append(
-            f"  ➡️ {len(entries)}→{len(filtered_entries)} entries "
-            f"(−{excluded_count} exclus, +{boosted_count} boostés)"
+            f"  ➡️ {len(entries)}→{len(filtered_entries)} entries (−{excluded_count} exclus)"
         )
         LOGGER.info("\n".join(_lines))
 
-    return filtered_entries, excluded_count, boosted_count, filters.batch_id
+    return filtered_entries, excluded_count, filters.batch_id

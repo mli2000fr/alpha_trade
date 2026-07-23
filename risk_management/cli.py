@@ -28,7 +28,10 @@ from risk_management.audit import (
     persist_decisions,
     persist_portfolio_targets,
 )
-from risk_management.batch_diagnostics import apply_batch_diagnostics_to_entries
+from risk_management.batch_diagnostics import (
+    apply_batch_diagnostics_to_entries,
+    boost_candidate_scores,
+)
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.db_io import RiskRepository
@@ -2147,6 +2150,19 @@ def main(args: list[str] | None = None) -> None:
                     _compat["issues"],
                 )
         else:
+            # ── Boost batch diagnostics : score prefer AVANT sizing ──
+            _bt_boosted = 0
+            _bt_batch_id: str | None = None
+            if candidates:
+                try:
+                    _bt_boosted, _bt_batch_id = boost_candidate_scores(
+                        candidates, getattr(repo, "engine", None),
+                    )
+                except Exception as _bt_exc:
+                    LOGGER.warning(
+                        "risk batch_diagnostics score boost skipped: %s", _bt_exc,
+                    )
+
             entries = builder.build_from_ml_candidates(
                 candidates, prices,
                 win_rates=win_rates,
@@ -2254,23 +2270,20 @@ def main(args: list[str] | None = None) -> None:
     _print_summary(entries, run_id, trade_date)
 
     # ── Filtre batch diagnostics (ML quality gate) ──
-    # Appliqué dans Risk (étape 11) pour que les décisions de filtrage
-    # soient tracées dans risk_decisions et portfolio_targets.
-    # L'étape 12 (Execution) n'a plus qu'un rôle de filet de sécurité
-    # (exclusion uniquement, sans boost).
+    # Exclusion uniquement : le boost score a déjà été appliqué
+    # AVANT le PortfolioBuilder (voir boost_candidate_scores plus haut).
     _bt_excluded = 0
-    _bt_boosted = 0
-    _bt_batch_id: str | None = None
+    _bt_batch_id_excl: str | None = None
     if entries:
         try:
-            entries, _bt_excluded, _bt_boosted, _bt_batch_id = (
+            entries, _bt_excluded, _bt_batch_id_excl = (
                 apply_batch_diagnostics_to_entries(
                     entries, getattr(repo, "engine", None),
                 )
             )
         except Exception as _bt_exc:
             LOGGER.warning(
-                "risk batch_diagnostics skipped (non-blocking): %s",
+                "risk batch_diagnostics exclusion skipped (non-blocking): %s",
                 _bt_exc,
             )
 
