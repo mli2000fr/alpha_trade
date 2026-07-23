@@ -74,7 +74,7 @@ DEFAULT_ML_MIN_PRECISION_LONG = 0.55         # plus exigeant que 0.52 backend
 # ---------------------------------------------------------------------------
 # Hyperparamètres avancés (alignés CLI modelFactory)
 # ---------------------------------------------------------------------------
-DEFAULT_ML_SEQUENCE_LENGTH = 20
+DEFAULT_ML_SEQUENCE_LENGTH = 40
 DEFAULT_ML_BATCH_SIZE = 32
 DEFAULT_ML_HIDDEN_SIZE = 256
 DEFAULT_ML_ARTIFACTS_DIR = "artifacts/models"

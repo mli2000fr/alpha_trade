@@ -75,13 +75,228 @@ Avec `sequence_length=10` et `forecast_horizon=10`, le modèle voit 10 jours de 
 
 > 📐 **Ratio info/horizon** : `seq_len / horizon = 10/10 = 1.0`. La littérature (Fischer & Krauss 2018, Sirignano 2019) utilise typiquement un ratio ≥ 3-5×. Pour un horizon de 10 jours, `seq_len ≥ 30-50` serait plus approprié.
 
+> 💡 **Note** : Ce `sequence_length=10` est **volontaire** — nous sommes en phase de recherche des meilleures combinaisons d'hyperparamètres. On teste rapidement les combinaisons avec une séquence courte pour itérer plus vite. En conditions normales de production, le `sequence_length` sera remis à **40**.
+
 #### Cause 2 : Trop de features pour trop peu de données
 
 47 features × seulement ~1400 séquences d'entraînement → ratio features/échantillons = 1/30. Pour un réseau de neurones, c'est très peu. Le LSTM a `128 × 4 × 47 ≈ 24K` paramètres juste pour la première couche, sans compter le classifieur. Le surapprentissage est quasi-certain, même avec dropout 0.3.
 
+> 🔍 **Explication détaillée** : Ce diagnostic ne dit pas que 8 ans de données (~2000 jours) est insuffisant dans l'absolu — c'est largement assez pour des modèles tabulaires (LightGBM, CatBoost). Le problème est **spécifique au LSTM** et vient du **ratio paramètres/échantillons** :
+>
+> ```
+> 1ère couche LSTM = 4 × (input×hidden + hidden×hidden + hidden)
+>                  = 4 × (47×128 + 128×128 + 128)
+>                  ≈ 90 112 paramètres
+>
+> Ratio ≈ 1400 échantillons / 90K paramètres ≈ 0.015
+> ```
+>
+> En deep learning, on vise typiquement un ratio ≥ 1:1, voire 10:1. Ici on est **60× en dessous**. Le LSTM a beaucoup trop de capacité par rapport au nombre d'exemples d'entraînement, ce qui garantit un surapprentissage quelle que soit la régularisation.
+>
+> **Pourquoi LightGBM/CatBoost ne souffrent pas du même problème ?** Les arbres de décision partitionnent l'espace des features de façon discrète — 1400 échantillons pour 47 features est un ratio tout à fait acceptable (30:1). Ils n'ont pas de problème de « remplissage » d'un espace de paramètres continu comme le LSTM.
+>
+> **Ce n'est PAS un problème de quantité de données historiques** : ajouter 5 ans de données pré-2018 n'aiderait pas car le contexte de marché a changé et les données trop anciennes ne sont plus représentatives. Les vraies solutions sont :
+> 1. **Réduire le nombre de features** : passer de `feature_set=expert` (47 colonnes) à `feature_set=v1` (13 colonnes), ou faire une sélection SHAP
+> 2. **Réduire la capacité du LSTM** : `hidden_size=64` au lieu de 128, 1 couche au lieu de 2
+> 3. **Augmenter la régularisation** : dropout plus fort (0.5), weight_decay plus élevé (1e-4)
+> 4. **Ou accepter que le LSTM n'est pas le bon modèle** pour ce régime de données et se concentrer sur LightGBM/CatBoost
+
+##### 🏦 Comment les professionnels résolvent ce problème
+
+Le problème « trop de features, pas assez d'échantillons par titre » est un défi classique en ML financière. Voici comment l'industrie le traite :
+
+**1. Panel Learning — Un seul modèle pour tous les titres (approche dominante)**
+
+Au lieu d'entraîner un LSTM **par symbole** (1400 séquences chacun), on entraîne **un seul LSTM sur tous les titres empilés** :
+
+```
+200 symboles × 1400 séquences = 280 000 séquences d'entraînement
+Ratio → 280K échantillons / 90K paramètres ≈ 3:1 ✅
+```
+
+C'est l'approche de la littérature académique de référence :
+- **Gu, Kelly, Xiu (2020)** — *« Empirical Asset Pricing via Machine Learning »*, Review of Financial Studies : un seul modèle pour tout l'univers, les caractéristiques du titre (secteur, taille, liquidité) sont des features comme les autres.
+- **Sirignano & Cont (2019)** — *« Universal features of price formation in financial markets »* : LSTM entraîné sur l'intégralité du carnet d'ordres de 1000+ actions NASDAQ, stock embedding pour identifier chaque titre.
+
+**2. Transfer Learning / Pre-training**
+
+C'est ce que font les grands hedge funds (Two Sigma, Renaissance, Citadel) :
+- **Phase 1** : Pré-entraîner un LSTM/Transformer sur un univers massif (toutes les actions US + données synthétiques)
+- **Phase 2** : Fine-tuner par secteur ou par titre avec les données spécifiques
+
+**3. Architectures plus économes en paramètres**
+
+- **TCN (Temporal Convolutional Networks)** : Moins de paramètres qu'un LSTM, meilleurs sur séquences courtes, pas de problème de vanishing gradient
+- **Attention simple sans LSTM** : Juste un `MultiHeadAttention` sur les 10 timesteps → ~5K paramètres au lieu de 90K
+- **GRU** au lieu de LSTM : 25% de paramètres en moins pour des performances équivalentes
+
+**4. Data Augmentation pour séries temporelles**
+
+- **Bootstrap de séquences** : échantillonner avec remplacement des sous-séquences
+- **Injection de bruit** : ajouter un bruit gaussien calibré sur la volatilité réalisée
+- **TimeGAN / TimeVAE** : générer des séquences synthétiques réalistes pour augmenter le dataset
+
+**5. Abandonner le DL et utiliser des arbres boostés**
+
+C'est le choix pragmatique de nombreux funds (AQR, WorldQuant) : LightGBM/CatBoost/XGBoost surperforment systématiquement les LSTM/Transformers sur des données tabulaires avec < 10K échantillons par prédiction. La raison est simple : les arbres n'ont pas de problème de ratio paramètres/échantillons.
+
+> 📖 **Référence clé** : *« Deep Learning for Asset Pricing »* — Gu, Kelly, Xiu (2020). Ils montrent qu'un simple MLP à 3 couches entraîné sur tout le panel (30 000+ titres-mois) surpasse tous les modèles linéaires, mais que les arbres boostés restent compétitifs voire supérieurs selon les métriques.
+
+##### 🎯 Application à ton cas — Quelle solution est la plus adaptée au swing trading ?
+
+Ton codebase a **déjà** une infrastructure de Panel Learning : `global_model.py` (Approche 2 — Stacking, Sprint 2026-07). Le Global Model entraîne un seul CatBoost/LightGBM sur **tous les titres empilés** avec des features cross-sectionnelles (rangs, secteurs, macro).
+
+Voici le classement des solutions par **proximité à ton architecture actuelle** et **pertinence pour le swing trading** :
+
+| Rang | Solution | Proximité | Pertinence swing | Effort |
+|------|----------|-----------|------------------|--------|
+| 🥇 | **Panel Learning (Global Model existant)** | ⭐⭐⭐ Déjà codé | ⭐⭐⭐ Idéal | Faible — activer les flags |
+| 🥈 | **Abandonner LSTM, tout miser sur GBM/CatBoost** | ⭐⭐⭐ Déjà codé | ⭐⭐ Bon | Nul |
+| 🥉 | **Simplifier l'archi LSTM** (GRU, attention pure) | ⭐⭐ Code à adapter | ⭐⭐ Bon | Moyen |
+| 4 | **Transfer Learning** | ⭐ À construire | ⭐⭐⭐ Idéal | Lourd |
+| 5 | **Data Augmentation** | ⭐ À construire | ⭐ Utile | Moyen |
+
+**Pourquoi le Panel Learning est le plus adapté au swing trading ?**
+
+Le swing trading (horizon 10 jours) est fondamentalement une problématique **cross-sectionnelle** : tu ne cherches pas juste à savoir « est-ce que AAPL va monter ? » mais « parmi 200 titres, lesquels vont le plus monter dans 10 jours ? ». Le Global Model répond exactement à cette question : il apprend les patterns de **sous-performance/surperformance relative** entre titres.
+
+```
+Per-symbol LSTM : "AAPL va-t-il monter de +3% dans 10 jours ?" → réponse isolée
+Global Model    : "AAPL est-il dans le top 35% des titres pour le rendement à 10 jours ?" → réponse relative
+```
+
+**Plan d'action recommandé :**
+
+1. **Court terme (maintenant)** : Activer le Global Model avec les flags existants :
+   ```powershell
+   --enable-global-model --enable-global-stacking --enable-global-challenger
+   ```
+   → Le Global Model (CatBoost/LightGBM) devient un 4ème challenger, et sa prédiction `global_pred_long` est injectée comme feature dans les modèles per-symbol.
+
+2. **Moyen terme** : Comparer les perfs du Global Model seul vs per-symbol. Si le Global surpasse, envisager d'en faire le modèle principal.
+
+3. **Long terme (si LSTM souhaité)** : Remplacer le CatBoost/LightGBM du Global Model par un LSTM panel → 280K séquences d'entraînement, le problème de ratio échantillons/paramètres disparaît.
+
 #### Cause 3 : Normalisation par split, pas globale
 
-Dans `_run_walk_forward_validation` (trainer.py:960-970), un `FeatureScaler` est fit **sur chaque split** indépendamment. Les features comme `sma200_distance` ou `regime_bull_market` ont des distributions très différentes selon la période (bull market 2018-2021 vs bear 2022). Le scaling par split atténue ce problème mais introduit une non-stationnarité : les mêmes valeurs brutes peuvent avoir des significations différentes d'un split à l'autre.
+Dans `_run_walk_forward_validation` (trainer.py:964-965), un `FeatureScaler` est fit **sur chaque split** indépendamment. Les features comme `sma200_distance` ou `regime_bull_market` ont des distributions très différentes selon la période (bull market 2018-2021 vs bear 2022). Le scaling par split atténue ce problème mais introduit une non-stationnarité : les mêmes valeurs brutes peuvent avoir des significations différentes d'un split à l'autre.
+
+> 🔍 **Explication détaillée** : Le `FeatureScaler` fait une z-normalization classique `(x - mean) / std`. Comme chaque split a son propre scaler fit sur sa propre période d'entraînement, la **même valeur brute** peut être normalisée très différemment d'un split à l'autre :
+>
+> | Période | Marché | Moyenne `sma200_distance` | Écart-type |
+> |---------|--------|---------------------------|------------|
+> | Split 1 (2018-2020) | Bull market | +8% | 12% |
+> | Split 2 (2020-2022) | COVID + reprise | +12% | 18% |
+> | Split 3 (2022-2024) | Bear puis recovery | −2% | 15% |
+>
+> Une valeur brute de `sma200_distance = +5%` devient alors :
+> - **z ≈ (5−8)/12 = −0.25** dans le split 1
+> - **z ≈ (5−12)/18 = −0.39** dans le split 2
+> - **z ≈ (5−(−2))/15 = +0.47** dans le split 3
+>
+> La **même condition de marché** (+5% au-dessus de la SMA200) donne des valeurs normalisées **complètement différentes** selon le split. Le modèle ne peut pas apprendre une relation stable entre la feature et le target à travers les splits.
+>
+> **Solutions proposées :**
+> 1. **Scaler global** : fit le `FeatureScaler` une seule fois sur tout l'historique (ou une période de référence fixe comme les 2 premières années), puis utiliser ce même scaler pour tous les splits. Avantage : une valeur brute → toujours le même z-score. Inconvénient : si les distributions dérivent fortement, les z-scores peuvent sortir de l'intervalle habituel.
+> 2. **Expanding window scaler** : fit cumulatif — pour le split N, fit sur toutes les données jusqu'au split N (et pas seulement le train du split N). Compromis entre adaptation et stabilité.
+> 3. **RobustScaler** : remplacer mean/std par médiane/IQR, moins sensible aux valeurs extrêmes et aux changements de régime.
+>
+> ⚠️ **Note** : La normalisation par split est en réalité une **bonne pratique** en walk-forward validation car elle évite le look-ahead bias. Ce diagnostic est donc à relativiser — les Causes 1, 2, 4 et 5 ont un impact bien plus fort sur la performance du LSTM.
+
+##### 🏦 Comment les professionnels résolvent ce problème
+
+La non-stationnarité des features est LE problème central de la finance quantitative. Voici les approches utilisées par l'industrie :
+
+**1. Cross-sectional ranking — LE standard en finance quantitative (approche dominante)**
+
+Au lieu de normaliser les features dans le temps (z-score par split), on les **classe transversalement** chaque jour :
+
+```
+Jour J : 200 titres
+├── Titre A : momentum_20 = +15% → rank = 0.98 (98ème percentile)
+├── Titre B : momentum_20 = +3%  → rank = 0.45 (45ème percentile)
+└── Titre C : momentum_20 = -8%  → rank = 0.05 (5ème percentile)
+```
+
+Le rank est **toujours** dans [0, 1] quelle que soit la période. Un titre au 98ème percentile de momentum a la même signification en bull market qu'en bear market.
+
+C'est l'approche de **AQR, Dimensional Fund Advisors, et de la quasi-totalité des funds systématiques**. Les features `_rank` existent déjà dans ton code (`ret_20_rank`, `relative_strength_20_rank`, etc.) — ce sont tes 8 colonnes cross-sectionnelles.
+
+> 📖 **Référence** : *« 101 Formulaic Alphas »* — Kakushadze (2016). La plupart des alphas quant sont définis comme des rangs cross-sectionnels, pas des valeurs brutes.
+
+**2. Fractional Differentiation (Marcos Lopez de Prado)**
+
+Rendre les features stationnaires **sans perdre la mémoire** du signal. La différenciation classique (prix → rendement) perd toute l'information de tendance long terme. La différenciation fractionnaire trouve le `d` minimal (entre 0 et 1) qui rend la série stationnaire tout en préservant un maximum de mémoire :
+
+```
+Prix        → d=0 → non stationnaire, mémoire infinie
+Rendement   → d=1 → stationnaire, mémoire nulle
+Fractionnel → d=0.35 → stationnaire, conserve ~65% de la mémoire long terme
+```
+
+> 📖 **Référence** : *« Advances in Financial Machine Learning »* — Lopez de Prado (2018), Chapitre 5.
+
+**3. Rolling window normalization (compromis pragmatique)**
+
+Fit le scaler sur une **longue fenêtre glissante** (ex: 5 ans) plutôt que sur le split courant. Assez long pour être stable, assez récent pour refléter le régime actuel :
+
+```python
+# Au lieu de fit sur split.train (2 ans)
+scaler.fit(df.rolling(5*252).mean())  # fit sur 5 ans glissants
+```
+
+**4. Ne pas normaliser du tout (arbres boostés)**
+
+LightGBM, CatBoost et XGBoost sont **insensibles à l'échelle des features** car ils découpent sur des seuils bruts. Si ton modèle final est un arbre, la normalisation est superflue. Beaucoup de professionnels ne normalisent que pour les réseaux de neurones, pas pour les arbres.
+
+**5. Features économiquement stationnaires by design**
+
+La meilleure normalisation est celle dont on n'a pas besoin. Les professionnels conçoivent leurs features pour qu'elles soient **naturellement stationnaires** :
+- Des **ratios** plutôt que des valeurs absolues (ex: `market_cap / sector_median_market_cap`)
+- Des **spreads** plutôt que des prix (ex: `stock_return - sector_return`)
+- Des **rangs** plutôt que des scores bruts
+- Des **indicateurs binaires** pour les régimes (ex: `is_above_sma200` plutôt que `sma200_distance`)
+
+> 💡 **Pour ton cas** : La solution la plus simple et la plus impactante est d'**utiliser massivement les features de rang cross-sectionnel que tu as déjà** (`_rank`, `_rank_xs`) et de réduire l'utilisation des features brutes non stationnaires (`sma200_distance`, `momentum_20`, etc.) pour le LSTM.
+
+##### 🎯 Application à ton cas — Cross-sectional ranking : LSTM uniquement ou aussi GBM/CatBoost ?
+
+La réponse est nuancée et dépend du type de modèle :
+
+| Aspect | LSTM | LightGBM / CatBoost |
+|--------|------|---------------------|
+| **Sensibilité à l'échelle** | 🔴 Très sensible — la z-normalization est indispensable | 🟢 Insensible — les arbres splitent sur des valeurs brutes |
+| **Sensibilité à la non-stationnarité** | 🔴 Très sensible — un changement de分布 degrade les poids appris | 🟡 Modérément sensible — les splits appris en bull market peuvent ne plus être optimaux en bear |
+| **Bénéfice du cross-sectional ranking** | 🔴 **CRITIQUE** — réduit l'input dim + rend les features stationnaires | 🟡 **Bénéfique mais pas indispensable** — améliore la généralisation inter-régimes |
+| **Perte d'information avec les rangs** | 🟡 Acceptable — de toute façon le LSTM n'a pas assez d'échantillons pour exploiter la magnitude | 🔴 **Risque de perte de signal** — les arbres savent exploiter les magnitudes (ex: momentum +50% vs +5%, même rang) |
+
+**Recommandation : stratégie différenciée LSTM vs GBM**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ LSTM                                                     │
+│ → Features : UNIQUEMENT les rangs cross-sectionnels      │
+│   (8 _rank + 8 secteur + 6 global_exclusive = 22 cols)   │
+│ → Pourquoi : réduction drastique de l'input dim (22       │
+│   au lieu de 47), features déjà stationnaires, pas        │
+│   besoin de scaler → Cause 2 + Cause 3 résolues ensemble  │
+├─────────────────────────────────────────────────────────┤
+│ LightGBM / CatBoost                                       │
+│ → Features : rangs cross-sectionnels + features brutes    │
+│   (22 rangs/secteur + 25 brutes = 47 cols, statu quo)     │
+│ → Pourquoi : les arbres gèrent bien la dimension, et      │
+│   les valeurs brutes apportent de la magnitude que les    │
+│   rangs ne capturent pas                                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Pourquoi c'est la meilleure approche pour le swing trading :**
+
+Le swing trading (horizon 10j) repose sur deux types de signaux :
+1. **Signal de timing** (quand entrer/sortir sur UN titre) → les features brutes excellent (ex: `rsi_14` extrême, `range_position_20` bas)
+2. **Signal de sélection** (quel titre choisir parmi N) → les rangs cross-sectionnels excellent (ex: `ret_20_rank` élevé, `relative_strength_20_rank` haut)
+
+Les arbres (GBM/CatBoost) peuvent exploiter les DEUX simultanément. Le LSTM, avec ses contraintes d'échantillons, doit se concentrer sur le signal de sélection (rangs) qui est plus robuste et plus stationnaire.
 
 #### Cause 4 : Pas de class_weight différencié
 
@@ -92,9 +307,16 @@ ternary_weight_short=1.0, ternary_weight_flat=1.0, ternary_weight_long=1.0
 
 Avec des classes naturellement déséquilibrées (le flat est structurellement plus fréquent que les extrêmes), le modèle n'a **aucune incitation** à sortir de la zone de confort « flat ». La `CrossEntropyLoss` non pondérée converge naturellement vers la classe majoritaire quand le signal est faible — c'est exactement ce qu'on observe (62.5% de prédictions flat).
 
+> ✅ **Action décidée** : Mettre en place des poids différenciés. Commande recommandée :
+> ```powershell
+> --ternary-weight-short 1.5 --ternary-weight-long 1.5 --ternary-weight-flat 0.7
+> ```
+
 #### Cause 5 : Early stopping trop agressif
 
 `patience=3` avec `max_epochs=20`. Si le modèle ne progresse pas en 3 epochs sur le `val_loss`, il s'arrête. Or, avec le bruit élevé des données financières, la loss de validation est très bruitée et peut stagner pendant 3-4 epochs avant de redescendre. Le modèle n'a probablement même pas le temps de converger.
+
+> 💡 **Note** : Ce réglage agressif est **volontaire** et partage la même origine que la Cause 1 — nous sommes en phase de recherche des meilleures combinaisons. On teste rapidement, donc `max_epochs=20` et `patience=3` permettent d'itérer vite. En production, on passera à `max_epochs=50` et `patience=10`.
 
 ### 1.5 Vérification dans le code
 
