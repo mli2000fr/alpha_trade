@@ -52,6 +52,7 @@ from ihm.services.fractional_trading_preferences import (
 from ihm.services.queries import (
     get_backtesting_ml_coverage_diagnostic,
     get_backtesting_pit_history_diagnostic,
+    get_batch_diagnostics_summary,
     get_completed_ml_training_batches,
 )
 from ihm.services.screener_artifact_history import (
@@ -4118,6 +4119,119 @@ def _render_screener_artifact_summary(run_record: dict[str, object]) -> bool:
     return True
 
 
+# ────────────────────────────────────────────────────────────────────
+# Bloc batch diagnostics dans l'historique des runs
+# ────────────────────────────────────────────────────────────────────
+
+def _render_batch_diagnostics_block() -> None:
+    """Affiche les filtres ML batch diagnostics (tickets filtrés long/short
+    et tickets boostés top N) dans l'expandeur d'historique des runs."""
+    with st.expander("🔬 Filtres ML batch diagnostics", expanded=False):
+        st.caption(
+            "Diagnostics du dernier batch d'entraînement complété, "
+            "utilisés pour filtrer les prédictions long/short et booster "
+            "le sizing des symboles du top N."
+        )
+        try:
+            summary = get_batch_diagnostics_summary()
+        except Exception as exc:
+            st.warning(f"Impossible de charger les diagnostics batch : {exc}")
+            return
+
+        if not summary.get("available"):
+            st.info(summary.get("reason", "Aucun diagnostic batch disponible."))
+            return
+
+        batch_id = summary.get("batch_id", "—")
+        batch_date = summary.get("batch_started_at", "—")
+        total_symbols = summary.get("total_symbols", 0)
+        st.caption(f"**Batch** : `{batch_id}` | **Date** : {batch_date} | **Symboles** : {total_symbols}")
+
+        col1, col2 = st.columns(2)
+
+        # ── Colonne 1 : Tickets filtrés ──
+        with col1:
+            st.markdown("##### 🚫 Tickets filtrés")
+
+            exclude_long = summary.get("exclude_long_symbols", [])
+            exclude_short = summary.get("exclude_short_symbols", [])
+
+            st.markdown(
+                f"**Long filtrés** ({len(exclude_long)})  \n"
+                + ("`" + "` `".join(exclude_long) + "`" if exclude_long else "*Aucun*")
+            )
+            st.markdown(
+                f"**Short filtrés** ({len(exclude_short)})  \n"
+                + ("`" + "` `".join(exclude_short) + "`" if exclude_short else "*Aucun*")
+            )
+
+            # Détail par catégorie
+            with st.expander("📋 Détail par catégorie d'exclusion", expanded=False):
+                bottom = summary.get("bottom", [])
+                zero_short = summary.get("zero_short", [])
+                weak_long = summary.get("weak_long", [])
+                weak_short = summary.get("weak_short", [])
+
+                if bottom:
+                    st.markdown(f"**Bottom** ({len(bottom)}) — F1 macro WF les plus faibles  \n"
+                                + "`" + "` `".join(r["symbol"] for r in bottom) + "`")
+                if zero_short:
+                    st.markdown(f"**Zero short** ({len(zero_short)}) — f1_short = 0  \n"
+                                + "`" + "` `".join(r["symbol"] for r in zero_short) + "`")
+                if weak_long:
+                    st.markdown(f"**Weak long** ({len(weak_long)}) — f1_long < seuil  \n"
+                                + "`" + "` `".join(r["symbol"] for r in weak_long) + "`")
+                if weak_short:
+                    st.markdown(f"**Weak short** ({len(weak_short)}) — 0 < f1_short < seuil  \n"
+                                + "`" + "` `".join(r["symbol"] for r in weak_short) + "`")
+
+        # ── Colonne 2 : Tickets boostés ──
+        with col2:
+            st.markdown("##### ⭐ Tickets boostés (top N)")
+
+            prefer = summary.get("prefer_symbols", [])
+            top_all = summary.get("top", [])
+
+            st.markdown(
+                f"**Top boostés** ({len(prefer)}) — sizing × multiplicateur  \n"
+                + ("`" + "` `".join(prefer) + "`" if prefer else "*Aucun*")
+            )
+
+            if top_all:
+                rows = []
+                for r in top_all:
+                    rows.append({
+                        "Rang": r.get("rank_position", "—"),
+                        "Symbole": r["symbol"],
+                        "F1 macro WF": f"{r['f1_macro_wf']:.4f}",
+                    })
+                st.dataframe(
+                    rows,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Rang": st.column_config.NumberColumn(width="small"),
+                        "Symbole": st.column_config.TextColumn(width="small"),
+                        "F1 macro WF": st.column_config.NumberColumn(format="%.4f", width="small"),
+                    },
+                )
+
+            if not prefer:
+                st.info("Aucun symbole dans le top après filtrage prefer_top_n.")
+
+        # ── Légende ──
+        with st.expander("ℹ️ Légende des catégories", expanded=False):
+            st.markdown("""
+| Catégorie | Condition | Effet live/backtest |
+|-----------|-----------|---------------------|
+| **Top** | Parmi les N meilleurs F1 macro WF | Boost sizing (×1.2) |
+| **Bottom** | Parmi les N pires F1 macro WF | Exclu long ET short |
+| **Zero short** | f1_short_wf = 0 | Exclu short uniquement |
+| **Weak long** | 0 < f1_long_wf < seuil (0.15) | Exclu long uniquement |
+| **Weak short** | 0 < f1_short_wf < seuil (0.15) | Exclu short uniquement |
+            """)
+
+
 def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
     active_runs, all_runs = _merge_runs()
     has_active_runs = bool(active_runs)
@@ -4370,6 +4484,9 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
 
             if not any(spec[2] for spec in history_download_specs):
                 st.caption("⚠️ Les artefacts de logs de ce run sont indisponibles (rotation, purge ou run incomplet).")
+
+        # ── Bloc batch diagnostics (filtres ML) ──
+        _render_batch_diagnostics_block()
 
     if st.toggle(
         "Charger l'historique global des artefacts screener",

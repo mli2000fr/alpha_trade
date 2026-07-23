@@ -161,47 +161,31 @@ preds_df = filter_predictions(preds_df, filters)
 
 ## 🔄 Workflow ML-First
 
-### Live (`execution_engine/executor.py`)
+### Live — Risk Management (`risk_management/cli.py`)
 
-Intégré dans `execute_run()`, après le chargement des targets :
+Intégré dans l'étape 11 (Risk), juste avant la persistance des `portfolio_targets` :
 
 ```
-1. Chargement des targets (screener → ML → sizing → targets)
+1. PortfolioBuilder → entries (list[PortfolioEntry])
 2. FILTRE BATCH (non-bloquant, try/except) :
    ├─ get_batch_filters(engine) → dernier batch
-   ├─ Exclusion : si side ∈ {sell, short} ET symbole ∈ exclude_short → skip
-   │              si side ∈ {buy, long}   ET symbole ∈ exclude_long  → skip
-   ├─ Boost prefer : target_shares   *= prefer_sizing_multiplier
-   │                 target_notional *= prefer_sizing_multiplier
-   │                 pour les symboles dans prefer (top prefer_top_n)
-   └─ Si plus aucune target après filtrage → ABORTED
-3. RISK MANAGEMENT → Sizing, concentration, stops
-4. EXECUTION → Submit orders Alpaca
+   ├─ Exclusion : si side ∈ {sell, short} ET symbole ∈ exclude_short → retirer
+   │              si side ∈ {buy, long}   ET symbole ∈ exclude_long  → retirer
+   └─ Boost prefer : approved_shares *= prefer_sizing_multiplier
+                     target_notional *= prefer_sizing_multiplier
+                     pour les symboles dans prefer (top prefer_top_n)
+3. persist_portfolio_targets() → DB (filtrées et boostées)
+4. Étape 12 (Execution) → charge les targets déjà filtrées
 ```
 
 Code réel (simplifié) :
 
 ```python
-from modelFactory.batch_diagnostics import get_batch_filters
+from risk_management.batch_diagnostics import apply_batch_diagnostics_to_entries
 
-_bt_filters = get_batch_filters(engine)  # dernier batch, prefer_top_n lu du config
-
-# ── Exclusion ──
-for _t in targets:
-    _sym = str(_t.symbol).strip().upper()
-    _side = str(getattr(_t, "side", "buy") or "buy").strip().lower()
-    if _side in ("sell", "short") and _sym in _bt_filters.exclude_short:
-        continue  # exclu
-    if _side in ("buy", "long") and _sym in _bt_filters.exclude_long:
-        continue  # exclu
-    _filtered_targets.append(_t)
-
-# ── Boost sizing prefer ──
-for _t in targets:
-    if _t.symbol in _bt_filters.prefer:
-        _t = replace(_t,
-            target_shares=_t.target_shares * prefer_sizing_multiplier,
-            target_notional=_t.target_notional * prefer_sizing_multiplier)
+entries, excluded, boosted, batch_id = apply_batch_diagnostics_to_entries(
+    entries, repo.engine,
+)
 ```
 
 ### Backtest (`backtesting/cli/_impl.py`)
@@ -232,7 +216,7 @@ _bt_filters = get_batch_filters(engine)
 # Étape 1 : exclusion
 preds_df = filter_predictions(preds_df, _bt_filters)
 
-# Étape 2 : boost prefer (Option B — sizing boost, parité avec le live)
+# Étape 2 : boost prefer (Option B — sizing boost)
 _prefer_mask = preds_df["symbol"].str.upper().isin(_bt_filters.prefer)
 for _col in ("proba_long", "proba_short"):
     preds_df.loc[_prefer_mask, _col] = (
@@ -244,14 +228,15 @@ for _col in ("proba_long", "proba_short"):
 
 Les deux pipelines utilisent la **même logique** (Option B = sizing boost) :
 
-| Aspect | Live | Backtest |
-|--------|------|----------|
+| Aspect | Live (Risk étape 11) | Backtest |
+|--------|----------------------|----------|
 | Exclusion long | `side ∈ {buy,long} ∧ sym ∈ exclude_long` | `predicted_side="long" ∧ sym ∈ exclude_long` |
 | Exclusion short | `side ∈ {sell,short} ∧ sym ∈ exclude_short` | `predicted_side="short" ∧ sym ∈ exclude_short` |
-| Boost prefer | `target_shares` × multiplier | `proba_long/proba_short` × multiplier (clip 1.0) |
+| Boost prefer | `approved_shares` × multiplier | `proba_long/proba_short` × multiplier (clip 1.0) |
 | Multiplier | `prefer_sizing_multiplier` (1.2) | `prefer_sizing_multiplier` (1.2) |
 | Prefer set | top N `prefer_top_n` (10) | top N `prefer_top_n` (10) |
 | Non-bloquant | ✅ try/except | ✅ try/except |
+| Module | `risk_management/batch_diagnostics.py` | `backtesting/cli/_impl.py` (inline) |
 
 ---
 

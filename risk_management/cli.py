@@ -28,6 +28,7 @@ from risk_management.audit import (
     persist_decisions,
     persist_portfolio_targets,
 )
+from risk_management.batch_diagnostics import apply_batch_diagnostics_to_entries
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.db_io import RiskRepository
@@ -2251,6 +2252,27 @@ def main(args: list[str] | None = None) -> None:
         regime_mode=str(getattr(regime_snapshot, "mode", "normal") or "normal"),
     )
     _print_summary(entries, run_id, trade_date)
+
+    # ── Filtre batch diagnostics (ML quality gate) ──
+    # Appliqué dans Risk (étape 11) pour que les décisions de filtrage
+    # soient tracées dans risk_decisions et portfolio_targets.
+    # L'étape 12 (Execution) n'a plus qu'un rôle de filet de sécurité
+    # (exclusion uniquement, sans boost).
+    _bt_excluded = 0
+    _bt_boosted = 0
+    _bt_batch_id: str | None = None
+    if entries:
+        try:
+            entries, _bt_excluded, _bt_boosted, _bt_batch_id = (
+                apply_batch_diagnostics_to_entries(
+                    entries, getattr(repo, "engine", None),
+                )
+            )
+        except Exception as _bt_exc:
+            LOGGER.warning(
+                "risk batch_diagnostics skipped (non-blocking): %s",
+                _bt_exc,
+            )
 
     n_dec = 0
     n_tgt = 0

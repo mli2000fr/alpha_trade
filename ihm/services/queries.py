@@ -2452,3 +2452,129 @@ def get_daily_pnl_data() -> dict[str, object]:
         "snapshot_at": snapshot_at,
     }
 
+
+# ────────────────────────────────────────────────────────────────────
+# Batch diagnostics (ML quality gate)
+# ────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300, show_spinner="Chargement des diagnostics batch ML…")
+def get_batch_diagnostics_summary() -> dict[str, object]:
+    """Charge le résumé des diagnostics du dernier batch complété
+    depuis ``alpha_trade.model_batch_diagnostics``.
+
+    Returns:
+        dict avec les clés :
+        - ``batch_id`` : str | None
+        - ``batch_started_at`` : str | None
+        - ``total_symbols`` : int
+        - ``top`` : list[dict]  (symbol, f1_macro, rank_position)
+        - ``bottom`` : list[dict]
+        - ``zero_short`` : list[dict]
+        - ``weak_long`` : list[dict]
+        - ``weak_short`` : list[dict]
+        - ``exclude_long_symbols`` : list[str]  (bottom + weak_long)
+        - ``exclude_short_symbols`` : list[str]  (bottom + zero_short + weak_short)
+        - ``prefer_symbols`` : list[str]  (top N, selon prefer_top_n config)
+        - ``available`` : bool
+    """
+    latest = safe_query(
+        """
+        SELECT batch_id, batch_started_at
+        FROM alpha_trade.model_batch_diagnostics
+        GROUP BY batch_id, batch_started_at
+        ORDER BY batch_started_at DESC
+        LIMIT 1
+        """
+    )
+    if latest.empty:
+        return {"available": False, "reason": "Aucun diagnostic batch trouvé en base."}
+
+    batch_id = str(latest["batch_id"].iloc[0])
+    batch_started_at = str(latest["batch_started_at"].iloc[0])
+
+    df = safe_query(
+        """
+        SELECT symbol, rank_type, rank_position,
+               f1_macro_wf, f1_long_wf, f1_short_wf, f1_flat_wf
+        FROM alpha_trade.model_batch_diagnostics
+        WHERE batch_id = :bid
+        ORDER BY
+            CASE rank_type
+                WHEN 'top' THEN 1
+                WHEN 'bottom' THEN 2
+                WHEN 'zero_short' THEN 3
+                WHEN 'weak_long' THEN 4
+                WHEN 'weak_short' THEN 5
+            END,
+            COALESCE(rank_position, 9999),
+            symbol
+        """,
+        {"bid": batch_id},
+    )
+    if df.empty:
+        return {
+            "available": True,
+            "batch_id": batch_id,
+            "batch_started_at": batch_started_at,
+            "total_symbols": 0,
+            "top": [],
+            "bottom": [],
+            "zero_short": [],
+            "weak_long": [],
+            "weak_short": [],
+            "exclude_long_symbols": [],
+            "exclude_short_symbols": [],
+            "prefer_symbols": [],
+        }
+
+    def _rows(rank_type: str) -> list[dict[str, object]]:
+        sub = df[df["rank_type"] == rank_type]
+        return [
+            {
+                "symbol": str(r["symbol"]),
+                "f1_macro_wf": float(r["f1_macro_wf"]),
+                "f1_long_wf": float(r["f1_long_wf"]) if pd.notna(r.get("f1_long_wf")) else None,
+                "f1_short_wf": float(r["f1_short_wf"]) if pd.notna(r.get("f1_short_wf")) else None,
+                "rank_position": int(r["rank_position"]) if pd.notna(r.get("rank_position")) else None,
+            }
+            for _, r in sub.iterrows()
+        ]
+
+    top_rows = _rows("top")
+    bottom_rows = _rows("bottom")
+    zero_short_rows = _rows("zero_short")
+    weak_long_rows = _rows("weak_long")
+    weak_short_rows = _rows("weak_short")
+
+    # Construire les sets d'exclusion et prefer (même logique que batch_diagnostics.py)
+    exclude_long_symbols = sorted({r["symbol"] for r in bottom_rows + weak_long_rows})
+    exclude_short_symbols = sorted({r["symbol"] for r in bottom_rows + zero_short_rows + weak_short_rows})
+
+    # prefer_top_n depuis config.yaml (même logique que _load_config_defaults)
+    prefer_top_n = 10
+    try:
+        import yaml
+        with open("config.yaml", encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+        prefer_top_n = int((cfg.get("batch_diagnostics") or {}).get("prefer_top_n", 10))
+    except Exception:
+        pass
+    prefer_symbols = sorted(
+        {r["symbol"] for r in top_rows if (r.get("rank_position") or 999) <= prefer_top_n}
+    )
+
+    return {
+        "available": True,
+        "batch_id": batch_id,
+        "batch_started_at": batch_started_at,
+        "total_symbols": int(df["symbol"].nunique()),
+        "top": top_rows,
+        "bottom": bottom_rows,
+        "zero_short": zero_short_rows,
+        "weak_long": weak_long_rows,
+        "weak_short": weak_short_rows,
+        "exclude_long_symbols": exclude_long_symbols,
+        "exclude_short_symbols": exclude_short_symbols,
+        "prefer_symbols": prefer_symbols,
+    }
+
