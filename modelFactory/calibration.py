@@ -104,7 +104,7 @@ def calibrator_from_state_dict(state: dict[str, Any] | None) -> PlattCalibrator 
         return TemperatureScaler.from_state_dict(state)
     if method == "vector":
         return VectorScaler.from_state_dict(state)
-	return None
+    return None
 
 
 # ---------------------------------------------------------------------------
