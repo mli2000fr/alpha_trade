@@ -144,6 +144,19 @@ class BaselineConfig:
     catboost_iterations: int = 300
     catboost_learning_rate: float = 0.03
     random_state: int = 42
+    # ── LightGBM tuning (optionnel) ──
+    lgbm_reg_alpha: float = 0.0       # L1 régularisation
+    lgbm_reg_lambda: float = 0.0       # L2 régularisation
+    lgbm_min_child_samples: int = 20   # min data in leaf
+    lgbm_subsample: float = 1.0        # bagging fraction
+    lgbm_colsample_bytree: float = 1.0 # feature fraction
+    # ── CatBoost tuning (optionnel) ──
+    catboost_l2_leaf_reg: float = 3.0      # L2 régularisation
+    catboost_border_count: int = 254       # précision des splits (max 255)
+    catboost_random_strength: float = 1.0  # randomized scoring
+    catboost_bagging_temperature: float = 1.0  # Bayesian bagging
+    catboost_od_type: str = "IncToDec"     # overfitting detector
+    catboost_od_wait: int = 20             # patience overfitting
 
     def __post_init__(self) -> None:
         if self.model_name not in {"lightgbm", "catboost"}:
@@ -160,6 +173,30 @@ class BaselineConfig:
             raise ValueError("baseline.catboost_iterations doit être >= 10.")
         if self.catboost_learning_rate <= 0:
             raise ValueError("baseline.catboost_learning_rate doit être > 0.")
+        # LightGBM tuning
+        if self.lgbm_reg_alpha < 0:
+            raise ValueError("baseline.lgbm_reg_alpha doit être >= 0.")
+        if self.lgbm_reg_lambda < 0:
+            raise ValueError("baseline.lgbm_reg_lambda doit être >= 0.")
+        if self.lgbm_min_child_samples < 1:
+            raise ValueError("baseline.lgbm_min_child_samples doit être >= 1.")
+        if not (0.0 < self.lgbm_subsample <= 1.0):
+            raise ValueError("baseline.lgbm_subsample doit être dans ]0, 1].")
+        if not (0.0 < self.lgbm_colsample_bytree <= 1.0):
+            raise ValueError("baseline.lgbm_colsample_bytree doit être dans ]0, 1].")
+        # CatBoost tuning
+        if self.catboost_l2_leaf_reg < 0:
+            raise ValueError("baseline.catboost_l2_leaf_reg doit être >= 0.")
+        if self.catboost_border_count < 1 or self.catboost_border_count > 255:
+            raise ValueError("baseline.catboost_border_count doit être dans [1, 255].")
+        if self.catboost_random_strength < 0:
+            raise ValueError("baseline.catboost_random_strength doit être >= 0.")
+        if self.catboost_bagging_temperature < 0:
+            raise ValueError("baseline.catboost_bagging_temperature doit être >= 0.")
+        if self.catboost_od_type not in {"IncToDec", "Iter"}:
+            raise ValueError("baseline.catboost_od_type doit être 'IncToDec' ou 'Iter'.")
+        if self.catboost_od_wait < 1:
+            raise ValueError("baseline.catboost_od_wait doit être >= 1.")
 
 
 @dataclass(frozen=True, slots=True)

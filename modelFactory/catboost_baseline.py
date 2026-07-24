@@ -53,6 +53,12 @@ def run_catboost_baseline(
 			train_dir=str(catboost_run_root / f"seed_{resolved_seed}"),
 			allow_writing_files=True,
 			auto_class_weights="Balanced",
+			l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
+			border_count=cfg.baseline.catboost_border_count,
+			random_strength=cfg.baseline.catboost_random_strength,
+			bagging_temperature=cfg.baseline.catboost_bagging_temperature,
+			od_type=cfg.baseline.catboost_od_type,
+			od_wait=cfg.baseline.catboost_od_wait,
 		),
 		artifact_dir=artifact_dir,
 		# Phase 4.2.c — format natif CatBoost (.cbm). Plus de pickle.

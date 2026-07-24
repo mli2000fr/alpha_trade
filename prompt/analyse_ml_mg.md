@@ -9,16 +9,17 @@
 
 ## Table des matières
 
-1. [Résumé exécutif](#résumé-exécutif)
+1. [Résumé exécutif + Correctifs appliqués](#résumé-exécutif)
 2. [Comparaison LightGBM vs CatBoost](#1-comparaison-lightgbm-vs-catboost)
 3. [Qualité de prédiction : distribution des F1](#2-qualité-de-prédiction--distribution-des-f1)
 4. [Analyse par classe (Short / Flat / Long)](#3-analyse-par-classe-short--flat--long)
 5. [Calibration : true vs pred](#4-calibration--true-vs-pred)
 6. [Top & Flop performers](#5-top--flop-performers)
-7. [Impact des nouvelles features : short-score & macro-move](#6-impact-des-nouvelles-features--short-score--macro-move)
+7. [Impact des nouvelles features](#6-impact-des-nouvelles-features--short-score--macro-move)
 8. [LightGBM vs CatBoost : lequel choisir ?](#7-lightgbm-vs-catboost--lequel-choisir-)
-9. [Pistes d'amélioration priorisées](#8-pistes-damélioration-priorisées)
-10. [Plan d'action](#9-plan-daction)
+9. [Analyse du code source](#8-analyse-du-code-source--ce-que-le-code-explique-des-résultats)
+10. [Pistes d'amélioration (enrichies code)](#9-pistes-damélioration-priorisées-enrichies-code)
+11. [Plan d'action](#10-plan-daction-mis-à-jour-avec-code)
 
 ---
 
@@ -34,7 +35,19 @@
 | Symboles F1>0.40 | 5/200 (2.5%) | 🟡 Faible, univers difficile |
 | Symboles F1<0.20 | 2/200 (1%) | ✅ Très peu de catastrophes |
 
-**Verdict global** : Le batch est **sain et reproductible**. LightGBM et CatBoost sont au coude-à-coude, avec un très léger avantage pour LightGBM. La qualité de prédiction est modeste (F1~0.30) mais honnête pour du ternary classification sur 200 symboles avec walk-forward. Le LSTM reste non compétitif et confirme qu'il nécessite un chantier d'optimisation dédié (hors scope actuel). Les pistes d'amélioration sont claires et actionnables.
+**Verdict global** : Le batch est **sain et reproductible**. LightGBM et CatBoost sont au coude-à-coude, avec un très léger avantage pour LightGBM. La qualité de prédiction est modeste (F1~0.30) mais honnête pour du ternary classification sur 200 symboles avec walk-forward. Le LSTM reste non compétitif et confirme qu'il nécessite un chantier d'optimisation dédié (hors scope actuel).
+
+### 🛠️ Correctifs déjà appliqués (2026-07-24, post-analyse)
+
+| # | Correctif | Fichiers | Impact |
+|:---|:---|:---|:---|
+| 1 | **`class_weight="balanced"` GBM** | `lightgbm_baseline.py`, `catboost_baseline.py`, `global_model.py` | Corrige le biais Short (+7.7% → attendu ~0%) |
+| 2 | **`VectorScaler` (T + biais/classe)** | `calibration.py`, `tabular_baseline.py`, `global_model.py` | Remplace `TemperatureScaler`, corrige le biais de distribution |
+| 3 | **Params tuning exposés (CLI + IHM)** | `config.py`, `cli.py`, `pipeline_ml_defaults.py`, `pipeline_runner.py`, `_execution_center/__init__.py` | `--lgbm-reg-alpha`, `--catboost-l2-leaf-reg`, etc. pilotables depuis l'IHM |
+| 4 | **Global Model aligné** | `global_model.py` | Mêmes correctifs que per-symbol (class_weight + VectorScaler + tuning params) |
+
+> ⚠️ Ces correctifs n'ont **pas encore** été testés sur un nouveau batch.
+> Le prochain run permettra de mesurer leur impact réel sur F1 et calibration.
 
 ---
 
@@ -381,6 +394,9 @@ Le Global Stacking (`--enable-global-stacking`) :
 (LightGBM). Pour un vrai stacking, il faudrait diversifier (ex: CatBoost global +
 LightGBM per-symbol, ou l'inverse).
 
+**Note (2026-07-24)** : Le Global Model bénéficie désormais des mêmes correctifs
+que les per-symbol (`class_weight="balanced"`, `VectorScaler`, params tuning).
+
 ### 8.4 Walk-Forward : configuration et impact
 
 **Fichier** : `modelFactory/config.py:WalkForwardConfig` — partagé par **tous** les modèles
@@ -451,7 +467,7 @@ model_builder=lambda resolved_seed: lgb.LGBMClassifier(
     class_weight="balanced", # ✅ FAIT — corrige le biais Short (+7.7%)
 ```
 
-**Paramètres restant à tuner** :
+**Pistes de tuning (optionnel — pas des bugs, des leviers d'optimisation)** :
 ```python
     reg_alpha=0.1,          # L1 régularisation → réduit overfitting
     reg_lambda=0.1,         # L2 régularisation
@@ -460,7 +476,9 @@ model_builder=lambda resolved_seed: lgb.LGBMClassifier(
     colsample_bytree=0.8,   # Feature sampling
 ```
 
-**Gain attendu** : +0.02 à +0.04 de F1 WF (tuning).
+> 💡 Ces paramètres ne sont **pas nécessaires** au fonctionnement. Ils
+> représentent des pistes d'amélioration à explorer via Optuna/GridSearch
+> quand on passera en phase tuning. Le modèle actuel est correct.
 
 #### 9.2 Hyperparameter tuning CatBoost
 
@@ -485,7 +503,7 @@ CatBoostClassifier(
     auto_class_weights="Balanced",  # ✅ FAIT — corrige le biais Short
 ```
 
-**Paramètres restant à tuner** :
+**Pistes de tuning (optionnel — pas des bugs, des leviers d'optimisation)** :
 ```python
     l2_leaf_reg=3,             # L2 régularisation
     border_count=128,          # Précision des splits
@@ -495,7 +513,8 @@ CatBoostClassifier(
     od_wait=20,                # Patience overfitting
 ```
 
-**Gain attendu** : +0.02 à +0.03 de F1 WF (tuning).
+> 💡 Même remarque que LightGBM : ces paramètres sont des pistes
+> d'optimisation pour la phase tuning, pas des corrections.
 
 #### 9.3 Poids de classe GBM — Correction du biais Short ✅ FAIT (2026-07-24)
 
@@ -664,16 +683,22 @@ ne peut pas les exploiter pleinement. Deux options :
 | **class_weight="balanced" LightGBM** | `lightgbm_baseline.py` | 30min | ✅ Fait |
 | **auto_class_weights="Balanced" CatBoost** | `catboost_baseline.py` | 30min | ✅ Fait |
 | **VectorScaler (remplace TemperatureScaler)** | `calibration.py` + `tabular_baseline.py` + `global_model.py` | 2h | ✅ Fait |
+| **Global Model aligné** | `global_model.py` | 30min | ✅ Fait |
+| **Params tuning CLI + IHM** | `config.py` + `cli.py` + IHM | 2h | ✅ Fait |
 | **Seuils asymétriques** | `ternary_decision_policy.py` + `config.py` | 2h | ⏳ À faire |
 | Filtrage liquidité | `orchestrator.py` + `selector_reference.py` | 3h | ⏳ À faire |
 
-### Semaine 2 : Tuning
+### Semaine 2 : Tuning (pilotable depuis l'IHM)
 
 | Action | Fichier(s) | Effort | Gain |
 |:---|:---|:---|:---|
 | Hyperparameter tuning LightGBM | `lightgbm_baseline.py` + `config.py` | 4h | +0.02–0.04 |
 | Hyperparameter tuning CatBoost | `catboost_baseline.py` + `config.py` | 4h | +0.02–0.03 |
 | Isotonic calibrator | `calibration.py` + `tabular_baseline.py` | 3h | calibration |
+
+> 💡 Les blocs de tuning LightGBM et CatBoost sont déjà dans l'IHM (page Pipeline,
+> expander « Hyperparams avancés »). Il suffit de jouer avec les sliders et de
+> lancer un batch pour tester différentes combinaisons.
 
 ### Pré-Go-Live (après recherche)
 
@@ -711,6 +736,18 @@ python -m modelFactory --mode train --accelerator auto \
   --comment "baseline + global staking gbm + challenger+ short score + move"
 ```
 
+> **Nouveaux flags tuning disponibles (2026-07-24)** :
+> ```powershell
+> # LightGBM
+> --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 50
+> --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.8
+> # CatBoost
+> --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0
+> --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20
+> ```
+> Ces flags sont pilotables depuis l'IHM (Page Pipeline → Hyperparams avancés →
+> blocs « LightGBM — tuning » et « CatBoost — tuning »). Checkbox cochée par défaut.
+
 ## Annexe B — Glossaire
 
 | Terme | Définition |
@@ -718,6 +755,7 @@ python -m modelFactory --mode train --accelerator auto \
 | **F1 macro** | Moyenne des F1 par classe (Short, Flat, Long). Mesure globale non biaisée par la distribution des classes. |
 | **WF (Walk-Forward)** | Validation temporelle réaliste : entraînement sur passé, test sur futur, avec fenêtre glissante. |
 | **Platt scaling** | Calibration des probabilités par régression logistique sur les scores bruts du modèle. |
+| **VectorScaler** | Calibration multiclasse avec T + biais/classe. Corrige la sur/sous-prédiction par classe (remplace TemperatureScaler). |
 | **Global stacking** | Un méta-modèle entraîné sur tous les symboles qui combine les features avec les prédictions du modèle local. |
 | **Short-score** | Feature indiquant la probabilité qu'un titre baisse, dérivée d'indicateurs techniques baissiers. |
 | **Macro-move** | Feature indiquant le mouvement global du marché (basé sur SPY), pour conditionner les prédictions au régime. |

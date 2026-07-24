@@ -35,6 +35,21 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_CATBOOST_DEPTH,
     DEFAULT_ML_CATBOOST_ITERATIONS,
     DEFAULT_ML_CATBOOST_LEARNING_RATE,
+    # LightGBM tuning
+    DEFAULT_ML_LGBM_TUNING_ENABLED,
+    DEFAULT_ML_LGBM_REG_ALPHA,
+    DEFAULT_ML_LGBM_REG_LAMBDA,
+    DEFAULT_ML_LGBM_MIN_CHILD_SAMPLES,
+    DEFAULT_ML_LGBM_SUBSAMPLE,
+    DEFAULT_ML_LGBM_COLSAMPLE_BYTREE,
+    # CatBoost tuning
+    DEFAULT_ML_CATBOOST_TUNING_ENABLED,
+    DEFAULT_ML_CATBOOST_L2_LEAF_REG,
+    DEFAULT_ML_CATBOOST_BORDER_COUNT,
+    DEFAULT_ML_CATBOOST_RANDOM_STRENGTH,
+    DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE,
+    DEFAULT_ML_CATBOOST_OD_TYPE,
+    DEFAULT_ML_CATBOOST_OD_WAIT,
     DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE,
     DEFAULT_ML_DEBUG_TRAIN,
     DEFAULT_ML_DECISION_THRESHOLD,
@@ -381,6 +396,21 @@ class PipelineLaunchOptions:
     ml_catboost_depth: int = DEFAULT_ML_CATBOOST_DEPTH
     ml_catboost_iterations: int = DEFAULT_ML_CATBOOST_ITERATIONS
     ml_catboost_learning_rate: float = DEFAULT_ML_CATBOOST_LEARNING_RATE
+    # LightGBM tuning (optionnel)
+    ml_lgbm_tuning_enabled: bool = DEFAULT_ML_LGBM_TUNING_ENABLED
+    ml_lgbm_reg_alpha: float = DEFAULT_ML_LGBM_REG_ALPHA
+    ml_lgbm_reg_lambda: float = DEFAULT_ML_LGBM_REG_LAMBDA
+    ml_lgbm_min_child_samples: int = DEFAULT_ML_LGBM_MIN_CHILD_SAMPLES
+    ml_lgbm_subsample: float = DEFAULT_ML_LGBM_SUBSAMPLE
+    ml_lgbm_colsample_bytree: float = DEFAULT_ML_LGBM_COLSAMPLE_BYTREE
+    # CatBoost tuning (optionnel)
+    ml_catboost_tuning_enabled: bool = DEFAULT_ML_CATBOOST_TUNING_ENABLED
+    ml_catboost_l2_leaf_reg: float = DEFAULT_ML_CATBOOST_L2_LEAF_REG
+    ml_catboost_border_count: int = DEFAULT_ML_CATBOOST_BORDER_COUNT
+    ml_catboost_random_strength: float = DEFAULT_ML_CATBOOST_RANDOM_STRENGTH
+    ml_catboost_bagging_temperature: float = DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE
+    ml_catboost_od_type: str = DEFAULT_ML_CATBOOST_OD_TYPE
+    ml_catboost_od_wait: int = DEFAULT_ML_CATBOOST_OD_WAIT
     ml_candidate_horizons: tuple[int, ...] = DEFAULT_ML_CANDIDATE_HORIZONS
     ml_candidate_up_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_UP_THRESHOLDS
     ml_candidate_down_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS
@@ -2130,6 +2160,23 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_catboost_iterations),
             "--catboost-learning-rate",
             str(options.ml_catboost_learning_rate),
+            # ── LightGBM tuning (conditionnel) ──
+            *([
+                "--lgbm-reg-alpha", str(options.ml_lgbm_reg_alpha),
+                "--lgbm-reg-lambda", str(options.ml_lgbm_reg_lambda),
+                "--lgbm-min-child-samples", str(options.ml_lgbm_min_child_samples),
+                "--lgbm-subsample", str(options.ml_lgbm_subsample),
+                "--lgbm-colsample-bytree", str(options.ml_lgbm_colsample_bytree),
+            ] if options.ml_lgbm_tuning_enabled else []),
+            # ── CatBoost tuning (conditionnel) ──
+            *([
+                "--catboost-l2-leaf-reg", str(options.ml_catboost_l2_leaf_reg),
+                "--catboost-border-count", str(options.ml_catboost_border_count),
+                "--catboost-random-strength", str(options.ml_catboost_random_strength),
+                "--catboost-bagging-temperature", str(options.ml_catboost_bagging_temperature),
+                "--catboost-od-type", str(options.ml_catboost_od_type),
+                "--catboost-od-wait", str(options.ml_catboost_od_wait),
+            ] if options.ml_catboost_tuning_enabled else []),
             "--default-champion",
             options.ml_default_champion,
             "--heartbeat-interval-seconds",

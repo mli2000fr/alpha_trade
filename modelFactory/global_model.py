@@ -187,6 +187,11 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
             random_state=resolved_seed,
             verbosity=-1,
             class_weight="balanced",
+            reg_alpha=cfg.baseline.lgbm_reg_alpha,
+            reg_lambda=cfg.baseline.lgbm_reg_lambda,
+            min_child_samples=cfg.baseline.lgbm_min_child_samples,
+            subsample=cfg.baseline.lgbm_subsample,
+            colsample_bytree=cfg.baseline.lgbm_colsample_bytree,
         )
     CatBoostClassifier = _import_catboost()
     is_ternary = cfg.data.target_mode == "ternary"
@@ -202,6 +207,12 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
         train_dir=str(train_dir),
         allow_writing_files=True,
         auto_class_weights="Balanced",
+        l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
+        border_count=cfg.baseline.catboost_border_count,
+        random_strength=cfg.baseline.catboost_random_strength,
+        bagging_temperature=cfg.baseline.catboost_bagging_temperature,
+        od_type=cfg.baseline.catboost_od_type,
+        od_wait=cfg.baseline.catboost_od_wait,
     )
 
 

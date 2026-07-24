@@ -110,6 +110,27 @@ DEFAULT_ML_CATBOOST_ITERATIONS = 300
 DEFAULT_ML_CATBOOST_LEARNING_RATE = 0.03
 
 # ---------------------------------------------------------------------------
+# LightGBM tuning (optionnel — activé par checkbox IHM)
+# ---------------------------------------------------------------------------
+DEFAULT_ML_LGBM_TUNING_ENABLED = True
+DEFAULT_ML_LGBM_REG_ALPHA = 0.1
+DEFAULT_ML_LGBM_REG_LAMBDA = 0.1
+DEFAULT_ML_LGBM_MIN_CHILD_SAMPLES = 50
+DEFAULT_ML_LGBM_SUBSAMPLE = 0.8
+DEFAULT_ML_LGBM_COLSAMPLE_BYTREE = 0.8
+
+# ---------------------------------------------------------------------------
+# CatBoost tuning (optionnel — activé par checkbox IHM)
+# ---------------------------------------------------------------------------
+DEFAULT_ML_CATBOOST_TUNING_ENABLED = True
+DEFAULT_ML_CATBOOST_L2_LEAF_REG = 3.0
+DEFAULT_ML_CATBOOST_BORDER_COUNT = 128
+DEFAULT_ML_CATBOOST_RANDOM_STRENGTH = 1.0
+DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE = 1.0
+DEFAULT_ML_CATBOOST_OD_TYPE = "IncToDec"
+DEFAULT_ML_CATBOOST_OD_WAIT = 20
+
+# ---------------------------------------------------------------------------
 # Grilles candidate (resserrées swing 2-10 j)
 # ---------------------------------------------------------------------------
 DEFAULT_ML_CANDIDATE_HORIZONS: tuple[int, ...] = (3, 5, 7, 10)

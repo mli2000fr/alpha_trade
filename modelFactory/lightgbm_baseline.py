@@ -49,6 +49,11 @@ def run_lightgbm_baseline(
             random_state=resolved_seed,
             verbosity=-1,
             class_weight="balanced",
+            reg_alpha=cfg.baseline.lgbm_reg_alpha,
+            reg_lambda=cfg.baseline.lgbm_reg_lambda,
+            min_child_samples=cfg.baseline.lgbm_min_child_samples,
+            subsample=cfg.baseline.lgbm_subsample,
+            colsample_bytree=cfg.baseline.lgbm_colsample_bytree,
         ),
         artifact_dir=artifact_dir,
         # Phase 4.2.c — format natif LightGBM (.txt). Plus de pickle.

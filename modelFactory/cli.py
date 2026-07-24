@@ -325,9 +325,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--lgbm-max-depth", type=int, default=4)
     p.add_argument("--lgbm-n-estimators", type=int, default=200)
     p.add_argument("--lgbm-learning-rate", type=float, default=0.05)
+    p.add_argument("--lgbm-reg-alpha", type=float, default=0.0,
+                   help="L1 régularisation LightGBM")
+    p.add_argument("--lgbm-reg-lambda", type=float, default=0.0,
+                   help="L2 régularisation LightGBM")
+    p.add_argument("--lgbm-min-child-samples", type=int, default=20,
+                   help="LightGBM min_data_in_leaf")
+    p.add_argument("--lgbm-subsample", type=float, default=1.0,
+                   help="LightGBM bagging_fraction")
+    p.add_argument("--lgbm-colsample-bytree", type=float, default=1.0,
+                   help="LightGBM feature_fraction")
     p.add_argument("--catboost-depth", type=int, default=6)
     p.add_argument("--catboost-iterations", type=int, default=300)
     p.add_argument("--catboost-learning-rate", type=float, default=0.03)
+    p.add_argument("--catboost-l2-leaf-reg", type=float, default=3.0,
+                   help="L2 régularisation CatBoost")
+    p.add_argument("--catboost-border-count", type=int, default=254,
+                   help="CatBoost border_count (max 255)")
+    p.add_argument("--catboost-random-strength", type=float, default=1.0,
+                   help="CatBoost random_strength")
+    p.add_argument("--catboost-bagging-temperature", type=float, default=1.0,
+                   help="CatBoost bagging_temperature")
+    p.add_argument("--catboost-od-type", type=str, default="IncToDec",
+                   choices=["IncToDec", "Iter"],
+                   help="CatBoost overfitting detector")
+    p.add_argument("--catboost-od-wait", type=int, default=20,
+                   help="CatBoost od_wait")
     p.add_argument("--optimize-target", action="store_true", default=False,
                    help="Sélectionne automatiquement le meilleur horizon swing parmi plusieurs candidats")
     p.add_argument("--candidate-horizons", nargs="*", type=int, default=[3, 5, 10, 15])
@@ -438,6 +461,17 @@ def main(args: list[str] | None = None) -> None:
             catboost_iterations=opts.catboost_iterations,
             catboost_learning_rate=opts.catboost_learning_rate,
             random_state=opts.seed,
+            lgbm_reg_alpha=opts.lgbm_reg_alpha,
+            lgbm_reg_lambda=opts.lgbm_reg_lambda,
+            lgbm_min_child_samples=opts.lgbm_min_child_samples,
+            lgbm_subsample=opts.lgbm_subsample,
+            lgbm_colsample_bytree=opts.lgbm_colsample_bytree,
+            catboost_l2_leaf_reg=opts.catboost_l2_leaf_reg,
+            catboost_border_count=opts.catboost_border_count,
+            catboost_random_strength=opts.catboost_random_strength,
+            catboost_bagging_temperature=opts.catboost_bagging_temperature,
+            catboost_od_type=opts.catboost_od_type,
+            catboost_od_wait=opts.catboost_od_wait,
         ),
         global_model=GlobalModelConfig(
             enabled=opts.enable_global_model,

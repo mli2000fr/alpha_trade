@@ -137,6 +137,21 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
+    # LightGBM tuning
+    DEFAULT_ML_LGBM_TUNING_ENABLED,
+    DEFAULT_ML_LGBM_REG_ALPHA,
+    DEFAULT_ML_LGBM_REG_LAMBDA,
+    DEFAULT_ML_LGBM_MIN_CHILD_SAMPLES,
+    DEFAULT_ML_LGBM_SUBSAMPLE,
+    DEFAULT_ML_LGBM_COLSAMPLE_BYTREE,
+    # CatBoost tuning
+    DEFAULT_ML_CATBOOST_TUNING_ENABLED,
+    DEFAULT_ML_CATBOOST_L2_LEAF_REG,
+    DEFAULT_ML_CATBOOST_BORDER_COUNT,
+    DEFAULT_ML_CATBOOST_RANDOM_STRENGTH,
+    DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE,
+    DEFAULT_ML_CATBOOST_OD_TYPE,
+    DEFAULT_ML_CATBOOST_OD_WAIT,
     DEFAULT_ML_TRAINING_START_DATE,
     DEFAULT_ML_TRAINING_END_DATE,
     DEFAULT_ML_LOG_LEVEL,
@@ -3918,6 +3933,190 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     )
                 )
 
+            # ── LightGBM tuning (optionnel) ──────────────────────────────────
+            st.markdown("##### LightGBM — tuning (régularisation, bagging)")
+            ml_lgbm_tuning_enabled = st.checkbox(
+                "Appliquer les paramètres de tuning LightGBM",
+                value=bool(st.session_state.get(
+                    "pipeline_ml_lgbm_tuning_enabled",
+                    DEFAULT_ML_LGBM_TUNING_ENABLED,
+                )),
+                key="pipeline_ml_lgbm_tuning_enabled",
+                help="Décoché = les paramètres ci-dessous ne sont pas ajoutés à la commande.",
+            )
+            if ml_lgbm_tuning_enabled:
+                lgbm_tune_col1, lgbm_tune_col2, lgbm_tune_col3 = st.columns(3)
+                with lgbm_tune_col1:
+                    ml_lgbm_reg_alpha = float(
+                        st.number_input(
+                            "LGBM — reg_alpha (L1)",
+                            min_value=0.0,
+                            max_value=10.0,
+                            value=_session_state_float(
+                                "pipeline_ml_lgbm_reg_alpha",
+                                DEFAULT_ML_LGBM_REG_ALPHA,
+                            ),
+                            step=0.05,
+                            format="%.2f",
+                            key="pipeline_ml_lgbm_reg_alpha",
+                        )
+                    )
+                    ml_lgbm_subsample = float(
+                        st.number_input(
+                            "LGBM — subsample (bagging)",
+                            min_value=0.1,
+                            max_value=1.0,
+                            value=_session_state_float(
+                                "pipeline_ml_lgbm_subsample",
+                                DEFAULT_ML_LGBM_SUBSAMPLE,
+                            ),
+                            step=0.05,
+                            format="%.2f",
+                            key="pipeline_ml_lgbm_subsample",
+                        )
+                    )
+                with lgbm_tune_col2:
+                    ml_lgbm_reg_lambda = float(
+                        st.number_input(
+                            "LGBM — reg_lambda (L2)",
+                            min_value=0.0,
+                            max_value=10.0,
+                            value=_session_state_float(
+                                "pipeline_ml_lgbm_reg_lambda",
+                                DEFAULT_ML_LGBM_REG_LAMBDA,
+                            ),
+                            step=0.05,
+                            format="%.2f",
+                            key="pipeline_ml_lgbm_reg_lambda",
+                        )
+                    )
+                    ml_lgbm_colsample_bytree = float(
+                        st.number_input(
+                            "LGBM — colsample_bytree",
+                            min_value=0.1,
+                            max_value=1.0,
+                            value=_session_state_float(
+                                "pipeline_ml_lgbm_colsample_bytree",
+                                DEFAULT_ML_LGBM_COLSAMPLE_BYTREE,
+                            ),
+                            step=0.05,
+                            format="%.2f",
+                            key="pipeline_ml_lgbm_colsample_bytree",
+                        )
+                    )
+                with lgbm_tune_col3:
+                    ml_lgbm_min_child_samples = int(
+                        st.number_input(
+                            "LGBM — min_child_samples",
+                            min_value=1,
+                            max_value=500,
+                            value=_session_state_int(
+                                "pipeline_ml_lgbm_min_child_samples",
+                                DEFAULT_ML_LGBM_MIN_CHILD_SAMPLES,
+                            ),
+                            step=5,
+                            key="pipeline_ml_lgbm_min_child_samples",
+                        )
+                    )
+
+            # ── CatBoost tuning (optionnel) ──────────────────────────────────
+            st.markdown("##### CatBoost — tuning (régularisation, overfitting)")
+            ml_catboost_tuning_enabled = st.checkbox(
+                "Appliquer les paramètres de tuning CatBoost",
+                value=bool(st.session_state.get(
+                    "pipeline_ml_catboost_tuning_enabled",
+                    DEFAULT_ML_CATBOOST_TUNING_ENABLED,
+                )),
+                key="pipeline_ml_catboost_tuning_enabled",
+                help="Décoché = les paramètres ci-dessous ne sont pas ajoutés à la commande.",
+            )
+            if ml_catboost_tuning_enabled:
+                cb_tune_col1, cb_tune_col2, cb_tune_col3 = st.columns(3)
+                with cb_tune_col1:
+                    ml_catboost_l2_leaf_reg = float(
+                        st.number_input(
+                            "CatBoost — l2_leaf_reg",
+                            min_value=0.0,
+                            max_value=50.0,
+                            value=_session_state_float(
+                                "pipeline_ml_catboost_l2_leaf_reg",
+                                DEFAULT_ML_CATBOOST_L2_LEAF_REG,
+                            ),
+                            step=0.5,
+                            format="%.1f",
+                            key="pipeline_ml_catboost_l2_leaf_reg",
+                        )
+                    )
+                    ml_catboost_border_count = int(
+                        st.number_input(
+                            "CatBoost — border_count",
+                            min_value=1,
+                            max_value=255,
+                            value=_session_state_int(
+                                "pipeline_ml_catboost_border_count",
+                                DEFAULT_ML_CATBOOST_BORDER_COUNT,
+                            ),
+                            step=32,
+                            key="pipeline_ml_catboost_border_count",
+                        )
+                    )
+                with cb_tune_col2:
+                    ml_catboost_random_strength = float(
+                        st.number_input(
+                            "CatBoost — random_strength",
+                            min_value=0.0,
+                            max_value=10.0,
+                            value=_session_state_float(
+                                "pipeline_ml_catboost_random_strength",
+                                DEFAULT_ML_CATBOOST_RANDOM_STRENGTH,
+                            ),
+                            step=0.5,
+                            format="%.1f",
+                            key="pipeline_ml_catboost_random_strength",
+                        )
+                    )
+                    ml_catboost_bagging_temperature = float(
+                        st.number_input(
+                            "CatBoost — bagging_temperature",
+                            min_value=0.0,
+                            max_value=10.0,
+                            value=_session_state_float(
+                                "pipeline_ml_catboost_bagging_temperature",
+                                DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE,
+                            ),
+                            step=0.5,
+                            format="%.1f",
+                            key="pipeline_ml_catboost_bagging_temperature",
+                        )
+                    )
+                with cb_tune_col3:
+                    ml_catboost_od_type = cast(
+                        str,
+                        st.selectbox(
+                            "CatBoost — od_type",
+                            options=["IncToDec", "Iter"],
+                            index=0 if st.session_state.get(
+                                "pipeline_ml_catboost_od_type",
+                                DEFAULT_ML_CATBOOST_OD_TYPE,
+                            ) == "IncToDec" else 1,
+                            key="pipeline_ml_catboost_od_type",
+                            help="IncToDec = arrête si overfitting. Iter = fixe.",
+                        ),
+                    )
+                    ml_catboost_od_wait = int(
+                        st.number_input(
+                            "CatBoost — od_wait",
+                            min_value=1,
+                            max_value=200,
+                            value=_session_state_int(
+                                "pipeline_ml_catboost_od_wait",
+                                DEFAULT_ML_CATBOOST_OD_WAIT,
+                            ),
+                            step=5,
+                            key="pipeline_ml_catboost_od_wait",
+                        )
+                    )
+
             st.markdown("##### Grilles candidate (utilisées si `--optimize-target` / `--optimize-thresholds`)")
             st.caption(
                 "Défauts swing 2-10 j : horizons {3,5,7,10}, up {1.5%, 2%, 3%}, down {-1%, -1.5%}, "
@@ -4149,6 +4348,21 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_catboost_depth=int(ml_catboost_depth),
             ml_catboost_iterations=int(ml_catboost_iterations),
             ml_catboost_learning_rate=float(ml_catboost_learning_rate),
+            # LightGBM tuning
+            ml_lgbm_tuning_enabled=bool(ml_lgbm_tuning_enabled),
+            ml_lgbm_reg_alpha=float(ml_lgbm_reg_alpha),
+            ml_lgbm_reg_lambda=float(ml_lgbm_reg_lambda),
+            ml_lgbm_min_child_samples=int(ml_lgbm_min_child_samples),
+            ml_lgbm_subsample=float(ml_lgbm_subsample),
+            ml_lgbm_colsample_bytree=float(ml_lgbm_colsample_bytree),
+            # CatBoost tuning
+            ml_catboost_tuning_enabled=bool(ml_catboost_tuning_enabled),
+            ml_catboost_l2_leaf_reg=float(ml_catboost_l2_leaf_reg),
+            ml_catboost_border_count=int(ml_catboost_border_count),
+            ml_catboost_random_strength=float(ml_catboost_random_strength),
+            ml_catboost_bagging_temperature=float(ml_catboost_bagging_temperature),
+            ml_catboost_od_type=str(ml_catboost_od_type),
+            ml_catboost_od_wait=int(ml_catboost_od_wait),
             ml_candidate_horizons=tuple(sorted({int(v) for v in ml_candidate_horizons_selection})) or DEFAULT_ML_CANDIDATE_HORIZONS,
             ml_candidate_up_thresholds=tuple(sorted({float(v) for v in ml_candidate_up_thresholds_selection})) or DEFAULT_ML_CANDIDATE_UP_THRESHOLDS,
             ml_candidate_down_thresholds=tuple(sorted({float(v) for v in ml_candidate_down_thresholds_selection})) or DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS,
