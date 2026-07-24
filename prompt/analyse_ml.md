@@ -1046,6 +1046,38 @@ def is_pathological_distribution(returns: np.ndarray) -> bool:
 
 ## 7. Synthèse & Plan d'action
 
+### 7.0 Règle de filtrage — Quels symboles trader ?
+
+Rappel des seuils de qualité par classe (baseline aléatoire = 0.33 pour 3 classes équilibrées) :
+
+| F1 par classe | Interprétation |
+|---------------|----------------|
+| < 0.20 | 🔴 **Classe invisible** |
+| 0.20 - 0.30 | 🟠 **Très faible** |
+| 0.30 - 0.35 | 🟡 **Marginal** (proche du hasard) |
+| 0.35 - 0.45 | 🟢 **Bon** |
+| > 0.45 | 🟢 **Très bon** |
+
+**Règle de filtrage :**
+
+```
+✅ TRADABLE (toutes directions) : F1_long > 0.35 ET F1_short > 0.30
+✅ TRADABLE (long only)        : F1_long > 0.40 ET F1_short < 0.20 → shorter interdit
+✅ TRADABLE (short only)       : F1_short > 0.40 ET F1_long < 0.20 → longer interdit
+⚠️ SURVEILLER                  : F1_long > 0.35 mais F1_short entre 0.20-0.30
+❌ EXCLURE                     : F1_long < 0.30 ET F1_short < 0.30 → aucune direction fiable
+❌ EXCLURE                     : F1_flat < 0.10 → titre trop volatil/binaire
+```
+
+**Application au batch `cddc05` :**
+
+| Catégorie | Nb symboles | Exemples |
+|-----------|-------------|---------|
+| ✅ Toutes directions | ~15-20 | HLIT, R, AIN, FLEX |
+| ✅ Long only | ~30-40 | NTRS, SANM, MOG.A |
+| ⚠️ Surveiller | ~30-40 | F1_short entre 0.20-0.30 |
+| ❌ Exclure | ~50-60 | HSBC, ROKU, IIPR + F1_macro < 0.25 |
+
 ### 7.1 Résumé des problèmes
 
 | # | Problème | Sévérité | Cause racine |

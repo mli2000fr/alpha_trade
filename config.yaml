@@ -407,8 +407,8 @@ batch_diagnostics:
   # Un symbole avec f1_long_wf < weak_long_threshold est marqué `weak_long`.
   # Un symbole avec 0 < f1_short_wf < weak_short_threshold est marqué `weak_short`.
   # Les symboles avec f1_short_wf = 0 sont marqués `zero_short` (indépendamment).
-  weak_long_threshold: 0.15
-  weak_short_threshold: 0.15
+  weak_long_threshold: 0.25
+  weak_short_threshold: 0.25
 
   # Multiplicateur de sizing pour les symboles du top N (rank_type=top).
   # Appliqué dans le live ET le backtest. 1.0 = pas de boost.

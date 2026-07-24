@@ -3256,9 +3256,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Backend du modèle global",
                     options=["catboost", "lightgbm"],
                     index=["catboost", "lightgbm"].index(
-                        cast(str, st.session_state.get("pipeline_ml_global_model_name", "catboost"))
-                        if st.session_state.get("pipeline_ml_global_model_name", "catboost") in {"catboost", "lightgbm"}
-                        else "catboost"
+                        cast(str, st.session_state.get("pipeline_ml_global_model_name", "lightgbm"))
+                        if st.session_state.get("pipeline_ml_global_model_name", "lightgbm") in {"catboost", "lightgbm"}
+                        else "lightgbm"
                     ),
                     key="pipeline_ml_global_model_name",
                     disabled=not ml_enable_global_model,
