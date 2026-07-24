@@ -107,15 +107,122 @@ Le problème « trop de features, pas assez d'échantillons par titre » est un 
 
 **1. Panel Learning — Un seul modèle pour tous les titres (approche dominante)**
 
-Au lieu d'entraîner un LSTM **par symbole** (1400 séquences chacun), on entraîne **un seul LSTM sur tous les titres empilés** :
+Au lieu d'entraîner un modèle **par symbole** (1400 séquences chacun), on entraîne **un seul modèle sur tous les titres empilés** :
 
 ```
 200 symboles × 1400 séquences = 280 000 séquences d'entraînement
 Ratio → 280K échantillons / 90K paramètres ≈ 3:1 ✅
 ```
 
-C'est l'approche de la littérature académique de référence :
-- **Gu, Kelly, Xiu (2020)** — *« Empirical Asset Pricing via Machine Learning »*, Review of Financial Studies : un seul modèle pour tout l'univers, les caractéristiques du titre (secteur, taille, liquidité) sont des features comme les autres.
+Le Panel Learning existe en deux variantes, mais le paysage réel est plus nuancé :
+
+| Variante | Utilisation dans l'industrie |
+|----------|------------------------------|
+| **Panel + Arbres (GBM)** | 🏭 **Majorité des funds systématiques** (AQR, Dimensional, WorldQuant, etc.) |
+| **Panel + Deep Learning (LSTM/Transformer)** | 🔬 **Funds quant avancés** (Renaissance, Two Sigma, Citadel) + littérature académique |
+
+##### 🏦 Ce que les pros utilisent VRAIMENT — le paysage réel
+
+**1. Arbres boostés (LightGBM > XGBoost >> CatBoost) — le standard de facto**
+
+La majorité des hedge funds systématiques utilisent des arbres boostés comme backbone, y compris pour des modèles panel/globaux. Pourquoi ?
+
+- **LightGBM** est le plus répandu en finance quant → rapidité sur gros volumes (des millions de lignes), gestion native des NaN, excellent sur données tabulaires
+- **XGBoost** est le deuxième choix → écosystème plus mature, meilleure documentation, mais plus lent que LightGBM sur grands datasets
+- **CatBoost** est rare en finance quant → conçu pour les features catégorielles (type NLP/recommandation), or les features financières sont quasi toutes numériques. Il reste bon, mais n'apporte pas d'avantage décisif par rapport à LightGBM.
+
+> 📖 **Référence** : *« Do Gradient Boosting Machines Beat Deep Learning? »* — Grinsztajn, Oyallon, Varoquaux (2022, NeurIPS). Sur données tabulaires (ce qui est le cas des features OHLCV cross-sectionnelles), les GBM surpassent les réseaux de neurones dans 90%+ des benchmarks. Ce résultat a été largement confirmé par la communauté quant.
+
+**2. Deep Learning (Transformers > LSTM) — pour ceux qui ont l'infrastructure**
+
+Les funds qui utilisent du DL pour du price forecasting (Renaissance, Two Sigma, Citadel, certains desks chez JPM/GS) ne font pas du « LSTM sur 47 features ». Ils font :
+
+- **Des Transformers** sur des séquences longues (100-500 pas de temps) avec des embeddings de stock appris → l'architecture *TabTransformer* ou *FT-Transformer* est devenue le standard
+- **Des CNN/TCN** pour du order book (carnet d'ordres intraday, milliers de ticks) → LSTM est trop lent et trop instable
+- **Du multi-modal** : prix + news NLP + images satellite → le DL est indispensable pour fusionner ces sources hétérogènes
+
+Le **LSTM pur sur données daily OHLCV**, c'est surtout le standard **académique** (Gu-Kelly-Xiu 2020, Sirignano-Cont 2019), pas vraiment le standard industriel. Les pros qui font du DL sont passés aux Transformers depuis ~2020.
+
+> ⚠️ **Question légitime : un Transformer est-il plus performant que LightGBM ?**
+>
+> La réponse dépend du régime de données, et elle est moins tranchée qu'on ne le croit :
+>
+> | Régime de données | Vainqueur | Écart |
+> |-------------------|-----------|-------|
+> | Tabulaire < 100 features, < 1M lignes | **LightGBM** 🥇 | GBM gagne dans ~90% des cas |
+> | Tabulaire > 500 features, > 10M lignes | **FT-Transformer** ≈ LightGBM | Écart < 2%, pas décisif |
+> | Séquentiel long (100+ timesteps) | **Transformer** 🥇 | Les arbres ne modélisent pas le temps |
+> | Multi-modal (prix + texte + image) | **Transformer** 🥇 | DL indispensable |
+>
+> 📖 **Référence clé** : *« Why do tree-based models still outperform deep learning on tabular data? »* — Grinsztajn, Oyallon, Varoquaux (2022, NeurIPS). Même les Transformers les plus récents (FT-Transformer, TabTransformer, SAINT) ne battent pas **systématiquement** un LightGBM bien réglé sur des données tabulaires classiques. L'écart se réduit avec la taille du dataset, mais pour la plupart des use-cases quant (< 500 features, < 10M lignes), **LightGBM reste le meilleur choix coût/bénéfice**.
+>
+> **Quelle infrastructure faut-il pour que le DL batte les arbres ?**
+>
+> ```
+> ┌─────────────────────────────────────────────────────────────────┐
+> │  Ce qu'il faut pour que Transformers > LightGBM                  │
+> ├─────────────────────────────────────────────────────────────────┤
+> │  💻 GPU A100/H100 (40-80 GB VRAM) — pas une carte gaming         │
+> │  📊 Des centaines de millions de séquences d'entraînement        │
+> │  🏗️  Distributed training multi-GPU / multi-nœud                │
+> │  👨‍🔬 Une équipe ML dediée (architecture design, tuning, debug)  │
+> │  ⏱️  Des heures/jours d'entraînement par modèle                  │
+> │  💰 Budget annuel : $500K-$2M en compute + salaires              │
+> ├─────────────────────────────────────────────────────────────────┤
+> │  Ce qu'il faut pour LightGBM                                     │
+> ├─────────────────────────────────────────────────────────────────┤
+> │  💻 Un CPU 32 cœurs + 64 GB RAM (un bon serveur, pas un cluster) │
+> │  📊 Quelques centaines de milliers de lignes                     │
+> │  ⏱️  Quelques minutes d'entraînement                             │
+> │  💰 Budget : $0 si tu as déjà le serveur                         │
+> └─────────────────────────────────────────────────────────────────┘
+> ```
+>
+> **Conclusion** : Pour ton cas (200 titres × 2000 jours = 400K lignes, 47 features, horizon 10j), un Transformer n'apporterait **aucun gain** par rapport à LightGBM — et coûterait 100× plus cher en infra et complexité. Les funds qui utilisent des Transformers le font parce qu'ils ont des **milliards** de lignes (tick data, order book, données alternatives) que les arbres ne peuvent tout simplement pas ingérer. Ce n'est pas un problème de « sophistication du modèle », c'est un problème de **volume de données**.
+
+**3. Le consensus pratique (2024-2026)**
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Données tabulaires (OHLCV, features calculées)              │
+│  → LightGBM / XGBoost                                       │
+│  → 90%+ des funds systématiques                             │
+├────────────────────────────────────────────────────────────┤
+│  Données séquentielles massives (order book, ticks)          │
+│  → Transformers / TCN                                       │
+│  → HFT, market making                                      │
+├────────────────────────────────────────────────────────────┤
+│  Données alternatives (NLP news, images satellite, macro)    │
+│  → Deep Learning multi-modal                                │
+│  → Funds avec infrastructure ML lourde                      │
+└────────────────────────────────────────────────────────────┘
+```
+
+##### 🎯 Et pour ton cas ?
+
+Tu n'as **pas** XGBoost dans le codebase — ni pour le Global Model, ni pour les modèles per-symbol. La liste déroulante « Backend du modèle global » dans l'IHM propose uniquement **LightGBM** et **CatBoost**, et c'est cohérent avec le code (`global_model.py:165` — `model_name: str = "catboost"  # catboost | lightgbm`).
+
+C'est un choix technique parfaitement défendable :
+
+| Backend | Disponible ? | Usage en finance quant |
+|---------|:-----------:|------------------------|
+| **LightGBM** | ✅ Dans le dropdown | 🥇 Standard de facto — rapidité, gestion native des NaN |
+| **CatBoost** | ✅ Dans le dropdown | 🟡 Rare en finance, conçu pour les features catégorielles |
+| **XGBoost** | ❌ Non implémenté | 🥈 Deuxième choix standard — plus lent, écosystème mature |
+
+Est-ce un problème de ne pas avoir XGBoost ? **Non.** LightGBM et XGBoost ont des performances quasi-identiques sur données tabulaires, et LightGBM est plus rapide. Ajouter XGBoost n'apporterait pas de gain de performance.
+
+> 💡 **Récapitulatif — ce que tu as vraiment :**
+>
+> | Niveau | Modèles disponibles | Type |
+> |--------|-------------------|------|
+> | **Global Model** (panel, cross-sectionnel) | LightGBM, CatBoost | 🌳 Arbres uniquement |
+> | **Per-symbol** (un modèle par titre) | LightGBM, CatBoost, LSTM | 🌳 Arbres + 🧠 LSTM |
+>
+> Le LSTM n'existe **qu'au niveau per-symbol**, pas dans le Global Model. Le Global Model est 100% arbres, et c'est très bien comme ça.
+
+Références académiques classiques du panel learning :
+- **Gu, Kelly, Xiu (2020)** — *« Empirical Asset Pricing via Machine Learning »*, Review of Financial Studies : MLP/LSTM sur panel, le papier fondateur.
 - **Sirignano & Cont (2019)** — *« Universal features of price formation in financial markets »* : LSTM entraîné sur l'intégralité du carnet d'ordres de 1000+ actions NASDAQ, stock embedding pour identifier chaque titre.
 
 **2. Transfer Learning / Pre-training**
@@ -144,7 +251,14 @@ C'est le choix pragmatique de nombreux funds (AQR, WorldQuant) : LightGBM/CatBoo
 
 ##### 🎯 Application à ton cas — Quelle solution est la plus adaptée au swing trading ?
 
-Ton codebase a **déjà** une infrastructure de Panel Learning : `global_model.py` (Approche 2 — Stacking, Sprint 2026-07). Le Global Model entraîne un seul CatBoost/LightGBM sur **tous les titres empilés** avec des features cross-sectionnelles (rangs, secteurs, macro).
+> ⚠️ **Clarification importante** : Le Global Model actuel (`global_model.py`, Approche 2 — Stacking, Sprint 2026-07) est un modèle **tabulaire** (LightGBM ou CatBoost au choix, pas de LSTM). C'est pour cela que dans l'IHM (page pipeline), le menu déroulant « Backend du modèle global » propose uniquement **LightGBM** et **CatBoost** — et pas LSTM. Le Global Model applique le principe du Panel Learning (un seul modèle sur tous les titres), mais avec des arbres boostés, pas un réseau de neurones.
+>
+> ```
+> Global Model actuel     → Panel Learning + Arbres (LightGBM/CatBoost) ✅ déjà en place
+> Global Model LSTM futur → Panel Learning + LSTM (à développer si besoin)
+> ```
+>
+> Et c'est parfaitement cohérent : les arbres n'ont PAS le problème de ratio paramètres/échantillons (Cause 2). Le Panel Learning résout le problème pour le LSTM, mais le Global Model n'en a pas besoin puisqu'il utilise des arbres. Le Global Model résout plutôt un autre problème : capter les signaux **cross-sectionnels** (rang relatif, dispersion, breadth) qu'un modèle per-symbol ne peut pas voir.
 
 Voici le classement des solutions par **proximité à ton architecture actuelle** et **pertinence pour le swing trading** :
 
@@ -176,6 +290,17 @@ Global Model    : "AAPL est-il dans le top 35% des titres pour le rendement à 1
 2. **Moyen terme** : Comparer les perfs du Global Model seul vs per-symbol. Si le Global surpasse, envisager d'en faire le modèle principal.
 
 3. **Long terme (si LSTM souhaité)** : Remplacer le CatBoost/LightGBM du Global Model par un LSTM panel → 280K séquences d'entraînement, le problème de ratio échantillons/paramètres disparaît.
+
+> ✅ **Bilan — Ce que tu as à faire MAINTENANT : pas grand-chose.**
+>
+> | Action | Effort | Pourquoi |
+> |--------|--------|----------|
+> | Activer le Global Model comme challenger | ⚡ 1 flag CLI | Déjà codé, prêt à l'emploi |
+> | Corriger les class_weights du LSTM | ⚡ 3 flags CLI | `--ternary-weight-*` |
+> | Passer `seq_len` à 40 en production | ⚡ 1 flag CLI | Déjà prévu |
+> | Passer `patience` à 10 en production | ⚡ 1 flag CLI | Déjà prévu |
+>
+> **Pas besoin de** : réécrire le Global Model, ajouter XGBoost, coder un Transformer, changer la normalisation, ou ajouter plus de données historiques. L'infrastructure existante couvre déjà l'essentiel. Le gros du travail est de l'**activer**, pas de la construire.
 
 #### Cause 3 : Normalisation par split, pas globale
 
@@ -466,6 +591,97 @@ Avec les classes réelles distribuées ~34/33/32 (WF), le baseline aléatoire es
 > 🔑 **Interprétation** : Un F1_macro < 0.30 signifie que le modèle est **pire que le hasard**.  
 > Un F1_macro entre 0.30 et 0.35 est **marginalement meilleur que le hasard**.  
 > Un F1_macro > 0.35 indique un **vrai signal**.
+
+##### 🏦 À partir de quel seuil les pros considèrent-ils un modèle « tradable » ?
+
+La réponse honnête : **les professionnels ne raisonnent pas en F1**. Le F1 est une métrique ML académique. En finance quantitative, on utilise d'autres métriques, directement liées à la rentabilité :
+
+| Métrique | Ce qu'elle mesure | Seuil « tradable » |
+|----------|-------------------|---------------------|
+| **IC (Information Coefficient)** | Corrélation de Spearman entre prédictions et rendements futurs | IC > 0.03 → exploitable ; IC > 0.05 → bon ; IC > 0.10 → exceptionnel |
+| **Sharpe ratio** (out-of-sample) | Rendement excédentaire / volatilité | Sharpe > 0.5 → marginal après coûts ; > 1.0 → bon ; > 2.0 → excellent |
+| **PnL net après coûts** | Profit réalisé après slippage, commissions, spread | Positif et statistiquement significatif (t-test > 2) |
+| **F1_macro** | Moyenne harmonique precision/recall par classe | Pas utilisé comme critère de tradability en production |
+
+**Pourquoi les pros n'utilisent pas le F1 comme critère de tradability ?**
+
+1. **Le F1 ne capture pas l'amplitude des mouvements** : prédire correctement « long » sur un titre qui fait +1% ou +15% donne le même F1, mais pas le même PnL.
+2. **Le F1 ignore les coûts de transaction** : un modèle avec F1=0.40 qui trigger 3 trades/jour peut être ruiné par les frais, alors qu'un F1=0.35 avec 1 trade/semaine peut être très rentable.
+3. **Le F1 est indépendant du capacity management** : tu ne peux pas allouer la même taille de position sur une small cap que sur AAPL.
+4. **Le F1 ne mesure pas la calibration** : un modèle peut avoir un bon F1 mais des probabilités mal calibrées → mauvaise gestion du risque.
+
+**Comment les pros évaluent-ils la tradability ?**
+
+```
+Pipeline d'évaluation professionnel :
+
+1. IC > 0.03 (ou F1_macro > 0.33) → signal potentiellement intéressant
+2. Backtest out-of-sample avec coûts réalistes → Sharpe net > 0.5 ?
+3. Analyse de robustesse (sous-périodes, secteurs, régimes) → stable ?
+4. Paper trading / small live → confirme le backtest ?
+5. Scale progressif → capacity management
+
+Seule l'étape 1 utilise une métrique de type F1/IC.
+Les étapes 2-5 déterminent la VRAIE tradability.
+```
+
+**Conversion approximative F1 → tradability (pour ton cas 3 classes) :**
+
+| F1_macro WF | Équivalent IC approx. | Interprétation pro |
+|-------------|----------------------|---------------------|
+| < 0.30 | IC < 0 | Bruit — exclure |
+| 0.30 - 0.33 | IC 0 - 0.02 | Trop faible — probablement non tradable après coûts |
+| 0.33 - 0.37 | IC 0.02 - 0.04 | **Potentiellement tradable** — nécessite backtest avec coûts |
+| 0.37 - 0.42 | IC 0.04 - 0.07 | **Probablement tradable** — bon signal, vérifier stabilité |
+| > 0.42 | IC > 0.07 | **Très bon signal** — rare, creuser absolument |
+
+> 💡 **Pour ton cas** : Tu as ~50% des symboles entre 0.30-0.39 et 5 symboles > 0.40. La priorité n'est pas de savoir « à quel F1 on trade » mais de **lancer un backtest avec coûts réalistes** sur les symboles > 0.33. C'est le backtest qui te dira si c'est tradable, pas le F1. Un F1 de 0.38 avec des frais élevés peut être non rentable ; un F1 de 0.34 avec des frais faibles et une bonne diversification (40+ titres) peut l'être.
+
+##### 🎯 Seuils par classe — Qu'est-ce qu'un « bon » F1_long, F1_short, F1_flat ?
+
+Avec des classes équilibrées (~33% chacune), le baseline aléatoire est le même pour chaque classe : **0.33**. Les mêmes seuils que le F1_macro s'appliquent donc :
+
+| F1 par classe | Interprétation |
+|---------------|----------------|
+| < 0.20 | 🔴 **Classe invisible** — le modèle ne la voit quasiment pas (ex: ROKU F1_flat=0.016) |
+| 0.20 - 0.30 | 🟠 **Très faible** — à peine mieux que de l'anti-signal |
+| 0.30 - 0.35 | 🟡 **Marginal** — proche du hasard, pas fiable seul |
+| 0.35 - 0.45 | 🟢 **Bon** — signal réel, exploitable si les 2 autres classes suivent |
+| > 0.45 | 🟢 **Très bon** — signal fort sur cette direction |
+
+**Mais il y a une nuance importante : toutes les classes ne se valent pas en trading.**
+
+| Classe | Difficulté | Pourquoi | Priorité |
+|--------|-----------|---------|----------|
+| **F1_long** | 🟢 La plus facile | Bull market structurel, tendance haussière = plus de vrais positifs | ⭐⭐ Important mais attention au biais |
+| **F1_short** | 🔴 La plus difficile | Bull market = peu d'opportunités short, signaux plus rares | ⭐⭐⭐ CRITIQUE — différencie un vrai modèle d'un modèle bull-only |
+| **F1_flat** | 🟡 Variable | Dépend de la volatilité du titre (biotech vs utility) | ⭐ Utile pour réduire le turnover |
+
+**Lecture de la table de ton batch avec ces seuils :**
+
+```
+Top 10 :
+├── HLIT : long=0.49🟢 short=0.41🟢 flat=0.35🟡 → modèle équilibré, bon partout ✅
+├── TEX  : long=0.51🟢 short=0.52🟢 flat=0.20🟠 → excellent directionnel, ignore le flat
+├── NTRS : long=0.51🟢 short=0.23🟠 flat=0.47🟢 → bon long/flat, ne pas shorter
+├── R    : long=0.52🟢 short=0.42🟢 flat=0.27🟠 → le plus équilibré du top 5 ✅
+
+Pires :
+├── IIPR : long=0.45🟢 short=0.07🔴 flat=0.06🔴 → long-only, short/flat inexistants
+├── HSBC : long=0.08🔴 short=0.09🔴 flat=0.43🟢 → ne prédit que flat, inutile
+├── ROKU : long=0.31🟡 short=0.31🟡 flat=0.02🔴 → binaire, pas de flat
+```
+
+**Règle pratique pour filtrer :**
+
+```
+✅ TRADABLE (toutes directions) : F1_long > 0.35 ET F1_short > 0.30
+✅ TRADABLE (long only)        : F1_long > 0.40 ET F1_short < 0.20 → shorter interdit
+✅ TRADABLE (short only)       : F1_short > 0.40 ET F1_long < 0.20 → longer interdit
+⚠️ SURVEILLER                  : F1_long > 0.35 mais F1_short entre 0.20-0.30
+❌ EXCLURE                     : F1_long < 0.30 ET F1_short < 0.30 → aucune direction fiable
+❌ EXCLURE                     : F1_flat < 0.10 → titre trop volatil/binaire
+```
 
 ### 3.3 Stratégie de filtrage recommandée
 
