@@ -50,6 +50,11 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE,
     DEFAULT_ML_CATBOOST_OD_TYPE,
     DEFAULT_ML_CATBOOST_OD_WAIT,
+    # Filtrage liquidité
+    DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
+    DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
+    DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
+    DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT,
     DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE,
     DEFAULT_ML_DEBUG_TRAIN,
     DEFAULT_ML_DECISION_THRESHOLD,
@@ -411,6 +416,11 @@ class PipelineLaunchOptions:
     ml_catboost_bagging_temperature: float = DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE
     ml_catboost_od_type: str = DEFAULT_ML_CATBOOST_OD_TYPE
     ml_catboost_od_wait: int = DEFAULT_ML_CATBOOST_OD_WAIT
+    # Filtrage liquidité
+    ml_enable_liquidity_filter: bool = DEFAULT_ML_ENABLE_LIQUIDITY_FILTER
+    ml_liquidity_min_avg_volume_20d: int = DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D
+    ml_liquidity_min_market_cap: float = DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP
+    ml_liquidity_max_avg_spread_pct: float = DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT
     ml_candidate_horizons: tuple[int, ...] = DEFAULT_ML_CANDIDATE_HORIZONS
     ml_candidate_up_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_UP_THRESHOLDS
     ml_candidate_down_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS
@@ -2218,6 +2228,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--enable-global-challenger")
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")
+        if options.ml_enable_liquidity_filter:
+            command.extend([
+                "--enable-liquidity-filter",
+                "--liquidity-min-avg-volume-20d", str(options.ml_liquidity_min_avg_volume_20d),
+                "--liquidity-min-market-cap", str(int(options.ml_liquidity_min_market_cap)),
+                "--liquidity-max-avg-spread-pct", str(options.ml_liquidity_max_avg_spread_pct),
+            ])
         if options.ml_select_champion:
             command.append("--select-champion")
         if options.ml_optimize_thresholds:

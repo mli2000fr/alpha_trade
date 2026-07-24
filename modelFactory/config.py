@@ -37,6 +37,11 @@ class DataConfig:
     decision_threshold: float = 0.5
     training_start_date: date | None = date(2020, 1, 1)
     training_end_date: date | None = None
+    # ── Filtrage liquidité (Sprint 2026-07-24) ──
+    enable_liquidity_filter: bool = False
+    liquidity_min_avg_volume_20d: int = 500_000
+    liquidity_min_market_cap: float = 500_000_000.0  # 500M$
+    liquidity_max_avg_spread_pct: float = 0.5
 
     def __post_init__(self) -> None:
         if self.sequence_length < 1:

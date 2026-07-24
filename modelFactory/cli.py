@@ -266,6 +266,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Active les features cross-sectionnelles PIT-safe (rangs percentiles + features sectorielles dynamiques)")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
                    help="Nombre minimum de symboles disponibles par date pour calculer des ranks cross-sectionnels fiables")
+    # ── Filtrage liquidité (Sprint 2026-07-24) ──
+    p.add_argument("--enable-liquidity-filter", action="store_true", default=False,
+                   help="Active le filtrage des symboles par liquidité (volume, market cap, spread) avant entraînement")
+    p.add_argument("--liquidity-min-avg-volume-20d", type=int, default=500_000,
+                   help="Volume quotidien moyen minimum sur 20 jours (défaut: 500k)")
+    p.add_argument("--liquidity-min-market-cap", type=float, default=500_000_000.0,
+                   help="Market cap minimum en dollars (défaut: 500M)")
+    p.add_argument("--liquidity-max-avg-spread-pct", type=float, default=0.5,
+                   help="Spread journalier moyen maximum en %% (défaut: 0.5)")
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
     p.add_argument("--benchmark-symbol", type=str, default="SPY")
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary"])
@@ -423,6 +432,10 @@ def main(args: list[str] | None = None) -> None:
             triple_barrier_tp_atr_mult=opts.triple_barrier_tp_atr_mult,
             triple_barrier_max_sessions=opts.triple_barrier_max_sessions,
             decision_threshold=opts.decision_threshold,
+            enable_liquidity_filter=opts.enable_liquidity_filter,
+            liquidity_min_avg_volume_20d=opts.liquidity_min_avg_volume_20d,
+            liquidity_min_market_cap=opts.liquidity_min_market_cap,
+            liquidity_max_avg_spread_pct=opts.liquidity_max_avg_spread_pct,
         ),
         model=ModelConfig(
             batch_size=opts.batch_size,
@@ -601,6 +614,29 @@ def main(args: list[str] | None = None) -> None:
             and r.metrics.get("champion_quarantine") is True
         )
         finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # ── Injecter le diagnostic liquidité dans metadata_json ──
+        try:
+            from modelFactory.orchestrator import get_last_liquidity_diagnostics
+
+            _liq_diag = get_last_liquidity_diagnostics()
+            if _liq_diag and _liq_diag.get("filtered_count", 0) > 0:
+                _existing_meta = json.loads(
+                    _build_training_batch_metadata(opts, cfg),
+                )
+                _existing_meta["liquidity_filter"] = _liq_diag
+                _updated_meta_json = json.dumps(_existing_meta, default=str, ensure_ascii=False, sort_keys=True)
+                update_training_batch(
+                    engine, run_id, metadata_json=_updated_meta_json,
+                )
+                LOGGER.info(
+                    "cli: liquidity_filter injected into metadata_json filtered=%d kept=%d",
+                    _liq_diag.get("filtered_count", 0),
+                    _liq_diag.get("kept_count", 0),
+                )
+        except Exception as _liq_exc:
+            LOGGER.warning("cli: failed to inject liquidity diagnostics: %s", _liq_exc)
+
         update_training_batch(
             engine,
             run_id,

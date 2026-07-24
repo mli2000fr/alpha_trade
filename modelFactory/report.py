@@ -1,6 +1,8 @@
 """modelFactory/report.py — Génération de rapport Markdown par batch."""
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
@@ -268,6 +270,32 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
         failure = row.get("failure_reason")
         if failure and str(failure) not in ("None", "nan", ""):
             lines.append(f"- **Raison échec** : {failure}")
+
+        # ── Liquidité filtrée (Sprint 2026-07-24) ──
+        _meta_raw = row.get("metadata_json")
+        if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
+            try:
+                _meta = json.loads(str(_meta_raw))
+                _liq = _meta.get("liquidity_filter")
+                if isinstance(_liq, dict) and _liq.get("filtered_count", 0) > 0:
+                    lines.append(f"- **Symboles filtrés (liquidité)** : {_liq['filtered_count']} exclus / {_liq['kept_count']} conservés")
+                    _th = _liq.get("thresholds", {})
+                    if _th:
+                        lines.append(f"  - Seuils : vol ≥ {_th.get('min_avg_volume_20d', '—'):,}, "
+                                     f"market cap ≥ ${_th.get('min_market_cap_proxy', '—'):,.0f}, "
+                                     f"spread ≤ {_th.get('max_avg_spread_pct', '—')}%")
+                    _details = _liq.get("details", {})
+                    if _details:
+                        lines.append("")
+                        lines.append("### 🚫 Symboles filtrés par liquidité")
+                        lines.append("")
+                        lines.append("| Symbole | Raison |")
+                        lines.append("|:---|:---|")
+                        for sym, reason in sorted(_details.items()):
+                            lines.append(f"| {sym} | {reason} |")
+            except (json.JSONDecodeError, TypeError, KeyError):
+                pass
+
         cmd = row.get("command_line")
         if cmd and str(cmd) not in ("None", "nan", ""):
             lines.append("")

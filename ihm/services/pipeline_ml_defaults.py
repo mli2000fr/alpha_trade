@@ -129,6 +129,13 @@ DEFAULT_ML_CATBOOST_RANDOM_STRENGTH = 1.0
 DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE = 1.0
 DEFAULT_ML_CATBOOST_OD_TYPE = "IncToDec"
 DEFAULT_ML_CATBOOST_OD_WAIT = 20
+# ---------------------------------------------------------------------------
+# Filtrage liquidité (Sprint 2026-07-24)
+# ---------------------------------------------------------------------------
+DEFAULT_ML_ENABLE_LIQUIDITY_FILTER = True
+DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D = 500_000
+DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP = 500_000_000.0
+DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT = 0.5
 
 # ---------------------------------------------------------------------------
 # Grilles candidate (resserrées swing 2-10 j)

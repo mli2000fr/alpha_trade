@@ -520,43 +520,54 @@ $$P_{\text{calibré}}(y=i | z) = \frac{\exp(z_i / T + b_i)}{\sum_j \exp(z_j / T 
 - `tabular_baseline.py` → `_fit_ternary_calibrator()` utilise `VectorScaler`
 - `global_model.py` → calibration ternaire sur single-split et WF
 
-#### 9.4 Seuils asymétriques dans TernaryDecisionPolicy
+#### 9.4 Seuils asymétriques dans TernaryDecisionPolicy 🔵 EN ATTENTE — mesurer avant d'agir
 
-**Fichier à modifier** : `core/ternary_decision_policy.py:93-97`
+**Fichier** : `core/ternary_decision_policy.py:93-97`
 
 ```python
 # Actuel :
 threshold_long: float = 0.45
 threshold_short: float = 0.45
 top2_margin: float = 0.05
+```
 
-# Proposé (compense le biais short de LightGBM) :
+**Raisonnement** : Avec `class_weight="balanced"` + `VectorScaler`, le biais Short
+devrait déjà être fortement réduit. Modifier les seuils maintenant risquerait de
+**sur-corriger** et créer un biais Long.
+
+**Plan** :
+1. Lancer un nouveau batch avec les correctifs 1+2
+2. Mesurer la nouvelle distribution `true vs pred`
+3. Si le biais Short résiduel > 3% → appliquer des seuils asymétriques
+4. Si le biais < 3% → les seuils symétriques sont suffisants
+
+```python
+# Conditionnel — uniquement si biais résiduel confirmé :
 threshold_long: float = 0.40   # Plus facile de dire long
 threshold_short: float = 0.50  # Plus exigeant pour dire short
-top2_margin: float = 0.05
 ```
 
-Ajouter ces paramètres dans la CLI (`config.py`) pour permettre l'A/B testing :
-```python
-# DataConfig:
-ternary_decision_threshold_long: float = 0.45
-ternary_decision_threshold_short: float = 0.45
-ternary_decision_top2_margin: float = 0.05
-```
+#### 9.5 Filtrage de l'univers par liquidité ✅ FAIT (2026-07-24)
 
-**Gain attendu** : Meilleure calibration, réduction du biais Short.
+**Fichiers** : `modelFactory/liquidity_filter.py` (nouveau) + `orchestrator.py` + `cli.py` + `config.py` + `report.py` + `db_registry.py`
 
-#### 9.5 Filtrage de l'univers par liquidité
+**Activation** : `--enable-liquidity-filter` (CLI) ou activable depuis l'IHM.
 
-**Fichier à créer/modifier** : `modelFactory/orchestrator.py` (dans la boucle de
-sélection des symboles) ou `database/selector_reference.py`.
+**Seuils par défaut** :
 
-Ajouter un filtre dans `filter_symbols_from_start()` ou en amont dans l'orchestrateur :
-```python
-MIN_AVG_VOLUME_20D = 500_000   # 500k shares/jour
-MIN_MARKET_CAP = 500_000_000    # 500M$
-MAX_AVG_SPREAD_PCT = 0.5        # 0.5%
-```
+| Paramètre | Défaut | Rôle |
+|:---|:---|:---|
+| `--liquidity-min-avg-volume-20d` | 500 000 | Volume quotidien moyen minimum |
+| `--liquidity-min-market-cap` | 500 000 000 | Market cap minimum (proxy via dollar volume) |
+| `--liquidity-max-avg-spread-pct` | 0.5 | Spread journalier maximum |
+
+**Fonctionnement** :
+1. Après chargement des symboles, avant entraînement
+2. Requête SQL sur `stock_bars_daily` pour calculer volume/spread/dollar volume 20j
+3. Logge chaque symbole filtré avec sa raison
+4. Injecte le diagnostic dans `metadata_json` du batch
+5. Visible dans le rapport batch (section « Symboles filtrés par liquidité »)
+6. Visible dans les logs (chercher `liquidity_filter`)
 
 **Gain attendu** : Élimination des 10-15% de small caps illiquides → F1 moyen +0.01.
 
@@ -656,8 +667,8 @@ ne peut pas les exploiter pleinement. Deux options :
 | **VectorScaler (remplace TemperatureScaler)** | `calibration.py` + `tabular_baseline.py` + `global_model.py` | 2h | ✅ Fait |
 | **Global Model aligné** | `global_model.py` | 30min | ✅ Fait |
 | **Params tuning CLI + IHM** | `config.py` + `cli.py` + IHM | 2h | ✅ Fait |
-| **Seuils asymétriques** | `ternary_decision_policy.py` + `config.py` | 2h | ⏳ À faire |
-| Filtrage liquidité | `orchestrator.py` + `selector_reference.py` | 3h | ⏳ À faire |
+| **Seuils asymétriques** | `ternary_decision_policy.py` + `config.py` | 2h | 🔵 Après mesure |
+| Filtrage liquidité | `liquidity_filter.py` + `orchestrator.py` + `cli.py` | 3h | ✅ Fait |
 
 ### Semaine 2 : Tuning (pilotable depuis l'IHM — params exposés, recherche à faire)
 

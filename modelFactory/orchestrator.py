@@ -47,6 +47,18 @@ from database.selector_reference import filter_symbols_from_start, normalize_sta
 
 LOGGER = logging.getLogger(__name__)
 SymbolSource = Literal[
+
+# Cache pour le diagnostic de liquidité — lu par cli.py après run_training_batch()
+_last_liquidity_diag: dict[str, Any] = {}
+
+
+def get_last_liquidity_diagnostics() -> dict[str, Any]:
+    """Retourne le diagnostic de liquidité du dernier batch.
+
+    Utilisé par cli.py pour l'injecter dans metadata_json
+    et par le rapport pour afficher les symboles filtrés.
+    """
+    return _last_liquidity_diag
     "tradable-universe",
     "stock-bars-daily",
     "ticket-recherche",
@@ -502,6 +514,36 @@ def run_training_batch(
         if not symbols:
             LOGGER.info("run_training_batch all_symbols_skipped mode=%s", mode)
             return []
+
+    # ── Filtrage liquidité (Sprint 2026-07-24) ──────────────────────────
+    liquidity_excluded: list[str] = []
+    liquidity_diag: dict[str, Any] = {}
+    if cfg.data.enable_liquidity_filter:
+        from modelFactory.liquidity_filter import filter_symbols_by_liquidity
+
+        liquidity_excluded, liquidity_diag = filter_symbols_by_liquidity(
+            engine,
+            symbols,
+            end_date=cfg.data.training_end_date,
+            min_avg_volume_20d=cfg.data.liquidity_min_avg_volume_20d,
+            min_market_cap=cfg.data.liquidity_min_market_cap,
+            max_avg_spread_pct=cfg.data.liquidity_max_avg_spread_pct,
+        )
+        if liquidity_excluded:
+            symbols = [s for s in symbols if s not in set(liquidity_excluded)]
+            LOGGER.info(
+                "run_training_batch liquidity_filter excluded=%d kept=%d",
+                len(liquidity_excluded), len(symbols),
+            )
+            if not symbols:
+                LOGGER.warning("run_training_batch all_symbols_filtered_by_liquidity")
+                return []
+    else:
+        LOGGER.info("run_training_batch liquidity_filter disabled")
+
+    # Stocker pour que cli.py puisse l'injecter dans metadata_json
+    global _last_liquidity_diag
+    _last_liquidity_diag = liquidity_diag
 
     use_gpu = _gpu_requested_or_available(cfg)
     effective_workers = 1 if use_gpu else cfg.max_workers

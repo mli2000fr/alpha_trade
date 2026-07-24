@@ -335,6 +335,7 @@ _TRAINING_BATCH_MUTABLE_FIELDS = {
     "symbols_skipped",
     "symbols_failed",
     "failure_reason",
+    "metadata_json",
 }
 
 

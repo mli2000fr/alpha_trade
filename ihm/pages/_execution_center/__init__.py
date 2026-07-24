@@ -124,6 +124,10 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_VXN,
     DEFAULT_ML_INCLUDE_MACRO_VIX3M,
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
+    DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
+    DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
+    DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
+    DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT,
     DEFAULT_ML_ENABLE_LIGHTGBM,
     DEFAULT_ML_ENABLE_CATBOOST,
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
@@ -3230,6 +3234,63 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_macro_move",
                 help="Ajoute `--include-macro-move`. Indice ICE BofA MOVE : volatilité des bons du Trésor US.",
             )
+            st.markdown("---")
+            ml_enable_liquidity_filter = st.checkbox(
+                "🔍 Filtrer les symboles illiquides (volume, cap, spread)",
+                value=_session_state_bool("pipeline_ml_enable_liquidity_filter", DEFAULT_ML_ENABLE_LIQUIDITY_FILTER),
+                key="pipeline_ml_enable_liquidity_filter",
+                help="Ajoute `--enable-liquidity-filter`. Exclut les small caps à faible volume/spread élevé avant entraînement.",
+            )
+            if ml_enable_liquidity_filter:
+                liq_col1, liq_col2, liq_col3 = st.columns(3)
+                with liq_col1:
+                    ml_liquidity_min_avg_volume_20d = int(
+                        st.number_input(
+                            "Volume min 20j (nb actions)",
+                            min_value=10_000,
+                            max_value=10_000_000,
+                            value=_session_state_int(
+                                "pipeline_ml_liquidity_min_avg_volume_20d",
+                                DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
+                            ),
+                            step=50_000,
+                            format="%d",
+                            key="pipeline_ml_liquidity_min_avg_volume_20d",
+                            help="Volume quotidien moyen minimum sur 20 jours. Défaut : 500k.",
+                        )
+                    )
+                with liq_col2:
+                    ml_liquidity_min_market_cap = float(
+                        st.number_input(
+                            "Market cap min ($)",
+                            min_value=10_000_000.0,
+                            max_value=10_000_000_000.0,
+                            value=_session_state_float(
+                                "pipeline_ml_liquidity_min_market_cap",
+                                DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
+                            ),
+                            step=100_000_000.0,
+                            format="%.0f",
+                            key="pipeline_ml_liquidity_min_market_cap",
+                            help="Capitalisation boursière minimum estimée. Défaut : 500M.",
+                        )
+                    )
+                with liq_col3:
+                    ml_liquidity_max_avg_spread_pct = float(
+                        st.number_input(
+                            "Spread max 20j (%)",
+                            min_value=0.1,
+                            max_value=5.0,
+                            value=_session_state_float(
+                                "pipeline_ml_liquidity_max_avg_spread_pct",
+                                DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT,
+                            ),
+                            step=0.1,
+                            format="%.1f",
+                            key="pipeline_ml_liquidity_max_avg_spread_pct",
+                            help="Spread journalier moyen maximum en %%. Défaut : 0.5%%.",
+                        )
+                    )
         with ml_opt_col3:
             ml_select_champion = st.checkbox(
                 "Activer la sélection automatique du champion",
@@ -4289,6 +4350,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_vxn=bool(ml_include_macro_vxn),
             ml_include_macro_vix3m=bool(ml_include_macro_vix3m),
             ml_include_macro_move=bool(ml_include_macro_move),
+            # Filtrage liquidité
+            ml_enable_liquidity_filter=bool(ml_enable_liquidity_filter),
+            ml_liquidity_min_avg_volume_20d=int(ml_liquidity_min_avg_volume_20d if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D),
+            ml_liquidity_min_market_cap=float(ml_liquidity_min_market_cap if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP),
+            ml_liquidity_max_avg_spread_pct=float(ml_liquidity_max_avg_spread_pct if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT),
             # ML challengers & advanced (widgets IHM câblés)
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),
