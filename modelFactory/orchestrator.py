@@ -730,6 +730,48 @@ def run_training_batch(
             by_symbol = global_result_wf.get("by_symbol", {}) if isinstance(global_result_wf, dict) else {}
             result.metrics["global_model"] = by_symbol.get(result.symbol, global_result_wf)
 
+    # ── Persister les métriques global_model dans model_metrics ──
+    if cfg.global_model.enabled and global_result_wf:
+        _by_symbol = global_result_wf.get("by_symbol", {}) if isinstance(global_result_wf, dict) else {}
+        _persisted_global = 0
+        for _sym, _gm in _by_symbol.items():
+            if _gm.get("status") != "completed":
+                continue
+            _wf = _gm.get("walk_forward") if isinstance(_gm.get("walk_forward"), dict) else {}
+            _wf_mean = _wf.get("mean") if isinstance(_wf, dict) else {}
+            if not _wf_mean:
+                continue
+            try:
+                _global_run_id = f"{batch_id}_global_{_sym}"
+                # Créer un training_run synthétique pour le global model
+                from modelFactory.db_registry import ensure_registry_entry as _ensure_reg, insert_training_run as _insert_tr, insert_metrics as _insert_m
+                _registry_id = 0
+                try:
+                    _registry_id = _ensure_reg(engine, _sym)
+                except Exception:
+                    pass
+                _insert_tr(
+                    engine, _global_run_id, _registry_id, _sym,
+                    status="completed", batch_id=batch_id,
+                )
+                # Insérer les métriques WF (mean)
+                _insert_m(engine, _global_run_id, _sym, "wf", _wf_mean, model_name="global_model")
+                # Insérer aussi val/test si disponibles
+                for _split in ("val", "test"):
+                    _split_metrics = _gm.get(_split)
+                    if isinstance(_split_metrics, dict) and _split_metrics:
+                        _insert_m(engine, _global_run_id, _sym, _split, _split_metrics, model_name="global_model")
+                _persisted_global += 1
+            except Exception as _exc:
+                LOGGER.warning(
+                    "global_model metrics persist failed symbol=%s: %s", _sym, _exc,
+                )
+        if _persisted_global > 0:
+            LOGGER.info(
+                "global_model metrics persisted for %d symbols batch_id=%s",
+                _persisted_global, batch_id,
+            )
+
     update_runtime_status(
         current_phase="batch_completed",
         progress_current=len(results),

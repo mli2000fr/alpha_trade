@@ -249,6 +249,9 @@ def _aggregate_wf_per_symbol_metrics(
         "auc", "f1_macro", "f1_short", "f1_flat", "f1_long",
         "threshold_business_score", "action_rate", "precision",
         "recall", "directional_accuracy", "brier_score",
+        # Distribution true/pred (ternaire)
+        "true_short_pct", "true_flat_pct", "true_long_pct",
+        "pred_short_pct", "pred_flat_pct", "pred_long_pct",
     ]
     aggregated: dict[str, dict[str, Any]] = {}
     for symbol, fold_list in fold_metrics_by_symbol.items():
