@@ -571,8 +571,8 @@ def train_global_model_wf(
     """Entraîne le Global Model en walk-forward (Phase 1 — Approche 2).
 
     Produit deux artefacts :
-    1. ``global_pred_df`` : DataFrame ``[symbol, date, global_pred_long]``
-       PIT-safe, à merger dans le cache cross-sectional pour le stacking.
+    1. ``global_pred_df`` : DataFrame ``[symbol, date, global_pred_short, global_pred_flat, global_pred_long]``
+       PIT-safe, à merger dans le cache cross-sectional pour le stacking (3 probas ternaires).
     2. ``by_symbol`` : métriques WF par symbole avec ``walk_forward.mean.f1_macro``,
        utilisable par ``select_champion()`` (Phase 3).
 
@@ -720,20 +720,26 @@ def train_global_model_wf(
         # ── Predict on val (per-symbol, PIT-safe) ──
         raw_val_all = model.predict_proba(val_df_split[feature_columns])
         num_val_cols = raw_val_all.shape[1]
-        if is_ternary and num_val_cols >= 3:
-            long_col = 2
-        else:
-            long_col = num_val_cols - 1
-        val_proba_global = raw_val_all[:, long_col]
 
-        # ── Stocker global_pred pour le stacking ──
+        # ── Stocker global_pred pour le stacking (3 probas ternaires) ──
         pred_part = val_df_split[["symbol", "date"]].copy()
-        pred_part["global_pred_long"] = val_proba_global.astype(np.float64)
+        if is_ternary and num_val_cols >= 3:
+            # short=col0, flat=col1, long=col2
+            pred_part["global_pred_short"] = raw_val_all[:, 0].astype(np.float64)
+            pred_part["global_pred_flat"] = raw_val_all[:, 1].astype(np.float64)
+            pred_part["global_pred_long"] = raw_val_all[:, 2].astype(np.float64)
+            val_proba_long = raw_val_all[:, 2]
+        else:
+            # fallback binaire : short=1-p, flat=0, long=p
+            pred_part["global_pred_short"] = (1.0 - raw_val_all[:, -1]).astype(np.float64)
+            pred_part["global_pred_flat"] = np.float64(0.0)
+            pred_part["global_pred_long"] = raw_val_all[:, -1].astype(np.float64)
+            val_proba_long = raw_val_all[:, -1]
         global_pred_parts.append(pred_part)
 
-        # ── Métriques par symbole sur ce split ──
+        # ── Métriques par symbole sur ce split (basées sur P(long)) ──
         split_by_symbol = _compute_by_symbol_metrics(
-            val_df_split, val_proba_global,
+            val_df_split, val_proba_long,
             decision_threshold=float(effective_data_cfg.decision_threshold),
             partition_name="val",
         )

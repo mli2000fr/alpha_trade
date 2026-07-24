@@ -254,8 +254,11 @@ def test_compute_sector_features_sector_symbol_count() -> None:
 # ─────────────────────────────────────────────────────────────────────
 
 def test_global_pred_feature_columns_defined() -> None:
-    """GLOBAL_PRED_FEATURE_COLUMNS must contain the expected column."""
-    assert GLOBAL_PRED_FEATURE_COLUMNS == ["global_pred_long"]
+    """GLOBAL_PRED_FEATURE_COLUMNS must contain the expected ternary columns."""
+    assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 3
+    assert "global_pred_short" in GLOBAL_PRED_FEATURE_COLUMNS
+    assert "global_pred_flat" in GLOBAL_PRED_FEATURE_COLUMNS
+    assert "global_pred_long" in GLOBAL_PRED_FEATURE_COLUMNS
 
 
 def test_merge_cross_sectional_features_handles_global_pred() -> None:

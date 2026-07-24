@@ -56,14 +56,17 @@ class TestFeatureColumnsWithStacking:
         )
         assert len(cols) == len(set(cols))
 
-    def test_stacking_adds_exactly_one_column(self) -> None:
+    def test_stacking_adds_expected_columns(self) -> None:
         cols_without = get_feature_columns(include_cross_sectional=True)
         cols_with = get_feature_columns(
             include_cross_sectional=True, include_global_stacking=True,
         )
-        assert len(cols_with) == len(cols_without) + 1
-        assert "global_pred_long" in cols_with
-        assert "global_pred_long" not in cols_without
+        expected_delta = len(GLOBAL_PRED_FEATURE_COLUMNS)
+        assert len(cols_with) == len(cols_without) + expected_delta
+        for col in GLOBAL_PRED_FEATURE_COLUMNS:
+            assert col in cols_with
+        for col in GLOBAL_PRED_FEATURE_COLUMNS:
+            assert col not in cols_without
 
 
 # ─────────────────────────────────────────────────────────────────────

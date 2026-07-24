@@ -193,10 +193,10 @@ def get_feature_columns(
     cross-sectionnels ET les features sectorielles dynamiques (momentum,
     volatilité, alpha intra-secteur).
 
-    ``include_global_stacking`` (Approche 2) ajoute ``global_pred_long``,
-    la prédiction PIT-safe du Global Model comme feature supplémentaire.
-    Nécessite ``include_cross_sectional=True`` pour avoir un effet
-    (la colonne est mergée via le cache cross-sectional).
+    ``include_global_stacking`` (Approche 2) ajoute les 3 probas ternaires
+    du Global Model (``global_pred_short``, ``global_pred_flat``, ``global_pred_long``)
+    comme features supplémentaires. Nécessite ``include_cross_sectional=True``
+    (les colonnes sont mergées via le cache cross-sectional).
     """
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":

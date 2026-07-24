@@ -418,9 +418,11 @@ def _train_worker(
                 cross_sectional_df = cross_sectional_df.merge(
                     global_pred_df, on=["symbol", "date"], how="left",
                 )
-                cross_sectional_df["global_pred_long"] = (
-                    cross_sectional_df["global_pred_long"].fillna(0.5).astype(np.float64)
-                )
+                for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+                    if _col in cross_sectional_df.columns:
+                        cross_sectional_df[_col] = (
+                            cross_sectional_df[_col].fillna(0.5).astype(np.float64)
+                        )
 
     return train_symbol(
         symbol,
@@ -608,9 +610,11 @@ def run_training_batch(
                 cross_sectional_cache = cross_sectional_cache.merge(
                     global_pred_df, on=["symbol", "date"], how="left",
                 )
-                cross_sectional_cache["global_pred_long"] = (
-                    cross_sectional_cache["global_pred_long"].fillna(0.5).astype(np.float64)
-                )
+                for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+                    if _col in cross_sectional_cache.columns:
+                        cross_sectional_cache[_col] = (
+                            cross_sectional_cache[_col].fillna(0.5).astype(np.float64)
+                        )
             else:
                 # Pas de cache cross-sectional → créer un cache minimal avec global_pred
                 cross_sectional_cache = global_pred_df.copy()

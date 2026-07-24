@@ -38,8 +38,10 @@ SECTOR_FEATURE_COLUMNS: list[str] = [
     "stock_vs_sector_ret_60",
 ]
 
-# ── Approche 2 — Stacking : prédiction du Global Model comme feature ──
-GLOBAL_PRED_FEATURE_COLUMNS: list[str] = ["global_pred_long"]
+# ── Approche 2 — Stacking : prédictions ternaires du Global Model comme features ──
+# 3 colonnes P(short), P(flat), P(long) → le per-symbol peut apprendre
+# à dévier du consensus global quand ses features locales sont en désaccord.
+GLOBAL_PRED_FEATURE_COLUMNS: list[str] = ["global_pred_short", "global_pred_flat", "global_pred_long"]
 
 # ── Approche 2 (Sprint 2026-07-21) — Features cross-symbol exclusives ──
 # Ces features n'ont de sens qu'au niveau cross-symbol (agrégation intra-secteur).
