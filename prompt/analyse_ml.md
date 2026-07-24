@@ -310,12 +310,15 @@ Global Model    : "AAPL est-il dans le top 35% des titres pour le rendement à 1
 > | Action | Effort | Statut |
 > |--------|--------|--------|
 > | ~~Activer le Global Model~~ | — | ❌ Testé, 0 gain — abandonner |
+> | Interactions features × régime | 🔧 Code | ✅ Fait (features.py + trainer.py) |
+> | Sample weighting par récence | 🔧 Code | ✅ Fait (tabular_baseline.py, GBM/CatBoost only) |
+> | LSTM hardcodé v1 (29 features) | 🔧 Code | ✅ Fait (trainer.py) |
 > | Corriger les class_weights du LSTM | ⚡ 3 flags CLI | À faire |
 > | Passer `seq_len` à 40, `patience` à 10 | ⚡ 2 flags CLI | Déjà prévu |
 > | SHAP + réduire features (47 → ~20) | 🔧 Code | Moyen terme |
 > | Si LSTM tjs mauvais → désactiver | ⚡ 1 flag CLI | Plan B |
 >
-> **Pas besoin de** : Global Model, XGBoost, Transformer, changer la normalisation. Le duo LightGBM + CatBoost fait déjà le job. L'énergie restante doit aller sur le **feature engineering** et le **backtest avec coûts**, pas sur l'ajout de modèles.
+> **Pas besoin de** : Global Model, XGBoost, Transformer. Le duo LightGBM + CatBoost avec interactions régime fait déjà le job. L'énergie restante va sur le **backtest avec coûts**.
 
 #### Cause 3 : Normalisation par split, pas globale
 
@@ -414,15 +417,28 @@ Inconvénient : divise les données par 2, donc nécessite un historique long.
 | **Online learning / decay** | Stat arb, HFT | Mise à jour continue des modèles avec un facteur d'oubli exponentiel. |
 | **Régimes de Markov (HMM)** | Recherche quantitative | Modélisation probabiliste du régime courant, le modèle reçoit `P(bull)` et `P(bear)` comme features continues. |
 
-> 💡 **Recommandation pour ton cas** : Commence par la solution 1 (interactions features × régime). C'est ~15 lignes de code dans `features.py`, aucun changement de pipeline, et ça donne aux arbres exactement l'information dont ils ont besoin pour adapter leurs splits au régime. Si tu veux aller plus loin, ajoute le sample weighting par récence (solution 2). Les deux combinées devraient significativement réduire le biais long et améliorer la robustesse inter-régimes.
+> 💡 **Recommandation pour ton cas — IMPLÉMENTÉ le 24 juillet 2026** :
 >
-> | Modèle | Impacté par la normalisation par split ? | Pourquoi |
-> |--------|:---:|----------|
-> | **LSTM** | 🔴 OUI | Les poids du réseau sont appris dans l'espace normalisé ; un changement de distribution casse les activations |
-> | **LightGBM** | 🟢 NON | Insensible à l'échelle, les splits sont équivalents |
-> | **CatBoost** | 🟢 NON | Idem LightGBM |
+> ✅ **Solution 1 (interactions features × régime) est en place.** 18 features d'interaction (`momentum_20_x_bull`, `relative_strength_20_x_risk_off`, etc.) sont calculées automatiquement dans `features.py` quand `feature_set="expert"` et un benchmark est disponible.
 >
-> 💡 **Conclusion** : Ne passe pas de temps sur ce point. Les arbres n'en souffrent pas, et pour le LSTM, les Causes 1, 2, 4 et 5 sont bien plus prioritaires.
+> ✅ **LSTM hardcodé en v1.** `trainer.py` force `feature_set="v1"` pour le LSTM (29 features : 13 v1 + 16 cross-sectional), ignorant le flag CLI `--feature-set`. Les 18 interactions sont donc **invisibles** pour le LSTM.
+>
+> ✅ **GBM/CatBoost utilisent `--feature-set` normalement.** Avec `--feature-set expert`, ils reçoivent 65 features (31 expert + 16 cross + 18 interactions).
+>
+> ```
+> LSTM (hardcodé v1)          : 29 features, pas d'interactions régime
+> LightGBM/CatBoost (expert)  : 65 features, 18 interactions régime actives
+> ```
+>
+> ✅ **Solution 2 (sample weighting par récence) est en place.** `tabular_baseline.py` applique des poids exponentiels décroissants (demi-vie = 1 an) aux deux appels `model.fit()` (main + walk-forward). Les données du jour le plus récent pèsent 1.0, celles d'il y a 1 an pèsent 0.37, celles d'il y a 2 ans pèsent 0.14. LightGBM et CatBoost supportent `sample_weight` nativement. **Uniquement pour GBM/CatBoost** — le LSTM n'est pas concerné.
+>
+> | Modèle | Features | Interactions régime |
+> |--------|----------|:---:|
+> | **LSTM** | 29 (v1 + cross) | ❌ Hardcodé v1 |
+> | **LightGBM** | 65 (expert + cross + interactions) | ✅ |
+> | **CatBoost** | 65 (expert + cross + interactions) | ✅ |
+>
+> 💡 **Note IHM** : Le flag `--feature-set` de l'IHM contrôle maintenant **uniquement** GBM/CatBoost. Le LSTM est automatiquement en v1, quoi que tu mettes dans le dropdown.
 
 ##### 🏦 Comment les professionnels résolvent ce problème
 
@@ -1189,6 +1205,11 @@ Rappel des seuils de qualité par classe (baseline aléatoire = 0.33 pour 3 clas
 ### 7.2 Plan d'action priorisé
 
 > 📊 **Test A/B du 24 juillet 2026** : Batch `22b4ca` (Global Model sans challenger) vs `9493ca` (avec challenger) → **résultats identiques**. Le Global Model n'a gagné **0 symbole sur 200**. LightGBM (112), CatBoost (68) et LSTM (20) dominent inchangés. Le Global Model est abandonné.
+>
+> ✅ **Implémentations du 24 juillet 2026** :
+> - **Interactions features × régime** : 18 features dans `features.py` (actives pour GBM/CatBoost avec `--feature-set expert`)
+> - **LSTM hardcodé v1** : `trainer.py` force 29 features pour LSTM, ignorant le flag `--feature-set`
+> - 💡 **Note IHM** : Le flag `--feature-set` contrôle uniquement GBM/CatBoost. Le LSTM est automatiquement en v1.
 
 #### 🔴 Immédiat (cette semaine)
 

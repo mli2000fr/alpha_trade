@@ -929,7 +929,7 @@ def _run_walk_forward_validation(
     )
     feature_cols = get_feature_columns(
         cfg.data.include_sentiment_features,
-        feature_set=cfg.data.feature_set,
+        feature_set="v1",  # LSTM WF : forcer v1 (Cause 2)
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
@@ -1275,6 +1275,14 @@ def train_symbol(
             datamodule_kwargs["reproducibility_seed"] = derive_seed(symbol_seed, "symbol_datamodule")
         if "include_global_stacking" in datamodule_signature.parameters:
             datamodule_kwargs["include_global_stacking"] = effective_cfg.global_model.stacking_enabled
+
+        # LSTM : forcer feature_set="v1" pour limiter l'input dim
+        # (Cause 2 — les interactions régime × technique sont inutiles pour le LSTM)
+        effective_cfg = replace(
+            effective_cfg,
+            data=replace(effective_cfg.data, feature_set="v1"),
+        )
+
         dm = SymbolDataModule(
             bars_df,
             effective_cfg.data,

@@ -32,7 +32,7 @@ class FractionalTradingPreferences:
         }
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def load_persisted_fractional_trading_preferences() -> FractionalTradingPreferences:
     path = FRACTIONAL_TRADING_PREFERENCES_PATH
     if not path.exists() or not path.is_file():
@@ -65,6 +65,8 @@ def save_persisted_fractional_trading_preferences(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    # Invalide le cache_resource pour que le prochain appel relise le fichier
+    load_persisted_fractional_trading_preferences.clear()
     return normalized
 
 

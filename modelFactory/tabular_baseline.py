@@ -292,7 +292,26 @@ def run_tabular_baseline(
 	unique_classes = train_targets.unique()
 	if len(unique_classes) < 2:
 		return {"status": "skipped", "model_name": model_name, "reason": f"single_class_target_{unique_classes[0]}"}
-	model.fit(train_df[feature_columns], train_targets)
+
+	# Sample weighting par récence (Cause 3 — changement de régime)
+	# Donne plus de poids aux données récentes (demi-vie = 1 an).
+	_sample_weights: "np.ndarray | None" = None
+	if "date" in train_df.columns:
+		_train_dates = pd.to_datetime(train_df["date"])
+		_max_date = _train_dates.max()
+		_days_diff = (_max_date - _train_dates).dt.days
+		_sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
+		LOGGER.info(
+			"tabular_baseline sample_weight model=%s rows=%d half_life=365d "
+			"weight_min=%.3f weight_max=%.3f weight_mean=%.3f",
+			model_name,
+			len(_sample_weights),
+			float(_sample_weights.min()),
+			float(_sample_weights.max()),
+			float(_sample_weights.mean()),
+		)
+
+	model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
 
 	is_ternary = cfg.data.target_mode == "ternary"
 	# Determine which predict_proba column holds the long probability.
@@ -642,7 +661,15 @@ def run_tabular_walk_forward(
 		if len(unique_train) < 2:
 			continue
 
-		model.fit(split.train[feature_cols], train_targets)
+		# Sample weighting par récence pour le split WF
+		_wf_sample_weights: "np.ndarray | None" = None
+		if "date" in split.train.columns:
+			_wf_train_dates = pd.to_datetime(split.train["date"])
+			_wf_max_date = _wf_train_dates.max()
+			_wf_days_diff = (_wf_max_date - _wf_train_dates).dt.days
+			_wf_sample_weights = np.exp(-_wf_days_diff.values.astype(np.float64) / 365.0)
+
+		model.fit(split.train[feature_cols], train_targets, sample_weight=_wf_sample_weights)
 
 		raw_proba_all = model.predict_proba(split.test[feature_cols])
 		test_targets = split.test["target"].astype(int)

@@ -59,6 +59,29 @@ SENTIMENT_FEATURE_COLUMNS: list[str] = [
     "major_event_flag",
 ]
 
+# Features d'interaction régime × technique (Cause 3 — changement de régime)
+# Calculées uniquement quand feature_set="expert" et benchmark_df dispo.
+REGIME_INTERACTION_FEATURES: list[str] = [
+    "momentum_20_x_bull",
+    "momentum_20_x_risk_off",
+    "momentum_60_x_bull",
+    "momentum_60_x_risk_off",
+    "relative_strength_20_x_bull",
+    "relative_strength_20_x_risk_off",
+    "relative_strength_60_x_bull",
+    "relative_strength_60_x_risk_off",
+    "rolling_volatility_20_x_bull",
+    "rolling_volatility_20_x_risk_off",
+    "vol_ratio_20_60_x_bull",
+    "vol_ratio_20_60_x_risk_off",
+    "rsi_14_x_bull",
+    "rsi_14_x_risk_off",
+    "sma20_distance_x_bull",
+    "sma20_distance_x_risk_off",
+    "sma50_distance_x_bull",
+    "sma50_distance_x_risk_off",
+]
+
 # Features macro contextuelles (depuis stock_macro_indicators_daily)
 MACRO_FEATURE_COLUMNS: list[str] = [
     "vix_close",
@@ -209,6 +232,9 @@ def get_feature_columns(
     if include_macro_move:
         if "move_close" not in cols:
             cols.append("move_close")
+    # Interaction régime × technique — ajoutées après les features expert
+    if feature_set == "expert":
+        cols.extend(REGIME_INTERACTION_FEATURES)
     return cols
 
 
@@ -680,6 +706,7 @@ def compute_features(
     df["is_filled"] = df["is_filled"].astype(float)
 
     # --- Expert feature set: trend / relative strength / regime ---
+    _has_benchmark = benchmark_df is not None and not benchmark_df.empty
     if feature_set == "expert":
         sma20 = close.rolling(20).mean()
         sma50 = close.rolling(50).mean()
@@ -700,7 +727,7 @@ def compute_features(
         df["vol_ratio_20_60"] = df["rolling_volatility_20"] / df["rolling_volatility_60"].clip(lower=1e-8)
         df["range_position_20"] = _range_position(close, 20)
 
-        if benchmark_df is not None and not benchmark_df.empty:
+        if _has_benchmark:
             bench_prices = _build_adjusted_price_frame(benchmark_df.copy().sort_values("date").reset_index(drop=True))
             bench = pd.DataFrame(
                 {
@@ -813,6 +840,40 @@ def compute_features(
             include_vix3m=include_macro_vix3m,
             include_move=include_macro_move,
         )
+
+    # --- Régime × technique interaction features (Cause 3) ---
+    # Permet aux arbres d'apprendre des splits conditionnels au régime.
+    if feature_set == "expert" and _has_benchmark:
+        _interact_pairs = [
+            ("momentum_20", "regime_bull_market"),
+            ("momentum_20", "regime_risk_off"),
+            ("momentum_60", "regime_bull_market"),
+            ("momentum_60", "regime_risk_off"),
+            ("relative_strength_20", "regime_bull_market"),
+            ("relative_strength_20", "regime_risk_off"),
+            ("relative_strength_60", "regime_bull_market"),
+            ("relative_strength_60", "regime_risk_off"),
+            ("rolling_volatility_20", "regime_bull_market"),
+            ("rolling_volatility_20", "regime_risk_off"),
+            ("vol_ratio_20_60", "regime_bull_market"),
+            ("vol_ratio_20_60", "regime_risk_off"),
+            ("rsi_14", "regime_bull_market"),
+            ("rsi_14", "regime_risk_off"),
+            ("sma20_distance", "regime_bull_market"),
+            ("sma20_distance", "regime_risk_off"),
+            ("sma50_distance", "regime_bull_market"),
+            ("sma50_distance", "regime_risk_off"),
+        ]
+        for tech_col, regime_col in _interact_pairs:
+            target_col = f"{tech_col}_x_{regime_col.replace('regime_', '')}"
+            if tech_col in df.columns and regime_col in df.columns:
+                df[target_col] = df[tech_col].astype(float) * df[regime_col].astype(float)
+            else:
+                df[target_col] = 0.0
+    elif feature_set == "expert":
+        # Pas de benchmark → remplir avec 0.0 pour que le contrat de features reste stable
+        for col in REGIME_INTERACTION_FEATURES:
+            df[col] = 0.0
 
     # Determine active feature columns
     active_features = get_feature_columns(
