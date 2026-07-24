@@ -549,25 +549,27 @@ threshold_short: float = 0.50  # Plus exigeant pour dire short
 
 #### 9.5 Filtrage de l'univers par liquidité ✅ FAIT (2026-07-24)
 
-**Fichiers** : `modelFactory/liquidity_filter.py` (nouveau) + `orchestrator.py` + `cli.py` + `config.py` + `report.py` + `db_registry.py`
+**Fichiers** : `modelFactory/liquidity_filter.py` (nouveau) + `orchestrator.py` + `cli.py` + `config.py` + `report.py` + `db_registry.py` + IHM (`pipeline_ml_defaults.py`, `pipeline_runner.py`, `_execution_center/__init__.py`)
 
-**Activation** : `--enable-liquidity-filter` (CLI) ou activable depuis l'IHM.
+**Activation CLI** : `--enable-liquidity-filter --liquidity-min-avg-volume-20d 500000 --liquidity-min-market-cap 500000000 --liquidity-max-avg-spread-pct 0.5`
 
-**Seuils par défaut** :
+**Activation IHM** : Page Pipeline → bloc « Features contextuelles » → checkbox « 🔍 Filtrer les symboles illiquides » (cochée par défaut) + 3 sliders pour les seuils.
+
+**Seuils par défaut (IHM)** :
 
 | Paramètre | Défaut | Rôle |
 |:---|:---|:---|
-| `--liquidity-min-avg-volume-20d` | 500 000 | Volume quotidien moyen minimum |
-| `--liquidity-min-market-cap` | 500 000 000 | Market cap minimum (proxy via dollar volume) |
-| `--liquidity-max-avg-spread-pct` | 0.5 | Spread journalier maximum |
+| Volume min 20j | 500 000 | Volume quotidien moyen minimum (actions) |
+| Market cap min | 500 000 000 $ | Capitalisation minimum (proxy via dollar volume) |
+| Spread max 20j | 0.5 % | Spread journalier moyen maximum |
 
 **Fonctionnement** :
-1. Après chargement des symboles, avant entraînement
+1. Après chargement des symboles, avant entraînement (`orchestrator.py`)
 2. Requête SQL sur `stock_bars_daily` pour calculer volume/spread/dollar volume 20j
-3. Logge chaque symbole filtré avec sa raison
-4. Injecte le diagnostic dans `metadata_json` du batch
-5. Visible dans le rapport batch (section « Symboles filtrés par liquidité »)
-6. Visible dans les logs (chercher `liquidity_filter`)
+3. Logge chaque symbole filtré avec sa raison (`liquidity_filter: SYM → volume_insuffisant`)
+4. Injecte le diagnostic dans `metadata_json` du batch (via `cli.py` après `run_training_batch`)
+5. Visible dans le rapport batch (section « 🚫 Symboles filtrés par liquidité » avec tableau `Symbole → Raison`)
+6. Seuils pilotables depuis l'IHM (checkbox + 3 sliders)
 
 **Gain attendu** : Élimination des 10-15% de small caps illiquides → F1 moyen +0.01.
 
