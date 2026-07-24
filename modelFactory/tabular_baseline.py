@@ -11,7 +11,7 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
-from modelFactory.calibration import PlattCalibrator, TemperatureScaler
+from modelFactory.calibration import PlattCalibrator, TemperatureScaler, VectorScaler
 from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.dataset import chrono_split
 from modelFactory.evaluation import (
@@ -169,7 +169,7 @@ def fit_tabular_calibrator(
 	cfg: TrainingConfig,
 	*,
 	target_mode: str = "binary",
-) -> PlattCalibrator | TemperatureScaler | None:
+) -> PlattCalibrator | TemperatureScaler | VectorScaler | None:
 	"""Fit un calibrateur selon le mode cible.
 
 	Sprint Maître 1 :
@@ -197,11 +197,15 @@ def _fit_ternary_calibrator(
 	raw_proba_all: np.ndarray,
 	labels: np.ndarray,
 	cfg: TrainingConfig,
-) -> TemperatureScaler | None:
-	"""Fit un TemperatureScaler pour la calibration ternaire (Sprint Maître 1).
+) -> VectorScaler | None:
+	"""Fit un VectorScaler pour la calibration ternaire (Sprint Maître 2).
 
-	Le TemperatureScaler opère sur les logits. On utilise les probabilités
-	brutes comme pseudo-logits via inverse-softmax (log).
+	Remplace TemperatureScaler : le VectorScaler ajoute des biais par classe
+	qui corrigent la sur/sous-prédiction systématique (ex. LightGBM qui
+	sur-predit le Short de +7.7pp). Le TemperatureScaler (1 paramètre T)
+	ne peut pas corriger un biais de distribution entre classes.
+
+	Fonctionne sur les pseudo-logits obtenus par inverse-softmax (log).
 	"""
 	labels = np.asarray(labels, dtype=np.int64)
 	proba = np.asarray(raw_proba_all, dtype=np.float64)
@@ -211,25 +215,25 @@ def _fit_ternary_calibrator(
 		return None
 	if len(np.unique(labels)) < 2:
 		return None
-	# Convertir probas en pseudo-logits pour TemperatureScaler
+	# Convertir probas en pseudo-logits pour le calibrateur
 	eps = 1e-8
 	clipped = np.clip(proba, eps, 1 - eps)
 	# Normaliser
 	clipped = clipped / clipped.sum(axis=1, keepdims=True)
 	logits = np.log(clipped)
-	return TemperatureScaler(max_iter=cfg.calibration.max_iter).fit(logits, labels)
+	return VectorScaler(max_iter=cfg.calibration.max_iter).fit(logits, labels)
 
 
 def apply_tabular_calibration(
 	raw_proba: np.ndarray,
-	calibrator: PlattCalibrator | TemperatureScaler | None,
+	calibrator: PlattCalibrator | TemperatureScaler | VectorScaler | None,
 	*,
 	target_mode: str = "binary",
 ) -> np.ndarray:
-	"""Applique le calibrateur selon le mode cible (Sprint Maître 1)."""
+	"""Applique le calibrateur selon le mode cible (Sprint Maître 2)."""
 	if calibrator is None or not calibrator.fitted:
 		return np.asarray(raw_proba, dtype=np.float64)
-	if target_mode == "ternary" and isinstance(calibrator, TemperatureScaler):
+	if target_mode == "ternary" and isinstance(calibrator, (TemperatureScaler, VectorScaler)):
 		return calibrator.predict_proba(raw_proba)
 	if isinstance(calibrator, PlattCalibrator):
 		eps = 1e-6

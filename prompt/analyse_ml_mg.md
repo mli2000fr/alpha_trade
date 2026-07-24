@@ -15,11 +15,10 @@
 4. [Analyse par classe (Short / Flat / Long)](#3-analyse-par-classe-short--flat--long)
 5. [Calibration : true vs pred](#4-calibration--true-vs-pred)
 6. [Top & Flop performers](#5-top--flop-performers)
-7. [Impact des nouvelles features](#6-impact-des-nouvelles-features--short-score--macro-move)
+7. [Impact des nouvelles features : short-score & macro-move](#6-impact-des-nouvelles-features--short-score--macro-move)
 8. [LightGBM vs CatBoost : lequel choisir ?](#7-lightgbm-vs-catboost--lequel-choisir-)
-9. [Analyse du code source](#8-analyse-du-code-source--ce-que-le-code-explique-des-résultats)
-10. [Pistes d'amélioration priorisées (enrichies code)](#9-pistes-damélioration-priorisées-enrichies-code)
-11. [Plan d'action (mis à jour avec code)](#10-plan-daction-mis-à-jour-avec-code)
+9. [Pistes d'amélioration priorisées](#8-pistes-damélioration-priorisées)
+10. [Plan d'action](#9-plan-daction)
 
 ---
 
@@ -334,9 +333,9 @@ Le pipeline de décision suit ce chemin :
    brutes déjà biaisées short, la policy ne compense rien.
 
 **Conclusion code** : Le biais Short de LightGBM (+7.7%) a **3 causes racines** :
-- (A) Pas de `class_weight` dans les GBM → le modèle apprend la distribution empirique
-- (B) `TemperatureScaler` ne corrige pas le biais de distribution
-- (C) `TernaryDecisionPolicy` a des seuils symétriques
+- (A) ~~Pas de `class_weight` dans les GBM~~ → ✅ Résolu (2026-07-24) : `class_weight="balanced"` + `auto_class_weights="Balanced"`
+- (B) ~~`TemperatureScaler` ne corrige pas le biais de distribution~~ → ✅ Résolu (2026-07-24) : remplacé par `VectorScaler` (T + biais par classe)
+- (C) `TernaryDecisionPolicy` a des seuils symétriques → ⏳ À faire (cf. §9.4)
 
 ### 8.2 Feature set réel utilisé par les GBM
 
@@ -384,26 +383,24 @@ LightGBM per-symbol, ou l'inverse).
 
 ### 8.4 Walk-Forward : configuration et impact
 
-**Fichier** : `modelFactory/config.py:WalkForwardConfig`
+**Fichier** : `modelFactory/config.py:WalkForwardConfig` — partagé par **tous** les modèles
+(LSTM via `trainer.py`, GBM via `tabular_baseline.py`, Global via `global_model.py`).
 
 ```python
 min_train_size=504  # ~2 ans de training
 val_size=126        # ~6 mois de validation
 test_size=126       # ~6 mois de test
 step_size=126       # avance de 6 mois par split
-max_splits=3        # 3 splits WF
+max_splits=3        # ⚠️ 3 splits — volontairement réduit (phase recherche)
 ```
 
-Avec `training_start_date=2018-01-01` et `training_end_date=2025-12-31` :
-- Split 1 : train 2018–2019, val H1 2020, test H2 2020
-- Split 2 : train 2018–H1 2020, val H2 2020, test H1 2021
-- Split 3 : train 2018–H2 2020, val H1 2021, test H2 2021
+**Statut** : `max_splits=3` est un **choix délibéré de phase recherche**. On allège
+les paramètres pour itérer vite sur les combinaisons (features, hyperparams, stacking).
+Ce n'est PAS un bug — c'est un trade-off vitesse vs couverture temporelle.
 
-**Limite** : Seulement 3 splits → le WF ne couvre que 2020-2021. Les régimes 2022
-(bear market), 2023 (rebond tech), 2024-2025 (bull) ne sont **pas testés en WF**.
-Le `max_splits=3` est trop conservateur pour 8 ans de données.
-
-**Recommandation** : Passer à `max_splits=8` ou plus pour couvrir tous les régimes.
+**Quand passer à `max_splits=8+`** : Une fois la « best combinaison » trouvée,
+augmenter `max_splits` pour une validation WF complète sur tous les régimes
+(2020-2024) avant le go-live.
 
 ### 8.5 Sélection du champion : mécanique et biais
 
@@ -449,18 +446,21 @@ model_builder=lambda resolved_seed: lgb.LGBMClassifier(
 )
 ```
 
-**Paramètres ajoutables qui manquent actuellement** :
+**Paramètres déjà appliqués (2026-07-24)** :
+```python
+    class_weight="balanced", # ✅ FAIT — corrige le biais Short (+7.7%)
+```
+
+**Paramètres restant à tuner** :
 ```python
     reg_alpha=0.1,          # L1 régularisation → réduit overfitting
     reg_lambda=0.1,         # L2 régularisation
     min_child_samples=50,   # Évite les feuilles trop petites
     subsample=0.8,          # Bagging → robustesse
     colsample_bytree=0.8,   # Feature sampling
-    class_weight="balanced", # ⚠️ CORRECTION DU BIAIS SHORT
 ```
 
-**Gain attendu** : +0.02 à +0.04 de F1 WF. Le `class_weight="balanced"` seul
-pourrait résoudre une partie du biais Short.
+**Gain attendu** : +0.02 à +0.04 de F1 WF (tuning).
 
 #### 9.2 Hyperparameter tuning CatBoost
 
@@ -480,32 +480,35 @@ CatBoostClassifier(
 )
 ```
 
-**Paramètres ajoutables** :
+**Paramètres déjà appliqués (2026-07-24)** :
+```python
+    auto_class_weights="Balanced",  # ✅ FAIT — corrige le biais Short
+```
+
+**Paramètres restant à tuner** :
 ```python
     l2_leaf_reg=3,             # L2 régularisation
     border_count=128,          # Précision des splits
     random_strength=1,         # Randomized scoring → robustesse
-    auto_class_weights="Balanced",  # ⚠️ CORRECTION DU BIAIS SHORT
     bagging_temperature=1,     # Bayesian bagging
     od_type="IncToDec",        # Overfitting detector
     od_wait=20,                # Patience overfitting
 ```
 
-**Gain attendu** : +0.02 à +0.03 de F1 WF.
+**Gain attendu** : +0.02 à +0.03 de F1 WF (tuning).
 
-#### 9.3 Poids de classe GBM — Correction du biais Short
+#### 9.3 Poids de classe GBM — Correction du biais Short ✅ FAIT (2026-07-24)
 
-**⚠️ C'est le quick win le plus important.**
-
-**Cause racine** : Ni `LGBMClassifier` ni `CatBoostClassifier` ne reçoivent de
-`class_weight`. Les poids `--ternary-weight-*` ne sont utilisés **que** par le LSTM
+**Cause racine** : Ni `LGBMClassifier` ni `CatBoostClassifier` ne recevaient de
+`class_weight`. Les poids `--ternary-weight-*` étaient utilisés **que** par le LSTM
 (`model.py:117`).
 
-**Solution immédiate** :
-- LightGBM : ajouter `class_weight="balanced"` dans `lightgbm_baseline.py:40`
-- CatBoost : ajouter `auto_class_weights="Balanced"` dans `catboost_baseline.py:50`
+**Correctif appliqué** (3 fichiers) :
+- `lightgbm_baseline.py` → `class_weight="balanced"`
+- `catboost_baseline.py` → `auto_class_weights="Balanced"`
+- `global_model.py` → idem pour le Global Model (single-split + WF)
 
-**Alternative plus fine** : calculer les poids réels depuis la distribution du train :
+**Alternative plus fine** (si `"balanced"` insuffisant) :
 ```python
 train_class_counts = train_targets.value_counts().sort_index()
 total = len(train_targets)
@@ -513,6 +516,19 @@ class_weights = {cls: total / (3 * count) for cls, count in train_class_counts.i
 ```
 
 **Gain attendu** : Correction du biais de calibration +0.01–0.02 F1.
+
+#### 9.3b Calibration VectorScaler (remplace TemperatureScaler) ✅ FAIT (2026-07-24)
+
+**Cause racine** : `TemperatureScaler` (1 paramètre T) ne peut pas corriger un biais
+de distribution vers une classe. Le `VectorScaler` (1 + C paramètres : T + biais par
+classe) permet de compenser la sur/sous-prédiction systématique par classe.
+
+$$P_{\text{calibré}}(y=i | z) = \frac{\exp(z_i / T + b_i)}{\sum_j \exp(z_j / T + b_j)}$$
+
+**Correctif appliqué** (3 fichiers) :
+- `calibration.py` → nouvelle classe `VectorScaler`
+- `tabular_baseline.py` → `_fit_ternary_calibrator()` utilise `VectorScaler`
+- `global_model.py` → calibration ternaire sur single-split et WF
 
 #### 9.4 Seuils asymétriques dans TernaryDecisionPolicy
 
@@ -556,18 +572,19 @@ MAX_AVG_SPREAD_PCT = 0.5        # 0.5%
 
 ### 🟡 Priorité Moyenne — Impact modéré, effort modéré
 
-#### 9.6 Augmenter max_splits WF
+#### 9.6 Augmenter max_splits WF (post-recherche)
 
-**Fichier** : `modelFactory/config.py:WalkForwardConfig`
+**Fichier** : `modelFactory/config.py:WalkForwardConfig` — partagé par LSTM, GBM, Global.
 
 ```python
-# Actuel : max_splits: int = 3
-# Proposé : max_splits: int = 8  (couvre 2020-2024 avec step=126)
+# Actuel : max_splits: int = 3   ← volontaire (phase recherche, itérations rapides)
+# Cible  : max_splits: int = 8   ← pré-go-live (couvre 2020-2024 avec step=126)
 ```
 
-Avec 8 splits, le WF testerait tous les régimes de 2020 à 2024. Le temps
-d'entraînement augmenterait de ~2x mais la validité statistique serait bien
-meilleure.
+⚠️ Ce n'est **PAS** à faire maintenant. On garde `max_splits=3` tant qu'on
+cherche la meilleure combinaison (features + hyperparams + stacking). On passera
+à 8+ une fois la config finale trouvée, pour une validation complète avant
+déploiement. Le temps d'entraînement augmentera de ~2-3x.
 
 #### 9.7 Calibration Isotonic
 
@@ -642,12 +659,13 @@ ne peut pas les exploiter pleinement. Deux options :
 
 ### Semaine 1 : Quick wins code
 
-| Action | Fichier(s) | Effort | Gain |
+| Action | Fichier(s) | Effort | Statut |
 |:---|:---|:---|:---|
-| **class_weight="balanced" LightGBM** | `lightgbm_baseline.py:40` | 30min | calibration |
-| **auto_class_weights="Balanced" CatBoost** | `catboost_baseline.py:50` | 30min | calibration |
-| **Seuils asymétriques** | `ternary_decision_policy.py:93` + `config.py` | 2h | +0.01 F1 |
-| Filtrage liquidité | `orchestrator.py` + `selector_reference.py` | 3h | +0.01 F1 |
+| **class_weight="balanced" LightGBM** | `lightgbm_baseline.py` | 30min | ✅ Fait |
+| **auto_class_weights="Balanced" CatBoost** | `catboost_baseline.py` | 30min | ✅ Fait |
+| **VectorScaler (remplace TemperatureScaler)** | `calibration.py` + `tabular_baseline.py` + `global_model.py` | 2h | ✅ Fait |
+| **Seuils asymétriques** | `ternary_decision_policy.py` + `config.py` | 2h | ⏳ À faire |
+| Filtrage liquidité | `orchestrator.py` + `selector_reference.py` | 3h | ⏳ À faire |
 
 ### Semaine 2 : Tuning
 
@@ -655,13 +673,13 @@ ne peut pas les exploiter pleinement. Deux options :
 |:---|:---|:---|:---|
 | Hyperparameter tuning LightGBM | `lightgbm_baseline.py` + `config.py` | 4h | +0.02–0.04 |
 | Hyperparameter tuning CatBoost | `catboost_baseline.py` + `config.py` | 4h | +0.02–0.03 |
-| Augmenter max_splits WF (3→8) | `config.py:WalkForwardConfig` | 1h | validité |
 | Isotonic calibrator | `calibration.py` + `tabular_baseline.py` | 3h | calibration |
 
-### Semaine 3-4 : Structure
+### Pré-Go-Live (après recherche)
 
 | Action | Fichier(s) | Effort | Gain |
 |:---|:---|:---|:---|
+| Augmenter max_splits WF (3→8+) | `config.py:WalkForwardConfig` | 1h | couverture régimes |
 | Global stacking cross-modèle | `global_model.py` | 4h | +0.005–0.01 |
 | Simplifier interactions régime | `features.py` | 2h | robustesse |
 | Macro-move sectoriel | `features.py` + loader | 5h | +0.005–0.01 |

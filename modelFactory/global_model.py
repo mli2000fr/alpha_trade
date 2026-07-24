@@ -52,6 +52,7 @@ from modelFactory.features import (
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.tabular_baseline import apply_tabular_calibration, compute_tabular_metrics, fit_tabular_calibrator
+from modelFactory.calibration import VectorScaler
 
 LOGGER = logging.getLogger(__name__)
 
@@ -185,6 +186,7 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
             learning_rate=cfg.baseline.learning_rate,
             random_state=resolved_seed,
             verbosity=-1,
+            class_weight="balanced",
         )
     CatBoostClassifier = _import_catboost()
     is_ternary = cfg.data.target_mode == "ternary"
@@ -199,6 +201,7 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
         verbose=False,
         train_dir=str(train_dir),
         allow_writing_files=True,
+        auto_class_weights="Balanced",
     )
 
 
@@ -445,8 +448,20 @@ def train_global_model(
         long_col = num_val_cols - 1  # fallback: last column
     val_raw = raw_val_all[:, long_col]
     cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
-    calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg)
-    val_proba = apply_tabular_calibration(val_raw, calibrator)
+
+    # ── Sprint Maître 2 : calibration ternaire VectorScaler ──────────
+    if is_ternary and num_val_cols >= 3:
+        val_labels_ternary = (val_df["target"].astype(int) + 1).to_numpy()  # shift -1,0,1 -> 0,1,2
+        calibrator = fit_tabular_calibrator(
+            raw_val_all[:, :3], val_labels_ternary, cfg, target_mode="ternary",
+        )
+        calibrated_all = apply_tabular_calibration(
+            raw_val_all[:, :3], calibrator, target_mode="ternary",
+        )
+        val_proba = calibrated_all[:, 2]  # p_long calibrée
+    else:
+        calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg)
+        val_proba = apply_tabular_calibration(val_raw, calibrator)
     selected_threshold = float(effective_data_cfg.decision_threshold)
     threshold_summary: dict[str, Any]
     if cfg.threshold_optimization.enabled:
@@ -476,7 +491,15 @@ def train_global_model(
     num_test_cols = raw_test_all.shape[1]
     test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
     test_raw = raw_test_all[:, test_long_col]
-    test_proba = apply_tabular_calibration(test_raw, calibrator)
+
+    # ── Sprint Maître 2 : calibration test ternaire ──────────────────
+    if is_ternary and num_test_cols >= 3:
+        calibrated_test_all = apply_tabular_calibration(
+            raw_test_all[:, :3], calibrator, target_mode="ternary",
+        )
+        test_proba = calibrated_test_all[:, 2]
+    else:
+        test_proba = apply_tabular_calibration(test_raw, calibrator)
     test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
     val_metrics = compute_tabular_metrics(
         cal_labels,
@@ -754,10 +777,32 @@ def train_global_model_wf(
         raw_val_all = model.predict_proba(val_df_split[feature_columns])
         num_val_cols = raw_val_all.shape[1]
 
-        # ── Stocker global_pred pour le stacking (3 probas ternaires) ──
+        # ── Sprint Maître 2 : calibration ternaire VectorScaler par split ──
+        # Fit sur train, appliqué sur val pour des métriques calibrées.
+        # Le global_pred_df reste en probas brutes (non calibrées) car elles
+        # servent de features de stacking — l'information brute est préférable.
+        if is_ternary and num_val_cols >= 3:
+            raw_train_all = model.predict_proba(train_df[feature_columns])
+            eps = 1e-8
+            _train_clipped = np.clip(raw_train_all[:, :3], eps, 1 - eps)
+            _train_clipped = _train_clipped / _train_clipped.sum(axis=1, keepdims=True)
+            _train_logits = np.log(_train_clipped)
+            _split_calibrator = VectorScaler(max_iter=cfg.calibration.max_iter).fit(
+                _train_logits, train_targets,
+            )
+            calibrated_val_all = apply_tabular_calibration(
+                raw_val_all[:, :3], _split_calibrator, target_mode="ternary",
+            )
+            val_proba_long_for_metrics = calibrated_val_all[:, 2]
+            val_proba_all_for_metrics = calibrated_val_all
+        else:
+            val_proba_long_for_metrics = raw_val_all[:, -1]
+            val_proba_all_for_metrics = raw_val_all
+
+        # ── Stocker global_pred pour le stacking (3 probas ternaires BRUTES) ──
         pred_part = val_df_split[["symbol", "date"]].copy()
         if is_ternary and num_val_cols >= 3:
-            # short=col0, flat=col1, long=col2
+            # short=col0, flat=col1, long=col2 — BRUT, non calibré pour stacking
             pred_part["global_pred_short"] = raw_val_all[:, 0].astype(np.float64)
             pred_part["global_pred_flat"] = raw_val_all[:, 1].astype(np.float64)
             pred_part["global_pred_long"] = raw_val_all[:, 2].astype(np.float64)
@@ -770,9 +815,9 @@ def train_global_model_wf(
             val_proba_long = raw_val_all[:, -1]
         global_pred_parts.append(pred_part)
 
-        # ── Métriques par symbole sur ce split (basées sur P(long)) ──
+        # ── Métriques par symbole sur ce split (basées sur probas CALIBRÉES) ──
         split_by_symbol = _compute_by_symbol_metrics(
-            val_df_split, val_proba_long,
+            val_df_split, val_proba_long_for_metrics,
             decision_threshold=float(effective_data_cfg.decision_threshold),
             partition_name="val",
         )

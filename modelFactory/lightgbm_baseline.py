@@ -48,6 +48,7 @@ def run_lightgbm_baseline(
             learning_rate=cfg.baseline.learning_rate,
             random_state=resolved_seed,
             verbosity=-1,
+            class_weight="balanced",
         ),
         artifact_dir=artifact_dir,
         # Phase 4.2.c — format natif LightGBM (.txt). Plus de pickle.
