@@ -47,6 +47,10 @@ from database.selector_reference import filter_symbols_from_start, normalize_sta
 
 LOGGER = logging.getLogger(__name__)
 SymbolSource = Literal[
+    "tradable-universe",
+    "stock-bars-daily",
+    "ticket-recherche",
+]
 
 # Cache pour le diagnostic de liquidité — lu par cli.py après run_training_batch()
 _last_liquidity_diag: dict[str, Any] = {}
@@ -59,10 +63,6 @@ def get_last_liquidity_diagnostics() -> dict[str, Any]:
     et par le rapport pour afficher les symboles filtrés.
     """
     return _last_liquidity_diag
-    "tradable-universe",
-    "stock-bars-daily",
-    "ticket-recherche",
-]
 
 
 def _with_batch_artifacts_dir(cfg: TrainingConfig, batch_id: str) -> TrainingConfig:
