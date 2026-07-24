@@ -279,28 +279,43 @@ Per-symbol LSTM : "AAPL va-t-il monter de +3% dans 10 jours ?" → réponse isol
 Global Model    : "AAPL est-il dans le top 35% des titres pour le rendement à 10 jours ?" → réponse relative
 ```
 
-**Plan d'action recommandé :**
+**Plan d'action recommandé — MIS À JOUR après test réel :**
 
-1. **Court terme (maintenant)** : Activer le Global Model avec les flags existants :
-   ```powershell
-   --enable-global-model --enable-global-stacking --enable-global-challenger
-   ```
-   → Le Global Model (CatBoost/LightGBM) devient un 4ème challenger, et sa prédiction `global_pred_long` est injectée comme feature dans les modèles per-symbol.
-
-2. **Moyen terme** : Comparer les perfs du Global Model seul vs per-symbol. Si le Global surpasse, envisager d'en faire le modèle principal.
-
-3. **Long terme (si LSTM souhaité)** : Remplacer le CatBoost/LightGBM du Global Model par un LSTM panel → 280K séquences d'entraînement, le problème de ratio échantillons/paramètres disparaît.
-
-> ✅ **Bilan — Ce que tu as à faire MAINTENANT : pas grand-chose.**
+> ⚠️ **Résultat du test A/B (24 juillet 2026)** : Deux batchs ont été lancés pour comparer l'impact du Global Model :
 >
-> | Action | Effort | Pourquoi |
-> |--------|--------|----------|
-> | Activer le Global Model comme challenger | ⚡ 1 flag CLI | Déjà codé, prêt à l'emploi |
-> | Corriger les class_weights du LSTM | ⚡ 3 flags CLI | `--ternary-weight-*` |
-> | Passer `seq_len` à 40 en production | ⚡ 1 flag CLI | Déjà prévu |
-> | Passer `patience` à 10 en production | ⚡ 1 flag CLI | Déjà prévu |
+> | Batch | Flags | Champions |
+> |-------|-------|-----------|
+> | `22b4ca` | `--enable-global-model --enable-global-stacking` (sans challenger) | lightgbm 112, catboost 68, lstm 20 |
+> | `9493ca` | `--enable-global-model --enable-global-stacking --enable-global-challenge` | lightgbm 112, catboost 68, lstm 20 |
 >
-> **Pas besoin de** : réécrire le Global Model, ajouter XGBoost, coder un Transformer, changer la normalisation, ou ajouter plus de données historiques. L'infrastructure existante couvre déjà l'essentiel. Le gros du travail est de l'**activer**, pas de la construire.
+> **Résultat : IDENTIQUE. Le Global Model n'a remporté AUCUN symbole sur 200.** Il n'apparaît même pas dans la liste des champions — lightgbm, catboost, et lstm_attention restent les seuls vainqueurs, dans les mêmes proportions.
+>
+> **Pourquoi le Global Model n'apporte rien ?**
+>
+> 1. **Le Global Model prédit UNIQUEMENT `global_pred_long`** — une prédiction directionnelle unique (probabilité d'être dans le top 35% long). Il ne produit pas de prédictions short/flat/long séparées comme les modèles per-symbol. Cette feature unique est noyée parmi les 47 autres features.
+>
+> 2. **Le per-symbol LightGBM capture déjà le même signal** — les features cross-sectionnelles (rangs, secteurs) sont déjà incluses dans les 47 colonnes du per-symbol. Le Global Model n'apporte pas d'information **nouvelle**, juste une reformulation de ce que le per-symbol voit déjà.
+>
+> 3. **Le Global Model est un arbre comme le per-symbol** — pas de diversité d'architecture. Un LightGBM qui stack un autre LightGBM n'ajoute rien. Pour que le stacking fonctionne, il faut des modèles de natures différentes (ex: un Transformer global + un LightGBM per-symbol).
+
+**Plan d'action révisé :**
+
+1. ~~Activer le Global Model comme challenger~~ → ❌ **Testé, aucun impact. Désactiver.**
+2. **Court terme** : Corriger les class_weights du LSTM + seq_len à 40 + patience à 10 (inchangé)
+3. **Moyen terme** : SHAP analysis sur LightGBM pour identifier les features inutiles, réduire de 47 → ~20
+4. **Si le LSTM reste mauvais après correctifs** → le désactiver, tout miser sur LightGBM/CatBoost
+
+> ✅ **Bilan révisé — Ce que tu as à faire :**
+>
+> | Action | Effort | Statut |
+> |--------|--------|--------|
+> | ~~Activer le Global Model~~ | — | ❌ Testé, 0 gain — abandonner |
+> | Corriger les class_weights du LSTM | ⚡ 3 flags CLI | À faire |
+> | Passer `seq_len` à 40, `patience` à 10 | ⚡ 2 flags CLI | Déjà prévu |
+> | SHAP + réduire features (47 → ~20) | 🔧 Code | Moyen terme |
+> | Si LSTM tjs mauvais → désactiver | ⚡ 1 flag CLI | Plan B |
+>
+> **Pas besoin de** : Global Model, XGBoost, Transformer, changer la normalisation. Le duo LightGBM + CatBoost fait déjà le job. L'énergie restante doit aller sur le **feature engineering** et le **backtest avec coûts**, pas sur l'ajout de modèles.
 
 #### Cause 3 : Normalisation par split, pas globale
 
@@ -327,6 +342,87 @@ Dans `_run_walk_forward_validation` (trainer.py:964-965), un `FeatureScaler` est
 > 3. **RobustScaler** : remplacer mean/std par médiane/IQR, moins sensible aux valeurs extrêmes et aux changements de régime.
 >
 > ⚠️ **Note** : La normalisation par split est en réalité une **bonne pratique** en walk-forward validation car elle évite le look-ahead bias. Ce diagnostic est donc à relativiser — les Causes 1, 2, 4 et 5 ont un impact bien plus fort sur la performance du LSTM.
+>
+> **Cette cause impacte-t-elle aussi LightGBM et CatBoost ?**
+>
+> **Non.** Les arbres de décision sont **insensibles à toute transformation monotone** des features, et la z-normalization `(x - mean) / std` est monotone (si $x_1 > x_2$, alors $z_1 > z_2$ puisque $\sigma > 0$). Concrètement :
+>
+> ```
+> LightGBM sur valeurs brutes :  split à momentum_20 > 0.12
+> LightGBM sur valeurs normalisées : split à momentum_20_z > 1.1
+>                                   ↑ Même arbre, seuil différent, décisions identiques
+> ```
+>
+> Le seul vrai problème pour les arbres n'est pas la normalisation, mais le **changement de régime** : un split appris en bull market (« momentum > 15% → long ») peut devenir sous-optimal en bear market. Mais ce problème existe **avec ou sans normalisation** — c'est inhérent aux données, pas au scaler.
+
+##### 🔧 Comment résoudre le problème de changement de régime pour GBM/CatBoost ?
+
+Le problème : un arbre entraîné sur 2018-2025 (bull market) apprend des règles comme « momentum_20 > 12% → long » qui ne fonctionnent plus en bear market (2022). Il faut que le modèle sache **dans quel régime il se trouve** pour adapter ses décisions.
+
+**Solutions, classées par impact :**
+
+**1. Interactions features × régime (🥇 le plus efficace, sans changer le pipeline)**
+
+Les arbres savent naturellement créer des interactions, mais seulement si les deux variables sont présentes. En ajoutant des features d'interaction explicites, tu facilites le travail :
+
+```python
+# Ajouter dans features.py
+df["momentum_20_x_bull"] = df["momentum_20"] * df["regime_bull_market"]
+df["momentum_20_x_risk_off"] = df["momentum_20"] * df["regime_risk_off"]
+df["relative_strength_20_x_bull"] = df["relative_strength_20"] * df["regime_bull_market"]
+df["relative_strength_20_x_risk_off"] = df["relative_strength_20"] * df["regime_risk_off"]
+# ... pour les 5-10 features les plus importantes (SHAP)
+```
+
+L'arbre peut alors apprendre : `momentum_20_x_bull > 0.08 → long` (valable uniquement en bull) vs `momentum_20_x_risk_off > 0.02 → short` (valable en risk-off). C'est la solution la plus simple et la plus efficace — ~15 lignes de code, zéro changement de pipeline.
+
+**2. Sample weighting par récence (🥈 simple, efficace)**
+
+Donner plus de poids aux données récentes pour que le modèle s'adapte naturellement au régime actuel :
+
+```python
+# Dans le trainer GBM/CatBoost
+today = df["date"].max()
+df["sample_weight"] = np.exp(-(today - df["date"]).dt.days / 365)  # demi-vie 1 an
+model.fit(X, y, sample_weight=df["sample_weight"])
+```
+
+LightGBM et CatBoost supportent `sample_weight` nativement. Une demi-vie de 1-2 ans est un bon point de départ pour du swing trading.
+
+**3. Retraining fréquent (déjà en place via le walk-forward)**
+
+Ton walk-forward tous les ~6 mois (126 jours de step) est déjà une forme d'adaptation. Tu peux le rendre plus fréquent (tous les 3 mois) si les changements de régime sont rapides.
+
+**4. Modèles séparés par régime (plus lourd, mais puissant)**
+
+```python
+bull_model = LightGBM().fit(data[data["regime_bull_market"] > 0.5])
+bear_model = LightGBM().fit(data[data["regime_bull_market"] < 0.5])
+# En prédiction : choisir le modèle selon le régime courant
+```
+
+Inconvénient : divise les données par 2, donc nécessite un historique long.
+
+##### 🏦 Comment les professionnels gèrent le changement de régime ?
+
+| Approche | Qui l'utilise | Détail |
+|----------|--------------|--------|
+| **Features cross-sectionnelles (rangs)** | AQR, Dimensional, WorldQuant, tous les funds systématiques | Les rangs sont **naturellement invariants au régime** : le 90ème percentile de momentum a la même signification en bull qu'en bear. C'est LA raison n°1 pour laquelle les pros utilisent des rangs plutôt que des valeurs brutes. |
+| **Retraining fréquent** | Tous | Re-estimation mensuelle ou trimestrielle des modèles. Le walk-forward que tu fais déjà est la version « propre » de ça. |
+| **Interactions features × régime** | Approche standard en ML | Pas spécifique à la finance, mais très efficace. Interactions explicites entre features techniques et indicateurs de régime. |
+| **Ensemble de modèles par régime** | Approche avancée | Des modèles spécialisés par régime (bull, bear, sideways, high vol, low vol) avec un méta-modèle qui les pondère. |
+| **Online learning / decay** | Stat arb, HFT | Mise à jour continue des modèles avec un facteur d'oubli exponentiel. |
+| **Régimes de Markov (HMM)** | Recherche quantitative | Modélisation probabiliste du régime courant, le modèle reçoit `P(bull)` et `P(bear)` comme features continues. |
+
+> 💡 **Recommandation pour ton cas** : Commence par la solution 1 (interactions features × régime). C'est ~15 lignes de code dans `features.py`, aucun changement de pipeline, et ça donne aux arbres exactement l'information dont ils ont besoin pour adapter leurs splits au régime. Si tu veux aller plus loin, ajoute le sample weighting par récence (solution 2). Les deux combinées devraient significativement réduire le biais long et améliorer la robustesse inter-régimes.
+>
+> | Modèle | Impacté par la normalisation par split ? | Pourquoi |
+> |--------|:---:|----------|
+> | **LSTM** | 🔴 OUI | Les poids du réseau sont appris dans l'espace normalisé ; un changement de distribution casse les activations |
+> | **LightGBM** | 🟢 NON | Insensible à l'échelle, les splits sont équivalents |
+> | **CatBoost** | 🟢 NON | Idem LightGBM |
+>
+> 💡 **Conclusion** : Ne passe pas de temps sur ce point. Les arbres n'en souffrent pas, et pour le LSTM, les Causes 1, 2, 4 et 5 sont bien plus prioritaires.
 
 ##### 🏦 Comment les professionnels résolvent ce problème
 
@@ -1088,8 +1184,11 @@ Rappel des seuils de qualité par classe (baseline aléatoire = 0.33 pour 3 clas
 | 4 | LightGBM domine (58%) | 🟢 Normal | Modèle simple + peu de données = arbres gagnent |
 | 5 | 4 symboles F1_short=0 | 🟠 Opérationnel | Incapacité totale à shorter certains titres |
 | 6 | F1_flat effondré pour 8/10 pires | 🟡 Important | Titres à distribution binaire |
+| 7 | Global Model = 0 champion sur 200 | 🟢 Normal (compris) | Même info que per-symbol, pas de diversité d'architecture |
 
 ### 7.2 Plan d'action priorisé
+
+> 📊 **Test A/B du 24 juillet 2026** : Batch `22b4ca` (Global Model sans challenger) vs `9493ca` (avec challenger) → **résultats identiques**. Le Global Model n'a gagné **0 symbole sur 200**. LightGBM (112), CatBoost (68) et LSTM (20) dominent inchangés. Le Global Model est abandonné.
 
 #### 🔴 Immédiat (cette semaine)
 
