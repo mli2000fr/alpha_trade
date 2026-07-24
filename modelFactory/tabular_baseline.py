@@ -146,7 +146,10 @@ def compute_tabular_metrics(
 				prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
 				rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
 				result[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
-			f1_vals = [v for k, v in result.items() if k.startswith("f1_") and v is not None]
+			# ⚠️ Ne pas inclure f1_weighted ni l'ancien f1_macro (issus de compute_multiclass_metrics)
+			# dans le calcul du f1_macro legacy — seul f1_short, f1_flat, f1_long sont pertinents.
+			_f1_class_keys = {"f1_short", "f1_flat", "f1_long"}
+			f1_vals = [v for k, v in result.items() if k in _f1_class_keys and v is not None]
 			result["f1_macro"] = float(np.mean(f1_vals)) if f1_vals else 0.0
 
 			# ── Distribution true / pred (compatible LSTM) ──
