@@ -69,6 +69,13 @@ Ajoute 1 feature : `global_pred_long` (prédiction du Global Model cross-symbol)
 Ajoute 1 feature `global_pred_long` + Global Model participe à la sélection du champion.
 ⚠️ Labeling corrigé → distribution true et prédictions rééquilibrées.
 
+### +Global Stk+Challenger+Short+MOVE ⚠️
+```powershell
+--feature-set expert --enable-cross-sectional --enable-global-model --global-model-name lightgbm --enable-global-stacking --enable-global-challenge --include-short-score --include-macro-move --comment "baseline + global staking gbm + challenger+ short score + move"
+```
+Ajoute `global_pred_long` + `selector_short_score` + `move_close` + Global Model challenger.
+⚠️ Même labeling que le batch précédent.
+
 ---
 
 ## 2. Métriques clés — F1 Macro Walk-Forward
@@ -85,12 +92,9 @@ Ajoute 1 feature `global_pred_long` + Global Model participe à la sélection du
 | +MOVE | 0.294 | 0.285 | 0.227 |
 | +Global Stacking | **0.295** | **0.287** | 0.229 |
 | +Global Stk+Challenger ⚠️ | 0.294 | **0.293** | 0.226 |
+| +Global Stk+Chal+Short+MOVE ⚠️ | **0.296** | **0.293** | 0.221 |
 
-> 🥇 **Baseline, Short Score & Global Stacking** : meilleur LightGBM WF (0.295).  
-> 🚀 **Global Stk+Challenger** : CatBoost +0.006, talonne LightGBM (0.293 vs 0.294). Biais long résolu.  
-> 🥇 **Global Stacking** : reproduit EXACTEMENT la baseline.  
-> 🔥 **MOVE** : seul batch macro qui améliore F1_short LightGBM (+0.024).  
-> ⚠️ Les métriques du batch Global Stk+Challenger utilisent un labeling différent.
+> 🥇 **Global Stk+Chal+Short+MOVE** : LightGBM 0.296 — première fois au-dessus de la baseline !  \n> 🚀 Short Score + MOVE boostent F1_short (+0.017 LGBM, +0.014 CB).  \n> 🥇 **Baseline, Short Score & Global Stacking** : LightGBM WF 0.295.  \n> ⚠️ Batches 10-11 : labeling post-correctif, non comparables aux batches 1-9.
 
 ---
 
@@ -108,11 +112,9 @@ Ajoute 1 feature `global_pred_long` + Global Model participe à la sélection du
 | +MOVE | **1** | 92 | 103 | 4 |
 | +Global Stacking | 2 | 96 | 97 | **5** |
 | +Global Stk+Challenger ⚠️ | 2 | **79** | **116** | 3 |
+| +Global Stk+Chal+Short+MOVE ⚠️ | 2 | 81 | 112 | **5** |
 
-> 🥇 **Short Score** : seul batch qui améliore le top 0.40+ (5→6) ET réduit le bas (95→87).  
-> 🚀 **Global Stk+Challenger** : ventre mou réduit de 17% (95→79), +19 dans 0.30-0.39. Meilleure distribution.  
-> 🥇 **Global Stacking** : distribution quasi identique à la baseline.  
-> ⚠️ Labeling différent.
+> 🥇 **Short Score** : seul batch qui améliore le top 0.40+ (5→6) ET réduit le bas (95→87).  \n> 🚀 **Global Stk+Chal+Short+MOVE** : top 0.40+ remonte à 5, ventre mou contenu (81).  \n> ⚠️ Batches 10-11 : labeling différent.
 
 ---
 
@@ -130,11 +132,9 @@ Ajoute 1 feature `global_pred_long` + Global Model participe à la sélection du
 | +MOVE | 109 (54.5%) | 74 (37%) | 17 (8.5%) |
 | +Global Stacking | 112 (56%) | 68 (34%) | 20 (10%) |
 | +Global Stk+Challenger ⚠️ | 97 (48.5%) | **89 (44.5%)** | 14 (7%) |
+| +Global Stk+Chal+Short+MOVE ⚠️ | 97 (48.5%) | **94 (47%)** | 9 (4.5%) |
 
-> 📊 LightGBM domine systématiquement (54-58%).  
-> 🚀 **Global Stk+Challenger** : CatBoost +21 champions, quasi co-leader (97 vs 89).  
-> 🥇 **Global Stacking & VXN** : distribution de champions très proche de la baseline.  
-> ⚠️ Labeling différent.
+> 📊 LightGBM domine systématiquement (54-58%).  \n> 🚀 **Global Stk+Chal+Short+MOVE** : CatBoost 94 champions, quasi majoritaire (47%).  \n> ⚠️ Batches 10-11 : labeling différent.
 
 ---
 
@@ -152,11 +152,9 @@ Ajoute 1 feature `global_pred_long` + Global Model participe à la sélection du
 | +MOVE | 6 | COLD, IEX, INTC, NSA, SSD, WERN |
 | +Global Stacking | 6 | ARMK, BMO, INTC, SSD, VOYA, WWD |
 | +Global Stk+Challenger ⚠️ | 5 | BAP, COLD, ESE, NWPX, WWD |
+| +Global Stk+Chal+Short+MOVE ⚠️ | **3** | ESE, HIW, WWD |
 
-> 🥇 **Sentiment** : meilleur score (3).  
-> ❌ **VIX3M** : pire score absolu (10).  
-> ⚠️ **BMO, VOYA** sont incapables de shorter dans ≥6 batches.  
-> ⚠️ Labeling différent pour le batch Global Stk+Challenger.
+> 🥇 **Sentiment** : meilleur score (3).  \n> 🥇 **Global Stk+Chal+Short+MOVE** : seulement 3 symboles — meilleur score post-correctif.  \n> ❌ **VIX3M** : pire score absolu (10).
 
 ---
 
@@ -236,6 +234,7 @@ Ajoute 1 feature `global_pred_long` + Global Model participe à la sélection du
 | **Baseline** | — | 0.295 | 5 | 4 | 🥇 Référence |
 | +Global Stacking | 1 | 0.000 | **5** | 6 | 🥇 F1 et distribution identiques à la baseline |
 | +Global Stk+Challenger ⚠️ | 1 | −0.001 | 3 | 5 | 🚀 CatBoost +0.006, biais long résolu, ventre mou −17% |
+| +Global Stk+Chal+Short+MOVE ⚠️ | 3 | **+0.001** | **5** | **3** | 🥇 F1 record (0.296), short +0.017, f1_short=0 minimal |
 | +Short Score | 1 | 0.000 | **6** ✅ | 7 ❌ | 🥈 Distribution améliorée |
 | +MOVE | 1 | −0.001 | 4 | 6 | 🥈 F1_short +0.024, record BEN 0.426 |
 | +VXN | 2 | −0.001 | 4 | 6 | 🥉 Champions = baseline |
@@ -282,9 +281,10 @@ Ajoute 1 feature `global_pred_long` + Global Model participe à la sélection du
 - **MOVE** : F1_short LightGBM **+0.024** vs baseline — meilleure amélioration short
 - **BEN 0.426** et **BFH 0.425** — records F1 macro (MOVE)
 - **Global Stacking** : F1 et distribution strictement identiques à la baseline
-- **Global Stk+Challenger ⚠️** : EXTR **0.439** — nouveau record absolu ; INDV passe de flop systématique à #6 (0.390)
-- ⚠️ Batches 1-9 vs 10 : labeling différent, comparaison directe impossible
+- **Global Stk+Challenger ⚠️** : EXTR **0.439** — record ; INDV passe de flop systématique à #6 (0.390)
+- **Global Stk+Chal+Short+MOVE ⚠️** : LightGBM **0.296** — premier batch au-dessus de la baseline ; MAS 0.427, INDV 0.424 confirme ; f1_short=0 réduit à 3
+- ⚠️ Batches 1-9 vs 10-11 : labeling différent, comparaison directe impossible entre les deux groupes
 
 ---
 
-*Rapport généré le 2026-07-24 — 10 batches comparés.*
+*Rapport généré le 2026-07-24 — 11 batches comparés.*

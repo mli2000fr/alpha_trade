@@ -118,6 +118,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
     DEFAULT_ML_INCLUDE_SCREENER_SCORES,
+    DEFAULT_ML_INCLUDE_SENTIMENT,
     DEFAULT_ML_INCLUDE_SHORT_SCORE,
     DEFAULT_ML_INCLUDE_MACRO_VIX,
     DEFAULT_ML_INCLUDE_MACRO_VXN,
@@ -3161,7 +3162,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_opt_col1:
             ml_include_sentiment = st.checkbox(
                 "Inclure les features sentiment",
-                value=_session_state_bool("pipeline_ml_include_sentiment", False),
+                value=_session_state_bool("pipeline_ml_include_sentiment", DEFAULT_ML_INCLUDE_SENTIMENT),
                 key="pipeline_ml_include_sentiment",
                 help="Ajoute `--include-sentiment` à `ml_train`.",
             )
@@ -3192,38 +3193,38 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_opt_col2:
             ml_include_macro_vix = st.checkbox(
                 "📊 VIX/VIX9D (volatilité S&P 500)",
-                value=_session_state_bool("pipeline_ml_include_macro_vix", False),
+                value=_session_state_bool("pipeline_ml_include_macro_vix", DEFAULT_ML_INCLUDE_MACRO_VIX),
                 key="pipeline_ml_include_macro_vix",
                 help="Ajoute `--include-macro-vix`. Nécessite un backfill préalable de `stock_macro_indicators_daily`.",
             )
             ml_include_macro_vxn = st.checkbox(
                 "📊 VXN (volatilité NASDAQ-100)",
-                value=_session_state_bool("pipeline_ml_include_macro_vxn", False),
+                value=_session_state_bool("pipeline_ml_include_macro_vxn", DEFAULT_ML_INCLUDE_MACRO_VXN),
                 key="pipeline_ml_include_macro_vxn",
                 help="Ajoute `--include-macro-vxn`. Utile pour les valeurs Tech.",
             )
             ml_include_macro_vix3m = st.checkbox(
                 "📊 VIX3M + ratio (term structure)",
-                value=_session_state_bool("pipeline_ml_include_macro_vix3m", False),
+                value=_session_state_bool("pipeline_ml_include_macro_vix3m", DEFAULT_ML_INCLUDE_MACRO_VIX3M),
                 key="pipeline_ml_include_macro_vix3m",
                 help="Ajoute `--include-macro-vix3m`. Ratio VIX/VIX3M : détecte la backwardation (panique court terme).",
             )
             ml_include_macro_move = st.checkbox(
                 "📊 MOVE (volatilité obligataire)",
-                value=_session_state_bool("pipeline_ml_include_macro_move", False),
+                value=_session_state_bool("pipeline_ml_include_macro_move", DEFAULT_ML_INCLUDE_MACRO_MOVE),
                 key="pipeline_ml_include_macro_move",
                 help="Ajoute `--include-macro-move`. Indice ICE BofA MOVE : volatilité des bons du Trésor US.",
             )
         with ml_opt_col3:
             ml_select_champion = st.checkbox(
                 "Activer la sélection automatique du champion",
-                value=_session_state_bool("pipeline_ml_select_champion", True),
+                value=_session_state_bool("pipeline_ml_select_champion", DEFAULT_ML_SELECT_CHAMPION),
                 key="pipeline_ml_select_champion",
                 help="Ajoute `--select-champion` et permet de servir automatiquement le meilleur modèle éligible.",
             )
             ml_optimize_thresholds = st.checkbox(
                 "Optimiser le seuil de décision (pour le mode binaire)",
-                value=_session_state_bool("pipeline_ml_optimize_thresholds", False),
+                value=_session_state_bool("pipeline_ml_optimize_thresholds", DEFAULT_ML_OPTIMIZE_THRESHOLDS),
                 key="pipeline_ml_optimize_thresholds",
                 help="Ajoute `--optimize-thresholds` pour sélectionner le meilleur `decision_threshold` sur validation.",
             )
@@ -3231,21 +3232,21 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             # ── Approche 2 : 3 checkboxes hiérarchiques ──
             ml_enable_global_model = st.checkbox(
                 "Entraîner aussi un modèle global multi-symboles",
-                value=_session_state_bool("pipeline_ml_enable_global_model", False),
+                value=_session_state_bool("pipeline_ml_enable_global_model", DEFAULT_ML_ENABLE_GLOBAL_MODEL),
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
             st.caption("Les deux options ci-dessous nécessitent que le modèle global soit activé.")
             ml_enable_global_stacking = st.checkbox(
                 "📥 Utiliser la prédiction globale comme feature (Stacking)",
-                value=_session_state_bool("pipeline_ml_enable_global_stacking", False),
+                value=_session_state_bool("pipeline_ml_enable_global_stacking", DEFAULT_ML_ENABLE_GLOBAL_STACKING),
                 key="pipeline_ml_enable_global_stacking",
                 disabled=not ml_enable_global_model,
                 help="Ajoute `--enable-global-stacking`. Injecte `global_pred_long` comme feature dans les modèles per-symbol (LSTM/LGBM/CatBoost). Le modèle apprend à pondérer le signal transverse.",
             )
             ml_enable_global_challenger = st.checkbox(
                 "🏆 Inclure le modèle global dans la sélection champion",
-                value=_session_state_bool("pipeline_ml_enable_global_challenger", False),
+                value=_session_state_bool("pipeline_ml_enable_global_challenger", DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER),
                 key="pipeline_ml_enable_global_challenger",
                 disabled=not ml_enable_global_model,
                 help="Ajoute `--enable-global-challenger`. Le Global Model devient un 4ème challenger avec métriques walk-forward comparables (wf.f1_macro).",
@@ -3256,9 +3257,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Backend du modèle global",
                     options=["catboost", "lightgbm"],
                     index=["catboost", "lightgbm"].index(
-                        cast(str, st.session_state.get("pipeline_ml_global_model_name", "lightgbm"))
-                        if st.session_state.get("pipeline_ml_global_model_name", "lightgbm") in {"catboost", "lightgbm"}
-                        else "lightgbm"
+                        cast(str, st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME))
+                        if st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME) in {"catboost", "lightgbm"}
+                        else DEFAULT_ML_GLOBAL_MODEL_NAME
                     ),
                     key="pipeline_ml_global_model_name",
                     disabled=not ml_enable_global_model,
@@ -3276,7 +3277,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         with ml_adv_col1:
             ml_optimize_target = st.checkbox(
                 "Optimiser l'horizon / la target swing",
-                value=_session_state_bool("pipeline_ml_optimize_target", False),
+                value=_session_state_bool("pipeline_ml_optimize_target", DEFAULT_ML_OPTIMIZE_TARGET),
                 key="pipeline_ml_optimize_target",
                 help="Ajoute `--optimize-target`.",
             )

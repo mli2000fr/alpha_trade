@@ -44,6 +44,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
     DEFAULT_ML_INCLUDE_SCREENER_SCORES,
+    DEFAULT_ML_INCLUDE_SENTIMENT,
     DEFAULT_ML_INCLUDE_SHORT_SCORE,
     DEFAULT_ML_INCLUDE_MACRO_VIX,
     DEFAULT_ML_INCLUDE_MACRO_VIX3M,
@@ -309,23 +310,23 @@ class PipelineLaunchOptions:
     execution_protection_transition_poll_interval_seconds: float = DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS
     execution_debug: bool = DEFAULT_EXEC_DEBUG
     ml_accelerator: MLAccelerator = "auto"
-    ml_include_sentiment: bool = False
+    ml_include_sentiment: bool = DEFAULT_ML_INCLUDE_SENTIMENT
     ml_include_screener_scores: bool = DEFAULT_ML_INCLUDE_SCREENER_SCORES
     ml_include_short_score: bool = DEFAULT_ML_INCLUDE_SHORT_SCORE
-    ml_include_macro_vix: bool = False   # VIX/VIX9D — nécessite backfill stock_macro_indicators_daily
-    ml_include_macro_vxn: bool = False   # VXN — Nasdaq-100 volatility
-    ml_include_macro_vix3m: bool = False # VIX3M — term structure contango/backwardation
-    ml_include_macro_move: bool = False  # MOVE — bond volatility
-    ml_enable_lightgbm: bool = True
-    ml_enable_catboost: bool = True
-    ml_enable_global_model: bool = False
-    ml_enable_global_stacking: bool = False    # Approche 2 — FLAG B
-    ml_enable_global_challenger: bool = False  # Approche 2 — FLAG C
-    ml_global_model_name: MLGlobalModelName = "catboost"
-    ml_enable_cross_sectional: bool = False
-    ml_select_champion: bool = True
-    ml_optimize_thresholds: bool = True
-    ml_optimize_target: bool = False
+    ml_include_macro_vix: bool = DEFAULT_ML_INCLUDE_MACRO_VIX
+    ml_include_macro_vxn: bool = DEFAULT_ML_INCLUDE_MACRO_VXN
+    ml_include_macro_vix3m: bool = DEFAULT_ML_INCLUDE_MACRO_VIX3M
+    ml_include_macro_move: bool = DEFAULT_ML_INCLUDE_MACRO_MOVE
+    ml_enable_lightgbm: bool = DEFAULT_ML_ENABLE_LIGHTGBM
+    ml_enable_catboost: bool = DEFAULT_ML_ENABLE_CATBOOST
+    ml_enable_global_model: bool = DEFAULT_ML_ENABLE_GLOBAL_MODEL
+    ml_enable_global_stacking: bool = DEFAULT_ML_ENABLE_GLOBAL_STACKING
+    ml_enable_global_challenger: bool = DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER
+    ml_global_model_name: MLGlobalModelName = DEFAULT_ML_GLOBAL_MODEL_NAME  # type: ignore[assignment]
+    ml_enable_cross_sectional: bool = DEFAULT_ML_ENABLE_CROSS_SECTIONAL
+    ml_select_champion: bool = DEFAULT_ML_SELECT_CHAMPION
+    ml_optimize_thresholds: bool = DEFAULT_ML_OPTIMIZE_THRESHOLDS
+    ml_optimize_target: bool = DEFAULT_ML_OPTIMIZE_TARGET
     # ML — cible swing cash + horizon + walk-forward (P1)
     ml_target_mode: MLTargetMode = DEFAULT_ML_TARGET_MODE  # type: ignore[assignment]
     ml_forecast_horizon: int = DEFAULT_ML_FORECAST_HORIZON
