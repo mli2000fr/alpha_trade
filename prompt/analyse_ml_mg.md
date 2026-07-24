@@ -445,76 +445,47 @@ est faite sur une vision partielle des régimes de marché.
 
 ### 🔴 Priorité Haute — Impact fort, effort modéré
 
-#### 9.1 Hyperparameter tuning LightGBM
+#### 9.1 Hyperparameter tuning LightGBM ✅ PARAMS EXPOSÉS — tuning à faire
 
-**Fichier à modifier** : `modelFactory/lightgbm_baseline.py:38-46`
+**Fichier** : `modelFactory/lightgbm_baseline.py:38-46` + `config.py:BaselineConfig`
 
-```python
-# Actuel (lightgbm_baseline.py):
-model_builder=lambda resolved_seed: lgb.LGBMClassifier(
-    objective="multiclass",
-    num_class=3,
-    max_depth=cfg.baseline.max_depth,        # 4
-    n_estimators=cfg.baseline.n_estimators,   # 200
-    learning_rate=cfg.baseline.learning_rate,  # 0.05
-    random_state=resolved_seed,
-    verbosity=-1,
-)
-```
+Tous les paramètres sont exposés en CLI et IHM (2026-07-24). Le tuning consiste
+à lancer plusieurs batches avec différentes combinaisons pour trouver l'optimum.
 
-**Paramètres déjà appliqués (2026-07-24)** :
-```python
-    class_weight="balanced", # ✅ FAIT — corrige le biais Short (+7.7%)
-```
+**Paramètres dispo dans l'IHM** (Page Pipeline → Hyperparams avancés → LightGBM — tuning) :
 
-**Pistes de tuning (optionnel — pas des bugs, des leviers d'optimisation)** :
-```python
-    reg_alpha=0.1,          # L1 régularisation → réduit overfitting
-    reg_lambda=0.1,         # L2 régularisation
-    min_child_samples=50,   # Évite les feuilles trop petites
-    subsample=0.8,          # Bagging → robustesse
-    colsample_bytree=0.8,   # Feature sampling
-```
+| Paramètre | Défaut IHM | Rôle |
+|:---|:---|:---|
+| `class_weight` | `"balanced"` | ✅ Déjà appliqué |
+| `reg_alpha` | `0.1` | L1 régularisation |
+| `reg_lambda` | `0.1` | L2 régularisation |
+| `min_child_samples` | `50` | Min data in leaf |
+| `subsample` | `0.8` | Bagging fraction |
+| `colsample_bytree` | `0.8` | Feature fraction |
 
-> 💡 Ces paramètres ne sont **pas nécessaires** au fonctionnement. Ils
-> représentent des pistes d'amélioration à explorer via Optuna/GridSearch
-> quand on passera en phase tuning. Le modèle actuel est correct.
+> 💡 Pour tuner : lancer 3-4 batches en faisant varier ces sliders, comparer les
+> F1 WF. Les valeurs par défaut IHM sont nos recommandations de départ.
 
-#### 9.2 Hyperparameter tuning CatBoost
+#### 9.2 Hyperparameter tuning CatBoost ✅ PARAMS EXPOSÉS — tuning à faire
 
-**Fichier à modifier** : `modelFactory/catboost_baseline.py:49-60`
+**Fichier** : `modelFactory/catboost_baseline.py:49-60` + `config.py:BaselineConfig`
 
-```python
-# Actuel (catboost_baseline.py):
-CatBoostClassifier(
-    depth=cfg.baseline.catboost_depth,            # 6
-    iterations=cfg.baseline.catboost_iterations,   # 300
-    learning_rate=cfg.baseline.catboost_learning_rate,  # 0.03
-    random_seed=resolved_seed,
-    loss_function="MultiClass",
-    verbose=False,
-    train_dir=str(...),
-    allow_writing_files=True,
-)
-```
+Tous les paramètres sont exposés en CLI et IHM (2026-07-24).
 
-**Paramètres déjà appliqués (2026-07-24)** :
-```python
-    auto_class_weights="Balanced",  # ✅ FAIT — corrige le biais Short
-```
+**Paramètres dispo dans l'IHM** (Page Pipeline → Hyperparams avancés → CatBoost — tuning) :
 
-**Pistes de tuning (optionnel — pas des bugs, des leviers d'optimisation)** :
-```python
-    l2_leaf_reg=3,             # L2 régularisation
-    border_count=128,          # Précision des splits
-    random_strength=1,         # Randomized scoring → robustesse
-    bagging_temperature=1,     # Bayesian bagging
-    od_type="IncToDec",        # Overfitting detector
-    od_wait=20,                # Patience overfitting
-```
+| Paramètre | Défaut IHM | Rôle |
+|:---|:---|:---|
+| `auto_class_weights` | `"Balanced"` | ✅ Déjà appliqué |
+| `l2_leaf_reg` | `3.0` | L2 régularisation |
+| `border_count` | `128` | Précision des splits |
+| `random_strength` | `1.0` | Randomized scoring |
+| `bagging_temperature` | `1.0` | Bayesian bagging |
+| `od_type` | `IncToDec` | Overfitting detector |
+| `od_wait` | `20` | Patience overfitting |
 
-> 💡 Même remarque que LightGBM : ces paramètres sont des pistes
-> d'optimisation pour la phase tuning, pas des corrections.
+> 💡 La checkbox « Appliquer les paramètres de tuning CatBoost » permet d'activer
+> ou désactiver ces flags d'un seul clic. Décochée = comportement identique à avant.
 
 #### 9.3 Poids de classe GBM — Correction du biais Short ✅ FAIT (2026-07-24)
 
@@ -688,17 +659,15 @@ ne peut pas les exploiter pleinement. Deux options :
 | **Seuils asymétriques** | `ternary_decision_policy.py` + `config.py` | 2h | ⏳ À faire |
 | Filtrage liquidité | `orchestrator.py` + `selector_reference.py` | 3h | ⏳ À faire |
 
-### Semaine 2 : Tuning (pilotable depuis l'IHM)
+### Semaine 2 : Tuning (pilotable depuis l'IHM — params exposés, recherche à faire)
 
-| Action | Fichier(s) | Effort | Gain |
+| Action | Fichier(s) | Effort | Statut |
 |:---|:---|:---|:---|
-| Hyperparameter tuning LightGBM | `lightgbm_baseline.py` + `config.py` | 4h | +0.02–0.04 |
-| Hyperparameter tuning CatBoost | `catboost_baseline.py` + `config.py` | 4h | +0.02–0.03 |
-| Isotonic calibrator | `calibration.py` + `tabular_baseline.py` | 3h | calibration |
-
-> 💡 Les blocs de tuning LightGBM et CatBoost sont déjà dans l'IHM (page Pipeline,
-> expander « Hyperparams avancés »). Il suffit de jouer avec les sliders et de
-> lancer un batch pour tester différentes combinaisons.
+| **Params LightGBM exposés (CLI + IHM)** | `config.py` + `cli.py` + IHM | 2h | ✅ Fait |
+| **Params CatBoost exposés (CLI + IHM)** | `config.py` + `cli.py` + IHM | 2h | ✅ Fait |
+| Lancer batches tuning LightGBM (varier sliders) | IHM Pipeline | 4h | ⏳ À faire |
+| Lancer batches tuning CatBoost (varier sliders) | IHM Pipeline | 4h | ⏳ À faire |
+| Isotonic calibrator | `calibration.py` + `tabular_baseline.py` | 3h | ⏳ À faire |
 
 ### Pré-Go-Live (après recherche)
 
