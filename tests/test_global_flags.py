@@ -83,40 +83,46 @@ class TestFlagMatrixFeatureColumns:
     def test_000_no_global_pred(self) -> None:
         """A=False, B=False, C=False → pas de global_pred."""
         cols = get_feature_columns(include_cross_sectional=True)
-        assert "global_pred_long" not in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col not in cols
 
     def test_100_flag_a_alone_no_global_pred(self) -> None:
         """A=True seul → pas de global_pred (B=False)."""
         cols = get_feature_columns(
             include_cross_sectional=True, include_global_stacking=False,
         )
-        assert "global_pred_long" not in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col not in cols
 
     def test_110_flag_ab_stacking_on(self) -> None:
-        """A=True, B=True → global_pred_long inclus."""
+        """A=True, B=True → 3 colonnes global_pred incluses."""
         cols = get_feature_columns(
             include_cross_sectional=True, include_global_stacking=True,
         )
-        assert "global_pred_long" in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col in cols
 
     def test_101_flag_ac_no_stacking(self) -> None:
         """A=True, C=True, B=False → pas de global_pred (challenger only)."""
         cols = get_feature_columns(
             include_cross_sectional=True, include_global_stacking=False,
         )
-        assert "global_pred_long" not in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col not in cols
 
     def test_111_full_stack_has_global_pred(self) -> None:
-        """A+B+C → global_pred_long présent."""
+        """A+B+C → 3 colonnes global_pred présentes."""
         cols = get_feature_columns(
             include_cross_sectional=True, include_global_stacking=True,
         )
-        assert "global_pred_long" in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col in cols
 
     def test_010_b_without_a_no_cross_sectional_no_effect(self) -> None:
         """B=True sans cross-sectional → pas de global_pred (gating dans get_feature_columns)."""
         cols = get_feature_columns(include_global_stacking=True)
-        assert "global_pred_long" not in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col not in cols
 
 
 # ─────────────────────────────────────────────────────────────────────

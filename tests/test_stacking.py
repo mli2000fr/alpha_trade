@@ -35,19 +35,22 @@ class TestFeatureColumnsWithStacking:
         cols = get_feature_columns(
             include_cross_sectional=True, include_global_stacking=True,
         )
-        assert "global_pred_long" in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col in cols
         assert "ret_20_rank" in cols   # cross-sectional still there
         assert "sector_ret_20" in cols  # sector still there
 
     def test_global_pred_not_included_without_cross_sectional(self) -> None:
         """Stacking sans cross-sectional n'ajoute rien."""
         cols = get_feature_columns(include_global_stacking=True)
-        assert "global_pred_long" not in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col not in cols
 
     def test_global_pred_not_included_without_stacking_flag(self) -> None:
         """Sans le flag stacking, pas de global_pred même avec cross-sectional."""
         cols = get_feature_columns(include_cross_sectional=True)
-        assert "global_pred_long" not in cols
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col not in cols
 
     def test_no_duplicates_with_stacking(self) -> None:
         """Aucun doublon quand stacking + cross-sectional activés."""
@@ -93,7 +96,7 @@ class TestMergeWithGlobalPred:
         assert merged.loc[1, "global_pred_long"] == 0.48
 
     def test_merge_fills_missing_global_pred_with_neutral(self) -> None:
-        """Cache sans global_pred_long → fillna(0.5)."""
+        """Cache sans colonnes global_pred → fillna(0.5) sur les 3."""
         symbol_df = pd.DataFrame({
             "symbol": ["AAPL"],
             "date": pd.to_datetime(["2022-01-01"]),
@@ -105,10 +108,12 @@ class TestMergeWithGlobalPred:
             "ret_20_rank": [0.55],
         })
         merged = merge_cross_sectional_features(symbol_df, cs_df)
+        assert merged["global_pred_short"].iloc[0] == 0.5
+        assert merged["global_pred_flat"].iloc[0] == 0.5
         assert merged["global_pred_long"].iloc[0] == 0.5
 
     def test_merge_without_cache_fills_all_columns(self) -> None:
-        """Aucun cache → toutes les colonnes (y compris global_pred) = defaults."""
+        """Aucun cache → toutes les colonnes (y compris 3 global_pred) = defaults."""
         symbol_df = pd.DataFrame({
             "symbol": ["AAPL"],
             "date": pd.to_datetime(["2022-01-01"]),
@@ -116,8 +121,9 @@ class TestMergeWithGlobalPred:
         })
         merged = merge_cross_sectional_features(symbol_df, None)
 
-        assert "global_pred_long" in merged.columns
-        assert merged["global_pred_long"].iloc[0] == 0.5
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert _col in merged.columns
+            assert merged[_col].iloc[0] == 0.5
         assert merged["ret_20_rank"].iloc[0] == 0.5
         assert merged["sector_ret_20"].iloc[0] == 0.0
 
@@ -129,7 +135,26 @@ class TestMergeWithGlobalPred:
             "daily_return": [0.01],
         })
         merged = merge_cross_sectional_features(symbol_df, pd.DataFrame())
-        assert merged["global_pred_long"].iloc[0] == 0.5
+        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
+            assert merged[_col].iloc[0] == 0.5
+
+    def test_merge_backward_compat_only_long_in_cache(self) -> None:
+        """Cache legacy avec seulement global_pred_long → short et flat = fillna(0.5)."""
+        symbol_df = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "date": pd.to_datetime(["2022-06-15"]),
+            "daily_return": [0.01],
+        })
+        cs_df = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "date": pd.to_datetime(["2022-06-15"]),
+            "ret_20_rank": [0.65],
+            "global_pred_long": [0.72],  # legacy : seule la colonne long
+        })
+        merged = merge_cross_sectional_features(symbol_df, cs_df)
+        assert merged["global_pred_long"].iloc[0] == 0.72   # valeur du cache
+        assert merged["global_pred_short"].iloc[0] == 0.5   # fillna
+        assert merged["global_pred_flat"].iloc[0] == 0.5    # fillna
 
 
 # ─────────────────────────────────────────────────────────────────────

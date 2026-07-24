@@ -311,3 +311,52 @@ def test_merge_cross_sectional_features_global_pred_no_cache() -> None:
 
     assert "global_pred_long" in merged.columns
     assert merged["global_pred_long"].iloc[0] == 0.5
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Régression : naming des interactions régime × technique
+# ─────────────────────────────────────────────────────────────────────
+
+def test_regime_interaction_column_naming() -> None:
+    """Les colonnes d'interaction regime x technique doivent matcher REGIME_INTERACTION_FEATURES."""
+    from modelFactory.features import REGIME_INTERACTION_FEATURES
+
+    _interact_pairs = [
+        ("momentum_20", "regime_bull_market"),
+        ("momentum_20", "regime_risk_off"),
+        ("momentum_60", "regime_bull_market"),
+        ("momentum_60", "regime_risk_off"),
+        ("relative_strength_20", "regime_bull_market"),
+        ("relative_strength_20", "regime_risk_off"),
+        ("relative_strength_60", "regime_bull_market"),
+        ("relative_strength_60", "regime_risk_off"),
+        ("rolling_volatility_20", "regime_bull_market"),
+        ("rolling_volatility_20", "regime_risk_off"),
+        ("vol_ratio_20_60", "regime_bull_market"),
+        ("vol_ratio_20_60", "regime_risk_off"),
+        ("rsi_14", "regime_bull_market"),
+        ("rsi_14", "regime_risk_off"),
+        ("sma20_distance", "regime_bull_market"),
+        ("sma20_distance", "regime_risk_off"),
+        ("sma50_distance", "regime_bull_market"),
+        ("sma50_distance", "regime_risk_off"),
+    ]
+
+    generated = []
+    for tech_col, regime_col in _interact_pairs:
+        _regime_suffix = regime_col.replace("regime_", "").replace("_market", "")
+        target_col = f"{tech_col}_x_{_regime_suffix}"
+        generated.append(target_col)
+
+    assert len(generated) == len(REGIME_INTERACTION_FEATURES)
+    assert set(generated) == set(REGIME_INTERACTION_FEATURES), (
+        f"Missing: {set(REGIME_INTERACTION_FEATURES) - set(generated)}, "
+        f"Extra: {set(generated) - set(REGIME_INTERACTION_FEATURES)}"
+    )
+
+    # Verifier qu'aucun nom ne contient "_bull_market" (le bug corrige)
+    for col in generated:
+        assert "_bull_market" not in col, f"{col} contient _bull_market (bug de naming)"
+        assert col.endswith("_bull") or col.endswith("_risk_off"), (
+            f"{col} suffixe inattendu"
+        )
