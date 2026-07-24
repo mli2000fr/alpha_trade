@@ -93,8 +93,9 @@ Ajoute `global_pred_long` + `selector_short_score` + `move_close` + Global Model
 | +Global Stacking | **0.295** | **0.287** | 0.229 |
 | +Global Stk+Challenger ⚠️ | 0.294 | **0.293** | 0.226 |
 | +Global Stk+Chal+Short+MOVE ⚠️ | **0.296** | **0.293** | 0.221 |
+| +Short+MOVE (sans Global) ⚠️ | **0.296** | **0.293** | 0.222 |
 
-> 🥇 **Global Stk+Chal+Short+MOVE** : LightGBM 0.296 — première fois au-dessus de la baseline !  \n> 🚀 Short Score + MOVE boostent F1_short (+0.017 LGBM, +0.014 CB).  \n> 🥇 **Baseline, Short Score & Global Stacking** : LightGBM WF 0.295.  \n> ⚠️ Batches 10-11 : labeling post-correctif, non comparables aux batches 1-9.
+> 🥇 **Short+MOVE** : LightGBM 0.296 — identique avec ou sans Global Model.  \n> 🥇 **Global Stk+Chal+Short+MOVE** : mêmes F1, mais plus complexe.  \n> 🔥 Short Score + MOVE suffisent — le Global Model est redondant.  \n> ⚠️ Batches 10-12 : labeling post-correctif.
 
 ---
 
@@ -113,6 +114,7 @@ Ajoute `global_pred_long` + `selector_short_score` + `move_close` + Global Model
 | +Global Stacking | 2 | 96 | 97 | **5** |
 | +Global Stk+Challenger ⚠️ | 2 | **79** | **116** | 3 |
 | +Global Stk+Chal+Short+MOVE ⚠️ | 2 | 81 | 112 | **5** |
+| +Short+MOVE (sans Global) ⚠️ | **1** | 85 | 109 | **5** |
 
 > 🥇 **Short Score** : seul batch qui améliore le top 0.40+ (5→6) ET réduit le bas (95→87).  \n> 🚀 **Global Stk+Chal+Short+MOVE** : top 0.40+ remonte à 5, ventre mou contenu (81).  \n> ⚠️ Batches 10-11 : labeling différent.
 
@@ -133,6 +135,7 @@ Ajoute `global_pred_long` + `selector_short_score` + `move_close` + Global Model
 | +Global Stacking | 112 (56%) | 68 (34%) | 20 (10%) |
 | +Global Stk+Challenger ⚠️ | 97 (48.5%) | **89 (44.5%)** | 14 (7%) |
 | +Global Stk+Chal+Short+MOVE ⚠️ | 97 (48.5%) | **94 (47%)** | 9 (4.5%) |
+| +Short+MOVE (sans Global) ⚠️ | 103 (51.5%) | 86 (43%) | 11 (5.5%) |
 
 > 📊 LightGBM domine systématiquement (54-58%).  \n> 🚀 **Global Stk+Chal+Short+MOVE** : CatBoost 94 champions, quasi majoritaire (47%).  \n> ⚠️ Batches 10-11 : labeling différent.
 
@@ -153,6 +156,7 @@ Ajoute `global_pred_long` + `selector_short_score` + `move_close` + Global Model
 | +Global Stacking | 6 | ARMK, BMO, INTC, SSD, VOYA, WWD |
 | +Global Stk+Challenger ⚠️ | 5 | BAP, COLD, ESE, NWPX, WWD |
 | +Global Stk+Chal+Short+MOVE ⚠️ | **3** | ESE, HIW, WWD |
+| +Short+MOVE (sans Global) ⚠️ | **3** | CFG, WSM, WWD |
 
 > 🥇 **Sentiment** : meilleur score (3).  \n> 🥇 **Global Stk+Chal+Short+MOVE** : seulement 3 symboles — meilleur score post-correctif.  \n> ❌ **VIX3M** : pire score absolu (10).
 
@@ -234,7 +238,8 @@ Ajoute `global_pred_long` + `selector_short_score` + `move_close` + Global Model
 | **Baseline** | — | 0.295 | 5 | 4 | 🥇 Référence |
 | +Global Stacking | 1 | 0.000 | **5** | 6 | 🥇 F1 et distribution identiques à la baseline |
 | +Global Stk+Challenger ⚠️ | 1 | −0.001 | 3 | 5 | 🚀 CatBoost +0.006, biais long résolu, ventre mou −17% |
-| +Global Stk+Chal+Short+MOVE ⚠️ | 3 | **+0.001** | **5** | **3** | 🥇 F1 record (0.296), short +0.017, f1_short=0 minimal |
+| +Global Stk+Chal+Short+MOVE ⚠️ | 3 | **+0.001** | **5** | **3** | 🥇 F1 record (0.296), short +0.017 |
+| +Short+MOVE (sans Global) ⚠️ | 2 | **+0.001** | **5** | **3** | 🥇 Identique sans Global — complexité réduite |
 | +Short Score | 1 | 0.000 | **6** ✅ | 7 ❌ | 🥈 Distribution améliorée |
 | +MOVE | 1 | −0.001 | 4 | 6 | 🥈 F1_short +0.024, record BEN 0.426 |
 | +VXN | 2 | −0.001 | 4 | 6 | 🥉 Champions = baseline |

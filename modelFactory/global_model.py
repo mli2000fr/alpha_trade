@@ -233,13 +233,22 @@ def _compute_by_symbol_metrics(
     """
     rows: dict[str, dict[str, Any]] = {}
     probs = np.asarray(probabilities, dtype=np.float64)
+    # Déterminer si on est en mode ternaire (3 colonnes de probas)
+    _is_ternary = probs.ndim == 2 and probs.shape[1] >= 3
     for symbol, part in df.groupby("symbol", sort=False):
         idx = part.index.to_numpy()
+        _labels = part["target"].astype(int).to_numpy()
+        _proba_slice = probs[idx]
+        # Pour le mode ternaire, la proba "long" est la 3ème colonne
+        _proba_binary = _proba_slice[:, 2] if _is_ternary else _proba_slice.reshape(-1)
         metrics = compute_tabular_metrics(
-            part["target"].astype(int).to_numpy(),
-            probs[idx],
+            _labels,
+            _proba_binary,
             part["future_return"].to_numpy(),
             decision_threshold,
+            raw_proba_all=_proba_slice[:, :3] if _is_ternary else None,
+            target_raw=_labels if _is_ternary else None,
+            is_ternary=_is_ternary,
         )
         rows[str(symbol)] = {
             "status": "completed",
