@@ -13,7 +13,7 @@ Ces données sont consommées par le live et le backtest pour :
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -30,10 +30,29 @@ RANK_TYPE_ZERO_SHORT = "zero_short"
 RANK_TYPE_WEAK_LONG = "weak_long"
 RANK_TYPE_WEAK_SHORT = "weak_short"
 
+# ── §7.0 (analyse_ml.md) — seuils absolus par classe ──
+RANK_TYPE_S7_EXCLUDE_ALL = "s7_exclude_all"
+RANK_TYPE_S7_FLAT_PATHOLOGICAL = "s7_flat_pathological"
+RANK_TYPE_S7_LONG_ONLY = "s7_long_only"
+RANK_TYPE_S7_SHORT_ONLY = "s7_short_only"
+RANK_TYPE_S7_MONITOR = "s7_monitor"
+
 # ── Groupes de filtrage pour le live/backtest ──
 EXCLUDE_LONG_RANK_TYPES = frozenset({RANK_TYPE_BOTTOM, RANK_TYPE_WEAK_LONG})
 EXCLUDE_SHORT_RANK_TYPES = frozenset({RANK_TYPE_BOTTOM, RANK_TYPE_ZERO_SHORT, RANK_TYPE_WEAK_SHORT})
 PREFER_RANK_TYPES = frozenset({RANK_TYPE_TOP})
+
+# ── §7.0 — rank_types qui s'ajoutent aux exclusions ──
+S7_EXCLUDE_LONG_RANK_TYPES = frozenset({
+    RANK_TYPE_S7_EXCLUDE_ALL,
+    RANK_TYPE_S7_FLAT_PATHOLOGICAL,
+    RANK_TYPE_S7_SHORT_ONLY,  # short-only → long interdit
+})
+S7_EXCLUDE_SHORT_RANK_TYPES = frozenset({
+    RANK_TYPE_S7_EXCLUDE_ALL,
+    RANK_TYPE_S7_FLAT_PATHOLOGICAL,
+    RANK_TYPE_S7_LONG_ONLY,  # long-only → short interdit
+})
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -105,8 +124,38 @@ _LOAD_DIAG_QUERY = """
 
 
 # ────────────────────────────────────────────────────────────────────
-# Data class
+# Data classes
 # ────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class Section7Filters:
+    """Filtres basés sur les règles du §7.0 de analyse_ml.md.
+
+    Seuils absolus par classe F1 (indépendants du classement relatif).
+    """
+    enabled: bool = False
+    # ── Sets de symboles ──
+    exclude_all: frozenset[str] = frozenset()          # aucune direction fiable
+    exclude_flat_pathological: frozenset[str] = frozenset()  # F1_flat < seuil
+    long_only: frozenset[str] = frozenset()             # long OK, short interdit
+    short_only: frozenset[str] = frozenset()            # short OK, long interdit
+    monitor: frozenset[str] = frozenset()               # à surveiller
+    # ── Seuils utilisés (pour transparence / logs) ──
+    threshold_long_good: float = 0.35
+    threshold_short_good: float = 0.30
+    threshold_long_only_min: float = 0.40
+    threshold_short_only_min: float = 0.40
+    threshold_weak_max: float = 0.20
+    threshold_flat_min: float = 0.10
+    threshold_exclude_long_max: float = 0.30
+    threshold_exclude_short_max: float = 0.30
+
+    def is_active(self) -> bool:
+        return self.enabled and (
+            self.exclude_all or self.exclude_flat_pathological
+            or self.long_only or self.short_only or self.monitor
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class BatchFilters:
@@ -118,6 +167,7 @@ class BatchFilters:
     exclude_short: frozenset[str]  # symboles à exclure du short
     all_diagnostics: pd.DataFrame  # DataFrame complet pour analyse fine
     batch_comment: str | None = None  # commentaire libre du batch (model_training_batch)
+    section7: Section7Filters = field(default_factory=Section7Filters)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -133,6 +183,98 @@ def _load_config_defaults() -> dict[str, Any]:
         return (cfg.get("batch_diagnostics") or {})
     except Exception:
         return {}
+
+
+def _load_section7_config() -> dict[str, Any]:
+    """Charge la config §7.0 depuis config.yaml."""
+    cfg = _load_config_defaults()
+    return (cfg.get("section7") or {})
+
+
+def _compute_section7_filters(
+    df: pd.DataFrame,
+    *,
+    s7_cfg: dict[str, Any] | None = None,
+) -> Section7Filters:
+    """Calcule les catégories §7.0 à partir d'un DataFrame de diagnostics.
+
+    Args:
+        df: DataFrame avec colonnes f1_long_wf, f1_short_wf, f1_flat_wf, symbol.
+        s7_cfg: Configuration section7 (config.yaml). Si None, utilise les défauts.
+
+    Returns:
+        Section7Filters avec les sets calculés.
+    """
+    if s7_cfg is None:
+        s7_cfg = _load_section7_config()
+
+    enabled = bool(s7_cfg.get("enabled", False))
+    if not enabled:
+        return Section7Filters(enabled=False)
+
+    # ── Seuils ──
+    th_long_good = float(s7_cfg.get("long_good_threshold", 0.35))
+    th_short_good = float(s7_cfg.get("short_good_threshold", 0.30))
+    th_long_only_min = float(s7_cfg.get("long_only_min_threshold", 0.40))
+    th_short_only_min = float(s7_cfg.get("short_only_min_threshold", 0.40))
+    th_weak_max = float(s7_cfg.get("weak_max_threshold", 0.20))
+    th_flat_min = float(s7_cfg.get("flat_min_threshold", 0.10))
+    th_exclude_long_max = float(s7_cfg.get("exclude_long_max_threshold", 0.30))
+    th_exclude_short_max = float(s7_cfg.get("exclude_short_max_threshold", 0.30))
+
+    if df.empty:
+        return Section7Filters(
+            enabled=True,
+            threshold_long_good=th_long_good,
+            threshold_short_good=th_short_good,
+            threshold_long_only_min=th_long_only_min,
+            threshold_short_only_min=th_short_only_min,
+            threshold_weak_max=th_weak_max,
+            threshold_flat_min=th_flat_min,
+            threshold_exclude_long_max=th_exclude_long_max,
+            threshold_exclude_short_max=th_exclude_short_max,
+        )
+
+    syms = df["symbol"].astype(str).str.upper().values
+    f1_long = df["f1_long_wf"].astype(float).values
+    f1_short = df["f1_short_wf"].astype(float).values
+    f1_flat = df["f1_flat_wf"].astype(float).values
+
+    # ── ❌ EXCLURE : F1_long < 0.30 ET F1_short < 0.30 ──
+    mask_exclude_all = (f1_long < th_exclude_long_max) & (f1_short < th_exclude_short_max)
+
+    # ── ❌ EXCLURE : F1_flat < 0.10 ──
+    mask_flat_pathological = f1_flat < th_flat_min
+
+    # ── ✅ LONG ONLY : F1_long > 0.40 ET F1_short < 0.20 ──
+    mask_long_only = (f1_long > th_long_only_min) & (f1_short < th_weak_max)
+
+    # ── ✅ SHORT ONLY : F1_short > 0.40 ET F1_long < 0.20 ──
+    mask_short_only = (f1_short > th_short_only_min) & (f1_long < th_weak_max)
+
+    # ── ⚠️ MONITOR : F1_long > 0.35 ET 0.20 <= F1_short <= 0.30 ──
+    mask_monitor = (
+        (f1_long > th_long_good)
+        & (f1_short >= th_weak_max)
+        & (f1_short <= th_short_good)
+    )
+
+    return Section7Filters(
+        enabled=True,
+        exclude_all=frozenset(syms[mask_exclude_all]),
+        exclude_flat_pathological=frozenset(syms[mask_flat_pathological]),
+        long_only=frozenset(syms[mask_long_only]),
+        short_only=frozenset(syms[mask_short_only]),
+        monitor=frozenset(syms[mask_monitor]),
+        threshold_long_good=th_long_good,
+        threshold_short_good=th_short_good,
+        threshold_long_only_min=th_long_only_min,
+        threshold_short_only_min=th_short_only_min,
+        threshold_weak_max=th_weak_max,
+        threshold_flat_min=th_flat_min,
+        threshold_exclude_long_max=th_exclude_long_max,
+        threshold_exclude_short_max=th_exclude_short_max,
+    )
 
 
 def persist_batch_diagnostics(
@@ -247,6 +389,75 @@ def persist_batch_diagnostics(
                          "rank_position": None,
                          "threshold_used": weak_short_threshold})
 
+    # ── §7.0 — seuils absolus par classe (indépendants du classement) ──
+    s7_cfg = _load_section7_config()
+    if s7_cfg.get("enabled", False):
+        s7 = _compute_section7_filters(df, s7_cfg=s7_cfg)
+        for sym in s7.exclude_all:
+            rows.append({
+                "batch_id": batch_id, "batch_started_at": batch_started_at,
+                "symbol": sym,
+                "f1_macro_wf": float(df[df["symbol"].astype(str).str.upper() == sym.upper()]["f1_macro_wf"].iloc[0]),
+                "f1_long_wf": float(df[df["symbol"].astype(str).str.upper() == sym.upper()]["f1_long_wf"].iloc[0]),
+                "f1_short_wf": float(df[df["symbol"].astype(str).str.upper() == sym.upper()]["f1_short_wf"].iloc[0]),
+                "f1_flat_wf": float(df[df["symbol"].astype(str).str.upper() == sym.upper()]["f1_flat_wf"].iloc[0]),
+                "rank_type": RANK_TYPE_S7_EXCLUDE_ALL,
+                "rank_position": None,
+                "threshold_used": None,
+            })
+        for sym in s7.exclude_flat_pathological:
+            _row = df[df["symbol"].astype(str).str.upper() == sym.upper()].iloc[0]
+            rows.append({
+                "batch_id": batch_id, "batch_started_at": batch_started_at,
+                "symbol": sym,
+                "f1_macro_wf": float(_row["f1_macro_wf"]),
+                "f1_long_wf": float(_row["f1_long_wf"]),
+                "f1_short_wf": float(_row["f1_short_wf"]),
+                "f1_flat_wf": float(_row["f1_flat_wf"]),
+                "rank_type": RANK_TYPE_S7_FLAT_PATHOLOGICAL,
+                "rank_position": None,
+                "threshold_used": s7.threshold_flat_min,
+            })
+        for sym in s7.long_only:
+            _row = df[df["symbol"].astype(str).str.upper() == sym.upper()].iloc[0]
+            rows.append({
+                "batch_id": batch_id, "batch_started_at": batch_started_at,
+                "symbol": sym,
+                "f1_macro_wf": float(_row["f1_macro_wf"]),
+                "f1_long_wf": float(_row["f1_long_wf"]),
+                "f1_short_wf": float(_row["f1_short_wf"]),
+                "f1_flat_wf": float(_row["f1_flat_wf"]),
+                "rank_type": RANK_TYPE_S7_LONG_ONLY,
+                "rank_position": None,
+                "threshold_used": None,
+            })
+        for sym in s7.short_only:
+            _row = df[df["symbol"].astype(str).str.upper() == sym.upper()].iloc[0]
+            rows.append({
+                "batch_id": batch_id, "batch_started_at": batch_started_at,
+                "symbol": sym,
+                "f1_macro_wf": float(_row["f1_macro_wf"]),
+                "f1_long_wf": float(_row["f1_long_wf"]),
+                "f1_short_wf": float(_row["f1_short_wf"]),
+                "f1_flat_wf": float(_row["f1_flat_wf"]),
+                "rank_type": RANK_TYPE_S7_SHORT_ONLY,
+                "rank_position": None,
+                "threshold_used": None,
+            })
+        for sym in s7.monitor:
+            _row = df[df["symbol"].astype(str).str.upper() == sym.upper()].iloc[0]
+            rows.append({
+                "batch_id": batch_id, "batch_started_at": batch_started_at,
+                "symbol": sym,
+                "f1_macro_wf": float(_row["f1_macro_wf"]),
+                "f1_long_wf": float(_row["f1_long_wf"]),
+                "f1_short_wf": float(_row["f1_short_wf"]),
+                "f1_flat_wf": float(_row["f1_flat_wf"]),
+                "rank_type": RANK_TYPE_S7_MONITOR,
+                "rank_position": None,
+                "threshold_used": None,
+            })
+
     # ── Insérer ──
     if not rows:
         LOGGER.info("batch_diagnostics: no rows to insert for batch %s", batch_id)
@@ -261,13 +472,19 @@ def persist_batch_diagnostics(
 
     LOGGER.info(
         "batch_diagnostics: persisted %d rows for batch %s "
-        "(top=%d bottom=%d zero_short=%d weak_long=%d weak_short=%d)",
+        "(top=%d bottom=%d zero_short=%d weak_long=%d weak_short=%d "
+        "s7_exclude_all=%d s7_flat_pathological=%d s7_long_only=%d s7_short_only=%d s7_monitor=%d)",
         len(rows), batch_id,
         sum(1 for r in rows if r["rank_type"] == RANK_TYPE_TOP),
         sum(1 for r in rows if r["rank_type"] == RANK_TYPE_BOTTOM),
         sum(1 for r in rows if r["rank_type"] == RANK_TYPE_ZERO_SHORT),
         sum(1 for r in rows if r["rank_type"] == RANK_TYPE_WEAK_LONG),
         sum(1 for r in rows if r["rank_type"] == RANK_TYPE_WEAK_SHORT),
+        sum(1 for r in rows if r["rank_type"] == RANK_TYPE_S7_EXCLUDE_ALL),
+        sum(1 for r in rows if r["rank_type"] == RANK_TYPE_S7_FLAT_PATHOLOGICAL),
+        sum(1 for r in rows if r["rank_type"] == RANK_TYPE_S7_LONG_ONLY),
+        sum(1 for r in rows if r["rank_type"] == RANK_TYPE_S7_SHORT_ONLY),
+        sum(1 for r in rows if r["rank_type"] == RANK_TYPE_S7_MONITOR),
     )
     return len(rows)
 
@@ -315,6 +532,7 @@ def get_batch_filters(
             exclude_long=frozenset(),
             exclude_short=frozenset(),
             all_diagnostics=pd.DataFrame(),
+            section7=Section7Filters(enabled=False),
         )
 
     df = pd.DataFrame()
@@ -348,17 +566,87 @@ def get_batch_filters(
             exclude_short=frozenset(),
             all_diagnostics=df,
             batch_comment=batch_comment,
+            section7=Section7Filters(enabled=False),
         )
 
     prefer = frozenset(
         df[(df["rank_type"] == RANK_TYPE_TOP) & (df["rank_position"] <= prefer_top_n)]["symbol"]
     )
-    exclude_long = frozenset(
+    exclude_long_base = frozenset(
         df[df["rank_type"].isin(EXCLUDE_LONG_RANK_TYPES)]["symbol"]
     )
-    exclude_short = frozenset(
+    exclude_short_base = frozenset(
         df[df["rank_type"].isin(EXCLUDE_SHORT_RANK_TYPES)]["symbol"]
     )
+
+    # ── §7.0 — charger les catégories depuis les rank_types persistés ──
+    s7_cfg = _load_section7_config()
+    s7_enabled = bool(s7_cfg.get("enabled", False))
+    s7 = Section7Filters(enabled=False)
+    if s7_enabled:
+        # Essayer de charger depuis les rank_types persistés
+        s7_exclude_all_set = frozenset(
+            df[df["rank_type"] == RANK_TYPE_S7_EXCLUDE_ALL]["symbol"]
+        )
+        s7_flat_path_set = frozenset(
+            df[df["rank_type"] == RANK_TYPE_S7_FLAT_PATHOLOGICAL]["symbol"]
+        )
+        s7_long_only_set = frozenset(
+            df[df["rank_type"] == RANK_TYPE_S7_LONG_ONLY]["symbol"]
+        )
+        s7_short_only_set = frozenset(
+            df[df["rank_type"] == RANK_TYPE_S7_SHORT_ONLY]["symbol"]
+        )
+        s7_monitor_set = frozenset(
+            df[df["rank_type"] == RANK_TYPE_S7_MONITOR]["symbol"]
+        )
+        # Si aucune catégorie §7 persistée (vieux batch), recalculer on-the-fly
+        _has_s7 = (
+            s7_exclude_all_set or s7_flat_path_set or s7_long_only_set
+            or s7_short_only_set or s7_monitor_set
+        )
+        if _has_s7:
+            s7 = Section7Filters(
+                enabled=True,
+                exclude_all=s7_exclude_all_set,
+                exclude_flat_pathological=s7_flat_path_set,
+                long_only=s7_long_only_set,
+                short_only=s7_short_only_set,
+                monitor=s7_monitor_set,
+                threshold_long_good=float(s7_cfg.get("long_good_threshold", 0.35)),
+                threshold_short_good=float(s7_cfg.get("short_good_threshold", 0.30)),
+                threshold_long_only_min=float(s7_cfg.get("long_only_min_threshold", 0.40)),
+                threshold_short_only_min=float(s7_cfg.get("short_only_min_threshold", 0.40)),
+                threshold_weak_max=float(s7_cfg.get("weak_max_threshold", 0.20)),
+                threshold_flat_min=float(s7_cfg.get("flat_min_threshold", 0.10)),
+                threshold_exclude_long_max=float(s7_cfg.get("exclude_long_max_threshold", 0.30)),
+                threshold_exclude_short_max=float(s7_cfg.get("exclude_short_max_threshold", 0.30)),
+            )
+        else:
+            # Recalcul on-the-fly depuis les métriques dispos
+            s7 = _compute_section7_filters(df, s7_cfg=s7_cfg)
+    else:
+        s7 = Section7Filters(enabled=False)
+
+    # ── Fusionner §7 dans les exclusions ──
+    exclude_long = exclude_long_base
+    exclude_short = exclude_short_base
+    if s7.is_active():
+        exclude_long = exclude_long_base | s7.exclude_all | s7.exclude_flat_pathological | s7.short_only
+        exclude_short = exclude_short_base | s7.exclude_all | s7.exclude_flat_pathological | s7.long_only
+        # Log des catégories §7
+        LOGGER.info(
+            "batch_diagnostics §7 actif (batch=%s): "
+            "exclude_all=%d flat_path=%d long_only=%d short_only=%d monitor=%d",
+            batch_id,
+            len(s7.exclude_all), len(s7.exclude_flat_pathological),
+            len(s7.long_only), len(s7.short_only), len(s7.monitor),
+        )
+        if s7.monitor:
+            LOGGER.warning(
+                "batch_diagnostics §7 MONITOR (⚠️ à surveiller, non exclus): %s",
+                ", ".join(sorted(s7.monitor)),
+            )
 
     return BatchFilters(
         batch_id=batch_id,
@@ -368,6 +656,7 @@ def get_batch_filters(
         exclude_short=exclude_short,
         all_diagnostics=df,
         batch_comment=batch_comment,
+        section7=s7,
     )
 
 
@@ -443,6 +732,14 @@ def filter_predictions(
             exclude_long_mask.sum(),
             exclude_short_mask.sum(),
         )
+        # Log supplémentaire si §7 est actif
+        if filters.section7.is_active():
+            s7 = filters.section7
+            LOGGER.info(
+                "batch_diagnostics §7: exclude_all=%d flat_path=%d long_only=%d short_only=%d",
+                len(s7.exclude_all), len(s7.exclude_flat_pathological),
+                len(s7.long_only), len(s7.short_only),
+            )
 
     # ── Boost sizing for preferred symbols ──
     if boost_prefer_sizing and "sizing_mult" in filtered.columns:

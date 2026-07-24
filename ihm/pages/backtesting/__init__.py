@@ -4146,7 +4146,9 @@ def _render_batch_diagnostics_block() -> None:
         batch_date = summary.get("batch_started_at", "—")
         batch_comment = summary.get("batch_comment") or None
         total_symbols = summary.get("total_symbols", 0)
-        st.caption(f"**Batch** : `{batch_id}` | **Date** : {batch_date} | **Symboles** : {total_symbols}")
+        s7_enabled = summary.get("s7_enabled", False)
+        _s7_badge = " 🔸§7" if s7_enabled else ""
+        st.caption(f"**Batch** : `{batch_id}` | **Date** : {batch_date} | **Symboles** : {total_symbols}{_s7_badge}")
         if batch_comment:
             st.caption(f"**Commentaire** : {batch_comment}")
 
@@ -4187,6 +4189,45 @@ def _render_batch_diagnostics_block() -> None:
                 if weak_short:
                     st.markdown(f"**Weak short** ({len(weak_short)}) — 0 < f1_short < seuil  \n"
                                 + "`" + "` `".join(r["symbol"] for r in weak_short) + "`")
+
+                # ── §7.0 ──
+                s7_enabled = summary.get("s7_enabled", False)
+                if s7_enabled:
+                    st.markdown("---")
+                    st.markdown("##### 📐 §7.0 — Seuils absolus par classe")
+                    s7_exclude_all = summary.get("s7_exclude_all", [])
+                    s7_flat_path = summary.get("s7_flat_pathological", [])
+                    s7_long_only = summary.get("s7_long_only", [])
+                    s7_short_only = summary.get("s7_short_only", [])
+                    s7_monitor = summary.get("s7_monitor", [])
+
+                    if s7_exclude_all:
+                        st.markdown(
+                            f"❌ **Exclude all** ({len(s7_exclude_all)}) — aucune direction fiable  \n"
+                            + "`" + "` `".join(s7_exclude_all) + "`"
+                        )
+                    if s7_flat_path:
+                        st.markdown(
+                            f"❌ **Flat pathologique** ({len(s7_flat_path)}) — F1_flat < 0.10  \n"
+                            + "`" + "` `".join(s7_flat_path) + "`"
+                        )
+                    if s7_long_only:
+                        st.markdown(
+                            f"✅ **Long only** ({len(s7_long_only)}) — long OK, short interdit  \n"
+                            + "`" + "` `".join(s7_long_only) + "`"
+                        )
+                    if s7_short_only:
+                        st.markdown(
+                            f"✅ **Short only** ({len(s7_short_only)}) — short OK, long interdit  \n"
+                            + "`" + "` `".join(s7_short_only) + "`"
+                        )
+                    if s7_monitor:
+                        st.warning(
+                            f"⚠️ **Monitor** ({len(s7_monitor)}) — à surveiller (non exclus) : "
+                            + "`" + "` `".join(s7_monitor) + "`"
+                        )
+                    if not any([s7_exclude_all, s7_flat_path, s7_long_only, s7_short_only, s7_monitor]):
+                        st.info("Aucun symbole classé dans les catégories §7 pour ce batch.")
 
         # ── Colonne 2 : Tickets boostés ──
         with col2:
@@ -4230,8 +4271,13 @@ def _render_batch_diagnostics_block() -> None:
 | **Top** | Parmi les N meilleurs F1 macro WF | Boost sizing (×1.2) |
 | **Bottom** | Parmi les N pires F1 macro WF | Exclu long ET short |
 | **Zero short** | f1_short_wf = 0 | Exclu short uniquement |
-| **Weak long** | 0 < f1_long_wf < seuil (0.15) | Exclu long uniquement |
-| **Weak short** | 0 < f1_short_wf < seuil (0.15) | Exclu short uniquement |
+| **Weak long** | 0 < f1_long_wf < seuil (0.25) | Exclu long uniquement |
+| **Weak short** | 0 < f1_short_wf < seuil (0.25) | Exclu short uniquement |
+| **§7 Exclude all** | f1_long < 0.30 ET f1_short < 0.30 | Exclu long ET short |
+| **§7 Flat path.** | f1_flat < 0.10 | Exclu long ET short |
+| **§7 Long only** | f1_long > 0.40 ET f1_short < 0.20 | Short interdit |
+| **§7 Short only** | f1_short > 0.40 ET f1_long < 0.20 | Long interdit |
+| **§7 Monitor** | f1_long > 0.35 ET 0.20 ≤ f1_short ≤ 0.30 | ⚠️ Warning seul |
             """)
 
 

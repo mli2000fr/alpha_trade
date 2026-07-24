@@ -26,17 +26,21 @@
 │                         │                                    │
 │                         ▼                                    │
 │    ┌─────────────────────────────────────────────┐           │
-│    │  alpha_trade.model_batch_diagnostics         │           │
+│    │  alpha_trade.model_batch_diagnostics        │           │
 │    │  (1 ligne par symbole × rank_type)          │           │
 │    └─────────────────────────────────────────────┘           │
 │                         │                                    │
 │                         ▼                                    │
 │    ┌─────────────────────────────────────────────┐           │
-│    │  get_batch_filters() → BatchFilters          │           │
+│    │  get_batch_filters() → BatchFilters         │           │
 │    │  → .prefer        (top N)                   │           │
-│    │  → .exclude_long  (bottom + weak_long)      │           │
+│    │  → .exclude_long  (bottom + weak_long       │           │
+│    │       + §7 exclude_all + flat_path          │           │
+│    │       + §7 short_only)                     │           │
 │    │  → .exclude_short (bottom + zero_short      │           │
-│    │                    + weak_short)             │           │
+│    │       + weak_short + §7 exclude_all         │           │
+│    │       + §7 flat_path + §7 long_only)       │           │
+│    │  → .section7      (Section7Filters)        │           │
 │    └─────────────────────────────────────────────┘           │
 │                         │                                    │
 │                         ▼                                    │
@@ -61,7 +65,7 @@
 | `f1_long_wf` | DOUBLE | F1 classe long WF |
 | `f1_short_wf` | DOUBLE | F1 classe short WF |
 | `f1_flat_wf` | DOUBLE | F1 classe flat WF |
-| `rank_type` | VARCHAR(20) | `top` / `bottom` / `zero_short` / `weak_long` / `weak_short` |
+| `rank_type` | VARCHAR(30) | `top` / `bottom` / `zero_short` / `weak_long` / `weak_short` / `s7_exclude_all` / `s7_flat_pathological` / `s7_long_only` / `s7_short_only` / `s7_monitor` |
 | `rank_position` | INT | 1..N pour top/bottom, NULL sinon |
 | `threshold_used` | DOUBLE | Seuil pour weak_long / weak_short |
 | `created_at` | DATETIME | Date de création |
@@ -81,14 +85,25 @@
 | `bottom` | Parmi les N pires f1_macro_wf | **Exclure** long et short |
 | `zero_short` | f1_short_wf = 0 | Modèle incapable de shorter |
 | `weak_long` | 0 < f1_long_wf < seuil (défaut 0.15) | Long inefficace |
-| `weak_short` | 0 < f1_short_wf < seuil (défaut 0.15) | Short inefficace |
+| `weak_short` | 0 < f1_short_wf < seuil (défaut 0.25) | Short inefficace |
+| `s7_exclude_all` | f1_long < 0.30 ET f1_short < 0.30 | **§7** — Aucune direction fiable, exclure tout |
+| `s7_flat_pathologique` | f1_flat < 0.10 | **§7** — Titre trop volatil/binaire, exclure tout |
+| `s7_long_only` | f1_long > 0.40 ET f1_short < 0.20 | **§7** — Long OK, short interdit |
+| `s7_short_only` | f1_short > 0.40 ET f1_long < 0.20 | **§7** — Short OK, long interdit |
+| `s7_monitor` | f1_long > 0.35 ET 0.20 ≤ f1_short ≤ 0.30 | **§7** — À surveiller (warning, pas d'exclusion) |
 
 ### Règles de filtrage
 
 ```python
+# Règles existantes (classement relatif)
 EXCLUDE_LONG  = {'bottom', 'weak_long'}
 EXCLUDE_SHORT = {'bottom', 'zero_short', 'weak_short'}
 PREFER        = {'top'}
+
+# §7 — ajoutées aux exclusions si enable_section7_filters = true
+EXCLUDE_LONG  |= {'s7_exclude_all', 's7_flat_pathological', 's7_short_only'}
+EXCLUDE_SHORT |= {'s7_exclude_all', 's7_flat_pathological', 's7_long_only'}
+# s7_monitor → LOGGER.warning uniquement, pas d'exclusion
 ```
 
 ---
@@ -99,12 +114,24 @@ PREFER        = {'top'}
 batch_diagnostics:
   top_n: 10                         # Nb symboles stockés dans le top
   bottom_n: 10                      # Nb symboles stockés dans le bottom
-  weak_long_threshold: 0.15         # Seuil f1_long pour weak_long
-  weak_short_threshold: 0.15        # Seuil f1_short pour weak_short
+  weak_long_threshold: 0.25         # Seuil f1_long pour weak_long
+  weak_short_threshold: 0.25        # Seuil f1_short pour weak_short
   prefer_top_n: 10                  # Nb de top effectivement boostés (≤ top_n)
   prefer_sizing_multiplier: 1.2     # Multiplicateur de sizing pour les prefer
   live_batch_id: ""                 # Batch à utiliser en live (vide = dernier batch)
   backtest_batch_id: ""             # Batch à utiliser en backtest (vide = dernier batch)
+
+  # §7.0 — filtres par seuils absolus de F1 (complémentaires)
+  section7:
+    enabled: true                   # Activer/désactiver les règles §7
+    long_good_threshold: 0.35       # F1_long minimum "bon"
+    short_good_threshold: 0.30      # F1_short minimum "bon"
+    long_only_min_threshold: 0.40   # F1_long minimum long-only
+    short_only_min_threshold: 0.40  # F1_short minimum short-only
+    weak_max_threshold: 0.20        # Classe "invisible" en dessous
+    flat_min_threshold: 0.10        # F1_flat minimum avant exclusion
+    exclude_long_max_threshold: 0.30
+    exclude_short_max_threshold: 0.30
 ```
 
 - `top_n` / `bottom_n` : combien de symboles on persiste dans la table.
@@ -121,6 +148,29 @@ batch_diagnostics:
   si le dernier batch est postérieur à la période backtestée, les diagnostics
   utilisent de l'information future). Pour un backtest PIT-safe, renseigner
   un `batch_id` dont la `training_end_date` est antérieure à la date simulée.
+
+### §7.0 — Règles de filtrage par seuils absolus
+
+Ces règles (issues de [`analyse_ml.md`](../prompt/analyse_ml.md#70-règle-de-filtrage--quels-symboles-trader))
+complètent le système de classement relatif existant. Elles utilisent des
+**seuils absolus** sur les F1 par classe plutôt que le rang.
+
+| Catégorie | Condition | Action |
+|-----------|-----------|--------|
+| ✅ Toutes directions | `f1_long > 0.35` ET `f1_short > 0.30` | Trader long & short (pas de restriction) |
+| ✅ Long only | `f1_long > 0.40` ET `f1_short < 0.20` | Long OK, **short interdit** |
+| ✅ Short only | `f1_short > 0.40` ET `f1_long < 0.20` | Short OK, **long interdit** |
+| ⚠️ Surveiller | `f1_long > 0.35` ET `0.20 ≤ f1_short ≤ 0.30` | Log warning, pas d'exclusion |
+| ❌ Exclure (exclude_all) | `f1_long < 0.30` ET `f1_short < 0.30` | Exclure long & short |
+| ❌ Exclure (flat_path) | `f1_flat < 0.10` | Titre pathologique, exclure tout |
+
+**Intégration** : les catégories §7 sont **fusionnées** dans les sets
+`exclude_long` / `exclude_short` existants. L'activation se fait via
+`config.yaml → batch_diagnostics.section7.enabled`.
+
+Les catégories sont **persistées** dans `model_batch_diagnostics` avec les
+`rank_type` préfixés `s7_`. Si un vieux batch n'a pas ces catégories, elles
+sont **recalculées on-the-fly** à partir des métriques disponibles.
 
 ---
 

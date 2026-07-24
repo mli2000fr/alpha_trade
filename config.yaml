@@ -430,6 +430,23 @@ batch_diagnostics:
   # Renseigner un batch_id explicite pour un backtest PIT-safe.
   backtest_batch_id: ""
 
+  # ── §7.0 (analyse_ml.md) — filtres additionnels par seuils absolus de F1 ──
+  # Ces règles complètent le système existant (top/bottom/weak_*).
+  # Les symboles exclus par §7 sont ajoutés aux sets exclude_long/exclude_short
+  # existants. Mettre `enabled: false` pour désactiver.
+  section7:
+    enabled: true
+
+    # Seuils de qualité par classe (baseline aléatoire ≈ 0.33)
+    long_good_threshold: 0.35          # F1_long minimum pour considérer la direction "bonne"
+    short_good_threshold: 0.30         # F1_short minimum pour considérer la direction "bonne"
+    long_only_min_threshold: 0.40      # F1_long minimum pour "long only"
+    short_only_min_threshold: 0.40     # F1_short minimum pour "short only"
+    weak_max_threshold: 0.20           # En dessous = classe "invisible"
+    flat_min_threshold: 0.10           # F1_flat minimum (titre pathologique)
+    exclude_long_max_threshold: 0.30   # F1_long en dessous → exclure
+    exclude_short_max_threshold: 0.30  # F1_short en dessous → exclure
+
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
 conviction:

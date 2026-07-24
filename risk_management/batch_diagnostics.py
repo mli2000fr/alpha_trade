@@ -14,6 +14,10 @@ from typing import Any
 
 from modelFactory.batch_diagnostics import (
     BatchFilters,
+    RANK_TYPE_BOTTOM,
+    RANK_TYPE_WEAK_LONG,
+    RANK_TYPE_WEAK_SHORT,
+    RANK_TYPE_ZERO_SHORT,
     _load_config_defaults,
     get_batch_filters,
 )
@@ -23,6 +27,58 @@ LOGGER = logging.getLogger(__name__)
 
 
 # ── Helpers ────────────────────────────────────────────────────────
+
+def _classify_exclusion(
+    sym: str,
+    side: str,
+    filters: BatchFilters,
+) -> str:
+    """Retourne la règle qui a causé l'exclusion d'un symbole.
+
+    Args:
+        sym: Symbole (uppercase).
+        side: ``"long"`` ou ``"short"``.
+        filters: BatchFilters chargés.
+
+    Returns:
+        Code de la règle : ``bottom``, ``weak_long``, ``weak_short``,
+        ``zero_short``, ``s7_exclude_all``, ``s7_flat_pathological``,
+        ``s7_long_only``, ``s7_short_only``, ou ``unknown``.
+    """
+    s7 = filters.section7
+    sym_u = sym.upper()
+
+    # ── Vérifier §7 d'abord (plus informatif) ──
+    if s7.is_active():
+        if sym_u in s7.exclude_all:
+            return "s7_exclude_all"
+        if sym_u in s7.exclude_flat_pathological:
+            return "s7_flat_pathological"
+        if side == "long" and sym_u in s7.short_only:
+            return "s7_short_only"
+        if side == "short" and sym_u in s7.long_only:
+            return "s7_long_only"
+
+    # ── Vérifier règles existantes via all_diagnostics ──
+    diag = filters.all_diagnostics
+    if not diag.empty:
+        sym_rows = diag[diag["symbol"].astype(str).str.upper() == sym_u]
+        if not sym_rows.empty:
+            rank_types = set(sym_rows["rank_type"].values)
+            if side == "long":
+                if RANK_TYPE_BOTTOM in rank_types:
+                    return "bottom"
+                if RANK_TYPE_WEAK_LONG in rank_types:
+                    return "weak_long"
+            elif side == "short":
+                if RANK_TYPE_BOTTOM in rank_types:
+                    return "bottom"
+                if RANK_TYPE_ZERO_SHORT in rank_types:
+                    return "zero_short"
+                if RANK_TYPE_WEAK_SHORT in rank_types:
+                    return "weak_short"
+
+    return "unknown"
 
 def _load_filters(engine: Any) -> BatchFilters | None:
     """Charge les BatchFilters pour le live (respecte live_batch_id config)."""
@@ -131,6 +187,32 @@ def boost_candidate_scores(
             ", ".join(sorted(boosted_syms)),
         )
 
+    # ── §7.0 — log des candidats dans les sets §7 (info contexte) ──
+    if filters.section7.is_active():
+        s7 = filters.section7
+        s7_affected: dict[str, list[str]] = {}
+        for c in candidates:
+            sym = str(getattr(c, "symbol", "")).strip().upper()
+            side = str(getattr(c, "side", "")).strip().lower()
+            if sym in s7.exclude_all:
+                s7_affected.setdefault("s7_exclude_all", []).append(sym)
+            elif sym in s7.exclude_flat_pathological:
+                s7_affected.setdefault("s7_flat_pathological", []).append(sym)
+            elif side == "short" and sym in s7.long_only:
+                s7_affected.setdefault("s7_long_only", []).append(sym)
+            elif side == "long" and sym in s7.short_only:
+                s7_affected.setdefault("s7_short_only", []).append(sym)
+            elif sym in s7.monitor:
+                s7_affected.setdefault("s7_monitor", []).append(sym)
+        if s7_affected:
+            _parts = []
+            for _rule in sorted(s7_affected.keys()):
+                _parts.append(f"{_rule}={len(s7_affected[_rule])}")
+            LOGGER.info(
+                "batch_diagnostics §7 candidats affectés (batch=%s): %s",
+                filters.batch_id, " | ".join(_parts),
+            )
+
     return boosted_count, filters.batch_id
 
 
@@ -159,6 +241,8 @@ def apply_batch_diagnostics_to_entries(
         return entries, 0, None
 
     excluded_count = 0
+    # Détail par règle pour le log
+    excluded_by_rule: dict[str, list[str]] = {}
     excluded_long_syms: list[str] = []
     excluded_short_syms: list[str] = []
     filtered_entries: list[PortfolioEntry] = []
@@ -169,10 +253,14 @@ def apply_batch_diagnostics_to_entries(
         if side in ("sell", "short") and sym in filters.exclude_short:
             excluded_count += 1
             excluded_short_syms.append(sym)
+            _rule = _classify_exclusion(sym, "short", filters)
+            excluded_by_rule.setdefault(_rule, []).append(sym)
             continue
         if side in ("buy", "long") and sym in filters.exclude_long:
             excluded_count += 1
             excluded_long_syms.append(sym)
+            _rule = _classify_exclusion(sym, "long", filters)
+            excluded_by_rule.setdefault(_rule, []).append(sym)
             continue
         filtered_entries.append(entry)
 
@@ -189,9 +277,31 @@ def apply_batch_diagnostics_to_entries(
                 f"  🚫 SHORT filtrés ({len(excluded_short_syms)}): "
                 + ", ".join(sorted(excluded_short_syms))
             )
+        # ── Détail par règle ──
+        if excluded_by_rule:
+            _lines.append("  📋 Détail par règle:")
+            for _rule in sorted(excluded_by_rule.keys()):
+                _syms = sorted(excluded_by_rule[_rule])
+                _lines.append(f"     {_rule} ({len(_syms)}): {', '.join(_syms)}")
         _lines.append(
             f"  ➡️ {len(entries)}→{len(filtered_entries)} entries (−{excluded_count} exclus)"
         )
         LOGGER.info("\n".join(_lines))
+
+    # ── §7.0 — log supplémentaire si actif ──
+    if filters.section7.is_active():
+        s7 = filters.section7
+        LOGGER.info(
+            "batch_diagnostics §7 actif (batch=%s): "
+            "exclude_all=%d flat_path=%d long_only=%d short_only=%d monitor=%d",
+            filters.batch_id,
+            len(s7.exclude_all), len(s7.exclude_flat_pathological),
+            len(s7.long_only), len(s7.short_only), len(s7.monitor),
+        )
+        if s7.monitor:
+            LOGGER.warning(
+                "batch_diagnostics §7 MONITOR (⚠️ à surveiller, non exclus): %s",
+                ", ".join(sorted(s7.monitor)),
+            )
 
     return filtered_entries, excluded_count, filters.batch_id

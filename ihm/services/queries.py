@@ -2515,6 +2515,12 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
                 WHEN 'zero_short' THEN 3
                 WHEN 'weak_long' THEN 4
                 WHEN 'weak_short' THEN 5
+                WHEN 's7_exclude_all' THEN 6
+                WHEN 's7_flat_pathological' THEN 7
+                WHEN 's7_long_only' THEN 8
+                WHEN 's7_short_only' THEN 9
+                WHEN 's7_monitor' THEN 10
+                ELSE 99
             END,
             COALESCE(rank_position, 9999),
             symbol
@@ -2536,6 +2542,12 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
             "exclude_long_symbols": [],
             "exclude_short_symbols": [],
             "prefer_symbols": [],
+            "s7_enabled": False,
+            "s7_exclude_all": [],
+            "s7_flat_pathological": [],
+            "s7_long_only": [],
+            "s7_short_only": [],
+            "s7_monitor": [],
         }
 
     def _rows(rank_type: str) -> list[dict[str, object]]:
@@ -2556,10 +2568,46 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
     zero_short_rows = _rows("zero_short")
     weak_long_rows = _rows("weak_long")
     weak_short_rows = _rows("weak_short")
+    # ── §7.0 ──
+    s7_exclude_all_rows = _rows("s7_exclude_all")
+    s7_flat_path_rows = _rows("s7_flat_pathological")
+    s7_long_only_rows = _rows("s7_long_only")
+    s7_short_only_rows = _rows("s7_short_only")
+    s7_monitor_rows = _rows("s7_monitor")
 
     # Construire les sets d'exclusion et prefer (même logique que batch_diagnostics.py)
-    exclude_long_symbols = sorted({r["symbol"] for r in bottom_rows + weak_long_rows})
-    exclude_short_symbols = sorted({r["symbol"] for r in bottom_rows + zero_short_rows + weak_short_rows})
+    exclude_long_base = sorted({r["symbol"] for r in bottom_rows + weak_long_rows})
+    exclude_short_base = sorted({r["symbol"] for r in bottom_rows + zero_short_rows + weak_short_rows})
+
+    # ── §7.0 — sets bruts ──
+    s7_exclude_all_syms = sorted({r["symbol"] for r in s7_exclude_all_rows})
+    s7_flat_path_syms = sorted({r["symbol"] for r in s7_flat_path_rows})
+    s7_long_only_syms = sorted({r["symbol"] for r in s7_long_only_rows})
+    s7_short_only_syms = sorted({r["symbol"] for r in s7_short_only_rows})
+    s7_monitor_syms = sorted({r["symbol"] for r in s7_monitor_rows})
+
+    # Vérifier si §7 est activé dans config.yaml
+    s7_enabled = False
+    try:
+        import yaml
+        with open("config.yaml", encoding="utf-8") as fh:
+            _cfg = yaml.safe_load(fh) or {}
+        s7_cfg = (_cfg.get("batch_diagnostics") or {}).get("section7") or {}
+        s7_enabled = bool(s7_cfg.get("enabled", False))
+    except Exception:
+        pass
+
+    # ── Fusion §7 dans les exclusions si actif ──
+    if s7_enabled:
+        exclude_long_symbols = sorted(
+            set(exclude_long_base) | set(s7_exclude_all_syms) | set(s7_flat_path_syms) | set(s7_short_only_syms)
+        )
+        exclude_short_symbols = sorted(
+            set(exclude_short_base) | set(s7_exclude_all_syms) | set(s7_flat_path_syms) | set(s7_long_only_syms)
+        )
+    else:
+        exclude_long_symbols = exclude_long_base
+        exclude_short_symbols = exclude_short_base
 
     # prefer_top_n depuis config.yaml (même logique que _load_config_defaults)
     prefer_top_n = 10
@@ -2588,5 +2636,12 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
         "exclude_long_symbols": exclude_long_symbols,
         "exclude_short_symbols": exclude_short_symbols,
         "prefer_symbols": prefer_symbols,
+        # ── §7.0 ──
+        "s7_enabled": s7_enabled,
+        "s7_exclude_all": s7_exclude_all_syms,
+        "s7_flat_pathological": s7_flat_path_syms,
+        "s7_long_only": s7_long_only_syms,
+        "s7_short_only": s7_short_only_syms,
+        "s7_monitor": s7_monitor_syms,
     }
 

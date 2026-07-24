@@ -2410,13 +2410,21 @@ def _run_backtest(args: argparse.Namespace) -> None:
             preds_df = filter_predictions(preds_df, _bt_filters)
             _bt_filtered_count = _bt_before - len(preds_df)
             if _bt_filtered_count > 0:
+                _s7_info = ""
+                if _bt_filters.section7.is_active():
+                    _s7 = _bt_filters.section7
+                    _s7_info = " §7(exclude_all={} flat_path={} long_only={} short_only={})".format(
+                        len(_s7.exclude_all), len(_s7.exclude_flat_pathological),
+                        len(_s7.long_only), len(_s7.short_only),
+                    )
                 _safe_print(
                     "   batch_diagnostics: filtered {}/{} predictions "
-                    "(batch={} exclude_long={} exclude_short={})\n".format(
+                    "(batch={} exclude_long={} exclude_short={}){}\n".format(
                         _bt_filtered_count, _bt_before,
                         _bt_filters.batch_id,
                         len(_bt_filters.exclude_long),
                         len(_bt_filters.exclude_short),
+                        _s7_info,
                     )
                 )
 
@@ -2471,6 +2479,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
                             _bt_filters.batch_id,
                         )
                     )
+
+            # ── §7.0 — log monitor symbols ──
+            if _bt_filters.section7.is_active() and _bt_filters.section7.monitor:
+                _safe_print(
+                    "   batch_diagnostics §7 MONITOR (⚠️ à surveiller): {}\n".format(
+                        ", ".join(sorted(_bt_filters.section7.monitor)),
+                    )
+                )
     except Exception as _bt_exc:
         LOGGER.warning(
             "batch_diagnostics backtest filter skipped (non-blocking): %s",
