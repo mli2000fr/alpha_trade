@@ -865,7 +865,8 @@ def compute_features(
             ("sma50_distance", "regime_risk_off"),
         ]
         for tech_col, regime_col in _interact_pairs:
-            target_col = f"{tech_col}_x_{regime_col.replace('regime_', '')}"
+            _regime_suffix = regime_col.replace('regime_', '').replace('_market', '')
+            target_col = f"{tech_col}_x_{_regime_suffix}"
             if tech_col in df.columns and regime_col in df.columns:
                 df[target_col] = df[tech_col].astype(float) * df[regime_col].astype(float)
             else:

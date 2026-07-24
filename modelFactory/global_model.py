@@ -68,6 +68,7 @@ def _get_global_feature_columns(cfg: TrainingConfig) -> list[str]:
     - Secteur : momentum/volatilité agrégés par GICS
     - Cross-symbol exclusives : breadth, dispersion, concentration, rang, ratio vol, momentum spread
     - Macro : VIX, VXN, VIX3M, MOVE (contexte de marché global)
+    - Régime : bull_market, risk_off (les arbres peuvent splitter conditionnellement)
     """
     cols: list[str] = []
     _use_cross_sectional = (
@@ -87,6 +88,12 @@ def _get_global_feature_columns(cfg: TrainingConfig) -> list[str]:
         cols.extend(["vix3m_close", "vix_term_structure_ratio", "vix_backwardation"])
     if cfg.data.include_macro_move_features:
         cols.append("move_close")
+    # Régime de marché — features market-wide (même valeur pour tous les symboles à date donnée).
+    # Les arbres (LightGBM/CatBoost) apprennent naturellement des splits conditionnels :
+    #   « si regime_bull_market == 1 → sous-arbre haussier »
+    #   « si regime_risk_off == 1   → sous-arbre défensif »
+    # Présentes uniquement quand le benchmark est disponible (feature_set="expert").
+    cols.extend(["regime_bull_market", "regime_risk_off"])
     return cols
 
 
@@ -131,6 +138,10 @@ def _prepare_global_symbol_frame(
     )
     if effective_data_cfg.enable_cross_sectional_features:
         df = merge_cross_sectional_features(df, cross_sectional_df)
+    # Sécurité : garantir la présence des colonnes régime même sans benchmark
+    for _regime_col in ("regime_bull_market", "regime_risk_off"):
+        if _regime_col not in df.columns:
+            df[_regime_col] = 0.0
     df["future_return"] = compute_future_return(df, horizon=effective_data_cfg.forecast_horizon)
     df["target"] = build_target(
         df,
@@ -714,8 +725,27 @@ def train_global_model_wf(
             LOGGER.warning("train_global_model_wf split=%d single_class", split.split_index)
             continue
 
+        # ── Sample weighting par récence (demi-vie = 1 an) ──
+        # Les relations cross-sectionnelles se dégradent plus vite que
+        # les patterns locaux → les observations récentes doivent peser plus.
+        _sample_weights: "np.ndarray | None" = None
+        if "date" in train_df.columns:
+            _train_dates = pd.to_datetime(train_df["date"])
+            _max_date = _train_dates.max()
+            _days_diff = (_max_date - _train_dates).dt.days
+            _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
+            LOGGER.info(
+                "train_global_model_wf split=%d sample_weight rows=%d "
+                "weight_min=%.3f weight_max=%.3f weight_mean=%.3f",
+                split.split_index + 1,
+                len(_sample_weights),
+                float(_sample_weights.min()),
+                float(_sample_weights.max()),
+                float(_sample_weights.mean()),
+            )
+
         # ── Fit ──
-        model.fit(train_df[feature_columns], train_targets)
+        model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
 
         # ── Predict on val (per-symbol, PIT-safe) ──
         raw_val_all = model.predict_proba(val_df_split[feature_columns])
