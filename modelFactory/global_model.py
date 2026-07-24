@@ -519,6 +519,7 @@ def train_global_model(
         )
         test_proba = calibrated_test_all[:, 2]
     else:
+        calibrated_test_all = None
         test_proba = apply_tabular_calibration(test_raw, calibrator)
     test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
     val_metrics = compute_tabular_metrics(
@@ -540,7 +541,11 @@ def train_global_model(
         is_ternary=is_ternary,
     )
 
-    by_symbol = _compute_by_symbol_metrics(test_df, test_proba, decision_threshold=selected_threshold, partition_name="test")
+    by_symbol = _compute_by_symbol_metrics(
+        test_df,
+        calibrated_test_all if calibrated_test_all is not None else test_proba,
+        decision_threshold=selected_threshold, partition_name="test",
+    )
     artifact_dir = (artifacts_dir / cfg.global_model.artifact_symbol).resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)
     model_path = artifact_dir / "global_model.pkl"
@@ -835,9 +840,9 @@ def train_global_model_wf(
             val_proba_long = raw_val_all[:, -1]
         global_pred_parts.append(pred_part)
 
-        # ── Métriques par symbole sur ce split (basées sur probas CALIBRÉES) ──
+        # ── Métriques par symbole sur ce split (basées sur probas CALIBRÉES 3D) ──
         split_by_symbol = _compute_by_symbol_metrics(
-            val_df_split, val_proba_long_for_metrics,
+            val_df_split, val_proba_all_for_metrics,
             decision_threshold=float(effective_data_cfg.decision_threshold),
             partition_name="val",
         )
