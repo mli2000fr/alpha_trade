@@ -648,7 +648,7 @@ def run_tabular_walk_forward(
 		"tabular_wf start symbol=%s model=%s splits=%d prepared_rows=%d "
 		"feature_cols=%d stacking=%s global_pred=%s",
 		symbol_tag, model_name, len(splits), len(prepared_df),
-		len(feature_cols), cfg.global_model.stacking_enabled, _has_global_pred,
+		len(feature_cols), cfg.global_model.stacking_enabled, _has_global_rank,
 	)
 
 	fold_metrics: list[dict[str, Any]] = []

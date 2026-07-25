@@ -444,6 +444,88 @@ def _prime_selected_symbol_state(symbols: list[str]) -> str | None:
     return symbols[0]
 
 
+def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> None:
+    """Affiche un bouton de suppression pour les batchs non complétés."""
+    from database.connection import get_sqlalchemy_engine as _get_eng
+    from sqlalchemy import text as _text
+    import shutil as _shutil
+
+    engine = _get_eng()
+    # Vérifier le statut du batch
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                _text(
+                    "SELECT status FROM alpha_trade.model_training_batch "
+                    "WHERE batch_id = :bid LIMIT 1"
+                ),
+                {"bid": selected_batch},
+            ).fetchone()
+        batch_status = str(row[0]).strip().lower() if row else None
+    except Exception:
+        batch_status = None
+
+    if batch_status == "completed":
+        return  # pas de bouton pour les batchs complétés
+
+    status_label = batch_status or "inconnu"
+    st.warning(
+        f"⚠️ Ce batch (`{selected_batch}`) a le statut **{status_label}**. "
+        "Vous pouvez le supprimer pour nettoyer les données partielles."
+    )
+
+    confirm_key = f"ml_confirm_delete_batch_{selected_batch}"
+    if confirm_key not in st.session_state:
+        st.session_state[confirm_key] = False
+
+    col1, col2 = st.columns([1, 3])
+    if not st.session_state[confirm_key]:
+        if col1.button("🗑️ Supprimer ce batch", key=f"ml_delete_batch_{selected_batch}"):
+            st.session_state[confirm_key] = True
+            st.rerun()
+    else:
+        col1.error("⚠️ Confirmer la suppression ?")
+        if col1.button("✅ Oui, supprimer", key=f"ml_confirm_delete_{selected_batch}"):
+            errors: list[str] = []
+            # 1. Supprimer les données DB
+            tables_to_clean = [
+                "model_batch_diagnostics",
+                "model_metrics",
+                "model_governance",
+                "model_training_run",
+                "model_training_batch",
+            ]
+            try:
+                with engine.begin() as conn:
+                    for table in tables_to_clean:
+                        conn.execute(
+                            _text(f"DELETE FROM alpha_trade.{table} WHERE batch_id = :bid"),
+                            {"bid": selected_batch},
+                        )
+                st.success(f"✅ {len(tables_to_clean)} tables nettoyées en base")
+            except Exception as exc:
+                errors.append(f"DB: {exc}")
+
+            # 2. Supprimer le répertoire artifacts
+            if artifacts_dir.exists():
+                try:
+                    _shutil.rmtree(artifacts_dir)
+                    st.success(f"✅ Répertoire supprimé : `{artifacts_dir}`")
+                except Exception as exc:
+                    errors.append(f"Disque: {exc}")
+
+            if errors:
+                st.error("Erreurs lors de la suppression : " + "; ".join(errors))
+            else:
+                st.success(f"🗑️ Batch `{selected_batch}` entièrement supprimé.")
+                st.session_state[confirm_key] = False
+                st.rerun()
+
+        if col2.button("❌ Annuler", key=f"ml_cancel_delete_{selected_batch}"):
+            st.session_state[confirm_key] = False
+            st.rerun()
+
+
 def render() -> None:
     st.header("🤖 Model Factory — Entraînement & prédictions")
     st.caption(
@@ -476,6 +558,9 @@ def render() -> None:
             except Exception as exc:
                 st.error(f"Promotion de campagne impossible : {exc}")
         serving_status_col.caption(f"Campagne de serving active : `{serving_batch or 'aucune (fallback historique)'}`")
+
+        # ── Bouton suppression batch non complété ──
+        _render_delete_batch_button(selected_batch, artifacts_dir)
 
     artifact_symbols = list_ml_artifact_symbols(artifacts_dir)
     db_symbols = get_prediction_symbols() if db_available() else []
