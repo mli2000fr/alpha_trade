@@ -24,6 +24,7 @@ class DataConfig:
     include_macro_vix3m_features: bool = False   # VIX3M + term structure ratio
     include_macro_move_features: bool = False    # MOVE (bond volatility)
     include_fundamentals_features: bool = False  # EODHD fundamentals (PE, ROE, etc.)
+    include_factors_features: bool = False       # CAPM beta/alpha/R² (rolling 252d)
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert

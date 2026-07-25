@@ -85,6 +85,7 @@ def _build_training_batch_metadata(opts: argparse.Namespace, cfg: TrainingConfig
         include_macro_move=cfg.data.include_macro_move_features,
         include_global_stacking=cfg.global_model.stacking_enabled,
         include_fundamentals=cfg.data.include_fundamentals_features,
+        include_factors=cfg.data.include_factors_features,
     )
     return json.dumps(
         {
@@ -263,6 +264,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les features VIX3M + ratio term structure (contango/backwardation) dans le modèle")
     p.add_argument("--include-macro-move", action="store_true", default=False,
                    help="Inclure les features MOVE (volatilité obligataire ICE BofA) dans le modèle")
+    p.add_argument("--include-fundamentals", action="store_true", default=False,
+                   help="Inclure les features fondamentales EODHD (PE, ROE, marges, croissance) — Global Model uniquement")
+    p.add_argument("--include-factors", action="store_true", default=False,
+                   help="Inclure les expositions factorielles CAPM (beta, alpha, R² via rolling 252j)")
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
                    help="Active les features cross-sectionnelles PIT-safe (rangs percentiles + features sectorielles dynamiques)")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
@@ -422,6 +427,7 @@ def main(args: list[str] | None = None) -> None:
             include_macro_vix3m_features=opts.include_macro_vix3m,
             include_macro_move_features=opts.include_macro_move,
             include_fundamentals_features=opts.include_fundamentals,
+            include_factors_features=opts.include_factors,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,
@@ -896,6 +902,7 @@ def _build_run_summary(
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
         include_fundamentals=cfg.data.include_fundamentals_features,
+        include_factors=cfg.data.include_factors_features,
     )
     payload: dict[str, object] = {
         "run_id": run_id,
@@ -936,6 +943,7 @@ def _build_run_summary(
             include_screener_scores=cfg.data.include_screener_scores,
             include_short_score=cfg.data.include_short_score_features,
             include_fundamentals=cfg.data.include_fundamentals_features,
+            include_factors=cfg.data.include_factors_features,
         )),
         "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),
         "champion_min_days": int(getattr(opts, "champion_min_days", 0)),

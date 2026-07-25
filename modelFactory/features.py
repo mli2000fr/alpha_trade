@@ -239,6 +239,7 @@ def get_feature_columns(
     include_macro_move: bool = False,
     include_global_stacking: bool = False,
     include_fundamentals: bool = False,
+    include_factors: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnels).
 
@@ -251,6 +252,9 @@ def get_feature_columns(
 
     ``include_fundamentals`` ajoute les features fondamentales
     (PE, ROE, marges, croissance, etc.) depuis stock_fundamentals_daily.
+
+    ``include_factors`` ajoute les expositions factorielles CAPM
+    (beta, alpha, R²) calculées par rolling regression 252j.
     """
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
@@ -296,6 +300,9 @@ def get_feature_columns(
     if include_fundamentals:
         from modelFactory.fundamental_features import FUNDAMENTAL_FEATURE_COLUMNS
         cols.extend(FUNDAMENTAL_FEATURE_COLUMNS)
+    if include_factors:
+        from modelFactory.factor_features import FACTOR_FEATURE_COLUMNS
+        cols.extend(FACTOR_FEATURE_COLUMNS)
     return cols
 
 
@@ -312,6 +319,7 @@ def fingerprint(
     include_macro_move: bool = False,
     include_global_stacking: bool = False,
     include_fundamentals: bool = False,
+    include_factors: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -333,6 +341,7 @@ def fingerprint(
         include_macro_move=include_macro_move,
         include_global_stacking=include_global_stacking,
         include_fundamentals=include_fundamentals,
+        include_factors=include_factors,
     ))
     payload = {
         "columns": columns,
@@ -347,6 +356,7 @@ def fingerprint(
         "include_macro_move": bool(include_macro_move),
         "include_global_stacking": bool(include_global_stacking),
         "include_fundamentals": bool(include_fundamentals),
+        "include_factors": bool(include_factors),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -374,6 +384,7 @@ def build_feature_contract(
     include_macro_move: bool = False,
     include_global_stacking: bool = False,
     include_fundamentals: bool = False,
+    include_factors: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -390,6 +401,7 @@ def build_feature_contract(
         include_macro_move=include_macro_move,
         include_global_stacking=include_global_stacking,
         include_fundamentals=include_fundamentals,
+        include_factors=include_factors,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -407,6 +419,7 @@ def build_feature_contract(
             include_macro_move=include_macro_move,
             include_global_stacking=include_global_stacking,
             include_fundamentals=include_fundamentals,
+            include_factors=include_factors,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
@@ -431,6 +444,7 @@ def validate_feature_contract(
     include_macro_move: bool = False,
     include_global_stacking: bool = False,
     include_fundamentals: bool = False,
+    include_factors: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -451,6 +465,7 @@ def validate_feature_contract(
         include_macro_move=include_macro_move,
         include_global_stacking=include_global_stacking,
         include_fundamentals=include_fundamentals,
+        include_factors=include_factors,
     )
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
@@ -464,6 +479,7 @@ def validate_feature_contract(
         include_macro_move=include_macro_move,
         include_global_stacking=include_global_stacking,
         include_fundamentals=include_fundamentals,
+        include_factors=include_factors,
         feature_columns=expected_columns,
     )
 
@@ -722,6 +738,7 @@ def compute_features(
     include_macro_move: bool = False,
     include_fundamentals: bool = False,
     fundamental_df: pd.DataFrame | None = None,
+    include_factors: bool = False,
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
@@ -1021,6 +1038,12 @@ def compute_features(
             if col not in df.columns:
                 df[col] = default
 
+    # ── Factor exposures (CAPM beta/alpha/R², momentum vs market) ──
+    if include_factors:
+        from modelFactory.factor_features import compute_factor_features, fill_factor_defaults
+        df = compute_factor_features(df, benchmark_df=benchmark_df)
+        df = fill_factor_defaults(df)
+
     # Determine active feature columns
     active_features = get_feature_columns(
         include_sentiment,
@@ -1032,6 +1055,7 @@ def compute_features(
         include_macro_vix3m=include_macro_vix3m,
         include_macro_move=include_macro_move,
         include_fundamentals=include_fundamentals,
+        include_factors=include_factors,
     )
 
     feature_matrix = df.loc[:, active_features].astype(np.float64)

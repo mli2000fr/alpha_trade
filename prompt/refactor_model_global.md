@@ -1,7 +1,7 @@
 # 📋 Plan d'action — Refonte du Global Model (Stacking)
 
 > **Date** : 2026-07-25  
-> **Statut** : Étapes 1, 2, 3, 4, 5 réalisées ✅ | Étape 5 (fondamentaux) réalisée ✅ | Factor Exposures à planifier  
+> **Statut** : Étapes 1, 2, 3, 4, 5, 6 (fondamentaux), 7 (factors) réalisées ✅ | Short Interest à planifier  
 > **Objectif** : Transformer le Global Model d'un classifieur ternaire faible en un régresseur de rang cross-sectionnel, puis réinjecter ce rang comme feature de stacking dans les per-symbol.  
 > **Périmètre** : Global Model = stacking uniquement. Pas de challenger champion selection.
 
@@ -51,13 +51,13 @@
 | `test_model_factory_cross_sectional.py` | `global_rank` au lieu de `global_pred_long` |
 | `test_model_factory_features.py` | `global_rank` au lieu de `global_pred_long` |
 
-**Résultat** : 187 tests OK (86 diagnostics + 94 stacking/flags/features + 7 assets).
+**Résultat** : 115 tests OK (94 stacking/flags/features + 21 factor features).
 
 ---
 
-## ✅ Réalisé (2026-07-25) — Sprint 2
+## ✅ Réalisé (2026-07-25) — Sprint 3
 
-### Étape 2 — Z-score rolling + sector-neutralisation ✅
+### Étape 5 (originale) — Fondamentaux ✅
 
 **Fichiers** : `modelFactory/features.py`, `modelFactory/cross_sectional.py`
 
@@ -96,14 +96,24 @@
 
 **Populateur** : `python -c "from modelFactory.fundamental_features import fetch_and_store_fundamentals; fetch_and_store_fundamentals(['AAPL', 'MSFT'], provider='eodhd')"`
 
----
+### Étape 6 — Factor Exposures (CAPM) ✅
+
+**Fichier créé** : `modelFactory/factor_features.py`
+
+- **4 features** calculées par rolling regression 252j stock vs SPY (zéro API externe) :
+  - `beta_252` : CAPM beta — `Cov(r_stock, r_market) / Var(r_market)`
+  - `alpha_252` : CAPM alpha annualisé — `(mean(r_stock) - beta × mean(r_market)) × 252`
+  - `r_squared_252` : qualité du fit — `Cov² / (Var_stock × Var_market)`
+  - `momentum_252_vs_market` : `Σ r_stock − Σ r_market` sur 252j
+- Flag `include_factors` ajouté dans `features.py` (`get_feature_columns`, `compute_features`, `fingerprint`, `build_feature_contract`, `validate_feature_contract`)
+- `DataConfig.include_factors_features: bool = False`
+- CLI : `--include-factors`
+- IHM : checkbox "📊 Facteurs CAPM" dans Pipeline → ML Train
+- **21 tests unitaires** dans `tests/test_factor_features.py`
+
+### Intégration pipeline — résumé des flags
 
 ## ⏳ Restant à faire
-
-### Factor Exposures
-
-- `modelFactory/factor_features.py` (beta, alpha via rolling regression 252j sur OHLCV)
-- Zéro API externe nécessaire
 
 ### Short Interest
 
@@ -118,9 +128,10 @@
 python -m modelFactory --mode train \
   --feature-set expert --enable-cross-sectional \
   --include-short-score --include-macro-move \
+  --include-factors --include-fundamentals \
   --enable-global-model --global-model-name lightgbm --enable-global-stacking \
   --compare-lightgbm --enable-catboost --select-champion --walkforward \
-  --comment "global_ranking_v1"
+  --comment "global_ranking_v3_all_features"
 ```
 
 **Attendu** : IC Rank > 0.03 → `global_rank` est une feature utile pour le stacking.

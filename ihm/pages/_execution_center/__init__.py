@@ -125,6 +125,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_VIX3M,
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
+    DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
     DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
     DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
@@ -3240,6 +3241,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_fundamentals",
                 help="Ajoute `--include-fundamentals`. Nécessite un backfill préalable de `stock_fundamentals_daily` (fetch EODHD).",
             )
+            ml_include_factors = st.checkbox(
+                "📊 Facteurs CAPM (beta, alpha, R² via rolling 252j)",
+                value=_session_state_bool("pipeline_ml_include_factors", DEFAULT_ML_INCLUDE_FACTORS),
+                key="pipeline_ml_include_factors",
+                help="Ajoute `--include-factors`. Calcule beta, alpha annualisé, R² et momentum 252j vs marché par rolling regression sur SPY.",
+            )
             st.markdown("---")
             ml_enable_liquidity_filter = st.checkbox(
                 "🔍 Filtrer les symboles illiquides (volume, cap, spread)",
@@ -4350,6 +4357,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_vix3m=bool(ml_include_macro_vix3m),
             ml_include_macro_move=bool(ml_include_macro_move),
             ml_include_fundamentals=bool(ml_include_fundamentals),
+            ml_include_factors=bool(ml_include_factors),
             # Filtrage liquidité
             ml_enable_liquidity_filter=bool(ml_enable_liquidity_filter),
             ml_liquidity_min_avg_volume_20d=int(ml_liquidity_min_avg_volume_20d if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D),

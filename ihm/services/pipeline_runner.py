@@ -71,6 +71,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_INCLUDE_MACRO_VXN,
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
+    DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_ENABLE_LIGHTGBM,
     DEFAULT_ML_ENABLE_CATBOOST,
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
@@ -339,6 +340,7 @@ class PipelineLaunchOptions:
     ml_include_macro_vix3m: bool = DEFAULT_ML_INCLUDE_MACRO_VIX3M
     ml_include_macro_move: bool = DEFAULT_ML_INCLUDE_MACRO_MOVE
     ml_include_fundamentals: bool = DEFAULT_ML_INCLUDE_FUNDAMENTALS
+    ml_include_factors: bool = DEFAULT_ML_INCLUDE_FACTORS
     ml_enable_lightgbm: bool = DEFAULT_ML_ENABLE_LIGHTGBM
     ml_enable_catboost: bool = DEFAULT_ML_ENABLE_CATBOOST
     ml_enable_global_model: bool = DEFAULT_ML_ENABLE_GLOBAL_MODEL
@@ -2217,6 +2219,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-macro-move")
         if options.ml_include_fundamentals:
             command.append("--include-fundamentals")
+        if options.ml_include_factors:
+            command.append("--include-factors")
         if options.ml_debug_train:
             command.append("--debug-train")
         if options.ml_enable_lightgbm:
