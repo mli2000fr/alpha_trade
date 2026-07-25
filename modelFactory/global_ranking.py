@@ -78,6 +78,7 @@ def _prepare_global_ranking_frame(
         include_macro_vxn=cfg.data.include_macro_vxn_features,
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
+        include_fundamentals=cfg.data.include_fundamentals_features,
     )
     if cfg.data.enable_cross_sectional_features and cross_sectional_df is not None:
         df = merge_cross_sectional_features(df, cross_sectional_df)
@@ -108,6 +109,7 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
         include_global_stacking=False,  # pas de stacking récursif
+        include_fundamentals=cfg.data.include_fundamentals_features,
     )
 
 
