@@ -1064,7 +1064,7 @@ def compute_features(
         affected_column_indexes = np.where(non_finite_mask)[1].tolist()
         affected_columns = sorted({str(active_features[int(column_index)]) for column_index in affected_column_indexes})
         affected_rows = int(non_finite_mask.any(axis=1).sum())
-        LOGGER.warning(
+        LOGGER.debug(
             "compute_features dropping non-finite rows=%d columns=%s",
             affected_rows,
             ",".join(affected_columns),

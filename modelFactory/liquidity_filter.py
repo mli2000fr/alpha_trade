@@ -23,14 +23,13 @@ _LIQUIDITY_QUERY = """
 WITH symbol_bars AS (
     SELECT
         symbol,
-        AVG(volume) FILTER (WHERE date >= :lookback_start) AS avg_volume_20d,
-        AVG(close * volume) FILTER (WHERE date >= :lookback_start) AS avg_dollar_volume_20d,
-        AVG(CASE WHEN low > 0 THEN (high - low) / low * 100 ELSE NULL END)
-            FILTER (WHERE date >= :lookback_start) AS avg_spread_pct,
-        MAX(close * volume) FILTER (WHERE date >= :lookback_start) AS max_dollar_volume,
-        COUNT(*) FILTER (WHERE date >= :lookback_start) AS nb_days
+        AVG(CASE WHEN date >= :lookback_start THEN volume ELSE NULL END) AS avg_volume_20d,
+        AVG(CASE WHEN date >= :lookback_start THEN close * volume ELSE NULL END) AS avg_dollar_volume_20d,
+        AVG(CASE WHEN date >= :lookback_start AND low > 0 THEN (high - low) / low * 100 ELSE NULL END) AS avg_spread_pct,
+        MAX(CASE WHEN date >= :lookback_start THEN close * volume ELSE NULL END) AS max_dollar_volume,
+        COUNT(CASE WHEN date >= :lookback_start THEN 1 ELSE NULL END) AS nb_days
     FROM stock_bars_daily
-    WHERE symbol = ANY(:symbols)
+    WHERE symbol IN :symbols_placeholder
       AND date <= :end_date
     GROUP BY symbol
 )
@@ -52,7 +51,7 @@ WHERE avg_volume_20d < :min_volume
    OR avg_dollar_volume_20d < :min_dollar_volume
    OR avg_spread_pct > :max_spread
    OR nb_days < :min_days
-ORDER BY avg_volume_20d ASC NULLS LAST
+ORDER BY CASE WHEN avg_volume_20d IS NULL THEN 1 ELSE 0 END, avg_volume_20d ASC
 """
 
 
@@ -97,19 +96,25 @@ def filter_symbols_by_liquidity(
 
     lookback_start = (end_date or date.today()) - timedelta(days=60)
 
-    params = {
-        "symbols": symbols,
+    # Construire les placeholders IN dynamiquement (MySQL ne supporte pas ANY(:array))
+    sym_placeholders = ", ".join(f":sym_{i}" for i in range(len(symbols)))
+    query = _LIQUIDITY_QUERY.replace(":symbols_placeholder", f"({sym_placeholders})")
+
+    params: dict[str, Any] = {
+        f"sym_{i}": s for i, s in enumerate(symbols)
+    }
+    params.update({
         "lookback_start": lookback_start,
         "end_date": end_date or date.today(),
         "min_volume": min_avg_volume_20d,
         "min_dollar_volume": min_market_cap / 20,  # proxy: cap ~20j de dollar volume
         "max_spread": max_avg_spread_pct,
         "min_days": min_days,
-    }
+    })
 
     try:
         with engine.connect() as conn:
-            rows = conn.execute(text(_LIQUIDITY_QUERY), params).fetchall()
+            rows = conn.execute(text(query), params).fetchall()
     except Exception as exc:
         LOGGER.warning(
             "liquidity_filter: query failed, skipping filter: %s", exc,

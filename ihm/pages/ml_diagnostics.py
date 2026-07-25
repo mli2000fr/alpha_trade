@@ -6,9 +6,13 @@ import json as _json
 import pandas as pd
 import streamlit as st
 
+import shutil as _shutil
+from pathlib import Path
+
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
 from ihm.services.db import db_available, safe_query, get_engine
+from ihm.services.ml_artifacts import get_model_artifacts_dir
 from modelFactory.report import generate_batch_report
 
 
@@ -646,6 +650,121 @@ def _render_regime_table(batch_id: str) -> None:
     st.caption(f"Classification basée sur la médiane VIX = {median_vix:.1f} | SPY < 0 & VIX > médiane → bear_high_vol | SPY > 0 & VIX ≤ médiane → bull")
 
 
+def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> None:
+    """Affiche un bouton de suppression compact avec confirmation inline.
+
+    Design : bouton simple → au clic, le bouton est remplacé par une ligne
+    « ⚠️ Confirmer ?  [Oui] [Non] » sans bloc d'erreur volumineux.
+    """
+    from sqlalchemy import text as _text
+
+    engine = get_engine()
+    if engine is None:
+        return
+
+    # Vérifier le statut du batch (une seule fois)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                _text(
+                    "SELECT status FROM alpha_trade.model_training_batch "
+                    "WHERE batch_id = :bid LIMIT 1"
+                ),
+                {"bid": selected_batch},
+            ).fetchone()
+        batch_status = str(row[0]).strip().lower() if row else None
+    except Exception:
+        batch_status = None
+
+    if batch_status == "completed":
+        st.caption("✅ Batch complété — suppression impossible.")
+        return
+
+    confirm_key = f"ml_diag_confirm_delete_batch_{selected_batch}"
+    if confirm_key not in st.session_state:
+        st.session_state[confirm_key] = False
+
+    if not st.session_state[confirm_key]:
+        # ── Étape 1 : simple bouton ──
+        label = "🗑️ Supprimer ce batch"
+        if batch_status is None:
+            label = "🗑️ Supprimer (artefacts uniquement)"
+        st.button(
+            label,
+            key=f"ml_diag_delete_btn_{selected_batch}",
+            on_click=lambda: st.session_state.__setitem__(confirm_key, True),
+        )
+        if batch_status is None:
+            st.caption("Batch absent de la DB — seuls les artefacts disque seront nettoyés.")
+    else:
+        # ── Étape 2 : confirmation compacte (1 ligne) ──
+        _, c_yes, c_no = st.columns([2, 1, 1])
+        with c_yes:
+            confirmed = st.button(
+                "✅ Oui, supprimer",
+                key=f"ml_diag_confirm_btn_{selected_batch}",
+                type="primary",
+                use_container_width=True,
+            )
+        with c_no:
+            cancelled = st.button(
+                "❌ Annuler",
+                key=f"ml_diag_cancel_btn_{selected_batch}",
+                use_container_width=True,
+            )
+            if cancelled:
+                st.session_state[confirm_key] = False
+                st.rerun()
+
+        if confirmed:
+            errors: list[str] = []
+            # Tables avec batch_id direct
+            tables_direct = [
+                "model_batch_diagnostics",
+                "model_training_run",
+                "model_training_batch",
+            ]
+            # Tables sans batch_id → DELETE via JOIN sur run_id
+            tables_via_run = [
+                "model_metrics",
+                "model_metrics_full",
+                "model_governance",
+            ]
+            try:
+                with engine.begin() as conn:
+                    for table in tables_direct:
+                        conn.execute(
+                            _text(f"DELETE FROM alpha_trade.{table} WHERE batch_id = :bid"),
+                            {"bid": selected_batch},
+                        )
+                    for table in tables_via_run:
+                        conn.execute(
+                            _text(
+                                f"DELETE FROM alpha_trade.{table} "
+                                f"WHERE run_id IN (SELECT run_id FROM alpha_trade.model_training_run WHERE batch_id = :bid)"
+                            ),
+                            {"bid": selected_batch},
+                        )
+                total = len(tables_direct) + len(tables_via_run)
+                st.success(f"✅ {total} tables nettoyées en base")
+            except Exception as exc:
+                errors.append(f"DB: {exc}")
+
+            if artifacts_dir.exists():
+                try:
+                    _shutil.rmtree(artifacts_dir)
+                    st.success(f"✅ Répertoire supprimé")
+                except Exception as exc:
+                    errors.append(f"Disque: {exc}")
+
+            if errors:
+                st.error("Erreurs : " + "; ".join(errors))
+            else:
+                st.success(f"🗑️ Batch `{selected_batch}` entièrement supprimé.")
+                st.session_state.pop(confirm_key, None)
+                st.rerun()
+
+
 def _render_batch_detail(batch: pd.Series) -> None:
     """Affiche le détail complet d'un batch."""
     batch_id = str(batch["batch_id"])
@@ -908,6 +1027,11 @@ def _render_batch_detail(batch: pd.Series) -> None:
     if selected_symbol:
         st.divider()
         _render_symbol_detail(str(batch["batch_id"]), selected_symbol)
+
+    # ── Suppression batch (tout en bas du détail) ──
+    st.divider()
+    artifacts_dir = get_model_artifacts_dir() / batch_id
+    _render_delete_batch_button(batch_id, artifacts_dir)
 
 
 # ---------------------------------------------------------------------------
