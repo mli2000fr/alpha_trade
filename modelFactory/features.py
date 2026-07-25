@@ -82,6 +82,40 @@ REGIME_INTERACTION_FEATURES: list[str] = [
     "sma50_distance_x_risk_off",
 ]
 
+# ── Sprint 2026-07-25 : Features multi-horizons, interactions techniques, z-score ──
+
+MULTI_HORIZON_FEATURES: list[str] = [
+    "momentum_5",
+    "momentum_120",
+    "momentum_250",
+    "rolling_volatility_5",
+    "rolling_volatility_10",
+    "rolling_volatility_120",
+    "sma10_distance",
+    "sma250_distance",
+    "rsi_5",
+    "rsi_21",
+]
+
+INTERACTION_FEATURES: list[str] = [
+    "momentum_20_div_vol_20",
+    "momentum_60_div_vol_60",
+    "momentum_5_minus_momentum_20",
+    "momentum_20_minus_momentum_60",
+    "volume_ratio_5_div_volume_ratio_20",
+    "rsi_14_times_volume_ratio_20",
+    "rsi_14_div_volatility_20",
+    "sma20_minus_sma50",
+    "sma50_minus_sma200",
+    "ema20_minus_sma20",
+    "intraday_range_div_atr_14",
+    "range_position_20_times_vol_ratio_20_60",
+    "daily_return_times_volume_ratio_20",
+    "log_return_div_intraday_range",
+    "relative_strength_20_times_market_trend",
+    "relative_strength_60_div_market_volatility",
+]
+
 # Features macro contextuelles (depuis stock_macro_indicators_daily)
 MACRO_FEATURE_COLUMNS: list[str] = [
     "vix_close",
@@ -193,10 +227,8 @@ def get_feature_columns(
     cross-sectionnels ET les features sectorielles dynamiques (momentum,
     volatilité, alpha intra-secteur).
 
-    ``include_global_stacking`` (Approche 2) ajoute les 3 probas ternaires
-    du Global Model (``global_pred_short``, ``global_pred_flat``, ``global_pred_long``)
-    comme features supplémentaires. Nécessite ``include_cross_sectional=True``
-    (les colonnes sont mergées via le cache cross-sectional).
+    ``include_global_stacking`` (Approche 2) ajoute ``global_rank``
+    (rang percentil du Global Ranking Model) comme feature.
     """
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
@@ -235,6 +267,8 @@ def get_feature_columns(
     # Interaction régime × technique — ajoutées après les features expert
     if feature_set == "expert":
         cols.extend(REGIME_INTERACTION_FEATURES)
+        cols.extend(MULTI_HORIZON_FEATURES)
+        cols.extend(INTERACTION_FEATURES)
     return cols
 
 
@@ -727,6 +761,20 @@ def compute_features(
         df["vol_ratio_20_60"] = df["rolling_volatility_20"] / df["rolling_volatility_60"].clip(lower=1e-8)
         df["range_position_20"] = _range_position(close, 20)
 
+        # ── Multi-horizon features (Sprint 2026-07-25) ──
+        df["momentum_5"] = close / close.shift(5) - 1.0
+        df["momentum_120"] = close / close.shift(120) - 1.0
+        df["momentum_250"] = close / close.shift(250) - 1.0
+        df["rolling_volatility_5"] = df["daily_return"].rolling(5).std()
+        df["rolling_volatility_10"] = df["daily_return"].rolling(10).std()
+        df["rolling_volatility_120"] = df["daily_return"].rolling(120).std()
+        sma10 = close.rolling(10).mean()
+        sma250 = close.rolling(250).mean()
+        df["sma10_distance"] = (close - sma10) / sma10.clip(lower=1e-8)
+        df["sma250_distance"] = (close - sma250) / sma250.clip(lower=1e-8)
+        df["rsi_5"] = _rsi(close, 5)
+        df["rsi_21"] = _rsi(close, 21)
+
         if _has_benchmark:
             bench_prices = _build_adjusted_price_frame(benchmark_df.copy().sort_values("date").reset_index(drop=True))
             bench = pd.DataFrame(
@@ -875,6 +923,39 @@ def compute_features(
         # Pas de benchmark → remplir avec 0.0 pour que le contrat de features reste stable
         for col in REGIME_INTERACTION_FEATURES:
             df[col] = 0.0
+
+    # ── Interaction features (Sprint 2026-07-25) ──
+    if feature_set == "expert":
+        _vol_20 = df["rolling_volatility_20"].clip(lower=1e-8)
+        _vol_60 = df["rolling_volatility_60"].clip(lower=1e-8)
+        _atr = df["atr_14_norm"].clip(lower=1e-8)
+        _range = df["intraday_range"].clip(lower=1e-8)
+        _vol_ratio_5 = volume.rolling(5).mean().clip(lower=1.0)
+        _vol_ratio_5 = volume / _vol_ratio_5
+        _vol_ratio_20_s = df["volume_ratio_20"].clip(lower=1e-3)
+        _mkt_trend = df.get("market_trend_strength_50", pd.Series(0.0, index=df.index))
+        _mkt_vol20 = df.get("market_volatility_20", pd.Series(1.0, index=df.index)).clip(lower=1e-8)
+
+        df["momentum_20_div_vol_20"] = df["momentum_20"] / _vol_20
+        df["momentum_60_div_vol_60"] = df["momentum_60"] / _vol_60
+        df["momentum_5_minus_momentum_20"] = df["momentum_5"] - df["momentum_20"]
+        df["momentum_20_minus_momentum_60"] = df["momentum_20"] - df["momentum_60"]
+        df["volume_ratio_5_div_volume_ratio_20"] = _vol_ratio_5 / _vol_ratio_20_s
+        df["rsi_14_times_volume_ratio_20"] = df["rsi_14"] * _vol_ratio_20_s
+        df["rsi_14_div_volatility_20"] = df["rsi_14"] / _vol_20
+        df["sma20_minus_sma50"] = df["sma20_distance"] - df["sma50_distance"]
+        df["sma50_minus_sma200"] = df["sma50_distance"] - df["sma200_distance"]
+        df["ema20_minus_sma20"] = df["ema20_distance"] - df["sma20_distance"]
+        df["intraday_range_div_atr_14"] = _range / _atr
+        df["range_position_20_times_vol_ratio_20_60"] = df["range_position_20"] * df["vol_ratio_20_60"]
+        df["daily_return_times_volume_ratio_20"] = df["daily_return"] * _vol_ratio_20_s
+        df["log_return_div_intraday_range"] = df["log_return"] / _range
+        df["relative_strength_20_times_market_trend"] = df["relative_strength_20"] * _mkt_trend
+        df["relative_strength_60_div_market_volatility"] = df["relative_strength_60"] / _mkt_vol20
+
+        for _col in INTERACTION_FEATURES:
+            if _col in df.columns:
+                df[_col] = df[_col].replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     # Determine active feature columns
     active_features = get_feature_columns(

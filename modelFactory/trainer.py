@@ -939,10 +939,10 @@ def _run_walk_forward_validation(
         include_macro_move=cfg.data.include_macro_move_features,
         include_global_stacking=cfg.global_model.stacking_enabled,
     )
-    _has_global_pred = "global_pred_long" in feature_cols
+    _has_global_rank = "global_rank" in feature_cols
     LOGGER.info(
         "walk_forward start symbol=%s splits=%d prepared_rows=%d max_epochs=%d accelerator=%s "
-        "feature_cols=%d stacking=%s global_pred=%s",
+        "feature_cols=%d stacking=%s global_rank=%s",
         symbol,
         len(splits),
         len(prepared_df),
@@ -950,7 +950,7 @@ def _run_walk_forward_validation(
         cfg.accelerator,
         len(feature_cols),
         cfg.global_model.stacking_enabled,
-        _has_global_pred,
+        _has_global_rank,
     )
     fold_metrics: list[dict[str, Any]] = []
     walk_forward_seed = derive_seed(cfg.reproducibility.seed, "walk_forward", symbol)

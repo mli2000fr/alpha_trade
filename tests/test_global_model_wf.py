@@ -87,23 +87,17 @@ class TestGlobalModelConfig:
 # ─────────────────────────────────────────────────────────────────────
 
 class TestGlobalPredFeatureColumns:
-    def test_ternary_columns_present(self) -> None:
-        """Approche 2 ternaire : 3 probas (short, flat, long)."""
-        assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 3
-        assert "global_pred_short" in GLOBAL_PRED_FEATURE_COLUMNS
-        assert "global_pred_flat" in GLOBAL_PRED_FEATURE_COLUMNS
-        assert "global_pred_long" in GLOBAL_PRED_FEATURE_COLUMNS
+    def test_single_column_global_rank(self) -> None:
+        assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 1
+        assert "global_rank" in GLOBAL_PRED_FEATURE_COLUMNS
 
     def test_is_list_of_strings(self) -> None:
         for col in GLOBAL_PRED_FEATURE_COLUMNS:
             assert isinstance(col, str)
             assert len(col) > 0
 
-    def test_order_short_flat_long(self) -> None:
-        """L'ordre doit être [short, flat, long] pour correspondre aux colonnes 0,1,2 de predict_proba."""
-        assert GLOBAL_PRED_FEATURE_COLUMNS[0] == "global_pred_short"
-        assert GLOBAL_PRED_FEATURE_COLUMNS[1] == "global_pred_flat"
-        assert GLOBAL_PRED_FEATURE_COLUMNS[2] == "global_pred_long"
+    def test_order(self) -> None:
+        assert GLOBAL_PRED_FEATURE_COLUMNS[0] == "global_rank"
 
 
 # ─────────────────────────────────────────────────────────────────────

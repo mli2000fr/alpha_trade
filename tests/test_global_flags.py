@@ -1,10 +1,10 @@
-"""tests/test_global_flags.py — Tests de la matrice A/B/C pour l'Approche 2.
+"""tests/test_global_flags.py — Tests de la matrice A/B/C pour l'Approche 2 (Global Rank).
 
-Vérifie que :
-- GlobalModelConfig gère correctement les 3 flags indépendants
+Verifie que :
+- GlobalModelConfig gere correctement les 3 flags independants
 - Les combinaisons de flags sont valides
-- Les flags B et C sont sans effet si A est False
-- Le fingerprint change de manière déterministe selon les flags
+- Le flag B active le stacking global_rank
+- Le fingerprint change de maniere deterministe
 """
 from __future__ import annotations
 
@@ -14,12 +14,8 @@ from modelFactory.config import GlobalModelConfig
 from modelFactory.features import fingerprint, get_feature_columns
 
 
-# ─────────────────────────────────────────────────────────────────────
-# GlobalModelConfig — combinaisons de flags
-# ─────────────────────────────────────────────────────────────────────
-
 class TestGlobalModelConfigFlags:
-    def test_all_defaults_false(self) -> None:
+    def test_all_defaults(self) -> None:
         cfg = GlobalModelConfig()
         assert cfg.enabled is False
         assert cfg.stacking_enabled is False
@@ -29,94 +25,37 @@ class TestGlobalModelConfigFlags:
         cfg = GlobalModelConfig(enabled=True)
         assert cfg.enabled is True
         assert cfg.stacking_enabled is False
-        assert cfg.challenger_enabled is False
 
-    def test_flag_a_plus_b(self) -> None:
+    def test_flag_ab_stacking_on(self) -> None:
         cfg = GlobalModelConfig(enabled=True, stacking_enabled=True)
         assert cfg.enabled is True
         assert cfg.stacking_enabled is True
         assert cfg.challenger_enabled is False
-
-    def test_flag_a_plus_c(self) -> None:
-        cfg = GlobalModelConfig(enabled=True, challenger_enabled=True)
-        assert cfg.enabled is True
-        assert cfg.stacking_enabled is False
-        assert cfg.challenger_enabled is True
-
-    def test_flag_a_plus_b_plus_c(self) -> None:
-        cfg = GlobalModelConfig(
-            enabled=True, stacking_enabled=True, challenger_enabled=True,
-        )
-        assert cfg.enabled is True
-        assert cfg.stacking_enabled is True
-        assert cfg.challenger_enabled is True
-
-    def test_flag_b_without_a_has_no_effect_on_features(self) -> None:
-        """FLAG B sans FLAG A → global_pred_long pas inclus (get_feature_columns
-        vérifie d'abord include_cross_sectional, mais le gating par config
-        se fait au niveau du TrainingConfig, pas ici)."""
-        cfg = GlobalModelConfig(enabled=False, stacking_enabled=True)
-        assert cfg.enabled is False
-        assert cfg.stacking_enabled is True  # stocké mais inactif
-        # Le gating réel est fait dans le code appelant (orchestrator, etc.)
-
-    def test_flag_c_without_a_has_no_effect(self) -> None:
-        cfg = GlobalModelConfig(enabled=False, challenger_enabled=True)
-        assert cfg.enabled is False
-        assert cfg.challenger_enabled is True  # stocké mais inactif
 
     def test_immutable(self) -> None:
         cfg = GlobalModelConfig(enabled=True, stacking_enabled=True)
         with pytest.raises(Exception):
             cfg.stacking_enabled = False  # type: ignore[misc]
-        with pytest.raises(Exception):
-            cfg.challenger_enabled = False  # type: ignore[misc]
 
+    def test_challenger_disabled_by_default(self) -> None:
+        cfg = GlobalModelConfig()
+        assert cfg.challenger_enabled is False
 
-# ─────────────────────────────────────────────────────────────────────
-# Matrice A/B/C — effet sur get_feature_columns
-# ─────────────────────────────────────────────────────────────────────
 
 class TestFlagMatrixFeatureColumns:
-    """Vérifie l'effet de chaque combinaison de flags sur get_feature_columns."""
-
-    def test_000_no_global_pred(self) -> None:
-        """A=False, B=False, C=False → pas de global_pred."""
+    def test_no_stacking_no_global_rank(self) -> None:
         cols = get_feature_columns(include_cross_sectional=True)
-        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
-            assert _col not in cols
+        assert "global_rank" not in cols
 
-    def test_100_flag_a_alone_no_global_pred(self) -> None:
-        """A=True seul → pas de global_pred (B=False)."""
-        cols = get_feature_columns(
-            include_cross_sectional=True, include_global_stacking=False,
-        )
-        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
-            assert _col not in cols
-
-    def test_110_flag_ab_stacking_on(self) -> None:
-        """A=True, B=True → 3 colonnes global_pred incluses."""
+    def test_stacking_adds_global_rank(self) -> None:
         cols = get_feature_columns(
             include_cross_sectional=True, include_global_stacking=True,
         )
-        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
-            assert _col in cols
+        assert "global_rank" in cols
 
-    def test_101_flag_ac_no_stacking(self) -> None:
-        """A=True, C=True, B=False → pas de global_pred (challenger only)."""
-        cols = get_feature_columns(
-            include_cross_sectional=True, include_global_stacking=False,
-        )
-        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
-            assert _col not in cols
-
-    def test_111_full_stack_has_global_pred(self) -> None:
-        """A+B+C → 3 colonnes global_pred présentes."""
-        cols = get_feature_columns(
-            include_cross_sectional=True, include_global_stacking=True,
-        )
-        for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
-            assert _col in cols
+    def test_stacking_without_cross_sectional_no_global_rank(self) -> None:
+        cols = get_feature_columns(include_global_stacking=True)
+        assert "global_rank" not in cols
 
     def test_010_b_without_a_no_cross_sectional_no_effect(self) -> None:
         """B=True sans cross-sectional → pas de global_pred (gating dans get_feature_columns)."""

@@ -168,25 +168,22 @@ def test_get_feature_columns_cross_sectional_includes_sector() -> None:
 # ── Approche 2 — Stacking : include_global_stacking ──
 
 def test_get_feature_columns_global_stacking_adds_column() -> None:
-    """include_global_stacking=True adds global_pred_long to cross-sectional features."""
     cols = features.get_feature_columns(
         include_cross_sectional=True, include_global_stacking=True,
     )
-    assert "global_pred_long" in cols
-    assert "ret_20_rank" in cols  # still present
-    assert "sector_ret_20" in cols  # still present
+    assert "global_rank" in cols
+    assert "ret_20_rank" in cols
+    assert "sector_ret_20" in cols
 
 
 def test_get_feature_columns_global_stacking_requires_cross_sectional() -> None:
-    """include_global_stacking=True sans include_cross_sectional n'ajoute RIEN."""
     cols = features.get_feature_columns(include_global_stacking=True)
-    assert "global_pred_long" not in cols
+    assert "global_rank" not in cols
 
 
 def test_get_feature_columns_global_stacking_default_off() -> None:
-    """Par défaut, global_pred_long n'est PAS inclus."""
     cols = features.get_feature_columns(include_cross_sectional=True)
-    assert "global_pred_long" not in cols
+    assert "global_rank" not in cols
 
 
 def test_fingerprint_differs_with_global_stacking() -> None:

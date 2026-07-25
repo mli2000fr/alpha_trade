@@ -418,23 +418,18 @@ def _train_worker(
                 end_date=history_end_date,
             )
 
-    # ── Approche 2 — Phase 2 (multiprocessing) : charger global_pred depuis disque ──
-    # Le cache cross-sectional complet n'est pas transmis aux workers
-    # (pickling trop lourd). On charge le global_pred_df sauvegardé en
-    # parquet par le processus parent et on le merge localement.
+    # ── Approche 2 — Phase 2 (multiprocessing) : charger global_rank depuis disque ──
     if cfg.global_model.stacking_enabled and cross_sectional_df is not None:
-        _global_pred_path = Path(cfg.artifacts_dir) / "_global_pred_cache.parquet"
-        if _global_pred_path.exists():
-            global_pred_df = pd.read_parquet(_global_pred_path)
-            if not global_pred_df.empty:
+        _global_rank_path = Path(cfg.artifacts_dir) / "_global_rank_cache.parquet"
+        if _global_rank_path.exists():
+            global_rank_df = pd.read_parquet(_global_rank_path)
+            if not global_rank_df.empty:
                 cross_sectional_df = cross_sectional_df.merge(
-                    global_pred_df, on=["symbol", "date"], how="left",
+                    global_rank_df[["symbol", "date", "global_rank"]], on=["symbol", "date"], how="left",
                 )
-                for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
-                    if _col in cross_sectional_df.columns:
-                        cross_sectional_df[_col] = (
-                            cross_sectional_df[_col].fillna(0.5).astype(np.float64)
-                        )
+                cross_sectional_df["global_rank"] = (
+                    cross_sectional_df["global_rank"].fillna(0.5).astype(np.float64)
+                )
 
     return train_symbol(
         symbol,
@@ -630,54 +625,48 @@ def run_training_batch(
             cross_sectional_cache["symbol"].nunique() if not cross_sectional_cache.empty else 0,
         )
 
-    # ── Approche 2 — Phase 1 : Global Model Walk-Forward (FLAG A) ──
+    # ── Approche 2 — Phase 1 : Global Ranking Model Walk-Forward (FLAG A) ──
     global_result_wf: dict[str, Any] | None = None
     _needs_global = cfg.global_model.enabled
     if _needs_global and symbols:
-        update_runtime_status(current_phase="global_model_wf", progress_item="__GLOBAL__")
-        LOGGER.info("run_training_batch global_model_wf start symbols=%d", len(symbols))
-        global_result_wf = train_global_model_wf(
+        update_runtime_status(current_phase="global_ranking_wf", progress_item="__GLOBAL__")
+        LOGGER.info("run_training_batch global_ranking_wf start symbols=%d", len(symbols))
+        from modelFactory.global_ranking import train_global_ranking_wf
+        global_result_wf = train_global_ranking_wf(
             symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
         )
         LOGGER.info(
-            "run_training_batch global_model_wf status=%s symbols_with_wf=%d",
+            "run_training_batch global_ranking_wf status=%s ic_rank_mean=%s",
             global_result_wf.get("status"),
-            global_result_wf.get("walk_forward", {}).get("symbols_with_metrics", 0),
+            global_result_wf.get("ic_rank_mean"),
         )
 
-        # ── Phase 2 : merge global_pred into cross-sectional cache (FLAG B) ──
-        global_pred_df = global_result_wf.get("global_pred_df") if isinstance(global_result_wf, dict) else None
-        if cfg.global_model.stacking_enabled and global_pred_df is not None and not global_pred_df.empty:
+        # ── Phase 2 : merge global_rank into cross-sectional cache (FLAG B) ──
+        global_rank_df = global_result_wf.get("global_rank_df") if isinstance(global_result_wf, dict) else None
+        if cfg.global_model.stacking_enabled and global_rank_df is not None and not global_rank_df.empty:
             if cross_sectional_cache is not None and not cross_sectional_cache.empty:
                 cross_sectional_cache = cross_sectional_cache.merge(
-                    global_pred_df, on=["symbol", "date"], how="left",
+                    global_rank_df[["symbol", "date", "global_rank"]], on=["symbol", "date"], how="left",
                 )
-                for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
-                    if _col in cross_sectional_cache.columns:
-                        cross_sectional_cache[_col] = (
-                            cross_sectional_cache[_col].fillna(0.5).astype(np.float64)
-                        )
+                cross_sectional_cache["global_rank"] = (
+                    cross_sectional_cache["global_rank"].fillna(0.5).astype(np.float64)
+                )
             else:
-                # Pas de cache cross-sectional → créer un cache minimal avec global_pred
-                cross_sectional_cache = global_pred_df.copy()
+                cross_sectional_cache = global_rank_df[["symbol", "date", "global_rank"]].copy()
             LOGGER.info(
-                "run_training_batch stacking enabled: global_pred_long merged into cache rows=%d",
+                "run_training_batch stacking enabled: global_rank merged into cache rows=%d",
                 len(cross_sectional_cache),
             )
-            # ── Persister global_pred_df sur disque pour les workers multiprocessing ──
-            # Le cache cross-sectional complet est trop volumineux pour être picklé
-            # vers les sous-processus. On sauvegarde uniquement global_pred_df
-            # (quelques milliers de lignes) en parquet ; chaque worker le chargera
-            # et le mergera localement.
-            _global_pred_path = Path(cfg.artifacts_dir) / "_global_pred_cache.parquet"
-            _global_pred_path.parent.mkdir(parents=True, exist_ok=True)
-            global_pred_df.to_parquet(_global_pred_path, index=False)
+            # Persister pour les workers multiprocessing
+            _global_rank_path = Path(cfg.artifacts_dir) / "_global_rank_cache.parquet"
+            _global_rank_path.parent.mkdir(parents=True, exist_ok=True)
+            global_rank_df.to_parquet(_global_rank_path, index=False)
             LOGGER.info(
-                "run_training_batch global_pred persisted to %s rows=%d",
-                _global_pred_path, len(global_pred_df),
+                "run_training_batch global_rank persisted to %s rows=%d",
+                _global_rank_path, len(global_rank_df),
             )
         elif cfg.global_model.stacking_enabled:
-            LOGGER.warning("run_training_batch stacking enabled but no global_pred_df produced")
+            LOGGER.warning("run_training_batch stacking enabled but no global_rank_df produced")
 
     if effective_workers == 1:
         for index, sym in enumerate(symbols, start=1):
@@ -755,63 +744,13 @@ def run_training_batch(
     skipped = sum(1 for r in results if r.status == "skipped")
     failed = sum(1 for r in results if r.status == "failed")
 
-    # ── Approche 2 — Phase 3 : Global Model comme challenger (FLAG C) ──
-    if cfg.global_model.enabled and cfg.global_model.challenger_enabled and symbols and global_result_wf:
-        update_runtime_status(current_phase="global_model_challenger_injection", progress_item="__GLOBAL__")
-        LOGGER.info(
-            "run_training_batch injecting global_model as challenger for %d completed symbols",
-            completed,
-        )
-        for result in results:
-            if result.status != "completed":
-                continue
-            _inject_global_model_into_symbol_artifacts(
-                result.symbol, cfg, global_result_wf, engine,
-            )
-            # Ajouter les métriques WF du global pour ce symbole
-            by_symbol = global_result_wf.get("by_symbol", {}) if isinstance(global_result_wf, dict) else {}
-            result.metrics["global_model"] = by_symbol.get(result.symbol, global_result_wf)
-
-    # ── Persister les métriques global_model dans model_metrics ──
+    # ── Log IC Rank du Global Ranking Model ──
     if cfg.global_model.enabled and global_result_wf:
-        _by_symbol = global_result_wf.get("by_symbol", {}) if isinstance(global_result_wf, dict) else {}
-        _persisted_global = 0
-        for _sym, _gm in _by_symbol.items():
-            if _gm.get("status") != "completed":
-                continue
-            _wf = _gm.get("walk_forward") if isinstance(_gm.get("walk_forward"), dict) else {}
-            _wf_mean = _wf.get("mean") if isinstance(_wf, dict) else {}
-            if not _wf_mean:
-                continue
-            try:
-                _global_run_id = f"{batch_id}_global_{_sym}"
-                # Créer un training_run synthétique pour le global model
-                from modelFactory.db_registry import ensure_registry_entry as _ensure_reg, insert_training_run as _insert_tr, insert_metrics as _insert_m
-                _registry_id = 0
-                try:
-                    _registry_id = _ensure_reg(engine, _sym)
-                except Exception:
-                    pass
-                _insert_tr(
-                    engine, _global_run_id, _registry_id, _sym,
-                    status="completed", batch_id=batch_id,
-                )
-                # Insérer les métriques WF (mean)
-                _insert_m(engine, _global_run_id, _sym, "wf", _wf_mean, model_name="global_model")
-                # Insérer aussi val/test si disponibles
-                for _split in ("val", "test"):
-                    _split_metrics = _gm.get(_split)
-                    if isinstance(_split_metrics, dict) and _split_metrics:
-                        _insert_m(engine, _global_run_id, _sym, _split, _split_metrics, model_name="global_model")
-                _persisted_global += 1
-            except Exception as _exc:
-                LOGGER.warning(
-                    "global_model metrics persist failed symbol=%s: %s", _sym, _exc,
-                )
-        if _persisted_global > 0:
+        _ic = global_result_wf.get("ic_rank_mean")
+        if _ic is not None:
             LOGGER.info(
-                "global_model metrics persisted for %d symbols batch_id=%s",
-                _persisted_global, batch_id,
+                "run_training_batch global_ranking ic_rank_mean=%.4f ic_rank_std=%.4f",
+                _ic, global_result_wf.get("ic_rank_std", float("nan")),
             )
 
     update_runtime_status(

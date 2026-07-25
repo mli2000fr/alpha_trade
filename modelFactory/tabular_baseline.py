@@ -643,7 +643,7 @@ def run_tabular_walk_forward(
 	if "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
 		symbol_tag = str(prepared_df["symbol"].iloc[0])
 
-	_has_global_pred = "global_pred_long" in feature_cols
+	_has_global_rank = "global_rank" in feature_cols
 	LOGGER.info(
 		"tabular_wf start symbol=%s model=%s splits=%d prepared_rows=%d "
 		"feature_cols=%d stacking=%s global_pred=%s",

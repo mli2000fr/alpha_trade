@@ -30,6 +30,7 @@ F1_BY_SPLIT_QUERY = """
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
+      AND mm.model_name != 'global_model'
     GROUP BY mm.model_name, mm.split_name
     ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
 """
@@ -50,6 +51,7 @@ TRUE_PRED_AGG_QUERY = """
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
+      AND mm.model_name != 'global_model'
     GROUP BY mm.model_name, mm.split_name
     ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
 """

@@ -254,15 +254,11 @@ def test_compute_sector_features_sector_symbol_count() -> None:
 # ─────────────────────────────────────────────────────────────────────
 
 def test_global_pred_feature_columns_defined() -> None:
-    """GLOBAL_PRED_FEATURE_COLUMNS must contain the expected ternary columns."""
-    assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 3
-    assert "global_pred_short" in GLOBAL_PRED_FEATURE_COLUMNS
-    assert "global_pred_flat" in GLOBAL_PRED_FEATURE_COLUMNS
-    assert "global_pred_long" in GLOBAL_PRED_FEATURE_COLUMNS
+    assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 1
+    assert GLOBAL_PRED_FEATURE_COLUMNS[0] == "global_rank"
 
 
-def test_merge_cross_sectional_features_handles_global_pred() -> None:
-    """merge_cross_sectional_features should handle global_pred_long if present in cache."""
+def test_merge_cross_sectional_features_handles_global_rank() -> None:
     symbol_df = pd.DataFrame({
         "symbol": ["AAPL", "MSFT"],
         "date": [pd.Timestamp("2022-06-15"), pd.Timestamp("2022-06-15")],
@@ -272,17 +268,15 @@ def test_merge_cross_sectional_features_handles_global_pred() -> None:
         "symbol": ["AAPL", "MSFT"],
         "date": [pd.Timestamp("2022-06-15"), pd.Timestamp("2022-06-15")],
         "ret_20_rank": [0.65, 0.45],
-        "global_pred_long": [0.72, 0.48],
+        "global_rank": [0.72, 0.48],
     })
     merged = merge_cross_sectional_features(symbol_df, cs_df)
+    assert "global_rank" in merged.columns
+    assert merged.loc[merged["symbol"] == "AAPL", "global_rank"].iloc[0] == 0.72
+    assert merged.loc[merged["symbol"] == "MSFT", "global_rank"].iloc[0] == 0.48
 
-    assert "global_pred_long" in merged.columns
-    assert merged.loc[merged["symbol"] == "AAPL", "global_pred_long"].iloc[0] == 0.72
-    assert merged.loc[merged["symbol"] == "MSFT", "global_pred_long"].iloc[0] == 0.48
 
-
-def test_merge_cross_sectional_features_fills_missing_global_pred() -> None:
-    """When global_pred_long is NOT in cache, it should default to 0.5 (neutral)."""
+def test_merge_cross_sectional_features_fills_missing_global_rank() -> None:
     symbol_df = pd.DataFrame({
         "symbol": ["AAPL"],
         "date": [pd.Timestamp("2022-01-01")],
@@ -295,25 +289,20 @@ def test_merge_cross_sectional_features_fills_missing_global_pred() -> None:
         "ret_20_rank": [0.55],
     })
     merged = merge_cross_sectional_features(symbol_df, cs_df)
+    assert "global_rank" in merged.columns
+    assert merged["global_rank"].iloc[0] == 0.5
 
-    assert "global_pred_long" in merged.columns
-    assert merged["global_pred_long"].iloc[0] == 0.5
 
-
-def test_merge_cross_sectional_features_global_pred_no_cache() -> None:
-    """When cache is None, global_pred_long defaults to 0.5 like other rank columns."""
+def test_merge_cross_sectional_features_global_rank_no_cache() -> None:
+    """When cache is None, global_rank defaults to 0.5."""
     symbol_df = pd.DataFrame({
         "symbol": ["AAPL"],
         "date": [pd.Timestamp("2022-01-01")],
         "daily_return": [0.01],
     })
     merged = merge_cross_sectional_features(symbol_df, None)
-
-    assert "global_pred_long" in merged.columns
-    assert merged["global_pred_long"].iloc[0] == 0.5
-
-
-# ─────────────────────────────────────────────────────────────────────
+    assert "global_rank" in merged.columns
+    assert merged["global_rank"].iloc[0] == 0.5
 # Régression : naming des interactions régime × technique
 # ─────────────────────────────────────────────────────────────────────
 
