@@ -367,7 +367,7 @@ def merge_fundamentals(
         fund_raw = fundamental_df.copy()
 
     if fund_raw.empty:
-        LOGGER.info("merge_fundamentals: no fundamentals data, filling defaults")
+        LOGGER.warning("merge_fundamentals: no fundamentals data, filling defaults")
         for col, default in FUNDAMENTAL_DEFAULTS.items():
             bars_df[col] = default
         return bars_df

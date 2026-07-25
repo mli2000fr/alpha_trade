@@ -332,6 +332,8 @@ def train_global_ranking_wf(
 
     global_rank_parts: list[pd.DataFrame] = []
     ic_ranks: list[float] = []
+    _last_model: Any = None
+    _last_model_name: str = ""
 
     for split in wf_splits:
         split_seed = derive_seed(resolved_seed, split.split_index)
@@ -362,6 +364,10 @@ def train_global_ranking_wf(
         X_train = train_df[feature_columns].to_numpy(dtype=np.float64)
         y_train = train_df["future_return"].to_numpy(dtype=np.float64)
         model.fit(X_train, y_train, sample_weight=_sample_weights)
+
+        # ── Sauvegarder le modèle (dernier split = plus récent) ──
+        _last_model = model
+        _last_model_name = backend_model_name
 
         # Predict sur val
         X_val = val_df[feature_columns].to_numpy(dtype=np.float64)
@@ -403,6 +409,28 @@ def train_global_ranking_wf(
         ic_std if ic_std is not None else float("nan"),
     )
 
+    import json as _json_
+
+    # ── Persister le dernier modèle entraîné (pour inférence) ──
+    _model_path: str | None = None
+    if _last_model is not None:
+        _model_dir = Path(cfg.artifacts_dir)
+        _model_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if _last_model_name == "lightgbm":
+                _model_path = str(_model_dir / "_global_ranking_model.txt")
+                _last_model.booster_.save_model(_model_path)
+            elif _last_model_name == "catboost":
+                _model_path = str(_model_dir / "_global_ranking_model.pkl")
+                _last_model.save_model(_model_path)
+            _model_dir.joinpath("_global_ranking_features.json").write_text(
+                _json_.dumps({"feature_columns": feature_columns, "model_name": _last_model_name}),
+                encoding="utf-8",
+            )
+            LOGGER.info("train_global_ranking_wf model saved to %s", _model_path)
+        except Exception as _exc:
+            LOGGER.warning("train_global_ranking_wf failed to save model: %s", _exc)
+
     return {
         "status": "completed",
         "model_name": "global_ranking",
@@ -414,3 +442,138 @@ def train_global_ranking_wf(
         "n_features": len(feature_columns),
         "horizon": horizon,
     }
+
+
+# ────────────────────────────────────────────────────────────────────
+# Inférence (appelé depuis predictor.py en étape 10)
+# ────────────────────────────────────────────────────────────────────
+
+def predict_global_rank(
+    universe_df: pd.DataFrame,
+    artifacts_dir: Path,
+    *,
+    benchmark_df: pd.DataFrame | None = None,
+) -> pd.DataFrame | None:
+    """Prédit le ``global_rank`` pour l'univers du jour.
+
+    Charge le modèle sauvegardé par ``train_global_ranking_wf()`` et
+    l'applique sur l'univers courant. Retourne un DataFrame avec les
+    colonnes [symbol, date, global_rank], ou None si le modèle est
+    indisponible.
+
+    Args:
+        universe_df: DataFrame universe avec barres OHLCV (doit avoir
+            les colonnes 'symbol', 'date', 'open', 'high', 'low',
+            'close', 'volume').
+        artifacts_dir: Répertoire contenant ``_global_ranking_model.*``
+            et ``_global_ranking_features.json``.
+        benchmark_df: Barres du benchmark (SPY) pour les features expert.
+
+    Returns:
+        DataFrame [symbol, date, global_rank] ou None.
+    """
+    _features_path = artifacts_dir / "_global_ranking_features.json"
+    if not _features_path.exists():
+        LOGGER.warning("predict_global_rank: features metadata not found at %s", _features_path)
+        return None
+
+    try:
+        _meta = json.loads(_features_path.read_text(encoding="utf-8"))
+        _feature_columns: list[str] = _meta["feature_columns"]
+        _model_name: str = _meta.get("model_name", "lightgbm")
+    except Exception as exc:
+        LOGGER.warning("predict_global_rank: failed to load features metadata: %s", exc)
+        return None
+
+    # ── Charger le modèle ──
+    if _model_name == "lightgbm":
+        _model_path = artifacts_dir / "_global_ranking_model.txt"
+        if not _model_path.exists():
+            LOGGER.warning("predict_global_rank: model not found at %s", _model_path)
+            return None
+        try:
+            lgb = _import_lightgbm()
+            model = lgb.Booster(model_file=str(_model_path))
+        except Exception as exc:
+            LOGGER.warning("predict_global_rank: failed to load LightGBM model: %s", exc)
+            return None
+    elif _model_name == "catboost":
+        _model_path = artifacts_dir / "_global_ranking_model.pkl"
+        if not _model_path.exists():
+            LOGGER.warning("predict_global_rank: model not found at %s", _model_path)
+            return None
+        try:
+            CatBoost = _import_catboost()
+            model = CatBoost.CatBoostRegressor()
+            model.load_model(str(_model_path))
+        except Exception as exc:
+            LOGGER.warning("predict_global_rank: failed to load CatBoost model: %s", exc)
+            return None
+    else:
+        LOGGER.warning("predict_global_rank: unknown model_name=%s", _model_name)
+        return None
+
+    # ── Préparer les features ──
+    from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS
+    # Filtrer pour ne garder que les colonnes cross-sectional + common
+    # qui sont disponibles (le modèle global n'utilise que celles-ci)
+
+    # Construire les features pour chaque symbole
+    frames: list[pd.DataFrame] = []
+    symbols = sorted(universe_df["symbol"].unique())
+    for sym in symbols:
+        try:
+            sym_bars = universe_df[universe_df["symbol"] == sym].copy()
+            if sym_bars.empty or len(sym_bars) < 20:
+                continue
+            sym_bars = sym_bars.sort_values("date")
+            # Features OHLCV de base
+            from modelFactory.features import compute_features
+            sym_df = compute_features(
+                sym_bars,
+                benchmark_df=benchmark_df,
+                feature_set="expert",
+            )
+            # Merge cross-sectional
+            from modelFactory.cross_sectional import merge_cross_sectional_features
+            cs_df = universe_df[["symbol", "date"]].copy()
+            # On ne peut pas construire de cross-sectional features ici
+            # sans l'univers complet — on les skip pour l'inférence
+            # et on garde les features locales + macro
+
+            # Ne garder que les colonnes présentes
+            available = [c for c in _feature_columns if c in sym_df.columns]
+            if not available:
+                continue
+            last_row = sym_df.iloc[[-1]].copy()
+            frames.append(last_row[["symbol", "date"] + available])
+        except Exception:
+            continue
+
+    if not frames:
+        LOGGER.warning("predict_global_rank: no valid frames built")
+        return None
+
+    pred_df = pd.concat(frames, ignore_index=True)
+
+    # ── Prédire ──
+    X = pred_df[[c for c in _feature_columns if c in pred_df.columns]].to_numpy(dtype=np.float64)
+    if X.shape[1] == 0:
+        LOGGER.warning("predict_global_rank: no matching feature columns")
+        return None
+
+    try:
+        pred_df["predicted_return"] = model.predict(X).astype(np.float64)
+    except Exception as exc:
+        LOGGER.warning("predict_global_rank: prediction failed: %s", exc)
+        return None
+
+    # ── Calculer le rang percentile par date ──
+    result = _compute_per_date_rank(pred_df)
+    LOGGER.info(
+        "predict_global_rank: predicted %d symbols, global_rank range [%.3f, %.3f]",
+        len(result),
+        result["global_rank"].min() if not result.empty else 0,
+        result["global_rank"].max() if not result.empty else 0,
+    )
+    return result[["symbol", "date", "global_rank"]]

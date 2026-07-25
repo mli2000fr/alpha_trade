@@ -448,6 +448,18 @@ batch_diagnostics:
     exclude_short_max_threshold: 0.30  # F1_short en dessous → exclure
 
 
+# ---------------------------------------------------------------------------
+# Global Ranking Model — inférence du rang percentile pour le stacking.
+# Utilisé par l'étape 10 (ML Predict) pour injecter `global_rank` comme feature
+# dans les prédictions per-symbol (live et backtest historique).
+# ---------------------------------------------------------------------------
+global_ranking:
+  # Nombre de jours d'historique à charger pour le calcul des features
+  # lors de la prédiction du global_rank. 365 = 1 an, suffisant pour
+  # momentum_250. Réduire si les barres sont limitées.
+  prediction_lookback_days: 365
+
+
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
 conviction:
   # Poids de fusion sentiment (somme = 1.0). Defauts historiques : 0.75 / 0.15 / 0.10.

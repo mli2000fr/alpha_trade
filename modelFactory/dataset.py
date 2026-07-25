@@ -643,6 +643,7 @@ def prepare_symbol_frame(
         include_macro_vxn=data_cfg.include_macro_vxn_features,
         include_macro_vix3m=data_cfg.include_macro_vix3m_features,
         include_macro_move=data_cfg.include_macro_move_features,
+        include_fundamentals=data_cfg.include_fundamentals_features,
         include_factors=data_cfg.include_factors_features,
         fundamental_df=fundamental_df,
     )

@@ -48,6 +48,9 @@ _benchmark_frame_cache_lock = Lock()
 _CROSS_SECTIONAL_FRAME_CACHE_MAX_ENTRIES = 8
 _cross_sectional_frame_cache: OrderedDict[tuple[object, ...], pd.DataFrame] = OrderedDict()
 _cross_sectional_frame_cache_lock = Lock()
+# Cache global_rank par cutoff_date (pour éviter de recalculer à chaque symbole)
+_global_rank_prediction_cache: dict[str, pd.DataFrame | None] = {}
+_global_rank_fallback_symbols: list[str] = []  # symboles ayant utilisé le fallback 0.5
 
 
 class ArtifactIntegrityError(RuntimeError):
@@ -849,6 +852,7 @@ def _prepare_prediction_frame(
     data_cfg: DataConfig,
     engine: "Engine",  # type: ignore[name-defined]
     cutoff_date: date | None,
+    include_global_stacking: bool = False,
 ) -> pd.DataFrame:
     """Prépare le DataFrame de features pour un symbole.
 
@@ -944,8 +948,28 @@ def _prepare_prediction_frame(
             include_macro_vxn=data_cfg.include_macro_vxn_features,
             include_macro_vix3m=data_cfg.include_macro_vix3m_features,
             include_macro_move=data_cfg.include_macro_move_features,
-            include_global_stacking=False,
+            include_global_stacking=include_global_stacking,
         )
+        # ── Fallback global_rank : si attendu mais absent → chercher dans le cache ──
+        if include_global_stacking and "global_rank" not in df.columns:
+            _cache_key = str(cutoff_date) if cutoff_date else "__today__"
+            _cached = _global_rank_prediction_cache.get(_cache_key)
+            if _cached is not None and not _cached.empty:
+                # Merger le global_rank depuis le cache
+                df = df.merge(
+                    _cached[["symbol", "date", "global_rank"]],
+                    on=["symbol", "date"], how="left",
+                )
+                if "global_rank" not in df.columns or df["global_rank"].isna().all():
+                    df["global_rank"] = 0.5
+                    _global_rank_fallback_symbols.append(symbol)
+            else:
+                LOGGER.warning(
+                    "predict_symbol global_rank missing for %s, filling with 0.5 (neutral)",
+                    symbol,
+                )
+                df["global_rank"] = 0.5
+                _global_rank_fallback_symbols.append(symbol)
         df = df.dropna(subset=active_features).reset_index(drop=True)
     return df
 
@@ -1001,8 +1025,14 @@ def _predict_with_tabular_model(
         _record_artifact_issue(symbol, reason=reason, path=model_path)
         raise ArtifactIntegrityError(reason, path=model_path)
     data_cfg = _load_data_cfg_from_payload(cfg_data)
+    _stacking = bool(
+        cfg_data.get("global_model", {}).get("stacking_enabled", False)
+    )
     cutoff_date = as_of_date or prediction_date
-    df = _prepare_prediction_frame(symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date)
+    df = _prepare_prediction_frame(
+        symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date,
+        include_global_stacking=_stacking,
+    )
     resolved_feature_columns = list(feature_columns or cfg_data.get("feature_columns") or get_feature_columns(
         data_cfg.include_sentiment_features,
         feature_set=data_cfg.feature_set,
@@ -1013,7 +1043,7 @@ def _predict_with_tabular_model(
         include_macro_vxn=data_cfg.include_macro_vxn_features,
         include_macro_vix3m=data_cfg.include_macro_vix3m_features,
         include_macro_move=data_cfg.include_macro_move_features,
-        include_global_stacking=False,
+        include_global_stacking=_stacking,
     ))
     if df.empty or len(df) == 0:
         return None
@@ -1439,7 +1469,13 @@ def predict_symbol(
     calibrator = _load_optional_calibrator(calibrator_path, symbol=symbol, selected_model=selected_architecture)
 
     cutoff_date = as_of_date or prediction_date
-    df = _prepare_prediction_frame(symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date)
+    _stacking = bool(
+        cfg_data.get("global_model", {}).get("stacking_enabled", False)
+    )
+    df = _prepare_prediction_frame(
+        symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date,
+        include_global_stacking=_stacking,
+    )
     if len(df) < data_cfg.sequence_length:
         LOGGER.warning("predict_symbol insufficient_sequences symbol=%s rows=%d required=%d", symbol, len(df), data_cfg.sequence_length)
         return None
@@ -1683,6 +1719,98 @@ def predict_symbol(
     return result
 
 
+# ────────────────────────────────────────────────────────────────────
+# Global Rank helpers (stacking à l'inférence)
+# ────────────────────────────────────────────────────────────────────
+
+def _try_compute_global_rank_for_prediction(
+    artifacts_dir: Path,
+    engine: Any,
+    prediction_date: date | None,
+) -> None:
+    """Tente de pré-calculer le ``global_rank`` pour la date de prédiction.
+
+    Si le modèle global est disponible dans ``artifacts_dir``, l'exécute
+    sur l'univers du jour et stocke le résultat dans le cache module.
+    Sinon, le fallback (0.5) sera utilisé par symbole.
+    """
+    global _global_rank_prediction_cache
+    _cache_key = str(prediction_date) if prediction_date else "__today__"
+    if _cache_key in _global_rank_prediction_cache:
+        return  # déjà calculé
+
+    # Vérifier que le modèle global existe
+    _features_path = artifacts_dir / "_global_ranking_features.json"
+    if not _features_path.exists():
+        LOGGER.info("_try_compute_global_rank: no model found, will use fallback 0.5")
+        _global_rank_prediction_cache[_cache_key] = None
+        return
+
+    try:
+        from modelFactory.global_ranking import predict_global_rank
+        from modelFactory.data_loader import load_universe_bars, load_tradable_universe_symbols
+    except ImportError:
+        _global_rank_prediction_cache[_cache_key] = None
+        return
+
+    try:
+        universe_symbols = load_tradable_universe_symbols(engine, trade_date=prediction_date)
+        if not universe_symbols:
+            LOGGER.warning("_try_compute_global_rank: empty universe, skip")
+            _global_rank_prediction_cache[_cache_key] = None
+            return
+        # Charger N jours d'historique (configurable, défaut 365)
+        _lookback = 365
+        try:
+            import yaml as _yaml_gr
+            with open("config.yaml", encoding="utf-8") as _fh_gr:
+                _cfg_gr = _yaml_gr.safe_load(_fh_gr) or {}
+            _lookback = int(
+                (_cfg_gr.get("global_ranking") or {}).get("prediction_lookback_days", 365)
+            )
+        except Exception:
+            pass
+        from datetime import timedelta as _td
+        _start_date = prediction_date - _td(days=_lookback) if prediction_date else None
+        universe_df = load_universe_bars(
+            engine, universe_symbols,
+            end_date=prediction_date,
+            start_date=_start_date,
+        )
+        if universe_df.empty:
+            LOGGER.warning("_try_compute_global_rank: empty universe bars, skip")
+            _global_rank_prediction_cache[_cache_key] = None
+            return
+
+        rank_df = predict_global_rank(universe_df, artifacts_dir)
+        if rank_df is not None and not rank_df.empty:
+            _global_rank_prediction_cache[_cache_key] = rank_df
+            LOGGER.info(
+                "_try_compute_global_rank: computed for %d symbols on %s",
+                len(rank_df), _cache_key,
+            )
+        else:
+            LOGGER.warning("_try_compute_global_rank: predict_global_rank returned None")
+            _global_rank_prediction_cache[_cache_key] = None
+    except Exception as exc:
+        LOGGER.warning("_try_compute_global_rank: failed: %s", exc)
+        _global_rank_prediction_cache[_cache_key] = None
+
+
+def _warn_global_rank_fallbacks() -> None:
+    """Log un avertissement si des symboles ont utilisé le fallback global_rank=0.5."""
+    global _global_rank_fallback_symbols
+    if _global_rank_fallback_symbols:
+        _unique = sorted(set(_global_rank_fallback_symbols))
+        LOGGER.warning(
+            "⚠️ GLOBAL_RANK FALLBACK: %d symbol(s) used neutral global_rank=0.5 "
+            "(global model unavailable or failed): %s",
+            len(_unique),
+            ", ".join(_unique[:20]) + ("..." if len(_unique) > 20 else ""),
+        )
+        _global_rank_fallback_symbols.clear()
+
+
 def predict_batch(
     symbols: list[str],
     artifacts_dir: Path,
@@ -1717,6 +1845,9 @@ def predict_batch(
         symbols_skipped=0,
         symbols_failed=0,
     )
+
+    # ── Pré-calcul du global_rank pour stacking (si activé) ──
+    _try_compute_global_rank_for_prediction(artifacts_dir, engine, prediction_date)
 
     if max_workers <= 1:
         # ── Chemin séquentiel (comportement historique) ──────────
@@ -1765,6 +1896,7 @@ def predict_batch(
             symbols_failed=0,
             progress_item=None,
         )
+        _warn_global_rank_fallbacks()
         if all_preds:
             return pd.concat(all_preds, ignore_index=True)
         return pd.DataFrame(columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"])
@@ -1819,6 +1951,7 @@ def predict_batch(
         "predict_batch parallel done symbols=%d completed=%d skipped=%d workers=%d",
         total, completed, skipped, max_workers,
     )
+    _warn_global_rank_fallbacks()
     if all_preds:
         return pd.concat(all_preds, ignore_index=True)
     return pd.DataFrame(columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"])
