@@ -336,6 +336,7 @@ _TRAINING_BATCH_MUTABLE_FIELDS = {
     "symbols_failed",
     "failure_reason",
     "metadata_json",
+    "ic_rank",
 }
 
 

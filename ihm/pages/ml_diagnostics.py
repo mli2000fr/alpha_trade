@@ -802,6 +802,12 @@ def _render_batch_detail(batch: pd.Series) -> None:
         st.metric("Date fin training", str(row.get("training_end_date", "—")))
         st.metric("Date univers", str(row.get("universe_date", "—")))
         st.metric("Nb symboles demandés", str(row.get("requested_symbol_count", "—")))
+        # IC Rank du Global Ranking Model
+        ic_val = row.get("ic_rank")
+        if ic_val is not None and str(ic_val) not in ("None", "nan", ""):
+            ic_display = f"{float(ic_val):.4f}"
+            ic_help = "IC Rank (Spearman) du Global Ranking Model — >0.03 = utile, >0.05 = bon"
+            st.metric("🎯 IC Rank Global", ic_display, help=ic_help)
 
     with col3:
         st.metric("Démarré le", str(row.get("started_at", "—")))

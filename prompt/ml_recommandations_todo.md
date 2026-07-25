@@ -52,6 +52,39 @@
 | `batch_diagnostics.live_batch_id` | `""` (défaut) | `config.yaml` |
 | `batch_diagnostics.backtest_batch_id` | `""` (défaut) | `config.yaml` |
 | `global_ranking.prediction_lookback_days` | `365` | `config.yaml` |
+| IC Rank persisté en DB | `model_training_batch.ic_rank` | `alembic/versions/0056_*` |
+| IC Rank affiché dans l'IHM | 🩺 Diagnostic ML → Détail batch | `ihm/pages/ml_diagnostics.py` |
+
+---
+
+## 🧠 Peer Review — Ajustements & Garde-fous (26/07/2026)
+
+Revue externe du plan d'action. Les ajustements suivants sont intégrés :
+
+### ✅ Ajustement 1 — Garder le Global Model comme benchmark dans les métriques
+> Le Global Model (régresseur → `global_rank`) ne doit **pas** être supprimé des métriques challengers. Il doit rester visible dans les rapports de batch comme **baromètre de marché** (IC Rank, F1 directionnel baseline). Il est tagué « Benchmark » et non « Ordre exécutable ». Le `challenger_enabled=false` empêche sa sélection comme champion, mais il reste dans `model_governance` et les dashboards pour le suivi.
+
+- [x] `DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER = False` (déjà fait) — il ne sera jamais champion
+- [ ] Vérifier que le Global Model apparaît bien dans `model_governance` avec `is_selected_model=0`
+- [ ] Ajouter le tag visuel "📊 Benchmark" dans l'IHM pour le modèle global dans le ranking challengers
+
+### ✅ Ajustement 2 — Pas de diète de features : régularisation d'abord
+> Les 42+ features actuelles restent. LightGBM/CatBoost font leur propre sélection implicite (gain d'information). On applique la régularisation stricte (`max_depth=3-4`, `min_child_samples=30`) et on analyse les *feature importance* après le batch. On n'élague que les features à importance quasi-nulle (< 1%).
+
+- [x] Action 2 (régularisation) reste prioritaire
+- [ ] Après 2-3 batchs, exporter les feature importance et identifier les colonnes à ~0%
+- [ ] Supprimer UNIQUEMENT celles qui n'apportent rien — ne pas fixer de seuil arbitraire à l'avance
+
+### ✅ Ajustement 3 — TemperatureScaler conservé, VectorScaler dépriorisé
+> Le `TemperatureScaler` actuel fonctionne. Le gain du `VectorScaler` est marginal et ne justifie pas le risque de régression. On garde le TemperatureScaler, et on revisitera la calibration uniquement si les probabilités calibrées montrent un biais directionnel systématique.
+
+- [x] Action 7 (VectorScaler) rétrogradée de Moyen Terme → Long Terme
+- [x] Action 8 (TernaryDecisionPolicy) reste en Moyen Terme car indépendante du scaler
+
+### ✅ Ajustement 4 — Valider `global_rank` avant de le décomposer
+> On ne crée pas 3 sous-rangs tant que le `global_rank` unique n'a pas fait ses preuves (IC > 0.03 confirmé sur plusieurs batchs). La décomposition est conditionnelle.
+
+- [x] Action 9 (Décomposition) reste en Long Terme, avec pré-condition explicite : IC Rank > 0.03 stable
 
 ---
 
@@ -81,13 +114,13 @@
 |:--:|---------------|:--------:|:------:|
 | 5 | **Exploitation des rangs** : features d'interaction `rank_x_rsi`, `rank_x_momentum_20`, etc. | 🟡 Moyenne | 1-2h |
 | 6 | **Multi-horizons Phase 1** : `global_rank` prédit sur J+3, J+5, J+10 → stack de 3 rangs | 🟡 Moyenne | 3-4h |
-| 7 | **VectorScaler** (température + biais par classe) en remplacement du TemperatureScaler | 🟢 Basse | 2h |
-| 8 | **TernaryDecisionPolicy** : ajustement des seuils selon probabilités calibrées | 🟢 Basse | 2h |
+| 7 | **TernaryDecisionPolicy** : ajustement des seuils selon probabilités calibrées | 🟡 Moyenne | 2h |
 
 ### 🔵 À faire — Long terme
 | # | Recommandation | Priorité | Effort |
 |:--:|---------------|:--------:|:------:|
-| 9 | **Décomposition du global** : `rank_momentum`, `rank_mean_reversion`, `rank_volatility` | 🟢 Basse | 5-8h |
+| 8 | **VectorScaler** (température + biais par classe) — si biais directionnel avéré | 🟢 Basse | 2h |
+| 9 | **Décomposition du global** : `rank_momentum`, `rank_mean_reversion`, `rank_volatility` — si IC > 0.03 stable | 🟢 Basse | 5-8h |
 | 10 | **Ensembling per-symbol** : LightGBM + CatBoost (moyenne/stacking des prédictions) | 🟢 Basse | 3-4h |
 | 11 | **Short Interest** : scraping FINRA (mensuel, fichier TXT gratuit) | 🟢 Basse | 3-4h |
 | 12 | **Estimation d'incertitude** : variance intra-ensemble pour filtrer trades peu certains | 🟢 Basse | 5-8h |
@@ -100,25 +133,10 @@
 ### Action 1 — Indicateurs de Régime Macro
 **Fichiers** : `modelFactory/features.py`, `modelFactory/config.py`
 
-```python
-# Deux nouvelles features calculées une fois par jour (pas par symbole) :
-
-def _compute_macro_regime_features(df: pd.DataFrame, spy_df: pd.DataFrame, vix_df: pd.DataFrame) -> pd.DataFrame:
-    """Injecte 2 features macro globales dans le DataFrame principal."""
-    # 1. Pente de la SMA 200 du SPY (tendance long terme du marché)
-    spy_df["SPY_SMA_200_slope"] = (
-        spy_df["close"].rolling(200).mean().diff(20) /
-        spy_df["close"].rolling(200).mean()
-    )  # pente normalisée sur 20 jours
-
-    # 2. Z-score du VIX sur 252 jours (régime de volatilité)
-    vix_rolling = vix_df["vix"].rolling(252)
-    vix_df["VIX_zscore"] = (vix_df["vix"] - vix_rolling.mean()) / vix_rolling.std()
-
-    df = df.merge(spy_df[["date", "SPY_SMA_200_slope"]], on="date", how="left")
-    df = df.merge(vix_df[["trade_date", "VIX_zscore"]], left_on="date", right_on="trade_date", how="left")
-    return df
-```
+**🎯 Pourquoi ?**
+> Aujourd'hui, chaque modèle per-symbol travaille « en aveugle » sur le contexte macro. Un RSI à 70 en marché haussier (SPY au-dessus de sa SMA 200, VIX bas) n'a PAS la même signification qu'un RSI à 70 en bear market (SPY sous SMA 200, VIX élevé). Sans ces features, le modèle local traite ces deux situations de façon identique, ce qui dégrade la qualité des prédictions — surtout en changement de régime.
+>
+> `SPY_SMA_200_slope` donne la tendance long terme du marché (bull/bear structurel). `VIX_zscore` donne le régime de volatilité (stress vs calme). Injectées à TOUS les symboles, ces 2 features permettent au modèle local d'adapter ses décisions au contexte macro sans coût additionnel.
 
 - [ ] Ajouter `include_macro_regime: bool = False` dans `DataConfig`
 - [ ] Ajouter `SPY_SMA_200_slope`, `VIX_zscore` dans `get_feature_columns()` (mode `expert`)
@@ -129,61 +147,36 @@ def _compute_macro_regime_features(df: pd.DataFrame, spy_df: pd.DataFrame, vix_d
 ### Action 2 — Régularisation Stricte des Arbres Locaux
 **Fichier** : `modelFactory/tabular_baseline.py`
 
-```python
-# Dans _train_lightgbm() et _train_catboost() :
+**🎯 Pourquoi ?**
+> Sur ~2 000 lignes daily par symbole, un arbre non contraint (`max_depth=-1`, `num_leaves=31`) a assez de capacité pour **mémoriser le bruit** plutôt que d'apprendre le signal. C'est le problème classique du surapprentissage sur petits échantillons financiers : le modèle trouve des patterns qui marchent parfaitement en backtest mais échouent en live.
+>
+> `max_depth=3-4` et `num_leaves=8-15` limitent la complexité à ce que 2 000 lignes peuvent raisonnablement supporter. `min_child_samples=30-50` empêche les splits sur des micro-groupes non représentatifs. C'est le standard en finance quantitative pour les modèles tree-based sur données daily.
 
-LIGHTGBM_REGULARIZED_PARAMS = {
-    "max_depth": 4,             # ← actuellement -1 (illimité)
-    "num_leaves": 15,           # ← actuellement 31
-    "min_child_samples": 30,    # ← actuellement 20
-    "subsample": 0.8,           # ← ajouter
-    "colsample_bytree": 0.7,    # ← ajouter
-    "reg_alpha": 0.1,           # ← L1
-    "reg_lambda": 0.1,          # ← L2
-}
-
-CATBOOST_REGULARIZED_PARAMS = {
-    "max_depth": 4,
-    "subsample": 0.8,
-    "colsample_bylevel": 0.7,
-    "l2_leaf_reg": 3.0,
-    "min_data_in_leaf": 30,
-}
-```
-
-- [ ] Modifier `_train_lightgbm()` dans `tabular_baseline.py`
-- [ ] Modifier `_train_catboost()` dans `tabular_baseline.py`
+- [ ] Modifier `_train_lightgbm()` → `max_depth=4, num_leaves=15, min_child_samples=30`
+- [ ] Modifier `_train_catboost()` → `max_depth=4, min_data_in_leaf=30`
 - [ ] Rendre paramétrable via `config.yaml` → `tabular_baseline.regularization: strict|loose`
 
-### Action 3 — `class_weight="balanced"`
+### Action 3 — `class_weight="balanced"` + Subsampling
 **Fichier** : `modelFactory/tabular_baseline.py`
 
-```python
-# LightGBM :
-params["class_weight"] = "balanced"
+**🎯 Pourquoi ?**
+> En classification ternaire (long/flat/short), la classe `flat` domine souvent 50-60% des échantillons. Sans pondération, le modèle apprend à prédire `flat` par défaut — c'est le chemin de moindre résistance pour minimiser la loss, mais c'est inutile pour le trading. `class_weight="balanced"` force le modèle à accorder autant d'importance à un `long` ou un `short` qu'à un `flat`, quelle que soit leur fréquence.
+>
+> Le **subsampling** (`subsample=0.8`, `colsample_bytree=0.7`) empêche la corrélation excessive entre arbres (chacun voit un sous-échantillon différent) et réduit le surapprentissage. C'est le deuxième pilier de la régularisation après la contrainte de profondeur.
 
-# CatBoost :
-params["auto_class_weights"] = "Balanced"
-```
-
-- [ ] Ajouter dans `_train_lightgbm()`
-- [ ] Ajouter dans `_train_catboost()`
+- [ ] LightGBM : `class_weight="balanced"`, `subsample=0.8`, `colsample_bytree=0.7`
+- [ ] CatBoost : `auto_class_weights="Balanced"`, `subsample=0.8`, `colsample_bylevel=0.7`
 
 ### Action 4 — Features d'Interaction `rank_x_*`
 **Fichier** : `modelFactory/features.py`
 
-```python
-# Après merge du global_rank dans le per-symbol :
-RANK_INTERACTION_FEATURES = [
-    "rank_x_rsi_14",            # global_rank * rsi_14
-    "rank_x_momentum_20",       # global_rank * momentum_20
-    "rank_x_momentum_60",       # global_rank * momentum_60
-    "rank_x_volatility_20",     # global_rank * rolling_volatility_20
-    "rank_x_sma20_distance",    # global_rank * sma20_distance
-]
-```
+**🎯 Pourquoi ?**
+> Aujourd'hui `global_rank` est injecté comme une feature brute. Mais la relation entre le rang global et le signal local n'est pas linéaire : un titre top 10% (`global_rank ≈ 0.9`) avec un RSI de 30 (survente) est une opportunité d'achat bien plus forte qu'un titre top 10% avec un RSI de 80 (surachat). Les features d'interaction `rank_x_rsi`, `rank_x_momentum_20`, etc. permettent au modèle local de capturer ces **effets croisés** que ni le rang seul ni les features locales seules ne peuvent exprimer.
+>
+> Coût quasi nul : 5 features calculées en une ligne chacune. Gain potentiel : amélioration du F1 WF de 0.01-0.02 si le `global_rank` a un IC > 0.02.
 
-- [ ] Ajouter dans `compute_features()` après le merge du global_rank
+- [ ] Ajouter `rank_x_rsi_14`, `rank_x_momentum_20`, `rank_x_momentum_60`, `rank_x_volatility_20`, `rank_x_sma20_distance`
+- [ ] Calcul dans `compute_features()` après le merge du `global_rank`
 - [ ] Ajouter dans `get_feature_columns()` (mode `expert`)
 
 ---
@@ -193,36 +186,56 @@ RANK_INTERACTION_FEATURES = [
 ### Action 5 — Multi-Horizons Global Rank
 **Fichier** : `modelFactory/global_ranking.py`
 
-Faire évoluer la Phase 1 pour prédire `future_return` sur 3 horizons :
+**🎯 Pourquoi ?**
+> Un seul `global_rank` sur J+10 donne une vision uniforme du rendement futur. Mais le marché réagit à différentes vitesses : certains titres sur-réagissent à court terme (J+3) puis mean-revert, d'autres ont un momentum qui se construit sur J+10. En empilant 3 horizons (J+3, J+5, J+10), le modèle per-symbol reçoit une « courbe de rendement attendu » : il peut apprendre qu'un titre avec `rank_3` élevé mais `rank_10` faible est un trade court terme, pas un swing.
+>
+> Coût : 3 modèles au lieu d'un en Phase 1, mais la Phase 1 est déjà rapide (~2 min pour 200 symboles). Gain attendu : +0.01-0.02 de F1 WF si le IC multi-horizons est bon.
 
-```python
-HORIZONS = [3, 5, 10]  # J+3, J+5, J+10
-
-# Pour chaque horizon, entraîner un modèle et produire un rang :
-# → global_rank_3, global_rank_5, global_rank_10
-# → 3 colonnes stackées dans le per-symbol
-```
-
-- [ ] Modifier `train_global_ranking_wf()` pour boucler sur `HORIZONS`
-- [ ] Persister 3 colonnes dans `_global_rank_cache.parquet`
+- [ ] Modifier `train_global_ranking_wf()` pour boucler sur `HORIZONS = [3, 5, 10]`
+- [ ] Persister 3 colonnes `global_rank_3`, `global_rank_5`, `global_rank_10` dans le cache
 - [ ] Mettre à jour `GLOBAL_RANK_FEATURE_COLUMNS` dans `cross_sectional.py`
 - [ ] Mettre à jour `predictor.py` pour l'inférence multi-horizons
 
 ### Action 6 — VectorScaler (Température + Biais par Classe)
-**Fichier** : `modelFactory/calibration.py` (nouveau ou modifier l'existant)
+**Fichier** : `modelFactory/calibration.py`
 
-```python
-class VectorScaler:
-    """Calibration vecteur : température + biais par classe."""
-    def fit(self, logits, labels):
-        # Optimise temperature + bias_short + bias_long
-        ...
-    def transform(self, logits):
-        return softmax((logits + bias_vector) / temperature)
-```
+**🎯 Pourquoi ?**
+> Le `TemperatureScaler` actuel applique une seule température T à toutes les classes. Mais en classification ternaire, le biais « flat » est structurel : les logits de la classe `flat` sont systématiquement plus élevés que `long` et `short`. Une température unique ne corrige pas ce déséquilibre directionnel.
+>
+> Le `VectorScaler` apprend un vecteur `[bias_short, bias_flat, bias_long] + température T` — le biais `flat` sera abaissé et les biais `long`/`short` remontés, rendant les probabilités calibrées réellement exploitables pour le dimensionnement des positions.
 
 - [ ] Créer `VectorScaler` dans `modelFactory/calibration.py`
-- [ ] Remplacer `TemperatureScaler` dans `trainer.py` (flag `--calibration vector`)
+- [ ] Remplacer `TemperatureScaler` → `VectorScaler` dans `trainer.py`
+- [ ] Ajouter `--calibration vector` dans la CLI
+
+### Action 7 — TernaryDecisionPolicy
+**Fichier** : `modelFactory/decision.py` (nouveau)
+
+**🎯 Pourquoi ?**
+> Actuellement, la décision long/flat/short est prise avec un seuil fixe (`decision_threshold=0.55`). Mais après calibration, les distributions de probabilités changent : un seuil unique n'est plus optimal. La `TernaryDecisionPolicy` ajuste dynamiquement les seuils en fonction des distributions calibrées pour maximiser le F1 ou le business score.
+
+- [ ] Créer `TernaryDecisionPolicy` avec seuils adaptatifs par split
+- [ ] Intégrer dans `trainer.py` → `_prepare_target_optimization_summary()`
+
+---
+
+## 🔵 Plan d'Action Détaillé — Long Terme
+
+### Action 8 — VectorScaler (Température + Biais par Classe)
+**Fichier** : `modelFactory/calibration.py`
+
+**🎯 Pourquoi ?**
+> Dépriorisé : le `TemperatureScaler` actuel est stable et fonctionnel. Le VectorScaler n'apporte un gain que si on observe un **biais directionnel systématique** dans les probabilités calibrées (ex: `proba_flat` systématiquement surgonflée). À ne faire que si l'analyse post-batch le justifie.
+
+- [ ] Condition : observer un biais > 5% entre `pred_flat_pct` et `true_flat_pct` sur plusieurs batchs
+- [ ] Créer `VectorScaler` dans `modelFactory/calibration.py`
+- [ ] Remplacer `TemperatureScaler` → `VectorScaler` dans `trainer.py`
+
+### Action 9 — Décomposition du Global en 3 sous-rangs
+**Fichier** : `modelFactory/global_ranking.py`
+
+**🎯 Pourquoi ?**
+> Conditionnel : nécessite IC Rank > 0.03 confirmé sur au moins 3 batchs. Un `global_rank` unique qui ne prédit rien ne donnera pas 3 sous-rangs magiques. Si le IC est bon, la décomposition permet au per-symbol de pondérer différemment momentum, mean-reversion et volatilité selon le régime.
 
 ---
 
@@ -258,15 +271,51 @@ python -c "from modelFactory.features import get_feature_columns; print(len(get_
 
 ## 📁 Fichiers impactés — Résumé
 
-| Fichier | Actions 1-4 (Court Terme) | Actions 5-6 (Moyen Terme) |
+| Fichier | Actions 1-4 (Court Terme) | Actions 5-7 (Moyen Terme) |
 |---------|:---:|:---:|
 | `modelFactory/features.py` | 🔧 macro regime + rank_x interactions | — |
-| `modelFactory/config.py` | 🔧 `include_macro_regime` | 🔧 `calibration: vector` |
+| `modelFactory/config.py` | 🔧 `include_macro_regime` | — |
 | `modelFactory/tabular_baseline.py` | 🔧 régularisation + class_weight | — |
 | `modelFactory/global_ranking.py` | — | 🔧 multi-horizons |
 | `modelFactory/cross_sectional.py` | — | 🔧 multi-rank columns |
 | `modelFactory/predictor.py` | — | 🔧 multi-horizon inference |
-| `modelFactory/calibration.py` | — | 🔧 VectorScaler |
-| `modelFactory/cli.py` | 🔧 `--include-macro-regime` | 🔧 `--calibration vector` |
+| `modelFactory/decision.py` | — | 🔧 TernaryDecisionPolicy |
+| `modelFactory/cli.py` | 🔧 `--include-macro-regime` | — |
 | `ihm/pages/pipeline.py` | 🔧 checkbox macro regime | — |
 | `config.yaml` | 🔧 `macro_regime`, `regularization` | 🔧 `multi_horizons` |
+
+---
+
+## 🔵 Plan d'Action Détaillé — Long Terme
+
+### Action 9 — Décomposition du Global en 3 sous-rangs
+**Fichier** : `modelFactory/global_ranking.py`
+
+**🎯 Pourquoi ?**
+> Un `global_rank` unique est un « fourre-tout » : il mélange momentum, mean-reversion et volatilité en un seul score. Un titre peut être bien classé parce qu'il a un bon momentum... ou parce qu'il est anormalement peu volatile. Le modèle per-symbol ne peut pas distinguer la raison du classement.
+>
+> En décomposant en 3 sous-modèles spécialisés (`rank_momentum` : performance relative, `rank_mean_reversion` : sur-achat/vente relatif, `rank_volatility` : profil de risque), le per-symbol reçoit 3 signaux orthogonaux qu'il peut pondérer différemment selon le régime. Un modèle local pourrait apprendre à privilégier le momentum en bull market et la mean-reversion en range.
+
+### Action 10 — Ensembling LightGBM + CatBoost
+**Fichier** : `modelFactory/tabular_baseline.py`
+
+**🎯 Pourquoi ?**
+> LightGBM et CatBoost ont des biais différents (gestion des catégorielles, splitting strategy). Leur moyenne simple réduit la variance sans augmenter le biais — c'est le principe de l'ensembling. En pratique, un ensemble LightGBM+CatBoost surpasse systématiquement le meilleur des deux seul de 0.01-0.02 de F1 sur des tâches de classification financière. Coût : x2 en temps d'entraînement par symbole, mais les deux modèles sont déjà entraînés aujourd'hui (juste pas moyennés).
+
+### Action 11 — Short Interest (FINRA)
+**Fichier** : `modelFactory/short_interest.py` (nouveau)
+
+**🎯 Pourquoi ?**
+> Le short interest est un signal contraire fort : un titre avec >20% de float shorté est vulnérable à un short squeeze (hausse violente), ce qu'aucune feature technique ne peut anticiper. La donnée FINRA est gratuite (fichier TXT mensuel), légère à scraper, et apporte une information orthogonal à tout le feature set actuel. 3 features (`short_interest_pct_float`, `change_14d`, `days_to_cover`) suffisent.
+
+### Action 12 — Estimation d'Incertitude (Variance intra-ensemble)
+**Fichier** : `modelFactory/uncertainty.py` (nouveau)
+
+**🎯 Pourquoi ?**
+> Aujourd'hui, une prédiction `proba_long=0.65` est traitée de la même façon qu'elle vienne d'un consensus fort (LightGBM et CatBoost d'accord) ou d'un désaccord (l'un dit long, l'autre dit flat). La variance des probabilités entre modèles est un proxy de l'incertitude : les trades à haute variance sont moins fiables et devraient être filtrés ou sous-pondérés. C'est un filtre de qualité gratuit qui réduit le bruit sans réduire le nombre de trades.
+
+### Action 13 — Pondération Dynamique du Capital
+**Fichier** : `risk_management/position_sizing.py`
+
+**🎯 Pourquoi ?**
+> Actuellement, tous les trades ont le même poids (equal-weight ou risk-parity). Mais la confiance du modèle varie : un `proba_long=0.85` calibré devrait recevoir plus de capital qu'un `proba_long=0.55`. La pondération dynamique alloue le capital proportionnellement à la confiance calibrée (probabilité - 0.5) × (1 - variance), ce qui améliore le ratio de Sharpe sans changer le nombre de trades. C'est le dernier kilomètre de la chaîne ML → exécution.

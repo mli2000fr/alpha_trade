@@ -305,13 +305,28 @@ def train_global_ranking_wf(
     global_df = pd.concat(prepared_parts, ignore_index=True).sort_values(["date", "symbol"]).reset_index(drop=True)
     global_df = global_df.dropna(subset=feature_columns + ["future_return"]).reset_index(drop=True)
 
-    # ── Walk-Forward splits ──
+    # ── Walk-Forward splits (adaptés pour données poolées multi-symboles) ──
+    # Les paramètres walk_forward (val_size, min_train_size, step_size) sont
+    # exprimés en JOURS pour le per-symbol. Pour le modèle global poolé, on
+    # doit les multiplier par le nombre de symboles par jour pour obtenir des
+    # splits de durée équivalente.
+    _daily_symbols = int(round(global_df.groupby("date").size().median()))
+    _daily_symbols = max(_daily_symbols, 1)
+    LOGGER.info(
+        "train_global_ranking_wf scaling WF params by daily_symbols=%d "
+        "(raw: train=%d val=%d step=%d max_splits=%d)",
+        _daily_symbols,
+        cfg.walk_forward.min_train_size,
+        cfg.walk_forward.val_size,
+        cfg.walk_forward.step_size,
+        cfg.walk_forward.max_splits,
+    )
     wf_splits = generate_walk_forward_splits(
         global_df,
-        min_train_size=cfg.walk_forward.min_train_size,
-        val_size=cfg.walk_forward.val_size,
-        test_size=cfg.walk_forward.test_size,
-        step_size=cfg.walk_forward.step_size,
+        min_train_size=cfg.walk_forward.min_train_size * _daily_symbols,
+        val_size=cfg.walk_forward.val_size * _daily_symbols,
+        test_size=cfg.walk_forward.test_size * _daily_symbols,
+        step_size=cfg.walk_forward.step_size * _daily_symbols,
         max_splits=cfg.walk_forward.max_splits,
         forecast_horizon=horizon,
         date_column="date",

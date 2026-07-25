@@ -38,6 +38,7 @@ from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.db_registry import (
     load_symbols_for_source,
     replace_model_governance,
+    update_training_batch,
 )
 from common.tradable_universe import load_tradable_universe_for_period
 from modelFactory.global_model import train_global_model, train_global_model_wf
@@ -794,6 +795,22 @@ def run_training_batch(
                 "run_training_batch diagnostics persist failed batch_id=%s error=%s",
                 batch_id, exc,
             )
+
+    # ── Persister l'IC Rank du Global Ranking Model ──
+    if cfg.global_model.enabled and global_result_wf:
+        _ic = global_result_wf.get("ic_rank_mean")
+        if _ic is not None:
+            try:
+                update_training_batch(engine, batch_id, ic_rank=float(_ic))
+                LOGGER.info(
+                    "run_training_batch ic_rank persisted batch_id=%s ic_rank=%.4f",
+                    batch_id, float(_ic),
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "run_training_batch ic_rank persist failed batch_id=%s error=%s",
+                    batch_id, exc,
+                )
 
     return results
 

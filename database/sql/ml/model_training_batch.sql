@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_batch (
     symbols_skipped        INT UNSIGNED NOT NULL DEFAULT 0,
     symbols_failed         INT UNSIGNED NOT NULL DEFAULT 0,
     failure_reason         TEXT         DEFAULT NULL,
+    ic_rank                DOUBLE       DEFAULT NULL COMMENT 'IC Rank (Spearman) moyen du Global Ranking Model sur le walk-forward',
     created_at             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (batch_id),
     INDEX idx_model_training_batch_status_started (status, started_at)
