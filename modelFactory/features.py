@@ -134,6 +134,21 @@ def _zscore_column_name(source_col: str) -> str:
 
 ZSCORE_FEATURE_COLUMNS: list[str] = [_zscore_column_name(c) for c in ZSCORE_SOURCE_FEATURES]
 
+# ── Sprint 2026-07-26 : Indicateurs de régime macro (SPY + VIX) ──
+MACRO_REGIME_FEATURE_COLUMNS: list[str] = [
+    "SPY_SMA_200_slope",
+    "VIX_zscore",
+]
+
+# ── Sprint 2026-07-26 : Interactions global_rank × features locales ──
+RANK_INTERACTION_FEATURES: list[str] = [
+    "rank_x_rsi_14",
+    "rank_x_momentum_20",
+    "rank_x_momentum_60",
+    "rank_x_volatility_20",
+    "rank_x_sma20_distance",
+]
+
 # Features macro contextuelles (depuis stock_macro_indicators_daily)
 MACRO_FEATURE_COLUMNS: list[str] = [
     "vix_close",
@@ -240,6 +255,7 @@ def get_feature_columns(
     include_global_stacking: bool = False,
     include_fundamentals: bool = False,
     include_factors: bool = False,
+    include_macro_regime: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnels).
 
@@ -269,6 +285,8 @@ def get_feature_columns(
             from modelFactory.cross_sectional import GLOBAL_PRED_FEATURE_COLUMNS
 
             cols.extend(GLOBAL_PRED_FEATURE_COLUMNS)
+            # Interactions global_rank × features locales
+            cols.extend(RANK_INTERACTION_FEATURES)
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
     if include_screener_scores:
@@ -303,6 +321,8 @@ def get_feature_columns(
     if include_factors:
         from modelFactory.factor_features import FACTOR_FEATURE_COLUMNS
         cols.extend(FACTOR_FEATURE_COLUMNS)
+    if include_macro_regime:
+        cols.extend(MACRO_REGIME_FEATURE_COLUMNS)
     return cols
 
 
@@ -739,6 +759,7 @@ def compute_features(
     include_fundamentals: bool = False,
     fundamental_df: pd.DataFrame | None = None,
     include_factors: bool = False,
+    include_macro_regime: bool = False,
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
@@ -945,6 +966,28 @@ def compute_features(
             include_move=include_macro_move,
         )
 
+    # --- Macro regime features (SPY_SMA_200_slope + VIX_zscore) ---
+    if include_macro_regime:
+        # 1. SPY SMA 200 slope = tendance long terme du marché
+        if benchmark_df is not None and "close" in benchmark_df.columns:
+            _spy_sma = benchmark_df["close"].rolling(200, min_periods=200).mean()
+            _spy_slope = _spy_sma.diff(20) / _spy_sma.replace(0, np.nan)
+            _spy_map = pd.Series(_spy_slope.values, index=benchmark_df["date"].values)
+            df["SPY_SMA_200_slope"] = (
+                pd.to_datetime(df["date"]).map(_spy_map).fillna(0.0).astype(float)
+            )
+        else:
+            df["SPY_SMA_200_slope"] = 0.0
+
+        # 2. VIX z-score (si VIX déjà chargé via macro features, sinon fallback 0)
+        if "vix_close" in df.columns:
+            _vix_roll = df["vix_close"].rolling(252, min_periods=60)
+            _vix_mean = _vix_roll.mean()
+            _vix_std = _vix_roll.std().replace(0, np.nan)
+            df["VIX_zscore"] = ((df["vix_close"] - _vix_mean) / _vix_std).fillna(0.0).astype(float)
+        else:
+            df["VIX_zscore"] = 0.0
+
     # --- Régime × technique interaction features (Cause 3) ---
     # Permet aux arbres d'apprendre des splits conditionnels au régime.
     if feature_set == "expert" and _has_benchmark:
@@ -1074,6 +1117,37 @@ def compute_features(
 
     # Drop warm-up NaN rows (rolling windows need ~60 rows)
     df = df.dropna(subset=active_features).reset_index(drop=True)
+    return df
+
+
+def compute_rank_interactions(df: pd.DataFrame) -> pd.DataFrame:
+    """Ajoute les features d'interaction global_rank × features locales.
+
+    Doit être appelé APRÈS merge_cross_sectional_features (qui injecte global_rank).
+    Les colonnes produites sont listées dans RANK_INTERACTION_FEATURES.
+    """
+    if "global_rank" not in df.columns:
+        for col in RANK_INTERACTION_FEATURES:
+            if col not in df.columns:
+                df[col] = 0.0
+        return df
+
+    _rank = df["global_rank"].fillna(0.5).astype(float)
+
+    _mapping = {
+        "rank_x_rsi_14": "rsi_14",
+        "rank_x_momentum_20": "momentum_20",
+        "rank_x_momentum_60": "momentum_60",
+        "rank_x_volatility_20": "rolling_volatility_20",
+        "rank_x_sma20_distance": "sma20_distance",
+    }
+
+    for out_col, src_col in _mapping.items():
+        if src_col in df.columns:
+            df[out_col] = (_rank * df[src_col].fillna(0.0).astype(float)).astype(float)
+        else:
+            df[out_col] = 0.0
+
     return df
 
 

@@ -90,7 +90,8 @@ DEFAULT_ML_INCLUDE_MACRO_VXN = False          # VXN — macro vol NASDAQ-100
 DEFAULT_ML_INCLUDE_MACRO_VIX3M = False        # VIX3M — term structure vol
 DEFAULT_ML_INCLUDE_MACRO_MOVE = True         # MOVE — macro vol obligataire
 DEFAULT_ML_INCLUDE_FUNDAMENTALS = False     # EODHD fundamentals (PE, ROE, marges, croissance)
-DEFAULT_ML_INCLUDE_FACTORS = False          # CAPM factor exposures (beta, alpha, R² via rolling 252j)
+DEFAULT_ML_INCLUDE_FACTORS = True          # CAPM factor exposures (beta, alpha, R² via rolling 252j)
+DEFAULT_ML_INCLUDE_MACRO_REGIME = True      # SPY_SMA_200_slope + VIX_zscore (macro regime indicators)
 DEFAULT_ML_ENABLE_LIGHTGBM = True             # challenger LightGBM activé par défaut
 DEFAULT_ML_ENABLE_CATBOOST = True             # challenger CatBoost activé par défaut
 DEFAULT_ML_ENABLE_GLOBAL_MODEL = True        # Global Ranking Model (stacking uniquement)
@@ -134,7 +135,7 @@ DEFAULT_ML_CATBOOST_OD_WAIT = 20
 # ---------------------------------------------------------------------------
 # Filtrage liquidité (Sprint 2026-07-24)
 # ---------------------------------------------------------------------------
-DEFAULT_ML_ENABLE_LIQUIDITY_FILTER = True
+DEFAULT_ML_ENABLE_LIQUIDITY_FILTER = False
 DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D = 500_000
 DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP = 500_000_000.0
 DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT = 0.5

@@ -25,6 +25,7 @@ class DataConfig:
     include_macro_move_features: bool = False    # MOVE (bond volatility)
     include_fundamentals_features: bool = False  # EODHD fundamentals (PE, ROE, etc.)
     include_factors_features: bool = False       # CAPM beta/alpha/R² (rolling 252d)
+    include_macro_regime_features: bool = False # SPY_SMA_200_slope + VIX_zscore
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert
@@ -147,16 +148,17 @@ class BaselineConfig:
     max_depth: int = 4
     n_estimators: int = 200
     learning_rate: float = 0.05
-    catboost_depth: int = 6
+    catboost_depth: int = 4
     catboost_iterations: int = 300
     catboost_learning_rate: float = 0.03
     random_state: int = 42
     # ── LightGBM tuning (optionnel) ──
-    lgbm_reg_alpha: float = 0.0       # L1 régularisation
-    lgbm_reg_lambda: float = 0.0       # L2 régularisation
-    lgbm_min_child_samples: int = 20   # min data in leaf
-    lgbm_subsample: float = 1.0        # bagging fraction
-    lgbm_colsample_bytree: float = 1.0 # feature fraction
+    lgbm_reg_alpha: float = 0.1       # L1 régularisation
+    lgbm_reg_lambda: float = 0.1      # L2 régularisation
+    lgbm_min_child_samples: int = 30   # min data in leaf
+    lgbm_num_leaves: int = 15          # max leaves (2^depth ≈ 16, capped here)
+    lgbm_subsample: float = 0.8        # bagging fraction
+    lgbm_colsample_bytree: float = 0.7 # feature fraction
     # ── CatBoost tuning (optionnel) ──
     catboost_l2_leaf_reg: float = 3.0      # L2 régularisation
     catboost_border_count: int = 254       # précision des splits (max 255)
@@ -185,8 +187,8 @@ class BaselineConfig:
             raise ValueError("baseline.lgbm_reg_alpha doit être >= 0.")
         if self.lgbm_reg_lambda < 0:
             raise ValueError("baseline.lgbm_reg_lambda doit être >= 0.")
-        if self.lgbm_min_child_samples < 1:
-            raise ValueError("baseline.lgbm_min_child_samples doit être >= 1.")
+        if self.lgbm_num_leaves < 2:
+            raise ValueError("baseline.lgbm_num_leaves doit être >= 2.")
         if not (0.0 < self.lgbm_subsample <= 1.0):
             raise ValueError("baseline.lgbm_subsample doit être dans ]0, 1].")
         if not (0.0 < self.lgbm_colsample_bytree <= 1.0):

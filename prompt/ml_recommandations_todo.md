@@ -28,6 +28,15 @@
 | Fondamentaux EODHD (PE, ROE, marges, etc.) | 20 | `modelFactory/fundamental_features.py` | ✅ |
 | Facteurs CAPM (beta_252, alpha_252, R², momentum_vs_market) | 4 | `modelFactory/factor_features.py` | ✅ |
 | Interactions régime de marché (bull/bear/risk_off) | 18 | `modelFactory/features.py` | ✅ |
+| **Régime macro** (`SPY_SMA_200_slope` + `VIX_zscore`) | 2 | `modelFactory/features.py` | ✅ (26/07) |
+| **Interactions global_rank × locales** (`rank_x_rsi_14`, etc.) | 5 | `modelFactory/features.py` | ✅ (26/07) |
+
+### Modélisation
+| Composant | Fichier | Statut |
+|-----------|---------|:------:|
+| **Régularisation stricte** (`max_depth=4`, `num_leaves=15`, `min_child_samples=30`) | `config.py`, `trainer.py`, `global_ranking.py` | ✅ (26/07) |
+| **`class_weight="balanced"`** + `auto_class_weights="Balanced"` | `trainer.py`, `global_ranking.py` | ✅ (26/07) |
+| **Subsampling** (`subsample=0.8`, `colsample_bytree=0.7`) | `config.py`, `trainer.py`, `global_ranking.py` | ✅ (26/07) |
 
 ### Filtrage & Exécution
 | Composant | Fichier | Statut |
@@ -104,15 +113,15 @@ Revue externe du plan d'action. Les ajustements suivants sont intégrés :
 ### 🟢 À faire — Court terme (prochain batch)
 | # | Recommandation | Priorité | Effort |
 |:--:|---------------|:--------:|:------:|
-| 1 | **Indicateurs de régime macro** : `SPY_SMA_200_slope` + `VIX_zscore` injectés partout | 🔴 Haute | 1h |
-| 2 | **Régularisation stricte des arbres** locaux (max_depth=3-4, num_leaves=8-15, min_child_samples=30-50) | 🔴 Haute | 30min |
-| 3 | **`class_weight="balanced"`** LightGBM / CatBoost pour classes ternaires | 🔴 Haute | 15min |
-| 4 | **Subsampling** : `subsample=0.7-0.8`, `colsample_bytree=0.6-0.8` | 🟡 Moyenne | 15min |
+| ~~1~~ | ~~**Indicateurs de régime macro**~~ → ✅ Fait (26/07) | — | — |
+| ~~2~~ | ~~**Régularisation stricte des arbres**~~ → ✅ Fait (26/07) | — | — |
+| ~~3~~ | ~~**`class_weight="balanced"`**~~ → ✅ Fait (26/07) | — | — |
+| ~~4~~ | ~~**Subsampling**~~ → ✅ Fait (26/07) | — | — |
 
 ### 🟡 À faire — Moyen terme
 | # | Recommandation | Priorité | Effort |
 |:--:|---------------|:--------:|:------:|
-| 5 | **Exploitation des rangs** : features d'interaction `rank_x_rsi`, `rank_x_momentum_20`, etc. | 🟡 Moyenne | 1-2h |
+| ~~5~~ | ~~**Exploitation des rangs** : features d'interaction `rank_x_*`~~ → ✅ Fait (26/07) | — | — |
 | 6 | **Multi-horizons Phase 1** : `global_rank` prédit sur J+3, J+5, J+10 → stack de 3 rangs | 🟡 Moyenne | 3-4h |
 | 7 | **TernaryDecisionPolicy** : ajustement des seuils selon probabilités calibrées | 🟡 Moyenne | 2h |
 

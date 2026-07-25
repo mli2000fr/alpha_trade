@@ -80,6 +80,7 @@ def _prepare_global_ranking_frame(
         include_macro_move=cfg.data.include_macro_move_features,
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_factors=cfg.data.include_factors_features,
+        include_macro_regime=cfg.data.include_macro_regime_features,
     )
     if cfg.data.enable_cross_sectional_features and cross_sectional_df is not None:
         df = merge_cross_sectional_features(df, cross_sectional_df)
@@ -178,6 +179,7 @@ def _build_ranking_estimator(
         return "lightgbm", lgb.LGBMRegressor(
             objective="regression",
             max_depth=cfg.baseline.max_depth,
+            num_leaves=cfg.baseline.lgbm_num_leaves,
             n_estimators=cfg.baseline.n_estimators,
             learning_rate=cfg.baseline.learning_rate,
             random_state=resolved_seed,

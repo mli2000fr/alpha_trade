@@ -515,6 +515,7 @@ class SymbolDataModule(L.LightningDataModule):
             include_macro_move=data_cfg.include_macro_move_features,
             include_global_stacking=self._include_global_stacking,
             include_factors=data_cfg.include_factors_features,
+            include_macro_regime=data_cfg.include_macro_regime_features,
         )
         self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
@@ -645,6 +646,7 @@ def prepare_symbol_frame(
         include_macro_move=data_cfg.include_macro_move_features,
         include_fundamentals=data_cfg.include_fundamentals_features,
         include_factors=data_cfg.include_factors_features,
+        include_macro_regime=data_cfg.include_macro_regime_features,
         fundamental_df=fundamental_df,
     )
     cross_sectional_diagnostics: dict[str, object] = {}
@@ -659,6 +661,10 @@ def prepare_symbol_frame(
                 min_universe_size=data_cfg.cross_sectional_min_universe,
             )
         df = merge_cross_sectional_features(df, cross_sectional_df)
+        # Interactions global_rank × features locales (après merge du rang)
+        if include_global_stacking:
+            from modelFactory.features import compute_rank_interactions
+            df = compute_rank_interactions(df)
     if data_cfg.label_method == "triple_barrier":
         triple_targets = build_triple_barrier_targets(
             df,
@@ -691,6 +697,7 @@ def prepare_symbol_frame(
         include_macro_move=data_cfg.include_macro_move_features,
         include_global_stacking=include_global_stacking,
         include_factors=data_cfg.include_factors_features,
+        include_macro_regime=data_cfg.include_macro_regime_features,
     )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics

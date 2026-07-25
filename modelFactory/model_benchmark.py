@@ -423,6 +423,7 @@ class BenchmarkRunner:
             include_global_stacking=self.training_cfg.global_model.stacking_enabled,
             include_fundamentals=self.training_cfg.data.include_fundamentals_features,
             include_factors=self.training_cfg.data.include_factors_features,
+            include_macro_regime=self.training_cfg.data.include_macro_regime_features,
         )
 
     def _run_challenger(

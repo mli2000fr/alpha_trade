@@ -126,6 +126,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
+    DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
     DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
     DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
@@ -3111,7 +3112,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
 
         ml_fast_search = st.checkbox(
             "⚡ Accélérer le batch (recherche uniquement)",
-            value=_session_state_bool("pipeline_ml_fast_search", False),
+            value=_session_state_bool("pipeline_ml_fast_search", True),
             key="pipeline_ml_fast_search",
             on_change=_apply_fast_search,
             help=(
@@ -3246,6 +3247,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 value=_session_state_bool("pipeline_ml_include_factors", DEFAULT_ML_INCLUDE_FACTORS),
                 key="pipeline_ml_include_factors",
                 help="Ajoute `--include-factors`. Calcule beta, alpha annualisé, R² et momentum 252j vs marché par rolling regression sur SPY.",
+            )
+            ml_include_macro_regime = st.checkbox(
+                "🌍 Régime macro (SPY_SMA_200_slope + VIX_zscore)",
+                value=_session_state_bool("pipeline_ml_include_macro_regime", DEFAULT_ML_INCLUDE_MACRO_REGIME),
+                key="pipeline_ml_include_macro_regime",
+                help="Ajoute `--include-macro-regime`. Injecte la tendance SPY long terme et le z-score VIX à tous les symboles.",
             )
             st.markdown("---")
             ml_enable_liquidity_filter = st.checkbox(
@@ -4358,6 +4365,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_move=bool(ml_include_macro_move),
             ml_include_fundamentals=bool(ml_include_fundamentals),
             ml_include_factors=bool(ml_include_factors),
+            ml_include_macro_regime=bool(ml_include_macro_regime),
             # Filtrage liquidité
             ml_enable_liquidity_filter=bool(ml_enable_liquidity_filter),
             ml_liquidity_min_avg_volume_20d=int(ml_liquidity_min_avg_volume_20d if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D),
