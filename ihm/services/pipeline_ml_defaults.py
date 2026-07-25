@@ -89,6 +89,7 @@ DEFAULT_ML_INCLUDE_MACRO_VIX = False          # VIX/VIX9D — macro vol S&P 500
 DEFAULT_ML_INCLUDE_MACRO_VXN = False          # VXN — macro vol NASDAQ-100
 DEFAULT_ML_INCLUDE_MACRO_VIX3M = False        # VIX3M — term structure vol
 DEFAULT_ML_INCLUDE_MACRO_MOVE = True         # MOVE — macro vol obligataire
+DEFAULT_ML_INCLUDE_FUNDAMENTALS = False     # EODHD fundamentals (PE, ROE, marges, croissance)
 DEFAULT_ML_ENABLE_LIGHTGBM = True             # challenger LightGBM activé par défaut
 DEFAULT_ML_ENABLE_CATBOOST = True             # challenger CatBoost activé par défaut
 DEFAULT_ML_ENABLE_GLOBAL_MODEL = True        # Global Ranking Model (stacking uniquement)

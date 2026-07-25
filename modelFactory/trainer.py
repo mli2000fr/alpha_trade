@@ -445,6 +445,7 @@ def _prepare_target_optimization_summary(
     benchmark_df: "pd.DataFrame | None" = None,
     universe_df: "pd.DataFrame | None" = None,
     selector_df: "pd.DataFrame | None" = None,
+    fundamental_df: "pd.DataFrame | None" = None,
 ) -> dict[str, Any]:
     prepared_df = prepare_symbol_frame(
         bars_df,
@@ -453,6 +454,7 @@ def _prepare_target_optimization_summary(
         benchmark_df=benchmark_df,
         universe_df=universe_df,
         selector_df=selector_df,
+        fundamental_df=fundamental_df,
     )
     label_horizon = (
         cfg.data.triple_barrier_max_sessions
@@ -1148,6 +1150,7 @@ def train_symbol(
     *,
     cross_sectional_df: "pd.DataFrame | None" = None,
     batch_id: str | None = None,
+    fundamental_df: "pd.DataFrame | None" = None,
 ) -> TrainResult:
     """Entraîne un modèle LSTM+Attention pour un symbole unique.
 
@@ -1217,6 +1220,7 @@ def train_symbol(
                 benchmark_df=benchmark_df,
                 universe_df=universe_df,
                 selector_df=selector_df,
+                fundamental_df=fundamental_df,
             )
             selected_horizon = int(target_optimization_summary.get("selected_horizon", cfg.data.forecast_horizon))
             selected_up_threshold = float(target_optimization_summary.get("selected_target_up_threshold", cfg.data.target_up_threshold))
@@ -1270,6 +1274,8 @@ def train_symbol(
             datamodule_kwargs["selector_df"] = selector_df
         if cross_sectional_df is not None:
             datamodule_kwargs["cross_sectional_df"] = cross_sectional_df
+        if fundamental_df is not None:
+            datamodule_kwargs["fundamental_df"] = fundamental_df
         datamodule_signature = inspect.signature(SymbolDataModule)
         if "reproducibility_seed" in datamodule_signature.parameters:
             datamodule_kwargs["reproducibility_seed"] = derive_seed(symbol_seed, "symbol_datamodule")

@@ -70,6 +70,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_INCLUDE_MACRO_VIX3M,
     DEFAULT_ML_INCLUDE_MACRO_VXN,
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
+    DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_ENABLE_LIGHTGBM,
     DEFAULT_ML_ENABLE_CATBOOST,
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
@@ -257,7 +258,7 @@ MLGlobalModelName = Literal["catboost", "lightgbm"]
 MLTargetMode = Literal["binary", "swing_cash", "ternary"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
-MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
+MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost"]
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
 MLTrainSymbolSource = Literal[
     "tradable-universe",
@@ -337,11 +338,11 @@ class PipelineLaunchOptions:
     ml_include_macro_vxn: bool = DEFAULT_ML_INCLUDE_MACRO_VXN
     ml_include_macro_vix3m: bool = DEFAULT_ML_INCLUDE_MACRO_VIX3M
     ml_include_macro_move: bool = DEFAULT_ML_INCLUDE_MACRO_MOVE
+    ml_include_fundamentals: bool = DEFAULT_ML_INCLUDE_FUNDAMENTALS
     ml_enable_lightgbm: bool = DEFAULT_ML_ENABLE_LIGHTGBM
     ml_enable_catboost: bool = DEFAULT_ML_ENABLE_CATBOOST
     ml_enable_global_model: bool = DEFAULT_ML_ENABLE_GLOBAL_MODEL
     ml_enable_global_stacking: bool = DEFAULT_ML_ENABLE_GLOBAL_STACKING
-    ml_enable_global_challenger: bool = DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER
     ml_global_model_name: MLGlobalModelName = DEFAULT_ML_GLOBAL_MODEL_NAME  # type: ignore[assignment]
     ml_enable_cross_sectional: bool = DEFAULT_ML_ENABLE_CROSS_SECTIONAL
     ml_select_champion: bool = DEFAULT_ML_SELECT_CHAMPION
@@ -2214,6 +2215,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-macro-vix3m")
         if options.ml_include_macro_move:
             command.append("--include-macro-move")
+        if options.ml_include_fundamentals:
+            command.append("--include-fundamentals")
         if options.ml_debug_train:
             command.append("--debug-train")
         if options.ml_enable_lightgbm:
@@ -2224,8 +2227,6 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
         if options.ml_enable_global_stacking:
             command.append("--enable-global-stacking")
-        if options.ml_enable_global_challenger:
-            command.append("--enable-global-challenger")
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")
         if options.ml_enable_liquidity_filter:

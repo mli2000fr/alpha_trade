@@ -334,8 +334,7 @@ def _train_worker(
     cfg: TrainingConfig,
     universe_symbols: list[str] | None = None,
     *,
-    cross_sectional_cache: pd.DataFrame | None = None,
-    batch_id: str | None = None,
+    cross_sectional_cache: pd.DataFrame | None = None,    fundamental_cache: pd.DataFrame | None = None,    batch_id: str | None = None,
 ) -> TrainResult:
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
     from common.utils import configure_root_logging
@@ -442,6 +441,7 @@ def _train_worker(
         selector_df=selector_df,
         cross_sectional_df=cross_sectional_df,
         batch_id=batch_id,
+        fundamental_df=fundamental_cache,
     )
 
 
@@ -625,6 +625,23 @@ def run_training_batch(
             cross_sectional_cache["symbol"].nunique() if not cross_sectional_cache.empty else 0,
         )
 
+    # ── Fundamental features cache ──
+    fundamental_cache: pd.DataFrame | None = None
+    if cfg.data.include_fundamentals_features and symbols:
+        from modelFactory.fundamental_features import load_fundamentals_from_db
+        LOGGER.info("run_training_batch loading fundamentals for %d symbols", len(symbols))
+        fundamental_cache = load_fundamentals_from_db(
+            symbols,
+            start_date=cfg.data.training_start_date or "2020-01-01",
+            end_date=cfg.data.training_end_date or pd.Timestamp.now().date(),
+            engine=engine,
+        )
+        LOGGER.info(
+            "run_training_batch fundamentals cache ready rows=%d symbols=%d",
+            len(fundamental_cache),
+            fundamental_cache["symbol"].nunique() if not fundamental_cache.empty else 0,
+        )
+
     # ── Approche 2 — Phase 1 : Global Ranking Model Walk-Forward (FLAG A) ──
     global_result_wf: dict[str, Any] | None = None
     _needs_global = cfg.global_model.enabled
@@ -678,9 +695,9 @@ def run_training_batch(
                     progress_item=sym,
                 )
                 if _needs_cross_sectional:
-                    result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache, batch_id=batch_id)
+                    result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache, fundamental_cache=fundamental_cache, batch_id=batch_id)
                 else:
-                    result = _train_worker(sym, cfg, batch_id=batch_id)
+                    result = _train_worker(sym, cfg, fundamental_cache=fundamental_cache, batch_id=batch_id)
                 results.append(result)
                 update_runtime_status(
                     progress_current=len(results),
@@ -707,6 +724,7 @@ def run_training_batch(
         with ProcessPoolExecutor(max_workers=effective_workers) as pool:
             # Cross-sectional cache NOT passed to subprocess (pickling overhead).
             # Each worker falls back to symbol-by-symbol DB loading.
+            # Same for fundamentals — workers load from DB independently.
             if _needs_cross_sectional:
                 futures = {pool.submit(_train_worker, sym, cfg, symbols, batch_id=batch_id): sym for sym in symbols}
             else:

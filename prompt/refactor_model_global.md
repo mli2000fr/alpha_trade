@@ -1,7 +1,7 @@
 # 📋 Plan d'action — Refonte du Global Model (Stacking)
 
 > **Date** : 2026-07-25  
-> **Statut** : Étapes 1, 3, 4, 5 réalisées ✅ | Étape 2 reportée | Étape 5 (fondamentaux) à planifier  
+> **Statut** : Étapes 1, 2, 3, 4, 5 réalisées ✅ | Étape 5 (fondamentaux) réalisée ✅ | Factor Exposures à planifier  
 > **Objectif** : Transformer le Global Model d'un classifieur ternaire faible en un régresseur de rang cross-sectionnel, puis réinjecter ce rang comme feature de stacking dans les per-symbol.  
 > **Périmètre** : Global Model = stacking uniquement. Pas de challenger champion selection.
 
@@ -51,25 +51,54 @@
 | `test_model_factory_cross_sectional.py` | `global_rank` au lieu de `global_pred_long` |
 | `test_model_factory_features.py` | `global_rank` au lieu de `global_pred_long` |
 
-**Résultat** : 180 tests OK (86 diagnostics + 94 stacking/flags/features).
+**Résultat** : 187 tests OK (86 diagnostics + 94 stacking/flags/features + 7 assets).
+
+---
+
+## ✅ Réalisé (2026-07-25) — Sprint 2
+
+### Étape 2 — Z-score rolling + sector-neutralisation ✅
+
+**Fichiers** : `modelFactory/features.py`, `modelFactory/cross_sectional.py`
+
+- **21 colonnes z-score** (`ZSCORE_SOURCE_FEATURES` → `ZSCORE_FEATURE_COLUMNS`) : normalisation temporelle sur 5 ans glissants (1260j, min_periods=252j)
+- **10 colonnes sector-neutral** (`SECTOR_NEUTRAL_SOURCE_FEATURES` → `SECTOR_NEUTRAL_FEATURE_COLUMNS`) : soustraction de la médiane sectorielle par date
+- `_compute_sector_neutral_features()` dans `cross_sectional.py`
+- `_compute_symbol_raw_values()` enrichi avec `momentum_20/60`, `rolling_volatility_60`, `rsi_14`, `sma20/50_distance`, `relative_strength_20/60`
+- **Impact** : ~31 nouvelles features sans donnée externe (21 z-score + 10 sector-neutral)
+
+### Étape 5 (originale) — Fondamentaux ✅
+
+**Fichiers créés/modifiés** :
+
+| Fichier | Changement |
+|---------|-----------|
+| `alembic/versions/0055_add_stock_fundamentals_daily.py` | Nouvelle table `stock_fundamentals_daily` (20+ colonnes : PE, ROE, marges, croissance, etc.) |
+| `modelFactory/fundamental_features.py` | Chargement, forward-fill, dérivation de features fondamentales (20 colonnes `fund_*`) |
+| `modelFactory/features.py` | Flag `include_fundamentals` dans `get_feature_columns()`, `compute_features()`, `fingerprint()`, `build_feature_contract()`, `validate_feature_contract()` |
+| `modelFactory/dataset.py` | `fundamental_df` paramètre dans `prepare_symbol_frame()` et `SymbolDataModule` |
+| `modelFactory/trainer.py` | `fundamental_df` propagé dans `train_symbol()` et `_prepare_target_optimization_summary()` |
+| `modelFactory/orchestrator.py` | `fundamental_cache` chargé dans `run_training_batch()`, passé aux workers |
+| `modelFactory/config.py` | `DataConfig.include_fundamentals_features: bool = False` |
+| `modelFactory/cli.py` | `--include-fundamentals` flag CLI |
+| `ihm/pages/fundamentals.py` | Page Streamlit : couverture, détail par symbole, distribution sectorielle, recherche |
+
+**20 features fondamentales** :
+- Valuation : `fund_pe_ratio`, `fund_forward_pe`, `fund_peg_ratio`, `fund_pb_ratio`, `fund_ps_ratio`, `fund_ev_to_ebitda`
+- Profitabilité : `fund_roe`, `fund_roa`, `fund_net_margin`, `fund_operating_margin`, `fund_gross_margin`
+- Croissance : `fund_eps_growth_yoy`, `fund_revenue_growth_yoy`
+- Yield : `fund_dividend_yield`
+- Marché : `fund_market_cap_log`, `fund_beta`
+- Estimations : `fund_eps_estimate_current`, `fund_eps_estimate_next`
+- Dérivées : `fund_eps_to_price`, `fund_estimate_revision`
+
+**Source** : EODHD `/fundamentals/{symbol}`. Stockage PIT-safe avec `trade_date` + forward-fill.
+
+**Populateur** : `python -c "from modelFactory.fundamental_features import fetch_and_store_fundamentals; fetch_and_store_fundamentals(['AAPL', 'MSFT'], provider='eodhd')"`
 
 ---
 
 ## ⏳ Restant à faire
-
-### Étape 2 — Z-score rolling + sector-neutralisation
-
-- `compute_rolling_zscore()` dans `features.py`
-- `compute_sector_neutral()` dans `cross_sectional.py`
-- ~30 colonnes supplémentaires sans donnée externe
-- Reporté car les features d'interaction + multi-horizons sont déjà un bon premier pas
-
-### Étape 5 (originale) — Fondamentaux
-
-- Migration `stock_fundamentals_daily`
-- Page IHM `ihm/pages/fundamentals.py`
-- Module `modelFactory/fundamental_features.py`
-- Intégration EODHD `fetch_fundamentals()` (déjà codé)
 
 ### Factor Exposures
 

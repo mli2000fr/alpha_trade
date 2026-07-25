@@ -116,6 +116,24 @@ INTERACTION_FEATURES: list[str] = [
     "relative_strength_60_div_market_volatility",
 ]
 
+# ── Sprint 2026-07-25 : Z-score rolling (normalisation temporelle) ──
+# Chaque feature transformée en z-score sur fenêtre glissante 5 ans (1260j, min_periods=252j).
+# Rend les features comparables dans le temps, indépendamment du régime de marché.
+
+ZSCORE_SOURCE_FEATURES: list[str] = [
+    "momentum_5", "momentum_10", "momentum_20", "momentum_60", "momentum_120", "momentum_250",
+    "rolling_volatility_5", "rolling_volatility_10", "rolling_volatility_20", "rolling_volatility_60", "rolling_volatility_120",
+    "rsi_5", "rsi_14", "rsi_21",
+    "sma10_distance", "sma20_distance", "sma50_distance", "sma100_distance", "sma200_distance", "sma250_distance",
+    "volume_ratio_20",
+    "intraday_range",
+]
+
+def _zscore_column_name(source_col: str) -> str:
+    return f"{source_col}_zscore"
+
+ZSCORE_FEATURE_COLUMNS: list[str] = [_zscore_column_name(c) for c in ZSCORE_SOURCE_FEATURES]
+
 # Features macro contextuelles (depuis stock_macro_indicators_daily)
 MACRO_FEATURE_COLUMNS: list[str] = [
     "vix_close",
@@ -220,6 +238,7 @@ def get_feature_columns(
     include_macro_vix3m: bool = False,
     include_macro_move: bool = False,
     include_global_stacking: bool = False,
+    include_fundamentals: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnels).
 
@@ -229,15 +248,19 @@ def get_feature_columns(
 
     ``include_global_stacking`` (Approche 2) ajoute ``global_rank``
     (rang percentil du Global Ranking Model) comme feature.
+
+    ``include_fundamentals`` ajoute les features fondamentales
+    (PE, ROE, marges, croissance, etc.) depuis stock_fundamentals_daily.
     """
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
         cols.extend(EXPERT_FEATURE_COLUMNS)
     if include_cross_sectional:
-        from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, SECTOR_FEATURE_COLUMNS
+        from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, SECTOR_FEATURE_COLUMNS, SECTOR_NEUTRAL_FEATURE_COLUMNS
 
         cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)
         cols.extend(SECTOR_FEATURE_COLUMNS)
+        cols.extend(SECTOR_NEUTRAL_FEATURE_COLUMNS)
         if include_global_stacking:
             from modelFactory.cross_sectional import GLOBAL_PRED_FEATURE_COLUMNS
 
@@ -269,6 +292,10 @@ def get_feature_columns(
         cols.extend(REGIME_INTERACTION_FEATURES)
         cols.extend(MULTI_HORIZON_FEATURES)
         cols.extend(INTERACTION_FEATURES)
+        cols.extend(ZSCORE_FEATURE_COLUMNS)
+    if include_fundamentals:
+        from modelFactory.fundamental_features import FUNDAMENTAL_FEATURE_COLUMNS
+        cols.extend(FUNDAMENTAL_FEATURE_COLUMNS)
     return cols
 
 
@@ -284,6 +311,7 @@ def fingerprint(
     include_macro_vix3m: bool = False,
     include_macro_move: bool = False,
     include_global_stacking: bool = False,
+    include_fundamentals: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -304,6 +332,7 @@ def fingerprint(
         include_macro_vix3m=include_macro_vix3m,
         include_macro_move=include_macro_move,
         include_global_stacking=include_global_stacking,
+        include_fundamentals=include_fundamentals,
     ))
     payload = {
         "columns": columns,
@@ -317,6 +346,7 @@ def fingerprint(
         "include_macro_vix3m": bool(include_macro_vix3m),
         "include_macro_move": bool(include_macro_move),
         "include_global_stacking": bool(include_global_stacking),
+        "include_fundamentals": bool(include_fundamentals),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -343,6 +373,7 @@ def build_feature_contract(
     include_macro_vix3m: bool = False,
     include_macro_move: bool = False,
     include_global_stacking: bool = False,
+    include_fundamentals: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -358,6 +389,7 @@ def build_feature_contract(
         include_macro_vix3m=include_macro_vix3m,
         include_macro_move=include_macro_move,
         include_global_stacking=include_global_stacking,
+        include_fundamentals=include_fundamentals,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -374,6 +406,7 @@ def build_feature_contract(
             include_macro_vix3m=include_macro_vix3m,
             include_macro_move=include_macro_move,
             include_global_stacking=include_global_stacking,
+            include_fundamentals=include_fundamentals,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
@@ -397,6 +430,7 @@ def validate_feature_contract(
     include_macro_vix3m: bool = False,
     include_macro_move: bool = False,
     include_global_stacking: bool = False,
+    include_fundamentals: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -416,6 +450,7 @@ def validate_feature_contract(
         include_macro_vix3m=include_macro_vix3m,
         include_macro_move=include_macro_move,
         include_global_stacking=include_global_stacking,
+        include_fundamentals=include_fundamentals,
     )
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
@@ -428,6 +463,7 @@ def validate_feature_contract(
         include_macro_vix3m=include_macro_vix3m,
         include_macro_move=include_macro_move,
         include_global_stacking=include_global_stacking,
+        include_fundamentals=include_fundamentals,
         feature_columns=expected_columns,
     )
 
@@ -684,11 +720,14 @@ def compute_features(
     include_macro_vxn: bool = False,
     include_macro_vix3m: bool = False,
     include_macro_move: bool = False,
+    include_fundamentals: bool = False,
+    fundamental_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
     Le DataFrame d'entrée doit avoir : open, high, low, close, volume, adj_close, vwap, daily_return, is_filled.
     Si include_sentiment=True et sentiment_df fourni, merge les colonnes sentiment sur (symbol, date).
+    Si include_fundamentals=True, merge les features fondamentales depuis stock_fundamentals_daily.
     Retourne une copie avec les colonnes features ajoutées.
     Les premières lignes avec NaN rolling sont supprimées.
     """
@@ -957,6 +996,31 @@ def compute_features(
             if _col in df.columns:
                 df[_col] = df[_col].replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
+    # ── Z-score rolling (Sprint 2026-07-25) ──
+    # Normalisation temporelle sur 5 ans glissants pour rendre les features
+    # comparables indépendamment du régime de marché.
+    if feature_set == "expert":
+        _zscore_window = 1260  # 5 ans
+        _zscore_min = 252      # 1 an minimum
+        for _src in ZSCORE_SOURCE_FEATURES:
+            _target = _zscore_column_name(_src)
+            if _src in df.columns:
+                _series = df[_src].astype(float)
+                _roll_mean = _series.rolling(_zscore_window, min_periods=_zscore_min).mean()
+                _roll_std = _series.rolling(_zscore_window, min_periods=_zscore_min).std()
+                df[_target] = ((_series - _roll_mean) / _roll_std.clip(lower=1e-8)).fillna(0.0)
+            else:
+                df[_target] = 0.0
+
+    # ── Fundamental features (optional, from stock_fundamentals_daily) ──
+    if include_fundamentals:
+        from modelFactory.fundamental_features import merge_fundamentals, FUNDAMENTAL_DEFAULTS
+        df = merge_fundamentals(df, fundamental_df=fundamental_df)
+        # Ensure all fundamental columns exist (merge may have skipped some)
+        for col, default in FUNDAMENTAL_DEFAULTS.items():
+            if col not in df.columns:
+                df[col] = default
+
     # Determine active feature columns
     active_features = get_feature_columns(
         include_sentiment,
@@ -967,6 +1031,7 @@ def compute_features(
         include_macro_vxn=include_macro_vxn,
         include_macro_vix3m=include_macro_vix3m,
         include_macro_move=include_macro_move,
+        include_fundamentals=include_fundamentals,
     )
 
     feature_matrix = df.loc[:, active_features].astype(np.float64)

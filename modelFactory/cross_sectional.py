@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import Table, MetaData, select
 
-from modelFactory.features import _build_adjusted_price_frame, _range_position
+from modelFactory.features import _build_adjusted_price_frame, _range_position, _rsi
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +43,26 @@ SECTOR_FEATURE_COLUMNS: list[str] = [
 # Injecté comme feature, le per-symbol peut ajuster sa conviction selon la position
 # relative du titre (top 10% = renforcer long, bottom 10% = renforcer short).
 GLOBAL_PRED_FEATURE_COLUMNS: list[str] = ["global_rank"]
+
+# ── Sprint 2026-07-25 : Sector-neutralisation ──
+# Chaque feature est ajustée par soustraction de la médiane sectorielle.
+# Isole l'alpha spécifique au titre, indépendamment de la tendance du secteur.
+
+SECTOR_NEUTRAL_SOURCE_FEATURES: list[str] = [
+    "momentum_20", "momentum_60",
+    "relative_strength_20", "relative_strength_60",
+    "rolling_volatility_20", "rolling_volatility_60",
+    "rsi_14",
+    "sma20_distance", "sma50_distance",
+    "volume_ratio_20",
+]
+
+def _sector_neutral_column_name(source_col: str) -> str:
+    return f"{source_col}_sector_neutral"
+
+SECTOR_NEUTRAL_FEATURE_COLUMNS: list[str] = [
+    _sector_neutral_column_name(c) for c in SECTOR_NEUTRAL_SOURCE_FEATURES
+]
 
 # ── Approche 2 (Sprint 2026-07-21) — Features cross-symbol exclusives ──
 # Ces features n'ont de sens qu'au niveau cross-symbol (agrégation intra-secteur).
@@ -93,15 +113,32 @@ def _compute_symbol_raw_values(
             "dollar_volume_20": dollar_volume.rolling(20).mean(),
             "volume_ratio_20": volume / volume.rolling(20).mean().clip(lower=1.0),
             "range_position_20": _range_position(close, 20),
+            # ── Sector-neutral source features (Sprint 2026-07-25) ──
+            "momentum_20": close / close.shift(20) - 1.0,
+            "momentum_60": close / close.shift(60) - 1.0,
+            "rolling_volatility_60": daily_return.rolling(60).std(),
+            "rsi_14": _rsi(close, 14),
         }
     )
+    # SMA distances
+    sma20 = close.rolling(20).mean()
+    sma50 = close.rolling(50).mean()
+    part["sma20_distance"] = (close - sma20) / sma20.clip(lower=1e-8)
+    part["sma50_distance"] = (close - sma50) / sma50.clip(lower=1e-8)
+    # Relative strength (raw, before ranking)
     if benchmark_returns is not None and not benchmark_returns.empty:
         part = part.merge(benchmark_returns, on="date", how="left")
-        part["relative_strength_20_value"] = part["ret_20"] - part["benchmark_return_20"]
-        part["relative_strength_60_value"] = part["ret_60"] - part["benchmark_return_60"]
+        _br20 = part.get("benchmark_return_20", pd.Series(0.0, index=part.index))
+        _br60 = part.get("benchmark_return_60", pd.Series(0.0, index=part.index))
+        part["relative_strength_20_value"] = part["ret_20"] - _br20
+        part["relative_strength_60_value"] = part["ret_60"] - _br60
+        part["relative_strength_20"] = part["relative_strength_20_value"]
+        part["relative_strength_60"] = part["relative_strength_60_value"]
     else:
         part["relative_strength_20_value"] = part["ret_20"]
         part["relative_strength_60_value"] = part["ret_60"]
+        part["relative_strength_20"] = part["ret_20"]
+        part["relative_strength_60"] = part["ret_60"]
     return part
 
 
@@ -379,6 +416,62 @@ def _compute_cross_symbol_features(
     return result[["symbol", "date", *GLOBAL_EXCLUSIVE_FEATURE_COLUMNS]].copy()
 
 
+def _compute_sector_neutral_features(
+    raw_panel: pd.DataFrame,
+    sector_map: dict[str, str],
+    *,
+    min_symbols_per_sector: int = 3,
+) -> pd.DataFrame:
+    """Calcule les versions sector-neutralisées des features techniques.
+
+    Pour chaque (date, secteur), calcule la médiane de chaque feature source
+    et soustrait cette médiane de la valeur brute du titre. Isole l'alpha
+    spécifique au titre, indépendamment de la tendance sectorielle.
+
+    Parameters
+    ----------
+    raw_panel : pd.DataFrame
+        Doit contenir ``symbol``, ``date`` et les colonnes de
+        ``SECTOR_NEUTRAL_SOURCE_FEATURES``.
+    sector_map : dict[str, str]
+        Mapping ``{symbol: sector_name}``.
+    min_symbols_per_sector : int
+        Minimum de symboles dans un secteur pour que la médiane soit valide.
+
+    Returns
+    -------
+    pd.DataFrame [symbol, date, *SECTOR_NEUTRAL_FEATURE_COLUMNS]
+    """
+    if not sector_map or raw_panel.empty:
+        return pd.DataFrame(columns=["symbol", "date", *SECTOR_NEUTRAL_FEATURE_COLUMNS])
+
+    panel = raw_panel.copy()
+    panel["sector"] = panel["symbol"].astype(str).str.upper().map(sector_map)
+    panel = panel.dropna(subset=["sector"])
+    if panel.empty:
+        return pd.DataFrame(columns=["symbol", "date", *SECTOR_NEUTRAL_FEATURE_COLUMNS])
+
+    # Compter les symboles par (date, secteur) pour filtrer les petits secteurs
+    sector_counts = panel.groupby(["date", "sector"])["symbol"].transform("nunique")
+    valid_mask = sector_counts >= min_symbols_per_sector
+
+    result = panel[["symbol", "date"]].copy()
+
+    for src_col in SECTOR_NEUTRAL_SOURCE_FEATURES:
+        target_col = _sector_neutral_column_name(src_col)
+        if src_col not in panel.columns:
+            result[target_col] = 0.0
+            continue
+        # Médiane sectorielle par date
+        sector_median = panel.groupby(["date", "sector"])[src_col].transform("median")
+        neutral = panel[src_col] - sector_median
+        # Mettre à 0 quand le secteur est trop petit (médiane non fiable)
+        neutral = neutral.where(valid_mask, 0.0)
+        result[target_col] = neutral.fillna(0.0).astype(float)
+
+    return result[["symbol", "date", *SECTOR_NEUTRAL_FEATURE_COLUMNS]]
+
+
 def build_cross_sectional_features_from_db(
     engine,
     symbols: list[str],
@@ -500,6 +593,22 @@ def build_cross_sectional_features_from_db(
         diagnostics["cross_symbol_features_enabled"] = True
         diagnostics["cross_symbol_feature_count"] = len(GLOBAL_EXCLUSIVE_FEATURE_COLUMNS)
 
+    # ── Sector-neutral features (Sprint 2026-07-25) ──
+    # Calcule les versions sector-neutralisées des features techniques.
+    # Chaque feature est ajustée par soustraction de la médiane de son secteur à chaque date.
+    if sector_map:
+        _sn_frame = _compute_sector_neutral_features(
+            raw_panel, sector_map, min_symbols_per_sector=min_symbols_per_sector,
+        )
+        if not _sn_frame.empty:
+            feature_frame = feature_frame.merge(_sn_frame, on=["symbol", "date"], how="left")
+        for col in SECTOR_NEUTRAL_FEATURE_COLUMNS:
+            if col not in feature_frame.columns:
+                feature_frame[col] = 0.0
+        diagnostics["sector_neutral_features_enabled"] = True
+        diagnostics["sector_neutral_feature_count"] = len(SECTOR_NEUTRAL_FEATURE_COLUMNS)
+        diagnostics["feature_columns"] = list(feature_frame.columns)
+
     return feature_frame, diagnostics
 
 
@@ -583,6 +692,7 @@ def merge_cross_sectional_features(
         + list(SECTOR_FEATURE_COLUMNS)
         + list(GLOBAL_PRED_FEATURE_COLUMNS)
         + list(GLOBAL_EXCLUSIVE_FEATURE_COLUMNS)
+        + list(SECTOR_NEUTRAL_FEATURE_COLUMNS)
     )
     if cross_sectional_df is None or cross_sectional_df.empty:
         merged = symbol_df.copy()

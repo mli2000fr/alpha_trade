@@ -489,6 +489,7 @@ class SymbolDataModule(L.LightningDataModule):
         *,
         cross_sectional_df: pd.DataFrame | None = None,
         include_global_stacking: bool = False,
+        fundamental_df: pd.DataFrame | None = None,
     ) -> None:
         super().__init__()
         self.bars_df = bars_df
@@ -499,6 +500,7 @@ class SymbolDataModule(L.LightningDataModule):
         self.universe_df = universe_df
         self.selector_df = selector_df
         self.cross_sectional_df = cross_sectional_df
+        self.fundamental_df = fundamental_df
         self.reproducibility_seed = int(reproducibility_seed)
         self._include_global_stacking = bool(include_global_stacking)
         self._feature_cols = get_feature_columns(
@@ -512,6 +514,7 @@ class SymbolDataModule(L.LightningDataModule):
             include_macro_vix3m=data_cfg.include_macro_vix3m_features,
             include_macro_move=data_cfg.include_macro_move_features,
             include_global_stacking=self._include_global_stacking,
+            include_fundamentals=data_cfg.include_fundamentals_features,
         )
         self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
@@ -554,6 +557,7 @@ class SymbolDataModule(L.LightningDataModule):
             selector_df=self.selector_df,
             cross_sectional_df=self.cross_sectional_df,
             include_global_stacking=self._include_global_stacking,
+            fundamental_df=self.fundamental_df,
         )
         self.prepared_df = df
         self.cross_sectional_diagnostics = dict(df.attrs.get("cross_sectional_diagnostics", {}))
@@ -616,12 +620,15 @@ def prepare_symbol_frame(
     *,
     cross_sectional_df: pd.DataFrame | None = None,
     include_global_stacking: bool = False,
+    fundamental_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Prepare le DataFrame final features + target pour un symbole.
 
     If ``cross_sectional_df`` is provided (pre-computed via
     ``build_cross_sectional_features_from_db``), the ``universe_df``
     parameter is ignored for cross-sectional computation.
+
+    If ``fundamental_df`` is provided, it is merged as fundamental features.
     """
     df = compute_features(
         bars_df,
@@ -636,6 +643,8 @@ def prepare_symbol_frame(
         include_macro_vxn=data_cfg.include_macro_vxn_features,
         include_macro_vix3m=data_cfg.include_macro_vix3m_features,
         include_macro_move=data_cfg.include_macro_move_features,
+        include_fundamentals=data_cfg.include_fundamentals_features,
+        fundamental_df=fundamental_df,
     )
     cross_sectional_diagnostics: dict[str, object] = {}
     if data_cfg.enable_cross_sectional_features:
@@ -680,6 +689,7 @@ def prepare_symbol_frame(
         include_macro_vix3m=data_cfg.include_macro_vix3m_features,
         include_macro_move=data_cfg.include_macro_move_features,
         include_global_stacking=include_global_stacking,
+        include_fundamentals=data_cfg.include_fundamentals_features,
     )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics

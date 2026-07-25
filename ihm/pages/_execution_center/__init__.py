@@ -124,6 +124,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_VXN,
     DEFAULT_ML_INCLUDE_MACRO_VIX3M,
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
+    DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
     DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
     DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
@@ -132,7 +133,6 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_ENABLE_CATBOOST,
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
     DEFAULT_ML_ENABLE_GLOBAL_STACKING,
-    DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER,
     DEFAULT_ML_GLOBAL_MODEL_NAME,
     DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
     DEFAULT_ML_SELECT_CHAMPION,
@@ -3234,6 +3234,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_macro_move",
                 help="Ajoute `--include-macro-move`. Indice ICE BofA MOVE : volatilité des bons du Trésor US.",
             )
+            ml_include_fundamentals = st.checkbox(
+                "📊 Fondamentaux EODHD (PE, ROE, marges, croissance)",
+                value=_session_state_bool("pipeline_ml_include_fundamentals", DEFAULT_ML_INCLUDE_FUNDAMENTALS),
+                key="pipeline_ml_include_fundamentals",
+                help="Ajoute `--include-fundamentals`. Nécessite un backfill préalable de `stock_fundamentals_daily` (fetch EODHD).",
+            )
             st.markdown("---")
             ml_enable_liquidity_filter = st.checkbox(
                 "🔍 Filtrer les symboles illiquides (volume, cap, spread)",
@@ -3312,20 +3318,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
-            st.caption("Les deux options ci-dessous nécessitent que le modèle global soit activé.")
+            st.caption("L'option ci-dessous nécessite que le modèle global soit activé.")
             ml_enable_global_stacking = st.checkbox(
-                "📥 Utiliser la prédiction globale comme feature (Stacking)",
+                "📥 Utiliser le rang global comme feature (Stacking)",
                 value=_session_state_bool("pipeline_ml_enable_global_stacking", DEFAULT_ML_ENABLE_GLOBAL_STACKING),
                 key="pipeline_ml_enable_global_stacking",
                 disabled=not ml_enable_global_model,
-                help="Ajoute `--enable-global-stacking`. Injecte `global_pred_long` comme feature dans les modèles per-symbol (LSTM/LGBM/CatBoost). Le modèle apprend à pondérer le signal transverse.",
-            )
-            ml_enable_global_challenger = st.checkbox(
-                "🏆 Inclure le modèle global dans la sélection champion",
-                value=_session_state_bool("pipeline_ml_enable_global_challenger", DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER),
-                key="pipeline_ml_enable_global_challenger",
-                disabled=not ml_enable_global_model,
-                help="Ajoute `--enable-global-challenger`. Le Global Model devient un 4ème challenger avec métriques walk-forward comparables (wf.f1_macro).",
+                help="Ajoute `--enable-global-stacking`. Injecte `global_rank` comme feature dans les modèles per-symbol (LSTM/LGBM/CatBoost). Le modèle apprend à pondérer le signal transverse.",
             )
             ml_global_model_name = cast(
                 str,
@@ -4350,6 +4349,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_vxn=bool(ml_include_macro_vxn),
             ml_include_macro_vix3m=bool(ml_include_macro_vix3m),
             ml_include_macro_move=bool(ml_include_macro_move),
+            ml_include_fundamentals=bool(ml_include_fundamentals),
             # Filtrage liquidité
             ml_enable_liquidity_filter=bool(ml_enable_liquidity_filter),
             ml_liquidity_min_avg_volume_20d=int(ml_liquidity_min_avg_volume_20d if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D),
@@ -4360,7 +4360,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),
             ml_enable_global_stacking=bool(ml_enable_global_stacking),
-            ml_enable_global_challenger=bool(ml_enable_global_challenger),
             ml_global_model_name=cast(Any, ml_global_model_name),
             ml_enable_cross_sectional=bool(ml_enable_cross_sectional),
             ml_select_champion=bool(ml_select_champion),
