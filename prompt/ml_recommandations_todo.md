@@ -97,6 +97,24 @@
 | Effet attendu | Le modèle n'a plus de « bruit macro » → forcé d'utiliser des features discriminantes (`momentum_*_zscore`, `dollar_volume_20_rank`, `sector_neutral_*`) |
 | **Important** | Ces features restent disponibles pour les **modèles per-symbol Phase 2** |
 
+### Target = Rang Percentile par Date (Rank Target)
+| Changement | Avant | Après |
+|-----------|-------|-------|
+| Target | `future_return` continu (excess vs SPY) | `rank_percentile(future_return)` par date ∈ [0,1] |
+| Fichier | `modelFactory/global_ranking.py` → `train_global_ranking_wf()` |
+| Raison | Le L2 loss est sensible aux outliers (+80% sur une biotech), le Spearman non. Entraîner sur des rangs aligne la loss d'entraînement avec la métrique d'évaluation |
+| Sortie modèle | `predicted_return` continu | `predicted_return` ∈ [0,1] → utilisé directement comme `global_rank` (clippé) |
+| `_compute_per_date_rank()` | Utilisé en post-processing | **Plus nécessaire** — la prédiction est le rang |
+| Effet attendu | — | Distribution uniforme de la target, plus d'outliers, IC plus stable |
+
+### Historique des itérations IC Rank
+| # | Correctifs cumulés | ic_mean | ic_std | Splits > 0 |
+|:---:|---------------------|:---:|:---:|:---:|
+| 1 | Target absolue | +0.017 | 0.102 | 4/8 |
+| 2 | + Excess return vs SPY | −0.003 | 0.043 | 3/8 |
+| 3 | + Blacklist macro | −0.023 | 0.033 | 2/8 |
+| 4 | + **Target = rang percentile** | **À mesurer** | — | — |
+
 ---
 
 ## 🧠 Peer Review — Ajustements & Garde-fous (26/07/2026)

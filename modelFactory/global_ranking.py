@@ -327,6 +327,13 @@ def train_global_ranking_wf(
     global_df = pd.concat(prepared_parts, ignore_index=True).sort_values(["date", "symbol"]).reset_index(drop=True)
     global_df = global_df.dropna(subset=feature_columns + ["future_return"]).reset_index(drop=True)
 
+    # ── Convertir la target en rang percentile par date ──
+    # Un modèle de ranking doit être entraîné sur des rangs, pas des rendements bruts.
+    # Le percentile rank neutralise les outliers (+80% sur une biotech) et aligne
+    # la loss L2 avec la métrique d'évaluation (Spearman).
+    global_df["future_return"] = global_df.groupby("date")["future_return"].rank(pct=True).astype(np.float64)
+    LOGGER.info("train_global_ranking_wf target converted to percentile rank per date")
+
     # ── Walk-Forward splits (adaptés pour données poolées multi-symboles) ──
     # Les paramètres walk_forward (val_size, min_train_size, step_size) sont
     # exprimés en JOURS pour le per-symbol. Pour le modèle global poolé, on
@@ -451,9 +458,10 @@ def train_global_ranking_wf(
         return {"status": "skipped", "reason": "no_predictions"}
 
     # ── Assemblage final ──
+    # Le modèle prédit directement le rang percentile → clipping [0, 1]
     global_pred_df = pd.concat(global_rank_parts, ignore_index=True)
-    global_rank_df = _compute_per_date_rank(global_pred_df)
-    global_rank_df = global_rank_df.sort_values(["symbol", "date"]).reset_index(drop=True)
+    global_pred_df["global_rank"] = global_pred_df["predicted_return"].clip(0.0, 1.0).astype(np.float64)
+    global_rank_df = global_pred_df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
     ic_mean = float(np.mean(ic_ranks)) if ic_ranks else None
     ic_std = float(np.std(ic_ranks)) if ic_ranks else None
@@ -636,12 +644,12 @@ def predict_global_rank(
         LOGGER.warning("predict_global_rank: prediction failed: %s", exc)
         return None
 
-    # ── Calculer le rang percentile par date ──
-    result = _compute_per_date_rank(pred_df)
+    # Le modèle prédit directement le rang → clipping [0, 1]
+    pred_df["global_rank"] = pred_df["predicted_return"].clip(0.0, 1.0).astype(np.float64)
     LOGGER.info(
         "predict_global_rank: predicted %d symbols, global_rank range [%.3f, %.3f]",
-        len(result),
-        result["global_rank"].min() if not result.empty else 0,
-        result["global_rank"].max() if not result.empty else 0,
+        len(pred_df),
+        pred_df["global_rank"].min() if not pred_df.empty else 0,
+        pred_df["global_rank"].max() if not pred_df.empty else 0,
     )
-    return result[["symbol", "date", "global_rank"]]
+    return pred_df[["symbol", "date", "global_rank"]]
