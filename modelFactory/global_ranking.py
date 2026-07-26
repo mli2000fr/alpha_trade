@@ -170,6 +170,8 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         # Régime de marché SPY (identiques ∀ symboles)
         "market_return_20", "market_volatility_20", "market_trend_strength_50",
         "regime_bull_market", "regime_risk_off",
+        # Liquidité — trop dominante, écrase les signaux d'alpha
+        "dollar_volume_20_rank",
     }
     cols = [c for c in all_cols if c not in _macro_blacklist]
     # Ajouter les rangs cross-sectionnels des features brutes
