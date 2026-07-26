@@ -565,7 +565,7 @@ def train_global_ranking_wf(
             _sample_weights = None
             if _train_dates is not None:
                 _days_diff = (_train_dates.max() - _train_dates).dt.days
-                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
+                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)  # demi-vie ~12 mois
 
             _group = None
             _eval_set = None
