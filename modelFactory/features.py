@@ -147,6 +147,7 @@ RANK_INTERACTION_FEATURES: list[str] = [
     "rank_x_momentum_60",
     "rank_x_volatility_20",
     "rank_x_sma20_distance",
+    "rank_acceleration",  # global_rank_3 - global_rank_10 (vitesse du rang)
 ]
 
 # Features macro contextuelles (depuis stock_macro_indicators_daily)
@@ -1137,15 +1138,17 @@ def compute_rank_interactions(df: pd.DataFrame) -> pd.DataFrame:
     """Ajoute les features d'interaction global_rank × features locales.
 
     Doit être appelé APRÈS merge_cross_sectional_features (qui injecte global_rank).
+    Utilise global_rank_10 comme référence primaire ; fallback sur global_rank.
     Les colonnes produites sont listées dans RANK_INTERACTION_FEATURES.
     """
-    if "global_rank" not in df.columns:
+    _rank_col = "global_rank_10" if "global_rank_10" in df.columns else "global_rank"
+    if _rank_col not in df.columns:
         for col in RANK_INTERACTION_FEATURES:
             if col not in df.columns:
                 df[col] = 0.0
         return df
 
-    _rank = df["global_rank"].fillna(0.5).astype(float)
+    _rank = df[_rank_col].fillna(0.5).astype(float)
 
     _mapping = {
         "rank_x_rsi_14": "rsi_14",
@@ -1160,6 +1163,11 @@ def compute_rank_interactions(df: pd.DataFrame) -> pd.DataFrame:
             df[out_col] = (_rank * df[src_col].fillna(0.0).astype(float)).astype(float)
         else:
             df[out_col] = 0.0
+
+    # rank_acceleration = vitesse du rang (J+3 vs J+10)
+    _r3 = df["global_rank_3"] if "global_rank_3" in df.columns else _rank
+    _r10 = df["global_rank_10"] if "global_rank_10" in df.columns else _rank
+    df["rank_acceleration"] = (_r3.fillna(0.5) - _r10.fillna(0.5)).astype(float)
 
     return df
 

@@ -951,17 +951,21 @@ def _prepare_prediction_frame(
             include_global_stacking=include_global_stacking,
         )
         # ── Fallback global_rank : si attendu mais absent → chercher dans le cache ──
-        if include_global_stacking and "global_rank" not in df.columns:
+        if include_global_stacking and "global_rank" not in df.columns and "global_rank_3" not in df.columns:
             _cache_key = str(cutoff_date) if cutoff_date else "__today__"
             _cached = _global_rank_prediction_cache.get(_cache_key)
             if _cached is not None and not _cached.empty:
-                # Merger le global_rank depuis le cache
-                df = df.merge(
-                    _cached[["symbol", "date", "global_rank"]],
-                    on=["symbol", "date"], how="left",
-                )
-                if "global_rank" not in df.columns or df["global_rank"].isna().all():
-                    df["global_rank"] = 0.5
+                # Merger toutes les colonnes global_rank* depuis le cache
+                _rank_cols = [c for c in _cached.columns if c.startswith("global_rank")]
+                if _rank_cols:
+                    df = df.merge(
+                        _cached[["symbol", "date"] + _rank_cols],
+                        on=["symbol", "date"], how="left",
+                    )
+                for _rc in _rank_cols:
+                    if _rc not in df.columns or df[_rc].isna().all():
+                        df[_rc] = 0.5
+                if all(df.get(rc, pd.Series(0.5)).isna().all() for rc in _rank_cols):
                     _global_rank_fallback_symbols.append(symbol)
             else:
                 LOGGER.warning(

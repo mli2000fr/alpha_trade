@@ -662,18 +662,18 @@ def run_training_batch(
         # ── Phase 2 : merge global_rank into cross-sectional cache (FLAG B) ──
         global_rank_df = global_result_wf.get("global_rank_df") if isinstance(global_result_wf, dict) else None
         if cfg.global_model.stacking_enabled and global_rank_df is not None and not global_rank_df.empty:
+            _rank_cols = [c for c in global_rank_df.columns if c.startswith("global_rank")]
             if cross_sectional_cache is not None and not cross_sectional_cache.empty:
                 cross_sectional_cache = cross_sectional_cache.merge(
-                    global_rank_df[["symbol", "date", "global_rank"]], on=["symbol", "date"], how="left",
+                    global_rank_df[["symbol", "date"] + _rank_cols], on=["symbol", "date"], how="left",
                 )
-                cross_sectional_cache["global_rank"] = (
-                    cross_sectional_cache["global_rank"].fillna(0.5).astype(np.float64)
-                )
+                for _rc in _rank_cols:
+                    cross_sectional_cache[_rc] = cross_sectional_cache[_rc].fillna(0.5).astype(np.float64)
             else:
-                cross_sectional_cache = global_rank_df[["symbol", "date", "global_rank"]].copy()
+                cross_sectional_cache = global_rank_df[["symbol", "date"] + _rank_cols].copy()
             LOGGER.info(
-                "run_training_batch stacking enabled: global_rank merged into cache rows=%d",
-                len(cross_sectional_cache),
+                "run_training_batch stacking enabled: %d global_rank cols merged into cache rows=%d",
+                len(_rank_cols), len(cross_sectional_cache),
             )
             # Persister pour les workers multiprocessing
             _global_rank_path = Path(cfg.artifacts_dir) / "_global_rank_cache.parquet"

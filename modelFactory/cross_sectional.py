@@ -42,7 +42,12 @@ SECTOR_FEATURE_COLUMNS: list[str] = [
 # Le Global Ranking Model prédit le rendement futur → rang percentil dans l'univers.
 # Injecté comme feature, le per-symbol peut ajuster sa conviction selon la position
 # relative du titre (top 10% = renforcer long, bottom 10% = renforcer short).
-GLOBAL_PRED_FEATURE_COLUMNS: list[str] = ["global_rank"]
+GLOBAL_PRED_FEATURE_COLUMNS: list[str] = [
+    "global_rank_3",
+    "global_rank_5",
+    "global_rank_10",
+    "global_rank",  # backward compat
+]
 
 # ── Sprint 2026-07-25 : Sector-neutralisation ──
 # Chaque feature est ajustée par soustraction de la médiane sectorielle.

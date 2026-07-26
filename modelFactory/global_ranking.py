@@ -48,6 +48,9 @@ from modelFactory.reproducibility import apply_reproducibility, derive_seed
 
 LOGGER = logging.getLogger(__name__)
 
+# Horizons pour le ranking multi-horizons (stacking Phase 2)
+_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10)
+
 
 # ────────────────────────────────────────────────────────────────────
 # Helpers
@@ -62,6 +65,7 @@ def _prepare_global_ranking_frame(
     selector_df: pd.DataFrame | None = None,
     cross_sectional_df: pd.DataFrame | None = None,
     symbol: str | None = None,
+    horizon: int = 10,
 ) -> pd.DataFrame:
     """Prépare le DataFrame pour un symbole avec toutes les features + future_return."""
     df = compute_features(
@@ -84,10 +88,7 @@ def _prepare_global_ranking_frame(
     if cfg.data.enable_cross_sectional_features and cross_sectional_df is not None:
         df = merge_cross_sectional_features(df, cross_sectional_df)
 
-    # Target : rendement excédentaire vs SPY (market-neutral)
-    # En neutralisant le rendement du marché, le modèle apprend le classement
-    # relatif inter-titres plutôt que la direction macro.
-    horizon = cfg.data.forecast_horizon
+    # Target : rendement excédentaire vs SPY (market-neutral), horizon variable
     close = df["close"].astype(float)
     stock_return = close.shift(-horizon) / close - 1.0
 
@@ -98,6 +99,9 @@ def _prepare_global_ranking_frame(
         df["future_return"] = (stock_return - _spy_map.values).astype(float)
     else:
         df["future_return"] = stock_return
+
+    # Stocker aussi le rendement brut pour référence
+    df[f"future_return_raw"] = stock_return
 
     return df
 
@@ -161,15 +165,21 @@ def compute_ic_rank(predicted: np.ndarray, actual: np.ndarray) -> float | None:
         return None
 
 
-def _compute_per_date_rank(pred_df: pd.DataFrame) -> pd.DataFrame:
+def _compute_per_date_rank(pred_df: pd.DataFrame, *, suffix: str = "") -> pd.DataFrame:
     """Calcule le rang percentil (0..1) par date.
 
-    global_rank = 0.0 → pire titre de l'univers ce jour-là
-    global_rank = 1.0 → meilleur titre de l'univers ce jour-là
+    Si suffix est fourni (ex: "_3", "_5", "_10"), les colonnes sont suffixées.
     """
     result = pred_df.copy()
-    result["global_rank"] = result.groupby("date")["predicted_return"].rank(pct=True)
-    result["global_rank"] = result["global_rank"].fillna(0.5).astype(np.float64)
+    pred_col = "predicted_return"
+    rank_col = "global_rank" if not suffix else f"global_rank{suffix}"
+    if suffix:
+        pred_col = f"predicted_return{suffix}"
+    if pred_col not in result.columns:
+        result[rank_col] = 0.5
+        return result
+    result[rank_col] = result.groupby("date")[pred_col].rank(pct=True)
+    result[rank_col] = result[rank_col].fillna(0.5).astype(np.float64)
     return result
 
 
@@ -202,8 +212,10 @@ def _build_ranking_estimator(
             model_name = "lightgbm"
     if model_name == "lightgbm":
         lgb = _import_lightgbm()
-        return "lightgbm", lgb.LGBMRegressor(
-            objective="regression",
+        return "lightgbm", lgb.LGBMRanker(
+            objective="lambdarank",
+            metric="ndcg",
+            eval_at=[10, 20, 50],
             max_depth=cfg.baseline.max_depth,
             num_leaves=cfg.baseline.lgbm_num_leaves,
             n_estimators=cfg.baseline.n_estimators,
@@ -293,9 +305,9 @@ def train_global_ranking_wf(
             min_universe_size=cfg.data.cross_sectional_min_universe,
         )
 
-    # ── Préparation du DataFrame poolé ──
+    # ── Préparation du DataFrame poolé (features communes à tous les horizons) ──
     feature_columns = _get_ranking_feature_columns(cfg)
-    prepared_parts: list[pd.DataFrame] = []
+    _base_parts: list[pd.DataFrame] = []
     for symbol in symbols:
         bars_df = universe_df[universe_df["symbol"] == symbol].copy().sort_values("date").reset_index(drop=True)
         if len(bars_df) < cfg.data.min_history_days:
@@ -314,187 +326,193 @@ def train_global_ranking_wf(
             bars_df, cfg,
             benchmark_df=benchmark_df, sentiment_df=sym_sentiment,
             selector_df=sym_selector, cross_sectional_df=sym_cross,
-            symbol=symbol,
+            symbol=symbol, horizon=max(_GLOBAL_RANKING_HORIZONS),
         )
         if prepared.empty:
             continue
         prepared["symbol"] = symbol
-        prepared_parts.append(prepared)
+        _base_parts.append(prepared)
 
-    if not prepared_parts:
+    if not _base_parts:
         return {"status": "skipped", "reason": "no_prepared_rows"}
 
-    global_df = pd.concat(prepared_parts, ignore_index=True).sort_values(["date", "symbol"]).reset_index(drop=True)
-    global_df = global_df.dropna(subset=feature_columns + ["future_return"]).reset_index(drop=True)
+    base_df = pd.concat(_base_parts, ignore_index=True).sort_values(["date", "symbol"]).reset_index(drop=True)
+    # Conserver close + SPY close pour recalculer la target par horizon
+    _close = base_df["close"].astype(float)
+    _spy_series: pd.Series | None = None
+    if benchmark_df is not None and "close" in benchmark_df.columns:
+        _spy_close = benchmark_df.set_index("date")["close"].astype(float)
+        _spy_series = _spy_close.reindex(pd.to_datetime(base_df["date"])).fillna(0.0)
+    base_df = base_df.dropna(subset=feature_columns).reset_index(drop=True)
 
-    # ── Convertir la target en rang percentile par date ──
-    # Un modèle de ranking doit être entraîné sur des rangs, pas des rendements bruts.
-    # Le percentile rank neutralise les outliers (+80% sur une biotech) et aligne
-    # la loss L2 avec la métrique d'évaluation (Spearman).
-    global_df["future_return"] = global_df.groupby("date")["future_return"].rank(pct=True).astype(np.float64)
-    LOGGER.info("train_global_ranking_wf target converted to percentile rank per date")
-
-    # ── Walk-Forward splits (adaptés pour données poolées multi-symboles) ──
-    # Les paramètres walk_forward (val_size, min_train_size, step_size) sont
-    # exprimés en JOURS pour le per-symbol. Pour le modèle global poolé, on
-    # doit les multiplier par le nombre de symboles par jour pour obtenir des
-    # splits de durée équivalente.
-    _daily_symbols = int(round(global_df.groupby("date").size().median()))
+    # ── Walk-Forward splits (communs à tous les horizons) ──
+    _daily_symbols = int(round(base_df.groupby("date").size().median()))
     _daily_symbols = max(_daily_symbols, 1)
-    LOGGER.info(
-        "train_global_ranking_wf scaling WF params by daily_symbols=%d "
-        "(raw: train=%d val=%d step=%d max_splits=%d)",
-        _daily_symbols,
-        cfg.walk_forward.min_train_size,
-        cfg.walk_forward.val_size,
-        cfg.walk_forward.step_size,
-        cfg.walk_forward.max_splits,
-    )
     wf_splits = generate_walk_forward_splits(
-        global_df,
+        base_df,
         min_train_size=cfg.walk_forward.min_train_size * _daily_symbols,
         val_size=cfg.walk_forward.val_size * _daily_symbols,
         test_size=cfg.walk_forward.test_size * _daily_symbols,
         step_size=cfg.walk_forward.step_size * _daily_symbols,
         max_splits=cfg.walk_forward.max_splits,
-        forecast_horizon=horizon,
+        forecast_horizon=max(_GLOBAL_RANKING_HORIZONS),
         date_column="date",
     )
     if not wf_splits:
         return {"status": "skipped", "reason": "no_valid_wf_split"}
 
     LOGGER.info(
-        "train_global_ranking_wf start symbols=%d splits=%d feature_cols=%d horizon=%d",
-        len(symbols), len(wf_splits), len(feature_columns), horizon,
+        "train_global_ranking_wf start symbols=%d splits=%d feature_cols=%d horizons=%s",
+        len(symbols), len(wf_splits), len(feature_columns), list(_GLOBAL_RANKING_HORIZONS),
     )
 
-    resolved_seed = derive_seed(cfg.reproducibility.seed, "global_ranking_wf", cfg.global_model.model_name)
-    apply_reproducibility(
-        ReproducibilityConfig(seed=resolved_seed, deterministic=cfg.reproducibility.deterministic),
-        context=f"global_ranking_wf:{cfg.global_model.model_name}",
-    )
+    # ── Entraîner un modèle par horizon ──
+    all_ic_means: dict[int, float] = {}
+    all_rank_dfs: list[pd.DataFrame] = []
+    _saved_models: dict[int, str] = {}
 
-    global_rank_parts: list[pd.DataFrame] = []
-    ic_ranks: list[float] = []
-    _last_model: Any = None
-    _last_model_name: str = ""
+    for horizon in _GLOBAL_RANKING_HORIZONS:
+        h_suffix = f"_{horizon}"
+        LOGGER.info("global_ranking_wf horizon=%d start", horizon)
 
-    for split in wf_splits:
-        split_seed = derive_seed(resolved_seed, split.split_index)
+        # Calculer la target pour cet horizon
+        base_df["future_return"] = (_close.shift(-horizon) / _close - 1.0)
+        if _spy_series is not None:
+            _spy_ret = _spy_series.shift(-horizon) / _spy_series - 1.0
+            base_df["future_return"] = (base_df["future_return"] - _spy_ret).astype(float)
+        base_df["future_return"] = base_df.groupby("date")["future_return"].rank(pct=True).astype(np.float64)
+
+        resolved_seed = derive_seed(cfg.reproducibility.seed, f"global_ranking_wf_{horizon}", cfg.global_model.model_name)
         apply_reproducibility(
-            ReproducibilityConfig(seed=split_seed, deterministic=cfg.reproducibility.deterministic),
-            context=f"global_ranking_wf:split_{split.split_index}",
+            ReproducibilityConfig(seed=resolved_seed, deterministic=cfg.reproducibility.deterministic),
+            context=f"global_ranking_wf:{cfg.global_model.model_name}:h{horizon}",
         )
 
-        try:
-            backend_model_name, model = _build_ranking_estimator(cfg, resolved_seed=split_seed)
-        except ImportError:
-            return {"status": "unavailable", "reason": f"{cfg.global_model.model_name}_not_installed"}
+        h_parts: list[pd.DataFrame] = []
+        h_ics: list[float] = []
+        _last_model: Any = None
+        _last_model_name: str = ""
 
-        train_df = split.train.dropna(subset=feature_columns + ["future_return"])
-        val_df = split.val.dropna(subset=feature_columns + ["future_return"])
+        for split in wf_splits:
+            split_seed = derive_seed(resolved_seed, split.split_index)
+            apply_reproducibility(
+                ReproducibilityConfig(seed=split_seed, deterministic=cfg.reproducibility.deterministic),
+                context=f"global_ranking_wf:split_{split.split_index}:h{horizon}",
+            )
+            try:
+                backend_model_name, model = _build_ranking_estimator(cfg, resolved_seed=split_seed)
+            except ImportError:
+                return {"status": "unavailable", "reason": f"{cfg.global_model.model_name}_not_installed"}
 
-        if train_df.empty or val_df.empty:
-            continue
+            train_df = split.train.dropna(subset=feature_columns + ["future_return"])
+            val_df = split.val.dropna(subset=feature_columns + ["future_return"])
+            if train_df.empty or val_df.empty:
+                continue
 
-        # ── Sample weighting par récence ──
-        _sample_weights = None
-        if "date" in train_df.columns:
-            _train_dates = pd.to_datetime(train_df["date"])
-            _days_diff = (_train_dates.max() - _train_dates).dt.days
-            _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
+            _sample_weights = None
+            if "date" in train_df.columns:
+                _train_dates = pd.to_datetime(train_df["date"])
+                _days_diff = (_train_dates.max() - _train_dates).dt.days
+                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
 
-        # Fit régression (passe un DataFrame pour éviter le warning sklearn)
-        X_train = train_df[feature_columns]
-        y_train = train_df["future_return"].to_numpy(dtype=np.float64)
-        model.fit(X_train, y_train, sample_weight=_sample_weights)
-
-        # ── Sauvegarder le modèle (dernier split = plus récent) ──
-        _last_model = model
-        _last_model_name = backend_model_name
-
-        # Predict sur val (DataFrame → pas de warning sklearn)
-        X_val = val_df[feature_columns]
-        y_val = val_df["future_return"].to_numpy(dtype=np.float64)
-
-        pred_part = val_df[["symbol", "date"]].copy()
-        pred_part["predicted_return"] = model.predict(X_val).astype(np.float64)
-        pred_part["actual_return"] = y_val
-
-        # IC Rank
-        ic = compute_ic_rank(pred_part["predicted_return"].to_numpy(), y_val)
-        if ic is not None:
-            ic_ranks.append(ic)
-
-        global_rank_parts.append(pred_part)
-
-        # ── Feature importance (top 10) ──
-        _top_features: list[tuple[str, float]] = []
-        try:
+            _group = None
             if backend_model_name == "lightgbm":
-                _importance = model.booster_.feature_importance(importance_type="gain")
-                _pairs = sorted(zip(feature_columns, _importance), key=lambda x: x[1], reverse=True)
-                _top_features = _pairs[:10]
-            elif backend_model_name == "catboost":
-                _importance = model.get_feature_importance()
-                _pairs = sorted(zip(feature_columns, _importance), key=lambda x: x[1], reverse=True)
-                _top_features = _pairs[:10]
-        except Exception:
-            pass
-        if _top_features:
-            _top_str = " ".join(f"{feat}={val:.1f}" for feat, val in _top_features)
+                _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
+
+            X_train = train_df[feature_columns]
+            y_train = train_df["future_return"].to_numpy(dtype=np.float64)
+            if _group is not None and len(_group) > 0:
+                model.fit(X_train, y_train, sample_weight=_sample_weights, group=_group)
+            else:
+                model.fit(X_train, y_train, sample_weight=_sample_weights)
+
+            _last_model = model
+            _last_model_name = backend_model_name
+
+            X_val = val_df[feature_columns]
+            y_val = val_df["future_return"].to_numpy(dtype=np.float64)
+            pred_part = val_df[["symbol", "date"]].copy()
+            pred_part[f"predicted_return{h_suffix}"] = model.predict(X_val).astype(np.float64)
+            pred_part["actual_return"] = y_val
+
+            ic = compute_ic_rank(pred_part[f"predicted_return{h_suffix}"].to_numpy(), y_val)
+            if ic is not None:
+                h_ics.append(ic)
+            h_parts.append(pred_part)
+
             LOGGER.info(
-                "global_ranking_wf split=%d top_features: %s",
-                split.split_index + 1, _top_str,
+                "global_ranking_wf horizon=%d split=%d/%d train_rows=%d val_rows=%d ic_rank=%.4f",
+                horizon, split.split_index + 1, len(wf_splits),
+                len(train_df), len(val_df), ic if ic is not None else float("nan"),
             )
 
-        LOGGER.info(
-            "global_ranking_wf split=%d/%d train_rows=%d val_rows=%d ic_rank=%.4f",
-            split.split_index + 1, len(wf_splits),
-            len(train_df), len(val_df), ic if ic is not None else float("nan"),
-        )
+        if h_parts:
+            h_pred_df = pd.concat(h_parts, ignore_index=True)
+            h_pred_df[f"global_rank{h_suffix}"] = h_pred_df[f"predicted_return{h_suffix}"].clip(0.0, 1.0).astype(np.float64)
+            all_rank_dfs.append(h_pred_df[["symbol", "date", f"global_rank{h_suffix}"]])
+            all_ic_means[horizon] = float(np.mean(h_ics)) if h_ics else float("nan")
 
-    if not global_rank_parts:
+            # Sauvegarder le modèle pour cet horizon
+            if _last_model is not None:
+                _model_dir = Path(cfg.artifacts_dir)
+                _model_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    if _last_model_name == "lightgbm":
+                        _mp = str(_model_dir / f"_global_ranking_model{h_suffix}.txt")
+                        _last_model.booster_.save_model(_mp)
+                        _saved_models[horizon] = _mp
+                    elif _last_model_name == "catboost":
+                        _mp = str(_model_dir / f"_global_ranking_model{h_suffix}.pkl")
+                        _last_model.save_model(_mp)
+                        _saved_models[horizon] = _mp
+                except Exception as _exc:
+                    LOGGER.warning("train_global_ranking_wf h=%d failed to save model: %s", horizon, _exc)
+
+            LOGGER.info("global_ranking_wf horizon=%d done ic_mean=%.4f", horizon, all_ic_means[horizon])
+        else:
+            LOGGER.warning("global_ranking_wf horizon=%d no predictions", horizon)
+
+    if not all_rank_dfs:
         return {"status": "skipped", "reason": "no_predictions"}
 
-    # ── Assemblage final ──
-    # Le modèle prédit directement le rang percentile → clipping [0, 1]
-    global_pred_df = pd.concat(global_rank_parts, ignore_index=True)
-    global_pred_df["global_rank"] = global_pred_df["predicted_return"].clip(0.0, 1.0).astype(np.float64)
-    global_rank_df = global_pred_df.sort_values(["symbol", "date"]).reset_index(drop=True)
+    # ── Fusionner tous les horizons ──
+    global_rank_df = all_rank_dfs[0]
+    for _df in all_rank_dfs[1:]:
+        global_rank_df = global_rank_df.merge(_df, on=["symbol", "date"], how="outer")
+    for h in _GLOBAL_RANKING_HORIZONS:
+        _col = f"global_rank_{h}"
+        if _col not in global_rank_df.columns:
+            global_rank_df[_col] = 0.5
+        global_rank_df[_col] = global_rank_df[_col].fillna(0.5).astype(np.float64)
+    global_rank_df = global_rank_df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
-    ic_mean = float(np.mean(ic_ranks)) if ic_ranks else None
-    ic_std = float(np.std(ic_ranks)) if ic_ranks else None
+    # IC moyen (moyenne des IC par horizon)
+    _valid_ics = [v for v in all_ic_means.values() if not np.isnan(v)]
+    ic_mean = float(np.mean(_valid_ics)) if _valid_ics else None
+    ic_std = float(np.std(_valid_ics)) if len(_valid_ics) > 1 else None
 
     LOGGER.info(
-        "train_global_ranking_wf done pred_rows=%d symbols=%d ic_mean=%.4f ic_std=%.4f",
+        "train_global_ranking_wf done pred_rows=%d symbols=%d horizons=%s ic_by_h=%s ic_mean=%.4f",
         len(global_rank_df),
         global_rank_df["symbol"].nunique() if not global_rank_df.empty else 0,
+        list(all_ic_means.keys()),
+        {h: f"{v:.4f}" for h, v in all_ic_means.items()},
         ic_mean if ic_mean is not None else float("nan"),
-        ic_std if ic_std is not None else float("nan"),
     )
 
+    # ── Sauvegarder les métadonnées features ──
     import json as _json_
-
-    # ── Persister le dernier modèle entraîné (pour inférence) ──
-    _model_path: str | None = None
-    if _last_model is not None:
-        _model_dir = Path(cfg.artifacts_dir)
-        _model_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            if _last_model_name == "lightgbm":
-                _model_path = str(_model_dir / "_global_ranking_model.txt")
-                _last_model.booster_.save_model(_model_path)
-            elif _last_model_name == "catboost":
-                _model_path = str(_model_dir / "_global_ranking_model.pkl")
-                _last_model.save_model(_model_path)
-            _model_dir.joinpath("_global_ranking_features.json").write_text(
-                _json_.dumps({"feature_columns": feature_columns, "model_name": _last_model_name}),
-                encoding="utf-8",
-            )
-            LOGGER.info("train_global_ranking_wf model saved to %s", _model_path)
-        except Exception as _exc:
-            LOGGER.warning("train_global_ranking_wf failed to save model: %s", _exc)
+    _model_dir = Path(cfg.artifacts_dir)
+    _model_dir.mkdir(parents=True, exist_ok=True)
+    _model_dir.joinpath("_global_ranking_features.json").write_text(
+        _json_.dumps({
+            "feature_columns": feature_columns,
+            "model_name": cfg.global_model.model_name,
+            "horizons": list(_GLOBAL_RANKING_HORIZONS),
+            "saved_models": _saved_models,
+        }),
+        encoding="utf-8",
+    )
 
     return {
         "status": "completed",
@@ -503,9 +521,10 @@ def train_global_ranking_wf(
         "global_rank_df": global_rank_df if not global_rank_df.empty else None,
         "ic_rank_mean": ic_mean,
         "ic_rank_std": ic_std,
+        "ic_by_horizon": all_ic_means,
         "feature_columns": feature_columns,
         "n_features": len(feature_columns),
-        "horizon": horizon,
+        "horizons": list(_GLOBAL_RANKING_HORIZONS),
     }
 
 
@@ -519,23 +538,14 @@ def predict_global_rank(
     *,
     benchmark_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame | None:
-    """Prédit le ``global_rank`` pour l'univers du jour.
+    """Prédit les ``global_rank_{h}`` multi-horizons pour l'univers du jour.
 
-    Charge le modèle sauvegardé par ``train_global_ranking_wf()`` et
-    l'applique sur l'univers courant. Retourne un DataFrame avec les
-    colonnes [symbol, date, global_rank], ou None si le modèle est
-    indisponible.
-
-    Args:
-        universe_df: DataFrame universe avec barres OHLCV (doit avoir
-            les colonnes 'symbol', 'date', 'open', 'high', 'low',
-            'close', 'volume').
-        artifacts_dir: Répertoire contenant ``_global_ranking_model.*``
-            et ``_global_ranking_features.json``.
-        benchmark_df: Barres du benchmark (SPY) pour les features expert.
+    Charge les modèles sauvegardés par ``train_global_ranking_wf()`` et
+    les applique sur l'univers courant.
 
     Returns:
-        DataFrame [symbol, date, global_rank] ou None.
+        DataFrame [symbol, date, global_rank_3, global_rank_5, global_rank_10]
+        ou None si indisponible.
     """
     _features_path = artifacts_dir / "_global_ranking_features.json"
     if not _features_path.exists():
@@ -546,48 +556,17 @@ def predict_global_rank(
         _meta = json.loads(_features_path.read_text(encoding="utf-8"))
         _feature_columns: list[str] = _meta["feature_columns"]
         _model_name: str = _meta.get("model_name", "lightgbm")
+        _horizons: list[int] = _meta.get("horizons", [10])
     except Exception as exc:
         LOGGER.warning("predict_global_rank: failed to load features metadata: %s", exc)
         return None
 
-    # ── Charger le modèle ──
-    if _model_name == "lightgbm":
-        _model_path = artifacts_dir / "_global_ranking_model.txt"
-        if not _model_path.exists():
-            LOGGER.warning("predict_global_rank: model not found at %s", _model_path)
-            return None
-        try:
-            lgb = _import_lightgbm()
-            model = lgb.Booster(model_file=str(_model_path))
-        except Exception as exc:
-            LOGGER.warning("predict_global_rank: failed to load LightGBM model: %s", exc)
-            return None
-    elif _model_name == "catboost":
-        _model_path = artifacts_dir / "_global_ranking_model.pkl"
-        if not _model_path.exists():
-            LOGGER.warning("predict_global_rank: model not found at %s", _model_path)
-            return None
-        try:
-            CatBoost = _import_catboost()
-            model = CatBoost.CatBoostRegressor()
-            model.load_model(str(_model_path))
-        except Exception as exc:
-            LOGGER.warning("predict_global_rank: failed to load CatBoost model: %s", exc)
-            return None
-    else:
-        LOGGER.warning("predict_global_rank: unknown model_name=%s", _model_name)
-        return None
-
-    # ── Préparer les features (même pipeline qu'à l'entraînement) ──
-    # 1. Construire les features cross-sectionnelles depuis l'univers complet
+    # ── Construire les features (communes à tous les horizons) ──
     from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
-
     cross_sectional_df, _cs_diag = build_cross_sectional_features(
-        universe_df, benchmark_df=benchmark_df,
-        min_universe_size=5,  # seuil bas pour l'inférence (peu de symboles possibles)
+        universe_df, benchmark_df=benchmark_df, min_universe_size=5,
     )
 
-    # 2. Pour chaque symbole : features locales + merge cross-sectional
     frames: list[pd.DataFrame] = []
     symbols = sorted(universe_df["symbol"].unique())
     for sym in symbols:
@@ -596,29 +575,15 @@ def predict_global_rank(
             if sym_bars.empty or len(sym_bars) < 20:
                 continue
             sym_bars = sym_bars.sort_values("date")
-
-            # Features locales (OHLCV, expert, z-scores, macro, etc.)
-            sym_df = compute_features(
-                sym_bars,
-                benchmark_df=benchmark_df,
-                feature_set="expert",
-            )
+            sym_df = compute_features(sym_bars, benchmark_df=benchmark_df, feature_set="expert")
             if sym_df.empty:
                 continue
-
-            # Merge cross-sectional (mêmes features qu'à l'entraînement)
             sym_cross = cross_sectional_df[cross_sectional_df["symbol"] == sym].copy() if not cross_sectional_df.empty else None
             sym_df = merge_cross_sectional_features(sym_df, sym_cross)
-
-            # Dernière ligne = prédiction du jour
             last_row = sym_df.iloc[[-1]].copy()
-
-            # Garantir que toutes les colonnes attendues par le modèle sont présentes
             for col in _feature_columns:
                 if col not in last_row.columns:
-                    # Rangs percentiles → 0.5, autres → 0.0
-                    last_row[col] = 0.5 if col.endswith("_rank") or col == "global_rank" else 0.0
-
+                    last_row[col] = 0.5 if col.endswith("_rank") or col.startswith("global_rank") else 0.0
             frames.append(last_row[["symbol", "date"] + _feature_columns])
         except Exception:
             continue
@@ -628,28 +593,29 @@ def predict_global_rank(
         return None
 
     pred_df = pd.concat(frames, ignore_index=True)
-
-    # ── Prédire (toutes les colonnes features doivent être présentes) ──
-    X = pred_df[_feature_columns].to_numpy(dtype=np.float64)
+    X = pred_df[_feature_columns]
     if X.shape[1] != len(_feature_columns):
-        LOGGER.warning(
-            "predict_global_rank: feature mismatch expected=%d got=%d",
-            len(_feature_columns), X.shape[1],
-        )
+        LOGGER.warning("predict_global_rank: feature mismatch expected=%d got=%d", len(_feature_columns), X.shape[1])
         return None
 
-    try:
-        pred_df["predicted_return"] = model.predict(X).astype(np.float64)
-    except Exception as exc:
-        LOGGER.warning("predict_global_rank: prediction failed: %s", exc)
-        return None
+    # ── Prédire pour chaque horizon ──
+    result = pred_df[["symbol", "date"]].copy()
+    for horizon in _horizons:
+        h_suffix = f"_{horizon}"
+        _model_path = artifacts_dir / f"_global_ranking_model{h_suffix}.txt"
+        if not _model_path.exists():
+            _model_path = artifacts_dir / f"_global_ranking_model{h_suffix}.pkl"
+        if not _model_path.exists():
+            LOGGER.warning("predict_global_rank: model for horizon %d not found", horizon)
+            result[f"global_rank{h_suffix}"] = 0.5
+            continue
+        try:
+            lgb = _import_lightgbm()
+            model = lgb.Booster(model_file=str(_model_path))
+            result[f"global_rank{h_suffix}"] = model.predict(X.to_numpy(dtype=np.float64)).clip(0.0, 1.0).astype(np.float64)
+        except Exception as exc:
+            LOGGER.warning("predict_global_rank: prediction failed for h=%d: %s", horizon, exc)
+            result[f"global_rank{h_suffix}"] = 0.5
 
-    # Le modèle prédit directement le rang → clipping [0, 1]
-    pred_df["global_rank"] = pred_df["predicted_return"].clip(0.0, 1.0).astype(np.float64)
-    LOGGER.info(
-        "predict_global_rank: predicted %d symbols, global_rank range [%.3f, %.3f]",
-        len(pred_df),
-        pred_df["global_rank"].min() if not pred_df.empty else 0,
-        pred_df["global_rank"].max() if not pred_df.empty else 0,
-    )
-    return pred_df[["symbol", "date", "global_rank"]]
+    LOGGER.info("predict_global_rank: predicted %d symbols for horizons %s", len(result), _horizons)
+    return result
