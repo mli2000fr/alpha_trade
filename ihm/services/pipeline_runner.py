@@ -74,6 +74,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
+    DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
     DEFAULT_ML_ENABLE_LIGHTGBM,
     DEFAULT_ML_ENABLE_CATBOOST,
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
@@ -345,6 +346,7 @@ class PipelineLaunchOptions:
     ml_include_factors: bool = DEFAULT_ML_INCLUDE_FACTORS
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
     ml_ranking_top_k_features: int = DEFAULT_ML_RANKING_TOP_K_FEATURES
+    ml_global_ranking_max_symbols: int = DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS
     ml_enable_lightgbm: bool = DEFAULT_ML_ENABLE_LIGHTGBM
     ml_enable_catboost: bool = DEFAULT_ML_ENABLE_CATBOOST
     ml_enable_global_model: bool = DEFAULT_ML_ENABLE_GLOBAL_MODEL
@@ -2229,6 +2231,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-macro-regime")
         if options.ml_ranking_top_k_features > 0:
             command.extend(["--ranking-top-k-features", str(options.ml_ranking_top_k_features)])
+        if options.ml_global_ranking_max_symbols > 0:
+            command.extend(["--global-ranking-max-symbols", str(options.ml_global_ranking_max_symbols)])
         if options.ml_debug_train:
             command.append("--debug-train")
         if options.ml_enable_lightgbm:

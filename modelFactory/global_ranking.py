@@ -356,6 +356,20 @@ def train_global_ranking_wf(
     if universe_df.empty:
         return {"status": "skipped", "reason": "empty_universe"}
 
+    # ── Limiter le nombre de symboles (mémoire + pertinence ranking) ──
+    _max_sym = cfg.data.global_ranking_max_symbols
+    if _max_sym > 0 and len(symbols) > _max_sym:
+        # Garder les top N par volume moyen (liquidité)
+        _vol_rank = (
+            universe_df.groupby("symbol")["volume"].mean()
+            .sort_values(ascending=False)
+        )
+        symbols = _vol_rank.head(_max_sym).index.tolist()
+        LOGGER.info(
+            "global_ranking_wf capped symbols %d → %d (top by avg volume)",
+            len(_vol_rank), len(symbols),
+        )
+
     # ── Chargement données auxiliaires ──
     benchmark_df = None
     if cfg.data.feature_set == "expert":
@@ -384,7 +398,7 @@ def train_global_ranking_wf(
     feature_columns = _get_ranking_feature_columns(cfg)
     _base_parts: list[pd.DataFrame] = []
     for symbol in symbols:
-        bars_df = universe_df[universe_df["symbol"] == symbol].copy().sort_values("date").reset_index(drop=True)
+        bars_df = universe_df[universe_df["symbol"] == symbol].sort_values("date").reset_index(drop=True)
         if len(bars_df) < cfg.data.min_history_days:
             continue
         sym_sentiment = None

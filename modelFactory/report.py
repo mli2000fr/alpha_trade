@@ -266,10 +266,14 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
         lines.append(f"- **Date fin training** : {row.get('training_end_date', '—')}")
         lines.append(f"- **Date univers** : {row.get('universe_date', '—')}")
         lines.append(f"- **Nb symboles demandés** : {row.get('requested_symbol_count', '—')}")
-        # ── IC Rank & Decile Spread du Global Ranking ──
+        # ── IC Rank, IC IR & Decile Spread du Global Ranking ──
         _ic = row.get("ic_rank")
         if _ic is not None and str(_ic) not in ("None", "nan", ""):
             lines.append(f"- **🎯 IC Rank Global** : {float(_ic):.4f}")
+        _ic_std = row.get("ic_rank_std")
+        if _ic is not None and _ic_std is not None and str(_ic_std) not in ("None", "nan", "") and float(_ic_std) > 0:
+            _ic_ir = float(_ic) / float(_ic_std)
+            lines.append(f"- **📈 IC IR (Stabilité)** : {_ic_ir:.2f}  (IC Mean / IC Std)")
         _ds_h3 = row.get("decile_spread_h3")
         _ds_h5 = row.get("decile_spread_h5")
         _ds_h10 = row.get("decile_spread_h10")

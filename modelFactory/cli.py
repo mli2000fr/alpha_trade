@@ -273,6 +273,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
     p.add_argument("--ranking-top-k-features", type=int, default=0,
                    help="Global Ranking : nombre de features à garder par importance (0 = toutes, ex: 30 = top 30)")
+    p.add_argument("--global-ranking-max-symbols", type=int, default=0,
+                   help="Global Ranking : nombre max de symboles (0 = tous, top N par volume moyen)")
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
                    help="Active les features cross-sectionnelles PIT-safe (rangs percentiles + features sectorielles dynamiques)")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
@@ -452,6 +454,7 @@ def main(args: list[str] | None = None) -> None:
             liquidity_min_avg_volume_20d=opts.liquidity_min_avg_volume_20d,
             liquidity_min_market_cap=opts.liquidity_min_market_cap,
             liquidity_max_avg_spread_pct=opts.liquidity_max_avg_spread_pct,
+            global_ranking_max_symbols=opts.global_ranking_max_symbols,
         ),
         model=ModelConfig(
             batch_size=opts.batch_size,

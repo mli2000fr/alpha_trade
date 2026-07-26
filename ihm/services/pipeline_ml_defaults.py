@@ -112,6 +112,7 @@ DEFAULT_ML_CATBOOST_DEPTH = 6
 DEFAULT_ML_CATBOOST_ITERATIONS = 300
 DEFAULT_ML_CATBOOST_LEARNING_RATE = 0.03
 DEFAULT_ML_RANKING_TOP_K_FEATURES = 0       # 0 = toutes les features (feature selection désactivée)
+DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS = 0  # 0 = pas de limite, >0 = top N par volume
 
 # ---------------------------------------------------------------------------
 # LightGBM tuning (optionnel — activé par checkbox IHM)

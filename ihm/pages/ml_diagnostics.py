@@ -808,6 +808,13 @@ def _render_batch_detail(batch: pd.Series) -> None:
             ic_display = f"{float(ic_val):.4f}"
             ic_help = "IC Rank (Spearman) du Global Ranking Model — >0.03 = utile, >0.05 = bon"
             st.metric("🎯 IC Rank Global", ic_display, help=ic_help)
+        # IC IR (Information Ratio de l'IC)
+        _ic_std_val = row.get("ic_rank_std")
+        if ic_val is not None and _ic_std_val is not None and str(_ic_std_val) not in ("None", "nan", "") and float(_ic_std_val) > 0:
+            _ic_ir = float(ic_val) / float(_ic_std_val)
+            st.metric("📈 IC IR (Stabilité)", f"{_ic_ir:.2f}",
+                      help="IC Information Ratio = IC Mean / IC Std. >0.5 = bon, >1.0 = exceptionnel. "
+                           "Mesure la stabilité du signal dans le temps.")
         # Decile Spreads
         ds_h3 = row.get("decile_spread_h3")
         ds_h5 = row.get("decile_spread_h5")

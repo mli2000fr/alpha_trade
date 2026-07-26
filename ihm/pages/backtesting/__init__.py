@@ -2370,7 +2370,7 @@ def _build_calibrate_sentiment_options() -> "CalibrateSentimentWeightsOptions":
                 "all": "Tous les symboles (all-symbols)",
                 "tradable-universe": "Univers tradable PIT canonique",
                 "stock-bars-daily": "Symboles avec barres daily",
-                "ticket-recherche": "200 tickets recherche (config/ticket_recherche.txt)",
+                "ticket-recherche": "Tickets recherche (config/ticket_recherche.txt)",
             }.get(str(v), str(v)),
             help="Univers de symboles pour la calibration sentiment.",
         )
@@ -2782,7 +2782,7 @@ def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
                 "all": "Tous les symboles (all-symbols)",
                 "tradable-universe": "Univers tradable PIT canonique",
                 "stock-bars-daily": "Symboles avec barres daily",
-                "ticket-recherche": "200 tickets recherche (config/ticket_recherche.txt)",
+                "ticket-recherche": "Tickets recherche (config/ticket_recherche.txt)",
             }.get(str(v), str(v)),
             help="Univers de symboles pour le walk-forward sentiment.",
         )

@@ -111,7 +111,7 @@ ML_TRAIN_SYMBOL_SOURCE_OPTIONS = ("stock-bars-daily", "tradable-universe", "tick
 ML_TRAIN_SYMBOL_SOURCE_LABELS = {
     "stock-bars-daily": "Symboles avec barres daily (stock_bars_daily)",
     "tradable-universe": "Univers tradable PIT canonique",
-    "ticket-recherche": "200 tickets recherche (config/ticket_recherche.txt)",
+    "ticket-recherche": "Tickets recherche (config/ticket_recherche.txt)",
 }
 
 ML_TRAIN_SYMBOL_SOURCE_TO_CLI = {

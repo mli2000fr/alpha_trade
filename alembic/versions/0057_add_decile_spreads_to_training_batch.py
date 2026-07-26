@@ -1,4 +1,4 @@
-"""Add decile_spread_h3/h5/h10 to model_training_batch
+"""Add decile_spread_h3/h5/h10 + ic_rank_std to model_training_batch
 
 Revision ID: 0057
 Revises: 0056
@@ -32,9 +32,16 @@ def upgrade() -> None:
         sa.Column("decile_spread_h10", sa.Double(), nullable=True),
         schema="alpha_trade",
     )
+    op.add_column(
+        "model_training_batch",
+        sa.Column("ic_rank_std", sa.Double(), nullable=True,
+                  comment="IC Rank Std Dev sur les splits WF"),
+        schema="alpha_trade",
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("model_training_batch", "ic_rank_std", schema="alpha_trade")
     op.drop_column("model_training_batch", "decile_spread_h3", schema="alpha_trade")
     op.drop_column("model_training_batch", "decile_spread_h5", schema="alpha_trade")
     op.drop_column("model_training_batch", "decile_spread_h10", schema="alpha_trade")

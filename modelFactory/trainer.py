@@ -1241,17 +1241,19 @@ def train_symbol(
                 or selected_tp_atr_mult != cfg.data.triple_barrier_tp_atr_mult
                 or selected_max_sessions != cfg.data.triple_barrier_max_sessions
             ):
+                _data_kwargs0: dict[str, Any] = {
+                    "forecast_horizon": effective_forecast_horizon,
+                    "target_up_threshold": selected_up_threshold,
+                    "target_down_threshold": selected_down_threshold,
+                    "triple_barrier_stop_atr_mult": selected_stop_atr_mult,
+                    "triple_barrier_tp_atr_mult": selected_tp_atr_mult,
+                    "triple_barrier_max_sessions": selected_max_sessions,
+                }
+                if hasattr(cfg.data, "global_ranking_max_symbols"):
+                    _data_kwargs0["global_ranking_max_symbols"] = cfg.data.global_ranking_max_symbols
                 effective_cfg = replace(
                     cfg,
-                    data=replace(
-                        cfg.data,
-                        forecast_horizon=effective_forecast_horizon,
-                        target_up_threshold=selected_up_threshold,
-                        target_down_threshold=selected_down_threshold,
-                        triple_barrier_stop_atr_mult=selected_stop_atr_mult,
-                        triple_barrier_tp_atr_mult=selected_tp_atr_mult,
-                        triple_barrier_max_sessions=selected_max_sessions,
-                    ),
+                    data=replace(cfg.data, **_data_kwargs0),
                 )
                 LOGGER.info(
                     "target optimization selected params symbol=%s horizon=%d->%d up=%.4f->%.4f down=%.4f->%.4f score=%.6f",
@@ -1284,9 +1286,14 @@ def train_symbol(
 
         # LSTM : forcer feature_set="v1" pour limiter l'input dim
         # (Cause 2 — les interactions régime × technique sont inutiles pour le LSTM)
+        _data_kwargs = {"feature_set": "v1"}
+        # Rétro-compatibilité : si global_ranking_max_symbols n'existe pas
+        # (config d'une version antérieure), utiliser la valeur par défaut 300.
+        if hasattr(effective_cfg.data, "global_ranking_max_symbols"):
+            _data_kwargs["global_ranking_max_symbols"] = effective_cfg.data.global_ranking_max_symbols
         effective_cfg = replace(
             effective_cfg,
-            data=replace(effective_cfg.data, feature_set="v1"),
+            data=replace(effective_cfg.data, **_data_kwargs),
         )
 
         dm = SymbolDataModule(
@@ -1411,9 +1418,12 @@ def train_symbol(
             ternary_policy=_build_ternary_policy(effective_cfg),
         )
         if selected_decision_threshold != effective_cfg.data.decision_threshold:
+            _data_kwargs2: dict[str, Any] = {"decision_threshold": selected_decision_threshold}
+            if hasattr(effective_cfg.data, "global_ranking_max_symbols"):
+                _data_kwargs2["global_ranking_max_symbols"] = effective_cfg.data.global_ranking_max_symbols
             effective_cfg = replace(
                 effective_cfg,
-                data=replace(effective_cfg.data, decision_threshold=selected_decision_threshold),
+                data=replace(effective_cfg.data, **_data_kwargs2),
             )
 
         baseline_metrics: dict[str, Any] = {}

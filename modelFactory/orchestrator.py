@@ -812,22 +812,24 @@ def run_training_batch(
                 batch_id, exc,
             )
 
-    # ── Persister l'IC Rank du Global Ranking Model ──
+    # ── Persister l'IC Rank + IC IR du Global Ranking Model ──
     if cfg.global_model.enabled and global_result_wf:
         _ic = global_result_wf.get("ic_rank_mean")
+        _ic_std = global_result_wf.get("ic_rank_std")
         _ds = global_result_wf.get("decile_spreads") or {}
         if _ic is not None:
             try:
                 update_training_batch(
                     engine, batch_id,
                     ic_rank=float(_ic),
+                    ic_rank_std=float(_ic_std) if _ic_std is not None else None,
                     decile_spread_h3=float(_ds.get(3)) if _ds.get(3) is not None else None,
                     decile_spread_h5=float(_ds.get(5)) if _ds.get(5) is not None else None,
                     decile_spread_h10=float(_ds.get(10)) if _ds.get(10) is not None else None,
                 )
                 LOGGER.info(
-                    "run_training_batch ic_rank+decile_spread persisted batch_id=%s ic_rank=%.4f decile_h3=%.4f decile_h5=%.4f decile_h10=%.4f",
-                    batch_id, float(_ic),
+                    "run_training_batch ic_rank+decile_spread persisted batch_id=%s ic_rank=%.4f ic_std=%.4f decile_h3=%.4f decile_h5=%.4f decile_h10=%.4f",
+                    batch_id, float(_ic), float(_ic_std) if _ic_std is not None else float("nan"),
                     float(_ds.get(3)) if _ds.get(3) is not None else float("nan"),
                     float(_ds.get(5)) if _ds.get(5) is not None else float("nan"),
                     float(_ds.get(10)) if _ds.get(10) is not None else float("nan"),

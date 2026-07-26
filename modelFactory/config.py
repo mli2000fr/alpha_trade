@@ -45,6 +45,8 @@ class DataConfig:
     liquidity_min_avg_volume_20d: int = 500_000
     liquidity_min_market_cap: float = 500_000_000.0  # 500M$
     liquidity_max_avg_spread_pct: float = 0.5
+    # ── Global Ranking (Sprint 2026-07-26) ──
+    global_ranking_max_symbols: int = 300    # 0 = pas de limite, >0 = top N par liquidité
 
     def __post_init__(self) -> None:
         if self.sequence_length < 1:
