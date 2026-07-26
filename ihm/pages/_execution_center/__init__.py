@@ -127,6 +127,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
+    DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
     DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
     DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
@@ -3254,6 +3255,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_macro_regime",
                 help="Ajoute `--include-macro-regime`. Injecte la tendance SPY long terme et le z-score VIX à tous les symboles.",
             )
+            ml_ranking_top_k_features = st.number_input(
+                "🎯 Global Ranking : Top-K features (0 = toutes)",
+                min_value=0,
+                max_value=200,
+                value=_session_state_int("pipeline_ml_ranking_top_k_features", DEFAULT_ML_RANKING_TOP_K_FEATURES),
+                key="pipeline_ml_ranking_top_k_features",
+                help="Ajoute `--ranking-top-k-features`. Après H3, garde les K features les plus importantes pour H5 et H10. 0 = toutes les features.",
+            )
             st.markdown("---")
             ml_enable_liquidity_filter = st.checkbox(
                 "🔍 Filtrer les symboles illiquides (volume, cap, spread)",
@@ -4366,6 +4375,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_fundamentals=bool(ml_include_fundamentals),
             ml_include_factors=bool(ml_include_factors),
             ml_include_macro_regime=bool(ml_include_macro_regime),
+            ml_ranking_top_k_features=int(ml_ranking_top_k_features),
             # Filtrage liquidité
             ml_enable_liquidity_filter=bool(ml_enable_liquidity_filter),
             ml_liquidity_min_avg_volume_20d=int(ml_liquidity_min_avg_volume_20d if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D),

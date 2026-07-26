@@ -146,8 +146,10 @@ class BaselineConfig:
     enable_catboost: bool = False
     model_name: str = "lightgbm"
     max_depth: int = 4
-    n_estimators: int = 200
+    n_estimators: int = 500
     learning_rate: float = 0.05
+    # ── Early stopping LightGBM (0 = désactivé) ──
+    lgbm_early_stopping_rounds: int = 30
     catboost_depth: int = 4
     catboost_iterations: int = 300
     catboost_learning_rate: float = 0.03
@@ -166,6 +168,8 @@ class BaselineConfig:
     catboost_bagging_temperature: float = 1.0  # Bayesian bagging
     catboost_od_type: str = "IncToDec"     # overfitting detector
     catboost_od_wait: int = 20             # patience overfitting
+    # ── Global Ranking feature selection (0 = toutes les features) ──
+    ranking_top_k_features: int = 0        # > 0 → garder les top K features par importance
 
     def __post_init__(self) -> None:
         if self.model_name not in {"lightgbm", "catboost"}:

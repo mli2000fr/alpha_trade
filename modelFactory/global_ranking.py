@@ -67,13 +67,15 @@ _XS_RANK_SOURCE_FEATURES: list[str] = [
     "rolling_volatility_5", "rolling_volatility_10", "rolling_volatility_20",
     "rolling_volatility_60", "rolling_volatility_120",
     # RSI
-    "rsi_5", "rsi_14", "rsi_21",
+    "rsi_3", "rsi_5", "rsi_14", "rsi_21",
     # Distance aux moyennes mobiles
     "sma10_distance", "sma20_distance", "sma50_distance",
     "sma100_distance", "sma200_distance", "sma250_distance",
     "ema20_distance", "ema50_distance",
+    "dist_to_sma_5d",
     # Rendements et volume
     "daily_return", "log_return", "volume_ratio_20",
+    "volume_zscore_5d",
     "rolling_mean_return_5", "rolling_mean_return_20",
     # Range / gap / vwap
     "intraday_range", "overnight_gap", "close_to_vwap",
@@ -192,6 +194,21 @@ def compute_ic_rank(predicted: np.ndarray, actual: np.ndarray) -> float | None:
         return float(corr)
     except Exception:
         return None
+
+
+def _compute_mean_importance(
+    split_importances: list[dict[str, float]],
+    feature_names: list[str],
+) -> dict[str, float]:
+    """Moyenne les feature importance sur les splits WF, triée décroissant."""
+    if not split_importances:
+        return {}
+    _mean: dict[str, float] = {}
+    for _fn in feature_names:
+        _vals = [_imp.get(_fn, 0.0) for _imp in split_importances if _fn in _imp]
+        if _vals:
+            _mean[_fn] = float(np.mean(_vals))
+    return dict(sorted(_mean.items(), key=lambda kv: kv[1], reverse=True))
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -387,6 +404,11 @@ def train_global_ranking_wf(
             base_df[f"future_return{h_suffix}"] = (
                 base_df[f"future_return{h_suffix}"] - _spy_ret
             ).astype(float)
+        # ── Winsorization intra-date à 1%/99% (élimine les outliers toxiques) ──
+        base_df[f"future_return{h_suffix}"] = (
+            base_df.groupby("date")[f"future_return{h_suffix}"]
+            .transform(lambda x: x.clip(lower=x.quantile(0.01), upper=x.quantile(0.99)))
+        )
         # Percentile rank intra-date → [0, 1]
         base_df[f"future_return{h_suffix}"] = (
             base_df.groupby("date")[f"future_return{h_suffix}"]
@@ -428,6 +450,8 @@ def train_global_ranking_wf(
     all_ic_means: dict[int, float] = {}
     all_rank_dfs: list[pd.DataFrame] = []
     _saved_models: dict[int, str] = {}
+    _horizon_features: dict[int, list[str]] = {}  # features actives par horizon
+    _top_k = max(cfg.baseline.ranking_top_k_features, 0)  # 0 = toutes les features
 
     for horizon in _GLOBAL_RANKING_HORIZONS:
         h_suffix = f"_{horizon}"
@@ -445,6 +469,8 @@ def train_global_ranking_wf(
         h_ics: list[float] = []
         _last_model: Any = None
         _last_model_name: str = ""
+        _split_importances: list[dict[str, float]] = []  # per-split feature importance
+        _active_features: list[str] = feature_columns  # sera réduit après le 1er split si top_k>0
 
         for split in wf_splits:
             split_seed = derive_seed(resolved_seed, split.split_index)
@@ -457,8 +483,8 @@ def train_global_ranking_wf(
             except ImportError:
                 return {"status": "unavailable", "reason": f"{cfg.global_model.model_name}_not_installed"}
 
-            train_df = split.train.dropna(subset=feature_columns + [_target_col, _label_col])
-            val_df = split.val.dropna(subset=feature_columns + [_target_col, _label_col])
+            train_df = split.train.dropna(subset=_active_features + [_target_col, _label_col])
+            val_df = split.val.dropna(subset=_active_features + [_target_col, _label_col])
             if train_df.empty or val_df.empty:
                 continue
 
@@ -469,25 +495,61 @@ def train_global_ranking_wf(
                 _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
 
             _group = None
+            _eval_set = None
+            _eval_group = None
             if backend_model_name == "lightgbm":
                 _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
+                # ── Early stopping : 20% du train comme eval set ──
+                _es_rounds = cfg.baseline.lgbm_early_stopping_rounds
+                if _es_rounds > 0 and len(train_df) > 100:
+                    _es_cut = max(int(len(train_df) * 0.8), 1)
+                    # Trier par date pour que l'eval set soit sur les dates les plus récentes
+                    _train_sorted = train_df.sort_values("date")
+                    _es_train = _train_sorted.iloc[:_es_cut]
+                    _es_eval = _train_sorted.iloc[_es_cut:]
+                    _eval_set = [(
+                        _es_eval[_active_features],
+                        _es_eval[_label_col].to_numpy(dtype=np.int32) if backend_model_name == "lightgbm"
+                        else _es_eval[_target_col].to_numpy(dtype=np.float64),
+                    )]
+                    _eval_group = [_es_eval.groupby("date", sort=False).size().to_numpy(dtype=np.int32)]
+                    # Ré-extraire train_df trié et son group
+                    train_df = _es_train
+                    _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
+                    if _sample_weights is not None:
+                        _sample_weights = _sample_weights[_es_train.index.get_indexer(train_df.index)]
 
-            X_train = train_df[feature_columns]
+            X_train = train_df[_active_features]
             # LambdaRank (LightGBM) : labels entiers 0..9 (décile de performance)
             # CatBoost (RMSE)       : rank continu [0, 1]
             if backend_model_name == "lightgbm":
                 y_train = train_df[_label_col].to_numpy(dtype=np.int32)
             else:
                 y_train = train_df[_target_col].to_numpy(dtype=np.float64)
+
+            _fit_kwargs: dict[str, Any] = {}
             if _group is not None and len(_group) > 0:
-                model.fit(X_train, y_train, sample_weight=_sample_weights, group=_group)
-            else:
-                model.fit(X_train, y_train, sample_weight=_sample_weights)
+                _fit_kwargs["group"] = _group
+            if _eval_set is not None:
+                _fit_kwargs["eval_set"] = _eval_set
+                _fit_kwargs["eval_group"] = _eval_group
+                _fit_kwargs["eval_at"] = [10, 20]
+            if _sample_weights is not None:
+                _fit_kwargs["sample_weight"] = _sample_weights
+            model.fit(X_train, y_train, **_fit_kwargs)
 
             _last_model = model
             _last_model_name = backend_model_name
 
-            X_val = val_df[feature_columns]
+            # ── Extraire feature importance (LightGBM uniquement) ──
+            if backend_model_name == "lightgbm" and hasattr(model, "booster_"):
+                try:
+                    _imp = dict(zip(_active_features, model.booster_.feature_importance(importance_type="gain")))
+                    _split_importances.append(_imp)
+                except Exception:
+                    pass
+
+            X_val = val_df[_active_features]
             # IC calculé sur le rank continu [0,1], pas sur le label discret
             y_val = val_df[_target_col].to_numpy(dtype=np.float64)
             pred_part = val_df[["symbol", "date"]].copy()
@@ -505,6 +567,26 @@ def train_global_ranking_wf(
                 len(train_df), len(val_df), ic if ic is not None else float("nan"),
             )
 
+            # ── Per-horizon feature selection : après le 1er split, réduire aux top-K ──
+            if _top_k > 0 and split.split_index == 0 and _split_importances:
+                _first_imp = _split_importances[0]
+                _sorted_imp = sorted(_first_imp.items(), key=lambda kv: kv[1], reverse=True)
+                _active_features = [feat for feat, _ in _sorted_imp[:_top_k]]
+                LOGGER.info(
+                    "global_ranking_wf horizon=%d selected own top-%d features: %s",
+                    horizon, _top_k, _active_features[:10],
+                )
+
+        # ── Feature importance agrégée pour cet horizon ──
+        if _split_importances and _active_features:
+            _mean_imp = _compute_mean_importance(_split_importances, _active_features)
+            _top30 = dict(list(_mean_imp.items())[:30])
+            LOGGER.info(
+                "global_ranking_wf horizon=%d feature_importance top5=%s",
+                horizon,
+                {k: f"{v:.4f}" for k, v in list(_top30.items())[:5]},
+            )
+
         if h_parts:
             h_pred_df = pd.concat(h_parts, ignore_index=True)
             # LambdaRank produit des scores continus → rank pct par date pour normaliser [0,1]
@@ -516,6 +598,9 @@ def train_global_ranking_wf(
             )
             all_rank_dfs.append(h_pred_df[["symbol", "date", f"global_rank{h_suffix}"]])
             all_ic_means[horizon] = float(np.mean(h_ics)) if h_ics else float("nan")
+
+            # ── Enregistrer les features actives pour cet horizon ──
+            _horizon_features[horizon] = list(_active_features)
 
             # Sauvegarder le modèle pour cet horizon
             if _last_model is not None:
@@ -586,6 +671,7 @@ def train_global_ranking_wf(
             "include_factors": cfg.data.include_factors_features,
             "include_macro_regime": cfg.data.include_macro_regime_features,
             "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
+            "horizon_features": {str(h): feats for h, feats in _horizon_features.items()},
         }),
         encoding="utf-8",
     )
@@ -635,6 +721,8 @@ def predict_global_rank(
         _horizons: list[int] = _meta.get("horizons", [10])
         _feature_set: str = _meta.get("feature_set", "expert")
         _include_cross_sectional: bool = _meta.get("enable_cross_sectional", True)
+        # Features spécifiques par horizon (post feature selection)
+        _horizon_features_meta: dict[str, list[str]] = _meta.get("horizon_features", {})
     except Exception as exc:
         LOGGER.warning("predict_global_rank: failed to load features metadata: %s", exc)
         return None
@@ -715,9 +803,17 @@ def predict_global_rank(
 
     # ── Prédire pour chaque horizon ──
     result = pred_df[["symbol", "date"]].copy()
-    X_np = X.to_numpy(dtype=np.float64)
     for horizon in _horizons:
         h_suffix = f"_{horizon}"
+        # Utiliser les features spécifiques à cet horizon (post feature selection)
+        _hf = _horizon_features_meta.get(str(horizon), _feature_columns)
+        _hf = [c for c in _hf if c in pred_df.columns]  # garder seulement celles disponibles
+        if not _hf:
+            LOGGER.warning("predict_global_rank: no features for horizon %d", horizon)
+            result[f"global_rank{h_suffix}"] = 0.5
+            continue
+        X_h = pred_df[_hf].to_numpy(dtype=np.float64)
+
         _model_path = artifacts_dir / f"_global_ranking_model{h_suffix}.txt"
         _is_catboost = False
         if not _model_path.exists():
@@ -735,7 +831,7 @@ def predict_global_rank(
             else:
                 lgb = _import_lightgbm()
                 model = lgb.Booster(model_file=str(_model_path))
-            raw_scores = model.predict(X_np).astype(np.float64)
+            raw_scores = model.predict(X_h).astype(np.float64)
             # Scores continus → rank pct par date pour normaliser [0,1]
             temp = pd.DataFrame({"date": result["date"].values, "score": raw_scores})
             result[f"global_rank{h_suffix}"] = (

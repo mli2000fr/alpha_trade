@@ -160,6 +160,55 @@
 |:---:|----------|:---:|:---:|:---:|:---:|
 | 5 | Après fix cross-symbol shift + purge WF | +0.008 | −0.002 | +0.007 | **+0.004** |
 | 6 | + Cross-sectional rank features (35 `_xs_rank`) | **À mesurer** | **À mesurer** | **À mesurer** | **À mesurer** |
+| 7 | + Winsorization 1%/99% + rsi_3/dist_sma_5d/vol_zscore_5d + n_est 500 + early_stop 30 + top-K feat | **+0.009** | **+0.005** | **+0.004** | **+0.006** |
+| 8 | + **Per-horizon feature selection** (chaque horizon choisit ses propres top-K) | **À mesurer** | **À mesurer** | **À mesurer** | **À mesurer** |
+
+---
+
+## 🚀 Sprint "5 Quick Wins" — Implémenté (26/07)
+
+### Win 1 — Winsorization de la target (priorité #1)
+| Changement | Détail |
+|-----------|--------|
+| Fichier | `modelFactory/global_ranking.py` → target pre-computation |
+| Transformation | `groupby("date")[future_return].transform(lambda x: x.clip(lower=x.quantile(0.01), upper=x.quantile(0.99)))` |
+| Raison | Élimine les outliers toxiques (±30% sur small caps) qui polluent le rank percentile et biaisent la feature importance |
+| Coût | ~15 min, 3 lignes de code |
+
+### Win 2 — Feature importance + pruning top-K
+| Changement | Détail |
+|-----------|--------|
+| Fichier | `modelFactory/global_ranking.py` → `_compute_mean_importance()` + boucle d'entraînement |
+| Config | `baseline.ranking_top_k_features: int = 0` (0 = désactivé, ex: 30 = top 30) |
+| Fonctionnement | Après le 1er horizon (H3), moyenne des importances « gain » sur tous les splits → sélection top-K → appliqué à H5 et H10 |
+| Log | Top 5 features + liste complète en info |
+| Sauvegarde | `horizon_features` dans le metadata JSON → utilisées en inférence |
+| Coût | ~30 min |
+
+### Win 3 — Features de réversion court-terme
+| Changement | Détail |
+|-----------|--------|
+| Fichier | `modelFactory/features.py` → `MULTI_HORIZON_FEATURES` + `compute_features()` |
+| Nouvelles features | `rsi_3` (RSI 3 périodes), `dist_to_sma_5d` (écart à SMA 5j), `volume_zscore_5d` ((vol − moyenne_5j) / std_5j) |
+| Ajout `_xs_rank` | Les 3 features sont aussi normalisées en rang cross-sectionnel |
+| Total features | 158 + 3 + 3 (`_xs_rank`) = **164** |
+| Coût | ~1h |
+
+### Win 4 — n_estimators 200→500 + early stopping
+| Changement | Détail |
+|-----------|--------|
+| Fichier | `modelFactory/config.py` → `n_estimators: int = 500`, `lgbm_early_stopping_rounds: int = 30` |
+| Eval set | 20% du train (le plus récent chronologiquement) utilisé comme validation pour early stopping |
+| LightGBM | `eval_set`, `eval_group`, `eval_at=[10,20]` passés à `model.fit()` |
+| Coût | ~30 min |
+
+### Win 5 — Feature selection par horizon (top-K dédié)
+| Changement | Détail |
+|-----------|--------|
+| Fichier | `modelFactory/global_ranking.py` → `_horizon_features` dict |
+| Fonctionnement | Chaque horizon peut utiliser une liste de features différente (issue de sa propre importance ou de H3) |
+| Inférence | `predict_global_rank()` utilise `horizon_features` du metadata → chaque modèle reçoit exactement ses features |
+| Coût | ~2h (refactoring inclus dans Win 2) |
 
 ---
 

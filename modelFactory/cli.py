@@ -271,6 +271,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les expositions factorielles CAPM (beta, alpha, R² via rolling 252j)")
     p.add_argument("--include-macro-regime", action="store_true", default=False,
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
+    p.add_argument("--ranking-top-k-features", type=int, default=0,
+                   help="Global Ranking : nombre de features à garder par importance (0 = toutes, ex: 30 = top 30)")
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
                    help="Active les features cross-sectionnelles PIT-safe (rangs percentiles + features sectorielles dynamiques)")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
@@ -353,6 +355,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="LightGBM bagging_fraction")
     p.add_argument("--lgbm-colsample-bytree", type=float, default=1.0,
                    help="LightGBM feature_fraction")
+    p.add_argument("--lgbm-early-stopping-rounds", type=int, default=30,
+                   help="LightGBM early stopping rounds (0 = désactivé)")
     p.add_argument("--catboost-depth", type=int, default=6)
     p.add_argument("--catboost-iterations", type=int, default=300)
     p.add_argument("--catboost-learning-rate", type=float, default=0.03)
@@ -491,6 +495,8 @@ def main(args: list[str] | None = None) -> None:
             lgbm_min_child_samples=opts.lgbm_min_child_samples,
             lgbm_subsample=opts.lgbm_subsample,
             lgbm_colsample_bytree=opts.lgbm_colsample_bytree,
+            lgbm_early_stopping_rounds=opts.lgbm_early_stopping_rounds,
+            ranking_top_k_features=opts.ranking_top_k_features,
             catboost_l2_leaf_reg=opts.catboost_l2_leaf_reg,
             catboost_border_count=opts.catboost_border_count,
             catboost_random_strength=opts.catboost_random_strength,

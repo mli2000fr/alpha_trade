@@ -93,8 +93,11 @@ MULTI_HORIZON_FEATURES: list[str] = [
     "rolling_volatility_120",
     "sma10_distance",
     "sma250_distance",
+    "rsi_3",
     "rsi_5",
     "rsi_21",
+    "dist_to_sma_5d",
+    "volume_zscore_5d",
 ]
 
 INTERACTION_FEATURES: list[str] = [
@@ -864,6 +867,13 @@ def compute_features(
         df["sma250_distance"] = (close - sma250) / sma250.clip(lower=1e-8)
         df["rsi_5"] = _rsi(close, 5)
         df["rsi_21"] = _rsi(close, 21)
+        # ── Features de réversion court-terme (Sprint 2026-07-26) ──
+        df["rsi_3"] = _rsi(close, 3)
+        sma5 = close.rolling(5).mean()
+        df["dist_to_sma_5d"] = (close - sma5) / sma5.clip(lower=1e-8)
+        vol_ma5 = volume.rolling(5).mean()
+        vol_std5 = volume.rolling(5).std()
+        df["volume_zscore_5d"] = (volume - vol_ma5) / vol_std5.clip(lower=1e-8)
 
         if _has_benchmark:
             bench_prices = _build_adjusted_price_frame(benchmark_df.copy().sort_values("date").reset_index(drop=True))
