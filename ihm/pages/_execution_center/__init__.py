@@ -3112,7 +3112,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
 
         ml_fast_search = st.checkbox(
             "⚡ Accélérer le batch (recherche uniquement)",
-            value=_session_state_bool("pipeline_ml_fast_search", True),
+            value=_session_state_bool("pipeline_ml_fast_search", False),
             key="pipeline_ml_fast_search",
             on_change=_apply_fast_search,
             help=(

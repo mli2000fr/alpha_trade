@@ -1465,7 +1465,6 @@ def train_symbol(
                         verbose=False, allow_writing_files=False,
                         auto_class_weights="Balanced",
                         l2_leaf_reg=effective_cfg.baseline.catboost_l2_leaf_reg,
-                        subsample=effective_cfg.baseline.lgbm_subsample,
                     ),
                     ternary_policy=_build_ternary_policy(effective_cfg),
                 )

@@ -424,12 +424,23 @@ def _train_worker(
         if _global_rank_path.exists():
             global_rank_df = pd.read_parquet(_global_rank_path)
             if not global_rank_df.empty:
-                cross_sectional_df = cross_sectional_df.merge(
-                    global_rank_df[["symbol", "date", "global_rank"]], on=["symbol", "date"], how="left",
-                )
-                cross_sectional_df["global_rank"] = (
-                    cross_sectional_df["global_rank"].fillna(0.5).astype(np.float64)
-                )
+                # Détection dynamique des colonnes multi-horizons (global_rank_3, _5, _10)
+                _rank_cols = [c for c in global_rank_df.columns if c.startswith("global_rank")]
+                if _rank_cols:
+                    cross_sectional_df = cross_sectional_df.merge(
+                        global_rank_df[["symbol", "date"] + _rank_cols],
+                        on=["symbol", "date"], how="left",
+                    )
+                    for _col in _rank_cols:
+                        cross_sectional_df[_col] = (
+                            cross_sectional_df[_col].fillna(0.5).astype(np.float64)
+                        )
+                # Rétro-compatibilité : colonne "global_rank" sans suffixe → "global_rank_10"
+                if "global_rank" in global_rank_df.columns and "global_rank" not in _rank_cols:
+                    cross_sectional_df["global_rank"] = cross_sectional_df.get(
+                        "global_rank_10",
+                        cross_sectional_df.get("global_rank", pd.Series(0.5, index=cross_sectional_df.index)),
+                    ).fillna(0.5).astype(np.float64)
 
     return train_symbol(
         symbol,

@@ -134,6 +134,33 @@
 |:---:|----------|:---:|:---:|
 | 5 | + **Multi-horizons (J+3/J+5/J+10) + LambdaRank** | **À mesurer** | **À mesurer** |
 
+### 🔴 Bug Critique — Target Cross-Symbol Shift (26/07)
+| Changement | Détail |
+|-----------|--------|
+| Fichier | `modelFactory/global_ranking.py` → `train_global_ranking_wf()` |
+| Bug | `_close.shift(-horizon)` sur le DataFrame concaténé (trié par `[date, symbol]`) → shift entre symboles différents au lieu d'être intra-symbole |
+| Correction | `base_df.groupby("symbol")["close"].shift(-horizon)` — shift strictement par symbole |
+| Impact | IC factice de 0.44 → IC réel de 0.004. Tous les IC antérieurs étaient gonflés par cette fuite. |
+| Purge WF | `forecast_horizon` passé de 10 lignes à `max_horizon × daily_symbols` (vraie purge en jours) |
+
+### ✅ Cross-Sectional Rank Normalization — Features (26/07)
+| Changement | Détail |
+|-----------|--------|
+| Fichier | `modelFactory/global_ranking.py` |
+| Features concernées | 35 features brutes : momentum, volatilité, RSI, distance aux MA, rendements, volume, range, force relative |
+| Transformation | `groupby("date")[feature].rank(pct=True)` → colonne `{feature}_xs_rank` ∈ [0, 1] |
+| Nombre de nouvelles colonnes | +35 (`_xs_rank`) |
+| Total feature_columns | 123 + 35 = 158 |
+| Raison | Les features absolues (ex: RSI=70) changent de sens selon le régime de marché. Le rang intra-date les rend comparables dans le temps et entre secteurs/capitalisations. |
+| Inférence | `predict_global_rank()` applique la même transformation sur l'univers du jour |
+
+### Historique des IC après corrections
+
+| # | Évolution | H3 | H5 | H10 | ic_mean |
+|:---:|----------|:---:|:---:|:---:|:---:|
+| 5 | Après fix cross-symbol shift + purge WF | +0.008 | −0.002 | +0.007 | **+0.004** |
+| 6 | + Cross-sectional rank features (35 `_xs_rank`) | **À mesurer** | **À mesurer** | **À mesurer** | **À mesurer** |
+
 ---
 
 ## 🧠 Peer Review — Ajustements & Garde-fous (26/07/2026)
