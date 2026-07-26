@@ -340,6 +340,7 @@ def fingerprint(
     include_global_stacking: bool = False,
     include_fundamentals: bool = False,
     include_factors: bool = False,
+    include_macro_regime: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -362,6 +363,7 @@ def fingerprint(
         include_global_stacking=include_global_stacking,
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
+        include_macro_regime=include_macro_regime,
     ))
     payload = {
         "columns": columns,
@@ -377,6 +379,7 @@ def fingerprint(
         "include_global_stacking": bool(include_global_stacking),
         "include_fundamentals": bool(include_fundamentals),
         "include_factors": bool(include_factors),
+        "include_macro_regime": bool(include_macro_regime),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -405,6 +408,7 @@ def build_feature_contract(
     include_global_stacking: bool = False,
     include_fundamentals: bool = False,
     include_factors: bool = False,
+    include_macro_regime: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -422,6 +426,7 @@ def build_feature_contract(
         include_global_stacking=include_global_stacking,
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
+        include_macro_regime=include_macro_regime,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -440,6 +445,7 @@ def build_feature_contract(
             include_global_stacking=include_global_stacking,
             include_fundamentals=include_fundamentals,
             include_factors=include_factors,
+            include_macro_regime=include_macro_regime,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
@@ -465,6 +471,7 @@ def validate_feature_contract(
     include_global_stacking: bool = False,
     include_fundamentals: bool = False,
     include_factors: bool = False,
+    include_macro_regime: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -486,6 +493,7 @@ def validate_feature_contract(
         include_global_stacking=include_global_stacking,
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
+        include_macro_regime=include_macro_regime,
     )
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
@@ -500,6 +508,7 @@ def validate_feature_contract(
         include_global_stacking=include_global_stacking,
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
+        include_macro_regime=include_macro_regime,
         feature_columns=expected_columns,
     )
 
@@ -527,6 +536,9 @@ def validate_feature_contract(
             include_macro_vix3m=include_macro_vix3m,
             include_macro_move=include_macro_move,
             include_global_stacking=include_global_stacking,
+            include_fundamentals=include_fundamentals,
+            include_factors=include_factors,
+            include_macro_regime=include_macro_regime,
             feature_columns=contract_columns,
         )
     else:
@@ -1099,6 +1111,7 @@ def compute_features(
         include_macro_move=include_macro_move,
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
+        include_macro_regime=include_macro_regime,
     )
 
     feature_matrix = df.loc[:, active_features].astype(np.float64)

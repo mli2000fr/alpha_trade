@@ -12,11 +12,13 @@
 | Composant | Fichier | Statut |
 |-----------|---------|:------:|
 | Global Ranking Model (régression, target `future_return` J+10) | `modelFactory/global_ranking.py` | ✅ |
+| **Target market-neutral** : rendement excédentaire vs SPY | `modelFactory/global_ranking.py` | ✅ (26/07) |
 | Per-Symbol Stacking via `global_rank` ∈ [0,1] | `modelFactory/cross_sectional.py`, `predictor.py` | ✅ |
-| Global Model **PAS** challenger champion | `pipeline_ml_defaults.py` (`DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER = False`) | ✅ |
+| Global Model **PAS** challenger champion | `pipeline_ml_defaults.py` | ✅ |
 | Nettoyage `_has_global_rank` vs `_has_global_pred` | `trainer.py`, `tabular_baseline.py` | ✅ |
 | Inférence : `predict_global_rank()` + cache par date + fallback 0.5 | `modelFactory/predictor.py` | ✅ |
-| Tests stacking/global 115 OK | `tests/test_stacking.py`, `test_global_flags.py`, etc. | ✅ |
+| **Inférence corrigée** : cross-sectional features réintégrées | `modelFactory/global_ranking.py` | ✅ (26/07) |
+| Tests stacking/global 115 OK | `tests/test_stacking.py`, etc. | ✅ |
 
 ### Features
 | Catégorie | Nb colonnes | Fichier | Statut |
@@ -63,6 +65,37 @@
 | `global_ranking.prediction_lookback_days` | `365` | `config.yaml` |
 | IC Rank persisté en DB | `model_training_batch.ic_rank` | `alembic/versions/0056_*` |
 | IC Rank affiché dans l'IHM | 🩺 Diagnostic ML → Détail batch | `ihm/pages/ml_diagnostics.py` |
+
+---
+
+## 🔧 Corrections & Optimisations (26/07/2026)
+
+### Bug Fixes — Audit `global_ranking.py`
+| # | Bug | Impact | Correction |
+|:--:|------|--------|------------|
+| 1 | `include_macro_regime` absent de `_get_ranking_feature_columns()` | `SPY_SMA_200_slope` + `VIX_zscore` calculés mais ignorés | Ajout du paramètre |
+| 2 | `predict_global_rank()` sans cross-sectional features | Inférence live → `global_rank` = bruit | Ajout `build_cross_sectional_features` + `merge` |
+| 3 | `fingerprint()` / `build_feature_contract()` sans `include_macro_regime` | Crash `TypeError` au `_build_run_summary` | Ajout du paramètre aux 3 fonctions |
+| 4 | `effective_data_cfg` no-op + imports inutilisés | Code mort | Supprimé |
+
+### Market-Neutral Target
+| Changement | Avant | Après |
+|-----------|-------|-------|
+| Target du Global Ranking | `future_return = stock J+10` | `future_return = stock J+10 - SPY J+10` |
+| Objectif | Prédire la direction absolue | Prédire la **surperformance relative** |
+| Effet attendu | IC inversé par rotations sectorielles | IC stable à travers les régimes |
+| Fallback | — | Si pas de `benchmark_df`, garde le rendement brut |
+
+### Macro Feature Blacklist — Phase 1 (Global Ranking)
+| Changement | Détail |
+|-----------|--------|
+| Features retirées | 15 features macro-globales (SPY/VIX/MOVE/régime) |
+| Fichier | `modelFactory/global_ranking.py` → `_get_ranking_feature_columns()` |
+| Raison | Ces features sont **identiques pour tous les symboles** à une date donnée → ne peuvent pas discriminer le classement cross-sectionnel |
+| Features blacklistées | `SPY_SMA_200_slope`, `VIX_zscore`, `vix_close`, `vix_momentum_5j`, `vxn_close`, `vxn_spread_vix`, `vix3m_close`, `vix_term_structure_ratio`, `vix_backwardation`, `move_close`, `market_return_20`, `market_volatility_20`, `market_trend_strength_50`, `regime_bull_market`, `regime_risk_off` |
+| Features conservées | Interactions régime (`_x_bull`, `_x_risk_off`), `relative_strength_*`, toutes les features cross-sectionnelles et locales |
+| Effet attendu | Le modèle n'a plus de « bruit macro » → forcé d'utiliser des features discriminantes (`momentum_*_zscore`, `dollar_volume_20_rank`, `sector_neutral_*`) |
+| **Important** | Ces features restent disponibles pour les **modèles per-symbol Phase 2** |
 
 ---
 
@@ -269,12 +302,11 @@ python -c "from modelFactory.features import get_feature_columns; print(len(get_
 
 ## 📊 Indicateurs de succès (mis à jour)
 
-| Métrique | Actuel | Cible Court Terme | Cible Moyen Terme |
-|----------|:---:|:---:|:---:|
-| F1 WF LightGBM (per-symbol) | ~0.296 | > 0.310 | > 0.330 |
-| IC Rank (Global Model) | ? | > 0.03 | > 0.05 |
-| % symboles avec F1 Macro WF > seuil | ? | > 30% | > 40% |
-| Temps batch (200 symboles, 6 workers) | ~? min | < +2 min vs actuel | < +5 min vs actuel |
+| Métrique | Actuel (absolu) | Après excess return | Après blacklist macro | Cible |
+|----------|:---:|:---:|:---:|:---:|
+| F1 WF LightGBM (per-symbol) | ~0.296 | — | — | > 0.310 |
+| IC Rank (Global Model) | +0.017 (ic_std=0.102) | −0.003 (ic_std=0.043) | **À mesurer** | > 0.03 |
+| % symboles avec F1 Macro WF > seuil | ? | — | — | > 30% |
 
 ---
 

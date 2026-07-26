@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -85,22 +84,33 @@ def _prepare_global_ranking_frame(
     if cfg.data.enable_cross_sectional_features and cross_sectional_df is not None:
         df = merge_cross_sectional_features(df, cross_sectional_df)
 
-    # Target : rendement futur J+10 (continu, pas de classification)
+    # Target : rendement excédentaire vs SPY (market-neutral)
+    # En neutralisant le rendement du marché, le modèle apprend le classement
+    # relatif inter-titres plutôt que la direction macro.
     horizon = cfg.data.forecast_horizon
     close = df["close"].astype(float)
-    df["future_return"] = close.shift(-horizon) / close - 1.0
+    stock_return = close.shift(-horizon) / close - 1.0
+
+    if benchmark_df is not None and "close" in benchmark_df.columns:
+        _spy_close = benchmark_df.set_index("date")["close"].astype(float)
+        _spy_return = _spy_close.shift(-horizon) / _spy_close - 1.0
+        _spy_map = _spy_return.reindex(pd.to_datetime(df["date"])).fillna(0.0)
+        df["future_return"] = (stock_return - _spy_map.values).astype(float)
+    else:
+        df["future_return"] = stock_return
 
     return df
 
 
 def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
-    """Retourne TOUTES les features pour le Global Ranking Model.
+    """Retourne les features pour le Global Ranking Model.
 
-    Contrairement à l'ancien Global Model (cross-sectionnel uniquement),
-    le Ranking Model utilise toutes les features disponibles : OHLCV, expert,
-    cross-sectional, macro, screener, sentiment, interactions, multi-horizons.
+    Exclut les features macro-globales (identiques pour tous les symboles
+    à une date donnée) car elles ne peuvent pas discriminer le classement
+    cross-sectionnel. Ces features restent disponibles pour les modèles
+    per-symbol (Phase 2) qui en ont besoin pour le contexte de régime.
     """
-    return get_feature_columns(
+    all_cols = get_feature_columns(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
@@ -110,10 +120,26 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         include_macro_vxn=cfg.data.include_macro_vxn_features,
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
-        include_global_stacking=False,  # pas de stacking récursif
+        include_global_stacking=False,
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_factors=cfg.data.include_factors_features,
+        include_macro_regime=cfg.data.include_macro_regime_features,
     )
+    # Supprimer les features purement macro (identiques pour tous les symboles
+    # à une date donnée → ne peuvent pas classer les titres entre eux).
+    _macro_blacklist: set[str] = {
+        # Macro regime (calculées depuis SPY/VIX, identiques ∀ symboles)
+        "SPY_SMA_200_slope", "VIX_zscore",
+        # VIX / VXN / VIX3M / MOVE (identiques ∀ symboles)
+        "vix_close", "vix_momentum_5j",
+        "vxn_close", "vxn_spread_vix",
+        "vix3m_close", "vix_term_structure_ratio", "vix_backwardation",
+        "move_close",
+        # Régime de marché SPY (identiques ∀ symboles)
+        "market_return_20", "market_volatility_20", "market_trend_strength_50",
+        "regime_bull_market", "regime_risk_off",
+    }
+    return [c for c in all_cols if c not in _macro_blacklist]
 
 
 def compute_ic_rank(predicted: np.ndarray, actual: np.ndarray) -> float | None:
@@ -231,17 +257,11 @@ def train_global_ranking_wf(
 
     horizon = cfg.data.forecast_horizon  # J+10 swing
 
-    effective_data_cfg = replace(
-        cfg.data,
-        enable_cross_sectional_features=(
-            cfg.data.enable_cross_sectional_features
-        ),
-    )
     history_end_date = load_universe_latest_bar_date(
-        engine, symbols, end_date=effective_data_cfg.training_end_date,
+        engine, symbols, end_date=cfg.data.training_end_date,
     )
     history_start_date = resolve_training_start_date(
-        history_end_date, effective_data_cfg.training_start_date,
+        history_end_date, cfg.data.training_start_date,
     )
     universe_df = load_universe_bars(
         engine, symbols, end_date=history_end_date, start_date=history_start_date,
@@ -251,26 +271,26 @@ def train_global_ranking_wf(
 
     # ── Chargement données auxiliaires ──
     benchmark_df = None
-    if effective_data_cfg.feature_set == "expert":
+    if cfg.data.feature_set == "expert":
         benchmark_df = load_benchmark_bars(
-            engine, effective_data_cfg.benchmark_symbol,
+            engine, cfg.data.benchmark_symbol,
             end_date=history_end_date, start_date=history_start_date,
         )
     sentiment_df = None
-    if effective_data_cfg.include_sentiment_features:
+    if cfg.data.include_sentiment_features:
         sentiment_df = load_symbols_sentiment(
             engine, symbols, end_date=history_end_date, start_date=history_start_date,
         )
     selector_context_df = None
-    if effective_data_cfg.include_screener_scores or effective_data_cfg.include_short_score_features:
+    if cfg.data.include_screener_scores or cfg.data.include_short_score_features:
         selector_context_df = load_symbols_selector_context(
             engine, symbols, end_date=history_end_date, start_date=history_start_date,
         )
     cross_sectional_df = None
-    if effective_data_cfg.enable_cross_sectional_features:
+    if cfg.data.enable_cross_sectional_features:
         cross_sectional_df, _ = build_cross_sectional_features(
             universe_df, benchmark_df=benchmark_df,
-            min_universe_size=effective_data_cfg.cross_sectional_min_universe,
+            min_universe_size=cfg.data.cross_sectional_min_universe,
         )
 
     # ── Préparation du DataFrame poolé ──
@@ -278,7 +298,7 @@ def train_global_ranking_wf(
     prepared_parts: list[pd.DataFrame] = []
     for symbol in symbols:
         bars_df = universe_df[universe_df["symbol"] == symbol].copy().sort_values("date").reset_index(drop=True)
-        if len(bars_df) < effective_data_cfg.min_history_days:
+        if len(bars_df) < cfg.data.min_history_days:
             continue
         sym_sentiment = None
         if sentiment_df is not None and not sentiment_df.empty:
@@ -400,6 +420,26 @@ def train_global_ranking_wf(
             ic_ranks.append(ic)
 
         global_rank_parts.append(pred_part)
+
+        # ── Feature importance (top 10) ──
+        _top_features: list[tuple[str, float]] = []
+        try:
+            if backend_model_name == "lightgbm":
+                _importance = model.booster_.feature_importance(importance_type="gain")
+                _pairs = sorted(zip(feature_columns, _importance), key=lambda x: x[1], reverse=True)
+                _top_features = _pairs[:10]
+            elif backend_model_name == "catboost":
+                _importance = model.get_feature_importance()
+                _pairs = sorted(zip(feature_columns, _importance), key=lambda x: x[1], reverse=True)
+                _top_features = _pairs[:10]
+        except Exception:
+            pass
+        if _top_features:
+            _top_str = " ".join(f"{feat}={val:.1f}" for feat, val in _top_features)
+            LOGGER.info(
+                "global_ranking_wf split=%d top_features: %s",
+                split.split_index + 1, _top_str,
+            )
 
         LOGGER.info(
             "global_ranking_wf split=%d/%d train_rows=%d val_rows=%d ic_rank=%.4f",
@@ -530,12 +570,16 @@ def predict_global_rank(
         LOGGER.warning("predict_global_rank: unknown model_name=%s", _model_name)
         return None
 
-    # ── Préparer les features ──
-    from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS
-    # Filtrer pour ne garder que les colonnes cross-sectional + common
-    # qui sont disponibles (le modèle global n'utilise que celles-ci)
+    # ── Préparer les features (même pipeline qu'à l'entraînement) ──
+    # 1. Construire les features cross-sectionnelles depuis l'univers complet
+    from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
 
-    # Construire les features pour chaque symbole
+    cross_sectional_df, _cs_diag = build_cross_sectional_features(
+        universe_df, benchmark_df=benchmark_df,
+        min_universe_size=5,  # seuil bas pour l'inférence (peu de symboles possibles)
+    )
+
+    # 2. Pour chaque symbole : features locales + merge cross-sectional
     frames: list[pd.DataFrame] = []
     symbols = sorted(universe_df["symbol"].unique())
     for sym in symbols:
@@ -544,26 +588,30 @@ def predict_global_rank(
             if sym_bars.empty or len(sym_bars) < 20:
                 continue
             sym_bars = sym_bars.sort_values("date")
-            # Features OHLCV de base
-            from modelFactory.features import compute_features
+
+            # Features locales (OHLCV, expert, z-scores, macro, etc.)
             sym_df = compute_features(
                 sym_bars,
                 benchmark_df=benchmark_df,
                 feature_set="expert",
             )
-            # Merge cross-sectional
-            from modelFactory.cross_sectional import merge_cross_sectional_features
-            cs_df = universe_df[["symbol", "date"]].copy()
-            # On ne peut pas construire de cross-sectional features ici
-            # sans l'univers complet — on les skip pour l'inférence
-            # et on garde les features locales + macro
-
-            # Ne garder que les colonnes présentes
-            available = [c for c in _feature_columns if c in sym_df.columns]
-            if not available:
+            if sym_df.empty:
                 continue
+
+            # Merge cross-sectional (mêmes features qu'à l'entraînement)
+            sym_cross = cross_sectional_df[cross_sectional_df["symbol"] == sym].copy() if not cross_sectional_df.empty else None
+            sym_df = merge_cross_sectional_features(sym_df, sym_cross)
+
+            # Dernière ligne = prédiction du jour
             last_row = sym_df.iloc[[-1]].copy()
-            frames.append(last_row[["symbol", "date"] + available])
+
+            # Garantir que toutes les colonnes attendues par le modèle sont présentes
+            for col in _feature_columns:
+                if col not in last_row.columns:
+                    # Rangs percentiles → 0.5, autres → 0.0
+                    last_row[col] = 0.5 if col.endswith("_rank") or col == "global_rank" else 0.0
+
+            frames.append(last_row[["symbol", "date"] + _feature_columns])
         except Exception:
             continue
 
@@ -573,10 +621,13 @@ def predict_global_rank(
 
     pred_df = pd.concat(frames, ignore_index=True)
 
-    # ── Prédire ──
-    X = pred_df[[c for c in _feature_columns if c in pred_df.columns]].to_numpy(dtype=np.float64)
-    if X.shape[1] == 0:
-        LOGGER.warning("predict_global_rank: no matching feature columns")
+    # ── Prédire (toutes les colonnes features doivent être présentes) ──
+    X = pred_df[_feature_columns].to_numpy(dtype=np.float64)
+    if X.shape[1] != len(_feature_columns):
+        LOGGER.warning(
+            "predict_global_rank: feature mismatch expected=%d got=%d",
+            len(_feature_columns), X.shape[1],
+        )
         return None
 
     try:

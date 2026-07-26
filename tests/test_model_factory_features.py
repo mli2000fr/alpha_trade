@@ -254,3 +254,182 @@ def test_compute_features_merges_selector_context_pit_safely() -> None:
     assert last_row["selector_mode_sector_neutralized"] == 1.0
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-07-26 — Régime macro + interactions global_rank
+# ─────────────────────────────────────────────────────────────────────
+
+def test_macro_regime_features_in_columns():
+    """Vérifie que SPY_SMA_200_slope et VIX_zscore sont dans get_feature_columns
+    quand include_macro_regime=True."""
+    cols = features.get_feature_columns(
+        feature_set="expert", include_macro_regime=True,
+    )
+    assert "SPY_SMA_200_slope" in cols
+    assert "VIX_zscore" in cols
+
+
+def test_macro_regime_features_absent_when_disabled():
+    """Sans include_macro_regime, les colonnes ne doivent pas apparaître."""
+    cols = features.get_feature_columns(feature_set="expert")
+    assert "SPY_SMA_200_slope" not in cols
+    assert "VIX_zscore" not in cols
+
+
+def test_compute_features_macro_regime_from_benchmark():
+    """compute_features avec benchmark SPY + include_macro_regime produit
+    SPY_SMA_200_slope (pente SMA200) et VIX_zscore (fallback 0 sans VIX chargé)."""
+    n = 300
+    dates = pd.date_range("2020-01-01", periods=n, freq="D")
+    close = pd.Series(100.0 + np.arange(n) * 0.5, dtype=float)
+
+    bars = pd.DataFrame({
+        "symbol": ["AAPL"] * n,
+        "date": dates,
+        "open": close * 0.99,
+        "high": close * 1.01,
+        "low": close * 0.98,
+        "close": close,
+        "volume": np.linspace(1_000_000, 1_100_000, n),
+        "adj_close": close,
+        "vwap": close,
+        "daily_return": 0.0,
+        "is_filled": 0,
+    })
+    benchmark = pd.DataFrame({
+        "symbol": ["SPY"] * n,
+        "date": dates,
+        "open": close * 0.5,
+        "high": close * 0.51,
+        "low": close * 0.49,
+        "close": close * 1.5,  # tendance haussière
+        "volume": np.linspace(5_000_000, 6_000_000, n),
+        "adj_close": close * 1.5,
+        "vwap": close * 1.5,
+        "daily_return": 0.0,
+        "is_filled": 0,
+    })
+
+    result = features.compute_features(
+        bars, benchmark_df=benchmark,
+        feature_set="expert", include_macro_regime=True,
+    )
+    assert "SPY_SMA_200_slope" in result.columns
+    assert "VIX_zscore" in result.columns
+    # En tendance haussière stable, la pente SMA200 doit être > 0
+    non_null = result["SPY_SMA_200_slope"].dropna()
+    assert len(non_null) > 0
+    assert (non_null > 0).all(), f"SPY_SMA_200_slope should be positive in uptrend, got min={non_null.min()}"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Rank interaction features (Action 5)
+# ─────────────────────────────────────────────────────────────────────
+
+def test_rank_interaction_features_in_columns():
+    """rank_x_* doivent apparaître dans get_feature_columns
+    quand include_cross_sectional=True ET include_global_stacking=True."""
+    cols = features.get_feature_columns(
+        feature_set="expert",
+        include_cross_sectional=True,
+        include_global_stacking=True,
+    )
+    for f in features.RANK_INTERACTION_FEATURES:
+        assert f in cols, f"{f} missing from feature columns"
+
+
+def test_rank_interaction_features_absent_without_stacking():
+    """Sans include_global_stacking, pas de rank_x_*."""
+    cols = features.get_feature_columns(
+        feature_set="expert",
+        include_cross_sectional=True,
+        include_global_stacking=False,
+    )
+    for f in features.RANK_INTERACTION_FEATURES:
+        assert f not in cols, f"{f} should not appear without stacking"
+
+
+def test_compute_rank_interactions_basic():
+    """compute_rank_interactions calcule bien global_rank × feature source."""
+    df = pd.DataFrame({
+        "global_rank": [0.5, 0.9, 0.1, 0.0, 1.0],
+        "rsi_14": [50.0, 70.0, 30.0, 40.0, 60.0],
+        "momentum_20": [0.02, -0.01, 0.05, 0.0, 0.10],
+        "momentum_60": [0.10, 0.05, -0.02, 0.0, 0.20],
+        "rolling_volatility_20": [0.15, 0.20, 0.10, 0.25, 0.05],
+        "sma20_distance": [0.01, 0.03, -0.02, 0.0, 0.05],
+    })
+    result = features.compute_rank_interactions(df)
+
+    assert result["rank_x_rsi_14"].tolist() == [25.0, 63.0, 3.0, 0.0, 60.0]
+    # Floating-point: 0.5*0.02, 0.9*(-0.01), 0.1*0.05, 0.0*0, 1.0*0.10
+    assert abs(result.loc[0, "rank_x_momentum_20"] - 0.01) < 1e-12
+    assert abs(result.loc[1, "rank_x_momentum_20"] - (-0.009)) < 1e-12
+    assert abs(result.loc[2, "rank_x_momentum_20"] - 0.005) < 1e-12
+    assert result.loc[3, "rank_x_momentum_20"] == 0.0
+    assert result.loc[4, "rank_x_momentum_20"] == 0.10
+    assert result["rank_x_sma20_distance"].tolist() == [0.005, 0.027, -0.002, 0.0, 0.05]
+
+
+def test_compute_rank_interactions_fallback_no_global_rank():
+    """Sans colonne global_rank, compute_rank_interactions remplit 0.0."""
+    df = pd.DataFrame({"rsi_14": [50.0, 70.0], "momentum_20": [0.02, -0.01]})
+    result = features.compute_rank_interactions(df)
+    for col in features.RANK_INTERACTION_FEATURES:
+        assert col in result.columns
+        assert (result[col] == 0.0).all(), f"{col} should be 0.0 without global_rank"
+
+
+def test_compute_rank_interactions_fallback_missing_source():
+    """Si une feature source manque, la colonne rank_x correspondante vaut 0.0."""
+    df = pd.DataFrame({
+        "global_rank": [0.5, 0.9],
+        "rsi_14": [50.0, 70.0],
+        # momentum_20, momentum_60, etc. absents
+    })
+    result = features.compute_rank_interactions(df)
+    # rsi_14 est présent → rank_x_rsi_14 doit être calculé
+    assert (result["rank_x_rsi_14"] != 0.0).any()
+    # momentum_20 est absent → fallback 0.0
+    assert (result["rank_x_momentum_20"] == 0.0).all()
+    assert (result["rank_x_volatility_20"] == 0.0).all()
+
+
+def test_compute_rank_interactions_handles_nan():
+    """global_rank NaN → fill 0.5 ; source NaN → fill 0.0."""
+    df = pd.DataFrame({
+        "global_rank": [np.nan, 0.8],
+        "rsi_14": [50.0, np.nan],
+        "momentum_20": [0.02, 0.05],
+    })
+    result = features.compute_rank_interactions(df)
+    # ligne 0: global_rank NaN → 0.5, rsi=50 → 25.0
+    assert abs(result.loc[0, "rank_x_rsi_14"] - 25.0) < 1e-9
+    # ligne 1: rsi NaN → 0.0 source → rank = 0
+    assert abs(result.loc[1, "rank_x_rsi_14"] - 0.0) < 1e-9
+    assert result.loc[0, "rank_x_momentum_20"] == 0.01  # 0.5*0.02
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Config defaults (Actions 2-4 — régularisation)
+# ─────────────────────────────────────────────────────────────────────
+
+def test_baseline_config_defaults_regularized():
+    """Vérifie que les nouveaux défauts de régularisation sont bien appliqués."""
+    from modelFactory.config import BaselineConfig
+    cfg = BaselineConfig()
+    assert cfg.max_depth == 4
+    assert cfg.lgbm_num_leaves == 15
+    assert cfg.lgbm_min_child_samples == 30
+    assert cfg.lgbm_subsample == 0.8
+    assert cfg.lgbm_colsample_bytree == 0.7
+    assert cfg.lgbm_reg_alpha == 0.1
+    assert cfg.lgbm_reg_lambda == 0.1
+    assert cfg.catboost_depth == 4
+
+
+def test_data_config_include_macro_regime_default():
+    """include_macro_regime_features est False par défaut."""
+    from modelFactory.config import DataConfig
+    cfg = DataConfig()
+    assert cfg.include_macro_regime_features is False
+
