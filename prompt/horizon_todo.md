@@ -31,76 +31,75 @@ Chaque horizon a sa propre liste de features importantes. H3 sélectionne ses to
 - **Coût** : déjà fait
 - **Gain** : modeste (+0.002-0.005 IC)
 
-### Niveau 2 — Features pondérées par horizon (à faire)
+### Niveau 2 — Features pondérées par horizon ❌ SKIP (inutile pour GBDT)
 
-Créer des versions "dédiées" des features clés, taguées par horizon. Le ratio de boost/atténuation vient de l'analyse de corrélation feature→target par horizon.
+Créer des versions pondérées par un scalaire :
 
 ```
-rsi_3_h3_weight   = rsi_3 × 1.5   (boost pour H3)
-rsi_3_h10_weight  = rsi_3 × 0.2   (atténué pour H10)
-momentum_250_h3   = momentum_250 × 0.1  (presque ignoré en H3)
-momentum_250_h10  = momentum_250 × 1.5  (boost pour H10)
+rsi_3_h3_weight  = rsi_3 × 1.5   (boost pour H3)
+rsi_3_h10_weight = rsi_3 × 0.2   (atténué pour H10)
 ```
 
-**Mécanisme** :
-1. Après le premier batch avec Niveau 1, extraire l'IC Rank par feature × horizon
-2. Pour chaque feature, calculer : `weight_h = IC(feature, target_h) / max(IC(any_feature, target_h))`
-3. Générer `feature_h3_weighted`, `feature_h5_weighted`, `feature_h10_weighted`
-4. Ajouter ces features pondérées au pipeline
+**Pourquoi c'est inutile :** Les arbres de décision (LightGBM, XGBoost, CatBoost) sont **invariants aux transformations monotones** ($f(x) = a \cdot x + b$ avec $a > 0$). Multiplier une feature par 1.5 ne change pas les splits optimaux — l'arbre trouvera exactement la même structure. Le Niveau 1 (top-K par horizon via importance) remplit déjà ce rôle de filtrage, sans ajouter de colonnes inutiles.
 
-- **Coût** : ~2h
-- **Fichiers** : `modelFactory/global_ranking.py`, `modelFactory/features.py`
-- **Gain attendu** : H3 IC ~0.012-0.018, H5 IC ~0.005-0.010, H10 IC ~0.010-0.015
+> ⚠️ Cette technique fonctionnerait pour un modèle linéaire (Ridge/Lasso), mais pas pour des GBDTs.
 
-### Niveau 3 — Features croisées horizon (à faire)
+- **Statut** : ❌ Abandonné
+- **Raison** : Invariance mathématique des arbres de décision
+- **Coût évité** : ~2h
 
-Créer des features qui capturent la **dynamique temporelle** entre horizons. Ces features décrivent comment le signal évolue dans le temps, pas juste sa valeur instantanée.
+### Niveau 3 — Features croisées horizon 🚀 PRIORITAIRE
+
+Créer des features qui capturent la **dynamique temporelle** (vitesse, accélération, convexité). En finance quantitative, la valeur instantanée d'un indicateur ($RSI=70$) contient moins de signal que sa **dynamique** ($RSI$ en train de chuter vs en train de monter).
 
 ```
 accel_3_5        = momentum_5 / momentum_3 − 1    (accélération du momentum)
 decay_5_10       = momentum_10 / momentum_5 − 1   (essoufflement)
 rsi_slope        = rsi_3 − rsi_14                 (vitesse de changement du RSI)
 vol_expansion    = vol_5 / vol_20 − 1             (explosion de volatilité court-terme)
-meanrev_signal   = dist_to_sma_5d − dist_to_sma_20d  (intensité de la réversion)
-gap_fade         = overnight_gap × (1 − abs(rsi_3 − 50) / 50)  (gap + condition de survente/surachat)
+meanrev_signal   = dist_to_sma_5d − dist_to_sma_20d  (tension de réversion vs tendance de fond)
+gap_fade         = overnight_gap × (1 − abs(rsi_3 − 50) / 50)  (gap × condition de survente/surachat)
 ```
 
-- **Coût** : ~3h
-- **Fichiers** : `modelFactory/features.py` → `INTERACTION_FEATURES` + `compute_features()`
+**Pourquoi ça marche :** Ces features sont **non-linéaires et non-monotones** par rapport aux features sources. Un arbre ne peut pas les recréer par simple split. Elles apportent une information réellement nouvelle.
+
+- **Coût** : ~1h30
+- **Fichiers** : `modelFactory/features.py` → `TEMPORAL_DYNAMICS_FEATURES` + `compute_features()`
 - **Gain attendu** : H3 IC ~0.015-0.025, H5 IC ~0.008-0.015, H10 IC ~0.012-0.020
 
 ---
 
 ## 🎯 Gain attendu — Résumé
 
-| Horizon | Sans interaction | Niveau 1 (top-K) | Niveau 2 (pondéré) | Niveau 3 (croisé) |
-|---------|:---:|:---:|:---:|:---:|
-| H3 | IC ~0.008 | ~0.010-0.013 | ~0.012-0.018 | ~0.015-0.025 |
-| H5 | IC ~−0.002 | ~0.002-0.005 | ~0.005-0.010 | ~0.008-0.015 |
-| H10 | IC ~0.007 | ~0.008-0.012 | ~0.010-0.015 | ~0.012-0.020 |
+| Horizon | Sans interaction | Niveau 1 (top-K/horizon) | Niveau 3 (croisé) |
+|---------|:---:|:---:|:---:|
+| H3 | IC ~0.008 | ~0.009-0.013 | ~0.015-0.025 |
+| H5 | IC ~−0.002 | ~0.002-0.005 | ~0.008-0.015 |
+| H10 | IC ~0.007 | ~0.004-0.008 | ~0.012-0.020 |
 
 ---
 
 ## 🔧 Plan d'implémentation
 
-### Étape 1 : Mesurer (batch à lancer)
-- Lancer un batch avec `ranking_top_k_features=30`
-- Extraire les IC par feature × horizon depuis les logs
-- Identifier quelles features sont utiles pour quel horizon
+### Étape 1 : Niveau 1 ✅ Fait
+- [x] `ranking_top_k_features` dans `config.py`
+- [x] Per-horizon feature selection (chaque horizon choisit ses propres top-K)
+- [x] IHM input dans Pipeline → Paramètres d'exécution
 
-### Étape 2 : Niveau 2 (si IC H3 < 0.02 après Niveau 1)
-- Générer les poids à partir des IC mesurés
-- Ajouter les features pondérées
-- Relancer un batch
+### Étape 2 : ❌ SKIP — Niveau 2 (inutile pour GBDT)
+- Les arbres sont invariants aux multiplications par un scalaire
 
-### Étape 3 : Niveau 3 (si IC H3 < 0.03 après Niveau 2)
-- Ajouter les 6-8 features croisées horizon
-- Relancer un batch
+### Étape 3 : 🚀 Niveau 3 — Features de dynamique temporelle (prochaine priorité)
+- [ ] Ajouter `TEMPORAL_DYNAMICS_FEATURES` dans `modelFactory/features.py`
+- [ ] Implémenter `compute_features()` pour les 6 features croisées
+- [ ] Ajouter au `_XS_RANK_SOURCE_FEATURES` dans `global_ranking.py`
+- [ ] Lancer un batch avec les nouvelles features
 
 ---
 
 ## 📝 Notes
 
-- Le Niveau 1 est déjà en production. Le Niveau 2 nécessite d'abord un batch complet pour mesurer les IC par feature.
-- Le Niveau 3 est le plus prometteur mais aussi le plus risqué : les features croisées peuvent introduire du bruit si mal conçues.
-- Priorité absolue : améliorer H3 (seul horizon structurellement positif). Si H3 décolle, H5 et H10 suivront par propagation du stacking.
+- Le Niveau 1 est en production avec per-horizon top-K.
+- Le Niveau 2 est définitivement abandonné (invariance mathématique des GBDT — Gemini a raison).
+- **Le Niveau 3 est la prochaine étape à fort potentiel.** Les features de pente/convexité capturent la dynamique que les arbres ne peuvent pas inférer de features statiques.
+- Priorité absolue : améliorer H3. Si H3 décolle, H5 et H10 suivront.
