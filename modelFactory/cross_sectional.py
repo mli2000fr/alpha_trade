@@ -287,7 +287,10 @@ def _compute_sector_features(
     result["stock_vs_sector_ret_60"] = result["ret_60"] - result["sector_ret_60"]
 
     # Invalider les agrégats quand le secteur a trop peu de symboles
-    result.loc[~valid_mask, SECTOR_FEATURE_COLUMNS] = np.nan
+    _invalid = ~valid_mask.reindex(result.index, fill_value=False)
+    for col in SECTOR_FEATURE_COLUMNS:
+        if col in result.columns:
+            result.loc[_invalid, col] = np.nan
 
     # Forward-fill les NaN au sein de chaque (symbol, secteur) pour les dates sans agrégat
     result = result.sort_values(["symbol", "date"]).reset_index(drop=True)

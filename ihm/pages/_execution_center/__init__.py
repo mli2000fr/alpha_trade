@@ -3178,7 +3178,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
 
         st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
-        ml_train_symbol_source = "tradable-universe"
+        ml_train_symbol_source = "ticket-recherche"
         ml_predict_symbol_source = "tradable-universe"
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:
