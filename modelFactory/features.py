@@ -85,6 +85,7 @@ REGIME_INTERACTION_FEATURES: list[str] = [
 # ── Sprint 2026-07-25 : Features multi-horizons, interactions techniques, z-score ──
 
 MULTI_HORIZON_FEATURES: list[str] = [
+    "momentum_3",
     "momentum_5",
     "momentum_120",
     "momentum_250",
@@ -117,6 +118,19 @@ INTERACTION_FEATURES: list[str] = [
     "log_return_div_intraday_range",
     "relative_strength_20_times_market_trend",
     "relative_strength_60_div_market_volatility",
+]
+
+# ── Sprint 2026-07-26 : Features de dynamique temporelle (Niveau 3) ──
+# Vitesse, accélération et convexité des indicateurs. Ces features sont
+# non-linéaires/non-monotones → les arbres ne peuvent pas les inférer de
+# features statiques. Capturent la « dérivée seconde » du signal.
+TEMPORAL_DYNAMICS_FEATURES: list[str] = [
+    "accel_3_5",         # momentum_5 / momentum_3 − 1  (accélération court-terme)
+    "decay_5_10",        # momentum_10 / momentum_5 − 1 (essoufflement du momentum)
+    "rsi_slope",         # rsi_3 − rsi_14              (vitesse de changement du RSI)
+    "vol_expansion",     # vol_5 / vol_20 − 1          (explosion de volatilité)
+    "meanrev_signal",    # dist_to_sma_5d − sma20_distance (tension de réversion)
+    "gap_fade",          # overnight_gap × (1 − |rsi_3−50|/50) (gap conditionnel)
 ]
 
 # ── Sprint 2026-07-25 : Z-score rolling (normalisation temporelle) ──
@@ -318,6 +332,7 @@ def get_feature_columns(
         cols.extend(REGIME_INTERACTION_FEATURES)
         cols.extend(MULTI_HORIZON_FEATURES)
         cols.extend(INTERACTION_FEATURES)
+        cols.extend(TEMPORAL_DYNAMICS_FEATURES)
         cols.extend(ZSCORE_FEATURE_COLUMNS)
     if include_fundamentals:
         from modelFactory.fundamental_features import FUNDAMENTAL_FEATURE_COLUMNS
@@ -855,6 +870,7 @@ def compute_features(
         df["range_position_20"] = _range_position(close, 20)
 
         # ── Multi-horizon features (Sprint 2026-07-25) ──
+        df["momentum_3"] = close / close.shift(3) - 1.0
         df["momentum_5"] = close / close.shift(5) - 1.0
         df["momentum_120"] = close / close.shift(120) - 1.0
         df["momentum_250"] = close / close.shift(250) - 1.0
@@ -1076,6 +1092,30 @@ def compute_features(
         df["relative_strength_60_div_market_volatility"] = df["relative_strength_60"] / _mkt_vol20
 
         for _col in INTERACTION_FEATURES:
+            if _col in df.columns:
+                df[_col] = df[_col].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    # ── Temporal dynamics features (Niveau 3, Sprint 2026-07-26) ──
+    if feature_set == "expert":
+        # Accélération / décélération du momentum
+        _m3 = df["momentum_3"].replace(0, np.nan)
+        _m5 = df["momentum_5"].replace(0, np.nan)
+        _m10 = df["momentum_10"]
+        df["accel_3_5"] = (_m5 / _m3 - 1.0).fillna(0.0)
+        df["decay_5_10"] = (_m10 / _m5 - 1.0).fillna(0.0)
+        # Vitesse du RSI
+        df["rsi_slope"] = df["rsi_3"] - df["rsi_14"]
+        # Explosion de volatilité
+        _v5 = df["rolling_volatility_5"].clip(lower=1e-8)
+        _v20 = df["rolling_volatility_20"].clip(lower=1e-8)
+        df["vol_expansion"] = (_v5 / _v20 - 1.0).fillna(0.0)
+        # Tension de réversion (court-terme vs fond)
+        df["meanrev_signal"] = df["dist_to_sma_5d"] - df["sma20_distance"]
+        # Gap × condition de survente/surachat
+        _rsi3_dev = 1.0 - (df["rsi_3"] - 50.0).abs() / 50.0
+        df["gap_fade"] = df["overnight_gap"] * _rsi3_dev.clip(0.0, 1.0)
+        # Nettoyage inf/nan
+        for _col in TEMPORAL_DYNAMICS_FEATURES:
             if _col in df.columns:
                 df[_col] = df[_col].replace([np.inf, -np.inf], np.nan).fillna(0.0)
 

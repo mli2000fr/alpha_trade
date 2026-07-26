@@ -2,7 +2,7 @@
 
 > **Date** : 2026-07-26
 > **Objectif** : Documenter la stratégie d'interactions features × horizon pour le Global Ranking Model.
-> **Statut** : Niveau 1 fait (feature selection). Niveaux 2 et 3 à implémenter.
+> **Statut** : Niveaux 1 & 3 faits. Niveau 2 abandonné.
 
 ---
 
@@ -89,11 +89,15 @@ gap_fade         = overnight_gap × (1 − abs(rsi_3 − 50) / 50)  (gap × cond
 ### Étape 2 : ❌ SKIP — Niveau 2 (inutile pour GBDT)
 - Les arbres sont invariants aux multiplications par un scalaire
 
-### Étape 3 : 🚀 Niveau 3 — Features de dynamique temporelle (prochaine priorité)
-- [ ] Ajouter `TEMPORAL_DYNAMICS_FEATURES` dans `modelFactory/features.py`
-- [ ] Implémenter `compute_features()` pour les 6 features croisées
-- [ ] Ajouter au `_XS_RANK_SOURCE_FEATURES` dans `global_ranking.py`
+### Étape 3 : 🚀 Niveau 3 — Features de dynamique temporelle ✅ Fait (26/07)
+- [x] `TEMPORAL_DYNAMICS_FEATURES` dans `modelFactory/features.py` (6 features)
+- [x] `momentum_3` ajouté à `MULTI_HORIZON_FEATURES`
+- [x] Calcul dans `compute_features()` (après INTERACTION_FEATURES, avant z-score)
+- [x] Ajout au `_XS_RANK_SOURCE_FEATURES` dans `global_ranking.py` (+6 → 45 cross-sectional ranks)
+- [x] Intégration dans `get_feature_columns()` (mode expert)
 - [ ] Lancer un batch avec les nouvelles features
+
+**Total features :** 164 + 1 (momentum_3) + 6 (temporal dynamics) + 7 (`_xs_rank`) = **178**
 
 ---
 

@@ -61,7 +61,7 @@ _GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10)
 # intra-date les rend comparables dans le temps et entre symboles.
 _XS_RANK_SOURCE_FEATURES: list[str] = [
     # Momentum multi-horizons
-    "momentum_5", "momentum_10", "momentum_20", "momentum_60",
+    "momentum_3", "momentum_5", "momentum_10", "momentum_20", "momentum_60",
     "momentum_120", "momentum_250",
     # Volatilité
     "rolling_volatility_5", "rolling_volatility_10", "rolling_volatility_20",
@@ -82,6 +82,9 @@ _XS_RANK_SOURCE_FEATURES: list[str] = [
     "atr_14_norm", "range_position_20", "vol_ratio_20_60",
     # Force relative
     "relative_strength_20", "relative_strength_60",
+    # ── Dynamique temporelle (Niveau 3) ──
+    "accel_3_5", "decay_5_10", "rsi_slope",
+    "vol_expansion", "meanrev_signal", "gap_fade",
 ]
 
 def _xs_rank_column_name(source_col: str) -> str:

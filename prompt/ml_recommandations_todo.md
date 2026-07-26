@@ -162,6 +162,7 @@
 | 6 | + Cross-sectional rank features (35 `_xs_rank`) | **À mesurer** | **À mesurer** | **À mesurer** | **À mesurer** |
 | 7 | + Winsorization 1%/99% + rsi_3/dist_sma_5d/vol_zscore_5d + n_est 500 + early_stop 30 + top-K feat | **+0.009** | **+0.005** | **+0.004** | **+0.006** |
 | 8 | + **Per-horizon feature selection** (chaque horizon choisit ses propres top-K) | **À mesurer** | **À mesurer** | **À mesurer** | **À mesurer** |
+| 9 | + **Temporal dynamics features** (6 features Niveau 3 : accel, decay, rsi_slope, vol_expansion, meanrev, gap_fade) | **À mesurer** | **À mesurer** | **À mesurer** | **À mesurer** |
 
 ---
 
