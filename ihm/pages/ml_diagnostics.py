@@ -808,6 +808,24 @@ def _render_batch_detail(batch: pd.Series) -> None:
             ic_display = f"{float(ic_val):.4f}"
             ic_help = "IC Rank (Spearman) du Global Ranking Model — >0.03 = utile, >0.05 = bon"
             st.metric("🎯 IC Rank Global", ic_display, help=ic_help)
+        # Decile Spreads
+        ds_h3 = row.get("decile_spread_h3")
+        ds_h5 = row.get("decile_spread_h5")
+        ds_h10 = row.get("decile_spread_h10")
+        if ds_h3 is not None or ds_h5 is not None or ds_h10 is not None:
+            _ds_parts = []
+            if ds_h3 is not None and str(ds_h3) not in ("None", "nan", ""):
+                _ds_parts.append(f"H3: {float(ds_h3):.4f}")
+            if ds_h5 is not None and str(ds_h5) not in ("None", "nan", ""):
+                _ds_parts.append(f"H5: {float(ds_h5):.4f}")
+            if ds_h10 is not None and str(ds_h10) not in ("None", "nan", ""):
+                _ds_parts.append(f"H10: {float(ds_h10):.4f}")
+            if _ds_parts:
+                st.metric("📊 Decile Spread (Top−Bottom)", "  ".join(_ds_parts),
+                          help="Rendement moyen du Top 10% moins Bottom 10% par horizon. "
+                               ">0.01 = excellent (1% de spread), "
+                               "~0.005 = correct (exploitable avec diversification), "
+                               "<0 = le classement est inversé.")
 
     with col3:
         st.metric("Démarré le", str(row.get("started_at", "—")))

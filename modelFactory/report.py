@@ -266,6 +266,23 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
         lines.append(f"- **Date fin training** : {row.get('training_end_date', '—')}")
         lines.append(f"- **Date univers** : {row.get('universe_date', '—')}")
         lines.append(f"- **Nb symboles demandés** : {row.get('requested_symbol_count', '—')}")
+        # ── IC Rank & Decile Spread du Global Ranking ──
+        _ic = row.get("ic_rank")
+        if _ic is not None and str(_ic) not in ("None", "nan", ""):
+            lines.append(f"- **🎯 IC Rank Global** : {float(_ic):.4f}")
+        _ds_h3 = row.get("decile_spread_h3")
+        _ds_h5 = row.get("decile_spread_h5")
+        _ds_h10 = row.get("decile_spread_h10")
+        if _ds_h3 is not None or _ds_h5 is not None or _ds_h10 is not None:
+            _ds_parts = []
+            if _ds_h3 is not None and str(_ds_h3) not in ("None", "nan", ""):
+                _ds_parts.append(f"H3={float(_ds_h3):.4f}")
+            if _ds_h5 is not None and str(_ds_h5) not in ("None", "nan", ""):
+                _ds_parts.append(f"H5={float(_ds_h5):.4f}")
+            if _ds_h10 is not None and str(_ds_h10) not in ("None", "nan", ""):
+                _ds_parts.append(f"H10={float(_ds_h10):.4f}")
+            if _ds_parts:
+                lines.append(f"- **📊 Decile Spread (Top−Bottom)** : {', '.join(_ds_parts)}")
         lines.append(f"- **Démarré le** : {row.get('started_at', '—')}")
         lines.append(f"- **Terminé le** : {row.get('finished_at', '—')}")
         lines.append(f"- **Complétés / Skippés / Échecs** : {row.get('symbols_completed', 0)} / {row.get('symbols_skipped', 0)} / {row.get('symbols_failed', 0)}")

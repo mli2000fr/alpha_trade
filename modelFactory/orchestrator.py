@@ -665,9 +665,10 @@ def run_training_batch(
             symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
         )
         LOGGER.info(
-            "run_training_batch global_ranking_wf status=%s ic_rank_mean=%s",
+            "run_training_batch global_ranking_wf status=%s ic_rank_mean=%s decile_spreads=%s",
             global_result_wf.get("status"),
             global_result_wf.get("ic_rank_mean"),
+            global_result_wf.get("decile_spreads"),
         )
 
         # ── Phase 2 : merge global_rank into cross-sectional cache (FLAG B) ──
@@ -774,13 +775,17 @@ def run_training_batch(
     skipped = sum(1 for r in results if r.status == "skipped")
     failed = sum(1 for r in results if r.status == "failed")
 
-    # ── Log IC Rank du Global Ranking Model ──
+    # ── Log IC Rank + Decile Spreads du Global Ranking Model ──
     if cfg.global_model.enabled and global_result_wf:
         _ic = global_result_wf.get("ic_rank_mean")
+        _ds = global_result_wf.get("decile_spreads") or {}
         if _ic is not None:
             LOGGER.info(
-                "run_training_batch global_ranking ic_rank_mean=%.4f ic_rank_std=%.4f",
+                "run_training_batch global_ranking ic_rank_mean=%.4f ic_rank_std=%.4f decile_spreads=H3=%.4f H5=%.4f H10=%.4f",
                 _ic, global_result_wf.get("ic_rank_std", float("nan")),
+                float(_ds.get(3)) if _ds.get(3) is not None else float("nan"),
+                float(_ds.get(5)) if _ds.get(5) is not None else float("nan"),
+                float(_ds.get(10)) if _ds.get(10) is not None else float("nan"),
             )
 
     update_runtime_status(
@@ -810,12 +815,22 @@ def run_training_batch(
     # ── Persister l'IC Rank du Global Ranking Model ──
     if cfg.global_model.enabled and global_result_wf:
         _ic = global_result_wf.get("ic_rank_mean")
+        _ds = global_result_wf.get("decile_spreads") or {}
         if _ic is not None:
             try:
-                update_training_batch(engine, batch_id, ic_rank=float(_ic))
+                update_training_batch(
+                    engine, batch_id,
+                    ic_rank=float(_ic),
+                    decile_spread_h3=float(_ds.get(3)) if _ds.get(3) is not None else None,
+                    decile_spread_h5=float(_ds.get(5)) if _ds.get(5) is not None else None,
+                    decile_spread_h10=float(_ds.get(10)) if _ds.get(10) is not None else None,
+                )
                 LOGGER.info(
-                    "run_training_batch ic_rank persisted batch_id=%s ic_rank=%.4f",
+                    "run_training_batch ic_rank+decile_spread persisted batch_id=%s ic_rank=%.4f decile_h3=%.4f decile_h5=%.4f decile_h10=%.4f",
                     batch_id, float(_ic),
+                    float(_ds.get(3)) if _ds.get(3) is not None else float("nan"),
+                    float(_ds.get(5)) if _ds.get(5) is not None else float("nan"),
+                    float(_ds.get(10)) if _ds.get(10) is not None else float("nan"),
                 )
             except Exception as exc:
                 LOGGER.warning(

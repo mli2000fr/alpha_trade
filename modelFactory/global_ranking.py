@@ -214,6 +214,51 @@ def _compute_mean_importance(
     return dict(sorted(_mean.items(), key=lambda kv: kv[1], reverse=True))
 
 
+def _compute_decile_spread(
+    pred_df: pd.DataFrame,
+    *,
+    score_col: str = "predicted_score",
+    return_col: str = "actual_return",
+    n_deciles: int = 10,
+) -> dict[str, float]:
+    """Calcule le rendement moyen par décile et le spread Top−Bottom.
+
+    Pour chaque date, les symboles sont classés en ``n_deciles`` selon
+    ``score_col``. Le rendement moyen du décile est la moyenne de
+    ``return_col`` (le vrai rendement futur percentile-ranké).
+
+    Returns
+    -------
+    dict avec :
+    - ``decile_spread`` : rendement moyen (Top − Bottom)
+    - ``top_decile_return`` : rendement moyen du meilleur décile
+    - ``bottom_decile_return`` : rendement moyen du pire décile
+    - ``decile_returns`` : dict décile → rendement moyen (pour monotonicité)
+    """
+    if pred_df.empty or score_col not in pred_df.columns or return_col not in pred_df.columns:
+        return {"decile_spread": 0.0, "top_decile_return": 0.0, "bottom_decile_return": 0.0, "decile_returns": {}}
+    try:
+        _df = pred_df.dropna(subset=[score_col, return_col])
+        if _df.empty:
+            return {"decile_spread": 0.0, "top_decile_return": 0.0, "bottom_decile_return": 0.0, "decile_returns": {}}
+        # Classer en déciles par date
+        _df["_decile"] = (
+            _df.groupby("date")[score_col]
+            .transform(lambda x: pd.qcut(x, n_deciles, labels=False, duplicates="drop"))
+        )
+        _decile_returns = _df.groupby("_decile")[return_col].mean().to_dict()
+        _top = _decile_returns.get(n_deciles - 1, 0.0)
+        _bottom = _decile_returns.get(0, 0.0)
+        return {
+            "decile_spread": float(_top - _bottom),
+            "top_decile_return": float(_top),
+            "bottom_decile_return": float(_bottom),
+            "decile_returns": {int(k): float(v) for k, v in _decile_returns.items()},
+        }
+    except Exception:
+        return {"decile_spread": 0.0, "top_decile_return": 0.0, "bottom_decile_return": 0.0, "decile_returns": {}}
+
+
 # ────────────────────────────────────────────────────────────────────
 # Modèle principal
 # ────────────────────────────────────────────────────────────────────
@@ -454,6 +499,7 @@ def train_global_ranking_wf(
     all_rank_dfs: list[pd.DataFrame] = []
     _saved_models: dict[int, str] = {}
     _horizon_features: dict[int, list[str]] = {}  # features actives par horizon
+    _decile_spreads: dict[int, float] = {}  # decile spread par horizon
     _top_k = max(cfg.baseline.ranking_top_k_features, 0)  # 0 = toutes les features
 
     for horizon in _GLOBAL_RANKING_HORIZONS:
@@ -491,9 +537,19 @@ def train_global_ranking_wf(
             if train_df.empty or val_df.empty:
                 continue
 
+            # ── Périodes des splits (diagnostic régime de marché) ──
+            _train_dates = pd.to_datetime(train_df["date"]) if "date" in train_df.columns else None
+            _val_dates = pd.to_datetime(val_df["date"]) if "date" in val_df.columns else None
+            if _train_dates is not None and _val_dates is not None:
+                LOGGER.info(
+                    "global_ranking_wf horizon=%d split=%d/%d train_period=%s→%s val_period=%s→%s",
+                    horizon, split.split_index + 1, len(wf_splits),
+                    _train_dates.min().strftime("%Y-%m-%d"), _train_dates.max().strftime("%Y-%m-%d"),
+                    _val_dates.min().strftime("%Y-%m-%d"), _val_dates.max().strftime("%Y-%m-%d"),
+                )
+
             _sample_weights = None
-            if "date" in train_df.columns:
-                _train_dates = pd.to_datetime(train_df["date"])
+            if _train_dates is not None:
                 _days_diff = (_train_dates.max() - _train_dates).dt.days
                 _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
 
@@ -592,6 +648,14 @@ def train_global_ranking_wf(
             all_rank_dfs.append(h_pred_df[["symbol", "date", f"global_rank{h_suffix}"]])
             all_ic_means[horizon] = float(np.mean(h_ics)) if h_ics else float("nan")
 
+            # ── Decile Spread (monétisation du signal) ──
+            _decile = _compute_decile_spread(h_pred_df)
+            _decile_spreads[horizon] = _decile["decile_spread"]
+            LOGGER.info(
+                "global_ranking_wf horizon=%d decile_spread=%.4f top=%.4f bottom=%.4f",
+                horizon, _decile["decile_spread"], _decile["top_decile_return"], _decile["bottom_decile_return"],
+            )
+
             # ── Enregistrer les features actives pour cet horizon ──
             _horizon_features[horizon] = list(_active_features)
 
@@ -677,6 +741,7 @@ def train_global_ranking_wf(
         "ic_rank_mean": ic_mean,
         "ic_rank_std": ic_std,
         "ic_by_horizon": all_ic_means,
+        "decile_spreads": _decile_spreads,
         "feature_columns": feature_columns,
         "n_features": len(feature_columns),
         "horizons": list(_GLOBAL_RANKING_HORIZONS),

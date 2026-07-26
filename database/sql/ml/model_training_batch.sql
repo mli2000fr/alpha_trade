@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_batch (
     symbols_failed         INT UNSIGNED NOT NULL DEFAULT 0,
     failure_reason         TEXT         DEFAULT NULL,
     ic_rank                DOUBLE       DEFAULT NULL COMMENT 'IC Rank (Spearman) moyen du Global Ranking Model sur le walk-forward',
+    decile_spread_h3       DOUBLE       DEFAULT NULL COMMENT 'Decile Spread H3 : rendement Top 10% − Bottom 10% (moyen par date)',
+    decile_spread_h5       DOUBLE       DEFAULT NULL COMMENT 'Decile Spread H5',
+    decile_spread_h10      DOUBLE       DEFAULT NULL COMMENT 'Decile Spread H10',
     created_at             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (batch_id),
     INDEX idx_model_training_batch_status_started (status, started_at)

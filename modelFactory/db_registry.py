@@ -337,6 +337,9 @@ _TRAINING_BATCH_MUTABLE_FIELDS = {
     "failure_reason",
     "metadata_json",
     "ic_rank",
+    "decile_spread_h3",
+    "decile_spread_h5",
+    "decile_spread_h10",
 }
 
 
