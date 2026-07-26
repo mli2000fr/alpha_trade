@@ -159,10 +159,10 @@ class BaselineConfig:
     # ── LightGBM tuning (optionnel) ──
     lgbm_reg_alpha: float = 0.1       # L1 régularisation
     lgbm_reg_lambda: float = 0.1      # L2 régularisation
-    lgbm_min_child_samples: int = 30   # min data in leaf
+    lgbm_min_child_samples: int = 100   # min data in leaf (réduit sur-spécialisation volume/volatilité)
     lgbm_num_leaves: int = 15          # max leaves (2^depth ≈ 16, capped here)
     lgbm_subsample: float = 0.8        # bagging fraction
-    lgbm_colsample_bytree: float = 0.7 # feature fraction
+    lgbm_colsample_bytree: float = 0.6 # feature fraction (force diversité, évite dominance volume)
     # ── CatBoost tuning (optionnel) ──
     catboost_l2_leaf_reg: float = 3.0      # L2 régularisation
     catboost_border_count: int = 254       # précision des splits (max 255)

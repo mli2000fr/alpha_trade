@@ -498,6 +498,7 @@ def train_global_ranking_wf(
         step_size=cfg.walk_forward.step_size * _daily_symbols,
         max_splits=cfg.walk_forward.max_splits,
         forecast_horizon=_purge_rows,
+        max_train_size=504 * _daily_symbols,  # rolling window ~2 ans
         date_column="date",
     )
     if not wf_splits:

@@ -137,14 +137,23 @@ def generate_walk_forward_splits(
     max_splits: int,
     forecast_horizon: int = 0,
     embargo_rows: int = 0,
+    max_train_size: int = 0,
     date_column: str | None = "date",
 ) -> list[WalkForwardSplit]:
-    """Construit des splits walk-forward en fenêtre expanding avec purge et embargo."""
+    """Construit des splits walk-forward en fenêtre expanding ou rolling.
+
+    Si ``max_train_size > 0``, la fenêtre est **rolling** : le train
+    débute à ``train_end - max_train_size`` au lieu de 0. Sinon,
+    fenêtre expanding (défaut historique).
+
+    Purge et embargo sont toujours appliqués aux frontières.
+    """
     _validate_ordered_frame(df, date_column=date_column)
     splits: list[WalkForwardSplit] = []
     train_end = min_train_size
     split_index = 0
     n = len(df)
+    _use_rolling = max_train_size > 0
 
     while split_index < max_splits:
         val_end = train_end + val_size
@@ -152,15 +161,14 @@ def generate_walk_forward_splits(
         test_end = test_start_raw + test_size
         if test_end > n:
             break
-        train_start, purged_train_end = _purged_bounds(start=0, end=train_end, purge_tail=forecast_horizon)
+        # Rolling : le train commence à train_end - max_train_size
+        _train_start = max(0, train_end - max_train_size) if _use_rolling else 0
+        train_start, purged_train_end = _purged_bounds(start=_train_start, end=train_end, purge_tail=forecast_horizon)
         val_start, purged_val_end = _purged_bounds(start=train_end, end=val_end, purge_tail=forecast_horizon)
-        # Embargo après la frontière non-purgée val_end (les lignes purgées
-        # entre purged_val_end et val_end sont exclues de tous les folds).
         test_start = _embargoed_start(val_end=val_end, embargo_rows=embargo_rows)
         test_start = min(test_start, n)
         test_end = min(test_start + test_size, n)
         if test_start >= test_end:
-            # L'embargo a consommé tout le test — on arrête
             break
         splits.append(
             WalkForwardSplit(
