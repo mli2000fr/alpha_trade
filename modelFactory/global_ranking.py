@@ -472,8 +472,8 @@ def train_global_ranking_wf(
         h_ics: list[float] = []
         _last_model: Any = None
         _last_model_name: str = ""
-        _split_importances: list[dict[str, float]] = []  # per-split feature importance
-        _active_features: list[str] = feature_columns  # sera réduit après le 1er split si top_k>0
+        _split_importances: list[dict[str, float]] = []
+        _active_features: list[str] = feature_columns
 
         for split in wf_splits:
             split_seed = derive_seed(resolved_seed, split.split_index)
@@ -569,16 +569,6 @@ def train_global_ranking_wf(
                 horizon, split.split_index + 1, len(wf_splits),
                 len(train_df), len(val_df), ic if ic is not None else float("nan"),
             )
-
-            # ── Per-horizon feature selection : après le 1er split, réduire aux top-K ──
-            if _top_k > 0 and split.split_index == 0 and _split_importances:
-                _first_imp = _split_importances[0]
-                _sorted_imp = sorted(_first_imp.items(), key=lambda kv: kv[1], reverse=True)
-                _active_features = [feat for feat, _ in _sorted_imp[:_top_k]]
-                LOGGER.info(
-                    "global_ranking_wf horizon=%d selected own top-%d features: %s",
-                    horizon, _top_k, _active_features[:10],
-                )
 
         # ── Feature importance agrégée pour cet horizon ──
         if _split_importances and _active_features:

@@ -2,7 +2,7 @@
 
 > **Date** : 2026-07-26
 > **Objectif** : Documenter la stratégie d'interactions features × horizon pour le Global Ranking Model.
-> **Statut** : Niveaux 1 & 3 faits. Niveau 2 abandonné.
+> **Statut** : Niveaux 1, 3, 4 faits. Niveau 2 abandonné. Feature selection désactivée (K=0).
 
 ---
 
