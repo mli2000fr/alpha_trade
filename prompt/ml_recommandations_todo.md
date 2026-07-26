@@ -31,7 +31,7 @@
 | Facteurs CAPM (beta_252, alpha_252, R², momentum_vs_market) | 4 | `modelFactory/factor_features.py` | ✅ |
 | Interactions régime de marché (bull/bear/risk_off) | 18 | `modelFactory/features.py` | ✅ |
 | **Régime macro** (`SPY_SMA_200_slope` + `VIX_zscore`) | 2 | `modelFactory/features.py` | ✅ (26/07) |
-| **Interactions global_rank × locales** (`rank_x_rsi_14`, etc.) | 5 | `modelFactory/features.py` | ✅ (26/07) |
+| **Interactions global_rank × locales** (`rank_x_rsi_14`, etc.) | 6 | `modelFactory/features.py` | ✅ (26/07) |
 
 ### Modélisation
 | Composant | Fichier | Statut |
@@ -117,6 +117,23 @@
 
 **Conclusion** : IC passée de −0.023 à +0.012. Variance divisée par 4. 6 splits sur 8 positifs. Le `global_rank` a un signal cross-sectionnel faible mais réel. Top features = facteurs canoniques (`dollar_volume_20_rank`, `sma50_minus_sma200`, `rolling_volatility_120_zscore`, `momentum_250_zscore`).
 
+### Multi-Horizons Global Rank (Action 6) — ✅ Implémenté (26/07)
+| Changement | Détail |
+|-----------|--------|
+| Fichiers | `global_ranking.py`, `orchestrator.py`, `cross_sectional.py`, `predictor.py`, `features.py` |
+| Horizons | `_GLOBAL_RANKING_HORIZONS = (3, 5, 10)` |
+| Fonctionnement | Features communes, target recalculée par horizon, 3 modèles WF entraînés → 3 colonnes de rang |
+| Sortie | `global_rank_3`, `global_rank_5`, `global_rank_10` dans le cache cross-sectional |
+| IC | Loggué par horizon : `ic_by_h={3: x.xxx, 5: x.xxx, 10: x.xxx}` |
+| `GLOBAL_PRED_FEATURE_COLUMNS` | `["global_rank_3", "global_rank_5", "global_rank_10", "global_rank"]` |
+| Nouvelle feature dérivée | `rank_acceleration = global_rank_3 − global_rank_10` — vitesse du rang (> 0 = accélération, < 0 = décélération) |
+| Modèles | `_global_ranking_model_3.txt`, `_5.txt`, `_10.txt` |
+| Inférence | `predict_global_rank()` charge tous les modèles et retourne toutes les colonnes |
+
+| # | Évolution | ic_mean | ic_std |
+|:---:|----------|:---:|:---:|
+| 5 | + **Multi-horizons (J+3/J+5/J+10) + LambdaRank** | **À mesurer** | **À mesurer** |
+
 ---
 
 ## 🧠 Peer Review — Ajustements & Garde-fous (26/07/2026)
@@ -160,7 +177,7 @@ Revue externe du plan d'action. Les ajustements suivants sont intégrés :
 | `group` | Nombre de symboles par date, injecté via `model.fit(X, y, group=group_sizes)` |
 | CatBoost | Inchangé (`objective="RMSE"`) — pas d'équivalent LambdaRank natif |
 
-#### Levier 5b — Horizon J+5 (→ intégré à l'Action 6)
+#### Levier 5b — Horizon J+5 (→ intégré à l'Action 6, implémenté ✅)
 - L'horizon J+10 est bruité ; J+5 capture mieux le momentum court terme
 - Utiliser `--forecast-horizon 5` en CLI
 
@@ -196,7 +213,7 @@ Revue externe du plan d'action. Les ajustements suivants sont intégrés :
 | # | Recommandation | Priorité | Effort |
 |:--:|---------------|:--------:|:------:|
 | ~~5~~ | ~~**Exploitation des rangs** : features d'interaction `rank_x_*`~~ → ✅ Fait (26/07) | — | — |
-| 6 | **Multi-horizons Phase 1** : `global_rank` prédit sur J+5 et J+10 → stack de 2 rangs + tester J+5 seul (moins bruité, IC généralement plus élevé) | 🟡 Moyenne | 3-4h |
+| 6 | **Multi-horizons Phase 1** : `global_rank` prédit sur J+3, J+5, J+10 → stack de 3 rangs + `rank_acceleration` | ~~🟡 Moyenne~~ ✅ Fait (26/07) |
 | 7 | **TernaryDecisionPolicy** : ajustement des seuils selon probabilités calibrées | 🟡 Moyenne | 2h |
 
 ### 🔵 À faire — Long terme
