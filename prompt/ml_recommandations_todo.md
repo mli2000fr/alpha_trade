@@ -148,6 +148,27 @@ Revue externe du plan d'action. Les ajustements suivants sont intégrés :
 
 - [x] Action 9 (Décomposition) reste en Long Terme, avec pré-condition explicite : IC Rank > 0.03 stable
 
+### ✅ Ajustement 5 — LambdaRank + approche « Learning-to-Rank » (26/07)
+> L'IC actuel (+0.012, ic_std=0.025) est positif mais faible. Pour passer au seuil institutionnel (> 0.03), deux leviers professionnels identifiés :
+
+#### Levier 5a — `objective="lambdarank"` (implémenté ✅)
+| Changement | Détail |
+|-----------|--------|
+| Fichier | `modelFactory/global_ranking.py` → `_build_ranking_estimator()` |
+| Avant | `LGBMRegressor(objective="regression")` → L2 loss sur valeurs brutes |
+| Après | `LGBMRanker(objective="lambdarank", metric="ndcg", eval_at=[10,20,50])` → loss directement sur la qualité du classement |
+| `group` | Nombre de symboles par date, injecté via `model.fit(X, y, group=group_sizes)` |
+| CatBoost | Inchangé (`objective="RMSE"`) — pas d'équivalent LambdaRank natif |
+
+#### Levier 5b — Horizon J+5 (→ intégré à l'Action 6)
+- L'horizon J+10 est bruité ; J+5 capture mieux le momentum court terme
+- Utiliser `--forecast-horizon 5` en CLI
+
+#### Leviers 5c/d — Normalisation cross-sectionnelle + Winsorization (futur)
+- Transformer toutes les features en rang percentile par date avant la Phase 1
+- Winsoriser la target et les features à 1%/99% pour éliminer les outliers
+- À implémenter si LambdaRank + J+5 ne suffisent pas à atteindre IC > 0.03
+
 ---
 
 ## 🔴 Recommandations Externes — Analyse & Position
@@ -175,7 +196,7 @@ Revue externe du plan d'action. Les ajustements suivants sont intégrés :
 | # | Recommandation | Priorité | Effort |
 |:--:|---------------|:--------:|:------:|
 | ~~5~~ | ~~**Exploitation des rangs** : features d'interaction `rank_x_*`~~ → ✅ Fait (26/07) | — | — |
-| 6 | **Multi-horizons Phase 1** : `global_rank` prédit sur J+3, J+5, J+10 → stack de 3 rangs | 🟡 Moyenne | 3-4h |
+| 6 | **Multi-horizons Phase 1** : `global_rank` prédit sur J+5 et J+10 → stack de 2 rangs + tester J+5 seul (moins bruité, IC généralement plus élevé) | 🟡 Moyenne | 3-4h |
 | 7 | **TernaryDecisionPolicy** : ajustement des seuils selon probabilités calibrées | 🟡 Moyenne | 2h |
 
 ### 🔵 À faire — Long terme
