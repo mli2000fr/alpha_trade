@@ -404,8 +404,8 @@ def train_global_ranking_wf(
             _days_diff = (_train_dates.max() - _train_dates).dt.days
             _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
 
-        # Fit régression
-        X_train = train_df[feature_columns].to_numpy(dtype=np.float64)
+        # Fit régression (passe un DataFrame pour éviter le warning sklearn)
+        X_train = train_df[feature_columns]
         y_train = train_df["future_return"].to_numpy(dtype=np.float64)
         model.fit(X_train, y_train, sample_weight=_sample_weights)
 
@@ -413,8 +413,8 @@ def train_global_ranking_wf(
         _last_model = model
         _last_model_name = backend_model_name
 
-        # Predict sur val
-        X_val = val_df[feature_columns].to_numpy(dtype=np.float64)
+        # Predict sur val (DataFrame → pas de warning sklearn)
+        X_val = val_df[feature_columns]
         y_val = val_df["future_return"].to_numpy(dtype=np.float64)
 
         pred_part = val_df[["symbol", "date"]].copy()

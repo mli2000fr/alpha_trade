@@ -108,12 +108,14 @@
 | Effet attendu | — | Distribution uniforme de la target, plus d'outliers, IC plus stable |
 
 ### Historique des itérations IC Rank
-| # | Correctifs cumulés | ic_mean | ic_std | Splits > 0 |
-|:---:|---------------------|:---:|:---:|:---:|
-| 1 | Target absolue | +0.017 | 0.102 | 4/8 |
-| 2 | + Excess return vs SPY | −0.003 | 0.043 | 3/8 |
-| 3 | + Blacklist macro | −0.023 | 0.033 | 2/8 |
-| 4 | + **Target = rang percentile** | **À mesurer** | — | — |
+| # | Correctifs cumulés | ic_mean | ic_std | Splits > 0 | Pire split |
+|:---:|---------------------|:---:|:---:|:---:|:---:|
+| 1 | Target absolue | +0.017 | 0.102 | 4/8 | −0.106 |
+| 2 | + Excess return vs SPY | −0.003 | 0.043 | 3/8 | −0.061 |
+| 3 | + Blacklist macro (15 features) | −0.023 | 0.033 | 2/8 | −0.075 |
+| 4 | + **Target = rang percentile** | **+0.012** ✅ | **0.025** ✅ | **6/8** ✅ | **−0.033** |
+
+**Conclusion** : IC passée de −0.023 à +0.012. Variance divisée par 4. 6 splits sur 8 positifs. Le `global_rank` a un signal cross-sectionnel faible mais réel. Top features = facteurs canoniques (`dollar_volume_20_rank`, `sma50_minus_sma200`, `rolling_volatility_120_zscore`, `momentum_250_zscore`).
 
 ---
 
@@ -320,11 +322,11 @@ python -c "from modelFactory.features import get_feature_columns; print(len(get_
 
 ## 📊 Indicateurs de succès (mis à jour)
 
-| Métrique | Actuel (absolu) | Après excess return | Après blacklist macro | Cible |
-|----------|:---:|:---:|:---:|:---:|
-| F1 WF LightGBM (per-symbol) | ~0.296 | — | — | > 0.310 |
-| IC Rank (Global Model) | +0.017 (ic_std=0.102) | −0.003 (ic_std=0.043) | **À mesurer** | > 0.03 |
-| % symboles avec F1 Macro WF > seuil | ? | — | — | > 30% |
+| Métrique | Actuel (absolu) | Après excess return | Après blacklist macro | Après rank target | Cible |
+|----------|:---:|:---:|:---:|:---:|:---:|
+| IC Rank (Global Model) | +0.017 (ic_std=0.102) | −0.003 (ic_std=0.043) | −0.023 (ic_std=0.033) | **+0.012 (ic_std=0.025)** | > 0.03 |
+| Splits positifs | 4/8 | 3/8 | 2/8 | **6/8** | 8/8 |
+| F1 WF LightGBM (per-symbol) | ~0.296 | — | — | — | > 0.310 |
 
 ---
 
