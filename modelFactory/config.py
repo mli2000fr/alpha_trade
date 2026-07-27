@@ -159,7 +159,7 @@ class BaselineConfig:
     # ── LightGBM tuning (optionnel) ──
     lgbm_reg_alpha: float = 0.1       # L1 régularisation
     lgbm_reg_lambda: float = 0.1      # L2 régularisation
-    lgbm_min_child_samples: int = 100   # min data in leaf (réduit sur-spécialisation volume/volatilité)
+    lgbm_min_child_samples: int = 200   # min data in leaf (régularisation forte, évite sur-apprentissage H5)
     lgbm_num_leaves: int = 15          # max leaves (2^depth ≈ 16, capped here)
     lgbm_subsample: float = 0.8        # bagging fraction
     lgbm_colsample_bytree: float = 0.5 # feature fraction (0.5 pour forcer diversité, éviter monopole volume)
