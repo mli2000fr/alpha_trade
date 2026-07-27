@@ -341,6 +341,7 @@ _TRAINING_BATCH_MUTABLE_FIELDS = {
     "decile_spread_h3",
     "decile_spread_h5",
     "decile_spread_h10",
+    "stacking_enabled",
 }
 
 
@@ -358,6 +359,7 @@ def insert_training_batch(
     training_end_date: date | None,
     started_at: datetime,
     comment: str | None = None,
+    stacking_enabled: bool = False,
 ) -> None:
     """Persist one immutable metadata record for a training campaign."""
     with engine.begin() as conn:
@@ -365,9 +367,9 @@ def insert_training_batch(
             text(
                 "INSERT INTO model_training_batch "
                 "(batch_id, status, command_line, command_argv_json, metadata_json, symbol_source, "
-                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at, comment) "
+                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at, comment, stacking_enabled) "
                 "VALUES (:bid, 'running', :command_line, :command_argv_json, :metadata_json, :symbol_source, "
-                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at, :comment)"
+                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at, :comment, :stacking_enabled)"
             ),
             {
                 "bid": batch_id,
@@ -381,6 +383,7 @@ def insert_training_batch(
                 "training_end_date": training_end_date,
                 "started_at": started_at,
                 "comment": comment,
+                "stacking_enabled": 1 if stacking_enabled else 0,
             },
         )
 

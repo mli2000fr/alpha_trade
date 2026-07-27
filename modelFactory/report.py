@@ -287,6 +287,13 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
                 _ds_parts.append(f"H10={float(_ds_h10):.4f}")
             if _ds_parts:
                 lines.append(f"- **📊 Decile Spread (Top−Bottom)** : {', '.join(_ds_parts)}")
+
+        # ── Stacking Global Rank ──
+        _stacking = row.get("stacking_enabled")
+        if _stacking is not None:
+            _stacking_label = "Oui" if int(_stacking) == 1 else "Non"
+            lines.append(f"- **📥 Stacking Global Rank** : {_stacking_label}")
+
         lines.append(f"- **Démarré le** : {row.get('started_at', '—')}")
         lines.append(f"- **Terminé le** : {row.get('finished_at', '—')}")
         lines.append(f"- **Complétés / Skippés / Échecs** : {row.get('symbols_completed', 0)} / {row.get('symbols_skipped', 0)} / {row.get('symbols_failed', 0)}")

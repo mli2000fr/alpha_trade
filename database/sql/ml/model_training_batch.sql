@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_batch (
     decile_spread_h3       DOUBLE       DEFAULT NULL COMMENT 'Decile Spread H3 : rendement Top 10% − Bottom 10% (moyen par date)',
     decile_spread_h5       DOUBLE       DEFAULT NULL COMMENT 'Decile Spread H5',
     decile_spread_h10      DOUBLE       DEFAULT NULL COMMENT 'Decile Spread H10',
+    stacking_enabled       TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'Global Rank stacking injecté comme feature per-symbol (checkbox IHM)',
     created_at             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (batch_id),
     INDEX idx_model_training_batch_status_started (status, started_at)

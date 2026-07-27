@@ -873,6 +873,14 @@ def _render_batch_detail(batch: pd.Series) -> None:
                                "~0.005 = correct (exploitable avec diversification), "
                                "<0 = le classement est inversé.")
 
+        # Stacking Global Rank
+        _stacking_val = row.get("stacking_enabled")
+        if _stacking_val is not None:
+            _stacking_bool = bool(int(_stacking_val))
+            _stacking_label = "📥 Oui" if _stacking_bool else "📥 Non"
+            st.metric("Stacking Global Rank", _stacking_label,
+                      help="Le rang global (global_rank_3/5) a été injecté comme feature dans les modèles per-symbol.")
+
     with col3:
         st.metric("Démarré le", str(row.get("started_at", "—")))
         st.metric("Terminé le", str(row.get("finished_at", "—")))

@@ -628,6 +628,7 @@ def main(args: list[str] | None = None) -> None:
             training_end_date=cfg.data.training_end_date,
             started_at=started_at,
             comment=opts.comment,
+            stacking_enabled=opts.enable_global_stacking,
         )
         update_runtime_status(current_phase="batch_dispatch")
         try:

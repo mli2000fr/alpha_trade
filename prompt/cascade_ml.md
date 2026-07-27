@@ -201,10 +201,11 @@ def cascade_select(date, global_ranks, per_symbol_preds, top_pct, min_prob):
 
 ---
 
-### Étape 5 — Stacking optionnel (checkbox IHM)
+### Étape 5 — Stacking optionnel (checkbox IHM) ✅
 
 > **Dépend de** : Étape 1 (config). Indépendant du reste — peut être fait en parallèle.
 > **Fichiers** : IHM, defaults, trainer, orchestrator, report, DB
+> **Statut** : ✅ Fait (2026-07-27)
 
 | Fichier | Action |
 |---------|--------|
