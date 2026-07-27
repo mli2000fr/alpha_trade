@@ -30,6 +30,8 @@ import pandas as pd
 
 from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.cross_sectional import (
+    SECTOR_NEUTRAL_FEATURE_COLUMNS,
+    SECTOR_NEUTRAL_SOURCE_FEATURES,
     build_cross_sectional_features,
     merge_cross_sectional_features,
 )
@@ -174,21 +176,20 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "regime_bull_market", "regime_risk_off",
         # Liquidité — trop dominante, écrase les signaux d'alpha
         "dollar_volume_20_rank",
-        # Volatilité 120j — béquille qui domine H10, empêche l'apprentissage du momentum
+        # Volatilité 120j — béquille qui domine, empêche l'apprentissage du momentum
         "rolling_volatility_120", "rolling_volatility_120_zscore", "rolling_volatility_120_xs_rank",
-        # Secteur-neutral & facteurs CAPM — importance zéro sur tous les horizons
-        "rolling_volatility_20_sector_neutral", "rolling_volatility_60_sector_neutral",
-        "rsi_14_sector_neutral", "sma20_distance_sector_neutral", "sma50_distance_sector_neutral",
-        "relative_strength_20_sector_neutral", "relative_strength_60_sector_neutral",
-        "volume_ratio_20_sector_neutral",
-        "beta_252", "alpha_252", "r_squared_252",
-        # Secteur — importance zéro (redondant avec les features cross-sectionnelles)
+        # Secteur agrégé — redondant avec les features cross-sectionnelles + sector_neutral
         "sector_ret_20", "sector_ret_60", "sector_vol_20",
         "sector_relative_strength_20", "sector_dollar_volume_20", "sector_symbol_count",
         "stock_vs_sector_ret_20", "stock_vs_sector_ret_60",
-        "momentum_20_sector_neutral", "momentum_60_sector_neutral",
+        # Métadonnées
         "is_filled",
     }
+    # Note 2026-07-27 : les *_sector_neutral et CAPM (beta_252, alpha_252,
+    # r_squared_252) ont été retirés de cette blacklist. Ils étaient exclus
+    # historiquement à cause d'un bug NaN dans _compute_sector_features()
+    # (corrigé depuis — valid_mask.reindex). On les réintègre pour que le
+    # LightGBM puisse les exploiter.
     cols = [c for c in all_cols if c not in _macro_blacklist]
     # Ajouter les rangs cross-sectionnels des features brutes
     for _src in _XS_RANK_SOURCE_FEATURES:
@@ -461,6 +462,49 @@ def train_global_ranking_wf(
             len(_xs_available),
         )
 
+    # ── Sector-neutral features (2026-07-27) ──
+    # Calcule les versions sector-neutralisées des features techniques
+    # (momentum, RSI, volatilité, etc.) en soustrayant la médiane du secteur
+    # à chaque date.  Isole l'alpha spécifique au titre vs son secteur.
+    _sn_cols_in = [c for c in SECTOR_NEUTRAL_FEATURE_COLUMNS if c in feature_columns]
+    if _sn_cols_in and cfg.data.enable_cross_sectional_features:
+        try:
+            from modelFactory.cross_sectional import _load_sector_mapping
+            _sector_map = _load_sector_mapping(engine)
+            if _sector_map:
+                _sn_sources = [c for c in SECTOR_NEUTRAL_SOURCE_FEATURES if c in base_df.columns]
+                if _sn_sources:
+                    base_df["_sector"] = base_df["symbol"].astype(str).str.upper().map(_sector_map)
+                    _valid = base_df["_sector"].notna()
+                    _sn_count = 0
+                    for _src in _sn_sources:
+                        _target = f"{_src}_sector_neutral"
+                        if _target not in feature_columns:
+                            continue
+                        _sector_med = (
+                            base_df.loc[_valid]
+                            .groupby(["date", "_sector"])[_src]
+                            .transform("median")
+                        )
+                        _neutral = base_df[_src].copy()
+                        _neutral.loc[_valid] = base_df.loc[_valid, _src] - _sector_med
+                        _neutral.loc[~_valid] = 0.0
+                        base_df[_target] = _neutral.fillna(0.0).astype(float)
+                        _sn_count += 1
+                    base_df.drop(columns=["_sector"], inplace=True)
+                    LOGGER.info(
+                        "train_global_ranking_wf sector-neutral computed for %d features "
+                        "(%d symbols mapped to %d sectors)",
+                        _sn_count, len(_sector_map), len(set(_sector_map.values())),
+                    )
+            else:
+                LOGGER.warning("train_global_ranking_wf sector-neutral skipped: empty sector_map")
+        except Exception as _sn_exc:
+            LOGGER.warning(
+                "train_global_ranking_wf sector-neutral computation failed (non-blocking): %s",
+                _sn_exc,
+            )
+
     base_df = base_df.dropna(subset=feature_columns).reset_index(drop=True)
 
     # Conserver SPY close pour le calcul du rendement excédentaire
@@ -673,6 +717,13 @@ def train_global_ranking_wf(
                 "global_ranking_wf horizon=%d feature_importance bottom10=%s",
                 horizon,
                 {k: f"{v:.1f}" for k, v in _bottom10},
+            )
+            # ── Log complet (toutes les features par importance décroissante) ──
+            LOGGER.info(
+                "global_ranking_wf horizon=%d feature_importance all=%d features: %s",
+                horizon,
+                len(_mean_imp),
+                ", ".join(f"{k}={v:.1f}" for k, v in _mean_imp.items()),
             )
 
         if h_parts:

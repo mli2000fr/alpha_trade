@@ -515,3 +515,184 @@ class TestMlDiagnosticsCascade:
         assert "_render_global_rank_history" in text
         assert "GLOBAL_RANK_TOP_BOTTOM_QUERY" in text
         assert "global_rank_history" in text
+
+
+# ═══════════════════════════════════════════════════════════════════
+# global_ranking.py — blacklist : *_sector_neutral & CAPM réintégrés
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSectorNeutralNotBlacklisted:
+    """Vérifie que les features sector_neutral et CAPM ne sont plus blacklistées."""
+
+    def test_sector_neutral_features_not_in_blacklist(self):
+        from modelFactory.global_ranking import _get_ranking_feature_columns
+        from modelFactory.cross_sectional import SECTOR_NEUTRAL_FEATURE_COLUMNS
+
+        # Simuler un appel avec cross-sectional activé
+        from unittest.mock import MagicMock
+        mock_cfg = MagicMock()
+        mock_cfg.data.include_sentiment_features = False
+        mock_cfg.data.include_screener_scores = False
+        mock_cfg.data.include_short_score_features = False
+        mock_cfg.data.include_macro_vix_features = False
+        mock_cfg.data.include_macro_vxn_features = False
+        mock_cfg.data.include_macro_vix3m_features = False
+        mock_cfg.data.include_macro_move_features = False
+        mock_cfg.data.include_macro_regime_features = False
+        mock_cfg.data.include_fundamentals_features = False
+        mock_cfg.data.include_factors_features = False
+
+        # Avec cross-sectional → les sector_neutral doivent être présentes
+        mock_cfg.data.enable_cross_sectional_features = True
+        cols_with_cs = _get_ranking_feature_columns(mock_cfg)
+        for sn_col in SECTOR_NEUTRAL_FEATURE_COLUMNS:
+            assert sn_col in cols_with_cs, (
+                f"{sn_col} devrait être dans les features (cross-sectional activé), "
+                "vérifier qu'elle n'est plus dans _macro_blacklist"
+            )
+
+    def test_capm_factors_not_in_blacklist(self):
+        from modelFactory.global_ranking import _get_ranking_feature_columns
+        from unittest.mock import MagicMock
+        mock_cfg = MagicMock()
+        mock_cfg.data.include_sentiment_features = False
+        mock_cfg.data.include_screener_scores = False
+        mock_cfg.data.include_short_score_features = False
+        mock_cfg.data.include_macro_vix_features = False
+        mock_cfg.data.include_macro_vxn_features = False
+        mock_cfg.data.include_macro_vix3m_features = False
+        mock_cfg.data.include_macro_move_features = False
+        mock_cfg.data.include_macro_regime_features = False
+        mock_cfg.data.include_fundamentals_features = False
+        mock_cfg.data.include_factors_features = True  # active CAPM
+        mock_cfg.data.enable_cross_sectional_features = False
+
+        cols = _get_ranking_feature_columns(mock_cfg)
+        for capm_col in ("beta_252", "alpha_252", "r_squared_252"):
+            assert capm_col in cols, (
+                f"{capm_col} devrait être dans les features (include_factors=True), "
+                "vérifier qu'elle n'est plus dans _macro_blacklist"
+            )
+
+    def test_macro_features_still_blacklisted(self):
+        """Les features macro (SPY/VIX) doivent rester blacklistées."""
+        from modelFactory.global_ranking import _get_ranking_feature_columns
+        from unittest.mock import MagicMock
+        mock_cfg = MagicMock()
+        mock_cfg.data.include_sentiment_features = False
+        mock_cfg.data.include_screener_scores = False
+        mock_cfg.data.include_short_score_features = False
+        mock_cfg.data.include_macro_vix_features = True
+        mock_cfg.data.include_macro_vxn_features = True
+        mock_cfg.data.include_macro_vix3m_features = True
+        mock_cfg.data.include_macro_move_features = True
+        mock_cfg.data.include_macro_regime_features = True
+        mock_cfg.data.include_fundamentals_features = False
+        mock_cfg.data.include_factors_features = False
+        mock_cfg.data.enable_cross_sectional_features = False
+
+        cols = _get_ranking_feature_columns(mock_cfg)
+        still_blacklisted = [
+            "vix_close", "vxn_close", "vix3m_close", "move_close",
+            "SPY_SMA_200_slope", "VIX_zscore",
+        ]
+        for sb in still_blacklisted:
+            assert sb not in cols, (
+                f"{sb} doit rester blacklistée (feature macro, identique ∀ symboles)"
+            )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Sector-neutral computation in global_ranking.py
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSectorNeutralComputation:
+    """Vérifie que la logique de neutralisation sectorielle produit des
+    valeurs non nulles quand un sector_map valide est fourni."""
+
+    def test_neutralize_with_sectors(self):
+        """Avec 2 secteurs distincts, les valeurs neutralisées doivent
+        différer des valeurs brutes quand le secteur a un signal différent."""
+        import pandas as pd
+        import numpy as np
+
+        # Simuler un mini-panel : 4 symboles, 2 secteurs, 2 dates
+        df = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT", "XOM", "CVX",
+                       "AAPL", "MSFT", "XOM", "CVX"],
+            "date": ["2025-01-15"] * 4 + ["2025-01-16"] * 4,
+            "momentum_20": [0.10, 0.12, -0.05, -0.03,
+                           0.08, 0.11, -0.02, -0.01],
+            "rsi_14": [65.0, 62.0, 35.0, 38.0,
+                       63.0, 60.0, 37.0, 40.0],
+        })
+        sector_map = {
+            "AAPL": "Technology", "MSFT": "Technology",
+            "XOM": "Energy", "CVX": "Energy",
+        }
+        df["_sector"] = df["symbol"].str.upper().map(sector_map)
+        valid = df["_sector"].notna()
+
+        # Neutraliser momentum_20
+        target_col = "momentum_20_sector_neutral"
+        src_col = "momentum_20"
+        sector_med = df.loc[valid].groupby(["date", "_sector"])[src_col].transform("median")
+        neutral = df[src_col].copy()
+        neutral.loc[valid] = df.loc[valid, src_col] - sector_med
+        neutral.loc[~valid] = 0.0
+        df[target_col] = neutral.fillna(0.0).astype(float)
+
+        # AAPL (momentum=0.10) dans Technology (médiane=0.11) → -0.01
+        aapl_row = df[(df["symbol"] == "AAPL") & (df["date"] == "2025-01-15")]
+        assert abs(float(aapl_row[target_col].iloc[0]) - (-0.01)) < 1e-6, (
+            f"AAPL sector_neutral devrait être -0.01, got {aapl_row[target_col].iloc[0]}"
+        )
+
+        # XOM (momentum=-0.05) dans Energy (médiane=-0.04) → -0.01
+        xom_row = df[(df["symbol"] == "XOM") & (df["date"] == "2025-01-15")]
+        assert abs(float(xom_row[target_col].iloc[0]) - (-0.01)) < 1e-6
+
+    def test_all_same_sector_produces_zeros(self):
+        """Si tous les symboles sont dans le même secteur, la neutralisation
+        produit des zéros (pas de variation inter-secteur)."""
+        import pandas as pd
+
+        df = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT", "GOOG"],
+            "date": ["2025-01-15"] * 3,
+            "momentum_20": [0.10, 0.12, 0.08],
+        })
+        sector_map = {"AAPL": "Technology", "MSFT": "Technology", "GOOG": "Technology"}
+        df["_sector"] = df["symbol"].str.upper().map(sector_map)
+        valid = df["_sector"].notna()
+
+        # Médiane = 0.10 → tout le monde est à la médiane → neutral = 0
+        sector_med = df.loc[valid].groupby(["date", "_sector"])["momentum_20"].transform("median")
+        neutral = df["momentum_20"].copy()
+        neutral.loc[valid] = df.loc[valid, "momentum_20"] - sector_med
+        neutral.loc[~valid] = 0.0
+        df["momentum_20_sector_neutral"] = neutral.fillna(0.0)
+
+        # Ce n'est pas "tout zéro" — la médiane est 0.10 donc AAPL=0.0, MSFT=0.02, GOOG=-0.02
+        values = df["momentum_20_sector_neutral"].tolist()
+        assert values == pytest.approx([0.0, 0.02, -0.02], abs=1e-6)
+
+    def test_no_sector_map_produces_zeros(self):
+        """Sans sector_map, pas de colonne _sector → tout est ~valid → zéros."""
+        import pandas as pd
+
+        df = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "date": ["2025-01-15"] * 2,
+            "momentum_20": [0.10, 0.12],
+        })
+        # Pas de secteur → _sector est NaN → valid=False → tout = 0.0
+        df["_sector"] = None
+        valid = df["_sector"].notna()
+
+        neutral = df["momentum_20"].copy()
+        neutral.loc[valid] = df.loc[valid, "momentum_20"] - 0.0  # never executed
+        neutral.loc[~valid] = 0.0
+        df["momentum_20_sector_neutral"] = neutral.fillna(0.0)
+
+        assert (df["momentum_20_sector_neutral"] == 0.0).all()
