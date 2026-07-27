@@ -522,13 +522,26 @@ class TestMlDiagnosticsCascade:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestSectorNeutralNotBlacklisted:
-    """Vérifie que les features sector_neutral et CAPM ne sont plus blacklistées."""
+    """Vérifie que les features sector_neutral utiles sont conservées,
+    et que les versions volatilité + CAPM sont re-blacklistées."""
 
-    def test_sector_neutral_features_not_in_blacklist(self):
+    _CONSERVED_SECTOR_NEUTRAL = [
+        "momentum_20_sector_neutral", "momentum_60_sector_neutral",
+        "relative_strength_20_sector_neutral", "relative_strength_60_sector_neutral",
+        "rsi_14_sector_neutral",
+        "sma20_distance_sector_neutral", "sma50_distance_sector_neutral",
+        "volume_ratio_20_sector_neutral",
+    ]
+
+    _BLACKLISTED_AGAIN = [
+        "rolling_volatility_20_sector_neutral",
+        "rolling_volatility_60_sector_neutral",
+        "beta_252", "alpha_252", "r_squared_252",
+    ]
+
+    def test_useful_sector_neutral_present(self):
+        """Les sector_neutral de momentum, RSI, SMA, volume sont conservées."""
         from modelFactory.global_ranking import _get_ranking_feature_columns
-        from modelFactory.cross_sectional import SECTOR_NEUTRAL_FEATURE_COLUMNS
-
-        # Simuler un appel avec cross-sectional activé
         from unittest.mock import MagicMock
         mock_cfg = MagicMock()
         mock_cfg.data.include_sentiment_features = False
@@ -541,17 +554,16 @@ class TestSectorNeutralNotBlacklisted:
         mock_cfg.data.include_macro_regime_features = False
         mock_cfg.data.include_fundamentals_features = False
         mock_cfg.data.include_factors_features = False
-
-        # Avec cross-sectional → les sector_neutral doivent être présentes
         mock_cfg.data.enable_cross_sectional_features = True
-        cols_with_cs = _get_ranking_feature_columns(mock_cfg)
-        for sn_col in SECTOR_NEUTRAL_FEATURE_COLUMNS:
-            assert sn_col in cols_with_cs, (
-                f"{sn_col} devrait être dans les features (cross-sectional activé), "
-                "vérifier qu'elle n'est plus dans _macro_blacklist"
+
+        cols = _get_ranking_feature_columns(mock_cfg)
+        for sn_col in self._CONSERVED_SECTOR_NEUTRAL:
+            assert sn_col in cols, (
+                f"{sn_col} devrait être conservée dans les features"
             )
 
-    def test_capm_factors_not_in_blacklist(self):
+    def test_volatility_sector_neutral_blacklisted(self):
+        """Les sector_neutral de volatilité sont re-blacklistées."""
         from modelFactory.global_ranking import _get_ranking_feature_columns
         from unittest.mock import MagicMock
         mock_cfg = MagicMock()
@@ -564,15 +576,35 @@ class TestSectorNeutralNotBlacklisted:
         mock_cfg.data.include_macro_move_features = False
         mock_cfg.data.include_macro_regime_features = False
         mock_cfg.data.include_fundamentals_features = False
-        mock_cfg.data.include_factors_features = True  # active CAPM
+        mock_cfg.data.include_factors_features = False
+        mock_cfg.data.enable_cross_sectional_features = True
+
+        cols = _get_ranking_feature_columns(mock_cfg)
+        for bl_col in self._BLACKLISTED_AGAIN:
+            assert bl_col not in cols, (
+                f"{bl_col} doit être re-blacklistée"
+            )
+
+    def test_capm_factors_still_blacklisted(self):
+        """CAPM doit rester blacklisté (importance 0.0)."""
+        from modelFactory.global_ranking import _get_ranking_feature_columns
+        from unittest.mock import MagicMock
+        mock_cfg = MagicMock()
+        mock_cfg.data.include_sentiment_features = False
+        mock_cfg.data.include_screener_scores = False
+        mock_cfg.data.include_short_score_features = False
+        mock_cfg.data.include_macro_vix_features = False
+        mock_cfg.data.include_macro_vxn_features = False
+        mock_cfg.data.include_macro_vix3m_features = False
+        mock_cfg.data.include_macro_move_features = False
+        mock_cfg.data.include_macro_regime_features = False
+        mock_cfg.data.include_fundamentals_features = False
+        mock_cfg.data.include_factors_features = True  # CAPM actif
         mock_cfg.data.enable_cross_sectional_features = False
 
         cols = _get_ranking_feature_columns(mock_cfg)
-        for capm_col in ("beta_252", "alpha_252", "r_squared_252"):
-            assert capm_col in cols, (
-                f"{capm_col} devrait être dans les features (include_factors=True), "
-                "vérifier qu'elle n'est plus dans _macro_blacklist"
-            )
+        for capm in ("beta_252", "alpha_252", "r_squared_252"):
+            assert capm not in cols, f"{capm} doit être blacklisté"
 
     def test_macro_features_still_blacklisted(self):
         """Les features macro (SPY/VIX) doivent rester blacklistées."""

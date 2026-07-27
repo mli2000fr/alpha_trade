@@ -184,12 +184,19 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "stock_vs_sector_ret_20", "stock_vs_sector_ret_60",
         # Métadonnées
         "is_filled",
+        # ── Chirurgie 2026-07-28 ──
+        # *_sector_neutral de volatilité → dominent H5 (imp 58.7 & 48.5),
+        # écrasent le signal momentum et font chuter l'IC de 0.0081 à 0.0039.
+        "rolling_volatility_20_sector_neutral",
+        "rolling_volatility_60_sector_neutral",
+        # CAPM → importance 0.0 sur tous les horizons (batch 2026-07-28).
+        "beta_252", "alpha_252", "r_squared_252",
     }
-    # Note 2026-07-27 : les *_sector_neutral et CAPM (beta_252, alpha_252,
-    # r_squared_252) ont été retirés de cette blacklist. Ils étaient exclus
-    # historiquement à cause d'un bug NaN dans _compute_sector_features()
-    # (corrigé depuis — valid_mask.reindex). On les réintègre pour que le
-    # LightGBM puisse les exploiter.
+    # Note 2026-07-28 : les *_sector_neutral de momentum, RSI, SMA distance
+    # et volume_ratio sont CONSERVÉS (imp 2.8–28.6 en H3, 4.4–28.6 en H5).
+    # Seules les versions volatilité + CAPM sont re-blacklistées.
+    # Le calcul sector-neutral dans train_global_ranking_wf() reste actif
+    # pour que les features conservées aient des valeurs réelles ≠ 0.0.
     cols = [c for c in all_cols if c not in _macro_blacklist]
     # Ajouter les rangs cross-sectionnels des features brutes
     for _src in _XS_RANK_SOURCE_FEATURES:
