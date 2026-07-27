@@ -176,6 +176,18 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "dollar_volume_20_rank",
         # Volatilité 120j — béquille qui domine H10, empêche l'apprentissage du momentum
         "rolling_volatility_120", "rolling_volatility_120_zscore", "rolling_volatility_120_xs_rank",
+        # Secteur-neutral & facteurs CAPM — importance zéro sur tous les horizons
+        "rolling_volatility_20_sector_neutral", "rolling_volatility_60_sector_neutral",
+        "rsi_14_sector_neutral", "sma20_distance_sector_neutral", "sma50_distance_sector_neutral",
+        "relative_strength_20_sector_neutral", "relative_strength_60_sector_neutral",
+        "volume_ratio_20_sector_neutral",
+        "beta_252", "alpha_252", "r_squared_252",
+        # Secteur — importance zéro (redondant avec les features cross-sectionnelles)
+        "sector_ret_20", "sector_ret_60", "sector_vol_20",
+        "sector_relative_strength_20", "sector_dollar_volume_20", "sector_symbol_count",
+        "stock_vs_sector_ret_20", "stock_vs_sector_ret_60",
+        "momentum_20_sector_neutral", "momentum_60_sector_neutral",
+        "is_filled",
     }
     cols = [c for c in all_cols if c not in _macro_blacklist]
     # Ajouter les rangs cross-sectionnels des features brutes
