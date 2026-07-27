@@ -2493,6 +2493,76 @@ def _run_backtest(args: argparse.Namespace) -> None:
             _bt_exc,
         )
 
+    # ── Cascade ML (Étape 7) : filtre Global Rank → Per-Symbol ──
+    _cascade_batch_id: str | None = None
+    _cascade_filtered_count = 0
+    _cascade_enabled = False
+    try:
+        import yaml as _yaml_cas
+        with open("config.yaml", encoding="utf-8") as _fh_cas:
+            _cfg_cas = _yaml_cas.safe_load(_fh_cas) or {}
+        _cas_cfg = _cfg_cas.get("cascade") or {}
+        _cascade_enabled = bool(_cas_cfg.get("enabled", True))
+        _cascade_batch_id = str(
+            (_cfg_cas.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
+        ).strip() or None
+
+        if not _cascade_enabled:
+            pass  # cascade désactivée → rien à faire
+        elif not _cascade_batch_id:
+            _safe_print(
+                "❌ Cascade ML activée (cascade.enabled=true) mais "
+                "batch_diagnostics.backtest_batch_id n'est pas renseigné dans config.yaml.\n"
+                "   → Renseigner le batch_id du Global Model à utiliser pour le backtest."
+            )
+            sys.exit(1)
+        elif preds_df.empty:
+            _safe_print(
+                "🔀 cascade: aucune prédiction ML à filtrer (preds_df vide)."
+            )
+        else:
+            from modelFactory.predictor import apply_cascade_to_predictions
+            _cas_before = len(preds_df)
+            preds_df = apply_cascade_to_predictions(
+                preds_df, _cascade_batch_id, engine=engine,
+            )
+            _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
+            _cascade_filtered_count = _cas_before - _cas_passed
+
+            if _cas_passed == 0 and _cas_before > 0:
+                _safe_print(
+                    "❌ Cascade ML : 0/{} prédictions ont passé le filtre (batch={}).\n"
+                    "   → Vérifier global_rank_history (10. ML Predict → Prédire l'univers)\n"
+                    "   → Vérifier cascade.top_pct (actuel: {}) et cascade.min_prob (actuel: {})\n"
+                    "   → backtest interrompu car aucune prédiction viable.".format(
+                        _cas_before, _cascade_batch_id,
+                        float(_cas_cfg.get("top_pct", 0.20)),
+                        float(_cas_cfg.get("min_prob", 0.55)),
+                    )
+                )
+                sys.exit(1)
+
+            _safe_print(
+                "   🔀 cascade: {} predictions → flat, {} passed (batch={})\n".format(
+                    _cascade_filtered_count, _cas_passed, _cascade_batch_id,
+                )
+            )
+    except SystemExit:
+        raise
+    except Exception as _cas_exc:
+        if _cascade_enabled:
+            _safe_print(
+                "❌ Cascade ML activée (cascade.enabled=true) mais échec du filtre : {}\n"
+                "   Vérifier que global_rank_history est peuplée pour le batch {} "
+                "(lancer 10. ML Predict → Prédire l'univers sélectionné d'abord).".format(
+                    _cas_exc, _cascade_batch_id or "?",
+                )
+            )
+            sys.exit(1)
+        LOGGER.warning(
+            "cascade backtest filter skipped (cascade.enabled=false): %s", _cas_exc,
+        )
+
     _emit_backtest_missing_coverage_logs(
         sentiment_mode=str(args.sentiment_mode or "auto"),
         sentiment_diagnostics=sentiment_diagnostics,

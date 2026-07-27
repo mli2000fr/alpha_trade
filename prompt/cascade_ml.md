@@ -49,10 +49,11 @@
 
 ---
 
-### Étape 1 — Paramétrage config.yaml
+### Étape 1 — Paramétrage config.yaml ✅
 
 > **Dépend de** : rien — fondation à faire en premier.
-> **Fichiers** : `config.yaml`
+> **Fichiers** : `config.yaml`, `modelFactory/predictor.py`
+> **Statut** : ✅ Fait (2026-07-27)
 
 Ajouter le bloc `cascade` et s'assurer que `batch_diagnostics` est bien configuré :
 
@@ -70,10 +71,11 @@ Utilisé par le backtest ET le live pipeline.
 
 ---
 
-### Étape 2 — Table DB `global_rank_history` + migration
+### Étape 2 — Table DB `global_rank_history` + migration ✅
 
 > **Dépend de** : Étape 1 (le batch_id vient de `config.yaml`).
-> **Fichiers** : migration SQL, `modelFactory/predictor.py` (stub upsert)
+> **Fichiers** : migration SQL, `modelFactory/predictor.py` (upsert_global_ranks)
+> **Statut** : ✅ Fait (2026-07-27)
 
 Créer la table source unique des rangs pour backtest/live :
 
@@ -108,10 +110,11 @@ def upsert_global_ranks(batch_id: str, date: str, ranks: dict[str, tuple[float, 
 
 ---
 
-### Étape 3 — Prédiction Global + Per-Symbol dans ML Predict
+### Étape 3 — Prédiction Global + Per-Symbol dans ML Predict ✅
 
 > **Dépend de** : Étape 2 (la table doit exister pour insérer).
-> **Fichiers** : `modelFactory/predictor.py`, `ihm/pages/_execution_center/__init__.py`
+> **Fichiers** : `modelFactory/predictor.py`
+> **Statut** : ✅ Fait (2026-07-27)
 
 **Workflow dans le bloc 10. ML Predict :**
 
@@ -138,10 +141,11 @@ def upsert_global_ranks(batch_id: str, date: str, ranks: dict[str, tuple[float, 
 
 ---
 
-### Étape 4 — Logique cascade dans predictor
+### Étape 4 — Logique cascade dans predictor ✅
 
 > **Dépend de** : Étape 1 (config), Étape 2 (table), Étape 3 (rangs générés).
 > **Fichiers** : `modelFactory/predictor.py`
+> **Statut** : ✅ Fait (2026-07-27)
 
 Un trade est exécuté si **toutes** ces conditions sont remplies :
 
@@ -224,10 +228,11 @@ Le Global Ranking peut tourner sur plus de 2000 symboles (tradable universe). Le
 
 ---
 
-### Étape 7 — Intégration backtest
+### Étape 7 — Intégration backtest ✅
 
 > **Dépend de** : Étape 4 (cascade filter fonctionnel).
-> **Fichiers** : `backtesting/`
+> **Fichiers** : `backtesting/cli/_impl.py`, `modelFactory/predictor.py`
+> **Statut** : ✅ Fait (2026-07-27)
 
 Premier test end-to-end : backtest sur période historique avec la cascade activée. Le backtest lit `global_rank_history` (DB) pour les rangs, applique le filtre cascade, puis simule les trades.
 

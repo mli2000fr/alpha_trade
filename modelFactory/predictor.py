@@ -1724,6 +1724,487 @@ def predict_symbol(
 
 
 # ────────────────────────────────────────────────────────────────────
+# Cascade config loader (Étape 1 — cascade_ml.md)
+# ────────────────────────────────────────────────────────────────────
+
+def load_cascade_config() -> dict[str, Any]:
+    """Charge la configuration cascade depuis config.yaml.
+
+    Returns:
+        dict avec clés ``top_pct`` (float, défaut 0.20) et ``min_prob``
+        (float, défaut 0.55).  Renvoie les défauts si le fichier est
+        absent ou si la section ``cascade`` n'existe pas.
+    """
+    _defaults: dict[str, Any] = {"top_pct": 0.20, "min_prob": 0.55}
+    try:
+        import yaml as _yaml
+        with open("config.yaml", encoding="utf-8") as _fh:
+            _raw = _yaml.safe_load(_fh) or {}
+        _section = _raw.get("cascade") or {}
+        return {
+            "top_pct": float(_section.get("top_pct", _defaults["top_pct"])),
+            "min_prob": float(_section.get("min_prob", _defaults["min_prob"])),
+        }
+    except Exception:
+        return _defaults
+
+
+def upsert_global_ranks(
+    batch_id: str,
+    trade_date: str,
+    ranks: list[dict[str, Any]],
+    engine: Any | None = None,
+) -> int:
+    """Insère ou écrase les rangs globaux dans ``global_rank_history``.
+
+    Args:
+        batch_id: Identifiant du batch de modèles utilisé.
+        trade_date: Date de trading (YYYY-MM-DD).
+        ranks: Liste de dicts ``{symbol, global_rank_3, global_rank_5, global_rank_10}``.
+        engine: SQLAlchemy engine. Si None, utilise ``get_engine()``.
+
+    Returns:
+        Nombre de lignes insérées/écrasées.
+    """
+    if not ranks:
+        return 0
+    if engine is None:
+        try:
+            from ihm.services.db import get_engine as _get_engine
+            engine = _get_engine()
+        except Exception:
+            LOGGER.warning("upsert_global_ranks: no engine available")
+            return 0
+    if engine is None:
+        return 0
+
+    from sqlalchemy import text as _text
+
+    _sql = _text(
+        "INSERT INTO alpha_trade.global_rank_history "
+        "(symbol, date, global_rank_3, global_rank_5, global_rank_10, batch_id) "
+        "VALUES (:symbol, :date, :r3, :r5, :r10, :batch_id) "
+        "ON DUPLICATE KEY UPDATE "
+        "global_rank_3 = VALUES(global_rank_3), "
+        "global_rank_5 = VALUES(global_rank_5), "
+        "global_rank_10 = VALUES(global_rank_10), "
+        "created_at = CURRENT_TIMESTAMP"
+    )
+
+    total = 0
+    try:
+        with engine.begin() as conn:
+            for row in ranks:
+                conn.execute(_sql, {
+                    "symbol": str(row["symbol"]),
+                    "date": trade_date,
+                    "r3": float(row.get("global_rank_3")) if row.get("global_rank_3") is not None else None,
+                    "r5": float(row.get("global_rank_5")) if row.get("global_rank_5") is not None else None,
+                    "r10": float(row.get("global_rank_10")) if row.get("global_rank_10") is not None else None,
+                    "batch_id": batch_id,
+                })
+                total += 1
+    except Exception:
+        LOGGER.exception("upsert_global_ranks: DB error for %s rows on %s", len(ranks), trade_date)
+    return total
+
+
+def predict_global_rank_history(
+    start_date: str,
+    end_date: str,
+    batch_id: str,
+    *,
+    artifacts_dir: Path | None = None,
+    engine: Any | None = None,
+) -> dict[str, int]:
+    """Prédit les rangs globaux pour une période et les persiste en DB.
+
+    Pour chaque jour de bourse entre ``start_date`` et ``end_date`` :
+    1. Charge les barres de l'univers tradable
+    2. Appelle ``predict_global_rank()`` (depuis global_ranking.py)
+    3. Upsert les résultats dans ``global_rank_history``
+
+    Le ``batch_id`` doit être déterminé par l'appelant selon le contexte :
+    - **Backtest** → ``config.yaml`` → ``batch_diagnostics.backtest_batch_id``
+    - **Live**     → ``config.yaml`` → ``batch_diagnostics.live_batch_id``
+
+    Args:
+        start_date: Date début (YYYY-MM-DD).
+        end_date: Date fin inclusive (YYYY-MM-DD).
+        batch_id: Identifiant du batch de modèles à utiliser.
+        artifacts_dir: Répertoire des artefacts du batch. Si None, déduit
+                       depuis ``get_model_artifacts_dir() / batch_id``.
+        engine: SQLAlchemy engine. Si None, utilise ``get_engine()``.
+
+    Returns:
+        Dict ``{date_str: nb_symbols_upserted}``.
+    """
+    from datetime import timedelta as _td
+
+    if artifacts_dir is None:
+        from ihm.services.ml_artifacts import get_model_artifacts_dir as _get_dir
+        artifacts_dir = _get_dir() / batch_id
+
+    if engine is None:
+        try:
+            from ihm.services.db import get_engine as _get_engine
+            engine = _get_engine()
+        except Exception:
+            LOGGER.warning("predict_global_rank_history: no engine available")
+            return {}
+
+    if engine is None:
+        return {}
+
+    # ── Imports lourds ──
+    from modelFactory.global_ranking import predict_global_rank
+    from modelFactory.data_loader import load_universe_bars
+    from common.universe import load_tradable_universe_symbols
+
+    _start = pd.Timestamp(start_date)
+    _end = pd.Timestamp(end_date)
+
+    # Récupérer toutes les dates de bourse dans la période
+    try:
+        from sqlalchemy import text as _text
+        with engine.connect() as conn:
+            _dates_rows = conn.execute(
+                _text(
+                    "SELECT DISTINCT date FROM alpha_trade.stock_bars_daily "
+                    "WHERE date BETWEEN :s AND :e ORDER BY date"
+                ),
+                {"s": str(_start.date()), "e": str(_end.date())},
+            ).fetchall()
+        trading_dates = [str(row[0]) for row in _dates_rows]
+    except Exception:
+        # Fallback : générer tous les jours et filtrer (lent)
+        _all_dates = pd.date_range(_start, _end, freq="B")
+        trading_dates = [d.strftime("%Y-%m-%d") for d in _all_dates]
+
+    if not trading_dates:
+        LOGGER.warning("predict_global_rank_history: no trading dates in [%s, %s]", start_date, end_date)
+        return {}
+
+    from modelFactory.global_ranking import predict_global_rank
+    from modelFactory.data_loader import load_universe_bars
+    from common.universe import load_tradable_universe_symbols
+
+    results: dict[str, int] = {}
+    _lookback_days = 365
+
+    for trade_date_str in trading_dates:
+        _trade_date = pd.Timestamp(trade_date_str).date()
+        _start_lookback = _trade_date - _td(days=_lookback_days)
+
+        try:
+            # Charger l'univers du jour
+            universe_symbols = load_tradable_universe_symbols(engine, trade_date=_trade_date)
+            if not universe_symbols:
+                LOGGER.warning("predict_global_rank_history: empty universe on %s", trade_date_str)
+                results[trade_date_str] = 0
+                continue
+
+            universe_df = load_universe_bars(
+                engine, universe_symbols,
+                end_date=_trade_date,
+                start_date=_start_lookback,
+            )
+            if universe_df.empty:
+                LOGGER.warning("predict_global_rank_history: empty bars on %s", trade_date_str)
+                results[trade_date_str] = 0
+                continue
+
+            # Prédire les rangs
+            rank_df = predict_global_rank(universe_df, artifacts_dir)
+            if rank_df is None or rank_df.empty:
+                LOGGER.warning("predict_global_rank_history: predict_global_rank returned None on %s", trade_date_str)
+                results[trade_date_str] = 0
+                continue
+
+            # Upsert
+            ranks_list = rank_df.to_dict(orient="records")
+            nb = upsert_global_ranks(batch_id, trade_date_str, ranks_list, engine=engine)
+            results[trade_date_str] = nb
+            LOGGER.info(
+                "predict_global_rank_history: %s — %d symbols upserted",
+                trade_date_str, nb,
+            )
+
+        except Exception:
+            LOGGER.exception("predict_global_rank_history: failed for %s", trade_date_str)
+            results[trade_date_str] = -1
+
+    _total = sum(v for v in results.values() if v > 0)
+    LOGGER.info(
+        "predict_global_rank_history: DONE — %d dates, %d total rows upserted",
+        len(results), _total,
+    )
+    return results
+
+
+# ────────────────────────────────────────────────────────────────────
+# Cascade ML (Étape 4 — cascade_ml.md)
+# ────────────────────────────────────────────────────────────────────
+
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass
+class CascadePrediction:
+    """Prédiction per-symbol utilisée par le filtre cascade."""
+    symbol: str
+    long_prob: float
+    short_prob: float
+    flat_prob: float = 0.0
+    side: str = "flat"  # "long", "short", "flat"
+
+
+def load_global_ranks_from_db(
+    trade_date: str,
+    batch_id: str,
+    *,
+    engine: Any | None = None,
+) -> pd.DataFrame:
+    """Charge les rangs globaux depuis ``global_rank_history`` pour une date.
+
+    Args:
+        trade_date: Date de trading (YYYY-MM-DD).
+        batch_id: Identifiant du batch.
+        engine: SQLAlchemy engine. Si None, utilise ``get_engine()``.
+
+    Returns:
+        DataFrame [symbol, global_rank_3, global_rank_5, global_rank_10]
+        ou DataFrame vide si aucune donnée.
+    """
+    if engine is None:
+        try:
+            from ihm.services.db import get_engine as _get_engine
+            engine = _get_engine()
+        except Exception:
+            LOGGER.warning("load_global_ranks_from_db: no engine available")
+            return pd.DataFrame()
+
+    if engine is None:
+        return pd.DataFrame()
+
+    from sqlalchemy import text as _text
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                _text(
+                    "SELECT symbol, global_rank_3, global_rank_5, global_rank_10 "
+                    "FROM alpha_trade.global_rank_history "
+                    "WHERE date = :d AND batch_id = :bid"
+                ),
+                {"d": trade_date, "bid": batch_id},
+            ).fetchall()
+    except Exception:
+        LOGGER.exception("load_global_ranks_from_db: query failed for %s / %s", trade_date, batch_id)
+        return pd.DataFrame()
+
+    if not rows:
+        LOGGER.warning("load_global_ranks_from_db: no ranks for %s / %s", trade_date, batch_id)
+        return pd.DataFrame()
+
+    return pd.DataFrame(
+        [(r[0], r[1], r[2], r[3]) for r in rows],
+        columns=["symbol", "global_rank_3", "global_rank_5", "global_rank_10"],
+    )
+
+
+def cascade_select(
+    trade_date: str,
+    batch_id: str,
+    per_symbol_preds: dict[str, CascadePrediction],
+    *,
+    top_pct: float | None = None,
+    min_prob: float | None = None,
+    engine: Any | None = None,
+) -> list[tuple[str, str, float]]:
+    """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
+
+    Pour chaque symbole ayant un rang global ET une prédiction per-symbol :
+    1. Filtre top/bottom N% selon ``rank_avg = (rank3 + rank5) / 2``
+    2. Vérifie que la proba per-symbol > ``min_prob``
+    3. Score multiplicatif : ``rank_dir × prob``
+    4. Trie par score décroissant
+
+    Args:
+        trade_date: Date de trading (YYYY-MM-DD).
+        batch_id: Identifiant du batch Global Model.
+        per_symbol_preds: Dict {symbol: CascadePrediction}.
+        top_pct: Seuil top/bottom (défaut: config.yaml → cascade.top_pct).
+        min_prob: Proba minimale per-symbol (défaut: config.yaml → cascade.min_prob).
+        engine: SQLAlchemy engine.
+
+    Returns:
+        Liste de tuples ``(side, symbol, score)`` triée par score décroissant.
+    """
+    # ── Charger la config cascade ──
+    _cfg = load_cascade_config()
+    _top_pct = top_pct if top_pct is not None else float(_cfg["top_pct"])
+    _min_prob = min_prob if min_prob is not None else float(_cfg["min_prob"])
+
+    # ── Charger les rangs globaux depuis la DB ──
+    ranks_df = load_global_ranks_from_db(trade_date, batch_id, engine=engine)
+    if ranks_df.empty:
+        LOGGER.warning("cascade_select: no global ranks for %s / %s", trade_date, batch_id)
+        return []
+
+    candidates: list[tuple[str, str, float]] = []
+
+    for _, row in ranks_df.iterrows():
+        symbol = str(row["symbol"])
+        rank3 = float(row.get("global_rank_3")) if pd.notna(row.get("global_rank_3")) else None
+        rank5 = float(row.get("global_rank_5")) if pd.notna(row.get("global_rank_5")) else None
+
+        if rank3 is None or rank5 is None:
+            continue
+
+        rank_avg = (rank3 + rank5) / 2.0
+
+        # Filtre sur la moyenne des deux horizons
+        is_top = rank_avg > (1.0 - _top_pct)
+        is_bottom = rank_avg < _top_pct
+
+        if not (is_top or is_bottom):
+            continue
+
+        # Prédiction per-symbol
+        pred = per_symbol_preds.get(symbol)
+        if pred is None:
+            continue
+
+        if is_top and pred.long_prob > _min_prob:
+            rank_dir = rank_avg  # déjà proche de 1.0
+            score = rank_dir * pred.long_prob
+            candidates.append(("LONG", symbol, score))
+
+        elif is_bottom and pred.short_prob > _min_prob:
+            rank_dir = 1.0 - rank_avg  # inverse : 0.05 → 0.95
+            score = rank_dir * pred.short_prob
+            candidates.append(("SHORT", symbol, score))
+
+    # Tri par score décroissant
+    candidates.sort(key=lambda x: x[2], reverse=True)
+
+    LOGGER.info(
+        "cascade_select: %s / %s — %d candidates (top_pct=%.2f, min_prob=%.2f)",
+        trade_date, batch_id, len(candidates), _top_pct, _min_prob,
+    )
+    return candidates
+
+
+def apply_cascade_to_predictions(
+    preds_df: pd.DataFrame,
+    batch_id: str,
+    *,
+    top_pct: float | None = None,
+    min_prob: float | None = None,
+    engine: Any | None = None,
+) -> pd.DataFrame:
+    """Filtre les prédictions per-symbol via la cascade Global Rank.
+
+    Pour chaque date de trading dans ``preds_df`` :
+    1. Charge les rangs globaux depuis ``global_rank_history``
+    2. Convertit les prédictions en ``CascadePrediction``
+    3. Appelle ``cascade_select()``
+    4. Ne garde que les symboles retenus par la cascade
+
+    Les symboles non retenus voient leur ``predicted_side`` forcé à
+    ``"flat"`` et leurs probas mises à 0 — ils sont ainsi exclus du
+    backtest sans casser le contrat de ``replay_signals()``.
+
+    Args:
+        preds_df: DataFrame au format ``load_predictions()`` avec colonnes
+                  ``symbol, trade_date, predicted_side, proba_long, proba_short``.
+        batch_id: Identifiant du batch Global Model.
+        top_pct: Seuil top/bottom (défaut: config.yaml).
+        min_prob: Proba minimale (défaut: config.yaml).
+        engine: SQLAlchemy engine.
+
+    Returns:
+        DataFrame filtré (mêmes colonnes, lignes non-cascade → flat).
+    """
+    if preds_df.empty:
+        return preds_df
+
+    _date_col = "trade_date" if "trade_date" in preds_df.columns else "prediction_date"
+    if _date_col not in preds_df.columns:
+        LOGGER.warning("apply_cascade_to_predictions: no date column found")
+        return preds_df
+
+    _required_cols = {"symbol", "predicted_side", "proba_long", "proba_short"}
+    _missing = _required_cols - set(preds_df.columns)
+    if _missing:
+        LOGGER.warning("apply_cascade_to_predictions: missing columns %s", _missing)
+        return preds_df
+
+    result = preds_df.copy()
+    # Initialiser la colonne cascade_score
+    result["cascade_score"] = 0.0
+
+    _dates = sorted(result[_date_col].dropna().unique())
+    _total_passed = 0
+    _total_processed = 0
+
+    for _d in _dates:
+        _date_str = str(_d)[:10]
+        _mask = result[_date_col].astype(str).str[:10] == _date_str
+        _day_preds = result.loc[_mask]
+        if _day_preds.empty:
+            continue
+
+        # Construire le dict CascadePrediction
+        _pred_dict: dict[str, CascadePrediction] = {}
+        for _, _row in _day_preds.iterrows():
+            _sym = str(_row["symbol"])
+            _pred_dict[_sym] = CascadePrediction(
+                symbol=_sym,
+                long_prob=float(_row.get("proba_long") or 0.0),
+                short_prob=float(_row.get("proba_short") or 0.0),
+                flat_prob=float(_row.get("proba_flat") or 0.0),
+                side=str(_row.get("predicted_side") or "flat"),
+            )
+
+        # Appliquer la cascade
+        _candidates = cascade_select(
+            _date_str, batch_id, _pred_dict,
+            top_pct=top_pct, min_prob=min_prob,
+            engine=engine,
+        )
+
+        # Symbols retenus par la cascade
+        _passed_symbols = {_sym for _, _sym, _ in _candidates}
+        _score_map = {_sym: _score for _, _sym, _score in _candidates}
+
+        # Forcer flat pour les non-retenus
+        _flat_mask = _mask & (~result["symbol"].astype(str).isin(_passed_symbols))
+        if _flat_mask.any():
+            result.loc[_flat_mask, "predicted_side"] = "flat"
+            result.loc[_flat_mask, "proba_long"] = 0.0
+            result.loc[_flat_mask, "proba_short"] = 0.0
+            if "proba_flat" in result.columns:
+                result.loc[_flat_mask, "proba_flat"] = 1.0
+
+        # Stocker le score cascade pour les retenus
+        for _sym, _score in _score_map.items():
+            _score_mask = _mask & (result["symbol"].astype(str) == _sym)
+            result.loc[_score_mask, "cascade_score"] = _score
+
+        _total_passed += len(_candidates)
+        _total_processed += len(_day_preds)
+
+    LOGGER.info(
+        "apply_cascade_to_predictions: %d/%d predictions passed cascade "
+        "(batch=%s, dates=%d)",
+        _total_passed, _total_processed, batch_id, len(_dates),
+    )
+    return result
+
+
+# ────────────────────────────────────────────────────────────────────
 # Global Rank helpers (stacking à l'inférence)
 # ────────────────────────────────────────────────────────────────────
 

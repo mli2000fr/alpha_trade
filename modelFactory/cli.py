@@ -67,6 +67,37 @@ def _generate_and_save_batch_report(engine: Engine, batch_id: str) -> None:
         LOGGER.warning("Échec génération rapport batch %s : %s", batch_id, exc)
 
 
+def _resolve_predict_batch_id(artifacts_dir: Path) -> str | None:
+    """Détermine le batch_id pour le mode predict.
+
+    Ordre de priorité :
+    1. ``config.yaml`` → ``batch_diagnostics.backtest_batch_id`` (si renseigné)
+    2. Dernier composant du chemin ``artifacts_dir`` (ex: ``model-factory-xxx``)
+    3. None si indéterminable
+    """
+    # Priorité 1 : config
+    try:
+        import yaml as _yaml
+        with open("config.yaml", encoding="utf-8") as _fh:
+            _raw = _yaml.safe_load(_fh) or {}
+        _bd = _raw.get("batch_diagnostics") or {}
+        _bid = str(_bd.get("backtest_batch_id", "")).strip()
+        if _bid:
+            return _bid
+    except Exception:
+        pass
+
+    # Priorité 2 : dernier composant du chemin artifacts_dir
+    try:
+        _name = artifacts_dir.resolve().name
+        if _name and _name not in (".", "..", ""):
+            return _name
+    except Exception:
+        pass
+
+    return None
+
+
 def _build_training_batch_command(raw_args: list[str]) -> tuple[str, str]:
     argv = ["python", "-m", "modelFactory", *raw_args]
     return subprocess.list2cmdline(argv), json.dumps(raw_args, ensure_ascii=False)
@@ -760,6 +791,28 @@ def main(args: list[str] | None = None) -> None:
                 cfg.data.training_end_date,
                 len(prediction_dates),
             )
+
+            # ── Cascade ML (Étape 3) : prédire les rangs globaux avant per-symbol ──
+            _batch_id = _resolve_predict_batch_id(Path(opts.artifacts_dir))
+            if _batch_id:
+                from modelFactory.predictor import predict_global_rank_history
+                LOGGER.info(
+                    "predict cascade global_rank_history batch_id=%s start=%s end=%s",
+                    _batch_id, cfg.data.training_start_date, cfg.data.training_end_date,
+                )
+                _gr_results = predict_global_rank_history(
+                    start_date=str(cfg.data.training_start_date),
+                    end_date=str(cfg.data.training_end_date),
+                    batch_id=_batch_id,
+                    artifacts_dir=Path(opts.artifacts_dir),
+                    engine=engine,
+                )
+                _gr_total = sum(v for v in _gr_results.values() if v > 0)
+                LOGGER.info(
+                    "predict cascade global_rank_history DONE — %d dates, %d rows",
+                    len(_gr_results), _gr_total,
+                )
+
             prediction_parts = []
             for prediction_date in prediction_dates:
                 symbols_for_date = opts.symbols or load_symbols_for_source(

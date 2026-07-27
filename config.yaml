@@ -460,6 +460,25 @@ global_ranking:
   prediction_lookback_days: 365
 
 
+# ---------------------------------------------------------------------------
+# Cascade ML — filtre Global Ranking → Per-Symbol pour le backtest et le live.
+# Consommé par modelFactory/predictor.py (cascade_select) et backtesting/.
+# Les rangs globaux sont lus depuis alpha_trade.global_rank_history (DB).
+# ---------------------------------------------------------------------------
+cascade:
+  # Activation du filtre cascade dans le backtest et le live.
+  # Mettre à false pour désactiver temporairement sans retirer la config.
+  enabled: true
+
+  # Seuil de filtrage : ne garder que les top/bottom N% du classement global.
+  # 0.20 = top 20% pour LONG, bottom 20% pour SHORT.
+  top_pct: 0.20
+
+  # Probabilité minimale du Per-Symbol pour valider un trade.
+  # En dessous, le trade est rejeté même si le rang global est bon.
+  min_prob: 0.55
+
+
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
 conviction:
   # Poids de fusion sentiment (somme = 1.0). Defauts historiques : 0.75 / 0.15 / 0.10.
