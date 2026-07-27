@@ -147,34 +147,50 @@ Un trade est exécuté si **toutes** ces conditions sont remplies :
 
 1. ✅ **Per-Symbol** prédit `LONG` avec probabilité > `cascade_min_prob` (défaut 0.55)
    — ou `SHORT` avec probabilité > `cascade_min_prob`
-2. ✅ Le symbole est dans le **top N%** de `global_rank_3` ET dans le **top N%** de `global_rank_5` (pour LONG)
-   — ou **bottom N%** des deux (pour SHORT)
-3. ✅ Tri par score combiné multiplicatif :
-   $$\text{score\_final} = \left( \frac{\text{global\_rank\_3} + \text{global\_rank\_5}}{2} \right) \times \text{prob\_per\_symbol}$$
-   > Pourquoi multiplicatif : si le rang global est médiocre (0.30), le score s'effondre même avec une proba locale élevée → protection contre les trades à contre-courant du marché. Si les deux sont forts (0.90 × 0.70 = 0.63), le trade est prioritaire. L'additif (w1×rank + w2×prob) peut être trompé par un seul score élevé.
+2. ✅ Le symbole est dans le **top N%** de `rank_avg` pour LONG, ou **bottom N%** pour SHORT
+   — `rank_avg = (global_rank_3 + global_rank_5) / 2`
+   — Filtre simple sur la moyenne, plus souple que la double condition ET (voir alternative en commentaire)
+3. ✅ Tri par score combiné multiplicatif — `rank_dir` unifié LONG/SHORT :
+   $$\text{rank\_dir} = \begin{cases} \text{rank\_avg} & \text{pour LONG} \\ 1.0 - \text{rank\_avg} & \text{pour SHORT} \end{cases}$$
+   $$\text{score\_final} = \text{rank\_dir} \times \text{prob\_per\_symbol}$$
+   > Pourquoi multiplicatif : si le rang global est médiocre (0.30), le score s'effondre même avec une proba locale élevée → protection contre les trades à contre-courant du marché. Si les deux sont forts (0.90 × 0.70 = 0.63), le trade est prioritaire.
+   > `rank_dir` garantit que LONG et SHORT sont sur la même échelle [0,1] → comparables dans la liste triée.
 4. ✅ Limite de positions : gérée par le module risque (`risk_max_positions`), pas par la cascade
 
-**Logique** :
+**Logique** (version corrigée — feedback Gemini) :
 ```python
 def cascade_select(date, global_ranks, per_symbol_preds, top_pct, min_prob):
+    """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés."""
     candidates = []
     for symbol, rank3, rank5 in global_ranks:
-        # Condition 2 : dans les extrêmes des DEUX horizons
-        is_top = rank3 > (1 - top_pct) and rank5 > (1 - top_pct)
-        is_bottom = rank3 < top_pct and rank5 < top_pct
+        rank_avg = (rank3 + rank5) / 2.0
+
+        # Condition 2 : extrêmes sur la MOYENNE des deux horizons
+        is_top = rank_avg > (1.0 - top_pct)
+        is_bottom = rank_avg < top_pct
+        # Alternative plus stricte (double condition ET) :
+        # is_top = rank3 > (1.0 - top_pct) and rank5 > (1.0 - top_pct)
+        # is_bottom = rank3 < top_pct and rank5 < top_pct
+
         if not (is_top or is_bottom):
             continue
+
         # Condition 1 : prob per-symbol
         pred = per_symbol_preds.get(symbol)
         if pred is None:
             continue
+
         if is_top and pred.long_prob > min_prob:
-            score = (rank3 + rank5) / 2.0 * pred.long_prob  # multiplicatif
+            rank_dir = rank_avg               # déjà proche de 1.0
+            score = rank_dir * pred.long_prob
             candidates.append(('LONG', symbol, score))
+
         elif is_bottom and pred.short_prob > min_prob:
-            score = ((1 - rank3) + (1 - rank5)) / 2.0 * pred.short_prob
+            rank_dir = 1.0 - rank_avg         # inverse : 0.05 → 0.95
+            score = rank_dir * pred.short_prob
             candidates.append(('SHORT', symbol, score))
-    # Condition 4 : tri par score décroissant (limite gérée par risk_max_positions)
+
+    # Tri par score décroissant (limite de positions gérée par risk_max_positions)
     candidates.sort(key=lambda x: x[2], reverse=True)
     return candidates
 ```
@@ -235,7 +251,7 @@ Dans `ihm/pages/ml_diagnostics.py`, une section **🌐 Ranks Globaux Historiques
 ## ⚠️ Risques
 
 1. **Top 20% trop restrictif** → trop peu de trades. Commencer à 25% et ajuster.
-2. **Double condition H3+H5** → peut être trop stricte. Possibilité de passer en OU (top H3 OU top H5).
+2. **Filtre sur `rank_avg` vs double condition H3+H5** → on utilise `rank_avg > (1-top_pct)` par défaut (plus souple). La double condition ET `rank3 > seuil AND rank5 > seuil` est en commentaire dans le code — à tester en backtest pour comparer le nombre de trades générés.
 3. **Per-symbol F1 faible** → si F1 < 0.30, la cascade ne filtre rien de plus. Nécessite per-symbol de qualité.
-4. **Latence** → interroger 200+ modèles per-symbol par jour. Doit être < 2s avec cache.
+4. **Latence** → la cascade filtre AVANT d'appeler les per-symbol : seuls ~50-100 symboles (sur 500) passent le filtre global, donc la latence est divisée par 5-10 dès le départ. Pas besoin d'optimisation prématurée.
 
