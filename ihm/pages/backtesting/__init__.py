@@ -1351,7 +1351,7 @@ def _build_run_options() -> BacktestRunOptions:
             value=float(
                 st.session_state.get(
                     "bt_run_commission_bps",
-                    1.0,
+                    5.0,
                 )
             ),
             step=0.5,
