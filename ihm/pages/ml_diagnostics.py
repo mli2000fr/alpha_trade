@@ -338,6 +338,45 @@ VIX_QUERY = """
     ORDER BY trade_date
 """
 
+# ── Global Rank History ──
+
+GLOBAL_RANK_BATCHES_QUERY = """
+    SELECT DISTINCT batch_id, COUNT(DISTINCT date) AS nb_dates, COUNT(DISTINCT symbol) AS nb_symbols
+    FROM alpha_trade.global_rank_history
+    GROUP BY batch_id
+    ORDER BY batch_id DESC
+    LIMIT 50
+"""
+
+GLOBAL_RANK_DATE_RANGE_QUERY = """
+    SELECT MIN(date) AS min_date, MAX(date) AS max_date, COUNT(DISTINCT date) AS nb_dates
+    FROM alpha_trade.global_rank_history
+    WHERE batch_id = :batch_id
+"""
+
+GLOBAL_RANK_TOP_BOTTOM_QUERY = """
+    SELECT
+        symbol,
+        date,
+        global_rank_3,
+        global_rank_5,
+        global_rank_10,
+        ROUND((COALESCE(global_rank_3, 0) + COALESCE(global_rank_5, 0)) / 2.0, 4) AS rank_avg_35,
+        batch_id,
+        created_at
+    FROM alpha_trade.global_rank_history
+    WHERE batch_id = :batch_id
+      AND date = :date
+    ORDER BY rank_avg_35 DESC
+"""
+
+GLOBAL_RANK_DATES_FOR_BATCH_QUERY = """
+    SELECT DISTINCT date
+    FROM alpha_trade.global_rank_history
+    WHERE batch_id = :batch_id
+    ORDER BY date DESC
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1061,8 +1100,146 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     # ── Suppression batch (tout en bas du détail) ──
     st.divider()
+    # ── Global Rank History ──
+    _render_global_rank_history(batch_id)
+    st.divider()
     artifacts_dir = get_model_artifacts_dir() / batch_id
     _render_delete_batch_button(batch_id, artifacts_dir)
+
+
+def _render_global_rank_history(batch_id: str) -> None:
+    """Affiche les rangs globaux historiques de la table global_rank_history."""
+    st.subheader("🌐 Ranks Globaux Historiques (global_rank_history)")
+
+    # ── Vérifier si des données existent pour ce batch ──
+    date_range_df = safe_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
+    if date_range_df.empty or date_range_df.iloc[0]["nb_dates"] == 0:
+        st.info(f"Aucun rang global historique trouvé pour le batch `{batch_id}`. Les rangs sont générés via **10. ML Predict → Prédire l'univers sélectionné**.")
+        return
+
+    dr = date_range_df.iloc[0]
+    st.caption(f"📅 {dr['nb_dates']} dates disponibles — du {str(dr['min_date'])[:10]} au {str(dr['max_date'])[:10]}")
+
+    # ── Sélecteur de date ──
+    dates_df = safe_query(GLOBAL_RANK_DATES_FOR_BATCH_QUERY, {"batch_id": batch_id})
+    if dates_df.empty:
+        st.info("Aucune date trouvée.")
+        return
+
+    available_dates = sorted(dates_df["date"].dropna().unique(), reverse=True)
+    available_dates_str = [str(d)[:10] for d in available_dates]
+
+    selected_date_str = st.selectbox(
+        "📅 Sélectionner une date",
+        available_dates_str,
+        key=f"global_rank_date_{batch_id}",
+    )
+
+    if not selected_date_str:
+        return
+
+    # ── Top/Bottom N% ──
+    top_pct = st.slider(
+        "Top/Bottom %",
+        min_value=5,
+        max_value=50,
+        value=20,
+        step=5,
+        key=f"global_rank_pct_{batch_id}",
+        help="Afficher les Top N% et Bottom N% des rangs pour cette date.",
+    )
+
+    # ── Requête principale ──
+    rank_df = safe_query(
+        GLOBAL_RANK_TOP_BOTTOM_QUERY,
+        {"batch_id": batch_id, "date": selected_date_str},
+    )
+
+    if rank_df.empty:
+        st.info(f"Aucun rang pour le {selected_date_str}.")
+        return
+
+    n_total = len(rank_df)
+    n_cut = max(1, int(n_total * top_pct / 100))
+
+    top_df = rank_df.head(n_cut).copy()
+    bottom_df = rank_df.tail(n_cut).copy()
+
+    # ── Stats ──
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Nb symboles", n_total)
+    with c2:
+        st.metric("Médiane rank_avg_35", f"{rank_df['rank_avg_35'].median():.4f}" if not rank_df['rank_avg_35'].isna().all() else "—")
+    with c3:
+        h3_ok = (~rank_df['global_rank_3'].isna()).sum()
+        st.metric("H3 renseigné", f"{h3_ok}/{n_total}")
+    with c4:
+        h5_ok = (~rank_df['global_rank_5'].isna()).sum()
+        st.metric("H5 renseigné", f"{h5_ok}/{n_total}")
+
+    st.markdown("")
+
+    # ── Tableaux Top / Bottom côte à côte ──
+    col_top, col_bottom = st.columns(2)
+
+    with col_top:
+        st.markdown(f"**🟢 Top {top_pct}% ({len(top_df)} symboles)**")
+        top_display = top_df[["symbol", "global_rank_3", "global_rank_5", "rank_avg_35"]].copy()
+        top_display["rank"] = range(1, len(top_display) + 1)
+        top_display = top_display[["rank", "symbol", "global_rank_3", "global_rank_5", "rank_avg_35"]]
+        st.dataframe(
+            top_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "rank": "#",
+                "symbol": "Symbole",
+                "global_rank_3": st.column_config.NumberColumn("Rank H3", format="%.4f"),
+                "global_rank_5": st.column_config.NumberColumn("Rank H5", format="%.4f"),
+                "rank_avg_35": st.column_config.NumberColumn("Avg(H3,H5)", format="%.4f"),
+            },
+        )
+
+    with col_bottom:
+        st.markdown(f"**🔴 Bottom {top_pct}% ({len(bottom_df)} symboles)**")
+        bottom_display = bottom_df[["symbol", "global_rank_3", "global_rank_5", "rank_avg_35"]].copy()
+        bottom_display = bottom_display.sort_values("rank_avg_35", ascending=True)
+        bottom_display["rank"] = range(1, len(bottom_display) + 1)
+        bottom_display = bottom_display[["rank", "symbol", "global_rank_3", "global_rank_5", "rank_avg_35"]]
+        st.dataframe(
+            bottom_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "rank": "#",
+                "symbol": "Symbole",
+                "global_rank_3": st.column_config.NumberColumn("Rank H3", format="%.4f"),
+                "global_rank_5": st.column_config.NumberColumn("Rank H5", format="%.4f"),
+                "rank_avg_35": st.column_config.NumberColumn("Avg(H3,H5)", format="%.4f"),
+            },
+        )
+
+    # ── Export CSV ──
+    st.markdown("")
+    csv_data = rank_df.to_csv(index=False)
+    st.download_button(
+        label=f"📥 Télécharger tous les rangs du {selected_date_str} (.csv)",
+        data=csv_data,
+        file_name=f"global_rank_{batch_id}_{selected_date_str}.csv",
+        mime="text/csv",
+        key=f"dl_gr_{batch_id}_{selected_date_str}",
+    )
+
+    # ── Aide ──
+    with st.expander("ℹ️ À propos des rangs globaux", expanded=False):
+        st.markdown("""
+- **`global_rank_3` / `global_rank_5`** : rang cross-sectional [0, 1] prédit par le Global Ranking Model (LightGBM LambdaRank).
+- **1.0** = meilleur rang (top de l'univers), **0.0** = pire rang.
+- **`rank_avg_35`** = moyenne arithmétique de H3 et H5 — utilisé par la cascade pour le filtrage.
+- Les rangs sont générés via **10. ML Predict → Prédire l'univers sélectionné** et stockés dans la table `global_rank_history`.
+- Les données sont écrasées (upsert) à chaque nouvelle prédiction pour la même date + batch.
+""")
 
 
 # ---------------------------------------------------------------------------
