@@ -53,7 +53,9 @@ from modelFactory.reproducibility import apply_reproducibility, derive_seed
 LOGGER = logging.getLogger(__name__)
 
 # Horizons pour le ranking multi-horizons (stacking Phase 2)
-_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10)
+# H10 retiré (26/07) : pas d'alpha propre, simple artefact de volatilité.
+# H3+H5 portent le vrai signal de momentum court/moyen terme.
+_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5)
 
 # Features "brutes" à normaliser en rang cross-sectionnel par date.
 # Ces features varient par symbole mais leurs seuils absolus changent avec
