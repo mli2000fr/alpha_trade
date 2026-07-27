@@ -51,6 +51,8 @@ _cross_sectional_frame_cache_lock = Lock()
 # Cache global_rank par cutoff_date (pour éviter de recalculer à chaque symbole)
 _global_rank_prediction_cache: dict[str, pd.DataFrame | None] = {}
 _global_rank_fallback_symbols: list[str] = []  # symboles ayant utilisé le fallback 0.5
+# Cache _per_symbol_features.json par artifacts_dir
+_per_symbol_features_cache: dict[str, dict[str, Any]] = {}
 
 
 class ArtifactIntegrityError(RuntimeError):
@@ -828,16 +830,34 @@ def _build_lstm_fallback_route(
     }
 
 
-def _load_data_cfg_from_payload(cfg_data: dict) -> DataConfig:
+def _load_data_cfg_from_payload(
+    cfg_data: dict,
+    *,
+    ps_features: dict[str, Any] | None = None,
+) -> DataConfig:
+    """Reconstruit DataConfig depuis le config.json per-symbol.
+
+    Si ``ps_features`` (issu de ``_per_symbol_features.json``) est fourni,
+    ses flags priment sur les valeurs du ``config.json`` — cela garantit la
+    parité exacte entraînement ↔ prédiction pour tous les ``include_*``.
+    """
+    _src = ps_features if ps_features else cfg_data.get("data", {})
     return DataConfig(
         sequence_length=cfg_data["data"]["sequence_length"],
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
-        include_sentiment_features=cfg_data["data"].get("include_sentiment_features", False),
-        include_screener_scores=cfg_data["data"].get("include_screener_scores", False),
-        include_short_score_features=cfg_data["data"].get("include_short_score_features", False),
-        enable_cross_sectional_features=cfg_data["data"].get("enable_cross_sectional_features", False),
+        include_sentiment_features=_src.get("include_sentiment", cfg_data["data"].get("include_sentiment_features", False)),
+        include_screener_scores=_src.get("include_screener_scores", cfg_data["data"].get("include_screener_scores", False)),
+        include_short_score_features=_src.get("include_short_score", cfg_data["data"].get("include_short_score_features", False)),
+        include_macro_vix_features=_src.get("include_macro_vix", cfg_data["data"].get("include_macro_vix_features", False)),
+        include_macro_vxn_features=_src.get("include_macro_vxn", cfg_data["data"].get("include_macro_vxn_features", False)),
+        include_macro_vix3m_features=_src.get("include_macro_vix3m", cfg_data["data"].get("include_macro_vix3m_features", False)),
+        include_macro_move_features=_src.get("include_macro_move", cfg_data["data"].get("include_macro_move_features", False)),
+        include_fundamentals_features=_src.get("include_fundamentals", cfg_data["data"].get("include_fundamentals_features", False)),
+        include_factors_features=_src.get("include_factors", cfg_data["data"].get("include_factors_features", False)),
+        include_macro_regime_features=_src.get("include_macro_regime", cfg_data["data"].get("include_macro_regime_features", False)),
+        enable_cross_sectional_features=_src.get("enable_cross_sectional", cfg_data["data"].get("enable_cross_sectional_features", False)),
         cross_sectional_min_universe=cfg_data["data"].get("cross_sectional_min_universe", 20),
-        feature_set=cfg_data["data"].get("feature_set", "v1"),
+        feature_set=_src.get("feature_set", cfg_data["data"].get("feature_set", "v1")),
         benchmark_symbol=cfg_data["data"].get("benchmark_symbol", "SPY"),
         target_mode=cfg_data["data"].get("target_mode", "binary"),
         target_up_threshold=cfg_data["data"].get("target_up_threshold", 0.0),
@@ -989,6 +1009,7 @@ def _predict_with_global_model(
     prediction_date: date | None,
     as_of_date: date | None,
     persist: bool,
+    ps_features: dict[str, Any] | None = None,
 ) -> Optional[pd.DataFrame]:
     return _predict_with_tabular_model(
         symbol,
@@ -1003,6 +1024,7 @@ def _predict_with_global_model(
         feature_columns=cfg_data.get("feature_columns"),
         decision_threshold=cfg_data.get("selected_decision_threshold"),
         config_path=config_path,
+        ps_features=ps_features,
     )
 
 
@@ -1022,15 +1044,17 @@ def _predict_with_tabular_model(
     config_path: Path | None = None,
     route_feature_fingerprint: object = None,
     route_feature_contract: object = None,
+    ps_features: dict[str, Any] | None = None,
 ) -> Optional[pd.DataFrame]:
     if not model_path.exists():
         reason = f"tabular_model_missing:{selected_model}"
         LOGGER.error("predict_symbol %s symbol=%s path=%s", reason, symbol, model_path)
         _record_artifact_issue(symbol, reason=reason, path=model_path)
         raise ArtifactIntegrityError(reason, path=model_path)
-    data_cfg = _load_data_cfg_from_payload(cfg_data)
+    data_cfg = _load_data_cfg_from_payload(cfg_data, ps_features=ps_features)
     _stacking = bool(
-        cfg_data.get("global_model", {}).get("stacking_enabled", False)
+        (ps_features or {}).get("global_stacking_enabled")
+        or cfg_data.get("global_model", {}).get("stacking_enabled", False)
     )
     cutoff_date = as_of_date or prediction_date
     df = _prepare_prediction_frame(
@@ -1300,6 +1324,9 @@ def predict_symbol(
         DataFrame avec colonnes: symbol, prediction_date, predicted_proba, predicted_class, run_id
         ou None si artefacts manquants.
     """
+    # ── Charger _per_symbol_features.json (cache par batch, lecture unique) ──
+    _ps_features = load_per_symbol_features(artifacts_dir)
+
     ckpt_path, scaler_path, config_path, selected_run_id = _resolve_artifact_paths(
         symbol,
         artifacts_dir,
@@ -1370,6 +1397,7 @@ def predict_symbol(
                     prediction_date=prediction_date,
                     as_of_date=as_of_date,
                     persist=persist,
+                    ps_features=_ps_features,
                 )
             except ArtifactIntegrityError as exc:
                 route = _build_lstm_fallback_route(
@@ -1421,6 +1449,7 @@ def predict_symbol(
                     config_path=local_config_path,
                     route_feature_fingerprint=route.get("feature_fingerprint"),
                     route_feature_contract=route.get("feature_contract"),
+                    ps_features=_ps_features,
                 )
             except ArtifactIntegrityError as exc:
                 route = _build_lstm_fallback_route(
@@ -1456,7 +1485,7 @@ def predict_symbol(
         _record_artifact_issue(symbol, reason=f"lstm_route_missing:{selected_architecture}", path=missing_path)
         return None
 
-    data_cfg = _load_data_cfg_from_payload(cfg_data)
+    data_cfg = _load_data_cfg_from_payload(cfg_data, ps_features=_ps_features)
     run_id = selected_run_id or cfg_data.get("run_id", "unknown")
 
     # Load scaler (Phase 4.2.d : cache LRU)
@@ -1474,7 +1503,8 @@ def predict_symbol(
 
     cutoff_date = as_of_date or prediction_date
     _stacking = bool(
-        cfg_data.get("global_model", {}).get("stacking_enabled", False)
+        (_ps_features or {}).get("global_stacking_enabled")
+        or cfg_data.get("global_model", {}).get("stacking_enabled", False)
     )
     df = _prepare_prediction_frame(
         symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date,
@@ -1749,6 +1779,50 @@ def load_cascade_config() -> dict[str, Any]:
         return _defaults
 
 
+# ── Per-symbol features (parité entraînement/prédiction) ──
+
+def load_per_symbol_features(artifacts_dir: Path) -> dict[str, Any]:
+    """Charge les features per-symbol depuis ``_per_symbol_features.json``.
+
+    Ce fichier est sauvegardé par ``run_training_batch()`` à la fin de
+    chaque campagne d'entraînement.  Il capture l'ensemble exact des
+    features et flags utilisés pour tous les symboles du batch.
+
+    Returns:
+        dict avec ``feature_columns``, ``feature_set``, ``include_*``,
+        ``enable_cross_sectional``, ``global_stacking_enabled``.
+        Retourne un dict vide si le fichier n'existe pas (batch ancien).
+    """
+    _cache_key = str(artifacts_dir.resolve())
+    _cached = _per_symbol_features_cache.get(_cache_key)
+    if _cached is not None:
+        return _cached
+
+    _path = artifacts_dir / "_per_symbol_features.json"
+    if not _path.exists():
+        LOGGER.info("load_per_symbol_features: %s not found (legacy batch)", _path)
+        _per_symbol_features_cache[_cache_key] = {}
+        return {}
+
+    try:
+        _payload = json.loads(_path.read_text(encoding="utf-8"))
+        if not isinstance(_payload, dict):
+            _per_symbol_features_cache[_cache_key] = {}
+            return {}
+        _per_symbol_features_cache[_cache_key] = _payload
+        LOGGER.info(
+            "load_per_symbol_features: loaded %d features, feature_set=%s, stacking=%s",
+            len(_payload.get("feature_columns", [])),
+            _payload.get("feature_set"),
+            _payload.get("global_stacking_enabled"),
+        )
+        return _payload
+    except Exception:
+        LOGGER.warning("load_per_symbol_features: failed to parse %s", _path)
+        _per_symbol_features_cache[_cache_key] = {}
+        return {}
+
+
 def upsert_global_ranks(
     batch_id: str,
     trade_date: str,
@@ -1915,7 +1989,7 @@ def predict_global_rank_history(
                 continue
 
             # Prédire les rangs
-            rank_df = predict_global_rank(universe_df, artifacts_dir)
+            rank_df = predict_global_rank(universe_df, artifacts_dir, engine=engine)
             if rank_df is None or rank_df.empty:
                 LOGGER.warning("predict_global_rank_history: predict_global_rank returned None on %s", trade_date_str)
                 results[trade_date_str] = 0
@@ -2267,7 +2341,7 @@ def _try_compute_global_rank_for_prediction(
             _global_rank_prediction_cache[_cache_key] = None
             return
 
-        rank_df = predict_global_rank(universe_df, artifacts_dir)
+        rank_df = predict_global_rank(universe_df, artifacts_dir, engine=engine)
         if rank_df is not None and not rank_df.empty:
             _global_rank_prediction_cache[_cache_key] = rank_df
             LOGGER.info(

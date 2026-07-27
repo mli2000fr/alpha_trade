@@ -99,6 +99,68 @@ def _xs_rank_column_name(source_col: str) -> str:
 # Helpers
 # ────────────────────────────────────────────────────────────────────
 
+def _compute_sector_neutral_inplace(
+    df: pd.DataFrame,
+    feature_columns: list[str],
+    engine: Any,
+) -> int:
+    """Calcule les features sector-neutral dans ``df`` (modifié sur place).
+
+    Pour chaque feature source de ``SECTOR_NEUTRAL_SOURCE_FEATURES``
+    présente à la fois dans ``df`` et ``feature_columns``, soustrait la
+    médiane du secteur à chaque date.
+
+    Returns:
+        Nombre de features sector-neutral calculées.
+    """
+    try:
+        from modelFactory.cross_sectional import SECTOR_NEUTRAL_SOURCE_FEATURES, _load_sector_mapping
+        _sector_map = _load_sector_mapping(engine)
+    except Exception:
+        LOGGER.warning("_compute_sector_neutral_inplace: failed to load sector map")
+        return 0
+
+    if not _sector_map:
+        LOGGER.warning("_compute_sector_neutral_inplace: empty sector_map")
+        return 0
+
+    _sn_sources = [c for c in SECTOR_NEUTRAL_SOURCE_FEATURES if c in df.columns]
+    if not _sn_sources:
+        return 0
+
+    df["_sector"] = df["symbol"].astype(str).str.upper().map(_sector_map)
+    _valid = df["_sector"].notna()
+    _sn_count = 0
+
+    for _src in _sn_sources:
+        _target = f"{_src}_sector_neutral"
+        if _target not in feature_columns:
+            continue
+        try:
+            _sector_med = (
+                df.loc[_valid]
+                .groupby(["date", "_sector"])[_src]
+                .transform("median")
+            )
+            _neutral = df[_src].copy()
+            _neutral.loc[_valid] = df.loc[_valid, _src] - _sector_med
+            _neutral.loc[~_valid] = 0.0
+            df[_target] = _neutral.fillna(0.0).astype(float)
+            _sn_count += 1
+        except Exception:
+            df[_target] = 0.0
+
+    df.drop(columns=["_sector"], inplace=True)
+
+    if _sn_count > 0:
+        LOGGER.info(
+            "_compute_sector_neutral_inplace: %d features computed "
+            "(%d symbols mapped to %d sectors)",
+            _sn_count, len(_sector_map), len(set(_sector_map.values())),
+        )
+    return _sn_count
+
+
 def _prepare_global_ranking_frame(
     bars_df: pd.DataFrame,
     cfg: TrainingConfig,
@@ -475,42 +537,7 @@ def train_global_ranking_wf(
     # à chaque date.  Isole l'alpha spécifique au titre vs son secteur.
     _sn_cols_in = [c for c in SECTOR_NEUTRAL_FEATURE_COLUMNS if c in feature_columns]
     if _sn_cols_in and cfg.data.enable_cross_sectional_features:
-        try:
-            from modelFactory.cross_sectional import _load_sector_mapping
-            _sector_map = _load_sector_mapping(engine)
-            if _sector_map:
-                _sn_sources = [c for c in SECTOR_NEUTRAL_SOURCE_FEATURES if c in base_df.columns]
-                if _sn_sources:
-                    base_df["_sector"] = base_df["symbol"].astype(str).str.upper().map(_sector_map)
-                    _valid = base_df["_sector"].notna()
-                    _sn_count = 0
-                    for _src in _sn_sources:
-                        _target = f"{_src}_sector_neutral"
-                        if _target not in feature_columns:
-                            continue
-                        _sector_med = (
-                            base_df.loc[_valid]
-                            .groupby(["date", "_sector"])[_src]
-                            .transform("median")
-                        )
-                        _neutral = base_df[_src].copy()
-                        _neutral.loc[_valid] = base_df.loc[_valid, _src] - _sector_med
-                        _neutral.loc[~_valid] = 0.0
-                        base_df[_target] = _neutral.fillna(0.0).astype(float)
-                        _sn_count += 1
-                    base_df.drop(columns=["_sector"], inplace=True)
-                    LOGGER.info(
-                        "train_global_ranking_wf sector-neutral computed for %d features "
-                        "(%d symbols mapped to %d sectors)",
-                        _sn_count, len(_sector_map), len(set(_sector_map.values())),
-                    )
-            else:
-                LOGGER.warning("train_global_ranking_wf sector-neutral skipped: empty sector_map")
-        except Exception as _sn_exc:
-            LOGGER.warning(
-                "train_global_ranking_wf sector-neutral computation failed (non-blocking): %s",
-                _sn_exc,
-            )
+        _compute_sector_neutral_inplace(base_df, feature_columns, engine)
 
     base_df = base_df.dropna(subset=feature_columns).reset_index(drop=True)
 
@@ -854,11 +881,18 @@ def predict_global_rank(
     artifacts_dir: Path,
     *,
     benchmark_df: pd.DataFrame | None = None,
+    engine: Any | None = None,
 ) -> pd.DataFrame | None:
     """Prédit les ``global_rank_{h}`` multi-horizons pour l'univers du jour.
 
     Charge les modèles sauvegardés par ``train_global_ranking_wf()`` et
     les applique sur l'univers courant.
+
+    Args:
+        universe_df: Barres OHLCV de tout l'univers.
+        artifacts_dir: Répertoire contenant ``_global_ranking_features.json``.
+        benchmark_df: Barres du benchmark (SPY).
+        engine: SQLAlchemy engine (requis pour les features sector-neutral).
 
     Returns:
         DataFrame [symbol, date, global_rank_3, global_rank_5, global_rank_10]
@@ -950,6 +984,11 @@ def predict_global_rank(
     for col in _feature_columns:
         if col not in pred_df.columns:
             pred_df[col] = 0.5 if col.endswith("_rank") or col.startswith("global_rank") else 0.0
+
+    # ── Sector-neutral features (parité entraînement/prédiction) ──
+    _sn_cols_in = [c for c in SECTOR_NEUTRAL_FEATURE_COLUMNS if c in _feature_columns]
+    if _sn_cols_in and engine is not None:
+        _compute_sector_neutral_inplace(pred_df, _feature_columns, engine)
 
     X = pred_df[_feature_columns]
     if X.shape[1] != len(_feature_columns):

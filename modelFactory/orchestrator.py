@@ -698,6 +698,57 @@ def run_training_batch(
         elif cfg.global_model.stacking_enabled:
             LOGGER.warning("run_training_batch stacking enabled but no global_rank_df produced")
 
+    # ── Sauvegarder _per_symbol_features.json AVANT la boucle per-symbol ──
+    # BLOQUANT et early : si l'écriture échoue (disque plein, permissions),
+    # on arrête tout de suite plutôt qu'après des heures d'entraînement.
+    # Ce fichier est la source de vérité pour la prédiction live/backtest.
+    from modelFactory.features import get_feature_columns
+    _ps_feature_columns = get_feature_columns(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_screener_scores=cfg.data.include_screener_scores,
+        include_short_score=cfg.data.include_short_score_features,
+        include_macro_vix=cfg.data.include_macro_vix_features,
+        include_macro_vxn=cfg.data.include_macro_vxn_features,
+        include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+        include_macro_move=cfg.data.include_macro_move_features,
+        include_global_stacking=cfg.global_model.stacking_enabled,
+        include_fundamentals=cfg.data.include_fundamentals_features,
+        include_factors=cfg.data.include_factors_features,
+        include_macro_regime=cfg.data.include_macro_regime_features,
+    )
+    _ps_features = {
+        "feature_columns": _ps_feature_columns,
+        "feature_set": cfg.data.feature_set,
+        "include_sentiment": cfg.data.include_sentiment_features,
+        "include_screener_scores": cfg.data.include_screener_scores,
+        "include_short_score": cfg.data.include_short_score_features,
+        "include_macro_vix": cfg.data.include_macro_vix_features,
+        "include_macro_vxn": cfg.data.include_macro_vxn_features,
+        "include_macro_vix3m": cfg.data.include_macro_vix3m_features,
+        "include_macro_move": cfg.data.include_macro_move_features,
+        "include_fundamentals": cfg.data.include_fundamentals_features,
+        "include_factors": cfg.data.include_factors_features,
+        "include_macro_regime": cfg.data.include_macro_regime_features,
+        "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
+        "global_stacking_enabled": cfg.global_model.stacking_enabled,
+    }
+    _model_dir = Path(cfg.artifacts_dir)
+    _model_dir.mkdir(parents=True, exist_ok=True)
+    _model_dir.joinpath("_per_symbol_features.json").write_text(
+        json.dumps(_ps_features, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    LOGGER.info(
+        "run_training_batch _per_symbol_features.json saved: %d features, "
+        "feature_set=%s, stacking=%s, cross_sectional=%s",
+        len(_ps_feature_columns),
+        cfg.data.feature_set,
+        cfg.global_model.stacking_enabled,
+        cfg.data.enable_cross_sectional_features,
+    )
+
     if effective_workers == 1:
         for index, sym in enumerate(symbols, start=1):
             try:
