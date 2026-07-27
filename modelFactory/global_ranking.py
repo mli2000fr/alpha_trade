@@ -65,7 +65,7 @@ _XS_RANK_SOURCE_FEATURES: list[str] = [
     "momentum_120", "momentum_250",
     # Volatilité
     "rolling_volatility_5", "rolling_volatility_10", "rolling_volatility_20",
-    "rolling_volatility_60", "rolling_volatility_120",
+    "rolling_volatility_60",
     # RSI
     "rsi_3", "rsi_5", "rsi_14", "rsi_21",
     # Distance aux moyennes mobiles
@@ -172,6 +172,8 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "regime_bull_market", "regime_risk_off",
         # Liquidité — trop dominante, écrase les signaux d'alpha
         "dollar_volume_20_rank",
+        # Volatilité 120j — béquille qui domine H10, empêche l'apprentissage du momentum
+        "rolling_volatility_120", "rolling_volatility_120_zscore", "rolling_volatility_120_xs_rank",
     }
     cols = [c for c in all_cols if c not in _macro_blacklist]
     # Ajouter les rangs cross-sectionnels des features brutes
@@ -646,11 +648,17 @@ def train_global_ranking_wf(
         # ── Feature importance agrégée pour cet horizon ──
         if _split_importances and _active_features:
             _mean_imp = _compute_mean_importance(_split_importances, _active_features)
-            _top30 = dict(list(_mean_imp.items())[:30])
+            _top10 = list(_mean_imp.items())[:10]
+            _bottom10 = list(_mean_imp.items())[-10:]
             LOGGER.info(
-                "global_ranking_wf horizon=%d feature_importance top5=%s",
+                "global_ranking_wf horizon=%d feature_importance top10=%s",
                 horizon,
-                {k: f"{v:.4f}" for k, v in list(_top30.items())[:5]},
+                {k: f"{v:.1f}" for k, v in _top10},
+            )
+            LOGGER.info(
+                "global_ranking_wf horizon=%d feature_importance bottom10=%s",
+                horizon,
+                {k: f"{v:.1f}" for k, v in _bottom10},
             )
 
         if h_parts:
