@@ -260,7 +260,8 @@ def forward_fill_fundamentals(
     # Forward-fill within each symbol group
     merged = merged.sort_values(["symbol", "date"]).reset_index(drop=True)
     for col in value_cols:
-        merged[col] = merged.groupby("symbol")[col].ffill()
+        if col in merged.columns:
+            merged[col] = merged.groupby("symbol")[col].ffill()
 
     return merged
 

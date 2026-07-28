@@ -195,7 +195,7 @@ def fundamentals_page() -> None:
                 "ticket-recherche (watchlist manuelle)",
                 "Symboles sans fondamentaux (provider_sector ou market_cap manquant)",
             ],
-            index=2,  # défaut : stock-bars-daily
+            index=1,  # défaut : tradable-universe
             key="fund_populate_mode",
             help="Détermine quels symboles seront fetchés. Tous les symboles de la source sont traités.",
         )

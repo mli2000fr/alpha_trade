@@ -3239,7 +3239,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--include-macro-move`. Indice ICE BofA MOVE : volatilité des bons du Trésor US.",
             )
             ml_include_fundamentals = st.checkbox(
-                "📊 Fondamentaux EODHD (PE, ROE, marges, croissance)",
+                "📊 Fondamentaux (PE, ROE, marges, croissance)",
                 value=_session_state_bool("pipeline_ml_include_fundamentals", DEFAULT_ML_INCLUDE_FUNDAMENTALS),
                 key="pipeline_ml_include_fundamentals",
                 help="Ajoute `--include-fundamentals`. Nécessite un backfill préalable de `stock_fundamentals_daily` (fetch EODHD).",

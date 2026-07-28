@@ -1,5 +1,6 @@
 1. vérifier les features utilisés dans l'entrainnement sur model global et per symbols sont aussi founit (identiques) dans prédit, en live et e nbacktest, ajouter les logs pour vérifier si besoin.
-2. découpage h3 et h5, donc ce ne ston plus les mêmes condictions dans l'entrainement, attention alignement aux predit backtest et live. (_H5_FEATURE_BLACKLIST dans global_ranking.py)
+2. découpage h3 et h5, donc ce ne sont plus les mêmes condictions dans l'entrainement, attention alignement aux predit backtest et live. (_H5_FEATURE_BLACKLIST dans global_ranking.py)
+3. vérifier dans live, il apelle bien sec pour récuperer les fondamentaux
 
 branche develop_ml_cascade_1:
 horizon=3 decile_spread=0.0095 top=0.5052 bottom=0.4957, ic_mean=0.0152

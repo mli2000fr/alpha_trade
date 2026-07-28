@@ -72,9 +72,10 @@ def _normalize_provider(provider: str) -> FundamentalsProvider:
 		"eodhd": "eodhd",
 		"finnhub": "finnhub",
 		"fmp": "fmp",
+		"sec": "sec",  # SEC EDGAR ne fournit pas sector/market_cap → fallback Yahoo
 	}
 	if normalized not in provider_aliases:
-		raise ValueError("provider doit être 'yahoo_finance', 'eodhd', 'finnhub' ou 'fmp'.")
+		raise ValueError("provider doit être 'yahoo_finance', 'eodhd', 'finnhub', 'fmp' ou 'sec'.")
 	normalized = provider_aliases[normalized]
 	return normalized  # type: ignore[return-value]
 
@@ -420,7 +421,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 	parser.add_argument(
 		"--provider",
 		type=str,
-		choices=("yahoo_finance", "eodhd", "finnhub", "fmp"),
+		choices=("yahoo_finance", "eodhd", "finnhub", "fmp", "sec"),
 		default="yahoo_finance",
 		help="Source fundamentals utilisée pour provider_sector et market_cap.",
 	)

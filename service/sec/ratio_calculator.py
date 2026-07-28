@@ -316,5 +316,9 @@ def _batch_update_market_ratios(
         for row in rows:
             params: dict[str, Any] = {"row_id": row["id"]}
             for col in all_keys:
-                params[f"new_{col}"] = row.get(col)
+                val = row.get(col)
+                # MySQL rejects NaN/Inf — replace with NULL
+                if val is not None and isinstance(val, float) and not np.isfinite(val):
+                    val = None
+                params[f"new_{col}"] = val
             conn.execute(_sa_text(sql), params)

@@ -1933,7 +1933,7 @@ def predict_global_rank_history(
     # ── Imports lourds ──
     from modelFactory.global_ranking import predict_global_rank
     from modelFactory.data_loader import load_universe_bars
-    from common.universe import load_tradable_universe_symbols
+    from modelFactory.db_registry import load_tradable_universe_symbols
 
     _start = pd.Timestamp(start_date)
     _end = pd.Timestamp(end_date)
@@ -1961,7 +1961,7 @@ def predict_global_rank_history(
 
     from modelFactory.global_ranking import predict_global_rank
     from modelFactory.data_loader import load_universe_bars
-    from common.universe import load_tradable_universe_symbols
+    from modelFactory.db_registry import load_tradable_universe_symbols
 
     results: dict[str, int] = {}
     _lookback_days = 365
