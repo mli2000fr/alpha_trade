@@ -33,6 +33,10 @@ CREATE TABLE alpha_trade.stock_fundamentals_daily (
     -- Estimates
     eps_estimate_current FLOAT COMMENT 'EPS estimate current year',
     eps_estimate_next FLOAT COMMENT 'EPS estimate next year',
+    
+    current_ratio FLOAT,
+    revenue FLOAT,
+    shares_outstanding BIGINT COMMENT 'Weighted average shares outstanding (from SEC 10-K/Q filings)',
     -- Metadata
     source VARCHAR(32) NOT NULL DEFAULT 'EODHD' COMMENT 'Data provider',
     PRIMARY KEY (id),

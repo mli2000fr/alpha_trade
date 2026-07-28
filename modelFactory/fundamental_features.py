@@ -488,9 +488,14 @@ def fetch_and_store_fundamentals(
                                 continue
                             if max_date and trade_date > max_date:
                                 continue
-                        row["fetched_at"] = now_utc
-                        row["source"] = "EODHD"
-                        _upsert_fundamentals_row(resolved_engine, **row)
+                        _upsert_fundamentals_row(
+                            resolved_engine,
+                            symbol=row.get("symbol") or normalized,
+                            trade_date=row.get("trade_date"),
+                            fetched_at=now_utc,
+                            record=row,
+                            source="EODHD",
+                        )
                         stored += 1
                     LOGGER.info(
                         "fetch_and_store_fundamentals %s: %d quarters stored (historical mode)",
@@ -512,6 +517,44 @@ def fetch_and_store_fundamentals(
                         "fetch_and_store_fundamentals %s: snapshot stored (no Financials)",
                         normalized,
                     )
+            elif provider == "sec":
+                # SEC EDGAR → historical quarterly data with true PIT (filed date)
+                from service.sec.clientEdgar import fetch_symbol_fundamentals_record as sec_record
+                from service.sec.xbrl_mapper import extract_fundamentals_from_sec
+
+                raw = sec_record(normalized)
+                raw_facts = raw.get("raw_facts", {})
+                if raw_facts:
+                    quarterly_rows = extract_fundamentals_from_sec(raw_facts, normalized)
+                    for row in quarterly_rows:
+                        trade_date = row.get("trade_date")
+                        if isinstance(trade_date, _date_cls):
+                            if min_date and trade_date < min_date:
+                                continue
+                            if max_date and trade_date > max_date:
+                                continue
+                        # Only upsert rows with at least one metric
+                        metric_keys = {"net_margin", "roe", "roa", "eps", "total_assets", "net_income"}
+                        if any(row.get(k) is not None for k in metric_keys):
+                            _upsert_fundamentals_row(
+                                resolved_engine,
+                                symbol=row.get("symbol") or normalized,
+                                trade_date=row.get("trade_date"),
+                                fetched_at=now_utc,
+                                record=row,
+                                source="SEC_EDGAR",
+                            )
+                            stored += 1
+                    LOGGER.info(
+                        "fetch_and_store_fundamentals %s: %d quarters stored (SEC EDGAR)",
+                        normalized, stored,
+                    )
+                    # Enrich with market ratios (PE, PB, beta...) from stock_bars_daily
+                    _enrich_sec_with_market_ratios(normalized, min_date, max_date)
+                else:
+                    failed += 1
+                    errors.append(f"{normalized}: no SEC EDGAR data found")
+                    LOGGER.warning("fetch_and_store_fundamentals %s: no SEC EDGAR facts", normalized)
             else:
                 # Finnhub / Yahoo / FMP → single snapshot
                 record = _fetch_fundamentals_record(normalized, provider=provider, session=session)
@@ -846,9 +889,10 @@ def _upsert_fundamentals_row(
         "pe_ratio", "forward_pe", "peg_ratio", "pb_ratio", "ps_ratio",
         "ev_to_ebitda", "roe", "roa", "net_margin", "operating_margin",
         "gross_margin", "eps_growth_yoy", "revenue_growth_yoy",
-        "debt_to_equity",
+        "debt_to_equity", "current_ratio",
         "dividend_yield", "market_cap", "beta", "eps",
         "book_value_per_share", "ebitda",
+        "shares_outstanding", "revenue",
         "eps_estimate_current", "eps_estimate_next",
     }
 
@@ -881,6 +925,29 @@ def _upsert_fundamentals_row(
 
     with engine.begin() as conn:
         conn.execute(_sa_text(upsert_sql), params)
+
+
+def _enrich_sec_with_market_ratios(
+    symbol: str,
+    min_date: Any,  # date or None
+    max_date: Any,  # date or None
+) -> None:
+    """Enrichit les lignes SEC EDGAR avec les ratios de marché (PE, PB, beta...)."""
+    try:
+        from service.sec.ratio_calculator import enrich_with_market_ratios
+        from database.connection import get_sqlalchemy_engine
+
+        engine = get_sqlalchemy_engine()
+        result = enrich_with_market_ratios(
+            engine,
+            [symbol],
+            start_date=min_date.isoformat() if min_date else None,
+            end_date=max_date.isoformat() if max_date else None,
+        )
+        if result.get("updated", 0) > 0:
+            LOGGER.info("Market ratio enrichment for %s: %d rows updated", symbol, result["updated"])
+    except Exception:
+        LOGGER.warning("Market ratio enrichment failed for %s", symbol, exc_info=True)
 
 
 __all__ = [
@@ -976,7 +1043,7 @@ def main() -> None:
     parser.add_argument(
         "--provider",
         type=str,
-        choices=("eodhd", "finnhub", "yahoo_finance", "fmp"),
+        choices=("eodhd", "finnhub", "yahoo_finance", "fmp", "sec"),
         default="eodhd",
         help="Fournisseur de données fondamentales.",
     )
