@@ -409,8 +409,10 @@ def fetch_and_store_fundamentals(
     engine=None,
     session=None,
     provider: str = "eodhd",
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict[str, Any]:
-    """Fetch fundamentals from EODHD and store in ``stock_fundamentals_daily``.
+    """Fetch fundamentals and store in ``stock_fundamentals_daily``.
 
     With a paid EODHD subscription, extracts **historical quarterly data**
     from the ``Financials`` section (Income_Statement, Balance_Sheet,
@@ -425,14 +427,20 @@ def fetch_and_store_fundamentals(
     engine : SQLAlchemy Engine, optional
     session : requests.Session, optional
     provider : str
-        "eodhd" (default), "finnhub", or "yahoo_finance".
+        "eodhd" (default), "finnhub", "yahoo_finance", or "fmp".
+    start_date : str | None
+        Date de début (YYYY-MM-DD). Si fournie, ne conserve que les trimestres
+        dont ``trade_date`` >= cette date.
+    end_date : str | None
+        Date de fin (YYYY-MM-DD). Si fournie, ne conserve que les trimestres
+        dont ``trade_date`` <= cette date.
 
     Returns
     -------
     dict with keys: stored (int), failed (int), errors (list[str])
     """
-    import time
-    from datetime import date as _date, datetime as _dt, timezone
+    import time as _time
+    from datetime import date as _date_cls, datetime as _dt_cls, timezone
 
     try:
         from sqlalchemy import text as _sa_text
@@ -441,7 +449,21 @@ def fetch_and_store_fundamentals(
     except Exception as exc:
         return {"stored": 0, "failed": len(symbols), "errors": [f"engine: {exc}"]}
 
-    now_utc = _dt.now(timezone.utc).replace(tzinfo=None)
+    # Parser les dates de filtrage
+    min_date: _date_cls | None = None
+    max_date: _date_cls | None = None
+    if start_date:
+        try:
+            min_date = _date_cls.fromisoformat(start_date)
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            max_date = _date_cls.fromisoformat(end_date)
+        except ValueError:
+            pass
+
+    now_utc = _dt_cls.now(timezone.utc).replace(tzinfo=None)
     stored = 0
     failed = 0
     errors: list[str] = []
@@ -458,11 +480,18 @@ def fetch_and_store_fundamentals(
                 quarterly_rows = _extract_quarterly_fundamentals(normalized, raw)
 
                 if quarterly_rows:
+                    # Filtrer par période si demandé
                     for row in quarterly_rows:
+                        trade_date = row.get("trade_date")
+                        if isinstance(trade_date, _date_cls):
+                            if min_date and trade_date < min_date:
+                                continue
+                            if max_date and trade_date > max_date:
+                                continue
                         row["fetched_at"] = now_utc
                         row["source"] = "EODHD"
                         _upsert_fundamentals_row(resolved_engine, **row)
-                    stored += len(quarterly_rows)
+                        stored += 1
                     LOGGER.info(
                         "fetch_and_store_fundamentals %s: %d quarters stored (historical mode)",
                         normalized, len(quarterly_rows),
@@ -473,7 +502,7 @@ def fetch_and_store_fundamentals(
                     _upsert_fundamentals_row(
                         resolved_engine,
                         symbol=normalized,
-                        trade_date=_date.today(),
+                        trade_date=_date_cls.today(),
                         fetched_at=now_utc,
                         record=record,
                         source=record.get("source", "EODHD"),
@@ -484,17 +513,29 @@ def fetch_and_store_fundamentals(
                         normalized,
                     )
             else:
-                # Finnhub / Yahoo → single snapshot
+                # Finnhub / Yahoo / FMP → single snapshot
                 record = _fetch_fundamentals_record(normalized, provider=provider, session=session)
-                _upsert_fundamentals_row(
-                    resolved_engine,
-                    symbol=normalized,
-                    trade_date=_date.today(),
-                    fetched_at=now_utc,
-                    record=record,
-                    source=record.get("source", provider.upper()),
-                )
-                stored += 1
+                # Vérifier que le record contient au moins une donnée utile
+                meaningful_fields = [
+                    record.get("sector"), record.get("market_cap"),
+                    record.get("pe_ratio"), record.get("roe"), record.get("eps"),
+                ]
+                if any(v is not None and v != 0 for v in meaningful_fields):
+                    _upsert_fundamentals_row(
+                        resolved_engine,
+                        symbol=normalized,
+                        trade_date=_date_cls.today(),
+                        fetched_at=now_utc,
+                        record=record,
+                        source=record.get("source", provider.upper()),
+                    )
+                    stored += 1
+                else:
+                    failed += 1
+                    errors.append(f"{normalized}: aucune donnée utile récupérée (vérifier token/API)")
+                    LOGGER.warning(
+                        "fetch_and_store_fundamentals %s: aucune donnée utile (record vide)", normalized,
+                    )
 
         except Exception as exc:
             failed += 1
@@ -502,7 +543,7 @@ def fetch_and_store_fundamentals(
             LOGGER.warning("fetch_and_store_fundamentals failed for %s: %s", symbol, exc)
 
         # Respect rate limits
-        time.sleep(0.25)
+        _time.sleep(0.25)
 
     LOGGER.info(
         "fetch_and_store_fundamentals done: stored=%d failed=%d symbols=%d",
@@ -805,7 +846,7 @@ def _upsert_fundamentals_row(
         "pe_ratio", "forward_pe", "peg_ratio", "pb_ratio", "ps_ratio",
         "ev_to_ebitda", "roe", "roa", "net_margin", "operating_margin",
         "gross_margin", "eps_growth_yoy", "revenue_growth_yoy",
-        "debt_to_equity", "current_ratio",
+        "debt_to_equity",
         "dividend_yield", "market_cap", "beta", "eps",
         "book_value_per_share", "ebitda",
         "eps_estimate_current", "eps_estimate_next",
@@ -851,3 +892,177 @@ __all__ = [
     "merge_fundamentals",
     "fetch_and_store_fundamentals",
 ]
+
+
+# ── CLI (python -m modelFactory.fundamental_features) ──
+
+def _resolve_cli_symbols(
+    symbol_source: str,
+    *,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[str]:
+    """Résout une source symbolique en liste de symboles.
+
+    Mêmes sources que ``update_sector`` :
+    - ``missing-fundamentals`` (défaut)
+    - ``stock-bars-daily``
+    - ``tradable-universe`` (requiert --start-date/--end-date)
+    - ``ticket-recherche`` (lit config/ticket_recherche.txt)
+    """
+    from database.connection import get_sqlalchemy_engine as _get_engine
+    from modelFactory.db_registry import load_symbols_for_source
+
+    engine = _get_engine()
+
+    if symbol_source == "ticket-recherche":
+        return load_symbols_for_source(engine, "ticket-recherche")
+
+    if symbol_source == "stock-bars-daily":
+        return load_symbols_for_source(engine, "stock-bars-daily")
+
+    if symbol_source == "tradable-universe":
+        if not start_date or not end_date:
+            raise ValueError("--start-date et --end-date sont requis pour --symbol-source tradable-universe")
+        from datetime import datetime as _dt_cls
+        try:
+            sd = _dt_cls.strptime(start_date, "%Y-%m-%d").date()
+            ed = _dt_cls.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError(f"Format de date invalide (attendu YYYY-MM-DD) : {exc}") from exc
+        from common.tradable_universe import load_tradable_universe_for_period
+        return load_tradable_universe_for_period(engine, sd, ed)
+
+    # missing-fundamentals (défaut)
+    from database.assets import get_symbols_missing_fundamentals, get_symbols_with_stale_market_cap
+    symbols = get_symbols_missing_fundamentals()
+    stale = get_symbols_with_stale_market_cap(max_age_days=30)
+    seen: set[str] = set()
+    combined: list[str] = []
+    for sym in (*symbols, *stale):
+        if sym not in seen:
+            seen.add(sym)
+            combined.append(sym)
+    return combined
+
+
+def main() -> None:
+    """CLI : fetch et stocke les fondamentaux historiques dans stock_fundamentals_daily."""
+    import argparse
+    import sys as _sys
+
+    parser = argparse.ArgumentParser(
+        description="Fetch les fondamentaux historiques et les stocke dans stock_fundamentals_daily.",
+    )
+    parser.add_argument(
+        "--symbol-source",
+        type=str,
+        choices=("missing-fundamentals", "stock-bars-daily", "tradable-universe", "ticket-recherche"),
+        default="missing-fundamentals",
+        help="Source des symboles à traiter.",
+    )
+    parser.add_argument(
+        "--start-date",
+        type=str,
+        default=None,
+        help="Date de début (YYYY-MM-DD). Période des fondamentaux à récupérer.",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        default=None,
+        help="Date de fin (YYYY-MM-DD). Période des fondamentaux à récupérer.",
+    )
+    parser.add_argument(
+        "--provider",
+        type=str,
+        choices=("eodhd", "finnhub", "yahoo_finance", "fmp"),
+        default="eodhd",
+        help="Fournisseur de données fondamentales.",
+    )
+    parser.add_argument(
+        "--overwrite-existing",
+        action="store_true",
+        default=False,
+        help="Écrase les données existantes (force re-fetch).",
+    )
+    args = parser.parse_args()
+
+    # Configure logging
+    from common.utils import configure_root_logging
+    configure_root_logging(
+        level=logging.INFO,
+        log_path="./log/fundamental_features.log",
+        fmt="%(asctime)s %(levelname)s %(message)s",
+    )
+
+    # 1. Résoudre les symboles
+    symbols = _resolve_cli_symbols(
+        args.symbol_source,
+        start_date=args.start_date if args.symbol_source == "tradable-universe" else None,
+        end_date=args.end_date if args.symbol_source == "tradable-universe" else None,
+    )
+
+    if not symbols:
+        LOGGER.warning("Aucun symbole à traiter après résolution.")
+        print("Aucun symbole à traiter.", flush=True)
+        return
+
+    LOGGER.info("Début fetch fondamentaux : %s symboles, provider=%s", len(symbols), args.provider)
+    print(f"Début fetch fondamentaux : {len(symbols)} symboles, provider={args.provider}", flush=True)
+
+    # Vérification préalable du token FMP si le fournisseur est fmp
+    if args.provider == "fmp":
+        import os as _os
+        if not _os.getenv("FMP_TOKEN", "").strip():
+            msg = (
+                "FMP_TOKEN environment variable is not set. "
+                "Set it via: $env:FMP_TOKEN='your_api_key' "
+                "(or export FMP_TOKEN=... on Linux/Mac)"
+            )
+            LOGGER.error(msg)
+            print(f"ERREUR: {msg}", flush=True)
+            _sys.exit(1)
+
+    # 2. Fetch et stockage (avec période si fournie, +1 an de look-back)
+    fetch_start = args.start_date
+    if fetch_start:
+        try:
+            from datetime import datetime as _dt_cls
+            sd = _dt_cls.strptime(fetch_start, "%Y-%m-%d").date()
+            # Look-back de 1 an : garantir que forward_fill aura des données dès le début
+            lookback_start = sd.replace(year=sd.year - 1).isoformat()
+            LOGGER.info("Look-back -1 an appliqué : %s → %s (fetch_start)", fetch_start, lookback_start)
+            print(f"Look-back -1 an : fetch de {lookback_start} à {args.end_date or 'aujourdhui'}", flush=True)
+            fetch_start = lookback_start
+        except ValueError:
+            pass
+
+    result = fetch_and_store_fundamentals(
+        symbols,
+        provider=args.provider,
+        start_date=fetch_start,
+        end_date=args.end_date,
+    )
+
+    print(f"Fetch terminé : {result['stored']} stockés, {result['failed']} échecs", flush=True)
+    if result.get("errors"):
+        for err in result["errors"][:20]:
+            print(f"  Erreur: {err}", flush=True)
+
+    # Émettre un résumé JSON (compatible pipeline)
+    import json as _json
+    summary = {
+        "run_id": f"fund-fetch-{pd.Timestamp.now().strftime('%Y%m%d%H%M%S')}",
+        "symbol_source": args.symbol_source,
+        "provider": args.provider,
+        "start_date": args.start_date,
+        "end_date": args.end_date,
+        "total": len(symbols),
+        **result,
+    }
+    print(f"::alpha_trade_run_summary::{_json.dumps(summary, ensure_ascii=False, default=str)}", flush=True)
+
+
+if __name__ == "__main__":
+    main()

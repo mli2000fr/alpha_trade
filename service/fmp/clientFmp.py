@@ -1,10 +1,10 @@
-"""service/fmp/clientFmp.py — Financial Modeling Prep API client.
+"""service/fmp/clientFmp.py — Financial Modeling Prep API client (Stable API).
 
-FMP free tier endpoints used:
-- ``/api/v3/profile/{symbol}`` — company profile, sector, market cap, beta
-- ``/api/v3/ratios-ttm/{symbol}`` — TTM ratios: PE, PB, PS, ROE, ROA, margins
-- ``/api/v3/key-metrics-ttm/{symbol}`` — TTM metrics: EV/EBITDA, book value
-- ``/api/v3/financial-growth/{symbol}?limit=1`` — YoY growth: EPS, revenue
+FMP endpoints (current /stable API):
+- ``/stable/profile?symbol={symbol}`` — company profile, sector, market cap, beta
+- ``/stable/key-metrics-ttm?symbol={symbol}`` — TTM metrics: PE, PB, ROE, ROA, etc.
+- ``/stable/ratios-ttm?symbol={symbol}`` — TTM ratios: margins, debt, etc.
+- ``/stable/financial-growth?symbol={symbol}&limit=1`` — YoY growth: EPS, revenue
 
 Rate limit: 250 requests/day (free tier).
 """
@@ -18,7 +18,7 @@ import requests
 
 LOGGER = logging.getLogger(__name__)
 
-_FMP_BASE_URL = "https://financialmodelingprep.com/api/v3"
+_FMP_BASE_URL = "https://financialmodelingprep.com/stable"
 
 # Shared session (connection pooling)
 _SESSION: requests.Session | None = None
@@ -63,6 +63,7 @@ def _get_api_key() -> str:
     import os
     _key = os.getenv("FMP_TOKEN", "").strip()
     if not _key:
+        LOGGER.error("FMP_TOKEN environment variable is not set. Set it via: $env:FMP_TOKEN='your_key'")
         raise FmpError("FMP_TOKEN environment variable required")
     return _key
 
@@ -89,21 +90,23 @@ def _do_get(endpoint: str, params: dict[str, Any] | None = None) -> Any:
         raise FmpError(f"FMP HTTP {resp.status_code}: {resp.text[:200]}")
 
     try:
-        return resp.json()
+        result = resp.json()
     except ValueError as exc:
         raise FmpError(f"FMP invalid JSON response") from exc
 
+    # Détecter les erreurs retournées dans le body (ex: "Legacy Endpoint")
+    if isinstance(result, dict) and "Error Message" in result:
+        raise FmpError(f"FMP API error: {result['Error Message'][:200]}")
+
+    return result
+
 
 def fetch_profile(symbol: str) -> dict[str, Any] | None:
-    """Fetch company profile from FMP.
-
-    Returns dict with: symbol, price, beta, mktCap, sector, industry,
-    exchange, companyName, etc.  None if symbol not found.
-    """
+    """Fetch company profile from FMP stable API."""
     try:
-        data = _do_get(f"profile/{symbol.upper()}")
-    except FmpError:
-        LOGGER.warning("FMP profile fetch failed for %s", symbol)
+        data = _do_get("profile", {"symbol": symbol.upper()})
+    except FmpError as exc:
+        LOGGER.warning("FMP profile fetch failed for %s: %s", symbol, exc)
         return None
 
     if not isinstance(data, list) or len(data) == 0:
@@ -112,56 +115,40 @@ def fetch_profile(symbol: str) -> dict[str, Any] | None:
     return data[0]
 
 
-def fetch_ratios_ttm(symbol: str) -> dict[str, Any] | None:
-    """Fetch TTM ratios from FMP.
-
-    Returns dict with: peRatioTTM, pegRatioTTM, priceToBookRatioTTM,
-    priceToSalesRatioTTM, returnOnEquityTTM, returnOnAssetsTTM,
-    netProfitMarginTTM, operatingProfitMarginTTM, grossProfitMarginTTM,
-    debtEquityRatioTTM, currentRatioTTM, dividendYielPercentageTTM, etc.
-    None if not available.
-    """
+def fetch_ratios(symbol: str) -> dict[str, Any] | None:
+    """Fetch TTM ratios from FMP stable API."""
     try:
-        data = _do_get(f"ratios-ttm/{symbol.upper()}")
-    except FmpError:
-        LOGGER.warning("FMP ratios-ttm fetch failed for %s", symbol)
+        data = _do_get("ratios-ttm", {"symbol": symbol.upper()})
+    except FmpError as exc:
+        LOGGER.warning("FMP ratios fetch failed for %s: %s", symbol, exc)
         return None
 
     if not isinstance(data, list) or len(data) == 0:
-        LOGGER.info("FMP: no ratios-ttm for %s", symbol)
+        LOGGER.info("FMP: no ratios for %s", symbol)
         return None
     return data[0]
 
 
-def fetch_key_metrics_ttm(symbol: str) -> dict[str, Any] | None:
-    """Fetch TTM key metrics from FMP.
-
-    Returns dict with: enterpriseValueMultipleTTM, bookValuePerShareTTM,
-    peRatioTTM, marketCapTTM, etc.
-    None if not available.
-    """
+def fetch_key_metrics(symbol: str) -> dict[str, Any] | None:
+    """Fetch TTM key metrics from FMP stable API."""
     try:
-        data = _do_get(f"key-metrics-ttm/{symbol.upper()}")
-    except FmpError:
-        LOGGER.warning("FMP key-metrics-ttm fetch failed for %s", symbol)
+        data = _do_get("key-metrics-ttm", {"symbol": symbol.upper()})
+    except FmpError as exc:
+        LOGGER.warning("FMP key-metrics fetch failed for %s: %s", symbol, exc)
         return None
 
     if not isinstance(data, list) or len(data) == 0:
-        LOGGER.info("FMP: no key-metrics-ttm for %s", symbol)
+        LOGGER.info("FMP: no key-metrics for %s", symbol)
         return None
     return data[0]
 
 
 def fetch_financial_growth(symbol: str) -> dict[str, Any] | None:
-    """Fetch latest financial growth YoY from FMP.
-
-    Returns dict with: epsgrowth, revenueGrowth, etc.
-    None if not available.
-    """
+    """Fetch latest financial growth YoY from FMP stable API."""
     try:
-        data = _do_get(f"financial-growth/{symbol.upper()}", {"limit": "1"})
-    except FmpError:
-        LOGGER.warning("FMP financial-growth fetch failed for %s", symbol)
+        data = _do_get("financial-growth", {"symbol": symbol.upper(), "limit": "1"})
+    except FmpError as exc:
+        LOGGER.warning("FMP financial-growth fetch failed for %s: %s", symbol, exc)
         return None
 
     if not isinstance(data, list) or len(data) == 0:
@@ -192,10 +179,10 @@ def fetch_symbol_fundamentals_record(
 
     _sf = lambda v: float(v) if v not in (None, "", 0) else None
 
-    # ── Fetch all FMP endpoints ──
+    # ── Fetch all FMP endpoints (current post-Aug 2025) ──
     profile = fetch_profile(normalized_symbol)
-    ratios = fetch_ratios_ttm(normalized_symbol) or {}
-    metrics = fetch_key_metrics_ttm(normalized_symbol) or {}
+    ratios = fetch_ratios(normalized_symbol) or {}
+    metrics = fetch_key_metrics(normalized_symbol) or {}
     growth = fetch_financial_growth(normalized_symbol) or {}
 
     # ── Extract from profile ──
@@ -204,44 +191,43 @@ def fetch_symbol_fundamentals_record(
     beta = None
     if profile:
         sector = profile.get("sector") or profile.get("industry")
-        # FMP profile uses "mktCap" (int or float)
         market_cap = _sf(profile.get("mktCap"))
         beta = _sf(profile.get("beta"))
 
     # ── Build normalized record ──
+    # Stable API renvoie les champs avec le suffixe "TTM" (ex: peRatioTTM, roeTTM, etc.)
     record: dict[str, Any] = {
         "symbol": normalized_symbol,
         "sector": str(sector).strip() if sector else None,
         "market_cap": market_cap or _sf(metrics.get("marketCapTTM")),
         "source": "FMP",
         "raw_profile": profile,
-        # Valuation (ratios-ttm)
+        # Valuation — ratios-ttm
         "pe_ratio": _sf(ratios.get("peRatioTTM")),
-        "forward_pe": _sf(metrics.get("peRatioTTM")),  # approximation
+        "forward_pe": _sf(metrics.get("peRatioTTM")),
         "peg_ratio": _sf(ratios.get("pegRatioTTM")),
         "pb_ratio": _sf(ratios.get("priceToBookRatioTTM")),
         "ps_ratio": _sf(ratios.get("priceToSalesRatioTTM")),
-        "ev_to_ebitda": _sf(metrics.get("enterpriseValueMultipleTTM")),
-        # Profitability (ratios-ttm)
-        "roe": _sf(ratios.get("returnOnEquityTTM")),
-        "roa": _sf(ratios.get("returnOnAssetsTTM")),
+        "ev_to_ebitda": _sf(metrics.get("enterpriseValueMultipleTTM")) or _sf(metrics.get("enterpriseValueOverEBITDA")),
+        # Profitability — ratios-ttm + key-metrics-ttm
+        "roe": _sf(ratios.get("returnOnEquityTTM")) or _sf(metrics.get("roeTTM")),
+        "roa": _sf(ratios.get("returnOnAssetsTTM")) or _sf(metrics.get("roaTTM")),
         "net_margin": _sf(ratios.get("netProfitMarginTTM")),
         "operating_margin": _sf(ratios.get("operatingProfitMarginTTM")),
         "gross_margin": _sf(ratios.get("grossProfitMarginTTM")),
-        # Growth (financial-growth)
-        "eps_growth_yoy": _sf(growth.get("epsgrowth")),
+        # Growth — financial-growth
+        "eps_growth_yoy": _sf(growth.get("epsgrowth")) or _sf(growth.get("epsGrowth")),
         "revenue_growth_yoy": _sf(growth.get("revenueGrowth")),
-        # Health (ratios-ttm)
-        "debt_to_equity": _sf(ratios.get("debtEquityRatioTTM")),
-        "current_ratio": _sf(ratios.get("currentRatioTTM")),
-        # Yield (ratios-ttm)
-        "dividend_yield": _sf(ratios.get("dividendYielPercentageTTM")),
+        # Health
+        "debt_to_equity": _sf(ratios.get("debtEquityRatioTTM")) or _sf(metrics.get("debtToEquityTTM")),
+        "current_ratio": _sf(ratios.get("currentRatioTTM")) or _sf(metrics.get("currentRatioTTM")),
+        # Yield
+        "dividend_yield": _sf(ratios.get("dividendYielPercentageTTM")) or _sf(ratios.get("dividendYieldTTM")),
         # Market
         "beta": beta,
-        "eps": _sf(ratios.get("cashPerShareTTM")),
+        "eps": _sf(metrics.get("netIncomePerShareTTM")) or _sf(metrics.get("netIncomePerShare")),
         "book_value_per_share": _sf(metrics.get("bookValuePerShareTTM")),
-        "ebitda": None,  # FMP free tier — income-statement-ttm requires paid plan
-        # Estimates (FMP free tier — analyst-estimates requires paid plan)
+        "ebitda": None,
         "eps_estimate_current": None,
         "eps_estimate_next": None,
     }
@@ -254,11 +240,8 @@ __all__ = [
     "FmpRateLimitError",
     "FmpSymbolNotFound",
     "fetch_profile",
-    "fetch_ratios_ttm",
-    "fetch_key_metrics_ttm",
+    "fetch_ratios",
+    "fetch_key_metrics",
     "fetch_financial_growth",
-    "fetch_symbol_fundamentals_record",
-]
-
     "fetch_symbol_fundamentals_record",
 ]

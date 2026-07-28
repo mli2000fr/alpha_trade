@@ -195,7 +195,7 @@ def fundamentals_page() -> None:
                 "ticket-recherche (watchlist manuelle)",
                 "Symboles sans fondamentaux (provider_sector ou market_cap manquant)",
             ],
-            index=0,  # défaut : stock-bars-daily
+            index=2,  # défaut : stock-bars-daily
             key="fund_populate_mode",
             help="Détermine quels symboles seront fetchés. Tous les symboles de la source sont traités.",
         )
@@ -205,16 +205,16 @@ def fundamentals_page() -> None:
         with col_d1:
             fund_start_date = st.date_input(
                 "Date de début",
-                value=_date(2015, 1, 1),
+                value=_date(2018, 1, 1),
                 key="fund_start_date",
-                help="Pour tradable-universe : filtre les symboles tradables sur cette période. Pour les autres sources : informatif.",
+                help="Période des fondamentaux à récupérer (filtre les trimestres). Requis pour tradable-universe.",
             )
         with col_d2:
             fund_end_date = st.date_input(
                 "Date de fin",
-                value=_date.today(),
+                value=_date(2026, 6, 30),
                 key="fund_end_date",
-                help="Pour tradable-universe : borne haute. Pour les autres sources : informatif.",
+                help="Période des fondamentaux à récupérer (filtre les trimestres). Requis pour tradable-universe.",
             )
 
         col_pop2, col_pop3 = st.columns(2)
@@ -248,21 +248,19 @@ def fundamentals_page() -> None:
         cli_cmd = [
             sys.executable,
             "-m",
-            "dataIntegrityEngine.update_sector",
+            "modelFactory.fundamental_features",
             "--provider",
             populate_provider,
             "--symbol-source",
             symbol_source,
+            "--start-date", fund_start_date.isoformat(),
+            "--end-date", fund_end_date.isoformat(),
         ]
         if populate_overwrite or symbol_source in ("stock-bars-daily", "tradable-universe"):
             cli_cmd.append("--overwrite-existing")
-        # Les dates sont toujours affichées si renseignées (filtre additionnel valable pour toute source)
-        cli_cmd.extend([
-            "--start-date", fund_start_date.isoformat(),
-            "--end-date", fund_end_date.isoformat(),
-        ])
         cli_cmd_display = subprocess.list2cmdline(cli_cmd)
         st.code(cli_cmd_display, language="powershell")
+        st.caption("ℹ️ Un look-back de -1 an est automatiquement appliqué au fetch pour garantir que `forward_fill` dispose de données dès la date de début.")
 
         # ── Preview ──
         if st.button("🔍 Aperçu des symboles concernés", key="fund_populate_preview"):
@@ -480,7 +478,7 @@ _FETCH_STATE_KEYS = [
     "fund_populate_cmd",
     "fund_populate_logs",
     "fund_populate_result",
-    "fund_populate_provider",
+    "fund_populate_run_provider",
     "fund_populate_tempfile",
     "fund_populate_output_queue",
     "fund_populate_reader_done",
@@ -553,21 +551,16 @@ def _start_fundamentals_fetch_subprocess(
     cmd = [
         sys.executable,
         "-m",
-        "dataIntegrityEngine.update_sector",
+        "modelFactory.fundamental_features",
         "--provider",
         populate_provider,
         "--symbol-source",
         symbol_source,
-        "--log-every",
-        "10",
+        "--start-date", fund_start_date.isoformat(),
+        "--end-date", fund_end_date.isoformat(),
     ]
     if populate_overwrite or symbol_source in ("stock-bars-daily", "tradable-universe"):
         cmd.append("--overwrite-existing")
-    # Toujours passer les dates (filtre additionnel valable pour toute source)
-    cmd.extend([
-        "--start-date", fund_start_date.isoformat(),
-        "--end-date", fund_end_date.isoformat(),
-    ])
 
     # Pas de fichier temporaire : tout passe par --symbol-source
 
@@ -616,7 +609,7 @@ def _start_fundamentals_fetch_subprocess(
     st.session_state["fund_populate_cmd"] = subprocess.list2cmdline(cmd)
     st.session_state["fund_populate_logs"] = []
     st.session_state["fund_populate_result"] = None
-    st.session_state["fund_populate_provider"] = populate_provider
+    st.session_state["fund_populate_run_provider"] = populate_provider
     st.session_state["fund_populate_tempfile"] = None
     st.session_state["fund_populate_output_queue"] = output_queue
     st.session_state["fund_populate_reader_done"] = False
@@ -696,7 +689,7 @@ def _render_fundamentals_fetch_results() -> None:
     result = st.session_state.get("fund_populate_result", {})
     logs = result.get("logs", []) if isinstance(result, dict) else []
     returncode = result.get("returncode", -1) if isinstance(result, dict) else -1
-    provider = st.session_state.get("fund_populate_provider", "inconnu")
+    provider = st.session_state.get("fund_populate_run_provider", "inconnu")
     cmd_display = st.session_state.get("fund_populate_cmd", "")
 
     full_log = "\n".join(logs)

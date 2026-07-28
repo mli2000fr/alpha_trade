@@ -477,13 +477,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 		"--start-date",
 		type=str,
 		default=None,
-		help="Date de début (YYYY-MM-DD). Filtre les symboles sur l'univers tradable PIT de la période.",
+		help="Date de début (YYYY-MM-DD). Requis pour --symbol-source tradable-universe.",
 	)
 	parser.add_argument(
 		"--end-date",
 		type=str,
 		default=None,
-		help="Date de fin (YYYY-MM-DD). Filtre les symboles sur l'univers tradable PIT de la période.",
+		help="Date de fin (YYYY-MM-DD). Requis pour --symbol-source tradable-universe.",
 	)
 	return parser
 
@@ -514,28 +514,6 @@ def main() -> None:
 		if resolved:
 			explicit_symbols = resolved
 			LOGGER.info("Symboles résolus depuis --symbol-source %s : %s symboles", args.symbol_source, len(explicit_symbols))
-
-	# 3. Filtre additionnel par univers tradable PIT (valable pour toute source)
-	if args.start_date and args.end_date and explicit_symbols is not None:
-		from common.tradable_universe import load_tradable_universe_for_period
-		from database.connection import get_sqlalchemy_engine as _get_engine
-		try:
-			start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
-			end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
-		except ValueError as exc:
-			LOGGER.error("Format de date invalide (attendu YYYY-MM-DD) : %s", exc)
-			raise SystemExit(1) from exc
-		tradable_symbols = load_tradable_universe_for_period(
-			_get_engine(),
-			start_date,
-			end_date,
-		)
-		tradable_set = {s.upper() for s in tradable_symbols}
-		explicit_symbols = [s for s in explicit_symbols if s in tradable_set]
-		LOGGER.info(
-			"Filtre tradable-universe [%s -> %s] : %s -> %s symboles après intersection",
-			args.start_date, args.end_date, len(tradable_symbols), len(explicit_symbols),
-		)
 
 	summary = update_missing_sectors(
 		limit=args.limit,
