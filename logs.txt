@@ -7,7 +7,7 @@ horizon=3 done ic_mean=0.0152
 horizon=5 decile_spread=0.0069 top=0.5018 bottom=0.4949
 horizon=5 done ic_mean=0.0087
 
-develop_ml_cascade_4: avec FMG fondamentaux
+develop_ml_cascade_4: avec FMG et sec
 
 SEC EDGAR pour les fondamentaux
 
