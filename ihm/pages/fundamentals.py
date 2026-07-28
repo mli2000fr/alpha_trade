@@ -11,6 +11,10 @@ Les données sont lues depuis ``stock_fundamentals_daily`` et
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import time
 from datetime import date as _date, datetime as _dt, timedelta
 from pathlib import Path
 from typing import Any
@@ -228,6 +232,38 @@ def fundamentals_page() -> None:
                 key="fund_populate_overwrite",
             )
 
+        # ── Commande CLI équivalente ──
+        st.caption("Commande équivalente (copiable pour exécution hors IHM) :")
+        # Mapping IHM -> CLI --symbol-source
+        _MODE_TO_SYMBOL_SOURCE = {
+            "stock-bars-daily": "stock-bars-daily",
+            "tradable-universe": "tradable-universe",
+            "ticket-recherche": "ticket-recherche",
+            "Symboles sans fondamentaux": "missing-fundamentals",
+        }
+        symbol_source = next(
+            (v for k, v in _MODE_TO_SYMBOL_SOURCE.items() if k in universe_mode),
+            "missing-fundamentals",
+        )
+        cli_cmd = [
+            sys.executable,
+            "-m",
+            "dataIntegrityEngine.update_sector",
+            "--provider",
+            populate_provider,
+            "--symbol-source",
+            symbol_source,
+        ]
+        if populate_overwrite or symbol_source in ("stock-bars-daily", "tradable-universe"):
+            cli_cmd.append("--overwrite-existing")
+        # Les dates sont toujours affichées si renseignées (filtre additionnel valable pour toute source)
+        cli_cmd.extend([
+            "--start-date", fund_start_date.isoformat(),
+            "--end-date", fund_end_date.isoformat(),
+        ])
+        cli_cmd_display = subprocess.list2cmdline(cli_cmd)
+        st.code(cli_cmd_display, language="powershell")
+
         # ── Preview ──
         if st.button("🔍 Aperçu des symboles concernés", key="fund_populate_preview"):
             with st.spinner("Résolution de l'univers…"):
@@ -263,63 +299,27 @@ def fundamentals_page() -> None:
                 except Exception as exc:
                     st.error(f"Erreur lors de la résolution : {exc}")
 
-        if st.button("🚀 Lancer le fetch des fondamentaux", type="primary", key="fund_populate_btn"):
-            with st.spinner(f"Fetch des fondamentaux en cours ({populate_provider})…"):
-                try:
-                    from modelFactory.fundamental_features import fetch_and_store_fundamentals
-                    from database.assets import (
-                        list_eligible_stock_symbols,
-                        get_symbols_missing_fundamentals,
-                        get_symbols_with_stale_market_cap,
-                    )
-                    from common.tradable_universe import load_tradable_universe_for_period
-                    from database.connection import get_sqlalchemy_engine
-
-                    if populate_overwrite:
-                        from modelFactory.db_registry import load_stock_bars_daily_symbols
-                        symbols = load_stock_bars_daily_symbols(get_sqlalchemy_engine())
-                    elif "sans fondamentaux" in universe_mode:
-                        symbols = get_symbols_missing_fundamentals()
-                        if not symbols:
-                            # Fallback: refresh stale
-                            symbols = get_symbols_with_stale_market_cap(max_age_days=30)
-                        if not symbols:
-                            symbols = list_eligible_stock_symbols()
-                    elif "stock-bars-daily" in universe_mode:
-                        from modelFactory.db_registry import load_stock_bars_daily_symbols
-                        symbols = load_stock_bars_daily_symbols(get_sqlalchemy_engine())
-                    elif "tradable-universe" in universe_mode:
-                        symbols = load_tradable_universe_for_period(
-                            get_sqlalchemy_engine(),
-                            fund_start_date,
-                            fund_end_date,
-                        )
-                    elif "ticket-recherche" in universe_mode:
-                        from modelFactory.db_registry import load_symbols_for_source
-                        symbols = load_symbols_for_source(get_sqlalchemy_engine(), "ticket-recherche")
-
-
-                    if not symbols:
-                        st.warning("Aucun symbole à rafraîchir — tous les symboles ont déjà des fondamentaux récents.")
-                    else:
-                        st.info(f"{len(symbols)} symboles à traiter : {', '.join(symbols[:10])}{'…' if len(symbols) > 10 else ''}")
-                        result = fetch_and_store_fundamentals(
-                            symbols,
-                            provider=populate_provider,
-                        )
-                        if result["stored"] > 0:
-                            st.success(f"✅ {result['stored']} fondamentaux stockés avec succès (source: {populate_provider})")
-                        if result["failed"] > 0:
-                            st.error(f"❌ {result['failed']} échecs")
-                            if result.get("errors"):
-                                st.code("\n".join(result["errors"][:10]))
-                        # Clear caches so the page refreshes
-                        _load_fundamentals_summary.clear()
-                        _load_coverage_stats.clear()
-                        _load_sector_distribution.clear()
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"Erreur lors du fetch : {exc}")
+        # ── État du fetch en cours ──
+        fetch_status = st.session_state.get("fund_populate_status", "")
+        if fetch_status == "running":
+            _render_live_fundamentals_fetch()
+            # Auto-refresh pendant l'exécution
+            time.sleep(0.8)
+            st.rerun()
+        elif fetch_status in ("completed", "failed", "stopped"):
+            _render_fundamentals_fetch_results()
+            _clear_fundamentals_fetch_state()
+        else:
+            # ── Bouton de lancement ──
+            if st.button("🚀 Lancer le fetch des fondamentaux", type="primary", key="fund_populate_btn"):
+                _start_fundamentals_fetch_subprocess(
+                    universe_mode=universe_mode,
+                    populate_provider=populate_provider,
+                    populate_overwrite=populate_overwrite,
+                    fund_start_date=fund_start_date,
+                    fund_end_date=fund_end_date,
+                )
+                st.rerun()
 
     st.divider()
 
@@ -470,6 +470,295 @@ def fundamentals_page() -> None:
 def render() -> None:
     """Point d'entrée standard pour la navigation IHM (appelé par ihm/app.py)."""
     fundamentals_page()
+
+
+# ── Helpers pour le fetch en subprocess (avec arrêt et logs live) ──
+
+_FETCH_STATE_KEYS = [
+    "fund_populate_status",
+    "fund_populate_process",
+    "fund_populate_cmd",
+    "fund_populate_logs",
+    "fund_populate_result",
+    "fund_populate_provider",
+    "fund_populate_tempfile",
+    "fund_populate_output_queue",
+    "fund_populate_reader_done",
+    "fund_populate_num_symbols",
+]
+
+
+def _start_fundamentals_fetch_subprocess(
+    *,
+    universe_mode: str,
+    populate_provider: str,
+    populate_overwrite: bool,
+    fund_start_date: _date,
+    fund_end_date: _date,
+) -> None:
+    """Résout les symboles, construit la commande CLI et lance le subprocess."""
+    import os
+    import queue as _queue_mod
+
+    from database.assets import (
+        list_eligible_stock_symbols,
+        get_symbols_missing_fundamentals,
+        get_symbols_with_stale_market_cap,
+    )
+    from common.tradable_universe import load_tradable_universe_for_period
+    from database.connection import get_sqlalchemy_engine
+
+    # ── Résolution des symboles ──
+    if populate_overwrite:
+        from modelFactory.db_registry import load_stock_bars_daily_symbols
+        symbols = load_stock_bars_daily_symbols(get_sqlalchemy_engine())
+    elif "sans fondamentaux" in universe_mode:
+        symbols = get_symbols_missing_fundamentals()
+        if not symbols:
+            symbols = get_symbols_with_stale_market_cap(max_age_days=30)
+        if not symbols:
+            symbols = list_eligible_stock_symbols()
+    elif "stock-bars-daily" in universe_mode:
+        from modelFactory.db_registry import load_stock_bars_daily_symbols
+        symbols = load_stock_bars_daily_symbols(get_sqlalchemy_engine())
+    elif "tradable-universe" in universe_mode:
+        symbols = load_tradable_universe_for_period(
+            get_sqlalchemy_engine(),
+            fund_start_date,
+            fund_end_date,
+        )
+    elif "ticket-recherche" in universe_mode:
+        from modelFactory.db_registry import load_symbols_for_source
+        symbols = load_symbols_for_source(get_sqlalchemy_engine(), "ticket-recherche")
+    else:
+        symbols = []
+
+    if not symbols:
+        st.warning("Aucun symbole à rafraîchir — tous les symboles ont déjà des fondamentaux récents.")
+        return
+
+    st.session_state["fund_populate_num_symbols"] = len(symbols)
+
+    # ── Construction de la commande ──
+    _MODE_TO_SYMBOL_SOURCE = {
+        "stock-bars-daily": "stock-bars-daily",
+        "tradable-universe": "tradable-universe",
+        "ticket-recherche": "ticket-recherche",
+        "Symboles sans fondamentaux": "missing-fundamentals",
+    }
+    symbol_source = next(
+        (v for k, v in _MODE_TO_SYMBOL_SOURCE.items() if k in universe_mode),
+        "missing-fundamentals",
+    )
+    cmd = [
+        sys.executable,
+        "-m",
+        "dataIntegrityEngine.update_sector",
+        "--provider",
+        populate_provider,
+        "--symbol-source",
+        symbol_source,
+        "--log-every",
+        "10",
+    ]
+    if populate_overwrite or symbol_source in ("stock-bars-daily", "tradable-universe"):
+        cmd.append("--overwrite-existing")
+    # Toujours passer les dates (filtre additionnel valable pour toute source)
+    cmd.extend([
+        "--start-date", fund_start_date.isoformat(),
+        "--end-date", fund_end_date.isoformat(),
+    ])
+
+    # Pas de fichier temporaire : tout passe par --symbol-source
+
+    # ── Copie de l'environnement (FMP_TOKEN etc.) ──
+    env = os.environ.copy()
+    # Ajouter le répertoire projet au PYTHONPATH si nécessaire
+    project_root = str(Path(__file__).resolve().parents[2])
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    if existing_pythonpath:
+        env["PYTHONPATH"] = f"{project_root}{os.pathsep}{existing_pythonpath}"
+    else:
+        env["PYTHONPATH"] = project_root
+
+    # ── Lancement du subprocess ──
+    process = subprocess.Popen(
+        cmd,
+        cwd=project_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+
+    # Queue pour la communication inter-thread
+    output_queue: _queue_mod.Queue[tuple[str, str]] = _queue_mod.Queue()
+
+    def _reader(stream, stream_name: str) -> None:
+        try:
+            for line in iter(stream.readline, ""):
+                output_queue.put((stream_name, line))
+        finally:
+            stream.close()
+
+    import threading
+    t_stdout = threading.Thread(target=_reader, args=(process.stdout, "stdout"), daemon=True)
+    t_stderr = threading.Thread(target=_reader, args=(process.stderr, "stderr"), daemon=True)
+    t_stdout.start()
+    t_stderr.start()
+
+    # ── Stockage dans la session ──
+    st.session_state["fund_populate_status"] = "running"
+    st.session_state["fund_populate_process"] = process
+    st.session_state["fund_populate_cmd"] = subprocess.list2cmdline(cmd)
+    st.session_state["fund_populate_logs"] = []
+    st.session_state["fund_populate_result"] = None
+    st.session_state["fund_populate_provider"] = populate_provider
+    st.session_state["fund_populate_tempfile"] = None
+    st.session_state["fund_populate_output_queue"] = output_queue
+    st.session_state["fund_populate_reader_done"] = False
+
+
+def _drain_output_queue() -> None:
+    """Lit les lignes disponibles dans la queue et les ajoute aux logs."""
+    queue_obj = st.session_state.get("fund_populate_output_queue")
+    if queue_obj is None:
+        return
+    logs = st.session_state.get("fund_populate_logs", [])
+    while True:
+        try:
+            stream_name, line = queue_obj.get_nowait()
+        except Exception:
+            break
+        prefix = "" if stream_name == "stdout" else "[STDERR] "
+        logs.append(f"{prefix}{line.rstrip()}")
+    st.session_state["fund_populate_logs"] = logs
+
+
+def _render_live_fundamentals_fetch() -> None:
+    """Affiche les logs en direct et le bouton d'arrêt pendant l'exécution."""
+    process = st.session_state.get("fund_populate_process")
+    if process is None:
+        st.session_state["fund_populate_status"] = "failed"
+        st.rerun()
+        return
+
+    # Vérifier si le process est toujours en cours
+    returncode = process.poll()
+    _drain_output_queue()
+
+    if returncode is not None:
+        # Process terminé
+        _drain_output_queue()  # Dernière lecture
+        if returncode == 0:
+            st.session_state["fund_populate_status"] = "completed"
+        elif returncode == -15 or returncode == -9:
+            # SIGTERM / SIGKILL
+            st.session_state["fund_populate_status"] = "stopped"
+        else:
+            st.session_state["fund_populate_status"] = "failed"
+        # Stocker le returncode et les logs pour l'affichage
+        st.session_state["fund_populate_result"] = {
+            "returncode": returncode,
+            "logs": st.session_state.get("fund_populate_logs", []),
+        }
+        st.rerun()
+        return
+
+    # ── Affichage live ──
+    num_symbols = st.session_state.get("fund_populate_num_symbols", "?")
+    st.info(f"🟨 Fetch en cours — **{num_symbols}** symboles à traiter")
+
+    col_stop, col_info = st.columns([1, 3])
+    with col_stop:
+        if st.button("⏹️ Arrêter le fetch", key="fund_populate_stop_btn", type="secondary"):
+            process.kill()
+            _drain_output_queue()
+            st.session_state["fund_populate_status"] = "stopped"
+            st.session_state["fund_populate_result"] = {
+                "returncode": -15,
+                "logs": st.session_state.get("fund_populate_logs", []),
+            }
+            st.rerun()
+
+    logs = st.session_state.get("fund_populate_logs", [])
+    with st.expander("📋 Logs en direct", expanded=True):
+        log_text = "\n".join(logs[-100:]) if logs else "En attente des premières lignes…"
+        with st.container(height=400):
+            st.code(log_text, language="text")
+
+
+def _render_fundamentals_fetch_results() -> None:
+    """Affiche le résultat final du fetch avec téléchargement des logs."""
+    result = st.session_state.get("fund_populate_result", {})
+    logs = result.get("logs", []) if isinstance(result, dict) else []
+    returncode = result.get("returncode", -1) if isinstance(result, dict) else -1
+    provider = st.session_state.get("fund_populate_provider", "inconnu")
+    cmd_display = st.session_state.get("fund_populate_cmd", "")
+
+    full_log = "\n".join(logs)
+
+    if returncode == 0:
+        # Essayer de parser le run summary JSON pour des stats précises
+        stored = 0
+        failed = 0
+        updated = 0
+        for line in logs:
+            if "::alpha_trade_run_summary::" in line:
+                try:
+                    import json
+                    json_start = line.index("::alpha_trade_run_summary::") + len("::alpha_trade_run_summary::")
+                    summary = json.loads(line[json_start:])
+                    stored = summary.get("stored", summary.get("updated", 0))
+                    updated = summary.get("updated", 0)
+                    failed = summary.get("failed", 0)
+                except Exception:
+                    pass
+        if stored > 0 or updated > 0:
+            st.success(f"✅ Fetch terminé — {stored or updated} mis à jour, {failed} échecs (source: {provider})")
+        else:
+            st.success(f"✅ Fetch terminé avec succès (source: {provider})")
+    elif returncode == -15 or returncode == -9:
+        st.warning(f"⏹️ Fetch arrêté par l'utilisateur (source: {provider})")
+    else:
+        st.error(f"❌ Fetch terminé avec erreur (code {returncode}, source: {provider})")
+
+    if cmd_display:
+        st.caption("Commande exécutée :")
+        st.code(cmd_display, language="powershell")
+
+    if full_log.strip():
+        with st.expander("📋 Logs d'exécution", expanded=True):
+            st.code(full_log[-20000:], language="text")
+        st.download_button(
+            label="📥 Télécharger les logs",
+            data=full_log,
+            file_name=f"fundamentals_fetch_{provider}_{_dt.now().strftime('%Y%m%d_%H%M%S')}.log",
+            mime="text/plain",
+            key="fund_download_logs",
+        )
+
+    # Clear caches
+    _load_fundamentals_summary.clear()
+    _load_coverage_stats.clear()
+    _load_sector_distribution.clear()
+
+
+def _clear_fundamentals_fetch_state() -> None:
+    """Nettoie la session state et les fichiers temporaires après un fetch."""
+    temp_file = st.session_state.get("fund_populate_tempfile")
+    if temp_file and os.path.exists(temp_file):
+        try:
+            os.unlink(temp_file)
+        except OSError:
+            pass
+
+    for key in _FETCH_STATE_KEYS:
+        if key in st.session_state:
+            del st.session_state[key]
 
 
 if __name__ == "__main__":

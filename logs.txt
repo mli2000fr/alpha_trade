@@ -1,12 +1,13 @@
 1. vérifier les features utilisés dans l'entrainnement sur model global et per symbols sont aussi founit (identiques) dans prédit, en live et e nbacktest, ajouter les logs pour vérifier si besoin.
 2. découpage h3 et h5, donc ce ne ston plus les mêmes condictions dans l'entrainement, attention alignement aux predit backtest et live. (_H5_FEATURE_BLACKLIST dans global_ranking.py)
+
 branche develop_ml_cascade_1:
 horizon=3 decile_spread=0.0095 top=0.5052 bottom=0.4957, ic_mean=0.0152
 horizon=3 done ic_mean=0.0152
 horizon=5 decile_spread=0.0069 top=0.5018 bottom=0.4949
 horizon=5 done ic_mean=0.0087
 
-develop_ml_cascade_3: avec FMG fontamentaux
+develop_ml_cascade_4: avec FMG fondamentaux
 
 SEC EDGAR pour les fondamentaux
 

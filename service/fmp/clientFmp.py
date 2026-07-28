@@ -1,8 +1,10 @@
 """service/fmp/clientFmp.py — Financial Modeling Prep API client.
 
-FMP free tier provides:
+FMP free tier endpoints used:
 - ``/api/v3/profile/{symbol}`` — company profile, sector, market cap, beta
-- ``/api/v3/key-metrics/{symbol}?limit=1`` — ROE, ROA, PE, debt/equity, etc.
+- ``/api/v3/ratios-ttm/{symbol}`` — TTM ratios: PE, PB, PS, ROE, ROA, margins
+- ``/api/v3/key-metrics-ttm/{symbol}`` — TTM metrics: EV/EBITDA, book value
+- ``/api/v3/financial-growth/{symbol}?limit=1`` — YoY growth: EPS, revenue
 
 Rate limit: 250 requests/day (free tier).
 """
@@ -95,10 +97,8 @@ def _do_get(endpoint: str, params: dict[str, Any] | None = None) -> Any:
 def fetch_profile(symbol: str) -> dict[str, Any] | None:
     """Fetch company profile from FMP.
 
-    Returns:
-        dict with keys: symbol, price, beta, marketCap, sector, industry,
-        exchange, companyName, mktCap, range, changes, volAvg, etc.
-        None if symbol not found.
+    Returns dict with: symbol, price, beta, mktCap, sector, industry,
+    exchange, companyName, etc.  None if symbol not found.
     """
     try:
         data = _do_get(f"profile/{symbol.upper()}")
@@ -112,23 +112,60 @@ def fetch_profile(symbol: str) -> dict[str, Any] | None:
     return data[0]
 
 
-def fetch_key_metrics(symbol: str) -> dict[str, Any] | None:
-    """Fetch latest key metrics TTM from FMP.
+def fetch_ratios_ttm(symbol: str) -> dict[str, Any] | None:
+    """Fetch TTM ratios from FMP.
 
-    Returns:
-        dict with keys: roe, roa, peRatio, pbRatio, debtToEquity,
-        currentRatio, netProfitMargin, revenueGrowth, earningsGrowth,
-        dividendYield, marketCap, enterpriseValue, etc.
-        None if not available.
+    Returns dict with: peRatioTTM, pegRatioTTM, priceToBookRatioTTM,
+    priceToSalesRatioTTM, returnOnEquityTTM, returnOnAssetsTTM,
+    netProfitMarginTTM, operatingProfitMarginTTM, grossProfitMarginTTM,
+    debtEquityRatioTTM, currentRatioTTM, dividendYielPercentageTTM, etc.
+    None if not available.
     """
     try:
-        data = _do_get(f"key-metrics/{symbol.upper()}", {"limit": "1"})
+        data = _do_get(f"ratios-ttm/{symbol.upper()}")
     except FmpError:
-        LOGGER.warning("FMP key-metrics fetch failed for %s", symbol)
+        LOGGER.warning("FMP ratios-ttm fetch failed for %s", symbol)
         return None
 
     if not isinstance(data, list) or len(data) == 0:
-        LOGGER.info("FMP: no key metrics for %s", symbol)
+        LOGGER.info("FMP: no ratios-ttm for %s", symbol)
+        return None
+    return data[0]
+
+
+def fetch_key_metrics_ttm(symbol: str) -> dict[str, Any] | None:
+    """Fetch TTM key metrics from FMP.
+
+    Returns dict with: enterpriseValueMultipleTTM, bookValuePerShareTTM,
+    peRatioTTM, marketCapTTM, etc.
+    None if not available.
+    """
+    try:
+        data = _do_get(f"key-metrics-ttm/{symbol.upper()}")
+    except FmpError:
+        LOGGER.warning("FMP key-metrics-ttm fetch failed for %s", symbol)
+        return None
+
+    if not isinstance(data, list) or len(data) == 0:
+        LOGGER.info("FMP: no key-metrics-ttm for %s", symbol)
+        return None
+    return data[0]
+
+
+def fetch_financial_growth(symbol: str) -> dict[str, Any] | None:
+    """Fetch latest financial growth YoY from FMP.
+
+    Returns dict with: epsgrowth, revenueGrowth, etc.
+    None if not available.
+    """
+    try:
+        data = _do_get(f"financial-growth/{symbol.upper()}", {"limit": "1"})
+    except FmpError:
+        LOGGER.warning("FMP financial-growth fetch failed for %s", symbol)
+        return None
+
+    if not isinstance(data, list) or len(data) == 0:
+        LOGGER.info("FMP: no financial-growth for %s", symbol)
         return None
     return data[0]
 
@@ -137,20 +174,29 @@ def fetch_symbol_fundamentals_record(
     symbol: str,
     session: Any = None,  # unused, kept for interface compatibility
 ) -> dict[str, Any]:
-    """Retourne un enregistrement normalisé contenant les fondamentaux FMP.
+    """Retourne un enregistrement normalisé FMP prêt pour stock_fundamentals_daily.
+
+    Utilise 4 endpoints FMP (3 calls ratio + 1 call profile).
+    Mapping exact des champs FMP → colonnes MySQL.
 
     Returns:
-        dict with keys: symbol, sector, market_cap, source,
-        + all normalized financial ratios ready for stock_fundamentals_daily.
+        dict with keys: symbol, sector, market_cap, source, pe_ratio,
+        forward_pe, peg_ratio, pb_ratio, ps_ratio, ev_to_ebitda, roe, roa,
+        net_margin, operating_margin, gross_margin, eps_growth_yoy,
+        revenue_growth_yoy, debt_to_equity, current_ratio, dividend_yield,
+        beta, eps, book_value_per_share, ebitda, raw_profile.
     """
     normalized_symbol = str(symbol).strip().upper()
     if not normalized_symbol:
         raise ValueError("symbol ne peut pas être vide.")
 
-    profile = fetch_profile(normalized_symbol)
-    metrics = fetch_key_metrics(normalized_symbol)
-
     _sf = lambda v: float(v) if v not in (None, "", 0) else None
+
+    # ── Fetch all FMP endpoints ──
+    profile = fetch_profile(normalized_symbol)
+    ratios = fetch_ratios_ttm(normalized_symbol) or {}
+    metrics = fetch_key_metrics_ttm(normalized_symbol) or {}
+    growth = fetch_financial_growth(normalized_symbol) or {}
 
     # ── Extract from profile ──
     sector = None
@@ -158,43 +204,44 @@ def fetch_symbol_fundamentals_record(
     beta = None
     if profile:
         sector = profile.get("sector") or profile.get("industry")
+        # FMP profile uses "mktCap" (int or float)
         market_cap = _sf(profile.get("mktCap"))
         beta = _sf(profile.get("beta"))
 
-    # ── Extract from key metrics ──
+    # ── Build normalized record ──
     record: dict[str, Any] = {
         "symbol": normalized_symbol,
         "sector": str(sector).strip() if sector else None,
-        "market_cap": market_cap,
+        "market_cap": market_cap or _sf(metrics.get("marketCapTTM")),
         "source": "FMP",
         "raw_profile": profile,
-        # Valuation
-        "pe_ratio": _sf((metrics or {}).get("peRatio")),
-        "pb_ratio": _sf((metrics or {}).get("pbRatio")),
-        "ps_ratio": _sf((metrics or {}).get("priceToSalesRatio")),
-        "ev_to_ebitda": _sf((metrics or {}).get("enterpriseValueOverEBITDA")),
-        "peg_ratio": None,  # FMP free tier doesn't provide PEG
-        "forward_pe": None,  # FMP free tier doesn't provide forward PE
-        # Profitability
-        "roe": _sf((metrics or {}).get("roe")),
-        "roa": _sf((metrics or {}).get("returnOnTangibleAssets")),
-        "net_margin": _sf((metrics or {}).get("netProfitMargin")),
-        "operating_margin": _sf((metrics or {}).get("operatingProfitMargin")),
-        "gross_margin": _sf((metrics or {}).get("grossProfitMargin")),
-        # Growth
-        "eps_growth_yoy": _sf((metrics or {}).get("earningsGrowth")),
-        "revenue_growth_yoy": _sf((metrics or {}).get("revenueGrowth")),
-        # Health
-        "debt_to_equity": _sf((metrics or {}).get("debtToEquity")),
-        "current_ratio": _sf((metrics or {}).get("currentRatio")),
-        # Yield
-        "dividend_yield": _sf((metrics or {}).get("dividendYield")),
+        # Valuation (ratios-ttm)
+        "pe_ratio": _sf(ratios.get("peRatioTTM")),
+        "forward_pe": _sf(metrics.get("peRatioTTM")),  # approximation
+        "peg_ratio": _sf(ratios.get("pegRatioTTM")),
+        "pb_ratio": _sf(ratios.get("priceToBookRatioTTM")),
+        "ps_ratio": _sf(ratios.get("priceToSalesRatioTTM")),
+        "ev_to_ebitda": _sf(metrics.get("enterpriseValueMultipleTTM")),
+        # Profitability (ratios-ttm)
+        "roe": _sf(ratios.get("returnOnEquityTTM")),
+        "roa": _sf(ratios.get("returnOnAssetsTTM")),
+        "net_margin": _sf(ratios.get("netProfitMarginTTM")),
+        "operating_margin": _sf(ratios.get("operatingProfitMarginTTM")),
+        "gross_margin": _sf(ratios.get("grossProfitMarginTTM")),
+        # Growth (financial-growth)
+        "eps_growth_yoy": _sf(growth.get("epsgrowth")),
+        "revenue_growth_yoy": _sf(growth.get("revenueGrowth")),
+        # Health (ratios-ttm)
+        "debt_to_equity": _sf(ratios.get("debtEquityRatioTTM")),
+        "current_ratio": _sf(ratios.get("currentRatioTTM")),
+        # Yield (ratios-ttm)
+        "dividend_yield": _sf(ratios.get("dividendYielPercentageTTM")),
         # Market
         "beta": beta,
-        "eps": _sf((metrics or {}).get("netIncomePerShare")),
-        "book_value_per_share": _sf((metrics or {}).get("bookValuePerShare")),
-        "ebitda": _sf((metrics or {}).get("enterpriseValue")) / (_sf((metrics or {}).get("enterpriseValueOverEBITDA")) or 1) if _sf((metrics or {}).get("enterpriseValue")) and _sf((metrics or {}).get("enterpriseValueOverEBITDA")) else None,
-        # Estimates (FMP free tier doesn't provide these)
+        "eps": _sf(ratios.get("cashPerShareTTM")),
+        "book_value_per_share": _sf(metrics.get("bookValuePerShareTTM")),
+        "ebitda": None,  # FMP free tier — income-statement-ttm requires paid plan
+        # Estimates (FMP free tier — analyst-estimates requires paid plan)
         "eps_estimate_current": None,
         "eps_estimate_next": None,
     }
@@ -207,6 +254,11 @@ __all__ = [
     "FmpRateLimitError",
     "FmpSymbolNotFound",
     "fetch_profile",
-    "fetch_key_metrics",
+    "fetch_ratios_ttm",
+    "fetch_key_metrics_ttm",
+    "fetch_financial_growth",
+    "fetch_symbol_fundamentals_record",
+]
+
     "fetch_symbol_fundamentals_record",
 ]

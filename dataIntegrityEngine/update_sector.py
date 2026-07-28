@@ -109,6 +109,70 @@ def _select_target_symbols(
 	return combined, missing_symbols, stale_symbols
 
 
+def _load_symbols_from_file(filepath: str) -> list[str]:
+	"""Charge une liste de symboles depuis un fichier.
+
+	Supporte deux formats :
+	- Un symbole par ligne
+	- Symboles séparés par des virgules sur une même ligne
+	- Les lignes vides et commençant par ``#`` sont ignorées.
+	"""
+	symbols: list[str] = []
+	with open(filepath, "r", encoding="utf-8") as fh:
+		for line in fh:
+			line = line.strip()
+			if not line or line.startswith("#"):
+				continue
+			for part in line.split(","):
+				part = part.strip().upper()
+				if part:
+					symbols.append(part)
+	return sorted(set(symbols))
+
+
+def _resolve_symbol_source(
+	source: str,
+	*,
+	start_date: str | None = None,
+	end_date: str | None = None,
+) -> list[str]:
+	"""Résout une source symbolique en liste de symboles.
+
+	Args:
+		source: ``missing-fundamentals`` (défaut), ``stock-bars-daily``,
+		        ``tradable-universe``, ou ``ticket-recherche``.
+		start_date: Requis pour ``tradable-universe`` (YYYY-MM-DD).
+		end_date: Requis pour ``tradable-universe`` (YYYY-MM-DD).
+
+	Returns:
+		Liste triée et dédupliquée de symboles.
+	"""
+	from database.connection import get_sqlalchemy_engine as _get_engine
+	from modelFactory.db_registry import load_symbols_for_source
+
+	engine = _get_engine()
+
+	if source == "ticket-recherche":
+		return load_symbols_for_source(engine, "ticket-recherche")
+
+	if source == "stock-bars-daily":
+		return load_symbols_for_source(engine, "stock-bars-daily")
+
+	if source == "tradable-universe":
+		if not start_date or not end_date:
+			raise ValueError("--start-date et --end-date sont requis pour --symbol-source tradable-universe")
+		try:
+			sd = datetime.strptime(start_date, "%Y-%m-%d").date()
+			ed = datetime.strptime(end_date, "%Y-%m-%d").date()
+		except ValueError as exc:
+			raise ValueError(f"Format de date invalide (attendu YYYY-MM-DD) : {exc}") from exc
+		from common.tradable_universe import load_tradable_universe_for_period
+		return load_tradable_universe_for_period(engine, sd, ed)
+
+	# missing-fundamentals (défaut) → géré par _select_target_symbols
+	return []
+
+
 def _fetch_fundamentals(
 	symbol: str,
 	*,
@@ -167,6 +231,7 @@ def update_missing_sectors(
 	refresh_stale_days: int | None = None,
 	provider: FundamentalsProvider = "yahoo_finance",
 	overwrite_existing: bool = False,
+	explicit_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
 	provider = _normalize_provider(provider)
 	if sleep_seconds < 0:
@@ -176,11 +241,16 @@ def update_missing_sectors(
 	if refresh_stale_days is not None and refresh_stale_days < 0:
 		raise ValueError("refresh_stale_days doit être >= 0.")
 
-	symbols, missing_symbols, stale_symbols = _select_target_symbols(
-		limit=limit,
-		refresh_stale_days=refresh_stale_days,
-		overwrite_existing=overwrite_existing,
-	)
+	if explicit_symbols is not None:
+		symbols = [str(s).strip().upper() for s in explicit_symbols if str(s).strip()]
+		missing_symbols: list[str] = []
+		stale_symbols: list[str] = []
+	else:
+		symbols, missing_symbols, stale_symbols = _select_target_symbols(
+			limit=limit,
+			refresh_stale_days=refresh_stale_days,
+			overwrite_existing=overwrite_existing,
+		)
 	total = len(symbols)
 	stale_symbol_set = {str(symbol).strip().upper() for symbol in stale_symbols}
 	existing_rows = get_stock_metadata_fundamentals_map(symbols)
@@ -194,7 +264,7 @@ def update_missing_sectors(
 		"refresh_stale_days": refresh_stale_days,
 		"provider": provider,
 		"provider_effective": provider,
-		"overwrite_existing": bool(overwrite_existing),
+		"overwrite_existing": bool(overwrite_existing or explicit_symbols is not None),
 		"provider_fallback_triggered": False,
 		"provider_fallback_count": 0,
 	}
@@ -381,6 +451,40 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 		default=False,
 		help="Écrase aussi les provider_sector / market_cap déjà présents pour les symboles ciblés.",
 	)
+	parser.add_argument(
+		"--symbol-source",
+		type=str,
+		choices=("missing-fundamentals", "stock-bars-daily", "tradable-universe", "ticket-recherche"),
+		default="missing-fundamentals",
+		help=(
+			"Source des symboles à traiter. "
+			"missing-fundamentals (défaut) : symboles sans provider_sector ou market_cap obsolète. "
+			"stock-bars-daily : tous les symboles avec OHLCV. "
+			"tradable-universe : univers tradable PIT (requiert --start-date/--end-date). "
+			"ticket-recherche : watchlist config/ticket_recherche.txt."
+		),
+	)
+	parser.add_argument(
+		"--symbols-file",
+		type=str,
+		default=None,
+		help=(
+			"Fichier contenant un symbole par ligne ou séparés par des virgules (UTF-8). "
+			"Si fourni, remplace --symbol-source."
+		),
+	)
+	parser.add_argument(
+		"--start-date",
+		type=str,
+		default=None,
+		help="Date de début (YYYY-MM-DD). Filtre les symboles sur l'univers tradable PIT de la période.",
+	)
+	parser.add_argument(
+		"--end-date",
+		type=str,
+		default=None,
+		help="Date de fin (YYYY-MM-DD). Filtre les symboles sur l'univers tradable PIT de la période.",
+	)
 	return parser
 
 
@@ -393,6 +497,46 @@ def main() -> None:
 	args = _build_arg_parser().parse_args()
 	started_at = _utc_now_naive()
 	refresh_stale_days = args.refresh_stale_days if args.refresh_stale_days and args.refresh_stale_days > 0 else None
+
+	explicit_symbols: list[str] | None = None
+
+	# 1. --symbols-file (prioritaire sur --symbol-source)
+	if args.symbols_file:
+		explicit_symbols = _load_symbols_from_file(args.symbols_file)
+		LOGGER.info("Symboles chargés depuis %s : %s symboles", args.symbols_file, len(explicit_symbols))
+	else:
+		# 2. --symbol-source (résolution symbolique)
+		resolved = _resolve_symbol_source(
+			args.symbol_source,
+			start_date=args.start_date if args.symbol_source == "tradable-universe" else None,
+			end_date=args.end_date if args.symbol_source == "tradable-universe" else None,
+		)
+		if resolved:
+			explicit_symbols = resolved
+			LOGGER.info("Symboles résolus depuis --symbol-source %s : %s symboles", args.symbol_source, len(explicit_symbols))
+
+	# 3. Filtre additionnel par univers tradable PIT (valable pour toute source)
+	if args.start_date and args.end_date and explicit_symbols is not None:
+		from common.tradable_universe import load_tradable_universe_for_period
+		from database.connection import get_sqlalchemy_engine as _get_engine
+		try:
+			start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
+			end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
+		except ValueError as exc:
+			LOGGER.error("Format de date invalide (attendu YYYY-MM-DD) : %s", exc)
+			raise SystemExit(1) from exc
+		tradable_symbols = load_tradable_universe_for_period(
+			_get_engine(),
+			start_date,
+			end_date,
+		)
+		tradable_set = {s.upper() for s in tradable_symbols}
+		explicit_symbols = [s for s in explicit_symbols if s in tradable_set]
+		LOGGER.info(
+			"Filtre tradable-universe [%s -> %s] : %s -> %s symboles après intersection",
+			args.start_date, args.end_date, len(tradable_symbols), len(explicit_symbols),
+		)
+
 	summary = update_missing_sectors(
 		limit=args.limit,
 		sleep_seconds=args.sleep_seconds,
@@ -400,6 +544,7 @@ def main() -> None:
 		refresh_stale_days=refresh_stale_days,
 		provider=args.provider,
 		overwrite_existing=bool(args.overwrite_existing),
+		explicit_symbols=explicit_symbols,
 	)
 	finished_at = _utc_now_naive()
 	cli_summary: dict[str, Any] = {
@@ -409,9 +554,12 @@ def main() -> None:
 		"duration_seconds": round((finished_at - started_at).total_seconds(), 2),
 		"requested_limit": args.limit,
 		"provider": args.provider,
+		"symbol_source": args.symbol_source,
 		"overwrite_existing": bool(args.overwrite_existing),
 		"sleep_seconds": args.sleep_seconds,
 		"log_every": args.log_every,
+		"filter_start_date": args.start_date,
+		"filter_end_date": args.end_date,
 		**summary,
 	}
 	# Phase 3.1.e : compteur biais IEX `stale_market_cap_pct` propagé via
