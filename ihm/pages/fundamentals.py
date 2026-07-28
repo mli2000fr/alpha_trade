@@ -217,7 +217,7 @@ def fundamentals_page() -> None:
         with col_pop2:
             populate_provider = st.selectbox(
                 "Fournisseur",
-                options=["eodhd", "finnhub", "yahoo_finance"],
+                options=["eodhd", "finnhub", "yahoo_finance", "fmp"],
                 index=0,
                 key="fund_populate_provider",
             )

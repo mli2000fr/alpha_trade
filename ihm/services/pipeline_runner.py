@@ -1654,7 +1654,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     if step_key == "update_sector":
         fundamentals_provider = (
             options.data_integrity_fundamentals_provider
-            if options.data_integrity_fundamentals_provider in {"yahoo_finance", "eodhd", "finnhub"}
+            if options.data_integrity_fundamentals_provider in {"yahoo_finance", "eodhd", "finnhub", "fmp"}
             else "yahoo_finance"
         )
         command = [

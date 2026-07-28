@@ -723,6 +723,11 @@ def _fetch_fundamentals_record(
         else:
             from service.yahoo.clientYahooFinance import fetch_symbol_fundamentals_record as yf_record
             return yf_record(symbol, session=session)
+
+    elif provider_lower == "fmp":
+        from service.fmp.clientFmp import fetch_symbol_fundamentals_record as fmp_record
+        return fmp_record(symbol, session=session)
+
     else:
         raise ValueError(f"Unknown provider: {provider}")
 

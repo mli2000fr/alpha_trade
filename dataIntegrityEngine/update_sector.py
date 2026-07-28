@@ -37,7 +37,7 @@ DEFAULT_LOG_EVERY = 50
 DEFAULT_REFRESH_STALE_DAYS = 30
 NOT_AVAILABLE = "N/A"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
-FundamentalsProvider = Literal["yahoo_finance", "eodhd", "finnhub"]
+FundamentalsProvider = Literal["yahoo_finance", "eodhd", "finnhub", "fmp"]
 DEFAULT_PROVIDER_FALLBACK: FundamentalsProvider = "finnhub"
 
 
@@ -71,9 +71,10 @@ def _normalize_provider(provider: str) -> FundamentalsProvider:
 		"yfinance": "yahoo_finance",
 		"eodhd": "eodhd",
 		"finnhub": "finnhub",
+		"fmp": "fmp",
 	}
 	if normalized not in provider_aliases:
-		raise ValueError("provider doit être 'yahoo_finance', 'eodhd' ou 'finnhub'.")
+		raise ValueError("provider doit être 'yahoo_finance', 'eodhd', 'finnhub' ou 'fmp'.")
 	normalized = provider_aliases[normalized]
 	return normalized  # type: ignore[return-value]
 
@@ -118,6 +119,9 @@ def _fetch_fundamentals(
 		return fetch_yahoo_fundamentals_record(symbol, session=session)
 	if provider == "finnhub":
 		return fetch_finnhub_fundamentals_record(symbol, session=session)
+	if provider == "fmp":
+		from service.fmp.clientFmp import fetch_symbol_fundamentals_record as fmp_record
+		return fmp_record(symbol, session=session)
 	return fetch_eodhd_fundamentals_record(symbol, session=session)
 
 
@@ -346,7 +350,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 	parser.add_argument(
 		"--provider",
 		type=str,
-		choices=("yahoo_finance", "eodhd", "finnhub"),
+		choices=("yahoo_finance", "eodhd", "finnhub", "fmp"),
 		default="yahoo_finance",
 		help="Source fundamentals utilisée pour provider_sector et market_cap.",
 	)
