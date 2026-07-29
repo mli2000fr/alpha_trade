@@ -3239,10 +3239,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--include-macro-move`. Indice ICE BofA MOVE : volatilité des bons du Trésor US.",
             )
             ml_include_fundamentals = st.checkbox(
-                "📊 Fondamentaux (PE, ROE, marges, croissance)",
+                "📊 Fondamentaux - Global Model uniquement (PE, ROE, marges, croissance)",
                 value=_session_state_bool("pipeline_ml_include_fundamentals", DEFAULT_ML_INCLUDE_FUNDAMENTALS),
                 key="pipeline_ml_include_fundamentals",
-                help="Ajoute `--include-fundamentals`. Nécessite un backfill préalable de `stock_fundamentals_daily` (fetch EODHD).",
+                help="Ajoute les features fondamentales au Global Ranking Model uniquement. Les modèles per-symbol n'utilisent jamais les fondamentaux. Nécessite un backfill préalable de stock_fundamentals_daily.",
             )
             ml_include_factors = st.checkbox(
                 "📊 Facteurs CAPM (beta, alpha, R² via rolling 252j)",

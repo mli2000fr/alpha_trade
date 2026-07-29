@@ -253,6 +253,12 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "rolling_volatility_60_sector_neutral",
         # CAPM → importance 0.0 sur tous les horizons (batch 2026-07-28).
         "beta_252", "alpha_252", "r_squared_252",
+        # ── Chirurgie 2026-07-29 ──
+        # Estimations analystes indisponibles via SEC EDGAR → importance 0.0,
+        # polluent le set de features sans apporter de signal.
+        "fund_forward_pe", "fund_peg_ratio",
+        "fund_eps_estimate_current", "fund_eps_estimate_next",
+        "fund_estimate_revision",
     }
     # Note 2026-07-28 : les *_sector_neutral de momentum, RSI, SMA distance
     # et volume_ratio sont CONSERVÉS (imp 2.8–28.6 en H3, 4.4–28.6 en H5).
@@ -631,6 +637,12 @@ def train_global_ranking_wf(
         _last_model_name: str = ""
         _split_importances: list[dict[str, float]] = []
         _active_features: list[str] = feature_columns
+
+        # ── H3 : exclure les features fondamentales (inefficaces à court terme) ──
+        if horizon == 3:
+            _active_features = [c for c in _active_features if not c.startswith("fund_")]
+            LOGGER.info("global_ranking_wf horizon=3: fundamental features excluded (%d → %d features)",
+                        len(feature_columns), len(_active_features))
 
         for split in wf_splits:
             split_seed = derive_seed(resolved_seed, split.split_index)

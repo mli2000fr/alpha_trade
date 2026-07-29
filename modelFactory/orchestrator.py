@@ -714,7 +714,7 @@ def run_training_batch(
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
         include_global_stacking=cfg.global_model.stacking_enabled,
-        include_fundamentals=cfg.data.include_fundamentals_features,
+        include_fundamentals=False,  # Fondamentaux réservés au Global Model, jamais en per-symbol
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
     )
@@ -728,7 +728,7 @@ def run_training_batch(
         "include_macro_vxn": cfg.data.include_macro_vxn_features,
         "include_macro_vix3m": cfg.data.include_macro_vix3m_features,
         "include_macro_move": cfg.data.include_macro_move_features,
-        "include_fundamentals": cfg.data.include_fundamentals_features,
+        "include_fundamentals": False,  # Fondamentaux réservés au Global Model
         "include_factors": cfg.data.include_factors_features,
         "include_macro_regime": cfg.data.include_macro_regime_features,
         "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
