@@ -56,7 +56,7 @@ flowchart TD
     C -->|Non| E[Phase 2 : Per-Symbol Training]
     D --> E
     
-    E --> E1[N workers parallèles<br/>LSTM + LightGBM + CatBoost]
+    E --> E1[N workers parallèles<br/>LSTM + LightGBM + CatBoost<br/>+ Global Model en stacking]
     E1 --> E2[select_champion<br/>par symbole]
     
     E2 --> F[Post-Training]
@@ -194,7 +194,11 @@ Le Global Ranking n'est PAS affecté.
 
 ### 5.1 Principe
 
-Pour chaque symbole, parmi les 3 challengers (LSTM, LightGBM, CatBoost) + le Global Model, on sélectionne le **meilleur** selon des critères de qualité.
+Pour chaque symbole, parmi les 3 challengers (LSTM, LightGBM, CatBoost), on sélectionne le **meilleur** selon des critères de qualité.
+
+> **Note** : Le **Global Model ne participe pas** à la sélection du champion. Son rôle est différent :
+> - Ses rangs (`global_rank_3/5/10`) sont injectés comme **features** dans les modèles per-symbol (stacking)
+> - Il est utilisé dans la **cascade de trading** (`global_rank × proba_long` → score du trade)
 
 ### 5.2 Modes de sélection
 
@@ -275,14 +279,14 @@ prefer        = top
 
 ### 7.1 Cascade de modèles par symbole
 
-Au moment de prédire pour un symbole, le système essaie les modèles dans l'ordre :
+Au moment de prédire pour un symbole, le système utilise le champion sélectionné (LSTM, LightGBM, ou CatBoost). En cas d'échec, fallback vers le LSTM :
 
 ```
-1. Global Model (global_tabular)
-   └─ Échec → 2. LightGBM (lightgbm_tabular)
-                └─ Échec → 3. CatBoost (catboost_tabular)
-                             └─ Échec → 4. LSTM Attention (fallback ultime)
+1. Champion (tel que sélectionné)
+   └─ Échec → 2. LSTM Attention (fallback ultime)
 ```
+
+Le Global Model n'est pas dans cette cascade — il est utilisé séparément via la cascade de trading (§7.2).
 
 ### 7.2 Cascade de trading (cascade_ml.md)
 
@@ -491,7 +495,7 @@ stock_fundamentals_daily
 | **WF** | Walk-Forward — validation glissante PIT-safe |
 | **PIT** | Point-In-Time — pas de fuite de données futures |
 | **Stacking** | Injection du rang global comme feature dans les modèles per-symbol |
-| **Champion** | Meilleur modèle sélectionné par symbole (LSTM, LightGBM, CatBoost ou Global) |
+| **Champion** | Meilleur modèle sélectionné par symbole (LSTM, LightGBM ou CatBoost — le Global Model ne participe pas) |
 | **S7** | Section 7 du plan ML — règles absolues d'exclusion basées sur les F1 |
 | **Cascade** | Chaîne de fallback pour l'inférence (global → tabular → LSTM) |
 
