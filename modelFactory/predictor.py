@@ -2046,15 +2046,17 @@ def compute_per_symbol_cross_sectional_ic(
         dict avec ic_mean, ic_std, n_dates.
     """
     from modelFactory.global_ranking import compute_cross_sectional_ic
+    from sqlalchemy import text as _text
 
     LOGGER.info("per_symbol_ic compute start batch_id=%s horizon=%d", batch_id, horizon)
 
-    # Charger les prédictions per-symbol depuis la DB
-    _pred_sql = """
-        SELECT symbol, prediction_date AS date, predicted_proba AS proba_long
-        FROM alpha_trade.predictions
-        WHERE batch_id = :batch_id
-    """
+    # Charger les prédictions per-symbol depuis la DB (via run_id → batch_id)
+    _pred_sql = _text("""
+        SELECT mp.symbol, mp.prediction_date AS date, mp.predicted_proba AS proba_long
+        FROM alpha_trade.model_predictions mp
+        JOIN alpha_trade.model_training_run mtr ON mtr.run_id = mp.run_id
+        WHERE mtr.batch_id = :batch_id
+    """)
     try:
         pred_df = pd.read_sql(_pred_sql, engine, params={"batch_id": batch_id})
     except Exception as exc:
@@ -2068,16 +2070,20 @@ def compute_per_symbol_cross_sectional_ic(
     pred_df["date"] = pd.to_datetime(pred_df["date"])
 
     # Charger les forward returns depuis la DB (calculés via _spy_series)
-    _fw_sql = """
+    _fw_sql = _text("""
         SELECT symbol, date,
                close AS spot,
                LEAD(close, :h) OVER (PARTITION BY symbol ORDER BY date) AS fwd_close
         FROM alpha_trade.stock_bars_daily
         WHERE date BETWEEN
-            (SELECT MIN(prediction_date) FROM alpha_trade.predictions WHERE batch_id = :batch_id)
+            (SELECT MIN(mp.prediction_date) FROM alpha_trade.model_predictions mp
+             JOIN alpha_trade.model_training_run mtr ON mtr.run_id = mp.run_id
+             WHERE mtr.batch_id = :batch_id)
             AND
-            (SELECT MAX(prediction_date) FROM alpha_trade.predictions WHERE batch_id = :batch_id)
-    """
+            (SELECT MAX(mp.prediction_date) FROM alpha_trade.model_predictions mp
+             JOIN alpha_trade.model_training_run mtr ON mtr.run_id = mp.run_id
+             WHERE mtr.batch_id = :batch_id)
+    """)
     try:
         bars_df = pd.read_sql(_fw_sql, engine, params={"batch_id": batch_id, "h": horizon})
     except Exception as exc:

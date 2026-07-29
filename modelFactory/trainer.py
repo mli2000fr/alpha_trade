@@ -840,7 +840,7 @@ def _evaluate_best_checkpoint(
             future_returns=test_frame["future_return"].to_numpy() if test_frame is not None and "future_return" in test_frame else None,
             ternary_policy=ternary_policy,
         )
-    return val_metrics, test_metrics, calibrator, threshold_optimization_summary, selected_decision_threshold
+    return val_metrics, test_metrics, calibrator, threshold_optimization_summary, selected_decision_threshold, test_outputs
 
 
 
@@ -955,6 +955,7 @@ def _run_walk_forward_validation(
         _has_global_rank,
     )
     fold_metrics: list[dict[str, Any]] = []
+    _wf_preds: list[pd.DataFrame] = []
     walk_forward_seed = derive_seed(cfg.reproducibility.seed, "walk_forward", symbol)
 
     for split in splits:
@@ -1084,16 +1085,42 @@ def _run_walk_forward_validation(
             )
             if not best_path.exists():
                 continue
-            _, test_metrics, calibrator, threshold_summary, _ = _evaluate_best_checkpoint(
+            _test_frame_aligned = align_sequence_rows(split.test, cfg.data.sequence_length)
+            _, test_metrics, calibrator, threshold_summary, _, test_outputs = _evaluate_best_checkpoint(
                 best_path,
                 batch_size=cfg.model.batch_size,
                 val_ds=val_ds,
                 test_ds=test_ds,
                 val_frame=align_sequence_rows(split.val, cfg.data.sequence_length),
-                test_frame=align_sequence_rows(split.test, cfg.data.sequence_length),
+                test_frame=_test_frame_aligned,
                 cfg=cfg,
                 ternary_policy=_build_ternary_policy(cfg),
             )
+            # ── Sauvegarder les prédictions test pour l'IC per-symbol ──
+            if test_outputs and _test_frame_aligned is not None and len(_test_frame_aligned) > 0:
+                _raw = test_outputs.get("raw_proba")
+                _n_classes = int(test_outputs.get("num_classes", 2))
+                if _raw is not None and len(_raw) > 0:
+                    _n_preds = len(_raw)
+                    _n_frame = len(_test_frame_aligned)
+                    _n = min(_n_preds, _n_frame)
+                    _pred_rows = {
+                        "symbol": symbol,
+                        "date": _test_frame_aligned["date"].iloc[:_n].values,
+                        "split_index": split.split_index,
+                    }
+                    if _n_classes == 3:
+                        _pred_rows["proba_short"] = _raw[:_n, 0].astype(float)
+                        _pred_rows["proba_flat"] = _raw[:_n, 1].astype(float)
+                        _pred_rows["proba_long"] = _raw[:_n, 2].astype(float)
+                    else:
+                        _pred_rows["proba_long"] = _raw[:_n].astype(float)
+                        _pred_rows["proba_short"] = (1.0 - _raw[:_n]).astype(float)
+                    if "future_return" in _test_frame_aligned.columns:
+                        _pred_rows["future_return"] = _test_frame_aligned["future_return"].iloc[:_n].values
+                    if "close" in _test_frame_aligned.columns:
+                        _pred_rows["close"] = _test_frame_aligned["close"].iloc[:_n].values
+                    _wf_preds.append(pd.DataFrame(_pred_rows))
             if test_metrics:
                 _train_dates = split.train["date"] if "date" in split.train.columns else None
                 _val_dates = split.val["date"] if "date" in split.val.columns else None
@@ -1115,6 +1142,25 @@ def _run_walk_forward_validation(
                 })
 
     summary = _aggregate_walk_forward_metrics(fold_metrics)
+
+    # ── Sauvegarder les prédictions WF pour l'IC per-symbol cross-sectionnel ──
+    if _wf_preds and summary:
+        try:
+            _preds_dir = Path(cfg.artifacts_dir) / "_per_symbol_wf_preds"
+            _preds_dir.mkdir(parents=True, exist_ok=True)
+            _all_preds = pd.concat(_wf_preds, ignore_index=True)
+            _all_preds["date"] = pd.to_datetime(_all_preds["date"])
+            _all_preds = _all_preds.drop_duplicates(subset=["symbol", "date"])
+            _all_preds.sort_values(["date", "symbol"]).to_parquet(
+                _preds_dir / f"{symbol}.parquet", index=False,
+            )
+            LOGGER.info(
+                "walk_forward wf_preds saved symbol=%s rows=%d dates=%d path=%s",
+                symbol, len(_all_preds), _all_preds["date"].nunique(),
+                _preds_dir / f"{symbol}.parquet",
+            )
+        except Exception as exc:
+            LOGGER.warning("walk_forward wf_preds save failed symbol=%s error=%s", symbol, exc)
     if summary:
         update_runtime_status(
             current_phase="walk_forward_completed",
@@ -1407,7 +1453,7 @@ def train_symbol(
         split = dm.split
         val_frame = align_sequence_rows(split.val, effective_cfg.data.sequence_length) if split is not None else None
         test_frame = align_sequence_rows(split.test, effective_cfg.data.sequence_length) if split is not None else None
-        val_metrics, test_metrics, calibrator, threshold_optimization_summary, selected_decision_threshold = _evaluate_best_checkpoint(
+        val_metrics, test_metrics, calibrator, threshold_optimization_summary, selected_decision_threshold, _test_outputs = _evaluate_best_checkpoint(
             best_source,
             batch_size=effective_cfg.model.batch_size,
             val_ds=dm.val_ds,

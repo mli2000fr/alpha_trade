@@ -835,12 +835,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
         st.metric("Source symboles", str(row.get("symbol_source", "")))
         comment_val = row.get("comment")
         st.metric("Commentaire", str(comment_val) if comment_val and str(comment_val) != "None" and str(comment_val) != "nan" else "—")
+        st.metric("Démarré le", str(row.get("started_at", "—")))
+        st.metric("Terminé le", str(row.get("finished_at", "—")))
 
     with col2:
-        st.metric("Date début training", str(row.get("training_start_date", "—")))
-        st.metric("Date fin training", str(row.get("training_end_date", "—")))
-        st.metric("Date univers", str(row.get("universe_date", "—")))
-        st.metric("Nb symboles demandés", str(row.get("requested_symbol_count", "—")))
         # IC Rank du Global Ranking Model
         ic_val = row.get("ic_rank")
         if ic_val is not None and str(ic_val) not in ("None", "nan", ""):
@@ -854,86 +852,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.metric("📈 IC IR (Stabilité)", f"{_ic_ir:.2f}",
                       help="IC Information Ratio = IC Mean / IC Std. >0.5 = bon, >1.0 = exceptionnel. "
                            "Mesure la stabilité du signal dans le temps.")
-        # Decile Spreads (depuis metadata_json pour avoir tous les horizons)
-        _ds_h3 = row.get("decile_spread_h3")
-        _ds_h5 = row.get("decile_spread_h5")
-        _ds_h10 = row.get("decile_spread_h10")
-        # Compléter avec metadata_json.global_ranking.decile_spreads (H15, H20)
-        _meta_raw = row.get("metadata_json")
-        _ds_all: dict[str, float] = {}
-        if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
-            try:
-                _meta = _json.loads(str(_meta_raw))
-                _gr = _meta.get("global_ranking") if isinstance(_meta, dict) else None
-                _ds_json = _gr.get("decile_spreads") if isinstance(_gr, dict) else None
-                if isinstance(_ds_json, dict):
-                    for _hk, _hv in _ds_json.items():
-                        if _hv is not None:
-                            try:
-                                _ds_all[str(_hk)] = float(_hv)
-                            except (TypeError, ValueError):
-                                pass
-            except Exception:
-                pass
-        # Fallback: colonnes DB si metadata_json absent
-        if not _ds_all:
-            if _ds_h3 is not None and str(_ds_h3) not in ("None", "nan", ""):
-                _ds_all["3"] = float(_ds_h3)
-            if _ds_h5 is not None and str(_ds_h5) not in ("None", "nan", ""):
-                _ds_all["5"] = float(_ds_h5)
-            if _ds_h10 is not None and str(_ds_h10) not in ("None", "nan", ""):
-                _ds_all["10"] = float(_ds_h10)
-        if _ds_all:
-            _ds_parts = [f"H{k}={v:.4f}" for k, v in sorted(_ds_all.items(), key=lambda x: int(x[0]))]
-            st.metric("📊 Decile Spread (Top−Bottom)", " ".join(_ds_parts),
-                      help="Rendement moyen du Top 10% moins Bottom 10% par horizon. "
-                           ">0.01 = excellent (1% de spread), "
-                           "~0.005 = correct (exploitable avec diversification), "
-                           "<0 = le classement est inversé.")
-
-        # Per-Symbol Cross-Sectional IC (modèles per-symbol)
-        if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
-            try:
-                _meta_ps = _json.loads(str(_meta_raw))
-                _ps_ic = _meta_ps.get("per_symbol_ic") if isinstance(_meta_ps, dict) else None
-                if isinstance(_ps_ic, dict) and _ps_ic:
-                    # Détection format : multi-horizon {"3": {...}, "5": {...}} vs single {"ic_mean": ...}
-                    _first_val = next(iter(_ps_ic.values()), None)
-                    if isinstance(_first_val, dict) and "ic_mean" in _first_val:
-                        # Format multi-horizon
-                        _ps_horizons = sorted(_ps_ic.keys(), key=lambda x: int(x))
-                        _ps_parts = []
-                        for _h_key in _ps_horizons:
-                            _h_info = _ps_ic[_h_key]
-                            if isinstance(_h_info, dict) and _h_info.get("ic_mean") is not None:
-                                _h_ic = float(_h_info["ic_mean"])
-                                _h_std = _h_info.get("ic_std")
-                                _h_label = f"H{_h_key}={_h_ic:.4f}"
-                                if _h_std is not None and float(_h_std) > 0:
-                                    _h_ir = _h_ic / float(_h_std)
-                                    _h_label += f"(IR={_h_ir:.2f})"
-                                _ps_parts.append(_h_label)
-                        if _ps_parts:
-                            st.metric("🔬 IC Per-Symbol", " ".join(_ps_parts),
-                                      help="IC Rank cross-sectionnel des **modèles per-symbol** par horizon. "
-                                           "Mesure la capacité de ranking des prédictions per-symbol sur l'univers. "
-                                           ">0.01 = utile, >0.02 = bon.")
-                    elif "ic_mean" in _ps_ic and _ps_ic.get("ic_mean") is not None:
-                        # Format single-horizon (rétro-compatibilité)
-                        _ps_ic_mean = float(_ps_ic["ic_mean"])
-                        _ps_std = _ps_ic.get("ic_std")
-                        _ps_horizon = _ps_ic.get("horizon", 5)
-                        _ps_label = f"{_ps_ic_mean:.4f}"
-                        if _ps_std is not None and float(_ps_std) > 0:
-                            _ps_ir = _ps_ic_mean / float(_ps_std)
-                            _ps_label += f"  (IR={_ps_ir:.2f})"
-                        st.metric("🔬 IC Per-Symbol", _ps_label,
-                                  help=f"IC Rank cross-sectionnel des **modèles per-symbol** (horizon H{_ps_horizon}). "
-                                       "Mesure la capacité de ranking des prédictions per-symbol sur l'univers. "
-                                       ">0.01 = utile, >0.02 = bon.")
-            except Exception:
-                pass
-
         # Stacking Global Rank
         _stacking_val = row.get("stacking_enabled")
         if _stacking_val is not None:
@@ -943,8 +861,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
                       help="Le rang global (global_rank_3/5) a été injecté comme feature dans les modèles per-symbol.")
 
     with col3:
-        st.metric("Démarré le", str(row.get("started_at", "—")))
-        st.metric("Terminé le", str(row.get("finished_at", "—")))
+        st.metric("Date début training", str(row.get("training_start_date", "—")))
+        st.metric("Date fin training", str(row.get("training_end_date", "—")))
+        st.metric("Date univers", str(row.get("universe_date", "—")))
+        st.metric("Nb symboles demandés", str(row.get("requested_symbol_count", "—")))
         st.metric("Complétés / Skippés / Échecs",
                   f"{row.get('symbols_completed', 0)} / {row.get('symbols_skipped', 0)} / {row.get('symbols_failed', 0)}")
         failure = row.get("failure_reason")
@@ -957,6 +877,51 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.code(str(cmd), language="powershell")
 
     st.markdown("")
+
+    # ── IC Cross-Sectionnel Per-Symbol (tableau) ──
+    _meta_raw = row.get("metadata_json")
+    if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
+        try:
+            _meta_ps = _json.loads(str(_meta_raw))
+            _ps_ic = _meta_ps.get("per_symbol_ic") if isinstance(_meta_ps, dict) else None
+            if isinstance(_ps_ic, dict) and any(
+                isinstance(v, dict) and "ic_mean" in v for v in _ps_ic.values()
+            ):
+                st.subheader("🔬 IC Cross-Sectionnel — Modèles Per-Symbol")
+                _ps_rows = []
+                for _h_key in sorted(_ps_ic.keys(), key=lambda x: int(x)):
+                    _h_info = _ps_ic[_h_key]
+                    _h_ic = _h_info.get("ic_mean")
+                    if _h_ic is None:
+                        continue
+                    _h_std = _h_info.get("ic_std")
+                    _h_n = _h_info.get("n_dates", "—")
+                    _ps_rows.append({
+                        "Horizon": f"H{_h_key}",
+                        "IC Mean": round(float(_h_ic), 4),
+                        "IC IR": round(float(_h_ic) / float(_h_std), 2) if _h_std and float(_h_std) > 0 else "—",
+                        "Nb Dates": _h_n,
+                    })
+                if _ps_rows:
+                    _ps_df = pd.DataFrame(_ps_rows)
+                    st.dataframe(
+                        _ps_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Horizon": "Horizon",
+                            "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
+                            "IC IR": st.column_config.NumberColumn("📈 IC IR", format="%.2f"),
+                            "Nb Dates": "Nb Dates",
+                        },
+                    )
+                    st.caption(
+                        "IC Rank cross-sectionnel des modèles per-symbol (agrégés). "
+                        ">0.01 = utile, >0.02 = bon. IC IR > 0.5 = stable."
+                    )
+        except Exception:
+            pass
+
     # ── Statut sélection du champion ──
     champion_df = safe_query(
         """SELECT mg.selection_mode, COUNT(DISTINCT mg.symbol) AS nb_symbols
