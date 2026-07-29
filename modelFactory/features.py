@@ -57,6 +57,7 @@ SENTIMENT_FEATURE_COLUMNS: list[str] = [
     "sentiment_confidence_mean_1d",
     "news_count_log",
     "major_event_flag",
+    "sentiment_intensity",  # direction × confiance × volume (2026-07-29)
 ]
 
 # Features d'interaction régime × technique (Cause 3 — changement de régime)
@@ -959,6 +960,15 @@ def compute_features(
                 df[col] = 0.0
             else:
                 df[col] = df[col].fillna(0.0).astype(float)
+        # ── Sentiment Intensity (2026-07-29) ──
+        # Combine les 3 dimensions en 1 signal dense pour le per-symbol.
+        # direction × confiance × volume → évite que des features sparse
+        # (ex: major_event_flag=0 sur 95% des jours) soient ignorées.
+        df["sentiment_intensity"] = (
+            df["sentiment_net_mean_1d"]
+            * df["sentiment_confidence_mean_1d"]
+            * df["news_count_log"]
+        ).astype(float)
 
     if include_screener_scores or include_short_score:
         if selector_df is not None and not selector_df.empty:

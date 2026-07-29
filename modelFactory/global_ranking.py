@@ -184,7 +184,7 @@ def _prepare_global_ranking_frame(
     df = compute_features(
         bars_df,
         sentiment_df=sentiment_df,
-        include_sentiment=cfg.data.include_sentiment_features,
+        include_sentiment=False,  # sentiment → per-symbol uniquement
         benchmark_df=benchmark_df,
         feature_set=cfg.data.feature_set,
         selector_df=selector_df,
@@ -213,7 +213,7 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
     per-symbol (Phase 2) qui en ont besoin pour le contexte de régime.
     """
     all_cols = get_feature_columns(
-        include_sentiment=cfg.data.include_sentiment_features,
+        include_sentiment=False,  # sentiment → per-symbol uniquement (sparse, noyé dans 177 features)
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_screener_scores=cfg.data.include_screener_scores,
@@ -476,11 +476,8 @@ def train_global_ranking_wf(
             end_date=history_end_date, start_date=history_start_date,
         )
     sentiment_df = None
-    if cfg.data.include_sentiment_features:
-        sentiment_df = load_symbols_sentiment(
-            engine, symbols, end_date=history_end_date, start_date=history_start_date,
-        )
-    selector_context_df = None
+    # sentiment → per-symbol uniquement ; le global ranking ignore ces features
+    # (sparse, noyées dans 177 features).  On saute le chargement pour gagner du temps.
     if cfg.data.include_screener_scores or cfg.data.include_short_score_features:
         selector_context_df = load_symbols_selector_context(
             engine, symbols, end_date=history_end_date, start_date=history_start_date,

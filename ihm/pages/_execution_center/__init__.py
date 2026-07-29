@@ -3184,10 +3184,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:
             ml_include_sentiment = st.checkbox(
-                "Inclure les features sentiment",
+                "Inclure les features sentiment (per-symbol uniquement)",
                 value=_session_state_bool("pipeline_ml_include_sentiment", DEFAULT_ML_INCLUDE_SENTIMENT),
                 key="pipeline_ml_include_sentiment",
-                help="Ajoute `--include-sentiment` à `ml_train`.",
+                help="Ajoute `--include-sentiment` au per-symbol uniquement. Le Global Ranking Model ignore ces features (trop sparse pour du ranking cross-sectionnel).",
             )
             ml_include_screener_scores = st.checkbox(
                 "Inclure les scores du screener (trend, VCP, final_score…)",
