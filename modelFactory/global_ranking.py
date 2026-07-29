@@ -55,12 +55,13 @@ from modelFactory.reproducibility import apply_reproducibility, derive_seed
 LOGGER = logging.getLogger(__name__)
 
 # Horizons pour le ranking multi-horizons (stacking Phase 2)
-# H3 : momentum court-terme, sans fondamentaux, sans vol scaling.
-# H5 : momentum moyen-terme, avec fondamentaux, avec vol scaling.
-# H10 : momentum long-terme, avec fondamentaux, avec vol scaling.
-# Note 2026-07-29 : H10 réintégré — le vol scaling devrait corriger
-# la domination des périodes de crise qui écrasait son signal.
-_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10)
+# H3  : momentum ultra-court, sans fondamentaux, sans vol scaling.
+# H5  : momentum court-terme, avec fondamentaux, avec vol scaling.
+# H10 : momentum moyen-terme, avec fondamentaux, avec vol scaling.
+# H15 : momentum long-terme, avec fondamentaux, avec vol scaling.
+# H20 : momentum très long-terme, avec fondamentaux, avec vol scaling.
+# Note 2026-07-29 : vol scaling actif pour tous les horizons ≥ 5j.
+_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10, 15, 20)
 
 # Features "brutes" à normaliser en rang cross-sectionnel par date.
 # Ces features varient par symbole mais leurs seuils absolus changent avec
