@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sqlalchemy.engine import Engine
+from sqlalchemy import text
 
 from modelFactory.batch_diagnostics import persist_batch_diagnostics
 from modelFactory.champion_selection import (
@@ -888,6 +889,95 @@ def run_training_batch(
             except Exception as exc:
                 LOGGER.warning(
                     "run_training_batch ic_rank persist failed batch_id=%s error=%s",
+                    batch_id, exc,
+                )
+
+        # ── Persister les détails par horizon dans metadata_json (IHM/rapport) ──
+        _features_path = Path(cfg.artifacts_dir) / "_global_ranking_features.json"
+        if _features_path.exists():
+            try:
+                _gr_meta = json.loads(_features_path.read_text(encoding="utf-8"))
+                _hd = _gr_meta.get("horizon_details")
+                if _hd:
+                    _gr_details = {
+                        "horizon_details": _hd,
+                        "ic_by_horizon": _gr_meta.get("ic_by_horizon", {}),
+                        "decile_spreads": _gr_meta.get("decile_spreads", {}),
+                        "symbols_count": _gr_meta.get("symbols_count"),
+                        "splits_count": _gr_meta.get("splits_count"),
+                        "pred_rows": _gr_meta.get("pred_rows"),
+                        "horizons": _gr_meta.get("horizons", []),
+                    }
+                    # Lire metadata_json existant
+                    with engine.begin() as conn:
+                        _row = conn.execute(
+                            text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                            {"bid": batch_id},
+                        ).mappings().first()
+                    _existing = {}
+                    if _row and _row.get("metadata_json"):
+                        try:
+                            _existing = json.loads(str(_row["metadata_json"]))
+                        except Exception:
+                            pass
+                    _existing["global_ranking"] = _gr_details
+                    update_training_batch(engine, batch_id, metadata_json=json.dumps(_existing, ensure_ascii=False))
+                    LOGGER.info("run_training_batch horizon_details persisted batch_id=%s horizons=%s",
+                                batch_id, list(_hd.keys()))
+            except Exception as exc:
+                LOGGER.warning("run_training_batch horizon_details persist failed: %s", exc)
+
+        # ── Per-Symbol Cross-Sectional IC (comparaison stacking vs no-stacking) ──
+        if completed > 0:
+            try:
+                from modelFactory.predictor import compute_per_symbol_cross_sectional_ic
+
+                _PER_SYMBOL_IC_HORIZONS = (3, 5, 10, 15, 20)
+                _ps_ic_by_horizon: dict[str, dict] = {}
+                for _h in _PER_SYMBOL_IC_HORIZONS:
+                    _ps_ic_result = compute_per_symbol_cross_sectional_ic(
+                        engine, batch_id, horizon=_h,
+                    )
+                    _ps_ic_mean = _ps_ic_result.get("ic_mean")
+                    LOGGER.info(
+                        "run_training_batch per_symbol_ic H%d batch_id=%s ic_mean=%.4f ic_std=%.4f n_dates=%d",
+                        _h, batch_id,
+                        _ps_ic_mean if _ps_ic_mean is not None else float("nan"),
+                        _ps_ic_result.get("ic_std", float("nan")),
+                        _ps_ic_result.get("n_dates", 0),
+                    )
+                    if _ps_ic_mean is not None:
+                        _ps_ic_by_horizon[str(_h)] = {
+                            "ic_mean": _ps_ic_mean,
+                            "ic_std": _ps_ic_result.get("ic_std"),
+                            "n_dates": _ps_ic_result.get("n_dates"),
+                            "horizon": _h,
+                        }
+                # Persister dans metadata_json pour IHM
+                if _ps_ic_by_horizon:
+                    with engine.begin() as conn:
+                        _mrow = conn.execute(
+                            text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                            {"bid": batch_id},
+                        ).mappings().first()
+                    _mexisting = {}
+                    if _mrow and _mrow.get("metadata_json"):
+                        try:
+                            _mexisting = json.loads(str(_mrow["metadata_json"]))
+                        except Exception:
+                            pass
+                    _mexisting["per_symbol_ic"] = _ps_ic_by_horizon
+                    update_training_batch(
+                        engine, batch_id,
+                        metadata_json=json.dumps(_mexisting, ensure_ascii=False),
+                    )
+                    LOGGER.info(
+                        "run_training_batch per_symbol_ic persisted batch_id=%s horizons=%s",
+                        batch_id, list(_ps_ic_by_horizon.keys()),
+                    )
+            except Exception as exc:
+                LOGGER.warning(
+                    "run_training_batch per_symbol_ic failed batch_id=%s error=%s",
                     batch_id, exc,
                 )
 

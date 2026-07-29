@@ -722,6 +722,7 @@ def train_global_ranking_wf(
     _saved_models: dict[int, str] = {}
     _horizon_features: dict[int, list[str]] = {}  # features actives par horizon
     _decile_spreads: dict[int, float] = {}  # decile spread par horizon
+    _horizon_details: dict[str, Any] = {}  # détails par horizon pour IHM/rapport
     _top_k = max(cfg.baseline.ranking_top_k_features, 0)  # 0 = toutes les features
 
     for horizon in _GLOBAL_RANKING_HORIZONS:
@@ -742,6 +743,7 @@ def train_global_ranking_wf(
         _last_model_name: str = ""
         _split_importances: list[dict[str, float]] = []
         _active_features: list[str] = feature_columns
+        _h_split_details: list[dict[str, Any]] = []  # détails par split pour IHM/rapport
 
         # ── H3 : exclure les features fondamentales (inefficaces à court terme) ──
         if horizon == 3:
@@ -853,6 +855,18 @@ def train_global_ranking_wf(
                 horizon, split.split_index + 1, len(wf_splits),
                 len(train_df), len(val_df), ic if ic is not None else float("nan"),
             )
+            # ── Collecter les détails du split pour IHM/rapport ──
+            _h_split_details.append({
+                "split_index": split.split_index + 1,
+                "n_splits": len(wf_splits),
+                "train_period_start": _train_dates.min().strftime("%Y-%m-%d") if _train_dates is not None else None,
+                "train_period_end": _train_dates.max().strftime("%Y-%m-%d") if _train_dates is not None else None,
+                "val_period_start": _val_dates.min().strftime("%Y-%m-%d") if _val_dates is not None else None,
+                "val_period_end": _val_dates.max().strftime("%Y-%m-%d") if _val_dates is not None else None,
+                "train_rows": len(train_df),
+                "val_rows": len(val_df),
+                "ic_rank": float(ic) if ic is not None else None,
+            })
 
         # ── Feature importance agrégée pour cet horizon ──
         if _split_importances and _active_features:
@@ -917,6 +931,19 @@ def train_global_ranking_wf(
                     LOGGER.warning("train_global_ranking_wf h=%d failed to save model: %s", horizon, _exc)
 
             LOGGER.info("global_ranking_wf horizon=%d done ic_mean=%.4f", horizon, all_ic_means[horizon])
+            # ── Stocker les détails pour IHM/rapport ──
+            _h_key = str(horizon)
+            _horizon_details[_h_key] = {
+                "ic_mean": float(all_ic_means[horizon]) if horizon in all_ic_means else None,
+                "decile_spread": float(_decile_spreads.get(horizon)) if horizon in _decile_spreads else None,
+                "decile_top": float(_decile.get("top_decile_return")) if _decile and _decile.get("top_decile_return") is not None else None,
+                "decile_bottom": float(_decile.get("bottom_decile_return")) if _decile and _decile.get("bottom_decile_return") is not None else None,
+                "n_features": len(_active_features),
+                "splits": _h_split_details,
+                "feature_importance_top10": [{"feature": k, "importance": round(v, 1)} for k, v in _top10] if (_split_importances and _active_features) else [],
+                "feature_importance_bottom10": [{"feature": k, "importance": round(v, 1)} for k, v in _bottom10] if (_split_importances and _active_features) else [],
+                "feature_importance_all": {k: round(v, 1) for k, v in _mean_imp.items()} if (_split_importances and _active_features) else {},
+            }
         else:
             LOGGER.warning("global_ranking_wf horizon=%d no predictions", horizon)
         # ── Libérer la mémoire avant l'horizon suivant ──
@@ -975,6 +1002,12 @@ def train_global_ranking_wf(
             "include_macro_regime": cfg.data.include_macro_regime_features,
             "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
             "horizon_features": {str(h): feats for h, feats in _horizon_features.items()},
+            "horizon_details": _horizon_details,
+            "ic_by_horizon": {str(h): float(v) for h, v in all_ic_means.items()} if all_ic_means else {},
+            "decile_spreads": {str(h): float(v) for h, v in _decile_spreads.items()} if _decile_spreads else {},
+            "symbols_count": len(symbols),
+            "pred_rows": len(global_rank_df) if not global_rank_df.empty else 0,
+            "splits_count": len(wf_splits),
         }),
         encoding="utf-8",
     )

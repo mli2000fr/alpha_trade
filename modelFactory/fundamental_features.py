@@ -369,9 +369,11 @@ def merge_fundamentals(
 
     if fund_raw.empty:
         _affected = bars_df["symbol"].unique() if "symbol" in bars_df.columns else ["<unknown>"]
+        _affected_sorted = sorted(_affected)
+        _show = _affected_sorted[:10] if len(_affected_sorted) > 10 else _affected_sorted
         LOGGER.warning(
-            "merge_fundamentals: no fundamentals data, filling defaults (symbols=%s)",
-            sorted(_affected)[:10] if len(_affected) > 10 else sorted(_affected),
+            "merge_fundamentals: no fundamentals data, filling defaults for %d symbols (showing first %d: %s)",
+            len(_affected_sorted), len(_show), _show,
         )
         for col, default in FUNDAMENTAL_DEFAULTS.items():
             bars_df[col] = default
