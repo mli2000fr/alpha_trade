@@ -368,7 +368,11 @@ def merge_fundamentals(
         fund_raw = fundamental_df.copy()
 
     if fund_raw.empty:
-        LOGGER.warning("merge_fundamentals: no fundamentals data, filling defaults")
+        _affected = bars_df["symbol"].unique() if "symbol" in bars_df.columns else ["<unknown>"]
+        LOGGER.warning(
+            "merge_fundamentals: no fundamentals data, filling defaults (symbols=%s)",
+            sorted(_affected)[:10] if len(_affected) > 10 else sorted(_affected),
+        )
         for col, default in FUNDAMENTAL_DEFAULTS.items():
             bars_df[col] = default
         return bars_df

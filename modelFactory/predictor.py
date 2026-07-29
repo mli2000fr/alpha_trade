@@ -2017,6 +2017,120 @@ def predict_global_rank_history(
 
 
 # ────────────────────────────────────────────────────────────────────
+# Per-Symbol Cross-Sectional IC (2026-07-29)
+# ────────────────────────────────────────────────────────────────────
+
+def compute_per_symbol_cross_sectional_ic(
+    engine: "Engine",
+    batch_id: str,
+    *,
+    horizon: int = 5,
+    min_symbols_per_date: int = 10,
+) -> dict[str, Any]:
+    """Calcule l'IC cross-sectionnel du modèle per-symbol.
+
+    Requiert que le batch ait :
+    1. Des prédictions per-symbol dans la table de prédictions
+    2. Un global_rank_df avec future_return_{horizon} dans la DB
+
+    Le résultat est loggé avec le préfixe ``per_symbol_ic`` pour
+    être facilement recherchable dans les logs.
+
+    Args:
+        engine: SQLAlchemy engine.
+        batch_id: ID du batch d'entraînement.
+        horizon: Horizon de forward return (défaut: 5, comme H5).
+        min_symbols_per_date: Seuil minimum de symboles par date.
+
+    Returns:
+        dict avec ic_mean, ic_std, n_dates.
+    """
+    from modelFactory.global_ranking import compute_cross_sectional_ic
+
+    LOGGER.info("per_symbol_ic compute start batch_id=%s horizon=%d", batch_id, horizon)
+
+    # Charger les prédictions per-symbol depuis la DB
+    _pred_sql = """
+        SELECT symbol, prediction_date AS date, predicted_proba AS proba_long
+        FROM alpha_trade.predictions
+        WHERE batch_id = :batch_id
+    """
+    try:
+        pred_df = pd.read_sql(_pred_sql, engine, params={"batch_id": batch_id})
+    except Exception as exc:
+        LOGGER.warning("per_symbol_ic failed to load predictions: %s", exc)
+        return {"ic_mean": None, "error": str(exc)}
+
+    if pred_df.empty:
+        LOGGER.warning("per_symbol_ic no predictions for batch_id=%s", batch_id)
+        return {"ic_mean": None, "n_dates": 0}
+
+    pred_df["date"] = pd.to_datetime(pred_df["date"])
+
+    # Charger les forward returns depuis la DB (calculés via _spy_series)
+    _fw_sql = """
+        SELECT symbol, date,
+               close AS spot,
+               LEAD(close, :h) OVER (PARTITION BY symbol ORDER BY date) AS fwd_close
+        FROM alpha_trade.stock_bars_daily
+        WHERE date BETWEEN
+            (SELECT MIN(prediction_date) FROM alpha_trade.predictions WHERE batch_id = :batch_id)
+            AND
+            (SELECT MAX(prediction_date) FROM alpha_trade.predictions WHERE batch_id = :batch_id)
+    """
+    try:
+        bars_df = pd.read_sql(_fw_sql, engine, params={"batch_id": batch_id, "h": horizon})
+    except Exception as exc:
+        LOGGER.warning("per_symbol_ic failed to load bars: %s", exc)
+        return {"ic_mean": None, "error": str(exc)}
+
+    if bars_df.empty:
+        LOGGER.warning("per_symbol_ic no bar data for batch_id=%s", batch_id)
+        return {"ic_mean": None, "n_dates": 0}
+
+    bars_df["future_return"] = bars_df["fwd_close"] / bars_df["spot"] - 1.0
+    bars_df = bars_df.dropna(subset=["future_return"])
+    bars_df["date"] = pd.to_datetime(bars_df["date"])
+
+    # Merger prédictions et forward returns
+    merged = pred_df.merge(bars_df[["symbol", "date", "future_return"]], on=["symbol", "date"], how="inner")
+
+    # Vol scaling (même que Global Ranking H5+)
+    merged["rolling_volatility_20"] = 0.01  # fallback
+    _vol = (
+        bars_df.groupby("symbol")["spot"]
+        .rolling(20).std()
+        .reset_index(level=0, drop=True)
+    )
+    bars_df["_vol20"] = _vol
+    bars_df["_vol20"] = bars_df["_vol20"].fillna(bars_df["_vol20"].median()).clip(lower=0.001)
+    merged = merged.merge(
+        bars_df[["symbol", "date", "_vol20"]],
+        on=["symbol", "date"], how="left",
+    )
+    merged["rolling_volatility_20"] = merged["_vol20"].fillna(0.01)
+
+    # Calculer l'IC cross-sectionnel
+    _result = compute_cross_sectional_ic(
+        merged,
+        score_col="proba_long",
+        return_col="future_return",
+        vol_col="rolling_volatility_20",
+        min_symbols_per_date=min_symbols_per_date,
+    )
+
+    _ic_mean = _result.get("ic_mean")
+    LOGGER.info(
+        "per_symbol_ic DONE batch_id=%s horizon=%d ic_mean=%.4f ic_std=%.4f n_dates=%d",
+        batch_id, horizon,
+        _ic_mean if _ic_mean is not None else float("nan"),
+        _result.get("ic_std", float("nan")),
+        _result.get("n_dates", 0),
+    )
+    return _result
+
+
+# ────────────────────────────────────────────────────────────────────
 # Cascade ML (Étape 4 — cascade_ml.md)
 # ────────────────────────────────────────────────────────────────────
 

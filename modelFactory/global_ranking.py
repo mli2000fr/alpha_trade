@@ -20,6 +20,7 @@ Architecture :
 """
 from __future__ import annotations
 
+import gc
 import json
 import logging
 from pathlib import Path
@@ -297,6 +298,66 @@ def compute_ic_rank(predicted: np.ndarray, actual: np.ndarray) -> float | None:
         return None
 
 
+def compute_cross_sectional_ic(
+    pred_df: pd.DataFrame,
+    *,
+    score_col: str = "proba_long",
+    return_col: str = "future_return",
+    date_col: str = "date",
+    vol_col: str | None = "rolling_volatility_20",
+    min_symbols_per_date: int = 10,
+) -> dict[str, Any]:
+    """Calcule l'IC cross-sectionnel (Spearman rank) par date.
+
+    Cette fonction permet de mesurer l'IC du per-symbol avec la **même**
+    méthode que le Global Ranking, pour une comparaison directe.
+
+    Pour chaque date, les symboles sont classés par ``score_col`` et
+    corrélés avec ``return_col``.  Si ``vol_col`` est fourni, le
+    rendement est divisé par la volatilité (vol scaling), comme pour
+    les horizons ≥ 5j du Global Ranking.
+
+    Args:
+        pred_df: DataFrame avec au minimum [symbol, date, score, return].
+        score_col: Colonne de score à évaluer (défaut: proba_long).
+        return_col: Colonne de rendement forward réel.
+        vol_col: Colonne de volatilité pour vol scaling (None = pas de scaling).
+        min_symbols_per_date: Nombre minimum de symboles pour calculer l'IC.
+
+    Returns:
+        dict avec ``ic_mean``, ``ic_std``, ``n_dates``, ``ic_by_date``.
+    """
+    if pred_df.empty or score_col not in pred_df.columns or return_col not in pred_df.columns:
+        LOGGER.warning("compute_cross_sectional_ic: missing required columns")
+        return {"ic_mean": None, "ic_std": None, "n_dates": 0, "ic_by_date": {}}
+
+    _df = pred_df.dropna(subset=[score_col, return_col]).copy()
+    if vol_col and vol_col in _df.columns:
+        _vol = _df[vol_col].clip(lower=0.001)
+        _df["_target"] = _df[return_col] / _vol
+    else:
+        _df["_target"] = _df[return_col]
+
+    _ics: dict[str, float] = {}
+    for _date, _group in _df.groupby(date_col):
+        if len(_group) < min_symbols_per_date:
+            continue
+        _ic = compute_ic_rank(_group[score_col].to_numpy(), _group["_target"].to_numpy())
+        if _ic is not None:
+            _ics[str(_date)] = _ic
+
+    if not _ics:
+        return {"ic_mean": None, "ic_std": None, "n_dates": 0, "ic_by_date": {}}
+
+    _values = list(_ics.values())
+    return {
+        "ic_mean": float(np.mean(_values)),
+        "ic_std": float(np.std(_values)) if len(_values) > 1 else 0.0,
+        "n_dates": len(_values),
+        "ic_by_date": _ics,
+    }
+
+
 def _compute_mean_importance(
     split_importances: list[dict[str, float]],
     feature_names: list[str],
@@ -515,12 +576,37 @@ def train_global_ranking_wf(
         if prepared.empty:
             continue
         prepared["symbol"] = symbol
+        # ── Downcast immédiat float64→float32 (évite pic mémoire au concat) ──
+        _f64 = [c for c in prepared.columns if prepared[c].dtype == np.float64]
+        if _f64:
+            prepared[_f64] = prepared[_f64].astype(np.float32)
         _base_parts.append(prepared)
+        # Libérer les DataFrames intermédiaires
+        del bars_df, sym_sentiment, sym_selector, sym_cross, prepared
+
+    # Libérer les données sources massives avant le concat
+    del universe_df
+    if cross_sectional_df is not None:
+        del cross_sectional_df
+    if selector_context_df is not None:
+        del selector_context_df
+    gc.collect()
 
     if not _base_parts:
         return {"status": "skipped", "reason": "no_prepared_rows"}
 
     base_df = pd.concat(_base_parts, ignore_index=True).sort_values(["date", "symbol"]).reset_index(drop=True)
+    # Libérer les parts individuelles (le concat a tout recopié)
+    del _base_parts
+    gc.collect()
+
+    # ── Downcast float64 → float32 (mémoire ÷ 2, précision suffisante pour le ranking) ──
+    # Déjà fait par symbole ci-dessus ; ce second passage attrape les colonnes
+    # ajoutées par le concat (ex: symbol casté en object, etc.)
+    _float_cols = [c for c in base_df.columns if base_df[c].dtype == np.float64]
+    if _float_cols:
+        base_df[_float_cols] = base_df[_float_cols].astype(np.float32)
+        LOGGER.info("train_global_ranking_wf downcast %d columns float64→float32", len(_float_cols))
 
     # ── Normalisation cross-sectionnelle des features brutes ──
     # Chaque feature est transformée en rang percentil intra-date [0, 1].
@@ -833,6 +919,11 @@ def train_global_ranking_wf(
             LOGGER.info("global_ranking_wf horizon=%d done ic_mean=%.4f", horizon, all_ic_means[horizon])
         else:
             LOGGER.warning("global_ranking_wf horizon=%d no predictions", horizon)
+        # ── Libérer la mémoire avant l'horizon suivant ──
+        # Les DataFrames h_parts et le modèle occupent plusieurs Go ;
+        # sans cleanup, 2000 symboles × 5 horizons → OOM.
+        del h_parts, h_ics, _last_model, _split_importances, _active_features
+        gc.collect()
 
     if not all_rank_dfs:
         return {"status": "skipped", "reason": "no_predictions"}
