@@ -129,6 +129,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
+    DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS,
     DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
     DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
     DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
@@ -3272,6 +3273,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_global_ranking_max_symbols",
                 help="Limite le nombre de symboles utilisés pour le Global Ranking (top N par volume moyen). 0 = pas de limite. Réduire si erreur mémoire.",
             )
+            ml_per_symbol_max_symbols = st.number_input(
+                "🔧 Per-Symbol : Nb max symboles (0 = tous)",
+                min_value=0,
+                max_value=5000,
+                value=_session_state_int("pipeline_ml_per_symbol_max_symbols", DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS),
+                key="pipeline_ml_per_symbol_max_symbols",
+                help="Limite le nombre de symboles à entraîner en per-symbol (prend les N premiers). 0 = pas de limite. Utile pour tester rapidement.",
+            )
             st.markdown("---")
             ml_enable_liquidity_filter = st.checkbox(
                 "🔍 Filtrer les symboles illiquides (volume, cap, spread)",
@@ -4386,6 +4395,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_ranking_top_k_features=int(ml_ranking_top_k_features),
             ml_global_ranking_max_symbols=int(ml_global_ranking_max_symbols),
+            ml_per_symbol_max_symbols=int(ml_per_symbol_max_symbols),
             # Filtrage liquidité
             ml_enable_liquidity_filter=bool(ml_enable_liquidity_filter),
             ml_liquidity_min_avg_volume_20d=int(ml_liquidity_min_avg_volume_20d if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D),

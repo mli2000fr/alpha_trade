@@ -650,6 +650,36 @@ def run_training_batch(
     global _last_liquidity_diag
     _last_liquidity_diag = liquidity_diag
 
+    # ── Filtrage per-symbol max (test rapide, top N par volume moyen) ──
+    _ps_max = getattr(cfg.data, "per_symbol_max_symbols", 0)
+    if _ps_max > 0 and len(symbols) > _ps_max:
+        _orig_count = len(symbols)
+        try:
+            _vol_df = pd.read_sql(
+                text(
+                    "SELECT symbol, AVG(volume) AS avg_vol "
+                    "FROM stock_bars_daily "
+                    "WHERE symbol IN :syms AND date >= :start AND date <= :end "
+                    "GROUP BY symbol ORDER BY avg_vol DESC LIMIT :n"
+                ),
+                engine,
+                params={
+                    "syms": tuple(symbols),
+                    "start": str(cfg.data.training_start_date),
+                    "end": str(cfg.data.training_end_date),
+                    "n": _ps_max,
+                },
+            )
+            if not _vol_df.empty:
+                symbols = _vol_df["symbol"].tolist()
+        except Exception as _exc:
+            LOGGER.warning("per_symbol_max_symbols: volume query failed, fallback alphabetical: %s", _exc)
+            symbols = symbols[:_ps_max]
+        LOGGER.info(
+            "run_training_batch per_symbol_max_symbols limit=%d orig=%d kept=%d",
+            _ps_max, _orig_count, len(symbols),
+        )
+
     use_gpu = _gpu_requested_or_available(cfg)
     effective_workers = 1 if use_gpu else cfg.max_workers
     if cfg.debug_train and effective_workers != 1:

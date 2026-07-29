@@ -47,6 +47,7 @@ class DataConfig:
     liquidity_max_avg_spread_pct: float = 0.5
     # ── Global Ranking (Sprint 2026-07-26) ──
     global_ranking_max_symbols: int = 300    # 0 = pas de limite, >0 = top N par liquidité
+    per_symbol_max_symbols: int = 0          # 0 = pas de limite, >0 = top N premiers symboles
 
     def __post_init__(self) -> None:
         if self.sequence_length < 1:
