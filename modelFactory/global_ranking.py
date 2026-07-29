@@ -55,9 +55,12 @@ from modelFactory.reproducibility import apply_reproducibility, derive_seed
 LOGGER = logging.getLogger(__name__)
 
 # Horizons pour le ranking multi-horizons (stacking Phase 2)
-# H10 retiré (26/07) : pas d'alpha propre, simple artefact de volatilité.
-# H3+H5 portent le vrai signal de momentum court/moyen terme.
-_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5)
+# H3 : momentum court-terme, sans fondamentaux, sans vol scaling.
+# H5 : momentum moyen-terme, avec fondamentaux, avec vol scaling.
+# H10 : momentum long-terme, avec fondamentaux, avec vol scaling.
+# Note 2026-07-29 : H10 réintégré — le vol scaling devrait corriger
+# la domination des périodes de crise qui écrasait son signal.
+_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10)
 
 # Features "brutes" à normaliser en rang cross-sectionnel par date.
 # Ces features varient par symbole mais leurs seuils absolus changent avec
@@ -568,6 +571,21 @@ def train_global_ranking_wf(
             base_df[f"future_return{h_suffix}"] = (
                 base_df[f"future_return{h_suffix}"] - _spy_ret
             ).astype(float)
+        # ── Target Volatility Scaling (2026-07-29) ──
+        # Pour les horizons ≥ 5j, divise le rendement excédentaire par la
+        # volatilité récente (20j) du titre.  En période de crise (2022),
+        # les retours sont 3-5× plus amples qu'en période calme → la loss
+        # LambdaRank sur-optimise ces périodes.  Le scaling ramène tous les
+        # retours en « écarts-types » (Sharpe-like).
+        # NOTE : NON appliqué à H3 car la vol20 (20j) est décorrélée du
+        # forward return à 3j → scaling = bruit pur.  H3 bénéficie déjà
+        # de son horizon ultra-court qui capture les micro-oscillations
+        # insensibles au régime macro.
+        if horizon >= 5:
+            _vol20 = base_df["rolling_volatility_20"].clip(lower=0.001)
+            base_df[f"future_return{h_suffix}"] = (
+                base_df[f"future_return{h_suffix}"] / _vol20
+            ).astype(float)
         # ── Winsorization intra-date à 1%/99% (élimine les outliers toxiques) ──
         base_df[f"future_return{h_suffix}"] = (
             base_df.groupby("date")[f"future_return{h_suffix}"]
@@ -589,9 +607,12 @@ def train_global_ranking_wf(
     # ── Walk-Forward splits (communs à tous les horizons) ──
     _daily_symbols = int(round(base_df.groupby("date").size().median()))
     _daily_symbols = max(_daily_symbols, 1)
-    # La purge doit couvrir l'horizon maximal en JOURS (pas en lignes),
-    # sinon avec 200 symbols/date, 10 lignes = 5% d'un jour → inefficace.
-    _purge_rows = max(_GLOBAL_RANKING_HORIZONS) * _daily_symbols
+    # Purge = horizon MINIMAL.  Les horizons plus longs sont protégés
+    # par le dropna(subset=[future_return_{h}]) dans la boucle : les
+    # targets shift(-h) produisent NaN sur les h dernières lignes,
+    # donc le dropna retire automatiquement les données non-PIT.
+    # Inutile (et nuisible) de purger globalement à max(horizons).
+    _purge_rows = min(_GLOBAL_RANKING_HORIZONS) * _daily_symbols
     wf_splits = generate_walk_forward_splits(
         base_df,
         min_train_size=cfg.walk_forward.min_train_size * _daily_symbols,
