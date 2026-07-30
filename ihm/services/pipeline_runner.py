@@ -54,7 +54,13 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
     DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
     DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
-    DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT,
+    DEFAULT_ML_LIQUIDITY_MAX_MARKET_CAP,
+    DEFAULT_ML_LIQUIDITY_MAX_AVG_HIGH_LOW_RANGE_PCT,
+    DEFAULT_ML_LIQUIDITY_MIN_DAILY_DOLLAR_VOLUME,
+    DEFAULT_ML_LIQUIDITY_MIN_PRICE,
+    DEFAULT_ML_LIQUIDITY_MAX_SPREAD_BPS,
+    DEFAULT_ML_LIQUIDITY_SPREAD_FALLBACK_MODE,
+    DEFAULT_ML_LIQUIDITY_SPREAD_MAX_QUOTE_AGE_DAYS,
     DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE,
     DEFAULT_ML_DEBUG_TRAIN,
     DEFAULT_ML_DECISION_THRESHOLD,
@@ -434,7 +440,13 @@ class PipelineLaunchOptions:
     ml_enable_liquidity_filter: bool = DEFAULT_ML_ENABLE_LIQUIDITY_FILTER
     ml_liquidity_min_avg_volume_20d: int = DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D
     ml_liquidity_min_market_cap: float = DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP
-    ml_liquidity_max_avg_spread_pct: float = DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT
+    ml_liquidity_max_market_cap: float = DEFAULT_ML_LIQUIDITY_MAX_MARKET_CAP
+    ml_liquidity_min_daily_dollar_volume: float = DEFAULT_ML_LIQUIDITY_MIN_DAILY_DOLLAR_VOLUME
+    ml_liquidity_min_price: float = DEFAULT_ML_LIQUIDITY_MIN_PRICE
+    ml_liquidity_max_avg_high_low_range_pct: float = DEFAULT_ML_LIQUIDITY_MAX_AVG_HIGH_LOW_RANGE_PCT
+    ml_liquidity_max_spread_bps: float = DEFAULT_ML_LIQUIDITY_MAX_SPREAD_BPS
+    ml_liquidity_spread_fallback_mode: str = DEFAULT_ML_LIQUIDITY_SPREAD_FALLBACK_MODE
+    ml_liquidity_spread_max_quote_age_days: int = DEFAULT_ML_LIQUIDITY_SPREAD_MAX_QUOTE_AGE_DAYS
     ml_candidate_horizons: tuple[int, ...] = DEFAULT_ML_CANDIDATE_HORIZONS
     ml_candidate_up_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_UP_THRESHOLDS
     ml_candidate_down_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS
@@ -2263,7 +2275,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--enable-liquidity-filter",
                 "--liquidity-min-avg-volume-20d", str(options.ml_liquidity_min_avg_volume_20d),
                 "--liquidity-min-market-cap", str(int(options.ml_liquidity_min_market_cap)),
-                "--liquidity-max-avg-spread-pct", str(options.ml_liquidity_max_avg_spread_pct),
+                "--liquidity-max-market-cap", str(int(options.ml_liquidity_max_market_cap)),
+                "--liquidity-min-daily-dollar-volume", str(int(options.ml_liquidity_min_daily_dollar_volume)),
+                "--liquidity-min-price", str(options.ml_liquidity_min_price),
+                "--liquidity-max-avg-high-low-range-pct", str(options.ml_liquidity_max_avg_high_low_range_pct),
+                "--liquidity-max-spread-bps", str(options.ml_liquidity_max_spread_bps),
+                "--liquidity-spread-fallback-mode", str(options.ml_liquidity_spread_fallback_mode),
+                "--liquidity-spread-max-quote-age-days", str(options.ml_liquidity_spread_max_quote_age_days),
             ])
         if options.ml_select_champion:
             command.append("--select-champion")

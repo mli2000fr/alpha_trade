@@ -138,10 +138,20 @@ DEFAULT_ML_CATBOOST_OD_WAIT = 20
 # ---------------------------------------------------------------------------
 # Filtrage liquidité (Sprint 2026-07-24)
 # ---------------------------------------------------------------------------
-DEFAULT_ML_ENABLE_LIQUIDITY_FILTER = False
-DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D = 500_000
-DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP = 500_000_000.0
-DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT = 0.5
+DEFAULT_ML_ENABLE_LIQUIDITY_FILTER = True
+# 1. Taille de l'entreprise (Filtre de Classe d'Actifs)
+DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP = 20_000_000  # 20 Millions $  (Élimine les Small/Micro Caps)
+DEFAULT_ML_LIQUIDITY_MAX_MARKET_CAP = 20_000_000_000   # 20 Milliards $ (Élimine les Large/Mega Caps)   # 0 = pas de limite
+# 2. Liquidité & Exécution (Filtres de Friction)
+DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D = 50_000  # 250k actions/j (Évite les pièges sur titres chers)
+DEFAULT_ML_LIQUIDITY_MAX_AVG_HIGH_LOW_RANGE_PCT = 5.0  # 5.0% d'amplitude High-Low quotidienne moyenne max (pas le spread bid-ask)
+DEFAULT_ML_LIQUIDITY_MIN_DAILY_DOLLAR_VOLUME = 10_000_000  # 10.0M $ / jour  (Garantit un volume institutionnel)
+# Filtres de Structure
+DEFAULT_ML_LIQUIDITY_MIN_PRICE = 10.0  # $10 min, élimine penny stocks
+# Filtre spread bid-ask réel (stock_quote_snapshots.spread_bps)
+DEFAULT_ML_LIQUIDITY_MAX_SPREAD_BPS = 40.0  # 40 bps = 0.40% de spread bid-ask max (0 = désactivé)
+DEFAULT_ML_LIQUIDITY_SPREAD_FALLBACK_MODE = "warn_only"  # "pass" | "reject" | "warn_only"
+DEFAULT_ML_LIQUIDITY_SPREAD_MAX_QUOTE_AGE_DAYS = 5  # âge max d'une quote spread
 
 # ---------------------------------------------------------------------------
 # Grilles candidate (resserrées swing 2-10 j)

@@ -530,7 +530,8 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
                     if _th:
                         lines.append(f"  - Seuils : vol ≥ {_th.get('min_avg_volume_20d', '—'):,}, "
                                      f"market cap ≥ ${_th.get('min_market_cap_proxy', '—'):,.0f}, "
-                                     f"spread ≤ {_th.get('max_avg_spread_pct', '—')}%")
+                                     f"range High-Low ≤ {_th.get('max_avg_high_low_range_pct', '—')}%, "
+                                     f"spread bid-ask ≤ {_th.get('max_spread_bps', '—')} bps")
                     _details = _liq.get("details", {})
                     if _details:
                         lines.append("")

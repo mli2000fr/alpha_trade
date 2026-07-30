@@ -44,7 +44,14 @@ class DataConfig:
     enable_liquidity_filter: bool = False
     liquidity_min_avg_volume_20d: int = 500_000
     liquidity_min_market_cap: float = 500_000_000.0  # 500M$
-    liquidity_max_avg_spread_pct: float = 0.5
+    liquidity_max_market_cap: float = 0.0              # 0 = pas de limite, >0 exclut mega caps
+    liquidity_max_avg_high_low_range_pct: float = 5.0  # amplitude High-Low quotidienne moyenne max (%), PAS le spread bid-ask
+    liquidity_min_daily_dollar_volume: float = 0.0     # 0 = pas de filtre, >0 = volume quotidien min en $
+    liquidity_min_price: float = 0.0                    # 0 = pas de filtre, >0 = prix minimum (dernier close)
+    # ── Filtre spread bid-ask réel (stock_quote_snapshots.spread_bps) ──
+    liquidity_max_spread_bps: float = 40.0             # 40 bps = 0.40% spread bid-ask max ; 0 = désactivé
+    liquidity_spread_fallback_mode: str = "pass"        # "pass" | "reject" | "warn_only"
+    liquidity_spread_max_quote_age_days: int = 5       # âge max d'une quote pour être considérée fraîche
     # ── Global Ranking (Sprint 2026-07-26) ──
     global_ranking_max_symbols: int = 300    # 0 = pas de limite, >0 = top N par liquidité ou stratifié
     global_ranking_selection_stratified: bool = True  # True = sélection stratifiée par déciles
