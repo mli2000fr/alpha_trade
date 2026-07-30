@@ -651,6 +651,8 @@ def run_training_batch(
     _last_liquidity_diag = liquidity_diag
 
     # ── Filtrage per-symbol max (test rapide, top N par volume moyen) ──
+    # Ne PAS appliquer au Global Ranking — sauvegarder la liste complète avant.
+    _global_symbols = list(symbols)
     _ps_max = getattr(cfg.data, "per_symbol_max_symbols", 0)
     if _ps_max > 0 and len(symbols) > _ps_max:
         _orig_count = len(symbols)
@@ -727,10 +729,10 @@ def run_training_batch(
     # 12k times.  Sector features piggyback on the same raw panel.
     cross_sectional_cache: pd.DataFrame | None = None
     _needs_cross_sectional = cfg.data.enable_cross_sectional_features
-    if _needs_cross_sectional and symbols:
+    if _needs_cross_sectional and _global_symbols:
         from modelFactory.cross_sectional import build_cross_sectional_features_from_db, _load_sector_mapping
         from modelFactory.data_loader import load_benchmark_bars, load_symbol_latest_bar_date
-        LOGGER.info("run_training_batch pre-computing cross-sectional features for %d symbols", len(symbols))
+        LOGGER.info("run_training_batch pre-computing cross-sectional features for %d symbols", len(_global_symbols))
         bench_df = None
         if cfg.data.feature_set == "expert" or cfg.data.benchmark_symbol:
             try:
@@ -752,7 +754,7 @@ def run_training_batch(
 
         cross_sectional_cache, _ = build_cross_sectional_features_from_db(
             engine,
-            symbols,
+            _global_symbols,
             benchmark_df=bench_df,
             min_universe_size=cfg.data.cross_sectional_min_universe,
             start_date=cfg.data.training_start_date,
@@ -767,11 +769,11 @@ def run_training_batch(
 
     # ── Fundamental features cache ──
     fundamental_cache: pd.DataFrame | None = None
-    if cfg.data.include_fundamentals_features and symbols:
+    if cfg.data.include_fundamentals_features and _global_symbols:
         from modelFactory.fundamental_features import load_fundamentals_from_db
-        LOGGER.info("run_training_batch loading fundamentals for %d symbols", len(symbols))
+        LOGGER.info("run_training_batch loading fundamentals for %d symbols", len(_global_symbols))
         fundamental_cache = load_fundamentals_from_db(
-            symbols,
+            _global_symbols,
             start_date=cfg.data.training_start_date or "2020-01-01",
             end_date=cfg.data.training_end_date or pd.Timestamp.now().date(),
             engine=engine,
@@ -785,12 +787,12 @@ def run_training_batch(
     # ── Approche 2 — Phase 1 : Global Ranking Model Walk-Forward (FLAG A) ──
     global_result_wf: dict[str, Any] | None = None
     _needs_global = cfg.global_model.enabled
-    if _needs_global and symbols:
+    if _needs_global and _global_symbols:
         update_runtime_status(current_phase="global_ranking_wf", progress_item="__GLOBAL__")
-        LOGGER.info("run_training_batch global_ranking_wf start symbols=%d", len(symbols))
+        LOGGER.info("run_training_batch global_ranking_wf start symbols=%d", len(_global_symbols))
         from modelFactory.global_ranking import train_global_ranking_wf
         global_result_wf = train_global_ranking_wf(
-            symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
+            _global_symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
         )
         LOGGER.info(
             "run_training_batch global_ranking_wf status=%s ic_rank_mean=%s decile_spreads=%s",
