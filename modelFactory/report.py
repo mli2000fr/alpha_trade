@@ -529,7 +529,7 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
                     _th = _liq.get("thresholds", {})
                     if _th:
                         lines.append(f"  - Seuils : vol ≥ {_th.get('min_avg_volume_20d', '—'):,}, "
-                                     f"market cap ≥ ${_th.get('min_market_cap_proxy', '—'):,.0f}, "
+                                     f"market cap ∈ [${_th.get('min_market_cap', '—'):,.0f}, ${_th.get('max_market_cap', '—'):,.0f}], "
                                      f"range High-Low ≤ {_th.get('max_avg_high_low_range_pct', '—')}%, "
                                      f"spread bid-ask ≤ {_th.get('max_spread_bps', '—')} bps")
                     _details = _liq.get("details", {})

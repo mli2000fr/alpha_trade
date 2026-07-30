@@ -9,7 +9,7 @@ from __future__ import annotations
 # ML train — cible swing cash + walk-forward
 # ---------------------------------------------------------------------------
 DEFAULT_ML_TARGET_MODE = "ternary"
-DEFAULT_ML_FORECAST_HORIZON = 5              # 10 jours = horizon swing étendu (TODO-5)
+DEFAULT_ML_FORECAST_HORIZON = 10              # 10 jours = horizon swing étendu
 DEFAULT_ML_TARGET_UP_THRESHOLD = 0.03        # +3.0 % cible long
 DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.03     # -3.0 % cible short
 DEFAULT_ML_TERNARY_WEIGHT_SHORT = 1.0

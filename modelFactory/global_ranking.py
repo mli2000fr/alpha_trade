@@ -734,6 +734,7 @@ def train_global_ranking_wf(
 
     # ── Entraîner un modèle par horizon ──
     all_ic_means: dict[int, float] = {}
+    all_ic_stds: dict[int, float] = {}
     all_rank_dfs: list[pd.DataFrame] = []
     _saved_models: dict[int, str] = {}
     _horizon_features: dict[int, list[str]] = {}  # features actives par horizon
@@ -918,6 +919,7 @@ def train_global_ranking_wf(
             )
             all_rank_dfs.append(h_pred_df[["symbol", "date", f"global_rank{h_suffix}"]])
             all_ic_means[horizon] = float(np.mean(h_ics)) if h_ics else float("nan")
+            all_ic_stds[horizon] = float(np.std(h_ics)) if (h_ics and len(h_ics) > 1) else float("nan")
 
             # ── Decile Spread (monétisation du signal) ──
             _decile = _compute_decile_spread(h_pred_df)
@@ -946,11 +948,19 @@ def train_global_ranking_wf(
                 except Exception as _exc:
                     LOGGER.warning("train_global_ranking_wf h=%d failed to save model: %s", horizon, _exc)
 
-            LOGGER.info("global_ranking_wf horizon=%d done ic_mean=%.4f", horizon, all_ic_means[horizon])
+            _ic_mean = all_ic_means.get(horizon, float("nan"))
+            _ic_std = all_ic_stds.get(horizon, float("nan"))
+            _ic_ir = _ic_mean / _ic_std if (_ic_std and not np.isnan(_ic_std) and _ic_std > 0) else float("nan")
+            LOGGER.info(
+                "global_ranking_wf horizon=%d done ic_mean=%.4f ic_std=%.4f ic_ir=%.2f",
+                horizon, _ic_mean, _ic_std, _ic_ir,
+            )
             # ── Stocker les détails pour IHM/rapport ──
             _h_key = str(horizon)
             _horizon_details[_h_key] = {
                 "ic_mean": float(all_ic_means[horizon]) if horizon in all_ic_means else None,
+                "ic_std": float(all_ic_stds[horizon]) if horizon in all_ic_stds else None,
+                "ic_ir": float(_ic_ir) if not np.isnan(_ic_ir) else None,
                 "decile_spread": float(_decile_spreads.get(horizon)) if horizon in _decile_spreads else None,
                 "decile_top": float(_decile.get("top_decile_return")) if _decile and _decile.get("top_decile_return") is not None else None,
                 "decile_bottom": float(_decile.get("bottom_decile_return")) if _decile and _decile.get("bottom_decile_return") is not None else None,

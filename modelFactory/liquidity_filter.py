@@ -3,11 +3,18 @@
 Supprime les symboles à faible volume / market cap avant l'entraînement
 pour réduire le bruit dans les signaux ML.
 
-Deux familles de filtres indépendantes :
-1. Range High-Low quotidien ((high-low)/low*100) — proxy de volatilité intraday
+Trois familles de filtres indépendantes :
+1. Market cap réel (stock_metadata.market_cap) — min/max pour cibler Mid Caps
+   et exclure Small/Micro Caps (<2B$) et Mega Caps (>20B$).
+2. Range High-Low quotidien ((high-low)/low*100) — proxy de volatilité intraday
    (100% de couverture via stock_bars_daily).
-2. Spread bid-ask réel (spread_bps) — coût d'exécution mesuré
+3. Spread bid-ask réel (spread_bps) — coût d'exécution mesuré
    (couverture partielle via stock_quote_snapshots, fallback configurable).
+
+Note : avant le Sprint 2026-08-01, le market cap était approximé par
+``avg_dollar_volume_20d * 20``, un proxy qui échouait pour les mega caps
+à faible turnover (ex: LMT ~120B$ avec seulement ~500M$/jour de volume).
+Désormais on utilise ``stock_metadata.market_cap`` directement.
 """
 from __future__ import annotations
 
@@ -44,7 +51,6 @@ WITH symbol_bars AS (
         AVG(CASE WHEN date >= :lookback_start THEN volume ELSE NULL END) AS avg_volume_20d,
         AVG(CASE WHEN date >= :lookback_start THEN close * volume ELSE NULL END) AS avg_dollar_volume_20d,
         AVG(CASE WHEN date >= :lookback_start AND low > 0 THEN (high - low) / low * 100 ELSE NULL END) AS avg_high_low_range_pct,
-        MAX(CASE WHEN date >= :lookback_start THEN close * volume ELSE NULL END) AS max_dollar_volume,
         COUNT(CASE WHEN date >= :lookback_start THEN 1 ELSE NULL END) AS nb_days
     FROM stock_bars_daily
     WHERE symbol IN :symbols_placeholder
@@ -69,11 +75,12 @@ SELECT
     sb.avg_high_low_range_pct,
     sb.nb_days,
     lc.last_close,
+    sm.market_cap,
     CASE
         WHEN sb.avg_volume_20d IS NULL OR sb.avg_volume_20d < :min_volume THEN 'volume_insuffisant'
         WHEN :min_daily_dvol > 0 AND (sb.avg_dollar_volume_20d IS NULL OR sb.avg_dollar_volume_20d < :min_daily_dvol) THEN 'dollar_volume_quotidien_insuffisant'
-        WHEN sb.avg_dollar_volume_20d IS NULL OR sb.avg_dollar_volume_20d < :min_dollar_volume THEN 'market_cap_insuffisant'
-        WHEN :max_dollar_volume > 0 AND (sb.avg_dollar_volume_20d IS NULL OR sb.avg_dollar_volume_20d > :max_dollar_volume) THEN 'dollar_volume_eleve'
+        WHEN :min_market_cap > 0 AND sm.market_cap IS NOT NULL AND sm.market_cap < :min_market_cap THEN 'market_cap_insuffisant'
+        WHEN :max_market_cap > 0 AND sm.market_cap IS NOT NULL AND sm.market_cap > :max_market_cap THEN 'market_cap_eleve'
         WHEN :min_price > 0 AND (lc.last_close IS NULL OR lc.last_close < :min_price) THEN 'prix_insuffisant'
         WHEN sb.avg_high_low_range_pct IS NULL OR sb.avg_high_low_range_pct > :max_high_low_range THEN 'range_eleve'
         WHEN sb.nb_days IS NULL OR sb.nb_days < :min_days THEN 'historique_insuffisant'
@@ -81,10 +88,11 @@ SELECT
     END AS reason
 FROM symbol_bars sb
 LEFT JOIN last_close lc ON lc.symbol = sb.symbol
+LEFT JOIN stock_metadata sm ON sm.symbol = sb.symbol
 WHERE sb.avg_volume_20d < :min_volume
    OR (:min_daily_dvol > 0 AND sb.avg_dollar_volume_20d < :min_daily_dvol)
-   OR sb.avg_dollar_volume_20d < :min_dollar_volume
-   OR (:max_dollar_volume > 0 AND sb.avg_dollar_volume_20d > :max_dollar_volume)
+   OR (:min_market_cap > 0 AND sm.market_cap IS NOT NULL AND sm.market_cap < :min_market_cap)
+   OR (:max_market_cap > 0 AND sm.market_cap IS NOT NULL AND sm.market_cap > :max_market_cap)
    OR (:min_price > 0 AND (lc.last_close IS NULL OR lc.last_close < :min_price))
    OR sb.avg_high_low_range_pct > :max_high_low_range
    OR sb.nb_days < :min_days
@@ -122,13 +130,17 @@ def filter_symbols_by_liquidity(
     min_avg_volume_20d : int
         Volume quotidien moyen minimum sur 20 jours.
     min_market_cap : float
-        Market cap minimum estimé (via prix × volume).
-        On utilise le dollar volume comme proxy.
+        Market cap minimum (en $). Basé sur stock_metadata.market_cap.
+        0 = pas de limite basse.
+    max_market_cap : float
+        Market cap maximum (en $). Basé sur stock_metadata.market_cap.
+        0 = pas de limite haute. Ex: 20_000_000_000 pour exclure les mega caps.
     max_avg_high_low_range_pct : float
         Amplitude High-Low quotidienne moyenne maximale (en %).
         Basé sur (high-low)/low*100 — PAS le spread bid-ask.
-    min_days : int
-        Nombre minimum de jours de données requis.
+    min_daily_dollar_volume : float
+        Volume quotidien moyen minimum en dollars (prix × volume).
+        0 = pas de filtre.
     max_spread_bps : float
         Spread bid-ask max en points de base (0 = désactive).
         Basé sur stock_quote_snapshots.spread_bps (données réelles).
@@ -164,8 +176,8 @@ def filter_symbols_by_liquidity(
         "lookback_start": lookback_start,
         "end_date": end_date or date.today(),
         "min_volume": min_avg_volume_20d,
-        "min_dollar_volume": min_market_cap / 20,  # proxy: cap ~20j de dollar volume
-        "max_dollar_volume": max_market_cap / 20 if max_market_cap > 0 else 0,
+        "min_market_cap": min_market_cap,
+        "max_market_cap": max_market_cap,
         "max_high_low_range": max_avg_high_low_range_pct,
         "min_daily_dvol": min_daily_dollar_volume,
         "min_price": min_price,
@@ -197,14 +209,17 @@ def filter_symbols_by_liquidity(
         for r in _sample:
             _vol = f"{r.avg_volume_20d:.0f}" if r.avg_volume_20d is not None else "NULL"
             _dvol = f"{r.avg_dollar_volume_20d:.0f}" if r.avg_dollar_volume_20d is not None else "NULL"
+            _mcap = f"${r.market_cap:,.0f}" if getattr(r, 'market_cap', None) is not None else "NULL"
             _range = f"{r.avg_high_low_range_pct:.2f}%" if r.avg_high_low_range_pct is not None else "NULL"
             _days = r.nb_days if r.nb_days is not None else "NULL"
-            _parts.append(f"{r.symbol}(vol={_vol}, dvol={_dvol}, range={_range}, days={_days})→{r.reason}")
+            _parts.append(f"{r.symbol}(vol={_vol}, dvol={_dvol}, mcap={_mcap}, range={_range}, days={_days})→{r.reason}")
         LOGGER.info("liquidity_filter: sample filtered: %s", ", ".join(_parts))
         LOGGER.info(
-            "liquidity_filter: %d/%d symbols filtered (min_vol=%d min_dvol=%.0f min_daily_dvol=%.0f max_dvol=%.0f min_price=%.0f max_range=%.1f%%)",
+            "liquidity_filter: %d/%d symbols filtered (min_vol=%d min_daily_dvol=%.0f "
+            "min_market_cap=%.0f max_market_cap=%.0f min_price=%.0f max_range=%.1f%%)",
             len(filtered), len(symbols),
-            min_avg_volume_20d, min_market_cap, min_daily_dollar_volume, max_market_cap, min_price,
+            min_avg_volume_20d, min_daily_dollar_volume,
+            min_market_cap, max_market_cap, min_price,
             max_avg_high_low_range_pct,
         )
 
@@ -212,6 +227,41 @@ def filter_symbols_by_liquidity(
         if LOGGER.isEnabledFor(logging.DEBUG):
             for sym, reason in sorted(filtered.items()):
                 LOGGER.debug("liquidity_filter: %s → %s", sym, reason)
+
+    # ── Vérification couverture market_cap ──────────────────────────────
+    _market_cap_stats: dict[str, Any] = {"coverage_pct": 100.0, "missing": 0}
+    if (min_market_cap > 0 or max_market_cap > 0) and symbols:
+        try:
+            _mcap_query = (
+                f"SELECT COUNT(*) FROM stock_metadata "
+                f"WHERE symbol IN ({sym_placeholders}) AND market_cap IS NOT NULL"
+            )
+            with engine.connect() as conn:
+                _mcap_count = conn.execute(
+                    text(_mcap_query),
+                    {f"sym_{i}": s for i, s in enumerate(symbols)},
+                ).scalar()
+            _mcap_missing = len(symbols) - int(_mcap_count or 0)
+            _mcap_cov = (len(symbols) - _mcap_missing) / len(symbols) * 100.0 if symbols else 100.0
+            _market_cap_stats = {"coverage_pct": round(_mcap_cov, 1), "missing": _mcap_missing}
+            if _mcap_missing > 0:
+                if _mcap_cov < 95.0:
+                    LOGGER.warning(
+                        "liquidity_filter: %d/%d symboles (%.1f%%) sans market_cap "
+                        "dans stock_metadata. Vérifiez le job update_sector. "
+                        "Le filtre market_cap min/max est inactif pour ces symboles.",
+                        _mcap_missing, len(symbols), _mcap_cov,
+                    )
+                else:
+                    LOGGER.info(
+                        "liquidity_filter: market_cap coverage=%.1f%% (%d/%d manquants)",
+                        _mcap_cov, _mcap_missing, len(symbols),
+                    )
+        except Exception as exc:
+            LOGGER.warning(
+                "liquidity_filter: market_cap coverage check failed: %s", exc,
+            )
+            _market_cap_stats = {"coverage_pct": 0.0, "missing": len(symbols), "error": str(exc)}
 
     # ── Filtre spread bid-ask réel (stock_quote_snapshots) ──────────────
     spread_stats: dict[str, Any] = {"enabled": False}
@@ -238,14 +288,18 @@ def filter_symbols_by_liquidity(
         "total_requested": len(symbols),
         "thresholds": {
             "min_avg_volume_20d": min_avg_volume_20d,
-            "min_market_cap_proxy": min_market_cap,
+            "min_market_cap": min_market_cap,
+            "max_market_cap": max_market_cap,
+            "min_daily_dollar_volume": min_daily_dollar_volume,
             "max_avg_high_low_range_pct": max_avg_high_low_range_pct,
+            "min_price": min_price,
             "min_days": min_days,
             "lookback_start": lookback_start.isoformat(),
             "max_spread_bps": max_spread_bps,
             "spread_fallback_mode": spread_fallback_mode,
             "spread_max_quote_age_days": spread_max_quote_age_days,
         },
+        "market_cap_diagnostics": _market_cap_stats,
         "spread_diagnostics": spread_stats,
         "details": filtered,
     }

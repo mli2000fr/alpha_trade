@@ -141,7 +141,7 @@ class TestFilterSymbolsByLiquidity:
         conn = MagicMock()
         conn.execute.return_value.fetchall.return_value = [
             FakeRow("T1", "volume_insuffisant"),
-            FakeRow("T2", "dollar_volume_insuffisant"),
+            FakeRow("T2", "market_cap_insuffisant"),
             FakeRow("T3", "range_eleve"),
             FakeRow("T4", "historique_insuffisant"),
         ]
@@ -162,7 +162,7 @@ class TestFilterSymbolsByLiquidity:
         # Vérifie les 4 raisons possibles
         reasons = set(diag["details"].values())
         assert "volume_insuffisant" in reasons
-        assert "dollar_volume_insuffisant" in reasons
+        assert "market_cap_insuffisant" in reasons
         assert "range_eleve" in reasons
         assert "historique_insuffisant" in reasons
 
