@@ -1313,9 +1313,19 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
     _summary_rows: list[dict] = []
     for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
         _h_info = _hd[_h_key]
+        _h_ic = _ic_by_h.get(_h_key)
+        # IC IR = IC Mean / IC Std (depuis les splits)
+        _split_ics = [s.get("ic_rank") for s in _h_info.get("splits", []) if s.get("ic_rank") is not None]
+        _h_ic_ir: float | None = None
+        if _split_ics and len(_split_ics) > 1:
+            import numpy as np
+            _arr = np.array(_split_ics, dtype=float)
+            if _arr.std() > 0:
+                _h_ic_ir = float(_arr.mean() / _arr.std())
         _summary_rows.append({
             "Horizon": f"H{_h_key}",
-            "IC Rank": _ic_by_h.get(_h_key),
+            "IC Mean": _h_ic,
+            "IC IR": round(_h_ic_ir, 2) if _h_ic_ir is not None else "—",
             "Decile Spread": _ds_by_h.get(_h_key),
             "Nb Features": _h_info.get("n_features", "—"),
             "Nb Splits": len(_h_info.get("splits", [])),
@@ -1329,7 +1339,8 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             hide_index=True,
             column_config={
                 "Horizon": "Horizon",
-                "IC Rank": st.column_config.NumberColumn("🎯 IC Rank", format="%.4f"),
+                "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
+                "IC IR": "📈 IC IR",
                 "Decile Spread": st.column_config.NumberColumn("📊 Decile Spread", format="%.4f"),
                 "Nb Features": "Nb Features",
                 "Nb Splits": "Nb Splits",
