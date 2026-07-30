@@ -306,6 +306,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Global Ranking : nombre de features à garder par importance (0 = toutes, ex: 30 = top 30)")
     p.add_argument("--global-ranking-max-symbols", type=int, default=0,
                    help="Global Ranking : nombre max de symboles (0 = tous, top N par volume moyen)")
+    p.add_argument("--per-symbol-max-symbols", type=int, default=0,
+                   help="Per-Symbol : nombre max de symboles à entraîner (0 = tous, top N par volume ou stratifié). Pour test rapide.")
+    p.add_argument("--per-symbol-selection-stratified", action="store_true", default=False,
+                   help="Per-Symbol : sélection stratifiée par déciles de volume (sinon top N par volume)")
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
                    help="Active les features cross-sectionnelles PIT-safe (rangs percentiles + features sectorielles dynamiques)")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
@@ -486,6 +490,8 @@ def main(args: list[str] | None = None) -> None:
             liquidity_min_market_cap=opts.liquidity_min_market_cap,
             liquidity_max_avg_spread_pct=opts.liquidity_max_avg_spread_pct,
             global_ranking_max_symbols=opts.global_ranking_max_symbols,
+            per_symbol_max_symbols=opts.per_symbol_max_symbols,
+            per_symbol_selection_stratified=opts.per_symbol_selection_stratified,
         ),
         model=ModelConfig(
             batch_size=opts.batch_size,

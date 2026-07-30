@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sqlalchemy.engine import Engine
+from sqlalchemy import text
 
 from modelFactory.batch_diagnostics import persist_batch_diagnostics
 from modelFactory.champion_selection import (
@@ -457,6 +458,103 @@ def _train_worker(
     )
 
 
+def _compute_per_symbol_ic_from_parquet(
+    cfg: TrainingConfig,
+    batch_id: str,
+    *,
+    horizons: tuple[int, ...] = (3, 5, 10, 15, 20),
+    min_symbols_per_date: int = 10,
+) -> dict[str, Any] | None:
+    """Agrège les prédictions WF per-symbol et calcule l'IC cross-sectionnel.
+
+    Lit les fichiers ``_per_symbol_wf_preds/<symbol>.parquet`` générés
+    pendant le walk-forward, les concatène, et calcule l'IC Rank
+    cross-sectionnel (Spearman) date par date, pour chaque horizon.
+
+    Les forward returns sont calculés à partir de la colonne ``close``
+    sauvegardée dans les parquets, ce qui permet de calculer l'IC pour
+    H3, H5, H10, H15, H20.
+
+    Returns:
+        dict keyed by horizon string, e.g. {"3": {"ic_mean": ..., ...}, "5": {...}},
+        ou None si pas de données.
+    """
+    from modelFactory.global_ranking import compute_cross_sectional_ic
+
+    _preds_dir = Path(cfg.artifacts_dir) / "_per_symbol_wf_preds"
+    if not _preds_dir.exists():
+        LOGGER.warning("_compute_per_symbol_ic: no _per_symbol_wf_preds directory at %s", _preds_dir)
+        return None
+
+    _parquet_files = sorted(_preds_dir.glob("*.parquet"))
+    if not _parquet_files:
+        LOGGER.warning("_compute_per_symbol_ic: no parquet files in %s", _preds_dir)
+        return None
+
+    _frames: list[pd.DataFrame] = []
+    for _pf in _parquet_files:
+        try:
+            _df = pd.read_parquet(_pf)
+            if not _df.empty:
+                _frames.append(_df)
+        except Exception as exc:
+            LOGGER.warning("_compute_per_symbol_ic: failed to read %s: %s", _pf, exc)
+
+    if not _frames:
+        return None
+
+    _all = pd.concat(_frames, ignore_index=True)
+    _all["date"] = pd.to_datetime(_all["date"])
+
+    if "proba_long" not in _all.columns:
+        LOGGER.warning("_compute_per_symbol_ic: no proba_long column in predictions")
+        return None
+
+    _n_symbols = _all["symbol"].nunique()
+    LOGGER.info(
+        "_compute_per_symbol_ic loaded %d symbols, %d rows, %d dates from %d files",
+        _n_symbols, len(_all), _all["date"].nunique(), len(_parquet_files),
+    )
+
+    # ── Calculer les forward returns à chaque horizon si close dispo ──
+    _has_close = "close" in _all.columns
+    _results: dict[str, dict] = {}
+    for _h in horizons:
+        if _has_close:
+            _all_sym = _all.sort_values(["symbol", "date"]).copy()
+            _all_sym["fwd_close"] = _all_sym.groupby("symbol")["close"].shift(-_h)
+            _all_sym["future_return_h"] = _all_sym["fwd_close"] / _all_sym["close"] - 1.0
+            _return_col = "future_return_h"
+        elif "future_return" in _all.columns:
+            _all_sym = _all.copy()
+            _return_col = "future_return"
+        else:
+            _all_sym = _all.copy()
+            _return_col = None
+
+        _result = compute_cross_sectional_ic(
+            _all_sym,
+            score_col="proba_long",
+            return_col=_return_col,
+            vol_col=None,
+            min_symbols_per_date=min_symbols_per_date,
+        )
+        _result["n_symbols"] = _n_symbols
+        # Ne pas persister ic_by_date (trop volumineux pour metadata_json TEXT)
+        _result.pop("ic_by_date", None)
+        _results[str(_h)] = _result
+
+        LOGGER.info(
+            "_compute_per_symbol_ic H%d ic_mean=%.4f ic_std=%.4f n_dates=%d",
+            _h,
+            _result.get("ic_mean", float("nan")),
+            _result.get("ic_std", float("nan")),
+            _result.get("n_dates", 0),
+        )
+
+    return _results
+
+
 def run_training_batch(
     cfg: TrainingConfig,
     engine: Engine,
@@ -552,6 +650,50 @@ def run_training_batch(
     global _last_liquidity_diag
     _last_liquidity_diag = liquidity_diag
 
+    # ── Filtrage per-symbol max (test rapide, top N par volume moyen) ──
+    # Ne PAS appliquer au Global Ranking — sauvegarder la liste complète avant.
+    _global_symbols = list(symbols)
+    _ps_max = getattr(cfg.data, "per_symbol_max_symbols", 0)
+    _ps_stratified = getattr(cfg.data, "per_symbol_selection_stratified", False)
+    if _ps_max > 0 and len(symbols) > _ps_max:
+        _orig_count = len(symbols)
+        try:
+            _vol_df = pd.read_sql(
+                text(
+                    "SELECT symbol, AVG(volume) AS avg_vol "
+                    "FROM stock_bars_daily "
+                    "WHERE symbol IN :syms AND date >= :start AND date <= :end "
+                    "GROUP BY symbol"
+                ),
+                engine,
+                params={
+                    "syms": tuple(symbols),
+                    "start": str(cfg.data.training_start_date),
+                    "end": str(cfg.data.training_end_date),
+                },
+            )
+            if not _vol_df.empty:
+                if _ps_stratified and len(_vol_df) >= 10:
+                    # Stratifié par déciles : ~N/10 symboles par décile
+                    _vol_df["decile"] = pd.qcut(_vol_df["avg_vol"], q=10, labels=False)
+                    _per_decile = max(1, _ps_max // 10)
+                    _selected: list[str] = []
+                    for _d in range(10):
+                        _decile_syms = _vol_df[_vol_df["decile"] == _d]["symbol"].tolist()
+                        _selected.extend(_decile_syms[:_per_decile])
+                    symbols = _selected[:_ps_max]
+                else:
+                    # Top N par volume moyen
+                    _vol_df = _vol_df.sort_values("avg_vol", ascending=False)
+                    symbols = _vol_df.head(_ps_max)["symbol"].tolist()
+        except Exception as _exc:
+            LOGGER.warning("per_symbol_max_symbols: volume query failed, fallback alphabetical: %s", _exc)
+            symbols = symbols[:_ps_max]
+        LOGGER.info(
+            "run_training_batch per_symbol_max_symbols limit=%d orig=%d kept=%d stratified=%s",
+            _ps_max, _orig_count, len(symbols), _ps_stratified,
+        )
+
     use_gpu = _gpu_requested_or_available(cfg)
     effective_workers = 1 if use_gpu else cfg.max_workers
     if cfg.debug_train and effective_workers != 1:
@@ -599,10 +741,10 @@ def run_training_batch(
     # 12k times.  Sector features piggyback on the same raw panel.
     cross_sectional_cache: pd.DataFrame | None = None
     _needs_cross_sectional = cfg.data.enable_cross_sectional_features
-    if _needs_cross_sectional and symbols:
+    if _needs_cross_sectional and _global_symbols:
         from modelFactory.cross_sectional import build_cross_sectional_features_from_db, _load_sector_mapping
         from modelFactory.data_loader import load_benchmark_bars, load_symbol_latest_bar_date
-        LOGGER.info("run_training_batch pre-computing cross-sectional features for %d symbols", len(symbols))
+        LOGGER.info("run_training_batch pre-computing cross-sectional features for %d symbols", len(_global_symbols))
         bench_df = None
         if cfg.data.feature_set == "expert" or cfg.data.benchmark_symbol:
             try:
@@ -624,7 +766,7 @@ def run_training_batch(
 
         cross_sectional_cache, _ = build_cross_sectional_features_from_db(
             engine,
-            symbols,
+            _global_symbols,
             benchmark_df=bench_df,
             min_universe_size=cfg.data.cross_sectional_min_universe,
             start_date=cfg.data.training_start_date,
@@ -639,11 +781,11 @@ def run_training_batch(
 
     # ── Fundamental features cache ──
     fundamental_cache: pd.DataFrame | None = None
-    if cfg.data.include_fundamentals_features and symbols:
+    if cfg.data.include_fundamentals_features and _global_symbols:
         from modelFactory.fundamental_features import load_fundamentals_from_db
-        LOGGER.info("run_training_batch loading fundamentals for %d symbols", len(symbols))
+        LOGGER.info("run_training_batch loading fundamentals for %d symbols", len(_global_symbols))
         fundamental_cache = load_fundamentals_from_db(
-            symbols,
+            _global_symbols,
             start_date=cfg.data.training_start_date or "2020-01-01",
             end_date=cfg.data.training_end_date or pd.Timestamp.now().date(),
             engine=engine,
@@ -657,12 +799,12 @@ def run_training_batch(
     # ── Approche 2 — Phase 1 : Global Ranking Model Walk-Forward (FLAG A) ──
     global_result_wf: dict[str, Any] | None = None
     _needs_global = cfg.global_model.enabled
-    if _needs_global and symbols:
+    if _needs_global and _global_symbols:
         update_runtime_status(current_phase="global_ranking_wf", progress_item="__GLOBAL__")
-        LOGGER.info("run_training_batch global_ranking_wf start symbols=%d", len(symbols))
+        LOGGER.info("run_training_batch global_ranking_wf start symbols=%d", len(_global_symbols))
         from modelFactory.global_ranking import train_global_ranking_wf
         global_result_wf = train_global_ranking_wf(
-            symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
+            _global_symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
         )
         LOGGER.info(
             "run_training_batch global_ranking_wf status=%s ic_rank_mean=%s decile_spreads=%s",
@@ -888,6 +1030,87 @@ def run_training_batch(
             except Exception as exc:
                 LOGGER.warning(
                     "run_training_batch ic_rank persist failed batch_id=%s error=%s",
+                    batch_id, exc,
+                )
+
+        # ── Persister les détails par horizon dans metadata_json (IHM/rapport) ──
+        _features_path = Path(cfg.artifacts_dir) / "_global_ranking_features.json"
+        if _features_path.exists():
+            try:
+                _gr_meta = json.loads(_features_path.read_text(encoding="utf-8"))
+                _hd = _gr_meta.get("horizon_details")
+                if _hd:
+                    # Nettoyer les champs volumineux inutiles pour IHM/rapport
+                    for _h_info in _hd.values():
+                        if isinstance(_h_info, dict):
+                            _h_info.pop("feature_importance_all", None)
+                    _gr_details = {
+                        "horizon_details": _hd,
+                        "ic_by_horizon": _gr_meta.get("ic_by_horizon", {}),
+                        "decile_spreads": _gr_meta.get("decile_spreads", {}),
+                        "symbols_count": _gr_meta.get("symbols_count"),
+                        "splits_count": _gr_meta.get("splits_count"),
+                        "pred_rows": _gr_meta.get("pred_rows"),
+                        "horizons": _gr_meta.get("horizons", []),
+                    }
+                    # Lire metadata_json existant
+                    with engine.begin() as conn:
+                        _row = conn.execute(
+                            text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                            {"bid": batch_id},
+                        ).mappings().first()
+                    _existing = {}
+                    if _row and _row.get("metadata_json"):
+                        try:
+                            _existing = json.loads(str(_row["metadata_json"]))
+                        except Exception:
+                            pass
+                    _existing["global_ranking"] = _gr_details
+                    update_training_batch(engine, batch_id, metadata_json=json.dumps(_existing, ensure_ascii=False))
+                    LOGGER.info("run_training_batch horizon_details persisted batch_id=%s horizons=%s",
+                                batch_id, list(_hd.keys()))
+            except Exception as exc:
+                LOGGER.warning("run_training_batch horizon_details persist failed: %s", exc)
+
+        # ── Per-Symbol Cross-Sectional IC (agrégé depuis prédictions WF) ──
+        if completed > 0:
+            try:
+                _ps_ic_result = _compute_per_symbol_ic_from_parquet(cfg, batch_id)
+                if _ps_ic_result:
+                    _ps_h5 = _ps_ic_result.get("5", {})
+                    LOGGER.info(
+                        "run_training_batch per_symbol_ic batch_id=%s horizons=%s h5_ic=%.4f",
+                        batch_id, list(_ps_ic_result.keys()),
+                        _ps_h5.get("ic_mean", float("nan")),
+                    )
+                    # Persister dans metadata_json pour IHM
+                    with engine.begin() as conn:
+                        _mrow = conn.execute(
+                            text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                            {"bid": batch_id},
+                        ).mappings().first()
+                    _mexisting = {}
+                    if _mrow and _mrow.get("metadata_json"):
+                        try:
+                            _mexisting = json.loads(str(_mrow["metadata_json"]))
+                        except Exception:
+                            pass
+                    _mexisting["per_symbol_ic"] = _ps_ic_result
+                    update_training_batch(
+                        engine, batch_id,
+                        metadata_json=json.dumps(_mexisting, ensure_ascii=False),
+                    )
+                    LOGGER.info(
+                        "run_training_batch per_symbol_ic persisted batch_id=%s horizons=%s",
+                        batch_id, list(_ps_ic_result.keys()),
+                    )
+                else:
+                    LOGGER.warning(
+                        "run_training_batch per_symbol_ic no data batch_id=%s (no _per_symbol_wf_preds found)", batch_id,
+                    )
+            except Exception as exc:
+                LOGGER.warning(
+                    "run_training_batch per_symbol_ic failed batch_id=%s error=%s",
                     batch_id, exc,
                 )
 

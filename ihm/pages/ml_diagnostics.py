@@ -835,12 +835,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
         st.metric("Source symboles", str(row.get("symbol_source", "")))
         comment_val = row.get("comment")
         st.metric("Commentaire", str(comment_val) if comment_val and str(comment_val) != "None" and str(comment_val) != "nan" else "—")
+        st.metric("Démarré le", str(row.get("started_at", "—")))
+        st.metric("Terminé le", str(row.get("finished_at", "—")))
 
     with col2:
-        st.metric("Date début training", str(row.get("training_start_date", "—")))
-        st.metric("Date fin training", str(row.get("training_end_date", "—")))
-        st.metric("Date univers", str(row.get("universe_date", "—")))
-        st.metric("Nb symboles demandés", str(row.get("requested_symbol_count", "—")))
         # IC Rank du Global Ranking Model
         ic_val = row.get("ic_rank")
         if ic_val is not None and str(ic_val) not in ("None", "nan", ""):
@@ -854,25 +852,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.metric("📈 IC IR (Stabilité)", f"{_ic_ir:.2f}",
                       help="IC Information Ratio = IC Mean / IC Std. >0.5 = bon, >1.0 = exceptionnel. "
                            "Mesure la stabilité du signal dans le temps.")
-        # Decile Spreads
-        ds_h3 = row.get("decile_spread_h3")
-        ds_h5 = row.get("decile_spread_h5")
-        ds_h10 = row.get("decile_spread_h10")
-        if ds_h3 is not None or ds_h5 is not None or ds_h10 is not None:
-            _ds_parts = []
-            if ds_h3 is not None and str(ds_h3) not in ("None", "nan", ""):
-                _ds_parts.append(f"H3: {float(ds_h3):.4f}")
-            if ds_h5 is not None and str(ds_h5) not in ("None", "nan", ""):
-                _ds_parts.append(f"H5: {float(ds_h5):.4f}")
-            if ds_h10 is not None and str(ds_h10) not in ("None", "nan", ""):
-                _ds_parts.append(f"H10: {float(ds_h10):.4f}")
-            if _ds_parts:
-                st.metric("📊 Decile Spread (Top−Bottom)", "  ".join(_ds_parts),
-                          help="Rendement moyen du Top 10% moins Bottom 10% par horizon. "
-                               ">0.01 = excellent (1% de spread), "
-                               "~0.005 = correct (exploitable avec diversification), "
-                               "<0 = le classement est inversé.")
-
         # Stacking Global Rank
         _stacking_val = row.get("stacking_enabled")
         if _stacking_val is not None:
@@ -882,8 +861,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
                       help="Le rang global (global_rank_3/5) a été injecté comme feature dans les modèles per-symbol.")
 
     with col3:
-        st.metric("Démarré le", str(row.get("started_at", "—")))
-        st.metric("Terminé le", str(row.get("finished_at", "—")))
+        st.metric("Date début training", str(row.get("training_start_date", "—")))
+        st.metric("Date fin training", str(row.get("training_end_date", "—")))
+        st.metric("Date univers", str(row.get("universe_date", "—")))
+        st.metric("Nb symboles demandés", str(row.get("requested_symbol_count", "—")))
         st.metric("Complétés / Skippés / Échecs",
                   f"{row.get('symbols_completed', 0)} / {row.get('symbols_skipped', 0)} / {row.get('symbols_failed', 0)}")
         failure = row.get("failure_reason")
@@ -896,6 +877,51 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.code(str(cmd), language="powershell")
 
     st.markdown("")
+
+    # ── IC Cross-Sectionnel Per-Symbol (tableau) ──
+    _meta_raw = row.get("metadata_json")
+    if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
+        try:
+            _meta_ps = _json.loads(str(_meta_raw))
+            _ps_ic = _meta_ps.get("per_symbol_ic") if isinstance(_meta_ps, dict) else None
+            if isinstance(_ps_ic, dict) and any(
+                isinstance(v, dict) and "ic_mean" in v for v in _ps_ic.values()
+            ):
+                st.subheader("🔬 IC Cross-Sectionnel — Modèles Per-Symbol")
+                _ps_rows = []
+                for _h_key in sorted(_ps_ic.keys(), key=lambda x: int(x)):
+                    _h_info = _ps_ic[_h_key]
+                    _h_ic = _h_info.get("ic_mean")
+                    if _h_ic is None:
+                        continue
+                    _h_std = _h_info.get("ic_std")
+                    _h_n = _h_info.get("n_dates", "—")
+                    _ps_rows.append({
+                        "Horizon": f"H{_h_key}",
+                        "IC Mean": round(float(_h_ic), 4),
+                        "IC IR": round(float(_h_ic) / float(_h_std), 2) if _h_std and float(_h_std) > 0 else "—",
+                        "Nb Dates": _h_n,
+                    })
+                if _ps_rows:
+                    _ps_df = pd.DataFrame(_ps_rows)
+                    st.dataframe(
+                        _ps_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Horizon": "Horizon",
+                            "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
+                            "IC IR": st.column_config.NumberColumn("📈 IC IR", format="%.2f"),
+                            "Nb Dates": "Nb Dates",
+                        },
+                    )
+                    st.caption(
+                        "IC Rank cross-sectionnel des modèles per-symbol (agrégés). "
+                        ">0.01 = utile, >0.02 = bon. IC IR > 0.5 = stable."
+                    )
+        except Exception:
+            pass
+
     # ── Statut sélection du champion ──
     champion_df = safe_query(
         """SELECT mg.selection_mode, COUNT(DISTINCT mg.symbol) AS nb_symbols
@@ -1110,6 +1136,8 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.divider()
     # ── Global Rank History ──
     _render_global_rank_history(batch_id)
+    # ── Global Ranking Horizon Details ──
+    _render_global_ranking_horizon_details(row)
     st.divider()
     artifacts_dir = get_model_artifacts_dir() / batch_id
     _render_delete_batch_button(batch_id, artifacts_dir)
@@ -1247,6 +1275,185 @@ def _render_global_rank_history(batch_id: str) -> None:
 - **`rank_avg_35`** = moyenne arithmétique de H3 et H5 — utilisé par la cascade pour le filtrage.
 - Les rangs sont générés via **10. ML Predict → Prédire l'univers sélectionné** et stockés dans la table `global_rank_history`.
 - Les données sont écrasées (upsert) à chaque nouvelle prédiction pour la même date + batch.
+""")
+
+
+
+def _render_global_ranking_horizon_details(row: pd.Series) -> None:
+    """Affiche les détails du Global Ranking Model par horizon (IC, decile spread,
+    feature importance, splits) depuis metadata_json."""
+    _meta_raw = row.get("metadata_json")
+    if _meta_raw is None or str(_meta_raw) in ("None", "nan", ""):
+        return
+
+    try:
+        _meta = _json.loads(str(_meta_raw))
+    except Exception:
+        return
+
+    _gr = _meta.get("global_ranking")
+    if not _gr or not isinstance(_gr, dict):
+        return
+
+    _hd = _gr.get("horizon_details")
+    if not _hd or not isinstance(_hd, dict):
+        return
+
+    st.subheader("🌐 Global Ranking — Détails par Horizon")
+    st.caption(
+        f"Modèle LightGBM LambdaRank — {_gr.get('symbols_count', '?')} symboles, "
+        f"{_gr.get('splits_count', '?')} splits walk-forward, "
+        f"{_gr.get('pred_rows', '?')} lignes de prédiction"
+    )
+
+    # ── Tableau récapitulatif tous horizons ──
+    _ic_by_h = _gr.get("ic_by_horizon", {})
+    _ds_by_h = _gr.get("decile_spreads", {})
+
+    _summary_rows: list[dict] = []
+    for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
+        _h_info = _hd[_h_key]
+        _h_ic = _ic_by_h.get(_h_key)
+        # IC IR = IC Mean / IC Std (depuis les splits)
+        _split_ics = [s.get("ic_rank") for s in _h_info.get("splits", []) if s.get("ic_rank") is not None]
+        _h_ic_ir: float | None = None
+        if _split_ics and len(_split_ics) > 1:
+            import numpy as np
+            _arr = np.array(_split_ics, dtype=float)
+            if _arr.std() > 0:
+                _h_ic_ir = float(_arr.mean() / _arr.std())
+        _summary_rows.append({
+            "Horizon": f"H{_h_key}",
+            "IC Mean": _h_ic,
+            "IC IR": round(_h_ic_ir, 2) if _h_ic_ir is not None else "—",
+            "Decile Spread": _ds_by_h.get(_h_key),
+            "Nb Features": _h_info.get("n_features", "—"),
+            "Nb Splits": len(_h_info.get("splits", [])),
+        })
+
+    if _summary_rows:
+        _sum_df = pd.DataFrame(_summary_rows)
+        st.dataframe(
+            _sum_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Horizon": "Horizon",
+                "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
+                "IC IR": "📈 IC IR",
+                "Decile Spread": st.column_config.NumberColumn("📊 Decile Spread", format="%.4f"),
+                "Nb Features": "Nb Features",
+                "Nb Splits": "Nb Splits",
+            },
+        )
+
+    # ── Détail par horizon (expander) ──
+    for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
+        _h_info = _hd[_h_key]
+        _ic_val = _ic_by_h.get(_h_key, 0)
+        _ds_val = _ds_by_h.get(_h_key, 0)
+        _ic_color = "🟢" if _ic_val and _ic_val >= 0.02 else ("🟡" if _ic_val and _ic_val >= 0.01 else "🔴")
+        _ds_color = "🟢" if _ds_val and _ds_val >= 0.01 else ("🟡" if _ds_val and _ds_val >= 0.005 else "🔴")
+
+        with st.expander(
+            f"H{_h_key}  |  {_ic_color} IC Rank: {_ic_val:.4f}  |  {_ds_color} Decile Spread: {_ds_val:.4f}  |  {_h_info.get('n_features', '—')} features",
+            expanded=False,
+        ):
+            # ── Feature Importance Top10 / Bottom10 ──
+            _fi_top10 = _h_info.get("feature_importance_top10", [])
+            _fi_bottom10 = _h_info.get("feature_importance_bottom10", [])
+
+            if _fi_top10:
+                col_fi1, col_fi2 = st.columns(2)
+                with col_fi1:
+                    st.markdown("**🔝 Feature Importance — Top 10**")
+                    _fi_top_df = pd.DataFrame(_fi_top10)
+                    if "importance" in _fi_top_df.columns:
+                        _fi_top_df["importance"] = _fi_top_df["importance"].round(1)
+                    st.dataframe(
+                        _fi_top_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "feature": "Feature",
+                            "importance": st.column_config.NumberColumn("Importance", format="%.1f"),
+                        },
+                    )
+                with col_fi2:
+                    st.markdown("**🔻 Feature Importance — Bottom 10**")
+                    _fi_bot_df = pd.DataFrame(_fi_bottom10)
+                    if "importance" in _fi_bot_df.columns:
+                        _fi_bot_df["importance"] = _fi_bot_df["importance"].round(1)
+                    st.dataframe(
+                        _fi_bot_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "feature": "Feature",
+                            "importance": st.column_config.NumberColumn("Importance", format="%.1f"),
+                        },
+                    )
+
+            # ── Tableau des splits ──
+            _splits = _h_info.get("splits", [])
+            if _splits:
+                st.markdown("**📅 Détail par split**")
+                _split_rows: list[dict] = []
+                for _sp in _splits:
+                    _train_start = str(_sp.get("train_period_start", ""))[:10] if _sp.get("train_period_start") else "—"
+                    _train_end = str(_sp.get("train_period_end", ""))[:10] if _sp.get("train_period_end") else "—"
+                    _val_start = str(_sp.get("val_period_start", ""))[:10] if _sp.get("val_period_start") else "—"
+                    _val_end = str(_sp.get("val_period_end", ""))[:10] if _sp.get("val_period_end") else "—"
+                    _split_rows.append({
+                        "Split": _sp.get("split_index", "—"),
+                        "Train (début→fin)": f"{_train_start} → {_train_end}",
+                        "Validation (début→fin)": f"{_val_start} → {_val_end}",
+                        "Lignes Train": _sp.get("train_rows", "—"),
+                        "Lignes Val": _sp.get("val_rows", "—"),
+                        "IC Rank": _sp.get("ic_rank"),
+                    })
+                _sp_df = pd.DataFrame(_split_rows)
+                st.dataframe(
+                    _sp_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Split": st.column_config.NumberColumn("Split", format="%d"),
+                        "Train (début→fin)": "Période Train",
+                        "Validation (début→fin)": "Période Validation",
+                        "Lignes Train": st.column_config.NumberColumn("Lignes Train", format="%d"),
+                        "Lignes Val": st.column_config.NumberColumn("Lignes Val", format="%d"),
+                        "IC Rank": st.column_config.NumberColumn("🎯 IC Rank", format="%.4f"),
+                    },
+                )
+
+            # ── Métriques par split (mini-distribution) ──
+            _split_ics = [_sp.get("ic_rank") for _sp in _splits if _sp.get("ic_rank") is not None]
+            if _split_ics:
+                import numpy as np
+                _arr = np.array(_split_ics, dtype=float)
+                _col1, _col2, _col3, _col4 = st.columns(4)
+                with _col1:
+                    st.metric("IC Moyen", f"{_arr.mean():.4f}")
+                with _col2:
+                    st.metric("IC Std", f"{_arr.std():.4f}")
+                with _col3:
+                    st.metric("IC Min", f"{_arr.min():.4f}")
+                with _col4:
+                    st.metric("IC Max", f"{_arr.max():.4f}")
+
+    # ── Aide ──
+    with st.expander("ℹ️ À propos du Global Ranking Model", expanded=False):
+        st.markdown("""
+- **LightGBM LambdaRank** : modèle de ranking cross-sectional entraîné sur l'univers complet.
+- **IC Rank** : corrélation de Spearman entre le rang prédit et le rendement futur réalisé. 
+  - $>0.03$ = bon pouvoir prédictif, $>0.05$ = excellent.
+- **Decile Spread** : rendement moyen du top décile moins le bottom décile.
+  - $>0.01$ = excellent (1% de spread entre top et bottom 10%).
+- **Feature Importance** : importance relative des features dans le modèle (gain-based).
+- **Target Volatility Scaling** (H5+) : le rendement forward est divisé par la volatilité réalisée 20j 
+  pour neutraliser l'effet des crises (2020, 2022) sur le ranking.
+- **Purge** : $\\min(\\text{horizons}) = 3$ jours ouvrés entre train et validation pour éviter le leakage.
 """)
 
 
