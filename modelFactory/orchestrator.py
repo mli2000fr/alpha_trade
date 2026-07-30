@@ -654,6 +654,7 @@ def run_training_batch(
     # Ne PAS appliquer au Global Ranking — sauvegarder la liste complète avant.
     _global_symbols = list(symbols)
     _ps_max = getattr(cfg.data, "per_symbol_max_symbols", 0)
+    _ps_stratified = getattr(cfg.data, "per_symbol_selection_stratified", False)
     if _ps_max > 0 and len(symbols) > _ps_max:
         _orig_count = len(symbols)
         try:
@@ -662,24 +663,35 @@ def run_training_batch(
                     "SELECT symbol, AVG(volume) AS avg_vol "
                     "FROM stock_bars_daily "
                     "WHERE symbol IN :syms AND date >= :start AND date <= :end "
-                    "GROUP BY symbol ORDER BY avg_vol DESC LIMIT :n"
+                    "GROUP BY symbol"
                 ),
                 engine,
                 params={
                     "syms": tuple(symbols),
                     "start": str(cfg.data.training_start_date),
                     "end": str(cfg.data.training_end_date),
-                    "n": _ps_max,
                 },
             )
             if not _vol_df.empty:
-                symbols = _vol_df["symbol"].tolist()
+                if _ps_stratified and len(_vol_df) >= 10:
+                    # Stratifié par déciles : ~N/10 symboles par décile
+                    _vol_df["decile"] = pd.qcut(_vol_df["avg_vol"], q=10, labels=False)
+                    _per_decile = max(1, _ps_max // 10)
+                    _selected: list[str] = []
+                    for _d in range(10):
+                        _decile_syms = _vol_df[_vol_df["decile"] == _d]["symbol"].tolist()
+                        _selected.extend(_decile_syms[:_per_decile])
+                    symbols = _selected[:_ps_max]
+                else:
+                    # Top N par volume moyen
+                    _vol_df = _vol_df.sort_values("avg_vol", ascending=False)
+                    symbols = _vol_df.head(_ps_max)["symbol"].tolist()
         except Exception as _exc:
             LOGGER.warning("per_symbol_max_symbols: volume query failed, fallback alphabetical: %s", _exc)
             symbols = symbols[:_ps_max]
         LOGGER.info(
-            "run_training_batch per_symbol_max_symbols limit=%d orig=%d kept=%d",
-            _ps_max, _orig_count, len(symbols),
+            "run_training_batch per_symbol_max_symbols limit=%d orig=%d kept=%d stratified=%s",
+            _ps_max, _orig_count, len(symbols), _ps_stratified,
         )
 
     use_gpu = _gpu_requested_or_available(cfg)
