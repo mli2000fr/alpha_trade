@@ -3337,7 +3337,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ml_liquidity_min_market_cap = float(
                         st.number_input(
                             "Market cap min ($)",
-                            min_value=10_000_000.0,
+                            min_value=1_000_000.0,
                             max_value=10_000_000_000.0,
                             value=_session_state_float(
                                 "pipeline_ml_liquidity_min_market_cap",
