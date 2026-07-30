@@ -517,17 +517,33 @@ def train_global_ranking_wf(
 
     # ── Limiter le nombre de symboles (mémoire + pertinence ranking) ──
     _max_sym = cfg.data.global_ranking_max_symbols
+    _stratified = getattr(cfg.data, "global_ranking_selection_stratified", False)
     if _max_sym > 0 and len(symbols) > _max_sym:
-        # Garder les top N par volume moyen (liquidité)
         _vol_rank = (
             universe_df.groupby("symbol")["volume"].mean()
             .sort_values(ascending=False)
         )
-        symbols = _vol_rank.head(_max_sym).index.tolist()
-        LOGGER.info(
-            "global_ranking_wf capped symbols %d → %d (top by avg volume)",
-            len(_vol_rank), len(symbols),
-        )
+        if _stratified and len(_vol_rank) >= 10:
+            # Stratifié par déciles de volume
+            _per_decile = max(1, _max_sym // 10)
+            _vol_df = _vol_rank.reset_index()
+            _vol_df.columns = ["symbol", "avg_vol"]
+            _vol_df["decile"] = pd.qcut(_vol_df["avg_vol"], q=10, labels=False)
+            _selected: list[str] = []
+            for _d in range(10):
+                _decile_syms = _vol_df[_vol_df["decile"] == _d]["symbol"].tolist()
+                _selected.extend(_decile_syms[:_per_decile])
+            symbols = _selected[:_max_sym]
+            LOGGER.info(
+                "global_ranking_wf capped symbols %d → %d (stratified deciles)",
+                len(_vol_rank), len(symbols),
+            )
+        else:
+            symbols = _vol_rank.head(_max_sym).index.tolist()
+            LOGGER.info(
+                "global_ranking_wf capped symbols %d → %d (top by avg volume)",
+                len(_vol_rank), len(symbols),
+            )
 
     # ── Chargement données auxiliaires ──
     benchmark_df = None

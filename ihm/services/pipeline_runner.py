@@ -348,8 +348,10 @@ class PipelineLaunchOptions:
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
     ml_ranking_top_k_features: int = DEFAULT_ML_RANKING_TOP_K_FEATURES
     ml_global_ranking_max_symbols: int = DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS
+    ml_global_ranking_selection_mode: str = "stratified"
     ml_per_symbol_max_symbols: int = DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS
     ml_per_symbol_selection_mode: str = "stratified"  # "top_volume" | "stratified"
+    ml_exclude_ticket_symbols: bool = False
     ml_enable_lightgbm: bool = DEFAULT_ML_ENABLE_LIGHTGBM
     ml_enable_catboost: bool = DEFAULT_ML_ENABLE_CATBOOST
     ml_enable_global_model: bool = DEFAULT_ML_ENABLE_GLOBAL_MODEL
@@ -2236,10 +2238,14 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--ranking-top-k-features", str(options.ml_ranking_top_k_features)])
         if options.ml_global_ranking_max_symbols > 0:
             command.extend(["--global-ranking-max-symbols", str(options.ml_global_ranking_max_symbols)])
+            if getattr(options, "ml_global_ranking_selection_mode", "top_volume") == "stratified":
+                command.append("--global-ranking-selection-stratified")
         if options.ml_per_symbol_max_symbols > 0:
             command.extend(["--per-symbol-max-symbols", str(options.ml_per_symbol_max_symbols)])
             if getattr(options, "ml_per_symbol_selection_mode", "top_volume") == "stratified":
                 command.append("--per-symbol-selection-stratified")
+        if options.ml_exclude_ticket_symbols:
+            command.append("--exclude-ticket-symbols")
         if options.ml_debug_train:
             command.append("--debug-train")
         if options.ml_enable_lightgbm:

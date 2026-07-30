@@ -614,6 +614,24 @@ def run_training_batch(
         LOGGER.warning("run_training_batch no_tradable_symbols")
         return []
 
+    # ── Exclusion des symboles ticket (config/ticket_exclude.txt) ──
+    if getattr(cfg.data, "exclude_ticket_symbols", False):
+        _exclude_path = Path("config/ticket_exclude.txt")
+        if _exclude_path.exists():
+            _exclude_raw = _exclude_path.read_text(encoding="utf-8").strip()
+            if _exclude_raw:
+                _excluded = {s.strip().upper() for s in _exclude_raw.replace("\n", ",").split(",") if s.strip()}
+                if _excluded:
+                    _before = len(symbols)
+                    symbols = [s for s in symbols if s.upper() not in _excluded]
+                    LOGGER.info(
+                        "run_training_batch exclude_ticket_symbols excluded=%d kept=%d path=%s",
+                        _before - len(symbols), len(symbols), _exclude_path,
+                    )
+                    if not symbols:
+                        LOGGER.warning("run_training_batch all_symbols_excluded_by_ticket")
+                        return []
+
     if mode != "rebuild-all":
         symbols = _filter_symbols_by_mode(engine, symbols, mode=mode, cfg=cfg)
         if not symbols:

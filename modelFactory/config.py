@@ -46,9 +46,11 @@ class DataConfig:
     liquidity_min_market_cap: float = 500_000_000.0  # 500M$
     liquidity_max_avg_spread_pct: float = 0.5
     # ── Global Ranking (Sprint 2026-07-26) ──
-    global_ranking_max_symbols: int = 300    # 0 = pas de limite, >0 = top N par liquidité
+    global_ranking_max_symbols: int = 300    # 0 = pas de limite, >0 = top N par liquidité ou stratifié
+    global_ranking_selection_stratified: bool = True  # True = sélection stratifiée par déciles
     per_symbol_max_symbols: int = 0          # 0 = pas de limite, >0 = top N par volume ou stratifié
     per_symbol_selection_stratified: bool = True  # True = sélection stratifiée par déciles
+    exclude_ticket_symbols: bool = False  # True = exclure les symboles de config/ticket_exclude.txt
 
     def __post_init__(self) -> None:
         if self.sequence_length < 1:
