@@ -429,6 +429,7 @@ def _prepare_workflow_child_run_state(
     return child_select_key, bool(st.session_state.get(follow_key)), current_child_run_id, selected_child_run_id, last_auto_key
 
 
+@st.cache_data(ttl=10, show_spinner=False)
 def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     active_runs = list_active_pipeline_runs()
     merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_pipeline_history()}

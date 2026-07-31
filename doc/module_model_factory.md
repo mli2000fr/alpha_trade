@@ -1,6 +1,6 @@
 # Module ModelFactory — Documentation Complète
 
-> **Version** : Sprint 2026-07-29  
+> **Version** : Sprint 2026-08-01 (mis à jour le 2026-07-31)  
 > **Auteur** : Généré automatiquement depuis le code source
 
 ---
@@ -17,6 +17,7 @@
 8. [IC Per-Symbol](#8-ic-per-symbol)
 9. [Configuration](#9-configuration)
 10. [Tables DB](#10-tables-db)
+11. [Diagnostic & Pistes d'amélioration](#11-diagnostic--pistes-damélioration)
 
 ---
 
@@ -33,7 +34,7 @@ Le module `modelFactory` est le cœur ML du système α-Trade. Il assure :
 
 ```
 Entraînement :
-  Global Ranking (1 modèle, tous symboles) → global_rank_3/5/10/15/20
+  Global Ranking (1 modèle, tous symboles) → global_rank_10/15/20
   Per-Symbol (~500 modèles, 1 par symbole)   → proba_long, proba_short
   Diagnostics batch                           → top/bottom N, weak, S7
 
@@ -48,7 +49,7 @@ Inférence (Live/Backtest) :
 ```mermaid
 flowchart TD
     A[run_training_batch] --> B[Phase 1 : Global Ranking Walk-Forward]
-    B --> B1[train_global_ranking_wf<br/>LightGBM LambdaRank<br/>5 horizons J+3,5,10,15,20]
+    B --> B1[train_global_ranking_wf<br/>LightGBM LambdaRank<br/>3 horizons J+10,15,20]
     B1 --> B2[global_rank_df<br/>symbol, date, rank ∈ 0..1]
     
     B2 --> C{Stacking activé ?}
@@ -93,40 +94,58 @@ Produire un **score de ranking cross-sectionnel** par symbole et par date, sur 5
 **Métrique** : **IC Rank** (Spearman), pas de F1  
 **Sortie** : `global_rank_h ∈ [0, 1]` — percentile dans l'univers
 
-### 3.2 Construction de la target (label 0..9)
+### 3.2 Construction de la target (label 0..19)
 
-Pour chaque horizon $h \in \{3, 5, 10, 15, 20\}$ :
+Pour chaque horizon $h \in \{10, 15, 20\}$ :
 
 ```
 1. Rendement forward : future_return_h = close[t+h] / close[t] - 1
-2. Excès vs SPY      : future_return_h -= spy_return_h
-3. Vol scaling (h≥5) : future_return_h /= rolling_volatility_20
-4. Winsorization     : clip 1%/99% intra-date
-5. Percentile rank   : rank(pct=True) → [0, 1]
-6. Décile discret    : label_h = floor(rank × 10).clip(0, 9)
+2. Vol scaling (h≥10)   : future_return_h /= rolling_volatility_20
+   ⚠️ Diagnostic 2026-07-31 : sur Mid Caps (vol20 > 0.03), le scaling
+   absolu écrase le signal → piste : scaling relatif vs médiane univers.
+3. Winsorization         : clip 1%/99% intra-date
+4. Percentile rank       : rank(pct=True) → [0, 1]
+5. Vingtile discret      : label_h = floor(rank × 20).clip(0, 19)
+   ⚠️ Note : vingtiles (0..19) depuis Sprint 2026-08-01.
+   Antérieurement déciles (0..9). Le gain de résolution est théorique
+   tant que l'IC reste < 0.02 (les vingtiles adjacents sont indistinguables).
 ```
 
-> **H3** : pas de vol scaling (vol 20j décorrélée du rendement 3j), pas de fondamentaux.
+> **H3, H5** : Retirés le 2026-08-01 (IC nul/bruit sur Mid Caps).
 
 ### 3.3 Walk-Forward
 
-- **Fenêtre glissante** : 504 jours de train, 126j val, 126j test
-- **Purge** : $\min(\text{horizons}) = 3$ jours entre train et val
+- **Fenêtre glissante** : 504 jours de train (max), 126j val, 126j test
+- **Purge** : $\min(\text{horizons}) / 2 = 5$ jours entre train et val
 - **Splits** : jusqu'à 13 (configurable via `max_splits`)
 - **Tous les horizons partagent les mêmes splits**
+- **Poids temporels** : `exp(-days_diff / 180)` — demi-vie ~6 mois
+  ⚠️ Avec 504j de train, les 12+ premiers mois sont quasiment ignorés.
 
 ### 3.4 Features
 
 | Horizon | Nb Features | Particularités |
 |---------|-------------|----------------|
-| H3 | 160 | Sans fondamentaux, sans vol scaling |
-| H5+ | 177 | Avec fondamentaux (PE, ROE, etc.), vol scaling |
+| H10+ | ~176 | Avec fondamentaux (PE, ROE, etc.), vol scaling, toutes features expert |
+
+> **Note 2026-08-01** : H3 et H5 sont retirés. Le nombre exact de features
+> dépend des flags CLI (`--include-fundamentals`, `--include-factors`,
+> `--include-macro-regime`, etc.). Les features blacklistées sont
+> déduites dynamiquement dans `_get_ranking_feature_columns()`.
 
 **Features blacklistées** du ranking (identiques pour tous les symboles → pas de pouvoir discriminant) :
-- SPY/VIX/VXN/VIX3M/MOVE
-- Régime de marché (bull/bear/risk_off)
-- Agrégats sectoriels
-- Dollar volume rank, CAPM
+- SPY/VIX/VXN/VIX3M/MOVE (macro globales)
+- `market_return_20`, `market_volatility_20`, `regime_risk_off`
+- `dollar_volume_20_rank` (liquidité — trop dominante)
+- `rolling_volatility_120` et dérivés (béquille anti-momentum)
+- Secteur agrégé (redondant avec sector_neutral)
+- `is_filled`, `log_return`, `daily_return` bruts (poids morts Mid Caps)
+- `rolling_volatility_*_sector_neutral` (dominent et écrasent momentum)
+- CAPM (`beta_252`, `alpha_252`, `r_squared_252`)
+- Estimations analystes indisponibles (`fund_forward_pe`, `fund_eps_estimate_*`, etc.)
+- Fondamentales brutes (`fund_pe_ratio`, `fund_pb_ratio`, `fund_ev_to_ebitda`, `fund_roa`, `fund_roe`)
+  → leurs versions sector-neutral (`_sector_neutral`) sont conservées
+- `accel_3_5`, `volume_zscore_5d`, `close_to_vwap` (poids morts Mid Caps, batch 2026-07-31)
 
 **Features conservées** : momentum, RSI, distance SMA, volume_ratio, sector-neutral, etc.
 
@@ -294,7 +313,7 @@ Combine **rang global** et **prédiction per-symbol** pour décider quels trades
 
 ```
 Pour chaque symbole avec global_rank ET per-symbol prediction :
-1. rank_avg = (global_rank_3 + global_rank_5) / 2
+1. rank_avg = (global_rank_10 + global_rank_15) / 2
 2. Si rank_avg > 0.80 (top 20%) ET proba_long > seuil → candidat LONG
 3. Si rank_avg < 0.20 (bottom 20%) ET proba_short > seuil → candidat SHORT
 4. Score = rank_avg × proba_long (ou (1-rank_avg) × proba_short)
@@ -451,28 +470,24 @@ stock_fundamentals_daily
 ```json
 {
   "cli_options": {...},
-  "liquidity_filter": {
-    "filtered_count": 0,
-    "kept_count": 500,
-    "thresholds": {...}
-  },
+  "liquidity_filter": {...},
   "global_ranking": {
     "horizon_details": {
-      "3": {
-        "ic_mean": 0.0168,
-        "decile_spread": 0.0184,
-        "n_features": 160,
+      "10": {
+        "ic_mean": 0.0083,
+        "decile_spread": 0.0034,
+        "n_features": 176,
         "splits": [...],
         "feature_importance_top10": [...],
         "feature_importance_bottom10": [...]
       },
-      "5": {...}, "10": {...}, "15": {...}, "20": {...}
+      "15": {...}, "20": {...}
     },
-    "ic_by_horizon": {"3": 0.0168, "5": 0.0150, ...},
-    "decile_spreads": {"3": 0.0184, ...},
-    "symbols_count": 500,
-    "splits_count": 12,
-    "pred_rows": 674532
+    "ic_by_horizon": {"10": 0.0083, "15": 0.0095, "20": 0.0161},
+    "decile_spreads": {"10": 0.0034, ...},
+    "symbols_count": 928,
+    "splits_count": 13,
+    "pred_rows": 1338623
   },
   "per_symbol_ic": {
     "3": {"ic_mean": 0.0013, "ic_std": 0.05, "n_dates": 348, "n_symbols": 12},
@@ -481,6 +496,48 @@ stock_fundamentals_daily
   }
 }
 ```
+
+---
+
+## 11. Diagnostic & Pistes d'amélioration
+
+### 11.1 État actuel (batch 2026-07-31, Mid Caps ~930 symboles)
+
+| Métrique | Valeur | Seuil « bon » |
+|----------|--------|---------------|
+| IC Rank moyen | 0.011 | > 0.05 |
+| IC IR | 0.26–0.46 | > 0.50 |
+| Decile Spread | 0.003–0.012 | > 0.02 |
+| Top/Bottom décile | ~0.50 / ~0.50 | Top > 0.52 |
+
+**Conclusion** : le modèle ne discrimine pas les gagnants des perdants.
+
+### 11.2 Causes racines identifiées
+
+1. **Vol Scaling absolu** : `future_return / vol20` avec Mid Caps (vol20 > 0.03)
+   → le signal est mécaniquement écrasé. Piste : scaling relatif vs médiane univers.
+
+2. **Target = rendement brut** (pas d'excès vs SPY) : le premier facteur cross-sectionnel
+   appris est le beta au marché, pas l'alpha.
+
+3. **Trop de features (176)** pour un signal quasi nul → noise fitting.
+   Piste : `--ranking-top-k-features 40`.
+
+4. **Vingtiles (20 labels)** : résolution trop fine pour un IC de 0.01.
+   Piste : revenir aux déciles (0..9).
+
+5. **Fenêtre train courte (504j) + décroissance agressive** (demi-vie 6 mois).
+   Piste : 756j, demi-vie 12 mois.
+
+### 11.3 Plan d'action recommandé
+
+| Priorité | Action | Facile ? |
+|----------|--------|----------|
+| P0 | Test A/B vol scaling ON vs OFF | Oui (flag) |
+| P0 | Réintroduire excès vs SPY (beta-adjusted) | Oui (décommenter) |
+| P1 | Vingtiles → déciles | Oui (1 ligne) |
+| P1 | `ranking_top_k_features=40` | Oui (déjà codé) |
+| P2 | Fenêtre 504→756j, demi-vie 180→360j | Oui (config) |
 
 ---
 
@@ -498,6 +555,8 @@ stock_fundamentals_daily
 | **Champion** | Meilleur modèle sélectionné par symbole (LSTM, LightGBM ou CatBoost — le Global Model ne participe pas) |
 | **S7** | Section 7 du plan ML — règles absolues d'exclusion basées sur les F1 |
 | **Cascade** | Chaîne de fallback pour l'inférence (global → tabular → LSTM) |
+| **Vingtile** | Subdivision en 20 groupes (0..19). Utilisé depuis 2026-08-01 (anciennement déciles 0..9) |
+| **Vol Scaling** | Division du forward return par `rolling_volatility_20`. Problématique sur Mid Caps (vol20 élevée) |
 
 ## Annexe B — Flux de bout en bout
 
@@ -511,9 +570,11 @@ stock_fundamentals_daily
 │  3. Limitation per-symbol (top N par volume, optionnel)             │
 │                                                                     │
 │  ┌─ Global Ranking ─────────────────────────────────────────┐      │
-│  │  LightGBM LambdaRank, 5 horizons, walk-forward           │      │
-│  │  Sortie : global_rank_df[symbol, date, rank_3..20]       │      │
+│  │  LightGBM LambdaRank, 3 horizons (10, 15, 20)            │      │
+│  │  Walk-forward, 13 splits, ~176 features                  │      │
+│  │  Sortie : global_rank_df[symbol, date, rank_10..20]      │      │
 │  │  Métrique : IC Rank (Spearman)                           │      │
+│  │  ⚠️ IC actuel ~0.01 (cf. section 11)                     │      │
 │  └──────────────────────────────────────────────────────────┘      │
 │                            ↓                                        │
 │  ┌─ Per-Symbol Training ───────────────────────────────────┐      │
