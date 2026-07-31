@@ -3312,7 +3312,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.markdown("---")
             ml_exclude_ticket_symbols = st.checkbox(
                 "🚫 Exclure les symboles de config/ticket_exclude.txt",
-                value=_session_state_bool("pipeline_ml_exclude_ticket_symbols", True),
+                value=_session_state_bool("pipeline_ml_exclude_ticket_symbols", False),
                 key="pipeline_ml_exclude_ticket_symbols",
                 help="Si coché, les symboles listés dans config/ticket_exclude.txt (séparés par ',') sont exclus de l'entraînement (Global + Per-Symbol) et de la prédiction.",
             )
