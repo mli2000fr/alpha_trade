@@ -5,7 +5,7 @@ Remplace l'ancien classifieur ternaire global_model.py pour le stacking.
 
 Contrat PIT :
 - Entraîné en walk-forward (mêmes splits que le per-symbol).
-- Target : rendement excédentaire vs SPY → décile de performance (label 0..9).
+- Target : rendement excédentaire vs SPY → vingtile de performance (label 0..19).
 - LambdaRank (LightGBM) : group=date, objective=lambdarank, label_gain=0..9.
 - CatBoost (fallback) : régression RMSE sur le rang continu [0, 1].
 - Sortie : global_rank_{3,5,10}[symbol, date] ∈ [0, 1] (percentile dans l'univers).
@@ -56,13 +56,12 @@ from modelFactory.reproducibility import apply_reproducibility, derive_seed
 LOGGER = logging.getLogger(__name__)
 
 # Horizons pour le ranking multi-horizons (stacking Phase 2)
-# H3  : momentum ultra-court, sans fondamentaux, sans vol scaling.
-# H5  : momentum court-terme, avec fondamentaux, avec vol scaling.
 # H10 : momentum moyen-terme, avec fondamentaux, avec vol scaling.
 # H15 : momentum long-terme, avec fondamentaux, avec vol scaling.
 # H20 : momentum très long-terme, avec fondamentaux, avec vol scaling.
+# Note 2026-08-01 : H=3 et H=5 retirés temporairement (IC nul/bruit sur Mid Caps).
 # Note 2026-07-29 : vol scaling actif pour tous les horizons ≥ 5j.
-_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10, 15, 20)
+_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (10, 15, 20)
 
 # Features "brutes" à normaliser en rang cross-sectionnel par date.
 # Ces features varient par symbole mais leurs seuils absolus changent avec
@@ -76,14 +75,16 @@ _XS_RANK_SOURCE_FEATURES: list[str] = [
     "rolling_volatility_5", "rolling_volatility_10", "rolling_volatility_20",
     "rolling_volatility_60",
     # RSI
-    "rsi_3", "rsi_5", "rsi_14", "rsi_21",
+    "rsi_2", "rsi_3", "rsi_5", "rsi_14", "rsi_21",
     # Distance aux moyennes mobiles
     "sma10_distance", "sma20_distance", "sma50_distance",
     "sma100_distance", "sma200_distance", "sma250_distance",
     "ema20_distance", "ema50_distance",
     "dist_to_sma_5d",
+    # Mean-reversion court terme (Mid Caps, Sprint 2026-08-01)
+    "zscore_close_vs_ma10",
     # Rendements et volume
-    "daily_return", "log_return", "volume_ratio_20",
+    "daily_return", "log_return", "volume_ratio_5", "volume_ratio_20",
     "volume_zscore_5d",
     "rolling_mean_return_5", "rolling_mean_return_20",
     # Range / gap / vwap
@@ -239,8 +240,12 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "vix3m_close", "vix_term_structure_ratio", "vix_backwardation",
         "move_close",
         # Régime de marché SPY (identiques ∀ symboles)
-        "market_return_20", "market_volatility_20", "market_trend_strength_50",
-        "regime_bull_market", "regime_risk_off",
+        # ── Sprint 2026-08-01 v4 : dé-blacklist market_trend_strength_50 & regime_bull_market ──
+        # Hypothèse : ces features conditionnent l'importance relative des autres features
+        # (ex: si VIX élevé → privilégier PE plutôt que momentum).  Même valeur ∀ symboles
+        # mais interaction non-linéaire avec les features cross-sectionnelles via les arbres.
+        "market_return_20", "market_volatility_20",
+        "regime_risk_off",
         # Liquidité — trop dominante, écrase les signaux d'alpha
         "dollar_volume_20_rank",
         # Volatilité 120j — béquille qui domine, empêche l'apprentissage du momentum
@@ -264,6 +269,21 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "fund_forward_pe", "fund_peg_ratio",
         "fund_eps_estimate_current", "fund_eps_estimate_next",
         "fund_estimate_revision",
+        # ── Chirurgie 2026-08-01 v2 : fondamentales brutes redondantes ──
+        # Les versions sector-neutral (_sector_neutral) sont conservées car
+        # elles normalisent par secteur (ex: PE=15 n'a pas le même sens
+        # dans la Tech que dans l'Énergie). Les versions brutes font doublon.
+        "fund_pe_ratio", "fund_pb_ratio", "fund_ev_to_ebitda",
+        "fund_roa", "fund_roe",
+        # ── Chirurgie 2026-08-01 : poids morts Mid Caps ──
+        # Batch 2026-07-31 sur 939 puis 480 Mid Caps (500M–20B$) :
+        # importance < 3.0 sur H=5,10,15,20 → bruit pur, aucun signal discriminant.
+        "log_return", "log_return_xs_rank",
+        "daily_return", "daily_return_xs_rank",
+        "daily_return_times_volume_ratio_20",
+        "close_to_vwap_xs_rank",
+        "volume_zscore_5d", "volume_zscore_5d_xs_rank",
+        "accel_3_5", "accel_3_5_xs_rank",
     }
     # Note 2026-07-28 : les *_sector_neutral de momentum, RSI, SMA distance
     # et volume_ratio sont CONSERVÉS (imp 2.8–28.6 en H3, 4.4–28.6 en H5).
@@ -449,7 +469,7 @@ def _build_ranking_estimator(
         lgb = _import_lightgbm()
         return "lightgbm", lgb.LGBMRanker(
             objective="lambdarank",
-            label_gain=list(range(10)),  # gains 0..9 pour labels 0..9
+            label_gain=list(range(20)),  # gain linéaire 0..19 (vingtiles, Sprint 2026-08-01 v2: quadratique régressait)
             max_depth=cfg.baseline.max_depth,
             num_leaves=cfg.baseline.lgbm_num_leaves,
             n_estimators=cfg.baseline.n_estimators,
@@ -568,6 +588,25 @@ def train_global_ranking_wf(
 
     # ── Préparation du DataFrame poolé (features communes à tous les horizons) ──
     feature_columns = _get_ranking_feature_columns(cfg)
+    LOGGER.info(
+        "train_global_ranking_wf symbols=%d feature_cols=%d horizons=%s",
+        len(symbols), len(feature_columns), list(_GLOBAL_RANKING_HORIZONS),
+    )
+    # Vérifier que l'univers est bien Mid Cap (pas de mega caps parasites)
+    if cfg.data.enable_liquidity_filter:
+        _max_mcap = cfg.data.liquidity_max_market_cap
+        if _max_mcap > 0:
+            LOGGER.info(
+                "train_global_ranking_wf liquidity_filter active: max_market_cap=%.0f — "
+                "ranking cross-sectionnel intra-Mid-Cap (pas de mega caps > %.0f$)",
+                _max_mcap, _max_mcap,
+            )
+        else:
+            LOGGER.info(
+                "train_global_ranking_wf liquidity_filter active: min_market_cap=%.0f — "
+                "pas de limite haute, univers mixte possible",
+                cfg.data.liquidity_min_market_cap,
+            )
     _base_parts: list[pd.DataFrame] = []
     for symbol in symbols:
         bars_df = universe_df[universe_df["symbol"] == symbol].sort_values("date").reset_index(drop=True)
@@ -666,26 +705,32 @@ def train_global_ranking_wf(
         # Rendement temporel futur par symbole
         _fwd_close = base_df.groupby("symbol")["close"].shift(-horizon)
         base_df[f"future_return{h_suffix}"] = (_fwd_close / base_df["close"] - 1.0)
-        if _spy_series is not None:
-            _spy_ret = (_spy_series.shift(-horizon) / _spy_series - 1.0).values
-            base_df[f"future_return{h_suffix}"] = (
-                base_df[f"future_return{h_suffix}"] - _spy_ret
-            ).astype(float)
+        # ── Sprint 2026-08-01 v4 : target = forward_return BRUT (sans excès vs SPY) ──
+        # Hypothèse : les Mid Caps ne trackent pas le SPY → soustraire le SPY ajoute
+        # du bruit, pas du signal.  Si l'IC baisse, réactiver le bloc ci-dessous.
+        # if _spy_series is not None:
+        #     _spy_ret = (_spy_series.shift(-horizon) / _spy_series - 1.0).values
+        #     base_df[f"future_return{h_suffix}"] -= _spy_ret
         # ── Target Volatility Scaling (2026-07-29) ──
-        # Pour les horizons ≥ 5j, divise le rendement excédentaire par la
-        # volatilité récente (20j) du titre.  En période de crise (2022),
-        # les retours sont 3-5× plus amples qu'en période calme → la loss
-        # LambdaRank sur-optimise ces périodes.  Le scaling ramène tous les
-        # retours en « écarts-types » (Sharpe-like).
-        # NOTE : NON appliqué à H3 car la vol20 (20j) est décorrélée du
-        # forward return à 3j → scaling = bruit pur.  H3 bénéficie déjà
-        # de son horizon ultra-court qui capture les micro-oscillations
-        # insensibles au régime macro.
+        # Test A/B 2026-08-01 : scaling OFF → IC H=20 +11% mais IC IR ÷2.
+        # Le scaling est conservé car il stabilise l'IC entre splits (IC IR ×2).
         if horizon >= 5:
             _vol20 = base_df["rolling_volatility_20"].clip(lower=0.001)
             base_df[f"future_return{h_suffix}"] = (
                 base_df[f"future_return{h_suffix}"] / _vol20
             ).astype(float)
+            # ── Diagnostic vol scaling (Sprint 2026-08-01) ──
+            # Vérifie que le scaling n'écrase pas le signal des Mid Caps.
+            # Les Mid Caps ont une vol20 2-3× plus élevée que les Large Caps
+            # → le scaling absolu réduit leur signal relatif et peut dégrader l'IC.
+            _raw_std = float(base_df[f"future_return{h_suffix}"].std())
+            _vol20_median = float(_vol20.median())
+            LOGGER.info(
+                "train_global_ranking_wf h=%d vol_scaling applied | "
+                "vol20_median=%.4f target_std_after_scaling=%.4f — "
+                "si vol20_median > 0.03 (Mid Caps volatiles), le scaling écrase le signal",
+                horizon, _vol20_median, _raw_std,
+            )
         # ── Winsorization intra-date à 1%/99% (élimine les outliers toxiques) ──
         base_df[f"future_return{h_suffix}"] = (
             base_df.groupby("date")[f"future_return{h_suffix}"]
@@ -697,10 +742,12 @@ def train_global_ranking_wf(
             .rank(pct=True)
             .astype(np.float64)
         )
-        # LambdaRank : labels entiers 0..9 (nullable, NaN conservés pour dropna)
+        # LambdaRank : labels entiers 0..19 (vingtiles, Sprint 2026-08-01).
+        # Anciennement déciles 0..9.  Les vingtiles doublent la résolution
+        # du classement, crucial pour discriminer le top 5% vs top 10% sur Mid Caps.
         base_df[f"label{h_suffix}"] = (
-            np.floor(base_df[f"future_return{h_suffix}"] * 10)
-            .clip(0, 9)
+            np.floor(base_df[f"future_return{h_suffix}"] * 20)
+            .clip(0, 19)
             .astype("Int32")
         )
 
@@ -712,7 +759,7 @@ def train_global_ranking_wf(
     # targets shift(-h) produisent NaN sur les h dernières lignes,
     # donc le dropna retire automatiquement les données non-PIT.
     # Inutile (et nuisible) de purger globalement à max(horizons).
-    _purge_rows = min(_GLOBAL_RANKING_HORIZONS) * _daily_symbols
+    _purge_rows = max(min(_GLOBAL_RANKING_HORIZONS) // 2, 1) * _daily_symbols  # Sprint 2026-08-01 v4 : purge = horizon_min/2
     wf_splits = generate_walk_forward_splits(
         base_df,
         min_train_size=cfg.walk_forward.min_train_size * _daily_symbols,
@@ -798,7 +845,7 @@ def train_global_ranking_wf(
             _sample_weights = None
             if _train_dates is not None:
                 _days_diff = (_train_dates.max() - _train_dates).dt.days
-                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)  # demi-vie ~12 mois
+                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 180.0)  # demi-vie ~6 mois (Sprint 2026-08-01, Mid Caps)
 
             _group = None
             _eval_set = None
@@ -826,7 +873,7 @@ def train_global_ranking_wf(
                         _sample_weights = _sample_weights[_es_train.index.get_indexer(train_df.index)]
 
             X_train = train_df[_active_features]
-            # LambdaRank (LightGBM) : labels entiers 0..9 (décile de performance)
+            # LambdaRank (LightGBM) : labels entiers 0..19 (vingtiles, gain quadratique)
             # CatBoost (RMSE)       : rank continu [0, 1]
             if backend_model_name == "lightgbm":
                 y_train = train_df[_label_col].to_numpy(dtype=np.int32)

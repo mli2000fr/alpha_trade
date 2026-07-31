@@ -97,7 +97,7 @@ DEFAULT_ML_ENABLE_CATBOOST = True             # challenger CatBoost activé par 
 DEFAULT_ML_ENABLE_GLOBAL_MODEL = True        # Global Ranking Model (stacking uniquement)
 DEFAULT_ML_ENABLE_GLOBAL_STACKING = False   # Stacking global_rank comme feature (défaut OFF — cascade ML)
 DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER = False  # DÉSACTIVÉ — le ranking ne participe pas au championnat
-DEFAULT_ML_GLOBAL_MODEL_NAME = "lightgbm"     # type de GlobalModel par défaut
+DEFAULT_ML_GLOBAL_MODEL_NAME = "catboost"     # Sprint 2026-08-01 v4 : CatBoost RMSE continu (pas de discrétisation)
 DEFAULT_ML_ENABLE_CROSS_SECTIONAL = True     # features cross-sectionnelles + sectorielles
 DEFAULT_ML_SELECT_CHAMPION = True             # champion selection activée
 DEFAULT_ML_OPTIMIZE_THRESHOLDS = False         # optimization des seuils de décision
@@ -105,9 +105,9 @@ DEFAULT_ML_OPTIMIZE_TARGET = False            # target optimization (supervisée
 DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20
 DEFAULT_ML_CALIBRATION_MIN_SAMPLES = 64
 DEFAULT_ML_CALIBRATION_MAX_ITER = 100
-DEFAULT_ML_LGBM_MAX_DEPTH = 4
+DEFAULT_ML_LGBM_MAX_DEPTH = 5  # 6→5 (Sprint 2026-08-01 v2)
 DEFAULT_ML_LGBM_N_ESTIMATORS = 200
-DEFAULT_ML_LGBM_LEARNING_RATE = 0.05
+DEFAULT_ML_LGBM_LEARNING_RATE = 0.03  # 0.05→0.03 (Sprint 2026-08-01)
 DEFAULT_ML_CATBOOST_DEPTH = 6
 DEFAULT_ML_CATBOOST_ITERATIONS = 300
 DEFAULT_ML_CATBOOST_LEARNING_RATE = 0.03
@@ -121,9 +121,9 @@ DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS = 0  # 0 = pas de limite, >0 = top N premiers 
 DEFAULT_ML_LGBM_TUNING_ENABLED = True
 DEFAULT_ML_LGBM_REG_ALPHA = 0.1
 DEFAULT_ML_LGBM_REG_LAMBDA = 0.1
-DEFAULT_ML_LGBM_MIN_CHILD_SAMPLES = 50
+DEFAULT_ML_LGBM_MIN_CHILD_SAMPLES = 150  # 50→150 (Sprint 2026-08-01, Mid Caps)
 DEFAULT_ML_LGBM_SUBSAMPLE = 0.8
-DEFAULT_ML_LGBM_COLSAMPLE_BYTREE = 0.8
+DEFAULT_ML_LGBM_COLSAMPLE_BYTREE = 0.7  # 0.8→0.7 (Sprint 2026-08-01)
 
 # ---------------------------------------------------------------------------
 # CatBoost tuning (optionnel — activé par checkbox IHM)
@@ -140,7 +140,7 @@ DEFAULT_ML_CATBOOST_OD_WAIT = 20
 # ---------------------------------------------------------------------------
 DEFAULT_ML_ENABLE_LIQUIDITY_FILTER = True
 # 1. Taille de l'entreprise (Filtre de Classe d'Actifs)
-DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP = 20_000_000  # 20 Millions $  (Élimine les Small/Micro Caps)
+DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP = 500_000_000  # 500 Millions $ (Élimine Small/Micro Caps — bruit microstructurel tuant H3)
 DEFAULT_ML_LIQUIDITY_MAX_MARKET_CAP = 20_000_000_000   # 20 Milliards $ (Élimine les Large/Mega Caps)   # 0 = pas de limite
 # 2. Liquidité & Exécution (Filtres de Friction)
 DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D = 50_000  # 250k actions/j (Évite les pièges sur titres chers)
