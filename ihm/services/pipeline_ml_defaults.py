@@ -138,7 +138,7 @@ DEFAULT_ML_CATBOOST_OD_WAIT = 20
 # ---------------------------------------------------------------------------
 # Filtrage liquidité (Sprint 2026-07-24)
 # ---------------------------------------------------------------------------
-DEFAULT_ML_ENABLE_LIQUIDITY_FILTER = True
+DEFAULT_ML_ENABLE_LIQUIDITY_FILTER = False
 # 1. Taille de l'entreprise (Filtre de Classe d'Actifs)
 DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP = 500_000_000  # 500 Millions $ (Élimine Small/Micro Caps — bruit microstructurel tuant H3)
 DEFAULT_ML_LIQUIDITY_MAX_MARKET_CAP = 20_000_000_000   # 20 Milliards $ (Élimine les Large/Mega Caps)   # 0 = pas de limite
