@@ -3310,6 +3310,19 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 ml_per_symbol_selection_mode = "stratified"
             st.markdown("---")
+            ml_ranking_sector_group = st.selectbox(
+                "🏭 Groupe sectoriel (Global Ranking)",
+                options=["all", "cyclical", "defensive"],
+                format_func=lambda x: {
+                    "all": "Tous les secteurs",
+                    "cyclical": "Cyclique (Energy, Materials, Industrials, Tech, Financials...)",
+                    "defensive": "Défensif (Consumer Staples, Healthcare, Utilities)"
+                }.get(x, x),
+                key="pipeline_ml_ranking_sector_group",
+                help="Filtre l'univers du Global Ranking par groupe sectoriel GICS. "
+                     "Cyclique ≈ 600 titres, Défensif ≈ 300 titres.",
+            )
+            st.markdown("---")
             ml_exclude_ticket_symbols = st.checkbox(
                 "🚫 Exclure les symboles de config/ticket_exclude.txt",
                 value=_session_state_bool("pipeline_ml_exclude_ticket_symbols", False),
@@ -4524,6 +4537,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_ranking_top_k_features=int(ml_ranking_top_k_features),
             ml_global_ranking_max_symbols=int(ml_global_ranking_max_symbols),
             ml_global_ranking_selection_mode=str(ml_global_ranking_selection_mode),
+            ml_ranking_sector_group=str(ml_ranking_sector_group),
             ml_per_symbol_max_symbols=int(ml_per_symbol_max_symbols),
             ml_per_symbol_selection_mode=str(ml_per_symbol_selection_mode),
             # Exclusion ticket symbols

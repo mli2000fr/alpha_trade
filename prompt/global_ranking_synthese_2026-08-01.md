@@ -19,6 +19,9 @@
 | 13 | 8 splits (252j) | 0.0161 | +42% | ❌ |
 | 14 | Composite features (×11) | 0.0198 | +75% | ❌ |
 | 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
+| 16 | **+ Target factor-neutral (OLS)** | **0.0208** | **+84%** | ✅ (IC IR ×1.3) |
+| 17 | Cyclical only (289 syms) | 0.0257 | +127% | IC ↑ mais IR ÷2 |
+| 18 | Defensive only (79 syms) | 0.0246 | +118% | Pas fiable (trop petit) |
 
 ## 🎯 Configuration gagnante (finale)
 
@@ -30,6 +33,7 @@
 | `regime_risk_off` | blacklisté | **disponible** |
 | Target smoothing | non | **50% h + 50% avg(10,15,20)** |
 | Target sector-neutral | non | **oui** |
+| Target factor-neutral (Size/Value/Mom) | non | **oui (OLS)** |
 | Config séparée | non | `GlobalModelConfig.ranking_max_depth=7` |
 | Horizons | 3 | **3, 5, 10, 15, 20** |
 
@@ -51,5 +55,7 @@
 6. **Tous les IC IR > 1.0** — signal stable pour la première fois.
 7. **756j** est le sweet spot de fenêtre train.
 8. **13 splits > 8 splits** : granularité fine → adaptation au régime.
+9. **Factor-neutral** : IC stable, IC IR ×1.3 — alpha plus pur.
+10. **Univers séparés** : IC brut ↑ mais IR ↓ — l'univers « all » reste optimal.
 
-## ✅ 15 tests, IC ×1.84, IC IR ×3.6
+## ✅ 18 tests, IC ×1.84, IC IR ×3.6

@@ -65,6 +65,27 @@ _GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10, 15, 20)
 # Smoothing : uniquement sur les horizons fiables (H3/H5 trop bruités)
 _SMOOTHING_HORIZONS: tuple[int, ...] = (10, 15, 20)
 
+# ── Sector group mapping (Sprint 2026-08-01) ──
+# GICS sectors → Cyclical / Defensive
+_CYCLICAL_KEYWORDS: tuple[str, ...] = (
+    "energy", "materials", "industri", "consumer discretionary",
+    "consumer cycl", "financial", "real estate", "technology", "communication",
+)
+_DEFENSIVE_KEYWORDS: tuple[str, ...] = (
+    "consumer stapl", "consumer defen", "health", "utilit",
+)
+
+def _classify_sector_group(sector: str) -> str:
+    """Classifie un nom de secteur GICS en 'cyclical' ou 'defensive'."""
+    _s = sector.lower().strip()
+    for _kw in _DEFENSIVE_KEYWORDS:
+        if _kw in _s:
+            return "defensive"
+    for _kw in _CYCLICAL_KEYWORDS:
+        if _kw in _s:
+            return "cyclical"
+    return "other"
+
 # Features "brutes" à normaliser en rang cross-sectionnel par date.
 # Ces features varient par symbole mais leurs seuils absolus changent avec
 # le régime de marché (volatilité, secteur, capitalisation). Le rank pct
@@ -566,6 +587,25 @@ def train_global_ranking_wf(
                 "global_ranking_wf capped symbols %d → %d (top by avg volume)",
                 len(_vol_rank), len(symbols),
             )
+
+    # ── Sector group filter (Sprint 2026-08-01) ──
+    _sector_group = getattr(cfg.global_model, 'ranking_sector_group', 'all') or 'all'
+    if _sector_group != 'all':
+        from modelFactory.cross_sectional import _load_sector_mapping as _load_smap
+        _smap = _load_smap(engine)
+        _before = len(symbols)
+        _filtered = []
+        for _s in symbols:
+            _sec = _smap.get(_s.upper(), "") if _smap else ""
+            if _classify_sector_group(_sec) == _sector_group:
+                _filtered.append(_s)
+        symbols = _filtered
+        LOGGER.info(
+            "global_ranking_wf sector_group=%s filtered %d → %d symbols",
+            _sector_group, _before, len(symbols),
+        )
+        if not symbols:
+            return {"status": "skipped", "reason": f"no_symbols_in_sector_group={_sector_group}"}
 
     # ── Chargement données auxiliaires ──
     benchmark_df = None
