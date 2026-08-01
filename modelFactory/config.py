@@ -158,7 +158,7 @@ class BaselineConfig:
     enabled: bool = False
     enable_catboost: bool = False
     model_name: str = "lightgbm"
-    max_depth: int = 5                   # 4→5 (Sprint 2026-08-01 v2, compromis Mid Caps)
+    max_depth: int = 5                   # 4→5 (Sprint 2026-08-01 v2, compromis per-symbol)
     n_estimators: int = 500
     learning_rate: float = 0.03          # 0.05→0.03
     # ── Early stopping LightGBM (0 = désactivé) ──
@@ -171,7 +171,7 @@ class BaselineConfig:
     lgbm_reg_alpha: float = 0.1       # L1 régularisation
     lgbm_reg_lambda: float = 0.1      # L2 régularisation
     lgbm_min_child_samples: int = 150   # 200→150 (Sprint 2026-08-01, Mid Caps: 150 avec 480 symboles ≈ 0.3% min/leaf)
-    lgbm_num_leaves: int = 15           # 31→15 (Sprint 2026-08-01 v2, cohérent avec max_depth=5)
+    lgbm_num_leaves: int = 15           # 31→15 (Sprint 2026-08-01 v2, cohérent avec max_depth=5, per-symbol)
     lgbm_subsample: float = 0.8         # bagging fraction
     lgbm_colsample_bytree: float = 0.7  # 0.5→0.7 (Sprint 2026-08-01, Mid Caps: plus de features/arbre)
     # ── CatBoost tuning (optionnel) ──
@@ -247,6 +247,9 @@ class GlobalModelConfig:
     model_name: str = "catboost"  # catboost | lightgbm
     artifact_symbol: str = "__GLOBAL__"
     use_cross_sectional_features: bool = True
+    # ── Global Ranking hyperparams (indépendants du per-symbol BaselineConfig) ──
+    ranking_max_depth: int = 7        # plus profond que per-symbol (640K lignes vs 2K)
+    ranking_num_leaves: int = 31      # cohérent avec max_depth=7
 
     def __post_init__(self) -> None:
         if self.model_name not in {"catboost", "lightgbm"}:

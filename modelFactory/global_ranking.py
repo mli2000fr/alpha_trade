@@ -470,8 +470,8 @@ def _build_ranking_estimator(
         return "lightgbm", lgb.LGBMRanker(
             objective="lambdarank",
             label_gain=list(range(10)),  # gain linéaire 0..9 (déciles, 2026-08-01: retour après test vingtiles)
-            max_depth=cfg.baseline.max_depth,
-            num_leaves=cfg.baseline.lgbm_num_leaves,
+            max_depth=cfg.global_model.ranking_max_depth,
+            num_leaves=cfg.global_model.ranking_num_leaves,
             n_estimators=cfg.baseline.n_estimators,
             learning_rate=cfg.baseline.learning_rate,
             random_state=resolved_seed,

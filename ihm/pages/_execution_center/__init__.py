@@ -3794,7 +3794,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 _wf_max_splits_default = 3 if ml_fast_search else DEFAULT_ML_WF_MAX_SPLITS
                 ml_wf_max_splits = int(st.session_state.get("pipeline_ml_wf_max_splits", _wf_max_splits_default))
 
-        with st.expander("ML — Hyperparams & seuils d'optimisation (avancé)", expanded=False):
+        with st.expander("ML — per symbol - Hyperparams & seuils d'optimisation (avancé)", expanded=False):
             ml_hp_col1, ml_hp_col2, ml_hp_col3 = st.columns(3)
             with ml_hp_col1:
                 ml_max_workers = int(
@@ -3948,7 +3948,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         # ML — Hyperparams avancés (architecture, boosters, grilles candidate)
         # cf. audit_ihm_pipeline_options.md — alignement complet CLI modelFactory
         # ──────────────────────────────────────────────────────────────────
-        with st.expander("ML — Hyperparams avancés (architecture, boosters, grilles)", expanded=False):
+        with st.expander("ML — per symbol - Hyperparams avancés (architecture, boosters, grilles)", expanded=False):
             st.caption(
                 "Expose les paramètres `--sequence-length / --batch-size / --hidden-size`, "
                 "`--artifacts-dir / --benchmark-symbol`, hyperparams LightGBM & CatBoost et les grilles "

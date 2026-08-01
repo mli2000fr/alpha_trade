@@ -619,7 +619,7 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
             disabled=bool(active_runs),
         )
         include_ml_train = st.checkbox(
-            "Inclure l'étape 9 — ML Train (Model Factory)",
+            "Inclure l'étape T1 — ML Train (Model Factory)",
             value=bool(st.session_state.get(WORKFLOW_INCLUDE_ML_TRAIN_KEY, False)),
             key=WORKFLOW_INCLUDE_ML_TRAIN_KEY,
             disabled=bool(active_runs),
