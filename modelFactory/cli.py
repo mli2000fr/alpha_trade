@@ -308,6 +308,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Global Ranking : nombre max de symboles (0 = tous, top N par volume moyen ou stratifié)")
     p.add_argument("--global-ranking-selection-stratified", action="store_true", default=False,
                    help="Global Ranking : sélection stratifiée par déciles de volume (sinon top N par volume)")
+    p.add_argument("--ranking-sector-group", type=str, default="all",
+                   choices=["all", "cyclical", "defensive"],
+                   help="Global Ranking : univers filtré par groupe sectoriel GICS")
     p.add_argument("--per-symbol-max-symbols", type=int, default=0,
                    help="Per-Symbol : nombre max de symboles à entraîner (0 = tous, top N par volume ou stratifié). Pour test rapide.")
     p.add_argument("--per-symbol-selection-stratified", action="store_true", default=False,
@@ -576,6 +579,7 @@ def main(args: list[str] | None = None) -> None:
             model_name=opts.global_model_name,
             artifact_symbol=opts.global_artifact_symbol,
             use_cross_sectional_features=opts.enable_cross_sectional,
+            ranking_sector_group=opts.ranking_sector_group,
         ),
         champion_selection=ChampionSelectionConfig(
             enabled=opts.select_champion,

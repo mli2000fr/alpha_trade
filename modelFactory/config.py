@@ -250,6 +250,7 @@ class GlobalModelConfig:
     # ── Global Ranking hyperparams (indépendants du per-symbol BaselineConfig) ──
     ranking_max_depth: int = 7        # plus profond que per-symbol (640K lignes vs 2K)
     ranking_num_leaves: int = 31      # cohérent avec max_depth=7
+    ranking_sector_group: str = "all" # all | cyclical | defensive (univers séparés)
 
     def __post_init__(self) -> None:
         if self.model_name not in {"catboost", "lightgbm"}:

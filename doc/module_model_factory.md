@@ -109,6 +109,7 @@ Pour chaque horizon $h \in \{3, 5, 10, 15, 20\}$ :
 6. Target smoothing (h ≥ 10): blend 50% horizon + 50% avg(10,15,20) → re-rank
    (H3/H5 exclus du smoothing : trop bruités, pas de vol scaling pour H3)
 7. Sector-neutral (tous)    : soustraire médiane sectorielle → re-rank → re-label
+8. Factor-neutral (tous)    : OLS résiduel sur size+value+momentum → re-rank → re-label
 ```
 
 > **Excès vs SPY** : Structurellement inutile (rank intra-date invariant).  
@@ -592,6 +593,9 @@ stock_fundamentals_daily
 | 13 | 8 splits (252j) | 0.0161 | +42% | ❌ |
 | 14 | Composite features (×11) | 0.0198 | +75% | ❌ |
 | 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
+| 16 | **+ Target factor-neutral (OLS)** | **0.0208** | **+84%** | ✅ |
+| 17 | Cyclical only (289 syms) | 0.0257 | +127% | IC↑ IR÷2 |
+| 18 | Defensive only (79 syms) | 0.0246 | +118% | Pas fiable |
 
 ### 11.2 Configuration gagnante
 
