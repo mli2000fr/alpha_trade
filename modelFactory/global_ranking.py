@@ -766,6 +766,50 @@ def train_global_ranking_wf(
             ",".join(str(h) for h in _GLOBAL_RANKING_HORIZONS),
         )
 
+    # ── Target sector-neutral (Sprint 2026-08-01) ──
+    # Pour chaque date+secteur, soustrait la médiane sectorielle du forward return.
+    # Isole l'alpha spécifique au titre, indépendamment de la tendance du secteur.
+    try:
+        from modelFactory.cross_sectional import _load_sector_mapping
+        _sector_map = _load_sector_mapping(engine)
+        if _sector_map:
+            base_df["_sector"] = base_df["symbol"].astype(str).str.upper().map(_sector_map)
+            _valid_sec = base_df["_sector"].notna()
+            _sector_count = 0
+            for horizon in _GLOBAL_RANKING_HORIZONS:
+                h_suffix = f"_{horizon}"
+                _col = f"future_return{h_suffix}"
+                _sector_med = (
+                    base_df.loc[_valid_sec]
+                    .groupby(["date", "_sector"])[_col]
+                    .transform("median")
+                )
+                _neutral = base_df[_col].copy()
+                _neutral.loc[_valid_sec] = base_df.loc[_valid_sec, _col] - _sector_med
+                _neutral.loc[~_valid_sec] = base_df.loc[~_valid_sec, _col]
+                base_df[_col] = _neutral.astype(float)
+                # Re-rank percentile intra-date
+                base_df[_col] = (
+                    base_df.groupby("date")[_col]
+                    .rank(pct=True)
+                    .astype(np.float64)
+                )
+                # Re-discretize
+                base_df[f"label{h_suffix}"] = (
+                    np.floor(base_df[_col] * 10)
+                    .clip(0, 9)
+                    .astype("Int32")
+                )
+                _sector_count += 1
+            base_df.drop(columns=["_sector"], inplace=True)
+            LOGGER.info(
+                "train_global_ranking_wf target sector-neutral: %d horizons neutralized "
+                "(%d symbols → %d sectors)",
+                _sector_count, len(_sector_map), len(set(_sector_map.values())),
+            )
+    except Exception as _exc:
+        LOGGER.warning("train_global_ranking_wf target sector-neutral failed: %s", _exc)
+
     # ── Walk-Forward splits (communs à tous les horizons) ──
     _daily_symbols = int(round(base_df.groupby("date").size().median()))
     _daily_symbols = max(_daily_symbols, 1)
