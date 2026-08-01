@@ -34,16 +34,20 @@
 | Target smoothing | non | **50% h + 50% avg(10,15,20)** |
 | Target sector-neutral | non | **oui** |
 | Target factor-neutral (Size/Value/Mom) | non | **oui (OLS)** |
+| Target computation | pré-split (leakage) | **post-split (étanche)** |
 | Config séparée | non | `GlobalModelConfig.ranking_max_depth=7` |
 | Horizons | 3 | **3, 5, 10, 15, 20** |
 
-## 📈 Détail par horizon (config finale)
+## 📈 Détail par horizon (config finale, P1 étanche — plus de leakage)
 
 | Métrique | H3 | H5 | H10 | H15 | H20 | Global |
 |----------|----|----|-----|-----|-----|--------|
-| IC Mean | 0.0132 | 0.0176 | 0.0230 | 0.0256 | 0.0245 | **0.0208** |
-| IC IR | 1.01 | 0.99 | 1.05 | 1.15 | 1.11 | — |
-| Decile Spread | 0.0125 | 0.0180 | 0.0243 | 0.0275 | 0.0248 | — |
+| IC Mean | 0.0090 | **0.0138** | 0.0159 | 0.0168 | 0.0140 | **0.0139** |
+| IC IR | 0.79 | **1.20** | 1.02 | 0.93 | 0.79 | — |
+| Decile Spread | 0.0087 | 0.0138 | 0.0170 | 0.0170 | 0.0171 | — |
+
+> L'IC original (0.0208) contenait **33% de data leakage**.
+> Le signal réel est ~0.014. H5 préserve l'IR le plus élevé (1.20).
 
 ## 🧠 Leçons apprises
 
@@ -57,5 +61,7 @@
 8. **13 splits > 8 splits** : granularité fine → adaptation au régime.
 9. **Factor-neutral** : IC stable, IC IR ×1.3 — alpha plus pur.
 10. **Univers séparés** : IC brut ↑ mais IR ↓ — l'univers « all » reste optimal.
+11. **Data leakage** : 33% de l'IC original était du bruit. P0 (purge 20j) insuffisant — P1 (target post-split) règle définitivement.
+12. **Pipeline étanche** : `_compute_ranking_targets()` sur chaque fold isolé → shift(-h) ne traverse plus les frontières. ✅
 
-## ✅ 18 tests, IC ×1.84, IC IR ×3.6
+## ✅ 18 tests + audit leakage corrigé. IC réel = 0.0139, H5 IR = 1.20

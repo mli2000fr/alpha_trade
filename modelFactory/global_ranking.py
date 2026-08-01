@@ -523,6 +523,145 @@ def _build_ranking_estimator(
         )
 
 
+def _compute_ranking_targets(
+    df: pd.DataFrame,
+    *,
+    horizons: tuple[int, ...],
+    smoothing_horizons: tuple[int, ...],
+    factor_cols: list[str],
+    sector_map: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """Compute ranking targets on an isolated DataFrame (PIT-étanche).
+
+    Le ``shift(-horizon)`` est appliqué sur le DataFrame fourni **sans**
+    accès aux données des folds voisins.  Les NaN naturels en queue de
+    fold (shift au-delà des données disponibles) sont éliminés par le
+    ``dropna`` appelant.
+
+    La target pipeline complète est appliquée :
+    1. future_return → vol scaling (H5+) → winsorize 1%/99% → rank
+    2. Smoothing 50% h + 50% avg(smoothing_horizons) [si ≥2 horizons]
+    3. Sector-neutral (médiane secteur par date)
+    4. Factor-neutral (OLS résiduel sur size+value+momentum)
+
+    Returns:
+        ``df`` avec les colonnes ``future_return_{h}`` et ``label_{h}``
+        pour chaque horizon, plus modifications in-place.
+    """
+    df = df.copy()
+
+    # ── Étape 1 : future_return + vol scaling + winsorize + rank + label ──
+    for horizon in horizons:
+        h_suffix = f"_{horizon}"
+        _fwd_close = df.groupby("symbol")["close"].shift(-horizon)
+        df[f"future_return{h_suffix}"] = (_fwd_close / df["close"] - 1.0)
+        if horizon >= 5:
+            _vol20 = df["rolling_volatility_20"].clip(lower=0.001)
+            df[f"future_return{h_suffix}"] = (
+                df[f"future_return{h_suffix}"] / _vol20
+            ).astype(float)
+        # Winsorize intra-date 1%/99%
+        df[f"future_return{h_suffix}"] = (
+            df.groupby("date")[f"future_return{h_suffix}"]
+            .transform(lambda x: x.clip(lower=x.quantile(0.01), upper=x.quantile(0.99)))
+        )
+        # Percentile rank intra-date → [0, 1]
+        df[f"future_return{h_suffix}"] = (
+            df.groupby("date")[f"future_return{h_suffix}"]
+            .rank(pct=True)
+            .astype(np.float64)
+        )
+        # Labels entiers 0..9 (déciles)
+        df[f"label{h_suffix}"] = (
+            np.floor(df[f"future_return{h_suffix}"] * 10)
+            .clip(0, 9)
+            .astype("Int32")
+        )
+
+    # ── Étape 2 : Smoothing multi-horizons ──
+    if len(smoothing_horizons) >= 2:
+        _all_ret_cols = [f"future_return_{h}" for h in smoothing_horizons]
+        # mean() skipne les NaN → un horizon manquant ne casse pas le blend
+        _avg = df[_all_ret_cols].mean(axis=1, skipna=True)
+        for horizon in smoothing_horizons:
+            h_suffix = f"_{horizon}"
+            _col = f"future_return{h_suffix}"
+            # Blend 50% horizon + 50% moyenne des autres horizons
+            _blend = 0.5 * df[_col].fillna(_avg) + 0.5 * _avg
+            df[_col] = _blend.astype(float)
+            df[_col] = (
+                df.groupby("date")[_col].rank(pct=True).astype(np.float64)
+            )
+            df[f"label{h_suffix}"] = (
+                np.floor(df[_col] * 10).clip(0, 9).astype("Int32")
+            )
+
+    # ── Étape 3 : Sector-neutral ──
+    if sector_map:
+        df["_sector"] = df["symbol"].astype(str).str.upper().map(sector_map)
+        _valid_sec = df["_sector"].notna()
+        for horizon in horizons:
+            h_suffix = f"_{horizon}"
+            _col = f"future_return{h_suffix}"
+            if _col not in df.columns:
+                continue
+            try:
+                _sector_med = (
+                    df.loc[_valid_sec]
+                    .groupby(["date", "_sector"])[_col]
+                    .transform("median")
+                )
+                _neutral = df[_col].copy()
+                _neutral.loc[_valid_sec] = df.loc[_valid_sec, _col] - _sector_med
+                _neutral.loc[~_valid_sec] = df.loc[~_valid_sec, _col]
+                df[_col] = _neutral.astype(float)
+                df[_col] = (
+                    df.groupby("date")[_col].rank(pct=True).astype(np.float64)
+                )
+                df[f"label{h_suffix}"] = (
+                    np.floor(df[_col] * 10).clip(0, 9).astype("Int32")
+                )
+            except Exception:
+                pass
+        df.drop(columns=["_sector"], inplace=True)
+
+    # ── Étape 4 : Factor-neutral (OLS résiduel intra-date) ──
+    if len(factor_cols) >= 2:
+        for horizon in horizons:
+            h_suffix = f"_{horizon}"
+            _col = f"future_return{h_suffix}"
+            if _col not in df.columns:
+                continue
+            _valid = df.dropna(subset=[_col] + factor_cols)
+            if _valid.empty:
+                continue
+            _residuals = pd.Series(0.0, index=df.index, dtype=float)
+            try:
+                for _date, _group in _valid.groupby("date"):
+                    if len(_group) < 20:
+                        _residuals.loc[_group.index] = _group[_col]
+                        continue
+                    X = _group[factor_cols].to_numpy(dtype=np.float64)
+                    X = np.column_stack([np.ones(len(X)), X])
+                    y = _group[_col].to_numpy(dtype=np.float64)
+                    try:
+                        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+                        _residuals.loc[_group.index] = y - X @ beta
+                    except np.linalg.LinAlgError:
+                        _residuals.loc[_group.index] = y
+            except Exception:
+                _residuals = df[_col]
+            df[_col] = _residuals.astype(float)
+            df[_col] = (
+                df.groupby("date")[_col].rank(pct=True).astype(np.float64)
+            )
+            df[f"label{h_suffix}"] = (
+                np.floor(df[_col] * 10).clip(0, 9).astype("Int32")
+            )
+
+    return df
+
+
 def train_global_ranking_wf(
     symbols: list[str],
     cfg: TrainingConfig,
@@ -731,177 +870,30 @@ def train_global_ranking_wf(
 
     base_df = base_df.dropna(subset=feature_columns).reset_index(drop=True)
 
-    # ── Pré-calculer les targets pour TOUS les horizons AVANT les splits ──
-    # (les WF splits font des copies → les colonnes doivent exister avant)
-    # CRITIQUE : shift(-horizon) doit être fait PAR SYMBOLE (groupby), pas sur
-    # le DataFrame global trié par [date, symbol] — sinon on shifte entre
-    # symboles différents et la target n'a aucun sens financier.
-    for horizon in _GLOBAL_RANKING_HORIZONS:
-        h_suffix = f"_{horizon}"
-        # Rendement temporel futur par symbole
-        _fwd_close = base_df.groupby("symbol")["close"].shift(-horizon)
-        base_df[f"future_return{h_suffix}"] = (_fwd_close / base_df["close"] - 1.0)
-        # Note 2026-08-01 : l'excès vs SPY est structurellement inutile ici
-        # car le percentile rank intra-date est invariant à la soustraction
-        # d'une constante (le SPY return est identique ∀ symboles à date donnée).
-        # Le per-symbol n'utilise pas non plus d'excès SPY dans build_target().
-        # ── Vol Scaling (2026-07-29) ──
-        # Test A/B 2026-08-01 : scaling OFF → IC -27% sur Mid Caps (vol20_median=0.019).
-        # Le scaling est conservé car il stabilise l'IC entre splits (IC IR ×2).
-        if horizon >= 5:
-            _vol20 = base_df["rolling_volatility_20"].clip(lower=0.001)
-            base_df[f"future_return{h_suffix}"] = (
-                base_df[f"future_return{h_suffix}"] / _vol20
-            ).astype(float)
-            _vol20_median = float(_vol20.median())
-            LOGGER.info(
-                "train_global_ranking_wf h=%d vol_scaling applied | "
-                "vol20_median=%.4f target_std_after_scaling=%.4f",
-                horizon, _vol20_median, float(base_df[f"future_return{h_suffix}"].std()),
-            )
-        # ── Winsorization intra-date à 1%/99% (élimine les outliers toxiques) ──
-        base_df[f"future_return{h_suffix}"] = (
-            base_df.groupby("date")[f"future_return{h_suffix}"]
-            .transform(lambda x: x.clip(lower=x.quantile(0.01), upper=x.quantile(0.99)))
-        )
-        # Percentile rank intra-date → [0, 1]
-        base_df[f"future_return{h_suffix}"] = (
-            base_df.groupby("date")[f"future_return{h_suffix}"]
-            .rank(pct=True)
-            .astype(np.float64)
-        )
-        # LambdaRank : labels entiers 0..9 (déciles).
-        # Retour aux déciles après test vingtiles (2026-08-01) : avec IC~0.01,
-        # les vingtiles adjacents sont indistinguables → bruit de discrétisation.
-        base_df[f"label{h_suffix}"] = (
-            np.floor(base_df[f"future_return{h_suffix}"] * 10)
-            .clip(0, 9)
-            .astype("Int32")
-        )
-
-    # ── Target smoothing multi-horizons (Sprint 2026-08-01) ──
-    # Lisse chaque horizon fiable (10, 15, 20) avec leur moyenne.
-    # H3/H5 sont trop bruités → pas de smoothing, leur target reste pure.
-    if len(_SMOOTHING_HORIZONS) >= 2:
-        _all_ret_cols = [f"future_return_{h}" for h in _SMOOTHING_HORIZONS]
-        _avg = base_df[_all_ret_cols].mean(axis=1)
-        for horizon in _SMOOTHING_HORIZONS:
-            h_suffix = f"_{horizon}"
-            _col = f"future_return{h_suffix}"
-            base_df[_col] = (0.5 * base_df[_col] + 0.5 * _avg).astype(float)
-            base_df[_col] = (
-                base_df.groupby("date")[_col].rank(pct=True).astype(np.float64)
-            )
-            base_df[f"label{h_suffix}"] = (
-                np.floor(base_df[_col] * 10).clip(0, 9).astype("Int32")
-            )
-        LOGGER.info(
-            "train_global_ranking_wf target smoothed: blended 50%% horizon + 50%% avg(%s)",
-            ",".join(str(h) for h in _SMOOTHING_HORIZONS),
-        )
-
-    # ── Target sector-neutral (Sprint 2026-08-01) ──
-    # Pour chaque date+secteur, soustrait la médiane sectorielle du forward return.
-    # Isole l'alpha spécifique au titre, indépendamment de la tendance du secteur.
+    # ── Résoudre les colonnes facteurs et le secteur mapping une fois ──
+    _factor_cols: list[str] = []
+    for _fc in ["fund_market_cap_log", "fund_pe_ratio_sector_neutral", "momentum_60"]:
+        if _fc in base_df.columns:
+            _factor_cols.append(_fc)
+    _sector_map: dict[str, str] = {}
     try:
         from modelFactory.cross_sectional import _load_sector_mapping
         _sector_map = _load_sector_mapping(engine)
         if _sector_map:
-            base_df["_sector"] = base_df["symbol"].astype(str).str.upper().map(_sector_map)
-            _valid_sec = base_df["_sector"].notna()
-            _sector_count = 0
-            for horizon in _GLOBAL_RANKING_HORIZONS:
-                h_suffix = f"_{horizon}"
-                _col = f"future_return{h_suffix}"
-                _sector_med = (
-                    base_df.loc[_valid_sec]
-                    .groupby(["date", "_sector"])[_col]
-                    .transform("median")
-                )
-                _neutral = base_df[_col].copy()
-                _neutral.loc[_valid_sec] = base_df.loc[_valid_sec, _col] - _sector_med
-                _neutral.loc[~_valid_sec] = base_df.loc[~_valid_sec, _col]
-                base_df[_col] = _neutral.astype(float)
-                # Re-rank percentile intra-date
-                base_df[_col] = (
-                    base_df.groupby("date")[_col]
-                    .rank(pct=True)
-                    .astype(np.float64)
-                )
-                # Re-discretize
-                base_df[f"label{h_suffix}"] = (
-                    np.floor(base_df[_col] * 10)
-                    .clip(0, 9)
-                    .astype("Int32")
-                )
-                _sector_count += 1
-            base_df.drop(columns=["_sector"], inplace=True)
             LOGGER.info(
-                "train_global_ranking_wf target sector-neutral: %d horizons neutralized "
-                "(%d symbols → %d sectors)",
-                _sector_count, len(_sector_map), len(set(_sector_map.values())),
+                "train_global_ranking_wf sector_map: %d symbols → %d sectors",
+                len(_sector_map), len(set(_sector_map.values())),
             )
     except Exception as _exc:
-        LOGGER.warning("train_global_ranking_wf target sector-neutral failed: %s", _exc)
+        LOGGER.warning("train_global_ranking_wf sector_map failed: %s", _exc)
 
-    # ── Target Factor-Neutral (Sprint 2026-08-01) ──
-    # Régression cross-sectionnelle intra-date sur les 3 facteurs
-    # (Size, Value, Momentum). Le résidu est l'alpha pur.
-    # Note : winsorization testée → dégrade l'IC IR. OLS simple est optimal.
-    _factor_cols = []
-    for _fc in ["fund_market_cap_log", "fund_pe_ratio_sector_neutral", "momentum_60"]:
-        if _fc in base_df.columns:
-            _factor_cols.append(_fc)
-    if len(_factor_cols) >= 2:
-        _factor_count = 0
-        for horizon in _GLOBAL_RANKING_HORIZONS:
-            h_suffix = f"_{horizon}"
-            _col = f"future_return{h_suffix}"
-            _valid = base_df.dropna(subset=[_col] + _factor_cols)
-            if _valid.empty:
-                continue
-            _residuals = pd.Series(0.0, index=base_df.index, dtype=float)
-            try:
-                for _date, _group in _valid.groupby("date"):
-                    if len(_group) < 20:
-                        _residuals.loc[_group.index] = _group[_col]
-                        continue
-                    X = _group[_factor_cols].to_numpy(dtype=np.float64)
-                    X = np.column_stack([np.ones(len(X)), X])
-                    y = _group[_col].to_numpy(dtype=np.float64)
-                    try:
-                        beta = np.linalg.lstsq(X, y, rcond=None)[0]
-                        _residuals.loc[_group.index] = y - X @ beta
-                    except np.linalg.LinAlgError:
-                        _residuals.loc[_group.index] = y
-            except Exception:
-                _residuals = base_df[_col]
-            base_df[_col] = _residuals.astype(float)
-            base_df[_col] = (
-                base_df.groupby("date")[_col].rank(pct=True).astype(np.float64)
-            )
-            base_df[f"label{h_suffix}"] = (
-                np.floor(base_df[_col] * 10).clip(0, 9).astype("Int32")
-            )
-            _factor_count += 1
-        LOGGER.info(
-            "train_global_ranking_wf target factor-neutral: %d horizons "
-            "residualized on %s",
-            _factor_count, ",".join(_factor_cols),
-        )
-    else:
-        LOGGER.warning("train_global_ranking_wf target factor-neutral skipped: "
-                       "need ≥2 factor columns, got %d", len(_factor_cols))
-
-    # ── Walk-Forward splits (communs à tous les horizons) ──
+    # ── Walk-Forward splits (features uniquement, PAS de targets) ──
     _daily_symbols = int(round(base_df.groupby("date").size().median()))
     _daily_symbols = max(_daily_symbols, 1)
-    # Purge = horizon MINIMAL.  Les horizons plus longs sont protégés
-    # par le dropna(subset=[future_return_{h}]) dans la boucle : les
-    # targets shift(-h) produisent NaN sur les h dernières lignes,
-    # donc le dropna retire automatiquement les données non-PIT.
-    # Inutile (et nuisible) de purger globalement à max(horizons).
-    _purge_rows = max(min(_GLOBAL_RANKING_HORIZONS) // 2, 1) * _daily_symbols  # Sprint 2026-08-01 v4 : purge = horizon_min/2
+    # P1 (2026-08-01) : targets calculées APRES le split sur chaque fold
+    # → le shift(-h) ne peut pas traverser les frontières train/val/test.
+    # Purge = 1 jour (marge de sécurité résiduelle uniquement).
+    _purge_rows = 1 * _daily_symbols
     wf_splits = generate_walk_forward_splits(
         base_df,
         min_train_size=cfg.walk_forward.min_train_size * _daily_symbols,
@@ -910,11 +902,16 @@ def train_global_ranking_wf(
         step_size=cfg.walk_forward.step_size * _daily_symbols,
         max_splits=cfg.walk_forward.max_splits,
         forecast_horizon=_purge_rows,
-        max_train_size=756 * _daily_symbols,  # rolling window ~3 ans (sweet spot, testé 504/756/1008)
+        max_train_size=756 * _daily_symbols,  # rolling window ~3 ans
         date_column="date",
     )
     if not wf_splits:
         return {"status": "skipped", "reason": "no_valid_wf_split"}
+
+    # ── Calculer les targets sur chaque fold (PIT-étanche) ──
+    # Les targets sont calculées à la volée dans la boucle split/horizon
+    # car WalkForwardSplit est frozen (pas d'assignation possible).
+    # Voir _compute_ranking_targets() appelé dans la double boucle. 
 
     LOGGER.info(
         "train_global_ranking_wf start symbols=%d splits=%d feature_cols=%d horizons=%s",
@@ -967,8 +964,27 @@ def train_global_ranking_wf(
             except ImportError:
                 return {"status": "unavailable", "reason": f"{cfg.global_model.model_name}_not_installed"}
 
-            train_df = split.train.dropna(subset=_active_features + [_target_col, _label_col])
-            val_df = split.val.dropna(subset=_active_features + [_target_col, _label_col])
+            # ── P1 : calculer les targets sur les folds isolés (étanche) ──
+            # Pour les horizons lissés (10,15,20), on a besoin des 3 horizons
+            # simultanément (le smoothing fait la moyenne).  Pour H3/H5, on
+            # ne calcule que l'horizon courant.
+            _target_horizons = _SMOOTHING_HORIZONS if horizon in _SMOOTHING_HORIZONS else (horizon,)
+            _train_with_targets = _compute_ranking_targets(
+                split.train,
+                horizons=_target_horizons,
+                smoothing_horizons=_SMOOTHING_HORIZONS if horizon in _SMOOTHING_HORIZONS else (),
+                factor_cols=_factor_cols,
+                sector_map=_sector_map,
+            )
+            _val_with_targets = _compute_ranking_targets(
+                split.val,
+                horizons=_target_horizons,
+                smoothing_horizons=_SMOOTHING_HORIZONS if horizon in _SMOOTHING_HORIZONS else (),
+                factor_cols=_factor_cols,
+                sector_map=_sector_map,
+            )
+            train_df = _train_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
+            val_df = _val_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
             if train_df.empty or val_df.empty:
                 continue
 
