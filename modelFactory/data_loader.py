@@ -322,7 +322,7 @@ def load_symbol_bars(
         # ── Price convention (Section 17 Point 2.3) ────────────────────
         from common.price_convention import PriceConvention, declare_price_convention
         declare_price_convention(df, PriceConvention.ADJUSTED, source="stock_bars_daily")
-    LOGGER.info("load_symbol_bars symbol=%s start_date=%s end_date=%s rows=%d", symbol, start_date, end_date, len(df))
+    # LOGGER.info("load_symbol_bars symbol=%s start_date=%s end_date=%s rows=%d", symbol, start_date, end_date, len(df))
     return df
 
 

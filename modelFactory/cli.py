@@ -305,11 +305,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--ranking-top-k-features", type=int, default=0,
                    help="Global Ranking : nombre de features à garder par importance (0 = toutes, ex: 30 = top 30)")
     p.add_argument("--global-ranking-max-symbols", type=int, default=0,
-                   help="Global Ranking : nombre max de symboles (0 = tous, top N par volume moyen)")
+                   help="Global Ranking : nombre max de symboles (0 = tous, top N par volume moyen ou stratifié)")
+    p.add_argument("--global-ranking-selection-stratified", action="store_true", default=False,
+                   help="Global Ranking : sélection stratifiée par déciles de volume (sinon top N par volume)")
     p.add_argument("--per-symbol-max-symbols", type=int, default=0,
                    help="Per-Symbol : nombre max de symboles à entraîner (0 = tous, top N par volume ou stratifié). Pour test rapide.")
     p.add_argument("--per-symbol-selection-stratified", action="store_true", default=False,
                    help="Per-Symbol : sélection stratifiée par déciles de volume (sinon top N par volume)")
+    p.add_argument("--exclude-ticket-symbols", action="store_true", default=False,
+                   help="Exclure les symboles listés dans config/ticket_exclude.txt (séparés par virgule)")
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
                    help="Active les features cross-sectionnelles PIT-safe (rangs percentiles + features sectorielles dynamiques)")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
@@ -321,8 +325,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Volume quotidien moyen minimum sur 20 jours (défaut: 500k)")
     p.add_argument("--liquidity-min-market-cap", type=float, default=500_000_000.0,
                    help="Market cap minimum en dollars (défaut: 500M)")
-    p.add_argument("--liquidity-max-avg-spread-pct", type=float, default=0.5,
-                   help="Spread journalier moyen maximum en %% (défaut: 0.5)")
+    p.add_argument("--liquidity-max-market-cap", type=float, default=0.0,
+                   help="Market cap maximum en dollars (défaut: 0 = pas de limite, >0 exclut mega caps)")
+    p.add_argument("--liquidity-min-daily-dollar-volume", type=float, default=0.0,
+                   help="Volume quotidien moyen minimum en dollars (défaut: 0 = pas de filtre)")
+    p.add_argument("--liquidity-min-price", type=float, default=0.0,
+                   help="Prix minimum du dernier close (défaut: 0 = pas de filtre)")
+    p.add_argument("--liquidity-max-avg-high-low-range-pct", type=float, default=5.0,
+                   help="Amplitude High-Low quotidienne moyenne max en %% (pas le spread bid-ask). Défaut: 5.0%%")
+    p.add_argument("--liquidity-max-spread-bps", type=float, default=40.0,
+                   help="Spread bid-ask max en points de base (0 = désactivé). Défaut: 40 bps (0.40%%)")
+    p.add_argument("--liquidity-spread-fallback-mode", type=str, default="pass",
+                   choices=["pass", "reject", "warn_only"],
+                   help="Comportement si spread_bps absent : pass (laisser passer), reject (rejeter), warn_only (passer + alerte). Défaut: pass")
+    p.add_argument("--liquidity-spread-max-quote-age-days", type=int, default=5,
+                   help="Âge max en jours d'une quote spread pour être considérée valide. Défaut: 5")
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
     p.add_argument("--benchmark-symbol", type=str, default="SPY")
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary"])
@@ -488,10 +505,18 @@ def main(args: list[str] | None = None) -> None:
             enable_liquidity_filter=opts.enable_liquidity_filter,
             liquidity_min_avg_volume_20d=opts.liquidity_min_avg_volume_20d,
             liquidity_min_market_cap=opts.liquidity_min_market_cap,
-            liquidity_max_avg_spread_pct=opts.liquidity_max_avg_spread_pct,
+            liquidity_max_market_cap=opts.liquidity_max_market_cap,
+            liquidity_min_daily_dollar_volume=opts.liquidity_min_daily_dollar_volume,
+            liquidity_min_price=opts.liquidity_min_price,
+            liquidity_max_avg_high_low_range_pct=opts.liquidity_max_avg_high_low_range_pct,
+            liquidity_max_spread_bps=opts.liquidity_max_spread_bps,
+            liquidity_spread_fallback_mode=opts.liquidity_spread_fallback_mode,
+            liquidity_spread_max_quote_age_days=opts.liquidity_spread_max_quote_age_days,
             global_ranking_max_symbols=opts.global_ranking_max_symbols,
+            global_ranking_selection_stratified=opts.global_ranking_selection_stratified,
             per_symbol_max_symbols=opts.per_symbol_max_symbols,
             per_symbol_selection_stratified=opts.per_symbol_selection_stratified,
+            exclude_ticket_symbols=opts.exclude_ticket_symbols,
         ),
         model=ModelConfig(
             batch_size=opts.batch_size,

@@ -54,12 +54,18 @@ GLOBAL_PRED_FEATURE_COLUMNS: list[str] = [
 # Isole l'alpha spécifique au titre, indépendamment de la tendance du secteur.
 
 SECTOR_NEUTRAL_SOURCE_FEATURES: list[str] = [
+    # Techniques (Sprint 2026-07-25)
     "momentum_20", "momentum_60",
     "relative_strength_20", "relative_strength_60",
     "rolling_volatility_20", "rolling_volatility_60",
     "rsi_14",
     "sma20_distance", "sma50_distance",
     "volume_ratio_20",
+    # Fondamentales (Sprint 2026-08-01) — neutralisation sectorielle indispensable.
+    # Un PE de 15 est "cher" dans l'Énergie mais "donné" dans la Tech.
+    # Sans neutralisation, le modèle fait un pari sectoriel, pas du stock-picking.
+    "fund_pe_ratio", "fund_pb_ratio", "fund_ev_to_ebitda",
+    "fund_roa", "fund_roe",
 ]
 
 def _sector_neutral_column_name(source_col: str) -> str:

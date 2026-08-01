@@ -1082,7 +1082,7 @@ def _render_ml_train_scope_block(
         selectbox_key="pipeline_ml_train_symbol_source",
         button_key="run_pipeline_step_ml_train_scoped",
         button_label="Entraîner l'univers sélectionné",
-        label_prefix="9. ML Train (Model Factory)",
+        label_prefix="T1. ML Train (Model Factory)",
         source_attr="ml_train_symbol_source",
         start_symbol_attr="ml_train_start_symbol",
         historical_range=True,

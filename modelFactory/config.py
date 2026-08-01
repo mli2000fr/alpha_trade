@@ -44,11 +44,20 @@ class DataConfig:
     enable_liquidity_filter: bool = False
     liquidity_min_avg_volume_20d: int = 500_000
     liquidity_min_market_cap: float = 500_000_000.0  # 500M$
-    liquidity_max_avg_spread_pct: float = 0.5
+    liquidity_max_market_cap: float = 0.0              # 0 = pas de limite, >0 exclut mega caps
+    liquidity_max_avg_high_low_range_pct: float = 5.0  # amplitude High-Low quotidienne moyenne max (%), PAS le spread bid-ask
+    liquidity_min_daily_dollar_volume: float = 0.0     # 0 = pas de filtre, >0 = volume quotidien min en $
+    liquidity_min_price: float = 0.0                    # 0 = pas de filtre, >0 = prix minimum (dernier close)
+    # ── Filtre spread bid-ask réel (stock_quote_snapshots.spread_bps) ──
+    liquidity_max_spread_bps: float = 40.0             # 40 bps = 0.40% spread bid-ask max ; 0 = désactivé
+    liquidity_spread_fallback_mode: str = "pass"        # "pass" | "reject" | "warn_only"
+    liquidity_spread_max_quote_age_days: int = 5       # âge max d'une quote pour être considérée fraîche
     # ── Global Ranking (Sprint 2026-07-26) ──
-    global_ranking_max_symbols: int = 300    # 0 = pas de limite, >0 = top N par liquidité
+    global_ranking_max_symbols: int = 300    # 0 = pas de limite, >0 = top N par liquidité ou stratifié
+    global_ranking_selection_stratified: bool = True  # True = sélection stratifiée par déciles
     per_symbol_max_symbols: int = 0          # 0 = pas de limite, >0 = top N par volume ou stratifié
     per_symbol_selection_stratified: bool = True  # True = sélection stratifiée par déciles
+    exclude_ticket_symbols: bool = False  # True = exclure les symboles de config/ticket_exclude.txt
 
     def __post_init__(self) -> None:
         if self.sequence_length < 1:
@@ -149,9 +158,9 @@ class BaselineConfig:
     enabled: bool = False
     enable_catboost: bool = False
     model_name: str = "lightgbm"
-    max_depth: int = 4
+    max_depth: int = 5                   # 4→5 (Sprint 2026-08-01 v2, compromis per-symbol)
     n_estimators: int = 500
-    learning_rate: float = 0.05
+    learning_rate: float = 0.03          # 0.05→0.03
     # ── Early stopping LightGBM (0 = désactivé) ──
     lgbm_early_stopping_rounds: int = 30
     catboost_depth: int = 4
@@ -161,10 +170,10 @@ class BaselineConfig:
     # ── LightGBM tuning (optionnel) ──
     lgbm_reg_alpha: float = 0.1       # L1 régularisation
     lgbm_reg_lambda: float = 0.1      # L2 régularisation
-    lgbm_min_child_samples: int = 200   # min data in leaf (régularisation forte, évite sur-apprentissage H5)
-    lgbm_num_leaves: int = 15          # max leaves (2^depth ≈ 16, capped here)
-    lgbm_subsample: float = 0.8        # bagging fraction
-    lgbm_colsample_bytree: float = 0.5 # feature fraction (0.5 pour forcer diversité, éviter monopole volume)
+    lgbm_min_child_samples: int = 150   # 200→150 (Sprint 2026-08-01, Mid Caps: 150 avec 480 symboles ≈ 0.3% min/leaf)
+    lgbm_num_leaves: int = 15           # 31→15 (Sprint 2026-08-01 v2, cohérent avec max_depth=5, per-symbol)
+    lgbm_subsample: float = 0.8         # bagging fraction
+    lgbm_colsample_bytree: float = 0.7  # 0.5→0.7 (Sprint 2026-08-01, Mid Caps: plus de features/arbre)
     # ── CatBoost tuning (optionnel) ──
     catboost_l2_leaf_reg: float = 3.0      # L2 régularisation
     catboost_border_count: int = 254       # précision des splits (max 255)
@@ -238,6 +247,9 @@ class GlobalModelConfig:
     model_name: str = "catboost"  # catboost | lightgbm
     artifact_symbol: str = "__GLOBAL__"
     use_cross_sectional_features: bool = True
+    # ── Global Ranking hyperparams (indépendants du per-symbol BaselineConfig) ──
+    ranking_max_depth: int = 7        # plus profond que per-symbol (640K lignes vs 2K)
+    ranking_num_leaves: int = 31      # cohérent avec max_depth=7
 
     def __post_init__(self) -> None:
         if self.model_name not in {"catboost", "lightgbm"}:

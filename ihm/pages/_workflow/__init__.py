@@ -429,9 +429,17 @@ def _prepare_workflow_child_run_state(
     return child_select_key, bool(st.session_state.get(follow_key)), current_child_run_id, selected_child_run_id, last_auto_key
 
 
+# ── Cache de l'historique disque uniquement (lecture de history_index.json
+#    1.5 Mo + recovery scan).  Les runs actifs (in-memory) sont toujours
+#    lus en direct pour que les logs et statuts se mettent à jour sans délai.
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_history() -> list[dict[str, object]]:
+    return load_pipeline_history()
+
+
 def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     active_runs = list_active_pipeline_runs()
-    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_pipeline_history()}
+    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in _cached_history()}
     for run in active_runs:
         merged[str(run["run_id"])] = run
     all_runs = sorted(
@@ -611,7 +619,7 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
             disabled=bool(active_runs),
         )
         include_ml_train = st.checkbox(
-            "Inclure l'étape 9 — ML Train (Model Factory)",
+            "Inclure l'étape T1 — ML Train (Model Factory)",
             value=bool(st.session_state.get(WORKFLOW_INCLUDE_ML_TRAIN_KEY, False)),
             key=WORKFLOW_INCLUDE_ML_TRAIN_KEY,
             disabled=bool(active_runs),

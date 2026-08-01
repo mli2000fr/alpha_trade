@@ -73,6 +73,11 @@ WORKFLOW_STEP_DONE_RE = re.compile(r"=== \[(\d+)/(\d+)] Terminé (.+?) \(run `([
 WORKFLOW_INTERRUPTED_RE = re.compile(r"Workflow interrompu sur (.+?) — statut `([^`]+)` \(run `([^`]+)`\)\.")
 INVALID_RUN_DIR_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
+# ── Sentinelle : ne lance la recovery disque (scan des 171+ dossiers) qu'une
+#    seule fois par session Streamlit.  Les appels suivants à
+#    load_pipeline_history() lisent uniquement history_index.json.
+_RECOVERY_DONE = False
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineRunRecord:
@@ -1883,10 +1888,20 @@ def stop_pipeline_run(run_id: str) -> bool:
 
 
 def load_pipeline_history() -> list[dict[str, object]]:
-    """Charge l'historique persistant des runs IHM."""
+    """Charge l'historique persistant des runs IHM.
+
+    La recovery disque (scan des dossiers de runs) n'est exécutée qu'une
+    seule fois par session Streamlit. Les appels suivants lisent uniquement
+    ``history_index.json`` (1.5 Mo) sans toucher au système de fichiers.
+    """
+    global _RECOVERY_DONE
     with _REGISTRY_LOCK:
         index = _read_history_index()
-        recovered = _recover_history_index_entries(index)
+        if not _RECOVERY_DONE:
+            recovered = _recover_history_index_entries(index)
+            _RECOVERY_DONE = True
+        else:
+            recovered = {}
         if recovered:
             index.update(recovered)
         active_step_run_ids = set(_ACTIVE_RUNS.keys())

@@ -614,6 +614,24 @@ def run_training_batch(
         LOGGER.warning("run_training_batch no_tradable_symbols")
         return []
 
+    # ── Exclusion des symboles ticket (config/ticket_exclude.txt) ──
+    if getattr(cfg.data, "exclude_ticket_symbols", False):
+        _exclude_path = Path("config/ticket_exclude.txt")
+        if _exclude_path.exists():
+            _exclude_raw = _exclude_path.read_text(encoding="utf-8").strip()
+            if _exclude_raw:
+                _excluded = {s.strip().upper() for s in _exclude_raw.replace("\n", ",").split(",") if s.strip()}
+                if _excluded:
+                    _before = len(symbols)
+                    symbols = [s for s in symbols if s.upper() not in _excluded]
+                    LOGGER.info(
+                        "run_training_batch exclude_ticket_symbols excluded=%d kept=%d path=%s",
+                        _before - len(symbols), len(symbols), _exclude_path,
+                    )
+                    if not symbols:
+                        LOGGER.warning("run_training_batch all_symbols_excluded_by_ticket")
+                        return []
+
     if mode != "rebuild-all":
         symbols = _filter_symbols_by_mode(engine, symbols, mode=mode, cfg=cfg)
         if not symbols:
@@ -632,13 +650,23 @@ def run_training_batch(
             end_date=cfg.data.training_end_date,
             min_avg_volume_20d=cfg.data.liquidity_min_avg_volume_20d,
             min_market_cap=cfg.data.liquidity_min_market_cap,
-            max_avg_spread_pct=cfg.data.liquidity_max_avg_spread_pct,
+            max_market_cap=getattr(cfg.data, "liquidity_max_market_cap", 0.0),
+            max_avg_high_low_range_pct=cfg.data.liquidity_max_avg_high_low_range_pct,
+            min_daily_dollar_volume=getattr(cfg.data, "liquidity_min_daily_dollar_volume", 0.0),
+            min_price=getattr(cfg.data, "liquidity_min_price", 0.0),
+            max_spread_bps=getattr(cfg.data, "liquidity_max_spread_bps", 40.0),
+            spread_fallback_mode=getattr(cfg.data, "liquidity_spread_fallback_mode", "pass"),
+            spread_max_quote_age_days=getattr(cfg.data, "liquidity_spread_max_quote_age_days", 5),
         )
         if liquidity_excluded:
             symbols = [s for s in symbols if s not in set(liquidity_excluded)]
             LOGGER.info(
                 "run_training_batch liquidity_filter excluded=%d kept=%d",
                 len(liquidity_excluded), len(symbols),
+            )
+            LOGGER.info(
+                "run_training_batch liquidity_filter kept symbols: %s",
+                ",".join(sorted(symbols)),
             )
             if not symbols:
                 LOGGER.warning("run_training_batch all_symbols_filtered_by_liquidity")

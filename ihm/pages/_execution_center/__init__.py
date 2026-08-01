@@ -133,7 +133,13 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_ENABLE_LIQUIDITY_FILTER,
     DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D,
     DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP,
-    DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT,
+    DEFAULT_ML_LIQUIDITY_MAX_MARKET_CAP,
+    DEFAULT_ML_LIQUIDITY_MAX_AVG_HIGH_LOW_RANGE_PCT,
+    DEFAULT_ML_LIQUIDITY_MIN_DAILY_DOLLAR_VOLUME,
+    DEFAULT_ML_LIQUIDITY_MIN_PRICE,
+    DEFAULT_ML_LIQUIDITY_MAX_SPREAD_BPS,
+    DEFAULT_ML_LIQUIDITY_SPREAD_FALLBACK_MODE,
+    DEFAULT_ML_LIQUIDITY_SPREAD_MAX_QUOTE_AGE_DAYS,
     DEFAULT_ML_ENABLE_LIGHTGBM,
     DEFAULT_ML_ENABLE_CATBOOST,
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
@@ -3257,6 +3263,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_macro_regime",
                 help="Ajoute `--include-macro-regime`. Injecte la tendance SPY long terme et le z-score VIX à tous les symboles.",
             )
+        st.markdown("---")
+        with st.expander("🔍 ML — Filtrage", expanded=False):
             ml_ranking_top_k_features = st.number_input(
                 "🎯 Global Ranking : Top-K features (0 = toutes)",
                 min_value=0,
@@ -3271,8 +3279,18 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 max_value=5000,
                 value=_session_state_int("pipeline_ml_global_ranking_max_symbols", DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS),
                 key="pipeline_ml_global_ranking_max_symbols",
-                help="Limite le nombre de symboles utilisés pour le Global Ranking (top N par volume moyen). 0 = pas de limite. Réduire si erreur mémoire.",
+                help="Limite le nombre de symboles utilisés pour le Global Ranking. 0 = pas de limite. Réduire si erreur mémoire.",
             )
+            if ml_global_ranking_max_symbols > 0:
+                ml_global_ranking_selection_mode = st.selectbox(
+                    "Mode de sélection Global Ranking",
+                    options=["stratified", "top_volume"],
+                    format_func=lambda x: "Stratifié par déciles de volume" if x == "stratified" else "Top N par volume moyen",
+                    key="pipeline_ml_global_ranking_selection_mode",
+                    help="Top volume : les N plus liquides. Stratifié : ~N/10 symboles par décile de volume, couverture homogène.",
+                )
+            else:
+                ml_global_ranking_selection_mode = "stratified"
             ml_per_symbol_max_symbols = st.number_input(
                 "🔧 Per-Symbol : Nb max symboles (0 = tous)",
                 min_value=0,
@@ -3292,6 +3310,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 ml_per_symbol_selection_mode = "stratified"
             st.markdown("---")
+            ml_exclude_ticket_symbols = st.checkbox(
+                "🚫 Exclure les symboles de config/ticket_exclude.txt",
+                value=_session_state_bool("pipeline_ml_exclude_ticket_symbols", False),
+                key="pipeline_ml_exclude_ticket_symbols",
+                help="Si coché, les symboles listés dans config/ticket_exclude.txt (séparés par ',') sont exclus de l'entraînement (Global + Per-Symbol) et de la prédiction.",
+            )
+            st.markdown("---")
             ml_enable_liquidity_filter = st.checkbox(
                 "🔍 Filtrer les symboles illiquides (volume, cap, spread)",
                 value=_session_state_bool("pipeline_ml_enable_liquidity_filter", DEFAULT_ML_ENABLE_LIQUIDITY_FILTER),
@@ -3299,7 +3324,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--enable-liquidity-filter`. Exclut les small caps à faible volume/spread élevé avant entraînement.",
             )
             if ml_enable_liquidity_filter:
-                liq_col1, liq_col2, liq_col3 = st.columns(3)
+                liq_col1, liq_col2, liq_col3, liq_col4, liq_col5, liq_col6 = st.columns(6)
                 with liq_col1:
                     ml_liquidity_min_avg_volume_20d = int(
                         st.number_input(
@@ -3320,7 +3345,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ml_liquidity_min_market_cap = float(
                         st.number_input(
                             "Market cap min ($)",
-                            min_value=10_000_000.0,
+                            min_value=0.0,
                             max_value=10_000_000_000.0,
                             value=_session_state_float(
                                 "pipeline_ml_liquidity_min_market_cap",
@@ -3329,23 +3354,116 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                             step=100_000_000.0,
                             format="%.0f",
                             key="pipeline_ml_liquidity_min_market_cap",
-                            help="Capitalisation boursière minimum estimée. Défaut : 500M.",
+                            help="Capitalisation boursière minimum estimée (proxy dollar volume). Défaut : 500M. 0 = pas de minimum.",
                         )
                     )
                 with liq_col3:
-                    ml_liquidity_max_avg_spread_pct = float(
+                    ml_liquidity_max_market_cap = float(
                         st.number_input(
-                            "Spread max 20j (%)",
+                            "Market cap max ($)",
+                            min_value=0.0,
+                            max_value=100_000_000_000.0,
+                            value=_session_state_float(
+                                "pipeline_ml_liquidity_max_market_cap",
+                                DEFAULT_ML_LIQUIDITY_MAX_MARKET_CAP,
+                            ),
+                            step=1_000_000_000.0,
+                            format="%.0f",
+                            key="pipeline_ml_liquidity_max_market_cap",
+                            help="Capitalisation boursière maximum estimée (proxy dollar volume). 0 = pas de limite. Ex : 15Md pour exclure mega caps.",
+                        )
+                    )
+                with liq_col4:
+                    ml_liquidity_min_daily_dollar_volume = float(
+                        st.number_input(
+                            "Volume quotidien min ($)",
+                            min_value=0.0,
+                            max_value=100_000_000.0,
+                            value=_session_state_float(
+                                "pipeline_ml_liquidity_min_daily_dollar_volume",
+                                DEFAULT_ML_LIQUIDITY_MIN_DAILY_DOLLAR_VOLUME,
+                            ),
+                            step=500_000.0,
+                            format="%.0f",
+                            key="pipeline_ml_liquidity_min_daily_dollar_volume",
+                            help="Volume quotidien moyen minimum en dollars (prix × volume). 0 = pas de filtre. Ex : 2M pour garantir un volume institutionnel.",
+                        )
+                    )
+                with liq_col5:
+                    ml_liquidity_min_price = float(
+                        st.number_input(
+                            "Prix min ($)",
+                            min_value=0.0,
+                            max_value=10000.0,
+                            value=_session_state_float(
+                                "pipeline_ml_liquidity_min_price",
+                                DEFAULT_ML_LIQUIDITY_MIN_PRICE,
+                            ),
+                            step=1.0,
+                            format="%.0f",
+                            key="pipeline_ml_liquidity_min_price",
+                            help="Prix minimum du dernier close. 0 = pas de filtre. Ex : 10$ pour éliminer les penny stocks.",
+                        )
+                    )
+                with liq_col6:
+                    ml_liquidity_max_avg_high_low_range_pct = float(
+                        st.number_input(
+                            "Range H-L max 20j (%)",
                             min_value=0.1,
                             max_value=5.0,
                             value=_session_state_float(
-                                "pipeline_ml_liquidity_max_avg_spread_pct",
-                                DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT,
+                                "pipeline_ml_liquidity_max_avg_high_low_range_pct",
+                                DEFAULT_ML_LIQUIDITY_MAX_AVG_HIGH_LOW_RANGE_PCT,
                             ),
                             step=0.1,
                             format="%.1f",
-                            key="pipeline_ml_liquidity_max_avg_spread_pct",
-                            help="Spread journalier moyen maximum en %%. Défaut : 0.5%%.",
+                            key="pipeline_ml_liquidity_max_avg_high_low_range_pct",
+                            help="Amplitude High-Low quotidienne moyenne max (%%, PAS le spread bid-ask). Défaut : 5.0%%. Titres Mid-Cap typiques : 1.5%%–5.0%%. Moins de 1%% = quasi inertes.",
+                        )
+                    )
+            # ── Rangée spread bid-ask réel ──
+            if ml_enable_liquidity_filter:
+                liq_spread_col1, liq_spread_col2, liq_spread_col3 = st.columns(3)
+                with liq_spread_col1:
+                    ml_liquidity_max_spread_bps = float(
+                        st.number_input(
+                            "Spread bid-ask max (bps)",
+                            min_value=0.0,
+                            max_value=200.0,
+                            value=_session_state_float(
+                                "pipeline_ml_liquidity_max_spread_bps",
+                                DEFAULT_ML_LIQUIDITY_MAX_SPREAD_BPS,
+                            ),
+                            step=5.0,
+                            format="%.0f",
+                            key="pipeline_ml_liquidity_max_spread_bps",
+                            help="Spread bid-ask réel max en points de base (stock_quote_snapshots.spread_bps). 0 = désactivé. 40 bps = 0.40%%. Cohérent avec STRICT_SWING_CASH_FILTERS.",
+                        )
+                    )
+                with liq_spread_col2:
+                    ml_liquidity_spread_fallback_mode = st.selectbox(
+                        "Fallback si spread absent",
+                        options=["pass", "reject", "warn_only"],
+                        index=["pass", "reject", "warn_only"].index(
+                            str(st.session_state.get("pipeline_ml_liquidity_spread_fallback_mode", DEFAULT_ML_LIQUIDITY_SPREAD_FALLBACK_MODE))
+                        ),
+                        key="pipeline_ml_liquidity_spread_fallback_mode",
+                        help="pass = laisse passer si pas de quote (best-effort) | reject = rejette le symbole (strict) | warn_only = passe mais alerte si couverture < 95%%. Les small caps sans couverture IEX sont souvent sans quote.",
+                    )
+                with liq_spread_col3:
+                    ml_liquidity_spread_max_quote_age_days = int(
+                        st.number_input(
+                            "Âge max quote (jours)",
+                            min_value=1,
+                            max_value=30,
+                            value=_session_state_int(
+                                "pipeline_ml_liquidity_spread_max_quote_age_days",
+                                DEFAULT_ML_LIQUIDITY_SPREAD_MAX_QUOTE_AGE_DAYS,
+                            ),
+                            step=1,
+                            format="%d",
+                            key="pipeline_ml_liquidity_spread_max_quote_age_days",
+                            help="Âge maximum en jours d'une quote spread pour être considérée valide. Au-delà, traitée comme absente selon le fallback mode.",
                         )
                     )
         with ml_opt_col3:
@@ -3676,7 +3794,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 _wf_max_splits_default = 3 if ml_fast_search else DEFAULT_ML_WF_MAX_SPLITS
                 ml_wf_max_splits = int(st.session_state.get("pipeline_ml_wf_max_splits", _wf_max_splits_default))
 
-        with st.expander("ML — Hyperparams & seuils d'optimisation (avancé)", expanded=False):
+        with st.expander("ML — per symbol - Hyperparams & seuils d'optimisation (avancé)", expanded=False):
             ml_hp_col1, ml_hp_col2, ml_hp_col3 = st.columns(3)
             with ml_hp_col1:
                 ml_max_workers = int(
@@ -3830,7 +3948,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         # ML — Hyperparams avancés (architecture, boosters, grilles candidate)
         # cf. audit_ihm_pipeline_options.md — alignement complet CLI modelFactory
         # ──────────────────────────────────────────────────────────────────
-        with st.expander("ML — Hyperparams avancés (architecture, boosters, grilles)", expanded=False):
+        with st.expander("ML — per symbol - Hyperparams avancés (architecture, boosters, grilles)", expanded=False):
             st.caption(
                 "Expose les paramètres `--sequence-length / --batch-size / --hidden-size`, "
                 "`--artifacts-dir / --benchmark-symbol`, hyperparams LightGBM & CatBoost et les grilles "
@@ -4405,13 +4523,22 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_ranking_top_k_features=int(ml_ranking_top_k_features),
             ml_global_ranking_max_symbols=int(ml_global_ranking_max_symbols),
+            ml_global_ranking_selection_mode=str(ml_global_ranking_selection_mode),
             ml_per_symbol_max_symbols=int(ml_per_symbol_max_symbols),
             ml_per_symbol_selection_mode=str(ml_per_symbol_selection_mode),
+            # Exclusion ticket symbols
+            ml_exclude_ticket_symbols=bool(ml_exclude_ticket_symbols),
             # Filtrage liquidité
             ml_enable_liquidity_filter=bool(ml_enable_liquidity_filter),
             ml_liquidity_min_avg_volume_20d=int(ml_liquidity_min_avg_volume_20d if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D),
             ml_liquidity_min_market_cap=float(ml_liquidity_min_market_cap if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_MARKET_CAP),
-            ml_liquidity_max_avg_spread_pct=float(ml_liquidity_max_avg_spread_pct if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MAX_AVG_SPREAD_PCT),
+            ml_liquidity_max_market_cap=float(ml_liquidity_max_market_cap if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MAX_MARKET_CAP),
+            ml_liquidity_min_daily_dollar_volume=float(ml_liquidity_min_daily_dollar_volume if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_DAILY_DOLLAR_VOLUME),
+            ml_liquidity_min_price=float(ml_liquidity_min_price if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MIN_PRICE),
+            ml_liquidity_max_avg_high_low_range_pct=float(ml_liquidity_max_avg_high_low_range_pct if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MAX_AVG_HIGH_LOW_RANGE_PCT),
+            ml_liquidity_max_spread_bps=float(ml_liquidity_max_spread_bps if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_MAX_SPREAD_BPS),
+            ml_liquidity_spread_fallback_mode=str(ml_liquidity_spread_fallback_mode if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_SPREAD_FALLBACK_MODE),
+            ml_liquidity_spread_max_quote_age_days=int(ml_liquidity_spread_max_quote_age_days if ml_enable_liquidity_filter else DEFAULT_ML_LIQUIDITY_SPREAD_MAX_QUOTE_AGE_DAYS),
             # ML challengers & advanced (widgets IHM câblés)
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),

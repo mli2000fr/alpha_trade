@@ -1,6 +1,6 @@
 # Module ModelFactory — Documentation Complète
 
-> **Version** : Sprint 2026-07-29  
+> **Version** : Sprint 2026-08-01 (à jour des tests A/B)  
 > **Auteur** : Généré automatiquement depuis le code source
 
 ---
@@ -17,6 +17,7 @@
 8. [IC Per-Symbol](#8-ic-per-symbol)
 9. [Configuration](#9-configuration)
 10. [Tables DB](#10-tables-db)
+11. [Résultats & Benchmark](#11-résultats--benchmark)
 
 ---
 
@@ -24,7 +25,7 @@
 
 Le module `modelFactory` est le cœur ML du système α-Trade. Il assure :
 
-1. **Classement cross-sectionnel** : un modèle Global Ranking (LightGBM LambdaRank) qui ordonne tous les symboles de l'univers par rendement futur attendu → `global_rank ∈ [0, 1]`
+1. **Classement cross-sectionnel** : un modèle Global Ranking (CatBoost RMSE) qui ordonne tous les symboles de l'univers par rendement futur attendu sur 5 horizons → `global_rank ∈ [0, 1]`
 2. **Prédiction directionnelle par symbole** : des modèles per-symbol (LSTM, LightGBM, CatBoost) qui prédisent `proba_long` / `proba_short` pour chaque symbole individuellement
 3. **Garde-fous qualité** : filtrage automatique des symboles dont les modèles sont trop faibles (F1 bas, zéro short, etc.)
 4. **Sélection automatique du meilleur modèle** par symbole (champion selection)
@@ -48,13 +49,13 @@ Inférence (Live/Backtest) :
 ```mermaid
 flowchart TD
     A[run_training_batch] --> B[Phase 1 : Global Ranking Walk-Forward]
-    B --> B1[train_global_ranking_wf<br/>LightGBM LambdaRank<br/>5 horizons J+3,5,10,15,20]
+    B --> B1[train_global_ranking_wf<br/>CatBoost RMSE<br/>5 horizons J+3,5,10,15,20]
     B1 --> B2[global_rank_df<br/>symbol, date, rank ∈ 0..1]
     
-    B2 --> C{Stacking activé ?}
-    C -->|Oui| D[Inject global_rank comme feature<br/>dans les modèles per-symbol]
-    C -->|Non| E[Phase 2 : Per-Symbol Training]
-    D --> E
+    B2 --> C{Stacking ?}
+    C -->|⚠️ Contre-indiqué| D[Déconseillé : rend le Per-Symbol<br/>dépendant du Global Ranking]
+    C -->|✅ Recommandé| E[Phase 2 : Per-Symbol Training
+    indépendant, patterns locaux]
     
     E --> E1[N workers parallèles<br/>LSTM + LightGBM + CatBoost<br/>+ Global Model en stacking]
     E1 --> E2[select_champion<br/>par symbole]
@@ -88,56 +89,95 @@ flowchart TD
 
 Produire un **score de ranking cross-sectionnel** par symbole et par date, sur 5 horizons.
 
-**Modèle** : LightGBM `LGBMRanker` (fallback CatBoost `RMSE`)  
-**Objectif** : `lambdarank`  
+**Modèle** : CatBoost `RMSE` (principal, meilleur qu'LightGBM LambdaRank sur cet usage)  
+**Objectif** : régression sur le rang continu [0, 1]  
 **Métrique** : **IC Rank** (Spearman), pas de F1  
-**Sortie** : `global_rank_h ∈ [0, 1]` — percentile dans l'univers
+**Sortie** : `global_rank_h ∈ [0, 1]` — percentile dans l'univers  
+**IC actuel** : 0.0208 (+84% vs baseline 0.0113), tous les IC IR > 1.0
 
-### 3.2 Construction de la target (label 0..9)
+### 3.2 Construction de la target
 
 Pour chaque horizon $h \in \{3, 5, 10, 15, 20\}$ :
 
 ```
-1. Rendement forward : future_return_h = close[t+h] / close[t] - 1
-2. Excès vs SPY      : future_return_h -= spy_return_h
-3. Vol scaling (h≥5) : future_return_h /= rolling_volatility_20
-4. Winsorization     : clip 1%/99% intra-date
-5. Percentile rank   : rank(pct=True) → [0, 1]
-6. Décile discret    : label_h = floor(rank × 10).clip(0, 9)
+1. Rendement forward brut  : future_return_h = close[t+h] / close[t] - 1
+2. Vol scaling (h ≥ 5)     : future_return_h /= rolling_volatility_20
+   (H3 : pas de scaling, vol 20j décorrélée du rendement 3j)
+3. Winsorization            : clip 1%/99% intra-date
+4. Percentile rank          : rank(pct=True) → [0, 1]
+5. Décile discret           : label_h = floor(rank × 10).clip(0, 9)
+6. Target smoothing (h ≥ 10): blend 50% horizon + 50% avg(10,15,20) → re-rank
+   (H3/H5 exclus du smoothing : trop bruités, pas de vol scaling pour H3)
+7. Sector-neutral (tous)    : soustraire médiane sectorielle → re-rank → re-label
 ```
 
-> **H3** : pas de vol scaling (vol 20j décorrélée du rendement 3j), pas de fondamentaux.
+> **Excès vs SPY** : Structurellement inutile (rank intra-date invariant).  
+> **Vol scaling** : Testé OFF → IC -27%, conservé ON pour H5+.  
+> **Smoothing** : +44% IC, uniquement sur H10/H15/H20.  
+> **Sector-neutral** : +84% IC — le levier le plus puissant.  
+> **H3/H5 réactivés** : IC 0.013/0.018, IC IR > 1.0. H5 pour trading 5j.
 
 ### 3.3 Walk-Forward
 
-- **Fenêtre glissante** : 504 jours de train, 126j val, 126j test
-- **Purge** : $\min(\text{horizons}) = 3$ jours entre train et val
-- **Splits** : jusqu'à 13 (configurable via `max_splits`)
-- **Tous les horizons partagent les mêmes splits**
+- **Fenêtre glissante** : 756 jours de train (max), 126j val, 126j test
+- **Purge** : $\min(\text{horizons}) / 2 = 1$ jour entre train et val
+- **Splits** : 13 (optimal ; 8 splits dégrade l'IC)
+- **Poids temporels** : `exp(-days_diff / 360)` — demi-vie ~12 mois
+
+> **504j** trop court, **1008j** diminishing returns. **756j** = sweet spot.
 
 ### 3.4 Features
 
-| Horizon | Nb Features | Particularités |
-|---------|-------------|----------------|
-| H3 | 160 | Sans fondamentaux, sans vol scaling |
-| H5+ | 177 | Avec fondamentaux (PE, ROE, etc.), vol scaling |
+| Catégorie | Nb | Description |
+|-----------|----|-------------|
+| Base (OHLCV) | ~13 | daily_return, log_return, intraday_range, etc. |
+| Expert | ~18 | SMA distances, momentum, relative strength, régime |
+| Multi-horizons | ~17 | H3-H250 momentum, volatilité, RSI |
+| Interactions | ~16 | momentum/vol, RSI/vol, SMA cross |
+| Dynamique temporelle | ~6 | accel, decay, RSI slope, vol expansion |
+| Z-scores | ~26 | Normalisation temporelle sur 5 ans |
+| Régime × technique | ~18 | momentum × bull/bear, vol × bull/bear |
+| Cross-sectional | 8 | Rangs percentiles intra-date |
+| Sector features | 8 | Agrégats sectoriels |
+| Sector-neutral | 13 | Techniques + fondamentales neutralisées |
+| Fondamentales | ~23 | PE, ROE, marges, croissance (EODHD) |
+| Facteurs CAPM | 4 | Beta, alpha, R² |
 
-**Features blacklistées** du ranking (identiques pour tous les symboles → pas de pouvoir discriminant) :
-- SPY/VIX/VXN/VIX3M/MOVE
-- Régime de marché (bull/bear/risk_off)
-- Agrégats sectoriels
-- Dollar volume rank, CAPM
+**Total** : ~177 features (160 pour H3, sans fondamentaux).
 
-**Features conservées** : momentum, RSI, distance SMA, volume_ratio, sector-neutral, etc.
+**Features blacklistées** (identiques ∀ symboles → pas de pouvoir discriminant) :
+- Macro globales : VIX/VXN/VIX3M/MOVE
+- Secteur agrégé : `sector_ret_*`, `sector_vol_*`, `sector_dollar_volume_*`
+- Liquidité : `dollar_volume_20_rank`
+- CAPM : `beta_252`, `alpha_252`, `r_squared_252`
+- Volatilité 120j et `*_sector_neutral` de volatilité
+- Fondamentales brutes (versions `_sector_neutral` conservées)
+- Estimations analystes indisponibles
+- Poids morts Mid Caps : `log_return`, `daily_return` bruts, `close_to_vwap`, `volume_zscore_5d`, `accel_3_5`
 
-### 3.5 Feature Importance
+> **Note 2026-08-01** : `regime_risk_off` et `regime_bull_market` sont **dé-blacklistés** — les arbres (CatBoost) peuvent apprendre des splits conditionnels au régime.
 
-Calculée via `gain` (LightGBM). Moyennée sur tous les splits WF. Top 10 / Bottom 10 affichés dans l'IHM et le rapport.
+### 3.5 Modèle
 
-### 3.6 Limitation du nombre de symboles
+| Paramètre | Valeur | Note |
+|-----------|--------|------|
+| Algorithme | **CatBoost RMSE** | Meilleur que LightGBM LambdaRank (+60%) |
+| `ranking_max_depth` | 7 | Indépendant du per-symbol (5) |
+| `ranking_num_leaves` | 31 | Cohérent avec depth=7 |
+| `n_estimators` | 500 | |
+| `learning_rate` | 0.03 | |
+| `loss_function` | RMSE | Régression sur rang continu |
+
+> **LightGBM LambdaRank** testé : IC 0.0130 vs CatBoost 0.0208. LambdaRank ignore `regime_*` (importance 0.0), perd 20% des données (early stopping), et la MSE tolère mieux l'incertitude du classement.
+
+### 3.6 Feature Importance
+
+Calculée via `gain` (LightGBM) ou `feature_importance` (CatBoost). Moyennée sur tous les splits WF. Les fondamentales dominent le top 10 (PE, ROE, debt_to_equity, PS ratio), suivies des features de momentum long-terme (momentum_250, SMA distances).
+
+### 3.7 Limitation du nombre de symboles
 
 Paramètre `--global-ranking-max-symbols` (défaut: 300, IHM: 0 = tous).  
-Si > 0 : garde les **top N par volume moyen** (liquidité).
+Si > 0 : garde les **top N par volume moyen** ou stratifié par déciles.
 
 ---
 
@@ -168,19 +208,32 @@ Seuils : `ternary_threshold_short` (0.35), `ternary_threshold_long` (0.35), `top
 
 Mêmes splits que le Global Ranking. Chaque split produit des métriques sur train/val/test, agrégées en fin de boucle.
 
-### 4.4 Stacking (injection des rangs globaux)
+### 4.4 Stacking (injection des rangs globaux) ⚠️ Contre-indiqué
 
 Quand `global_model.stacking_enabled = True` :
 
 ```
 Avant entraînement per-symbol :
-  cross_sectional_cache ← merge(global_rank_df[["symbol", "date", "global_rank_3", "_5", "_10", "_15", "_20"]])
+  cross_sectional_cache ← merge(global_rank_df[["symbol", "date", "global_rank_10", "_15", "_20"]])
   NaN → 0.5 (rang neutre)
 
 Le modèle per-symbol voit donc les rangs cross-sectionnels comme features supplémentaires.
 ```
 
-Le but : comparer stacking=true vs stacking=false pour mesurer la valeur ajoutée (via l'IC Per-Symbol).
+> **⚠️ Le stacking est une mauvaise idée pour le Per-Symbol.**
+>
+> Si tu donnes le `global_rank` de la Phase 1 comme feature à la Phase 2, tes modèles
+> Per-Symbol (LSTM, LightGBM, CatBoost) vont devenir **dépendants du marché global**.
+> Ils vont perdre leur capacité à détecter les figures de retournement propres au symbole
+> et ne feront que « recopier » la tendance générale identifiée par la Phase 1.
+>
+> **Conséquence** : le Per-Symbol devient un simple amplificateur du Global Ranking,
+> perdant toute sa valeur ajoutée (détection de patterns locaux, divergences,
+> retournements idiosyncratiques). Les deux phases doivent rester complémentaires,
+> pas redondantes.
+>
+> **Recommandation** : laisser `stacking_enabled = false`. Le Global Ranking
+> et le Per-Symbol jouent des rôles distincts dans la cascade de trading (§7.2).
 
 ### 4.5 Limitation per-symbol (test rapide)
 
@@ -294,7 +347,7 @@ Combine **rang global** et **prédiction per-symbol** pour décider quels trades
 
 ```
 Pour chaque symbole avec global_rank ET per-symbol prediction :
-1. rank_avg = (global_rank_3 + global_rank_5) / 2
+1. rank_avg = (global_rank_10 + global_rank_15) / 2
 2. Si rank_avg > 0.80 (top 20%) ET proba_long > seuil → candidat LONG
 3. Si rank_avg < 0.20 (bottom 20%) ET proba_short > seuil → candidat SHORT
 4. Score = rank_avg × proba_long (ou (1-rank_avg) × proba_short)
@@ -367,18 +420,56 @@ L'IC Per-Symbol permet de comparer deux batchs :
 
 | Paramètre | Défaut | Description |
 |-----------|--------|-------------|
-| `forecast_horizon` | 5 | Horizon de prédiction (jours) — détermine `future_return` |
-| `sequence_length` | 10 | Longueur des séquences LSTM |
+| `forecast_horizon` | 10 | Horizon de prédiction (jours) |
 | `feature_set` | `expert` | `v1` ou `expert` (plus de features) |
 | `target_mode` | `ternary` | `binary` ou `ternary` (3 classes) |
-| `decision_threshold` | 0.55 | Seuil de proba pour classe positive |
 | `global_ranking_max_symbols` | 300 | Limite symboles Global Ranking (0 = tous) |
 | `per_symbol_max_symbols` | 0 | Limite symboles Per-Symbol (0 = tous) |
-| `wf_max_splits` | 13 | Nombre max de splits walk-forward |
+| `wf_max_splits` | 13 | Nombre max de splits walk-forward (optimal) |
 | `wf_min_train_size` | 504 | Taille min fenêtre train (jours) |
-| `enable_global_stacking` | false | Injecter global_rank comme feature |
+| `wf_step_size` | 126 | Pas entre splits (jours) |
+| `max_train_size` | **756** | Fenêtre train max (sweet spot) |
+| `demi-vie` | **360j** | Poids temporels (12 mois) |
 
-### 9.2 Garde-fous (config.yaml)
+### 9.2 Global Ranking (GlobalModelConfig)
+
+| Paramètre | Défaut | Note |
+|-----------|--------|------|
+| `model_name` | `catboost` | CatBoost RMSE > LightGBM LambdaRank |
+| `ranking_max_depth` | 7 | Indépendant du per-symbol |
+| `ranking_num_leaves` | 31 | Cohérent avec depth=7 |
+| `enabled` | false | Flag A : active le Global Ranking |
+| `stacking_enabled` | false | Flag B : injecte global_rank dans per-symbol |
+| `use_cross_sectional_features` | true | |
+
+### 9.3 Per-Symbol (BaselineConfig)
+
+| Paramètre | Défaut | Note |
+|-----------|--------|------|
+| `max_depth` | 5 | Conservateur (peu de données) |
+| `lgbm_num_leaves` | 15 | Cohérent avec depth=5 |
+| `n_estimators` | 500 | |
+| `learning_rate` | 0.03 | |
+| `lgbm_min_child_samples` | 150 | |
+| `lgbm_colsample_bytree` | 0.7 | |
+
+> **Séparation des configs** : `GlobalModelConfig` (ranking) et `BaselineConfig` (per-symbol) sont indépendants. Les paramètres `n_estimators`, `learning_rate` et tuning LGBM sont partagés.
+
+### 9.4 Target pipeline
+
+```
+future_return brut → vol scaling (H5+) → winsorize 1%/99% → rank intra-date
+→ smoothing 50% h + 50% avg(10,15,20) → re-rank [H10+ uniquement]
+→ sector-neutral (médiane secteur) → re-rank → label décile 0..9 [tous]
+```
+
+| Horizon | Vol scaling | Fondamentales | Smoothing | Sector-neutral |
+|---------|-------------|---------------|-----------|----------------|
+| H3 | ❌ | ❌ | ❌ | ✅ |
+| H5 | ✅ | ✅ | ❌ | ✅ |
+| H10/15/20 | ✅ | ✅ | ✅ | ✅ |
+
+### 9.5 Garde-fous (config.yaml)
 
 ```yaml
 batch_diagnostics:
@@ -451,28 +542,24 @@ stock_fundamentals_daily
 ```json
 {
   "cli_options": {...},
-  "liquidity_filter": {
-    "filtered_count": 0,
-    "kept_count": 500,
-    "thresholds": {...}
-  },
+  "liquidity_filter": {...},
   "global_ranking": {
     "horizon_details": {
-      "3": {
-        "ic_mean": 0.0168,
-        "decile_spread": 0.0184,
-        "n_features": 160,
+      "10": {
+        "ic_mean": 0.0083,
+        "decile_spread": 0.0034,
+        "n_features": 176,
         "splits": [...],
         "feature_importance_top10": [...],
         "feature_importance_bottom10": [...]
       },
-      "5": {...}, "10": {...}, "15": {...}, "20": {...}
+      "15": {...}, "20": {...}
     },
-    "ic_by_horizon": {"3": 0.0168, "5": 0.0150, ...},
-    "decile_spreads": {"3": 0.0184, ...},
-    "symbols_count": 500,
-    "splits_count": 12,
-    "pred_rows": 674532
+    "ic_by_horizon": {"10": 0.0083, "15": 0.0095, "20": 0.0161},
+    "decile_spreads": {"10": 0.0034, ...},
+    "symbols_count": 928,
+    "splits_count": 13,
+    "pred_rows": 1338623
   },
   "per_symbol_ic": {
     "3": {"ic_mean": 0.0013, "ic_std": 0.05, "n_dates": 348, "n_symbols": 12},
@@ -481,6 +568,65 @@ stock_fundamentals_daily
   }
 }
 ```
+
+---
+
+## 11. Résultats & Benchmark
+
+### 11.1 Tests A/B (13 tests, 2026-08-01)
+
+| # | Test | IC Global | Δ vs Baseline | Verdict |
+|---|------|-----------|---------------|---------|
+| 1 | **Baseline** (504j, CatBoost RMSE) | 0.0113 | — | référence |
+| 2 | Vol scaling OFF | 0.0082 | -27% | ❌ |
+| 3 | Excès vs SPY | 0.0106 | -6% | ❌ |
+| 4 | Déciles vs vingtiles | 0.0113 | 0% | ❌ |
+| 5 | Whitelist 53 features | 0.0064 | -43% | ❌ |
+| 6 | **756j + régime dé-blacklisté** | **0.0144** | **+27%** | ✅ |
+| 7 | 1008j | 0.0135 | +19% | ❌ |
+| 8 | colsample_bytree 0.4 | 0.0144 | 0% | ❌ |
+| 9 | **+ Target smoothing** | **0.0163** | **+44%** | ✅✅ |
+| 10 | max_depth 7, num_leaves 31 | 0.0166 | +47% | ✅ |
+| 11 | LightGBM LambdaRank | 0.0130 | +15% | ❌ |
+| 12 | **+ Target sector-neutral** | **0.0208** | **+84%** | 🔥🔥 |
+| 13 | 8 splits (252j) | 0.0161 | +42% | ❌ |
+| 14 | Composite features (×11) | 0.0198 | +75% | ❌ |
+| 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
+
+### 11.2 Configuration gagnante
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Modèle | CatBoost RMSE |
+| Horizons | **3, 5, 10, 15, 20** |
+| Fenêtre train | 756j |
+| Demi-vie | 360j |
+| Target smoothing | 50% h + 50% avg(10,15,20) — H3/H5 bruts |
+| Target sector-neutral | Oui (tous horizons) |
+| ranking_max_depth | 7 |
+| Splits | 13 × 126j |
+| Features | ~177 (160 pour H3) |
+
+### 11.3 Métriques finales
+
+| Métrique | H3 | H5 | H10 | H15 | H20 | Global |
+|----------|----|----|-----|-----|-----|--------|
+| IC Mean | 0.0132 | 0.0176 | 0.0230 | 0.0256 | 0.0245 | **0.0208** |
+| IC IR | 1.01 | 0.99 | 1.05 | 1.15 | 1.11 | — |
+| Decile Spread | 0.0125 | 0.0180 | 0.0243 | 0.0275 | 0.0248 | — |
+
+### 11.4 Leçons apprises
+
+1. **Target sector-neutral** est le levier #1 (+84% IC). Sans cela, on fait du sector-riding, pas du stock-picking.
+2. **CatBoost RMSE > LightGBM LambdaRank** pour le ranking financier faible signal.
+3. **756j** est le sweet spot de fenêtre train (504 trop court, 1008 diminishing).
+4. **13 splits > 8 splits** — granularité fine → adaptation au régime.
+5. **Le lissage de target** aide les horizons courts (H10 +65%).
+6. **Moins de features ≠ meilleur** — les arbres excellent à combiner des signaux faibles.
+7. **Le vol scaling est indispensable** (testé OFF : -27%).
+8. **Configs séparées** : `GlobalModelConfig` vs `BaselineConfig`.
+9. **Composites inutiles** : les arbres apprennent déjà ces interactions.
+10. **H3/H5 viables** : IC IR > 1.0, H5 exploitable pour trading 5j.
 
 ---
 
@@ -495,9 +641,11 @@ stock_fundamentals_daily
 | **WF** | Walk-Forward — validation glissante PIT-safe |
 | **PIT** | Point-In-Time — pas de fuite de données futures |
 | **Stacking** | Injection du rang global comme feature dans les modèles per-symbol |
-| **Champion** | Meilleur modèle sélectionné par symbole (LSTM, LightGBM ou CatBoost — le Global Model ne participe pas) |
-| **S7** | Section 7 du plan ML — règles absolues d'exclusion basées sur les F1 |
-| **Cascade** | Chaîne de fallback pour l'inférence (global → tabular → LSTM) |
+| **Champion** | Meilleur modèle sélectionné par symbole (LSTM, LightGBM ou CatBoost) |
+| **S7** | Règles absolues d'exclusion basées sur les F1 |
+| **Target smoothing** | Moyenne pondérée cross-horizon du forward return (50% h + 50% avg) |
+| **Target sector-neutral** | Soustraction de la médiane sectorielle du forward return avant le rank |
+| **CatBoost RMSE** | Régression sur rang continu — plus robuste que LambdaRank pour le signal faible |
 
 ## Annexe B — Flux de bout en bout
 
@@ -505,22 +653,21 @@ stock_fundamentals_daily
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        ENTRAÎNEMENT (batch)                         │
 ├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  1. Chargement univers (500-2000 symboles)                          │
+│  1. Chargement univers (939 Mid Caps)                               │
 │  2. Filtrage liquidité (volume, market cap, spread)                 │
-│  3. Limitation per-symbol (top N par volume, optionnel)             │
+│  3. Features (~188) : OHLCV + expert + cross-sectional + composites │
 │                                                                     │
-│  ┌─ Global Ranking ─────────────────────────────────────────┐      │
-│  │  LightGBM LambdaRank, 5 horizons, walk-forward           │      │
-│  │  Sortie : global_rank_df[symbol, date, rank_3..20]       │      │
-│  │  Métrique : IC Rank (Spearman)                           │      │
+│  ┌─ Global Ranking (CatBoost RMSE) ────────────────────────┐      │
+│  │  5 horizons (3,5,10,15,20), 756j train, 13 splits      │      │
+│  │  Target : vol-scaled → smoothed(10+) → sector-neutral   │      │
+│  │  Sortie : global_rank_df[symbol, date, rank_3..20]      │      │
+│  │  Métrique : IC Rank ~0.021, tous IC IR > 1.0            │      │
 │  └──────────────────────────────────────────────────────────┘      │
 │                            ↓                                        │
 │  ┌─ Per-Symbol Training ───────────────────────────────────┐      │
 │  │  Pour chaque symbole (parallèle) :                      │      │
 │  │    - LSTM Attention + LightGBM + CatBoost               │      │
 │  │    - Walk-forward avec splits identiques                │      │
-│  │    - Sauvegarde prédictions WF → _per_symbol_wf_preds/  │      │
 │  │    - select_champion() → 1 modèle élu par symbole       │      │
 │  └──────────────────────────────────────────────────────────┘      │
 │                            ↓                                        │
@@ -529,17 +676,13 @@ stock_fundamentals_daily
 │  │  - _compute_per_symbol_ic_from_parquet                  │      │
 │  │  - Persist metadata_json → IHM + rapport                │      │
 │  └──────────────────────────────────────────────────────────┘      │
-│                                                                     │
 ├─────────────────────────────────────────────────────────────────────┤
 │                      INFÉRENCE (live/backtest)                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  Pour chaque date de trading :                                      │
+│  Pour chaque date :                                                 │
 │  1. Charger global_rank_history[date]                               │
 │  2. Pour chaque symbole : predict_symbol() → proba_long/short/flat  │
 │  3. cascade_select(global_rank × proba) → candidats triés           │
 │  4. filter_predictions(batch_diagnostics) → exclusion weak/bottom   │
 │  5. Sortie : liste de trades (symbol, side, score)                  │
-│                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
