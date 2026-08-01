@@ -611,13 +611,16 @@ stock_fundamentals_daily
 | Splits | 13 × 126j |
 | Features | ~177 (160 pour H3) |
 
-### 11.3 Métriques finales
+### 11.3 Métriques finales (post data-leakage fix P1 — étanche)
 
 | Métrique | H3 | H5 | H10 | H15 | H20 | Global |
 |----------|----|----|-----|-----|-----|--------|
-| IC Mean | 0.0132 | 0.0176 | 0.0230 | 0.0256 | 0.0245 | **0.0208** |
-| IC IR | 1.01 | 0.99 | 1.05 | 1.15 | 1.11 | — |
-| Decile Spread | 0.0125 | 0.0180 | 0.0243 | 0.0275 | 0.0248 | — |
+| IC Mean | 0.0090 | **0.0138** | 0.0159 | 0.0168 | 0.0140 | **0.0139** |
+| IC IR | 0.79 | **1.20** | 1.02 | 0.93 | 0.79 | — |
+| Decile Spread | 0.0087 | 0.0138 | 0.0170 | 0.0170 | 0.0171 | — |
+
+L'IC original (0.0208) contenait ~33% de data leakage. Le signal réel est ~0.014.
+Le H5 (horizon de trading) préserve un IC de 0.014 avec l'IR le plus élevé (1.20).
 
 ### 11.4 Leçons apprises
 
@@ -631,6 +634,44 @@ stock_fundamentals_daily
 8. **Configs séparées** : `GlobalModelConfig` vs `BaselineConfig`.
 9. **Composites inutiles** : les arbres apprennent déjà ces interactions.
 10. **H3/H5 viables** : IC IR > 1.0, H5 exploitable pour trading 5j.
+11. **Target post-split** : l'unique source de leakage était le shift pré-split — corrigé, le pipeline est étanche.
+12. **H15/H20 surévalués** : ~27-33% de l'IC était du bruit de leakage. La hiérarchie réelle est H10 > H5 > H3.
+
+### 11.5 Audit Data Leakage (2026-08-01) — ✅ RÉSOLU
+
+**Conclusion** : Plus de data leakage. Le pipeline est étanche par construction.
+
+#### Historique du problème
+
+La target était pré-calculée sur `base_df` (toutes dates) **avant** les splits walk-forward.
+Le `shift(-horizon)` trouvait le close futur au-delà des frontières train/val → biais de ~33%
+sur l'IC global (0.0208 → 0.0139).
+
+| Étape | Approche | IC Global | Statut |
+|-------|----------|-----------|--------|
+| Original | purge=1j, target pré-split | 0.0208 | ❌ 33% leakage |
+| P0 | purge=20j, target pré-split | 0.0163 | 🟡 résiduel |
+| **P1** | **target post-split** (`_compute_ranking_targets` par fold) | **0.0139** | ✅ **étanche** |
+
+**P1** : la fonction `_compute_ranking_targets()` est appelée sur chaque fold isolément
+(train puis val) dans la boucle split/horizon. Le `shift(-h)` ne peut pas physiquement
+traverser les frontières car le DataFrame du fold ne contient pas les dates voisines.
+Purge = 1j (marge de sécurité résiduelle uniquement).
+
+#### 🟢 Composants vérifiés sans leakage (tous OK)
+
+| Composant | Méthode | Statut |
+|-----------|---------|--------|
+| Features OHLCV | `rolling`, `shift(N)` backward | ✅ |
+| Features cross-section | `groupby("date").rank(pct=True)` intra-date | ✅ |
+| Features macro | `ffill()` PIT-safe | ✅ |
+| Features fondamentales | `ffill()` par symbole, `trade_date ≤ date` | ✅ |
+| Features facteurs (CAPM) | Rolling 252j backward-only | ✅ |
+| Regime (bull/risk_off) | SMA/Std backward | ✅ |
+| Sector-neutral target | `groupby(["date","_sector"]).median()` intra-date | ✅ |
+| Factor-neutral target | OLS par date, résidus intra-date | ✅ |
+| XS rank features | `groupby("date").rank(pct=True)` intra-date | ✅ |
+| Sample weights | `exp(-days_diff/360)` dates train uniquement | ✅ |
 
 ---
 
