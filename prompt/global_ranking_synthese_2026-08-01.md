@@ -21,8 +21,9 @@
 | 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
 | 16 | **+ Target factor-neutral (OLS)** | **0.0208** | **+84%** | ✅ |
 | R1 | **Baseline P1 réel** (504j, H10 seul, étanche) | 0.0084 | — | référence réelle |
-| R2 | **Smoothing OFF** (P1) | H15 +3%, H20 +36% | — | ✅ smoothing retiré |
+| R2 | **Smoothing OFF** (P1, 13 splits) | H20 +36%, H10 −12% | — | retiré |
 | R3 | **8 splits × 252j** (P1) | **0.0194 (+40%)** | — | 🔥🔥 adopté |
+| R4 | **8 splits + no smoothing** | H10 −24% vs avec | — | ❌ interaction |
 
 ## 🎯 Configuration gagnante (finale P1)
 
@@ -33,11 +34,15 @@
 | `demi-vie` | 180j | **360j** |
 | Splits | — | **8 × 252j** |
 | `regime_risk_off` | blacklisté | **disponible** |
-| Target smoothing | non | **OFF (retiré)** |
+| Target smoothing | non | **50% h + 50% avg(10,15,20)** |
 | Target sector-neutral | non | **oui** |
 | Target factor-neutral | non | **oui (OLS)** |
 | Target computation | pré-split (leakage) | **post-split (P1 étanche)** |
 | Config séparée | non | `GlobalModelConfig.ranking_max_depth=7` |
+| Horizons | 3 | **3, 5, 10, 15, 20** |
+
+> **Interaction smoothing × splits** : le smoothing seul (13 splits) diluait (−12% H10).
+> Avec 8 splits (régimes distincts), il apporte +31% sur H10. Les deux sont complémentaires.
 | Horizons | 3 | **3, 5, 10, 15, 20** |
 
 ## 📈 Détail par horizon (P1 étanche, 8 splits, sans smoothing)

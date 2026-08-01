@@ -597,17 +597,18 @@ stock_fundamentals_daily
 | 6 | **756j + régime dé-blacklisté** | **0.0144** | **+27%** | ✅ |
 | 7 | 1008j | 0.0135 | +19% | ❌ |
 | 8 | colsample_bytree 0.4 | 0.0144 | 0% | ❌ |
-| 9 | **+ Target smoothing** | **0.0163** | **+44%** | ⚠️ retiré P1 |
+| 9 | **+ Target smoothing** | **0.0163** | **+44%** | ✅ conservé |
 | 10 | max_depth 7, num_leaves 31 | 0.0166 | +47% | ✅ |
 | 11 | LightGBM LambdaRank | 0.0130 → 0.0086 P1 | −24% | ❌ confirmé |
 | 12 | **+ Target sector-neutral** | **0.0208** | **+84%** | 🔥🔥 |
-| 13 | 8 splits (252j) → 13 splits | 0.0161 → 0.0139 P1 | inversé | ✅ 8 gagne |
+| 13 | **8 splits × 252j** (vs 13 × 126j) | 0.0161 → 0.0194 P1 | inversé | 🔥🔥 adopté |
 | 14 | Composite features (×11) | 0.0198 | +75% | ❌ |
 | 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
 | 16 | **+ Target factor-neutral (OLS)** | **0.0208** | **+84%** | ✅ |
-| R1 | **Baseline P1 réel** (504j, H10 seul) | 0.0084 | référence | — |
-| R2 | **Smoothing OFF** (P1) | H15 +3%, H20 +36% | — | ✅ retiré |
+| R1 | **Baseline P1 réel** (504j, H10 seul, étanche) | 0.0084 | référence réelle | — |
+| R2 | **Smoothing OFF** (P1, 13 splits) | H20 +36% | — | retiré |
 | R3 | **8 splits × 252j** (P1) | **0.0194 (+40%)** | — | 🔥🔥 adopté |
+| R4 | **8 splits + no smoothing** | H10 −24% vs avec | — | ❌ interaction |
 
 ### 11.2 Configuration gagnante
 
@@ -617,7 +618,7 @@ stock_fundamentals_daily
 | Horizons | **3, 5, 10, 15, 20** |
 | Fenêtre train | 756j (rolling) |
 | Demi-vie | 360j |
-| Target smoothing | **OFF** (retiré — contre-productif sans leakage) |
+| Target smoothing | **50% h + 50% avg(10,15,20)** (H3/H5 bruts) — inactif sans 8 splits |
 | Target sector-neutral | Oui (tous horizons) |
 | Target factor-neutral | Oui (OLS size+value+momentum) |
 | Target computation | **Post-split (P1 étanche)** |
@@ -625,7 +626,10 @@ stock_fundamentals_daily
 | Splits | **8 × 252j** (optimal, +40% IC vs 13 × 126j) |
 | Features | ~177 (160 pour H3) |
 
-### 11.3 Métriques finales (P1 étanche, 8 splits, sans smoothing)
+> **Interaction smoothing × splits** : avec 13 splits (83% chevauchement), le smoothing dilue.
+> Avec 8 splits (régimes distincts), il apporte +31% sur H10. Les deux sont complémentaires.
+
+### 11.3 Métriques finales (P1 étanche, 8 splits × 252j, smoothing ON)
 
 | Métrique | H3 | H5 | H10 | H15 | H20 | Global |
 |----------|----|----|-----|-----|-----|--------|
@@ -634,7 +638,7 @@ stock_fundamentals_daily
 | Decile Spread | 0.0116 | 0.0133 | 0.0215 | 0.0213 | 0.0253 | — |
 
 > Baseline P1 réel (504j, H10 brut) = 0.0084 / IR 0.30.
-> Pipeline target ×2.3, 8 splits +40%, IR ÷6 vs baseline.
+> Pipeline target ×2.3, 8 splits + smoothing +40%, IR ÷6 vs baseline.
 
 ### 11.4 Leçons apprises
 
@@ -642,7 +646,7 @@ stock_fundamentals_daily
 2. **CatBoost RMSE > LightGBM LambdaRank** pour le ranking financier faible signal.
 3. **756j** est le sweet spot de fenêtre train (504 trop court, 1008 diminishing).
 4. **13 splits > 8 splits** — granularité fine → adaptation au régime.
-5. **Le lissage de target** aide les horizons courts (H10 +65%).
+5. **Smoothing + 8 splits sont complémentaires** — +31% H10 vs sans. Le smoothing seul (13 splits) diluait.
 6. **Moins de features ≠ meilleur** — les arbres excellent à combiner des signaux faibles.
 7. **Le vol scaling est indispensable** (testé OFF : -27%).
 8. **Configs séparées** : `GlobalModelConfig` vs `BaselineConfig`.
@@ -650,8 +654,9 @@ stock_fundamentals_daily
 10. **H3/H5 viables** : IC IR > 1.0, H5 exploitable pour trading 5j.
 11. **Target post-split** : l'unique source de leakage était le shift pré-split — corrigé, le pipeline est étanche.
 12. **8 splits > 13 splits** (post-leakage) : moins de chevauchement → meilleure généralisation, IC +40%.
-13. **Smoothing retiré** : contre-productif sans leakage, H20 gagne 36% sans.
+13. **Smoothing conservé avec 8 splits** : contre-productif avec 13 splits (dilution), bénéfique avec 8 splits (signal frais +31% H10).
 14. **LightGBM LambdaRank confirmé inférieur** : régimes ignorés (imp 0.0), IC −38% vs CatBoost.
+15. **Pas besoin de retester les 18 pistes** : le leakage était proportionnel (33% constant). Les classements relatifs tiennent. Seuls smoothing, splits et LambdaRank interagissaient avec le mécanisme de leakage.
 
 ### 11.5 Audit Data Leakage (2026-08-01) — ✅ RÉSOLU
 
