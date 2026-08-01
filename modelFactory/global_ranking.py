@@ -737,6 +737,35 @@ def train_global_ranking_wf(
             .astype("Int32")
         )
 
+    # ── Target smoothing multi-horizons (Sprint 2026-08-01) ──
+    # Le forward return à un horizon unique est bruité. On lisse chaque
+    # horizon avec une moyenne pondérée des 3 horizons (50% horizon cible,
+    # 50% moyenne des 3). Réduit le bruit idiosyncratique.
+    if len(_GLOBAL_RANKING_HORIZONS) >= 2:
+        _all_ret_cols = [f"future_return_{h}" for h in _GLOBAL_RANKING_HORIZONS]
+        _avg = base_df[_all_ret_cols].mean(axis=1)
+        for horizon in _GLOBAL_RANKING_HORIZONS:
+            h_suffix = f"_{horizon}"
+            _col = f"future_return{h_suffix}"
+            # Blend: 50% horizon-specific + 50% cross-horizon average
+            base_df[_col] = (0.5 * base_df[_col] + 0.5 * _avg).astype(float)
+            # Re-rank percentile intra-date
+            base_df[_col] = (
+                base_df.groupby("date")[_col]
+                .rank(pct=True)
+                .astype(np.float64)
+            )
+            # Re-discretize
+            base_df[f"label{h_suffix}"] = (
+                np.floor(base_df[_col] * 10)
+                .clip(0, 9)
+                .astype("Int32")
+            )
+        LOGGER.info(
+            "train_global_ranking_wf target smoothed: blended 50%% horizon + 50%% avg(%s)",
+            ",".join(str(h) for h in _GLOBAL_RANKING_HORIZONS),
+        )
+
     # ── Walk-Forward splits (communs à tous les horizons) ──
     _daily_symbols = int(round(base_df.groupby("date").size().median()))
     _daily_symbols = max(_daily_symbols, 1)
