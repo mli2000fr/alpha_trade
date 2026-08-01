@@ -59,9 +59,11 @@ LOGGER = logging.getLogger(__name__)
 # H10 : momentum moyen-terme, avec fondamentaux, avec vol scaling.
 # H15 : momentum long-terme, avec fondamentaux, avec vol scaling.
 # H20 : momentum très long-terme, avec fondamentaux, avec vol scaling.
-# Note 2026-08-01 : H=3 et H=5 retirés temporairement (IC nul/bruit sur Mid Caps).
+# Note 2026-08-01 : H=3 et H=5 réactivés pour test short-term.
 # Note 2026-07-29 : vol scaling actif pour tous les horizons ≥ 5j.
-_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (10, 15, 20)
+_GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10, 15, 20)
+# Smoothing : uniquement sur les horizons fiables (H3/H5 trop bruités)
+_SMOOTHING_HORIZONS: tuple[int, ...] = (10, 15, 20)
 
 # Features "brutes" à normaliser en rang cross-sectionnel par date.
 # Ces features varient par symbole mais leurs seuils absolus changent avec
@@ -738,32 +740,24 @@ def train_global_ranking_wf(
         )
 
     # ── Target smoothing multi-horizons (Sprint 2026-08-01) ──
-    # Le forward return à un horizon unique est bruité. On lisse chaque
-    # horizon avec une moyenne pondérée des 3 horizons (50% horizon cible,
-    # 50% moyenne des 3). Réduit le bruit idiosyncratique.
-    if len(_GLOBAL_RANKING_HORIZONS) >= 2:
-        _all_ret_cols = [f"future_return_{h}" for h in _GLOBAL_RANKING_HORIZONS]
+    # Lisse chaque horizon fiable (10, 15, 20) avec leur moyenne.
+    # H3/H5 sont trop bruités → pas de smoothing, leur target reste pure.
+    if len(_SMOOTHING_HORIZONS) >= 2:
+        _all_ret_cols = [f"future_return_{h}" for h in _SMOOTHING_HORIZONS]
         _avg = base_df[_all_ret_cols].mean(axis=1)
-        for horizon in _GLOBAL_RANKING_HORIZONS:
+        for horizon in _SMOOTHING_HORIZONS:
             h_suffix = f"_{horizon}"
             _col = f"future_return{h_suffix}"
-            # Blend: 50% horizon-specific + 50% cross-horizon average
             base_df[_col] = (0.5 * base_df[_col] + 0.5 * _avg).astype(float)
-            # Re-rank percentile intra-date
             base_df[_col] = (
-                base_df.groupby("date")[_col]
-                .rank(pct=True)
-                .astype(np.float64)
+                base_df.groupby("date")[_col].rank(pct=True).astype(np.float64)
             )
-            # Re-discretize
             base_df[f"label{h_suffix}"] = (
-                np.floor(base_df[_col] * 10)
-                .clip(0, 9)
-                .astype("Int32")
+                np.floor(base_df[_col] * 10).clip(0, 9).astype("Int32")
             )
         LOGGER.info(
             "train_global_ranking_wf target smoothed: blended 50%% horizon + 50%% avg(%s)",
-            ",".join(str(h) for h in _GLOBAL_RANKING_HORIZONS),
+            ",".join(str(h) for h in _SMOOTHING_HORIZONS),
         )
 
     # ── Target sector-neutral (Sprint 2026-08-01) ──

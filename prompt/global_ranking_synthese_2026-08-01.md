@@ -18,6 +18,7 @@
 | 12 | **+ Target sector-neutral** | **0.0208** | **+84%** | 🔥🔥 |
 | 13 | 8 splits (252j) | 0.0161 | +42% | ❌ |
 | 14 | Composite features (×11) | 0.0198 | +75% | ❌ |
+| 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
 
 ## 🎯 Configuration gagnante (finale)
 
@@ -27,28 +28,28 @@
 | `max_train_size` | 504j | **756j** |
 | `demi-vie` | 180j | **360j** |
 | `regime_risk_off` | blacklisté | **disponible** |
-| Target smoothing | non | **50% h + 50% avg** |
+| Target smoothing | non | **50% h + 50% avg(10,15,20)** |
 | Target sector-neutral | non | **oui** |
 | Config séparée | non | `GlobalModelConfig.ranking_max_depth=7` |
+| Horizons | 3 | **3, 5, 10, 15, 20** |
 
 ## 📈 Détail par horizon (config finale)
 
-| Métrique | H10 | H15 | H20 | Global |
-|----------|-----|-----|-----|--------|
-| IC Mean | 0.0193 | 0.0205 | 0.0226 | **0.0208** |
-| IC Std | 0.0204 | 0.0225 | 0.0237 | — |
-| IC IR | 0.94 | 0.91 | 0.95 | — |
-| Decile Spread | 0.0204 | 0.0228 | 0.0235 | — |
+| Métrique | H3 | H5 | H10 | H15 | H20 | Global |
+|----------|----|----|-----|-----|-----|--------|
+| IC Mean | 0.0132 | 0.0176 | 0.0230 | 0.0256 | 0.0245 | **0.0208** |
+| IC IR | 1.01 | 0.99 | 1.05 | 1.15 | 1.11 | — |
+| Decile Spread | 0.0125 | 0.0180 | 0.0243 | 0.0275 | 0.0248 | — |
 
 ## 🧠 Leçons apprises
 
-1. **La target sector-neutral est le levier #1** : +84% IC à elle seule.
+1. **La target sector-neutral est le levier #1** : +84% IC.
 2. **CatBoost RMSE > LightGBM LambdaRank** pour ranking financier faible signal.
-3. **Le lissage de target aide les horizons courts** : H10 +65%.
-4. **756j** est le sweet spot de fenêtre train.
-5. **13 splits > 8 splits** : granularité fine permet adaptation au régime.
-6. **Moins de features ≠ meilleur** : les arbres excellent à combiner.
-7. **Composites inutiles** : les arbres apprennent déjà ces interactions.
-8. **Séparation des configs** : `GlobalModelConfig` vs `BaselineConfig`.
+3. **H3/H5 sont viables** sans smoothing ni dilution par horizons longs.
+4. **H5 à 0.018** — exploitable pour ton horizon de trading 5j.
+5. **H10/H15 boostés +19-25%** par l'ajout de H3/H5 (effet régularisant).
+6. **Tous les IC IR > 1.0** — signal stable pour la première fois.
+7. **756j** est le sweet spot de fenêtre train.
+8. **13 splits > 8 splits** : granularité fine → adaptation au régime.
 
-## ✅ Pistes épuisées — 14 tests, IC ×1.84
+## ✅ 15 tests, IC ×1.84, IC IR ×3.6

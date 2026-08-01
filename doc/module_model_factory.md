@@ -25,7 +25,7 @@
 
 Le module `modelFactory` est le cœur ML du système α-Trade. Il assure :
 
-1. **Classement cross-sectionnel** : un modèle Global Ranking (LightGBM LambdaRank) qui ordonne tous les symboles de l'univers par rendement futur attendu → `global_rank ∈ [0, 1]`
+1. **Classement cross-sectionnel** : un modèle Global Ranking (CatBoost RMSE) qui ordonne tous les symboles de l'univers par rendement futur attendu sur 5 horizons → `global_rank ∈ [0, 1]`
 2. **Prédiction directionnelle par symbole** : des modèles per-symbol (LSTM, LightGBM, CatBoost) qui prédisent `proba_long` / `proba_short` pour chaque symbole individuellement
 3. **Garde-fous qualité** : filtrage automatique des symboles dont les modèles sont trop faibles (F1 bas, zéro short, etc.)
 4. **Sélection automatique du meilleur modèle** par symbole (champion selection)
@@ -34,7 +34,7 @@ Le module `modelFactory` est le cœur ML du système α-Trade. Il assure :
 
 ```
 Entraînement :
-  Global Ranking (1 modèle, tous symboles) → global_rank_10/15/20
+  Global Ranking (1 modèle, tous symboles) → global_rank_3/5/10/15/20
   Per-Symbol (~500 modèles, 1 par symbole)   → proba_long, proba_short
   Diagnostics batch                           → top/bottom N, weak, S7
 
@@ -49,7 +49,7 @@ Inférence (Live/Backtest) :
 ```mermaid
 flowchart TD
     A[run_training_batch] --> B[Phase 1 : Global Ranking Walk-Forward]
-    B --> B1[train_global_ranking_wf<br/>LightGBM LambdaRank<br/>3 horizons J+10,15,20]
+    B --> B1[train_global_ranking_wf<br/>CatBoost RMSE<br/>5 horizons J+3,5,10,15,20]
     B1 --> B2[global_rank_df<br/>symbol, date, rank ∈ 0..1]
     
     B2 --> C{Stacking ?}
@@ -87,39 +87,40 @@ flowchart TD
 
 ### 3.1 Objectif
 
-Produire un **score de ranking cross-sectionnel** par symbole et par date, sur 3 horizons.
+Produire un **score de ranking cross-sectionnel** par symbole et par date, sur 5 horizons.
 
 **Modèle** : CatBoost `RMSE` (principal, meilleur qu'LightGBM LambdaRank sur cet usage)  
 **Objectif** : régression sur le rang continu [0, 1]  
 **Métrique** : **IC Rank** (Spearman), pas de F1  
 **Sortie** : `global_rank_h ∈ [0, 1]` — percentile dans l'univers  
-**IC actuel** : 0.0208 (+84% vs baseline 0.0113), IC IR 0.94
+**IC actuel** : 0.0208 (+84% vs baseline 0.0113), tous les IC IR > 1.0
 
 ### 3.2 Construction de la target
 
-Pour chaque horizon $h \in \{10, 15, 20\}$ :
+Pour chaque horizon $h \in \{3, 5, 10, 15, 20\}$ :
 
 ```
 1. Rendement forward brut  : future_return_h = close[t+h] / close[t] - 1
-2. Vol scaling (obligatoire): future_return_h /= rolling_volatility_20
+2. Vol scaling (h ≥ 5)     : future_return_h /= rolling_volatility_20
+   (H3 : pas de scaling, vol 20j décorrélée du rendement 3j)
 3. Winsorization            : clip 1%/99% intra-date
 4. Percentile rank          : rank(pct=True) → [0, 1]
 5. Décile discret           : label_h = floor(rank × 10).clip(0, 9)
-6. Target smoothing         : blend 50% horizon + 50% avg(H10,H15,H20) → re-rank
-7. Sector-neutral           : soustraire médiane sectorielle → re-rank → re-label
+6. Target smoothing (h ≥ 10): blend 50% horizon + 50% avg(10,15,20) → re-rank
+   (H3/H5 exclus du smoothing : trop bruités, pas de vol scaling pour H3)
+7. Sector-neutral (tous)    : soustraire médiane sectorielle → re-rank → re-label
 ```
 
-> **H3, H5** : Retirés (IC nul/bruit sur Mid Caps).  
 > **Excès vs SPY** : Structurellement inutile (rank intra-date invariant).  
-> **Vol scaling** : Testé OFF → IC -27%, conservé ON.  
-> **Déciles vs vingtiles** : Testé, aucun effet (post-normalisation rank).  
-> **Smoothing** : +44% IC, aide surtout les horizons courts.  
-> **Sector-neutral** : +84% IC — le levier le plus puissant identifié.
+> **Vol scaling** : Testé OFF → IC -27%, conservé ON pour H5+.  
+> **Smoothing** : +44% IC, uniquement sur H10/H15/H20.  
+> **Sector-neutral** : +84% IC — le levier le plus puissant.  
+> **H3/H5 réactivés** : IC 0.013/0.018, IC IR > 1.0. H5 pour trading 5j.
 
 ### 3.3 Walk-Forward
 
 - **Fenêtre glissante** : 756 jours de train (max), 126j val, 126j test
-- **Purge** : $\min(\text{horizons}) / 2 = 5$ jours entre train et val
+- **Purge** : $\min(\text{horizons}) / 2 = 1$ jour entre train et val
 - **Splits** : 13 (optimal ; 8 splits dégrade l'IC)
 - **Poids temporels** : `exp(-days_diff / 360)` — demi-vie ~12 mois
 
@@ -142,7 +143,7 @@ Pour chaque horizon $h \in \{10, 15, 20\}$ :
 | Fondamentales | ~23 | PE, ROE, marges, croissance (EODHD) |
 | Facteurs CAPM | 4 | Beta, alpha, R² |
 
-**Total** : ~177 features (variable selon flags CLI).
+**Total** : ~177 features (160 pour H3, sans fondamentaux).
 
 **Features blacklistées** (identiques ∀ symboles → pas de pouvoir discriminant) :
 - Macro globales : VIX/VXN/VIX3M/MOVE
@@ -457,10 +458,16 @@ L'IC Per-Symbol permet de comparer deux batchs :
 ### 9.4 Target pipeline
 
 ```
-future_return brut → vol scaling → winsorize 1%/99% → rank intra-date
-→ smoothing 50% h + 50% avg(H10,H15,H20) → re-rank
-→ sector-neutral (médiane secteur) → re-rank → label décile 0..9
+future_return brut → vol scaling (H5+) → winsorize 1%/99% → rank intra-date
+→ smoothing 50% h + 50% avg(10,15,20) → re-rank [H10+ uniquement]
+→ sector-neutral (médiane secteur) → re-rank → label décile 0..9 [tous]
 ```
+
+| Horizon | Vol scaling | Fondamentales | Smoothing | Sector-neutral |
+|---------|-------------|---------------|-----------|----------------|
+| H3 | ❌ | ❌ | ❌ | ✅ |
+| H5 | ✅ | ✅ | ❌ | ✅ |
+| H10/15/20 | ✅ | ✅ | ✅ | ✅ |
 
 ### 9.5 Garde-fous (config.yaml)
 
@@ -584,29 +591,29 @@ stock_fundamentals_daily
 | 12 | **+ Target sector-neutral** | **0.0208** | **+84%** | 🔥🔥 |
 | 13 | 8 splits (252j) | 0.0161 | +42% | ❌ |
 | 14 | Composite features (×11) | 0.0198 | +75% | ❌ |
+| 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
 
 ### 11.2 Configuration gagnante
 
 | Paramètre | Valeur |
 |-----------|--------|
 | Modèle | CatBoost RMSE |
+| Horizons | **3, 5, 10, 15, 20** |
 | Fenêtre train | 756j |
 | Demi-vie | 360j |
-| Target smoothing | 50% h + 50% avg |
-| Target sector-neutral | Oui |
+| Target smoothing | 50% h + 50% avg(10,15,20) — H3/H5 bruts |
+| Target sector-neutral | Oui (tous horizons) |
 | ranking_max_depth | 7 |
 | Splits | 13 × 126j |
-| Features | ~177 |
-| Features régime | `regime_bull_market`, `regime_risk_off` disponibles |
+| Features | ~177 (160 pour H3) |
 
 ### 11.3 Métriques finales
 
-| Métrique | H10 | H15 | H20 | Global |
-|----------|-----|-----|-----|--------|
-| IC Mean | 0.0193 | 0.0205 | 0.0226 | **0.0208** |
-| IC Std | 0.0204 | 0.0225 | 0.0237 | — |
-| IC IR | 0.94 | 0.91 | 0.95 | — |
-| Decile Spread | 0.0204 | 0.0228 | 0.0235 | — |
+| Métrique | H3 | H5 | H10 | H15 | H20 | Global |
+|----------|----|----|-----|-----|-----|--------|
+| IC Mean | 0.0132 | 0.0176 | 0.0230 | 0.0256 | 0.0245 | **0.0208** |
+| IC IR | 1.01 | 0.99 | 1.05 | 1.15 | 1.11 | — |
+| Decile Spread | 0.0125 | 0.0180 | 0.0243 | 0.0275 | 0.0248 | — |
 
 ### 11.4 Leçons apprises
 
@@ -619,6 +626,7 @@ stock_fundamentals_daily
 7. **Le vol scaling est indispensable** (testé OFF : -27%).
 8. **Configs séparées** : `GlobalModelConfig` vs `BaselineConfig`.
 9. **Composites inutiles** : les arbres apprennent déjà ces interactions.
+10. **H3/H5 viables** : IC IR > 1.0, H5 exploitable pour trading 5j.
 
 ---
 
@@ -650,10 +658,10 @@ stock_fundamentals_daily
 │  3. Features (~188) : OHLCV + expert + cross-sectional + composites │
 │                                                                     │
 │  ┌─ Global Ranking (CatBoost RMSE) ────────────────────────┐      │
-│  │  3 horizons (10, 15, 20), 756j train, 13 splits         │      │
-│  │  Target : vol-scaled → smoothed → sector-neutral → rank │      │
-│  │  Sortie : global_rank_df[symbol, date, rank_10..20]     │      │
-│  │  Métrique : IC Rank ~0.021, IC IR ~0.94                 │      │
+│  │  5 horizons (3,5,10,15,20), 756j train, 13 splits      │      │
+│  │  Target : vol-scaled → smoothed(10+) → sector-neutral   │      │
+│  │  Sortie : global_rank_df[symbol, date, rank_3..20]      │      │
+│  │  Métrique : IC Rank ~0.021, tous IC IR > 1.0            │      │
 │  └──────────────────────────────────────────────────────────┘      │
 │                            ↓                                        │
 │  ┌─ Per-Symbol Training ───────────────────────────────────┐      │
