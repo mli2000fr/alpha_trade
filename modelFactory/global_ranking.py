@@ -239,13 +239,13 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "vxn_close", "vxn_spread_vix",
         "vix3m_close", "vix_term_structure_ratio", "vix_backwardation",
         "move_close",
-        # Régime de marché SPY (identiques ∀ symboles)
-        # ── Sprint 2026-08-01 v4 : dé-blacklist market_trend_strength_50 & regime_bull_market ──
-        # Hypothèse : ces features conditionnent l'importance relative des autres features
-        # (ex: si VIX élevé → privilégier PE plutôt que momentum).  Même valeur ∀ symboles
-        # mais interaction non-linéaire avec les features cross-sectionnelles via les arbres.
+        # Régime de marché SPY — dé-blacklistés (Sprint 2026-08-01 P0)
+        # Diagnostic : momentum_60 a un IC de -0.05 en bear, ~0 en bull.
+        # Les arbres peuvent apprendre des splits conditionnels :
+        #   « si regime_risk_off → sous-arbre défensif (vol, value) »
+        #   « si regime_bull_market → sous-arbre momentum »
+        # Même valeur ∀ symboles mais interaction non-linéaire via les arbres.
         "market_return_20", "market_volatility_20",
-        "regime_risk_off",
         # Liquidité — trop dominante, écrase les signaux d'alpha
         "dollar_volume_20_rank",
         # Volatilité 120j — béquille qui domine, empêche l'apprentissage du momentum
@@ -469,7 +469,7 @@ def _build_ranking_estimator(
         lgb = _import_lightgbm()
         return "lightgbm", lgb.LGBMRanker(
             objective="lambdarank",
-            label_gain=list(range(20)),  # gain linéaire 0..19 (vingtiles, Sprint 2026-08-01 v2: quadratique régressait)
+            label_gain=list(range(10)),  # gain linéaire 0..9 (déciles, 2026-08-01: retour après test vingtiles)
             max_depth=cfg.baseline.max_depth,
             num_leaves=cfg.baseline.lgbm_num_leaves,
             n_estimators=cfg.baseline.n_estimators,
@@ -689,12 +689,6 @@ def train_global_ranking_wf(
 
     base_df = base_df.dropna(subset=feature_columns).reset_index(drop=True)
 
-    # Conserver SPY close pour le calcul du rendement excédentaire
-    _spy_series: pd.Series | None = None
-    if benchmark_df is not None and "close" in benchmark_df.columns:
-        _spy_close = benchmark_df.set_index("date")["close"].astype(float)
-        _spy_series = _spy_close.reindex(pd.to_datetime(base_df["date"])).fillna(0.0)
-
     # ── Pré-calculer les targets pour TOUS les horizons AVANT les splits ──
     # (les WF splits font des copies → les colonnes doivent exister avant)
     # CRITIQUE : shift(-horizon) doit être fait PAR SYMBOLE (groupby), pas sur
@@ -705,31 +699,23 @@ def train_global_ranking_wf(
         # Rendement temporel futur par symbole
         _fwd_close = base_df.groupby("symbol")["close"].shift(-horizon)
         base_df[f"future_return{h_suffix}"] = (_fwd_close / base_df["close"] - 1.0)
-        # ── Sprint 2026-08-01 v4 : target = forward_return BRUT (sans excès vs SPY) ──
-        # Hypothèse : les Mid Caps ne trackent pas le SPY → soustraire le SPY ajoute
-        # du bruit, pas du signal.  Si l'IC baisse, réactiver le bloc ci-dessous.
-        # if _spy_series is not None:
-        #     _spy_ret = (_spy_series.shift(-horizon) / _spy_series - 1.0).values
-        #     base_df[f"future_return{h_suffix}"] -= _spy_ret
-        # ── Target Volatility Scaling (2026-07-29) ──
-        # Test A/B 2026-08-01 : scaling OFF → IC H=20 +11% mais IC IR ÷2.
+        # Note 2026-08-01 : l'excès vs SPY est structurellement inutile ici
+        # car le percentile rank intra-date est invariant à la soustraction
+        # d'une constante (le SPY return est identique ∀ symboles à date donnée).
+        # Le per-symbol n'utilise pas non plus d'excès SPY dans build_target().
+        # ── Vol Scaling (2026-07-29) ──
+        # Test A/B 2026-08-01 : scaling OFF → IC -27% sur Mid Caps (vol20_median=0.019).
         # Le scaling est conservé car il stabilise l'IC entre splits (IC IR ×2).
         if horizon >= 5:
             _vol20 = base_df["rolling_volatility_20"].clip(lower=0.001)
             base_df[f"future_return{h_suffix}"] = (
                 base_df[f"future_return{h_suffix}"] / _vol20
             ).astype(float)
-            # ── Diagnostic vol scaling (Sprint 2026-08-01) ──
-            # Vérifie que le scaling n'écrase pas le signal des Mid Caps.
-            # Les Mid Caps ont une vol20 2-3× plus élevée que les Large Caps
-            # → le scaling absolu réduit leur signal relatif et peut dégrader l'IC.
-            _raw_std = float(base_df[f"future_return{h_suffix}"].std())
             _vol20_median = float(_vol20.median())
             LOGGER.info(
                 "train_global_ranking_wf h=%d vol_scaling applied | "
-                "vol20_median=%.4f target_std_after_scaling=%.4f — "
-                "si vol20_median > 0.03 (Mid Caps volatiles), le scaling écrase le signal",
-                horizon, _vol20_median, _raw_std,
+                "vol20_median=%.4f target_std_after_scaling=%.4f",
+                horizon, _vol20_median, float(base_df[f"future_return{h_suffix}"].std()),
             )
         # ── Winsorization intra-date à 1%/99% (élimine les outliers toxiques) ──
         base_df[f"future_return{h_suffix}"] = (
@@ -742,12 +728,12 @@ def train_global_ranking_wf(
             .rank(pct=True)
             .astype(np.float64)
         )
-        # LambdaRank : labels entiers 0..19 (vingtiles, Sprint 2026-08-01).
-        # Anciennement déciles 0..9.  Les vingtiles doublent la résolution
-        # du classement, crucial pour discriminer le top 5% vs top 10% sur Mid Caps.
+        # LambdaRank : labels entiers 0..9 (déciles).
+        # Retour aux déciles après test vingtiles (2026-08-01) : avec IC~0.01,
+        # les vingtiles adjacents sont indistinguables → bruit de discrétisation.
         base_df[f"label{h_suffix}"] = (
-            np.floor(base_df[f"future_return{h_suffix}"] * 20)
-            .clip(0, 19)
+            np.floor(base_df[f"future_return{h_suffix}"] * 10)
+            .clip(0, 9)
             .astype("Int32")
         )
 
@@ -768,7 +754,7 @@ def train_global_ranking_wf(
         step_size=cfg.walk_forward.step_size * _daily_symbols,
         max_splits=cfg.walk_forward.max_splits,
         forecast_horizon=_purge_rows,
-        max_train_size=504 * _daily_symbols,  # rolling window ~2 ans
+        max_train_size=756 * _daily_symbols,  # rolling window ~3 ans (sweet spot, testé 504/756/1008)
         date_column="date",
     )
     if not wf_splits:
@@ -787,7 +773,6 @@ def train_global_ranking_wf(
     _horizon_features: dict[int, list[str]] = {}  # features actives par horizon
     _decile_spreads: dict[int, float] = {}  # decile spread par horizon
     _horizon_details: dict[str, Any] = {}  # détails par horizon pour IHM/rapport
-    _top_k = max(cfg.baseline.ranking_top_k_features, 0)  # 0 = toutes les features
 
     for horizon in _GLOBAL_RANKING_HORIZONS:
         h_suffix = f"_{horizon}"
@@ -845,7 +830,7 @@ def train_global_ranking_wf(
             _sample_weights = None
             if _train_dates is not None:
                 _days_diff = (_train_dates.max() - _train_dates).dt.days
-                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 180.0)  # demi-vie ~6 mois (Sprint 2026-08-01, Mid Caps)
+                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 360.0)  # demi-vie ~12 mois (Sprint 2026-08-01, 180→360)
 
             _group = None
             _eval_set = None
