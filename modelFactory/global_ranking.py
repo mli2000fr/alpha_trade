@@ -804,6 +804,55 @@ def train_global_ranking_wf(
     except Exception as _exc:
         LOGGER.warning("train_global_ranking_wf target sector-neutral failed: %s", _exc)
 
+    # ── Target Factor-Neutral (Sprint 2026-08-01) ──
+    # Régression cross-sectionnelle intra-date sur les 3 facteurs
+    # (Size, Value, Momentum). Le résidu est l'alpha pur.
+    # Note : winsorization testée → dégrade l'IC IR. OLS simple est optimal.
+    _factor_cols = []
+    for _fc in ["fund_market_cap_log", "fund_pe_ratio_sector_neutral", "momentum_60"]:
+        if _fc in base_df.columns:
+            _factor_cols.append(_fc)
+    if len(_factor_cols) >= 2:
+        _factor_count = 0
+        for horizon in _GLOBAL_RANKING_HORIZONS:
+            h_suffix = f"_{horizon}"
+            _col = f"future_return{h_suffix}"
+            _valid = base_df.dropna(subset=[_col] + _factor_cols)
+            if _valid.empty:
+                continue
+            _residuals = pd.Series(0.0, index=base_df.index, dtype=float)
+            try:
+                for _date, _group in _valid.groupby("date"):
+                    if len(_group) < 20:
+                        _residuals.loc[_group.index] = _group[_col]
+                        continue
+                    X = _group[_factor_cols].to_numpy(dtype=np.float64)
+                    X = np.column_stack([np.ones(len(X)), X])
+                    y = _group[_col].to_numpy(dtype=np.float64)
+                    try:
+                        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+                        _residuals.loc[_group.index] = y - X @ beta
+                    except np.linalg.LinAlgError:
+                        _residuals.loc[_group.index] = y
+            except Exception:
+                _residuals = base_df[_col]
+            base_df[_col] = _residuals.astype(float)
+            base_df[_col] = (
+                base_df.groupby("date")[_col].rank(pct=True).astype(np.float64)
+            )
+            base_df[f"label{h_suffix}"] = (
+                np.floor(base_df[_col] * 10).clip(0, 9).astype("Int32")
+            )
+            _factor_count += 1
+        LOGGER.info(
+            "train_global_ranking_wf target factor-neutral: %d horizons "
+            "residualized on %s",
+            _factor_count, ",".join(_factor_cols),
+        )
+    else:
+        LOGGER.warning("train_global_ranking_wf target factor-neutral skipped: "
+                       "need ≥2 factor columns, got %d", len(_factor_cols))
+
     # ── Walk-Forward splits (communs à tous les horizons) ──
     _daily_symbols = int(round(base_df.groupby("date").size().median()))
     _daily_symbols = max(_daily_symbols, 1)
