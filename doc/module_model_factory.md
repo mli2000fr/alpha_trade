@@ -112,20 +112,28 @@ Pour chaque horizon $h \in \{3, 5, 10, 15, 20\}$ :
 8. Factor-neutral (tous)    : OLS résiduel sur size+value+momentum → re-rank → re-label
 ```
 
-> **Excès vs SPY** : Structurellement inutile (rank intra-date invariant).  
-> **Vol scaling** : Testé OFF → IC -27%, conservé ON pour H5+.  
-> **Smoothing** : +44% IC, uniquement sur H10/H15/H20.  
-> **Sector-neutral** : +84% IC — le levier le plus puissant.  
-> **H3/H5 réactivés** : IC 0.013/0.018, IC IR > 1.0. H5 pour trading 5j.
+| Horizon | Vol scaling | Fondamentales | Smoothing | Sector-neutral | Factor-neutral |
+|---------|-------------|---------------|-----------|----------------|----------------|
+| H3 | ❌ | ❌ | ❌ | ✅ | ✅ |
+| H5 | ✅ | ✅ | ❌ | ✅ | ✅ |
+| H10/15/20 | ✅ | ✅ | ❌ | ✅ | ✅ |
+
+> **Smoothing supprimé** (Sprint 2026-08-02) : le mélange cross-horizon diluait
+> le signal après correction du data leakage. H20 passe de 0.0140 à 0.0191 sans.
+> **Vol scaling** : Testé OFF → IC -27%, conservé ON pour H5+.
+> **Sector-neutral** : +84% IC — le levier le plus puissant.
+> **H3/H5 réactivés** : IC 0.009/0.014, H5 pour trading 5j.
 
 ### 3.3 Walk-Forward
 
 - **Fenêtre glissante** : 756 jours de train (max), 126j val, 126j test
-- **Purge** : $\min(\text{horizons}) / 2 = 1$ jour entre train et val
-- **Splits** : 13 (optimal ; 8 splits dégrade l'IC)
+- **Purge** : 1 jour (marge de sécurité résiduelle, P1 post-split)
+- **Splits** : **8 × 252j** (optimal sans leakage ; 13 × 126j sous-performe)
 - **Poids temporels** : `exp(-days_diff / 360)` — demi-vie ~12 mois
 
-> **504j** trop court, **1008j** diminishing returns. **756j** = sweet spot.
+> **8 splits > 13 splits** (Sprint 2026-08-02) : avec target post-split étanche,
+> 13 splits ont 83% de chevauchement → val corrélé. 8 splits × 252j →
+> diversité des régimes, IC +40%, IR ×2. **504j** trop court, **1008j** diminishing.
 
 ### 3.4 Features
 
@@ -426,11 +434,12 @@ L'IC Per-Symbol permet de comparer deux batchs :
 | `target_mode` | `ternary` | `binary` ou `ternary` (3 classes) |
 | `global_ranking_max_symbols` | 300 | Limite symboles Global Ranking (0 = tous) |
 | `per_symbol_max_symbols` | 0 | Limite symboles Per-Symbol (0 = tous) |
-| `wf_max_splits` | 13 | Nombre max de splits walk-forward (optimal) |
+| `wf_max_splits` | **8** | Nombre de splits walk-forward (optimal P1) |
 | `wf_min_train_size` | 504 | Taille min fenêtre train (jours) |
-| `wf_step_size` | 126 | Pas entre splits (jours) |
+| `wf_step_size` | **252** | Pas entre splits (jours) |
 | `max_train_size` | **756** | Fenêtre train max (sweet spot) |
 | `demi-vie` | **360j** | Poids temporels (12 mois) |
+| `target_smoothing` | **OFF** | Supprimé — diluait le signal sans leakage |
 
 ### 9.2 Global Ranking (GlobalModelConfig)
 
@@ -460,15 +469,17 @@ L'IC Per-Symbol permet de comparer deux batchs :
 
 ```
 future_return brut → vol scaling (H5+) → winsorize 1%/99% → rank intra-date
-→ smoothing 50% h + 50% avg(10,15,20) → re-rank [H10+ uniquement]
 → sector-neutral (médiane secteur) → re-rank → label décile 0..9 [tous]
+→ factor-neutral (OLS résiduel size+value+momentum) → re-rank → label [tous]
 ```
 
-| Horizon | Vol scaling | Fondamentales | Smoothing | Sector-neutral |
-|---------|-------------|---------------|-----------|----------------|
-| H3 | ❌ | ❌ | ❌ | ✅ |
-| H5 | ✅ | ✅ | ❌ | ✅ |
+| Horizon | Vol scaling | Fondamentales | Sector-neutral | Factor-neutral |
+|---------|-------------|---------------|----------------|----------------|
+| H3 | ❌ | ❌ | ✅ | ✅ |
+| H5 | ✅ | ✅ | ✅ | ✅ |
 | H10/15/20 | ✅ | ✅ | ✅ | ✅ |
+
+> **Smoothing retiré** (Sprint 2026-08-02) — contre-productif sans data leakage.
 
 ### 9.5 Garde-fous (config.yaml)
 
@@ -586,16 +597,17 @@ stock_fundamentals_daily
 | 6 | **756j + régime dé-blacklisté** | **0.0144** | **+27%** | ✅ |
 | 7 | 1008j | 0.0135 | +19% | ❌ |
 | 8 | colsample_bytree 0.4 | 0.0144 | 0% | ❌ |
-| 9 | **+ Target smoothing** | **0.0163** | **+44%** | ✅✅ |
+| 9 | **+ Target smoothing** | **0.0163** | **+44%** | ⚠️ retiré P1 |
 | 10 | max_depth 7, num_leaves 31 | 0.0166 | +47% | ✅ |
-| 11 | LightGBM LambdaRank | 0.0130 | +15% | ❌ |
+| 11 | LightGBM LambdaRank | 0.0130 → 0.0086 P1 | −24% | ❌ confirmé |
 | 12 | **+ Target sector-neutral** | **0.0208** | **+84%** | 🔥🔥 |
-| 13 | 8 splits (252j) | 0.0161 | +42% | ❌ |
+| 13 | 8 splits (252j) → 13 splits | 0.0161 → 0.0139 P1 | inversé | ✅ 8 gagne |
 | 14 | Composite features (×11) | 0.0198 | +75% | ❌ |
 | 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
 | 16 | **+ Target factor-neutral (OLS)** | **0.0208** | **+84%** | ✅ |
-| 17 | Cyclical only (289 syms) | 0.0257 | +127% | IC↑ IR÷2 |
-| 18 | Defensive only (79 syms) | 0.0246 | +118% | Pas fiable |
+| R1 | **Baseline P1 réel** (504j, H10 seul) | 0.0084 | référence | — |
+| R2 | **Smoothing OFF** (P1) | H15 +3%, H20 +36% | — | ✅ retiré |
+| R3 | **8 splits × 252j** (P1) | **0.0194 (+40%)** | — | 🔥🔥 adopté |
 
 ### 11.2 Configuration gagnante
 
@@ -603,24 +615,26 @@ stock_fundamentals_daily
 |-----------|--------|
 | Modèle | CatBoost RMSE |
 | Horizons | **3, 5, 10, 15, 20** |
-| Fenêtre train | 756j |
+| Fenêtre train | 756j (rolling) |
 | Demi-vie | 360j |
-| Target smoothing | 50% h + 50% avg(10,15,20) — H3/H5 bruts |
+| Target smoothing | **OFF** (retiré — contre-productif sans leakage) |
 | Target sector-neutral | Oui (tous horizons) |
+| Target factor-neutral | Oui (OLS size+value+momentum) |
+| Target computation | **Post-split (P1 étanche)** |
 | ranking_max_depth | 7 |
-| Splits | 13 × 126j |
+| Splits | **8 × 252j** (optimal, +40% IC vs 13 × 126j) |
 | Features | ~177 (160 pour H3) |
 
-### 11.3 Métriques finales (post data-leakage fix P1 — étanche)
+### 11.3 Métriques finales (P1 étanche, 8 splits, sans smoothing)
 
 | Métrique | H3 | H5 | H10 | H15 | H20 | Global |
 |----------|----|----|-----|-----|-----|--------|
-| IC Mean | 0.0090 | **0.0138** | 0.0159 | 0.0168 | 0.0140 | **0.0139** |
-| IC IR | 0.79 | **1.20** | 1.02 | 0.93 | 0.79 | — |
-| Decile Spread | 0.0087 | 0.0138 | 0.0170 | 0.0170 | 0.0171 | — |
+| IC Mean | 0.0129 | **0.0130** | 0.0219 | 0.0241 | 0.0238 | **0.0194** |
+| IC IR | 1.46 | **1.40** | 2.01 | 1.72 | 1.79 | — |
+| Decile Spread | 0.0116 | 0.0133 | 0.0215 | 0.0213 | 0.0253 | — |
 
-L'IC original (0.0208) contenait ~33% de data leakage. Le signal réel est ~0.014.
-Le H5 (horizon de trading) préserve un IC de 0.014 avec l'IR le plus élevé (1.20).
+> Baseline P1 réel (504j, H10 brut) = 0.0084 / IR 0.30.
+> Pipeline target ×2.3, 8 splits +40%, IR ÷6 vs baseline.
 
 ### 11.4 Leçons apprises
 
@@ -635,7 +649,9 @@ Le H5 (horizon de trading) préserve un IC de 0.014 avec l'IR le plus élevé (1
 9. **Composites inutiles** : les arbres apprennent déjà ces interactions.
 10. **H3/H5 viables** : IC IR > 1.0, H5 exploitable pour trading 5j.
 11. **Target post-split** : l'unique source de leakage était le shift pré-split — corrigé, le pipeline est étanche.
-12. **H15/H20 surévalués** : ~27-33% de l'IC était du bruit de leakage. La hiérarchie réelle est H10 > H5 > H3.
+12. **8 splits > 13 splits** (post-leakage) : moins de chevauchement → meilleure généralisation, IC +40%.
+13. **Smoothing retiré** : contre-productif sans leakage, H20 gagne 36% sans.
+14. **LightGBM LambdaRank confirmé inférieur** : régimes ignorés (imp 0.0), IC −38% vs CatBoost.
 
 ### 11.5 Audit Data Leakage (2026-08-01) — ✅ RÉSOLU
 
