@@ -33,6 +33,8 @@ from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.cross_sectional import (
     SECTOR_NEUTRAL_FEATURE_COLUMNS,
     SECTOR_NEUTRAL_SOURCE_FEATURES,
+    SECTOR_ZSCORE_FEATURE_COLUMNS,
+    SECTOR_ZSCORE_SOURCE_FEATURES,
     build_cross_sectional_features,
     merge_cross_sectional_features,
 )
@@ -178,6 +180,38 @@ def _compute_sector_neutral_inplace(
             _sn_count += 1
         except Exception:
             df[_target] = 0.0
+
+    # ── Z-score sectoriel pour fondamentales (Sprint 2026-08-02) ──
+    from modelFactory.cross_sectional import SECTOR_ZSCORE_SOURCE_FEATURES, SECTOR_ZSCORE_FEATURE_COLUMNS, _sector_zscore_column_name
+    _zs_sources = [c for c in SECTOR_ZSCORE_SOURCE_FEATURES if c in df.columns]
+    _zs_targets = [_sector_zscore_column_name(c) for c in _zs_sources if _sector_zscore_column_name(c) in feature_columns]
+    _zs_count = 0
+    for _src in _zs_sources:
+        _target = _sector_zscore_column_name(_src)
+        if _target not in feature_columns:
+            continue
+        try:
+            _grp = df.loc[_valid].groupby(["date", "_sector"])[_src]
+            _sector_med = _grp.transform("median")
+            # MAD = median absolute deviation (robuste aux outliers)
+            _dev = (df.loc[_valid, _src] - _sector_med).abs()
+            _sector_mad = (
+                _dev.groupby([df.loc[_valid, "date"], df.loc[_valid, "_sector"]])
+                .transform("median")
+                .clip(lower=1e-8)
+            )
+            _zscore = df[_src].copy()
+            _zscore.loc[_valid] = (df.loc[_valid, _src] - _sector_med) / _sector_mad
+            _zscore.loc[~_valid] = 0.0
+            df[_target] = _zscore.fillna(0.0).clip(-5.0, 5.0).astype(float)
+            _zs_count += 1
+        except Exception:
+            df[_target] = 0.0
+    if _zs_count > 0:
+        LOGGER.info(
+            "_compute_sector_neutral_inplace: %d z-score fundamentals computed",
+            _zs_count,
+        )
 
     df.drop(columns=["_sector"], inplace=True)
 

@@ -75,6 +75,25 @@ SECTOR_NEUTRAL_FEATURE_COLUMNS: list[str] = [
     _sector_neutral_column_name(c) for c in SECTOR_NEUTRAL_SOURCE_FEATURES
 ]
 
+# ── Sprint 2026-08-02 : Z-score sectoriel pour fondamentales ──
+# Normalisation (valeur − médiane secteur) / MAD secteur → échelle comparable
+# entre secteurs. Un PE de 25 dans la Tech (Z≈−1) vs Utilities (Z≈+3).
+SECTOR_ZSCORE_SOURCE_FEATURES: list[str] = [
+    "fund_pe_ratio", "fund_pb_ratio", "fund_ev_to_ebitda",
+    "fund_roa", "fund_roe",
+    "fund_debt_to_equity", "fund_eps_to_price",
+    "fund_net_margin", "fund_operating_margin", "fund_gross_margin",
+    "fund_revenue_growth_yoy", "fund_eps_growth_yoy",
+    "fund_current_ratio",
+]
+
+def _sector_zscore_column_name(source_col: str) -> str:
+    return f"{source_col}_sector_zscore"
+
+SECTOR_ZSCORE_FEATURE_COLUMNS: list[str] = [
+    _sector_zscore_column_name(c) for c in SECTOR_ZSCORE_SOURCE_FEATURES
+]
+
 # ── Approche 2 (Sprint 2026-07-21) — Features cross-symbol exclusives ──
 # Ces features n'ont de sens qu'au niveau cross-symbol (agrégation intra-secteur).
 # Elles sont injectées UNIQUEMENT dans le Global Model (pas dans les per-symbol).
@@ -707,6 +726,7 @@ def merge_cross_sectional_features(
         + list(GLOBAL_PRED_FEATURE_COLUMNS)
         + list(GLOBAL_EXCLUSIVE_FEATURE_COLUMNS)
         + list(SECTOR_NEUTRAL_FEATURE_COLUMNS)
+        + list(SECTOR_ZSCORE_FEATURE_COLUMNS)
     )
     if cross_sectional_df is None or cross_sectional_df.empty:
         merged = symbol_df.copy()

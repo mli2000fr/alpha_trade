@@ -298,11 +298,12 @@ def get_feature_columns(
     if feature_set == "expert":
         cols.extend(EXPERT_FEATURE_COLUMNS)
     if include_cross_sectional:
-        from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, SECTOR_FEATURE_COLUMNS, SECTOR_NEUTRAL_FEATURE_COLUMNS
+        from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, SECTOR_FEATURE_COLUMNS, SECTOR_NEUTRAL_FEATURE_COLUMNS, SECTOR_ZSCORE_FEATURE_COLUMNS
 
         cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)
         cols.extend(SECTOR_FEATURE_COLUMNS)
         cols.extend(SECTOR_NEUTRAL_FEATURE_COLUMNS)
+        cols.extend(SECTOR_ZSCORE_FEATURE_COLUMNS)
         if include_global_stacking:
             from modelFactory.cross_sectional import GLOBAL_PRED_FEATURE_COLUMNS
 
