@@ -763,8 +763,8 @@ que le F1 (0 à 1). Voici comment les interpréter.
 
 | Métrique | Excellent | Correct | Faible | Inutilisable | Signification |
 |----------|-----------|---------|--------|--------------|---------------|
-| **MSE** | < 0.5 | 0.5 – 1.5 | 1.5 – 3.0 | > 3.0 | Erreur quadratique moyenne sur la target vol-scalée |
-| **MAE** | < 0.5 | 0.5 – 1.0 | 1.0 – 1.5 | > 1.5 | Erreur absolue moyenne |
+| **MSE** | < 0.5 | 0.5 – 1.0 | 1.0 – 1.5 | > 1.5 | Erreur quadratique sur target standardisée (moy=0, std=1) |
+| **MAE** | < 0.5 | 0.5 – 0.8 | 0.8 – 1.0 | > 1.0 | Erreur absolue moyenne |
 | **Directional Accuracy** | > 0.54 | 0.51 – 0.54 | 0.50 – 0.51 | < 0.50 | % de signes corrects (pire que le hasard si < 0.50) |
 | **IC** | > 0.03 | 0.01 – 0.03 | 0.00 – 0.01 | < 0.00 | Corrélation pred vs future_return |
 | **Correlation** | > 0.10 | 0.03 – 0.10 | 0.00 – 0.03 | < 0.00 | Corrélation pred vs target continue |
@@ -773,11 +773,11 @@ que le F1 (0 à 1). Voici comment les interpréter.
 
 **1. Vérifie d'abord le « modèle nul »**
 
-Un modèle naïf qui prédit toujours 0 (ou la moyenne) donne :
+Un modèle naïf qui prédit toujours 0 (la moyenne) donne :
 
-$$MSE_{nul} = Var(target) \approx 0.5 \text{ à } 1.5$$
+$$MSE_{nul} = Var(target) = 1.0$$
 
-Si ton MSE > 2.0 → le modèle fait **pire que de ne rien prédire**. Il est cassé.
+Si ton MSE > 1.5 → le modèle fait **pire que de ne rien prédire**. Il est cassé.
 
 **2. Vérifie la directional accuracy**
 
@@ -794,30 +794,31 @@ C'est la métrique la plus intuitive : quel % du temps le signe prédit est-il c
 | Situation | Diagnostic |
 |-----------|-----------|
 | MSE bas + IC élevé + dir_acc > 0.53 | ✅ Modèle sain, signal réel |
-| MSE élevé (>3) + dir_acc > 0.52 | 🟡 Le modèle capte la direction mais pas la magnitude — acceptable |
-| MSE bas (<1) + dir_acc < 0.50 | 🟡 Le modèle fit bien la target mais prédit le mauvais signe — inutilisable en trading |
+| MSE élevé (>1.5) + dir_acc > 0.52 | 🟡 Le modèle capte la direction mais pas la magnitude — acceptable |
+| MSE bas (<0.8) + dir_acc < 0.50 | 🟡 Le modèle fit bien la target mais prédit le mauvais signe — inutilisable en trading |
 | MSE bas + IC élevé + dir_acc ≈ 0.50 | 🟡 Le modèle prédit bien le rang cross-sectionnel mais pas la direction absolue |
-| MSE > 5 | ❌ Modèle non convergé, erreur d'échelle, ou target mal normalisée |
+| MSE > 2.0 | ❌ Modèle non convergé, erreur d'échelle, ou target mal normalisée |
 
 #### 📐 Comprendre l'échelle de la target
 
-La target regression est un rendement forward **divisé par la volatilité 20j** puis winsorizé :
+La target regression est standardisée (mean=0, std=1) après vol-scaling et winsorization :
 
 ```
 future_return ≈ ±2% à ±8% sur 10j
 vol_20j       ≈ 1.5% à 3% par jour
-target        ≈ future_return / vol_20j ≈ ±0.5 à ±5
-Après winsorize 1%/99%                ≈ ±2 à ±3 (valeurs extrêmes coupées)
+target brute  ≈ future_return / vol_20j ≈ ±0.5 à ±5
+Après winsorize 1%/99%                ≈ ±2 à ±3
+Après standardisation (mean=0, std=1)  ≈ 95% des valeurs dans [-2, +2]
 ```
 
-Donc une **MAE de 1.0** signifie que le modèle se trompe en moyenne de 1 unité de vol — soit environ 2% de rendement pour un titre à vol 2%. C'est beaucoup mais pas aberrant pour un modèle financier.
+Un **MSE de 1.0** = le modèle naïf (prédire la moyenne). Un **MSE de 0.5** = 2× meilleur que le naïf.
 
 #### 🎯 Combinaison gagnante
 
 Un bon modèle regression doit avoir **simultanément** :
 
 ```
-MSE < 1.5          (erreur contenue)
+MSE < 1.0          (meilleur que le modèle naïf)
 directional_accuracy > 0.52  (direction fiable)
 IC > 0.01           (bon classement cross-sectionnel)
 f1_long > 0.25      (détection haussière)

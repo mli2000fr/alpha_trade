@@ -1288,16 +1288,22 @@ def build_target(
 
     if mode == "regression":
         # ── Regression target (Sprint 2026-08-02) ──
-        # Même prétraitement que le Global Ranking : vol-scaling + winsorize.
-        # Pas de ranking cross-sectional car chaque modèle ne voit qu'un symbole.
+        # Vol-scaling + winsorize + standardisation (mean=0, std=1).
+        # La standardisation évite que le modèle produise des prédictions
+        # non contraintes (MSE explosif). Le signe est préservé (F1 inchangé).
         target = future_return.copy()
         if horizon >= 5:
-            # Vol-scaling comme le global (rolling 20j)
             rolling_vol = close.pct_change().rolling(20).std()
             target = target / rolling_vol
         # Winsorize 1% / 99% par symbole (robustesse aux outliers)
         lo, hi = target.quantile(0.01), target.quantile(0.99)
         target = target.clip(lo, hi)
+        # Standardisation : mean=0, std=1 (préserve le signe pour F1)
+        valid_mask = target.notna()
+        t_mean = target.loc[valid_mask].mean()
+        t_std = target.loc[valid_mask].std()
+        if t_std is not None and t_std > 1e-9:
+            target = (target - t_mean) / t_std
         return target.where(future_return.notna()).astype(float)
 
     raise ValueError(f"Unsupported target mode: {mode}")
