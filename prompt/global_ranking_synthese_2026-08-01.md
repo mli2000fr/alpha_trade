@@ -21,9 +21,11 @@
 | 15 | **+ H3/H5 (5 horizons)** | **0.0208** | **+84%** | 🔥 |
 | 16 | **+ Target factor-neutral (OLS)** | **0.0208** | **+84%** | ✅ |
 | R1 | **Baseline P1 réel** (504j, H10 seul, étanche) | 0.0084 | — | référence réelle |
-| R2 | **Smoothing OFF** (P1, 13 splits) | H20 +36%, H10 −12% | — | retiré |
+| R2 | **Smoothing OFF** (P1, 13 splits) | H20 +36%, H10 −12% | — | conservé avec 8 splits |
 | R3 | **8 splits × 252j** (P1) | **0.0194 (+40%)** | — | 🔥🔥 adopté |
 | R4 | **8 splits + no smoothing** | H10 −24% vs avec | — | ❌ interaction |
+| R5 | **Z-score fondamentales secteur** | H20 IR +54%, H5 IC −8% | — | ✅ adopté |
+| R6 | **Signal blending** (grid search) | IC 0.0246 vs H15 0.0249 | — | ❌ rejeté |
 
 ## 🎯 Configuration gagnante (finale P1)
 
@@ -38,6 +40,7 @@
 | Target sector-neutral | non | **oui** |
 | Target factor-neutral | non | **oui (OLS)** |
 | Target computation | pré-split (leakage) | **post-split (P1 étanche)** |
+| Z-score fondamentales | non | **oui (médiane/MAD secteur)** |
 | Config séparée | non | `GlobalModelConfig.ranking_max_depth=7` |
 | Horizons | 3 | **3, 5, 10, 15, 20** |
 
@@ -45,15 +48,15 @@
 > Avec 8 splits (régimes distincts), il apporte +31% sur H10. Les deux sont complémentaires.
 | Horizons | 3 | **3, 5, 10, 15, 20** |
 
-## 📈 Détail par horizon (P1 étanche, 8 splits, sans smoothing)
+## 📈 Détail par horizon (P1 étanche, 8 splits, smoothing ON, Z-score)
 
 | Métrique | H3 | H5 | H10 | H15 | H20 | Global |
 |----------|----|----|-----|-----|-----|--------|
-| IC Mean | 0.0129 | **0.0130** | 0.0219 | 0.0241 | 0.0238 | **0.0194** |
-| IC IR | 1.46 | **1.40** | 2.01 | 1.72 | 1.79 | — |
-| Decile Spread | 0.0116 | 0.0133 | 0.0215 | 0.0213 | 0.0253 | — |
+| IC Mean | 0.0129 | **0.0120** | 0.0211 | 0.0239 | 0.0251 | **0.0190** |
+| IC IR | 1.46 | **1.19** | 1.69 | 2.28 | 2.76 | — |
+| Decile Spread | 0.0116 | 0.0147 | 0.0238 | 0.0247 | 0.0260 | — |
 
-> Baseline P1 réel = 0.0084 / IR 0.30. Pipeline target ×2.3. 8 splits +40%.
+> Baseline P1 réel = 0.0084 / IR 0.30. Pipeline cible ×2.3.
 
 ## 🧠 Leçons apprises
 
@@ -67,5 +70,7 @@
 8. **756j** sweet spot, 360j demi-vie.
 9. **Factor-neutral** stabilise l'IC IR.
 10. **Univers « all »** reste optimal vs séparation cyclique/défensive.
+11. **Z-score fondamentales** : stabilise H15/H20 (IR +54%), trade-off acceptable sur H5.
+12. **Blending inutile** : horizons trop corrélés.
 
-## ✅ 18 tests + 3 retests P1. IC réel = 0.0194, H5 IR = 1.40
+## ✅ 18 tests + 6 retests P1. IC réel = 0.0190, H20 IR = 2.76
