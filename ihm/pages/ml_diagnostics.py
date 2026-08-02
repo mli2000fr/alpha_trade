@@ -1442,20 +1442,6 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                 with _col4:
                     st.metric("IC Max", f"{_arr.max():.4f}")
 
-    # ── Aide ──
-    with st.expander("ℹ️ À propos du Global Ranking Model", expanded=False):
-        st.markdown("""
-- **LightGBM LambdaRank** : modèle de ranking cross-sectional entraîné sur l'univers complet.
-- **IC Rank** : corrélation de Spearman entre le rang prédit et le rendement futur réalisé. 
-  - $>0.03$ = bon pouvoir prédictif, $>0.05$ = excellent.
-- **Decile Spread** : rendement moyen du top décile moins le bottom décile.
-  - $>0.01$ = excellent (1% de spread entre top et bottom 10%).
-- **Feature Importance** : importance relative des features dans le modèle (gain-based).
-- **Target Volatility Scaling** (H5+) : le rendement forward est divisé par la volatilité réalisée 20j 
-  pour neutraliser l'effet des crises (2020, 2022) sur le ranking.
-- **Purge** : $\\min(\\text{horizons}) = 3$ jours ouvrés entre train et validation pour éviter le leakage.
-""")
-
 
 # ---------------------------------------------------------------------------
 # Page principale
