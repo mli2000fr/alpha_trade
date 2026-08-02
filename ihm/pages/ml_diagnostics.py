@@ -1538,6 +1538,37 @@ def render() -> None:
         key=BATCH_TABLE_KEY,
     )
 
+    # ── Bouton nettoyage batchs ──
+    st.divider()
+    with st.expander("🧹 Nettoyer les batchs", expanded=False):
+        from modelFactory.cleanup_incomplete_batches import cleanup_batches, list_batches
+        _include_completed = st.checkbox("🗑️ Inclure les batchs **terminés** (TOUT supprimer)", value=False)
+        _candidates = list_batches(include_completed=_include_completed)
+        _label = "terminés et non terminés" if _include_completed else "non terminés"
+        if _candidates:
+            st.warning(f"{len(_candidates)} batch(s) {_label}")
+            if st.button("🗑️ Supprimer tous les batchs listés", type="primary"):
+                st.session_state["_confirm_cleanup"] = True
+            if st.session_state.get("_confirm_cleanup"):
+                st.error("⚠️ Cette action est irréversible. Confirmez :")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Oui, supprimer", key="cleanup_confirm"):
+                        result = cleanup_batches(dry_run=False, include_completed=_include_completed)
+                        st.success(
+                            f"✅ {result['deleted_batches']} batch(s), "
+                            f"{result['deleted_db_rows']} lignes DB, "
+                            f"{result['deleted_dirs']} répertoires."
+                        )
+                        st.session_state["_confirm_cleanup"] = False
+                        st.rerun()
+                with col2:
+                    if st.button("❌ Annuler", key="cleanup_cancel"):
+                        st.session_state["_confirm_cleanup"] = False
+                        st.rerun()
+        else:
+            st.info(f"✅ Aucun batch {_label}.")
+
     row_index = _selected_row_index(BATCH_TABLE_KEY)
     if row_index is None:
         st.info("👆 Cliquez sur un batch dans le tableau ci-dessus pour afficher son détail et ses métriques.")
