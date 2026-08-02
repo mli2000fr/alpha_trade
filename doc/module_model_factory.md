@@ -825,6 +825,107 @@ f1_short > 0.20     (détection baissière)
 ```
 
 Si UNE SEULE de ces conditions manque, le modèle n'est pas exploitable en l'état.
+
+### Q3 : Per-Symbol, Comment savoir si les scores ternaires sont bons ou mauvais ?
+
+Le mode ternaire utilise des métriques de classification (F1 par classe, precision, recall).
+Contrairement à la regression, tout est sur une échelle **0 à 1**, ce qui rend l'interprétation
+plus directe.
+
+#### 📊 Les métriques et leurs seuils
+
+| Métrique | Excellent | Correct | Faible | Inutilisable | Signification |
+|----------|-----------|---------|--------|--------------|---------------|
+| **f1_macro** | > 0.30 | 0.20 – 0.30 | 0.12 – 0.20 | < 0.12 | Moyenne f1_short + f1_flat + f1_long |
+| **f1_long** | > 0.35 | 0.25 – 0.35 | 0.15 – 0.25 | < 0.15 | F1 sur la classe « long » uniquement |
+| **f1_short** | > 0.30 | 0.20 – 0.30 | 0.10 – 0.20 | < 0.10 | F1 sur la classe « short » (plus difficile) |
+| **f1_flat** | > 0.30 | 0.20 – 0.30 | 0.10 – 0.20 | < 0.10 | F1 sur la classe « flat » |
+| **Accuracy** | > 0.48 | 0.42 – 0.48 | 0.35 – 0.42 | < 0.35 | % de classes correctes (3 classes → hasard = 33%) |
+| **AUC** | > 0.65 | 0.55 – 0.65 | 0.50 – 0.55 | < 0.50 | Capacité à séparer long vs reste |
+
+> **Note** : le hasard pour 3 classes équilibrées est 33% d'accuracy et f1_macro ≈ 0.33.
+> En pratique les classes sont déséquilibrées (beaucoup de flat, peu de short), donc un
+> modèle naïf « toujours flat » peut avoir accuracy ≈ 40-50% mais f1_short = f1_long = 0.
+
+#### 🔍 Diagnostic rapide
+
+**1. Vérifie que le modèle n'est pas « collapsed »**
+
+Un modèle collapsed prédit toujours la même classe :
+
+| Symptôme | Diagnostic |
+|----------|-----------|
+| `f1_long > 0` mais `f1_short = 0` et `f1_flat = 0` | 🟡 Prédit toujours LONG — utilisable long uniquement |
+| `f1_long = 0` et `f1_short = 0` et `f1_flat > 0` | ❌ Prédit toujours FLAT — inutile |
+| `f1_short > 0` mais `f1_long = 0` | 🟡 Prédit toujours SHORT — cas rare, vérifier |
+| Les 3 F1 > 0 | ✅ Le modèle discrimine réellement |
+
+**2. Vérifie la distribution true vs pred**
+
+Dans l'IHM, section **📊 Distribution true/pred** :
+
+```
+Si pred_long_pct ≈ true_long_pct  ✅ Le modèle est calibré
+Si pred_long_pct ≪ true_long_pct  🟡 Trop prudent, rate des opportunités
+Si pred_long_pct ≫ true_long_pct  ⚠️ Sur-confiant, beaucoup de faux longs
+```
+
+**3. Vérifie la stabilité train → val → test → wf**
+
+Le F1 doit être **stable** (pas d'effondrement) :
+
+```
+F1 train ≈ 0.40, F1 test ≈ 0.12  → ❌ Overfitting massif
+F1 train ≈ 0.25, F1 test ≈ 0.23  → ✅ Bonne généralisation
+F1 train ≈ 0.15, F1 test ≈ 0.14  → 🟡 Underfitting (modèle trop simple)
+```
+
+**4. Vérifie le walk-forward (WF)**
+
+Le WF est le juge final — pas de look-ahead possible :
+
+| F1 WF | Verdict |
+|-------|---------|
+| > 0.30 | 🔥 Excellent — le modèle généralise dans le temps |
+| 0.20 – 0.30 | ✅ Bon — exploitable |
+| 0.12 – 0.20 | 🟡 Faible mais utilisable avec diversification |
+| < 0.12 | ❌ Trop faible |
+| WF ≪ val | ⚠️ Overfitting temporel (régime spécifique) |
+
+#### 📐 Les pièges à éviter
+
+**Piège 1 : Accuracy trompeuse**
+
+Avec 3 classes déséquilibrées (ex: 50% flat, 35% long, 15% short), un modèle qui prédit
+toujours « flat » aura **50% d'accuracy** mais f1_macro = 0.17. L'accuracy seule ne suffit pas.
+
+**Piège 2 : f1_macro masque les faiblesses**
+
+```
+Modèle A : f1_short=0.40, f1_flat=0.40, f1_long=0.40 → f1_macro=0.40 ✅ Équilibré
+Modèle B : f1_short=0.00, f1_flat=0.60, f1_long=0.60 → f1_macro=0.40 ⚠️ Zéro short!
+```
+
+Même f1_macro, mais A est utilisable long+short, B est utilisable long uniquement.
+
+**Piège 3 : Confusion train/val/test/WF**
+
+Seul le **WF** (walk-forward) compte pour juger la performance réelle. Le test set est
+chronologique mais pas glissant — il peut surprendre un régime de marché favorable.
+
+#### 🎯 Combinaison gagnante (ternaire)
+
+Un bon modèle ternaire doit avoir **simultanément** :
+
+```
+f1_long > 0.25        (détection haussière fiable)
+f1_short > 0.15       (détection baissière minimale — ou assumer long-only)
+f1_flat > 0.20        (sait identifier les zones neutres)
+WF f1_macro > 0.20    (généralisation temporelle)
+pred ≈ true (distribution équilibrée)
+```
+
+Et surtout : **F1 train ≈ F1 val ≈ F1 test ≈ F1 WF** (pas d'effondrement).
 13. **Smoothing conservé avec 8 splits** : contre-productif avec 13 splits (dilution), bénéfique avec 8 splits (signal frais +31% H10).
 14. **LightGBM LambdaRank confirmé inférieur** : régimes ignorés (imp 0.0), IC −38% vs CatBoost.
 15. **Pas besoin de retester les 18 pistes** : le leakage était proportionnel (33% constant). Les classements relatifs tiennent. Seuls smoothing, splits et LambdaRank interagissaient avec le mécanisme de leakage.
