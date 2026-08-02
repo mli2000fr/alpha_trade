@@ -698,6 +698,53 @@ Purge = 1j (marge de sécurité résiduelle uniquement).
 
 ---
 
+## 12. Stratégie d'exploitation (à implémenter)
+
+### 12.1 Principe : H20 pour la sélection, H5 pour le timing
+
+| Horizon | Rôle | IC / IR |
+|---------|------|---------|
+| **H20** | Filtre d'univers — quoi acheter | 0.0251 / 2.76 |
+| **H5** | Timing — quand acheter | 0.0120 / 1.19 |
+
+**Logique** : H20 identifie les actions qui vont surperformer sur 1 mois (signal fiable, IR 2.76). H5 détecte le bon moment pour entrer dans les 5 jours (évite d'acheter sur un pic local).
+
+### 12.2 Algorithme
+
+```python
+# Pour chaque date, pour chaque symbole :
+eligible = global_rank_20 > 0.70          # Top 30% H20
+
+# H5 confirme si le rang s'améliore vs la veille :
+h5_rising = global_rank_5[t] > global_rank_5[t-1]
+
+# Signal d'achat :
+buy_signal = eligible & h5_rising
+
+# Alternative contrarian : acheter sur faiblesse temporaire
+# buy_signal = eligible & (global_rank_5[t] < 0.30)  # H5 bas → opportunité
+```
+
+### 12.3 Paramètres de backtest
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Univers éligible | Top 30% H20 |
+| Trigger entrée | H5 rising (ou H5 bas pour contrarian) |
+| Rebalancement | Toutes les 3-4 semaines (H20) |
+| Frais A/R estimés | 0.25-0.30% par trade |
+| Turnover cible | < 50% par mois |
+| Sharpe net attendu | > 1.0 |
+
+### 12.4 À tester
+
+1. **Seuil H20** : top 20% vs 30% vs 40%
+2. **Condition H5** : rising vs falling vs absolu (< 0.30)
+3. **H15 alternative** : remplacer H20 par H15 (IC 0.0239, IR 2.28)
+4. **Frais réels** : spread bid-ask par symbole si disponible
+
+---
+
 ## Annexe A — Glossaire
 
 | Terme | Définition |
