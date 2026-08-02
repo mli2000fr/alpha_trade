@@ -171,6 +171,50 @@ CHAMPION_BY_MODEL_QUERY = """
     ORDER BY nb_symbols DESC
 """
 
+# ── Métriques régression (target continue) ──
+REG_BY_SPLIT_QUERY = """
+    SELECT
+        mm.model_name,
+        mm.split_name,
+        COUNT(DISTINCT mm.symbol) AS nb_symbols,
+        ROUND(AVG(mm.loss), 6) AS avg_mse,
+        ROUND(AVG(mm.directional_accuracy), 4) AS avg_dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.model_name != 'global_model'
+    GROUP BY mm.model_name, mm.split_name
+    ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+"""
+
+REG_TOP_QUERY = """
+    SELECT
+        mm.model_name, mm.symbol,
+        ROUND(mm.directional_accuracy, 4) AS dir_acc,
+        ROUND(mm.loss, 4) AS mse
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
+      AND mm.directional_accuracy IS NOT NULL
+    ORDER BY mm.directional_accuracy DESC LIMIT 10
+"""
+
+REG_WORST_QUERY = """
+    SELECT
+        mm.model_name, mm.symbol,
+        ROUND(mm.directional_accuracy, 4) AS dir_acc,
+        ROUND(mm.loss, 4) AS mse
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
+      AND mm.directional_accuracy IS NOT NULL
+    ORDER BY mm.directional_accuracy ASC LIMIT 10
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -442,6 +486,9 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     zero_df = _safe_query(engine, ZERO_F1_SHORT_QUERY, {"batch_id": batch_id})
     champion_df = _safe_query(engine, CHAMPION_MODE_QUERY, {"batch_id": batch_id})
     champion_by_model_df = _safe_query(engine, CHAMPION_BY_MODEL_QUERY, {"batch_id": batch_id})
+    reg_df = _safe_query(engine, REG_BY_SPLIT_QUERY, {"batch_id": batch_id})
+    reg_top_df = _safe_query(engine, REG_TOP_QUERY, {"batch_id": batch_id})
+    reg_worst_df = _safe_query(engine, REG_WORST_QUERY, {"batch_id": batch_id})
 
     lines: list[str] = []
     lines.append(f"# Diagnostic ML — Batch `{batch_id}`")
@@ -589,5 +636,37 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     lines.append("## ⚪ `f1_short = 0` (WF)")
     lines.append("")
     lines.append(_df_to_md(zero_df))
+
+    # ── Métriques régression (uniquement si batch regression) ──
+    _is_reg_report = False
+    try:
+        _meta_raw3 = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
+        if isinstance(_meta_raw3, str) and _meta_raw3.strip():
+            _meta3 = json.loads(str(_meta_raw3))
+            _tm3 = str(_meta3.get("cli_options", {}).get("target_mode") or _meta3.get("target_mode") or "")
+            _is_reg_report = _tm3 == "regression"
+    except Exception:
+        pass
+
+    if _is_reg_report:
+        lines.append("## 📊 Métriques Régression par split")
+        lines.append("")
+        if not reg_df.empty:
+            _styled = reg_df.copy()
+            for col in ["avg_mse", "avg_dir_acc"]:
+                if col in _styled.columns:
+                    _styled[col] = _styled[col].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "—")
+            lines.append(_df_to_md(_styled))
+        else:
+            lines.append("_Aucune métrique de régression disponible._")
+            lines.append("")
+
+        lines.append("## 🏆 Top 10 meilleurs `directional_accuracy` (WF)")
+        lines.append("")
+        lines.append(_df_to_md(reg_top_df))
+
+        lines.append("## 🥉 Top 10 plus mauvais `directional_accuracy` (WF)")
+        lines.append("")
+        lines.append(_df_to_md(reg_worst_df))
 
     return "\n".join(lines)

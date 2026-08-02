@@ -107,12 +107,14 @@ def compute_tabular_metrics(
 		n_buckets=5,
 	)
 	pred = (proba >= decision_threshold).astype(np.int64)
+	brier = float(np.mean((proba - labels) ** 2))
 	result: dict[str, Any] = {
+		"loss": brier,  # Brier score = MSE des probas (compatible colonne loss)
 		"directional_accuracy": float((pred == labels).mean()),
 		"precision": float(threshold_metrics["precision_long"]),
 		"recall": float(threshold_metrics["recall_long"]),
 		"auc": binary_auc(labels, proba),
-		"brier_score": float(np.mean((proba - labels) ** 2)),
+		"brier_score": brier,
 		"ece": expected_calibration_error(labels, proba),
 		"action_rate": float(threshold_metrics["coverage_at_threshold"]),
 		"n_observations": len(labels),
@@ -894,12 +896,19 @@ def run_tabular_walk_forward(
 					"split_index": split.split_index,
 				"train_rows": len(_train_df),
 				"test_rows": len(_test_df),
+					"loss": 0.0, "directional_accuracy": 0.0,
 					"f1_macro": 0.0,
 					"f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
 					"true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
 					"pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0,
 				}
 				if n > 0:
+					# Directional accuracy : % de classes correctes (3 classes)
+					fold_m["directional_accuracy"] = float((preds == test_labels_shifted).mean())
+					# Brier score (MSE des probas vs one-hot) comme loss
+					_one_hot = np.zeros((n, 3), dtype=np.float64)
+					_one_hot[np.arange(n), test_labels_shifted] = 1.0
+					fold_m["loss"] = float(np.mean((raw_proba_all[:, :3] - _one_hot) ** 2))
 					for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
 						tp = int(((preds == cls_idx) & (test_labels_shifted == cls_idx)).sum())
 						fp = int(((preds == cls_idx) & (test_labels_shifted != cls_idx)).sum())
@@ -940,7 +949,8 @@ def run_tabular_walk_forward(
 		         "true_short_pct", "true_flat_pct", "true_long_pct",
 		         "pred_short_pct", "pred_flat_pct", "pred_long_pct"]
 	else:
-		_keys = ["f1_macro", "f1_short", "f1_flat", "f1_long",
+		_keys = ["loss", "directional_accuracy",
+		         "f1_macro", "f1_short", "f1_flat", "f1_long",
 				"true_short_pct", "true_flat_pct", "true_long_pct",
 				"pred_short_pct", "pred_flat_pct", "pred_long_pct"]
 	mean_metrics: dict[str, float | None] = {}

@@ -1067,29 +1067,19 @@ def _render_batch_detail(batch: pd.Series) -> None:
                     st.metric(label=model_label, value=f"{count} ({pct})")
 
     # ── Détection mode régression vs classification ──
-    # Régression : a des métriques, f1_macro est renseigné (calculé via binarisation),
-    # mais precision/recall/auc sont NULL (pas de calibration binaire).
-    _has_any_metrics = not safe_query(
-        "SELECT 1 FROM alpha_trade.model_metrics AS mm "
-        "JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id "
-        "WHERE mtr.batch_id = :bid AND mtr.status = 'completed' "
-        "AND mm.model_name != 'global_model' LIMIT 1",
-        {"bid": batch["batch_id"]},
-    ).empty
-    _is_reg_batch = _has_any_metrics and safe_query(
-        "SELECT COUNT(*) AS cnt FROM alpha_trade.model_metrics AS mm "
-        "JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id "
-        "WHERE mtr.batch_id = :bid AND mtr.status = 'completed' "
-        "AND mm.precision IS NULL AND mm.f1_macro IS NOT NULL AND mm.model_name != 'global_model'",
-        {"bid": batch["batch_id"]},
-    ).iloc[0]["cnt"] > 0
-    _has_classif = _has_any_metrics and safe_query(
-        "SELECT COUNT(*) AS cnt FROM alpha_trade.model_metrics AS mm "
-        "JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id "
-        "WHERE mtr.batch_id = :bid AND mtr.status = 'completed' "
-        "AND mm.precision IS NOT NULL AND mm.model_name != 'global_model'",
-        {"bid": batch["batch_id"]},
-    ).iloc[0]["cnt"] > 0
+    # Règle fiable : lire target_mode depuis metadata_json (pas d'heuristique SQL).
+    # ⚠️ batch vient de BATCH_LIST_QUERY (colonnes limitées) → utiliser detail_df.
+    _target_mode: str = "ternary"
+    try:
+        _meta_raw = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
+        if isinstance(_meta_raw, str) and _meta_raw.strip():
+            import json
+            _meta = json.loads(_meta_raw)
+            _target_mode = str(_meta.get("cli_options", {}).get("target_mode") or _meta.get("target_mode") or "ternary")
+    except Exception:
+        pass
+    _is_reg_batch = _target_mode == "regression"
+    _has_classif = _target_mode in ("binary", "ternary", "swing_cash")
 
     if _is_reg_batch:
         # ── Bloc régression par split ──
