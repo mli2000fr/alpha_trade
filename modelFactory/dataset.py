@@ -447,12 +447,12 @@ def build_sequences(features: np.ndarray, targets: np.ndarray, seq_len: int) -> 
     return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.float32)
 
 
-def build_sequence_dataset(df: pd.DataFrame, scaler: FeatureScaler, seq_len: int) -> SequenceDataset | None:
+def build_sequence_dataset(df: pd.DataFrame, scaler: FeatureScaler, seq_len: int, *, is_regression: bool = False) -> SequenceDataset | None:
     """Construit un `SequenceDataset` à partir d'un split préparé."""
     feats = scaler.transform(df)
     targets = df["target"].values
     X, y = build_sequences(feats, targets, seq_len)
-    return SequenceDataset(X, y) if len(X) > 0 else None
+    return SequenceDataset(X, y, is_regression=is_regression) if len(X) > 0 else None
 
 
 # ---------------------------------------------------------------------------
@@ -460,9 +460,10 @@ def build_sequence_dataset(df: pd.DataFrame, scaler: FeatureScaler, seq_len: int
 # ---------------------------------------------------------------------------
 
 class SequenceDataset(Dataset):  # type: ignore[type-arg]
-    def __init__(self, X: np.ndarray, y: np.ndarray) -> None:
+    def __init__(self, X: np.ndarray, y: np.ndarray, *, is_regression: bool = False) -> None:
         self.X = torch.from_numpy(X)
-        self.y = torch.from_numpy(y).long()
+        self.y = torch.from_numpy(y).float() if is_regression else torch.from_numpy(y).long()
+        self._is_regression = is_regression
 
     def __len__(self) -> int:
         return len(self.y)
@@ -581,8 +582,9 @@ class SymbolDataModule(L.LightningDataModule):
         # 3. Fit scaler on train
         self.scaler.fit(split.train)
         # 4. Transform + build sequences
+        _is_reg = self.data_cfg.target_mode == "regression"
         for name, part in [("train", split.train), ("val", split.val), ("test", split.test)]:
-            ds = build_sequence_dataset(part, self.scaler, self.data_cfg.sequence_length)
+            ds = build_sequence_dataset(part, self.scaler, self.data_cfg.sequence_length, is_regression=_is_reg)
             setattr(self, f"{name}_ds", ds)
             LOGGER.info("dataset split=%s sequences=%d", name, len(ds) if ds is not None else 0)
 

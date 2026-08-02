@@ -249,6 +249,59 @@ def apply_tabular_calibration(
 	return np.asarray(raw_proba, dtype=np.float64)
 
 
+# ── Regression metrics helper ────────────────────────────────────────────
+
+def _compute_regression_metrics(
+	pred: np.ndarray,
+	target: np.ndarray,
+	future_return: np.ndarray,
+) -> dict[str, Any]:
+	"""Calcule les métriques de régression pour un modèle per-symbol.
+
+	Args:
+		pred: Prédictions continues du modèle [n_samples]
+		target: Target de régression (vol-scalé winsorizé) [n_samples]
+		future_return: Rendement futur brut [n_samples]
+
+	Returns:
+		dict avec mse, mae, correlation, directional_accuracy, etc.
+	"""
+	valid = np.isfinite(pred) & np.isfinite(target)
+	if valid.sum() < 2:
+		return {"mse": 0.0, "mae": 0.0, "correlation": 0.0, "directional_accuracy": 0.0, "n_samples": int(valid.sum())}
+
+	p = pred[valid]
+	t = target[valid]
+	f = future_return[valid]
+
+	residuals = p - t
+	mse = float(np.mean(residuals ** 2))
+	mae = float(np.mean(np.abs(residuals)))
+
+	# Pearson correlation avec la target
+	corr = float(np.corrcoef(p, t)[0, 1]) if len(p) > 2 else 0.0
+
+	# Directional accuracy : sign(pred) == sign(future_return)
+	dir_acc = float(np.mean(np.sign(p) == np.sign(f))) if len(p) > 0 else 0.0
+
+	# IC (Information Coefficient) — corrélation entre prédiction et future_return
+	ic = float(np.corrcoef(p, f)[0, 1]) if len(p) > 2 else 0.0
+
+	return {
+		"mse": mse,
+		"mae": mae,
+		"rmse": float(np.sqrt(mse)),
+		"correlation": corr,
+		"directional_accuracy": dir_acc,
+		"ic": ic,
+		"n_samples": int(valid.sum()),
+		"pred_mean": float(np.mean(p)),
+		"pred_std": float(np.std(p)),
+		"target_mean": float(np.mean(t)),
+		"target_std": float(np.std(t)),
+	}
+
+
 def run_tabular_baseline(
 	prepared_df: pd.DataFrame,
 	cfg: TrainingConfig,
@@ -291,136 +344,175 @@ def run_tabular_baseline(
 	)
 	model = model_builder(resolved_seed)
 	is_ternary = cfg.data.target_mode == "ternary"
-	train_targets = train_df["target"].astype(int)
-	# LightGBM/CatBoost exigent des labels consecutifs a partir de 0.
-	# On decale {-1,0,+1} -> {0,1,2} pour le mode ternaire.
-	if is_ternary:
-		train_targets = train_targets + 1  # shift: -1->0, 0->1, +1->2
-	unique_classes = train_targets.unique()
-	if len(unique_classes) < 2:
-		return {"status": "skipped", "model_name": model_name, "reason": f"single_class_target_{unique_classes[0]}"}
+	is_regression = cfg.data.target_mode == "regression"
 
-	# Sample weighting par récence (Cause 3 — changement de régime)
-	# Donne plus de poids aux données récentes (demi-vie = 1 an).
-	_sample_weights: "np.ndarray | None" = None
-	if "date" in train_df.columns:
-		_train_dates = pd.to_datetime(train_df["date"])
-		_max_date = _train_dates.max()
-		_days_diff = (_max_date - _train_dates).dt.days
-		_sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
-		LOGGER.info(
-			"tabular_baseline sample_weight model=%s rows=%d half_life=365d "
-			"weight_min=%.3f weight_max=%.3f weight_mean=%.3f",
-			model_name,
-			len(_sample_weights),
-			float(_sample_weights.min()),
-			float(_sample_weights.max()),
-			float(_sample_weights.mean()),
-		)
+	if is_regression:
+		# ── Regression : target continue ─────────────────────────────
+		train_targets = train_df["target"].astype(float)
+		# Vérifier qu'il y a de la variance
+		if train_targets.std() < 1e-9:
+			return {"status": "skipped", "model_name": model_name, "reason": "zero_variance_target"}
 
-	model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
+		_sample_weights: "np.ndarray | None" = None
+		if "date" in train_df.columns:
+			_train_dates = pd.to_datetime(train_df["date"])
+			_max_date = _train_dates.max()
+			_days_diff = (_max_date - _train_dates).dt.days
+			_sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
+
+		model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
+
+		# Prédictions continues
+		val_pred = model.predict(val_df[feature_columns])
+		test_pred = model.predict(test_df[feature_columns])
+
+		# Métriques régression
+		val_future = val_df["future_return"].to_numpy()
+		test_future = test_df["future_return"].to_numpy()
+
+		val_metrics = _compute_regression_metrics(val_pred, val_df["target"].to_numpy(), val_future)
+		test_metrics = _compute_regression_metrics(test_pred, test_df["target"].to_numpy(), test_future)
+
+		selected_threshold = float(cfg.data.decision_threshold)
+		calibrator = None
+		val_proba = val_pred  # utilisé pour décision binaire simple
+		test_proba = test_pred
+		cal_labels = (val_future > 0).astype(int)
+		threshold_summary = {"enabled": False, "selection_status": "regression_mode", "selected_threshold": selected_threshold, "candidates": []}
+		selection_score = float(val_metrics.get("directional_accuracy", 0.0))
+	else:
+		# ── Classification (binaire / ternaire) ──────────────────────
+		train_targets = train_df["target"].astype(int)
+		# LightGBM/CatBoost exigent des labels consecutifs a partir de 0.
+		# On decale {-1,0,+1} -> {0,1,2} pour le mode ternaire.
+		if is_ternary:
+			train_targets = train_targets + 1  # shift: -1->0, 0->1, +1->2
+		unique_classes = train_targets.unique()
+		if len(unique_classes) < 2:
+			return {"status": "skipped", "model_name": model_name, "reason": f"single_class_target_{unique_classes[0]}"}
+
+		# Sample weighting par récence (Cause 3 — changement de régime)
+		# Donne plus de poids aux données récentes (demi-vie = 1 an).
+		_sample_weights: "np.ndarray | None" = None
+		if "date" in train_df.columns:
+			_train_dates = pd.to_datetime(train_df["date"])
+			_max_date = _train_dates.max()
+			_days_diff = (_max_date - _train_dates).dt.days
+			_sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
+			LOGGER.info(
+				"tabular_baseline sample_weight model=%s rows=%d half_life=365d "
+				"weight_min=%.3f weight_max=%.3f weight_mean=%.3f",
+				model_name,
+				len(_sample_weights),
+				float(_sample_weights.min()),
+				float(_sample_weights.max()),
+				float(_sample_weights.mean()),
+			)
+
+		model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
 
 	is_ternary = cfg.data.target_mode == "ternary"
-	# Determine which predict_proba column holds the long probability.
-	# For ternary with all 3 classes present: 3 cols -> col 2=long.
-	# For binary or ternary with missing classes: use last column.
-	raw_proba_all = model.predict_proba(val_df[feature_columns])
-	num_proba_cols = raw_proba_all.shape[1]
-	if is_ternary and num_proba_cols >= 3:
-		long_col = 2  # full ternary: [short, flat, long]
-	else:
-		long_col = num_proba_cols - 1  # fallback: last column
+	if not is_regression:
+		# Determine which predict_proba column holds the long probability.
+		# For ternary with all 3 classes present: 3 cols -> col 2=long.
+		# For binary or ternary with missing classes: use last column.
+		raw_proba_all = model.predict_proba(val_df[feature_columns])
+		num_proba_cols = raw_proba_all.shape[1]
+		if is_ternary and num_proba_cols >= 3:
+			long_col = 2  # full ternary: [short, flat, long]
+		else:
+			long_col = num_proba_cols - 1  # fallback: last column
 
-	val_raw = raw_proba_all[:, long_col]
-	target_mode = cfg.data.target_mode
+		val_raw = raw_proba_all[:, long_col]
+		target_mode = cfg.data.target_mode
 
-	# ── Sprint Maître 1 : calibration multiclasse ─────────────────────
-	# Toujours calculer cal_labels (binarisé long=1) pour le threshold optimizer
-	cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
+		# ── Sprint Maître 1 : calibration multiclasse ─────────────────────
+		# Toujours calculer cal_labels (binarisé long=1) pour le threshold optimizer
+		cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
 
-	if is_ternary and num_proba_cols >= 3:
-		# Ternaire : TemperatureScaler sur les 3 probas
-		val_labels_ternary = (val_df["target"].astype(int) + 1).to_numpy()  # shift -1,0,1 -> 0,1,2
-		calibrator = fit_tabular_calibrator(
-			raw_proba_all[:, :3], val_labels_ternary, cfg, target_mode="ternary",
-		)
-		# Appliquer calibration ternaire
-		calibrated_all = apply_tabular_calibration(
-			raw_proba_all[:, :3], calibrator, target_mode="ternary",
-		)
-		val_proba = calibrated_all[:, 2]  # p_long calibrée
-	else:
-		# Binaire : Platt
-		calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg, target_mode="binary")
-		val_proba = apply_tabular_calibration(val_raw, calibrator, target_mode="binary")
+		if is_ternary and num_proba_cols >= 3:
+			# Ternaire : TemperatureScaler sur les 3 probas
+			val_labels_ternary = (val_df["target"].astype(int) + 1).to_numpy()  # shift -1,0,1 -> 0,1,2
+			calibrator = fit_tabular_calibrator(
+				raw_proba_all[:, :3], val_labels_ternary, cfg, target_mode="ternary",
+			)
+			# Appliquer calibration ternaire
+			calibrated_all = apply_tabular_calibration(
+				raw_proba_all[:, :3], calibrator, target_mode="ternary",
+			)
+			val_proba = calibrated_all[:, 2]  # p_long calibrée
+		else:
+			# Binaire : Platt
+			calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg, target_mode="binary")
+			val_proba = apply_tabular_calibration(val_raw, calibrator, target_mode="binary")
 
-	if cfg.threshold_optimization.enabled:
-		threshold_summary = optimize_decision_threshold(
+		if cfg.threshold_optimization.enabled:
+			threshold_summary = optimize_decision_threshold(
+				val_proba,
+				cal_labels,  # binarisee : 1=long, 0=sinon
+				val_df["future_return"].to_numpy(),
+				candidate_thresholds=cfg.threshold_optimization.candidate_decision_thresholds,
+				default_threshold=cfg.data.decision_threshold,
+				min_action_rate=cfg.threshold_optimization.min_action_rate,
+				max_action_rate=cfg.threshold_optimization.max_action_rate,
+				min_precision_long=cfg.threshold_optimization.min_precision_long,
+				n_buckets=5,
+			)
+			selected_threshold = float(threshold_summary["selected_threshold"])
+		else:
+			selected_threshold = float(cfg.data.decision_threshold)
+			threshold_summary = {
+				"enabled": False,
+				"selection_status": "disabled",
+				"selected_threshold": selected_threshold,
+				"candidates": [],
+			}
+
+		test_raw_all = model.predict_proba(test_df[feature_columns])
+		num_test_cols = test_raw_all.shape[1]
+		test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
+		test_raw = test_raw_all[:, test_long_col]
+
+		# ── Sprint Maître 1 : calibration test ────────────────────────────
+		if is_ternary and num_test_cols >= 3:
+			calibrated_test_all = apply_tabular_calibration(
+				test_raw_all[:, :3], calibrator, target_mode="ternary",
+			)
+			test_proba = calibrated_test_all[:, 2]
+		else:
+			test_proba = apply_tabular_calibration(test_raw, calibrator, target_mode="binary")
+
+		# Pour les métriques, on binarise aussi la target test
+		test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
+		val_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
+
+		val_metrics = compute_tabular_metrics(
+			val_labels,
 			val_proba,
-			cal_labels,  # binarisee : 1=long, 0=sinon
 			val_df["future_return"].to_numpy(),
-			candidate_thresholds=cfg.threshold_optimization.candidate_decision_thresholds,
-			default_threshold=cfg.data.decision_threshold,
-			min_action_rate=cfg.threshold_optimization.min_action_rate,
-			max_action_rate=cfg.threshold_optimization.max_action_rate,
-			min_precision_long=cfg.threshold_optimization.min_precision_long,
-			n_buckets=5,
+			selected_threshold,
+			raw_proba_all=raw_proba_all if is_ternary else None,
+			target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
+			is_ternary=is_ternary,
+			ternary_policy=ternary_policy,
 		)
-		selected_threshold = float(threshold_summary["selected_threshold"])
-	else:
-		selected_threshold = float(cfg.data.decision_threshold)
-		threshold_summary = {
-			"enabled": False,
-			"selection_status": "disabled",
-			"selected_threshold": selected_threshold,
-			"candidates": [],
-		}
-
-	test_raw_all = model.predict_proba(test_df[feature_columns])
-	num_test_cols = test_raw_all.shape[1]
-	test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
-	test_raw = test_raw_all[:, test_long_col]
-
-	# ── Sprint Maître 1 : calibration test ────────────────────────────
-	if is_ternary and num_test_cols >= 3:
-		calibrated_test_all = apply_tabular_calibration(
-			test_raw_all[:, :3], calibrator, target_mode="ternary",
+		test_metrics = compute_tabular_metrics(
+			test_labels,
+			test_proba,
+			test_df["future_return"].to_numpy(),
+			selected_threshold,
+			raw_proba_all=test_raw_all if is_ternary else None,
+			target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
+			is_ternary=is_ternary,
+			ternary_policy=ternary_policy,
 		)
-		test_proba = calibrated_test_all[:, 2]
-	else:
-		test_proba = apply_tabular_calibration(test_raw, calibrator, target_mode="binary")
-
-	# Pour les métriques, on binarise aussi la target test
-	test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
-	val_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
-
-	val_metrics = compute_tabular_metrics(
-		val_labels,
-		val_proba,
-		val_df["future_return"].to_numpy(),
-		selected_threshold,
-		raw_proba_all=raw_proba_all if is_ternary else None,
-		target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
-		is_ternary=is_ternary,
-		ternary_policy=ternary_policy,
-	)
-	test_metrics = compute_tabular_metrics(
-		test_labels,
-		test_proba,
-		test_df["future_return"].to_numpy(),
-		selected_threshold,
-		raw_proba_all=test_raw_all if is_ternary else None,
-		target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
-		is_ternary=is_ternary,
-		ternary_policy=ternary_policy,
-	)
-	# ── Sprint Maître 1 : selection_score depuis val uniquement ──────
-	selection_score = float(
-		val_metrics.get("threshold_business_score")
-		or val_metrics.get("auc")
-		or val_metrics.get("auc_macro")
-		or 0.0
-	)
+		# ── Sprint Maître 1 : selection_score depuis val uniquement ──────
+		selection_score = float(
+			val_metrics.get("threshold_business_score")
+			or val_metrics.get("auc")
+			or val_metrics.get("auc_macro")
+			or 0.0
+		)
 	feature_contract = build_feature_contract(
 		include_sentiment=cfg.data.include_sentiment_features,
 		feature_set=cfg.data.feature_set,

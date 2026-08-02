@@ -345,7 +345,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Âge max en jours d'une quote spread pour être considérée valide. Défaut: 5")
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
     p.add_argument("--benchmark-symbol", type=str, default="SPY")
-    p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary"])
+    p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary", "regression"])
     p.add_argument("--label-method", type=str, default="fixed_horizon", choices=["fixed_horizon", "triple_barrier"])
     p.add_argument("--triple-barrier-stop-atr-mult", type=float, default=2.0)
     p.add_argument("--triple-barrier-tp-atr-mult", type=float, default=3.0)

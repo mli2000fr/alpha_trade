@@ -501,6 +501,7 @@ def _collect_outputs(model: LSTMAttentionModule, dataloader: DataLoader | None, 
     labels_parts: list[torch.Tensor] = []
     model.to(device)
     model.eval()
+    _is_reg = model._is_regression if hasattr(model, '_is_regression') else False
     with torch.no_grad():
         for x, y in dataloader:
             x = x.to(device)
@@ -518,6 +519,19 @@ def _collect_outputs(model: LSTMAttentionModule, dataloader: DataLoader | None, 
 
     logits = torch.cat(logits_parts, dim=0)
     labels = torch.cat(labels_parts, dim=0)
+
+    if _is_reg:
+        # ── Regression : predictions continues ──
+        predictions = logits.squeeze(1).numpy().astype(np.float64)  # [N]
+        return {
+            "logits": np.zeros((len(predictions), 2), dtype=np.float32),  # placeholder
+            "labels": labels.numpy().astype(np.float64),
+            "raw_proba": predictions,
+            "margins": predictions,
+            "num_classes": 1,
+            "predictions": predictions,
+        }
+
     probs = torch.softmax(logits, dim=1)
     num_classes = logits.shape[1]
     if num_classes == 3:
@@ -597,6 +611,33 @@ def _compute_metrics(
     num_classes = int(outputs.get("num_classes", 2))
     if len(labels) == 0:
         return {}
+
+    if num_classes == 1:
+        # ── Regression metrics ────────────────────────────────────
+        predictions = outputs.get("predictions", outputs["raw_proba"])
+        target = labels  # déjà float
+        valid = np.isfinite(predictions) & np.isfinite(target)
+        n = int(valid.sum())
+        if n < 2:
+            return {"mse": 0.0, "mae": 0.0, "directional_accuracy": 0.0, "n_samples": n, "num_classes": 1}
+        p = predictions[valid]
+        t = target[valid]
+        mse = float(np.mean((p - t) ** 2))
+        mae = float(np.mean(np.abs(p - t)))
+        corr = float(np.corrcoef(p, t)[0, 1]) if n > 2 else 0.0
+        dir_acc = float(np.mean(np.sign(p) == np.sign(t)))
+        ic = float(np.corrcoef(p, future_returns[valid])[0, 1]) if future_returns is not None and n > 2 else None
+        return {
+            "loss": mse,
+            "mse": mse,
+            "mae": mae,
+            "rmse": float(np.sqrt(mse)),
+            "correlation": corr,
+            "directional_accuracy": dir_acc,
+            "ic": ic,
+            "n_samples": n,
+            "num_classes": 1,
+        }
 
     if num_classes == 3:
         # ── Ternary metrics ──────────────────────────────────────
@@ -744,6 +785,8 @@ def _fit_calibrator(
         return None
 
     num_classes = int(outputs.get("num_classes", 2))
+    if num_classes == 1:
+        return None  # pas de calibration pour la régression
     if num_classes != 2:
         # ── Temperature Scaling pour mode ternaire (2026-06-25) ──
         LOGGER.info(
@@ -966,9 +1009,10 @@ def _run_walk_forward_validation(
         )
         scaler = FeatureScaler(feature_names=feature_cols)
         scaler.fit(split.train)
-        train_ds = build_sequence_dataset(split.train, scaler, cfg.data.sequence_length)
-        val_ds = build_sequence_dataset(split.val, scaler, cfg.data.sequence_length)
-        test_ds = build_sequence_dataset(split.test, scaler, cfg.data.sequence_length)
+        _is_reg = cfg.data.target_mode == "regression"
+        train_ds = build_sequence_dataset(split.train, scaler, cfg.data.sequence_length, is_regression=_is_reg)
+        val_ds = build_sequence_dataset(split.val, scaler, cfg.data.sequence_length, is_regression=_is_reg)
+        test_ds = build_sequence_dataset(split.test, scaler, cfg.data.sequence_length, is_regression=_is_reg)
         if train_ds is None or val_ds is None or test_ds is None:
             LOGGER.info(
                 "walk_forward skipped split symbol=%s split=%d reason=insufficient_sequences",
@@ -1021,7 +1065,7 @@ def _run_walk_forward_validation(
                 dropout=cfg.model.dropout,
                 learning_rate=cfg.model.learning_rate,
                 weight_decay=cfg.model.weight_decay,
-                num_classes=cfg.model.num_classes,
+                num_classes=1 if cfg.data.target_mode == "regression" else cfg.model.num_classes,
                 ternary_weight_short=cfg.model.ternary_weight_short,
                 ternary_weight_flat=cfg.model.ternary_weight_flat,
                 ternary_weight_long=cfg.model.ternary_weight_long,
@@ -1376,7 +1420,7 @@ def train_symbol(
             dropout=effective_cfg.model.dropout,
             learning_rate=effective_cfg.model.learning_rate,
             weight_decay=effective_cfg.model.weight_decay,
-            num_classes=effective_cfg.model.num_classes,
+            num_classes=1 if effective_cfg.data.target_mode == "regression" else effective_cfg.model.num_classes,
             ternary_weight_short=effective_cfg.model.ternary_weight_short,
             ternary_weight_flat=effective_cfg.model.ternary_weight_flat,
             ternary_weight_long=effective_cfg.model.ternary_weight_long,

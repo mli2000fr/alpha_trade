@@ -1263,6 +1263,7 @@ def build_target(
     - ``ternary``     : +1 (long)  si future_return > positive_threshold,
                         -1 (short) si future_return < negative_threshold,
                          0 (flat)  entre les deux.
+    - ``regression``  : rendement futur vol-scalé + winsorizé (continu).
 
       Pour ``ternary``, ``negative_threshold`` doit être < 0 (ex: -0.08 pour -8%).
     """
@@ -1284,6 +1285,20 @@ def build_target(
         target = target.mask(future_return > positive_threshold, 1)
         target = target.mask(future_return < negative_threshold, -1)
         return target.where(future_return.notna())
+
+    if mode == "regression":
+        # ── Regression target (Sprint 2026-08-02) ──
+        # Même prétraitement que le Global Ranking : vol-scaling + winsorize.
+        # Pas de ranking cross-sectional car chaque modèle ne voit qu'un symbole.
+        target = future_return.copy()
+        if horizon >= 5:
+            # Vol-scaling comme le global (rolling 20j)
+            rolling_vol = close.pct_change().rolling(20).std()
+            target = target / rolling_vol
+        # Winsorize 1% / 99% par symbole (robustesse aux outliers)
+        lo, hi = target.quantile(0.01), target.quantile(0.99)
+        target = target.clip(lo, hi)
+        return target.where(future_return.notna()).astype(float)
 
     raise ValueError(f"Unsupported target mode: {mode}")
 

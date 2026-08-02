@@ -14,9 +14,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _import_catboost() -> Any:
-	from catboost import CatBoostClassifier  # type: ignore[import-not-found]
-
-	return CatBoostClassifier
+	from catboost import CatBoostClassifier, CatBoostRegressor  # type: ignore[import-not-found]
+	return CatBoostClassifier, CatBoostRegressor
 
 
 def run_catboost_baseline(
@@ -30,7 +29,7 @@ def run_catboost_baseline(
 		return {}
 
 	try:
-		CatBoostClassifier = _import_catboost()
+		CatBoostClassifier, CatBoostRegressor = _import_catboost()
 	except ImportError:
 		LOGGER.warning("CatBoost indisponible: baseline ignorée")
 		return {"status": "unavailable", "model_name": "catboost", "reason": "catboost_not_installed"}
@@ -39,20 +38,31 @@ def run_catboost_baseline(
 	catboost_run_root = (Path(cfg.catboost_artifacts_dir) / artifact_scope).resolve()
 	catboost_run_root.mkdir(parents=True, exist_ok=True)
 
+	is_regression = cfg.data.target_mode == "regression"
+
+	if is_regression:
+		_CBClass = CatBoostRegressor
+		_loss = "RMSE"
+		_auto_weights = None
+	else:
+		_CBClass = CatBoostClassifier
+		_loss = "MultiClass" if cfg.data.target_mode == "ternary" else "Logloss"
+		_auto_weights = "Balanced"
+
 	return run_tabular_baseline(
 		prepared_df,
 		cfg,
 		model_name="catboost",
-		model_builder=lambda resolved_seed: CatBoostClassifier(
+		model_builder=lambda resolved_seed: _CBClass(
 			depth=cfg.baseline.catboost_depth,
 			iterations=cfg.baseline.catboost_iterations,
 			learning_rate=cfg.baseline.catboost_learning_rate,
 			random_seed=resolved_seed,
-			loss_function="MultiClass" if cfg.data.target_mode == "ternary" else "Logloss",
+			loss_function=_loss,
 			verbose=False,
 			train_dir=str(catboost_run_root / f"seed_{resolved_seed}"),
 			allow_writing_files=True,
-			auto_class_weights="Balanced",
+			auto_class_weights=_auto_weights,
 			l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
 			border_count=cfg.baseline.catboost_border_count,
 			random_strength=cfg.baseline.catboost_random_strength,

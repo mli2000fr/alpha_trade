@@ -592,33 +592,42 @@ def run_training_batch(
             _vol_df = pd.read_sql(
                 text(
                     "SELECT symbol, AVG(volume) AS avg_vol "
-                    "FROM stock_bars_daily "
-                    "WHERE symbol IN :syms AND date >= :start AND date <= :end "
+                    "FROM alpha_trade.stock_bars_daily "
+                    "WHERE symbol IN :syms "
                     "GROUP BY symbol"
                 ),
                 engine,
-                params={
-                    "syms": tuple(symbols),
-                    "start": str(cfg.data.training_start_date),
-                    "end": str(cfg.data.training_end_date),
-                },
+                params={"syms": tuple(symbols)},
             )
-            if not _vol_df.empty:
-                if _ps_stratified and len(_vol_df) >= 10:
-                    # Stratifié par déciles : ~N/10 symboles par décile
-                    _vol_df["decile"] = pd.qcut(_vol_df["avg_vol"], q=10, labels=False)
-                    _per_decile = max(1, _ps_max // 10)
-                    _selected: list[str] = []
-                    for _d in range(10):
-                        _decile_syms = _vol_df[_vol_df["decile"] == _d]["symbol"].tolist()
-                        _selected.extend(_decile_syms[:_per_decile])
-                    symbols = _selected[:_ps_max]
-                else:
-                    # Top N par volume moyen
-                    _vol_df = _vol_df.sort_values("avg_vol", ascending=False)
-                    symbols = _vol_df.head(_ps_max)["symbol"].tolist()
+            if _vol_df.empty:
+                LOGGER.warning(
+                    "per_symbol_max_symbols: no volume data for %d symbols, "
+                    "keeping alphabetical truncation",
+                    len(symbols),
+                )
+                symbols = symbols[:_ps_max]
+            elif _ps_stratified and len(_vol_df) >= 10:
+                # Stratifié par déciles : ~N/10 symboles par décile
+                # On trie d'abord par volume décroissant pour que le top de
+                # chaque décile soit représentatif, pas juste alphabétique.
+                _vol_df = _vol_df.sort_values("avg_vol", ascending=False)
+                _vol_df["decile"] = pd.qcut(_vol_df["avg_vol"], q=10, labels=False)
+                _per_decile = max(1, _ps_max // 10)
+                _selected: list[str] = []
+                for _d in range(10):
+                    _decile_syms = _vol_df[_vol_df["decile"] == _d]["symbol"].tolist()
+                    _selected.extend(_decile_syms[:_per_decile])
+                symbols = _selected[:_ps_max]
+            else:
+                # Top N par volume moyen (fallback si < 10 symboles pour stratifié)
+                _vol_df = _vol_df.sort_values("avg_vol", ascending=False)
+                symbols = _vol_df.head(_ps_max)["symbol"].tolist()
         except Exception as _exc:
-            LOGGER.warning("per_symbol_max_symbols: volume query failed, fallback alphabetical: %s", _exc)
+            LOGGER.warning(
+                "per_symbol_max_symbols: volume query failed, fallback alphabetical. "
+                "error=%s symbols_count=%d",
+                _exc, _orig_count,
+            )
             symbols = symbols[:_ps_max]
         LOGGER.info(
             "run_training_batch per_symbol_max_symbols limit=%d orig=%d kept=%d stratified=%s",
@@ -648,6 +657,8 @@ def run_training_batch(
         cfg.accelerator,
         torch.cuda.is_available(),
     )
+    # ── Log exhaustif des symboles retenus pour l'entraînement ──
+    LOGGER.info("TRAINING_SYMBOLS_FINAL count=%d symbols=[%s]", len(symbols), ",".join(symbols))
     update_runtime_status(
         current_phase="batch_start",
         progress_label="🧠 Progression ML Train",

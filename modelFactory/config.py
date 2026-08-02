@@ -76,8 +76,8 @@ class DataConfig:
             raise ValueError("feature_set doit être 'v1' ou 'expert'.")
         if self.cross_sectional_min_universe < 2:
             raise ValueError("cross_sectional_min_universe doit être >= 2.")
-        if self.target_mode not in {"binary", "swing_cash", "ternary"}:
-            raise ValueError("target_mode doit être 'binary', 'swing_cash' ou 'ternary'.")
+        if self.target_mode not in {"binary", "swing_cash", "ternary", "regression"}:
+            raise ValueError("target_mode doit être 'binary', 'swing_cash', 'ternary' ou 'regression'.")
         if self.label_method not in {"fixed_horizon", "triple_barrier"}:
             raise ValueError("label_method doit être 'fixed_horizon' ou 'triple_barrier'.")
         if self.label_method == "triple_barrier" and self.target_mode != "ternary":

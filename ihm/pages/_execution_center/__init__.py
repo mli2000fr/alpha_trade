@@ -3550,18 +3550,17 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         st.markdown("##### Cible swing & horizon")
         ml_target_col1, ml_target_col2, ml_target_col3 = st.columns(3)
         with ml_target_col1:
+            _target_options = ["regression", "ternary", "binary", "swing_cash"]
+            _session_target = cast(str, st.session_state.get("pipeline_ml_target_mode", DEFAULT_ML_TARGET_MODE))
+            _default_idx = _target_options.index(_session_target) if _session_target in _target_options else 0
             ml_target_mode = cast(
                 str,
                 st.selectbox(
                     "Mode de cible",
-                    options=["binary", "swing_cash", "ternary"],
-                    index=["binary", "swing_cash", "ternary"].index(
-                        cast(str, st.session_state.get("pipeline_ml_target_mode", DEFAULT_ML_TARGET_MODE))
-                        if st.session_state.get("pipeline_ml_target_mode", DEFAULT_ML_TARGET_MODE) in {"binary", "swing_cash", "ternary"}
-                        else DEFAULT_ML_TARGET_MODE
-                    ),
+                    options=_target_options,
+                    index=_default_idx,
                     key="pipeline_ml_target_mode",
-                    help="`swing_cash` = cible asymétrique up/down. `ternary` = long/flat/short (ML Sprint 1).",
+                    help="`regression` = target continue vol-scalée (recommandé). `ternary` = long/flat/short. `binary`/`swing_cash` = classification.",
                 ),
             )
             ml_forecast_horizon = int(
@@ -3637,89 +3636,98 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ),
             )
 
-        st.markdown("##### Poids ternaires (short / flat / long)")
-        _tw_col1, _tw_col2, _tw_col3 = st.columns(3)
-        with _tw_col1:
-            ml_ternary_weight_short = float(
-                st.number_input(
-                    "Poids short",
-                    min_value=0.1,
-                    max_value=5.0,
-                    value=_session_state_float("pipeline_ml_ternary_weight_short", DEFAULT_ML_TERNARY_WEIGHT_SHORT),
-                    step=0.05,
-                    format="%.1f",
-                    key="pipeline_ml_ternary_weight_short",
-                    help="Poids de la classe short dans la CrossEntropyLoss ternaire (défaut: 1.0).",
-                )
-            )
-        with _tw_col2:
-            ml_ternary_weight_flat = float(
-                st.number_input(
-                    "Poids flat",
-                    min_value=0.1,
-                    max_value=5.0,
-                    value=_session_state_float("pipeline_ml_ternary_weight_flat", DEFAULT_ML_TERNARY_WEIGHT_FLAT),
-                    step=0.05,
-                    format="%.1f",
-                    key="pipeline_ml_ternary_weight_flat",
-                    help="Poids de la classe flat dans la CrossEntropyLoss ternaire (défaut: 1.5).",
-                )
-            )
-        with _tw_col3:
-            ml_ternary_weight_long = float(
-                st.number_input(
-                    "Poids long",
-                    min_value=0.1,
-                    max_value=5.0,
-                    value=_session_state_float("pipeline_ml_ternary_weight_long", DEFAULT_ML_TERNARY_WEIGHT_LONG),
-                    step=0.05,
-                    format="%.1f",
-                    key="pipeline_ml_ternary_weight_long",
-                    help="Poids de la classe long dans la CrossEntropyLoss ternaire (défaut: 1.0).",
-                )
-            )
+        # Valeurs par défaut pour les champs ternaires (utilisés seulement si target_mode != regression)
+        ml_ternary_weight_short = DEFAULT_ML_TERNARY_WEIGHT_SHORT
+        ml_ternary_weight_flat = DEFAULT_ML_TERNARY_WEIGHT_FLAT
+        ml_ternary_weight_long = DEFAULT_ML_TERNARY_WEIGHT_LONG
+        ml_ternary_threshold_short = DEFAULT_ML_TERNARY_THRESHOLD_SHORT
+        ml_ternary_threshold_long = DEFAULT_ML_TERNARY_THRESHOLD_LONG
+        ml_ternary_top2_margin = DEFAULT_ML_TERNARY_TOP2_MARGIN
 
-        st.markdown("##### Seuils de décision ternaire (short / long / marge)")
-        _td_col1, _td_col2, _td_col3 = st.columns(3)
-        with _td_col1:
-            ml_ternary_threshold_short = float(
-                st.number_input(
-                    "Seuil short",
-                    min_value=0.10,
-                    max_value=0.90,
-                    value=_session_state_float("pipeline_ml_ternary_threshold_short", DEFAULT_ML_TERNARY_THRESHOLD_SHORT),
-                    step=0.05,
-                    format="%.2f",
-                    key="pipeline_ml_ternary_threshold_short",
-                    help="p_short minimum pour autoriser un signal short (défaut: 0.45). Baisser pour réduire le flat.",
+        if ml_target_mode != "regression":
+            st.markdown("##### Poids ternaires (short / flat / long)")
+            _tw_col1, _tw_col2, _tw_col3 = st.columns(3)
+            with _tw_col1:
+                ml_ternary_weight_short = float(
+                    st.number_input(
+                        "Poids short",
+                        min_value=0.1,
+                        max_value=5.0,
+                        value=_session_state_float("pipeline_ml_ternary_weight_short", DEFAULT_ML_TERNARY_WEIGHT_SHORT),
+                        step=0.05,
+                        format="%.1f",
+                        key="pipeline_ml_ternary_weight_short",
+                        help="Poids de la classe short dans la CrossEntropyLoss ternaire (défaut: 1.0).",
+                    )
                 )
-            )
-        with _td_col2:
-            ml_ternary_threshold_long = float(
-                st.number_input(
-                    "Seuil long",
-                    min_value=0.10,
-                    max_value=0.90,
-                    value=_session_state_float("pipeline_ml_ternary_threshold_long", DEFAULT_ML_TERNARY_THRESHOLD_LONG),
-                    step=0.05,
-                    format="%.2f",
-                    key="pipeline_ml_ternary_threshold_long",
-                    help="p_long minimum pour autoriser un signal long (défaut: 0.45). Baisser pour réduire le flat.",
+            with _tw_col2:
+                ml_ternary_weight_flat = float(
+                    st.number_input(
+                        "Poids flat",
+                        min_value=0.1,
+                        max_value=5.0,
+                        value=_session_state_float("pipeline_ml_ternary_weight_flat", DEFAULT_ML_TERNARY_WEIGHT_FLAT),
+                        step=0.05,
+                        format="%.1f",
+                        key="pipeline_ml_ternary_weight_flat",
+                        help="Poids de la classe flat dans la CrossEntropyLoss ternaire (défaut: 1.5).",
+                    )
                 )
-            )
-        with _td_col3:
-            ml_ternary_top2_margin = float(
-                st.number_input(
-                    "Marge top-2",
-                    min_value=0.00,
-                    max_value=0.50,
-                    value=_session_state_float("pipeline_ml_ternary_top2_margin", DEFAULT_ML_TERNARY_TOP2_MARGIN),
-                    step=0.01,
-                    format="%.2f",
-                    key="pipeline_ml_ternary_top2_margin",
-                    help="Écart minimum entre la 1ère et 2ème proba (défaut: 0.05). 0 = pas de marge exigée.",
+            with _tw_col3:
+                ml_ternary_weight_long = float(
+                    st.number_input(
+                        "Poids long",
+                        min_value=0.1,
+                        max_value=5.0,
+                        value=_session_state_float("pipeline_ml_ternary_weight_long", DEFAULT_ML_TERNARY_WEIGHT_LONG),
+                        step=0.05,
+                        format="%.1f",
+                        key="pipeline_ml_ternary_weight_long",
+                        help="Poids de la classe long dans la CrossEntropyLoss ternaire (défaut: 1.0).",
+                    )
                 )
-            )
+
+            st.markdown("##### Seuils de décision ternaire (short / long / marge)")
+            _td_col1, _td_col2, _td_col3 = st.columns(3)
+            with _td_col1:
+                ml_ternary_threshold_short = float(
+                    st.number_input(
+                        "Seuil short",
+                        min_value=0.10,
+                        max_value=0.90,
+                        value=_session_state_float("pipeline_ml_ternary_threshold_short", DEFAULT_ML_TERNARY_THRESHOLD_SHORT),
+                        step=0.05,
+                        format="%.2f",
+                        key="pipeline_ml_ternary_threshold_short",
+                        help="p_short minimum pour autoriser un signal short (défaut: 0.45). Baisser pour réduire le flat.",
+                    )
+                )
+            with _td_col2:
+                ml_ternary_threshold_long = float(
+                    st.number_input(
+                        "Seuil long",
+                        min_value=0.10,
+                        max_value=0.90,
+                        value=_session_state_float("pipeline_ml_ternary_threshold_long", DEFAULT_ML_TERNARY_THRESHOLD_LONG),
+                        step=0.05,
+                        format="%.2f",
+                        key="pipeline_ml_ternary_threshold_long",
+                        help="p_long minimum pour autoriser un signal long (défaut: 0.45). Baisser pour réduire le flat.",
+                    )
+                )
+            with _td_col3:
+                ml_ternary_top2_margin = float(
+                    st.number_input(
+                        "Marge top-2",
+                        min_value=0.00,
+                        max_value=0.50,
+                        value=_session_state_float("pipeline_ml_ternary_top2_margin", DEFAULT_ML_TERNARY_TOP2_MARGIN),
+                        step=0.01,
+                        format="%.2f",
+                        key="pipeline_ml_ternary_top2_margin",
+                        help="Écart minimum entre la 1ère et 2ème proba (défaut: 0.05). 0 = pas de marge exigée.",
+                    )
+                )
 
         st.markdown("##### Walk-forward")
         ml_wf_col1, ml_wf_col2 = st.columns([1, 4])
