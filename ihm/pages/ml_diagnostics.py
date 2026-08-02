@@ -1570,7 +1570,7 @@ def render() -> None:
             st.info(f"✅ Aucun batch {_label}.")
 
     row_index = _selected_row_index(BATCH_TABLE_KEY)
-    if row_index is None:
+    if row_index is None or row_index >= len(batches_df):
         st.info("👆 Cliquez sur un batch dans le tableau ci-dessus pour afficher son détail et ses métriques.")
         return
 
