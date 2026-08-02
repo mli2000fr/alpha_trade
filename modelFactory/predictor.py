@@ -1141,32 +1141,42 @@ def _predict_with_tabular_model(
         _record_artifact_issue(symbol, reason=reason, path=model_path)
         raise ArtifactIntegrityError(reason, path=model_path) from exc
     try:
-        prediction_output = model.predict_proba(last_row[resolved_feature_columns])
-        raw_proba = _extract_positive_class_probability(
-            prediction_output,
-            symbol=symbol,
-            selected_model=selected_model,
-            model_path=model_path,
-            target_mode=data_cfg.target_mode,
-        )
-        # ── Ternaire tabulaire (P2 2026-06-30) ──────────────────────
-        # Les challengers LightGBM / CatBoost entraînés en ternaire
-        # produisent 3 colonnes [short, flat, long] → on extrait les
-        # 3 probas pour les persister dans model_predictions.
-        proba_all = np.asarray(prediction_output, dtype=float)
-        is_ternary_tab = (
-            data_cfg.target_mode == "ternary"
-            and proba_all.ndim == 2
-            and proba_all.shape[1] >= 3
-        )
-        if is_ternary_tab:
-            proba_short_val: float | None = float(proba_all[0, 0])
-            proba_flat_val: float | None = float(proba_all[0, 1])
-            proba_long_val: float | None = float(proba_all[0, 2])
-        else:
+        is_tab_regression = data_cfg.target_mode == "regression"
+        if is_tab_regression:
+            # ── Regression : score continu ──────────────────────────
+            prediction_output = model.predict(last_row[resolved_feature_columns])
+            raw_proba = float(np.asarray(prediction_output, dtype=float).reshape(-1)[0])
             proba_short_val = None
             proba_flat_val = None
             proba_long_val = None
+            is_ternary_tab = False
+        else:
+            prediction_output = model.predict_proba(last_row[resolved_feature_columns])
+            raw_proba = _extract_positive_class_probability(
+                prediction_output,
+                symbol=symbol,
+                selected_model=selected_model,
+                model_path=model_path,
+                target_mode=data_cfg.target_mode,
+            )
+            # ── Ternaire tabulaire (P2 2026-06-30) ──────────────────────
+            # Les challengers LightGBM / CatBoost entraînés en ternaire
+            # produisent 3 colonnes [short, flat, long] → on extrait les
+            # 3 probas pour les persister dans model_predictions.
+            proba_all = np.asarray(prediction_output, dtype=float)
+            is_ternary_tab = (
+                data_cfg.target_mode == "ternary"
+                and proba_all.ndim == 2
+                and proba_all.shape[1] >= 3
+            )
+            if is_ternary_tab:
+                proba_short_val: float | None = float(proba_all[0, 0])
+                proba_flat_val: float | None = float(proba_all[0, 1])
+                proba_long_val: float | None = float(proba_all[0, 2])
+            else:
+                proba_short_val = None
+                proba_flat_val = None
+                proba_long_val = None
     except ArtifactIntegrityError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1257,6 +1267,22 @@ def _predict_with_tabular_model(
                 symbol, selected_model, exc,
             )
             return None
+    elif is_tab_regression:
+        # ── Regression : décision basée sur le signe ─────────────────
+        if raw_proba > 0:
+            pred_class = 1
+            signal_label = "long"
+            predicted_side_val = "long"
+        elif raw_proba < 0:
+            pred_class = 0
+            signal_label = "short"
+            predicted_side_val = "short"
+        else:
+            pred_class = 0
+            signal_label = "no_trade"
+            predicted_side_val = None
+        decision_reason = None
+        proba = raw_proba  # score continu
     else:
         pred_class = 1 if proba >= effective_threshold else 0
         signal_label = "long" if pred_class == 1 else "no_trade"
@@ -1595,23 +1621,32 @@ def predict_symbol(
         try:
             logits, _ = model(x)
             logits_tensor = torch.as_tensor(logits)
-            if logits_tensor.ndim != 2 or logits_tensor.shape[0] < 1 or logits_tensor.shape[1] < 2:
-                raise ValueError(f"invalid_logits_shape={tuple(logits_tensor.shape)}")
             num_classes = logits_tensor.shape[1]
-            probs_all = torch.softmax(logits_tensor, dim=1)[0]  # [C]
-            is_ternary = num_classes == 3 or data_cfg.target_mode == "ternary"
-            if is_ternary and num_classes >= 3:
-                # Ternaire : classe 0=short, 1=flat, 2=long (apres label shift)
-                proba_long_val = probs_all[2].item()
-                proba_flat_val = probs_all[1].item()
-                proba_short_val = probs_all[0].item()
-                raw_proba = proba_long_val  # pour compatibilite binaire
-            else:
-                # Binaire : colonne 1 = classe positive (long)
-                raw_proba = probs_all[1].item()
+            is_regression = num_classes == 1 or data_cfg.target_mode == "regression"
+            if logits_tensor.ndim != 2 or logits_tensor.shape[0] < 1 or (not is_regression and logits_tensor.shape[1] < 2):
+                raise ValueError(f"invalid_logits_shape={tuple(logits_tensor.shape)}")
+            if is_regression:
+                # ── Regression : score continu ────────────────────────
+                raw_proba = float(logits_tensor[0, 0].item())
                 proba_long_val = None
                 proba_flat_val = None
                 proba_short_val = None
+                is_ternary = False
+            else:
+                probs_all = torch.softmax(logits_tensor, dim=1)[0]  # [C]
+                is_ternary = num_classes == 3 or data_cfg.target_mode == "ternary"
+                if is_ternary and num_classes >= 3:
+                    # Ternaire : classe 0=short, 1=flat, 2=long (apres label shift)
+                    proba_long_val = probs_all[2].item()
+                    proba_flat_val = probs_all[1].item()
+                    proba_short_val = probs_all[0].item()
+                    raw_proba = proba_long_val  # pour compatibilite binaire
+                else:
+                    # Binaire : colonne 1 = classe positive (long)
+                    raw_proba = probs_all[1].item()
+                    proba_long_val = None
+                    proba_flat_val = None
+                    proba_short_val = None
         except Exception as exc:  # noqa: BLE001
             reason = f"lstm_runtime_incompatible:{selected_architecture}"
             LOGGER.error("predict_symbol %s symbol=%s path=%s error=%s", reason, symbol, ckpt_path, exc)
@@ -1678,7 +1713,22 @@ def predict_symbol(
             LOGGER.warning("Temperature scaling failed symbol=%s: %s", symbol, _exc)
 
     pred_date = prediction_date or date.today()
-    if is_ternary and num_classes >= 3:
+    if is_regression:
+        # ── Regression : décision basée sur le signe ─────────────────
+        if raw_proba > 0:
+            pred_class = 1
+            signal_label = "long"
+            predicted_side_val = "long"
+        elif raw_proba < 0:
+            pred_class = 0
+            signal_label = "short"
+            predicted_side_val = "short"
+        else:
+            pred_class = 0
+            signal_label = "no_trade"
+            predicted_side_val = None
+        proba = raw_proba  # score continu
+    elif is_ternary and num_classes >= 3:
         # Le chemin LSTM consomme la même policy que les backends tabulaires.
         cal_short = calibrated_ternary_probs.get("proba_short", 0.0) or 0.0
         cal_flat = calibrated_ternary_probs.get("proba_flat", 0.0) or 0.0

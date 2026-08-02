@@ -43,17 +43,12 @@ def run_catboost_baseline(
 	if is_regression:
 		_CBClass = CatBoostRegressor
 		_loss = "RMSE"
-		_auto_weights = None
 	else:
 		_CBClass = CatBoostClassifier
 		_loss = "MultiClass" if cfg.data.target_mode == "ternary" else "Logloss"
-		_auto_weights = "Balanced"
 
-	return run_tabular_baseline(
-		prepared_df,
-		cfg,
-		model_name="catboost",
-		model_builder=lambda resolved_seed: _CBClass(
+	if is_regression:
+		_cb_builder = lambda resolved_seed: _CBClass(
 			depth=cfg.baseline.catboost_depth,
 			iterations=cfg.baseline.catboost_iterations,
 			learning_rate=cfg.baseline.catboost_learning_rate,
@@ -62,14 +57,37 @@ def run_catboost_baseline(
 			verbose=False,
 			train_dir=str(catboost_run_root / f"seed_{resolved_seed}"),
 			allow_writing_files=True,
-			auto_class_weights=_auto_weights,
 			l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
 			border_count=cfg.baseline.catboost_border_count,
 			random_strength=cfg.baseline.catboost_random_strength,
 			bagging_temperature=cfg.baseline.catboost_bagging_temperature,
 			od_type=cfg.baseline.catboost_od_type,
 			od_wait=cfg.baseline.catboost_od_wait,
-		),
+		)
+	else:
+		_cb_builder = lambda resolved_seed: _CBClass(
+			depth=cfg.baseline.catboost_depth,
+			iterations=cfg.baseline.catboost_iterations,
+			learning_rate=cfg.baseline.catboost_learning_rate,
+			random_seed=resolved_seed,
+			loss_function=_loss,
+			verbose=False,
+			train_dir=str(catboost_run_root / f"seed_{resolved_seed}"),
+			allow_writing_files=True,
+			auto_class_weights="Balanced",
+			l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
+			border_count=cfg.baseline.catboost_border_count,
+			random_strength=cfg.baseline.catboost_random_strength,
+			bagging_temperature=cfg.baseline.catboost_bagging_temperature,
+			od_type=cfg.baseline.catboost_od_type,
+			od_wait=cfg.baseline.catboost_od_wait,
+		)
+
+	return run_tabular_baseline(
+		prepared_df,
+		cfg,
+		model_name="catboost",
+		model_builder=_cb_builder,
 		artifact_dir=artifact_dir,
 		# Phase 4.2.c — format natif CatBoost (.cbm). Plus de pickle.
 		save_callback=lambda model, path: model.save_model(str(path)),

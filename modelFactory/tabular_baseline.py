@@ -258,17 +258,22 @@ def _compute_regression_metrics(
 ) -> dict[str, Any]:
 	"""Calcule les métriques de régression pour un modèle per-symbol.
 
+	Inclut le F1 macro binarisé (signe) pour comparabilité avec le mode ternaire.
+
 	Args:
 		pred: Prédictions continues du modèle [n_samples]
 		target: Target de régression (vol-scalé winsorizé) [n_samples]
 		future_return: Rendement futur brut [n_samples]
 
 	Returns:
-		dict avec mse, mae, correlation, directional_accuracy, etc.
+		dict avec mse, mae, correlation, directional_accuracy, ic, f1_macro, etc.
 	"""
 	valid = np.isfinite(pred) & np.isfinite(target)
 	if valid.sum() < 2:
-		return {"mse": 0.0, "mae": 0.0, "correlation": 0.0, "directional_accuracy": 0.0, "n_samples": int(valid.sum())}
+		return {"loss": 0.0, "mse": 0.0, "mae": 0.0, "correlation": 0.0, "directional_accuracy": 0.0, "n_samples": int(valid.sum()),
+		        "f1_macro": 0.0, "f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
+		        "true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
+		        "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0}
 
 	p = pred[valid]
 	t = target[valid]
@@ -287,7 +292,27 @@ def _compute_regression_metrics(
 	# IC (Information Coefficient) — corrélation entre prédiction et future_return
 	ic = float(np.corrcoef(p, f)[0, 1]) if len(p) > 2 else 0.0
 
+	# ── F1 macro binarisé (comparable au mode ternaire) ──
+	pred_side = np.select([p > 0, p < 0], [1, -1], default=0).astype(int)
+	true_side = np.select([f > 0, f < 0], [1, -1], default=0).astype(int)
+
+	pred_shifted = pred_side + 1  # {-1,0,1} → {0,1,2}
+	true_shifted = true_side + 1
+
+	f1_per_class: dict[str, float] = {}
+	for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+		tp = int(((pred_shifted == cls_idx) & (true_shifted == cls_idx)).sum())
+		fp = int(((pred_shifted == cls_idx) & (true_shifted != cls_idx)).sum())
+		fn = int(((pred_shifted != cls_idx) & (true_shifted == cls_idx)).sum())
+		prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+		rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+		f1_per_class[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
+
+	f1_values = [v for v in f1_per_class.values() if v is not None]
+	f1_macro = float(np.mean(f1_values)) if f1_values else 0.0
+
 	return {
+		"loss": mse,  # compatibilité avec insert_metrics (colonne loss = MSE pour regression)
 		"mse": mse,
 		"mae": mae,
 		"rmse": float(np.sqrt(mse)),
@@ -299,6 +324,14 @@ def _compute_regression_metrics(
 		"pred_std": float(np.std(p)),
 		"target_mean": float(np.mean(t)),
 		"target_std": float(np.std(t)),
+		"f1_macro": f1_macro,
+		**f1_per_class,
+		"true_short_pct": float((true_shifted == 0).mean() * 100),
+		"true_flat_pct": float((true_shifted == 1).mean() * 100),
+		"true_long_pct": float((true_shifted == 2).mean() * 100),
+		"pred_short_pct": float((pred_shifted == 0).mean() * 100),
+		"pred_flat_pct": float((pred_shifted == 1).mean() * 100),
+		"pred_long_pct": float((pred_shifted == 2).mean() * 100),
 	}
 
 
@@ -777,15 +810,43 @@ def run_tabular_walk_forward(
 			test_future = _test_df_r["future_return"].to_numpy() if "future_return" in _test_df_r.columns else None
 			valid = np.isfinite(test_pred) & np.isfinite(test_target)
 			n = int(valid.sum())
-			fold_m: dict[str, Any] = {"split_index": split.split_index, "train_rows": len(_train_df_r), "test_rows": len(_test_df_r), "n_valid": n}
+			fold_m: dict[str, Any] = {"split_index": split.split_index, "train_rows": len(_train_df_r), "test_rows": len(_test_df_r), "n_valid": n,
+			                          "f1_macro": 0.0, "f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
+			                          "true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
+			                          "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0}
 			if n >= 2:
 				p, t = test_pred[valid], test_target[valid]
+				f = test_future[valid] if test_future is not None else None
 				fold_m["mse"] = float(np.mean((p - t) ** 2))
 				fold_m["mae"] = float(np.mean(np.abs(p - t)))
 				fold_m["directional_accuracy"] = float(np.mean(np.sign(p) == np.sign(t)))
-				if test_future is not None:
-					f = test_future[valid]
+				if f is not None:
 					fold_m["ic"] = float(np.corrcoef(p, f)[0, 1]) if np.isfinite(f).sum() >= 2 else None
+					# ── F1 macro binarisé ──────────────────────────
+					_f_f1 = f
+				else:
+					_f_f1 = t
+				pred_side = np.select([p > 0, p < 0], [1, -1], default=0).astype(int)
+				true_side = np.select([_f_f1 > 0, _f_f1 < 0], [1, -1], default=0).astype(int)
+				pred_shifted = pred_side + 1
+				true_shifted = true_side + 1
+				f1_vals: dict[str, float] = {}
+				for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+					tp = int(((pred_shifted == cls_idx) & (true_shifted == cls_idx)).sum())
+					fp = int(((pred_shifted == cls_idx) & (true_shifted != cls_idx)).sum())
+					fn = int(((pred_shifted != cls_idx) & (true_shifted == cls_idx)).sum())
+					_prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+					_rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+					f1_vals[f"f1_{cls_name}"] = float(2 * _prec * _rec / (_prec + _rec) if (_prec + _rec) > 0 else 0.0)
+				fold_m.update(f1_vals)
+				_f1_list = [v for v in f1_vals.values() if v is not None]
+				fold_m["f1_macro"] = float(np.mean(_f1_list)) if _f1_list else 0.0
+				fold_m["true_short_pct"] = float((true_shifted == 0).mean() * 100)
+				fold_m["true_flat_pct"] = float((true_shifted == 1).mean() * 100)
+				fold_m["true_long_pct"] = float((true_shifted == 2).mean() * 100)
+				fold_m["pred_short_pct"] = float((pred_shifted == 0).mean() * 100)
+				fold_m["pred_flat_pct"] = float((pred_shifted == 1).mean() * 100)
+				fold_m["pred_long_pct"] = float((pred_shifted == 2).mean() * 100)
 			if "date" in _train_df_r.columns:
 				fold_m["train_start_date"] = str(_train_df_r["date"].min().date())
 				fold_m["train_end_date"] = str(_train_df_r["date"].max().date())
@@ -874,7 +935,10 @@ def run_tabular_walk_forward(
 
 	# ── Agrégation ──
 	if is_regression:
-		_keys = ["mse", "mae", "directional_accuracy", "ic"]
+		_keys = ["mse", "mae", "directional_accuracy", "ic",
+		         "f1_macro", "f1_short", "f1_flat", "f1_long",
+		         "true_short_pct", "true_flat_pct", "true_long_pct",
+		         "pred_short_pct", "pred_flat_pct", "pred_long_pct"]
 	else:
 		_keys = ["f1_macro", "f1_short", "f1_flat", "f1_long",
 				"true_short_pct", "true_flat_pct", "true_long_pct",

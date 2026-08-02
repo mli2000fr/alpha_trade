@@ -622,21 +622,57 @@ def _compute_metrics(
             return {"mse": 0.0, "mae": 0.0, "directional_accuracy": 0.0, "n_samples": n, "num_classes": 1}
         p = predictions[valid]
         t = target[valid]
+        f = future_returns[valid] if future_returns is not None else None
+
         mse = float(np.mean((p - t) ** 2))
         mae = float(np.mean(np.abs(p - t)))
         corr = float(np.corrcoef(p, t)[0, 1]) if n > 2 else 0.0
         dir_acc = float(np.mean(np.sign(p) == np.sign(t)))
-        ic = float(np.corrcoef(p, future_returns[valid])[0, 1]) if future_returns is not None and n > 2 else None
+        ic = float(np.corrcoef(p, f)[0, 1]) if f is not None and n > 2 else None
+
+        # ── F1 macro binarisé (comparable au mode ternaire) ──
+        # Prédictions : signe → short(-1) / flat(0) / long(+1)
+        pred_side = np.select([p > 0, p < 0], [1, -1], default=0).astype(int)
+        if f is not None:
+            true_side = np.select([f > 0, f < 0], [1, -1], default=0).astype(int)
+        else:
+            true_side = np.select([t > 0, t < 0], [1, -1], default=0).astype(int)
+
+        # Décale {-1,0,1} → {0,1,2}
+        pred_shifted = pred_side + 1
+        true_shifted = true_side + 1
+
+        f1_per_class: dict[str, float] = {}
+        for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+            tp = int(((pred_shifted == cls_idx) & (true_shifted == cls_idx)).sum())
+            fp = int(((pred_shifted == cls_idx) & (true_shifted != cls_idx)).sum())
+            fn = int(((pred_shifted != cls_idx) & (true_shifted == cls_idx)).sum())
+            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1_per_class[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
+
+        f1_values = [v for v in f1_per_class.values() if v is not None]
+        f1_macro = float(np.mean(f1_values)) if f1_values else 0.0
+
+        # Distributions
+        pred_dist = {
+            "pred_short_pct": float((pred_shifted == 0).mean() * 100),
+            "pred_flat_pct": float((pred_shifted == 1).mean() * 100),
+            "pred_long_pct": float((pred_shifted == 2).mean() * 100),
+        }
+        true_dist = {
+            "true_short_pct": float((true_shifted == 0).mean() * 100),
+            "true_flat_pct": float((true_shifted == 1).mean() * 100),
+            "true_long_pct": float((true_shifted == 2).mean() * 100),
+        }
+
         return {
             "loss": mse,
-            "mse": mse,
-            "mae": mae,
-            "rmse": float(np.sqrt(mse)),
-            "correlation": corr,
-            "directional_accuracy": dir_acc,
-            "ic": ic,
-            "n_samples": n,
-            "num_classes": 1,
+            "mse": mse, "mae": mae, "rmse": float(np.sqrt(mse)),
+            "correlation": corr, "directional_accuracy": dir_acc, "ic": ic,
+            "n_samples": n, "num_classes": 1,
+            "f1_macro": f1_macro, **f1_per_class,
+            **pred_dist, **true_dist,
         }
 
     if num_classes == 3:
@@ -1302,7 +1338,7 @@ def train_symbol(
 
         effective_cfg = cfg
         target_optimization_summary: dict[str, Any] = {}
-        if cfg.target_optimization.enabled:
+        if cfg.target_optimization.enabled and cfg.data.target_mode != "regression":
             target_optimization_summary = _prepare_target_optimization_summary(
                 bars_df=bars_df,
                 cfg=cfg,
@@ -1523,10 +1559,23 @@ def train_symbol(
             # LightGBM walk-forward
             if effective_cfg.walk_forward.enabled and baseline_metrics.get("status") == "completed":
                 from modelFactory.tabular_baseline import run_tabular_walk_forward
-                lgbm_wf = run_tabular_walk_forward(
-                    prepared_df, effective_cfg,
-                    model_name="lightgbm",
-                    model_builder=lambda seed: __import__("lightgbm").LGBMClassifier(
+                _is_reg = effective_cfg.data.target_mode == "regression"
+                if _is_reg:
+                    _lgbm_builder = lambda seed: __import__("lightgbm").LGBMRegressor(
+                        objective="regression",
+                        max_depth=effective_cfg.baseline.max_depth,
+                        num_leaves=effective_cfg.baseline.lgbm_num_leaves,
+                        n_estimators=effective_cfg.baseline.n_estimators,
+                        learning_rate=effective_cfg.baseline.learning_rate,
+                        random_state=seed, verbosity=-1,
+                        reg_alpha=effective_cfg.baseline.lgbm_reg_alpha,
+                        reg_lambda=effective_cfg.baseline.lgbm_reg_lambda,
+                        min_child_samples=effective_cfg.baseline.lgbm_min_child_samples,
+                        subsample=effective_cfg.baseline.lgbm_subsample,
+                        colsample_bytree=effective_cfg.baseline.lgbm_colsample_bytree,
+                    )
+                else:
+                    _lgbm_builder = lambda seed: __import__("lightgbm").LGBMClassifier(
                         objective="multiclass" if effective_cfg.data.target_mode == "ternary" else "binary",
                         num_class=3 if effective_cfg.data.target_mode == "ternary" else 1,
                         max_depth=effective_cfg.baseline.max_depth,
@@ -1540,7 +1589,11 @@ def train_symbol(
                         min_child_samples=effective_cfg.baseline.lgbm_min_child_samples,
                         subsample=effective_cfg.baseline.lgbm_subsample,
                         colsample_bytree=effective_cfg.baseline.lgbm_colsample_bytree,
-                    ),
+                    )
+                lgbm_wf = run_tabular_walk_forward(
+                    prepared_df, effective_cfg,
+                    model_name="lightgbm",
+                    model_builder=_lgbm_builder,
                     ternary_policy=_build_ternary_policy(effective_cfg),
                 )
                 if lgbm_wf.get("status") == "completed" and lgbm_wf.get("mean"):
@@ -1553,10 +1606,19 @@ def train_symbol(
             # CatBoost walk-forward
             if effective_cfg.walk_forward.enabled and catboost_metrics.get("status") == "completed":
                 from modelFactory.tabular_baseline import run_tabular_walk_forward
-                cb_wf = run_tabular_walk_forward(
-                    prepared_df, effective_cfg,
-                    model_name="catboost",
-                    model_builder=lambda seed: __import__("catboost").CatBoostClassifier(
+                _is_reg = effective_cfg.data.target_mode == "regression"
+                if _is_reg:
+                    _cb_builder = lambda seed: __import__("catboost").CatBoostRegressor(
+                        depth=effective_cfg.baseline.catboost_depth,
+                        iterations=effective_cfg.baseline.catboost_iterations,
+                        learning_rate=effective_cfg.baseline.catboost_learning_rate,
+                        random_seed=seed,
+                        loss_function="RMSE",
+                        verbose=False, allow_writing_files=False,
+                        l2_leaf_reg=effective_cfg.baseline.catboost_l2_leaf_reg,
+                    )
+                else:
+                    _cb_builder = lambda seed: __import__("catboost").CatBoostClassifier(
                         depth=effective_cfg.baseline.catboost_depth,
                         iterations=effective_cfg.baseline.catboost_iterations,
                         learning_rate=effective_cfg.baseline.catboost_learning_rate,
@@ -1565,7 +1627,11 @@ def train_symbol(
                         verbose=False, allow_writing_files=False,
                         auto_class_weights="Balanced",
                         l2_leaf_reg=effective_cfg.baseline.catboost_l2_leaf_reg,
-                    ),
+                    )
+                cb_wf = run_tabular_walk_forward(
+                    prepared_df, effective_cfg,
+                    model_name="catboost",
+                    model_builder=_cb_builder,
                     ternary_policy=_build_ternary_policy(effective_cfg),
                 )
                 if cb_wf.get("status") == "completed" and cb_wf.get("mean"):

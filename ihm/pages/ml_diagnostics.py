@@ -322,6 +322,47 @@ ZERO_F1_SHORT_CHAMPION_QUERY = """
     LIMIT 10
 """
 
+# ── Métriques régression (target continue) ──
+
+REG_BY_SPLIT_QUERY = """
+    SELECT
+        mm.model_name,
+        mm.split_name,
+        COUNT(DISTINCT mm.symbol) AS nb_symbols,
+        ROUND(AVG(mm.loss), 6) AS avg_mse,
+        ROUND(AVG(mm.directional_accuracy), 4) AS avg_dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.model_name != 'global_model'
+    GROUP BY mm.model_name, mm.split_name
+    ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+"""
+
+REG_TOP_QUERY = """
+    SELECT
+        mm.model_name, mm.symbol,
+        ROUND(mm.directional_accuracy, 4) AS dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
+    ORDER BY mm.directional_accuracy DESC LIMIT 10
+"""
+
+REG_WORST_QUERY = """
+    SELECT
+        mm.model_name, mm.symbol,
+        ROUND(mm.directional_accuracy, 4) AS dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
+    ORDER BY mm.directional_accuracy ASC LIMIT 10
+"""
+
 SYMBOL_METRICS_QUERY = """
     SELECT
         mm.split_name,
@@ -1025,13 +1066,73 @@ def _render_batch_detail(batch: pd.Series) -> None:
                 with cols_model[idx]:
                     st.metric(label=model_label, value=f"{count} ({pct})")
 
+    # ── Détection mode régression vs classification ──
+    # Régression : a des métriques, f1_macro est renseigné (calculé via binarisation),
+    # mais precision/recall/auc sont NULL (pas de calibration binaire).
+    _has_any_metrics = not safe_query(
+        "SELECT 1 FROM alpha_trade.model_metrics AS mm "
+        "JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id "
+        "WHERE mtr.batch_id = :bid AND mtr.status = 'completed' "
+        "AND mm.model_name != 'global_model' LIMIT 1",
+        {"bid": batch["batch_id"]},
+    ).empty
+    _is_reg_batch = _has_any_metrics and safe_query(
+        "SELECT COUNT(*) AS cnt FROM alpha_trade.model_metrics AS mm "
+        "JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id "
+        "WHERE mtr.batch_id = :bid AND mtr.status = 'completed' "
+        "AND mm.precision IS NULL AND mm.f1_macro IS NOT NULL AND mm.model_name != 'global_model'",
+        {"bid": batch["batch_id"]},
+    ).iloc[0]["cnt"] > 0
+    _has_classif = _has_any_metrics and safe_query(
+        "SELECT COUNT(*) AS cnt FROM alpha_trade.model_metrics AS mm "
+        "JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id "
+        "WHERE mtr.batch_id = :bid AND mtr.status = 'completed' "
+        "AND mm.precision IS NOT NULL AND mm.model_name != 'global_model'",
+        {"bid": batch["batch_id"]},
+    ).iloc[0]["cnt"] > 0
+
+    if _is_reg_batch:
+        # ── Bloc régression par split ──
+        st.subheader("📊 Métriques Régression par split")
+        reg_df = safe_query(REG_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})
+        if reg_df.empty:
+            st.info("Aucune métrique de régression disponible.")
+        else:
+            styled = reg_df.copy()
+            for col in ["avg_mse", "avg_dir_acc"]:
+                if col in styled.columns:
+                    styled[col] = styled[col].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "—")
+            styled = styled.rename(columns={
+                "model_name": "Modèle", "split_name": "Split",
+                "nb_symbols": "Nb symboles", "avg_mse": "MSE moy", "avg_dir_acc": "Dir Acc",
+            })
+            st.dataframe(_bold_wf_rows(styled), use_container_width=True, hide_index=True)
+        st.markdown("")
+
+        # ── Top / Flop Directional Accuracy ──
+        col_top_r, col_worst_r = st.columns(2)
+        with col_top_r:
+            st.markdown("**🥇 10 meilleurs `directional_accuracy` (WF)**")
+            rtop = safe_query(REG_TOP_QUERY, {"batch_id": batch["batch_id"]})
+            if not rtop.empty:
+                st.dataframe(rtop, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Aucune donnée.")
+        with col_worst_r:
+            st.markdown("**🥉 10 plus mauvais `directional_accuracy` (WF)**")
+            rworst = safe_query(REG_WORST_QUERY, {"batch_id": batch["batch_id"]})
+            if not rworst.empty:
+                st.dataframe(rworst, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Aucune donnée.")
+        st.markdown("")
+
     # ── Bloc F1 par split ──
     st.subheader("📊 Métriques F1 par split")
     f1_df = safe_query(F1_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})
     if f1_df.empty:
         st.info("Aucune métrique F1 disponible pour ce batch (vérifiez que les runs sont `completed`).")
     else:
-        # Formater les colonnes numériques
         styled = f1_df.copy()
         for col in ["avg_f1_macro", "avg_f1_short", "avg_f1_flat", "avg_f1_long"]:
             if col in styled.columns:

@@ -194,11 +194,11 @@ Si > 0 : garde les **top N par volume moyen** ou stratifié par déciles.
 
 ### 4.1 Objectif
 
-Pour **chaque symbole** de l'univers, entraîner un modèle qui prédit la direction (long/short/flat).
+Pour **chaque symbole** de l'univers, entraîner un modèle qui prédit la direction (long/short/flat) ou un score continu (regression).
 
 **Modèles** : LSTM Attention, LightGBM, CatBoost (3 challengers par symbole)  
-**Target** : `future_return` (binaire ou ternaire selon config)  
-**Métrique** : **F1 macro** (moyenne de F1 short, F1 flat, F1 long)
+**Target** : `future_return` (binaire, ternaire, ou regression selon config)  
+**Métrique** : **F1 macro** (moyenne de F1 short, F1 flat, F1 long) — y compris en mode regression où le F1 est calculé par binarisation du signe
 
 ### 4.2 Mode ternaire (3 classes)
 
@@ -213,11 +213,34 @@ Décision :
 
 Seuils : `ternary_threshold_short` (0.35), `ternary_threshold_long` (0.35), `top2_margin` (0.02).
 
-### 4.3 Walk-Forward
+### 4.3 Mode regression (continu)
+
+Ajouté le 2026-08-02. La target n'est plus discrète (long/short/flat) mais continue :
+
+```
+1. Rendement forward brut : future_return = close[t+h] / close[t] - 1
+2. Vol scaling (h ≥ 5)   : target = future_return / rolling_vol_20
+3. Winsorization          : clip 1%/99% par symbole
+```
+
+**Spécificités** :
+- **Modèle** : `num_classes=1` → 1 neurone de sortie, loss **MSE** (pas CrossEntropy)
+- **Métriques** : MSE, MAE, corrélation, directional accuracy, IC
+- **F1 comparable** : binarisation du signe — `sign(pred)` vs `sign(future_return)` → classes {-1,0,1} → F1 macro identique au mode ternaire
+- **Décision** : score > 0 → LONG, score < 0 → SHORT, score ≈ 0 → FLAT
+- **Calibration** : désactivée (pas de Platt sur une régression)
+- **Pas de threshold optimization** : ignorée automatiquement
+
+**Avantages vs ternaire** :
+- Pas de seuils arbitraires (up_threshold/down_threshold) — le modèle apprend la magnitude
+- La force du signal est directement utilisable (pas juste une probabilité)
+- Comparaison équitable avec le ternaire grâce au F1 binarisé
+
+### 4.4 Walk-Forward
 
 Mêmes splits que le Global Ranking. Chaque split produit des métriques sur train/val/test, agrégées en fin de boucle.
 
-### 4.4 Stacking (injection des rangs globaux) ⚠️ Contre-indiqué
+### 4.5 Stacking (injection des rangs globaux) ⚠️ Contre-indiqué
 
 Quand `global_model.stacking_enabled = True` :
 
@@ -244,7 +267,7 @@ Le modèle per-symbol voit donc les rangs cross-sectionnels comme features suppl
 > **Recommandation** : laisser `stacking_enabled = false`. Le Global Ranking
 > et le Per-Symbol jouent des rôles distincts dans la cascade de trading (§7.2).
 
-### 4.5 Limitation per-symbol (test rapide)
+### 4.6 Limitation per-symbol (test rapide)
 
 Paramètre `--per-symbol-max-symbols` (défaut: 0 = tous).  
 Si > 0 : garde les **top N par volume moyen**, avant l'entraînement per-symbol.  
@@ -363,7 +386,7 @@ Pour chaque symbole avec global_rank ET per-symbol prediction :
 5. Trié par score décroissant
 ```
 
-### 7.3 Conversion proba → décision
+### 7.3 Conversion proba/score → décision
 
 **Mode binaire** :
 ```
@@ -376,6 +399,17 @@ TernaryDecisionPolicy :
   si proba_long > threshold_long (0.35) ET proba_long - proba_flat > top2_margin → LONG
   si proba_short > threshold_short (0.35) ET proba_short - proba_flat > top2_margin → SHORT
   sinon → FLAT
+```
+
+**Mode regression** :
+```
+Décision au signe :
+  si score > 0  → LONG  (pred_class=1, signal_label="long")
+  si score < 0  → SHORT (pred_class=0, signal_label="short")
+  si score ≈ 0  → FLAT  (pred_class=0, signal_label="no_trade")
+
+Le score continu est stocké dans predicted_proba et raw_proba.
+Pas de seuil de décision (decision_threshold ignoré).
 ```
 
 ---
@@ -431,7 +465,7 @@ L'IC Per-Symbol permet de comparer deux batchs :
 |-----------|--------|-------------|
 | `forecast_horizon` | 10 | Horizon de prédiction (jours) |
 | `feature_set` | `expert` | `v1` ou `expert` (plus de features) |
-| `target_mode` | `ternary` | `binary` ou `ternary` (3 classes) |
+| `target_mode` | `ternary` | `binary`, `ternary`, ou `regression` (score continu) |
 | `global_ranking_max_symbols` | 300 | Limite symboles Global Ranking (0 = tous) |
 | `per_symbol_max_symbols` | 0 | Limite symboles Per-Symbol (0 = tous) |
 | `wf_max_splits` | **8** | Nombre de splits walk-forward (optimal P1) |
@@ -654,6 +688,71 @@ stock_fundamentals_daily
 10. **H3/H5 viables** : IC IR > 1.0, H5 exploitable pour trading 5j.
 11. **Target post-split** : l'unique source de leakage était le shift pré-split — corrigé, le pipeline est étanche.
 12. **8 splits > 13 splits** (post-leakage) : moins de chevauchement → meilleure généralisation, IC +40%.
+
+---
+
+## 12. Questions / Réponses
+
+### Q1 : Comment comparer réellement la performance entre le mode ternaire et le mode regression ?
+
+Les métriques des deux modes sont **directement comparables** car le F1 est calculé de la même façon dans les deux cas : par binarisation du signe. Cependant, il y a des pièges à éviter.
+
+#### ⚠️ Ne pas utiliser `f1_macro` pour comparer
+
+En mode regression, le F1 est calculé ainsi :
+
+```
+pred_side = sign(pred)         → +1 (long), -1 (short), 0 (flat)
+true_side = sign(future_return) → +1, -1, 0
+```
+
+Or un modèle de régression ne prédit **jamais exactement 0.0** (sortie continue). Donc :
+
+| Classe | Regression | Ternaire |
+|--------|-----------|----------|
+| `f1_long` | ✅ Comparable | ✅ Comparable |
+| `f1_short` | ✅ Comparable | ✅ Comparable |
+| `f1_flat` | ❌ Toujours ~0 | ✅ Peut être >0 |
+| `f1_macro` | ❌ Mécaniquement tiré vers le bas | ✅ Correct |
+
+→ **`f1_macro` est systématiquement plus bas en regression**, ce qui ne reflète pas une moins bonne performance mais un artefact de la binarisation.
+
+#### ✅ Métriques recommandées pour la comparaison
+
+| Métrique | Signification | Disponible |
+|----------|--------------|------------|
+| **`f1_long`** | Capacité à identifier les jours haussiers | LSTM + baselines |
+| **`f1_short`** | Capacité à identifier les jours baissiers | LSTM + baselines |
+| **`directional_accuracy`** | % de jours où sign(pred) = sign(future_return) | LSTM + baselines |
+| **`ic`** (Information Coefficient) | Corrélation prédiction vs rendement futur | LSTM + baselines |
+| **`mse`** / **`mae`** | Erreur de prédiction absolue | Regression seulement |
+| **`correlation`** | Corrélation pred vs target continue | Regression seulement |
+
+#### Exemple de comparaison
+
+```
+Modèle A (ternaire) :  f1_long=0.35, f1_short=0.28, f1_flat=0.25, f1_macro=0.293
+Modèle B (regression): f1_long=0.37, f1_short=0.30, f1_flat=0.00, f1_macro=0.223
+
+→ f1_macro : A gagne (0.293 vs 0.223) ← ⚠️ trompeur!
+→ f1_long  : B gagne (0.37 vs 0.35)   ← ✅ vrai signal
+→ f1_short : B gagne (0.30 vs 0.28)   ← ✅ vrai signal
+→ IC       : B (0.045) vs A (0.038)    ← ✅ B mieux corrélé aux rendements
+
+Conclusion : B (regression) est meilleur en signal directionnel pur.
+```
+
+#### 🏆 Critère de décision final
+
+| Si tu veux... | Utilise |
+|---------------|---------|
+| Un signal directionnel fort (long/short) | `f1_long` + `f1_short` → le meilleur gagne |
+| Un score de confiance continu (forces de conviction) | Regression (le score est directement la force du signal) |
+| Rester neutre souvent (frais de transaction réduits) | Ternaire (la classe flat est activement apprise) |
+| Éviter les seuils arbitraires (up/down_threshold) | Regression (pas de seuils, le modèle apprend la magnitude) |
+
+> **Règle pratique** : si `f1_long` et `f1_short` sont plus élevés en regression qu'en ternaire,
+> la regression est objectivement meilleure — ignore `f1_macro` et `f1_flat`.
 13. **Smoothing conservé avec 8 splits** : contre-productif avec 13 splits (dilution), bénéfique avec 8 splits (signal frais +31% H10).
 14. **LightGBM LambdaRank confirmé inférieur** : régimes ignorés (imp 0.0), IC −38% vs CatBoost.
 15. **Pas besoin de retester les 18 pistes** : le leakage était proportionnel (33% constant). Les classements relatifs tiennent. Seuls smoothing, splits et LambdaRank interagissaient avec le mécanisme de leakage.
