@@ -693,7 +693,7 @@ stock_fundamentals_daily
 
 ## 12. Questions / Réponses
 
-### Q1 : Comment comparer réellement la performance entre le mode ternaire et le mode regression ?
+### Q1 : Per-Symbol, Comment comparer réellement la performance entre le mode ternaire et le mode regression ?
 
 Les métriques des deux modes sont **directement comparables** car le F1 est calculé de la même façon dans les deux cas : par binarisation du signe. Cependant, il y a des pièges à éviter.
 
@@ -753,6 +753,78 @@ Conclusion : B (regression) est meilleur en signal directionnel pur.
 
 > **Règle pratique** : si `f1_long` et `f1_short` sont plus élevés en regression qu'en ternaire,
 > la regression est objectivement meilleure — ignore `f1_macro` et `f1_flat`.
+
+### Q2 : Per-Symbol, Comment savoir si les scores de regression sont bons ou mauvais ?
+
+Les métriques de regression (MSE, MAE, IC, directional accuracy) n'ont pas la même échelle
+que le F1 (0 à 1). Voici comment les interpréter.
+
+#### 📊 Les métriques et leurs seuils
+
+| Métrique | Excellent | Correct | Faible | Inutilisable | Signification |
+|----------|-----------|---------|--------|--------------|---------------|
+| **MSE** | < 0.5 | 0.5 – 1.5 | 1.5 – 3.0 | > 3.0 | Erreur quadratique moyenne sur la target vol-scalée |
+| **MAE** | < 0.5 | 0.5 – 1.0 | 1.0 – 1.5 | > 1.5 | Erreur absolue moyenne |
+| **Directional Accuracy** | > 0.54 | 0.51 – 0.54 | 0.50 – 0.51 | < 0.50 | % de signes corrects (pire que le hasard si < 0.50) |
+| **IC** | > 0.03 | 0.01 – 0.03 | 0.00 – 0.01 | < 0.00 | Corrélation pred vs future_return |
+| **Correlation** | > 0.10 | 0.03 – 0.10 | 0.00 – 0.03 | < 0.00 | Corrélation pred vs target continue |
+
+#### 🔍 Diagnostic rapide
+
+**1. Vérifie d'abord le « modèle nul »**
+
+Un modèle naïf qui prédit toujours 0 (ou la moyenne) donne :
+
+$$MSE_{nul} = Var(target) \approx 0.5 \text{ à } 1.5$$
+
+Si ton MSE > 2.0 → le modèle fait **pire que de ne rien prédire**. Il est cassé.
+
+**2. Vérifie la directional accuracy**
+
+```
+directional_accuracy > 0.50 → le modèle bat le pile-ou-face
+directional_accuracy > 0.53 → signal exploitable
+directional_accuracy > 0.55 → très bon
+```
+
+C'est la métrique la plus intuitive : quel % du temps le signe prédit est-il correct ?
+
+**3. Vérifie la cohérence entre les métriques**
+
+| Situation | Diagnostic |
+|-----------|-----------|
+| MSE bas + IC élevé + dir_acc > 0.53 | ✅ Modèle sain, signal réel |
+| MSE élevé (>3) + dir_acc > 0.52 | 🟡 Le modèle capte la direction mais pas la magnitude — acceptable |
+| MSE bas (<1) + dir_acc < 0.50 | 🟡 Le modèle fit bien la target mais prédit le mauvais signe — inutilisable en trading |
+| MSE bas + IC élevé + dir_acc ≈ 0.50 | 🟡 Le modèle prédit bien le rang cross-sectionnel mais pas la direction absolue |
+| MSE > 5 | ❌ Modèle non convergé, erreur d'échelle, ou target mal normalisée |
+
+#### 📐 Comprendre l'échelle de la target
+
+La target regression est un rendement forward **divisé par la volatilité 20j** puis winsorizé :
+
+```
+future_return ≈ ±2% à ±8% sur 10j
+vol_20j       ≈ 1.5% à 3% par jour
+target        ≈ future_return / vol_20j ≈ ±0.5 à ±5
+Après winsorize 1%/99%                ≈ ±2 à ±3 (valeurs extrêmes coupées)
+```
+
+Donc une **MAE de 1.0** signifie que le modèle se trompe en moyenne de 1 unité de vol — soit environ 2% de rendement pour un titre à vol 2%. C'est beaucoup mais pas aberrant pour un modèle financier.
+
+#### 🎯 Combinaison gagnante
+
+Un bon modèle regression doit avoir **simultanément** :
+
+```
+MSE < 1.5          (erreur contenue)
+directional_accuracy > 0.52  (direction fiable)
+IC > 0.01           (bon classement cross-sectionnel)
+f1_long > 0.25      (détection haussière)
+f1_short > 0.20     (détection baissière)
+```
+
+Si UNE SEULE de ces conditions manque, le modèle n'est pas exploitable en l'état.
 13. **Smoothing conservé avec 8 splits** : contre-productif avec 13 splits (dilution), bénéfique avec 8 splits (signal frais +31% H10).
 14. **LightGBM LambdaRank confirmé inférieur** : régimes ignorés (imp 0.0), IC −38% vs CatBoost.
 15. **Pas besoin de retester les 18 pistes** : le leakage était proportionnel (33% constant). Les classements relatifs tiennent. Seuls smoothing, splits et LambdaRank interagissaient avec le mécanisme de leakage.
