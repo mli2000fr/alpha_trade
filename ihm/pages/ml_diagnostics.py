@@ -878,50 +878,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     st.markdown("")
 
-    # ── IC Cross-Sectionnel Per-Symbol (tableau) ──
-    _meta_raw = row.get("metadata_json")
-    if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
-        try:
-            _meta_ps = _json.loads(str(_meta_raw))
-            _ps_ic = _meta_ps.get("per_symbol_ic") if isinstance(_meta_ps, dict) else None
-            if isinstance(_ps_ic, dict) and any(
-                isinstance(v, dict) and "ic_mean" in v for v in _ps_ic.values()
-            ):
-                st.subheader("🔬 IC Cross-Sectionnel — Modèles Per-Symbol")
-                _ps_rows = []
-                for _h_key in sorted(_ps_ic.keys(), key=lambda x: int(x)):
-                    _h_info = _ps_ic[_h_key]
-                    _h_ic = _h_info.get("ic_mean")
-                    if _h_ic is None:
-                        continue
-                    _h_std = _h_info.get("ic_std")
-                    _h_n = _h_info.get("n_dates", "—")
-                    _ps_rows.append({
-                        "Horizon": f"H{_h_key}",
-                        "IC Mean": round(float(_h_ic), 4),
-                        "IC IR": round(float(_h_ic) / float(_h_std), 2) if _h_std and float(_h_std) > 0 else "—",
-                        "Nb Dates": _h_n,
-                    })
-                if _ps_rows:
-                    _ps_df = pd.DataFrame(_ps_rows)
-                    st.dataframe(
-                        _ps_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Horizon": "Horizon",
-                            "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
-                            "IC IR": st.column_config.NumberColumn("📈 IC IR", format="%.2f"),
-                            "Nb Dates": "Nb Dates",
-                        },
-                    )
-                    st.caption(
-                        "IC Rank cross-sectionnel des modèles per-symbol (agrégés). "
-                        ">0.01 = utile, >0.02 = bon. IC IR > 0.5 = stable."
-                    )
-        except Exception:
-            pass
-
     # ── Statut sélection du champion ──
     champion_df = safe_query(
         """SELECT mg.selection_mode, COUNT(DISTINCT mg.symbol) AS nb_symbols
@@ -1301,7 +1257,7 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
 
     st.subheader("🌐 Global Ranking — Détails par Horizon")
     st.caption(
-        f"Modèle LightGBM LambdaRank — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )

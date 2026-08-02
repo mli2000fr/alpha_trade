@@ -260,7 +260,7 @@ def _append_global_ranking_horizon_details(
     lines.append("## 🌐 Global Ranking — Détails par Horizon")
     lines.append("")
     lines.append(
-        f"Modèle LightGBM LambdaRank — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )
@@ -358,80 +358,6 @@ def _append_global_ranking_horizon_details(
             lines.append("")
 
 
-def _append_per_symbol_ic(
-    lines: list[str],
-    metadata_json_str: str | None,
-) -> None:
-    """Ajoute la section IC cross-sectionnel des modèles per-symbol (multi-horizon)."""
-    if not metadata_json_str or str(metadata_json_str) in ("None", "nan", ""):
-        return
-
-    try:
-        _meta = json.loads(str(metadata_json_str))
-    except (json.JSONDecodeError, TypeError):
-        return
-
-    _ps_ic = _meta.get("per_symbol_ic")
-    if not _ps_ic or not isinstance(_ps_ic, dict):
-        return
-
-    # Détection format : multi-horizon {"3": {...}, "5": {...}} ou single {"ic_mean": ...}
-    _first_val = next(iter(_ps_ic.values()), None)
-    if isinstance(_first_val, dict) and "ic_mean" in _first_val:
-        # Format multi-horizon
-        _horizons = sorted(_ps_ic.keys(), key=lambda x: int(x))
-        lines.append("## 🔬 IC Cross-Sectionnel — Modèles Per-Symbol")
-        lines.append("")
-        _ps_rows = []
-        for _h_key in _horizons:
-            _h_info = _ps_ic[_h_key]
-            _h_ic = _h_info.get("ic_mean")
-            if _h_ic is None:
-                continue
-            _h_std = _h_info.get("ic_std")
-            _h_n = _h_info.get("n_dates", "—")
-            _ps_rows.append({
-                "Horizon": f"H{_h_key}",
-                "IC Mean": _h_ic,
-                "IC IR": round(_h_ic / float(_h_std), 2) if _h_std and float(_h_std) > 0 else "—",
-                "Nb Dates": _h_n,
-            })
-        if _ps_rows:
-            lines.append(_df_to_md(pd.DataFrame(_ps_rows)))
-        lines.append(
-            "L'IC Rank cross-sectionnel mesure la capacité des **modèles per-symbol** "
-            "(une fois agrégés) à classer les actions par rendement futur. "
-            ">0.01 = utile, >0.02 = bon. "
-            "À comparer avec l'IC Rank du **Global Ranking Model** pour évaluer "
-            "la valeur ajoutée du stacking."
-        )
-        lines.append("")
-        return
-
-    # Format single-horizon (rétro-compatibilité)
-    _ic_mean = _ps_ic.get("ic_mean")
-    if _ic_mean is None:
-        return
-
-    _ic_std = _ps_ic.get("ic_std")
-    _n_dates = _ps_ic.get("n_dates", "—")
-    _horizon = _ps_ic.get("horizon", 5)
-
-    lines.append("## 🔬 IC Cross-Sectionnel — Modèles Per-Symbol")
-    lines.append("")
-    lines.append(f"- **IC Rank Per-Symbol (H{_horizon})** : {_ic_mean:.4f}")
-    if _ic_std is not None and float(_ic_std) > 0:
-        _ir = _ic_mean / float(_ic_std)
-        lines.append(f"- **IC IR (Stabilité)** : {_ir:.2f}")
-    lines.append(f"- **Nb dates** : {_n_dates}")
-    lines.append("")
-    lines.append(
-        "L'IC Rank cross-sectionnel mesure la capacité des **modèles per-symbol** "
-        "(une fois agrégés) à classer les actions par rendement futur. "
-        ">0.01 = utile, >0.02 = bon. "
-        "À comparer avec l'IC Rank du **Global Ranking Model** pour évaluer "
-        "la valeur ajoutée du stacking."
-    )
     lines.append("")
 
 
@@ -561,7 +487,7 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     _append_global_ranking_horizon_details(lines, str(_meta_raw) if _meta_raw is not None else None)
 
     # ── Per-Symbol Cross-Sectional IC ──
-    _append_per_symbol_ic(lines, str(_meta_raw) if _meta_raw is not None else None)
+    # ── IC Cross-Sectionnel Per-Symbol — retiré (métrique non pertinente) ──
 
     # ── Métriques F1 par split ──
     lines.append("## 📊 Métriques F1 par split")
