@@ -629,16 +629,16 @@ stock_fundamentals_daily
 > **Interaction smoothing × splits** : avec 13 splits (83% chevauchement), le smoothing dilue.
 > Avec 8 splits (régimes distincts), il apporte +31% sur H10. Les deux sont complémentaires.
 
-### 11.3 Métriques finales (P1 étanche, 8 splits × 252j, smoothing ON)
+### 11.3 Métriques finales (P1 étanche, 8 splits, smoothing ON, Z-score fondamentales)
 
 | Métrique | H3 | H5 | H10 | H15 | H20 | Global |
 |----------|----|----|-----|-----|-----|--------|
-| IC Mean | 0.0129 | **0.0130** | 0.0219 | 0.0241 | 0.0238 | **0.0194** |
-| IC IR | 1.46 | **1.40** | 2.01 | 1.72 | 1.79 | — |
-| Decile Spread | 0.0116 | 0.0133 | 0.0215 | 0.0213 | 0.0253 | — |
+| IC Mean | 0.0129 | **0.0120** | 0.0211 | 0.0239 | 0.0251 | **0.0190** |
+| IC IR | 1.46 | **1.19** | 1.69 | 2.28 | 2.76 | — |
+| Decile Spread | 0.0116 | 0.0147 | 0.0238 | 0.0247 | 0.0260 | — |
 
 > Baseline P1 réel (504j, H10 brut) = 0.0084 / IR 0.30.
-> Pipeline target ×2.3, 8 splits + smoothing +40%, IR ÷6 vs baseline.
+> Pipeline target ×2.3, 8 splits +40%, Z-score stabilise H15/H20.
 
 ### 11.4 Leçons apprises
 
@@ -657,6 +657,8 @@ stock_fundamentals_daily
 13. **Smoothing conservé avec 8 splits** : contre-productif avec 13 splits (dilution), bénéfique avec 8 splits (signal frais +31% H10).
 14. **LightGBM LambdaRank confirmé inférieur** : régimes ignorés (imp 0.0), IC −38% vs CatBoost.
 15. **Pas besoin de retester les 18 pistes** : le leakage était proportionnel (33% constant). Les classements relatifs tiennent. Seuls smoothing, splits et LambdaRank interagissaient avec le mécanisme de leakage.
+16. **Z-score fondamentales** : stabilise H15/H20 (IR +54%), léger trade-off sur H5.
+17. **Blending inutile** : horizons trop corrélés, ne dépasse pas le meilleur horizon individuel.
 
 ### 11.5 Audit Data Leakage (2026-08-01) — ✅ RÉSOLU
 
