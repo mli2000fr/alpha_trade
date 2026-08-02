@@ -1004,15 +1004,6 @@ def run_training_batch(
                 LOGGER.warning("run_training_batch horizon_details persist failed: %s", exc)
 
         # ── Per-Symbol IC retiré (métrique non pertinente, 2026-08-02) ──
-                else:
-                    LOGGER.warning(
-                        "run_training_batch per_symbol_ic no data batch_id=%s (no _per_symbol_wf_preds found)", batch_id,
-                    )
-            except Exception as exc:
-                LOGGER.warning(
-                    "run_training_batch per_symbol_ic failed batch_id=%s error=%s",
-                    batch_id, exc,
-                )
 
     return results
 

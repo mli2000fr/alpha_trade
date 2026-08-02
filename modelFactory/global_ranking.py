@@ -1244,6 +1244,18 @@ def train_global_ranking_wf(
         ic_mean if ic_mean is not None else float("nan"),
     )
 
+    # ── Sauvegarder global_rank_df en parquet pour backtest ──
+    if not global_rank_df.empty:
+        try:
+            _cache_path = Path(cfg.artifacts_dir) / "global_rank_cache.parquet"
+            global_rank_df.to_parquet(_cache_path, index=False)
+            LOGGER.info(
+                "train_global_ranking_wf cached %d rows to %s",
+                len(global_rank_df), _cache_path,
+            )
+        except Exception as _exc:
+            LOGGER.warning("train_global_ranking_wf failed to cache ranks: %s", _exc)
+
     # ── Sauvegarder les métadonnées features ──
     _model_dir = Path(cfg.artifacts_dir)
     _model_dir.mkdir(parents=True, exist_ok=True)

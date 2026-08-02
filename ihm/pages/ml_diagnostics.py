@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json as _json
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -19,6 +20,70 @@ from modelFactory.report import generate_batch_report
 # ---------------------------------------------------------------------------
 # Helper — mise en gras des lignes walk-forward dans les tableaux
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Backtest Global Rank (V1/V2/V3) — logique partagée
+# ---------------------------------------------------------------------------
+
+_REBALANCE_DAYS = 20
+_TOP_PCT = 0.70
+_H5_DIP = 0.35
+_TRANSACTION_COST_BPS = 25.0
+_MAX_POSITIONS = 30
+
+
+def _run_strategy_backtest(rank_df: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """Exécute les 3 variantes de stratégie sur un DataFrame de rangs.
+
+    Returns:
+        dict {variante: {sharpe, ann_return, ann_vol, max_drawdown}}.
+    """
+    _df = rank_df.sort_values(["date", "symbol"]).copy()
+    _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
+    _all_dates = sorted(_df["date"].unique())
+    _rebal_dates = _all_dates[::_REBALANCE_DAYS]
+    _results: dict[str, dict[str, float]] = {}
+
+    for _label, _filter_fn in [
+        ("V1 — H20 seul", lambda d: d["global_rank_20"] > _TOP_PCT),
+        ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+        ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] < _H5_DIP)),
+    ]:
+        _positions: dict[str, float] = {}
+        _daily_rets = {}
+        _turnover = 0
+        for _d in _all_dates:
+            _day = _df[_df["date"] == _d].set_index("symbol")
+            _day_sig = _filter_fn(_day)
+            if _d in _rebal_dates or not _positions:
+                _candidates = _day.loc[_day_sig].sort_values("global_rank_20", ascending=False)
+                if _positions:
+                    _turnover += len(_positions)
+                _positions = {}
+                for _s in _candidates.index[:_MAX_POSITIONS]:
+                    _positions[_s] = float(_candidates.loc[_s, "global_rank_20"])
+                _turnover += len(_positions)
+            _held = [s for s in _positions if s in _day.index]
+            _daily_rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+
+        _rets = pd.Series(_daily_rets).sort_index()
+        _cost = (_TRANSACTION_COST_BPS / 10000.0) * _turnover / len(_all_dates)
+        _rets = _rets - _cost / _REBALANCE_DAYS
+        _excess = _rets - 0.02 / 252
+        _mean = float(_excess.mean())
+        _std = float(_excess.std())
+        _sharpe = float(_mean / _std * np.sqrt(252)) if _std > 0 else 0.0
+        _cum = (1 + _rets).cumprod()
+        _dd = float((_cum / _cum.cummax() - 1).min())
+        _results[_label] = {
+            "sharpe": _sharpe,
+            "ann_return": float(_mean * 252),
+            "ann_vol": float(_std * np.sqrt(252)),
+            "max_drawdown": _dd,
+        }
+
+    return _results
+
 
 def _bold_wf_rows(df: pd.DataFrame):
     """Retourne un Styler pandas avec les lignes walk-forward en gras.
@@ -877,6 +942,40 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.code(str(cmd), language="powershell")
 
     st.markdown("")
+
+    # ── Backtest Global Rank Strategies (V1/V2/V3) ──
+    with st.expander("🧪 Backtest Stratégies Global Rank (H20 + H5)", expanded=False):
+        _batch_id = str(row["batch_id"])
+        _cache_path = Path(get_model_artifacts_dir()) / _batch_id / "global_rank_cache.parquet"
+        if _cache_path.exists():
+            if st.button("🚀 Lancer le backtest", key=f"backtest_{_batch_id}"):
+                try:
+                    import numpy as np
+                    _rank_df = pd.read_parquet(_cache_path)
+                    _rank_df["date"] = pd.to_datetime(_rank_df["date"])
+                    _results = _run_strategy_backtest(_rank_df)
+                    if _results:
+                        st.markdown("### 📊 Classement relatif des stratégies")
+                        _best = max(_results, key=lambda v: _results[v]["sharpe"])
+                        _rows = []
+                        for _v, _m in _results.items():
+                            _pct = f"{(_m['sharpe'] / _results[_best]['sharpe'] - 1) * 100:+.1f}%" if _v != _best else "🏆 référence"
+                            _rows.append({"Variante": _v, "Score relatif": _pct})
+                        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+                        st.success(f"🏆 Meilleure stratégie : **{_best}**")
+                        st.caption(
+                            "Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
+                            "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
+                            "Frais 0.25% A/R inclus. "
+                            "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
+                        )
+                except Exception as _exc:
+                    st.error(f"Échec du backtest : {_exc}")
+        else:
+            st.info(
+                "Cache `global_rank_cache.parquet` non trouvé. "
+                "Relancez un batch avec la dernière version de `global_ranking.py` pour le générer."
+            )
 
     # ── Statut sélection du champion ──
     champion_df = safe_query(

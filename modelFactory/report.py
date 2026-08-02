@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
@@ -361,6 +363,74 @@ def _append_global_ranking_horizon_details(
     lines.append("")
 
 
+def _append_backtest_results(
+    lines: list[str],
+    batch_id: str | None,
+) -> None:
+    """Ajoute la section backtest stratégies Global Rank (V1/V2/V3)."""
+    if not batch_id:
+        return
+    _cache = Path("artifacts") / "models" / batch_id / "global_rank_cache.parquet"
+    if not _cache.exists():
+        return
+    try:
+        import numpy as np
+        _df = pd.read_parquet(_cache)
+        _df["date"] = pd.to_datetime(_df["date"])
+        _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
+        _all_dates = sorted(_df["date"].unique())
+        _rebal = _all_dates[::20]
+        _results = {}
+        for _label, _fn in [
+            ("V1 — H20 seul", lambda d: d["global_rank_20"] > 0.70),
+            ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > 0.70) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+            ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > 0.70) & (d["global_rank_5"] < 0.35)),
+        ]:
+            _pos = {}
+            _rets = {}
+            _turn = 0
+            for _d in _all_dates:
+                _day = _df[_df["date"] == _d].set_index("symbol")
+                _sig = _fn(_day)
+                if _d in _rebal or not _pos:
+                    _cand = _day.loc[_sig].sort_values("global_rank_20", ascending=False)
+                    if _pos:
+                        _turn += len(_pos)
+                    _pos = {s: float(_cand.loc[s, "global_rank_20"]) for s in _cand.index[:30]}
+                    _turn += len(_pos)
+                _held = [s for s in _pos if s in _day.index]
+                _rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+            _s = pd.Series(_rets).sort_index()
+            _cost = (25.0 / 10000.0) * _turn / len(_all_dates)
+            _s = _s - _cost / 20
+            _exc = _s - 0.02 / 252
+            _m, _std = float(_exc.mean()), float(_exc.std())
+            _sharpe = float(_m / _std * np.sqrt(252)) if _std > 0 else 0.0
+            _cum = (1 + _s).cumprod()
+            _dd = float((_cum / _cum.cummax() - 1).min())
+            _results[_label] = {"sharpe": _sharpe, "ann_return": _m * 252, "ann_vol": _std * np.sqrt(252), "max_dd": _dd}
+
+        if _results:
+            lines.append("## 🧪 Backtest Stratégies — Global Rank")
+            lines.append("")
+            _best = max(_results, key=lambda v: _results[v]["sharpe"])
+            lines.append("| Variante | Score relatif |")
+            lines.append("|----------|---------------|")
+            for _l, _m in _results.items():
+                _pct = f"{(_m['sharpe'] / _results[_best]['sharpe'] - 1) * 100:+.1f}%" if _l != _best else "🏆 référence"
+                lines.append(f"| {_l} | {_pct} |")
+            lines.append("")
+            lines.append(
+                "> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
+                "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
+                "Frais 0.25% A/R inclus. "
+                "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
+            )
+            lines.append("")
+    except Exception:
+        pass
+
+
 def generate_batch_report(engine: Engine, batch_id: str) -> str:
     """Génère un rapport Markdown complet pour un batch d'entraînement."""
     detail_df = _safe_query(engine, BATCH_DETAIL_QUERY, {"batch_id": batch_id})
@@ -486,8 +556,11 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     _meta_raw = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
     _append_global_ranking_horizon_details(lines, str(_meta_raw) if _meta_raw is not None else None)
 
-    # ── Per-Symbol Cross-Sectional IC ──
-    # ── IC Cross-Sectionnel Per-Symbol — retiré (métrique non pertinente) ──
+    # ── Backtest Stratégies Global Rank ──
+    _batch_id = detail_df.iloc[0].get("batch_id") if not detail_df.empty else None
+    _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None)
+
+    # ── Per-Symbol Cross-Sectional IC — retiré ──
 
     # ── Métriques F1 par split ──
     lines.append("## 📊 Métriques F1 par split")

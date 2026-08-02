@@ -2219,9 +2219,9 @@ def cascade_select(
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
     Pour chaque symbole ayant un rang global ET une prédiction per-symbol :
-    1. Filtre top/bottom N% selon ``rank_avg = (rank3 + rank5) / 2``
+    1. Filtre top/bottom N% selon ``global_rank_20`` (H20, meilleur horizon)
     2. Vérifie que la proba per-symbol > ``min_prob``
-    3. Score multiplicatif : ``rank_dir × prob``
+    3. Score multiplicatif : ``rank × prob``
     4. Trie par score décroissant
 
     Args:
@@ -2250,17 +2250,14 @@ def cascade_select(
 
     for _, row in ranks_df.iterrows():
         symbol = str(row["symbol"])
-        rank3 = float(row.get("global_rank_3")) if pd.notna(row.get("global_rank_3")) else None
-        rank5 = float(row.get("global_rank_5")) if pd.notna(row.get("global_rank_5")) else None
+        rank20 = float(row.get("global_rank_20")) if pd.notna(row.get("global_rank_20")) else None
 
-        if rank3 is None or rank5 is None:
+        if rank20 is None:
             continue
 
-        rank_avg = (rank3 + rank5) / 2.0
-
-        # Filtre sur la moyenne des deux horizons
-        is_top = rank_avg > (1.0 - _top_pct)
-        is_bottom = rank_avg < _top_pct
+        # Filtre sur H20 (meilleur horizon : IC 0.025, IR 2.76)
+        is_top = rank20 > (1.0 - _top_pct)
+        is_bottom = rank20 < _top_pct
 
         if not (is_top or is_bottom):
             continue
@@ -2271,12 +2268,12 @@ def cascade_select(
             continue
 
         if is_top and pred.long_prob > _min_prob:
-            rank_dir = rank_avg  # déjà proche de 1.0
+            rank_dir = rank20  # déjà proche de 1.0
             score = rank_dir * pred.long_prob
             candidates.append(("LONG", symbol, score))
 
         elif is_bottom and pred.short_prob > _min_prob:
-            rank_dir = 1.0 - rank_avg  # inverse : 0.05 → 0.95
+            rank_dir = 1.0 - rank20  # inverse : 0.05 → 0.95
             score = rank_dir * pred.short_prob
             candidates.append(("SHORT", symbol, score))
 
