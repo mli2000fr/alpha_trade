@@ -107,12 +107,14 @@ def compute_tabular_metrics(
 		n_buckets=5,
 	)
 	pred = (proba >= decision_threshold).astype(np.int64)
+	brier = float(np.mean((proba - labels) ** 2))
 	result: dict[str, Any] = {
+		"loss": brier,  # Brier score = MSE des probas (compatible colonne loss)
 		"directional_accuracy": float((pred == labels).mean()),
 		"precision": float(threshold_metrics["precision_long"]),
 		"recall": float(threshold_metrics["recall_long"]),
 		"auc": binary_auc(labels, proba),
-		"brier_score": float(np.mean((proba - labels) ** 2)),
+		"brier_score": brier,
 		"ece": expected_calibration_error(labels, proba),
 		"action_rate": float(threshold_metrics["coverage_at_threshold"]),
 		"n_observations": len(labels),
@@ -249,6 +251,92 @@ def apply_tabular_calibration(
 	return np.asarray(raw_proba, dtype=np.float64)
 
 
+# ── Regression metrics helper ────────────────────────────────────────────
+
+def _compute_regression_metrics(
+	pred: np.ndarray,
+	target: np.ndarray,
+	future_return: np.ndarray,
+) -> dict[str, Any]:
+	"""Calcule les métriques de régression pour un modèle per-symbol.
+
+	Inclut le F1 macro binarisé (signe) pour comparabilité avec le mode ternaire.
+
+	Args:
+		pred: Prédictions continues du modèle [n_samples]
+		target: Target de régression (vol-scalé winsorizé) [n_samples]
+		future_return: Rendement futur brut [n_samples]
+
+	Returns:
+		dict avec mse, mae, correlation, directional_accuracy, ic, f1_macro, etc.
+	"""
+	valid = np.isfinite(pred) & np.isfinite(target)
+	if valid.sum() < 2:
+		return {"loss": 0.0, "mse": 0.0, "mae": 0.0, "correlation": 0.0, "directional_accuracy": 0.0, "n_samples": int(valid.sum()),
+		        "f1_macro": 0.0, "f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
+		        "true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
+		        "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0}
+
+	p = pred[valid]
+	t = target[valid]
+	f = future_return[valid]
+
+	residuals = p - t
+	mse = float(np.mean(residuals ** 2))
+	mae = float(np.mean(np.abs(residuals)))
+
+	# Pearson correlation avec la target
+	corr = float(np.corrcoef(p, t)[0, 1]) if len(p) > 2 else 0.0
+
+	# Directional accuracy : sign(pred) == sign(future_return)
+	dir_acc = float(np.mean(np.sign(p) == np.sign(f))) if len(p) > 0 else 0.0
+
+	# IC (Information Coefficient) — corrélation entre prédiction et future_return
+	ic = float(np.corrcoef(p, f)[0, 1]) if len(p) > 2 else 0.0
+
+	# ── F1 macro binarisé (comparable au mode ternaire) ──
+	pred_side = np.select([p > 0, p < 0], [1, -1], default=0).astype(int)
+	true_side = np.select([f > 0, f < 0], [1, -1], default=0).astype(int)
+
+	pred_shifted = pred_side + 1  # {-1,0,1} → {0,1,2}
+	true_shifted = true_side + 1
+
+	f1_per_class: dict[str, float] = {}
+	for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+		tp = int(((pred_shifted == cls_idx) & (true_shifted == cls_idx)).sum())
+		fp = int(((pred_shifted == cls_idx) & (true_shifted != cls_idx)).sum())
+		fn = int(((pred_shifted != cls_idx) & (true_shifted == cls_idx)).sum())
+		prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+		rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+		f1_per_class[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
+
+	f1_values = [v for v in f1_per_class.values() if v is not None]
+	f1_macro = float(np.mean(f1_values)) if f1_values else 0.0
+
+	return {
+		"loss": mse,  # compatibilité avec insert_metrics (colonne loss = MSE pour regression)
+		"mse": mse,
+		"mae": mae,
+		"rmse": float(np.sqrt(mse)),
+		"correlation": corr,
+		"directional_accuracy": dir_acc,
+		"ic": ic,
+		"n_samples": int(valid.sum()),
+		"pred_mean": float(np.mean(p)),
+		"pred_std": float(np.std(p)),
+		"target_mean": float(np.mean(t)),
+		"target_std": float(np.std(t)),
+		"f1_macro": f1_macro,
+		**f1_per_class,
+		"true_short_pct": float((true_shifted == 0).mean() * 100),
+		"true_flat_pct": float((true_shifted == 1).mean() * 100),
+		"true_long_pct": float((true_shifted == 2).mean() * 100),
+		"pred_short_pct": float((pred_shifted == 0).mean() * 100),
+		"pred_flat_pct": float((pred_shifted == 1).mean() * 100),
+		"pred_long_pct": float((pred_shifted == 2).mean() * 100),
+	}
+
+
 def run_tabular_baseline(
 	prepared_df: pd.DataFrame,
 	cfg: TrainingConfig,
@@ -291,136 +379,175 @@ def run_tabular_baseline(
 	)
 	model = model_builder(resolved_seed)
 	is_ternary = cfg.data.target_mode == "ternary"
-	train_targets = train_df["target"].astype(int)
-	# LightGBM/CatBoost exigent des labels consecutifs a partir de 0.
-	# On decale {-1,0,+1} -> {0,1,2} pour le mode ternaire.
-	if is_ternary:
-		train_targets = train_targets + 1  # shift: -1->0, 0->1, +1->2
-	unique_classes = train_targets.unique()
-	if len(unique_classes) < 2:
-		return {"status": "skipped", "model_name": model_name, "reason": f"single_class_target_{unique_classes[0]}"}
+	is_regression = cfg.data.target_mode == "regression"
 
-	# Sample weighting par récence (Cause 3 — changement de régime)
-	# Donne plus de poids aux données récentes (demi-vie = 1 an).
-	_sample_weights: "np.ndarray | None" = None
-	if "date" in train_df.columns:
-		_train_dates = pd.to_datetime(train_df["date"])
-		_max_date = _train_dates.max()
-		_days_diff = (_max_date - _train_dates).dt.days
-		_sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
-		LOGGER.info(
-			"tabular_baseline sample_weight model=%s rows=%d half_life=365d "
-			"weight_min=%.3f weight_max=%.3f weight_mean=%.3f",
-			model_name,
-			len(_sample_weights),
-			float(_sample_weights.min()),
-			float(_sample_weights.max()),
-			float(_sample_weights.mean()),
-		)
+	if is_regression:
+		# ── Regression : target continue ─────────────────────────────
+		train_targets = train_df["target"].astype(float)
+		# Vérifier qu'il y a de la variance
+		if train_targets.std() < 1e-9:
+			return {"status": "skipped", "model_name": model_name, "reason": "zero_variance_target"}
 
-	model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
+		_sample_weights: "np.ndarray | None" = None
+		if "date" in train_df.columns:
+			_train_dates = pd.to_datetime(train_df["date"])
+			_max_date = _train_dates.max()
+			_days_diff = (_max_date - _train_dates).dt.days
+			_sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
+
+		model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
+
+		# Prédictions continues
+		val_pred = model.predict(val_df[feature_columns])
+		test_pred = model.predict(test_df[feature_columns])
+
+		# Métriques régression
+		val_future = val_df["future_return"].to_numpy()
+		test_future = test_df["future_return"].to_numpy()
+
+		val_metrics = _compute_regression_metrics(val_pred, val_df["target"].to_numpy(), val_future)
+		test_metrics = _compute_regression_metrics(test_pred, test_df["target"].to_numpy(), test_future)
+
+		selected_threshold = float(cfg.data.decision_threshold)
+		calibrator = None
+		val_proba = val_pred  # utilisé pour décision binaire simple
+		test_proba = test_pred
+		cal_labels = (val_future > 0).astype(int)
+		threshold_summary = {"enabled": False, "selection_status": "regression_mode", "selected_threshold": selected_threshold, "candidates": []}
+		selection_score = float(val_metrics.get("directional_accuracy", 0.0))
+	else:
+		# ── Classification (binaire / ternaire) ──────────────────────
+		train_targets = train_df["target"].astype(int)
+		# LightGBM/CatBoost exigent des labels consecutifs a partir de 0.
+		# On decale {-1,0,+1} -> {0,1,2} pour le mode ternaire.
+		if is_ternary:
+			train_targets = train_targets + 1  # shift: -1->0, 0->1, +1->2
+		unique_classes = train_targets.unique()
+		if len(unique_classes) < 2:
+			return {"status": "skipped", "model_name": model_name, "reason": f"single_class_target_{unique_classes[0]}"}
+
+		# Sample weighting par récence (Cause 3 — changement de régime)
+		# Donne plus de poids aux données récentes (demi-vie = 1 an).
+		_sample_weights: "np.ndarray | None" = None
+		if "date" in train_df.columns:
+			_train_dates = pd.to_datetime(train_df["date"])
+			_max_date = _train_dates.max()
+			_days_diff = (_max_date - _train_dates).dt.days
+			_sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 365.0)
+			LOGGER.info(
+				"tabular_baseline sample_weight model=%s rows=%d half_life=365d "
+				"weight_min=%.3f weight_max=%.3f weight_mean=%.3f",
+				model_name,
+				len(_sample_weights),
+				float(_sample_weights.min()),
+				float(_sample_weights.max()),
+				float(_sample_weights.mean()),
+			)
+
+		model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
 
 	is_ternary = cfg.data.target_mode == "ternary"
-	# Determine which predict_proba column holds the long probability.
-	# For ternary with all 3 classes present: 3 cols -> col 2=long.
-	# For binary or ternary with missing classes: use last column.
-	raw_proba_all = model.predict_proba(val_df[feature_columns])
-	num_proba_cols = raw_proba_all.shape[1]
-	if is_ternary and num_proba_cols >= 3:
-		long_col = 2  # full ternary: [short, flat, long]
-	else:
-		long_col = num_proba_cols - 1  # fallback: last column
+	if not is_regression:
+		# Determine which predict_proba column holds the long probability.
+		# For ternary with all 3 classes present: 3 cols -> col 2=long.
+		# For binary or ternary with missing classes: use last column.
+		raw_proba_all = model.predict_proba(val_df[feature_columns])
+		num_proba_cols = raw_proba_all.shape[1]
+		if is_ternary and num_proba_cols >= 3:
+			long_col = 2  # full ternary: [short, flat, long]
+		else:
+			long_col = num_proba_cols - 1  # fallback: last column
 
-	val_raw = raw_proba_all[:, long_col]
-	target_mode = cfg.data.target_mode
+		val_raw = raw_proba_all[:, long_col]
+		target_mode = cfg.data.target_mode
 
-	# ── Sprint Maître 1 : calibration multiclasse ─────────────────────
-	# Toujours calculer cal_labels (binarisé long=1) pour le threshold optimizer
-	cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
+		# ── Sprint Maître 1 : calibration multiclasse ─────────────────────
+		# Toujours calculer cal_labels (binarisé long=1) pour le threshold optimizer
+		cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
 
-	if is_ternary and num_proba_cols >= 3:
-		# Ternaire : TemperatureScaler sur les 3 probas
-		val_labels_ternary = (val_df["target"].astype(int) + 1).to_numpy()  # shift -1,0,1 -> 0,1,2
-		calibrator = fit_tabular_calibrator(
-			raw_proba_all[:, :3], val_labels_ternary, cfg, target_mode="ternary",
-		)
-		# Appliquer calibration ternaire
-		calibrated_all = apply_tabular_calibration(
-			raw_proba_all[:, :3], calibrator, target_mode="ternary",
-		)
-		val_proba = calibrated_all[:, 2]  # p_long calibrée
-	else:
-		# Binaire : Platt
-		calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg, target_mode="binary")
-		val_proba = apply_tabular_calibration(val_raw, calibrator, target_mode="binary")
+		if is_ternary and num_proba_cols >= 3:
+			# Ternaire : TemperatureScaler sur les 3 probas
+			val_labels_ternary = (val_df["target"].astype(int) + 1).to_numpy()  # shift -1,0,1 -> 0,1,2
+			calibrator = fit_tabular_calibrator(
+				raw_proba_all[:, :3], val_labels_ternary, cfg, target_mode="ternary",
+			)
+			# Appliquer calibration ternaire
+			calibrated_all = apply_tabular_calibration(
+				raw_proba_all[:, :3], calibrator, target_mode="ternary",
+			)
+			val_proba = calibrated_all[:, 2]  # p_long calibrée
+		else:
+			# Binaire : Platt
+			calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg, target_mode="binary")
+			val_proba = apply_tabular_calibration(val_raw, calibrator, target_mode="binary")
 
-	if cfg.threshold_optimization.enabled:
-		threshold_summary = optimize_decision_threshold(
+		if cfg.threshold_optimization.enabled:
+			threshold_summary = optimize_decision_threshold(
+				val_proba,
+				cal_labels,  # binarisee : 1=long, 0=sinon
+				val_df["future_return"].to_numpy(),
+				candidate_thresholds=cfg.threshold_optimization.candidate_decision_thresholds,
+				default_threshold=cfg.data.decision_threshold,
+				min_action_rate=cfg.threshold_optimization.min_action_rate,
+				max_action_rate=cfg.threshold_optimization.max_action_rate,
+				min_precision_long=cfg.threshold_optimization.min_precision_long,
+				n_buckets=5,
+			)
+			selected_threshold = float(threshold_summary["selected_threshold"])
+		else:
+			selected_threshold = float(cfg.data.decision_threshold)
+			threshold_summary = {
+				"enabled": False,
+				"selection_status": "disabled",
+				"selected_threshold": selected_threshold,
+				"candidates": [],
+			}
+
+		test_raw_all = model.predict_proba(test_df[feature_columns])
+		num_test_cols = test_raw_all.shape[1]
+		test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
+		test_raw = test_raw_all[:, test_long_col]
+
+		# ── Sprint Maître 1 : calibration test ────────────────────────────
+		if is_ternary and num_test_cols >= 3:
+			calibrated_test_all = apply_tabular_calibration(
+				test_raw_all[:, :3], calibrator, target_mode="ternary",
+			)
+			test_proba = calibrated_test_all[:, 2]
+		else:
+			test_proba = apply_tabular_calibration(test_raw, calibrator, target_mode="binary")
+
+		# Pour les métriques, on binarise aussi la target test
+		test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
+		val_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
+
+		val_metrics = compute_tabular_metrics(
+			val_labels,
 			val_proba,
-			cal_labels,  # binarisee : 1=long, 0=sinon
 			val_df["future_return"].to_numpy(),
-			candidate_thresholds=cfg.threshold_optimization.candidate_decision_thresholds,
-			default_threshold=cfg.data.decision_threshold,
-			min_action_rate=cfg.threshold_optimization.min_action_rate,
-			max_action_rate=cfg.threshold_optimization.max_action_rate,
-			min_precision_long=cfg.threshold_optimization.min_precision_long,
-			n_buckets=5,
+			selected_threshold,
+			raw_proba_all=raw_proba_all if is_ternary else None,
+			target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
+			is_ternary=is_ternary,
+			ternary_policy=ternary_policy,
 		)
-		selected_threshold = float(threshold_summary["selected_threshold"])
-	else:
-		selected_threshold = float(cfg.data.decision_threshold)
-		threshold_summary = {
-			"enabled": False,
-			"selection_status": "disabled",
-			"selected_threshold": selected_threshold,
-			"candidates": [],
-		}
-
-	test_raw_all = model.predict_proba(test_df[feature_columns])
-	num_test_cols = test_raw_all.shape[1]
-	test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
-	test_raw = test_raw_all[:, test_long_col]
-
-	# ── Sprint Maître 1 : calibration test ────────────────────────────
-	if is_ternary and num_test_cols >= 3:
-		calibrated_test_all = apply_tabular_calibration(
-			test_raw_all[:, :3], calibrator, target_mode="ternary",
+		test_metrics = compute_tabular_metrics(
+			test_labels,
+			test_proba,
+			test_df["future_return"].to_numpy(),
+			selected_threshold,
+			raw_proba_all=test_raw_all if is_ternary else None,
+			target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
+			is_ternary=is_ternary,
+			ternary_policy=ternary_policy,
 		)
-		test_proba = calibrated_test_all[:, 2]
-	else:
-		test_proba = apply_tabular_calibration(test_raw, calibrator, target_mode="binary")
-
-	# Pour les métriques, on binarise aussi la target test
-	test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
-	val_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
-
-	val_metrics = compute_tabular_metrics(
-		val_labels,
-		val_proba,
-		val_df["future_return"].to_numpy(),
-		selected_threshold,
-		raw_proba_all=raw_proba_all if is_ternary else None,
-		target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
-		is_ternary=is_ternary,
-		ternary_policy=ternary_policy,
-	)
-	test_metrics = compute_tabular_metrics(
-		test_labels,
-		test_proba,
-		test_df["future_return"].to_numpy(),
-		selected_threshold,
-		raw_proba_all=test_raw_all if is_ternary else None,
-		target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
-		is_ternary=is_ternary,
-		ternary_policy=ternary_policy,
-	)
-	# ── Sprint Maître 1 : selection_score depuis val uniquement ──────
-	selection_score = float(
-		val_metrics.get("threshold_business_score")
-		or val_metrics.get("auc")
-		or val_metrics.get("auc_macro")
-		or 0.0
-	)
+		# ── Sprint Maître 1 : selection_score depuis val uniquement ──────
+		selection_score = float(
+			val_metrics.get("threshold_business_score")
+			or val_metrics.get("auc")
+			or val_metrics.get("auc_macro")
+			or 0.0
+		)
 	feature_contract = build_feature_contract(
 		include_sentiment=cfg.data.include_sentiment_features,
 		feature_set=cfg.data.feature_set,
@@ -626,6 +753,7 @@ def run_tabular_walk_forward(
 		return {"status": "skipped", "reason": "no_valid_split"}
 
 	is_ternary = cfg.data.target_mode == "ternary"
+	is_regression = cfg.data.target_mode == "regression"
 	feature_cols = _get_fc(
 		include_sentiment=cfg.data.include_sentiment_features,
 		feature_set=cfg.data.feature_set,
@@ -661,82 +789,172 @@ def run_tabular_walk_forward(
 			context=f"tabular_wf:{model_name}:{symbol_tag}:split_{split.split_index}",
 		)
 		model = model_builder(split_seed)
-		train_targets = split.train["target"].astype(int)
-		if is_ternary:
-			train_targets = train_targets + 1
-		unique_train = train_targets.unique()
-		if len(unique_train) < 2:
-			continue
-
-		# Sample weighting par récence pour le split WF
-		_wf_sample_weights: "np.ndarray | None" = None
-		if "date" in split.train.columns:
-			_wf_train_dates = pd.to_datetime(split.train["date"])
-			_wf_max_date = _wf_train_dates.max()
-			_wf_days_diff = (_wf_max_date - _wf_train_dates).dt.days
-			_wf_sample_weights = np.exp(-_wf_days_diff.values.astype(np.float64) / 365.0)
-
-		model.fit(split.train[feature_cols], train_targets, sample_weight=_wf_sample_weights)
-
-		raw_proba_all = model.predict_proba(split.test[feature_cols])
-		test_targets = split.test["target"].astype(int)
-		test_labels = test_targets.to_numpy()
-		if is_ternary:
-			test_labels_shifted = test_labels + 1
-			preds = decide_ternary_side_batch(
-				raw_proba_all[:, :3],
-				policy=ternary_policy if ternary_policy is not None else TernaryDecisionPolicy(),
-			)
-			n = len(preds)
-			fold_m: dict[str, Any] = {
-				"split_index": split.split_index,
-				"train_rows": len(split.train),
-				"test_rows": len(split.test),
-				"f1_macro": 0.0,
-				"f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
-				"true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
-				"pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0,
-			}
-			if n > 0:
+		if is_regression:
+			# ── Regression : target continue ──
+			_train_valid_r = split.train["target"].notna()
+			_train_df_r = split.train.loc[_train_valid_r]
+			train_targets = _train_df_r["target"].astype(float)
+			if train_targets.std() < 1e-9:
+				continue
+			_wf_sample_weights: "np.ndarray | None" = None
+			if "date" in _train_df_r.columns:
+				_wf_train_dates = pd.to_datetime(_train_df_r["date"])
+				_wf_max_date = _wf_train_dates.max()
+				_wf_days_diff = (_wf_max_date - _wf_train_dates).dt.days
+				_wf_sample_weights = np.exp(-_wf_days_diff.values.astype(np.float64) / 365.0)
+			model.fit(_train_df_r[feature_cols], train_targets, sample_weight=_wf_sample_weights)
+			_test_valid_r = split.test["target"].notna()
+			_test_df_r = split.test.loc[_test_valid_r]
+			if _test_df_r.empty:
+				continue
+			test_pred = model.predict(_test_df_r[feature_cols])
+			test_target = _test_df_r["target"].astype(float).to_numpy()
+			test_future = _test_df_r["future_return"].to_numpy() if "future_return" in _test_df_r.columns else None
+			valid = np.isfinite(test_pred) & np.isfinite(test_target)
+			n = int(valid.sum())
+			fold_m: dict[str, Any] = {"split_index": split.split_index, "train_rows": len(_train_df_r), "test_rows": len(_test_df_r), "n_valid": n,
+			                          "f1_macro": 0.0, "f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
+			                          "true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
+			                          "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0}
+			if n >= 2:
+				p, t = test_pred[valid], test_target[valid]
+				f = test_future[valid] if test_future is not None else None
+				fold_m["mse"] = float(np.mean((p - t) ** 2))
+				fold_m["mae"] = float(np.mean(np.abs(p - t)))
+				fold_m["directional_accuracy"] = float(np.mean(np.sign(p) == np.sign(t)))
+				if f is not None:
+					fold_m["ic"] = float(np.corrcoef(p, f)[0, 1]) if np.isfinite(f).sum() >= 2 else None
+					# ── F1 macro binarisé ──────────────────────────
+					_f_f1 = f
+				else:
+					_f_f1 = t
+				pred_side = np.select([p > 0, p < 0], [1, -1], default=0).astype(int)
+				true_side = np.select([_f_f1 > 0, _f_f1 < 0], [1, -1], default=0).astype(int)
+				pred_shifted = pred_side + 1
+				true_shifted = true_side + 1
+				f1_vals: dict[str, float] = {}
 				for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
-					tp = int(((preds == cls_idx) & (test_labels_shifted == cls_idx)).sum())
-					fp = int(((preds == cls_idx) & (test_labels_shifted != cls_idx)).sum())
-					fn = int(((preds != cls_idx) & (test_labels_shifted == cls_idx)).sum())
-					prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-					rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-					fold_m[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
-					fold_m[f"true_{cls_name}_pct"] = float((test_labels_shifted == cls_idx).mean() * 100)
-					fold_m[f"pred_{cls_name}_pct"] = float((preds == cls_idx).mean() * 100)
-				f1_vals = [fold_m[f"f1_{c}"] for c in ["short", "flat", "long"]]
-				fold_m["f1_macro"] = float(np.mean(f1_vals)) if f1_vals else 0.0
-			# Ajouter les dates du fold
-			if "date" in split.train.columns:
-				fold_m["train_start_date"] = str(split.train["date"].min().date())
-				fold_m["train_end_date"] = str(split.train["date"].max().date())
-			if "date" in split.test.columns:
-				fold_m["test_start_date"] = str(split.test["date"].min().date())
-				fold_m["test_end_date"] = str(split.test["date"].max().date())
+					tp = int(((pred_shifted == cls_idx) & (true_shifted == cls_idx)).sum())
+					fp = int(((pred_shifted == cls_idx) & (true_shifted != cls_idx)).sum())
+					fn = int(((pred_shifted != cls_idx) & (true_shifted == cls_idx)).sum())
+					_prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+					_rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+					f1_vals[f"f1_{cls_name}"] = float(2 * _prec * _rec / (_prec + _rec) if (_prec + _rec) > 0 else 0.0)
+				fold_m.update(f1_vals)
+				_f1_list = [v for v in f1_vals.values() if v is not None]
+				fold_m["f1_macro"] = float(np.mean(_f1_list)) if _f1_list else 0.0
+				fold_m["true_short_pct"] = float((true_shifted == 0).mean() * 100)
+				fold_m["true_flat_pct"] = float((true_shifted == 1).mean() * 100)
+				fold_m["true_long_pct"] = float((true_shifted == 2).mean() * 100)
+				fold_m["pred_short_pct"] = float((pred_shifted == 0).mean() * 100)
+				fold_m["pred_flat_pct"] = float((pred_shifted == 1).mean() * 100)
+				fold_m["pred_long_pct"] = float((pred_shifted == 2).mean() * 100)
+			if "date" in _train_df_r.columns:
+				fold_m["train_start_date"] = str(_train_df_r["date"].min().date())
+				fold_m["train_end_date"] = str(_train_df_r["date"].max().date())
+			if "date" in _test_df_r.columns:
+				fold_m["test_start_date"] = str(_test_df_r["date"].min().date())
+				fold_m["test_end_date"] = str(_test_df_r["date"].max().date())
 			fold_metrics.append(fold_m)
 		else:
-			# Binaire
-			test_proba = raw_proba_all[:, -1]
-			acc = float((test_proba >= 0.5).astype(int) == test_labels).mean()
-			fold_metrics.append({
-				"split_index": split.split_index,
-				"train_rows": len(split.train),
-				"test_rows": len(split.test),
-				"accuracy": acc,
-			})
+			# ── Filtrer les lignes avec target valide (évite NaN du shift) ──
+			_train_valid = split.train["target"].notna()
+			_train_df = split.train.loc[_train_valid]
+			train_targets = _train_df["target"].astype(int)
+			if is_ternary:
+				train_targets = train_targets + 1
+			unique_train = train_targets.unique()
+			if len(unique_train) < 2:
+				continue
+
+			# Sample weighting par récence pour le split WF
+			_wf_sample_weights: "np.ndarray | None" = None
+			if "date" in _train_df.columns:
+				_wf_train_dates = pd.to_datetime(_train_df["date"])
+				_wf_max_date = _wf_train_dates.max()
+				_wf_days_diff = (_wf_max_date - _wf_train_dates).dt.days
+				_wf_sample_weights = np.exp(-_wf_days_diff.values.astype(np.float64) / 365.0)
+
+			model.fit(_train_df[feature_cols], train_targets, sample_weight=_wf_sample_weights)
+
+			# ── Filtrer les lignes test avec target valide ──
+			_test_valid = split.test["target"].notna()
+			_test_df = split.test.loc[_test_valid]
+			if _test_df.empty:
+				continue
+			raw_proba_all = model.predict_proba(_test_df[feature_cols])
+			test_targets = _test_df["target"].astype(int)
+			test_labels = test_targets.to_numpy()
+			if is_ternary:
+				test_labels_shifted = test_labels + 1
+				preds = decide_ternary_side_batch(
+					raw_proba_all[:, :3],
+					policy=ternary_policy if ternary_policy is not None else TernaryDecisionPolicy(),
+				)
+				n = len(preds)
+				fold_m: dict[str, Any] = {
+					"split_index": split.split_index,
+				"train_rows": len(_train_df),
+				"test_rows": len(_test_df),
+					"loss": 0.0, "directional_accuracy": 0.0,
+					"f1_macro": 0.0,
+					"f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
+					"true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
+					"pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0,
+				}
+				if n > 0:
+					# Directional accuracy : % de classes correctes (3 classes)
+					fold_m["directional_accuracy"] = float((preds == test_labels_shifted).mean())
+					# Brier score (MSE des probas vs one-hot) comme loss
+					_one_hot = np.zeros((n, 3), dtype=np.float64)
+					_one_hot[np.arange(n), test_labels_shifted] = 1.0
+					fold_m["loss"] = float(np.mean((raw_proba_all[:, :3] - _one_hot) ** 2))
+					for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
+						tp = int(((preds == cls_idx) & (test_labels_shifted == cls_idx)).sum())
+						fp = int(((preds == cls_idx) & (test_labels_shifted != cls_idx)).sum())
+						fn = int(((preds != cls_idx) & (test_labels_shifted == cls_idx)).sum())
+						prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+						rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+						fold_m[f"f1_{cls_name}"] = float(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
+						fold_m[f"true_{cls_name}_pct"] = float((test_labels_shifted == cls_idx).mean() * 100)
+						fold_m[f"pred_{cls_name}_pct"] = float((preds == cls_idx).mean() * 100)
+					f1_vals = [fold_m[f"f1_{c}"] for c in ["short", "flat", "long"]]
+					fold_m["f1_macro"] = float(np.mean(f1_vals)) if f1_vals else 0.0
+				# Ajouter les dates du fold
+				if "date" in _train_df.columns:
+					fold_m["train_start_date"] = str(_train_df["date"].min().date())
+					fold_m["train_end_date"] = str(_train_df["date"].max().date())
+				if "date" in _test_df.columns:
+					fold_m["test_start_date"] = str(_test_df["date"].min().date())
+					fold_m["test_end_date"] = str(_test_df["date"].max().date())
+				fold_metrics.append(fold_m)
+			else:
+				# Binaire
+				test_proba = raw_proba_all[:, -1]
+				acc = float((test_proba >= 0.5).astype(int) == test_labels).mean()
+				fold_metrics.append({
+					"split_index": split.split_index,
+					"train_rows": len(_train_df),
+					"test_rows": len(_test_df),
+					"accuracy": acc,
+				})
 
 	if not fold_metrics:
 		return {"status": "skipped", "reason": "all_folds_empty"}
 
 	# ── Agrégation ──
-	keys = ["f1_macro", "f1_short", "f1_flat", "f1_long",
-			"true_short_pct", "true_flat_pct", "true_long_pct",
-			"pred_short_pct", "pred_flat_pct", "pred_long_pct"]
+	if is_regression:
+		_keys = ["mse", "mae", "directional_accuracy", "ic",
+		         "f1_macro", "f1_short", "f1_flat", "f1_long",
+		         "true_short_pct", "true_flat_pct", "true_long_pct",
+		         "pred_short_pct", "pred_flat_pct", "pred_long_pct"]
+	else:
+		_keys = ["loss", "directional_accuracy",
+		         "f1_macro", "f1_short", "f1_flat", "f1_long",
+				"true_short_pct", "true_flat_pct", "true_long_pct",
+				"pred_short_pct", "pred_flat_pct", "pred_long_pct"]
 	mean_metrics: dict[str, float | None] = {}
-	for key in keys:
+	for key in _keys:
 		vals = [m[key] for m in fold_metrics if m.get(key) is not None]
 		mean_metrics[key] = float(np.mean(vals)) if vals else None
 

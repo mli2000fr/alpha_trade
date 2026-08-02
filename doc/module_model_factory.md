@@ -194,11 +194,11 @@ Si > 0 : garde les **top N par volume moyen** ou stratifié par déciles.
 
 ### 4.1 Objectif
 
-Pour **chaque symbole** de l'univers, entraîner un modèle qui prédit la direction (long/short/flat).
+Pour **chaque symbole** de l'univers, entraîner un modèle qui prédit la direction (long/short/flat) ou un score continu (regression).
 
 **Modèles** : LSTM Attention, LightGBM, CatBoost (3 challengers par symbole)  
-**Target** : `future_return` (binaire ou ternaire selon config)  
-**Métrique** : **F1 macro** (moyenne de F1 short, F1 flat, F1 long)
+**Target** : `future_return` (binaire, ternaire, ou regression selon config)  
+**Métrique** : **F1 macro** (moyenne de F1 short, F1 flat, F1 long) — y compris en mode regression où le F1 est calculé par binarisation du signe
 
 ### 4.2 Mode ternaire (3 classes)
 
@@ -213,11 +213,34 @@ Décision :
 
 Seuils : `ternary_threshold_short` (0.35), `ternary_threshold_long` (0.35), `top2_margin` (0.02).
 
-### 4.3 Walk-Forward
+### 4.3 Mode regression (continu)
+
+Ajouté le 2026-08-02. La target n'est plus discrète (long/short/flat) mais continue :
+
+```
+1. Rendement forward brut : future_return = close[t+h] / close[t] - 1
+2. Vol scaling (h ≥ 5)   : target = future_return / rolling_vol_20
+3. Winsorization          : clip 1%/99% par symbole
+```
+
+**Spécificités** :
+- **Modèle** : `num_classes=1` → 1 neurone de sortie, loss **MSE** (pas CrossEntropy)
+- **Métriques** : MSE, MAE, corrélation, directional accuracy, IC
+- **F1 comparable** : binarisation du signe — `sign(pred)` vs `sign(future_return)` → classes {-1,0,1} → F1 macro identique au mode ternaire
+- **Décision** : score > 0 → LONG, score < 0 → SHORT, score ≈ 0 → FLAT
+- **Calibration** : désactivée (pas de Platt sur une régression)
+- **Pas de threshold optimization** : ignorée automatiquement
+
+**Avantages vs ternaire** :
+- Pas de seuils arbitraires (up_threshold/down_threshold) — le modèle apprend la magnitude
+- La force du signal est directement utilisable (pas juste une probabilité)
+- Comparaison équitable avec le ternaire grâce au F1 binarisé
+
+### 4.4 Walk-Forward
 
 Mêmes splits que le Global Ranking. Chaque split produit des métriques sur train/val/test, agrégées en fin de boucle.
 
-### 4.4 Stacking (injection des rangs globaux) ⚠️ Contre-indiqué
+### 4.5 Stacking (injection des rangs globaux) ⚠️ Contre-indiqué
 
 Quand `global_model.stacking_enabled = True` :
 
@@ -244,7 +267,7 @@ Le modèle per-symbol voit donc les rangs cross-sectionnels comme features suppl
 > **Recommandation** : laisser `stacking_enabled = false`. Le Global Ranking
 > et le Per-Symbol jouent des rôles distincts dans la cascade de trading (§7.2).
 
-### 4.5 Limitation per-symbol (test rapide)
+### 4.6 Limitation per-symbol (test rapide)
 
 Paramètre `--per-symbol-max-symbols` (défaut: 0 = tous).  
 Si > 0 : garde les **top N par volume moyen**, avant l'entraînement per-symbol.  
@@ -363,7 +386,7 @@ Pour chaque symbole avec global_rank ET per-symbol prediction :
 5. Trié par score décroissant
 ```
 
-### 7.3 Conversion proba → décision
+### 7.3 Conversion proba/score → décision
 
 **Mode binaire** :
 ```
@@ -376,6 +399,17 @@ TernaryDecisionPolicy :
   si proba_long > threshold_long (0.35) ET proba_long - proba_flat > top2_margin → LONG
   si proba_short > threshold_short (0.35) ET proba_short - proba_flat > top2_margin → SHORT
   sinon → FLAT
+```
+
+**Mode regression** :
+```
+Décision au signe :
+  si score > 0  → LONG  (pred_class=1, signal_label="long")
+  si score < 0  → SHORT (pred_class=0, signal_label="short")
+  si score ≈ 0  → FLAT  (pred_class=0, signal_label="no_trade")
+
+Le score continu est stocké dans predicted_proba et raw_proba.
+Pas de seuil de décision (decision_threshold ignoré).
 ```
 
 ---
@@ -431,7 +465,7 @@ L'IC Per-Symbol permet de comparer deux batchs :
 |-----------|--------|-------------|
 | `forecast_horizon` | 10 | Horizon de prédiction (jours) |
 | `feature_set` | `expert` | `v1` ou `expert` (plus de features) |
-| `target_mode` | `ternary` | `binary` ou `ternary` (3 classes) |
+| `target_mode` | `ternary` | `binary`, `ternary`, ou `regression` (score continu) |
 | `global_ranking_max_symbols` | 300 | Limite symboles Global Ranking (0 = tous) |
 | `per_symbol_max_symbols` | 0 | Limite symboles Per-Symbol (0 = tous) |
 | `wf_max_splits` | **8** | Nombre de splits walk-forward (optimal P1) |
@@ -654,6 +688,245 @@ stock_fundamentals_daily
 10. **H3/H5 viables** : IC IR > 1.0, H5 exploitable pour trading 5j.
 11. **Target post-split** : l'unique source de leakage était le shift pré-split — corrigé, le pipeline est étanche.
 12. **8 splits > 13 splits** (post-leakage) : moins de chevauchement → meilleure généralisation, IC +40%.
+
+---
+
+## 12. Questions / Réponses
+
+### Q1 : Per-Symbol, Comment comparer réellement la performance entre le mode ternaire et le mode regression ?
+
+Les métriques des deux modes sont **directement comparables** car le F1 est calculé de la même façon dans les deux cas : par binarisation du signe. Cependant, il y a des pièges à éviter.
+
+#### ⚠️ Ne pas utiliser `f1_macro` pour comparer
+
+En mode regression, le F1 est calculé ainsi :
+
+```
+pred_side = sign(pred)         → +1 (long), -1 (short), 0 (flat)
+true_side = sign(future_return) → +1, -1, 0
+```
+
+Or un modèle de régression ne prédit **jamais exactement 0.0** (sortie continue). Donc :
+
+| Classe | Regression | Ternaire |
+|--------|-----------|----------|
+| `f1_long` | ✅ Comparable | ✅ Comparable |
+| `f1_short` | ✅ Comparable | ✅ Comparable |
+| `f1_flat` | ❌ Toujours ~0 | ✅ Peut être >0 |
+| `f1_macro` | ❌ Mécaniquement tiré vers le bas | ✅ Correct |
+
+→ **`f1_macro` est systématiquement plus bas en regression**, ce qui ne reflète pas une moins bonne performance mais un artefact de la binarisation.
+
+#### ✅ Métriques recommandées pour la comparaison
+
+| Métrique | Signification | Disponible |
+|----------|--------------|------------|
+| **`f1_long`** | Capacité à identifier les jours haussiers | LSTM + baselines |
+| **`f1_short`** | Capacité à identifier les jours baissiers | LSTM + baselines |
+| **`directional_accuracy`** | % de jours où sign(pred) = sign(future_return) | LSTM + baselines |
+| **`ic`** (Information Coefficient) | Corrélation prédiction vs rendement futur | LSTM + baselines |
+| **`mse`** / **`mae`** | Erreur de prédiction absolue | Regression seulement |
+| **`correlation`** | Corrélation pred vs target continue | Regression seulement |
+
+#### Exemple de comparaison
+
+```
+Modèle A (ternaire) :  f1_long=0.35, f1_short=0.28, f1_flat=0.25, f1_macro=0.293
+Modèle B (regression): f1_long=0.37, f1_short=0.30, f1_flat=0.00, f1_macro=0.223
+
+→ f1_macro : A gagne (0.293 vs 0.223) ← ⚠️ trompeur!
+→ f1_long  : B gagne (0.37 vs 0.35)   ← ✅ vrai signal
+→ f1_short : B gagne (0.30 vs 0.28)   ← ✅ vrai signal
+→ IC       : B (0.045) vs A (0.038)    ← ✅ B mieux corrélé aux rendements
+
+Conclusion : B (regression) est meilleur en signal directionnel pur.
+```
+
+#### 🏆 Critère de décision final
+
+| Si tu veux... | Utilise |
+|---------------|---------|
+| Un signal directionnel fort (long/short) | `f1_long` + `f1_short` → le meilleur gagne |
+| Un score de confiance continu (forces de conviction) | Regression (le score est directement la force du signal) |
+| Rester neutre souvent (frais de transaction réduits) | Ternaire (la classe flat est activement apprise) |
+| Éviter les seuils arbitraires (up/down_threshold) | Regression (pas de seuils, le modèle apprend la magnitude) |
+
+> **Règle pratique** : si `f1_long` et `f1_short` sont plus élevés en regression qu'en ternaire,
+> la regression est objectivement meilleure — ignore `f1_macro` et `f1_flat`.
+
+### Q2 : Per-Symbol, Comment savoir si les scores de regression sont bons ou mauvais ?
+
+Les métriques de regression (MSE, MAE, IC, directional accuracy) n'ont pas la même échelle
+que le F1 (0 à 1). Voici comment les interpréter.
+
+#### 📊 Les métriques et leurs seuils
+
+| Métrique | Excellent | Correct | Faible | Inutilisable | Signification |
+|----------|-----------|---------|--------|--------------|---------------|
+| **MSE** | < 0.5 | 0.5 – 1.0 | 1.0 – 1.5 | > 1.5 | Erreur quadratique sur target standardisée (moy=0, std=1) |
+| **MAE** | < 0.5 | 0.5 – 0.8 | 0.8 – 1.0 | > 1.0 | Erreur absolue moyenne |
+| **Directional Accuracy** | > 0.54 | 0.51 – 0.54 | 0.50 – 0.51 | < 0.50 | % de signes corrects (pire que le hasard si < 0.50) |
+| **IC** | > 0.03 | 0.01 – 0.03 | 0.00 – 0.01 | < 0.00 | Corrélation pred vs future_return |
+| **Correlation** | > 0.10 | 0.03 – 0.10 | 0.00 – 0.03 | < 0.00 | Corrélation pred vs target continue |
+
+#### 🔍 Diagnostic rapide
+
+**1. Vérifie d'abord le « modèle nul »**
+
+Un modèle naïf qui prédit toujours 0 (la moyenne) donne :
+
+$$MSE_{nul} = Var(target) = 1.0$$
+
+Si ton MSE > 1.5 → le modèle fait **pire que de ne rien prédire**. Il est cassé.
+
+**2. Vérifie la directional accuracy**
+
+```
+directional_accuracy > 0.50 → le modèle bat le pile-ou-face
+directional_accuracy > 0.53 → signal exploitable
+directional_accuracy > 0.55 → très bon
+```
+
+C'est la métrique la plus intuitive : quel % du temps le signe prédit est-il correct ?
+
+**3. Vérifie la cohérence entre les métriques**
+
+| Situation | Diagnostic |
+|-----------|-----------|
+| MSE bas + IC élevé + dir_acc > 0.53 | ✅ Modèle sain, signal réel |
+| MSE élevé (>1.5) + dir_acc > 0.52 | 🟡 Le modèle capte la direction mais pas la magnitude — acceptable |
+| MSE bas (<0.8) + dir_acc < 0.50 | 🟡 Le modèle fit bien la target mais prédit le mauvais signe — inutilisable en trading |
+| MSE bas + IC élevé + dir_acc ≈ 0.50 | 🟡 Le modèle prédit bien le rang cross-sectionnel mais pas la direction absolue |
+| MSE > 2.0 | ❌ Modèle non convergé, erreur d'échelle, ou target mal normalisée |
+
+#### 📐 Comprendre l'échelle de la target
+
+La target regression est standardisée (mean=0, std=1) après vol-scaling et winsorization :
+
+```
+future_return ≈ ±2% à ±8% sur 10j
+vol_20j       ≈ 1.5% à 3% par jour
+target brute  ≈ future_return / vol_20j ≈ ±0.5 à ±5
+Après winsorize 1%/99%                ≈ ±2 à ±3
+Après standardisation (mean=0, std=1)  ≈ 95% des valeurs dans [-2, +2]
+```
+
+Un **MSE de 1.0** = le modèle naïf (prédire la moyenne). Un **MSE de 0.5** = 2× meilleur que le naïf.
+
+#### 🎯 Combinaison gagnante
+
+Un bon modèle regression doit avoir **simultanément** :
+
+```
+MSE < 1.0          (meilleur que le modèle naïf)
+directional_accuracy > 0.52  (direction fiable)
+IC > 0.01           (bon classement cross-sectionnel)
+f1_long > 0.25      (détection haussière)
+f1_short > 0.20     (détection baissière)
+```
+
+Si UNE SEULE de ces conditions manque, le modèle n'est pas exploitable en l'état.
+
+### Q3 : Per-Symbol, Comment savoir si les scores ternaires sont bons ou mauvais ?
+
+Le mode ternaire utilise des métriques de classification (F1 par classe, precision, recall).
+Contrairement à la regression, tout est sur une échelle **0 à 1**, ce qui rend l'interprétation
+plus directe.
+
+#### 📊 Les métriques et leurs seuils
+
+| Métrique | Excellent | Correct | Faible | Inutilisable | Signification |
+|----------|-----------|---------|--------|--------------|---------------|
+| **f1_macro** | > 0.30 | 0.20 – 0.30 | 0.12 – 0.20 | < 0.12 | Moyenne f1_short + f1_flat + f1_long |
+| **f1_long** | > 0.35 | 0.25 – 0.35 | 0.15 – 0.25 | < 0.15 | F1 sur la classe « long » uniquement |
+| **f1_short** | > 0.30 | 0.20 – 0.30 | 0.10 – 0.20 | < 0.10 | F1 sur la classe « short » (plus difficile) |
+| **f1_flat** | > 0.30 | 0.20 – 0.30 | 0.10 – 0.20 | < 0.10 | F1 sur la classe « flat » |
+| **Accuracy** | > 0.48 | 0.42 – 0.48 | 0.35 – 0.42 | < 0.35 | % de classes correctes (3 classes → hasard = 33%) |
+| **AUC** | > 0.65 | 0.55 – 0.65 | 0.50 – 0.55 | < 0.50 | Capacité à séparer long vs reste |
+
+> **Note** : le hasard pour 3 classes équilibrées est 33% d'accuracy et f1_macro ≈ 0.33.
+> En pratique les classes sont déséquilibrées (beaucoup de flat, peu de short), donc un
+> modèle naïf « toujours flat » peut avoir accuracy ≈ 40-50% mais f1_short = f1_long = 0.
+
+#### 🔍 Diagnostic rapide
+
+**1. Vérifie que le modèle n'est pas « collapsed »**
+
+Un modèle collapsed prédit toujours la même classe :
+
+| Symptôme | Diagnostic |
+|----------|-----------|
+| `f1_long > 0` mais `f1_short = 0` et `f1_flat = 0` | 🟡 Prédit toujours LONG — utilisable long uniquement |
+| `f1_long = 0` et `f1_short = 0` et `f1_flat > 0` | ❌ Prédit toujours FLAT — inutile |
+| `f1_short > 0` mais `f1_long = 0` | 🟡 Prédit toujours SHORT — cas rare, vérifier |
+| Les 3 F1 > 0 | ✅ Le modèle discrimine réellement |
+
+**2. Vérifie la distribution true vs pred**
+
+Dans l'IHM, section **📊 Distribution true/pred** :
+
+```
+Si pred_long_pct ≈ true_long_pct  ✅ Le modèle est calibré
+Si pred_long_pct ≪ true_long_pct  🟡 Trop prudent, rate des opportunités
+Si pred_long_pct ≫ true_long_pct  ⚠️ Sur-confiant, beaucoup de faux longs
+```
+
+**3. Vérifie la stabilité train → val → test → wf**
+
+Le F1 doit être **stable** (pas d'effondrement) :
+
+```
+F1 train ≈ 0.40, F1 test ≈ 0.12  → ❌ Overfitting massif
+F1 train ≈ 0.25, F1 test ≈ 0.23  → ✅ Bonne généralisation
+F1 train ≈ 0.15, F1 test ≈ 0.14  → 🟡 Underfitting (modèle trop simple)
+```
+
+**4. Vérifie le walk-forward (WF)**
+
+Le WF est le juge final — pas de look-ahead possible :
+
+| F1 WF | Verdict |
+|-------|---------|
+| > 0.30 | 🔥 Excellent — le modèle généralise dans le temps |
+| 0.20 – 0.30 | ✅ Bon — exploitable |
+| 0.12 – 0.20 | 🟡 Faible mais utilisable avec diversification |
+| < 0.12 | ❌ Trop faible |
+| WF ≪ val | ⚠️ Overfitting temporel (régime spécifique) |
+
+#### 📐 Les pièges à éviter
+
+**Piège 1 : Accuracy trompeuse**
+
+Avec 3 classes déséquilibrées (ex: 50% flat, 35% long, 15% short), un modèle qui prédit
+toujours « flat » aura **50% d'accuracy** mais f1_macro = 0.17. L'accuracy seule ne suffit pas.
+
+**Piège 2 : f1_macro masque les faiblesses**
+
+```
+Modèle A : f1_short=0.40, f1_flat=0.40, f1_long=0.40 → f1_macro=0.40 ✅ Équilibré
+Modèle B : f1_short=0.00, f1_flat=0.60, f1_long=0.60 → f1_macro=0.40 ⚠️ Zéro short!
+```
+
+Même f1_macro, mais A est utilisable long+short, B est utilisable long uniquement.
+
+**Piège 3 : Confusion train/val/test/WF**
+
+Seul le **WF** (walk-forward) compte pour juger la performance réelle. Le test set est
+chronologique mais pas glissant — il peut surprendre un régime de marché favorable.
+
+#### 🎯 Combinaison gagnante (ternaire)
+
+Un bon modèle ternaire doit avoir **simultanément** :
+
+```
+f1_long > 0.25        (détection haussière fiable)
+f1_short > 0.15       (détection baissière minimale — ou assumer long-only)
+f1_flat > 0.20        (sait identifier les zones neutres)
+WF f1_macro > 0.20    (généralisation temporelle)
+pred ≈ true (distribution équilibrée)
+```
+
+Et surtout : **F1 train ≈ F1 val ≈ F1 test ≈ F1 WF** (pas d'effondrement).
 13. **Smoothing conservé avec 8 splits** : contre-productif avec 13 splits (dilution), bénéfique avec 8 splits (signal frais +31% H10).
 14. **LightGBM LambdaRank confirmé inférieur** : régimes ignorés (imp 0.0), IC −38% vs CatBoost.
 15. **Pas besoin de retester les 18 pistes** : le leakage était proportionnel (33% constant). Les classements relatifs tiennent. Seuls smoothing, splits et LambdaRank interagissaient avec le mécanisme de leakage.

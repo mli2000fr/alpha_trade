@@ -1263,6 +1263,7 @@ def build_target(
     - ``ternary``     : +1 (long)  si future_return > positive_threshold,
                         -1 (short) si future_return < negative_threshold,
                          0 (flat)  entre les deux.
+    - ``regression``  : rendement futur vol-scalé + winsorizé (continu).
 
       Pour ``ternary``, ``negative_threshold`` doit être < 0 (ex: -0.08 pour -8%).
     """
@@ -1284,6 +1285,26 @@ def build_target(
         target = target.mask(future_return > positive_threshold, 1)
         target = target.mask(future_return < negative_threshold, -1)
         return target.where(future_return.notna())
+
+    if mode == "regression":
+        # ── Regression target (Sprint 2026-08-02) ──
+        # Vol-scaling + winsorize + standardisation (mean=0, std=1).
+        # La standardisation évite que le modèle produise des prédictions
+        # non contraintes (MSE explosif). Le signe est préservé (F1 inchangé).
+        target = future_return.copy()
+        if horizon >= 5:
+            rolling_vol = close.pct_change().rolling(20).std()
+            target = target / rolling_vol
+        # Winsorize 1% / 99% par symbole (robustesse aux outliers)
+        lo, hi = target.quantile(0.01), target.quantile(0.99)
+        target = target.clip(lo, hi)
+        # Standardisation : mean=0, std=1 (préserve le signe pour F1)
+        valid_mask = target.notna()
+        t_mean = target.loc[valid_mask].mean()
+        t_std = target.loc[valid_mask].std()
+        if t_std is not None and t_std > 1e-9:
+            target = (target - t_mean) / t_std
+        return target.where(future_return.notna()).astype(float)
 
     raise ValueError(f"Unsupported target mode: {mode}")
 

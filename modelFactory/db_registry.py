@@ -485,7 +485,7 @@ def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, me
         )
     params = {
         "rid": run_id, "sym": symbol, "mn": model_name, "split": split_name,
-        "loss": metrics.get("loss"),
+        "loss": metrics.get("loss") if metrics.get("loss") is not None else metrics.get("mse"),
         "da": metrics.get("directional_accuracy") or metrics.get("accuracy"),
         "prec": metrics.get("precision"),
         "rec": metrics.get("recall"),

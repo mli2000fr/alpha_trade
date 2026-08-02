@@ -266,7 +266,7 @@ DEFAULT_CA_BATCH_SIZE = 25
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
 MLGlobalModelName = Literal["catboost", "lightgbm"]
-MLTargetMode = Literal["binary", "swing_cash", "ternary"]
+MLTargetMode = Literal["binary", "swing_cash", "ternary", "regression"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost"]
@@ -2133,7 +2133,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--target-mode",
             options.ml_target_mode,
         ]
-        # ML Sprint 1 — ajouter num-classes pour mode ternaire
+        # ML Sprint 1 — ajouter num-classes pour mode ternaire / régression
         if options.ml_target_mode == "ternary":
             command.extend(["--num-classes", "3"])
             command.extend([
@@ -2144,6 +2144,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--ternary-threshold-long", str(options.ml_ternary_threshold_long),
                 "--ternary-top2-margin", str(options.ml_ternary_top2_margin),
             ])
+        elif options.ml_target_mode == "regression":
+            command.extend(["--num-classes", "1"])
         command.extend([
             "--forecast-horizon",
             str(options.ml_forecast_horizon),

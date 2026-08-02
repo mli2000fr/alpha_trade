@@ -14,6 +14,7 @@ from torchmetrics.classification import (
     BinaryAccuracy, BinaryAUROC, BinaryPrecision, BinaryRecall,
     MulticlassAccuracy, MulticlassF1Score,
 )
+from torchmetrics.regression import MeanSquaredError, MeanAbsoluteError
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +47,11 @@ class TemporalAttention(nn.Module):
 # ---------------------------------------------------------------------------
 
 class LSTMAttentionClassifier(nn.Module):
-    """LSTM multi-couche + attention temporelle + classification head."""
+    """LSTM multi-couche + attention temporelle + head.
+
+    - ``num_classes >= 2`` : classification head (logits).
+    - ``num_classes == 1`` : regression head (scalaire continu).
+    """
 
     def __init__(self, input_size: int, hidden_size: int, num_layers: int, dropout: float, num_classes: int = 2) -> None:
         super().__init__()
@@ -59,21 +64,22 @@ class LSTMAttentionClassifier(nn.Module):
         )
         self.attention = TemporalAttention(hidden_size)
         self.dropout = nn.Dropout(dropout)
-        self.classifier = nn.Linear(hidden_size, num_classes)
+        self.classifier = nn.Linear(hidden_size, max(num_classes, 1))
+        self._num_classes = num_classes
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x: [batch, seq_len, input_size]
         Returns:
-            logits: [batch, num_classes]
+            logits/pred: [batch, num_classes] (classification) ou [batch, 1] (regression)
             attn_weights: [batch, seq_len]
         """
         lstm_out, _ = self.lstm(x)                         # [batch, seq_len, hidden]
         context, attn_weights = self.attention(lstm_out)   # [batch, hidden], [batch, seq_len]
         context = self.dropout(context)
-        logits = self.classifier(context)                  # [batch, num_classes]
-        return logits, attn_weights
+        out = self.classifier(context)                     # [batch, num_classes] ou [batch, 1]
+        return out, attn_weights
 
 
 # ---------------------------------------------------------------------------
@@ -81,9 +87,10 @@ class LSTMAttentionClassifier(nn.Module):
 # ---------------------------------------------------------------------------
 
 class LSTMAttentionModule(L.LightningModule):
-    """LightningModule wrapping the LSTM+Attention classifier.
+    """LightningModule wrapping the LSTM+Attention.
 
-    Supports ``num_classes=2`` (binary) and ``num_classes=3`` (ternary long/flat/short).
+    Supports ``num_classes=2`` (binary), ``num_classes=3`` (ternary long/flat/short),
+    and ``num_classes=1`` (regression — target continue).
     """
 
     def __init__(
@@ -103,18 +110,39 @@ class LSTMAttentionModule(L.LightningModule):
         self.save_hyperparameters()
         self.net = LSTMAttentionClassifier(input_size, hidden_size, num_layers, dropout, num_classes)
         self._num_classes = num_classes
+        self._is_regression = num_classes == 1
 
-        # Class weights for imbalanced ternary targets
-        class_weights = None
-        if num_classes == 3:
+        # ── Loss ──
+        if self._is_regression:
+            self.criterion = nn.MSELoss()
+        elif num_classes == 3:
             class_weights = torch.tensor(
                 [ternary_weight_short, ternary_weight_flat, ternary_weight_long],
                 dtype=torch.float32,
             )  # short, flat, long
-        self.criterion = nn.CrossEntropyLoss(weight=class_weights)
+            self.criterion = nn.CrossEntropyLoss(weight=class_weights)
+        else:
+            self.criterion = nn.CrossEntropyLoss()
 
-        # Metrics — adaptés au nombre de classes
-        if num_classes == 3:
+        # ── Metrics ──
+        if self._is_regression:
+            self.train_mse = MeanSquaredError()
+            self.val_mse = MeanSquaredError()
+            self.val_mae = MeanAbsoluteError()
+            self.test_mse = MeanSquaredError()
+            self.test_mae = MeanAbsoluteError()
+            self.train_acc = None
+            self.val_acc = None
+            self.val_f1 = None
+            self.test_acc = None
+            self.test_f1 = None
+            self.val_precision = None
+            self.val_recall = None
+            self.val_auc = None
+            self.test_precision = None
+            self.test_recall = None
+            self.test_auc = None
+        elif num_classes == 3:
             self.train_acc = MulticlassAccuracy(num_classes=3, average="macro")
             self.val_acc = MulticlassAccuracy(num_classes=3, average="macro")
             self.val_f1 = MulticlassF1Score(num_classes=3, average="macro")
@@ -126,6 +154,8 @@ class LSTMAttentionModule(L.LightningModule):
             self.test_precision = None
             self.test_recall = None
             self.test_auc = None
+            self.train_mse = None; self.val_mse = None; self.val_mae = None
+            self.test_mse = None; self.test_mae = None
         else:
             self.train_acc = BinaryAccuracy()
             self.val_acc = BinaryAccuracy()
@@ -138,66 +168,92 @@ class LSTMAttentionModule(L.LightningModule):
             self.test_auc = BinaryAUROC()
             self.val_f1 = None
             self.test_f1 = None
+            self.train_mse = None; self.val_mse = None; self.val_mae = None
+            self.test_mse = None; self.test_mae = None
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         return self.net(x)
 
     def _shared_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x, y = batch
-        logits, _ = self.net(x)
-        if self._num_classes == 3:
+        out, _ = self.net(x)
+        if self._is_regression:
+            # y est déjà float [batch, 1] ou [batch] → squeeze si nécessaire
+            y_float = y.float()
+            if y_float.dim() == 2:
+                y_float = y_float.squeeze(1)
+            pred = out.squeeze(1)  # [batch]
+            loss = self.criterion(pred, y_float)
+            return loss, pred, y_float
+        elif self._num_classes == 3:
             # y est {-1, 0, 1}, on le décale en {0, 1, 2} pour CrossEntropyLoss
             y_shifted = y + 1
-            loss = self.criterion(logits, y_shifted)
-            probs = F.softmax(logits, dim=1)
+            loss = self.criterion(out, y_shifted)
+            probs = F.softmax(out, dim=1)
             preds = torch.argmax(probs, dim=1)
             return loss, preds, y_shifted
         else:
-            loss = self.criterion(logits, y)
-            probs = F.softmax(logits, dim=1)
+            loss = self.criterion(out, y)
+            probs = F.softmax(out, dim=1)
             probs_class1 = probs[:, 1]
             return loss, probs_class1, y
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:
         loss, output, y = self._shared_step(batch)
-        self.train_acc(output, y)
-        self.log("train_loss", loss, prog_bar=True)
-        self.log("train_acc", self.train_acc, prog_bar=True)
+        if self._is_regression:
+            self.train_mse(output, y)
+            self.log("train_loss", loss, prog_bar=True)
+            self.log("train_mse", self.train_mse, prog_bar=True)
+        else:
+            self.train_acc(output, y)
+            self.log("train_loss", loss, prog_bar=True)
+            self.log("train_acc", self.train_acc, prog_bar=True)
         return loss
 
     def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         loss, output, y = self._shared_step(batch)
-        self.val_acc(output, y)
-        if self.val_precision is not None:
-            self.val_precision(output, y)
-        if self.val_recall is not None:
-            self.val_recall(output, y)
-        if self.val_auc is not None:
-            self.val_auc(output, y)
-        if self.val_f1 is not None:
-            self.val_f1(output, y)
-        self.log("val_loss", loss, prog_bar=True)
-        self.log("val_acc", self.val_acc, prog_bar=True)
-        if self.val_precision is not None:
-            self.log("val_precision", self.val_precision)
-        if self.val_recall is not None:
-            self.log("val_recall", self.val_recall)
-        if self.val_auc is not None:
-            self.log("val_auc", self.val_auc)
-        if self.val_f1 is not None:
-            self.log("val_f1", self.val_f1)
+        if self._is_regression:
+            self.val_mse(output, y)
+            self.val_mae(output, y)
+            self.log("val_loss", loss, prog_bar=True)
+            self.log("val_mse", self.val_mse, prog_bar=True)
+            self.log("val_mae", self.val_mae, prog_bar=True)
+        else:
+            self.val_acc(output, y)
+            if self.val_precision is not None:
+                self.val_precision(output, y)
+            if self.val_recall is not None:
+                self.val_recall(output, y)
+            if self.val_auc is not None:
+                self.val_auc(output, y)
+            if self.val_f1 is not None:
+                self.val_f1(output, y)
+            self.log("val_loss", loss, prog_bar=True)
+            self.log("val_acc", self.val_acc, prog_bar=True)
+            if self.val_precision is not None:
+                self.log("val_precision", self.val_precision)
+            if self.val_recall is not None:
+                self.log("val_recall", self.val_recall)
+            if self.val_auc is not None:
+                self.log("val_auc", self.val_auc)
+            if self.val_f1 is not None:
+                self.log("val_f1", self.val_f1)
 
     def test_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         loss, output, y = self._shared_step(batch)
-        self.test_acc(output, y)
-        if self.test_precision is not None:
-            self.test_precision(output, y)
-        if self.test_recall is not None:
-            self.test_recall(output, y)
-        if self.test_auc is not None:
-            self.test_auc(output, y)
-        if self.test_f1 is not None:
-            self.test_f1(output, y)
+        if self._is_regression:
+            self.test_mse(output, y)
+            self.test_mae(output, y)
+        else:
+            self.test_acc(output, y)
+            if self.test_precision is not None:
+                self.test_precision(output, y)
+            if self.test_recall is not None:
+                self.test_recall(output, y)
+            if self.test_auc is not None:
+                self.test_auc(output, y)
+            if self.test_f1 is not None:
+                self.test_f1(output, y)
         self.log("test_loss", loss)
         self.log("test_acc", self.test_acc)
         if self.test_precision is not None:
