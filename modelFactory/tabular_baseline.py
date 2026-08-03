@@ -270,6 +270,8 @@ def _compute_regression_metrics(
 	pred: np.ndarray,
 	target: np.ndarray,
 	future_return: np.ndarray,
+	*,
+	bias_correction: float = 0.0,
 ) -> dict[str, Any]:
 	"""Calcule les métriques de régression pour un modèle per-symbol.
 
@@ -279,6 +281,9 @@ def _compute_regression_metrics(
 		pred: Prédictions continues du modèle [n_samples]
 		target: Target de régression (vol-scalé winsorizé) [n_samples]
 		future_return: Rendement futur brut [n_samples]
+		bias_correction: Correction de biais appliquée AVANT binarisation.
+		    pred_corrected = pred - bias_correction.
+		    Le signe de pred_corrected détermine long (>0) / short (<0).
 
 	Returns:
 		dict avec mse, mae, correlation, directional_accuracy, ic, f1_macro, etc.
@@ -288,7 +293,8 @@ def _compute_regression_metrics(
 		return {"loss": 0.0, "mse": 0.0, "mae": 0.0, "correlation": 0.0, "directional_accuracy": 0.0, "n_samples": int(valid.sum()),
 		        "f1_macro": 0.0, "f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
 		        "true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
-		        "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0}
+		        "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0,
+		        "bias_correction": 0.0}
 
 	p = pred[valid]
 	t = target[valid]
@@ -301,14 +307,17 @@ def _compute_regression_metrics(
 	# Pearson correlation avec la target
 	corr = float(np.corrcoef(p, t)[0, 1]) if len(p) > 2 else 0.0
 
-	# Directional accuracy : sign(pred) == sign(future_return)
-	dir_acc = float(np.mean(np.sign(p) == np.sign(f))) if len(p) > 0 else 0.0
+	# ── Bias correction ──
+	p_corrected = p - bias_correction
+
+	# Directional accuracy : sign(pred_corrected) == sign(future_return)
+	dir_acc = float(np.mean(np.sign(p_corrected) == np.sign(f))) if len(p) > 0 else 0.0
 
 	# IC (Information Coefficient) — corrélation entre prédiction et future_return
 	ic = float(np.corrcoef(p, f)[0, 1]) if len(p) > 2 else 0.0
 
 	# ── F1 macro binarisé (comparable au mode ternaire) ──
-	pred_side = np.select([p > 0, p < 0], [1, -1], default=0).astype(int)
+	pred_side = np.select([p_corrected > 0, p_corrected < 0], [1, -1], default=0).astype(int)
 	true_side = np.select([f > 0, f < 0], [1, -1], default=0).astype(int)
 
 	pred_shifted = pred_side + 1  # {-1,0,1} → {0,1,2}
@@ -347,6 +356,7 @@ def _compute_regression_metrics(
 		"pred_short_pct": float((pred_shifted == 0).mean() * 100),
 		"pred_flat_pct": float((pred_shifted == 1).mean() * 100),
 		"pred_long_pct": float((pred_shifted == 2).mean() * 100),
+		"bias_correction": float(bias_correction),
 	}
 
 
@@ -438,8 +448,19 @@ def run_tabular_baseline(
 		val_future = val_df["future_return"].to_numpy()
 		test_future = test_df["future_return"].to_numpy()
 
-		val_metrics = _compute_regression_metrics(val_pred, val_df["target"].to_numpy(), val_future)
-		test_metrics = _compute_regression_metrics(test_pred, test_df["target"].to_numpy(), test_future)
+		# ── Bias correction : recalibre le seuil long/short ──
+		# La target sector-neutre est centrée sur 0 par construction,
+		# mais le modèle peut avoir un biais systématique.
+		# On calcule la médiane des prédictions sur la validation
+		# pour recentrer le seuil de décision.
+		bias_correction = float(np.median(val_pred))
+		LOGGER.info(
+			"tabular_baseline regression bias_correction=%.6f model=%s",
+			bias_correction, model_name,
+		)
+
+		val_metrics = _compute_regression_metrics(val_pred, val_df["target"].to_numpy(), val_future, bias_correction=bias_correction)
+		test_metrics = _compute_regression_metrics(test_pred, test_df["target"].to_numpy(), test_future, bias_correction=bias_correction)
 
 		selected_threshold = float(cfg.data.decision_threshold)
 		calibrator = None
@@ -864,24 +885,29 @@ def run_tabular_walk_forward(
 				_wf_days_diff = (_wf_max_date - _wf_train_dates).dt.days
 				_wf_sample_weights = np.exp(-_wf_days_diff.values.astype(np.float64) / 365.0)
 			model.fit(_train_df_r[feature_cols], train_targets, sample_weight=_wf_sample_weights)
+			# ── Bias correction from train set (WF fold) ──
+			_train_pred = model.predict(_train_df_r[feature_cols])
+			_wf_bias = float(np.median(_train_pred))
 			_test_valid_r = _test_df_r["target"].notna()
 			_test_df_r = _test_df_r.loc[_test_valid_r]
 			if _test_df_r.empty:
 				continue
 			test_pred = model.predict(_test_df_r[feature_cols])
+			test_pred_corrected = test_pred - _wf_bias
 			test_target = _test_df_r["target"].astype(float).to_numpy()
 			test_future = _test_df_r["future_return"].to_numpy() if "future_return" in _test_df_r.columns else None
-			valid = np.isfinite(test_pred) & np.isfinite(test_target)
+			valid = np.isfinite(test_pred_corrected) & np.isfinite(test_target)
 			n = int(valid.sum())
 			fold_m: dict[str, Any] = {"split_index": split.split_index, "train_rows": len(_train_df_r), "test_rows": len(_test_df_r), "n_valid": n,
 			                          "f1_macro": 0.0, "f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
 			                          "true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
-			                          "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0}
+			                          "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0,
+			                          "bias_correction": float(_wf_bias)}
 			if n >= 2:
-				p, t = test_pred[valid], test_target[valid]
+				p, t = test_pred_corrected[valid], test_target[valid]
 				f = test_future[valid] if test_future is not None else None
-				fold_m["mse"] = float(np.mean((p - t) ** 2))
-				fold_m["mae"] = float(np.mean(np.abs(p - t)))
+				fold_m["mse"] = float(np.mean((test_pred[valid] - t) ** 2))  # MSE on raw pred
+				fold_m["mae"] = float(np.mean(np.abs(test_pred[valid] - t)))
 				fold_m["directional_accuracy"] = float(np.mean(np.sign(p) == np.sign(t)))
 				if f is not None:
 					fold_m["ic"] = float(np.corrcoef(p, f)[0, 1]) if np.isfinite(f).sum() >= 2 else None

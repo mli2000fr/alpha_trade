@@ -515,6 +515,7 @@ def _status_badge(status: str) -> str:
         "running": "🟨 En cours",
         "completed": "🟢 Terminé",
         "failed": "🔴 Échec",
+        "to delete": "❌ À supprimer",
     }
     return mapping.get(str(status).strip().lower(), str(status))
 
@@ -924,13 +925,39 @@ def _render_batch_detail(batch: pd.Series) -> None:
     safe_bid = batch_id.replace("/", "_").replace("\\", "_")[:64]
     engine = get_engine()
     if engine is not None:
-        st.download_button(
-            label="📥 Télécharger le rapport (.md)",
-            data=generate_batch_report(engine, batch_id),
-            file_name=f"{safe_bid}.md",
-            mime="text/markdown",
-            key=f"dl_{safe_bid}",
-        )
+        col_dl, col_del = st.columns([3, 1])
+        with col_dl:
+            st.download_button(
+                label="📥 Télécharger le rapport (.md)",
+                data=generate_batch_report(engine, batch_id),
+                file_name=f"{safe_bid}.md",
+                mime="text/markdown",
+                key=f"dl_{safe_bid}",
+            )
+        with col_del:
+            _current_status = str(batch.get("status", "")).strip().lower()
+            if _current_status == "to delete":
+                st.info("❌ À supprimer", icon="🗑️")
+            else:
+                _del_key = f"del_{safe_bid}"
+                if st.button("🗑️ TO DELETE", key=_del_key, type="secondary", help="Marque ce batch comme 'TO DELETE'."):
+                    st.session_state["_confirm_to_delete"] = batch_id
+                if st.session_state.get("_confirm_to_delete") == batch_id:
+                    st.warning("Confirmer ?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Oui", key=f"{_del_key}_yes"):
+                            _ = safe_query(
+                                "UPDATE model_training_batch SET status = 'TO DELETE' WHERE batch_id = :bid",
+                                {"bid": batch_id},
+                            )
+                            st.session_state["_confirm_to_delete"] = None
+                            st.success("Batch marqué TO DELETE.")
+                            st.rerun()
+                    with c2:
+                        if st.button("❌ Non", key=f"{_del_key}_no"):
+                            st.session_state["_confirm_to_delete"] = None
+                            st.rerun()
 
     row = detail_df.iloc[0]
 
@@ -1613,6 +1640,13 @@ def render() -> None:
     display_df = batches_df.copy()
     if "status" in display_df.columns:
         display_df["status"] = display_df["status"].apply(_status_badge)
+    if "batch_id" in display_df.columns and "status" in batches_df.columns:
+        # Prefix "❌ " for TO DELETE batches
+        _raw_status = batches_df["status"].fillna("").str.strip().str.lower()
+        display_df["batch_id"] = display_df.apply(
+            lambda r: ("❌ " if _raw_status.loc[r.name] == "to delete" else "") + str(r["batch_id"]),
+            axis=1,
+        )
     if "comment" in display_df.columns:
         display_df["comment"] = display_df["comment"].fillna("—")
         display_df["comment"] = display_df["comment"].apply(
