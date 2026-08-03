@@ -139,3 +139,6 @@ En Résumé
 Passer tes modèles Per-Symbol en 15 min ou 30 min tout en conservant une target à horizon Swing (H5 ou H10) est exactement la solution pour débloquer le manque de données et booster la qualité de tes prédictions Per-Symbol.
 MD
 + 1
+
+
+tu te souvietns encore **#3 Clusters**✅ Oui — 11 modèles sectoriels au lieu de 939, ~64K lignes chacun. Tu as déjà le mapping secteurs.1 semaine ?

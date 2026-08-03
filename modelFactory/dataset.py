@@ -579,6 +579,24 @@ class SymbolDataModule(L.LightningDataModule):
             forecast_horizon=self.data_cfg.forecast_horizon,
         )
         self.split = split
+        # 2.5 Standardize regression target on train stats only (anti-leakage)
+        if self.data_cfg.target_mode == "regression":
+            from modelFactory.features import standardize_regression_target
+            # Identify train rows using the same indices chrono_split used
+            n = len(df)
+            i_train = int(n * self.data_cfg.train_ratio)
+            train_start, train_end = _purged_bounds(start=0, end=i_train, purge_tail=self.data_cfg.forecast_horizon)
+            train_mask = pd.Series(False, index=df.index)
+            train_mask.iloc[train_start:train_end] = True
+            df = standardize_regression_target(df, train_mask=train_mask)
+            # Re-split with standardized target
+            split = chrono_split(
+                df,
+                self.data_cfg.train_ratio,
+                self.data_cfg.val_ratio,
+                forecast_horizon=self.data_cfg.forecast_horizon,
+            )
+            self.split = split
         # 3. Fit scaler on train
         self.scaler.fit(split.train)
         # 4. Transform + build sequences

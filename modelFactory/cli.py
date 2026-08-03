@@ -346,6 +346,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
     p.add_argument("--benchmark-symbol", type=str, default="SPY")
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary", "regression"])
+    p.add_argument("--training-mode", type=str, default="per_symbol", choices=["per_symbol", "per_sector"],
+                   help="Mode d'entraînement : per_symbol (1 modèle par symbole) ou per_sector (1 modèle par secteur GICS)")
     p.add_argument("--label-method", type=str, default="fixed_horizon", choices=["fixed_horizon", "triple_barrier"])
     p.add_argument("--triple-barrier-stop-atr-mult", type=float, default=2.0)
     p.add_argument("--triple-barrier-tp-atr-mult", type=float, default=3.0)
@@ -608,6 +610,7 @@ def main(args: list[str] | None = None) -> None:
         max_workers=opts.max_workers,
         accelerator=opts.accelerator,
         debug_train=opts.debug_train,
+        training_mode=opts.training_mode,
     )
 
     reproducibility_state = apply_reproducibility(cfg.reproducibility, context=f"cli:{opts.mode}")

@@ -370,6 +370,7 @@ class PipelineLaunchOptions:
     ml_optimize_target: bool = DEFAULT_ML_OPTIMIZE_TARGET
     # ML — cible swing cash + horizon + walk-forward (P1)
     ml_target_mode: MLTargetMode = DEFAULT_ML_TARGET_MODE  # type: ignore[assignment]
+    ml_training_mode: str = "per_sector"  # per_symbol (legacy) | per_sector
     ml_forecast_horizon: int = DEFAULT_ML_FORECAST_HORIZON
     ml_target_up_threshold: float = DEFAULT_ML_TARGET_UP_THRESHOLD
     ml_target_down_threshold: float = DEFAULT_ML_TARGET_DOWN_THRESHOLD
@@ -2146,6 +2147,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
         elif options.ml_target_mode == "regression":
             command.extend(["--num-classes", "1"])
+        if options.ml_training_mode != "per_symbol":
+            command.extend(["--training-mode", options.ml_training_mode])
         command.extend([
             "--forecast-horizon",
             str(options.ml_forecast_horizon),

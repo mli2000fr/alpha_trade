@@ -369,6 +369,22 @@ def run_tabular_baseline(
 	if train_df.empty or val_df.empty or test_df.empty:
 		return {"status": "skipped", "model_name": model_name, "reason": "insufficient_rows_after_split"}
 
+	# ── Standardize regression target on train stats (anti-leakage) ──
+	if cfg.data.target_mode == "regression":
+		from modelFactory.features import standardize_regression_target
+		# Compute stats on train only, apply to all splits
+		train_target = train_df["target"]
+		valid = train_target.notna()
+		if valid.sum() >= 2:
+			t_mean = float(train_target.loc[valid].mean())
+			t_std = float(train_target.loc[valid].std())
+			if t_std > 1e-9:
+				for _part in (train_df, val_df, test_df):
+					_part["target"] = (_part["target"] - t_mean) / t_std
+			else:
+				for _part in (train_df, val_df, test_df):
+					_part["target"] = _part["target"] - t_mean
+
 	symbol_tag = "__BATCH__"
 	if "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
 		symbol_tag = str(prepared_df["symbol"].iloc[0])
@@ -790,9 +806,25 @@ def run_tabular_walk_forward(
 		)
 		model = model_builder(split_seed)
 		if is_regression:
+			# ── Standardize target on this fold's train stats (anti-leakage) ──
+			_train_df_r = split.train.copy()
+			_test_df_r = split.test.copy()
+			_train_valid_r = _train_df_r["target"].notna()
+			if _train_valid_r.sum() >= 2:
+				_t_mean = float(_train_df_r.loc[_train_valid_r, "target"].mean())
+				_t_std = float(_train_df_r.loc[_train_valid_r, "target"].std())
+				if _t_std > 1e-9:
+					_train_df_r["target"] = (_train_df_r["target"] - _t_mean) / _t_std
+					_test_df_r["target"] = (_test_df_r["target"] - _t_mean) / _t_std
+				else:
+					_train_df_r["target"] = _train_df_r["target"] - _t_mean
+					_test_df_r["target"] = _test_df_r["target"] - _t_mean
 			# ── Regression : target continue ──
-			_train_valid_r = split.train["target"].notna()
-			_train_df_r = split.train.loc[_train_valid_r]
+			# Filter NaN rows AFTER standardization (NaN targets persist from shift(-h))
+			_train_valid_mask = _train_df_r["target"].notna()
+			_train_df_r = _train_df_r.loc[_train_valid_mask]
+			if _train_df_r.empty:
+				continue
 			train_targets = _train_df_r["target"].astype(float)
 			if train_targets.std() < 1e-9:
 				continue
@@ -803,8 +835,8 @@ def run_tabular_walk_forward(
 				_wf_days_diff = (_wf_max_date - _wf_train_dates).dt.days
 				_wf_sample_weights = np.exp(-_wf_days_diff.values.astype(np.float64) / 365.0)
 			model.fit(_train_df_r[feature_cols], train_targets, sample_weight=_wf_sample_weights)
-			_test_valid_r = split.test["target"].notna()
-			_test_df_r = split.test.loc[_test_valid_r]
+			_test_valid_r = _test_df_r["target"].notna()
+			_test_df_r = _test_df_r.loc[_test_valid_r]
 			if _test_df_r.empty:
 				continue
 			test_pred = model.predict(_test_df_r[feature_cols])

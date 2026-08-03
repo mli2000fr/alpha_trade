@@ -1288,9 +1288,9 @@ def build_target(
 
     if mode == "regression":
         # ── Regression target (Sprint 2026-08-02) ──
-        # Vol-scaling + winsorize + standardisation (mean=0, std=1).
-        # La standardisation évite que le modèle produise des prédictions
-        # non contraintes (MSE explosif). Le signe est préservé (F1 inchangé).
+        # Vol-scaling + winsorize ONLY. La standardisation (mean=0, std=1)
+        # est appliquée APRÈS le split chronologique pour éviter le leakage
+        # (→ SymbolDataModule.setup() appelle standardize_regression_target).
         target = future_return.copy()
         if horizon >= 5:
             rolling_vol = close.pct_change().rolling(20).std()
@@ -1298,12 +1298,6 @@ def build_target(
         # Winsorize 1% / 99% par symbole (robustesse aux outliers)
         lo, hi = target.quantile(0.01), target.quantile(0.99)
         target = target.clip(lo, hi)
-        # Standardisation : mean=0, std=1 (préserve le signe pour F1)
-        valid_mask = target.notna()
-        t_mean = target.loc[valid_mask].mean()
-        t_std = target.loc[valid_mask].std()
-        if t_std is not None and t_std > 1e-9:
-            target = (target - t_mean) / t_std
         return target.where(future_return.notna()).astype(float)
 
     raise ValueError(f"Unsupported target mode: {mode}")
@@ -1313,6 +1307,46 @@ def compute_future_return(df: pd.DataFrame, horizon: int = 5) -> pd.Series:
     """Retourne le rendement futur aligné à la ligne courante."""
     close = _build_adjusted_price_frame(df)["close"]
     return close.shift(-horizon) / close - 1.0
+
+
+def standardize_regression_target(
+    prepared_df: pd.DataFrame,
+    train_mask: "pd.Series | None" = None,
+) -> pd.DataFrame:
+    """Standardise la target regression (mean=0, std=1) sur les stats du train.
+
+    Doit être appelée APRÈS le split chronologique pour éviter le data leakage.
+    Si ``train_mask`` est None, standardise sur l'ensemble du DataFrame
+    (utilisé uniquement pour l'inférence, où il n'y a pas de split).
+
+    Returns
+    -------
+    pd.DataFrame
+        Copie du DataFrame avec la colonne ``target`` standardisée.
+    """
+    if "target" not in prepared_df.columns:
+        return prepared_df
+
+    df = prepared_df.copy()
+    target = df["target"]
+
+    if train_mask is not None:
+        train_target = target.loc[train_mask]
+    else:
+        train_target = target
+
+    valid = train_target.notna()
+    if valid.sum() < 2:
+        return df
+
+    t_mean = float(train_target.loc[valid].mean())
+    t_std = float(train_target.loc[valid].std())
+    if t_std > 1e-9:
+        df["target"] = (target - t_mean) / t_std
+    else:
+        df["target"] = target - t_mean
+
+    return df
 
 
 # ---------------------------------------------------------------------------

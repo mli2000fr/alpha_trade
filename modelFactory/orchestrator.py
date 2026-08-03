@@ -833,54 +833,42 @@ def run_training_batch(
         cfg.data.enable_cross_sectional_features,
     )
 
-    if effective_workers == 1:
-        for index, sym in enumerate(symbols, start=1):
-            try:
-                update_runtime_status(
-                    current_phase="symbol_train_start",
-                    current_symbol=sym,
-                    current_symbol_index=index,
-                    progress_item=sym,
-                )
-                if _needs_cross_sectional:
-                    result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache, fundamental_cache=fundamental_cache, batch_id=batch_id)
-                else:
-                    result = _train_worker(sym, cfg, fundamental_cache=fundamental_cache, batch_id=batch_id)
-                results.append(result)
-                update_runtime_status(
-                    progress_current=len(results),
-                    symbols_completed=sum(1 for r in results if r.status == "completed"),
-                    symbols_skipped=sum(1 for r in results if r.status == "skipped"),
-                    symbols_failed=sum(1 for r in results if r.status == "failed"),
-                    current_phase=f"symbol_{result.status}",
-                )
-                LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
-            except Exception as exc:
-                LOGGER.exception("orchestrator worker_exception symbol=%s", sym)
-                results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
-                update_runtime_status(
-                    progress_current=len(results),
-                    symbols_completed=sum(1 for r in results if r.status == "completed"),
-                    symbols_skipped=sum(1 for r in results if r.status == "skipped"),
-                    symbols_failed=sum(1 for r in results if r.status == "failed"),
-                    current_phase="symbol_failed",
-                    current_symbol=sym,
-                    current_symbol_index=index,
-                    progress_item=sym,
-                )
+    # ── Per-Sector mode (Sprint 2026-08-03) ──
+    if cfg.training_mode == "per_sector":
+        from modelFactory.trainer_sector import run_per_sector_batch
+
+        sector_results = run_per_sector_batch(
+            symbols,
+            engine,
+            cfg,
+            batch_id=batch_id,
+        )
+        # Convert sector results to TrainResult format for compatibility
+        for sr in sector_results:
+            results.append(TrainResult(
+                sr.get("sector", "unknown"),
+                batch_id or "N/A",
+                sr.get("status", "failed"),
+                skip_reason=sr.get("reason"),
+            ))
+        LOGGER.info("orchestrator per_sector done sectors=%d statuses=%s",
+                     len(sector_results),
+                     {r.get("sector"): r.get("status") for r in sector_results})
     else:
-        with ProcessPoolExecutor(max_workers=effective_workers) as pool:
-            # Cross-sectional cache NOT passed to subprocess (pickling overhead).
-            # Each worker falls back to symbol-by-symbol DB loading.
-            # Same for fundamentals — workers load from DB independently.
-            if _needs_cross_sectional:
-                futures = {pool.submit(_train_worker, sym, cfg, symbols, batch_id=batch_id): sym for sym in symbols}
-            else:
-                futures = {pool.submit(_train_worker, sym, cfg, batch_id=batch_id): sym for sym in symbols}
-            for future in as_completed(futures):
-                sym = futures[future]
+        # ── Per-Symbol mode (legacy) ──
+        if effective_workers == 1:
+            for index, sym in enumerate(symbols, start=1):
                 try:
-                    result = future.result()
+                    update_runtime_status(
+                        current_phase="symbol_train_start",
+                        current_symbol=sym,
+                        current_symbol_index=index,
+                        progress_item=sym,
+                    )
+                    if _needs_cross_sectional:
+                        result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache, fundamental_cache=fundamental_cache, batch_id=batch_id)
+                    else:
+                        result = _train_worker(sym, cfg, fundamental_cache=fundamental_cache, batch_id=batch_id)
                     results.append(result)
                     update_runtime_status(
                         progress_current=len(results),
@@ -888,8 +876,6 @@ def run_training_batch(
                         symbols_skipped=sum(1 for r in results if r.status == "skipped"),
                         symbols_failed=sum(1 for r in results if r.status == "failed"),
                         current_phase=f"symbol_{result.status}",
-                        current_symbol=sym,
-                        progress_item=sym,
                     )
                     LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
                 except Exception as exc:
@@ -902,8 +888,45 @@ def run_training_batch(
                         symbols_failed=sum(1 for r in results if r.status == "failed"),
                         current_phase="symbol_failed",
                         current_symbol=sym,
+                        current_symbol_index=index,
                         progress_item=sym,
                     )
+        else:
+            with ProcessPoolExecutor(max_workers=effective_workers) as pool:
+                # Cross-sectional cache NOT passed to subprocess (pickling overhead).
+                # Each worker falls back to symbol-by-symbol DB loading.
+                # Same for fundamentals — workers load from DB independently.
+                if _needs_cross_sectional:
+                    futures = {pool.submit(_train_worker, sym, cfg, symbols, batch_id=batch_id): sym for sym in symbols}
+                else:
+                    futures = {pool.submit(_train_worker, sym, cfg, batch_id=batch_id): sym for sym in symbols}
+                for future in as_completed(futures):
+                    sym = futures[future]
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        update_runtime_status(
+                            progress_current=len(results),
+                            symbols_completed=sum(1 for r in results if r.status == "completed"),
+                            symbols_skipped=sum(1 for r in results if r.status == "skipped"),
+                            symbols_failed=sum(1 for r in results if r.status == "failed"),
+                            current_phase=f"symbol_{result.status}",
+                            current_symbol=sym,
+                            progress_item=sym,
+                        )
+                        LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
+                    except Exception as exc:
+                        LOGGER.exception("orchestrator worker_exception symbol=%s", sym)
+                        results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
+                        update_runtime_status(
+                            progress_current=len(results),
+                            symbols_completed=sum(1 for r in results if r.status == "completed"),
+                            symbols_skipped=sum(1 for r in results if r.status == "skipped"),
+                            symbols_failed=sum(1 for r in results if r.status == "failed"),
+                            current_phase="symbol_failed",
+                            current_symbol=sym,
+                            progress_item=sym,
+                        )
 
     # Summary
     completed = sum(1 for r in results if r.status == "completed")
