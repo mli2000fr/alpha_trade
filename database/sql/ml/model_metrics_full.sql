@@ -14,6 +14,7 @@
 CREATE TABLE IF NOT EXISTS alpha_trade.model_metrics_full (
     run_id          VARCHAR(64) NOT NULL,
     symbol          VARCHAR(32) NOT NULL,
+    horizon         INT         DEFAULT NULL,
     metrics_json    LONGBLOB    NOT NULL
         COMMENT 'JSON sérialisé de metrics.json (champion only)',
     created_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -139,3 +139,16 @@ En Résumé
 Passer tes modèles Per-Symbol en 15 min ou 30 min tout en conservant une target à horizon Swing (H5 ou H10) est exactement la solution pour débloquer le manque de données et booster la qualité de tes prédictions Per-Symbol.
 MD
 + 1
+
+
+tu te souvietns encore **#3 Clusters**✅ Oui — 11 modèles sectoriels au lieu de 939, ~64K lignes chacun. Tu as déjà le mapping secteurs.1 semaine ?
+
+
+__________________________________________
+
+
+4. Comment transformer ce F1 en VRAI PnL positif ?Pour que ce F1 élevé se traduise par de l'argent réel sur ton compte, ton système doit combiner ces prédictions avec une stratégie de portefeuille adaptée :Option A : Le Long/Short Market-Neutral (L'approche Hedge Fund)Tu achetes les meilleures actions (LONG) et tu shortes les pires (SHORT) pour le même montant.Dans l'exemple au-dessus : Tu gagnes sur le Short de B ($+12\%$) ce que tu perds sur le Long de A ($-4\%$). Ton profit net est de $+8\%$, même dans un marché qui s'effondre !Option B : Le Filtre de Régime (Overlay Risk)Comme évoqué précédemment :Tu n'utilises les signaux LONG que lorsque le marché global est sain (ex: SPY au-dessus de sa SMA200).Si le marché global chute, tu ne prends pas les signaux Long, même si le F1 du modèle sectoriel est excellent.
+
+3. Comment obtenir de "VRAIS" Longs et Shorts absolus ?Si ton objectif est que le modèle prédit la hausse ou la baisse absolue des prix (en dollars bruts, non neutralisés par le secteur), ce n'est pas le mode (Ternaire vs Régression) qu'il faut changer, c'est la construction de la Target :Option A (Conserver la target Sector-Neutral + Risk Overlay) — RECOMMANDE :Tu gardes ton modèle Per-Sector actuel en Régression (qui est excellent avec ses 79.6% de Directional Accuracy).Tu filtres la prise de position avec le Régime Macro (ex: SPY > SMA200).En Bull Market, les actions qui "surperforment leur secteur" ($Y > 0$) montent presque toutes en dollars réels.Option B (Désactiver Sector-Neutral) — DECONSEILLE :Tu entraînes le modèle sur le rendement brut non neutralisé : $Y = \text{Close}(t+h)/\text{Close}(t) - 1$.Le problème : Tu réintroduis 100% du bruit macroéconomique. Tes F1-scores et ton Accuracy vont s'effondrer à nouveau vers ~51-52% parce que le modèle n'arrivera pas à prédire la direction du marché global.
+
+La meilleure stratégie pour trader en dollars réels :Garde tes modèles per_sector (qui ont 79.6% de précision relative) et utilise le Régime de Marché (Market Overlay) dans le module Risk pour filtrer :Quand le marché est Bull $\rightarrow$ Tu prends les Longs du modèle sectoriel (ils monteront en dollars réels dans 80%+ des cas).Quand le marché est Bear $\rightarrow$ Tu penses à couper les Longs ou passer Cash/Short.

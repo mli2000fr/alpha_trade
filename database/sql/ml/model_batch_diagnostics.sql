@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_batch_diagnostics (
     id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     batch_id            VARCHAR(64)     NOT NULL,
     batch_started_at    DATETIME        NOT NULL,
-    symbol              VARCHAR(20)     NOT NULL,
+    symbol              VARCHAR(50)     NOT NULL,
     f1_macro_wf         DOUBLE          NOT NULL,
     f1_long_wf          DOUBLE          DEFAULT NULL,
     f1_short_wf         DOUBLE          DEFAULT NULL,

@@ -13,6 +13,7 @@ from pathlib import Path
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
 from ihm.services.db import db_available, safe_query, get_engine
+from sqlalchemy import text
 from ihm.services.ml_artifacts import get_model_artifacts_dir
 from modelFactory.report import generate_batch_report
 
@@ -111,6 +112,21 @@ def _bold_wf_rows(df: pd.DataFrame):
 # ---------------------------------------------------------------------------
 # Requêtes SQL
 # ---------------------------------------------------------------------------
+
+# ── Requête SQL
+# ---------------------------------------------------------------------------
+# Le filtre horizon est injecté dynamiquement par _q() dans _render_batch_detail.
+# Voir _horizon_sql et selected_horizon.
+
+HORIZON_LIST_QUERY = """
+    SELECT DISTINCT mm.horizon
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mm.horizon IS NOT NULL
+    ORDER BY mm.horizon
+"""
 
 BATCH_LIST_QUERY = """
     SELECT
@@ -515,6 +531,7 @@ def _status_badge(status: str) -> str:
         "running": "🟨 En cours",
         "completed": "🟢 Terminé",
         "failed": "🔴 Échec",
+        "to delete": "❌ À supprimer",
     }
     return mapping.get(str(status).strip().lower(), str(status))
 
@@ -924,13 +941,40 @@ def _render_batch_detail(batch: pd.Series) -> None:
     safe_bid = batch_id.replace("/", "_").replace("\\", "_")[:64]
     engine = get_engine()
     if engine is not None:
-        st.download_button(
-            label="📥 Télécharger le rapport (.md)",
-            data=generate_batch_report(engine, batch_id),
-            file_name=f"{safe_bid}.md",
-            mime="text/markdown",
-            key=f"dl_{safe_bid}",
-        )
+        col_dl, col_del = st.columns([3, 1])
+        with col_dl:
+            st.download_button(
+                label="📥 Télécharger le rapport (.md)",
+                data=generate_batch_report(engine, batch_id),
+                file_name=f"{safe_bid}.md",
+                mime="text/markdown",
+                key=f"dl_{safe_bid}",
+            )
+        with col_del:
+            _current_status = str(batch.get("status", "")).strip().lower()
+            if _current_status == "to delete":
+                st.info("❌ À supprimer", icon="🗑️")
+            else:
+                _del_key = f"del_{safe_bid}"
+                if st.button("🗑️ TO DELETE", key=_del_key, type="secondary", help="Marque ce batch comme 'TO DELETE'."):
+                    st.session_state["_confirm_to_delete"] = batch_id
+                if st.session_state.get("_confirm_to_delete") == batch_id:
+                    st.warning("Confirmer ?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Oui", key=f"{_del_key}_yes"):
+                            _engine = get_engine()
+                            if _engine is not None:
+                                with _engine.connect() as _conn:
+                                    _conn.execute(text("UPDATE model_training_batch SET status = 'TO DELETE' WHERE batch_id = :bid"), {"bid": batch_id})
+                                    _conn.commit()
+                            st.session_state["_confirm_to_delete"] = None
+                            st.success("Batch marqué TO DELETE.")
+                            st.rerun()
+                    with c2:
+                        if st.button("❌ Non", key=f"{_del_key}_no"):
+                            st.session_state["_confirm_to_delete"] = None
+                            st.rerun()
 
     row = detail_df.iloc[0]
 
@@ -1081,10 +1125,54 @@ def _render_batch_detail(batch: pd.Series) -> None:
     _is_reg_batch = _target_mode == "regression"
     _has_classif = _target_mode in ("binary", "ternary", "swing_cash")
 
+    # ── Horizon selector (avant les métriques) ──
+    horizon_list = safe_query(HORIZON_LIST_QUERY, {"batch_id": batch_id})
+    selected_horizon: int | None = None
+    _horizon_sql: str = ""
+    if not horizon_list.empty:
+        _horizons = [None] + [int(h) for h in horizon_list["horizon"].dropna().sort_values()]
+        selected_horizon = st.selectbox(
+            "Horizon",
+            options=_horizons,
+            format_func=lambda h: f"H{h}" if h is not None else "Tous les horizons",
+            key=f"horizon_{batch_id}",
+        )
+        if selected_horizon is not None:
+            _horizon_sql = " AND mm.horizon = :horizon"
+
+    def _q(sql: str, extra_params: dict | None = None) -> pd.DataFrame:
+        """Exécute une requête avec le filtre horizon injecté dynamiquement.
+
+        - ``selected_horizon is None`` (Tous) : pas de filtre → agrégation sur tous les horizons (AVG).
+        - ``selected_horizon = 3`` (H3) : filtre ``AND mm.horizon = 3``.
+        """
+        _sql = sql
+        if _horizon_sql:
+            # Injecte le filtre horizon avant GROUP BY / ORDER BY / LIMIT
+            if "GROUP BY" in _sql:
+                _sql = _sql.replace("GROUP BY", f"{_horizon_sql}\n    GROUP BY")
+            elif "ORDER BY" in _sql:
+                _sql = _sql.replace("ORDER BY", f"{_horizon_sql}\n    ORDER BY")
+            elif "LIMIT" in _sql:
+                _sql = _sql.replace("LIMIT", f"{_horizon_sql}\n    LIMIT")
+        params: dict[str, object] = {"batch_id": batch_id}
+        if selected_horizon is not None:
+            params["horizon"] = selected_horizon
+        if extra_params:
+            params.update(extra_params)
+        return safe_query(_sql, params)
+
+    # ── Indicateur d'horizon ──
+    if not horizon_list.empty:
+        if selected_horizon is not None:
+            st.caption(f"🔍 Horizon sélectionné : **H{selected_horizon}** — métriques filtrées sur cet horizon uniquement.")
+        else:
+            st.caption("🔍 **Tous horizons confondus** — chaque métrique est la moyenne (AVG) des 5 horizons H3/H5/H10/H15/H20.")
+
     if _is_reg_batch:
         # ── Bloc régression par split ──
         st.subheader("📊 Métriques Régression par split")
-        reg_df = safe_query(REG_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})
+        reg_df = _q(REG_BY_SPLIT_QUERY)
         if reg_df.empty:
             st.info("Aucune métrique de régression disponible.")
         else:
@@ -1103,14 +1191,14 @@ def _render_batch_detail(batch: pd.Series) -> None:
         col_top_r, col_worst_r = st.columns(2)
         with col_top_r:
             st.markdown("**🥇 10 meilleurs `directional_accuracy` (WF)**")
-            rtop = safe_query(REG_TOP_QUERY, {"batch_id": batch["batch_id"]})
+            rtop = _q(REG_TOP_QUERY)
             if not rtop.empty:
                 st.dataframe(rtop, use_container_width=True, hide_index=True)
             else:
                 st.caption("Aucune donnée.")
         with col_worst_r:
             st.markdown("**🥉 10 plus mauvais `directional_accuracy` (WF)**")
-            rworst = safe_query(REG_WORST_QUERY, {"batch_id": batch["batch_id"]})
+            rworst = _q(REG_WORST_QUERY)
             if not rworst.empty:
                 st.dataframe(rworst, use_container_width=True, hide_index=True)
             else:
@@ -1119,7 +1207,8 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     # ── Bloc F1 par split ──
     st.subheader("📊 Métriques F1 par split")
-    f1_df = safe_query(F1_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})
+
+    f1_df = _q(F1_BY_SPLIT_QUERY)
     if f1_df.empty:
         st.info("Aucune métrique F1 disponible pour ce batch (vérifiez que les runs sont `completed`).")
     else:
@@ -1132,7 +1221,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.markdown("")
     # ── Bloc distribution true / pred par split ──
     st.subheader("📊 Distribution true / pred par split")
-    tp_df = safe_query(TRUE_PRED_AGG_QUERY, {"batch_id": batch["batch_id"]})
+    tp_df = _q(TRUE_PRED_AGG_QUERY)
     if tp_df.empty:
         st.info("Aucune donnée true_*_pct / pred_*_pct disponible (vérifiez que le mode ternaire est activé).")
     else:
@@ -1184,7 +1273,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     _worst_q = TOP5_WORST_CHAMPION_QUERY if champion_only_wf else TOP5_WORST_F1_QUERY
     _zero_q = ZERO_F1_SHORT_CHAMPION_QUERY if champion_only_wf else ZERO_F1_SHORT_QUERY
 
-    bucket_df = safe_query(_bucket_q, {"batch_id": batch["batch_id"]})
+    bucket_df = _q(_bucket_q)
     if bucket_df.empty:
         st.info("Aucune métrique walk-forward disponible pour ce batch.")
     else:
@@ -1224,7 +1313,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_best:
         st.markdown("**🥇 10 meilleurs `f1_macro`**")
-        best_df = safe_query(_best_q, {"batch_id": batch["batch_id"]})
+        best_df = _q(_best_q)
         if best_df.empty:
             st.caption("Aucune donnée.")
         else:
@@ -1236,7 +1325,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_worst:
         st.markdown("**🥉 10 plus mauvais `f1_macro`**")
-        worst_df = safe_query(_worst_q, {"batch_id": batch["batch_id"]})
+        worst_df = _q(_worst_q)
         if worst_df.empty:
             st.caption("Aucune donnée.")
         else:
@@ -1248,7 +1337,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_zero:
         st.markdown("**⚪ `f1_short = 0`**")
-        zero_df = safe_query(_zero_q, {"batch_id": batch["batch_id"]})
+        zero_df = _q(_zero_q)
         if zero_df.empty:
             st.caption("Aucun symbole avec f1_short = 0.")
         else:
@@ -1613,6 +1702,13 @@ def render() -> None:
     display_df = batches_df.copy()
     if "status" in display_df.columns:
         display_df["status"] = display_df["status"].apply(_status_badge)
+    if "batch_id" in display_df.columns and "status" in batches_df.columns:
+        # Prefix "❌ " for TO DELETE batches
+        _raw_status = batches_df["status"].fillna("").str.strip().str.lower()
+        display_df["batch_id"] = display_df.apply(
+            lambda r: ("❌ " if _raw_status.loc[r.name] == "to delete" else "") + str(r["batch_id"]),
+            axis=1,
+        )
     if "comment" in display_df.columns:
         display_df["comment"] = display_df["comment"].fillna("—")
         display_df["comment"] = display_df["comment"].apply(

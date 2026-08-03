@@ -1,6 +1,6 @@
 # Module ModelFactory — Documentation Complète
 
-> **Version** : Sprint 2026-08-01 (à jour des tests A/B)  
+> **Version** : Sprint 2026-08-03 (per-sector multi-horizon)  
 > **Auteur** : Généré automatiquement depuis le code source
 
 ---
@@ -11,32 +11,51 @@
 2. [Architecture globale](#2-architecture-globale)
 3. [Phase 1 — Global Ranking Model](#3-phase-1--global-ranking-model)
 4. [Phase 2 — Per-Symbol Training](#4-phase-2--per-symbol-training)
-5. [Sélection du Champion](#5-sélection-du-champion)
-6. [Diagnostics Batch & Garde-fous](#6-diagnostics-batch--garde-fous)
-7. [Prédiction & Inférence](#7-prédiction--inférence)
-8. [IC Per-Symbol](#8-ic-per-symbol)
-9. [Configuration](#9-configuration)
-10. [Tables DB](#10-tables-db)
-11. [Résultats & Benchmark](#11-résultats--benchmark)
+5. [Phase 2bis — Per-Sector Training (NEW)](#5-phase-2bis--per-sector-training-new)
+6. [Sélection du Champion](#6-sélection-du-champion)
+7. [Diagnostics Batch & Garde-fous](#7-diagnostics-batch--garde-fous)
+8. [Prédiction & Inférence](#8-prédiction--inférence)
+9. [IC Per-Symbol](#9-ic-per-symbol)
+10. [Configuration](#10-configuration)
+11. [Tables DB](#11-tables-db)
+12. [Résultats & Benchmark](#12-résultats--benchmark)
+13. [Questions / Réponses](#13-questions--réponses)
+14. [Stratégie d'exploitation](#14-stratégie-dexploitation-validée-par-backtest-2026-08-02)
 
 ---
 
 ## 1. Vue d'ensemble
 
-Le module `modelFactory` est le cœur ML du système α-Trade. Il assure :
+Le module `modelFactory` est le cœur ML du système α-Trade. Il supporte **deux modes d'entraînement** :
+
+| Mode | Description | Usage |
+|------|-------------|-------|
+| **Per-Symbol** | 1 modèle par symbole (LSTM + LightGBM + CatBoost) | ~500 symboles, patterns individuels |
+| **Per-Sector** | 1 modèle par secteur GICS × horizon (LightGBM + CatBoost) | 11 secteurs × 5 horizons = 55 modèles |
+
+Il assure :
 
 1. **Classement cross-sectionnel** : un modèle Global Ranking (CatBoost RMSE) qui ordonne tous les symboles de l'univers par rendement futur attendu sur 5 horizons → `global_rank ∈ [0, 1]`
-2. **Prédiction directionnelle par symbole** : des modèles per-symbol (LSTM, LightGBM, CatBoost) qui prédisent `proba_long` / `proba_short` pour chaque symbole individuellement
-3. **Garde-fous qualité** : filtrage automatique des symboles dont les modèles sont trop faibles (F1 bas, zéro short, etc.)
-4. **Sélection automatique du meilleur modèle** par symbole (champion selection)
+2. **Prédiction directionnelle** :
+   - **Per-Symbol** : des modèles individuels (LSTM, LightGBM, CatBoost) par symbole
+   - **Per-Sector** : des modèles par secteur GICS (LightGBM, CatBoost) qui apprennent la **surperformance relative intra-secteur** (target neutralisée = rendement − médiane sectorielle)
+3. **Multi-horizon** : 5 horizons (H3, H5, H10, H15, H20) avec purge dynamique par horizon
+4. **Garde-fous qualité** : filtrage automatique des symboles dont les modèles sont trop faibles
+5. **Sélection automatique du meilleur modèle** par symbole/secteur (champion selection)
 
 ### Flux simplifié
 
 ```
 Entraînement :
   Global Ranking (1 modèle, tous symboles) → global_rank_3/5/10/15/20
-  Per-Symbol (~500 modèles, 1 par symbole)   → proba_long, proba_short
-  Diagnostics batch                           → top/bottom N, weak, S7
+  
+  Mode Per-Symbol (~500 modèles) :
+    LSTM + LightGBM + CatBoost par symbole → proba_long, proba_short
+  
+  Mode Per-Sector (55 modèles) :
+    11 secteurs × 5 horizons → LightGBM + CatBoost → target sector-neutre
+  
+  Diagnostics batch → top/bottom N, weak, S7
 
 Inférence (Live/Backtest) :
   global_rank × proba_long → cascade_select → trades filtrés
@@ -52,15 +71,15 @@ flowchart TD
     B --> B1[train_global_ranking_wf<br/>CatBoost RMSE<br/>5 horizons J+3,5,10,15,20]
     B1 --> B2[global_rank_df<br/>symbol, date, rank ∈ 0..1]
     
-    B2 --> C{Stacking ?}
-    C -->|⚠️ Contre-indiqué| D[Déconseillé : rend le Per-Symbol<br/>dépendant du Global Ranking]
-    C -->|✅ Recommandé| E[Phase 2 : Per-Symbol Training
-    indépendant, patterns locaux]
+    B2 --> C{Training Mode ?}
+    C -->|per_symbol| D[Phase 2 : Per-Symbol<br/>LSTM + LightGBM + CatBoost<br/>1 modèle par symbole]
+    C -->|per_sector| D2[Phase 2bis : Per-Sector<br/>LightGBM + CatBoost<br/>1 modèle par secteur × horizon<br/>target sector-neutre]
     
-    E --> E1[N workers parallèles<br/>LSTM + LightGBM + CatBoost<br/>+ Global Model en stacking]
-    E1 --> E2[select_champion<br/>par symbole]
+    D --> E2[select_champion<br/>par symbole]
+    D2 --> E3[select_champion<br/>par secteur]
     
     E2 --> F[Post-Training]
+    E3 --> F
     F --> F1[persist_batch_diagnostics<br/>top/bottom N, S7, weak]
     F --> F2[IC Per-Symbol<br/>depuis prédictions WF]
     F --> F3[Persist metadata_json<br/>pour IHM / rapport]
@@ -72,14 +91,16 @@ flowchart TD
 |-------|---------|---------|
 | 1 | 📋 Détail du batch | Métadonnées, IC Rank Global, Stacking |
 | 2 | 🏆 Sélection du champion | auto / fallback par modèle |
-| 3 | 🔬 IC Per-Symbol | Tableau H3/H5/H10/H15/H20 |
-| 4 | 🌐 Global Ranking — Détails | IC, Decile Spread, FI, splits par horizon |
-| 5 | 📊 Métriques F1 par split | F1 macro/short/flat/long par modèle × split |
-| 6 | 📊 Distribution true/pred | % short/flat/long prédit vs réel |
-| 7 | 📈 Distribution F1 macro WF | Histogramme par bucket |
-| 8 | 📅 Diagnostic par régime | F1 × régime de marché (bear/bull/range) |
-| 9 | 🏆 Top 10 / Flop 10 | Meilleurs/pires symboles par F1 macro WF |
-| 10 | ⚪ f1_short = 0 | Symboles sans signal short |
+| 3 | 📊 Métriques par Horizon (WF) | F1 macro, F1 short, F1 long, Dir Acc × H3/5/10/15/20 |
+| 4 | 🔬 IC Per-Symbol | Tableau H3/H5/H10/H15/H20 |
+| 5 | 🌐 Global Ranking — Détails | IC, Decile Spread, FI, splits par horizon |
+| 6 | 📊 Métriques F1 par split | F1 macro/short/flat/long par modèle × split |
+| 7 | 📊 Distribution true/pred | % short/flat/long prédit vs réel |
+| 8 | 📈 Distribution F1 macro WF | Histogramme par bucket |
+| 9 | 📅 Diagnostic par régime | F1 × régime de marché (bear/bull/range) |
+| 10 | 🏆 Top 10 / Flop 10 | Meilleurs/pires symboles/secteurs par F1 macro WF |
+| 11 | ⚪ f1_short = 0 | Symboles sans signal short |
+| 12 | 📊 Métriques Régression par split | MSE, Dir Acc (mode regression) |
 
 ---
 
@@ -196,9 +217,20 @@ Si > 0 : garde les **top N par volume moyen** ou stratifié par déciles.
 
 Pour **chaque symbole** de l'univers, entraîner un modèle qui prédit la direction (long/short/flat) ou un score continu (regression).
 
+| Composant | Single-horizon | Multi-horizon |
+|---|---|---|
+| **LSTM** | 1 modèle, horizon max | 1 modèle, horizon max (inchangé) |
+| **LightGBM** | 1 modèle, horizon configuré | 5 modèles (H3/H5/H10/H15/H20) |
+| **CatBoost** | 1 modèle, horizon configuré | 5 modèles (H3/H5/H10/H15/H20) |
+
 **Modèles** : LSTM Attention, LightGBM, CatBoost (3 challengers par symbole)  
 **Target** : `future_return` (binaire, ternaire, ou regression selon config)  
 **Métrique** : **F1 macro** (moyenne de F1 short, F1 flat, F1 long) — y compris en mode regression où le F1 est calculé par binarisation du signe
+
+> **Multi-horizon** (ajouté 2026-08-03) : quand `--forecast-horizons 3,5,10,15,20` est spécifié,
+> les baselines tabulaires (LightGBM + CatBoost) sont entraînées pour chaque horizon
+> indépendamment. Le LSTM reste sur l'horizon max pour la rétrocompatibilité.
+> La purge est dynamique : 3 jours pour H3, 20 jours pour H20.
 
 ### 4.2 Mode ternaire (3 classes)
 
@@ -226,10 +258,11 @@ Ajouté le 2026-08-02. La target n'est plus discrète (long/short/flat) mais con
 **Spécificités** :
 - **Modèle** : `num_classes=1` → 1 neurone de sortie, loss **MSE** (pas CrossEntropy)
 - **Métriques** : MSE, MAE, corrélation, directional accuracy, IC
-- **F1 comparable** : binarisation du signe — `sign(pred)` vs `sign(future_return)` → classes {-1,0,1} → F1 macro identique au mode ternaire
+- **F1 comparable** : binarisation du signe — `sign(pred)` vs `sign(target)` → classes {-1,0,1} → F1 macro identique au mode ternaire
 - **Décision** : score > 0 → LONG, score < 0 → SHORT, score ≈ 0 → FLAT
 - **Calibration** : désactivée (pas de Platt sur une régression)
 - **Pas de threshold optimization** : ignorée automatiquement
+- **Multi-horizon** : chaque horizon a son propre modèle de régression (LightGBM + CatBoost). Le F1 est calculé par rapport à la target de l'horizon (pas le `future_return` brut).
 
 **Avantages vs ternaire** :
 - Pas de seuils arbitraires (up_threshold/down_threshold) — le modèle apprend la magnitude
@@ -239,6 +272,8 @@ Ajouté le 2026-08-02. La target n'est plus discrète (long/short/flat) mais con
 ### 4.4 Walk-Forward
 
 Mêmes splits que le Global Ranking. Chaque split produit des métriques sur train/val/test, agrégées en fin de boucle.
+
+**Multi-horizon** : le walk-forward est exécuté pour chaque horizon indépendamment, avec purge dynamique (`forecast_horizon_override=h`). Pour H3, seuls 3 jours sont purgés aux frontières (au lieu de 20) → +17 jours de train par fold.
 
 ### 4.5 Stacking (injection des rangs globaux) ⚠️ Contre-indiqué
 
@@ -267,7 +302,47 @@ Le modèle per-symbol voit donc les rangs cross-sectionnels comme features suppl
 > **Recommandation** : laisser `stacking_enabled = false`. Le Global Ranking
 > et le Per-Symbol jouent des rôles distincts dans la cascade de trading (§7.2).
 
-### 4.6 Limitation per-symbol (test rapide)
+### 4.7 Multi-horizon tabular (NEW 2026-08-03)
+
+Quand `--forecast-horizons 3,5,10,15,20` est spécifié, les baselines tabulaires
+(LightGBM + CatBoost) sont entraînées pour **chaque horizon indépendamment**.
+Le LSTM reste single-horizon (horizon max = rétrocompatibilité).
+
+#### Boucle d'entraînement
+
+```
+Pour chaque symbole :
+  LSTM → single-horizon (max_h)
+  
+  Pour chaque h ∈ {3, 5, 10, 15, 20} :
+    1. _df = prepared_df.copy()
+    2. _df["target"] = _df[f"target_h{h}"]          ← target déjà neutralisée si per-sector
+    3. _df["future_return"] = _df[f"future_return_h{h}"]
+    4. run_tabular_baseline(_df, forecast_horizon_override=h)
+       → LightGBM + CatBoost avec purge = h jours
+    5. run_tabular_walk_forward(_df, forecast_horizon_override=h)
+    
+  → Persiste chaque horizon avec insert_metrics(horizon=h)
+  → Champion selection sur l'horizon primaire (max)
+```
+
+#### Impact
+
+| | Single-horizon | Multi-horizon |
+|---|---|---|
+| Modèles par symbole | 3 (LSTM+LGBM+CB) | 11 (1 LSTM + 5 LGBM + 5 CB) |
+| Temps d'entraînement | ~1× | ~5× (tabulaire uniquement) |
+| Purge | fixe (max_h) | dynamique (h) |
+| Métriques DB | 1 ligne par split | 5 lignes par split (horizon=h) |
+
+#### Limitation
+
+Le LSTM n'est **pas** multi-horizon — il reste sur l'horizon max pour :
+- Rétrocompatibilité avec l'inférence existante
+- Éviter la complexité d'un LSTM multi-output (5 têtes de sortie)
+- Le LSTM est le fallback ; les baselines tabulaires sont les modèles primaires
+
+### 4.8 Limitation per-symbol (test rapide)
 
 Paramètre `--per-symbol-max-symbols` (défaut: 0 = tous).  
 Si > 0 : garde les **top N par volume moyen**, avant l'entraînement per-symbol.  
@@ -275,9 +350,111 @@ Le Global Ranking n'est PAS affecté.
 
 ---
 
-## 5. Sélection du Champion
+## 5. Phase 2bis — Per-Sector Training (NEW)
 
-### 5.1 Principe
+> **Ajouté le 2026-08-03**. Alternative au Per-Symbol : au lieu d'un modèle par symbole,
+> un modèle par **secteur GICS** qui apprend la **surperformance relative intra-secteur**.
+
+### 5.1 Objectif
+
+Pour chaque **secteur GICS** (11 secteurs), entraîner un modèle qui prédit si un symbole va **surperformer ou sous-performer la médiane de son secteur**.
+
+| Caractéristique | Per-Symbol | Per-Sector |
+|---|---|---|
+| Granularité | 1 modèle par symbole | 1 modèle par secteur × horizon |
+| Nombre de modèles | ~500 | 11 × 5 = 55 |
+| Algorithmes | LSTM + LightGBM + CatBoost | LightGBM + CatBoost |
+| Target | `future_return` brut | `target − median(sector, date)` (neutralisée) |
+| Features | Techniques + fondamentales + `symbol` | Techniques + fondamentales + `symbol` (catégorielle) |
+| Métrique | F1 macro vs target neutralisée | F1 macro vs target neutralisée |
+| IC | — | Via future_return brut uniquement |
+
+### 5.2 Target sector-neutre
+
+Le modèle n'apprend PAS à prédire « ce stock va-t-il monter ? » mais **« ce stock va-t-il battre son secteur ? »**.
+
+```
+1. target_h = future_return_h brut (close[t+h]/close[t] − 1)
+2. Pour chaque date t, dans le secteur S :
+     target_neutralisee[t] = target_h[t] − median(target_h[t] pour tous les symboles de S)
+3. Le split chronologique (par date) garantit qu'aucune date n'est éclatée entre train/test
+   → la médiane intra-date ne crée PAS de leakage
+```
+
+**Alignement évaluation** (Sprint 2026-08-03) : la `directional_accuracy` et le `F1` sont calculés par rapport à la **target neutralisée** (pas le `future_return` brut), pour mesurer la vraie capacité de ranking intra-secteur. L'IC reste sur le `future_return` brut pour l'interprétation économique.
+
+### 5.3 Multi-horizon
+
+Chaque secteur est entraîné sur **5 horizons** (H3, H5, H10, H15, H20). Pour chaque horizon, un modèle LightGBM et un modèle CatBoost sont entraînés indépendamment.
+
+```
+Pour chaque secteur (11) :
+  Pour chaque horizon h ∈ {3, 5, 10, 15, 20} :
+    1. Swap target → target_h{h} (déjà neutralisée)
+    2. Swap future_return → future_return_h{h}
+    3. run_tabular_baseline(_df, cfg, forecast_horizon_override=h)
+       → LightGBM + CatBoost avec purge = h jours (dynamique)
+    4. run_tabular_walk_forward(_df, cfg, forecast_horizon_override=h)
+       → Validation walk-forward avec purge = h jours
+```
+
+**Purge dynamique** : pour H3, seuls 3 jours sont purgés aux frontières (au lieu de 20).  
+→ **Gain** : +17 jours de données d'entraînement par fold pour les horizons courts.
+
+### 5.4 Modèles
+
+| Paramètre | LightGBM | CatBoost |
+|-----------|----------|----------|
+| Type | `LGBMRegressor` | `CatBoostRegressor` |
+| Loss | MSE (regression continue) | RMSE |
+| `max_depth` | 5 | `catboost_depth=6` |
+| `n_estimators` | 200 | `catboost_iterations=300` |
+| `learning_rate` | 0.03 | 0.03 |
+| Régularisation | `reg_alpha=0.1, reg_lambda=0.1` | `l2_leaf_reg=3.0` |
+| `min_child_samples` | 150 | — |
+| `subsample` | 0.8 | — |
+| `colsample_bytree` | 0.7 | — |
+
+### 5.5 Features
+
+Mêmes features que le Per-Symbol (mode `expert`), plus :
+- **`symbol`** : feature catégorielle — permet au modèle de différencier les symboles au sein du secteur
+- **Cross-sectional** (si activé) : rangs globaux calculés sur l'univers entier → le modèle sectoriel sait où se situe son secteur par rapport au marché
+
+### 5.6 Résultats (batch 7e4cf8, 2026-08-03)
+
+| Horizon | F1 macro (WF) | F1 short | F1 long | Dir Acc |
+|---------|---------------|----------|---------|---------|
+| H3 | 0.514 | 0.765 | 0.776 | 0.7076 |
+| H5 | 0.507 | 0.756 | 0.766 | 0.6891 |
+| H10 | 0.506 | 0.754 | 0.765 | 0.6832 |
+| H15 | 0.499 | 0.743 | 0.754 | 0.6722 |
+| H20 | 0.503 | 0.750 | 0.759 | 0.6805 |
+
+- **11/11 secteurs** entraînés avec succès
+- **8 CatBoost / 3 LightGBM** sélectionnés comme champions
+- **F1 macro WF** : 0.486 – 0.544 selon le secteur
+- **Meilleurs secteurs** : Real Estate (0.544), Consumer Discretionary (0.541), Information Technology (0.536)
+- **Distribution true/pred** : ~50/50 long/short (équilibré grâce au bias correction)
+
+### 5.7 Lancement
+
+```bash
+python -m modelFactory --mode train \
+  --training-mode per_sector \
+  --target-mode regression \
+  --forecast-horizons 3,5,10,15,20 \
+  --feature-set expert \
+  --symbol-source ticket-recherche \
+  --compare-lightgbm --enable-catboost \
+  --select-champion --walkforward
+```
+
+---
+
+## 6. Sélection du Champion
+
+### 6.1 Principe
 
 Pour chaque symbole, parmi les 3 challengers (LSTM, LightGBM, CatBoost), on sélectionne le **meilleur** selon des critères de qualité.
 
@@ -285,7 +462,7 @@ Pour chaque symbole, parmi les 3 challengers (LSTM, LightGBM, CatBoost), on sél
 > - Ses rangs (`global_rank_3/5/10`) sont injectés comme **features** dans les modèles per-symbol (stacking)
 > - Il est utilisé dans la **cascade de trading** (`global_rank × proba_long` → score du trade)
 
-### 5.2 Modes de sélection
+### 6.2 Modes de sélection
 
 | Mode | Condition | Modèle choisi |
 |------|-----------|---------------|
@@ -293,7 +470,7 @@ Pour chaque symbole, parmi les 3 challengers (LSTM, LightGBM, CatBoost), on sél
 | `fallback_default_champion` | Aucun éligible | Modèle par défaut (ex: `lstm_attention`) |
 | `default_champion` | Auto-sélection désactivée | Modèle par défaut |
 
-### 5.3 Critères d'éligibilité
+### 6.3 Critères d'éligibilité
 
 Un modèle est éligible si TOUS ces critères sont remplis :
 
@@ -308,7 +485,7 @@ Un modèle est éligible si TOUS ces critères sont remplis :
    - `n_observations ≥ 50` en val et WF
 5. **Quarantaine** (optionnelle) : ≥ `min_runs` runs, premier succès ≥ `min_days` jours
 
-### 5.4 Selection Score
+### 6.4 Selection Score
 
 Calculé à partir des partitions **val et walk_forward uniquement** (jamais test) :
 - Priorité 1 : `f1_macro` dans `wf.mean`
@@ -319,9 +496,9 @@ Calculé à partir des partitions **val et walk_forward uniquement** (jamais tes
 
 ---
 
-## 6. Diagnostics Batch & Garde-fous
+## 7. Diagnostics Batch & Garde-fous
 
-### 6.1 Top / Bottom N
+### 7.1 Top / Bottom N
 
 Pour chaque symbole, classé par **F1 macro WF** décroissant :
 
@@ -332,7 +509,7 @@ Pour chaque symbole, classé par **F1 macro WF** décroissant :
 
 $N = \min(50, \text{total\_symbols})$, configurable.
 
-### 6.2 Seuils directionnels
+### 7.2 Seuils directionnels
 
 | Type | Condition | Impact |
 |------|-----------|--------|
@@ -340,7 +517,7 @@ $N = \min(50, \text{total\_symbols})$, configurable.
 | `weak_long` | `0 < f1_long < 0.15` | **Exclu long** |
 | `weak_short` | `0 < f1_short < 0.15` | **Exclu short** |
 
-### 6.3 Règles S7 (seuils absolus)
+### 7.3 Règles S7 (seuils absolus)
 
 | Classe | Condition | Signification |
 |--------|-----------|---------------|
@@ -350,7 +527,7 @@ $N = \min(50, \text{total\_symbols})$, configurable.
 | `s7_short_only` | `f1_short > 0.40` ET `f1_long < 0.20` | Short OK, **long interdit** |
 | `s7_monitor` | `f1_long > 0.35` ET `0.20 ≤ f1_short ≤ 0.30` | Alerte seulement, pas d'exclusion |
 
-### 6.4 Filtrage final pour le Live/Backtest
+### 7.4 Filtrage final pour le Live/Backtest
 
 ```python
 exclude_long  = bottom ∪ weak_long ∪ s7_exclude_all ∪ s7_flat_pathological ∪ s7_short_only
@@ -360,9 +537,9 @@ prefer        = top
 
 ---
 
-## 7. Prédiction & Inférence
+## 8. Prédiction & Inférence
 
-### 7.1 Cascade de modèles par symbole
+### 8.1 Cascade de modèles par symbole
 
 Au moment de prédire pour un symbole, le système utilise le champion sélectionné (LSTM, LightGBM, ou CatBoost). En cas d'échec, fallback vers le LSTM :
 
@@ -373,7 +550,7 @@ Au moment de prédire pour un symbole, le système utilise le champion sélectio
 
 Le Global Model n'est pas dans cette cascade — il est utilisé séparément via la cascade de trading (§7.2).
 
-### 7.2 Cascade de trading (cascade_ml.md)
+### 8.2 Cascade de trading (cascade_ml.md)
 
 Combine **rang global** et **prédiction per-symbol** pour décider quels trades prendre :
 
@@ -386,7 +563,7 @@ Pour chaque symbole avec global_rank ET per-symbol prediction :
 5. Trié par score décroissant
 ```
 
-### 7.3 Conversion proba/score → décision
+### 8.3 Conversion proba/score → décision
 
 **Mode binaire** :
 ```
@@ -414,13 +591,13 @@ Pas de seuil de décision (decision_threshold ignoré).
 
 ---
 
-## 8. IC Per-Symbol
+## 9. IC Per-Symbol
 
-### 8.1 Définition
+### 9.1 Définition
 
 L'IC Per-Symbol mesure la capacité de ranking cross-sectionnel **des modèles per-symbol agrégés** (≠ Global Ranking qui a son propre IC).
 
-### 8.2 Calcul
+### 9.2 Calcul
 
 ```
 1. Walk-Forward : pour chaque symbole, on sauvegarde (date, proba_long, close, future_return)
@@ -435,7 +612,7 @@ L'IC Per-Symbol mesure la capacité de ranking cross-sectionnel **des modèles p
    → stocke dans metadata_json.per_symbol_ic = {"3": {ic_mean, ic_std, n_dates}, ...}
 ```
 
-### 8.3 Interprétation
+### 9.3 Interprétation
 
 | IC | Interprétation |
 |----|---------------|
@@ -448,7 +625,7 @@ L'IC IR (IC Mean / IC Std) mesure la **stabilité** :
 - > 0.5 : bon
 - > 1.0 : excellent
 
-### 8.4 Comparaison stacking
+### 9.4 Comparaison stacking
 
 L'IC Per-Symbol permet de comparer deux batchs :
 - Batch A : `stacking_enabled = true` → IC avec stacking
@@ -457,13 +634,15 @@ L'IC Per-Symbol permet de comparer deux batchs :
 
 ---
 
-## 9. Configuration
+## 10. Configuration
 
-### 9.1 Paramètres clés
+### 10.1 Paramètres clés
 
 | Paramètre | Défaut | Description |
 |-----------|--------|-------------|
-| `forecast_horizon` | 10 | Horizon de prédiction (jours) |
+| `forecast_horizon` | 10 | Horizon de prédiction (jours). Si `forecast_horizons` est défini, `forecast_horizon = max(horizons)` pour la purge. |
+| `forecast_horizons` | (vide) | Tuple d'horizons pour le mode multi-horizon : `3,5,10,15,20`. Si vide → single-horizon legacy. |
+| `training_mode` | `per_symbol` | `per_symbol` (1 modèle/symbole) ou `per_sector` (1 modèle/secteur GICS × horizon). |
 | `feature_set` | `expert` | `v1` ou `expert` (plus de features) |
 | `target_mode` | `ternary` | `binary`, `ternary`, ou `regression` (score continu) |
 | `global_ranking_max_symbols` | 300 | Limite symboles Global Ranking (0 = tous) |
@@ -475,7 +654,7 @@ L'IC Per-Symbol permet de comparer deux batchs :
 | `demi-vie` | **360j** | Poids temporels (12 mois) |
 | `target_smoothing` | **OFF** | Supprimé — diluait le signal sans leakage |
 
-### 9.2 Global Ranking (GlobalModelConfig)
+### 10.2 Global Ranking (GlobalModelConfig)
 
 | Paramètre | Défaut | Note |
 |-----------|--------|------|
@@ -486,7 +665,7 @@ L'IC Per-Symbol permet de comparer deux batchs :
 | `stacking_enabled` | false | Flag B : injecte global_rank dans per-symbol |
 | `use_cross_sectional_features` | true | |
 
-### 9.3 Per-Symbol (BaselineConfig)
+### 10.3 Per-Symbol / Per-Sector (BaselineConfig)
 
 | Paramètre | Défaut | Note |
 |-----------|--------|------|
@@ -499,7 +678,7 @@ L'IC Per-Symbol permet de comparer deux batchs :
 
 > **Séparation des configs** : `GlobalModelConfig` (ranking) et `BaselineConfig` (per-symbol) sont indépendants. Les paramètres `n_estimators`, `learning_rate` et tuning LGBM sont partagés.
 
-### 9.4 Target pipeline
+### 10.4 Target pipeline
 
 ```
 future_return brut → vol scaling (H5+) → winsorize 1%/99% → rank intra-date
@@ -515,7 +694,7 @@ future_return brut → vol scaling (H5+) → winsorize 1%/99% → rank intra-dat
 
 > **Smoothing retiré** (Sprint 2026-08-02) — contre-productif sans data leakage.
 
-### 9.5 Garde-fous (config.yaml)
+### 10.5 Garde-fous (config.yaml)
 
 ```yaml
 batch_diagnostics:
@@ -533,9 +712,9 @@ batch_diagnostics:
 
 ---
 
-## 10. Tables DB
+## 11. Tables DB
 
-### 10.1 Schéma simplifié
+### 11.1 Schéma simplifié
 
 ```
 model_training_batch
@@ -583,7 +762,7 @@ stock_fundamentals_daily
   └── pe_ratio, roe, roa, net_margin, eps_growth_yoy, beta, market_cap, ...
 ```
 
-### 10.2 metadata_json structure
+### 11.2 metadata_json structure
 
 ```json
 {
@@ -617,9 +796,9 @@ stock_fundamentals_daily
 
 ---
 
-## 11. Résultats & Benchmark
+## 12. Résultats & Benchmark
 
-### 11.1 Tests A/B (13 tests, 2026-08-01)
+### 12.1 Tests A/B (16 tests, 2026-08-01)
 
 | # | Test | IC Global | Δ vs Baseline | Verdict |
 |---|------|-----------|---------------|---------|
@@ -644,7 +823,7 @@ stock_fundamentals_daily
 | R3 | **8 splits × 252j** (P1) | **0.0194 (+40%)** | — | 🔥🔥 adopté |
 | R4 | **8 splits + no smoothing** | H10 −24% vs avec | — | ❌ interaction |
 
-### 11.2 Configuration gagnante
+### 12.2 Configuration gagnante
 
 | Paramètre | Valeur |
 |-----------|--------|
@@ -691,7 +870,7 @@ stock_fundamentals_daily
 
 ---
 
-## 12. Questions / Réponses
+## 13. Questions / Réponses
 
 ### Q1 : Per-Symbol, Comment comparer réellement la performance entre le mode ternaire et le mode regression ?
 
@@ -971,7 +1150,7 @@ Purge = 1j (marge de sécurité résiduelle uniquement).
 
 ---
 
-## 12. Stratégie d'exploitation (validée par backtest 2026-08-02)
+## 14. Stratégie d'exploitation (validée par backtest 2026-08-02)
 
 ### 12.1 Principe : H20 seul pour la sélection
 

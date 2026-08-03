@@ -3566,7 +3566,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_forecast_horizon = int(
                 st.number_input(
                     "Horizon de prédiction (jours)",
-                    min_value=1,
+                    min_value=0,
                     max_value=30,
                     value=_session_state_int(
                         "pipeline_ml_forecast_horizon",
@@ -3574,7 +3574,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ),
                     step=1,
                     key="pipeline_ml_forecast_horizon",
-                    help="Défaut swing : 5 jours. Ajustable 3-15 selon style.",
+                    help="0 = tous les horizons (3, 5, 10, 15, 20 jours). "
+                         "Valeur > 0 = un seul horizon (ex: 15 = H15 uniquement).",
                 )
             )
         with ml_target_col2:
@@ -3635,6 +3636,18 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     key="pipeline_ml_calibration_method",
                 ),
             )
+
+        # ── Mode d'entraînement (Sprint 2026-08-03) ──
+        ml_training_mode = cast(
+            str,
+            st.selectbox(
+                "Mode d'entraînement",
+                options=["per_symbol", "per_sector"],
+                index=1 if st.session_state.get("pipeline_ml_training_mode", "per_sector") != "per_symbol" else 0,
+                key="pipeline_ml_training_mode",
+                help="`per_symbol` = 1 modèle par symbole (legacy). `per_sector` = 1 modèle par secteur GICS (~11 modèles, plus de données).",
+            ),
+        )
 
         # Valeurs par défaut pour les champs ternaires (utilisés seulement si target_mode != regression)
         ml_ternary_weight_short = DEFAULT_ML_TERNARY_WEIGHT_SHORT
@@ -4572,6 +4585,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_optimize_thresholds=bool(ml_optimize_thresholds),
             ml_optimize_target=bool(ml_optimize_target),
             ml_target_mode=cast(Any, ml_target_mode),
+            ml_training_mode=str(ml_training_mode),
             ml_forecast_horizon=int(ml_forecast_horizon),
             ml_target_up_threshold=float(ml_target_up_threshold),
             ml_target_down_threshold=float(ml_target_down_threshold),

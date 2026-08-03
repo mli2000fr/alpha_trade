@@ -357,28 +357,52 @@ def _run_training_registry_writes(
     # ── LightGBM challenger metrics ──
     lgbm_metrics = challengers.get("lightgbm") if isinstance(challengers, dict) else None
     if isinstance(lgbm_metrics, dict) and lgbm_metrics.get("status") == "completed":
-        lgbm_val = lgbm_metrics.get("val")
-        if isinstance(lgbm_val, dict):
-            insert_metrics(engine, run_id, symbol, "val", lgbm_val, model_name="lightgbm")
-        lgbm_test = lgbm_metrics.get("test")
-        if isinstance(lgbm_test, dict):
-            insert_metrics(engine, run_id, symbol, "test", lgbm_test, model_name="lightgbm")
-        lgbm_wf = lgbm_metrics.get("wf")
-        if isinstance(lgbm_wf, dict):
-            insert_metrics(engine, run_id, symbol, "wf", lgbm_wf, model_name="lightgbm")
+        _lgbm_horizons = lgbm_metrics.get("horizons") if isinstance(lgbm_metrics, dict) else None
+        if _lgbm_horizons:
+            # ── Multi-horizon : persister chaque horizon séparément ──
+            for _h_tag, _h_result in _lgbm_horizons.items():
+                if isinstance(_h_result, dict) and _h_result.get("status") == "completed":
+                    _h = int(_h_tag.lstrip("h")) if _h_tag.startswith("h") else None
+                    for _split_name in ("val", "test", "wf"):
+                        _metrics = _h_result.get(_split_name)
+                        if isinstance(_metrics, dict) and _metrics:
+                            insert_metrics(engine, run_id, symbol, _split_name, _metrics, model_name="lightgbm", horizon=_h)
+        else:
+            # Legacy single-horizon
+            lgbm_val = lgbm_metrics.get("val")
+            if isinstance(lgbm_val, dict):
+                insert_metrics(engine, run_id, symbol, "val", lgbm_val, model_name="lightgbm")
+            lgbm_test = lgbm_metrics.get("test")
+            if isinstance(lgbm_test, dict):
+                insert_metrics(engine, run_id, symbol, "test", lgbm_test, model_name="lightgbm")
+            lgbm_wf = lgbm_metrics.get("wf")
+            if isinstance(lgbm_wf, dict):
+                insert_metrics(engine, run_id, symbol, "wf", lgbm_wf, model_name="lightgbm")
 
     # ── CatBoost challenger metrics ──
     cb_metrics = challengers.get("catboost") if isinstance(challengers, dict) else None
     if isinstance(cb_metrics, dict) and cb_metrics.get("status") == "completed":
-        cb_val = cb_metrics.get("val")
-        if isinstance(cb_val, dict):
-            insert_metrics(engine, run_id, symbol, "val", cb_val, model_name="catboost")
-        cb_test = cb_metrics.get("test")
-        if isinstance(cb_test, dict):
-            insert_metrics(engine, run_id, symbol, "test", cb_test, model_name="catboost")
-        cb_wf = cb_metrics.get("wf")
-        if isinstance(cb_wf, dict):
-            insert_metrics(engine, run_id, symbol, "wf", cb_wf, model_name="catboost")
+        _cb_horizons = cb_metrics.get("horizons") if isinstance(cb_metrics, dict) else None
+        if _cb_horizons:
+            # ── Multi-horizon : persister chaque horizon séparément ──
+            for _h_tag, _h_result in _cb_horizons.items():
+                if isinstance(_h_result, dict) and _h_result.get("status") == "completed":
+                    _h = int(_h_tag.lstrip("h")) if _h_tag.startswith("h") else None
+                    for _split_name in ("val", "test", "wf"):
+                        _metrics = _h_result.get(_split_name)
+                        if isinstance(_metrics, dict) and _metrics:
+                            insert_metrics(engine, run_id, symbol, _split_name, _metrics, model_name="catboost", horizon=_h)
+        else:
+            # Legacy single-horizon
+            cb_val = cb_metrics.get("val")
+            if isinstance(cb_val, dict):
+                insert_metrics(engine, run_id, symbol, "val", cb_val, model_name="catboost")
+            cb_test = cb_metrics.get("test")
+            if isinstance(cb_test, dict):
+                insert_metrics(engine, run_id, symbol, "test", cb_test, model_name="catboost")
+            cb_wf = cb_metrics.get("wf")
+            if isinstance(cb_wf, dict):
+                insert_metrics(engine, run_id, symbol, "wf", cb_wf, model_name="catboost")
 
     upsert_metrics_full(engine, run_id=run_id, symbol=symbol, metrics=all_metrics)
     replace_model_governance(
@@ -1552,91 +1576,180 @@ def train_symbol(
                 data=replace(effective_cfg.data, **_data_kwargs2),
             )
 
-        baseline_metrics: dict[str, Any] = {}
-        if prepared_df is not None and effective_cfg.baseline.enabled:
-            update_runtime_status(current_phase="baseline_lightgbm", current_symbol=symbol, progress_item=symbol)
-            baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir, ternary_policy=_build_ternary_policy(effective_cfg))
-            # LightGBM walk-forward
-            if effective_cfg.walk_forward.enabled and baseline_metrics.get("status") == "completed":
-                from modelFactory.tabular_baseline import run_tabular_walk_forward
-                _is_reg = effective_cfg.data.target_mode == "regression"
-                if _is_reg:
-                    _lgbm_builder = lambda seed: __import__("lightgbm").LGBMRegressor(
-                        objective="regression",
-                        max_depth=effective_cfg.baseline.max_depth,
-                        num_leaves=effective_cfg.baseline.lgbm_num_leaves,
-                        n_estimators=effective_cfg.baseline.n_estimators,
-                        learning_rate=effective_cfg.baseline.learning_rate,
-                        random_state=seed, verbosity=-1,
-                        reg_alpha=effective_cfg.baseline.lgbm_reg_alpha,
-                        reg_lambda=effective_cfg.baseline.lgbm_reg_lambda,
-                        min_child_samples=effective_cfg.baseline.lgbm_min_child_samples,
-                        subsample=effective_cfg.baseline.lgbm_subsample,
-                        colsample_bytree=effective_cfg.baseline.lgbm_colsample_bytree,
-                    )
-                else:
-                    _lgbm_builder = lambda seed: __import__("lightgbm").LGBMClassifier(
-                        objective="multiclass" if effective_cfg.data.target_mode == "ternary" else "binary",
-                        num_class=3 if effective_cfg.data.target_mode == "ternary" else 1,
-                        max_depth=effective_cfg.baseline.max_depth,
-                        num_leaves=effective_cfg.baseline.lgbm_num_leaves,
-                        n_estimators=effective_cfg.baseline.n_estimators,
-                        learning_rate=effective_cfg.baseline.learning_rate,
-                        random_state=seed, verbosity=-1,
-                        class_weight="balanced",
-                        reg_alpha=effective_cfg.baseline.lgbm_reg_alpha,
-                        reg_lambda=effective_cfg.baseline.lgbm_reg_lambda,
-                        min_child_samples=effective_cfg.baseline.lgbm_min_child_samples,
-                        subsample=effective_cfg.baseline.lgbm_subsample,
-                        colsample_bytree=effective_cfg.baseline.lgbm_colsample_bytree,
-                    )
-                lgbm_wf = run_tabular_walk_forward(
-                    prepared_df, effective_cfg,
+        # ── Tabular baselines (LightGBM + CatBoost) ──
+        # Multi-horizon: loop over horizons like per-sector.
+        # Single-horizon: legacy path (no loop).
+        _horizons = effective_cfg.data.forecast_horizons if effective_cfg.data.forecast_horizons else ()
+        _is_multi = bool(_horizons)
+        _is_reg = effective_cfg.data.target_mode == "regression"
+        _is_ternary = effective_cfg.data.target_mode == "ternary"
+        _ternary_policy = _build_ternary_policy(effective_cfg)
+
+        # ── Build model builders (shared across horizons) ──
+        if _is_reg:
+            _lgbm_builder = lambda seed: __import__("lightgbm").LGBMRegressor(
+                objective="regression",
+                max_depth=effective_cfg.baseline.max_depth,
+                num_leaves=effective_cfg.baseline.lgbm_num_leaves,
+                n_estimators=effective_cfg.baseline.n_estimators,
+                learning_rate=effective_cfg.baseline.learning_rate,
+                random_state=seed, verbosity=-1,
+                reg_alpha=effective_cfg.baseline.lgbm_reg_alpha,
+                reg_lambda=effective_cfg.baseline.lgbm_reg_lambda,
+                min_child_samples=effective_cfg.baseline.lgbm_min_child_samples,
+                subsample=effective_cfg.baseline.lgbm_subsample,
+                colsample_bytree=effective_cfg.baseline.lgbm_colsample_bytree,
+            )
+            _cb_builder = lambda seed: __import__("catboost").CatBoostRegressor(
+                depth=effective_cfg.baseline.catboost_depth,
+                iterations=effective_cfg.baseline.catboost_iterations,
+                learning_rate=effective_cfg.baseline.catboost_learning_rate,
+                random_seed=seed,
+                loss_function="RMSE",
+                verbose=False, allow_writing_files=False,
+                l2_leaf_reg=effective_cfg.baseline.catboost_l2_leaf_reg,
+            )
+        else:
+            _lgbm_builder = lambda seed: __import__("lightgbm").LGBMClassifier(
+                objective="multiclass" if _is_ternary else "binary",
+                num_class=3 if _is_ternary else 1,
+                max_depth=effective_cfg.baseline.max_depth,
+                num_leaves=effective_cfg.baseline.lgbm_num_leaves,
+                n_estimators=effective_cfg.baseline.n_estimators,
+                learning_rate=effective_cfg.baseline.learning_rate,
+                random_state=seed, verbosity=-1,
+                class_weight="balanced",
+                reg_alpha=effective_cfg.baseline.lgbm_reg_alpha,
+                reg_lambda=effective_cfg.baseline.lgbm_reg_lambda,
+                min_child_samples=effective_cfg.baseline.lgbm_min_child_samples,
+                subsample=effective_cfg.baseline.lgbm_subsample,
+                colsample_bytree=effective_cfg.baseline.lgbm_colsample_bytree,
+            )
+            _cb_builder = lambda seed: __import__("catboost").CatBoostClassifier(
+                depth=effective_cfg.baseline.catboost_depth,
+                iterations=effective_cfg.baseline.catboost_iterations,
+                learning_rate=effective_cfg.baseline.catboost_learning_rate,
+                random_seed=seed,
+                loss_function="MultiClass" if _is_ternary else "Logloss",
+                verbose=False, allow_writing_files=False,
+                auto_class_weights="Balanced",
+                l2_leaf_reg=effective_cfg.baseline.catboost_l2_leaf_reg,
+            )
+
+        from modelFactory.tabular_baseline import run_tabular_baseline, run_tabular_walk_forward
+
+        # ── Determine horizons to train ──
+        _train_horizons = _horizons if _is_multi else (effective_cfg.data.forecast_horizon,)
+        baseline_metrics: dict[str, Any] = {"status": "completed", "model_name": "lightgbm"}
+        catboost_metrics: dict[str, Any] = {"status": "completed", "model_name": "catboost"}
+        _lgbm_horizons: dict[str, dict] = {}
+        _cb_horizons: dict[str, dict] = {}
+
+        for _h in _train_horizons:
+            _target_col = f"target_h{_h}" if _is_multi else "target"
+            _future_col = f"future_return_h{_h}" if _is_multi else "future_return"
+            _horizon_tag = f"h{_h}"
+
+            LOGGER.info(
+                "train_symbol tabular horizon=%s symbol=%s",
+                _horizon_tag, symbol,
+            )
+
+            # Swap target/future_return columns for this horizon
+            _df = prepared_df.copy()
+            if _is_multi:
+                if _target_col not in _df.columns or _future_col not in _df.columns:
+                    LOGGER.warning("train_symbol: skipping horizon %s (columns missing)", _horizon_tag)
+                    continue
+                _df["target"] = _df[_target_col]
+                _df["future_return"] = _df[_future_col]
+
+            _h_dir = sym_dir / _horizon_tag if _is_multi else sym_dir
+            _h_dir.mkdir(parents=True, exist_ok=True)
+
+            # ── LightGBM ──
+            if effective_cfg.baseline.enabled:
+                update_runtime_status(current_phase="baseline_lightgbm", current_symbol=symbol, progress_item=symbol)
+                _lgbm_h = run_tabular_baseline(
+                    _df, effective_cfg,
                     model_name="lightgbm",
                     model_builder=_lgbm_builder,
-                    ternary_policy=_build_ternary_policy(effective_cfg),
+                    artifact_dir=_h_dir / "lightgbm" if _is_multi else _h_dir,
+                    save_callback=lambda model, path: model.booster_.save_model(str(path)),
+                    model_extension=".txt",
+                    ternary_policy=_ternary_policy,
+                    by_dates=False,
+                    symbol_tag=f"{symbol}_{_horizon_tag}" if _is_multi else symbol,
+                    forecast_horizon_override=_h if _is_multi else None,
                 )
-                if lgbm_wf.get("status") == "completed" and lgbm_wf.get("mean"):
-                    baseline_metrics["wf"] = lgbm_wf["mean"]
-                    baseline_metrics["walk_forward"] = lgbm_wf
-        catboost_metrics: dict[str, Any] = {}
-        if prepared_df is not None and effective_cfg.baseline.enable_catboost:
-            update_runtime_status(current_phase="baseline_catboost", current_symbol=symbol, progress_item=symbol)
-            catboost_metrics = run_catboost_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir, ternary_policy=_build_ternary_policy(effective_cfg))
-            # CatBoost walk-forward
-            if effective_cfg.walk_forward.enabled and catboost_metrics.get("status") == "completed":
-                from modelFactory.tabular_baseline import run_tabular_walk_forward
-                _is_reg = effective_cfg.data.target_mode == "regression"
-                if _is_reg:
-                    _cb_builder = lambda seed: __import__("catboost").CatBoostRegressor(
-                        depth=effective_cfg.baseline.catboost_depth,
-                        iterations=effective_cfg.baseline.catboost_iterations,
-                        learning_rate=effective_cfg.baseline.catboost_learning_rate,
-                        random_seed=seed,
-                        loss_function="RMSE",
-                        verbose=False, allow_writing_files=False,
-                        l2_leaf_reg=effective_cfg.baseline.catboost_l2_leaf_reg,
+
+                # LightGBM walk-forward
+                if effective_cfg.walk_forward.enabled and _lgbm_h.get("status") == "completed":
+                    _lgbm_wf = run_tabular_walk_forward(
+                        _df, effective_cfg,
+                        model_name="lightgbm",
+                        model_builder=_lgbm_builder,
+                        ternary_policy=_ternary_policy,
+                        by_dates=False,
+                        symbol_tag=f"{symbol}_{_horizon_tag}" if _is_multi else symbol,
+                        forecast_horizon_override=_h if _is_multi else None,
                     )
+                    if _lgbm_wf.get("status") == "completed" and _lgbm_wf.get("mean"):
+                        _lgbm_h["wf"] = _lgbm_wf["mean"]
+                        _lgbm_h["walk_forward"] = _lgbm_wf
+
+                if _is_multi:
+                    _lgbm_horizons[_horizon_tag] = _lgbm_h
                 else:
-                    _cb_builder = lambda seed: __import__("catboost").CatBoostClassifier(
-                        depth=effective_cfg.baseline.catboost_depth,
-                        iterations=effective_cfg.baseline.catboost_iterations,
-                        learning_rate=effective_cfg.baseline.catboost_learning_rate,
-                        random_seed=seed,
-                        loss_function="MultiClass" if effective_cfg.data.target_mode == "ternary" else "Logloss",
-                        verbose=False, allow_writing_files=False,
-                        auto_class_weights="Balanced",
-                        l2_leaf_reg=effective_cfg.baseline.catboost_l2_leaf_reg,
-                    )
-                cb_wf = run_tabular_walk_forward(
-                    prepared_df, effective_cfg,
+                    baseline_metrics = _lgbm_h
+
+            # ── CatBoost ──
+            if effective_cfg.baseline.enable_catboost:
+                update_runtime_status(current_phase="baseline_catboost", current_symbol=symbol, progress_item=symbol)
+                _cb_h = run_tabular_baseline(
+                    _df, effective_cfg,
                     model_name="catboost",
                     model_builder=_cb_builder,
-                    ternary_policy=_build_ternary_policy(effective_cfg),
+                    artifact_dir=_h_dir / "catboost" if _is_multi else _h_dir,
+                    model_extension=".cbm",
+                    ternary_policy=_ternary_policy,
+                    by_dates=False,
+                    symbol_tag=f"{symbol}_{_horizon_tag}" if _is_multi else symbol,
+                    forecast_horizon_override=_h if _is_multi else None,
                 )
-                if cb_wf.get("status") == "completed" and cb_wf.get("mean"):
-                    catboost_metrics["wf"] = cb_wf["mean"]
-                    catboost_metrics["walk_forward"] = cb_wf
+
+                # CatBoost walk-forward
+                if effective_cfg.walk_forward.enabled and _cb_h.get("status") == "completed":
+                    _cb_wf = run_tabular_walk_forward(
+                        _df, effective_cfg,
+                        model_name="catboost",
+                        model_builder=_cb_builder,
+                        ternary_policy=_ternary_policy,
+                        by_dates=False,
+                        symbol_tag=f"{symbol}_{_horizon_tag}" if _is_multi else symbol,
+                        forecast_horizon_override=_h if _is_multi else None,
+                    )
+                    if _cb_wf.get("status") == "completed" and _cb_wf.get("mean"):
+                        _cb_h["wf"] = _cb_wf["mean"]
+                        _cb_h["walk_forward"] = _cb_wf
+
+                if _is_multi:
+                    _cb_horizons[_horizon_tag] = _cb_h
+                else:
+                    catboost_metrics = _cb_h
+
+        # ── Merge multi-horizon results ──
+        if _is_multi:
+            # Primary = max horizon (backward compat), store all in "horizons"
+            # ⚠️ Copier pour éviter une référence circulaire :
+            #    baseline_metrics["horizons"][primary_h] → baseline_metrics (cycle)
+            _primary_h = f"h{effective_cfg.data.forecast_horizon}"
+            if _primary_h in _lgbm_horizons:
+                baseline_metrics = dict(_lgbm_horizons[_primary_h])  # shallow copy
+                baseline_metrics["horizons"] = _lgbm_horizons
+            if _primary_h in _cb_horizons:
+                catboost_metrics = dict(_cb_horizons[_primary_h])  # shallow copy
+                catboost_metrics["horizons"] = _cb_horizons
 
         best_ckpt = sym_dir / "best.ckpt"
         if best_source.exists() and best_source.resolve() != best_ckpt.resolve():

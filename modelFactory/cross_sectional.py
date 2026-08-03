@@ -230,6 +230,95 @@ def _load_sector_mapping(engine) -> dict[str, str]:
         return {}
 
 
+# ── GICS Sector grouping (Sprint 2026-08-03) ──
+# Maps DB sub-industry names → 11 GICS sectors for per-sector training.
+_GICS_SECTOR_MAP: dict[str, str] = {
+    # Energy
+    "energy": "Energy",
+    # Materials
+    "chemicals": "Materials",
+    "metals & mining": "Materials",
+    "paper & forest": "Materials",
+    # Industrials
+    "machinery": "Industrials",
+    "electrical equipment": "Industrials",
+    "building": "Industrials",
+    "commercial services & supplies": "Industrials",
+    "construction": "Industrials",
+    "aerospace & defense": "Industrials",
+    "trading companies & distributors": "Industrials",
+    "professional services": "Industrials",
+    "road & rail": "Industrials",
+    "airlines": "Industrials",
+    "marine": "Industrials",
+    "logistics & transportation": "Industrials",
+    "distributors": "Industrials",
+    "packaging": "Industrials",
+    # Consumer Discretionary
+    "retail": "Consumer Discretionary",
+    "hotels, restaurants & leisure": "Consumer Discretionary",
+    "auto components": "Consumer Discretionary",
+    "textiles, apparel & luxury goods": "Consumer Discretionary",
+    "leisure products": "Consumer Discretionary",
+    "automobiles": "Consumer Discretionary",
+    "diversified consumer services": "Consumer Discretionary",
+    # Consumer Staples
+    "consumer products": "Consumer Staples",
+    "food products": "Consumer Staples",
+    "beverages": "Consumer Staples",
+    "tobacco": "Consumer Staples",
+    # Health Care
+    "health care": "Health Care",
+    "biotechnology": "Health Care",
+    "pharmaceuticals": "Health Care",
+    "life sciences tools & services": "Health Care",
+    # Financials
+    "banking": "Financials",
+    "financial services": "Financials",
+    "insurance": "Financials",
+    # Real Estate
+    "real estate": "Real Estate",
+    # Information Technology
+    "technology": "Information Technology",
+    "semiconductors": "Information Technology",
+    # Communication Services
+    "media": "Communication Services",
+    "communications": "Communication Services",
+    "telecommunication": "Communication Services",
+    # Utilities
+    "utilities": "Utilities",
+}
+
+
+def _map_to_gics_sector(db_sector: str) -> str:
+    """Map a DB sub-industry name to its GICS sector.
+
+    Returns the GICS sector name, or "Other" if unmatched.
+    """
+    key = db_sector.strip().lower()
+    return _GICS_SECTOR_MAP.get(key, "Other")
+
+
+def load_sector_groups(engine) -> dict[str, list[str]]:
+    """Load symbol→sector from DB and group symbols by GICS sector.
+
+    Returns
+    -------
+    dict[str, list[str]]
+        ``{gics_sector: [symbols]}}, symbols sorted alphabetically.
+    """
+    raw_mapping = _load_sector_mapping(engine)
+    groups: dict[str, list[str]] = {}
+    for sym, db_sec in raw_mapping.items():
+        gics = _map_to_gics_sector(db_sec)
+        groups.setdefault(gics, []).append(sym)
+    # Sort symbols within each group
+    for gics in groups:
+        groups[gics] = sorted(groups[gics])
+    LOGGER.info("load_sector_groups: %d symbols → %d GICS sectors", len(raw_mapping), len(groups))
+    return groups
+
+
 def _compute_sector_features(
     raw_panel: pd.DataFrame,
     sector_map: dict[str, str],

@@ -18,6 +18,34 @@ BATCH_DETAIL_QUERY = """
     SELECT * FROM model_training_batch WHERE batch_id = :batch_id
 """
 
+HORIZON_LIST_QUERY = """
+    SELECT DISTINCT mm.horizon
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mm.horizon IS NOT NULL
+    ORDER BY mm.horizon
+"""
+
+F1_BY_HORIZON_QUERY = """
+    SELECT
+        mm.horizon,
+        ROUND(AVG(mm.f1_macro), 3) AS f1_macro,
+        ROUND(AVG(mm.f1_short), 3) AS f1_short,
+        ROUND(AVG(mm.f1_long), 3) AS f1_long,
+        ROUND(AVG(mm.directional_accuracy), 4) AS dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+      AND mm.horizon IS NOT NULL
+    GROUP BY mm.horizon
+    ORDER BY mm.horizon
+"""
+
 F1_BY_SPLIT_QUERY = """
     SELECT
         mm.model_name,
@@ -781,6 +809,20 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None)
 
     # ── Per-Symbol Cross-Sectional IC — retiré ──
+
+    # ── Métriques par horizon (si multi-horizon) ──
+    horizon_df = _safe_query(engine, HORIZON_LIST_QUERY, {"batch_id": batch_id})
+    if not horizon_df.empty:
+        f1_h_df = _safe_query(engine, F1_BY_HORIZON_QUERY, {"batch_id": batch_id})
+        if not f1_h_df.empty:
+            lines.append("## 📊 Métriques par Horizon (WF)")
+            lines.append("")
+            # Rename columns for readability
+            _h_display = f1_h_df.rename(columns={
+                "horizon": "Horizon", "f1_macro": "F1 macro",
+                "f1_short": "F1 short", "f1_long": "F1 long", "dir_acc": "Dir Acc",
+            })
+            lines.append(_df_to_md(_h_display))
 
     # ── Métriques F1 par split ──
     lines.append("## 📊 Métriques F1 par split")

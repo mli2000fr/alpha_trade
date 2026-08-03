@@ -36,18 +36,31 @@ def tabular_split(
 	val_ratio: float,
 	forecast_horizon: int = 0,
 	embargo_rows: int = 0,
+	by_dates: bool = False,
+	embargo_dates: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 	if "target" not in df.columns:
 		raise ValueError("La baseline tabulaire attend une colonne 'target'.")
 	clean = df.loc[df["target"].notna()].reset_index(drop=True)
-	split = chrono_split(
-		clean,
-		train_ratio,
-		val_ratio,
-		forecast_horizon=forecast_horizon,
-		embargo_rows=embargo_rows,
-		date_column="date" if "date" in clean.columns else None,
-	)
+	if by_dates and "date" in clean.columns:
+		from modelFactory.dataset import chrono_split_by_dates
+		split = chrono_split_by_dates(
+			clean,
+			train_ratio=train_ratio,
+			val_ratio=val_ratio,
+			forecast_horizon=forecast_horizon,
+			embargo_dates=embargo_dates,
+			date_column="date",
+		)
+	else:
+		split = chrono_split(
+			clean,
+			train_ratio,
+			val_ratio,
+			forecast_horizon=forecast_horizon,
+			embargo_rows=embargo_rows,
+			date_column="date" if "date" in clean.columns else None,
+		)
 	return split.train, split.val, split.test
 
 
@@ -257,15 +270,27 @@ def _compute_regression_metrics(
 	pred: np.ndarray,
 	target: np.ndarray,
 	future_return: np.ndarray,
+	*,
+	bias_correction: float = 0.0,
 ) -> dict[str, Any]:
 	"""Calcule les métriques de régression pour un modèle per-symbol.
 
 	Inclut le F1 macro binarisé (signe) pour comparabilité avec le mode ternaire.
 
+	**Sprint 2026-08-03 — Alignement sector-neutre** :
+	La ``directional_accuracy`` et le ``F1`` sont calculés par rapport à la
+	**target neutralisée** (``target``) — celle que le modèle a appris à prédire.
+	Compare le signe de la prédiction au signe de la target neutralisée,
+	PAS au ``future_return`` brut. Le ``future_return`` brut reste utilisé
+	uniquement pour l'IC (coefficient d'information vs rendements réels).
+
 	Args:
 		pred: Prédictions continues du modèle [n_samples]
-		target: Target de régression (vol-scalé winsorizé) [n_samples]
-		future_return: Rendement futur brut [n_samples]
+		target: Target de régression NEUTRALISÉE (vol-scalé winsorizé) [n_samples]
+		future_return: Rendement futur BRUT [n_samples] — pour IC uniquement
+		bias_correction: Correction de biais appliquée AVANT binarisation.
+		    pred_corrected = pred - bias_correction.
+		    Le signe de pred_corrected détermine long (>0) / short (<0).
 
 	Returns:
 		dict avec mse, mae, correlation, directional_accuracy, ic, f1_macro, etc.
@@ -275,28 +300,38 @@ def _compute_regression_metrics(
 		return {"loss": 0.0, "mse": 0.0, "mae": 0.0, "correlation": 0.0, "directional_accuracy": 0.0, "n_samples": int(valid.sum()),
 		        "f1_macro": 0.0, "f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
 		        "true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
-		        "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0}
+		        "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0,
+		        "ic": 0.0, "bias_correction": 0.0}
 
 	p = pred[valid]
-	t = target[valid]
-	f = future_return[valid]
+	t = target[valid]          # neutralisée — ce que le modèle apprend
+	f = future_return[valid]   # brute — réalité économique
 
 	residuals = p - t
 	mse = float(np.mean(residuals ** 2))
 	mae = float(np.mean(np.abs(residuals)))
 
-	# Pearson correlation avec la target
+	# Pearson correlation avec la target neutralisée
 	corr = float(np.corrcoef(p, t)[0, 1]) if len(p) > 2 else 0.0
 
-	# Directional accuracy : sign(pred) == sign(future_return)
-	dir_acc = float(np.mean(np.sign(p) == np.sign(f))) if len(p) > 0 else 0.0
+	# ── Bias correction ──
+	p_corrected = p - bias_correction
 
-	# IC (Information Coefficient) — corrélation entre prédiction et future_return
-	ic = float(np.corrcoef(p, f)[0, 1]) if len(p) > 2 else 0.0
+	# ── Directional accuracy : sign(pred) == sign(target neutralisée) ──
+	# C'est la métrique alignée avec ce que le modèle apprend.
+	# On mesure : "le modèle a-t-il correctement prédit la sur/sous-performance
+	# relative au secteur ?" et NON "le prix a-t-il monté ou baissé ?"
+	dir_acc = float(np.mean(np.sign(p_corrected) == np.sign(t))) if len(p) > 0 else 0.0
 
-	# ── F1 macro binarisé (comparable au mode ternaire) ──
-	pred_side = np.select([p > 0, p < 0], [1, -1], default=0).astype(int)
-	true_side = np.select([f > 0, f < 0], [1, -1], default=0).astype(int)
+	# ── IC (Information Coefficient) : corrélation prédiction vs rendement BRUT ──
+	# L'IC reste sur le future_return brut car il mesure la capacité
+	# à générer du PnL réel (utile pour le backtesting).
+	ic = float(np.corrcoef(p, f)[0, 1]) if len(p) > 2 and np.isfinite(f).sum() >= 2 else 0.0
+
+	# ── F1 macro binarisé — sur target NEUTRALISÉE ──
+	# Cohérent avec dir_acc : on évalue la capacité de ranking intra-secteur.
+	pred_side = np.select([p_corrected > 0, p_corrected < 0], [1, -1], default=0).astype(int)
+	true_side = np.select([t > 0, t < 0], [1, -1], default=0).astype(int)
 
 	pred_shifted = pred_side + 1  # {-1,0,1} → {0,1,2}
 	true_shifted = true_side + 1
@@ -334,6 +369,7 @@ def _compute_regression_metrics(
 		"pred_short_pct": float((pred_shifted == 0).mean() * 100),
 		"pred_flat_pct": float((pred_shifted == 1).mean() * 100),
 		"pred_long_pct": float((pred_shifted == 2).mean() * 100),
+		"bias_correction": float(bias_correction),
 	}
 
 
@@ -347,7 +383,16 @@ def run_tabular_baseline(
 	save_callback: Callable[[Any, Path], None] | None = None,
 	model_extension: str = ".pkl",
 	ternary_policy: "TernaryDecisionPolicy | None" = None,
+	by_dates: bool = False,
+	embargo_dates: int = 0,
+	symbol_tag: str = "",
+	forecast_horizon_override: int | None = None,
 ) -> dict[str, Any]:
+	# ── Purge dynamique par horizon (Sprint 2026-08-03) ──
+	# Si forecast_horizon_override est fourni, on l'utilise pour la purge
+	# plutôt que cfg.data.forecast_horizon (qui est le max des horizons).
+	# Ex: pour h=3, on ne purge que 3 jours au lieu de 20 → +17 jours de train.
+	_purge_horizon = forecast_horizon_override if forecast_horizon_override is not None else cfg.data.forecast_horizon
 	feature_columns = get_feature_columns(
 		include_sentiment=cfg.data.include_sentiment_features,
 		feature_set=cfg.data.feature_set,
@@ -364,18 +409,36 @@ def run_tabular_baseline(
 		prepared_df,
 		train_ratio=cfg.data.train_ratio,
 		val_ratio=cfg.data.val_ratio,
-		forecast_horizon=cfg.data.forecast_horizon,
+		forecast_horizon=_purge_horizon,
+		by_dates=by_dates,
+		embargo_dates=embargo_dates,
 	)
 	if train_df.empty or val_df.empty or test_df.empty:
 		return {"status": "skipped", "model_name": model_name, "reason": "insufficient_rows_after_split"}
 
-	symbol_tag = "__BATCH__"
-	if "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
-		symbol_tag = str(prepared_df["symbol"].iloc[0])
-	resolved_seed = derive_seed(cfg.reproducibility.seed, "tabular_baseline", model_name, symbol_tag)
+	# ── Standardize regression target on train stats (anti-leakage) ──
+	if cfg.data.target_mode == "regression":
+		from modelFactory.features import standardize_regression_target
+		# Compute stats on train only, apply to all splits
+		train_target = train_df["target"]
+		valid = train_target.notna()
+		if valid.sum() >= 2:
+			t_mean = float(train_target.loc[valid].mean())
+			t_std = float(train_target.loc[valid].std())
+			if t_std > 1e-9:
+				for _part in (train_df, val_df, test_df):
+					_part["target"] = (_part["target"] - t_mean) / t_std
+			else:
+				for _part in (train_df, val_df, test_df):
+					_part["target"] = _part["target"] - t_mean
+
+	_symbol_tag = symbol_tag or "__BATCH__"
+	if not symbol_tag and "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
+		_symbol_tag = str(prepared_df["symbol"].iloc[0])
+	resolved_seed = derive_seed(cfg.reproducibility.seed, "tabular_baseline", model_name, _symbol_tag)
 	apply_reproducibility(
 		ReproducibilityConfig(seed=resolved_seed, deterministic=cfg.reproducibility.deterministic),
-		context=f"tabular_baseline:{model_name}:{symbol_tag}",
+		context=f"tabular_baseline:{model_name}:{_symbol_tag}",
 	)
 	model = model_builder(resolved_seed)
 	is_ternary = cfg.data.target_mode == "ternary"
@@ -405,8 +468,19 @@ def run_tabular_baseline(
 		val_future = val_df["future_return"].to_numpy()
 		test_future = test_df["future_return"].to_numpy()
 
-		val_metrics = _compute_regression_metrics(val_pred, val_df["target"].to_numpy(), val_future)
-		test_metrics = _compute_regression_metrics(test_pred, test_df["target"].to_numpy(), test_future)
+		# ── Bias correction : recalibre le seuil long/short ──
+		# La target sector-neutre est centrée sur 0 par construction,
+		# mais le modèle peut avoir un biais systématique.
+		# On calcule la médiane des prédictions sur la validation
+		# pour recentrer le seuil de décision.
+		bias_correction = float(np.median(val_pred))
+		LOGGER.info(
+			"tabular_baseline regression bias_correction=%.6f model=%s",
+			bias_correction, model_name,
+		)
+
+		val_metrics = _compute_regression_metrics(val_pred, val_df["target"].to_numpy(), val_future, bias_correction=bias_correction)
+		test_metrics = _compute_regression_metrics(test_pred, test_df["target"].to_numpy(), test_future, bias_correction=bias_correction)
 
 		selected_threshold = float(cfg.data.decision_threshold)
 		calibrator = None
@@ -732,23 +806,40 @@ def run_tabular_walk_forward(
 	model_name: str,
 	model_builder: Callable[[int], Any],
 	ternary_policy: "TernaryDecisionPolicy | None" = None,
+	by_dates: bool = False,
+	symbol_tag: str = "",
+	forecast_horizon_override: int | None = None,
 ) -> dict[str, Any]:
 	"""Évalue un modèle tabulaire en walk-forward (mêmes splits que le LSTM)."""
-	from modelFactory.dataset import generate_walk_forward_splits
+	from modelFactory.dataset import generate_walk_forward_splits, generate_walk_forward_splits_by_dates
 	from modelFactory.features import get_feature_columns as _get_fc
 
 	if not cfg.walk_forward.enabled:
 		return {}
 
-	splits = generate_walk_forward_splits(
-		prepared_df,
-		min_train_size=cfg.walk_forward.min_train_size,
-		val_size=cfg.walk_forward.val_size,
-		test_size=cfg.walk_forward.test_size,
-		step_size=cfg.walk_forward.step_size,
-		max_splits=cfg.walk_forward.max_splits,
-		forecast_horizon=cfg.data.forecast_horizon,
-	)
+	# ── Purge dynamique par horizon (Sprint 2026-08-03) ──
+	_purge_horizon = forecast_horizon_override if forecast_horizon_override is not None else cfg.data.forecast_horizon
+
+	if by_dates:
+		splits = generate_walk_forward_splits_by_dates(
+			prepared_df,
+			min_train_dates=cfg.walk_forward.min_train_size,
+			val_dates=cfg.walk_forward.val_size,
+			test_dates=cfg.walk_forward.test_size,
+			step_dates=cfg.walk_forward.step_size,
+			max_splits=cfg.walk_forward.max_splits,
+			forecast_horizon=_purge_horizon,
+		)
+	else:
+		splits = generate_walk_forward_splits(
+			prepared_df,
+			min_train_size=cfg.walk_forward.min_train_size,
+			val_size=cfg.walk_forward.val_size,
+			test_size=cfg.walk_forward.test_size,
+			step_size=cfg.walk_forward.step_size,
+			max_splits=cfg.walk_forward.max_splits,
+			forecast_horizon=_purge_horizon,
+		)
 	if not splits:
 		return {"status": "skipped", "reason": "no_valid_split"}
 
@@ -767,32 +858,48 @@ def run_tabular_walk_forward(
 		include_global_stacking=cfg.global_model.stacking_enabled,
 	)
 
-	symbol_tag = "__BATCH__"
-	if "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
-		symbol_tag = str(prepared_df["symbol"].iloc[0])
+	_symbol_tag = symbol_tag or "__BATCH__"
+	if not symbol_tag and "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
+		_symbol_tag = str(prepared_df["symbol"].iloc[0])
 
 	_has_global_rank = "global_rank" in feature_cols
 	LOGGER.info(
 		"tabular_wf start symbol=%s model=%s splits=%d prepared_rows=%d "
 		"feature_cols=%d stacking=%s global_pred=%s",
-		symbol_tag, model_name, len(splits), len(prepared_df),
+		_symbol_tag, model_name, len(splits), len(prepared_df),
 		len(feature_cols), cfg.global_model.stacking_enabled, _has_global_rank,
 	)
 
 	fold_metrics: list[dict[str, Any]] = []
-	wf_seed = derive_seed(cfg.reproducibility.seed, "tabular_walk_forward", model_name, symbol_tag)
+	wf_seed = derive_seed(cfg.reproducibility.seed, "tabular_walk_forward", model_name, _symbol_tag)
 
 	for split in splits:
 		split_seed = derive_seed(wf_seed, split.split_index)
 		apply_reproducibility(
 			ReproducibilityConfig(seed=split_seed, deterministic=cfg.reproducibility.deterministic),
-			context=f"tabular_wf:{model_name}:{symbol_tag}:split_{split.split_index}",
+			context=f"tabular_wf:{model_name}:{_symbol_tag}:split_{split.split_index}",
 		)
 		model = model_builder(split_seed)
 		if is_regression:
+			# ── Standardize target on this fold's train stats (anti-leakage) ──
+			_train_df_r = split.train.copy()
+			_test_df_r = split.test.copy()
+			_train_valid_r = _train_df_r["target"].notna()
+			if _train_valid_r.sum() >= 2:
+				_t_mean = float(_train_df_r.loc[_train_valid_r, "target"].mean())
+				_t_std = float(_train_df_r.loc[_train_valid_r, "target"].std())
+				if _t_std > 1e-9:
+					_train_df_r["target"] = (_train_df_r["target"] - _t_mean) / _t_std
+					_test_df_r["target"] = (_test_df_r["target"] - _t_mean) / _t_std
+				else:
+					_train_df_r["target"] = _train_df_r["target"] - _t_mean
+					_test_df_r["target"] = _test_df_r["target"] - _t_mean
 			# ── Regression : target continue ──
-			_train_valid_r = split.train["target"].notna()
-			_train_df_r = split.train.loc[_train_valid_r]
+			# Filter NaN rows AFTER standardization (NaN targets persist from shift(-h))
+			_train_valid_mask = _train_df_r["target"].notna()
+			_train_df_r = _train_df_r.loc[_train_valid_mask]
+			if _train_df_r.empty:
+				continue
 			train_targets = _train_df_r["target"].astype(float)
 			if train_targets.std() < 1e-9:
 				continue
@@ -803,31 +910,36 @@ def run_tabular_walk_forward(
 				_wf_days_diff = (_wf_max_date - _wf_train_dates).dt.days
 				_wf_sample_weights = np.exp(-_wf_days_diff.values.astype(np.float64) / 365.0)
 			model.fit(_train_df_r[feature_cols], train_targets, sample_weight=_wf_sample_weights)
-			_test_valid_r = split.test["target"].notna()
-			_test_df_r = split.test.loc[_test_valid_r]
+			# ── Bias correction from train set (WF fold) ──
+			_train_pred = model.predict(_train_df_r[feature_cols])
+			_wf_bias = float(np.median(_train_pred))
+			_test_valid_r = _test_df_r["target"].notna()
+			_test_df_r = _test_df_r.loc[_test_valid_r]
 			if _test_df_r.empty:
 				continue
 			test_pred = model.predict(_test_df_r[feature_cols])
+			test_pred_corrected = test_pred - _wf_bias
 			test_target = _test_df_r["target"].astype(float).to_numpy()
 			test_future = _test_df_r["future_return"].to_numpy() if "future_return" in _test_df_r.columns else None
-			valid = np.isfinite(test_pred) & np.isfinite(test_target)
+			valid = np.isfinite(test_pred_corrected) & np.isfinite(test_target)
 			n = int(valid.sum())
 			fold_m: dict[str, Any] = {"split_index": split.split_index, "train_rows": len(_train_df_r), "test_rows": len(_test_df_r), "n_valid": n,
 			                          "f1_macro": 0.0, "f1_short": 0.0, "f1_flat": 0.0, "f1_long": 0.0,
 			                          "true_short_pct": 0.0, "true_flat_pct": 0.0, "true_long_pct": 0.0,
-			                          "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0}
+			                          "pred_short_pct": 0.0, "pred_flat_pct": 0.0, "pred_long_pct": 0.0,
+			                          "bias_correction": float(_wf_bias)}
 			if n >= 2:
-				p, t = test_pred[valid], test_target[valid]
+				p, t = test_pred_corrected[valid], test_target[valid]
 				f = test_future[valid] if test_future is not None else None
-				fold_m["mse"] = float(np.mean((p - t) ** 2))
-				fold_m["mae"] = float(np.mean(np.abs(p - t)))
+				fold_m["mse"] = float(np.mean((test_pred[valid] - t) ** 2))  # MSE on raw pred
+				fold_m["mae"] = float(np.mean(np.abs(test_pred[valid] - t)))
 				fold_m["directional_accuracy"] = float(np.mean(np.sign(p) == np.sign(t)))
 				if f is not None:
 					fold_m["ic"] = float(np.corrcoef(p, f)[0, 1]) if np.isfinite(f).sum() >= 2 else None
-					# ── F1 macro binarisé ──────────────────────────
-					_f_f1 = f
-				else:
-					_f_f1 = t
+				# ── F1 macro binarisé — sur target NEUTRALISÉE ──
+				# Cohérent avec l'entraînement sector-neutre :
+				# on mesure la capacité de ranking intra-secteur, pas le rendement absolu.
+				_f_f1 = t
 				pred_side = np.select([p > 0, p < 0], [1, -1], default=0).astype(int)
 				true_side = np.select([_f_f1 > 0, _f_f1 < 0], [1, -1], default=0).astype(int)
 				pred_shifted = pred_side + 1

@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_run (
     run_id          VARCHAR(64)     NOT NULL  COMMENT 'UUID ou hash unique du run',
     batch_id        VARCHAR(64)     DEFAULT NULL COMMENT 'Identifiant partagé de la campagne d entraînement',
     registry_id     BIGINT UNSIGNED NOT NULL,
-    symbol          VARCHAR(20)     NOT NULL,
+    symbol          VARCHAR(50)     NOT NULL,
     status          VARCHAR(20)     NOT NULL  COMMENT 'pending|running|completed|failed|skipped',
     skip_reason     VARCHAR(200)    DEFAULT NULL,
     started_at      DATETIME        DEFAULT NULL,

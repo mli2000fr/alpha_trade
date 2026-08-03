@@ -253,6 +253,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--sequence-length", type=int, default=60)
     p.add_argument("--forecast-horizon", type=int, default=10)
     p.add_argument(
+        "--forecast-horizons",
+        type=str,
+        default=None,
+        help="Horizons multiples séparés par des virgules (ex: 3,5,10,15,20). "
+             "Si renseigné, --forecast-horizon est ignoré et chaque horizon "
+             "produit un modèle indépendant.",
+    )
+    p.add_argument(
         "--training-start-date",
         type=_parse_iso_date_arg,
         default=date(2020, 1, 1),
@@ -346,6 +354,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
     p.add_argument("--benchmark-symbol", type=str, default="SPY")
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary", "regression"])
+    p.add_argument("--training-mode", type=str, default="per_symbol", choices=["per_symbol", "per_sector"],
+                   help="Mode d'entraînement : per_symbol (1 modèle par symbole) ou per_sector (1 modèle par secteur GICS)")
     p.add_argument("--label-method", type=str, default="fixed_horizon", choices=["fixed_horizon", "triple_barrier"])
     p.add_argument("--triple-barrier-stop-atr-mult", type=float, default=2.0)
     p.add_argument("--triple-barrier-tp-atr-mult", type=float, default=3.0)
@@ -477,10 +487,17 @@ def main(args: list[str] | None = None) -> None:
         fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
+    _horizons: tuple[int, ...] = ()
+    _forecast_horizon = opts.forecast_horizon
+    if opts.forecast_horizons:
+        _horizons = tuple(int(h.strip()) for h in opts.forecast_horizons.split(",") if h.strip())
+        _forecast_horizon = max(_horizons) if _horizons else opts.forecast_horizon
+
     cfg = TrainingConfig(
         data=DataConfig(
             sequence_length=opts.sequence_length,
-            forecast_horizon=opts.forecast_horizon,
+            forecast_horizon=_forecast_horizon,
+            forecast_horizons=_horizons,
             training_start_date=opts.training_start_date,
             training_end_date=opts.training_end_date,
             include_sentiment_features=opts.include_sentiment,
@@ -608,6 +625,7 @@ def main(args: list[str] | None = None) -> None:
         max_workers=opts.max_workers,
         accelerator=opts.accelerator,
         debug_train=opts.debug_train,
+        training_mode=opts.training_mode,
     )
 
     reproducibility_state = apply_reproducibility(cfg.reproducibility, context=f"cli:{opts.mode}")

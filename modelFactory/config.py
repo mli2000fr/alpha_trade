@@ -12,6 +12,7 @@ class DataConfig:
 
     sequence_length: int = 60
     forecast_horizon: int = 10
+    forecast_horizons: tuple[int, ...] = ()  # vide = single-horizon (legacy)
     min_history_days: int = 504
     train_ratio: float = 0.70
     val_ratio: float = 0.15
@@ -452,10 +453,13 @@ class TrainingConfig:
     max_workers: int = 4
     accelerator: str = "auto"  # auto | cpu | gpu
     debug_train: bool = False
+    training_mode: str = "per_symbol"  # per_symbol | per_sector
 
     def __post_init__(self) -> None:
         if self.max_workers < 1:
             raise ValueError("max_workers doit être >= 1.")
         if self.batch_id is not None and (not self.batch_id.strip() or Path(self.batch_id).name != self.batch_id):
             raise ValueError("batch_id doit être un nom de dossier non vide.")
+        if self.training_mode not in {"per_symbol", "per_sector"}:
+            raise ValueError("training_mode doit être 'per_symbol' ou 'per_sector'.")
 

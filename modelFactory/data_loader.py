@@ -501,7 +501,7 @@ def load_symbols_selector_context(
 
     available_columns = _get_table_columns(engine, "stock_scores_history")
     if "symbol" not in available_columns or "snapshot_date" not in available_columns:
-        LOGGER.info("load_symbols_selector_context unavailable missing_required_columns=%s", sorted(available_columns))
+        LOGGER.debug("load_symbols_selector_context: no data (columns=%s)", sorted(available_columns))
         return pd.DataFrame(columns=expected_columns)
 
     selected_columns = [
