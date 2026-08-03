@@ -2150,8 +2150,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_training_mode != "per_symbol":
             command.extend(["--training-mode", options.ml_training_mode])
         command.extend([
-            "--forecast-horizon",
-            str(options.ml_forecast_horizon),
+            "--forecast-horizon" if options.ml_forecast_horizon != 0 else "--forecast-horizons",
+            str(options.ml_forecast_horizon) if options.ml_forecast_horizon != 0 else "3,5,10,15,20",
             "--target-up-threshold",
             str(options.ml_target_up_threshold),
             "--target-down-threshold",

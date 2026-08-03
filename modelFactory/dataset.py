@@ -775,6 +775,21 @@ def prepare_symbol_frame(
         )
         df["future_return"] = triple_targets["future_return"]
         df["target"] = triple_targets["target"]
+    elif data_cfg.forecast_horizons:
+        # ── Multi-horizon : construit target_h{3,5,10,15,20} ──
+        from modelFactory.features import build_multi_horizon_targets as _bmt
+        _multi = _bmt(
+            df,
+            horizons=data_cfg.forecast_horizons,
+            mode=data_cfg.target_mode,
+            positive_threshold=data_cfg.target_up_threshold,
+            negative_threshold=data_cfg.target_down_threshold,
+        )
+        for _col in _multi.columns:
+            df[_col] = _multi[_col]
+        # Rétrocompat : "target" et "future_return" pointent vers l'horizon max
+        df["target"] = df[f"target_h{data_cfg.forecast_horizon}"]
+        df["future_return"] = df[f"future_return_h{data_cfg.forecast_horizon}"]
     else:
         df["future_return"] = compute_future_return(df, horizon=data_cfg.forecast_horizon)
         df["target"] = build_target(

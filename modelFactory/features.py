@@ -1309,6 +1309,40 @@ def compute_future_return(df: pd.DataFrame, horizon: int = 5) -> pd.Series:
     return close.shift(-horizon) / close - 1.0
 
 
+def build_multi_horizon_targets(
+    df: pd.DataFrame,
+    horizons: tuple[int, ...],
+    mode: str = "binary",
+    positive_threshold: float = 0.0,
+    negative_threshold: float = 0.0,
+) -> pd.DataFrame:
+    """Construit les targets pour plusieurs horizons en une seule passe.
+
+    Retourne un DataFrame avec les colonnes ``target_h{horizon}`` et
+    ``future_return_h{horizon}`` pour chaque horizon.
+    """
+    close = _build_adjusted_price_frame(df)["close"]
+    targets: dict[str, pd.Series] = {}
+    for h in horizons:
+        future_return = close.shift(-h) / close - 1.0
+        targets[f"future_return_h{h}"] = future_return
+        if mode == "regression":
+            target = future_return.copy()
+            if h >= 5:
+                rolling_vol = close.pct_change().rolling(20).std()
+                target = target / rolling_vol
+            lo, hi = target.quantile(0.01), target.quantile(0.99)
+            target = target.clip(lo, hi)
+            targets[f"target_h{h}"] = target.where(future_return.notna()).astype(float)
+        else:
+            targets[f"target_h{h}"] = build_target(
+                df, horizon=h, mode=mode,
+                positive_threshold=positive_threshold,
+                negative_threshold=negative_threshold,
+            )
+    return pd.DataFrame(targets, index=df.index)
+
+
 def standardize_regression_target(
     prepared_df: pd.DataFrame,
     train_mask: "pd.Series | None" = None,

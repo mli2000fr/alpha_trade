@@ -12,6 +12,7 @@ class DataConfig:
 
     sequence_length: int = 60
     forecast_horizon: int = 10
+    forecast_horizons: tuple[int, ...] = ()  # vide = single-horizon (legacy)
     min_history_days: int = 504
     train_ratio: float = 0.70
     val_ratio: float = 0.15

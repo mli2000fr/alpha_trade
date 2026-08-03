@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_metrics (
     `precision`             DOUBLE          DEFAULT NULL,
     recall                  DOUBLE          DEFAULT NULL,
     auc                     DOUBLE          DEFAULT NULL,
+    horizon                 INT             DEFAULT NULL,
     -- ML Sprint 7 — support ternaire
     f1_macro                DOUBLE          DEFAULT NULL COMMENT 'F1 macro (ternaire uniquement)',
     f1_short                DOUBLE          DEFAULT NULL COMMENT 'F1 classe short',

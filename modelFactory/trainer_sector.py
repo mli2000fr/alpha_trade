@@ -107,13 +107,27 @@ def _prepare_sector_data(
     # ── Sector-neutral target ──
     # Predict outperformance within the sector, not absolute direction.
     # The target becomes: "will this stock beat the sector median?"
-    if "target" in prepared.columns and "date" in prepared.columns:
-        daily_median = prepared.groupby("date")["target"].transform("median")
-        prepared["target"] = prepared["target"] - daily_median
-        LOGGER.info(
-            "train_sector: target sector-neutralized "
-            "(target = target - daily_median within sector)"
-        )
+    # Must neutralize ALL horizon targets before splits are created.
+    if "date" in prepared.columns:
+        if cfg.data.forecast_horizons:
+            for h in cfg.data.forecast_horizons:
+                _col = f"target_h{h}"
+                if _col in prepared.columns:
+                    _daily_med = prepared.groupby("date")[_col].transform("median")
+                    prepared[_col] = prepared[_col] - _daily_med
+            # Sync primary "target" column with the max horizon (already neutralized)
+            prepared["target"] = prepared[f"target_h{cfg.data.forecast_horizon}"]
+            LOGGER.info(
+                "train_sector: sector-neutralized %d horizon targets",
+                len(cfg.data.forecast_horizons),
+            )
+        elif "target" in prepared.columns:
+            daily_median = prepared.groupby("date")["target"].transform("median")
+            prepared["target"] = prepared["target"] - daily_median
+            LOGGER.info(
+                "train_sector: target sector-neutralized "
+                "(target = target - daily_median within sector)"
+            )
 
     # Chronological split by DATES (PIT-safe: same date → same split)
     split = chrono_split_by_dates(
@@ -172,10 +186,22 @@ def _persist_sector_metrics(
     for model_name, model_result in [("lightgbm", lgbm_result), ("catboost", cb_result)]:
         if model_result.get("status") != "completed":
             continue
-        for split_name in ("val", "test", "wf"):
-            metrics = model_result.get(split_name)
-            if isinstance(metrics, dict) and metrics:
-                insert_metrics(engine, run_id, sector_name, split_name, metrics, model_name=model_name)
+        # ── Multi-horizon : persister chaque horizon séparément ──
+        _horizons_dict = model_result.get("horizons", {})
+        if _horizons_dict:
+            for _h_tag, _h_result in _horizons_dict.items():
+                if isinstance(_h_result, dict) and _h_result.get("status") == "completed":
+                    _h = int(_h_tag.lstrip("h")) if _h_tag.startswith("h") else None
+                    for split_name in ("val", "test", "wf"):
+                        metrics = _h_result.get(split_name)
+                        if isinstance(metrics, dict) and metrics:
+                            insert_metrics(engine, run_id, sector_name, split_name, metrics, model_name=model_name, horizon=_h)
+        else:
+            # Legacy single-horizon
+            for split_name in ("val", "test", "wf"):
+                metrics = model_result.get(split_name)
+                if isinstance(metrics, dict) and metrics:
+                    insert_metrics(engine, run_id, sector_name, split_name, metrics, model_name=model_name)
 
     wf_full_lgbm = lgbm_result.get("walk_forward") if isinstance(lgbm_result, dict) else None
     wf_full_cb = cb_result.get("walk_forward") if isinstance(cb_result, dict) else None
@@ -313,50 +339,102 @@ def _train_sector_models(
     sector_dir = Path(cfg.artifacts_dir) / f"_sector_{sector_slug}"
     sector_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Train tabular baselines ──
+    # ── Train tabular baselines (loop over horizons) ──
+    horizons = cfg.data.forecast_horizons if cfg.data.forecast_horizons else (cfg.data.forecast_horizon,)
     ternary_policy = _build_ternary_policy(cfg)
-    lgbm_result = run_tabular_baseline(
-        prepared_df, cfg,
-        model_name="lightgbm",
-        model_builder=_lgbm_builder,
-        artifact_dir=sector_dir / "lightgbm",
-        model_extension=".txt" if not is_reg else ".pkl",
-        ternary_policy=ternary_policy,
-        by_dates=True,
-    )
-    cb_result = run_tabular_baseline(
-        prepared_df, cfg,
-        model_name="catboost",
-        model_builder=_cb_builder,
-        artifact_dir=sector_dir / "catboost",
-        model_extension=".cbm" if not is_reg else ".pkl",
-        ternary_policy=ternary_policy,
-        by_dates=True,
-    )
 
-    # ── Walk-forward tabular ──
-    if cfg.walk_forward.enabled:
-        lgbm_wf = run_tabular_walk_forward(
-            prepared_df, cfg,
+    lgbm_result: dict[str, Any] = {"status": "completed", "model_name": "lightgbm"}
+    cb_result: dict[str, Any] = {"status": "completed", "model_name": "catboost"}
+    horizon_metrics_lgbm: dict[str, dict] = {}
+    horizon_metrics_cb: dict[str, dict] = {}
+
+    for h in horizons:
+        _target_col = f"target_h{h}" if cfg.data.forecast_horizons else "target"
+        _future_col = f"future_return_h{h}" if cfg.data.forecast_horizons else "future_return"
+        _horizon_tag = f"h{h}"
+
+        LOGGER.info(
+            "train_sector horizon=%s sector=%s symbols=%d",
+            _horizon_tag, sector_name, len(symbols),
+        )
+
+        # Swap target/future_return columns for this horizon
+        _df = prepared_df.copy()
+        if cfg.data.forecast_horizons:
+            if _target_col not in _df.columns or _future_col not in _df.columns:
+                LOGGER.warning("train_sector: skipping horizon %s (columns missing)", _horizon_tag)
+                continue
+            _df["target"] = _df[_target_col]
+            _df["future_return"] = _df[_future_col]
+
+        _sector_dir_h = sector_dir / _horizon_tag
+        _sector_dir_h.mkdir(parents=True, exist_ok=True)
+
+        LOGGER.info(
+            "train_sector horizon=%s: training baselines (lgbm+catboost) sector=%s",
+            _horizon_tag, sector_name,
+        )
+        _lgbm_h = run_tabular_baseline(
+            _df, cfg,
             model_name="lightgbm",
             model_builder=_lgbm_builder,
+            artifact_dir=_sector_dir_h / "lightgbm",
+            model_extension=".txt" if not is_reg else ".pkl",
             ternary_policy=ternary_policy,
             by_dates=True,
+            symbol_tag=f"{sector_name}_{_horizon_tag}",
+            forecast_horizon_override=h,
         )
-        if lgbm_wf.get("status") == "completed" and lgbm_wf.get("mean"):
-            lgbm_result["wf"] = lgbm_wf["mean"]
-            lgbm_result["walk_forward"] = lgbm_wf
-
-        cb_wf = run_tabular_walk_forward(
-            prepared_df, cfg,
+        _cb_h = run_tabular_baseline(
+            _df, cfg,
             model_name="catboost",
             model_builder=_cb_builder,
+            artifact_dir=_sector_dir_h / "catboost",
+            model_extension=".cbm" if not is_reg else ".pkl",
             ternary_policy=ternary_policy,
             by_dates=True,
+            symbol_tag=f"{sector_name}_{_horizon_tag}",
+            forecast_horizon_override=h,
         )
-        if cb_wf.get("status") == "completed" and cb_wf.get("mean"):
-            cb_result["wf"] = cb_wf["mean"]
-            cb_result["walk_forward"] = cb_wf
+
+        horizon_metrics_lgbm[_horizon_tag] = _lgbm_h
+        horizon_metrics_cb[_horizon_tag] = _cb_h
+
+        # ── Walk-forward tabular ──
+        if cfg.walk_forward.enabled:
+            lgbm_wf = run_tabular_walk_forward(
+                _df, cfg,
+                model_name="lightgbm",
+                model_builder=_lgbm_builder,
+                ternary_policy=ternary_policy,
+                by_dates=True,
+                symbol_tag=f"{sector_name}_{_horizon_tag}",
+                forecast_horizon_override=h,
+            )
+            if lgbm_wf.get("status") == "completed" and lgbm_wf.get("mean"):
+                _lgbm_h["wf"] = lgbm_wf["mean"]
+                _lgbm_h["walk_forward"] = lgbm_wf
+
+            cb_wf = run_tabular_walk_forward(
+                _df, cfg,
+                model_name="catboost",
+                model_builder=_cb_builder,
+                ternary_policy=ternary_policy,
+                by_dates=True,
+                symbol_tag=f"{sector_name}_{_horizon_tag}",
+                forecast_horizon_override=h,
+            )
+            if cb_wf.get("status") == "completed" and cb_wf.get("mean"):
+                _cb_h["wf"] = cb_wf["mean"]
+                _cb_h["walk_forward"] = cb_wf
+
+    # Merge horizon results: use h15 as primary (backward compat), store all in "horizons"
+    _primary_horizon = "h15" if "h15" in horizon_metrics_lgbm else next(iter(horizon_metrics_lgbm), None)
+    if _primary_horizon:
+        lgbm_result = horizon_metrics_lgbm[_primary_horizon]
+        cb_result = horizon_metrics_cb[_primary_horizon]
+    lgbm_result["horizons"] = horizon_metrics_lgbm
+    cb_result["horizons"] = horizon_metrics_cb
 
     # ── LSTM (si activé) ──
     lstm_result: dict[str, Any] = {"status": "skipped", "reason": "lstm_not_implemented_for_sectors"}
@@ -459,7 +537,17 @@ def run_per_sector_batch(
 
     # Train sectors sequentially
     results: list[dict[str, Any]] = []
-    for sector_name, sector_symbols in sorted(filtered_groups.items()):
+    _total_sectors = len(filtered_groups)
+    _sector_names = sorted(filtered_groups.keys())
+    LOGGER.info(
+        "🏁 run_per_sector_batch START: %d sectors to process: %s",
+        _total_sectors, ", ".join(_sector_names),
+    )
+    for _idx, (sector_name, sector_symbols) in enumerate(sorted(filtered_groups.items()), start=1):
+        LOGGER.info(
+            "🔄 run_per_sector_batch [%d/%d] START sector=%s symbols=%d",
+            _idx, _total_sectors, sector_name, len(sector_symbols),
+        )
         try:
             result = _train_sector_models(
                 sector_name,
@@ -474,10 +562,25 @@ def run_per_sector_batch(
                 batch_id=batch_id,
             )
             results.append(result)
+            LOGGER.info(
+                "✅ run_per_sector_batch [%d/%d] DONE sector=%s status=%s",
+                _idx, _total_sectors, sector_name, result.get("status", "?"),
+            )
         except Exception as exc:
-            LOGGER.error("run_per_sector_batch: sector %s failed: %s", sector_name, exc)
+            LOGGER.error(
+                "❌ run_per_sector_batch [%d/%d] FAILED sector=%s: %s",
+                _idx, _total_sectors, sector_name, exc,
+            )
             results.append({"sector": sector_name, "status": "failed", "reason": str(exc)})
 
+    # ── Final summary ──
+    _completed = sum(1 for r in results if r.get("status") == "completed")
+    _failed = sum(1 for r in results if r.get("status") == "failed")
+    _skipped = sum(1 for r in results if r.get("status") == "skipped")
+    LOGGER.info(
+        "🏁🏁🏁 run_per_sector_batch FINISHED: %d total | %d completed | %d failed | %d skipped 🏁🏁🏁",
+        len(results), _completed, _failed, _skipped,
+    )
     return results
 
 

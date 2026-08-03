@@ -3566,7 +3566,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_forecast_horizon = int(
                 st.number_input(
                     "Horizon de prédiction (jours)",
-                    min_value=1,
+                    min_value=0,
                     max_value=30,
                     value=_session_state_int(
                         "pipeline_ml_forecast_horizon",
@@ -3574,7 +3574,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ),
                     step=1,
                     key="pipeline_ml_forecast_horizon",
-                    help="Défaut swing : 5 jours. Ajustable 3-15 selon style.",
+                    help="0 = tous les horizons (3, 5, 10, 15, 20 jours). "
+                         "Valeur > 0 = un seul horizon (ex: 15 = H15 uniquement).",
                 )
             )
         with ml_target_col2:

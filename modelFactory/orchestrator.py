@@ -854,6 +854,7 @@ def run_training_batch(
         LOGGER.info("orchestrator per_sector done sectors=%d statuses=%s",
                      len(sector_results),
                      {r.get("sector"): r.get("status") for r in sector_results})
+        LOGGER.info("🏁🏁🏁 orchestrator per_sector ALL DONE — moving to summary 🏁🏁🏁")
     else:
         # ── Per-Symbol mode (legacy) ──
         if effective_workers == 1:
