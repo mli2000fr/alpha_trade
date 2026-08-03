@@ -3642,7 +3642,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.selectbox(
                 "Mode d'entraînement",
                 options=["per_symbol", "per_sector"],
-                index=0 if st.session_state.get("pipeline_ml_training_mode", "per_sector") != "per_symbol" else 1,
+                index=1 if st.session_state.get("pipeline_ml_training_mode", "per_sector") != "per_symbol" else 0,
                 key="pipeline_ml_training_mode",
                 help="`per_symbol` = 1 modèle par symbole (legacy). `per_sector` = 1 modèle par secteur GICS (~11 modèles, plus de données).",
             ),
