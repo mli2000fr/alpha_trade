@@ -36,18 +36,31 @@ def tabular_split(
 	val_ratio: float,
 	forecast_horizon: int = 0,
 	embargo_rows: int = 0,
+	by_dates: bool = False,
+	embargo_dates: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 	if "target" not in df.columns:
 		raise ValueError("La baseline tabulaire attend une colonne 'target'.")
 	clean = df.loc[df["target"].notna()].reset_index(drop=True)
-	split = chrono_split(
-		clean,
-		train_ratio,
-		val_ratio,
-		forecast_horizon=forecast_horizon,
-		embargo_rows=embargo_rows,
-		date_column="date" if "date" in clean.columns else None,
-	)
+	if by_dates and "date" in clean.columns:
+		from modelFactory.dataset import chrono_split_by_dates
+		split = chrono_split_by_dates(
+			clean,
+			train_ratio=train_ratio,
+			val_ratio=val_ratio,
+			forecast_horizon=forecast_horizon,
+			embargo_dates=embargo_dates,
+			date_column="date",
+		)
+	else:
+		split = chrono_split(
+			clean,
+			train_ratio,
+			val_ratio,
+			forecast_horizon=forecast_horizon,
+			embargo_rows=embargo_rows,
+			date_column="date" if "date" in clean.columns else None,
+		)
 	return split.train, split.val, split.test
 
 
@@ -347,6 +360,8 @@ def run_tabular_baseline(
 	save_callback: Callable[[Any, Path], None] | None = None,
 	model_extension: str = ".pkl",
 	ternary_policy: "TernaryDecisionPolicy | None" = None,
+	by_dates: bool = False,
+	embargo_dates: int = 0,
 ) -> dict[str, Any]:
 	feature_columns = get_feature_columns(
 		include_sentiment=cfg.data.include_sentiment_features,
@@ -365,6 +380,8 @@ def run_tabular_baseline(
 		train_ratio=cfg.data.train_ratio,
 		val_ratio=cfg.data.val_ratio,
 		forecast_horizon=cfg.data.forecast_horizon,
+		by_dates=by_dates,
+		embargo_dates=embargo_dates,
 	)
 	if train_df.empty or val_df.empty or test_df.empty:
 		return {"status": "skipped", "model_name": model_name, "reason": "insufficient_rows_after_split"}
@@ -748,23 +765,35 @@ def run_tabular_walk_forward(
 	model_name: str,
 	model_builder: Callable[[int], Any],
 	ternary_policy: "TernaryDecisionPolicy | None" = None,
+	by_dates: bool = False,
 ) -> dict[str, Any]:
 	"""Évalue un modèle tabulaire en walk-forward (mêmes splits que le LSTM)."""
-	from modelFactory.dataset import generate_walk_forward_splits
+	from modelFactory.dataset import generate_walk_forward_splits, generate_walk_forward_splits_by_dates
 	from modelFactory.features import get_feature_columns as _get_fc
 
 	if not cfg.walk_forward.enabled:
 		return {}
 
-	splits = generate_walk_forward_splits(
-		prepared_df,
-		min_train_size=cfg.walk_forward.min_train_size,
-		val_size=cfg.walk_forward.val_size,
-		test_size=cfg.walk_forward.test_size,
-		step_size=cfg.walk_forward.step_size,
-		max_splits=cfg.walk_forward.max_splits,
-		forecast_horizon=cfg.data.forecast_horizon,
-	)
+	if by_dates:
+		splits = generate_walk_forward_splits_by_dates(
+			prepared_df,
+			min_train_dates=cfg.walk_forward.min_train_size,
+			val_dates=cfg.walk_forward.val_size,
+			test_dates=cfg.walk_forward.test_size,
+			step_dates=cfg.walk_forward.step_size,
+			max_splits=cfg.walk_forward.max_splits,
+			forecast_horizon=cfg.data.forecast_horizon,
+		)
+	else:
+		splits = generate_walk_forward_splits(
+			prepared_df,
+			min_train_size=cfg.walk_forward.min_train_size,
+			val_size=cfg.walk_forward.val_size,
+			test_size=cfg.walk_forward.test_size,
+			step_size=cfg.walk_forward.step_size,
+			max_splits=cfg.walk_forward.max_splits,
+			forecast_horizon=cfg.data.forecast_horizon,
+		)
 	if not splits:
 		return {"status": "skipped", "reason": "no_valid_split"}
 

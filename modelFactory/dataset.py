@@ -217,6 +217,77 @@ def chrono_split_by_dates(
     return ChronoSplit(train=train, val=val, test=test)
 
 
+def generate_walk_forward_splits_by_dates(
+    df: pd.DataFrame,
+    *,
+    min_train_dates: int,
+    val_dates: int,
+    test_dates: int,
+    step_dates: int,
+    max_splits: int,
+    forecast_horizon: int = 0,
+    embargo_dates: int = 0,
+    date_column: str = "date",
+) -> list[WalkForwardSplit]:
+    """Construit des splits walk-forward par dates uniques.
+
+    Les paramètres de taille sont interprétés en **nombre de dates**
+    (et non en nombre de lignes), garantissant qu'un même jour
+    calendaire ne peut pas être éclaté entre train / val / test.
+
+    Si ``min_train_dates`` dépasse la longueur disponible, la
+    fonction retourne une liste vide.
+    """
+    if date_column not in df.columns:
+        raise ValueError(f"Colonne date absente: {date_column}")
+    _validate_ordered_frame(df, date_column=date_column)
+    dated = df.copy()
+    dated[date_column] = pd.to_datetime(dated[date_column])
+    unique_dates = pd.Index(sorted(dated[date_column].unique()))
+    n_dates = len(unique_dates)
+
+    splits: list[WalkForwardSplit] = []
+    train_end_idx = min_train_dates
+    split_index = 0
+
+    while split_index < max_splits:
+        val_end_idx = train_end_idx + val_dates
+        test_end_idx = val_end_idx + test_dates
+        if test_end_idx > n_dates:
+            break
+
+        train_dates = unique_dates[:train_end_idx]
+        val_dates_arr = unique_dates[train_end_idx:val_end_idx]
+        # embargo: skip `embargo_dates` dates after val
+        test_start_idx = val_end_idx + max(int(embargo_dates), 0)
+        test_dates_arr = unique_dates[test_start_idx:test_end_idx]
+
+        train = _purge_by_dates(
+            dated, start_dates=train_dates,
+            purge_tail_dates=forecast_horizon, date_column=date_column,
+        )
+        val = _purge_by_dates(
+            dated, start_dates=val_dates_arr,
+            purge_tail_dates=forecast_horizon, date_column=date_column,
+        )
+        test = dated[dated[date_column].isin(set(test_dates_arr))].reset_index(drop=True)
+
+        if not train.empty and not val.empty and not test.empty:
+            splits.append(
+                WalkForwardSplit(
+                    split_index=split_index,
+                    train=train,
+                    val=val,
+                    test=test,
+                )
+            )
+            split_index += 1
+
+        train_end_idx += step_dates
+
+    return splits
+
+
 # ---------------------------------------------------------------------------
 # Validation d'isolation des folds (Sprint 3 Point 3.4)
 # ---------------------------------------------------------------------------

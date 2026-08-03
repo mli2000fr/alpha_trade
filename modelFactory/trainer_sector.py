@@ -20,7 +20,7 @@ import pandas as pd
 from modelFactory.config import TrainingConfig
 from modelFactory.dataset import (
     SymbolDataModule,
-    chrono_split,
+    chrono_split_by_dates,
     generate_walk_forward_splits,
     prepare_symbol_frame,
 )
@@ -104,11 +104,22 @@ def _prepare_sector_data(
         fundamental_df=fundamental_df,
     )
 
-    # Chronological split (PIT-safe: same date → same split)
-    split = chrono_split(
+    # ── Sector-neutral target ──
+    # Predict outperformance within the sector, not absolute direction.
+    # The target becomes: "will this stock beat the sector median?"
+    if "target" in prepared.columns and "date" in prepared.columns:
+        daily_median = prepared.groupby("date")["target"].transform("median")
+        prepared["target"] = prepared["target"] - daily_median
+        LOGGER.info(
+            "train_sector: target sector-neutralized "
+            "(target = target - daily_median within sector)"
+        )
+
+    # Chronological split by DATES (PIT-safe: same date → same split)
+    split = chrono_split_by_dates(
         prepared,
-        cfg.data.train_ratio,
-        cfg.data.val_ratio,
+        train_ratio=cfg.data.train_ratio,
+        val_ratio=cfg.data.val_ratio,
         forecast_horizon=cfg.data.forecast_horizon,
     )
 
@@ -311,6 +322,7 @@ def _train_sector_models(
         artifact_dir=sector_dir / "lightgbm",
         model_extension=".txt" if not is_reg else ".pkl",
         ternary_policy=ternary_policy,
+        by_dates=True,
     )
     cb_result = run_tabular_baseline(
         prepared_df, cfg,
@@ -319,6 +331,7 @@ def _train_sector_models(
         artifact_dir=sector_dir / "catboost",
         model_extension=".cbm" if not is_reg else ".pkl",
         ternary_policy=ternary_policy,
+        by_dates=True,
     )
 
     # ── Walk-forward tabular ──
@@ -328,6 +341,7 @@ def _train_sector_models(
             model_name="lightgbm",
             model_builder=_lgbm_builder,
             ternary_policy=ternary_policy,
+            by_dates=True,
         )
         if lgbm_wf.get("status") == "completed" and lgbm_wf.get("mean"):
             lgbm_result["wf"] = lgbm_wf["mean"]
@@ -338,6 +352,7 @@ def _train_sector_models(
             model_name="catboost",
             model_builder=_cb_builder,
             ternary_policy=ternary_policy,
+            by_dates=True,
         )
         if cb_wf.get("status") == "completed" and cb_wf.get("mean"):
             cb_result["wf"] = cb_wf["mean"]
