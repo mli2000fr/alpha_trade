@@ -429,10 +429,12 @@ def _train_sector_models(
                 _cb_h["walk_forward"] = cb_wf
 
     # Merge horizon results: use h15 as primary (backward compat), store all in "horizons"
+    # ⚠️ Copier pour éviter une référence circulaire :
+    #    lgbm_result["horizons"][primary_h] → lgbm_result (cycle)
     _primary_horizon = "h15" if "h15" in horizon_metrics_lgbm else next(iter(horizon_metrics_lgbm), None)
     if _primary_horizon:
-        lgbm_result = horizon_metrics_lgbm[_primary_horizon]
-        cb_result = horizon_metrics_cb[_primary_horizon]
+        lgbm_result = dict(horizon_metrics_lgbm[_primary_horizon])  # shallow copy
+        cb_result = dict(horizon_metrics_cb[_primary_horizon])  # shallow copy
     lgbm_result["horizons"] = horizon_metrics_lgbm
     cb_result["horizons"] = horizon_metrics_cb
 

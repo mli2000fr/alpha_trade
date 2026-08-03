@@ -217,9 +217,20 @@ Si > 0 : garde les **top N par volume moyen** ou stratifié par déciles.
 
 Pour **chaque symbole** de l'univers, entraîner un modèle qui prédit la direction (long/short/flat) ou un score continu (regression).
 
+| Composant | Single-horizon | Multi-horizon |
+|---|---|---|
+| **LSTM** | 1 modèle, horizon max | 1 modèle, horizon max (inchangé) |
+| **LightGBM** | 1 modèle, horizon configuré | 5 modèles (H3/H5/H10/H15/H20) |
+| **CatBoost** | 1 modèle, horizon configuré | 5 modèles (H3/H5/H10/H15/H20) |
+
 **Modèles** : LSTM Attention, LightGBM, CatBoost (3 challengers par symbole)  
 **Target** : `future_return` (binaire, ternaire, ou regression selon config)  
 **Métrique** : **F1 macro** (moyenne de F1 short, F1 flat, F1 long) — y compris en mode regression où le F1 est calculé par binarisation du signe
+
+> **Multi-horizon** (ajouté 2026-08-03) : quand `--forecast-horizons 3,5,10,15,20` est spécifié,
+> les baselines tabulaires (LightGBM + CatBoost) sont entraînées pour chaque horizon
+> indépendamment. Le LSTM reste sur l'horizon max pour la rétrocompatibilité.
+> La purge est dynamique : 3 jours pour H3, 20 jours pour H20.
 
 ### 4.2 Mode ternaire (3 classes)
 
@@ -247,10 +258,11 @@ Ajouté le 2026-08-02. La target n'est plus discrète (long/short/flat) mais con
 **Spécificités** :
 - **Modèle** : `num_classes=1` → 1 neurone de sortie, loss **MSE** (pas CrossEntropy)
 - **Métriques** : MSE, MAE, corrélation, directional accuracy, IC
-- **F1 comparable** : binarisation du signe — `sign(pred)` vs `sign(future_return)` → classes {-1,0,1} → F1 macro identique au mode ternaire
+- **F1 comparable** : binarisation du signe — `sign(pred)` vs `sign(target)` → classes {-1,0,1} → F1 macro identique au mode ternaire
 - **Décision** : score > 0 → LONG, score < 0 → SHORT, score ≈ 0 → FLAT
 - **Calibration** : désactivée (pas de Platt sur une régression)
 - **Pas de threshold optimization** : ignorée automatiquement
+- **Multi-horizon** : chaque horizon a son propre modèle de régression (LightGBM + CatBoost). Le F1 est calculé par rapport à la target de l'horizon (pas le `future_return` brut).
 
 **Avantages vs ternaire** :
 - Pas de seuils arbitraires (up_threshold/down_threshold) — le modèle apprend la magnitude
@@ -260,6 +272,8 @@ Ajouté le 2026-08-02. La target n'est plus discrète (long/short/flat) mais con
 ### 4.4 Walk-Forward
 
 Mêmes splits que le Global Ranking. Chaque split produit des métriques sur train/val/test, agrégées en fin de boucle.
+
+**Multi-horizon** : le walk-forward est exécuté pour chaque horizon indépendamment, avec purge dynamique (`forecast_horizon_override=h`). Pour H3, seuls 3 jours sont purgés aux frontières (au lieu de 20) → +17 jours de train par fold.
 
 ### 4.5 Stacking (injection des rangs globaux) ⚠️ Contre-indiqué
 
@@ -288,7 +302,47 @@ Le modèle per-symbol voit donc les rangs cross-sectionnels comme features suppl
 > **Recommandation** : laisser `stacking_enabled = false`. Le Global Ranking
 > et le Per-Symbol jouent des rôles distincts dans la cascade de trading (§7.2).
 
-### 4.6 Limitation per-symbol (test rapide)
+### 4.7 Multi-horizon tabular (NEW 2026-08-03)
+
+Quand `--forecast-horizons 3,5,10,15,20` est spécifié, les baselines tabulaires
+(LightGBM + CatBoost) sont entraînées pour **chaque horizon indépendamment**.
+Le LSTM reste single-horizon (horizon max = rétrocompatibilité).
+
+#### Boucle d'entraînement
+
+```
+Pour chaque symbole :
+  LSTM → single-horizon (max_h)
+  
+  Pour chaque h ∈ {3, 5, 10, 15, 20} :
+    1. _df = prepared_df.copy()
+    2. _df["target"] = _df[f"target_h{h}"]          ← target déjà neutralisée si per-sector
+    3. _df["future_return"] = _df[f"future_return_h{h}"]
+    4. run_tabular_baseline(_df, forecast_horizon_override=h)
+       → LightGBM + CatBoost avec purge = h jours
+    5. run_tabular_walk_forward(_df, forecast_horizon_override=h)
+    
+  → Persiste chaque horizon avec insert_metrics(horizon=h)
+  → Champion selection sur l'horizon primaire (max)
+```
+
+#### Impact
+
+| | Single-horizon | Multi-horizon |
+|---|---|---|
+| Modèles par symbole | 3 (LSTM+LGBM+CB) | 11 (1 LSTM + 5 LGBM + 5 CB) |
+| Temps d'entraînement | ~1× | ~5× (tabulaire uniquement) |
+| Purge | fixe (max_h) | dynamique (h) |
+| Métriques DB | 1 ligne par split | 5 lignes par split (horizon=h) |
+
+#### Limitation
+
+Le LSTM n'est **pas** multi-horizon — il reste sur l'horizon max pour :
+- Rétrocompatibilité avec l'inférence existante
+- Éviter la complexité d'un LSTM multi-output (5 têtes de sortie)
+- Le LSTM est le fallback ; les baselines tabulaires sont les modèles primaires
+
+### 4.8 Limitation per-symbol (test rapide)
 
 Paramètre `--per-symbol-max-symbols` (défaut: 0 = tous).  
 Si > 0 : garde les **top N par volume moyen**, avant l'entraînement per-symbol.  

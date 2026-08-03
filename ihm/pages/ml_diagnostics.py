@@ -115,16 +115,8 @@ def _bold_wf_rows(df: pd.DataFrame):
 
 # ── Requête SQL
 # ---------------------------------------------------------------------------
-
-# Clause horizon optionnelle (injectée dans les requêtes multi-horizon).
-# Utiliser _horizon_clause() pour générer le fragment SQL + param.
-_HORIZON_WHERE = " AND (:horizon IS NULL OR mm.horizon = :horizon)"
-
-
-def _horizon_params(horizon: int | None) -> dict[str, object]:
-    """Retourne le dict de paramètres pour le filtre horizon."""
-    return {"horizon": horizon}
-
+# Le filtre horizon est injecté dynamiquement par _q() dans _render_batch_detail.
+# Voir _horizon_sql et selected_horizon.
 
 HORIZON_LIST_QUERY = """
     SELECT DISTINCT mm.horizon
@@ -156,7 +148,7 @@ BATCH_DETAIL_QUERY = """
     WHERE batch_id = :batch_id
 """
 
-F1_BY_SPLIT_QUERY = f"""
+F1_BY_SPLIT_QUERY = """
     SELECT
         mm.model_name,
         mm.split_name,
@@ -171,7 +163,6 @@ F1_BY_SPLIT_QUERY = f"""
     WHERE mtr.batch_id = :batch_id
       AND mtr.status = 'completed'
       AND mm.model_name != 'global_model'
-      {_HORIZON_WHERE}
     GROUP BY mm.model_name, mm.split_name
     ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
 """
@@ -1150,9 +1141,14 @@ def _render_batch_detail(batch: pd.Series) -> None:
             _horizon_sql = " AND mm.horizon = :horizon"
 
     def _q(sql: str, extra_params: dict | None = None) -> pd.DataFrame:
-        """Exécute une requête avec le filtre horizon injecté."""
+        """Exécute une requête avec le filtre horizon injecté dynamiquement.
+
+        - ``selected_horizon is None`` (Tous) : pas de filtre → agrégation sur tous les horizons (AVG).
+        - ``selected_horizon = 3`` (H3) : filtre ``AND mm.horizon = 3``.
+        """
         _sql = sql
         if _horizon_sql:
+            # Injecte le filtre horizon avant GROUP BY / ORDER BY / LIMIT
             if "GROUP BY" in _sql:
                 _sql = _sql.replace("GROUP BY", f"{_horizon_sql}\n    GROUP BY")
             elif "ORDER BY" in _sql:
@@ -1165,6 +1161,13 @@ def _render_batch_detail(batch: pd.Series) -> None:
         if extra_params:
             params.update(extra_params)
         return safe_query(_sql, params)
+
+    # ── Indicateur d'horizon ──
+    if not horizon_list.empty:
+        if selected_horizon is not None:
+            st.caption(f"🔍 Horizon sélectionné : **H{selected_horizon}** — métriques filtrées sur cet horizon uniquement.")
+        else:
+            st.caption("🔍 **Tous horizons confondus** — chaque métrique est la moyenne (AVG) des 5 horizons H3/H5/H10/H15/H20.")
 
     if _is_reg_batch:
         # ── Bloc régression par split ──
