@@ -1024,26 +1024,31 @@ def train_global_ranking_wf(
             if train_df.empty or val_df.empty:
                 continue
 
-            # ── P1-6 diagnostic (2026-08-04) : symboles par fold ──
+            # ── P1-6 (2026-08-04) : filtre liquidité + disponibilité par fold ──
+            # Le filtre global utilise end_date=training_end_date → biais de sélection.
+            # Dans CE fold, on refiltre : volume suffisant DANS la période de train du fold.
+            _total_syms = len(symbols)
+            if cfg.data.enable_liquidity_filter and "date" in train_df.columns and "symbol" in train_df.columns and "volume" in train_df.columns:
+                # Disponibilité : ≥ min_train_dates/2 sessions dans le train du fold
+                _sym_sessions = train_df.groupby("symbol")["date"].nunique()
+                _min_sessions = max(cfg.walk_forward.min_train_size // 2, 60)
+                _eligible_sessions = set(_sym_sessions[_sym_sessions >= _min_sessions].index)
+                # Liquidité : volume quotidien moyen ≥ seuil DANS le train du fold
+                _sym_vol = train_df.groupby("symbol")["volume"].mean()
+                _min_vol = cfg.data.liquidity_min_avg_volume_20d if hasattr(cfg.data, "liquidity_min_avg_volume_20d") else 50000
+                _eligible_vol = set(_sym_vol[_sym_vol >= _min_vol].index)
+                _eligible = _eligible_sessions & _eligible_vol
+                _excluded = (set(train_df["symbol"].unique()) | set(val_df["symbol"].unique())) - _eligible
+                if _excluded:
+                    LOGGER.info(
+                        "global_ranking_wf fold=%d: %d symbols excluded (low vol or sessions in train period)",
+                        split.split_index + 1, len(_excluded),
+                    )
+                    train_df = train_df[train_df["symbol"].isin(_eligible)]
+                    val_df = val_df[val_df["symbol"].isin(_eligible)]
+            # Recalculer APRES filtrage pour refléter le panel réel
             _train_syms = train_df["symbol"].nunique() if "symbol" in train_df.columns else 0
             _val_syms = val_df["symbol"].nunique() if "symbol" in val_df.columns else 0
-            _total_syms = len(symbols)
-            # ── P1-6 (2026-08-04) : diagnostic + filtre de disponibilité par fold ──
-            # Le filtre de liquidité global utilise end_date=training_end_date.
-            # Dans un fold ancien, un symbole peut ne pas avoir assez d'historique.
-            # On vérifie que chaque symbole a ≥ min_train_dates séances avant train_end.
-            if "date" in train_df.columns and "symbol" in train_df.columns:
-                _sym_counts = train_df.groupby("symbol")["date"].nunique()
-                _eligible = _sym_counts[_sym_counts >= cfg.walk_forward.min_train_size // 2]
-                _ineligible = set(_sym_counts.index) - set(_eligible.index)
-                if _ineligible:
-                    LOGGER.info(
-                        "global_ranking_wf fold=%d: %d symbols with < %d sessions in train, excluded",
-                        split.split_index + 1, len(_ineligible),
-                        cfg.walk_forward.min_train_size // 2,
-                    )
-                    train_df = train_df[~train_df["symbol"].isin(_ineligible)]
-                    val_df = val_df[~val_df["symbol"].isin(_ineligible)]
             LOGGER.info(
                 "global_ranking_wf fold=%d symbols train=%d/%d val=%d/%d (%.0f%% of universe)",
                 split.split_index + 1, _train_syms, _total_syms, _val_syms, _total_syms,
@@ -1051,9 +1056,9 @@ def train_global_ranking_wf(
             )
             if _train_syms < 0.5 * _total_syms and _total_syms > 20:
                 LOGGER.warning(
-                    "global_ranking_wf P1-6: fold %d only has %d/%d symbols. "
-                    "Universe/liquidity filter is NOT per-fold — symbols may enter "
-                    "folds where they were not yet tradable.",
+                    "global_ranking_wf P1-6: fold %d only has %d/%d symbols after per-fold "
+                    "filtering (sessions+volume in train period). Initial selection still "
+                    "uses global liquidity filter — remaining symbols may have limited history.",
                     split.split_index + 1, _train_syms, _total_syms,
                 )
 

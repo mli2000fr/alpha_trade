@@ -785,31 +785,55 @@ def run_training_batch(
                 cfg = replace(cfg, global_model=replace(cfg.global_model, stacking_enabled=False))
                 global_rank_df = None  # prevent merge below
             if global_rank_df is not None and not global_rank_df.empty:
-                # Ajouter global_rank_available avant le merge
                 global_rank_df["global_rank_available"] = True
-            if cross_sectional_cache is not None and not cross_sectional_cache.empty:
-                cross_sectional_cache = cross_sectional_cache.merge(
-                    global_rank_df[["symbol", "date"] + _rank_cols + (["global_rank_available"] if "global_rank_available" in global_rank_df.columns else [])],
-                    on=["symbol", "date"], how="left",
-                )
-                for _rc in _rank_cols:
-                    cross_sectional_cache[_rc] = cross_sectional_cache[_rc].fillna(0.5).astype(np.float64)
-                if "global_rank_available" in cross_sectional_cache.columns:
+                if cross_sectional_cache is not None and not cross_sectional_cache.empty:
+                    cross_sectional_cache = cross_sectional_cache.merge(
+                        global_rank_df[["symbol", "date"] + _rank_cols + ["global_rank_available"]],
+                        on=["symbol", "date"], how="left",
+                    )
+                    for _rc in _rank_cols:
+                        cross_sectional_cache[_rc] = cross_sectional_cache[_rc].fillna(0.5).astype(np.float64)
                     cross_sectional_cache["global_rank_available"] = cross_sectional_cache["global_rank_available"].fillna(False).astype(bool)
-            elif global_rank_df is not None:
-                cross_sectional_cache = global_rank_df[["symbol", "date"] + _rank_cols + (["global_rank_available"] if "global_rank_available" in global_rank_df.columns else [])].copy()
-            LOGGER.info(
-                "run_training_batch stacking enabled: %d global_rank cols merged into cache rows=%d",
-                len(_rank_cols), len(cross_sectional_cache) if cross_sectional_cache is not None else 0,
-            )
-            # Persister pour les workers multiprocessing
-            _global_rank_path = Path(cfg.artifacts_dir) / "_global_rank_cache.parquet"
-            _global_rank_path.parent.mkdir(parents=True, exist_ok=True)
-            global_rank_df.to_parquet(_global_rank_path, index=False)
-            LOGGER.info(
-                "run_training_batch global_rank persisted to %s rows=%d",
-                _global_rank_path, len(global_rank_df),
-            )
+                    # ── P1-5 : couverture par symbole + gate ──
+                    _cov_by_sym = cross_sectional_cache.groupby("symbol")["global_rank_available"].mean()
+                    _low_cov = _cov_by_sym[_cov_by_sym < 0.3]
+                    _critical_cov = _cov_by_sym[_cov_by_sym < 0.1]
+                    if len(_critical_cov) > 0:
+                        LOGGER.warning(
+                            "run_training_batch stacking: %d symbols with <10%% global_rank coverage "
+                            "→ stacking DISABLED for these symbols. %s",
+                            len(_critical_cov),
+                            ",".join(_critical_cov.index[:10]) + ("..." if len(_critical_cov) > 10 else ""),
+                        )
+                        _crit_mask = cross_sectional_cache["symbol"].isin(_critical_cov.index)
+                        for _rc in _rank_cols:
+                            cross_sectional_cache.loc[_crit_mask, _rc] = 0.5
+                        cross_sectional_cache.loc[_crit_mask, "global_rank_available"] = False
+                    elif len(_low_cov) > 0:
+                        LOGGER.warning(
+                            "run_training_batch stacking: %d symbols with <30%% global_rank coverage. "
+                            "Symbols: %s",
+                            len(_low_cov),
+                            ",".join(_low_cov.index[:10]) + ("..." if len(_low_cov) > 10 else ""),
+                        )
+                    LOGGER.info(
+                        "run_training_batch stacking per-symbol coverage: median=%.1f%% min=%.1f%% n_symbols=%d",
+                        100 * _cov_by_sym.median(), 100 * _cov_by_sym.min(), len(_cov_by_sym),
+                    )
+                else:
+                    cross_sectional_cache = global_rank_df[["symbol", "date"] + _rank_cols + ["global_rank_available"]].copy()
+                LOGGER.info(
+                    "run_training_batch stacking enabled: %d global_rank cols merged into cache rows=%d",
+                    len(_rank_cols), len(cross_sectional_cache),
+                )
+                # Persister pour les workers multiprocessing
+                _global_rank_path = Path(cfg.artifacts_dir) / "_global_rank_cache.parquet"
+                _global_rank_path.parent.mkdir(parents=True, exist_ok=True)
+                global_rank_df.to_parquet(_global_rank_path, index=False)
+                LOGGER.info(
+                    "run_training_batch global_rank persisted to %s rows=%d",
+                    _global_rank_path, len(global_rank_df),
+                )
         elif cfg.global_model.stacking_enabled:
             LOGGER.warning("run_training_batch stacking enabled but no global_rank_df produced")
 

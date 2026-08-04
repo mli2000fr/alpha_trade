@@ -80,11 +80,11 @@ Ce point ne dispense pas d'un univers PIT : la formule est temporalement saine, 
 | Sujet | Statut verifie | Evidence |
 |---|---|---|
 | Tests triple-barrier et colonnes globales | **Resolu** | Les deux fixtures triple-barrier ont des seuils valides et le test multi-horizon accepte les colonnes attendues. La suite ciblee est maintenant a **79 passes**. |
-| P1-5 stacking | **Ameliore, restant P2** | `global_rank_available` separe correctement le fallback du score OOF et une couverture date inferieure a 10 % desactive le stacking du run. La couverture par symbole/partition et un seuil gouverne restent absents. |
+| P1-5 stacking | **Ameliore, tests de branches manquants** | `global_rank_available` separe correctement le fallback du score OOF. Une gate globale sous 10 % et une gate symboles sous 10 % sont implementees ; la couverture par symbole est loggee avec mediane/minimum et warning sous 30 %. Le merge/persistence est maintenant protege lorsque la gate globale desactive le stacking. |
 | P2-5 invalidation cache | **Resolu au code** | `clear_prediction_data_cache` vide maintenant les caches global-rank et features per-symbol, en plus des caches benchmark/cross-sectionnel. Un test de non-regression reste souhaitable. |
 | P2-6 symboles inconnus | **Resolu par politique documentee** | Le comportement LightGBM, CatBoost et le fallback per-symbol sont explicitement documentes. La performance hors univers reste non garantie, ce qui est correctement indique. |
 | P2-3 purge en seances | **Stabilise, approximation documentee** | La tentative par positions a ete retiree car le validateur ne connait que les folds deja purges. Le controle revient a `.days`, approximation conservative, tandis que la purge productive reste correcte par construction. |
-| P1-6 disponibilite par fold | **Partiellement resolu** | Les symboles ayant moins de `min_train_size / 2` seances dans le train sont ecartes de train/validation du fold et le nombre est trace. La liquidite/top-N ne sont pas encore recalcules par fold. |
+| P1-6 disponibilite/liquidite par fold | **Partiellement resolu** | Les symboles ayant moins de `min_train_size / 2` seances ou un volume moyen train inferieur au seuil sont ecartes de train/validation du fold et le nombre est trace. Le filtre est conditionne a `enable_liquidity_filter`, le message indique correctement le filtrage per-fold et les compteurs sont calcules apres exclusion. Top-N/autres criteres ne sont pas encore recalcules par fold. |
 | E2E per-sector | **Test de route unitaire ajoute** | Le test valide `config.json -> _resolve_selected_model_route -> lightgbm_tabular`; il n'exerce ni registre DB, ni chargement LightGBM reel, ni feature frame, ni `predict_symbol`. |
 
 ### P2-3 - limite connue du validateur de purge
@@ -118,25 +118,30 @@ Chaque test doit verifier le backend choisi, l'horizon, les colonnes de la matri
 
 **Statut : P1 integrite de recherche.**
 
-`global_rank_df` ne contient que les predictions de validation walk-forward. Lors du merge dans le cache cross-sectionnel, les dates/symboles absents sont remplaces par `0.5`. Le correctif ajoute `global_rank_available`, calcule la couverture par date, avertit sous 50 % et desactive le stacking sous 10 %. C'est une protection reelle contre une couverture quasi nulle.
+`global_rank_df` ne contient que les predictions de validation walk-forward. Lors du merge dans le cache cross-sectionnel, les dates/symboles absents sont remplaces par `0.5`. Le correctif ajoute `global_rank_available`, calcule la couverture par date, avertit sous 50 % et desactive le stacking sous 10 %. Apres merge, il calcule aussi `groupby("symbol")["global_rank_available"].mean()`, loggue mediane/minimum, avertit pour les symboles sous 30 % et neutralise les rangs/availability des symboles sous 10 %. C'est une protection reelle contre une couverture quasi nulle et une observabilite utile des symboles mal couverts.
+
+Le bug de flux de la branche globale `<10 %` est corrige : merge, persistence parquet et logs dependants sont maintenant places sous `if global_rank_df is not None and not global_rank_df.empty`. La suite ciblee reste verte a `79 passed`.
+
+**Dette de test :** aucun test orchestrateur ne couvre encore les branches globale `<10 %`, symbole `<10 %` et symbole `[10 %, 30 %[`. Ajouter ces trois cas est necessaire pour proteger les gates nouvellement introduites. Le doublon d'assignation `global_rank_df["global_rank_available"] = True` a ete retire.
 
 Ce n'est pas une fuite si les valeurs presentes sont vraiment OOF. C'est un biais de comparabilite : deux splits per-symbol peuvent avoir des proportions tres differentes de vrai signal global et de valeur neutre. Une bonne metrique globale peut etre diluee ou artificiellement stabilisee selon le calendrier de couverture.
 
 **Complement recommande :**
 
 * conserver `global_rank_available` booleen, ne pas confondre `0.5` neutre et une prediction effectivement egale a 0.5 ;
-* calculer couverture par symbole et par partition train/val/test/WF ;
-* imposer un seuil de couverture configurable ou desactiver le stacking pour le run ;
+* conserver la couverture par symbole maintenant ajoutee et la ventiler par partition train/val/test/WF ;
+* rendre configurable le seuil global et ajouter un seuil/gate par symbole pour les symboles sous-couverts ;
 * logguer et persister la couverture dans les metriques et l'artefact ;
 * tester qu'aucune valeur non OOF ne rejoint une matrice d'entrainement.
+* ajouter un test orchestrateur couvrant explicitement les branches globale `<10 %`, symbole `<10 %` et symbole `[10 %, 30 %[`.
 
 ### P1-6 - Disponibilite par fold filtree, liquidite/top-N encore globaux
 
 **Statut : P1 partiellement corrige ; risque de selection temporelle residuel, pas une fuite de label directe.**
 
-L'univers de base est une union de snapshots canoniques PIT entre `training_start_date` et `training_end_date`, ce qui est une bonne fondation. Dans chaque fold Global Ranking, les symboles ayant moins de `min_train_size / 2` seances dans le train sont maintenant exclus du train et de la validation, et le nombre d'exclusions est trace. Cela empeche un titre avec historique insuffisant de participer aux metriques de ce fold.
+L'univers de base est une union de snapshots canoniques PIT entre `training_start_date` et `training_end_date`, ce qui est une bonne fondation. Dans chaque fold Global Ranking, les symboles ayant moins de `max(min_train_size / 2, 60)` seances dans le train ou un volume quotidien moyen train sous `liquidity_min_avg_volume_20d` sont maintenant exclus du train et de la validation, et le nombre d'exclusions est trace. Le calcul est bien effectue sur le `train_df` du fold, sans regarder les volumes de validation ; cela empeche un titre avec historique ou volume insuffisant de participer aux metriques de ce fold.
 
-Mais `filter_symbols_by_liquidity` est toujours applique une seule fois avec `end_date=training_end_date`, avant le walk-forward. Les plafonds `global_ranking_max_symbols` et `per_symbol_max_symbols` utilisent aussi une moyenne de volume sur tout l'historique charge jusqu'a la fin. Enfin, le filtre de disponibilite derive `_ineligible` de `train_df` : un symbole totalement absent du train ne figure pas dans ce compte et merite un test explicite sur son exclusion de validation.
+Le filtre ajoute est correctement conditionne par `cfg.data.enable_liquidity_filter`, coherent avec le contrat de configuration. Le warning indique que sessions+volume sont controles per-fold, tout en distinguant la selection initiale globale qui reste a ameliorer. Les compteurs `_train_syms`/`_val_syms` sont maintenant recalcules apres exclusion et refletent donc le panel effectivement entraine. `filter_symbols_by_liquidity` reste par ailleurs applique une seule fois avec `end_date=training_end_date`, avant le walk-forward ; les plafonds `global_ranking_max_symbols` et `per_symbol_max_symbols` utilisent aussi une moyenne de volume sur tout l'historique charge jusqu'a la fin. Enfin, le filtre derive l'eligibilite des symboles presents dans `train_df` : un symbole totalement absent du train est retire de la validation par la difference avec l'union train/val, mais ce cas merite un test explicite.
 
 Une selection de titres liquides a la fin de periode peut influencer les folds anciens : un titre illiquide dans un ancien regime mais liquide a la fin entre dans l'etude, ou l'inverse. Les rendements/labels ne fuient pas, mais la selection de l'univers et les metriques WF deviennent conditionnelles a une information plus recente que le fold.
 
@@ -144,6 +149,7 @@ Une selection de titres liquides a la fin de periode peut influencer les folds a
 
 * definir explicitement le protocole : univers fixe a la date initiale, reconstitution par date, ou rebalancement periodique ;
 * pour le WF, calculer la selection de liquidite et top-N uniquement sur le train disponible a chaque fold ;
+* recalculer les compteurs de symboles apres exclusion et remplacer le warning legacy par un diagnostic de couverture post-filtre ;
 * persister par fold `universe_snapshot_id`, liste/hash des symboles, criteres de liquidite et date de selection ;
 * ajouter un test ou un symbole ne devient liquide qu'apres le premier fold et verifier qu'il n'est pas eligible avant sa date d'entree.
 
