@@ -249,6 +249,124 @@ def test_compute_sector_features_sector_symbol_count() -> None:
     assert fin_count == 2.0
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Per-sector XS merge tests (Action 1.1 audit, 2026-08-04)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_per_sector_xs_merge_uses_global_universe() -> None:
+    """Les colonnes XS d'un sous-ensemble sectoriel reçoivent les vraies valeurs
+    du cache global, pas les defaults neutres (0.5 / 0.0).
+
+    Scénario : 3 symboles dans l'univers global, 2 dans un secteur.
+    On construit le cache XS global, puis on merge sur le sous-ensemble sectoriel.
+    Les colonnes de rang doivent avoir une variance > 0 (valeurs réelles).
+    """
+    rng = np.random.default_rng(42)
+    n = 120
+
+    def _make_bars(symbol: str, base: float) -> pd.DataFrame:
+        close = base + rng.normal(0, 2, n).cumsum() * 0.5
+        return pd.DataFrame({
+            "symbol": [symbol] * n,
+            "date": pd.date_range("2020-01-01", periods=n, freq="B"),
+            "open": close - 0.5,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": np.linspace(500_000, 2_000_000, n),
+            "adj_close": close,
+            "vwap": close,
+            "daily_return": [0.0] * n,
+            "is_filled": [1] * n,
+        })
+
+    # Univers global : 3 symboles
+    bars_aapl = _make_bars("AAPL", 150.0)
+    bars_msft = _make_bars("MSFT", 300.0)
+    bars_jpm  = _make_bars("JPM", 120.0)
+    universe = pd.concat([bars_aapl, bars_msft, bars_jpm], ignore_index=True)
+
+    # Cache XS global (simule run_per_sector_batch)
+    from modelFactory.cross_sectional import (
+        build_cross_sectional_features,
+        merge_cross_sectional_features,
+    )
+    cs_cache, _ = build_cross_sectional_features(
+        universe,
+        benchmark_df=None,
+        min_universe_size=2,
+    )
+
+    # Secteur « Tech » : seulement AAPL et MSFT
+    sector_symbols_df = pd.concat([bars_aapl, bars_msft], ignore_index=True)
+    sector_symbols_df = sector_symbols_df.sort_values(["date", "symbol"]).reset_index(drop=True)
+    # Garder seulement les colonnes de base (pas de features déjà calculées)
+    sector_bare = sector_symbols_df[["symbol", "date", "close", "volume"]].copy()
+
+    # Merge XS
+    merged = merge_cross_sectional_features(sector_bare, cs_cache)
+
+    # ── Vérifications ──
+    # 1. Les colonnes de rang cross-sectionnel existent
+    for col in CROSS_SECTIONAL_FEATURE_COLUMNS:
+        assert col in merged.columns, f"XS column {col} missing after merge"
+
+    # 2. Les colonnes de rang ont de la variance (pas toutes à 0.5)
+    rank_cols_present = [c for c in CROSS_SECTIONAL_FEATURE_COLUMNS if c in merged.columns]
+    rank_var = merged[rank_cols_present].var(numeric_only=True)
+    alive_ranks = int((rank_var > 1e-9).sum())
+    assert alive_ranks >= len(rank_cols_present) * 0.5, (
+        f"Only {alive_ranks}/{len(rank_cols_present)} XS rank columns have variance > 0 "
+        f"— XS merge is not feeding real values"
+    )
+
+    # 3. Les valeurs ne sont pas toutes égales à 0.5 (default neutre)
+    for col in rank_cols_present[:3]:  # vérifier 3 colonnes représentatives
+        unique_vals = merged[col].unique()
+        assert not np.allclose(unique_vals, 0.5), (
+            f"XS column {col} is all 0.5 — merge returned neutral defaults, not real ranks"
+        )
+
+
+def test_per_sector_feature_contract_includes_fundamentals_when_enabled() -> None:
+    """Quand include_fundamentals=True, get_feature_columns retourne les colonnes
+    fondamentales. Quand False, elles sont absentes. Les colonnes retournées
+    correspondent à FUNDAMENTAL_FEATURE_COLUMNS du module fundamental_features.
+    """
+    from modelFactory.features import get_feature_columns
+    from modelFactory.fundamental_features import FUNDAMENTAL_FEATURE_COLUMNS
+
+    # ── Avec fondamentales ──
+    cols_with = get_feature_columns(
+        include_fundamentals=True,
+        feature_set="expert",
+        include_cross_sectional=False,
+    )
+    for fcol in FUNDAMENTAL_FEATURE_COLUMNS:
+        assert fcol in cols_with, (
+            f"Fundamental column '{fcol}' missing from get_feature_columns "
+            f"with include_fundamentals=True"
+        )
+
+    # ── Sans fondamentales ──
+    cols_without = get_feature_columns(
+        include_fundamentals=False,
+        feature_set="expert",
+        include_cross_sectional=False,
+    )
+    for fcol in FUNDAMENTAL_FEATURE_COLUMNS:
+        assert fcol not in cols_without, (
+            f"Fundamental column '{fcol}' present in get_feature_columns "
+            f"with include_fundamentals=False"
+        )
+
+    # ── Contrat : les colonnes fondamentales sont > 0 ──
+    assert len(FUNDAMENTAL_FEATURE_COLUMNS) > 0, "FUNDAMENTAL_FEATURE_COLUMNS is empty"
+    assert len(cols_with) > len(cols_without), (
+        "Feature columns count should increase when fundamentals are enabled"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Approche 2 — Stacking : GLOBAL_PRED_FEATURE_COLUMNS
 # ─────────────────────────────────────────────────────────────────────

@@ -55,6 +55,7 @@ def _prepare_sector_data(
     universe_df: pd.DataFrame | None = None,
     selector_df: pd.DataFrame | None = None,
     fundamental_df: pd.DataFrame | None = None,
+    cross_sectional_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
     """Charge et prépare les données pour un secteur entier.
 
@@ -111,6 +112,30 @@ def _prepare_sector_data(
         len(prepared_frames), len(prepared),
     )
 
+    # ── Action 1.1 (2026-08-04) : fusionner les features cross-sectionnelles ──
+    # Avant : universe_df=None → les colonnes XS étaient remplies de valeurs
+    # neutres (0.5 pour les rangs, 0.0 pour les sectorielles/neutralisées)
+    # par merge_cross_sectional_features, rendant ~30 features inactives.
+    # Maintenant : on construit le cache XS une fois dans run_per_sector_batch
+    # et on le merge ici après concaténation.
+    from modelFactory.cross_sectional import (
+        CROSS_SECTIONAL_FEATURE_COLUMNS,
+        GLOBAL_PRED_FEATURE_COLUMNS,
+        merge_cross_sectional_features,
+    )
+    prepared = merge_cross_sectional_features(prepared, cross_sectional_df)
+    # Diagnostic : compter les colonnes XS réellement alimentées (variance > 0)
+    _rank_cols = set(CROSS_SECTIONAL_FEATURE_COLUMNS) | set(GLOBAL_PRED_FEATURE_COLUMNS)
+    _xs_cols = [c for c in prepared.columns if c in _rank_cols or c.startswith("sector_") or c.startswith("global_rank")]
+    _xs_alive = 0
+    if _xs_cols:
+        _xs_var = prepared[_xs_cols].var(numeric_only=True)
+        _xs_alive = int((_xs_var > 1e-9).sum())
+    LOGGER.info(
+        "train_sector: XS merge done — %d XS columns requested, %d alive (variance > 0)",
+        len(_xs_cols), _xs_alive,
+    )
+
     # ── Sector-neutral target ──
     # Predict outperformance within the sector, not absolute direction.
     # The target becomes: "will this stock beat the sector median?"
@@ -157,6 +182,7 @@ def _prepare_sector_data(
         include_global_stacking=cfg.global_model.stacking_enabled,
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_fundamentals=cfg.data.include_fundamentals_features,
     )
 
     # Add "symbol" as a categorical feature for tabular models
@@ -305,6 +331,7 @@ def _train_sector_models(
     universe_df: pd.DataFrame | None = None,
     selector_df: pd.DataFrame | None = None,
     fundamental_df: pd.DataFrame | None = None,
+    cross_sectional_df: pd.DataFrame | None = None,
     batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Entraîne les 3 challengers (LSTM, LightGBM, CatBoost) pour un secteur.
@@ -322,6 +349,7 @@ def _train_sector_models(
         universe_df=universe_df,
         selector_df=selector_df,
         fundamental_df=fundamental_df,
+        cross_sectional_df=cross_sectional_df,
     )
 
     if train_df.empty:
@@ -611,6 +639,37 @@ def run_per_sector_batch(
     selector_df = _load_selector_for_symbols(symbols, engine, cfg)
     fundamental_df = _load_fundamentals_for_symbols(symbols, engine, cfg)
 
+    # ── Action 1.1 (2026-08-04) : construire le cache cross-sectionnel UNE FOIS ──
+    # Avant : chaque _prepare_sector_data recevait universe_df=None → les features
+    # XS étaient remplies de valeurs neutres (0.5). Maintenant : on bâtit le cache
+    # globalement (comme le fait l'orchestrateur pour le per-symbol) et on le passe
+    # à chaque secteur.
+    cross_sectional_cache: pd.DataFrame | None = None
+    _needs_cross_sectional = (
+        cfg.data.enable_cross_sectional_features
+        or cfg.global_model.stacking_enabled
+    )
+    if _needs_cross_sectional and symbols:
+        from modelFactory.cross_sectional import build_cross_sectional_features_from_db, _load_sector_mapping
+        LOGGER.info(
+            "run_per_sector_batch: building cross-sectional cache for %d symbols", len(symbols),
+        )
+        _sector_map: dict[str, str] | None = _load_sector_mapping(engine)
+        cross_sectional_cache, _xs_diag = build_cross_sectional_features_from_db(
+            engine,
+            symbols,
+            benchmark_df=benchmark_df,
+            min_universe_size=cfg.data.cross_sectional_min_universe,
+            start_date=cfg.data.training_start_date,
+            end_date=cfg.data.training_end_date,
+            sector_map=_sector_map,
+        )
+        LOGGER.info(
+            "run_per_sector_batch: XS cache ready — rows=%d symbols=%d",
+            len(cross_sectional_cache),
+            cross_sectional_cache["symbol"].nunique() if not cross_sectional_cache.empty else 0,
+        )
+
     # Train sectors sequentially
     results: list[dict[str, Any]] = []
     _total_sectors = len(filtered_groups)
@@ -635,6 +694,7 @@ def run_per_sector_batch(
                 universe_df=universe_df,
                 selector_df=selector_df,
                 fundamental_df=fundamental_df,
+                cross_sectional_df=cross_sectional_cache,
                 batch_id=batch_id,
             )
             results.append(result)

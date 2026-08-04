@@ -839,8 +839,15 @@ def merge_cross_sectional_features(
                     merged[col] = 0.0
         return merged
 
+    # Supprimer les colonnes déjà présentes dans symbol_df pour éviter les
+    # suffixes _x/_y lors du merge (qui feraient perdre les valeurs réelles).
+    # Cas typique : prepare_symbol_frame a déjà appelé merge_cross_sectional_features
+    # avec un cache vide → colonnes à 0.5. Puis _prepare_sector_data rappelle
+    # avec le vrai cache → si on ne drop pas, les 0.5 écrasent les vraies valeurs.
+    _symbol_df_clean = symbol_df.drop(columns=[c for c in all_cols if c in symbol_df.columns], errors="ignore")
+
     merge_df = cross_sectional_df[["symbol", "date", *available_cols]]
-    merged = symbol_df.merge(merge_df, on=["symbol", "date"], how="left")
+    merged = _symbol_df_clean.merge(merge_df, on=["symbol", "date"], how="left")
     for col in all_cols:
         if col not in merged.columns:
             if col in CROSS_SECTIONAL_FEATURE_COLUMNS or col in GLOBAL_PRED_FEATURE_COLUMNS:

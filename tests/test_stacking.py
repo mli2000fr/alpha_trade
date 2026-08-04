@@ -28,8 +28,9 @@ class TestFeatureColumnsWithStacking:
             include_cross_sectional=True, include_global_stacking=True,
         )
         assert "global_rank" in cols
-        assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 1
-        assert GLOBAL_PRED_FEATURE_COLUMNS[0] == "global_rank"
+        # Multi-horizon : GLOBAL_PRED_FEATURE_COLUMNS inclut global_rank_3/5/10 + global_rank
+        assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 4
+        assert GLOBAL_PRED_FEATURE_COLUMNS[0] == "global_rank_3"
 
     def test_global_rank_not_included_without_cross_sectional(self) -> None:
         cols = get_feature_columns(include_global_stacking=True)
@@ -45,13 +46,15 @@ class TestFeatureColumnsWithStacking:
         )
         assert len(cols) == len(set(cols))
 
-    def test_stacking_adds_one_column(self) -> None:
+    def test_stacking_adds_columns(self) -> None:
         cols_without = get_feature_columns(include_cross_sectional=True)
         cols_with = get_feature_columns(
             include_cross_sectional=True, include_global_stacking=True,
         )
-        assert len(cols_with) == len(cols_without) + 1
+        # Multi-horizon: 4 global_rank columns + interaction features
+        assert len(cols_with) > len(cols_without)
         assert "global_rank" in cols_with
+        assert "global_rank_3" in cols_with
         assert "global_rank" not in cols_without
 
 
