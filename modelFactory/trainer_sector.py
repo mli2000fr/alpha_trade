@@ -10,6 +10,7 @@ import json
 import logging
 import pickle
 import uuid
+from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -67,7 +68,12 @@ def _prepare_sector_data(
     """
     from modelFactory.data_loader import load_symbol_bars
 
-    frames: list[pd.DataFrame] = []
+    # ── P0-1 fix (2026-08-04) : préparer chaque symbole INDÉPENDAMMENT ──
+    # Avant : concaténation des barres brutes → prepare_symbol_frame sur le panel
+    #   → compute_features() fait sort_values("date") sans groupby("symbol")
+    #   → rolling() et shift(-h) traversent les symboles → features corrompues.
+    # Après : chaque symbole est préparé isolément, PUIS les frames sont concaténées.
+    prepared_frames: list[pd.DataFrame] = []
     for sym in symbols:
         try:
             bars = load_symbol_bars(
@@ -78,30 +84,31 @@ def _prepare_sector_data(
             if bars is None or bars.empty:
                 LOGGER.warning("train_sector: no bars for %s, skipping", sym)
                 continue
-            bars["symbol"] = sym
-            frames.append(bars)
+            # Préparer ce symbole seul (features + targets, PAS de neutralisation)
+            # Note: universe_df n'est pas passé → pas de cross-sectional features
+            # par symbole. Elles seront fusionnées après concaténation si activées.
+            sym_prepared = prepare_symbol_frame(
+                bars,
+                cfg.data,
+                sentiment_df=sentiment_df[sentiment_df["symbol"] == sym] if sentiment_df is not None and "symbol" in sentiment_df.columns else sentiment_df,
+                benchmark_df=benchmark_df,
+                universe_df=None,  # cross-sectional: fusionné après concaténation
+                selector_df=selector_df[selector_df["symbol"] == sym] if selector_df is not None and "symbol" in selector_df.columns else selector_df,
+                fundamental_df=fundamental_df[fundamental_df["symbol"] == sym] if fundamental_df is not None and "symbol" in fundamental_df.columns else fundamental_df,
+            )
+            sym_prepared["symbol"] = sym
+            prepared_frames.append(sym_prepared)
         except Exception as exc:
-            LOGGER.warning("train_sector: failed to load %s: %s", sym, exc)
+            LOGGER.warning("train_sector: failed to prepare %s: %s", sym, exc)
 
-    if not frames:
+    if not prepared_frames:
         raise ValueError(f"No bar data loaded for any symbol in sector")
 
-    combined = pd.concat(frames, ignore_index=True)
-    combined = combined.sort_values(["date", "symbol"]).reset_index(drop=True)
+    prepared = pd.concat(prepared_frames, ignore_index=True)
+    prepared = prepared.sort_values(["date", "symbol"]).reset_index(drop=True)
     LOGGER.info(
-        "train_sector: loaded %d symbols, %d total rows",
-        len(frames), len(combined),
-    )
-
-    # Prepare features (same pipeline as per-symbol)
-    prepared = prepare_symbol_frame(
-        combined,
-        cfg.data,
-        sentiment_df=sentiment_df,
-        benchmark_df=benchmark_df,
-        universe_df=universe_df,
-        selector_df=selector_df,
-        fundamental_df=fundamental_df,
+        "train_sector: prepared %d symbols independently, %d total rows",
+        len(prepared_frames), len(prepared),
     )
 
     # ── Sector-neutral target ──
@@ -221,9 +228,47 @@ def _persist_sector_metrics(
         "lstm_attention": {"status": "skipped"},
     }
     artifact_routes = {
-        "lightgbm": {"inference_backend": "lightgbm_tabular", "config_path": "", "model_path": ""},
-        "catboost": {"inference_backend": "catboost_tabular", "config_path": "", "model_path": ""},
+        "lightgbm": {
+            "inference_backend": "lightgbm_tabular",
+            "config_path": str(sector_dir / "config.json"),
+            "model_path": str(lgbm_result.get("artifact_paths", {}).get("model_path", "")),
+        },
+        "catboost": {
+            "inference_backend": "catboost_tabular",
+            "config_path": str(sector_dir / "config.json"),
+            "model_path": str(cb_result.get("artifact_paths", {}).get("model_path", "")),
+        },
     }
+    # ── P0-2 fix (2026-08-04) : persister un config.json complet pour l'inférence ──
+    _feature_cols = lgbm_result.get("feature_columns") or cb_result.get("feature_columns") or []
+    # P0-3: persister la liste des symboles comme catégories pour reconstruction
+    _symbol_categories = sorted(symbols) if _has_symbol_feat else None
+    _artifact_routes_for_config = {
+        "selected_model": champion,
+        "models": {
+            "lightgbm": artifact_routes["lightgbm"],
+            "catboost": artifact_routes["catboost"],
+        },
+    }
+    _sector_config = {
+        "data": asdict(cfg.data),
+        "model": asdict(cfg.model),
+        "feature_columns": _feature_cols,
+        "feature_contract": lgbm_result.get("feature_contract") or cb_result.get("feature_contract"),
+        "feature_fingerprint": lgbm_result.get("feature_fingerprint") or cb_result.get("feature_fingerprint"),
+        "inference_backend": f"{champion}_tabular",
+        "selected_model": champion,
+        "sector": sector_name,
+        "symbols": symbols,
+        "target_mode": cfg.data.target_mode,
+        "artifact_routes": _artifact_routes_for_config,
+        # P0-3: catégories pour reconstruction du dtype category à l'inférence
+        "symbol_categories": _symbol_categories,
+    }
+    _config_path = Path(artifact_routes[champion]["config_path"])
+    _config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(_config_path, "w", encoding="utf-8") as _fh:
+        json.dump(_sector_config, _fh, indent=2, default=str)
     replace_model_governance(
         engine, run_id=run_id, symbol=sector_name,
         challengers=challengers,
@@ -275,8 +320,9 @@ def _train_sector_models(
     # Build prepared_df for tabular baselines
     prepared_df = pd.concat([train_df, val_df, test_df], ignore_index=True)
 
-    # Ensure symbol is a categorical feature for tree models
+    # Ensure symbol is a categorical feature for tree models (P0-3 fix)
     tab_feature_cols = list(feature_cols)
+    _has_symbol_feat = "symbol" in tab_feature_cols
 
     # ── LightGBM ──
     is_reg = cfg.data.target_mode == "regression"
@@ -312,8 +358,10 @@ def _train_sector_models(
         )
 
     # ── CatBoost ──
+    # P0-3 fix: passer cat_features=["symbol"] pour le support natif des catégorielles
+    _cb_cat_features = ["symbol"] if _has_symbol_feat else None
     if is_reg:
-        _cb_builder = lambda seed: __import__("catboost").CatBoostRegressor(
+        _cb_builder = lambda seed, cf=_cb_cat_features: __import__("catboost").CatBoostRegressor(
             depth=cfg.baseline.catboost_depth,
             iterations=cfg.baseline.catboost_iterations,
             learning_rate=cfg.baseline.catboost_learning_rate,
@@ -321,9 +369,10 @@ def _train_sector_models(
             loss_function="RMSE",
             verbose=False, allow_writing_files=False,
             l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
+            **( {"cat_features": cf} if cf else {}),
         )
     else:
-        _cb_builder = lambda seed: __import__("catboost").CatBoostClassifier(
+        _cb_builder = lambda seed, cf=_cb_cat_features: __import__("catboost").CatBoostClassifier(
             depth=cfg.baseline.catboost_depth,
             iterations=cfg.baseline.catboost_iterations,
             learning_rate=cfg.baseline.catboost_learning_rate,
@@ -332,6 +381,7 @@ def _train_sector_models(
             verbose=False, allow_writing_files=False,
             auto_class_weights="Balanced",
             l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
+            **( {"cat_features": cf} if cf else {}),
         )
 
     # ── Artifact directory ──
@@ -367,6 +417,10 @@ def _train_sector_models(
             _df["target"] = _df[_target_col]
             _df["future_return"] = _df[_future_col]
 
+        # ── Encodage catégoriel de "symbol" (P0-3 fix) ──
+        if _has_symbol_feat and "symbol" in _df.columns:
+            _df["symbol"] = _df["symbol"].astype("category")
+
         _sector_dir_h = sector_dir / _horizon_tag
         _sector_dir_h.mkdir(parents=True, exist_ok=True)
 
@@ -384,6 +438,7 @@ def _train_sector_models(
             by_dates=True,
             symbol_tag=f"{sector_name}_{_horizon_tag}",
             forecast_horizon_override=h,
+            feature_columns_override=tab_feature_cols,
         )
         _cb_h = run_tabular_baseline(
             _df, cfg,
@@ -395,6 +450,7 @@ def _train_sector_models(
             by_dates=True,
             symbol_tag=f"{sector_name}_{_horizon_tag}",
             forecast_horizon_override=h,
+            feature_columns_override=tab_feature_cols,
         )
 
         horizon_metrics_lgbm[_horizon_tag] = _lgbm_h
@@ -410,6 +466,7 @@ def _train_sector_models(
                 by_dates=True,
                 symbol_tag=f"{sector_name}_{_horizon_tag}",
                 forecast_horizon_override=h,
+                feature_columns_override=tab_feature_cols,
             )
             if lgbm_wf.get("status") == "completed" and lgbm_wf.get("mean"):
                 _lgbm_h["wf"] = lgbm_wf["mean"]
@@ -423,15 +480,18 @@ def _train_sector_models(
                 by_dates=True,
                 symbol_tag=f"{sector_name}_{_horizon_tag}",
                 forecast_horizon_override=h,
+                feature_columns_override=tab_feature_cols,
             )
             if cb_wf.get("status") == "completed" and cb_wf.get("mean"):
                 _cb_h["wf"] = cb_wf["mean"]
                 _cb_h["walk_forward"] = cb_wf
 
-    # Merge horizon results: use h15 as primary (backward compat), store all in "horizons"
+    # Merge horizon results: use forecast_horizon (max horizon) as primary (P2-2 fix)
     # ⚠️ Copier pour éviter une référence circulaire :
     #    lgbm_result["horizons"][primary_h] → lgbm_result (cycle)
-    _primary_horizon = "h15" if "h15" in horizon_metrics_lgbm else next(iter(horizon_metrics_lgbm), None)
+    _primary_horizon = f"h{cfg.data.forecast_horizon}"
+    if _primary_horizon not in horizon_metrics_lgbm:
+        _primary_horizon = next(iter(horizon_metrics_lgbm), None)  # fallback
     if _primary_horizon:
         lgbm_result = dict(horizon_metrics_lgbm[_primary_horizon])  # shallow copy
         cb_result = dict(horizon_metrics_cb[_primary_horizon])  # shallow copy

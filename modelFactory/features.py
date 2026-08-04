@@ -1248,6 +1248,8 @@ def build_target(
     mode: str = "binary",
     positive_threshold: float = 0.0,
     negative_threshold: float = 0.0,
+    *,
+    skip_winsorize: bool = False,
 ) -> pd.Series:
     """Construit la target pour l'horizon futur.
 
@@ -1288,16 +1290,17 @@ def build_target(
 
     if mode == "regression":
         # ── Regression target (Sprint 2026-08-02) ──
-        # Vol-scaling + winsorize ONLY. La standardisation (mean=0, std=1)
-        # est appliquée APRÈS le split chronologique pour éviter le leakage
-        # (→ SymbolDataModule.setup() appelle standardize_regression_target).
+        # Vol-scaling ONLY. La winsorisation et la standardisation sont
+        # appliquées APRÈS le split chronologique pour éviter le leakage
+        # (→ run_tabular_baseline, run_tabular_walk_forward, SymbolDataModule).
+        # skip_winsorize=True désactive la winsorisation pré-split (P1-1 fix).
         target = future_return.copy()
         if horizon >= 5:
             rolling_vol = close.pct_change().rolling(20).std()
             target = target / rolling_vol
-        # Winsorize 1% / 99% par symbole (robustesse aux outliers)
-        lo, hi = target.quantile(0.01), target.quantile(0.99)
-        target = target.clip(lo, hi)
+        if not skip_winsorize:
+            lo, hi = target.quantile(0.01), target.quantile(0.99)
+            target = target.clip(lo, hi)
         return target.where(future_return.notna()).astype(float)
 
     raise ValueError(f"Unsupported target mode: {mode}")
@@ -1315,11 +1318,16 @@ def build_multi_horizon_targets(
     mode: str = "binary",
     positive_threshold: float = 0.0,
     negative_threshold: float = 0.0,
+    *,
+    skip_winsorize: bool = False,
 ) -> pd.DataFrame:
     """Construit les targets pour plusieurs horizons en une seule passe.
 
     Retourne un DataFrame avec les colonnes ``target_h{horizon}`` et
     ``future_return_h{horizon}`` pour chaque horizon.
+
+    Si ``skip_winsorize=True``, la winsorisation est désactivée (P1-1 fix).
+    Elle sera appliquée après le split chronologique sur les stats du train.
     """
     close = _build_adjusted_price_frame(df)["close"]
     targets: dict[str, pd.Series] = {}
@@ -1331,8 +1339,9 @@ def build_multi_horizon_targets(
             if h >= 5:
                 rolling_vol = close.pct_change().rolling(20).std()
                 target = target / rolling_vol
-            lo, hi = target.quantile(0.01), target.quantile(0.99)
-            target = target.clip(lo, hi)
+            if not skip_winsorize:
+                lo, hi = target.quantile(0.01), target.quantile(0.99)
+                target = target.clip(lo, hi)
             targets[f"target_h{h}"] = target.where(future_return.notna()).astype(float)
         else:
             targets[f"target_h{h}"] = build_target(

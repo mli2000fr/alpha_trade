@@ -137,13 +137,10 @@ Pour chaque horizon $h \in \{3, 5, 10, 15, 20\}$ :
 |---------|-------------|---------------|-----------|----------------|----------------|
 | H3 | ❌ | ❌ | ❌ | ✅ | ✅ |
 | H5 | ✅ | ✅ | ❌ | ✅ | ✅ |
-| H10/15/20 | ✅ | ✅ | ❌ | ✅ | ✅ |
+| H10/15/20 | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-> **Smoothing supprimé** (Sprint 2026-08-02) : le mélange cross-horizon diluait
-> le signal après correction du data leakage. H20 passe de 0.0140 à 0.0191 sans.
-> **Vol scaling** : Testé OFF → IC -27%, conservé ON pour H5+.
-> **Sector-neutral** : +84% IC — le levier le plus puissant.
-> **H3/H5 réactivés** : IC 0.009/0.014, H5 pour trading 5j.
+> **Smoothing actif** (H10/H15/H20 uniquement) : blend 50% horizon + 50% avg(10,15,20),
+> H3/H5 exclus (trop bruités). Bénéfique avec 8 splits (+31% H10), dilutif avec 13 splits.
 
 ### 3.3 Walk-Forward
 
@@ -365,7 +362,7 @@ Pour chaque **secteur GICS** (11 secteurs), entraîner un modèle qui prédit si
 | Nombre de modèles | ~500 | 11 × 5 = 55 |
 | Algorithmes | LSTM + LightGBM + CatBoost | LightGBM + CatBoost |
 | Target | `future_return` brut | `target − median(sector, date)` (neutralisée) |
-| Features | Techniques + fondamentales + `symbol` | Techniques + fondamentales + `symbol` (catégorielle) |
+| Features | Techniques + `symbol` (pas de fondamentales) | Techniques + `symbol` (catégorielle, pas de fondamentales) |
 | Métrique | F1 macro vs target neutralisée | F1 macro vs target neutralisée |
 | IC | — | Via future_return brut uniquement |
 
@@ -419,9 +416,18 @@ Pour chaque secteur (11) :
 
 Mêmes features que le Per-Symbol (mode `expert`), plus :
 - **`symbol`** : feature catégorielle — permet au modèle de différencier les symboles au sein du secteur
-- **Cross-sectional** (si activé) : rangs globaux calculés sur l'univers entier → le modèle sectoriel sait où se situe son secteur par rapport au marché
+- **Cross-sectional** (si activé) : actuellement **non fusionnées** en per-sector. Les rangs globaux nécessitent un calcul sur l'univers entier → laissés à leurs valeurs neutres. La fusion post-concaténation est un TODO.
 
-### 5.6 Résultats (batch 7e4cf8, 2026-08-03)
+### 5.6 Politique symboles inconnus (P2-6)
+
+À l'inférence, si un symbole n'était pas dans l'univers d'entraînement du secteur :
+- **LightGBM** : le symbole est ajouté aux catégories (`pd.Categorical` avec `categories=_all_cats`) → il suit une branche apprise existante, sans erreur.
+- **CatBoost** : `cat_features=["symbol"]` accepte les valeurs non vues à l'entraînement → comportement natif CatBoost.
+- **Fallback** : si le modèle sectoriel est indisponible, le prédicteur remonte au modèle per-symbol du titre.
+
+> **Limite** : un symbole hors univers n'a pas de garantie de performance. La prédiction est produite mais doit être interprétée avec prudence.
+
+### 5.7 Résultats (batch 7e4cf8, 2026-08-03)
 
 | Horizon | F1 macro (WF) | F1 short | F1 long | Dir Acc |
 |---------|---------------|----------|---------|---------|
@@ -652,7 +658,7 @@ L'IC Per-Symbol permet de comparer deux batchs :
 | `wf_step_size` | **252** | Pas entre splits (jours) |
 | `max_train_size` | **756** | Fenêtre train max (sweet spot) |
 | `demi-vie` | **360j** | Poids temporels (12 mois) |
-| `target_smoothing` | **OFF** | Supprimé — diluait le signal sans leakage |
+| `target_smoothing` | **ON** (H10/H15/H20) | Blend 50% horizon + 50% avg(10,15,20). H3/H5 bruts. |
 
 ### 10.2 Global Ranking (GlobalModelConfig)
 
@@ -692,7 +698,8 @@ future_return brut → vol scaling (H5+) → winsorize 1%/99% → rank intra-dat
 | H5 | ✅ | ✅ | ✅ | ✅ |
 | H10/15/20 | ✅ | ✅ | ✅ | ✅ |
 
-> **Smoothing retiré** (Sprint 2026-08-02) — contre-productif sans data leakage.
+> **Smoothing actif pour H10/H15/H20** (50% h + 50% moyenne cross-horizon).
+> H3/H5 sont bruts (pas assez d'horizons voisins fiables).
 
 ### 10.5 Garde-fous (config.yaml)
 
@@ -881,11 +888,11 @@ Les métriques des deux modes sont **directement comparables** car le F1 est cal
 En mode regression, le F1 est calculé ainsi :
 
 ```
-pred_side = sign(pred)         → +1 (long), -1 (short), 0 (flat)
-true_side = sign(future_return) → +1, -1, 0
+pred_side = sign(pred)      → +1 (long), -1 (short), 0 (flat)
+true_side = sign(target)    → +1, -1, 0  (target neutralisée ou brute selon le mode)
 ```
 
-Or un modèle de régression ne prédit **jamais exactement 0.0** (sortie continue). Donc :
+La target (neutralisée en per-sector, brute en per-symbol) a une distribution continue. Donc :
 
 | Classe | Regression | Ternaire |
 |--------|-----------|----------|
@@ -902,7 +909,7 @@ Or un modèle de régression ne prédit **jamais exactement 0.0** (sortie contin
 |----------|--------------|------------|
 | **`f1_long`** | Capacité à identifier les jours haussiers | LSTM + baselines |
 | **`f1_short`** | Capacité à identifier les jours baissiers | LSTM + baselines |
-| **`directional_accuracy`** | % de jours où sign(pred) = sign(future_return) | LSTM + baselines |
+| **`directional_accuracy`** | % de jours où sign(pred) = sign(target) | LSTM + baselines |
 | **`ic`** (Information Coefficient) | Corrélation prédiction vs rendement futur | LSTM + baselines |
 | **`mse`** / **`mae`** | Erreur de prédiction absolue | Regression seulement |
 | **`correlation`** | Corrélation pred vs target continue | Regression seulement |

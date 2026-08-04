@@ -254,8 +254,10 @@ def test_compute_sector_features_sector_symbol_count() -> None:
 # ─────────────────────────────────────────────────────────────────────
 
 def test_global_pred_feature_columns_defined() -> None:
-    assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 1
-    assert GLOBAL_PRED_FEATURE_COLUMNS[0] == "global_rank"
+    # Multi-horizon : 4 colonnes (global_rank_3, _5, _10, + backward compat global_rank)
+    assert len(GLOBAL_PRED_FEATURE_COLUMNS) >= 3
+    assert "global_rank" in GLOBAL_PRED_FEATURE_COLUMNS
+    assert "global_rank_10" in GLOBAL_PRED_FEATURE_COLUMNS
 
 
 def test_merge_cross_sectional_features_handles_global_rank() -> None:

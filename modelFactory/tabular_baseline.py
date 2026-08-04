@@ -387,24 +387,29 @@ def run_tabular_baseline(
 	embargo_dates: int = 0,
 	symbol_tag: str = "",
 	forecast_horizon_override: int | None = None,
+	feature_columns_override: list[str] | None = None,
 ) -> dict[str, Any]:
 	# ── Purge dynamique par horizon (Sprint 2026-08-03) ──
-	# Si forecast_horizon_override est fourni, on l'utilise pour la purge
-	# plutôt que cfg.data.forecast_horizon (qui est le max des horizons).
-	# Ex: pour h=3, on ne purge que 3 jours au lieu de 20 → +17 jours de train.
 	_purge_horizon = forecast_horizon_override if forecast_horizon_override is not None else cfg.data.forecast_horizon
-	feature_columns = get_feature_columns(
-		include_sentiment=cfg.data.include_sentiment_features,
-		feature_set=cfg.data.feature_set,
-		include_cross_sectional=cfg.data.enable_cross_sectional_features,
-		include_screener_scores=cfg.data.include_screener_scores,
-		include_short_score=cfg.data.include_short_score_features,
-		include_macro_vix=cfg.data.include_macro_vix_features,
-		include_macro_vxn=cfg.data.include_macro_vxn_features,
-		include_macro_vix3m=cfg.data.include_macro_vix3m_features,
-		include_macro_move=cfg.data.include_macro_move_features,
-		include_global_stacking=cfg.global_model.stacking_enabled,
-	)
+	# ── Feature columns : utiliser l'override si fourni (P0-3 fix) ──
+	if feature_columns_override is not None:
+		feature_columns = list(feature_columns_override)
+	else:
+		feature_columns = get_feature_columns(
+			include_sentiment=cfg.data.include_sentiment_features,
+			feature_set=cfg.data.feature_set,
+			include_cross_sectional=cfg.data.enable_cross_sectional_features,
+			include_screener_scores=cfg.data.include_screener_scores,
+			include_short_score=cfg.data.include_short_score_features,
+			include_macro_vix=cfg.data.include_macro_vix_features,
+			include_macro_vxn=cfg.data.include_macro_vxn_features,
+			include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+			include_macro_move=cfg.data.include_macro_move_features,
+			include_global_stacking=cfg.global_model.stacking_enabled,
+			include_fundamentals=cfg.data.include_fundamentals_features,
+			include_factors=cfg.data.include_factors_features,
+			include_macro_regime=cfg.data.include_macro_regime_features,
+		)
 	train_df, val_df, test_df = tabular_split(
 		prepared_df,
 		train_ratio=cfg.data.train_ratio,
@@ -419,6 +424,16 @@ def run_tabular_baseline(
 	# ── Standardize regression target on train stats (anti-leakage) ──
 	if cfg.data.target_mode == "regression":
 		from modelFactory.features import standardize_regression_target
+		# ── Winsorize using train quantiles (anti-leakage P1-1, 2026-08-04) ──
+		# Avant : build_target() winsorisait sur l'historique complet → fuite.
+		# Après : on re-winsorise avec les quantiles du train SEULEMENT.
+		train_target = train_df["target"]
+		valid = train_target.notna()
+		if valid.sum() >= 2:
+			_lo = float(train_target.loc[valid].quantile(0.01))
+			_hi = float(train_target.loc[valid].quantile(0.99))
+			for _part in (train_df, val_df, test_df):
+				_part["target"] = _part["target"].clip(_lo, _hi)
 		# Compute stats on train only, apply to all splits
 		train_target = train_df["target"]
 		valid = train_target.notna()
@@ -809,6 +824,7 @@ def run_tabular_walk_forward(
 	by_dates: bool = False,
 	symbol_tag: str = "",
 	forecast_horizon_override: int | None = None,
+	feature_columns_override: list[str] | None = None,
 ) -> dict[str, Any]:
 	"""Évalue un modèle tabulaire en walk-forward (mêmes splits que le LSTM)."""
 	from modelFactory.dataset import generate_walk_forward_splits, generate_walk_forward_splits_by_dates
@@ -845,18 +861,25 @@ def run_tabular_walk_forward(
 
 	is_ternary = cfg.data.target_mode == "ternary"
 	is_regression = cfg.data.target_mode == "regression"
-	feature_cols = _get_fc(
-		include_sentiment=cfg.data.include_sentiment_features,
-		feature_set=cfg.data.feature_set,
-		include_cross_sectional=cfg.data.enable_cross_sectional_features,
-		include_screener_scores=cfg.data.include_screener_scores,
-		include_short_score=cfg.data.include_short_score_features,
-		include_macro_vix=cfg.data.include_macro_vix_features,
-		include_macro_vxn=cfg.data.include_macro_vxn_features,
-		include_macro_vix3m=cfg.data.include_macro_vix3m_features,
-		include_macro_move=cfg.data.include_macro_move_features,
-		include_global_stacking=cfg.global_model.stacking_enabled,
-	)
+	# ── Feature columns : utiliser l'override si fourni (P0-3 fix) ──
+	if feature_columns_override is not None:
+		feature_cols = list(feature_columns_override)
+	else:
+		feature_cols = _get_fc(
+			include_sentiment=cfg.data.include_sentiment_features,
+			feature_set=cfg.data.feature_set,
+			include_cross_sectional=cfg.data.enable_cross_sectional_features,
+			include_screener_scores=cfg.data.include_screener_scores,
+			include_short_score=cfg.data.include_short_score_features,
+			include_macro_vix=cfg.data.include_macro_vix_features,
+			include_macro_vxn=cfg.data.include_macro_vxn_features,
+			include_macro_vix3m=cfg.data.include_macro_vix3m_features,
+			include_macro_move=cfg.data.include_macro_move_features,
+			include_global_stacking=cfg.global_model.stacking_enabled,
+			include_fundamentals=cfg.data.include_fundamentals_features,
+			include_factors=cfg.data.include_factors_features,
+			include_macro_regime=cfg.data.include_macro_regime_features,
+		)
 
 	_symbol_tag = symbol_tag or "__BATCH__"
 	if not symbol_tag and "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
@@ -881,11 +904,17 @@ def run_tabular_walk_forward(
 		)
 		model = model_builder(split_seed)
 		if is_regression:
-			# ── Standardize target on this fold's train stats (anti-leakage) ──
+			# ── Winsorize + Standardize target on this fold's train stats (anti-leakage) ──
 			_train_df_r = split.train.copy()
 			_test_df_r = split.test.copy()
 			_train_valid_r = _train_df_r["target"].notna()
 			if _train_valid_r.sum() >= 2:
+				# Winsorize using this fold's train quantiles (P1-1 fix)
+				_lo = float(_train_df_r.loc[_train_valid_r, "target"].quantile(0.01))
+				_hi = float(_train_df_r.loc[_train_valid_r, "target"].quantile(0.99))
+				_train_df_r["target"] = _train_df_r["target"].clip(_lo, _hi)
+				_test_df_r["target"] = _test_df_r["target"].clip(_lo, _hi)
+				# Standardize
 				_t_mean = float(_train_df_r.loc[_train_valid_r, "target"].mean())
 				_t_std = float(_train_df_r.loc[_train_valid_r, "target"].std())
 				if _t_std > 1e-9:
