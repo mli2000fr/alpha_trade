@@ -265,7 +265,7 @@ def _persist_sector_metrics(
         # P0-3: catégories pour reconstruction du dtype category à l'inférence
         "symbol_categories": _symbol_categories,
     }
-    _config_path = sector_dir / "config.json"
+    _config_path = Path(artifact_routes[champion]["config_path"])
     _config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(_config_path, "w", encoding="utf-8") as _fh:
         json.dump(_sector_config, _fh, indent=2, default=str)
