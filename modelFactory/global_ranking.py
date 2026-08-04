@@ -367,6 +367,10 @@ def compute_ic_rank(predicted: np.ndarray, actual: np.ndarray) -> float | None:
     """
     if len(predicted) < 10:
         return None
+    # Éviter le ConstantInputWarning de scipy : si l'une des séries est constante,
+    # la corrélation de Spearman n'est pas définie.
+    if np.std(predicted) < 1e-12 or np.std(actual) < 1e-12:
+        return None
     try:
         from scipy.stats import spearmanr
         corr, _ = spearmanr(predicted, actual)
