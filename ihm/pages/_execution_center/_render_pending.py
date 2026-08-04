@@ -136,10 +136,10 @@ def render_model_factory_block() -> dict[str, Any]:
     )
     ml_target_mode = st.selectbox(
         "Mode cible ML",
-        options=["swing_5d", "swing_10d", "intraday"],
+        options=["regression", "swing_5d", "swing_10d", "intraday"],
         index=0,
         key="pipeline_ml_target_mode",
-        help="Horizon de prédiction du modèle champion.",
+        help="`regression` = target continue (recommandé). `swing_*` = classification.",
     )
     ml_walkforward = st.checkbox(
         "Activer walk-forward",

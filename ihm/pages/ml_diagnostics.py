@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json as _json
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -12,6 +13,7 @@ from pathlib import Path
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
 from ihm.services.db import db_available, safe_query, get_engine
+from sqlalchemy import text
 from ihm.services.ml_artifacts import get_model_artifacts_dir
 from modelFactory.report import generate_batch_report
 
@@ -19,6 +21,70 @@ from modelFactory.report import generate_batch_report
 # ---------------------------------------------------------------------------
 # Helper — mise en gras des lignes walk-forward dans les tableaux
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Backtest Global Rank (V1/V2/V3) — logique partagée
+# ---------------------------------------------------------------------------
+
+_REBALANCE_DAYS = 20
+_TOP_PCT = 0.70
+_H5_DIP = 0.35
+_TRANSACTION_COST_BPS = 25.0
+_MAX_POSITIONS = 30
+
+
+def _run_strategy_backtest(rank_df: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """Exécute les 3 variantes de stratégie sur un DataFrame de rangs.
+
+    Returns:
+        dict {variante: {sharpe, ann_return, ann_vol, max_drawdown}}.
+    """
+    _df = rank_df.sort_values(["date", "symbol"]).copy()
+    _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
+    _all_dates = sorted(_df["date"].unique())
+    _rebal_dates = _all_dates[::_REBALANCE_DAYS]
+    _results: dict[str, dict[str, float]] = {}
+
+    for _label, _filter_fn in [
+        ("V1 — H20 seul", lambda d: d["global_rank_20"] > _TOP_PCT),
+        ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+        ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] < _H5_DIP)),
+    ]:
+        _positions: dict[str, float] = {}
+        _daily_rets = {}
+        _turnover = 0
+        for _d in _all_dates:
+            _day = _df[_df["date"] == _d].set_index("symbol")
+            _day_sig = _filter_fn(_day)
+            if _d in _rebal_dates or not _positions:
+                _candidates = _day.loc[_day_sig].sort_values("global_rank_20", ascending=False)
+                if _positions:
+                    _turnover += len(_positions)
+                _positions = {}
+                for _s in _candidates.index[:_MAX_POSITIONS]:
+                    _positions[_s] = float(_candidates.loc[_s, "global_rank_20"])
+                _turnover += len(_positions)
+            _held = [s for s in _positions if s in _day.index]
+            _daily_rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+
+        _rets = pd.Series(_daily_rets).sort_index()
+        _cost = (_TRANSACTION_COST_BPS / 10000.0) * _turnover / len(_all_dates)
+        _rets = _rets - _cost / _REBALANCE_DAYS
+        _excess = _rets - 0.02 / 252
+        _mean = float(_excess.mean())
+        _std = float(_excess.std())
+        _sharpe = float(_mean / _std * np.sqrt(252)) if _std > 0 else 0.0
+        _cum = (1 + _rets).cumprod()
+        _dd = float((_cum / _cum.cummax() - 1).min())
+        _results[_label] = {
+            "sharpe": _sharpe,
+            "ann_return": float(_mean * 252),
+            "ann_vol": float(_std * np.sqrt(252)),
+            "max_drawdown": _dd,
+        }
+
+    return _results
+
 
 def _bold_wf_rows(df: pd.DataFrame):
     """Retourne un Styler pandas avec les lignes walk-forward en gras.
@@ -46,6 +112,21 @@ def _bold_wf_rows(df: pd.DataFrame):
 # ---------------------------------------------------------------------------
 # Requêtes SQL
 # ---------------------------------------------------------------------------
+
+# ── Requête SQL
+# ---------------------------------------------------------------------------
+# Le filtre horizon est injecté dynamiquement par _q() dans _render_batch_detail.
+# Voir _horizon_sql et selected_horizon.
+
+HORIZON_LIST_QUERY = """
+    SELECT DISTINCT mm.horizon
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mm.horizon IS NOT NULL
+    ORDER BY mm.horizon
+"""
 
 BATCH_LIST_QUERY = """
     SELECT
@@ -257,6 +338,47 @@ ZERO_F1_SHORT_CHAMPION_QUERY = """
     LIMIT 10
 """
 
+# ── Métriques régression (target continue) ──
+
+REG_BY_SPLIT_QUERY = """
+    SELECT
+        mm.model_name,
+        mm.split_name,
+        COUNT(DISTINCT mm.symbol) AS nb_symbols,
+        ROUND(AVG(mm.loss), 6) AS avg_mse,
+        ROUND(AVG(mm.directional_accuracy), 4) AS avg_dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.model_name != 'global_model'
+    GROUP BY mm.model_name, mm.split_name
+    ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+"""
+
+REG_TOP_QUERY = """
+    SELECT
+        mm.model_name, mm.symbol,
+        ROUND(mm.directional_accuracy, 4) AS dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
+    ORDER BY mm.directional_accuracy DESC LIMIT 10
+"""
+
+REG_WORST_QUERY = """
+    SELECT
+        mm.model_name, mm.symbol,
+        ROUND(mm.directional_accuracy, 4) AS dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
+    ORDER BY mm.directional_accuracy ASC LIMIT 10
+"""
+
 SYMBOL_METRICS_QUERY = """
     SELECT
         mm.split_name,
@@ -409,6 +531,7 @@ def _status_badge(status: str) -> str:
         "running": "🟨 En cours",
         "completed": "🟢 Terminé",
         "failed": "🔴 Échec",
+        "to delete": "❌ À supprimer",
     }
     return mapping.get(str(status).strip().lower(), str(status))
 
@@ -818,13 +941,40 @@ def _render_batch_detail(batch: pd.Series) -> None:
     safe_bid = batch_id.replace("/", "_").replace("\\", "_")[:64]
     engine = get_engine()
     if engine is not None:
-        st.download_button(
-            label="📥 Télécharger le rapport (.md)",
-            data=generate_batch_report(engine, batch_id),
-            file_name=f"{safe_bid}.md",
-            mime="text/markdown",
-            key=f"dl_{safe_bid}",
-        )
+        col_dl, col_del = st.columns([3, 1])
+        with col_dl:
+            st.download_button(
+                label="📥 Télécharger le rapport (.md)",
+                data=generate_batch_report(engine, batch_id),
+                file_name=f"{safe_bid}.md",
+                mime="text/markdown",
+                key=f"dl_{safe_bid}",
+            )
+        with col_del:
+            _current_status = str(batch.get("status", "")).strip().lower()
+            if _current_status == "to delete":
+                st.info("❌ À supprimer", icon="🗑️")
+            else:
+                _del_key = f"del_{safe_bid}"
+                if st.button("🗑️ TO DELETE", key=_del_key, type="secondary", help="Marque ce batch comme 'TO DELETE'."):
+                    st.session_state["_confirm_to_delete"] = batch_id
+                if st.session_state.get("_confirm_to_delete") == batch_id:
+                    st.warning("Confirmer ?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Oui", key=f"{_del_key}_yes"):
+                            _engine = get_engine()
+                            if _engine is not None:
+                                with _engine.connect() as _conn:
+                                    _conn.execute(text("UPDATE model_training_batch SET status = 'TO DELETE' WHERE batch_id = :bid"), {"bid": batch_id})
+                                    _conn.commit()
+                            st.session_state["_confirm_to_delete"] = None
+                            st.success("Batch marqué TO DELETE.")
+                            st.rerun()
+                    with c2:
+                        if st.button("❌ Non", key=f"{_del_key}_no"):
+                            st.session_state["_confirm_to_delete"] = None
+                            st.rerun()
 
     row = detail_df.iloc[0]
 
@@ -878,49 +1028,39 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     st.markdown("")
 
-    # ── IC Cross-Sectionnel Per-Symbol (tableau) ──
-    _meta_raw = row.get("metadata_json")
-    if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
-        try:
-            _meta_ps = _json.loads(str(_meta_raw))
-            _ps_ic = _meta_ps.get("per_symbol_ic") if isinstance(_meta_ps, dict) else None
-            if isinstance(_ps_ic, dict) and any(
-                isinstance(v, dict) and "ic_mean" in v for v in _ps_ic.values()
-            ):
-                st.subheader("🔬 IC Cross-Sectionnel — Modèles Per-Symbol")
-                _ps_rows = []
-                for _h_key in sorted(_ps_ic.keys(), key=lambda x: int(x)):
-                    _h_info = _ps_ic[_h_key]
-                    _h_ic = _h_info.get("ic_mean")
-                    if _h_ic is None:
-                        continue
-                    _h_std = _h_info.get("ic_std")
-                    _h_n = _h_info.get("n_dates", "—")
-                    _ps_rows.append({
-                        "Horizon": f"H{_h_key}",
-                        "IC Mean": round(float(_h_ic), 4),
-                        "IC IR": round(float(_h_ic) / float(_h_std), 2) if _h_std and float(_h_std) > 0 else "—",
-                        "Nb Dates": _h_n,
-                    })
-                if _ps_rows:
-                    _ps_df = pd.DataFrame(_ps_rows)
-                    st.dataframe(
-                        _ps_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Horizon": "Horizon",
-                            "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
-                            "IC IR": st.column_config.NumberColumn("📈 IC IR", format="%.2f"),
-                            "Nb Dates": "Nb Dates",
-                        },
-                    )
-                    st.caption(
-                        "IC Rank cross-sectionnel des modèles per-symbol (agrégés). "
-                        ">0.01 = utile, >0.02 = bon. IC IR > 0.5 = stable."
-                    )
-        except Exception:
-            pass
+    # ── Backtest Global Rank Strategies (V1/V2/V3) ──
+    with st.expander("🧪 Backtest Stratégies Global Rank (H20 + H5)", expanded=False):
+        _batch_id = str(row["batch_id"])
+        _cache_path = Path(get_model_artifacts_dir()) / _batch_id / "global_rank_cache.parquet"
+        if _cache_path.exists():
+            if st.button("🚀 Lancer le backtest", key=f"backtest_{_batch_id}"):
+                try:
+                    import numpy as np
+                    _rank_df = pd.read_parquet(_cache_path)
+                    _rank_df["date"] = pd.to_datetime(_rank_df["date"])
+                    _results = _run_strategy_backtest(_rank_df)
+                    if _results:
+                        st.markdown("### 📊 Classement relatif des stratégies")
+                        _best = max(_results, key=lambda v: _results[v]["sharpe"])
+                        _rows = []
+                        for _v, _m in _results.items():
+                            _pct = f"{(_m['sharpe'] / _results[_best]['sharpe'] - 1) * 100:+.1f}%" if _v != _best else "🏆 référence"
+                            _rows.append({"Variante": _v, "Score relatif": _pct})
+                        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+                        st.success(f"🏆 Meilleure stratégie : **{_best}**")
+                        st.caption(
+                            "Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
+                            "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
+                            "Frais 0.25% A/R inclus. "
+                            "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
+                        )
+                except Exception as _exc:
+                    st.error(f"Échec du backtest : {_exc}")
+        else:
+            st.info(
+                "Cache `global_rank_cache.parquet` non trouvé. "
+                "Relancez un batch avec la dernière version de `global_ranking.py` pour le générer."
+            )
 
     # ── Statut sélection du champion ──
     champion_df = safe_query(
@@ -970,13 +1110,108 @@ def _render_batch_detail(batch: pd.Series) -> None:
                 with cols_model[idx]:
                     st.metric(label=model_label, value=f"{count} ({pct})")
 
+    # ── Détection mode régression vs classification ──
+    # Règle fiable : lire target_mode depuis metadata_json (pas d'heuristique SQL).
+    # ⚠️ batch vient de BATCH_LIST_QUERY (colonnes limitées) → utiliser detail_df.
+    _target_mode: str = "ternary"
+    try:
+        _meta_raw = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
+        if isinstance(_meta_raw, str) and _meta_raw.strip():
+            import json
+            _meta = json.loads(_meta_raw)
+            _target_mode = str(_meta.get("cli_options", {}).get("target_mode") or _meta.get("target_mode") or "ternary")
+    except Exception:
+        pass
+    _is_reg_batch = _target_mode == "regression"
+    _has_classif = _target_mode in ("binary", "ternary", "swing_cash")
+
+    # ── Horizon selector (avant les métriques) ──
+    horizon_list = safe_query(HORIZON_LIST_QUERY, {"batch_id": batch_id})
+    selected_horizon: int | None = None
+    _horizon_sql: str = ""
+    if not horizon_list.empty:
+        _horizons = [None] + [int(h) for h in horizon_list["horizon"].dropna().sort_values()]
+        selected_horizon = st.selectbox(
+            "Horizon",
+            options=_horizons,
+            format_func=lambda h: f"H{h}" if h is not None else "Tous les horizons",
+            key=f"horizon_{batch_id}",
+        )
+        if selected_horizon is not None:
+            _horizon_sql = " AND mm.horizon = :horizon"
+
+    def _q(sql: str, extra_params: dict | None = None) -> pd.DataFrame:
+        """Exécute une requête avec le filtre horizon injecté dynamiquement.
+
+        - ``selected_horizon is None`` (Tous) : pas de filtre → agrégation sur tous les horizons (AVG).
+        - ``selected_horizon = 3`` (H3) : filtre ``AND mm.horizon = 3``.
+        """
+        _sql = sql
+        if _horizon_sql:
+            # Injecte le filtre horizon avant GROUP BY / ORDER BY / LIMIT
+            if "GROUP BY" in _sql:
+                _sql = _sql.replace("GROUP BY", f"{_horizon_sql}\n    GROUP BY")
+            elif "ORDER BY" in _sql:
+                _sql = _sql.replace("ORDER BY", f"{_horizon_sql}\n    ORDER BY")
+            elif "LIMIT" in _sql:
+                _sql = _sql.replace("LIMIT", f"{_horizon_sql}\n    LIMIT")
+        params: dict[str, object] = {"batch_id": batch_id}
+        if selected_horizon is not None:
+            params["horizon"] = selected_horizon
+        if extra_params:
+            params.update(extra_params)
+        return safe_query(_sql, params)
+
+    # ── Indicateur d'horizon ──
+    if not horizon_list.empty:
+        if selected_horizon is not None:
+            st.caption(f"🔍 Horizon sélectionné : **H{selected_horizon}** — métriques filtrées sur cet horizon uniquement.")
+        else:
+            st.caption("🔍 **Tous horizons confondus** — chaque métrique est la moyenne (AVG) des 5 horizons H3/H5/H10/H15/H20.")
+
+    if _is_reg_batch:
+        # ── Bloc régression par split ──
+        st.subheader("📊 Métriques Régression par split")
+        reg_df = _q(REG_BY_SPLIT_QUERY)
+        if reg_df.empty:
+            st.info("Aucune métrique de régression disponible.")
+        else:
+            styled = reg_df.copy()
+            for col in ["avg_mse", "avg_dir_acc"]:
+                if col in styled.columns:
+                    styled[col] = styled[col].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "—")
+            styled = styled.rename(columns={
+                "model_name": "Modèle", "split_name": "Split",
+                "nb_symbols": "Nb symboles", "avg_mse": "MSE moy", "avg_dir_acc": "Dir Acc",
+            })
+            st.dataframe(_bold_wf_rows(styled), use_container_width=True, hide_index=True)
+        st.markdown("")
+
+        # ── Top / Flop Directional Accuracy ──
+        col_top_r, col_worst_r = st.columns(2)
+        with col_top_r:
+            st.markdown("**🥇 10 meilleurs `directional_accuracy` (WF)**")
+            rtop = _q(REG_TOP_QUERY)
+            if not rtop.empty:
+                st.dataframe(rtop, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Aucune donnée.")
+        with col_worst_r:
+            st.markdown("**🥉 10 plus mauvais `directional_accuracy` (WF)**")
+            rworst = _q(REG_WORST_QUERY)
+            if not rworst.empty:
+                st.dataframe(rworst, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Aucune donnée.")
+        st.markdown("")
+
     # ── Bloc F1 par split ──
     st.subheader("📊 Métriques F1 par split")
-    f1_df = safe_query(F1_BY_SPLIT_QUERY, {"batch_id": batch["batch_id"]})
+
+    f1_df = _q(F1_BY_SPLIT_QUERY)
     if f1_df.empty:
         st.info("Aucune métrique F1 disponible pour ce batch (vérifiez que les runs sont `completed`).")
     else:
-        # Formater les colonnes numériques
         styled = f1_df.copy()
         for col in ["avg_f1_macro", "avg_f1_short", "avg_f1_flat", "avg_f1_long"]:
             if col in styled.columns:
@@ -986,7 +1221,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.markdown("")
     # ── Bloc distribution true / pred par split ──
     st.subheader("📊 Distribution true / pred par split")
-    tp_df = safe_query(TRUE_PRED_AGG_QUERY, {"batch_id": batch["batch_id"]})
+    tp_df = _q(TRUE_PRED_AGG_QUERY)
     if tp_df.empty:
         st.info("Aucune donnée true_*_pct / pred_*_pct disponible (vérifiez que le mode ternaire est activé).")
     else:
@@ -1038,7 +1273,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     _worst_q = TOP5_WORST_CHAMPION_QUERY if champion_only_wf else TOP5_WORST_F1_QUERY
     _zero_q = ZERO_F1_SHORT_CHAMPION_QUERY if champion_only_wf else ZERO_F1_SHORT_QUERY
 
-    bucket_df = safe_query(_bucket_q, {"batch_id": batch["batch_id"]})
+    bucket_df = _q(_bucket_q)
     if bucket_df.empty:
         st.info("Aucune métrique walk-forward disponible pour ce batch.")
     else:
@@ -1078,7 +1313,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_best:
         st.markdown("**🥇 10 meilleurs `f1_macro`**")
-        best_df = safe_query(_best_q, {"batch_id": batch["batch_id"]})
+        best_df = _q(_best_q)
         if best_df.empty:
             st.caption("Aucune donnée.")
         else:
@@ -1090,7 +1325,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_worst:
         st.markdown("**🥉 10 plus mauvais `f1_macro`**")
-        worst_df = safe_query(_worst_q, {"batch_id": batch["batch_id"]})
+        worst_df = _q(_worst_q)
         if worst_df.empty:
             st.caption("Aucune donnée.")
         else:
@@ -1102,7 +1337,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col_zero:
         st.markdown("**⚪ `f1_short = 0`**")
-        zero_df = safe_query(_zero_q, {"batch_id": batch["batch_id"]})
+        zero_df = _q(_zero_q)
         if zero_df.empty:
             st.caption("Aucun symbole avec f1_short = 0.")
         else:
@@ -1301,7 +1536,7 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
 
     st.subheader("🌐 Global Ranking — Détails par Horizon")
     st.caption(
-        f"Modèle LightGBM LambdaRank — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )
@@ -1442,20 +1677,6 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                 with _col4:
                     st.metric("IC Max", f"{_arr.max():.4f}")
 
-    # ── Aide ──
-    with st.expander("ℹ️ À propos du Global Ranking Model", expanded=False):
-        st.markdown("""
-- **LightGBM LambdaRank** : modèle de ranking cross-sectional entraîné sur l'univers complet.
-- **IC Rank** : corrélation de Spearman entre le rang prédit et le rendement futur réalisé. 
-  - $>0.03$ = bon pouvoir prédictif, $>0.05$ = excellent.
-- **Decile Spread** : rendement moyen du top décile moins le bottom décile.
-  - $>0.01$ = excellent (1% de spread entre top et bottom 10%).
-- **Feature Importance** : importance relative des features dans le modèle (gain-based).
-- **Target Volatility Scaling** (H5+) : le rendement forward est divisé par la volatilité réalisée 20j 
-  pour neutraliser l'effet des crises (2020, 2022) sur le ranking.
-- **Purge** : $\\min(\\text{horizons}) = 3$ jours ouvrés entre train et validation pour éviter le leakage.
-""")
-
 
 # ---------------------------------------------------------------------------
 # Page principale
@@ -1481,6 +1702,13 @@ def render() -> None:
     display_df = batches_df.copy()
     if "status" in display_df.columns:
         display_df["status"] = display_df["status"].apply(_status_badge)
+    if "batch_id" in display_df.columns and "status" in batches_df.columns:
+        # Prefix "❌ " for TO DELETE batches
+        _raw_status = batches_df["status"].fillna("").str.strip().str.lower()
+        display_df["batch_id"] = display_df.apply(
+            lambda r: ("❌ " if _raw_status.loc[r.name] == "to delete" else "") + str(r["batch_id"]),
+            axis=1,
+        )
     if "comment" in display_df.columns:
         display_df["comment"] = display_df["comment"].fillna("—")
         display_df["comment"] = display_df["comment"].apply(
@@ -1497,8 +1725,39 @@ def render() -> None:
         key=BATCH_TABLE_KEY,
     )
 
+    # ── Bouton nettoyage batchs ──
+    st.divider()
+    with st.expander("🧹 Nettoyer les batchs", expanded=False):
+        from modelFactory.cleanup_incomplete_batches import cleanup_batches, list_batches
+        _include_completed = st.checkbox("🗑️ Inclure les batchs **terminés** (TOUT supprimer)", value=False)
+        _candidates = list_batches(include_completed=_include_completed)
+        _label = "terminés et non terminés" if _include_completed else "non terminés"
+        if _candidates:
+            st.warning(f"{len(_candidates)} batch(s) {_label}")
+            if st.button("🗑️ Supprimer tous les batchs listés", type="primary"):
+                st.session_state["_confirm_cleanup"] = True
+            if st.session_state.get("_confirm_cleanup"):
+                st.error("⚠️ Cette action est irréversible. Confirmez :")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Oui, supprimer", key="cleanup_confirm"):
+                        result = cleanup_batches(dry_run=False, include_completed=_include_completed)
+                        st.success(
+                            f"✅ {result['deleted_batches']} batch(s), "
+                            f"{result['deleted_db_rows']} lignes DB, "
+                            f"{result['deleted_dirs']} répertoires."
+                        )
+                        st.session_state["_confirm_cleanup"] = False
+                        st.rerun()
+                with col2:
+                    if st.button("❌ Annuler", key="cleanup_cancel"):
+                        st.session_state["_confirm_cleanup"] = False
+                        st.rerun()
+        else:
+            st.info(f"✅ Aucun batch {_label}.")
+
     row_index = _selected_row_index(BATCH_TABLE_KEY)
-    if row_index is None:
+    if row_index is None or row_index >= len(batches_df):
         st.info("👆 Cliquez sur un batch dans le tableau ci-dessus pour afficher son détail et ses métriques.")
         return
 

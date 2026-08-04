@@ -458,103 +458,6 @@ def _train_worker(
     )
 
 
-def _compute_per_symbol_ic_from_parquet(
-    cfg: TrainingConfig,
-    batch_id: str,
-    *,
-    horizons: tuple[int, ...] = (3, 5, 10, 15, 20),
-    min_symbols_per_date: int = 10,
-) -> dict[str, Any] | None:
-    """Agrège les prédictions WF per-symbol et calcule l'IC cross-sectionnel.
-
-    Lit les fichiers ``_per_symbol_wf_preds/<symbol>.parquet`` générés
-    pendant le walk-forward, les concatène, et calcule l'IC Rank
-    cross-sectionnel (Spearman) date par date, pour chaque horizon.
-
-    Les forward returns sont calculés à partir de la colonne ``close``
-    sauvegardée dans les parquets, ce qui permet de calculer l'IC pour
-    H3, H5, H10, H15, H20.
-
-    Returns:
-        dict keyed by horizon string, e.g. {"3": {"ic_mean": ..., ...}, "5": {...}},
-        ou None si pas de données.
-    """
-    from modelFactory.global_ranking import compute_cross_sectional_ic
-
-    _preds_dir = Path(cfg.artifacts_dir) / "_per_symbol_wf_preds"
-    if not _preds_dir.exists():
-        LOGGER.warning("_compute_per_symbol_ic: no _per_symbol_wf_preds directory at %s", _preds_dir)
-        return None
-
-    _parquet_files = sorted(_preds_dir.glob("*.parquet"))
-    if not _parquet_files:
-        LOGGER.warning("_compute_per_symbol_ic: no parquet files in %s", _preds_dir)
-        return None
-
-    _frames: list[pd.DataFrame] = []
-    for _pf in _parquet_files:
-        try:
-            _df = pd.read_parquet(_pf)
-            if not _df.empty:
-                _frames.append(_df)
-        except Exception as exc:
-            LOGGER.warning("_compute_per_symbol_ic: failed to read %s: %s", _pf, exc)
-
-    if not _frames:
-        return None
-
-    _all = pd.concat(_frames, ignore_index=True)
-    _all["date"] = pd.to_datetime(_all["date"])
-
-    if "proba_long" not in _all.columns:
-        LOGGER.warning("_compute_per_symbol_ic: no proba_long column in predictions")
-        return None
-
-    _n_symbols = _all["symbol"].nunique()
-    LOGGER.info(
-        "_compute_per_symbol_ic loaded %d symbols, %d rows, %d dates from %d files",
-        _n_symbols, len(_all), _all["date"].nunique(), len(_parquet_files),
-    )
-
-    # ── Calculer les forward returns à chaque horizon si close dispo ──
-    _has_close = "close" in _all.columns
-    _results: dict[str, dict] = {}
-    for _h in horizons:
-        if _has_close:
-            _all_sym = _all.sort_values(["symbol", "date"]).copy()
-            _all_sym["fwd_close"] = _all_sym.groupby("symbol")["close"].shift(-_h)
-            _all_sym["future_return_h"] = _all_sym["fwd_close"] / _all_sym["close"] - 1.0
-            _return_col = "future_return_h"
-        elif "future_return" in _all.columns:
-            _all_sym = _all.copy()
-            _return_col = "future_return"
-        else:
-            _all_sym = _all.copy()
-            _return_col = None
-
-        _result = compute_cross_sectional_ic(
-            _all_sym,
-            score_col="proba_long",
-            return_col=_return_col,
-            vol_col=None,
-            min_symbols_per_date=min_symbols_per_date,
-        )
-        _result["n_symbols"] = _n_symbols
-        # Ne pas persister ic_by_date (trop volumineux pour metadata_json TEXT)
-        _result.pop("ic_by_date", None)
-        _results[str(_h)] = _result
-
-        LOGGER.info(
-            "_compute_per_symbol_ic H%d ic_mean=%.4f ic_std=%.4f n_dates=%d",
-            _h,
-            _result.get("ic_mean", float("nan")),
-            _result.get("ic_std", float("nan")),
-            _result.get("n_dates", 0),
-        )
-
-    return _results
-
-
 def run_training_batch(
     cfg: TrainingConfig,
     engine: Engine,
@@ -689,33 +592,42 @@ def run_training_batch(
             _vol_df = pd.read_sql(
                 text(
                     "SELECT symbol, AVG(volume) AS avg_vol "
-                    "FROM stock_bars_daily "
-                    "WHERE symbol IN :syms AND date >= :start AND date <= :end "
+                    "FROM alpha_trade.stock_bars_daily "
+                    "WHERE symbol IN :syms "
                     "GROUP BY symbol"
                 ),
                 engine,
-                params={
-                    "syms": tuple(symbols),
-                    "start": str(cfg.data.training_start_date),
-                    "end": str(cfg.data.training_end_date),
-                },
+                params={"syms": tuple(symbols)},
             )
-            if not _vol_df.empty:
-                if _ps_stratified and len(_vol_df) >= 10:
-                    # Stratifié par déciles : ~N/10 symboles par décile
-                    _vol_df["decile"] = pd.qcut(_vol_df["avg_vol"], q=10, labels=False)
-                    _per_decile = max(1, _ps_max // 10)
-                    _selected: list[str] = []
-                    for _d in range(10):
-                        _decile_syms = _vol_df[_vol_df["decile"] == _d]["symbol"].tolist()
-                        _selected.extend(_decile_syms[:_per_decile])
-                    symbols = _selected[:_ps_max]
-                else:
-                    # Top N par volume moyen
-                    _vol_df = _vol_df.sort_values("avg_vol", ascending=False)
-                    symbols = _vol_df.head(_ps_max)["symbol"].tolist()
+            if _vol_df.empty:
+                LOGGER.warning(
+                    "per_symbol_max_symbols: no volume data for %d symbols, "
+                    "keeping alphabetical truncation",
+                    len(symbols),
+                )
+                symbols = symbols[:_ps_max]
+            elif _ps_stratified and len(_vol_df) >= 10:
+                # Stratifié par déciles : ~N/10 symboles par décile
+                # On trie d'abord par volume décroissant pour que le top de
+                # chaque décile soit représentatif, pas juste alphabétique.
+                _vol_df = _vol_df.sort_values("avg_vol", ascending=False)
+                _vol_df["decile"] = pd.qcut(_vol_df["avg_vol"], q=10, labels=False)
+                _per_decile = max(1, _ps_max // 10)
+                _selected: list[str] = []
+                for _d in range(10):
+                    _decile_syms = _vol_df[_vol_df["decile"] == _d]["symbol"].tolist()
+                    _selected.extend(_decile_syms[:_per_decile])
+                symbols = _selected[:_ps_max]
+            else:
+                # Top N par volume moyen (fallback si < 10 symboles pour stratifié)
+                _vol_df = _vol_df.sort_values("avg_vol", ascending=False)
+                symbols = _vol_df.head(_ps_max)["symbol"].tolist()
         except Exception as _exc:
-            LOGGER.warning("per_symbol_max_symbols: volume query failed, fallback alphabetical: %s", _exc)
+            LOGGER.warning(
+                "per_symbol_max_symbols: volume query failed, fallback alphabetical. "
+                "error=%s symbols_count=%d",
+                _exc, _orig_count,
+            )
             symbols = symbols[:_ps_max]
         LOGGER.info(
             "run_training_batch per_symbol_max_symbols limit=%d orig=%d kept=%d stratified=%s",
@@ -745,6 +657,8 @@ def run_training_batch(
         cfg.accelerator,
         torch.cuda.is_available(),
     )
+    # ── Log exhaustif des symboles retenus pour l'entraînement ──
+    LOGGER.info("TRAINING_SYMBOLS_FINAL count=%d symbols=[%s]", len(symbols), ",".join(symbols))
     update_runtime_status(
         current_phase="batch_start",
         progress_label="🧠 Progression ML Train",
@@ -845,26 +759,81 @@ def run_training_batch(
         global_rank_df = global_result_wf.get("global_rank_df") if isinstance(global_result_wf, dict) else None
         if cfg.global_model.stacking_enabled and global_rank_df is not None and not global_rank_df.empty:
             _rank_cols = [c for c in global_rank_df.columns if c.startswith("global_rank")]
-            if cross_sectional_cache is not None and not cross_sectional_cache.empty:
-                cross_sectional_cache = cross_sectional_cache.merge(
-                    global_rank_df[["symbol", "date"] + _rank_cols], on=["symbol", "date"], how="left",
+            # ── P1-5 fix (2026-08-04) : mesurer la couverture OOF + gate + global_rank_available ──
+            _total_dates = 0
+            if cross_sectional_cache is not None and not cross_sectional_cache.empty and "date" in cross_sectional_cache.columns:
+                _total_dates = cross_sectional_cache["date"].nunique()
+            _covered_dates = global_rank_df["date"].nunique() if "date" in global_rank_df.columns else 0
+            _coverage_pct = round(100 * _covered_dates / _total_dates, 1) if _total_dates > 0 else 0.0
+            LOGGER.info(
+                "run_training_batch stacking coverage: %d/%d dates (%.1f%%) — "
+                "dates hors validation Global Ranking → fallback 0.5",
+                _covered_dates, _total_dates, _coverage_pct,
+            )
+            if _coverage_pct < 50:
+                LOGGER.warning(
+                    "run_training_batch stacking LOW COVERAGE: only %.1f%% of per-symbol dates "
+                    "have real global_rank values. Remaining dates use neutral fallback 0.5.",
+                    _coverage_pct,
                 )
-                for _rc in _rank_cols:
-                    cross_sectional_cache[_rc] = cross_sectional_cache[_rc].fillna(0.5).astype(np.float64)
-            else:
-                cross_sectional_cache = global_rank_df[["symbol", "date"] + _rank_cols].copy()
-            LOGGER.info(
-                "run_training_batch stacking enabled: %d global_rank cols merged into cache rows=%d",
-                len(_rank_cols), len(cross_sectional_cache),
-            )
-            # Persister pour les workers multiprocessing
-            _global_rank_path = Path(cfg.artifacts_dir) / "_global_rank_cache.parquet"
-            _global_rank_path.parent.mkdir(parents=True, exist_ok=True)
-            global_rank_df.to_parquet(_global_rank_path, index=False)
-            LOGGER.info(
-                "run_training_batch global_rank persisted to %s rows=%d",
-                _global_rank_path, len(global_rank_df),
-            )
+            if _coverage_pct < 10:
+                LOGGER.error(
+                    "run_training_batch stacking COVERAGE CRITICAL (%.1f%% < 10%%) — "
+                    "disabling stacking for this run. global_rank will not be injected.",
+                    _coverage_pct,
+                )
+                cfg = replace(cfg, global_model=replace(cfg.global_model, stacking_enabled=False))
+                global_rank_df = None  # prevent merge below
+            if global_rank_df is not None and not global_rank_df.empty:
+                global_rank_df["global_rank_available"] = True
+                if cross_sectional_cache is not None and not cross_sectional_cache.empty:
+                    cross_sectional_cache = cross_sectional_cache.merge(
+                        global_rank_df[["symbol", "date"] + _rank_cols + ["global_rank_available"]],
+                        on=["symbol", "date"], how="left",
+                    )
+                    for _rc in _rank_cols:
+                        cross_sectional_cache[_rc] = cross_sectional_cache[_rc].fillna(0.5).astype(np.float64)
+                    cross_sectional_cache["global_rank_available"] = cross_sectional_cache["global_rank_available"].fillna(False).astype(bool)
+                    # ── P1-5 : couverture par symbole + gate ──
+                    _cov_by_sym = cross_sectional_cache.groupby("symbol")["global_rank_available"].mean()
+                    _low_cov = _cov_by_sym[_cov_by_sym < 0.3]
+                    _critical_cov = _cov_by_sym[_cov_by_sym < 0.1]
+                    if len(_critical_cov) > 0:
+                        LOGGER.warning(
+                            "run_training_batch stacking: %d symbols with <10%% global_rank coverage "
+                            "→ stacking DISABLED for these symbols. %s",
+                            len(_critical_cov),
+                            ",".join(_critical_cov.index[:10]) + ("..." if len(_critical_cov) > 10 else ""),
+                        )
+                        _crit_mask = cross_sectional_cache["symbol"].isin(_critical_cov.index)
+                        for _rc in _rank_cols:
+                            cross_sectional_cache.loc[_crit_mask, _rc] = 0.5
+                        cross_sectional_cache.loc[_crit_mask, "global_rank_available"] = False
+                    elif len(_low_cov) > 0:
+                        LOGGER.warning(
+                            "run_training_batch stacking: %d symbols with <30%% global_rank coverage. "
+                            "Symbols: %s",
+                            len(_low_cov),
+                            ",".join(_low_cov.index[:10]) + ("..." if len(_low_cov) > 10 else ""),
+                        )
+                    LOGGER.info(
+                        "run_training_batch stacking per-symbol coverage: median=%.1f%% min=%.1f%% n_symbols=%d",
+                        100 * _cov_by_sym.median(), 100 * _cov_by_sym.min(), len(_cov_by_sym),
+                    )
+                else:
+                    cross_sectional_cache = global_rank_df[["symbol", "date"] + _rank_cols + ["global_rank_available"]].copy()
+                LOGGER.info(
+                    "run_training_batch stacking enabled: %d global_rank cols merged into cache rows=%d",
+                    len(_rank_cols), len(cross_sectional_cache),
+                )
+                # Persister pour les workers multiprocessing
+                _global_rank_path = Path(cfg.artifacts_dir) / "_global_rank_cache.parquet"
+                _global_rank_path.parent.mkdir(parents=True, exist_ok=True)
+                global_rank_df.to_parquet(_global_rank_path, index=False)
+                LOGGER.info(
+                    "run_training_batch global_rank persisted to %s rows=%d",
+                    _global_rank_path, len(global_rank_df),
+                )
         elif cfg.global_model.stacking_enabled:
             LOGGER.warning("run_training_batch stacking enabled but no global_rank_df produced")
 
@@ -919,54 +888,43 @@ def run_training_batch(
         cfg.data.enable_cross_sectional_features,
     )
 
-    if effective_workers == 1:
-        for index, sym in enumerate(symbols, start=1):
-            try:
-                update_runtime_status(
-                    current_phase="symbol_train_start",
-                    current_symbol=sym,
-                    current_symbol_index=index,
-                    progress_item=sym,
-                )
-                if _needs_cross_sectional:
-                    result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache, fundamental_cache=fundamental_cache, batch_id=batch_id)
-                else:
-                    result = _train_worker(sym, cfg, fundamental_cache=fundamental_cache, batch_id=batch_id)
-                results.append(result)
-                update_runtime_status(
-                    progress_current=len(results),
-                    symbols_completed=sum(1 for r in results if r.status == "completed"),
-                    symbols_skipped=sum(1 for r in results if r.status == "skipped"),
-                    symbols_failed=sum(1 for r in results if r.status == "failed"),
-                    current_phase=f"symbol_{result.status}",
-                )
-                LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
-            except Exception as exc:
-                LOGGER.exception("orchestrator worker_exception symbol=%s", sym)
-                results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
-                update_runtime_status(
-                    progress_current=len(results),
-                    symbols_completed=sum(1 for r in results if r.status == "completed"),
-                    symbols_skipped=sum(1 for r in results if r.status == "skipped"),
-                    symbols_failed=sum(1 for r in results if r.status == "failed"),
-                    current_phase="symbol_failed",
-                    current_symbol=sym,
-                    current_symbol_index=index,
-                    progress_item=sym,
-                )
+    # ── Per-Sector mode (Sprint 2026-08-03) ──
+    if cfg.training_mode == "per_sector":
+        from modelFactory.trainer_sector import run_per_sector_batch
+
+        sector_results = run_per_sector_batch(
+            symbols,
+            engine,
+            cfg,
+            batch_id=batch_id,
+        )
+        # Convert sector results to TrainResult format for compatibility
+        for sr in sector_results:
+            results.append(TrainResult(
+                sr.get("sector", "unknown"),
+                batch_id or "N/A",
+                sr.get("status", "failed"),
+                skip_reason=sr.get("reason"),
+            ))
+        LOGGER.info("orchestrator per_sector done sectors=%d statuses=%s",
+                     len(sector_results),
+                     {r.get("sector"): r.get("status") for r in sector_results})
+        LOGGER.info("🏁🏁🏁 orchestrator per_sector ALL DONE — moving to summary 🏁🏁🏁")
     else:
-        with ProcessPoolExecutor(max_workers=effective_workers) as pool:
-            # Cross-sectional cache NOT passed to subprocess (pickling overhead).
-            # Each worker falls back to symbol-by-symbol DB loading.
-            # Same for fundamentals — workers load from DB independently.
-            if _needs_cross_sectional:
-                futures = {pool.submit(_train_worker, sym, cfg, symbols, batch_id=batch_id): sym for sym in symbols}
-            else:
-                futures = {pool.submit(_train_worker, sym, cfg, batch_id=batch_id): sym for sym in symbols}
-            for future in as_completed(futures):
-                sym = futures[future]
+        # ── Per-Symbol mode (legacy) ──
+        if effective_workers == 1:
+            for index, sym in enumerate(symbols, start=1):
                 try:
-                    result = future.result()
+                    update_runtime_status(
+                        current_phase="symbol_train_start",
+                        current_symbol=sym,
+                        current_symbol_index=index,
+                        progress_item=sym,
+                    )
+                    if _needs_cross_sectional:
+                        result = _train_worker(sym, cfg, symbols, cross_sectional_cache=cross_sectional_cache, fundamental_cache=fundamental_cache, batch_id=batch_id)
+                    else:
+                        result = _train_worker(sym, cfg, fundamental_cache=fundamental_cache, batch_id=batch_id)
                     results.append(result)
                     update_runtime_status(
                         progress_current=len(results),
@@ -974,8 +932,6 @@ def run_training_batch(
                         symbols_skipped=sum(1 for r in results if r.status == "skipped"),
                         symbols_failed=sum(1 for r in results if r.status == "failed"),
                         current_phase=f"symbol_{result.status}",
-                        current_symbol=sym,
-                        progress_item=sym,
                     )
                     LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
                 except Exception as exc:
@@ -988,8 +944,45 @@ def run_training_batch(
                         symbols_failed=sum(1 for r in results if r.status == "failed"),
                         current_phase="symbol_failed",
                         current_symbol=sym,
+                        current_symbol_index=index,
                         progress_item=sym,
                     )
+        else:
+            with ProcessPoolExecutor(max_workers=effective_workers) as pool:
+                # Cross-sectional cache NOT passed to subprocess (pickling overhead).
+                # Each worker falls back to symbol-by-symbol DB loading.
+                # Same for fundamentals — workers load from DB independently.
+                if _needs_cross_sectional:
+                    futures = {pool.submit(_train_worker, sym, cfg, symbols, batch_id=batch_id): sym for sym in symbols}
+                else:
+                    futures = {pool.submit(_train_worker, sym, cfg, batch_id=batch_id): sym for sym in symbols}
+                for future in as_completed(futures):
+                    sym = futures[future]
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        update_runtime_status(
+                            progress_current=len(results),
+                            symbols_completed=sum(1 for r in results if r.status == "completed"),
+                            symbols_skipped=sum(1 for r in results if r.status == "skipped"),
+                            symbols_failed=sum(1 for r in results if r.status == "failed"),
+                            current_phase=f"symbol_{result.status}",
+                            current_symbol=sym,
+                            progress_item=sym,
+                        )
+                        LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
+                    except Exception as exc:
+                        LOGGER.exception("orchestrator worker_exception symbol=%s", sym)
+                        results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
+                        update_runtime_status(
+                            progress_current=len(results),
+                            symbols_completed=sum(1 for r in results if r.status == "completed"),
+                            symbols_skipped=sum(1 for r in results if r.status == "skipped"),
+                            symbols_failed=sum(1 for r in results if r.status == "failed"),
+                            current_phase="symbol_failed",
+                            current_symbol=sym,
+                            progress_item=sym,
+                        )
 
     # Summary
     completed = sum(1 for r in results if r.status == "completed")
@@ -1100,47 +1093,7 @@ def run_training_batch(
             except Exception as exc:
                 LOGGER.warning("run_training_batch horizon_details persist failed: %s", exc)
 
-        # ── Per-Symbol Cross-Sectional IC (agrégé depuis prédictions WF) ──
-        if completed > 0:
-            try:
-                _ps_ic_result = _compute_per_symbol_ic_from_parquet(cfg, batch_id)
-                if _ps_ic_result:
-                    _ps_h5 = _ps_ic_result.get("5", {})
-                    LOGGER.info(
-                        "run_training_batch per_symbol_ic batch_id=%s horizons=%s h5_ic=%.4f",
-                        batch_id, list(_ps_ic_result.keys()),
-                        _ps_h5.get("ic_mean", float("nan")),
-                    )
-                    # Persister dans metadata_json pour IHM
-                    with engine.begin() as conn:
-                        _mrow = conn.execute(
-                            text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
-                            {"bid": batch_id},
-                        ).mappings().first()
-                    _mexisting = {}
-                    if _mrow and _mrow.get("metadata_json"):
-                        try:
-                            _mexisting = json.loads(str(_mrow["metadata_json"]))
-                        except Exception:
-                            pass
-                    _mexisting["per_symbol_ic"] = _ps_ic_result
-                    update_training_batch(
-                        engine, batch_id,
-                        metadata_json=json.dumps(_mexisting, ensure_ascii=False),
-                    )
-                    LOGGER.info(
-                        "run_training_batch per_symbol_ic persisted batch_id=%s horizons=%s",
-                        batch_id, list(_ps_ic_result.keys()),
-                    )
-                else:
-                    LOGGER.warning(
-                        "run_training_batch per_symbol_ic no data batch_id=%s (no _per_symbol_wf_preds found)", batch_id,
-                    )
-            except Exception as exc:
-                LOGGER.warning(
-                    "run_training_batch per_symbol_ic failed batch_id=%s error=%s",
-                    batch_id, exc,
-                )
+        # ── Per-Symbol IC retiré (métrique non pertinente, 2026-08-02) ──
 
     return results
 

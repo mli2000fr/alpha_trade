@@ -465,7 +465,7 @@ def load_training_run(engine: Engine, symbol: str, run_id: str | None = None) ->
 # Metrics
 # ---------------------------------------------------------------------------
 
-def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, metrics: dict[str, float], *, model_name: str = "lstm_attention") -> None:
+def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, metrics: dict[str, float], *, model_name: str = "lstm_attention", horizon: int | None = None) -> None:
     # ML Sprint 7 — inclure les métriques ternaires si disponibles
     has_ternary = "f1_macro" in metrics or "f1_short" in metrics
     if has_ternary:
@@ -473,23 +473,24 @@ def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, me
             "INSERT INTO model_metrics (run_id, symbol, model_name, split_name, loss, directional_accuracy, `precision`, recall, auc, "
             "f1_macro, f1_short, f1_flat, f1_long, "
             "true_short_pct, true_flat_pct, true_long_pct, "
-            "pred_short_pct, pred_flat_pct, pred_long_pct) "
+            "pred_short_pct, pred_flat_pct, pred_long_pct, horizon) "
             "VALUES (:rid, :sym, :mn, :split, :loss, :da, :prec, :rec, :auc, "
             ":f1m, :f1s, :f1f, :f1l, "
-            ":tsp, :tfp, :tlp, :psp, :pfp, :plp)"
+            ":tsp, :tfp, :tlp, :psp, :pfp, :plp, :horizon)"
         )
     else:
         sql = text(
-            "INSERT INTO model_metrics (run_id, symbol, model_name, split_name, loss, directional_accuracy, `precision`, recall, auc) "
-            "VALUES (:rid, :sym, :mn, :split, :loss, :da, :prec, :rec, :auc)"
+            "INSERT INTO model_metrics (run_id, symbol, model_name, split_name, loss, directional_accuracy, `precision`, recall, auc, horizon) "
+            "VALUES (:rid, :sym, :mn, :split, :loss, :da, :prec, :rec, :auc, :horizon)"
         )
     params = {
         "rid": run_id, "sym": symbol, "mn": model_name, "split": split_name,
-        "loss": metrics.get("loss"),
+        "loss": metrics.get("loss") if metrics.get("loss") is not None else metrics.get("mse"),
         "da": metrics.get("directional_accuracy") or metrics.get("accuracy"),
         "prec": metrics.get("precision"),
         "rec": metrics.get("recall"),
         "auc": metrics.get("auc"),
+        "horizon": horizon,
     }
     if has_ternary:
         params["f1m"] = metrics.get("f1_macro") or metrics.get("f1_score")

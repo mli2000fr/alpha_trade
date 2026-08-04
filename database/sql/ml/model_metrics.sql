@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS alpha_trade.model_metrics (
     metric_id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     run_id                  VARCHAR(64)     NOT NULL,
-    symbol                  VARCHAR(20)     NOT NULL,
+    symbol                  VARCHAR(50)     NOT NULL,
     model_name              VARCHAR(32)     NOT NULL DEFAULT 'lstm_attention' COMMENT 'lstm_attention|lightgbm|catboost|global_model',
     split_name              VARCHAR(10)     NOT NULL  COMMENT 'train|val|test|wf',
     loss                    DOUBLE          DEFAULT NULL,
@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_metrics (
     `precision`             DOUBLE          DEFAULT NULL,
     recall                  DOUBLE          DEFAULT NULL,
     auc                     DOUBLE          DEFAULT NULL,
+    horizon                 INT             DEFAULT NULL,
     -- ML Sprint 7 — support ternaire
     f1_macro                DOUBLE          DEFAULT NULL COMMENT 'F1 macro (ternaire uniquement)',
     f1_short                DOUBLE          DEFAULT NULL COMMENT 'F1 classe short',

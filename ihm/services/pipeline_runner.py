@@ -266,7 +266,7 @@ DEFAULT_CA_BATCH_SIZE = 25
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
 MLGlobalModelName = Literal["catboost", "lightgbm"]
-MLTargetMode = Literal["binary", "swing_cash", "ternary"]
+MLTargetMode = Literal["binary", "swing_cash", "ternary", "regression"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost"]
@@ -370,6 +370,7 @@ class PipelineLaunchOptions:
     ml_optimize_target: bool = DEFAULT_ML_OPTIMIZE_TARGET
     # ML — cible swing cash + horizon + walk-forward (P1)
     ml_target_mode: MLTargetMode = DEFAULT_ML_TARGET_MODE  # type: ignore[assignment]
+    ml_training_mode: str = "per_sector"  # per_symbol (legacy) | per_sector
     ml_forecast_horizon: int = DEFAULT_ML_FORECAST_HORIZON
     ml_target_up_threshold: float = DEFAULT_ML_TARGET_UP_THRESHOLD
     ml_target_down_threshold: float = DEFAULT_ML_TARGET_DOWN_THRESHOLD
@@ -2133,7 +2134,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--target-mode",
             options.ml_target_mode,
         ]
-        # ML Sprint 1 — ajouter num-classes pour mode ternaire
+        # ML Sprint 1 — ajouter num-classes pour mode ternaire / régression
         if options.ml_target_mode == "ternary":
             command.extend(["--num-classes", "3"])
             command.extend([
@@ -2144,9 +2145,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--ternary-threshold-long", str(options.ml_ternary_threshold_long),
                 "--ternary-top2-margin", str(options.ml_ternary_top2_margin),
             ])
+        elif options.ml_target_mode == "regression":
+            command.extend(["--num-classes", "1"])
+        if options.ml_training_mode != "per_symbol":
+            command.extend(["--training-mode", options.ml_training_mode])
         command.extend([
-            "--forecast-horizon",
-            str(options.ml_forecast_horizon),
+            "--forecast-horizon" if options.ml_forecast_horizon != 0 else "--forecast-horizons",
+            str(options.ml_forecast_horizon) if options.ml_forecast_horizon != 0 else "3,5,10,15,20",
             "--target-up-threshold",
             str(options.ml_target_up_threshold),
             "--target-down-threshold",

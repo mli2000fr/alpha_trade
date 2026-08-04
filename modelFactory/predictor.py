@@ -496,7 +496,11 @@ def _resolve_artifact_paths(
     run_id: Optional[str],
     batch_id: Optional[str] = None,
 ) -> tuple[Path, Path, Path, Optional[str]]:
-    """Résout les artefacts depuis le registre DB, sinon via le dossier de campagne du symbole."""
+    """Résout les artefacts depuis le registre DB, sinon via le dossier de campagne du symbole.
+
+    P0-2 (2026-08-04) : si aucun artefact per-symbol n'est trouvé, tente le routage
+    per-sector (symbol → secteur GICS → modèle sectoriel).
+    """
     try:
         if batch_id is not None:
             selected_run = load_training_run(engine, symbol, run_id=run_id, batch_id=batch_id)
@@ -524,8 +528,84 @@ def _resolve_artifact_paths(
             selected_run.get("run_id"),
         )
 
+    # ── P0-2 : fallback per-sector ──
+    sector_run = _resolve_sector_run(engine, symbol, batch_id=batch_id)
+    if sector_run is not None:
+        ckpt_path = Path(sector_run["checkpoint_path"])
+        scaler_path = Path(sector_run["scaler_path"])
+        config_path = Path(sector_run["config_path"])
+        if ckpt_path.exists() and config_path.exists():
+            LOGGER.info(
+                "predict_symbol sector_fallback symbol=%s sector=%s run_id=%s",
+                symbol, sector_run.get("symbol"), sector_run.get("run_id"),
+            )
+            return ckpt_path, scaler_path, config_path, str(sector_run["run_id"])
+
     sym_dir = artifacts_dir / batch_id / symbol if batch_id is not None else artifacts_dir / symbol
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
+
+
+def _resolve_sector_run(
+    engine: "Engine",  # type: ignore[name-defined]
+    symbol: str,
+    batch_id: str | None = None,
+) -> dict | None:
+    """Résout le training run du secteur GICS pour un symbole donné.
+
+    Retourne un dict avec les clés nécessaires au fallback tabulaire :
+    ``run_id``, ``config_path``, ``checkpoint_path`` (→ model_path).
+
+    P0-2 fix (2026-08-04) : utilise une requête directe qui n'exige pas
+    checkpoint_path/scaler_path (absents des runs tabulaires sectoriels).
+    """
+    try:
+        from modelFactory.cross_sectional import _load_sector_mapping, _map_to_gics_sector
+        sector_map = _load_sector_mapping(engine)
+        if not sector_map:
+            return None
+        db_sector = sector_map.get(symbol.upper())
+        if db_sector is None:
+            return None
+        gics_sector = _map_to_gics_sector(db_sector)
+        # Requête directe : ne pas exiger checkpoint_path/scaler_path
+        from sqlalchemy import text
+        if batch_id is not None:
+            sql = text(
+                "SELECT mtr.run_id, mtr.symbol, mtr.config_path, "
+                "mg.model_path, mg.model_name "
+                "FROM model_training_run mtr "
+                "JOIN model_governance mg ON mg.run_id = mtr.run_id "
+                "WHERE mtr.symbol = :sym AND mtr.batch_id = :bid "
+                "AND mtr.status = 'completed' AND mg.is_selected_model = 1 "
+                "ORDER BY mtr.finished_at DESC LIMIT 1"
+            )
+            params = {"sym": gics_sector, "bid": batch_id}
+        else:
+            sql = text(
+                "SELECT mtr.run_id, mtr.symbol, mtr.config_path, "
+                "mg.model_path, mg.model_name "
+                "FROM model_training_run mtr "
+                "JOIN model_governance mg ON mg.run_id = mtr.run_id "
+                "WHERE mtr.symbol = :sym AND mtr.status = 'completed' "
+                "AND mg.is_selected_model = 1 "
+                "ORDER BY mtr.finished_at DESC LIMIT 1"
+            )
+            params = {"sym": gics_sector}
+        with engine.connect() as conn:
+            row = conn.execute(sql, params).mappings().first()
+        if row is None:
+            return None
+        return {
+            "run_id": row["run_id"],
+            "symbol": row["symbol"],
+            "config_path": row["config_path"] or "",
+            # Le predictor lit checkpoint_path comme chemin du modèle tabulaire
+            "checkpoint_path": row["model_path"] or "",
+            "scaler_path": "",  # non utilisé pour les modèles tabulaires
+            "model_name": row["model_name"],
+        }
+    except Exception:
+        return None
 
 
 def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -> str | None:
@@ -658,11 +738,18 @@ def clear_model_cache() -> None:
 
 
 def clear_prediction_data_cache() -> None:
-    """Vide le cache des données immuables réutilisées entre symboles."""
+    """Vide le cache des données immuables réutilisées entre symboles.
+
+    P2-5 fix (2026-08-04) : inclut _global_rank_prediction_cache et
+    _per_symbol_features_cache qui n'étaient pas vidés.
+    """
+    global _global_rank_prediction_cache, _per_symbol_features_cache
     with _benchmark_frame_cache_lock:
         _benchmark_frame_cache.clear()
     with _cross_sectional_frame_cache_lock:
         _cross_sectional_frame_cache.clear()
+    _global_rank_prediction_cache.clear()
+    _per_symbol_features_cache.clear()
 
 
 def _load_benchmark_bars_cached(
@@ -933,6 +1020,9 @@ def _prepare_prediction_frame(
             include_macro_vxn=data_cfg.include_macro_vxn_features,
             include_macro_vix3m=data_cfg.include_macro_vix3m_features,
             include_macro_move=data_cfg.include_macro_move_features,
+            include_fundamentals=data_cfg.include_fundamentals_features,
+            include_factors=data_cfg.include_factors_features,
+            include_macro_regime=data_cfg.include_macro_regime_features,
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)
@@ -1075,6 +1165,12 @@ def _predict_with_tabular_model(
     ))
     if df.empty or len(df) == 0:
         return None
+    # ── P0-3 fix (2026-08-04) : reconstruire pd.Categorical pour "symbol" ──
+    _symbol_cats = cfg_data.get("symbol_categories")
+    if _symbol_cats and "symbol" in df.columns:
+        # Inclure le symbole courant s'il n'est pas dans les catégories d'entraînement
+        _all_cats = list(dict.fromkeys(list(_symbol_cats) + [symbol]))
+        df["symbol"] = pd.Categorical(df["symbol"], categories=_all_cats)
     if not _has_matching_latest_feature_date(df, cutoff_date):
         LOGGER.warning(
             "predict_symbol stale_feature_row symbol=%s selected_model=%s cutoff_date=%s last_feature_date=%s",
@@ -1141,32 +1237,42 @@ def _predict_with_tabular_model(
         _record_artifact_issue(symbol, reason=reason, path=model_path)
         raise ArtifactIntegrityError(reason, path=model_path) from exc
     try:
-        prediction_output = model.predict_proba(last_row[resolved_feature_columns])
-        raw_proba = _extract_positive_class_probability(
-            prediction_output,
-            symbol=symbol,
-            selected_model=selected_model,
-            model_path=model_path,
-            target_mode=data_cfg.target_mode,
-        )
-        # ── Ternaire tabulaire (P2 2026-06-30) ──────────────────────
-        # Les challengers LightGBM / CatBoost entraînés en ternaire
-        # produisent 3 colonnes [short, flat, long] → on extrait les
-        # 3 probas pour les persister dans model_predictions.
-        proba_all = np.asarray(prediction_output, dtype=float)
-        is_ternary_tab = (
-            data_cfg.target_mode == "ternary"
-            and proba_all.ndim == 2
-            and proba_all.shape[1] >= 3
-        )
-        if is_ternary_tab:
-            proba_short_val: float | None = float(proba_all[0, 0])
-            proba_flat_val: float | None = float(proba_all[0, 1])
-            proba_long_val: float | None = float(proba_all[0, 2])
-        else:
+        is_tab_regression = data_cfg.target_mode == "regression"
+        if is_tab_regression:
+            # ── Regression : score continu ──────────────────────────
+            prediction_output = model.predict(last_row[resolved_feature_columns])
+            raw_proba = float(np.asarray(prediction_output, dtype=float).reshape(-1)[0])
             proba_short_val = None
             proba_flat_val = None
             proba_long_val = None
+            is_ternary_tab = False
+        else:
+            prediction_output = model.predict_proba(last_row[resolved_feature_columns])
+            raw_proba = _extract_positive_class_probability(
+                prediction_output,
+                symbol=symbol,
+                selected_model=selected_model,
+                model_path=model_path,
+                target_mode=data_cfg.target_mode,
+            )
+            # ── Ternaire tabulaire (P2 2026-06-30) ──────────────────────
+            # Les challengers LightGBM / CatBoost entraînés en ternaire
+            # produisent 3 colonnes [short, flat, long] → on extrait les
+            # 3 probas pour les persister dans model_predictions.
+            proba_all = np.asarray(prediction_output, dtype=float)
+            is_ternary_tab = (
+                data_cfg.target_mode == "ternary"
+                and proba_all.ndim == 2
+                and proba_all.shape[1] >= 3
+            )
+            if is_ternary_tab:
+                proba_short_val: float | None = float(proba_all[0, 0])
+                proba_flat_val: float | None = float(proba_all[0, 1])
+                proba_long_val: float | None = float(proba_all[0, 2])
+            else:
+                proba_short_val = None
+                proba_flat_val = None
+                proba_long_val = None
     except ArtifactIntegrityError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1257,6 +1363,22 @@ def _predict_with_tabular_model(
                 symbol, selected_model, exc,
             )
             return None
+    elif is_tab_regression:
+        # ── Regression : décision basée sur le signe ─────────────────
+        if raw_proba > 0:
+            pred_class = 1
+            signal_label = "long"
+            predicted_side_val = "long"
+        elif raw_proba < 0:
+            pred_class = 0
+            signal_label = "short"
+            predicted_side_val = "short"
+        else:
+            pred_class = 0
+            signal_label = "no_trade"
+            predicted_side_val = None
+        decision_reason = None
+        proba = raw_proba  # score continu
     else:
         pred_class = 1 if proba >= effective_threshold else 0
         signal_label = "long" if pred_class == 1 else "no_trade"
@@ -1595,23 +1717,32 @@ def predict_symbol(
         try:
             logits, _ = model(x)
             logits_tensor = torch.as_tensor(logits)
-            if logits_tensor.ndim != 2 or logits_tensor.shape[0] < 1 or logits_tensor.shape[1] < 2:
-                raise ValueError(f"invalid_logits_shape={tuple(logits_tensor.shape)}")
             num_classes = logits_tensor.shape[1]
-            probs_all = torch.softmax(logits_tensor, dim=1)[0]  # [C]
-            is_ternary = num_classes == 3 or data_cfg.target_mode == "ternary"
-            if is_ternary and num_classes >= 3:
-                # Ternaire : classe 0=short, 1=flat, 2=long (apres label shift)
-                proba_long_val = probs_all[2].item()
-                proba_flat_val = probs_all[1].item()
-                proba_short_val = probs_all[0].item()
-                raw_proba = proba_long_val  # pour compatibilite binaire
-            else:
-                # Binaire : colonne 1 = classe positive (long)
-                raw_proba = probs_all[1].item()
+            is_regression = num_classes == 1 or data_cfg.target_mode == "regression"
+            if logits_tensor.ndim != 2 or logits_tensor.shape[0] < 1 or (not is_regression and logits_tensor.shape[1] < 2):
+                raise ValueError(f"invalid_logits_shape={tuple(logits_tensor.shape)}")
+            if is_regression:
+                # ── Regression : score continu ────────────────────────
+                raw_proba = float(logits_tensor[0, 0].item())
                 proba_long_val = None
                 proba_flat_val = None
                 proba_short_val = None
+                is_ternary = False
+            else:
+                probs_all = torch.softmax(logits_tensor, dim=1)[0]  # [C]
+                is_ternary = num_classes == 3 or data_cfg.target_mode == "ternary"
+                if is_ternary and num_classes >= 3:
+                    # Ternaire : classe 0=short, 1=flat, 2=long (apres label shift)
+                    proba_long_val = probs_all[2].item()
+                    proba_flat_val = probs_all[1].item()
+                    proba_short_val = probs_all[0].item()
+                    raw_proba = proba_long_val  # pour compatibilite binaire
+                else:
+                    # Binaire : colonne 1 = classe positive (long)
+                    raw_proba = probs_all[1].item()
+                    proba_long_val = None
+                    proba_flat_val = None
+                    proba_short_val = None
         except Exception as exc:  # noqa: BLE001
             reason = f"lstm_runtime_incompatible:{selected_architecture}"
             LOGGER.error("predict_symbol %s symbol=%s path=%s error=%s", reason, symbol, ckpt_path, exc)
@@ -1678,7 +1809,22 @@ def predict_symbol(
             LOGGER.warning("Temperature scaling failed symbol=%s: %s", symbol, _exc)
 
     pred_date = prediction_date or date.today()
-    if is_ternary and num_classes >= 3:
+    if is_regression:
+        # ── Regression : décision basée sur le signe ─────────────────
+        if raw_proba > 0:
+            pred_class = 1
+            signal_label = "long"
+            predicted_side_val = "long"
+        elif raw_proba < 0:
+            pred_class = 0
+            signal_label = "short"
+            predicted_side_val = "short"
+        else:
+            pred_class = 0
+            signal_label = "no_trade"
+            predicted_side_val = None
+        proba = raw_proba  # score continu
+    elif is_ternary and num_classes >= 3:
         # Le chemin LSTM consomme la même policy que les backends tabulaires.
         cal_short = calibrated_ternary_probs.get("proba_short", 0.0) or 0.0
         cal_flat = calibrated_ternary_probs.get("proba_flat", 0.0) or 0.0
@@ -2219,9 +2365,9 @@ def cascade_select(
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
     Pour chaque symbole ayant un rang global ET une prédiction per-symbol :
-    1. Filtre top/bottom N% selon ``rank_avg = (rank3 + rank5) / 2``
+    1. Filtre top/bottom N% selon ``global_rank_20`` (H20, meilleur horizon)
     2. Vérifie que la proba per-symbol > ``min_prob``
-    3. Score multiplicatif : ``rank_dir × prob``
+    3. Score multiplicatif : ``rank × prob``
     4. Trie par score décroissant
 
     Args:
@@ -2250,17 +2396,14 @@ def cascade_select(
 
     for _, row in ranks_df.iterrows():
         symbol = str(row["symbol"])
-        rank3 = float(row.get("global_rank_3")) if pd.notna(row.get("global_rank_3")) else None
-        rank5 = float(row.get("global_rank_5")) if pd.notna(row.get("global_rank_5")) else None
+        rank20 = float(row.get("global_rank_20")) if pd.notna(row.get("global_rank_20")) else None
 
-        if rank3 is None or rank5 is None:
+        if rank20 is None:
             continue
 
-        rank_avg = (rank3 + rank5) / 2.0
-
-        # Filtre sur la moyenne des deux horizons
-        is_top = rank_avg > (1.0 - _top_pct)
-        is_bottom = rank_avg < _top_pct
+        # Filtre sur H20 (meilleur horizon : IC 0.025, IR 2.76)
+        is_top = rank20 > (1.0 - _top_pct)
+        is_bottom = rank20 < _top_pct
 
         if not (is_top or is_bottom):
             continue
@@ -2271,12 +2414,12 @@ def cascade_select(
             continue
 
         if is_top and pred.long_prob > _min_prob:
-            rank_dir = rank_avg  # déjà proche de 1.0
+            rank_dir = rank20  # déjà proche de 1.0
             score = rank_dir * pred.long_prob
             candidates.append(("LONG", symbol, score))
 
         elif is_bottom and pred.short_prob > _min_prob:
-            rank_dir = 1.0 - rank_avg  # inverse : 0.05 → 0.95
+            rank_dir = 1.0 - rank20  # inverse : 0.05 → 0.95
             score = rank_dir * pred.short_prob
             candidates.append(("SHORT", symbol, score))
 

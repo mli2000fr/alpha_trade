@@ -1248,6 +1248,8 @@ def build_target(
     mode: str = "binary",
     positive_threshold: float = 0.0,
     negative_threshold: float = 0.0,
+    *,
+    skip_winsorize: bool = False,
 ) -> pd.Series:
     """Construit la target pour l'horizon futur.
 
@@ -1263,6 +1265,7 @@ def build_target(
     - ``ternary``     : +1 (long)  si future_return > positive_threshold,
                         -1 (short) si future_return < negative_threshold,
                          0 (flat)  entre les deux.
+    - ``regression``  : rendement futur vol-scalé + winsorizé (continu).
 
       Pour ``ternary``, ``negative_threshold`` doit être < 0 (ex: -0.08 pour -8%).
     """
@@ -1285,6 +1288,21 @@ def build_target(
         target = target.mask(future_return < negative_threshold, -1)
         return target.where(future_return.notna())
 
+    if mode == "regression":
+        # ── Regression target (Sprint 2026-08-02) ──
+        # Vol-scaling ONLY. La winsorisation et la standardisation sont
+        # appliquées APRÈS le split chronologique pour éviter le leakage
+        # (→ run_tabular_baseline, run_tabular_walk_forward, SymbolDataModule).
+        # skip_winsorize=True désactive la winsorisation pré-split (P1-1 fix).
+        target = future_return.copy()
+        if horizon >= 5:
+            rolling_vol = close.pct_change().rolling(20).std()
+            target = target / rolling_vol
+        if not skip_winsorize:
+            lo, hi = target.quantile(0.01), target.quantile(0.99)
+            target = target.clip(lo, hi)
+        return target.where(future_return.notna()).astype(float)
+
     raise ValueError(f"Unsupported target mode: {mode}")
 
 
@@ -1292,6 +1310,86 @@ def compute_future_return(df: pd.DataFrame, horizon: int = 5) -> pd.Series:
     """Retourne le rendement futur aligné à la ligne courante."""
     close = _build_adjusted_price_frame(df)["close"]
     return close.shift(-horizon) / close - 1.0
+
+
+def build_multi_horizon_targets(
+    df: pd.DataFrame,
+    horizons: tuple[int, ...],
+    mode: str = "binary",
+    positive_threshold: float = 0.0,
+    negative_threshold: float = 0.0,
+    *,
+    skip_winsorize: bool = False,
+) -> pd.DataFrame:
+    """Construit les targets pour plusieurs horizons en une seule passe.
+
+    Retourne un DataFrame avec les colonnes ``target_h{horizon}`` et
+    ``future_return_h{horizon}`` pour chaque horizon.
+
+    Si ``skip_winsorize=True``, la winsorisation est désactivée (P1-1 fix).
+    Elle sera appliquée après le split chronologique sur les stats du train.
+    """
+    close = _build_adjusted_price_frame(df)["close"]
+    targets: dict[str, pd.Series] = {}
+    for h in horizons:
+        future_return = close.shift(-h) / close - 1.0
+        targets[f"future_return_h{h}"] = future_return
+        if mode == "regression":
+            target = future_return.copy()
+            if h >= 5:
+                rolling_vol = close.pct_change().rolling(20).std()
+                target = target / rolling_vol
+            if not skip_winsorize:
+                lo, hi = target.quantile(0.01), target.quantile(0.99)
+                target = target.clip(lo, hi)
+            targets[f"target_h{h}"] = target.where(future_return.notna()).astype(float)
+        else:
+            targets[f"target_h{h}"] = build_target(
+                df, horizon=h, mode=mode,
+                positive_threshold=positive_threshold,
+                negative_threshold=negative_threshold,
+            )
+    return pd.DataFrame(targets, index=df.index)
+
+
+def standardize_regression_target(
+    prepared_df: pd.DataFrame,
+    train_mask: "pd.Series | None" = None,
+) -> pd.DataFrame:
+    """Standardise la target regression (mean=0, std=1) sur les stats du train.
+
+    Doit être appelée APRÈS le split chronologique pour éviter le data leakage.
+    Si ``train_mask`` est None, standardise sur l'ensemble du DataFrame
+    (utilisé uniquement pour l'inférence, où il n'y a pas de split).
+
+    Returns
+    -------
+    pd.DataFrame
+        Copie du DataFrame avec la colonne ``target`` standardisée.
+    """
+    if "target" not in prepared_df.columns:
+        return prepared_df
+
+    df = prepared_df.copy()
+    target = df["target"]
+
+    if train_mask is not None:
+        train_target = target.loc[train_mask]
+    else:
+        train_target = target
+
+    valid = train_target.notna()
+    if valid.sum() < 2:
+        return df
+
+    t_mean = float(train_target.loc[valid].mean())
+    t_std = float(train_target.loc[valid].std())
+    if t_std > 1e-9:
+        df["target"] = (target - t_mean) / t_std
+    else:
+        df["target"] = target - t_mean
+
+    return df
 
 
 # ---------------------------------------------------------------------------

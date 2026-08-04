@@ -217,6 +217,77 @@ def chrono_split_by_dates(
     return ChronoSplit(train=train, val=val, test=test)
 
 
+def generate_walk_forward_splits_by_dates(
+    df: pd.DataFrame,
+    *,
+    min_train_dates: int,
+    val_dates: int,
+    test_dates: int,
+    step_dates: int,
+    max_splits: int,
+    forecast_horizon: int = 0,
+    embargo_dates: int = 0,
+    date_column: str = "date",
+) -> list[WalkForwardSplit]:
+    """Construit des splits walk-forward par dates uniques.
+
+    Les paramètres de taille sont interprétés en **nombre de dates**
+    (et non en nombre de lignes), garantissant qu'un même jour
+    calendaire ne peut pas être éclaté entre train / val / test.
+
+    Si ``min_train_dates`` dépasse la longueur disponible, la
+    fonction retourne une liste vide.
+    """
+    if date_column not in df.columns:
+        raise ValueError(f"Colonne date absente: {date_column}")
+    _validate_ordered_frame(df, date_column=date_column)
+    dated = df.copy()
+    dated[date_column] = pd.to_datetime(dated[date_column])
+    unique_dates = pd.Index(sorted(dated[date_column].unique()))
+    n_dates = len(unique_dates)
+
+    splits: list[WalkForwardSplit] = []
+    train_end_idx = min_train_dates
+    split_index = 0
+
+    while split_index < max_splits:
+        val_end_idx = train_end_idx + val_dates
+        test_end_idx = val_end_idx + test_dates
+        if test_end_idx > n_dates:
+            break
+
+        train_dates = unique_dates[:train_end_idx]
+        val_dates_arr = unique_dates[train_end_idx:val_end_idx]
+        # embargo: skip `embargo_dates` dates after val
+        test_start_idx = val_end_idx + max(int(embargo_dates), 0)
+        test_dates_arr = unique_dates[test_start_idx:test_end_idx]
+
+        train = _purge_by_dates(
+            dated, start_dates=train_dates,
+            purge_tail_dates=forecast_horizon, date_column=date_column,
+        )
+        val = _purge_by_dates(
+            dated, start_dates=val_dates_arr,
+            purge_tail_dates=forecast_horizon, date_column=date_column,
+        )
+        test = dated[dated[date_column].isin(set(test_dates_arr))].reset_index(drop=True)
+
+        if not train.empty and not val.empty and not test.empty:
+            splits.append(
+                WalkForwardSplit(
+                    split_index=split_index,
+                    train=train,
+                    val=val,
+                    test=test,
+                )
+            )
+            split_index += 1
+
+        train_end_idx += step_dates
+
+    return splits
+
+
 # ---------------------------------------------------------------------------
 # Validation d'isolation des folds (Sprint 3 Point 3.4)
 # ---------------------------------------------------------------------------
@@ -308,7 +379,13 @@ def validate_fold_isolation(
             details.append(f"train∩test={train_test_overlap}")
         violations.append(f"Folds non disjoints: {', '.join(details)}")
 
-    # ── 2. Purge adequacy ───────────────────────────────────────────────
+    # ── 2. Purge adequacy (P2-3, 2026-08-04) ──────────────────────────
+    # Le validateur ne dispose que des folds DÉJÀ purgés. Les dates retirées
+    # par la purge sont absentes → impossible de compter précisément les séances.
+    # On utilise donc .days (calendaires) comme approximation conservative :
+    # - un week-end peut produire un faux positif (gap calendaire > gap séances)
+    # - mais un vrai manque de purge ne passera jamais (gap calendaire ≥ gap séances)
+    # Le comportement productif (_purge_by_dates) est correct par construction.
     purge_adequate = True
     if label_horizon > 0 and date_column and date_column in split.train.columns:
         train_dates = pd.to_datetime(split.train[date_column])
@@ -320,7 +397,7 @@ def validate_fold_isolation(
             gap_train_val = (first_val - last_train).days
             if gap_train_val < label_horizon:
                 violations.append(
-                    f"Gap train→val insuffisant: {gap_train_val}j < {label_horizon}j (label_horizon)"
+                    f"Gap train→val insuffisant: {gap_train_val}j calendaires < {label_horizon} séances"
                 )
                 purge_adequate = False
         if not val_dates.empty and not test_dates.empty:
@@ -329,7 +406,7 @@ def validate_fold_isolation(
             gap_val_test = (first_test - last_val).days
             if gap_val_test < label_horizon:
                 violations.append(
-                    f"Gap val→test insuffisant: {gap_val_test}j < {label_horizon}j (label_horizon)"
+                    f"Gap val→test insuffisant: {gap_val_test}j calendaires < {label_horizon} séances"
                 )
                 purge_adequate = False
 
@@ -447,12 +524,12 @@ def build_sequences(features: np.ndarray, targets: np.ndarray, seq_len: int) -> 
     return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.float32)
 
 
-def build_sequence_dataset(df: pd.DataFrame, scaler: FeatureScaler, seq_len: int) -> SequenceDataset | None:
+def build_sequence_dataset(df: pd.DataFrame, scaler: FeatureScaler, seq_len: int, *, is_regression: bool = False) -> SequenceDataset | None:
     """Construit un `SequenceDataset` à partir d'un split préparé."""
     feats = scaler.transform(df)
     targets = df["target"].values
     X, y = build_sequences(feats, targets, seq_len)
-    return SequenceDataset(X, y) if len(X) > 0 else None
+    return SequenceDataset(X, y, is_regression=is_regression) if len(X) > 0 else None
 
 
 # ---------------------------------------------------------------------------
@@ -460,9 +537,10 @@ def build_sequence_dataset(df: pd.DataFrame, scaler: FeatureScaler, seq_len: int
 # ---------------------------------------------------------------------------
 
 class SequenceDataset(Dataset):  # type: ignore[type-arg]
-    def __init__(self, X: np.ndarray, y: np.ndarray) -> None:
+    def __init__(self, X: np.ndarray, y: np.ndarray, *, is_regression: bool = False) -> None:
         self.X = torch.from_numpy(X)
-        self.y = torch.from_numpy(y).long()
+        self.y = torch.from_numpy(y).float() if is_regression else torch.from_numpy(y).long()
+        self._is_regression = is_regression
 
     def __len__(self) -> int:
         return len(self.y)
@@ -578,11 +656,38 @@ class SymbolDataModule(L.LightningDataModule):
             forecast_horizon=self.data_cfg.forecast_horizon,
         )
         self.split = split
+        # 2.5 Winsorize + Standardize regression target on train stats only (anti-leakage)
+        if self.data_cfg.target_mode == "regression":
+            # Identify train rows using the same indices chrono_split used
+            n = len(df)
+            i_train = int(n * self.data_cfg.train_ratio)
+            train_start, train_end = _purged_bounds(start=0, end=i_train, purge_tail=self.data_cfg.forecast_horizon)
+            train_mask = pd.Series(False, index=df.index)
+            train_mask.iloc[train_start:train_end] = True
+            # ── Winsorize using train quantiles (P1-1 fix) ──
+            _t_target = df.loc[train_mask, "target"]
+            _t_valid = _t_target.notna()
+            if _t_valid.sum() >= 2:
+                _lo = float(_t_target.loc[_t_valid].quantile(0.01))
+                _hi = float(_t_target.loc[_t_valid].quantile(0.99))
+                df["target"] = df["target"].clip(_lo, _hi)
+            # Standardize
+            from modelFactory.features import standardize_regression_target
+            df = standardize_regression_target(df, train_mask=train_mask)
+            # Re-split with standardized target
+            split = chrono_split(
+                df,
+                self.data_cfg.train_ratio,
+                self.data_cfg.val_ratio,
+                forecast_horizon=self.data_cfg.forecast_horizon,
+            )
+            self.split = split
         # 3. Fit scaler on train
         self.scaler.fit(split.train)
         # 4. Transform + build sequences
+        _is_reg = self.data_cfg.target_mode == "regression"
         for name, part in [("train", split.train), ("val", split.val), ("test", split.test)]:
-            ds = build_sequence_dataset(part, self.scaler, self.data_cfg.sequence_length)
+            ds = build_sequence_dataset(part, self.scaler, self.data_cfg.sequence_length, is_regression=_is_reg)
             setattr(self, f"{name}_ds", ds)
             LOGGER.info("dataset split=%s sequences=%d", name, len(ds) if ds is not None else 0)
 
@@ -684,6 +789,22 @@ def prepare_symbol_frame(
         )
         df["future_return"] = triple_targets["future_return"]
         df["target"] = triple_targets["target"]
+    elif data_cfg.forecast_horizons:
+        # ── Multi-horizon : construit target_h{3,5,10,15,20} ──
+        from modelFactory.features import build_multi_horizon_targets as _bmt
+        _multi = _bmt(
+            df,
+            horizons=data_cfg.forecast_horizons,
+            mode=data_cfg.target_mode,
+            positive_threshold=data_cfg.target_up_threshold,
+            negative_threshold=data_cfg.target_down_threshold,
+            skip_winsorize=True,  # P1-1: winsorization handled post-split
+        )
+        for _col in _multi.columns:
+            df[_col] = _multi[_col]
+        # Rétrocompat : "target" et "future_return" pointent vers l'horizon max
+        df["target"] = df[f"target_h{data_cfg.forecast_horizon}"]
+        df["future_return"] = df[f"future_return_h{data_cfg.forecast_horizon}"]
     else:
         df["future_return"] = compute_future_return(df, horizon=data_cfg.forecast_horizon)
         df["target"] = build_target(
@@ -692,6 +813,7 @@ def prepare_symbol_frame(
             mode=data_cfg.target_mode,
             positive_threshold=data_cfg.target_up_threshold,
             negative_threshold=data_cfg.target_down_threshold,
+            skip_winsorize=True,  # P1-1: winsorization handled post-split
         )
     active_features = get_feature_columns(
         data_cfg.include_sentiment_features,

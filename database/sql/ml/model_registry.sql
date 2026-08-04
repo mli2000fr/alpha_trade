@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS alpha_trade.model_registry (
     registry_id     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    symbol          VARCHAR(20)     NOT NULL,
+    symbol          VARCHAR(50)     NOT NULL,
     architecture    VARCHAR(50)     NOT NULL DEFAULT 'lstm_attention',
     version         INT UNSIGNED    NOT NULL DEFAULT 1,
     is_active       TINYINT(1)      NOT NULL DEFAULT 1   COMMENT '1=modèle courant pour inférence',

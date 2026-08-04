@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
@@ -14,6 +16,34 @@ from sqlalchemy import text
 
 BATCH_DETAIL_QUERY = """
     SELECT * FROM model_training_batch WHERE batch_id = :batch_id
+"""
+
+HORIZON_LIST_QUERY = """
+    SELECT DISTINCT mm.horizon
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mm.horizon IS NOT NULL
+    ORDER BY mm.horizon
+"""
+
+F1_BY_HORIZON_QUERY = """
+    SELECT
+        mm.horizon,
+        ROUND(AVG(mm.f1_macro), 3) AS f1_macro,
+        ROUND(AVG(mm.f1_short), 3) AS f1_short,
+        ROUND(AVG(mm.f1_long), 3) AS f1_long,
+        ROUND(AVG(mm.directional_accuracy), 4) AS dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.split_name = 'wf'
+      AND mm.horizon IS NOT NULL
+    GROUP BY mm.horizon
+    ORDER BY mm.horizon
 """
 
 F1_BY_SPLIT_QUERY = """
@@ -169,6 +199,92 @@ CHAMPION_BY_MODEL_QUERY = """
     ORDER BY nb_symbols DESC
 """
 
+# ── Métriques régression (target continue) ──
+REG_BY_SPLIT_QUERY = """
+    SELECT
+        mm.model_name,
+        mm.split_name,
+        COUNT(DISTINCT mm.symbol) AS nb_symbols,
+        ROUND(AVG(mm.loss), 6) AS avg_mse,
+        ROUND(AVG(mm.directional_accuracy), 4) AS avg_dir_acc
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+      AND mm.model_name != 'global_model'
+    GROUP BY mm.model_name, mm.split_name
+    ORDER BY mm.model_name, FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
+"""
+
+REG_TOP_QUERY = """
+    SELECT
+        mm.model_name, mm.symbol,
+        ROUND(mm.directional_accuracy, 4) AS dir_acc,
+        ROUND(mm.loss, 4) AS mse
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
+      AND mm.directional_accuracy IS NOT NULL
+    ORDER BY mm.directional_accuracy DESC LIMIT 10
+"""
+
+REG_WORST_QUERY = """
+    SELECT
+        mm.model_name, mm.symbol,
+        ROUND(mm.directional_accuracy, 4) AS dir_acc,
+        ROUND(mm.loss, 4) AS mse
+    FROM alpha_trade.model_metrics AS mm
+    JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
+    WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
+      AND mm.directional_accuracy IS NOT NULL
+    ORDER BY mm.directional_accuracy ASC LIMIT 10
+"""
+
+# ── Régime de marché ──
+ALL_WF_JSON_QUERY = """
+    SELECT
+        mmf.symbol,
+        mmf.metrics_json
+    FROM alpha_trade.model_metrics_full AS mmf
+    JOIN alpha_trade.model_training_run AS mtr
+        ON mtr.run_id = mmf.run_id
+    WHERE mtr.batch_id = :batch_id
+      AND mtr.status = 'completed'
+"""
+
+SPY_QUERY = """
+    SELECT `date`, adj_close
+    FROM alpha_trade.stock_bars_daily
+    WHERE symbol = 'SPY'
+    ORDER BY `date`
+"""
+
+VIX_QUERY = """
+    SELECT trade_date, vix
+    FROM alpha_trade.stock_macro_indicators_daily
+    ORDER BY trade_date
+"""
+
+_REGIME_LABELS: dict[str, str] = {
+    "bear_high_vol": "🔴 Bear high vol",
+    "bull": "🟢 Bull",
+    "range_high_vol": "🟠 Range high vol",
+    "range_low_vol": "🔵 Range low vol",
+}
+
+
+def _classify_regime(spy_return_pct: float, vix: float, median_vix: float) -> str:
+    if spy_return_pct < 0 and vix > median_vix:
+        return "bear_high_vol"
+    if spy_return_pct > 0 and vix <= median_vix:
+        return "bull"
+    if abs(spy_return_pct) < 2 and vix > median_vix:
+        return "range_high_vol"
+    return "range_low_vol"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -260,7 +376,7 @@ def _append_global_ranking_horizon_details(
     lines.append("## 🌐 Global Ranking — Détails par Horizon")
     lines.append("")
     lines.append(
-        f"Modèle LightGBM LambdaRank — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )
@@ -358,81 +474,206 @@ def _append_global_ranking_horizon_details(
             lines.append("")
 
 
-def _append_per_symbol_ic(
+    lines.append("")
+
+
+def _append_backtest_results(
     lines: list[str],
-    metadata_json_str: str | None,
+    batch_id: str | None,
 ) -> None:
-    """Ajoute la section IC cross-sectionnel des modèles per-symbol (multi-horizon)."""
-    if not metadata_json_str or str(metadata_json_str) in ("None", "nan", ""):
+    """Ajoute la section backtest stratégies Global Rank (V1/V2/V3)."""
+    if not batch_id:
         return
-
+    _cache = Path("artifacts") / "models" / batch_id / "global_rank_cache.parquet"
+    if not _cache.exists():
+        return
     try:
-        _meta = json.loads(str(metadata_json_str))
-    except (json.JSONDecodeError, TypeError):
-        return
+        import numpy as np
+        _df = pd.read_parquet(_cache)
+        _df["date"] = pd.to_datetime(_df["date"])
+        _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
+        _all_dates = sorted(_df["date"].unique())
+        _rebal = _all_dates[::20]
+        _results = {}
+        for _label, _fn in [
+            ("V1 — H20 seul", lambda d: d["global_rank_20"] > 0.70),
+            ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > 0.70) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+            ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > 0.70) & (d["global_rank_5"] < 0.35)),
+        ]:
+            _pos = {}
+            _rets = {}
+            _turn = 0
+            for _d in _all_dates:
+                _day = _df[_df["date"] == _d].set_index("symbol")
+                _sig = _fn(_day)
+                if _d in _rebal or not _pos:
+                    _cand = _day.loc[_sig].sort_values("global_rank_20", ascending=False)
+                    if _pos:
+                        _turn += len(_pos)
+                    _pos = {s: float(_cand.loc[s, "global_rank_20"]) for s in _cand.index[:30]}
+                    _turn += len(_pos)
+                _held = [s for s in _pos if s in _day.index]
+                _rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+            _s = pd.Series(_rets).sort_index()
+            _cost = (25.0 / 10000.0) * _turn / len(_all_dates)
+            _s = _s - _cost / 20
+            _exc = _s - 0.02 / 252
+            _m, _std = float(_exc.mean()), float(_exc.std())
+            _sharpe = float(_m / _std * np.sqrt(252)) if _std > 0 else 0.0
+            _cum = (1 + _s).cumprod()
+            _dd = float((_cum / _cum.cummax() - 1).min())
+            _results[_label] = {"sharpe": _sharpe, "ann_return": _m * 252, "ann_vol": _std * np.sqrt(252), "max_dd": _dd}
 
-    _ps_ic = _meta.get("per_symbol_ic")
-    if not _ps_ic or not isinstance(_ps_ic, dict):
-        return
+        if _results:
+            lines.append("## 🧪 Backtest Stratégies — Global Rank")
+            lines.append("")
+            _best = max(_results, key=lambda v: _results[v]["sharpe"])
+            lines.append("| Variante | Score relatif |")
+            lines.append("|----------|---------------|")
+            for _l, _m in _results.items():
+                _pct = f"{(_m['sharpe'] / _results[_best]['sharpe'] - 1) * 100:+.1f}%" if _l != _best else "🏆 référence"
+                lines.append(f"| {_l} | {_pct} |")
+            lines.append("")
+            lines.append(
+                "> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
+                "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
+                "Frais 0.25% A/R inclus. "
+                "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
+            )
+            lines.append("")
+    except Exception:
+        pass
 
-    # Détection format : multi-horizon {"3": {...}, "5": {...}} ou single {"ic_mean": ...}
-    _first_val = next(iter(_ps_ic.values()), None)
-    if isinstance(_first_val, dict) and "ic_mean" in _first_val:
-        # Format multi-horizon
-        _horizons = sorted(_ps_ic.keys(), key=lambda x: int(x))
-        lines.append("## 🔬 IC Cross-Sectionnel — Modèles Per-Symbol")
-        lines.append("")
-        _ps_rows = []
-        for _h_key in _horizons:
-            _h_info = _ps_ic[_h_key]
-            _h_ic = _h_info.get("ic_mean")
-            if _h_ic is None:
+
+def _build_regime_table(engine: Engine, batch_id: str) -> pd.DataFrame:
+    """Construit le tableau diagnostic par régime de marché pour un batch.
+
+    Fonctionne pour tous les target_mode (ternaire, regression, binaire).
+    """
+    all_json_df = _safe_query(engine, ALL_WF_JSON_QUERY, {"batch_id": batch_id})
+    if all_json_df.empty:
+        return pd.DataFrame()
+
+    # Parser les folds WF depuis metrics_json
+    folds_data: list[dict] = []
+    for _, row in all_json_df.iterrows():
+        blob = row.get("metrics_json")
+        if blob is None:
+            continue
+        try:
+            if isinstance(blob, bytes):
+                blob = blob.decode("utf-8")
+            wf_data = (json.loads(blob) if isinstance(blob, str) else blob).get("walk_forward", {})
+            splits = wf_data.get("splits", []) if isinstance(wf_data, dict) else []
+        except Exception:
+            continue
+        for s in splits:
+            oos_start = s.get("test_start_date")
+            oos_end = s.get("test_end_date")
+            if not oos_start or not oos_end:
                 continue
-            _h_std = _h_info.get("ic_std")
-            _h_n = _h_info.get("n_dates", "—")
-            _ps_rows.append({
-                "Horizon": f"H{_h_key}",
-                "IC Mean": _h_ic,
-                "IC IR": round(_h_ic / float(_h_std), 2) if _h_std and float(_h_std) > 0 else "—",
-                "Nb Dates": _h_n,
+            folds_data.append({
+                "split_index": s.get("split_index"),
+                "oos_start": str(oos_start),
+                "oos_end": str(oos_end),
+                "f1_macro": s.get("f1_macro"),
+                "f1_short": s.get("f1_short"),
+                "f1_flat": s.get("f1_flat"),
+                "f1_long": s.get("f1_long"),
+                "action_rate": s.get("action_rate"),
             })
-        if _ps_rows:
-            lines.append(_df_to_md(pd.DataFrame(_ps_rows)))
-        lines.append(
-            "L'IC Rank cross-sectionnel mesure la capacité des **modèles per-symbol** "
-            "(une fois agrégés) à classer les actions par rendement futur. "
-            ">0.01 = utile, >0.02 = bon. "
-            "À comparer avec l'IC Rank du **Global Ranking Model** pour évaluer "
-            "la valeur ajoutée du stacking."
-        )
-        lines.append("")
-        return
 
-    # Format single-horizon (rétro-compatibilité)
-    _ic_mean = _ps_ic.get("ic_mean")
-    if _ic_mean is None:
-        return
+    if not folds_data:
+        return pd.DataFrame()
 
-    _ic_std = _ps_ic.get("ic_std")
-    _n_dates = _ps_ic.get("n_dates", "—")
-    _horizon = _ps_ic.get("horizon", 5)
+    folds_df = pd.DataFrame(folds_data)
 
-    lines.append("## 🔬 IC Cross-Sectionnel — Modèles Per-Symbol")
-    lines.append("")
-    lines.append(f"- **IC Rank Per-Symbol (H{_horizon})** : {_ic_mean:.4f}")
-    if _ic_std is not None and float(_ic_std) > 0:
-        _ir = _ic_mean / float(_ic_std)
-        lines.append(f"- **IC IR (Stabilité)** : {_ir:.2f}")
-    lines.append(f"- **Nb dates** : {_n_dates}")
-    lines.append("")
-    lines.append(
-        "L'IC Rank cross-sectionnel mesure la capacité des **modèles per-symbol** "
-        "(une fois agrégés) à classer les actions par rendement futur. "
-        ">0.01 = utile, >0.02 = bon. "
-        "À comparer avec l'IC Rank du **Global Ranking Model** pour évaluer "
-        "la valeur ajoutée du stacking."
-    )
-    lines.append("")
+    # Agréger par split_index
+    agg = folds_df.groupby(["split_index", "oos_start", "oos_end"], dropna=False).agg(
+        nb_symbols=("f1_macro", "count"),
+        f1_macro=("f1_macro", "mean"),
+        f1_short=("f1_short", "mean"),
+        f1_flat=("f1_flat", "mean"),
+        f1_long=("f1_long", "mean"),
+        action_rate=("action_rate", "mean"),
+    ).reset_index().sort_values("oos_start")
+
+    if agg.empty:
+        return pd.DataFrame()
+
+    # Récupérer SPY et VIX
+    spy_df = _safe_query(engine, SPY_QUERY)
+    vix_df = _safe_query(engine, VIX_QUERY)
+
+    def _spy_return(start: str, end: str) -> float | None:
+        if spy_df.empty or "date" not in spy_df.columns:
+            return None
+        spy_df["date"] = pd.to_datetime(spy_df["date"])
+        mask = (spy_df["date"] >= pd.Timestamp(start)) & (spy_df["date"] <= pd.Timestamp(end))
+        window = spy_df.loc[mask].sort_values("date")
+        if len(window) < 2:
+            return None
+        p0 = window["adj_close"].iloc[0]
+        p1 = window["adj_close"].iloc[-1]
+        return float(100 * (p1 / p0 - 1)) if p0 and p0 > 0 else None
+
+    def _avg_vix(start: str, end: str) -> float | None:
+        if vix_df.empty or "trade_date" not in vix_df.columns:
+            return None
+        vix_df["trade_date"] = pd.to_datetime(vix_df["trade_date"])
+        mask = (vix_df["trade_date"] >= pd.Timestamp(start)) & (vix_df["trade_date"] <= pd.Timestamp(end))
+        vals = vix_df.loc[mask, "vix"].dropna()
+        return float(vals.mean()) if len(vals) > 0 else None
+
+    spy_returns = []
+    vix_values = []
+    for _, r in agg.iterrows():
+        sr = _spy_return(str(r["oos_start"]), str(r["oos_end"]))
+        vx = _avg_vix(str(r["oos_start"]), str(r["oos_end"]))
+        spy_returns.append(sr)
+        vix_values.append(vx)
+
+    agg["spy_return_pct"] = spy_returns
+    agg["avg_vix"] = vix_values
+
+    # Classifier les régimes
+    valid_vix = [v for v in vix_values if v is not None]
+    median_vix = float(pd.Series(valid_vix).median()) if valid_vix else 20.0
+
+    def _safe_regime(sr: float | None, vx: float | None) -> str:
+        if sr is None or vx is None:
+            return "—"
+        return _REGIME_LABELS.get(_classify_regime(sr, vx, median_vix), _classify_regime(sr, vx, median_vix))
+
+    agg["regime"] = [_safe_regime(sr, vx) for sr, vx in zip(spy_returns, vix_values)]
+
+    # Formater
+    display = agg.rename(columns={
+        "split_index": "Split",
+        "oos_start": "Début OOS",
+        "oos_end": "Fin OOS",
+        "nb_symbols": "Nb symboles",
+        "f1_macro": "F1 macro",
+        "f1_short": "F1 short",
+        "f1_flat": "F1 flat",
+        "f1_long": "F1 long",
+        "action_rate": "Tx action",
+        "spy_return_pct": "SPY %",
+        "avg_vix": "VIX moy",
+        "regime": "Régime",
+    })
+
+    for col in ["F1 macro", "F1 short", "F1 flat", "F1 long"]:
+        if col in display.columns:
+            display[col] = display[col].apply(lambda x: f"{float(x):.3f}" if pd.notna(x) and x is not None else "—")
+    for col in ["Tx action", "SPY %", "VIX moy"]:
+        if col in display.columns:
+            display[col] = display[col].apply(lambda x: f"{float(x):.1f}" if pd.notna(x) and x is not None else "—")
+
+    cols = ["Split", "Début OOS", "Fin OOS", "Régime", "F1 macro", "F1 short", "F1 flat", "F1 long",
+            "Tx action", "SPY %", "VIX moy", "Nb symboles"]
+    display = display[[c for c in cols if c in display.columns]]
+    return display
 
 
 def generate_batch_report(engine: Engine, batch_id: str) -> str:
@@ -446,6 +687,9 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     zero_df = _safe_query(engine, ZERO_F1_SHORT_QUERY, {"batch_id": batch_id})
     champion_df = _safe_query(engine, CHAMPION_MODE_QUERY, {"batch_id": batch_id})
     champion_by_model_df = _safe_query(engine, CHAMPION_BY_MODEL_QUERY, {"batch_id": batch_id})
+    reg_df = _safe_query(engine, REG_BY_SPLIT_QUERY, {"batch_id": batch_id})
+    reg_top_df = _safe_query(engine, REG_TOP_QUERY, {"batch_id": batch_id})
+    reg_worst_df = _safe_query(engine, REG_WORST_QUERY, {"batch_id": batch_id})
 
     lines: list[str] = []
     lines.append(f"# Diagnostic ML — Batch `{batch_id}`")
@@ -560,8 +804,25 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     _meta_raw = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
     _append_global_ranking_horizon_details(lines, str(_meta_raw) if _meta_raw is not None else None)
 
-    # ── Per-Symbol Cross-Sectional IC ──
-    _append_per_symbol_ic(lines, str(_meta_raw) if _meta_raw is not None else None)
+    # ── Backtest Stratégies Global Rank ──
+    _batch_id = detail_df.iloc[0].get("batch_id") if not detail_df.empty else None
+    _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None)
+
+    # ── Per-Symbol Cross-Sectional IC — retiré ──
+
+    # ── Métriques par horizon (si multi-horizon) ──
+    horizon_df = _safe_query(engine, HORIZON_LIST_QUERY, {"batch_id": batch_id})
+    if not horizon_df.empty:
+        f1_h_df = _safe_query(engine, F1_BY_HORIZON_QUERY, {"batch_id": batch_id})
+        if not f1_h_df.empty:
+            lines.append("## 📊 Métriques par Horizon (WF)")
+            lines.append("")
+            # Rename columns for readability
+            _h_display = f1_h_df.rename(columns={
+                "horizon": "Horizon", "f1_macro": "F1 macro",
+                "f1_short": "F1 short", "f1_long": "F1 long", "dir_acc": "Dir Acc",
+            })
+            lines.append(_df_to_md(_h_display))
 
     # ── Métriques F1 par split ──
     lines.append("## 📊 Métriques F1 par split")
@@ -590,5 +851,44 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     lines.append("## ⚪ `f1_short = 0` (WF)")
     lines.append("")
     lines.append(_df_to_md(zero_df))
+
+    # ── Métriques régression (uniquement si batch regression) ──
+    _is_reg_report = False
+    try:
+        _meta_raw3 = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
+        if isinstance(_meta_raw3, str) and _meta_raw3.strip():
+            _meta3 = json.loads(str(_meta_raw3))
+            _tm3 = str(_meta3.get("cli_options", {}).get("target_mode") or _meta3.get("target_mode") or "")
+            _is_reg_report = _tm3 == "regression"
+    except Exception:
+        pass
+
+    if _is_reg_report:
+        lines.append("## 📊 Métriques Régression par split")
+        lines.append("")
+        if not reg_df.empty:
+            _styled = reg_df.copy()
+            for col in ["avg_mse", "avg_dir_acc"]:
+                if col in _styled.columns:
+                    _styled[col] = _styled[col].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "—")
+            lines.append(_df_to_md(_styled))
+        else:
+            lines.append("_Aucune métrique de régression disponible._")
+            lines.append("")
+
+        lines.append("## 🏆 Top 10 meilleurs `directional_accuracy` (WF)")
+        lines.append("")
+        lines.append(_df_to_md(reg_top_df))
+
+        lines.append("## 🥉 Top 10 plus mauvais `directional_accuracy` (WF)")
+        lines.append("")
+        lines.append(_df_to_md(reg_worst_df))
+
+    # ── Diagnostic par régime de marché (tous modes) ──
+    regime_df = _build_regime_table(engine, batch_id)
+    if not regime_df.empty:
+        lines.append("## 📅 Diagnostic par régime de marché — Walk-Forward")
+        lines.append("")
+        lines.append(_df_to_md(regime_df))
 
     return "\n".join(lines)

@@ -12,6 +12,7 @@ class DataConfig:
 
     sequence_length: int = 60
     forecast_horizon: int = 10
+    forecast_horizons: tuple[int, ...] = ()  # vide = single-horizon (legacy)
     min_history_days: int = 504
     train_ratio: float = 0.70
     val_ratio: float = 0.15
@@ -76,8 +77,8 @@ class DataConfig:
             raise ValueError("feature_set doit être 'v1' ou 'expert'.")
         if self.cross_sectional_min_universe < 2:
             raise ValueError("cross_sectional_min_universe doit être >= 2.")
-        if self.target_mode not in {"binary", "swing_cash", "ternary"}:
-            raise ValueError("target_mode doit être 'binary', 'swing_cash' ou 'ternary'.")
+        if self.target_mode not in {"binary", "swing_cash", "ternary", "regression"}:
+            raise ValueError("target_mode doit être 'binary', 'swing_cash', 'ternary' ou 'regression'.")
         if self.label_method not in {"fixed_horizon", "triple_barrier"}:
             raise ValueError("label_method doit être 'fixed_horizon' ou 'triple_barrier'.")
         if self.label_method == "triple_barrier" and self.target_mode != "ternary":
@@ -251,6 +252,11 @@ class GlobalModelConfig:
     ranking_max_depth: int = 7        # plus profond que per-symbol (640K lignes vs 2K)
     ranking_num_leaves: int = 31      # cohérent avec max_depth=7
     ranking_sector_group: str = "all" # all | cyclical | defensive (univers séparés)
+    # ── CatBoost ranking params (P1-4 fix, 2026-08-04) ──
+    # Séparés de BaselineConfig pour éviter que le tuning per-symbol ne modifie
+    # silencieusement le Global Ranking. Cohérents avec la doc (n_estimators=500).
+    ranking_catboost_iterations: int = 500
+    ranking_catboost_learning_rate: float = 0.03
 
     def __post_init__(self) -> None:
         if self.model_name not in {"catboost", "lightgbm"}:
@@ -452,10 +458,13 @@ class TrainingConfig:
     max_workers: int = 4
     accelerator: str = "auto"  # auto | cpu | gpu
     debug_train: bool = False
+    training_mode: str = "per_symbol"  # per_symbol | per_sector
 
     def __post_init__(self) -> None:
         if self.max_workers < 1:
             raise ValueError("max_workers doit être >= 1.")
         if self.batch_id is not None and (not self.batch_id.strip() or Path(self.batch_id).name != self.batch_id):
             raise ValueError("batch_id doit être un nom de dossier non vide.")
+        if self.training_mode not in {"per_symbol", "per_sector"}:
+            raise ValueError("training_mode doit être 'per_symbol' ou 'per_sector'.")
 

@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS alpha_trade.model_governance (
     governance_id                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     run_id                           VARCHAR(64)     NOT NULL,
-    symbol                           VARCHAR(20)     NOT NULL,
+    symbol                           VARCHAR(50)     NOT NULL,
     model_name                       VARCHAR(32)     NOT NULL COMMENT 'lstm_attention|lightgbm|catboost|global_model',
     `rank`                           INT             DEFAULT NULL,
     is_selected_model                TINYINT(1)      NOT NULL DEFAULT 0,
