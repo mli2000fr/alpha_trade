@@ -1,6 +1,6 @@
 # Module ModelFactory — Documentation Complète
 
-> **Version** : Sprint 2026-08-03 (per-sector multi-horizon)  
+> **Version** : Sprint 2026-08-04 (batch f82ab5, per-sector + global ranking)  
 > **Auteur** : Généré automatiquement depuis le code source
 
 ---
@@ -114,7 +114,10 @@ Produire un **score de ranking cross-sectionnel** par symbole et par date, sur 5
 **Objectif** : régression sur le rang continu [0, 1]  
 **Métrique** : **IC Rank** (Spearman), pas de F1  
 **Sortie** : `global_rank_h ∈ [0, 1]` — percentile dans l'univers  
-**IC actuel** : 0.0208 (+84% vs baseline 0.0113), tous les IC IR > 1.0
+**IC actuel** : 0.0115 (batch f82ab5, 2026-08-04, 6 splits, 939 symboles).  
+*Référence historique* : 0.0208 (batch 7e4cf8, 2026-08-03, 8 splits, 928 symboles, +84% vs baseline 0.0113), tous les IC IR > 1.0.
+
+> ⚠️ **Régression** : l'IC a chuté de 0.0208 → 0.0115 entre le 03/08 et le 04/08. La cause probable est le passage de 8 → 6 splits effectifs (--wf-max-splits 8 mais 6 réalisés), ou une différence dans l'univers de symboles (939 vs 928).
 
 ### 3.2 Construction de la target
 
@@ -443,7 +446,32 @@ Mêmes features que le Per-Symbol (mode `expert`), plus :
 - **Meilleurs secteurs** : Real Estate (0.544), Consumer Discretionary (0.541), Information Technology (0.536)
 - **Distribution true/pred** : ~50/50 long/short (équilibré grâce au bias correction)
 
-### 5.7 Lancement
+### 5.8 Résultats (batch f82ab5, 2026-08-04) ⚠️ Régression
+
+| Horizon | F1 macro (WF) | F1 short | F1 long | Dir Acc | MSE |
+|---------|---------------|----------|---------|---------|-----|
+| H3 | 0.330 | 0.497 | 0.493 | 0.5033 | 1.01-1.05 |
+| H5 | 0.331 | 0.497 | 0.496 | 0.5019 | 1.01-1.05 |
+| H10 | 0.332 | 0.497 | 0.498 | 0.5038 | 1.01-1.05 |
+| H15 | 0.332 | 0.498 | 0.499 | 0.5041 | 1.01-1.05 |
+| H20 | 0.331 | 0.494 | 0.498 | 0.5019 | 1.01-1.05 |
+
+- **11/11 secteurs** entraînés avec succès, 0 échec
+- **6 LightGBM / 5 CatBoost** sélectionnés comme champions (équilibré)
+- **F1 macro WF** : 0.308 – 0.344 selon le secteur (tous dans le bucket 0.30-0.39)
+- **Directional Accuracy** : ~50% → **pile ou face**, aucun pouvoir prédictif directionnel
+- **MSE** : ~1.0 → équivalent au modèle naïf (prédire la moyenne), aucune variance expliquée
+- **Meilleurs secteurs** : Industrials (0.344), Consumer Staples (0.342)
+- **Pires secteurs** : Energy (0.308-0.325)
+- **F1 flat = 0** partout (attendu en mode regression)
+- **Régimes** : F1 stable ~0.33 en bull, range, high vol — aucune dépendance au régime
+
+> 🔴 **Alerte** : le per-sector ne capture **aucun signal** sur ce batch. F1 macro = 0.33 = hasard pour 3 classes.
+> Directional Accuracy = 50% = pile ou face. MSE = 1.0 = modèle naïf.
+> À comparer avec le batch 7e4cf8 (F1 0.50+, Dir Acc 68%) qui avait un vrai signal.
+> La cause de cette régression est à investiguer (changement d'univers, splits, ou régression code).
+
+### 5.9 Lancement
 
 ```bash
 python -m modelFactory --mode train \
@@ -849,7 +877,20 @@ stock_fundamentals_daily
 > **Interaction smoothing × splits** : avec 13 splits (83% chevauchement), le smoothing dilue.
 > Avec 8 splits (régimes distincts), il apporte +31% sur H10. Les deux sont complémentaires.
 
-### 11.3 Métriques finales (P1 étanche, 8 splits, smoothing ON, Z-score fondamentales)
+### 11.3 Métriques finales — Global Ranking
+
+#### Batch f82ab5 (2026-08-04, per-sector, 6 splits, 939 symboles) ⚠️ Actuel
+
+| Métrique | H3 | H5 | H10 | H15 | H20 | Global |
+|----------|----|----|-----|-----|-----|--------|
+| IC Mean | 0.0091 | 0.0139 | 0.0128 | 0.0117 | 0.0102 | **0.0115** |
+| IC IR | 0.69 | 0.85 | 1.15 | 1.43 | 1.47 | — |
+| Decile Spread | 0.0080 | 0.0171 | 0.0104 | 0.0083 | 0.0081 | — |
+
+> IC faible (0.01-0.014), IC IR correct à partir de H10 (>1.0). Seul H15 a tous les splits positifs.
+> H5 a le meilleur IC ponctuel (0.014) mais très volatile (IC IR 0.85).
+
+#### Batch 7e4cf8 (2026-08-03, P1 étanche, 8 splits, smoothing ON, Z-score fondamentales) — Référence
 
 | Métrique | H3 | H5 | H10 | H15 | H20 | Global |
 |----------|----|----|-----|-----|-----|--------|
@@ -859,6 +900,9 @@ stock_fundamentals_daily
 
 > Baseline P1 réel (504j, H10 brut) = 0.0084 / IR 0.30.
 > Pipeline target ×2.3, 8 splits +40%, Z-score stabilise H15/H20.
+
+> 🔴 **Écart f82ab5 vs 7e4cf8** : IC global divisé par ~1.7 (0.0115 vs 0.0190). H15/H20 particulièrement touchés (÷2).
+> Hypothèses : splits effectifs (6 vs 8), univers élargi (939 vs 928), ou régression liée aux fixes data leakage.
 
 ### 11.4 Leçons apprises
 
@@ -1157,21 +1201,30 @@ Purge = 1j (marge de sécurité résiduelle uniquement).
 
 ---
 
-## 14. Stratégie d'exploitation (validée par backtest 2026-08-02)
+## 14. Stratégie d'exploitation (validée par backtest 2026-08-04)
 
-### 12.1 Principe : H20 seul pour la sélection
+### 14.1 Principe : H20 seul pour la sélection
 
-| Horizon | Rôle | IC / IR |
-|---------|------|---------|
-| **H20** | Filtre d'univers — quoi acheter | 0.0251 / 2.76 |
-| **H5** | Monitoring uniquement (alerte si < 0.10) | 0.0120 / 1.19 |
+| Horizon | Rôle | IC / IR (f82ab5) | IC / IR (7e4cf8 ref) |
+|---------|------|-------------------|-----------------------|
+| **H20** | Filtre d'univers — quoi acheter | 0.0102 / 1.47 | 0.0251 / 2.76 |
+| **H5** | Monitoring uniquement (alerte si < 0.10) | 0.0139 / 0.85 | 0.0120 / 1.19 |
 
-**Logique** : H20 identifie les actions qui vont surperformer sur 1 mois (signal fiable, IR 2.76).
-Le backtest a montré que tout filtre H5 (rising ou dip) dégrade la performance (−3.6% à −12.8%).
-H5 est conservé uniquement comme signal de monitoring — une chute brutale (< 0.10) peut déclencher
-une alerte de sortie, mais pas un signal d'entrée.
+**Logique** : H20 identifie les actions qui vont surperformer sur 1 mois. Le backtest confirme que tout filtre H5 (rising ou dip) dégrade la performance.
 
-### 12.2 Algorithme
+### 14.2 Résultats backtest Global Rank (batch f82ab5)
+
+| Variante | Score relatif vs V1 | Interprétation |
+|----------|---------------------|----------------|
+| **V1 — H20 seul** | 🏆 référence | Top 30% H20, 30 positions, rebalancement 20j |
+| V2 — H20 + H5 rising | −10.6% | Ajouter le momentum H5 dégrade |
+| V3 — H20 + H5 < 0.35 | −29.0% | Le setup contrarian H5 est clairement perdant |
+
+> **Conclusion** : H20 seul est la meilleure stratégie. H5 n'apporte aucune valeur ajoutée en sélection.
+> H5 est conservé uniquement comme signal de monitoring — une chute brutale (< 0.10) peut déclencher
+> une alerte de sortie, mais pas un signal d'entrée.
+
+### 14.3 Algorithme
 
 ```python
 # Pour chaque date, pour chaque symbole :
@@ -1179,7 +1232,7 @@ eligible = global_rank_20 > 0.70  # Top 30% H20
 # C'est tout. Pas de filtre H5.
 ```
 
-### 12.3 Paramètres de backtest
+### 14.4 Paramètres de backtest
 
 | Paramètre | Valeur |
 |-----------|--------|
