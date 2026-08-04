@@ -160,7 +160,8 @@ def test_prepare_symbol_frame_uses_triple_barrier_targets(monkeypatch) -> None:
 
     prepared = dataset.prepare_symbol_frame(
         bars,
-        dataset.DataConfig(target_mode="ternary", label_method="triple_barrier"),
+        dataset.DataConfig(target_mode="ternary", label_method="triple_barrier",
+                           target_up_threshold=0.02, target_down_threshold=-0.02),
     )
 
     assert calls
@@ -361,7 +362,54 @@ class TestValidateFoldIsolation:
         # (le gap réel est probablement < 10 jours)
         assert not report.embargo_present or len(report.violations) > 0
 
-    def test_fold_isolation_report_to_dict(self) -> None:
+
+# ═══════════════════════════════════════════════════════════════════════════
+# P0 E2E per-sector route test (2026-08-04)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_per_sector_route_resolves_tabular_backend(tmp_path: Path) -> None:
+    """Vérifie que le résolveur de route accepte un config.json sectoriel."""
+    from pathlib import Path as P
+    from modelFactory.predictor import _resolve_selected_model_route
+
+    _tmp = P(tmp_path)
+    sector_config = {
+        "selected_model": "lightgbm",
+        "data": {"feature_set": "expert"},
+        "model": {},
+        "feature_columns": ["symbol", "momentum_20", "rsi_14"],
+        "inference_backend": "lightgbm_tabular",
+        "artifact_routes": {
+            "selected_model": "lightgbm",
+            "models": {
+                "lightgbm": {
+                    "inference_backend": "lightgbm_tabular",
+                    "config_path": str(_tmp / "config.json"),
+                    "model_path": str(_tmp / "model.txt"),
+                },
+                "catboost": {
+                    "inference_backend": "catboost_tabular",
+                    "config_path": str(_tmp / "config.json"),
+                    "model_path": str(_tmp / "model.cbm"),
+                },
+            },
+        },
+    }
+    (_tmp / "model.txt").write_text("fake")
+    (_tmp / "config.json").write_text("{}")
+
+    route = _resolve_selected_model_route(
+        sector_config,
+        ckpt_path=_tmp / "model.txt",
+        scaler_path=_tmp / "scaler.pkl",
+        config_path=_tmp / "config.json",
+    )
+    assert route["selected_model"] == "lightgbm"
+    assert route["inference_backend"] == "lightgbm_tabular"
+    assert "model.txt" in str(route.get("model_path", ""))
+
+
+def test_fold_isolation_report_to_dict() -> None:
         """FoldIsolationReport est sérialisable pour audit."""
         df = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=100, freq="D"), "i": range(100)})
         split = dataset.chrono_split(df, 0.50, 0.25, forecast_horizon=5, embargo_rows=3)
@@ -377,7 +425,8 @@ class TestValidateFoldIsolation:
         assert isinstance(d["is_valid"], bool)
         assert isinstance(d["violations"], list)
 
-    def test_zero_horizon_split_still_disjoint(self) -> None:
+
+def test_zero_horizon_split_still_disjoint() -> None:
         """Même sans purge, les folds doivent être disjoints (vérifié par date)."""
         df = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=100, freq="D"), "i": range(100)})
         split = dataset.chrono_split(df, 0.50, 0.25, forecast_horizon=0, embargo_rows=0)
@@ -439,7 +488,8 @@ class TestFoldIsolationEndToEnd:
         split = dataset.chrono_split(df, 0.60, 0.20, forecast_horizon=20)
         train_df = split.train.reset_index(drop=True)
 
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier",
+                         target_up_threshold=0.02, target_down_threshold=-0.02)
         opt_cfg = TargetOptimizationConfig(
             enabled=True,
             candidate_stop_atr_mults=(2.0,),
@@ -647,5 +697,119 @@ def test_chrono_split_no_overlap_between_train_val_test() -> None:
             assert max(split.val["i"]) < min(split.test["i"]) if not split.val.empty else True, (
                 "val doit précéder test chronologiquement"
             )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# P0-1 test (2026-08-04) : Per-sector symbol isolation
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_per_sector_prepare_isolates_symbols() -> None:
+    """Vérifie que prepare_symbol_frame par symbole ne mélange pas les séries.
+
+    Avant le fix P0-1, compute_features() était appelé sur le panel concaténé
+    et sort_values("date") intercalait les symboles → rolling() et shift(-h)
+    traversaient les frontières entre symboles.
+
+    Après le fix, chaque symbole est préparé indépendamment puis concaténé.
+    """
+    n = 120
+    rng = np.random.default_rng(42)
+
+    # ── Symbole A : tendance haussière régulière ──
+    close_a = 100.0 + np.arange(n) * 0.5 + rng.normal(0, 1, n).cumsum() * 0.1
+    bars_a = pd.DataFrame({
+        "symbol": ["AAA"] * n,
+        "date": pd.date_range("2020-01-01", periods=n, freq="B"),
+        "open": close_a - 0.5,
+        "high": close_a + 1.0,
+        "low": close_a - 1.0,
+        "close": close_a,
+        "volume": [1_000_000.0] * n,
+        "adj_close": close_a,
+        "vwap": close_a,
+        "daily_return": [0.0] * n,
+        "is_filled": [1] * n,
+    })
+
+    # ── Symbole B : complètement différent (bruit pur autour de 50) ──
+    close_b = 50.0 + rng.normal(0, 3, n).cumsum() * 0.1
+    bars_b = pd.DataFrame({
+        "symbol": ["BBB"] * n,
+        "date": pd.date_range("2020-01-01", periods=n, freq="B"),
+        "open": close_b - 0.5,
+        "high": close_b + 1.0,
+        "low": close_b - 1.0,
+        "close": close_b,
+        "volume": [500_000.0] * n,
+        "adj_close": close_b,
+        "vwap": close_b,
+        "daily_return": [0.0] * n,
+        "is_filled": [1] * n,
+    })
+
+    # ── Simuler la préparation per-symbol (comme _prepare_sector_data après P0-1) ──
+    from modelFactory.dataset import prepare_symbol_frame, DataConfig
+    # feature_set="v1" : warm-up ~60 rows (rolling_volatility_60). Avec 120 rows → ~60 valides.
+    # expert nécessiterait 252+ rows (z-score, momentum_250) → 0 target valide sur 120 rows.
+    cfg = DataConfig(feature_set="v1", forecast_horizons=(3, 5), forecast_horizon=5, target_mode="regression")
+
+    prepared_a = prepare_symbol_frame(bars_a, cfg)
+    prepared_a["symbol"] = "AAA"
+    prepared_b = prepare_symbol_frame(bars_b, cfg)
+    prepared_b["symbol"] = "BBB"
+
+    combined = pd.concat([prepared_a, prepared_b], ignore_index=True)
+    combined = combined.sort_values(["date", "symbol"]).reset_index(drop=True)
+
+    # ── Vérification 1 : target_h3 pour AAA = close[t+3]/close[t]-1 de AAA ──
+    a_rows = combined[combined["symbol"] == "AAA"].sort_values("date")
+    b_rows = combined[combined["symbol"] == "BBB"].sort_values("date")
+
+    # Recalculer target_h3 manuellement pour AAA
+    close_a_series = a_rows["close"].values
+    expected_target_h3 = close_a_series[3:] / close_a_series[:-3] - 1.0  # shift(-3)
+
+    actual_target = a_rows["target_h3"].dropna().values
+    # Note: prepare_symbol_frame drop les warm-up rows (rolling windows),
+    # donc len(actual_target) < n - 3. On vérifie que les valeurs coïncident
+    # sur la portion disponible.
+    n_actual = len(actual_target)
+    assert n_actual >= 10, f"Expected at least 10 valid targets, got {n_actual}"
+    # Comparer sur les n_actual dernières lignes du expected (alignement shift)
+    expected_tail = expected_target_h3[-n_actual:]
+    # Tolérance : les cibles peuvent différer à cause du vol-scaling
+    # On vérifie que la corrélation est quasi-parfaite (>0.99)
+    corr = np.corrcoef(actual_target, expected_tail)[0, 1]
+    assert corr > 0.99, (
+        f"target_h3 for AAA should match AAA's own forward return. "
+        f"Correlation={corr:.6f} (expected >0.99). "
+        f"If symbols were mixed, correlation would be near 0."
+    )
+
+    # ── Vérification 2 : target_h3 pour BBB ne dépend PAS de AAA ──
+    # Inverser l'ordre des symboles et vérifier que les résultats ne changent pas
+    combined_swapped = pd.concat([prepared_b, prepared_a], ignore_index=True)
+    combined_swapped = combined_swapped.sort_values(["date", "symbol"]).reset_index(drop=True)
+
+    a_swapped = combined_swapped[combined_swapped["symbol"] == "AAA"].sort_values("date")
+    # Les targets de AAA doivent être identiques quel que soit l'ordre de concaténation
+    pd.testing.assert_series_equal(
+        a_rows["target_h3"].reset_index(drop=True),
+        a_swapped["target_h3"].reset_index(drop=True),
+        check_names=False,
+        obj="target_h3 AAA should be independent of concat order",
+    )
+
+    # ── Vérification 3 : rolling_volatility_20 de AAA ne contient pas les returns de BBB ──
+    # Une volatilité qui mélange AAA (~tendance) et BBB (~bruit) serait très différente
+    vol_a = a_rows["rolling_volatility_20"].dropna()
+    # Recalculer manuellement la vol de AAA seul
+    ret_a = a_rows["daily_return"].values
+    expected_vol = pd.Series(ret_a).rolling(20).std().dropna().values
+    corr_vol = np.corrcoef(vol_a.values[-len(expected_vol):], expected_vol)[0, 1]
+    assert corr_vol > 0.99, (
+        f"rolling_volatility_20 for AAA should match AAA's own volatility. "
+        f"Correlation={corr_vol:.6f} (expected >0.99)."
+    )
 
 

@@ -379,7 +379,13 @@ def validate_fold_isolation(
             details.append(f"train∩test={train_test_overlap}")
         violations.append(f"Folds non disjoints: {', '.join(details)}")
 
-    # ── 2. Purge adequacy ───────────────────────────────────────────────
+    # ── 2. Purge adequacy (P2-3, 2026-08-04) ──────────────────────────
+    # Le validateur ne dispose que des folds DÉJÀ purgés. Les dates retirées
+    # par la purge sont absentes → impossible de compter précisément les séances.
+    # On utilise donc .days (calendaires) comme approximation conservative :
+    # - un week-end peut produire un faux positif (gap calendaire > gap séances)
+    # - mais un vrai manque de purge ne passera jamais (gap calendaire ≥ gap séances)
+    # Le comportement productif (_purge_by_dates) est correct par construction.
     purge_adequate = True
     if label_horizon > 0 and date_column and date_column in split.train.columns:
         train_dates = pd.to_datetime(split.train[date_column])
@@ -391,7 +397,7 @@ def validate_fold_isolation(
             gap_train_val = (first_val - last_train).days
             if gap_train_val < label_horizon:
                 violations.append(
-                    f"Gap train→val insuffisant: {gap_train_val}j < {label_horizon}j (label_horizon)"
+                    f"Gap train→val insuffisant: {gap_train_val}j calendaires < {label_horizon} séances"
                 )
                 purge_adequate = False
         if not val_dates.empty and not test_dates.empty:
@@ -400,7 +406,7 @@ def validate_fold_isolation(
             gap_val_test = (first_test - last_val).days
             if gap_val_test < label_horizon:
                 violations.append(
-                    f"Gap val→test insuffisant: {gap_val_test}j < {label_horizon}j (label_horizon)"
+                    f"Gap val→test insuffisant: {gap_val_test}j calendaires < {label_horizon} séances"
                 )
                 purge_adequate = False
 
@@ -650,15 +656,23 @@ class SymbolDataModule(L.LightningDataModule):
             forecast_horizon=self.data_cfg.forecast_horizon,
         )
         self.split = split
-        # 2.5 Standardize regression target on train stats only (anti-leakage)
+        # 2.5 Winsorize + Standardize regression target on train stats only (anti-leakage)
         if self.data_cfg.target_mode == "regression":
-            from modelFactory.features import standardize_regression_target
             # Identify train rows using the same indices chrono_split used
             n = len(df)
             i_train = int(n * self.data_cfg.train_ratio)
             train_start, train_end = _purged_bounds(start=0, end=i_train, purge_tail=self.data_cfg.forecast_horizon)
             train_mask = pd.Series(False, index=df.index)
             train_mask.iloc[train_start:train_end] = True
+            # ── Winsorize using train quantiles (P1-1 fix) ──
+            _t_target = df.loc[train_mask, "target"]
+            _t_valid = _t_target.notna()
+            if _t_valid.sum() >= 2:
+                _lo = float(_t_target.loc[_t_valid].quantile(0.01))
+                _hi = float(_t_target.loc[_t_valid].quantile(0.99))
+                df["target"] = df["target"].clip(_lo, _hi)
+            # Standardize
+            from modelFactory.features import standardize_regression_target
             df = standardize_regression_target(df, train_mask=train_mask)
             # Re-split with standardized target
             split = chrono_split(
@@ -784,6 +798,7 @@ def prepare_symbol_frame(
             mode=data_cfg.target_mode,
             positive_threshold=data_cfg.target_up_threshold,
             negative_threshold=data_cfg.target_down_threshold,
+            skip_winsorize=True,  # P1-1: winsorization handled post-split
         )
         for _col in _multi.columns:
             df[_col] = _multi[_col]
@@ -798,6 +813,7 @@ def prepare_symbol_frame(
             mode=data_cfg.target_mode,
             positive_threshold=data_cfg.target_up_threshold,
             negative_threshold=data_cfg.target_down_threshold,
+            skip_winsorize=True,  # P1-1: winsorization handled post-split
         )
     active_features = get_feature_columns(
         data_cfg.include_sentiment_features,

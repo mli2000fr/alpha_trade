@@ -759,17 +759,48 @@ def run_training_batch(
         global_rank_df = global_result_wf.get("global_rank_df") if isinstance(global_result_wf, dict) else None
         if cfg.global_model.stacking_enabled and global_rank_df is not None and not global_rank_df.empty:
             _rank_cols = [c for c in global_rank_df.columns if c.startswith("global_rank")]
+            # ── P1-5 fix (2026-08-04) : mesurer la couverture OOF + gate + global_rank_available ──
+            _total_dates = 0
+            if cross_sectional_cache is not None and not cross_sectional_cache.empty and "date" in cross_sectional_cache.columns:
+                _total_dates = cross_sectional_cache["date"].nunique()
+            _covered_dates = global_rank_df["date"].nunique() if "date" in global_rank_df.columns else 0
+            _coverage_pct = round(100 * _covered_dates / _total_dates, 1) if _total_dates > 0 else 0.0
+            LOGGER.info(
+                "run_training_batch stacking coverage: %d/%d dates (%.1f%%) — "
+                "dates hors validation Global Ranking → fallback 0.5",
+                _covered_dates, _total_dates, _coverage_pct,
+            )
+            if _coverage_pct < 50:
+                LOGGER.warning(
+                    "run_training_batch stacking LOW COVERAGE: only %.1f%% of per-symbol dates "
+                    "have real global_rank values. Remaining dates use neutral fallback 0.5.",
+                    _coverage_pct,
+                )
+            if _coverage_pct < 10:
+                LOGGER.error(
+                    "run_training_batch stacking COVERAGE CRITICAL (%.1f%% < 10%%) — "
+                    "disabling stacking for this run. global_rank will not be injected.",
+                    _coverage_pct,
+                )
+                cfg = replace(cfg, global_model=replace(cfg.global_model, stacking_enabled=False))
+                global_rank_df = None  # prevent merge below
+            if global_rank_df is not None and not global_rank_df.empty:
+                # Ajouter global_rank_available avant le merge
+                global_rank_df["global_rank_available"] = True
             if cross_sectional_cache is not None and not cross_sectional_cache.empty:
                 cross_sectional_cache = cross_sectional_cache.merge(
-                    global_rank_df[["symbol", "date"] + _rank_cols], on=["symbol", "date"], how="left",
+                    global_rank_df[["symbol", "date"] + _rank_cols + (["global_rank_available"] if "global_rank_available" in global_rank_df.columns else [])],
+                    on=["symbol", "date"], how="left",
                 )
                 for _rc in _rank_cols:
                     cross_sectional_cache[_rc] = cross_sectional_cache[_rc].fillna(0.5).astype(np.float64)
-            else:
-                cross_sectional_cache = global_rank_df[["symbol", "date"] + _rank_cols].copy()
+                if "global_rank_available" in cross_sectional_cache.columns:
+                    cross_sectional_cache["global_rank_available"] = cross_sectional_cache["global_rank_available"].fillna(False).astype(bool)
+            elif global_rank_df is not None:
+                cross_sectional_cache = global_rank_df[["symbol", "date"] + _rank_cols + (["global_rank_available"] if "global_rank_available" in global_rank_df.columns else [])].copy()
             LOGGER.info(
                 "run_training_batch stacking enabled: %d global_rank cols merged into cache rows=%d",
-                len(_rank_cols), len(cross_sectional_cache),
+                len(_rank_cols), len(cross_sectional_cache) if cross_sectional_cache is not None else 0,
             )
             # Persister pour les workers multiprocessing
             _global_rank_path = Path(cfg.artifacts_dir) / "_global_rank_cache.parquet"

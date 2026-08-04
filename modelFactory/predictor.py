@@ -496,7 +496,11 @@ def _resolve_artifact_paths(
     run_id: Optional[str],
     batch_id: Optional[str] = None,
 ) -> tuple[Path, Path, Path, Optional[str]]:
-    """Résout les artefacts depuis le registre DB, sinon via le dossier de campagne du symbole."""
+    """Résout les artefacts depuis le registre DB, sinon via le dossier de campagne du symbole.
+
+    P0-2 (2026-08-04) : si aucun artefact per-symbol n'est trouvé, tente le routage
+    per-sector (symbol → secteur GICS → modèle sectoriel).
+    """
     try:
         if batch_id is not None:
             selected_run = load_training_run(engine, symbol, run_id=run_id, batch_id=batch_id)
@@ -524,8 +528,84 @@ def _resolve_artifact_paths(
             selected_run.get("run_id"),
         )
 
+    # ── P0-2 : fallback per-sector ──
+    sector_run = _resolve_sector_run(engine, symbol, batch_id=batch_id)
+    if sector_run is not None:
+        ckpt_path = Path(sector_run["checkpoint_path"])
+        scaler_path = Path(sector_run["scaler_path"])
+        config_path = Path(sector_run["config_path"])
+        if ckpt_path.exists() and config_path.exists():
+            LOGGER.info(
+                "predict_symbol sector_fallback symbol=%s sector=%s run_id=%s",
+                symbol, sector_run.get("symbol"), sector_run.get("run_id"),
+            )
+            return ckpt_path, scaler_path, config_path, str(sector_run["run_id"])
+
     sym_dir = artifacts_dir / batch_id / symbol if batch_id is not None else artifacts_dir / symbol
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
+
+
+def _resolve_sector_run(
+    engine: "Engine",  # type: ignore[name-defined]
+    symbol: str,
+    batch_id: str | None = None,
+) -> dict | None:
+    """Résout le training run du secteur GICS pour un symbole donné.
+
+    Retourne un dict avec les clés nécessaires au fallback tabulaire :
+    ``run_id``, ``config_path``, ``checkpoint_path`` (→ model_path).
+
+    P0-2 fix (2026-08-04) : utilise une requête directe qui n'exige pas
+    checkpoint_path/scaler_path (absents des runs tabulaires sectoriels).
+    """
+    try:
+        from modelFactory.cross_sectional import _load_sector_mapping, _map_to_gics_sector
+        sector_map = _load_sector_mapping(engine)
+        if not sector_map:
+            return None
+        db_sector = sector_map.get(symbol.upper())
+        if db_sector is None:
+            return None
+        gics_sector = _map_to_gics_sector(db_sector)
+        # Requête directe : ne pas exiger checkpoint_path/scaler_path
+        from sqlalchemy import text
+        if batch_id is not None:
+            sql = text(
+                "SELECT mtr.run_id, mtr.symbol, mtr.config_path, "
+                "mg.model_path, mg.model_name "
+                "FROM model_training_run mtr "
+                "JOIN model_governance mg ON mg.run_id = mtr.run_id "
+                "WHERE mtr.symbol = :sym AND mtr.batch_id = :bid "
+                "AND mtr.status = 'completed' AND mg.is_selected_model = 1 "
+                "ORDER BY mtr.finished_at DESC LIMIT 1"
+            )
+            params = {"sym": gics_sector, "bid": batch_id}
+        else:
+            sql = text(
+                "SELECT mtr.run_id, mtr.symbol, mtr.config_path, "
+                "mg.model_path, mg.model_name "
+                "FROM model_training_run mtr "
+                "JOIN model_governance mg ON mg.run_id = mtr.run_id "
+                "WHERE mtr.symbol = :sym AND mtr.status = 'completed' "
+                "AND mg.is_selected_model = 1 "
+                "ORDER BY mtr.finished_at DESC LIMIT 1"
+            )
+            params = {"sym": gics_sector}
+        with engine.connect() as conn:
+            row = conn.execute(sql, params).mappings().first()
+        if row is None:
+            return None
+        return {
+            "run_id": row["run_id"],
+            "symbol": row["symbol"],
+            "config_path": row["config_path"] or "",
+            # Le predictor lit checkpoint_path comme chemin du modèle tabulaire
+            "checkpoint_path": row["model_path"] or "",
+            "scaler_path": "",  # non utilisé pour les modèles tabulaires
+            "model_name": row["model_name"],
+        }
+    except Exception:
+        return None
 
 
 def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -> str | None:
@@ -658,11 +738,18 @@ def clear_model_cache() -> None:
 
 
 def clear_prediction_data_cache() -> None:
-    """Vide le cache des données immuables réutilisées entre symboles."""
+    """Vide le cache des données immuables réutilisées entre symboles.
+
+    P2-5 fix (2026-08-04) : inclut _global_rank_prediction_cache et
+    _per_symbol_features_cache qui n'étaient pas vidés.
+    """
+    global _global_rank_prediction_cache, _per_symbol_features_cache
     with _benchmark_frame_cache_lock:
         _benchmark_frame_cache.clear()
     with _cross_sectional_frame_cache_lock:
         _cross_sectional_frame_cache.clear()
+    _global_rank_prediction_cache.clear()
+    _per_symbol_features_cache.clear()
 
 
 def _load_benchmark_bars_cached(
@@ -933,6 +1020,9 @@ def _prepare_prediction_frame(
             include_macro_vxn=data_cfg.include_macro_vxn_features,
             include_macro_vix3m=data_cfg.include_macro_vix3m_features,
             include_macro_move=data_cfg.include_macro_move_features,
+            include_fundamentals=data_cfg.include_fundamentals_features,
+            include_factors=data_cfg.include_factors_features,
+            include_macro_regime=data_cfg.include_macro_regime_features,
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)
@@ -1075,6 +1165,12 @@ def _predict_with_tabular_model(
     ))
     if df.empty or len(df) == 0:
         return None
+    # ── P0-3 fix (2026-08-04) : reconstruire pd.Categorical pour "symbol" ──
+    _symbol_cats = cfg_data.get("symbol_categories")
+    if _symbol_cats and "symbol" in df.columns:
+        # Inclure le symbole courant s'il n'est pas dans les catégories d'entraînement
+        _all_cats = list(dict.fromkeys(list(_symbol_cats) + [symbol]))
+        df["symbol"] = pd.Categorical(df["symbol"], categories=_all_cats)
     if not _has_matching_latest_feature_date(df, cutoff_date):
         LOGGER.warning(
             "predict_symbol stale_feature_row symbol=%s selected_model=%s cutoff_date=%s last_feature_date=%s",

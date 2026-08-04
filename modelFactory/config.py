@@ -252,6 +252,11 @@ class GlobalModelConfig:
     ranking_max_depth: int = 7        # plus profond que per-symbol (640K lignes vs 2K)
     ranking_num_leaves: int = 31      # cohérent avec max_depth=7
     ranking_sector_group: str = "all" # all | cyclical | defensive (univers séparés)
+    # ── CatBoost ranking params (P1-4 fix, 2026-08-04) ──
+    # Séparés de BaselineConfig pour éviter que le tuning per-symbol ne modifie
+    # silencieusement le Global Ranking. Cohérents avec la doc (n_estimators=500).
+    ranking_catboost_iterations: int = 500
+    ranking_catboost_learning_rate: float = 0.03
 
     def __post_init__(self) -> None:
         if self.model_name not in {"catboost", "lightgbm"}:

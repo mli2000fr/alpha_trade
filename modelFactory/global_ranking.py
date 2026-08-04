@@ -46,7 +46,7 @@ from modelFactory.data_loader import (
     load_universe_latest_bar_date,
     resolve_training_start_date,
 )
-from modelFactory.dataset import generate_walk_forward_splits
+from modelFactory.dataset import generate_walk_forward_splits_by_dates
 from modelFactory.features import (
     build_feature_contract,
     compute_features,
@@ -541,10 +541,15 @@ def _build_ranking_estimator(
         )
     else:
         CatBoostRegressor = _import_catboost()
+        # P1-4 fix (2026-08-04) : utiliser les params dédiés du GlobalModelConfig
+        # pour l'itération et le learning rate, pas ceux du BaselineConfig.
+        _cb_depth = cfg.global_model.ranking_max_depth
+        _cb_iterations = cfg.global_model.ranking_catboost_iterations
+        _cb_lr = cfg.global_model.ranking_catboost_learning_rate
         return "catboost", CatBoostRegressor(
-            depth=cfg.baseline.catboost_depth,
-            iterations=cfg.baseline.catboost_iterations,
-            learning_rate=cfg.baseline.catboost_learning_rate,
+            depth=_cb_depth,
+            iterations=_cb_iterations,
+            learning_rate=_cb_lr,
             random_seed=resolved_seed,
             loss_function="RMSE",
             verbose=False,
@@ -921,22 +926,19 @@ def train_global_ranking_wf(
     except Exception as _exc:
         LOGGER.warning("train_global_ranking_wf sector_map failed: %s", _exc)
 
-    # ── Walk-Forward splits (features uniquement, PAS de targets) ──
-    _daily_symbols = int(round(base_df.groupby("date").size().median()))
-    _daily_symbols = max(_daily_symbols, 1)
-    # P1 (2026-08-01) : targets calculées APRES le split sur chaque fold
-    # → le shift(-h) ne peut pas traverser les frontières train/val/test.
-    # Purge = 1 jour (marge de sécurité résiduelle uniquement).
-    _purge_rows = 1 * _daily_symbols
-    wf_splits = generate_walk_forward_splits(
+    # ── Walk-Forward splits par DATES (P1-2 fix, 2026-08-04) ──
+    # Avant : generate_walk_forward_splits (par lignes) × median_symbols_per_date
+    #   → si le nombre de symboles varie, une date peut être coupée entre train/val.
+    # Après : generate_walk_forward_splits_by_dates (par dates uniques)
+    #   → une date entière ne peut appartenir qu'à UN seul fold.
+    wf_splits = generate_walk_forward_splits_by_dates(
         base_df,
-        min_train_size=cfg.walk_forward.min_train_size * _daily_symbols,
-        val_size=cfg.walk_forward.val_size * _daily_symbols,
-        test_size=cfg.walk_forward.test_size * _daily_symbols,
-        step_size=cfg.walk_forward.step_size * _daily_symbols,
+        min_train_dates=cfg.walk_forward.min_train_size,
+        val_dates=cfg.walk_forward.val_size,
+        test_dates=cfg.walk_forward.test_size,
+        step_dates=cfg.walk_forward.step_size,
         max_splits=cfg.walk_forward.max_splits,
-        forecast_horizon=_purge_rows,
-        max_train_size=756 * _daily_symbols,  # rolling window ~3 ans
+        forecast_horizon=1,  # 1 date de purge (marge résiduelle)
         date_column="date",
     )
     if not wf_splits:
@@ -1022,6 +1024,39 @@ def train_global_ranking_wf(
             if train_df.empty or val_df.empty:
                 continue
 
+            # ── P1-6 diagnostic (2026-08-04) : symboles par fold ──
+            _train_syms = train_df["symbol"].nunique() if "symbol" in train_df.columns else 0
+            _val_syms = val_df["symbol"].nunique() if "symbol" in val_df.columns else 0
+            _total_syms = len(symbols)
+            # ── P1-6 (2026-08-04) : diagnostic + filtre de disponibilité par fold ──
+            # Le filtre de liquidité global utilise end_date=training_end_date.
+            # Dans un fold ancien, un symbole peut ne pas avoir assez d'historique.
+            # On vérifie que chaque symbole a ≥ min_train_dates séances avant train_end.
+            if "date" in train_df.columns and "symbol" in train_df.columns:
+                _sym_counts = train_df.groupby("symbol")["date"].nunique()
+                _eligible = _sym_counts[_sym_counts >= cfg.walk_forward.min_train_size // 2]
+                _ineligible = set(_sym_counts.index) - set(_eligible.index)
+                if _ineligible:
+                    LOGGER.info(
+                        "global_ranking_wf fold=%d: %d symbols with < %d sessions in train, excluded",
+                        split.split_index + 1, len(_ineligible),
+                        cfg.walk_forward.min_train_size // 2,
+                    )
+                    train_df = train_df[~train_df["symbol"].isin(_ineligible)]
+                    val_df = val_df[~val_df["symbol"].isin(_ineligible)]
+            LOGGER.info(
+                "global_ranking_wf fold=%d symbols train=%d/%d val=%d/%d (%.0f%% of universe)",
+                split.split_index + 1, _train_syms, _total_syms, _val_syms, _total_syms,
+                100 * _train_syms / _total_syms if _total_syms > 0 else 0,
+            )
+            if _train_syms < 0.5 * _total_syms and _total_syms > 20:
+                LOGGER.warning(
+                    "global_ranking_wf P1-6: fold %d only has %d/%d symbols. "
+                    "Universe/liquidity filter is NOT per-fold — symbols may enter "
+                    "folds where they were not yet tradable.",
+                    split.split_index + 1, _train_syms, _total_syms,
+                )
+
             # ── Périodes des splits (diagnostic régime de marché) ──
             _train_dates = pd.to_datetime(train_df["date"]) if "date" in train_df.columns else None
             _val_dates = pd.to_datetime(val_df["date"]) if "date" in val_df.columns else None
@@ -1100,7 +1135,17 @@ def train_global_ranking_wf(
             pred_part["predicted_score"] = model.predict(X_val).astype(np.float64)
             pred_part["actual_return"] = y_val
 
-            ic = compute_ic_rank(pred_part["predicted_score"].to_numpy(), y_val)
+            # P2-1 fix (2026-08-04) : IC calculé par date (Spearman cross-sectionnel),
+            # pas poolé sur tout le fold. Cohérent avec la définition du ranking.
+            _ic_result = compute_cross_sectional_ic(
+                pred_part,
+                score_col="predicted_score",
+                return_col="actual_return",
+                date_col="date",
+                vol_col=None,  # target déjà vol-scalée
+                min_symbols_per_date=10,
+            )
+            ic = _ic_result.get("ic_mean")
             if ic is not None:
                 h_ics.append(ic)
             h_parts.append(pred_part)
