@@ -328,6 +328,79 @@ def test_per_sector_xs_merge_uses_global_universe() -> None:
         )
 
 
+def test_double_merge_no_suffix_columns_real_values_preserved() -> None:
+    """Régression 2026-08-04 : un double appel à merge_cross_sectional_features
+    (defaults → cache réel) ne doit PAS créer de colonnes _x/_y et doit
+    contenir les valeurs réelles du second merge.
+
+    Scénario exact du per-sector :
+    1. prepare_symbol_frame appelle merge avec cache vide → colonnes XS à 0.5
+    2. _prepare_sector_data rappelle merge avec le vrai cache global
+    Avant le fix, le pd.merge créait col_x/col_y et les 0.5 survivaient.
+    """
+    from modelFactory.cross_sectional import (
+        CROSS_SECTIONAL_FEATURE_COLUMNS,
+        merge_cross_sectional_features,
+    )
+
+    # ── Étape 1 : premier merge avec cache vide (simule prepare_symbol_frame) ──
+    symbol_df = pd.DataFrame({
+        "symbol": ["AAPL", "MSFT", "AAPL", "MSFT"],
+        "date": pd.to_datetime(["2022-06-15", "2022-06-15", "2022-06-16", "2022-06-16"]),
+        "daily_return": [0.01, -0.005, 0.02, 0.003],
+    })
+    empty_cache = pd.DataFrame(columns=["symbol", "date"])
+    after_first = merge_cross_sectional_features(symbol_df, empty_cache)
+
+    # Vérifier que les colonnes XS existent et valent 0.5
+    for col in CROSS_SECTIONAL_FEATURE_COLUMNS:
+        assert col in after_first.columns, f"{col} missing after first merge"
+        assert np.allclose(after_first[col], 0.5), (
+            f"{col} should be 0.5 after empty-cache merge, got {after_first[col].unique()}"
+        )
+
+    # ── Étape 2 : second merge avec cache réel (simule _prepare_sector_data) ──
+    real_cache = pd.DataFrame({
+        "symbol": ["AAPL", "MSFT", "AAPL", "MSFT"],
+        "date": pd.to_datetime(["2022-06-15", "2022-06-15", "2022-06-16", "2022-06-16"]),
+        "ret_20_rank": [0.82, 0.31, 0.75, 0.28],
+        "ret_60_rank": [0.79, 0.35, 0.72, 0.30],
+        "volatility_20_rank": [0.40, 0.60, 0.45, 0.55],
+    })
+    after_second = merge_cross_sectional_features(after_first, real_cache)
+
+    # ── Vérification 1 : AUCUNE colonne avec suffixe _x ou _y ──
+    suffix_cols = [c for c in after_second.columns if c.endswith("_x") or c.endswith("_y")]
+    assert len(suffix_cols) == 0, (
+        f"Found _x/_y suffix columns after double merge: {suffix_cols}. "
+        f"The drop-before-merge fix is not working."
+    )
+
+    # ── Vérification 2 : les colonnes non-XS sont préservées ──
+    assert "daily_return" in after_second.columns
+    assert list(after_second["daily_return"]) == [0.01, -0.005, 0.02, 0.003]
+
+    # ── Vérification 3 : les valeurs réelles du cache sont présentes ──
+    aapl_row = after_second[(after_second["symbol"] == "AAPL") & (after_second["date"] == "2022-06-15")]
+    assert len(aapl_row) == 1, "AAPL 2022-06-15 should have exactly 1 row after merge"
+    assert aapl_row["ret_20_rank"].iloc[0] == 0.82, (
+        f"Expected ret_20_rank=0.82 (real cache value), got {aapl_row['ret_20_rank'].iloc[0]}"
+    )
+    assert aapl_row["ret_60_rank"].iloc[0] == 0.79
+
+    msft_row = after_second[(after_second["symbol"] == "MSFT") & (after_second["date"] == "2022-06-15")]
+    assert msft_row["ret_20_rank"].iloc[0] == 0.31
+
+    # ── Vérification 4 : colonne absente du cache → default 0.5 ──
+    # relative_strength_20_rank n'est pas dans le cache → doit rester à 0.5
+    for col in CROSS_SECTIONAL_FEATURE_COLUMNS:
+        assert col in after_second.columns, f"{col} missing after second merge"
+        if col not in real_cache.columns:
+            assert np.allclose(after_second[col], 0.5), (
+                f"{col} not in real cache, should stay at default 0.5"
+            )
+
+
 def test_per_sector_feature_contract_includes_fundamentals_when_enabled() -> None:
     """Quand include_fundamentals=True, get_feature_columns retourne les colonnes
     fondamentales. Quand False, elles sont absentes. Les colonnes retournées
