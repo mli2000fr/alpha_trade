@@ -174,6 +174,10 @@ def _persist_sector_metrics(
     lgbm_result: dict[str, Any],
     cb_result: dict[str, Any],
     batch_id: str | None = None,
+    sector_dir: Path | None = None,
+    symbols: list[str] | None = None,
+    cfg: Any = None,
+    has_symbol_feat: bool = False,
 ) -> None:
     """Persiste les métriques d'un secteur dans les tables model_training_*."""
     from modelFactory.db_registry import (
@@ -227,6 +231,10 @@ def _persist_sector_metrics(
         "catboost": cb_result,
         "lstm_attention": {"status": "skipped"},
     }
+    # ── Déterminer sector_dir (paramètre ou dérivé du model_path) ──
+    if sector_dir is None:
+        _model_path = lgbm_result.get("artifact_paths", {}).get("model_path") or ""
+        sector_dir = Path(_model_path).parent.parent if _model_path else Path(".")
     artifact_routes = {
         "lightgbm": {
             "inference_backend": "lightgbm_tabular",
@@ -242,7 +250,7 @@ def _persist_sector_metrics(
     # ── P0-2 fix (2026-08-04) : persister un config.json complet pour l'inférence ──
     _feature_cols = lgbm_result.get("feature_columns") or cb_result.get("feature_columns") or []
     # P0-3: persister la liste des symboles comme catégories pour reconstruction
-    _symbol_categories = sorted(symbols) if _has_symbol_feat else None
+    _symbol_categories = sorted(symbols) if (has_symbol_feat and symbols) else None
     _artifact_routes_for_config = {
         "selected_model": champion,
         "models": {
@@ -269,6 +277,9 @@ def _persist_sector_metrics(
     _config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(_config_path, "w", encoding="utf-8") as _fh:
         json.dump(_sector_config, _fh, indent=2, default=str)
+    # ── Marquer completed AVANT replace_model_governance (survit si erreur ensuite) ──
+    update_training_run(engine, run_id, status="completed", finished_at=datetime.now(timezone.utc))
+
     replace_model_governance(
         engine, run_id=run_id, symbol=sector_name,
         challengers=challengers,
@@ -279,7 +290,6 @@ def _persist_sector_metrics(
         ranking=[],
     )
 
-    update_training_run(engine, run_id, status="completed", finished_at=datetime.now(timezone.utc))
     LOGGER.info("_persist_sector_metrics: sector=%s champion=%s lgbm=%.4f cb=%.4f",
                  sector_name, champion, lgbm_score, cb_score)
 
@@ -546,6 +556,10 @@ def _train_sector_models(
             engine, sector_name, run_id=sector_run_id,
             lgbm_result=lgbm_result, cb_result=cb_result,
             batch_id=batch_id,
+            sector_dir=sector_dir,
+            symbols=symbols,
+            cfg=cfg,
+            has_symbol_feat=_has_symbol_feat,
         )
     except Exception as exc:
         LOGGER.warning("train_sector: failed to persist metrics for %s: %s", sector_name, exc)
