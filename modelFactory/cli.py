@@ -310,6 +310,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les expositions factorielles CAPM (beta, alpha, R² via rolling 252j)")
     p.add_argument("--include-macro-regime", action="store_true", default=False,
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
+    p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
+                   help="T1 experiment: désactiver le vol-scaling dans la target regression (target = future_return brut)")
+    p.add_argument("--target-intra-sector-rank", action="store_true", default=False,
+                   help="T2 experiment: target = rang percentile intra-secteur [0,1] (classification de rang au lieu de régression de magnitude)")
+    p.add_argument("--target-ternary-intra-sector", action="store_true", default=False,
+                   help="T3 experiment: classification ternaire intra-secteur (LONG/FLAT/SHORT avec seuils en quantiles train-only)")
+    p.add_argument("--target-ternary-quantile", type=float, default=0.30,
+                   help="T3: quantile pour les seuils LONG/SHORT (défaut 0.30 = top 30%% LONG, bottom 30%% SHORT)")
     p.add_argument("--ranking-top-k-features", type=int, default=0,
                    help="Global Ranking : nombre de features à garder par importance (0 = toutes, ex: 30 = top 30)")
     p.add_argument("--global-ranking-max-symbols", type=int, default=0,
@@ -521,6 +529,10 @@ def main(args: list[str] | None = None) -> None:
             triple_barrier_stop_atr_mult=opts.triple_barrier_stop_atr_mult,
             triple_barrier_tp_atr_mult=opts.triple_barrier_tp_atr_mult,
             triple_barrier_max_sessions=opts.triple_barrier_max_sessions,
+            target_skip_vol_scaling=opts.target_skip_vol_scaling,
+            target_intra_sector_rank=opts.target_intra_sector_rank,
+            target_ternary_intra_sector=opts.target_ternary_intra_sector,
+            target_ternary_quantile=opts.target_ternary_quantile,
             decision_threshold=opts.decision_threshold,
             enable_liquidity_filter=opts.enable_liquidity_filter,
             liquidity_min_avg_volume_20d=opts.liquidity_min_avg_volume_20d,

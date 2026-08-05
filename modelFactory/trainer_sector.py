@@ -161,6 +161,27 @@ def _prepare_sector_data(
                 "(target = target - daily_median within sector)"
             )
 
+    # ── T2 experiment (2026-08-05) : rang percentile intra-secteur ──
+    # Au lieu de prédire la magnitude de la surperformance, le modèle apprend
+    # à classer les titres dans leur secteur. La target devient un rang [0,1].
+    if cfg.data.target_intra_sector_rank:
+        _ranked = 0
+        if cfg.data.forecast_horizons:
+            for h in cfg.data.forecast_horizons:
+                _col = f"target_h{h}"
+                if _col in prepared.columns:
+                    prepared[_col] = prepared.groupby("date")[_col].rank(pct=True)
+                    _ranked += 1
+            if "target" in prepared.columns:
+                prepared["target"] = prepared[f"target_h{cfg.data.forecast_horizon}"]
+        elif "target" in prepared.columns:
+            prepared["target"] = prepared.groupby("date")["target"].rank(pct=True)
+            _ranked = 1
+        LOGGER.info(
+            "train_sector: T2 intra-sector rank applied — %d targets converted to percentile rank [0,1]",
+            _ranked,
+        )
+
     # Chronological split by DATES (PIT-safe: same date → same split)
     split = chrono_split_by_dates(
         prepared,
@@ -355,6 +376,47 @@ def _train_sector_models(
     if train_df.empty:
         return {"sector": sector_name, "status": "skipped", "reason": "empty_train"}
 
+    # ── T3 experiment (2026-08-05) : classification ternaire intra-secteur ──
+    # Convertit la target continue en labels LONG(+1)/FLAT(0)/SHORT(-1)
+    # avec des seuils en quantiles calculés sur le TRAIN uniquement.
+    _is_ternary = (
+        cfg.data.target_mode == "regression"
+        and cfg.data.target_ternary_intra_sector
+    )
+    if _is_ternary:
+        from dataclasses import replace
+        _q = cfg.data.target_ternary_quantile
+        _q_lo = _q
+        _q_hi = 1.0 - _q
+        for _df in (train_df, val_df, test_df):
+            if "target" not in _df.columns:
+                continue
+            _target = _df["target"].copy()
+            if _df is train_df:
+                _train_lo = _target.quantile(_q_lo)
+                _train_hi = _target.quantile(_q_hi)
+                LOGGER.info(
+                    "train_sector T3: train quantiles lo=%.4f (q=%.2f) hi=%.4f (q=%.2f)",
+                    _train_lo, _q_lo, _train_hi, _q_hi,
+                )
+            _ternary = pd.Series(0, index=_df.index, dtype=int)
+            _ternary = _ternary.mask(_target > _train_hi, 1)
+            _ternary = _ternary.mask(_target < _train_lo, -1)
+            _df["target"] = _ternary
+            # Propager aux targets multi-horizon si présentes
+            for _hcol in [c for c in _df.columns if c.startswith("target_h")]:
+                _t = _df[_hcol].copy()
+                _t_ternary = pd.Series(0, index=_df.index, dtype=int)
+                _t_ternary = _t_ternary.mask(_t > _train_hi, 1)
+                _t_ternary = _t_ternary.mask(_t < _train_lo, -1)
+                _df[_hcol] = _t_ternary
+        _ternary_dist = train_df["target"].value_counts().to_dict()
+        LOGGER.info(
+            "train_sector T3: ternary distribution train — %s", _ternary_dist,
+        )
+        # Remplacer cfg pour que les fonctions aval voient target_mode="ternary"
+        cfg = replace(cfg, data=replace(cfg.data, target_mode="ternary"))
+
     # Build prepared_df for tabular baselines
     prepared_df = pd.concat([train_df, val_df, test_df], ignore_index=True)
 
@@ -363,7 +425,8 @@ def _train_sector_models(
     _has_symbol_feat = "symbol" in tab_feature_cols
 
     # ── LightGBM ──
-    is_reg = cfg.data.target_mode == "regression"
+    is_reg = cfg.data.target_mode == "regression" and not _is_ternary
+    _effective_mode = "ternary" if _is_ternary else cfg.data.target_mode
     if is_reg:
         _lgbm_builder = lambda seed: __import__("lightgbm").LGBMRegressor(
             objective="regression",
@@ -380,8 +443,8 @@ def _train_sector_models(
         )
     else:
         _lgbm_builder = lambda seed: __import__("lightgbm").LGBMClassifier(
-            objective="multiclass" if cfg.data.target_mode == "ternary" else "binary",
-            num_class=3 if cfg.data.target_mode == "ternary" else 1,
+            objective="multiclass" if _effective_mode == "ternary" else "binary",
+            num_class=3 if _effective_mode == "ternary" else 1,
             max_depth=cfg.baseline.max_depth,
             num_leaves=cfg.baseline.lgbm_num_leaves,
             n_estimators=cfg.baseline.n_estimators,
@@ -415,7 +478,7 @@ def _train_sector_models(
             iterations=cfg.baseline.catboost_iterations,
             learning_rate=cfg.baseline.catboost_learning_rate,
             random_seed=seed,
-            loss_function="MultiClass" if cfg.data.target_mode == "ternary" else "Logloss",
+            loss_function="MultiClass" if _effective_mode == "ternary" else "Logloss",
             verbose=False, allow_writing_files=False,
             auto_class_weights="Balanced",
             l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,

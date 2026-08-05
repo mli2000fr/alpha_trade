@@ -38,6 +38,10 @@ class DataConfig:
     triple_barrier_stop_atr_mult: float = 2.0
     triple_barrier_tp_atr_mult: float = 3.0
     triple_barrier_max_sessions: int = 20
+    target_skip_vol_scaling: bool = False  # T1 experiment: skip vol-scaling in regression target
+    target_intra_sector_rank: bool = False  # T2 experiment: target = percentile rank within sector
+    target_ternary_intra_sector: bool = False  # T3 experiment: ternary classification intra-sector
+    target_ternary_quantile: float = 0.30  # T3: top/bottom quantile for LONG/SHORT (0.30 = top 30% LONG, bottom 30% SHORT)
     decision_threshold: float = 0.5
     training_start_date: date | None = date(2020, 1, 1)
     training_end_date: date | None = None

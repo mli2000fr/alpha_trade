@@ -127,6 +127,10 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
+    DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
+    DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
     DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS,
@@ -3263,6 +3267,33 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_macro_regime",
                 help="Ajoute `--include-macro-regime`. Injecte la tendance SPY long terme et le z-score VIX à tous les symboles.",
             )
+            ml_target_skip_vol_scaling = st.checkbox(
+                "🎯 T1 Experiment — Désactiver le vol-scaling de la target (target = future_return brut)",
+                value=_session_state_bool("pipeline_ml_target_skip_vol_scaling", DEFAULT_ML_TARGET_SKIP_VOL_SCALING),
+                key="pipeline_ml_target_skip_vol_scaling",
+                help="Ajoute `--target-skip-vol-scaling`. La target regression n'est PAS divisée par la volatilité 20j. Expérience T1 : tester si le vol-scaling amplifie le bruit.",
+            )
+            ml_target_intra_sector_rank = st.checkbox(
+                "🏆 T2 Experiment — Rang percentile intra-secteur (classification de rang)",
+                value=_session_state_bool("pipeline_ml_target_intra_sector_rank", DEFAULT_ML_TARGET_INTRA_SECTOR_RANK),
+                key="pipeline_ml_target_intra_sector_rank",
+                help="Ajoute `--target-intra-sector-rank`. La target devient le rang percentil [0,1] du titre dans son secteur sur chaque date. Le modèle apprend à classer, pas à prédire une magnitude.",
+            )
+            ml_target_ternary_intra_sector = st.checkbox(
+                "🔺 T3 Experiment — Classification ternaire intra-secteur (LONG/FLAT/SHORT)",
+                value=_session_state_bool("pipeline_ml_target_ternary_intra_sector", DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR),
+                key="pipeline_ml_target_ternary_intra_sector",
+                help="Ajoute `--target-ternary-intra-sector`. Convertit la target continue en labels LONG(+1)/FLAT(0)/SHORT(-1) avec des seuils en quantiles calculés sur le train uniquement. Le modèle devient un classifieur.",
+            )
+            if ml_target_ternary_intra_sector:
+                ml_target_ternary_quantile = st.slider(
+                    "Quantile LONG/SHORT",
+                    min_value=0.10, max_value=0.45, value=0.30, step=0.05,
+                    key="pipeline_ml_target_ternary_quantile",
+                    help="Top N = LONG, bottom N = SHORT. 0.30 = top 30% LONG, bottom 30% SHORT, 40% FLAT.",
+                )
+            else:
+                ml_target_ternary_quantile = 0.30
         st.markdown("---")
         with st.expander("🔍 ML — Filtrage", expanded=False):
             ml_ranking_top_k_features = st.number_input(
@@ -4555,6 +4586,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_fundamentals=bool(ml_include_fundamentals),
             ml_include_factors=bool(ml_include_factors),
             ml_include_macro_regime=bool(ml_include_macro_regime),
+            ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),
+            ml_target_intra_sector_rank=bool(ml_target_intra_sector_rank),
+            ml_target_ternary_intra_sector=bool(ml_target_ternary_intra_sector),
+            ml_target_ternary_quantile=float(ml_target_ternary_quantile),
             ml_ranking_top_k_features=int(ml_ranking_top_k_features),
             ml_global_ranking_max_symbols=int(ml_global_ranking_max_symbols),
             ml_global_ranking_selection_mode=str(ml_global_ranking_selection_mode),

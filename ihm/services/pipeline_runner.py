@@ -107,6 +107,10 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_SEQUENCE_LENGTH,
     DEFAULT_ML_TARGET_DOWN_THRESHOLD,
     DEFAULT_ML_TARGET_MODE,
+    DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
+    DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
     DEFAULT_ML_TERNARY_WEIGHT_SHORT,
     DEFAULT_ML_TERNARY_WEIGHT_FLAT,
@@ -352,6 +356,10 @@ class PipelineLaunchOptions:
     ml_include_fundamentals: bool = DEFAULT_ML_INCLUDE_FUNDAMENTALS
     ml_include_factors: bool = DEFAULT_ML_INCLUDE_FACTORS
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
+    ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
+    ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
+    ml_target_ternary_intra_sector: bool = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR
+    ml_target_ternary_quantile: float = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE
     ml_ranking_top_k_features: int = DEFAULT_ML_RANKING_TOP_K_FEATURES
     ml_global_ranking_max_symbols: int = DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS
     ml_global_ranking_selection_mode: str = "stratified"
@@ -2252,6 +2260,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-factors")
         if options.ml_include_macro_regime:
             command.append("--include-macro-regime")
+        if options.ml_target_skip_vol_scaling:
+            command.append("--target-skip-vol-scaling")
+        if options.ml_target_intra_sector_rank:
+            command.append("--target-intra-sector-rank")
+        if options.ml_target_ternary_intra_sector:
+            command.append("--target-ternary-intra-sector")
+            command.extend(["--target-ternary-quantile", str(options.ml_target_ternary_quantile)])
         if options.ml_ranking_top_k_features > 0:
             command.extend(["--ranking-top-k-features", str(options.ml_ranking_top_k_features)])
         if options.ml_global_ranking_max_symbols > 0:

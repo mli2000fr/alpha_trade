@@ -6,6 +6,48 @@
 
 ## 1. Diagnostic de depart
 
+### 1.0 Decision de recherche : suspendre le per-sector comme signal de trading (2026-08-05)
+
+La campagne controlee comporte huit batchs sur le meme probleme per-sector, dont une baseline sans familles optionnelles (`S0`), les corrections de contrat XS/fondamentales, H20 seul, trois formulations de cible et le score short. Elle donne un resultat coherent : **aucun alpha per-sector tradable n'est demontre par les configurations et le dataset testes**.
+
+| Experience | Hypothese testee | Resultat WF H20 | Lecture |
+|---|---|---:|---|
+| `S0` `799d9e` | Baseline sans flag optionnel | F1 0.330, DA 50.0 %, MSE 1.01 | Niveau nul. |
+| `S0+short` `57461f` | Score short incremental | F1 0.330, DA 50.0 %, MSE 1.01 | Aucun effet mesure. |
+| `d21cb1` | XS/fondamentales effectivement presentes | F1 0.325, DA 49.8 %, MSE 1.09 | Le correctif de contrat est valide, sans gain economique. |
+| `T0` `a3aaa3` | H20 seul, cible continue actuelle | F1 0.330, DA 50.0 %, MSE 1.01 | Multi-horizon non responsable. |
+| `T1` `1b2059` | Cible sans vol scaling | F1 0.330, DA 50.0 %, MSE 1.24 | Degradation nette de l'erreur. |
+| `T2` `054378` | Rang percentile intra-secteur | F1 0.330, DA 49.9 %, MSE 1.07 | Pas de signal de ranking exploitable. |
+| `T3` `5b6760` | Classes intra-secteur long/flat/short | F1 0.331, DA 39.3 %, MSE 0.23 | Surapprentissage temporel severe. |
+
+`T3` ne constitue pas une exception positive : CatBoost et LightGBM affichent environ `69.3 %` de directional accuracy en validation, `71.3 %` en test interne, puis respectivement `39.6 %` et `39.0 %` en walk-forward. Le gain apparent vient donc d'un protocole de selection/calibration qui ne se generalise pas aux six periodes OOS, et non d'un signal utilisable.
+
+**Decision operationnelle :** le per-sector passe en statut **research-only**. Il ne doit ni etre champion de production, ni entrer dans la cascade, ni servir de veto ou de ponderation du capital. Les artefacts et rapports sont conserves pour audit, mais aucune nouvelle campagne de tuning, de flags ou d'hyperparametres n'est justifiee.
+
+**Regle de re-entree :** ne le reconsiderer que pour une hypothese materiallement nouvelle, avec une information nouvelle et PIT (revisions de resultats/estimations, flux ETF sectoriels, evenements sectoriels), ou un objectif de portefeuille relatif entierement redesigne. Une promotion requerra avant tout tuning une preregistration, un IC relatif positif par date, un spread long-short net de couts stable sur la majorite des folds et une confirmation sur holdout gele.
+
+La priorite experimentale est maintenant le **Global Ranking**. Son IC positif historique ne suffit pas encore a une promotion automatique, mais justifie un baseline fige et reproductible : manifeste de run, univers PIT par fold, nombre reel de splits explique, IC par date avec intervalle de confiance, spread decile net, turnover et capacite. Le per-sector ne doit pas etre une condition de confirmation de ce signal global.
+
+### 1.0 Comparaison per-sector : `f82ab5` versus `d21cb1` (2026-08-05)
+
+Le batch `d21cb1` est le premier rerun apres les corrections de merge XS/fondamentales. Il est bien termine (`11/11` secteurs, stacking desactive), avec six splits WF OOS de 2019-07 a 2025-03. Il active simultanement cross-sectionnelles, fondamentales, facteurs, macro-regime, MOVE et short score.
+
+| Horizon | F1 macro f82ab5 | F1 macro d21cb1 | Delta | Dir. acc. f82ab5 | Dir. acc. d21cb1 | Delta |
+|---|---:|---:|---:|---:|---:|---:|
+| H3 | 0.330 | 0.328 | -0.002 | 0.5033 | 0.5007 | -0.0026 |
+| H5 | 0.331 | 0.326 | -0.005 | 0.5019 | 0.5003 | -0.0016 |
+| H10 | 0.332 | 0.329 | -0.003 | 0.5038 | 0.5037 | -0.0001 |
+| H15 | 0.332 | 0.326 | -0.006 | 0.5041 | 0.4994 | -0.0047 |
+| H20 | 0.331 | 0.325 | -0.006 | 0.5019 | 0.4979 | -0.0040 |
+
+`d21cb1` est donc legerement moins bon sur tous les horizons, sans changement qualitativement positif : F1 macro reste voisin de `0.33`, directional accuracy de `0.50`, et F1 flat est nul. Le MSE WF de `d21cb1` est `1.089` CatBoost et `1.118` LightGBM, toujours au voisinage ou au-dessus du modele nul standardise.
+
+La dispersion sectorielle existe mais n'est pas suffisamment robuste pour une promotion : meilleur point Utilities/CatBoost (`dir_acc=0.5346`) mais MSE `1.3431`, et plusieurs secteurs/backend sont sous `0.48` de directional accuracy. Par regime, les F1 WF vont de `0.305` a `0.345`, sans relation convaincante avec bull/range/high-vol. Ce n'est pas une preuve d'alpha sectoriel exploitable.
+
+**Interpretation correcte :** les corrections XS/fondamentales ont retire un bug de contrat reel, mais elles n'ont pas automatiquement cree du signal sur ce rerun. Il serait incorrect de les annuler : le nouveau batch active plusieurs sources a la fois (`short_score`, MOVE, fondamentales, facteurs, macro-regime, XS) et le rapport precedent ne fournit pas la commande complete de `f82ab5`. La comparaison ne constitue donc pas une ablation causalement propre.
+
+**Decision historique remplacee par la campagne S0/T0-T3 :** les ablations prevues ont maintenant ete testees a un niveau suffisant pour interrompre la recherche incrementaliste. Ne pas lancer de tuning hyperparametrique, de nouvelles combinaisons de flags, ni promouvoir le per-sector.
+
 ### 1.1 Global Ranking : signal faible mais pas nul
 
 Le batch `f82ab5` donne un IC moyen global de `0.0115`, contre `0.0190` sur le batch de reference `7e4cf8`. C'est une chute importante, mais pas une absence de signal :

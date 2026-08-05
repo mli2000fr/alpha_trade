@@ -1250,6 +1250,7 @@ def build_target(
     negative_threshold: float = 0.0,
     *,
     skip_winsorize: bool = False,
+    skip_vol_scaling: bool = False,
 ) -> pd.Series:
     """Construit la target pour l'horizon futur.
 
@@ -1294,8 +1295,9 @@ def build_target(
         # appliquées APRÈS le split chronologique pour éviter le leakage
         # (→ run_tabular_baseline, run_tabular_walk_forward, SymbolDataModule).
         # skip_winsorize=True désactive la winsorisation pré-split (P1-1 fix).
+        # skip_vol_scaling=True désactive le vol-scaling (T1 experiment).
         target = future_return.copy()
-        if horizon >= 5:
+        if not skip_vol_scaling and horizon >= 5:
             rolling_vol = close.pct_change().rolling(20).std()
             target = target / rolling_vol
         if not skip_winsorize:
@@ -1320,6 +1322,7 @@ def build_multi_horizon_targets(
     negative_threshold: float = 0.0,
     *,
     skip_winsorize: bool = False,
+    skip_vol_scaling: bool = False,
 ) -> pd.DataFrame:
     """Construit les targets pour plusieurs horizons en une seule passe.
 
@@ -1328,6 +1331,9 @@ def build_multi_horizon_targets(
 
     Si ``skip_winsorize=True``, la winsorisation est désactivée (P1-1 fix).
     Elle sera appliquée après le split chronologique sur les stats du train.
+
+    Si ``skip_vol_scaling=True``, le vol-scaling est désactivé (T1 experiment).
+    La target est le forward return brut (non divisé par la volatilité).
     """
     close = _build_adjusted_price_frame(df)["close"]
     targets: dict[str, pd.Series] = {}
@@ -1336,7 +1342,7 @@ def build_multi_horizon_targets(
         targets[f"future_return_h{h}"] = future_return
         if mode == "regression":
             target = future_return.copy()
-            if h >= 5:
+            if not skip_vol_scaling and h >= 5:
                 rolling_vol = close.pct_change().rolling(20).std()
                 target = target / rolling_vol
             if not skip_winsorize:
