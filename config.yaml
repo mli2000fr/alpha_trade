@@ -428,7 +428,7 @@ batch_diagnostics:
   # Laisser vide pour utiliser automatiquement le dernier batch (⚠️ look-ahead
   # si le dernier batch est postérieur à la période backtestée).
   # Renseigner un batch_id explicite pour un backtest PIT-safe.
-  backtest_batch_id: "model-factory-20260805180215-71ad0b"
+  backtest_batch_id: ""
 
   # ── §7.0 (analyse_ml.md) — filtres additionnels par seuils absolus de F1 ──
   # Ces règles complètent le système existant (top/bottom/weak_*).
