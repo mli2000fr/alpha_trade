@@ -434,8 +434,11 @@ def update_training_run(engine: Engine, run_id: str, **kwargs: Any) -> None:
         conn.execute(text(f"UPDATE model_training_run SET {set_clause} WHERE run_id = :rid"), params)
 
 
-def load_training_run(engine: Engine, symbol: str, run_id: str | None = None) -> dict[str, Any] | None:
-    """Charge le run demandé, ou le dernier run complété disponible pour un symbole."""
+def load_training_run(engine: Engine, symbol: str, run_id: str | None = None, batch_id: str | None = None) -> dict[str, Any] | None:
+    """Charge le run demandé, ou le dernier run complété disponible pour un symbole.
+
+    Si ``batch_id`` est fourni, filtre sur ce batch.
+    """
     if run_id:
         sql = (
             "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "
@@ -444,6 +447,16 @@ def load_training_run(engine: Engine, symbol: str, run_id: str | None = None) ->
             "LIMIT 1"
         )
         params = {"sym": symbol, "rid": run_id}
+    elif batch_id:
+        sql = (
+            "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "
+            "FROM model_training_run "
+            "WHERE symbol = :sym AND status = 'completed' AND batch_id = :bid "
+            "AND checkpoint_path IS NOT NULL AND scaler_path IS NOT NULL AND config_path IS NOT NULL "
+            "ORDER BY COALESCE(finished_at, started_at) DESC, started_at DESC "
+            "LIMIT 1"
+        )
+        params = {"sym": symbol, "bid": batch_id}
     else:
         sql = (
             "SELECT run_id, symbol, status, checkpoint_path, scaler_path, config_path, started_at, finished_at "

@@ -519,6 +519,16 @@ def validate_feature_contract(
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
     )
+    contract = contract_payload if isinstance(contract_payload, dict) else None
+    contract_columns = normalize_feature_columns(contract.get("feature_columns")) if contract is not None else None
+    contract_fingerprint = str(contract.get("feature_fingerprint") or "").strip() if contract is not None else ""
+
+    # P0-4 (2026-08-06) : "symbol" est ajouté post-hoc comme feature
+    # catégorielle pour les modèles tabulaires per-sector. Il n'est pas
+    # listé par get_feature_columns() mais fait partie du contrat légitime.
+    if contract_columns is not None and "symbol" in contract_columns and "symbol" not in expected_columns:
+        expected_columns = list(expected_columns) + ["symbol"]
+
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
@@ -535,10 +545,6 @@ def validate_feature_contract(
         include_macro_regime=include_macro_regime,
         feature_columns=expected_columns,
     )
-
-    contract = contract_payload if isinstance(contract_payload, dict) else None
-    contract_columns = normalize_feature_columns(contract.get("feature_columns")) if contract is not None else None
-    contract_fingerprint = str(contract.get("feature_fingerprint") or "").strip() if contract is not None else ""
 
     if contract is None:
         if not allow_legacy_missing_contract:

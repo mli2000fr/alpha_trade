@@ -476,7 +476,9 @@ cascade:
 
   # Probabilité minimale du Per-Symbol pour valider un trade.
   # En dessous, le trade est rejeté même si le rang global est bon.
-  min_prob: 0.55
+  # Deux seuils distincts : classification (probas 0-1) vs regression (scores continus).
+  min_prob_classification: 0.55
+  min_prob_regression: 0.10
 
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)

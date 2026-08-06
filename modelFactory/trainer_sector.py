@@ -306,6 +306,7 @@ def _persist_sector_metrics(
         },
     }
     _sector_config = {
+        "run_id": run_id,
         "data": asdict(cfg.data),
         "model": asdict(cfg.model),
         "feature_columns": _feature_cols,

@@ -1161,7 +1161,7 @@ def _render_ml_predict_scope_block(
 
     _predict_workers = st.number_input(
         "⚡ Workers parallèles (dates simultanées)",
-        min_value=1, max_value=8, value=4, step=1,
+        min_value=1, max_value=8, value=8, step=1,
         key="pipeline_ml_predict_backtest_workers",
         help="Nombre de dates traitées en parallèle lors du predict historique. 4 = ~4× plus rapide.",
     )

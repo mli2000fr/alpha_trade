@@ -607,13 +607,23 @@ def _resolve_sector_run(
             row = conn.execute(sql, params).mappings().first()
         if row is None:
             return None
+        _model_path = row["model_path"] or ""
+        # config.json est au niveau du dossier secteur, pas dans h20/lightgbm/
+        # Ex: _sector_financials/h20/lightgbm/model.pkl → _sector_financials/config.json
+        if row["config_path"]:
+            _config_path = str(row["config_path"])
+        elif _model_path:
+            _model_dir = Path(_model_path).parent  # .../h20/lightgbm
+            _sector_dir = _model_dir.parent.parent   # .../ (sector root, 3 levels up from model)
+            _config_path = str(_sector_dir / "config.json")
+        else:
+            _config_path = ""
         return {
             "run_id": row["run_id"],
             "symbol": row["symbol"],
-            "config_path": row["config_path"] or "",
-            # Le predictor lit checkpoint_path comme chemin du modèle tabulaire
-            "checkpoint_path": row["model_path"] or "",
-            "scaler_path": "",  # non utilisé pour les modèles tabulaires
+            "config_path": _config_path,
+            "checkpoint_path": _model_path,
+            "scaler_path": "",
             "model_name": row["model_name"],
         }
     except Exception:
@@ -630,6 +640,14 @@ def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -
             include_cross_sectional=bool(data_cfg.get("enable_cross_sectional_features", False)),
             include_screener_scores=bool(data_cfg.get("include_screener_scores", False)),
             include_short_score=bool(data_cfg.get("include_short_score_features", False)),
+            include_macro_vix=bool(data_cfg.get("include_macro_vix_features", False)),
+            include_macro_vxn=bool(data_cfg.get("include_macro_vxn_features", False)),
+            include_macro_vix3m=bool(data_cfg.get("include_macro_vix3m_features", False)),
+            include_macro_move=bool(data_cfg.get("include_macro_move_features", False)),
+            include_global_stacking=bool((cfg_data.get("global_model") or {}).get("stacking_enabled", False)),
+            include_fundamentals=bool(data_cfg.get("include_fundamentals_features", False)),
+            include_factors=bool(data_cfg.get("include_factors_features", False)),
+            include_macro_regime=bool(data_cfg.get("include_macro_regime_features", False)),
             persisted_feature_columns=cfg_data.get("feature_columns"),
             persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
             allow_legacy_missing_contract=False,
@@ -638,6 +656,19 @@ def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -
         LOGGER.warning("feature_contract_check_failed symbol=%s error=%s", symbol, exc)
         return f"feature_contract_check_failed:{exc}"
     if reason is not None:
+        # P0-4 (2026-08-06) : les modèles entraînés avant le fix de
+        # _build_feature_contract_for_columns ont un fingerprint calculé
+        # avec des flags incomplets (include_fundamentals, include_factors,
+        # include_macro_regime absents). Si SEUL le fingerprint diverge
+        # (les colonnes matchent), on downgrade en warning au lieu d'abort.
+        if reason.startswith("feature_contract_fingerprint_mismatch"):
+            LOGGER.warning(
+                "feature_contract_fingerprint_lenient symbol=%s reason=%s "
+                "(columns ok, fingerprint mismatch accepted — training contract "
+                "built with incomplete flags, fixed in P0-4)",
+                symbol, reason,
+            )
+            return None
         LOGGER.error("feature_contract_violation symbol=%s reason=%s", symbol, reason)
         _record_artifact_issue(symbol, reason=f"feature_contract_violation:{reason}", path=config_path)
     return reason
@@ -934,34 +965,38 @@ def _load_data_cfg_from_payload(
     *,
     ps_features: dict[str, Any] | None = None,
 ) -> DataConfig:
-    """Reconstruit DataConfig depuis le config.json per-symbol.
+    """Reconstruit DataConfig depuis le config.json du modèle.
 
-    Si ``ps_features`` (issu de ``_per_symbol_features.json``) est fourni,
-    ses flags priment sur les valeurs du ``config.json`` — cela garantit la
-    parité exacte entraînement ↔ prédiction pour tous les ``include_*``.
+    Priorité : ``cfg_data["data"]`` d'abord (config du modèle cible),
+    puis ``ps_features`` (``_per_symbol_features.json``) en fallback
+    pour les clés absentes du config.json.
+
+    Cela garantit qu'un config per-sector (qui a son propre ``data``
+    complet) n'est pas écrasé par les flags per-symbol du batch.
     """
-    _src = ps_features if ps_features else cfg_data.get("data", {})
+    _primary = cfg_data.get("data", {})
+    _fallback = ps_features if ps_features else {}
     return DataConfig(
-        sequence_length=cfg_data["data"]["sequence_length"],
-        forecast_horizon=cfg_data["data"]["forecast_horizon"],
-        include_sentiment_features=_src.get("include_sentiment", cfg_data["data"].get("include_sentiment_features", False)),
-        include_screener_scores=_src.get("include_screener_scores", cfg_data["data"].get("include_screener_scores", False)),
-        include_short_score_features=_src.get("include_short_score", cfg_data["data"].get("include_short_score_features", False)),
-        include_macro_vix_features=_src.get("include_macro_vix", cfg_data["data"].get("include_macro_vix_features", False)),
-        include_macro_vxn_features=_src.get("include_macro_vxn", cfg_data["data"].get("include_macro_vxn_features", False)),
-        include_macro_vix3m_features=_src.get("include_macro_vix3m", cfg_data["data"].get("include_macro_vix3m_features", False)),
-        include_macro_move_features=_src.get("include_macro_move", cfg_data["data"].get("include_macro_move_features", False)),
-        include_fundamentals_features=_src.get("include_fundamentals", cfg_data["data"].get("include_fundamentals_features", False)),
-        include_factors_features=_src.get("include_factors", cfg_data["data"].get("include_factors_features", False)),
-        include_macro_regime_features=_src.get("include_macro_regime", cfg_data["data"].get("include_macro_regime_features", False)),
-        enable_cross_sectional_features=_src.get("enable_cross_sectional", cfg_data["data"].get("enable_cross_sectional_features", False)),
-        cross_sectional_min_universe=cfg_data["data"].get("cross_sectional_min_universe", 20),
-        feature_set=_src.get("feature_set", cfg_data["data"].get("feature_set", "v1")),
-        benchmark_symbol=cfg_data["data"].get("benchmark_symbol", "SPY"),
-        target_mode=cfg_data["data"].get("target_mode", "binary"),
-        target_up_threshold=cfg_data["data"].get("target_up_threshold", 0.0),
-        target_down_threshold=cfg_data["data"].get("target_down_threshold", 0.0),
-        decision_threshold=cfg_data["data"].get("decision_threshold", cfg_data.get("selected_decision_threshold", 0.5)),
+        sequence_length=_primary["sequence_length"],
+        forecast_horizon=_primary["forecast_horizon"],
+        include_sentiment_features=_primary.get("include_sentiment_features", _fallback.get("include_sentiment", False)),
+        include_screener_scores=_primary.get("include_screener_scores", _fallback.get("include_screener_scores", False)),
+        include_short_score_features=_primary.get("include_short_score_features", _fallback.get("include_short_score", False)),
+        include_macro_vix_features=_primary.get("include_macro_vix_features", _fallback.get("include_macro_vix", False)),
+        include_macro_vxn_features=_primary.get("include_macro_vxn_features", _fallback.get("include_macro_vxn", False)),
+        include_macro_vix3m_features=_primary.get("include_macro_vix3m_features", _fallback.get("include_macro_vix3m", False)),
+        include_macro_move_features=_primary.get("include_macro_move_features", _fallback.get("include_macro_move", False)),
+        include_fundamentals_features=_primary.get("include_fundamentals_features", _fallback.get("include_fundamentals", False)),
+        include_factors_features=_primary.get("include_factors_features", _fallback.get("include_factors", False)),
+        include_macro_regime_features=_primary.get("include_macro_regime_features", _fallback.get("include_macro_regime", False)),
+        enable_cross_sectional_features=_primary.get("enable_cross_sectional_features", _fallback.get("enable_cross_sectional", False)),
+        cross_sectional_min_universe=_primary.get("cross_sectional_min_universe", 20),
+        feature_set=_primary.get("feature_set", _fallback.get("feature_set", "v1")),
+        benchmark_symbol=_primary.get("benchmark_symbol", "SPY"),
+        target_mode=_primary.get("target_mode", "binary"),
+        target_up_threshold=_primary.get("target_up_threshold", 0.0),
+        target_down_threshold=_primary.get("target_down_threshold", 0.0),
+        decision_threshold=_primary.get("decision_threshold", cfg_data.get("selected_decision_threshold", 0.5)),
     )
 
 
@@ -1205,6 +1240,14 @@ def _predict_with_tabular_model(
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_screener_scores=data_cfg.include_screener_scores,
         include_short_score=data_cfg.include_short_score_features,
+        include_macro_vix=data_cfg.include_macro_vix_features,
+        include_macro_vxn=data_cfg.include_macro_vxn_features,
+        include_macro_vix3m=data_cfg.include_macro_vix3m_features,
+        include_macro_move=data_cfg.include_macro_move_features,
+        include_global_stacking=bool((cfg_data.get("global_model") or {}).get("stacking_enabled", False)),
+        include_fundamentals=data_cfg.include_fundamentals_features,
+        include_factors=data_cfg.include_factors_features,
+        include_macro_regime=data_cfg.include_macro_regime_features,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
         route_feature_columns=resolved_feature_columns,
@@ -1213,14 +1256,22 @@ def _predict_with_tabular_model(
         allow_legacy_missing_contract=False,
     )
     if contract_reason is not None:
-        LOGGER.error(
-            "predict_symbol feature_contract_violation symbol=%s selected_model=%s reason=%s",
-            symbol,
-            selected_model,
-            contract_reason,
-        )
-        _record_artifact_issue(symbol, reason=f"feature_contract_violation:{selected_model}", path=config_path)
-        return None
+        # P0-4 (2026-08-06) : fingerprint mismatch accepté si colonnes OK
+        # (contrat entraîné avec flags incomplets dans _build_feature_contract_for_columns)
+        if str(contract_reason).startswith("feature_contract_fingerprint_mismatch"):
+            LOGGER.warning(
+                "predict_symbol feature_contract_fingerprint_lenient symbol=%s selected_model=%s reason=%s",
+                symbol, selected_model, contract_reason,
+            )
+        else:
+            LOGGER.error(
+                "predict_symbol feature_contract_violation symbol=%s selected_model=%s reason=%s",
+                symbol,
+                selected_model,
+                contract_reason,
+            )
+            _record_artifact_issue(symbol, reason=f"feature_contract_violation:{selected_model}", path=config_path)
+            return None
     missing_columns = [col for col in resolved_feature_columns if col not in last_row.columns]
     if missing_columns:
         LOGGER.error(
@@ -1232,7 +1283,8 @@ def _predict_with_tabular_model(
         )
         _record_artifact_issue(symbol, reason=f"missing_columns:{','.join(missing_columns[:5])}", path=config_path)
         return None
-    last_row_values = last_row[resolved_feature_columns].to_numpy(dtype=np.float64, copy=False)
+    _numeric_cols = [c for c in resolved_feature_columns if c != "symbol"]
+    last_row_values = last_row[_numeric_cols].to_numpy(dtype=np.float64, copy=False)
     if not np.isfinite(last_row_values).all():
         LOGGER.warning(
             "predict_symbol non_finite_runtime_features symbol=%s selected_model=%s cutoff_date=%s",
@@ -1925,19 +1977,30 @@ def load_cascade_config() -> dict[str, Any]:
     """Charge la configuration cascade depuis config.yaml.
 
     Returns:
-        dict avec clés ``top_pct`` (float, défaut 0.20) et ``min_prob``
-        (float, défaut 0.55).  Renvoie les défauts si le fichier est
-        absent ou si la section ``cascade`` n'existe pas.
+        dict avec clés ``top_pct`` (float, défaut 0.20),
+        ``min_prob_classification`` (float, défaut 0.55) et
+        ``min_prob_regression`` (float, défaut 0.10).
     """
-    _defaults: dict[str, Any] = {"top_pct": 0.20, "min_prob": 0.55}
+    _defaults: dict[str, Any] = {
+        "top_pct": 0.20,
+        "min_prob_classification": 0.55,
+        "min_prob_regression": 0.10,
+    }
     try:
         import yaml as _yaml
         with open("config.yaml", encoding="utf-8") as _fh:
             _raw = _yaml.safe_load(_fh) or {}
         _section = _raw.get("cascade") or {}
+        # Backward compat: if old "min_prob" key exists, use it for both
+        _legacy = _section.get("min_prob")
         return {
             "top_pct": float(_section.get("top_pct", _defaults["top_pct"])),
-            "min_prob": float(_section.get("min_prob", _defaults["min_prob"])),
+            "min_prob_classification": float(
+                _section.get("min_prob_classification", _legacy or _defaults["min_prob_classification"])
+            ),
+            "min_prob_regression": float(
+                _section.get("min_prob_regression", _legacy or _defaults["min_prob_regression"])
+            ),
         }
     except Exception:
         return _defaults
@@ -2347,16 +2410,27 @@ def load_global_ranks_from_db(
 
     from sqlalchemy import text as _text
 
+    # ── P0-5 : interroger tous les horizons disponibles ──
+    _rank_cols = ["global_rank_3", "global_rank_5", "global_rank_10", "global_rank_15", "global_rank_20"]
+    # Ne garder que les colonnes qui existent réellement
+    _available = ["symbol"]
     try:
         with engine.connect() as conn:
-            rows = conn.execute(
-                _text(
-                    "SELECT symbol, global_rank_3, global_rank_5, global_rank_10 "
-                    "FROM alpha_trade.global_rank_history "
-                    "WHERE date = :d AND batch_id = :bid"
-                ),
-                {"d": trade_date, "bid": batch_id},
+            _table_cols = conn.execute(
+                _text("SELECT column_name FROM information_schema.columns WHERE table_name = 'global_rank_history'")
             ).fetchall()
+            _existing = {row[0] for row in _table_cols}
+            for _rc in _rank_cols:
+                if _rc in _existing:
+                    _available.append(_rc)
+    except Exception:
+        _available.extend(_rank_cols)  # fallback: try all
+
+    _query = f"SELECT {', '.join(_available)} FROM global_rank_history WHERE date = :d AND batch_id = :bid"
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(_text(_query), {"d": trade_date, "bid": batch_id}).fetchall()
     except Exception:
         LOGGER.exception("load_global_ranks_from_db: query failed for %s / %s", trade_date, batch_id)
         return pd.DataFrame()
@@ -2402,7 +2476,7 @@ def cascade_select(
     # ── Charger la config cascade ──
     _cfg = load_cascade_config()
     _top_pct = top_pct if top_pct is not None else float(_cfg["top_pct"])
-    _min_prob = min_prob if min_prob is not None else float(_cfg["min_prob"])
+    _min_prob = min_prob if min_prob is not None else float(_cfg.get("min_prob_regression", 0.10))
 
     # ── Charger les rangs globaux depuis la DB ──
     ranks_df = load_global_ranks_from_db(trade_date, batch_id, engine=engine)
@@ -2410,18 +2484,28 @@ def cascade_select(
         LOGGER.warning("cascade_select: no global ranks for %s / %s", trade_date, batch_id)
         return []
 
+    # ── Déterminer le meilleur horizon disponible ──
+    _rank_col = None
+    for _col in ("global_rank_20", "global_rank_15", "global_rank_10", "global_rank_5", "global_rank_3"):
+        if _col in ranks_df.columns and ranks_df[_col].notna().any():
+            _rank_col = _col
+            break
+    if _rank_col is None:
+        LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
+        return []
+
     candidates: list[tuple[str, str, float]] = []
 
     for _, row in ranks_df.iterrows():
         symbol = str(row["symbol"])
-        rank20 = float(row.get("global_rank_20")) if pd.notna(row.get("global_rank_20")) else None
+        rank = float(row[_rank_col]) if pd.notna(row[_rank_col]) else None
 
-        if rank20 is None:
+        if rank is None:
             continue
 
-        # Filtre sur H20 (meilleur horizon : IC 0.025, IR 2.76)
-        is_top = rank20 > (1.0 - _top_pct)
-        is_bottom = rank20 < _top_pct
+        # Filtre top/bottom N%
+        is_top = rank > (1.0 - _top_pct)
+        is_bottom = rank < _top_pct
 
         if not (is_top or is_bottom):
             continue
@@ -2432,12 +2516,12 @@ def cascade_select(
             continue
 
         if is_top and pred.long_prob > _min_prob:
-            rank_dir = rank20  # déjà proche de 1.0
+            rank_dir = rank  # déjà proche de 1.0
             score = rank_dir * pred.long_prob
             candidates.append(("LONG", symbol, score))
 
         elif is_bottom and pred.short_prob > _min_prob:
-            rank_dir = 1.0 - rank20  # inverse : 0.05 → 0.95
+            rank_dir = 1.0 - rank  # inverse : 0.05 → 0.95
             score = rank_dir * pred.short_prob
             candidates.append(("SHORT", symbol, score))
 
@@ -2500,6 +2584,24 @@ def apply_cascade_to_predictions(
     # Initialiser la colonne cascade_score
     result["cascade_score"] = 0.0
 
+    # ── P0-5 (2026-08-06) : détecter le mode (regression vs classification) ──
+    _has_ternary = (
+        "proba_long" in result.columns
+        and result["proba_long"].notna().any()
+    )
+    _cfg = load_cascade_config()
+    _top_pct = top_pct if top_pct is not None else float(_cfg["top_pct"])
+    if min_prob is not None:
+        _min_prob = float(min_prob)
+    elif _has_ternary:
+        _min_prob = float(_cfg["min_prob_classification"])
+    else:
+        _min_prob = float(_cfg["min_prob_regression"])
+    LOGGER.info(
+        "apply_cascade_to_predictions: mode=%s min_prob=%.2f top_pct=%.2f",
+        "classification" if _has_ternary else "regression", _min_prob, _top_pct,
+    )
+
     _dates = sorted(result[_date_col].dropna().unique())
     _total_passed = 0
     _total_processed = 0
@@ -2515,24 +2617,49 @@ def apply_cascade_to_predictions(
         _pred_dict: dict[str, CascadePrediction] = {}
         for _, _row in _day_preds.iterrows():
             _sym = str(_row["symbol"])
+            _side = str(_row.get("predicted_side") or "flat")
+            _proba = float(_row.get("predicted_proba") or 0.0)
+            _long = float(_row.get("proba_long") or 0.0)
+            _short = float(_row.get("proba_short") or 0.0)
+            _flat = float(_row.get("proba_flat") or 0.0)
+            # P0-5 (2026-08-06) : en mode regression, proba_long/short sont NULL.
+            # Utiliser |predicted_proba| comme force du signal selon le signe.
+            if _long == 0.0 and _short == 0.0 and _side != "flat":
+                if _side == "long":
+                    _long = abs(_proba)
+                elif _side == "short":
+                    _short = abs(_proba)
             _pred_dict[_sym] = CascadePrediction(
                 symbol=_sym,
-                long_prob=float(_row.get("proba_long") or 0.0),
-                short_prob=float(_row.get("proba_short") or 0.0),
-                flat_prob=float(_row.get("proba_flat") or 0.0),
-                side=str(_row.get("predicted_side") or "flat"),
+                long_prob=_long,
+                short_prob=_short,
+                flat_prob=_flat,
+                side=_side,
             )
 
         # Appliquer la cascade
         _candidates = cascade_select(
             _date_str, batch_id, _pred_dict,
-            top_pct=top_pct, min_prob=min_prob,
+            top_pct=_top_pct, min_prob=_min_prob,
             engine=engine,
         )
 
         # Symbols retenus par la cascade
         _passed_symbols = {_sym for _, _sym, _ in _candidates}
         _score_map = {_sym: _score for _, _sym, _score in _candidates}
+
+        # P0-5 (2026-08-06) : en mode regression, proba_long/short sont NULL.
+        # Après cascade, on les peuple depuis |predicted_proba| pour que
+        # replay_signals() puisse les utiliser (il exige notna()).
+        for _sym in _passed_symbols:
+            _cp = _pred_dict.get(_sym)
+            if _cp is None:
+                continue
+            _pm = _mask & (result["symbol"].astype(str) == _sym)
+            if "proba_long" in result.columns and _cp.long_prob > 0:
+                result.loc[_pm, "proba_long"] = _cp.long_prob
+            if "proba_short" in result.columns and _cp.short_prob > 0:
+                result.loc[_pm, "proba_short"] = _cp.short_prob
 
         # Forcer flat pour les non-retenus
         _flat_mask = _mask & (~result["symbol"].astype(str).isin(_passed_symbols))

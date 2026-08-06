@@ -1494,6 +1494,8 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--dd-regime-ramp-up-max-pct": "dd_regime_ramp_up_max_pct",
         "--target-annual-vol": "target_annual_vol",
         "--min-ml-coverage-ratio": "min_ml_coverage_ratio",
+        "--max-sector-exposure-pct": "max_sector_exposure_pct",
+        "--max-entry-gap-pct": "max_entry_gap_pct",
     }
     for token in argv:
         key = token.split("=", 1)[0]
