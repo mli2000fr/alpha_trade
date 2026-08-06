@@ -1033,6 +1033,11 @@ def _render_ml_scope_block(
         command_preview_overrides[start_symbol_attr] = normalized_start_symbol
     if step_key == "ml_predict":
         command_preview_overrides["ml_predict_use_historical_range"] = historical_range
+        _predict_bid = st.session_state.get("pipeline_ml_predict_batch_id", "")
+        if _predict_bid:
+            command_preview_overrides["ml_predict_batch_id"] = _predict_bid
+        _predict_w = st.session_state.get("pipeline_ml_predict_backtest_workers", 4)
+        command_preview_overrides["ml_predict_max_date_workers"] = int(_predict_w)
     if ml_comment is not None:
         command_preview_overrides["ml_comment"] = ml_comment
     command_preview_options = replace(options, **command_preview_overrides)
@@ -1053,6 +1058,11 @@ def _render_ml_scope_block(
             overrides[start_symbol_attr] = normalized_start_symbol
         if step_key == "ml_predict":
             overrides["ml_predict_use_historical_range"] = historical_range
+            _predict_bid = st.session_state.get("pipeline_ml_predict_batch_id", "")
+            if _predict_bid:
+                overrides["ml_predict_batch_id"] = _predict_bid
+            _predict_w = st.session_state.get("pipeline_ml_predict_backtest_workers", 4)
+            overrides["ml_predict_max_date_workers"] = int(_predict_w)
         if ml_comment is not None:
             overrides["ml_comment"] = ml_comment
         _launch_pipeline_step(
@@ -1098,6 +1108,64 @@ def _render_ml_predict_scope_block(
     db_config: dict[str, str | None],
     all_runs: list[dict[str, object]],
 ) -> None:
+    # ── Sélecteur de batch ML ──
+    from ihm.services.queries import safe_query
+
+    _batches_df = safe_query(
+        "SELECT batch_id, comment, started_at FROM alpha_trade.model_training_batch "
+        "WHERE status = 'completed' ORDER BY started_at DESC LIMIT 30"
+    )
+    _batch_options: list[tuple[str, str]] = [("", "⚠️ Auto-détection (config.yaml ou dossier artifacts)")]
+    _batch_comments: dict[str, str] = {}
+    if not _batches_df.empty:
+        for _, _row in _batches_df.iterrows():
+            _bid = str(_row["batch_id"])
+            _comment = str(_row.get("comment") or "").strip()
+            _started = str(_row.get("started_at") or "")[:16]
+            _label = f"{_bid} — {_started}"
+            if _comment:
+                _label += f" — {_comment[:60]}"
+            _batch_options.append((_bid, _label))
+            if _comment:
+                _batch_comments[_bid] = _comment
+
+    # ── Défaut : backtest_batch_id du config.yaml ──
+    _default_batch = ""
+    try:
+        import yaml as _yaml
+        with open("config.yaml", encoding="utf-8") as _fh:
+            _raw = _yaml.safe_load(_fh) or {}
+        _bid_cfg = str(((_raw.get("batch_diagnostics") or {}).get("backtest_batch_id") or "")).strip()
+        if _bid_cfg and _bid_cfg in [b for b, _ in _batch_options]:
+            _default_batch = _bid_cfg
+    except Exception:
+        pass
+
+    # Initialiser la session state au backtest_batch_id si pas encore défini
+    if "pipeline_ml_predict_batch_id" not in st.session_state:
+        st.session_state["pipeline_ml_predict_batch_id"] = _default_batch
+
+    _selected_batch = st.selectbox(
+        "Batch ML à utiliser pour les prédictions BACKTEST",
+        options=[bid for bid, _ in _batch_options],
+        format_func=lambda bid: dict(_batch_options).get(bid, bid),
+        key="pipeline_ml_predict_batch_id",
+        help="Sélectionne le batch dont les modèles entraînés seront utilisés pour générer les prédictions. Laissez vide pour auto-détection (config.yaml ou dossier artifacts).",
+    )
+    if _selected_batch and _selected_batch in _batch_comments:
+        st.caption(f"📝 Commentaire batch : {_batch_comments[_selected_batch]}")
+    elif _selected_batch:
+        st.caption(f"📦 Batch : `{_selected_batch}` (pas de commentaire)")
+    else:
+        st.caption("⚠️ Aucun batch sélectionné — le système tentera l'auto-détection via config.yaml ou le dossier artifacts.")
+
+    _predict_workers = st.number_input(
+        "⚡ Workers parallèles (dates simultanées)",
+        min_value=1, max_value=8, value=4, step=1,
+        key="pipeline_ml_predict_backtest_workers",
+        help="Nombre de dates traitées en parallèle lors du predict historique. 4 = ~4× plus rapide.",
+    )
+
     _render_ml_scope_block(
         options,
         workflow_active=workflow_active,
@@ -1229,9 +1297,86 @@ def _render_launchable_step_panel(
                     all_runs=all_runs,
                     latest_by_step=latest_by_step,
                 )
-            st.code(command_preview, language="powershell")
+            if step.key != "ml_predict":
+                st.code(command_preview, language="powershell")
 
         with action_col:
+            # ── Predict LIVE : sélecteur de batch + workers (au-dessus du bouton) ──
+            _live_selected: str = ""
+            _live_workers: int = 4
+            if step.key == "ml_predict":
+                _live_default_batch = ""
+                try:
+                    import yaml as _yaml
+                    with open("config.yaml", encoding="utf-8") as _fh:
+                        _raw = _yaml.safe_load(_fh) or {}
+                    _live_bid_cfg = str(((_raw.get("batch_diagnostics") or {}).get("live_batch_id") or "")).strip()
+                    if _live_bid_cfg:
+                        _live_default_batch = _live_bid_cfg
+                except Exception:
+                    pass
+
+                from ihm.services.queries import safe_query as _safe_query
+                _live_batches_df = _safe_query(
+                    "SELECT batch_id, comment, started_at FROM alpha_trade.model_training_batch "
+                    "WHERE status = 'completed' ORDER BY started_at DESC LIMIT 30"
+                )
+                _live_options: list[tuple[str, str]] = [("", "⚠️ Auto-détection")]
+                if not _live_batches_df.empty:
+                    for _, _row in _live_batches_df.iterrows():
+                        _bid = str(_row["batch_id"])
+                        _comment = str(_row.get("comment") or "").strip()
+                        _started = str(_row.get("started_at") or "")[:16]
+                        _label = f"{_bid} — {_started}"
+                        if _comment:
+                            _label += f" — {_comment[:60]}"
+                        _live_options.append((_bid, _label))
+
+                if f"pipeline_ml_live_predict_batch_id_{step.key}" not in st.session_state:
+                    st.session_state[f"pipeline_ml_live_predict_batch_id_{step.key}"] = _live_default_batch
+
+                _live_selected = st.selectbox(
+                    "📡 Batch LIVE",
+                    options=[b for b, _ in _live_options],
+                    format_func=lambda b: dict(_live_options).get(b, b),
+                    key=f"pipeline_ml_live_predict_batch_id_{step.key}",
+                    help="Batch ML pour les prédictions live (lancées en arrière-plan). Défaut = live_batch_id du config.yaml.",
+                )
+                if _live_selected:
+                    _live_comment = ""
+                    try:
+                        _live_c_df = _safe_query(
+                            "SELECT comment FROM alpha_trade.model_training_batch WHERE batch_id = :bid LIMIT 1",
+                            {"bid": _live_selected},
+                        )
+                        if not _live_c_df.empty:
+                            _live_comment = str(_live_c_df["comment"].iloc[0] or "").strip()
+                    except Exception:
+                        pass
+                    if _live_comment:
+                        st.caption(f"📝 {_live_comment}")
+                    else:
+                        st.caption(f"📦 `{_live_selected}`")
+                else:
+                    st.caption("⚠️ Auto-détection")
+
+                _live_workers = st.number_input(
+                    "⚡ Workers",
+                    min_value=1, max_value=8, value=4, step=1,
+                    key=f"pipeline_ml_live_predict_workers_{step.key}",
+                    help="Dates traitées en parallèle (4 = ~4× plus rapide).",
+                )
+
+                # Commande avec les options LIVE sélectionnées
+                _live_overrides: dict[str, object] = {"ml_predict_max_date_workers": _live_workers}
+                if _live_selected:
+                    _live_overrides["ml_live_predict_batch_id"] = _live_selected
+                _live_opts = replace(options, **_live_overrides)
+                st.code(
+                    format_command_for_display(build_pipeline_command(step.key, _live_opts)),
+                    language="powershell",
+                )
+
             execution_locked = step.key == "execution" and options.execution_mode == "live" and not live_confirmed
             state_machine_lock_reason = _pipeline_state_machine_lock_reason(step.key, latest_by_step)
             live_guard_lock_reason = (
@@ -1300,10 +1445,20 @@ def _render_launchable_step_panel(
                     )
 
                 if run_clicked:
+                    _launch_options = options
+                    if step.key == "ml_predict":
+                        _live_bid = st.session_state.get(f"pipeline_ml_live_predict_batch_id_{step.key}", "") or None
+                        _live_w = st.session_state.get(f"pipeline_ml_live_predict_workers_{step.key}", 4)
+                        _overrides: dict[str, object] = {}
+                        if _live_bid:
+                            _overrides["ml_live_predict_batch_id"] = _live_bid
+                        _overrides["ml_predict_max_date_workers"] = int(_live_w)
+                        if _overrides:
+                            _launch_options = replace(options, **_overrides)
                     _launch_pipeline_step(
                         step.key,
                         f"{step.num}. {resolve_step_display_name(step)}",
-                        options,
+                        _launch_options,
                         db_config,
                         all_runs,
                     )

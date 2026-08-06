@@ -96,6 +96,7 @@ DEFAULT_ML_TARGET_SKIP_VOL_SCALING = False   # T1 experiment: désactiver le vol
 DEFAULT_ML_TARGET_INTRA_SECTOR_RANK = False  # T2 experiment: target = rang percentile intra-secteur [0,1]
 DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR = False  # T3 experiment: ternary classification intra-sector
 DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE = 0.30  # T3: top/bottom quantile for LONG/SHORT
+DEFAULT_ML_PREDICT_MAX_DATE_WORKERS = 4  # nb de dates traitées en parallèle lors du predict historique
 DEFAULT_ML_ENABLE_LIGHTGBM = True             # challenger LightGBM activé par défaut
 DEFAULT_ML_ENABLE_CATBOOST = True             # challenger CatBoost activé par défaut
 DEFAULT_ML_ENABLE_GLOBAL_MODEL = False        # Global Ranking Model

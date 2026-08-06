@@ -247,6 +247,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("--max-workers", type=int, default=4)
+    p.add_argument("--predict-max-date-workers", type=int, default=4,
+                   help="Nombre de dates traitées en parallèle lors du predict historique (défaut: 4)")
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--patience", type=int, default=DEFAULT_PATIENCE,
                    help="Patience pour l'early stopping du LSTM (epochs sans amélioration).")
@@ -812,6 +814,7 @@ def main(args: list[str] | None = None) -> None:
         )
         historical_predict_enabled = cfg.data.training_end_date is not None
         persisted_incrementally = False
+        _batch_id = _resolve_predict_batch_id(Path(opts.artifacts_dir))
 
         def _persist_predictions_chunk(
             chunk: pd.DataFrame,
@@ -858,56 +861,85 @@ def main(args: list[str] | None = None) -> None:
                 len(prediction_dates),
             )
 
-            # ── Cascade ML (Étape 3) : prédire les rangs globaux avant per-symbol ──
-            _batch_id = _resolve_predict_batch_id(Path(opts.artifacts_dir))
-            if _batch_id:
-                from modelFactory.predictor import predict_global_rank_history
-                LOGGER.info(
-                    "predict cascade global_rank_history batch_id=%s start=%s end=%s",
-                    _batch_id, cfg.data.training_start_date, cfg.data.training_end_date,
-                )
-                _gr_results = predict_global_rank_history(
-                    start_date=str(cfg.data.training_start_date),
-                    end_date=str(cfg.data.training_end_date),
-                    batch_id=_batch_id,
-                    artifacts_dir=Path(opts.artifacts_dir),
-                    engine=engine,
-                )
-                _gr_total = sum(v for v in _gr_results.values() if v > 0)
-                LOGGER.info(
-                    "predict cascade global_rank_history DONE — %d dates, %d rows",
-                    len(_gr_results), _gr_total,
-                )
+            # ── Date-by-date parallel : global rank + per-symbol par date ──
+            # Chaque worker traite une date complète : global_rank → predict_batch → persist.
+            # Les dates sont indépendantes → parallélisation sans contrainte de séquence.
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from threading import Lock
+            from modelFactory.predictor import predict_global_rank_history
 
-            prediction_parts = []
-            for prediction_date in prediction_dates:
-                symbols_for_date = opts.symbols or load_symbols_for_source(
-                    engine,
-                    opts.symbol_source,
-                    trade_date=prediction_date,
+            _persist_lock = Lock()
+            _prediction_parts: list[pd.DataFrame] = []
+            _dates_with_data = 0
+            _dates_total = len(prediction_dates)
+
+            def _process_date(pred_date: date) -> tuple[str, int]:
+                """Traite une date : global_rank → predict_batch → persist. Thread-safe."""
+                _ds = pred_date.isoformat()
+                # Étape 1 : global rank
+                if _batch_id:
+                    predict_global_rank_history(
+                        start_date=_ds,
+                        end_date=_ds,
+                        batch_id=_batch_id,
+                        artifacts_dir=Path(opts.artifacts_dir),
+                        engine=engine,
+                    )
+                # Étape 2 : per-symbol
+                _syms = opts.symbols or load_symbols_for_source(
+                    engine, opts.symbol_source, trade_date=pred_date,
                 )
-                part = predict_batch(
-                    symbols_for_date,
+                _part = predict_batch(
+                    _syms,
                     Path(opts.artifacts_dir),
                     engine,
-                    prediction_date=prediction_date,
-                    as_of_date=prediction_date,
+                    prediction_date=pred_date,
+                    as_of_date=pred_date,
                     persist=False,
+                    batch_id=_batch_id,
                     accelerator=opts.accelerator,
-                    max_workers=opts.max_workers,
+                    max_workers=1,  # déjà parallélisé au niveau date
                 )
-                if not part.empty:
-                    prediction_parts.append(part)
+                _rows = 0
+                if not _part.empty:
+                    with _persist_lock:
+                        _prediction_parts.append(_part)
                     _persist_predictions_chunk(
-                        part,
+                        _part,
                         operation="insert_predictions_historical_date",
-                        prediction_date=prediction_date,
+                        prediction_date=pred_date,
                     )
-                else:
-                    LOGGER.info(
-                        "predict date=%s skipped rows=0 reason=no_valid_predictions", prediction_date.isoformat())
+                    _rows = len(_part)
+                return (_ds, _rows)
+
+            _max_date_workers = max(1, min(getattr(opts, "predict_max_date_workers", 4) or 4, 8))
+            LOGGER.info(
+                "predict parallel start: %d dates, %d workers",
+                _dates_total, _max_date_workers,
+            )
+            with ThreadPoolExecutor(max_workers=_max_date_workers) as _exec:
+                _futures = {_exec.submit(_process_date, d): d for d in prediction_dates}
+                for _future in as_completed(_futures):
+                    try:
+                        _ds, _rows = _future.result()
+                        if _rows > 0:
+                            _dates_with_data += 1
+                            LOGGER.info(
+                                "predict date=%s per_symbol=%d rows → model_predictions (%d/%d dates done)",
+                                _ds, _rows, _dates_with_data, _dates_total,
+                            )
+                        else:
+                            LOGGER.warning(
+                                "predict date=%s ALL SKIPPED — 0 predictions (%d/%d dates done)",
+                                _ds, _dates_with_data, _dates_total,
+                            )
+                    except Exception as _exc:
+                        _failed_date = _futures[_future]
+                        LOGGER.error(
+                            "predict date=%s FAILED: %s", _failed_date.isoformat(), _exc,
+                        )
             persisted_incrementally = True
-            non_empty_parts = [part for part in prediction_parts if not part.empty]
+            non_empty_parts = [part for part in _prediction_parts if not part.empty]
             preds = (
                 pd.concat(non_empty_parts, ignore_index=True)
                 if non_empty_parts
@@ -915,8 +947,20 @@ def main(args: list[str] | None = None) -> None:
                     columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
                 )
             )
+            if _dates_with_data == 0:
+                LOGGER.error(
+                    "predict ALL %d DATES SKIPPED — 0 predictions total. "
+                    "model_predictions table will be EMPTY. "
+                    "Verify: batch_id=%s artifacts_dir=%s has champions for symbol_source=%s",
+                    _dates_total, _batch_id, opts.artifacts_dir, opts.symbol_source,
+                )
+            else:
+                LOGGER.info(
+                    "predict historical done: %d/%d dates with predictions, %d total rows",
+                    _dates_with_data, _dates_total, len(preds),
+                )
         else:
-            preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, accelerator=opts.accelerator)
+            preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, batch_id=_batch_id, accelerator=opts.accelerator)
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None

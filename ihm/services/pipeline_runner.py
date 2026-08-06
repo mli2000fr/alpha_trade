@@ -111,6 +111,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
     DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
     DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE,
+    DEFAULT_ML_PREDICT_MAX_DATE_WORKERS,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
     DEFAULT_ML_TERNARY_WEIGHT_SHORT,
     DEFAULT_ML_TERNARY_WEIGHT_FLAT,
@@ -419,6 +420,9 @@ class PipelineLaunchOptions:
     ml_comment: str | None = None
     ml_predict_symbol_source: MLTrainSymbolSource = "tradable-universe"
     ml_predict_use_historical_range: bool = False
+    ml_predict_batch_id: str | None = None
+    ml_live_predict_batch_id: str | None = None
+    ml_predict_max_date_workers: int = DEFAULT_ML_PREDICT_MAX_DATE_WORKERS
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
     ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
@@ -2352,6 +2356,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_predict":
+        _predict_artifacts_dir = ml_artifacts_dir
+        _bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        if _bid:
+            _predict_artifacts_dir = f"{ml_artifacts_dir}/{_bid}"
         command = [
             sys.executable,
             "-u",
@@ -2364,7 +2372,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--symbol-source",
             ml_predict_symbol_source,
             "--artifacts-dir",
-            ml_artifacts_dir,
+            _predict_artifacts_dir,
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
             "--max-workers",
@@ -2377,6 +2385,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
             if ml_training_end_date:
                 command.extend(["--training-end-date", ml_training_end_date])
+        if options.ml_predict_max_date_workers > 1:
+            command.extend(["--predict-max-date-workers", str(options.ml_predict_max_date_workers)])
         return command
 
     if step_key == "risk_management":

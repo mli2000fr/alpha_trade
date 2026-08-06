@@ -540,8 +540,20 @@ def _resolve_artifact_paths(
                 symbol, sector_run.get("symbol"), sector_run.get("run_id"),
             )
             return ckpt_path, scaler_path, config_path, str(sector_run["run_id"])
+        else:
+            LOGGER.error(
+                "predict_symbol sector_artifacts_missing symbol=%s sector=%s ckpt=%s config=%s",
+                symbol, sector_run.get("symbol"),
+                str(ckpt_path) if ckpt_path.exists() else f"MISSING:{ckpt_path}",
+                str(config_path) if config_path.exists() else f"MISSING:{config_path}",
+            )
 
     sym_dir = artifacts_dir / batch_id / symbol if batch_id is not None else artifacts_dir / symbol
+    LOGGER.error(
+        "predict_symbol no_model_found symbol=%s batch=%s — no per-symbol champion, "
+        "no per-sector fallback, and no filesystem artifacts at %s",
+        symbol, batch_id, sym_dir,
+    )
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
 
 
@@ -1162,11 +1174,16 @@ def _predict_with_tabular_model(
         include_macro_vix3m=data_cfg.include_macro_vix3m_features,
         include_macro_move=data_cfg.include_macro_move_features,
         include_global_stacking=_stacking,
+        include_fundamentals=data_cfg.include_fundamentals_features,
+        include_factors=data_cfg.include_factors_features,
+        include_macro_regime=data_cfg.include_macro_regime_features,
     ))
     if df.empty or len(df) == 0:
         return None
     # ── P0-3 fix (2026-08-04) : reconstruire pd.Categorical pour "symbol" ──
     _symbol_cats = cfg_data.get("symbol_categories")
+    if "symbol" in resolved_feature_columns and "symbol" not in df.columns:
+        df["symbol"] = symbol
     if _symbol_cats and "symbol" in df.columns:
         # Inclure le symbole courant s'il n'est pas dans les catégories d'entraînement
         _all_cats = list(dict.fromkeys(list(_symbol_cats) + [symbol]))
@@ -1213,6 +1230,7 @@ def _predict_with_tabular_model(
             missing_columns,
             resolved_feature_columns,
         )
+        _record_artifact_issue(symbol, reason=f"missing_columns:{','.join(missing_columns[:5])}", path=config_path)
         return None
     last_row_values = last_row[resolved_feature_columns].to_numpy(dtype=np.float64, copy=False)
     if not np.isfinite(last_row_values).all():
