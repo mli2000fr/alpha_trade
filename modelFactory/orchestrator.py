@@ -890,6 +890,54 @@ def run_training_batch(
         cfg.data.enable_cross_sectional_features,
     )
 
+    # ── P0-6 (2026-08-07) : Global Model Only ──
+    if cfg.data.global_model_only:
+        LOGGER.info("🏁🏁🏁 orchestrator global_model_only — training Global Model standalone 🏁🏁🏁")
+        if cfg.global_model.enabled and _global_symbols:
+            update_runtime_status(current_phase="global_model_standalone", progress_item="__GLOBAL__")
+            _gm_result = train_global_model(
+                _global_symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
+            )
+            LOGGER.info("global_model_standalone result: %s", _gm_result.get("status"))
+            if _gm_result.get("status") == "completed":
+                results.append(TrainResult("__GLOBAL__", batch_id, "completed", metrics=_gm_result))
+                # ── Persist to DB so IHM diagnostics can see it ──
+                _gm_run_id = f"{batch_id}__global__"
+                try:
+                    from modelFactory.db_registry import (
+                        ensure_registry_entry, insert_metrics,
+                        insert_training_run, replace_model_governance,
+                        update_training_run,
+                    )
+                    _registry_id = ensure_registry_entry(engine, "__GLOBAL__")
+                    insert_training_run(engine, _gm_run_id, _registry_id, "__GLOBAL__",
+                                        status="completed", batch_id=batch_id)
+                    update_training_run(engine, _gm_run_id, status="completed",
+                                        finished_at=datetime.now(timezone.utc),
+                                        config_path=str(Path(cfg.artifacts_dir) / "__GLOBAL__" / "config.json"))
+                    _gm_val = _gm_result.get("val_metrics") or _gm_result.get("val") or {}
+                    _gm_test = _gm_result.get("test_metrics") or _gm_result.get("test") or {}
+                    if _gm_val:
+                        insert_metrics(engine, _gm_run_id, "__GLOBAL__", "val", _gm_val, model_name="global_model")
+                    if _gm_test:
+                        insert_metrics(engine, _gm_run_id, "__GLOBAL__", "test", _gm_test, model_name="global_model")
+                    replace_model_governance(
+                        engine, run_id=_gm_run_id, symbol="__GLOBAL__",
+                        challengers={"global_model": _gm_result},
+                        artifact_routes_models={},
+                        selected_model="global_model",
+                        selection_mode="global_model_only",
+                        selection_metric="directional_accuracy",
+                        ranking=[],
+                    )
+                    LOGGER.info("global_model_only persisted to DB: run_id=%s", _gm_run_id)
+                except Exception as _db_exc:
+                    LOGGER.warning("global_model_only DB persist failed: %s", _db_exc)
+        else:
+            LOGGER.warning("global_model_only: enable_global_model=%s symbols=%d — nothing to train",
+                           cfg.global_model.enabled, len(_global_symbols))
+        return results
+
     # ── Per-Sector mode (Sprint 2026-08-03) ──
     if cfg.training_mode == "per_sector":
         from modelFactory.trainer_sector import run_per_sector_batch

@@ -408,6 +408,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi une baseline CatBoost et compare ses métriques")
     p.add_argument("--enable-global-model", action="store_true", default=False,
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
+    p.add_argument("--global-model-only", action="store_true", default=False,
+                   help="Entraîne UNIQUEMENT le modèle global, sans per-symbol ni per-sector. Active implicitement --enable-global-model.")
     p.add_argument("--enable-global-stacking", action="store_true", default=False,
                    help="Utilise la prédiction du Global Model comme feature (Approche 2 — Stacking)")
     p.add_argument("--enable-global-challenger", action="store_true", default=False,
@@ -501,6 +503,10 @@ def main(args: list[str] | None = None) -> None:
         fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
+    # P0-6 : --global-model-only active implicitement le Global Model
+    if opts.global_model_only:
+        opts.enable_global_model = True
+
     _horizons: tuple[int, ...] = ()
     _forecast_horizon = opts.forecast_horizon
     if opts.forecast_horizons:
@@ -525,6 +531,7 @@ def main(args: list[str] | None = None) -> None:
             include_factors_features=opts.include_factors,
             include_macro_regime_features=opts.include_macro_regime,
             include_score_components=opts.include_score_components,
+            global_model_only=opts.global_model_only,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,

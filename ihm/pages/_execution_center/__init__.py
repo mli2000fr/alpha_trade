@@ -128,6 +128,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
+    DEFAULT_ML_GLOBAL_MODEL_ONLY,
     DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
     DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
     DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
@@ -3538,6 +3539,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
+            ml_global_model_only = st.checkbox(
+                "🎯 Global Model ONLY — sauter per-symbol et per-sector",
+                value=_session_state_bool("pipeline_ml_global_model_only", DEFAULT_ML_GLOBAL_MODEL_ONLY),
+                key="pipeline_ml_global_model_only",
+                disabled=not ml_enable_global_model,
+                help="Ajoute `--global-model-only`. N'entraîne QUE le modèle global, sans entraîner de modèles per-symbol ni per-sector. Le batch s'arrête après le Global Model.",
+            )
             st.caption("L'option ci-dessous nécessite que le modèle global soit activé.")
             ml_enable_global_stacking = st.checkbox(
                 "📥 Utiliser le rang global comme feature (Stacking)",
@@ -4621,6 +4629,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),
+            ml_global_model_only=bool(ml_global_model_only),
             ml_enable_global_stacking=bool(ml_enable_global_stacking),
             ml_global_model_name=cast(Any, ml_global_model_name),
             ml_enable_cross_sectional=bool(ml_enable_cross_sectional),

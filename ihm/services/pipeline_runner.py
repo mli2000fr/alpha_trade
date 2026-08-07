@@ -80,6 +80,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
+    DEFAULT_ML_GLOBAL_MODEL_ONLY,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
     DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS,
@@ -359,6 +360,7 @@ class PipelineLaunchOptions:
     ml_include_factors: bool = DEFAULT_ML_INCLUDE_FACTORS
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
     ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
+    ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
     ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
     ml_target_ternary_intra_sector: bool = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR
@@ -2246,6 +2248,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--training-end-date", ml_training_end_date])
         if ml_train_start_symbol:
             command.extend(["--start-symbol", ml_train_start_symbol])
+        if options.ml_global_model_only:
+            command.append("--global-model-only")
+            command.append("--enable-global-model")  # P0-6: implicite
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
         if options.ml_include_screener_scores:

@@ -800,6 +800,7 @@ def train_global_ranking_wf(
     sentiment_df = None
     # sentiment → per-symbol uniquement ; le global ranking ignore ces features
     # (sparse, noyées dans 177 features).  On saute le chargement pour gagner du temps.
+    selector_context_df = None
     if cfg.data.include_screener_scores or cfg.data.include_short_score_features:
         selector_context_df = load_symbols_selector_context(
             engine, symbols, end_date=history_end_date, start_date=history_start_date,
