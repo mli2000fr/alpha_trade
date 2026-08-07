@@ -472,7 +472,7 @@ cascade:
 
   # Seuil de filtrage : ne garder que les top/bottom N% du classement global.
   # 0.20 = top 20% pour LONG, bottom 20% pour SHORT.
-  top_pct: 0.20
+  top_pct: 0.10
 
   # Probabilité minimale du Per-Symbol pour valider un trade.
   # En dessous, le trade est rejeté même si le rang global est bon.
