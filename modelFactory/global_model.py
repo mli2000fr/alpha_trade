@@ -150,6 +150,7 @@ def _prepare_global_symbol_frame(
         mode=effective_data_cfg.target_mode,
         positive_threshold=effective_data_cfg.target_up_threshold,
         negative_threshold=effective_data_cfg.target_down_threshold,
+        excess_vs_spy=effective_data_cfg.target_excess_vs_spy,  # P0-7
     )
     active_features = _get_global_feature_columns(cfg)
     df = df.dropna(subset=active_features).reset_index(drop=True)

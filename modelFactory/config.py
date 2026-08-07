@@ -41,6 +41,7 @@ class DataConfig:
     triple_barrier_tp_atr_mult: float = 3.0
     triple_barrier_max_sessions: int = 20
     target_skip_vol_scaling: bool = False  # T1 experiment: skip vol-scaling in regression target
+    target_excess_vs_spy: bool = False  # P0-7: target = (future_return - spy_return) / vol20
     target_intra_sector_rank: bool = False  # T2 experiment: target = percentile rank within sector
     target_ternary_intra_sector: bool = False  # T3 experiment: ternary classification intra-sector
     target_ternary_quantile: float = 0.30  # T3: top/bottom quantile for LONG/SHORT (0.30 = top 30% LONG, bottom 30% SHORT)

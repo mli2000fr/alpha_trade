@@ -130,6 +130,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
     DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
+    DEFAULT_ML_TARGET_EXCESS_VS_SPY,
     DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
     DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
     DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE,
@@ -3281,6 +3282,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_target_skip_vol_scaling",
                 help="Ajoute `--target-skip-vol-scaling`. La target regression n'est PAS divisée par la volatilité 20j. Expérience T1 : tester si le vol-scaling amplifie le bruit.",
             )
+            ml_target_excess_vs_spy = st.checkbox(
+                "📊 P0-7 — Target excès vs SPY (target = (future_return - spy_return) / vol20)",
+                value=_session_state_bool("pipeline_ml_target_excess_vs_spy", DEFAULT_ML_TARGET_EXCESS_VS_SPY),
+                key="pipeline_ml_target_excess_vs_spy",
+                help="Ajoute `--target-excess-vs-spy`. Centre la distribution en soustrayant le rendement du SPY. Réduit le biais directionnel (long/short équilibré).",
+            )
             ml_target_intra_sector_rank = st.checkbox(
                 "🏆 T2 Experiment — Rang percentile intra-secteur (classification de rang)",
                 value=_session_state_bool("pipeline_ml_target_intra_sector_rank", DEFAULT_ML_TARGET_INTRA_SECTOR_RANK),
@@ -4603,6 +4610,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_include_score_components=bool(ml_include_score_components),
             ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),
+            ml_target_excess_vs_spy=bool(ml_target_excess_vs_spy),
             ml_target_intra_sector_rank=bool(ml_target_intra_sector_rank),
             ml_target_ternary_intra_sector=bool(ml_target_ternary_intra_sector),
             ml_target_ternary_quantile=float(ml_target_ternary_quantile),

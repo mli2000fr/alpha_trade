@@ -95,6 +95,7 @@ DEFAULT_ML_INCLUDE_MACRO_REGIME = False      # SPY_SMA_200_slope + VIX_zscore (m
 DEFAULT_ML_INCLUDE_SCORE_COMPONENTS = False  # P0-6 : composants stock_scores_history (sentiment_net_agg, company_idio_score...)
 DEFAULT_ML_GLOBAL_MODEL_ONLY = True  # P0-6 : skip per-symbol & per-sector, ne faire que le global
 DEFAULT_ML_TARGET_SKIP_VOL_SCALING = False   # T1 experiment: désactiver le vol-scaling (target = future_return brut)
+DEFAULT_ML_TARGET_EXCESS_VS_SPY = True      # P0-7 : target = (future_return - spy_return) / vol20 – centre la distribution
 DEFAULT_ML_TARGET_INTRA_SECTOR_RANK = False  # T2 experiment: target = rang percentile intra-secteur [0,1]
 DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR = False  # T3 experiment: ternary classification intra-sector
 DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE = 0.30  # T3: top/bottom quantile for LONG/SHORT

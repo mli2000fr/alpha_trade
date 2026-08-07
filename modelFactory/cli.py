@@ -318,6 +318,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
     p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
                    help="T1 experiment: désactiver le vol-scaling dans la target regression (target = future_return brut)")
+    p.add_argument("--target-excess-vs-spy", action="store_true", default=False,
+                   help="P0-7: target = (future_return - spy_return) / vol20 — centre la distribution pour équilibrer long/short")
     p.add_argument("--target-intra-sector-rank", action="store_true", default=False,
                    help="T2 experiment: target = rang percentile intra-secteur [0,1] (classification de rang au lieu de régression de magnitude)")
     p.add_argument("--target-ternary-intra-sector", action="store_true", default=False,
@@ -544,6 +546,7 @@ def main(args: list[str] | None = None) -> None:
             triple_barrier_tp_atr_mult=opts.triple_barrier_tp_atr_mult,
             triple_barrier_max_sessions=opts.triple_barrier_max_sessions,
             target_skip_vol_scaling=opts.target_skip_vol_scaling,
+            target_excess_vs_spy=opts.target_excess_vs_spy,
             target_intra_sector_rank=opts.target_intra_sector_rank,
             target_ternary_intra_sector=opts.target_ternary_intra_sector,
             target_ternary_quantile=opts.target_ternary_quantile,

@@ -110,6 +110,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_TARGET_DOWN_THRESHOLD,
     DEFAULT_ML_TARGET_MODE,
     DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
+    DEFAULT_ML_TARGET_EXCESS_VS_SPY,
     DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
     DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
     DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE,
@@ -362,6 +363,7 @@ class PipelineLaunchOptions:
     ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
     ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
+    ml_target_excess_vs_spy: bool = DEFAULT_ML_TARGET_EXCESS_VS_SPY  # P0-7
     ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
     ml_target_ternary_intra_sector: bool = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR
     ml_target_ternary_quantile: float = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE
@@ -2275,6 +2277,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--no-include-score-components")  # default True, explicit disable
         if options.ml_target_skip_vol_scaling:
             command.append("--target-skip-vol-scaling")
+        if options.ml_target_excess_vs_spy:
+            command.append("--target-excess-vs-spy")
         if options.ml_target_intra_sector_rank:
             command.append("--target-intra-sector-rank")
         if options.ml_target_ternary_intra_sector:

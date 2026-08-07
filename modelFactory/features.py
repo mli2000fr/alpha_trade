@@ -1290,6 +1290,7 @@ def build_target(
     *,
     skip_winsorize: bool = False,
     skip_vol_scaling: bool = False,
+    excess_vs_spy: bool = False,
 ) -> pd.Series:
     """Construit la target pour l'horizon futur.
 
@@ -1336,6 +1337,11 @@ def build_target(
         # skip_winsorize=True désactive la winsorisation pré-split (P1-1 fix).
         # skip_vol_scaling=True désactive le vol-scaling (T1 experiment).
         target = future_return.copy()
+        # P0-7 (2026-08-07) : excès vs SPY pour centrer la distribution
+        if excess_vs_spy and "benchmark_close" in df.columns:
+            spy_close = df["benchmark_close"]
+            spy_return = spy_close.shift(-horizon) / spy_close - 1.0
+            target = target - spy_return
         if not skip_vol_scaling and horizon >= 5:
             rolling_vol = close.pct_change().rolling(20).std()
             target = target / rolling_vol
@@ -1362,6 +1368,7 @@ def build_multi_horizon_targets(
     *,
     skip_winsorize: bool = False,
     skip_vol_scaling: bool = False,
+    excess_vs_spy: bool = False,
 ) -> pd.DataFrame:
     """Construit les targets pour plusieurs horizons en une seule passe.
 
@@ -1381,6 +1388,11 @@ def build_multi_horizon_targets(
         targets[f"future_return_h{h}"] = future_return
         if mode == "regression":
             target = future_return.copy()
+            # P0-7 (2026-08-07) : excès vs SPY
+            if excess_vs_spy and "benchmark_close" in df.columns:
+                spy_close = df["benchmark_close"]
+                spy_return = spy_close.shift(-h) / spy_close - 1.0
+                target = target - spy_return
             if not skip_vol_scaling and h >= 5:
                 rolling_vol = close.pct_change().rolling(20).std()
                 target = target / rolling_vol
@@ -1393,6 +1405,7 @@ def build_multi_horizon_targets(
                 df, horizon=h, mode=mode,
                 positive_threshold=positive_threshold,
                 negative_threshold=negative_threshold,
+                excess_vs_spy=excess_vs_spy,
             )
     return pd.DataFrame(targets, index=df.index)
 
