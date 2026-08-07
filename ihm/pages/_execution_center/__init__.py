@@ -127,6 +127,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
+    DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
     DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
     DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
@@ -3267,6 +3268,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_macro_regime",
                 help="Ajoute `--include-macro-regime`. Injecte la tendance SPY long terme et le z-score VIX à tous les symboles.",
             )
+            ml_include_score_components = st.checkbox(
+                "📊 Composants de score (stock_scores_history)",
+                value=_session_state_bool("pipeline_ml_include_score_components", DEFAULT_ML_INCLUDE_SCORE_COMPONENTS),
+                key="pipeline_ml_include_score_components",
+                help="Ajoute `--include-score-components`. Injecte sentiment_net_agg, company_idio_score, macro_regime_score, quant_component et autres composants de stock_scores_history comme features ML. Actif par défaut sur per-sector + global, ignoré sur per-symbol.",
+            )
             ml_target_skip_vol_scaling = st.checkbox(
                 "🎯 T1 Experiment — Désactiver le vol-scaling de la target (target = future_return brut)",
                 value=_session_state_bool("pipeline_ml_target_skip_vol_scaling", DEFAULT_ML_TARGET_SKIP_VOL_SCALING),
@@ -4586,6 +4593,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_fundamentals=bool(ml_include_fundamentals),
             ml_include_factors=bool(ml_include_factors),
             ml_include_macro_regime=bool(ml_include_macro_regime),
+            ml_include_score_components=bool(ml_include_score_components),
             ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),
             ml_target_intra_sector_rank=bool(ml_target_intra_sector_rank),
             ml_target_ternary_intra_sector=bool(ml_target_ternary_intra_sector),

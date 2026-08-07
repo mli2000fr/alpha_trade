@@ -210,6 +210,21 @@ SELECTOR_CONTEXT_FEATURE_COLUMNS: list[str] = [
     "selector_short_score",
 ]
 
+# ── Composants de score issus de stock_scores_history ──
+# P0-6 (2026-08-07) : signal orthogonal aux features techniques.
+# Applicable per-sector + global, désactivé par défaut sur per-symbol.
+SCORE_COMPONENT_FEATURE_COLUMNS: list[str] = [
+    "sentiment_net_agg",
+    "company_idio_score",
+    "macro_regime_score",
+    "quant_component",
+    "company_idio_signal_norm",
+    "macro_regime_signal_norm",
+    "company_idio_component",
+    "macro_regime_component",
+    "sector_impact_agg",
+]
+
 _SELECTOR_CONTEXT_SOURCE_TO_FEATURE = {
     "trend_score": "selector_trend_score",
     "vcp_score": "selector_vcp_score",
@@ -278,6 +293,7 @@ def get_feature_columns(
     include_fundamentals: bool = False,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnels).
 
@@ -293,6 +309,11 @@ def get_feature_columns(
 
     ``include_factors`` ajoute les expositions factorielles CAPM
     (beta, alpha, R²) calculées par rolling regression 252j.
+
+    ``include_score_components`` (P0-6) ajoute les composants de score
+    issus de ``stock_scores_history`` (sentiment_net_agg, company_idio_score,
+    macro_regime_score, etc.). Applicable per-sector + global, désactivé
+    par défaut sur per-symbol.
     """
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
@@ -347,6 +368,8 @@ def get_feature_columns(
         cols.extend(FACTOR_FEATURE_COLUMNS)
     if include_macro_regime:
         cols.extend(MACRO_REGIME_FEATURE_COLUMNS)
+    if include_score_components:
+        cols.extend(SCORE_COMPONENT_FEATURE_COLUMNS)
     return cols
 
 
@@ -365,6 +388,7 @@ def fingerprint(
     include_fundamentals: bool = False,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -388,6 +412,7 @@ def fingerprint(
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
+        include_score_components=include_score_components,
     ))
     payload = {
         "columns": columns,
@@ -404,6 +429,7 @@ def fingerprint(
         "include_fundamentals": bool(include_fundamentals),
         "include_factors": bool(include_factors),
         "include_macro_regime": bool(include_macro_regime),
+        "include_score_components": bool(include_score_components),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -433,6 +459,7 @@ def build_feature_contract(
     include_fundamentals: bool = False,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -451,6 +478,7 @@ def build_feature_contract(
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
+        include_score_components=include_score_components,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -470,6 +498,7 @@ def build_feature_contract(
             include_fundamentals=include_fundamentals,
             include_factors=include_factors,
             include_macro_regime=include_macro_regime,
+            include_score_components=include_score_components,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
@@ -496,6 +525,7 @@ def validate_feature_contract(
     include_fundamentals: bool = False,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -518,6 +548,7 @@ def validate_feature_contract(
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
+        include_score_components=include_score_components,
     )
     contract = contract_payload if isinstance(contract_payload, dict) else None
     contract_columns = normalize_feature_columns(contract.get("feature_columns")) if contract is not None else None
@@ -543,6 +574,7 @@ def validate_feature_contract(
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
+        include_score_components=include_score_components,
         feature_columns=expected_columns,
     )
 
@@ -569,6 +601,7 @@ def validate_feature_contract(
             include_fundamentals=include_fundamentals,
             include_factors=include_factors,
             include_macro_regime=include_macro_regime,
+            include_score_components=include_score_components,
             feature_columns=contract_columns,
         )
     else:

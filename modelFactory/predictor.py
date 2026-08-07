@@ -648,6 +648,7 @@ def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -
             include_fundamentals=bool(data_cfg.get("include_fundamentals_features", False)),
             include_factors=bool(data_cfg.get("include_factors_features", False)),
             include_macro_regime=bool(data_cfg.get("include_macro_regime_features", False)),
+            include_score_components=bool(data_cfg.get("include_score_components", False)),
             persisted_feature_columns=cfg_data.get("feature_columns"),
             persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
             allow_legacy_missing_contract=False,
@@ -989,6 +990,7 @@ def _load_data_cfg_from_payload(
         include_fundamentals_features=_primary.get("include_fundamentals_features", _fallback.get("include_fundamentals", False)),
         include_factors_features=_primary.get("include_factors_features", _fallback.get("include_factors", False)),
         include_macro_regime_features=_primary.get("include_macro_regime_features", _fallback.get("include_macro_regime", False)),
+        include_score_components=_primary.get("include_score_components", _fallback.get("include_score_components", False)),
         enable_cross_sectional_features=_primary.get("enable_cross_sectional_features", _fallback.get("enable_cross_sectional", False)),
         cross_sectional_min_universe=_primary.get("cross_sectional_min_universe", 20),
         feature_set=_primary.get("feature_set", _fallback.get("feature_set", "v1")),
@@ -1106,6 +1108,7 @@ def _prepare_prediction_frame(
             include_macro_vix3m=data_cfg.include_macro_vix3m_features,
             include_macro_move=data_cfg.include_macro_move_features,
             include_global_stacking=include_global_stacking,
+            include_score_components=data_cfg.include_score_components,
         )
         # ── Fallback global_rank : si attendu mais absent → chercher dans le cache ──
         if include_global_stacking and "global_rank" not in df.columns and "global_rank_3" not in df.columns:
@@ -1212,6 +1215,7 @@ def _predict_with_tabular_model(
         include_fundamentals=data_cfg.include_fundamentals_features,
         include_factors=data_cfg.include_factors_features,
         include_macro_regime=data_cfg.include_macro_regime_features,
+        include_score_components=data_cfg.include_score_components,
     ))
     if df.empty or len(df) == 0:
         return None
@@ -1248,6 +1252,7 @@ def _predict_with_tabular_model(
         include_fundamentals=data_cfg.include_fundamentals_features,
         include_factors=data_cfg.include_factors_features,
         include_macro_regime=data_cfg.include_macro_regime_features,
+        include_score_components=data_cfg.include_score_components,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
         route_feature_columns=resolved_feature_columns,

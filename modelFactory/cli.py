@@ -308,6 +308,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les features MOVE (volatilité obligataire ICE BofA) dans le modèle")
     p.add_argument("--include-fundamentals", action="store_true", default=False,
                    help="Inclure les features fondamentales EODHD (PE, ROE, marges, croissance) — Global Model uniquement")
+    p.add_argument("--include-score-components", action="store_true", default=True,
+                   help="Inclure les composants de score de stock_scores_history (sentiment_net_agg, company_idio_score, macro_regime_score...) comme features. Actif par défaut sur per-sector + global, ignoré sur per-symbol.")
+    p.add_argument("--no-include-score-components", dest="include_score_components", action="store_false",
+                   help="Désactiver l'inclusion des composants de score.")
     p.add_argument("--include-factors", action="store_true", default=False,
                    help="Inclure les expositions factorielles CAPM (beta, alpha, R² via rolling 252j)")
     p.add_argument("--include-macro-regime", action="store_true", default=False,
@@ -520,6 +524,7 @@ def main(args: list[str] | None = None) -> None:
             include_fundamentals_features=opts.include_fundamentals,
             include_factors_features=opts.include_factors,
             include_macro_regime_features=opts.include_macro_regime,
+            include_score_components=opts.include_score_components,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,

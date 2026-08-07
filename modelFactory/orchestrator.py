@@ -856,6 +856,7 @@ def run_training_batch(
         include_fundamentals=False,  # Fondamentaux réservés au Global Model, jamais en per-symbol
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_score_components=False,  # P0-6 : composants score reservés per-sector + global
     )
     _ps_features = {
         "feature_columns": _ps_feature_columns,
@@ -870,6 +871,7 @@ def run_training_batch(
         "include_fundamentals": False,  # Fondamentaux réservés au Global Model
         "include_factors": cfg.data.include_factors_features,
         "include_macro_regime": cfg.data.include_macro_regime_features,
+        "include_score_components": False,  # P0-6 : réservé per-sector + global
         "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
         "global_stacking_enabled": cfg.global_model.stacking_enabled,
     }
