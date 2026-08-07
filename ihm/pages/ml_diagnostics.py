@@ -1049,6 +1049,12 @@ def _render_batch_detail(batch: pd.Series) -> None:
         _render_global_ranking_horizon_details(row)
         st.markdown("")
 
+    # ═══════════════════════════════════════════════════════════════
+    # 🟢 GLOBAL MODEL — Ranking, Backtest, Champion
+    # ═══════════════════════════════════════════════════════════════
+
+    st.subheader("🔵 Modèle global — Métriques")
+
     # ── Backtest Global Rank Strategies (V1/V2/V3) ──
     with st.expander("🧪 Backtest Stratégies Global Rank (H20 + H5)", expanded=False):
         _batch_id = str(row["batch_id"])
@@ -1082,6 +1088,18 @@ def _render_batch_detail(batch: pd.Series) -> None:
                 "Cache `global_rank_cache.parquet` non trouvé. "
                 "Relancez un batch avec la dernière version de `global_ranking.py` pour le générer."
             )
+
+    # ── Global Rank History ──
+    _render_global_rank_history(batch_id)
+    # ── Global Ranking Horizon Details (seulement si pas déjà affiché pour batch running) ──
+    if _batch_status.strip().lower() != "running":
+        _render_global_ranking_horizon_details(row)
+
+    # ═══════════════════════════════════════════════════════════════
+    # 🔵 PER-SYMBOL / PER-SECTOR — Métriques d'entraînement
+    # ═══════════════════════════════════════════════════════════════
+    st.divider()
+    st.subheader("🔵 Per-Symbol / Per-Sector — Métriques")
 
     # ── Statut sélection du champion ──
     champion_df = safe_query(
@@ -1189,6 +1207,8 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.caption(f"🔍 Horizon sélectionné : **H{selected_horizon}** — métriques filtrées sur cet horizon uniquement.")
         else:
             st.caption("🔍 **Tous horizons confondus** — chaque métrique est la moyenne (AVG) des 5 horizons H3/H5/H10/H15/H20.")
+
+ 
 
     if _is_reg_batch:
         # ── Bloc régression par split ──
@@ -1389,12 +1409,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
         _render_symbol_detail(str(batch["batch_id"]), selected_symbol)
 
     # ── Suppression batch (tout en bas du détail) ──
-    st.divider()
-    # ── Global Rank History ──
-    _render_global_rank_history(batch_id)
-    # ── Global Ranking Horizon Details (seulement si pas déjà affiché pour batch running) ──
-    if _batch_status != "running":
-        _render_global_ranking_horizon_details(row)
     st.divider()
     artifacts_dir = get_model_artifacts_dir() / batch_id
     _render_delete_batch_button(batch_id, artifacts_dir)

@@ -797,6 +797,10 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
             lines.append("```")
     lines.append("")
 
+    # ═══════════════════════════════════════════════════════════════
+    # 🟢 GLOBAL MODEL — Ranking, Backtest, Champion
+    # ═══════════════════════════════════════════════════════════════
+
     # ── Statut champion ──
     _append_champion_status(lines, champion_df, champion_by_model_df)
 
@@ -809,6 +813,15 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None)
 
     # ── Per-Symbol Cross-Sectional IC — retiré ──
+
+    # ═══════════════════════════════════════════════════════════════
+    # 🔵 PER-SYMBOL / PER-SECTOR — Métriques d'entraînement
+    # ═══════════════════════════════════════════════════════════════
+
+    lines.append("---")
+    lines.append("")
+    lines.append("## 🔵 Per-Symbol / Per-Sector — Métriques d'entraînement")
+    lines.append("")
 
     # ── Métriques par horizon (si multi-horizon) ──
     horizon_df = _safe_query(engine, HORIZON_LIST_QUERY, {"batch_id": batch_id})

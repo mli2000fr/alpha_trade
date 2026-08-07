@@ -814,11 +814,16 @@ def train_global_ranking_wf(
 
     # ── Préparation du DataFrame poolé (features communes à tous les horizons) ──
     feature_columns = _get_ranking_feature_columns(cfg)
+    _req_horizons = getattr(cfg.data, "forecast_horizons", ()) or ()
     _requested_h = cfg.data.forecast_horizon
-    _display_horizons = [h for h in _GLOBAL_RANKING_HORIZONS if _requested_h <= 0 or h == _requested_h]
+    if _req_horizons:
+        _display_horizons = [h for h in _GLOBAL_RANKING_HORIZONS if h in _req_horizons]
+    else:
+        _display_horizons = [h for h in _GLOBAL_RANKING_HORIZONS if _requested_h <= 0 or h == _requested_h]
     LOGGER.info(
-        "train_global_ranking_wf symbols=%d feature_cols=%d horizons=%s (requested=%d)",
+        "train_global_ranking_wf symbols=%d feature_cols=%d horizons=%s (requested=%d, multi=%s)",
         len(symbols), len(feature_columns), _display_horizons, _requested_h,
+        bool(_req_horizons),
     )
     # Vérifier que l'univers est bien Mid Cap (pas de mega caps parasites)
     if cfg.data.enable_liquidity_filter:
@@ -957,18 +962,25 @@ def train_global_ranking_wf(
     # car WalkForwardSplit est frozen (pas d'assignation possible).
     # Voir _compute_ranking_targets() appelé dans la double boucle.
 
-    # P0-9 (2026-08-07) : respecter --forecast-horizon.  0 = tous les horizons.
-    _requested_horizon = cfg.data.forecast_horizon
-    if _requested_horizon > 0:
-        _active_horizons = tuple(h for h in _GLOBAL_RANKING_HORIZONS if h == _requested_horizon)
-        if not _active_horizons:
-            LOGGER.warning(
-                "global_ranking_wf forecast_horizon=%d not in %s, falling back to all horizons",
-                _requested_horizon, list(_GLOBAL_RANKING_HORIZONS),
-            )
-            _active_horizons = _GLOBAL_RANKING_HORIZONS
+    # P0-9 (2026-08-07) : respecter --forecast-horizon / --forecast-horizons.
+    # --forecast-horizons 3,5,10,15,20 → ces 5 horizons exactement.
+    # --forecast-horizon 20           → seulement H20.
+    # --forecast-horizon 0 (ou omis)  → tous les horizons par défaut.
+    _req_horizons = getattr(cfg.data, "forecast_horizons", ()) or ()
+    if _req_horizons:
+        _active_horizons = tuple(h for h in _GLOBAL_RANKING_HORIZONS if h in _req_horizons)
     else:
-        _active_horizons = _GLOBAL_RANKING_HORIZONS
+        _requested_horizon = cfg.data.forecast_horizon
+        if _requested_horizon > 0:
+            _active_horizons = tuple(h for h in _GLOBAL_RANKING_HORIZONS if h == _requested_horizon)
+            if not _active_horizons:
+                LOGGER.warning(
+                    "global_ranking_wf forecast_horizon=%d not in %s, falling back to all horizons",
+                    _requested_horizon, list(_GLOBAL_RANKING_HORIZONS),
+                )
+                _active_horizons = _GLOBAL_RANKING_HORIZONS
+        else:
+            _active_horizons = _GLOBAL_RANKING_HORIZONS
 
     LOGGER.info(
         "train_global_ranking_wf start symbols=%d splits=%d feature_cols=%d horizons=%s",
