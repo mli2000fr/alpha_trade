@@ -150,6 +150,8 @@ def _prepare_global_symbol_frame(
         mode=effective_data_cfg.target_mode,
         positive_threshold=effective_data_cfg.target_up_threshold,
         negative_threshold=effective_data_cfg.target_down_threshold,
+        skip_winsorize=True,  # P1-1: winsorization handled post-split
+        skip_vol_scaling=effective_data_cfg.target_skip_vol_scaling,  # T1 experiment
         excess_vs_spy=effective_data_cfg.target_excess_vs_spy,  # P0-7
     )
     active_features = _get_global_feature_columns(cfg)
@@ -486,7 +488,17 @@ def train_global_model(
     if is_reg:
         # ── Regression : target continue ──
         train_targets = train_df["target"].astype(float)
-        unique_vals = train_targets.dropna().nunique()
+        # P0-10 (2026-08-07) : drop NaN + inf targets qui font crasher CatBoost
+        _valid_mask = train_targets.notna() & np.isfinite(train_targets)
+        if not _valid_mask.all():
+            _dropped = (~_valid_mask).sum()
+            LOGGER.warning(
+                "train_global_model dropping %d/%d rows with NaN/inf target",
+                _dropped, len(train_targets),
+            )
+            train_df = train_df.loc[_valid_mask].reset_index(drop=True)
+            train_targets = train_targets[_valid_mask].reset_index(drop=True)
+        unique_vals = train_targets.nunique()
         if unique_vals < 2:
             return {"status": "skipped", "model_name": "global_model", "reason": "single_value_target"}
         model.fit(train_df[feature_columns], train_targets)

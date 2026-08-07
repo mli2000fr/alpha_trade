@@ -756,9 +756,21 @@ def main(args: list[str] | None = None) -> None:
 
             _liq_diag = get_last_liquidity_diagnostics()
             if _liq_diag and _liq_diag.get("filtered_count", 0) > 0:
-                _existing_meta = json.loads(
-                    _build_training_batch_metadata(opts, cfg),
-                )
+                # P0-8 fix : lire le metadata_json EXISTANT (qui contient déjà
+                # global_ranking du orchestrator), pas le reconstruire à zéro.
+                with engine.begin() as _conn:
+                    _existing_meta_raw = _conn.execute(
+                        text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                        {"bid": run_id},
+                    ).scalar()
+                _existing_meta: dict[str, Any] = {}
+                if _existing_meta_raw:
+                    try:
+                        _existing_meta = json.loads(str(_existing_meta_raw))
+                    except Exception:
+                        _existing_meta = json.loads(_build_training_batch_metadata(opts, cfg))
+                if not _existing_meta:
+                    _existing_meta = json.loads(_build_training_batch_metadata(opts, cfg))
                 _existing_meta["liquidity_filter"] = _liq_diag
                 _updated_meta_json = json.dumps(_existing_meta, default=str, ensure_ascii=False, sort_keys=True)
                 update_training_batch(

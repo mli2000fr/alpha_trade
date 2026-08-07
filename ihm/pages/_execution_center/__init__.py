@@ -3276,17 +3276,17 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_score_components",
                 help="Ajoute `--include-score-components`. Injecte sentiment_net_agg, company_idio_score, macro_regime_score, quant_component et autres composants de stock_scores_history comme features ML. Actif par défaut sur per-sector + global, ignoré sur per-symbol.",
             )
-            ml_target_skip_vol_scaling = st.checkbox(
-                "🎯 T1 Experiment — Désactiver le vol-scaling de la target (target = future_return brut)",
-                value=_session_state_bool("pipeline_ml_target_skip_vol_scaling", DEFAULT_ML_TARGET_SKIP_VOL_SCALING),
-                key="pipeline_ml_target_skip_vol_scaling",
-                help="Ajoute `--target-skip-vol-scaling`. La target regression n'est PAS divisée par la volatilité 20j. Expérience T1 : tester si le vol-scaling amplifie le bruit.",
-            )
             ml_target_excess_vs_spy = st.checkbox(
                 "📊 P0-7 — Target excès vs SPY (target = (future_return - spy_return) / vol20)",
                 value=_session_state_bool("pipeline_ml_target_excess_vs_spy", DEFAULT_ML_TARGET_EXCESS_VS_SPY),
                 key="pipeline_ml_target_excess_vs_spy",
                 help="Ajoute `--target-excess-vs-spy`. Centre la distribution en soustrayant le rendement du SPY. Réduit le biais directionnel (long/short équilibré).",
+            )
+            ml_target_skip_vol_scaling = st.checkbox(
+                "🎯 T1 Experiment — Désactiver le vol-scaling de la target (target = future_return brut)",
+                value=_session_state_bool("pipeline_ml_target_skip_vol_scaling", DEFAULT_ML_TARGET_SKIP_VOL_SCALING),
+                key="pipeline_ml_target_skip_vol_scaling",
+                help="Ajoute `--target-skip-vol-scaling`. La target regression n'est PAS divisée par la volatilité 20j. Expérience T1 : tester si le vol-scaling amplifie le bruit.",
             )
             ml_target_intra_sector_rank = st.checkbox(
                 "🏆 T2 Experiment — Rang percentile intra-secteur (classification de rang)",

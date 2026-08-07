@@ -658,7 +658,10 @@ def run_training_batch(
         torch.cuda.is_available(),
     )
     # ── Log exhaustif des symboles retenus pour l'entraînement ──
-    LOGGER.info("TRAINING_SYMBOLS_FINAL count=%d symbols=[%s]", len(symbols), ",".join(symbols))
+    LOGGER.info(
+        "TRAINING_SYMBOLS_FINAL per_symbol=%d (after --per-symbol-max-symbols filter) global=%d symbols=[%s]",
+        len(symbols), len(_global_symbols), ",".join(symbols),
+    )
     update_runtime_status(
         current_phase="batch_start",
         progress_label="🧠 Progression ML Train",
@@ -754,6 +757,59 @@ def run_training_batch(
             global_result_wf.get("ic_rank_mean"),
             global_result_wf.get("decile_spreads"),
         )
+
+        # ── P0-8 (2026-08-07) : persister immédiatement les résultats du global ranking
+        #    dans model_training_batch pour que le diagnostic IHM les affiche même
+        #    si le batch est encore en cours (per-symbol training pas encore fait).
+        _gr_ic = global_result_wf.get("ic_rank_mean")
+        _gr_ic_std = global_result_wf.get("ic_rank_std")
+        _gr_ds = global_result_wf.get("decile_spreads") or {}
+        _gr_hd = global_result_wf.get("horizon_details") or {}
+        if _gr_ic is not None:
+            try:
+                update_training_batch(
+                    engine, batch_id,
+                    ic_rank=float(_gr_ic),
+                    ic_rank_std=float(_gr_ic_std) if _gr_ic_std is not None else None,
+                    decile_spread_h3=float(_gr_ds.get(3)) if _gr_ds.get(3) is not None else None,
+                    decile_spread_h5=float(_gr_ds.get(5)) if _gr_ds.get(5) is not None else None,
+                    decile_spread_h10=float(_gr_ds.get(10)) if _gr_ds.get(10) is not None else None,
+                )
+                # ── Mettre à jour metadata_json avec les détails par horizon ──
+                with engine.begin() as _conn:
+                    _existing_meta = _conn.execute(
+                        text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                        {"bid": batch_id},
+                    ).scalar()
+                _meta_dict: dict[str, Any] = {}
+                if _existing_meta:
+                    try:
+                        _meta_dict = json.loads(str(_existing_meta))
+                    except Exception:
+                        _meta_dict = {}
+                _meta_dict["global_ranking"] = {
+                    "ic_rank_mean": float(_gr_ic),
+                    "ic_rank_std": float(_gr_ic_std) if _gr_ic_std is not None else None,
+                    "decile_spreads": {str(h): float(v) for h, v in _gr_ds.items()} if _gr_ds else {},
+                    "horizon_details": _gr_hd,
+                    "symbols_count": int(global_result_wf.get("symbols_count", len(_global_symbols))),
+                    "splits_count": int(global_result_wf.get("splits_count", 0)),
+                    "pred_rows": int(global_result_wf.get("pred_rows", 0)),
+                    "ic_by_horizon": global_result_wf.get("ic_by_horizon", {}),
+                }
+                update_training_batch(
+                    engine, batch_id,
+                    metadata_json=json.dumps(_meta_dict, default=str),
+                )
+                LOGGER.info(
+                    "run_training_batch global_ranking persisted EARLY batch_id=%s ic=%.4f ic_std=%.4f",
+                    batch_id, float(_gr_ic), float(_gr_ic_std) if _gr_ic_std is not None else float("nan"),
+                )
+            except Exception as _exc:
+                LOGGER.warning(
+                    "run_training_batch global_ranking early persist failed: %s",
+                    _exc,
+                )
 
         # ── Phase 2 : merge global_rank into cross-sectional cache (FLAG B) ──
         global_rank_df = global_result_wf.get("global_rank_df") if isinstance(global_result_wf, dict) else None

@@ -963,6 +963,7 @@ def compute_features(
                 bench[
                     [
                         "date",
+                        "benchmark_close",
                         "benchmark_return_20",
                         "benchmark_return_60",
                         "market_return_20",

@@ -1028,6 +1028,27 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     st.markdown("")
 
+    # ── P0-8 (2026-08-07) : bannière batch en cours ──
+    _batch_status = str(row.get("status", "")).strip().lower()
+    if _batch_status == "running":
+        _ic_available = row.get("ic_rank") is not None and str(row.get("ic_rank")) not in ("None", "nan", "")
+        if _ic_available:
+            st.info(
+                "🟨 **Batch en cours d'exécution** — Le Global Ranking est terminé "
+                f"(IC Rank = {float(row['ic_rank']):.4f}), l'entraînement per-symbol est en cours. "
+                "Les métriques F1 / Directional Accuracy apparaîtront ci-dessous au fur et à mesure."
+            )
+        else:
+            st.info(
+                "🟨 **Batch en cours d'exécution** — Le Global Ranking Walk-Forward est en cours "
+                "(5 horizons × 6 folds, ~30 min pour 939 symboles). "
+                "Les métriques (IC Rank, F1, etc.) apparaîtront automatiquement ci-dessous une fois disponibles. "
+                "Rafraîchissez la page (F5) pour voir les mises à jour."
+            )
+        # ── Afficher le détail global ranking immédiatement si dispo ──
+        _render_global_ranking_horizon_details(row)
+        st.markdown("")
+
     # ── Backtest Global Rank Strategies (V1/V2/V3) ──
     with st.expander("🧪 Backtest Stratégies Global Rank (H20 + H5)", expanded=False):
         _batch_id = str(row["batch_id"])
@@ -1371,8 +1392,9 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.divider()
     # ── Global Rank History ──
     _render_global_rank_history(batch_id)
-    # ── Global Ranking Horizon Details ──
-    _render_global_ranking_horizon_details(row)
+    # ── Global Ranking Horizon Details (seulement si pas déjà affiché pour batch running) ──
+    if _batch_status != "running":
+        _render_global_ranking_horizon_details(row)
     st.divider()
     artifacts_dir = get_model_artifacts_dir() / batch_id
     _render_delete_batch_button(batch_id, artifacts_dir)
