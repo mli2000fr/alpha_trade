@@ -6,6 +6,48 @@
 
 ## 1. Diagnostic de depart
 
+### 1.0 Decision de recherche : suspendre le per-sector comme signal de trading (2026-08-05)
+
+La campagne controlee comporte huit batchs sur le meme probleme per-sector, dont une baseline sans familles optionnelles (`S0`), les corrections de contrat XS/fondamentales, H20 seul, trois formulations de cible et le score short. Elle donne un resultat coherent : **aucun alpha per-sector tradable n'est demontre par les configurations et le dataset testes**.
+
+| Experience | Hypothese testee | Resultat WF H20 | Lecture |
+|---|---|---:|---|
+| `S0` `799d9e` | Baseline sans flag optionnel | F1 0.330, DA 50.0 %, MSE 1.01 | Niveau nul. |
+| `S0+short` `57461f` | Score short incremental | F1 0.330, DA 50.0 %, MSE 1.01 | Aucun effet mesure. |
+| `d21cb1` | XS/fondamentales effectivement presentes | F1 0.325, DA 49.8 %, MSE 1.09 | Le correctif de contrat est valide, sans gain economique. |
+| `T0` `a3aaa3` | H20 seul, cible continue actuelle | F1 0.330, DA 50.0 %, MSE 1.01 | Multi-horizon non responsable. |
+| `T1` `1b2059` | Cible sans vol scaling | F1 0.330, DA 50.0 %, MSE 1.24 | Degradation nette de l'erreur. |
+| `T2` `054378` | Rang percentile intra-secteur | F1 0.330, DA 49.9 %, MSE 1.07 | Pas de signal de ranking exploitable. |
+| `T3` `5b6760` | Classes intra-secteur long/flat/short | F1 0.331, DA 39.3 %, MSE 0.23 | Surapprentissage temporel severe. |
+
+`T3` ne constitue pas une exception positive : CatBoost et LightGBM affichent environ `69.3 %` de directional accuracy en validation, `71.3 %` en test interne, puis respectivement `39.6 %` et `39.0 %` en walk-forward. Le gain apparent vient donc d'un protocole de selection/calibration qui ne se generalise pas aux six periodes OOS, et non d'un signal utilisable.
+
+**Decision operationnelle :** le per-sector passe en statut **research-only**. Il ne doit ni etre champion de production, ni entrer dans la cascade, ni servir de veto ou de ponderation du capital. Les artefacts et rapports sont conserves pour audit, mais aucune nouvelle campagne de tuning, de flags ou d'hyperparametres n'est justifiee.
+
+**Regle de re-entree :** ne le reconsiderer que pour une hypothese materiallement nouvelle, avec une information nouvelle et PIT (revisions de resultats/estimations, flux ETF sectoriels, evenements sectoriels), ou un objectif de portefeuille relatif entierement redesigne. Une promotion requerra avant tout tuning une preregistration, un IC relatif positif par date, un spread long-short net de couts stable sur la majorite des folds et une confirmation sur holdout gele.
+
+La priorite experimentale est maintenant le **Global Ranking**. Son IC positif historique ne suffit pas encore a une promotion automatique, mais justifie un baseline fige et reproductible : manifeste de run, univers PIT par fold, nombre reel de splits explique, IC par date avec intervalle de confiance, spread decile net, turnover et capacite. Le per-sector ne doit pas etre une condition de confirmation de ce signal global.
+
+### 1.0 Comparaison per-sector : `f82ab5` versus `d21cb1` (2026-08-05)
+
+Le batch `d21cb1` est le premier rerun apres les corrections de merge XS/fondamentales. Il est bien termine (`11/11` secteurs, stacking desactive), avec six splits WF OOS de 2019-07 a 2025-03. Il active simultanement cross-sectionnelles, fondamentales, facteurs, macro-regime, MOVE et short score.
+
+| Horizon | F1 macro f82ab5 | F1 macro d21cb1 | Delta | Dir. acc. f82ab5 | Dir. acc. d21cb1 | Delta |
+|---|---:|---:|---:|---:|---:|---:|
+| H3 | 0.330 | 0.328 | -0.002 | 0.5033 | 0.5007 | -0.0026 |
+| H5 | 0.331 | 0.326 | -0.005 | 0.5019 | 0.5003 | -0.0016 |
+| H10 | 0.332 | 0.329 | -0.003 | 0.5038 | 0.5037 | -0.0001 |
+| H15 | 0.332 | 0.326 | -0.006 | 0.5041 | 0.4994 | -0.0047 |
+| H20 | 0.331 | 0.325 | -0.006 | 0.5019 | 0.4979 | -0.0040 |
+
+`d21cb1` est donc legerement moins bon sur tous les horizons, sans changement qualitativement positif : F1 macro reste voisin de `0.33`, directional accuracy de `0.50`, et F1 flat est nul. Le MSE WF de `d21cb1` est `1.089` CatBoost et `1.118` LightGBM, toujours au voisinage ou au-dessus du modele nul standardise.
+
+La dispersion sectorielle existe mais n'est pas suffisamment robuste pour une promotion : meilleur point Utilities/CatBoost (`dir_acc=0.5346`) mais MSE `1.3431`, et plusieurs secteurs/backend sont sous `0.48` de directional accuracy. Par regime, les F1 WF vont de `0.305` a `0.345`, sans relation convaincante avec bull/range/high-vol. Ce n'est pas une preuve d'alpha sectoriel exploitable.
+
+**Interpretation correcte :** les corrections XS/fondamentales ont retire un bug de contrat reel, mais elles n'ont pas automatiquement cree du signal sur ce rerun. Il serait incorrect de les annuler : le nouveau batch active plusieurs sources a la fois (`short_score`, MOVE, fondamentales, facteurs, macro-regime, XS) et le rapport precedent ne fournit pas la commande complete de `f82ab5`. La comparaison ne constitue donc pas une ablation causalement propre.
+
+**Decision historique remplacee par la campagne S0/T0-T3 :** les ablations prevues ont maintenant ete testees a un niveau suffisant pour interrompre la recherche incrementaliste. Ne pas lancer de tuning hyperparametrique, de nouvelles combinaisons de flags, ni promouvoir le per-sector.
+
 ### 1.1 Global Ranking : signal faible mais pas nul
 
 Le batch `f82ab5` donne un IC moyen global de `0.0115`, contre `0.0190` sur le batch de reference `7e4cf8`. C'est une chute importante, mais pas une absence de signal :
@@ -94,9 +136,36 @@ Rejouer d'abord trois baselines sur le code actuel, sans changer de features :
 
 ## 4. Phase 1 - Corriger et auditer le dataset per-sector (P0)
 
-### Action 1.1 - Rendre les cross-sectionnelles reellement disponibles au per-sector
+### Etat au 2026-08-04 - Actions 1.1 et 1.2 corrigees et validees au niveau preparation
 
-**Correction :** construire une fois les features cross-sectionnelles sur l'univers global PIT, puis les transmettre a `run_per_sector_batch` et `_prepare_sector_data`. Apres preparation locale de chaque symbole, merger `cross_sectional_df` sur `(symbol, date)` via `merge_cross_sectional_features` avant la neutralisation target et avant les splits.
+La lecture du code confirme les deux changements de structure :
+
+* `run_per_sector_batch` construit une fois `cross_sectional_cache` avec `build_cross_sectional_features_from_db`, sur l'univers complet et le cutoff de training ; il le transmet a chaque `_train_sector_models`, puis a `_prepare_sector_data`.
+* `_prepare_sector_data` concatene d'abord les frames preparees symbole par symbole, puis appelle `merge_cross_sectional_features(prepared, cross_sectional_df)` avant la neutralisation de target et le split par dates. L'isolation rolling/forward par symbole reste donc intacte.
+* `get_feature_columns` recoit maintenant `include_fundamentals=cfg.data.include_fundamentals_features`. Les fondamentales demandees rejoignent donc le feature contract et peuvent etre donnees aux estimateurs.
+
+Une regression silencieuse supplementaire a ete identifiee puis corrigee dans `merge_cross_sectional_features` : les frames individuelles per-sector recevaient d'abord les defaults XS lors de `prepare_symbol_frame` (cache absent), puis `_prepare_sector_data` tentait de merger le cache reel. Sans suppression prealable des colonnes XS existantes, `pandas.merge` creait des suffixes `_x/_y`; les features consommees par le contrat restaient les defaults et les valeurs reelles pouvaient etre ignorees.
+
+Le helper supprime maintenant les colonnes XS deja presentes avant le merge, puis ajoute les valeurs du cache reel. C'est un correctif qui peut affecter directement la performance per-sector : les rangs cross-sectionnels n'etaient pas seulement non observes, ils pouvaient etre effectivement neutralises dans la matrice d'entrainement.
+
+Les validations executees dans le venv du projet sont vertes : **`36 passed in 4.82s`** pour le test d'integration per-sector, les tests cross-sectionnels et les tests stacking concernes. Aucun diagnostic statique n'est remonte dans `cross_sectional.py`, `trainer_sector.py` et les tests modifies.
+
+Les deux tests unitaires dedies sont inclus dans cette validation :
+
+* `test_per_sector_xs_merge_uses_global_universe` construit un cache XS sur trois symboles, le merge sur deux symboles sectoriels, puis verifie les colonnes, leur variance et l'absence de fallback uniforme a `0.5`.
+* `test_per_sector_feature_contract_includes_fundamentals_when_enabled` verifie que toutes les colonnes fondamentales sont ajoutees/enlevees par `get_feature_columns` selon le flag.
+
+Un test d'integration `_prepare_sector_data` est aussi vert : il simule deux symboles, cache XS global et fondamentales, puis verifie les colonnes demandees, leur presence dans `train_df`, la variance XS, les fondamentales non-nulles/non constantes et l'absence de colonne fantome.
+
+Ces changements corrigent le contrat de donnees que ce plan avait identifie. Ils ne prouvent pas encore un gain d'alpha : il faut relancer le baseline per-sector comparable. Il reste un test d'integration desirable qui entraine puis persiste un artefact per-sector et compare son `feature_contract` a la matrice passee a `fit` ; le test actuel valide le contrat renvoye par `_prepare_sector_data`, pas le fichier d'artefact final.
+
+**Diagnostic XS corrige :** le log n'utilise plus `mean() != 0.5`. Il compte les colonnes dont la variance est `> 1e-9`, avec identification des rangs et des colonnes sectorielles. Une colonne constante au default `0.0` ou `0.5` n'est donc plus qualifiee a tort de feature alimentee.
+
+**Validation executable :** les tests concernes ont ete executes avec l'interpreteur du venv du projet et passent. Le terminal systeme peut ne pas resoudre `python`; utiliser explicitement l'interpreteur du venv pour les prochaines validations.
+
+### Action 1.1 - Rendre les cross-sectionnelles reellement disponibles au per-sector - IMPLEMENTEE ET TESTEE
+
+**Correction implementée :** les features cross-sectionnelles sont construites une fois sur l'univers global PIT, transmises a `run_per_sector_batch`/`_train_sector_models`/`_prepare_sector_data`, puis mergees sur `(symbol, date)` via `merge_cross_sectional_features` avant la neutralisation target et avant les splits. Le helper supprime les colonnes XS deja presentes avant le merge afin que le cache reel remplace necessairement les defaults, sans suffixe `_x/_y`.
 
 Les rangs de date et les medianes sectorielles sont licites s'ils n'emploient que les barres connues a la cloture de cette date et un univers PIT. Le merge doit donc conserver le cutoff de training, la liste de symboles et l'empreinte du cache.
 
@@ -109,9 +178,11 @@ Les rangs de date et les medianes sectorielles sont licites s'ils n'emploient qu
 
 **Mesures :** fraction de valeurs `0.5/0.0`, variance par colonne, taux de lignes sans univers minimum, IC intra-secteur et spread top-bottom. Une colonne demandee mais 99 % neutre doit etre retiree ou corrigee, jamais laissee silencieusement.
 
-### Action 1.2 - Inclure les fondamentales quand le flag le demande
+### Action 1.2 - Inclure les fondamentales quand le flag le demande - IMPLEMENTEE ET TESTEE AU NIVEAU PREPARATION
 
-**Correction :** passer `include_fundamentals=cfg.data.include_fundamentals_features` a `get_feature_columns` dans `trainer_sector._prepare_sector_data`. Ajouter un test de contrat : avec le flag actif, les colonnes fondamentales sont dans `feature_cols`, dans le feature contract et non constantes apres merge ; avec le flag inactif, elles en sont absentes.
+**Correction implementée :** `include_fundamentals=cfg.data.include_fundamentals_features` est maintenant passe a `get_feature_columns` dans `trainer_sector._prepare_sector_data`.
+
+**Test d'integration restant :** avec le flag actif, verifier que les colonnes fondamentales sont dans `feature_cols` renvoye par `_prepare_sector_data`, le feature contract persiste et la matrice passee a `fit`, puis qu'elles ne sont pas constantes apres merge. Avec le flag inactif, elles doivent etre absentes.
 
 **Pourquoi :** le code prepare deja `fundamental_df`, mais la matrice per-sector peut l'ignorer. Tester « les fondamentales n'ont pas de signal » avant cette correction serait une conclusion invalide.
 
@@ -324,8 +395,10 @@ Choisir l'horizon d'execution sur le rendement net et la robustesse, pas seuleme
 
 | Test | But |
 |---|---|
-| `per_sector_xs_merge_uses_global_universe` | Les lignes per-sector recoivent les valeurs XS du cache global, pas les defaults. |
-| `per_sector_feature_contract_includes_fundamentals_when_enabled` | Fondamentales demandees = colonnes utilisees par fit et artefact. |
+| `per_sector_xs_merge_uses_global_universe` | Les lignes sectorielles recoivent les valeurs XS du cache global, pas les defaults. **Ajoute et vert.** |
+| `per_sector_feature_contract_includes_fundamentals_when_enabled` | Le helper ajoute/enleve les fondamentales selon le flag. **Ajoute et vert.** |
+| `prepare_sector_data_delivers_xs_and_fundamentals_to_feature_contract` | Deux symboles, cache XS, fondamentales et `_prepare_sector_data` : contrat, matrice, variance et absence de colonnes fantomes. **Ajoute et vert.** |
+| `merge_cross_sectional_features_overwrites_existing_defaults` | Defaults XS deja presents puis cache reel : verifier l'absence de suffixes `_x/_y` et l'ecrasement par les valeurs reelles. **Recommande comme test unitaire explicite du bug corrige.** |
 | `per_sector_features_non_constant` | Toute feature active a une variance/missing rate acceptable par fold. |
 | `per_sector_relative_metrics_align_target` | Direction/F1 utilisent la target relative ; IC relatif et IC brut sont distincts. |
 | `per_sector_quantile_labels_fit_train_only` | Seuils ternaires relatifs ne consultent ni val ni test. |
@@ -358,3 +431,47 @@ Choisir l'horizon d'execution sur le rendement net et la robustesse, pas seuleme
 ## Conclusion
 
 Le prochain gain ne viendra vraisemblablement pas d'un changement de profondeur CatBoost ou d'une nouvelle famille de 50 features. Il faut d'abord rendre visible la matrice reellement entrainee par le per-sector, mettre ses features XS/fondamentales en coherence avec les flags, puis tester une cible economique relative et un benchmark long-short net. Si le per-sector ne bat toujours pas un simple ranking momentum intra-secteur sur un holdout, il faudra assumer qu'il n'a pas d'alpha propre et l'utiliser seulement comme diagnostic, voire le retirer de la cascade. Le Global Ranking garde un signal positif ; il merite une campagne A/B reproduisible pour determiner si l'IC `0.019` historique survit aux corrections de protocole.
+
+---
+
+## 13. Avis Copilot (DeepSeek V4 Pro) — 2026-08-04
+
+### Accord global : ~90%
+
+L'audit GPT est rigoureux, bien séquencé, et identifie correctement les deux défauts de contrat P0 (XS non fusionnées, fondamentales exclues). Les phases sont logiquement ordonnées : d'abord rendre le dataset visible et correct, ensuite mesurer, puis tester des hypothèses, enfin optimiser.
+
+### Points d'accord fort
+
+1. **P0 : XS + fondamentales** — ces deux bugs de contrat rendent tout A/B sur le per-sector invalide. À fixer avant toute expérience.
+2. **Reproductibilité avant optimisation** — relancer G0/G1/S0 avec manifest est la seule façon d'expliquer la baisse d'IC.
+3. **Métriques relatives** — F1=0.33 et DirAcc=50% disent « ça ne marche pas » mais pas pourquoi. L'IC relatif par date + spread net long-short sont nécessaires.
+4. **H20 seul comme diagnostic** — tester la cible la plus stable avant de jeter le per-sector.
+5. **Ne pas relancer les 16 A/B** — reproduire 3-6 expériences clés, pas le historique complet.
+6. **Screener/VIX en PIT incrémental** — pas de activation massive sans ablation.
+
+### Nuances
+
+1. **Ablation `symbol` (§4.1)** — test scientifiquement valide, mais pas prioritaire. Si le per-sector reste à F1=0.33 après corrections XS + fondamentales, retirer `symbol` ne changera rien. À faire en Phase 4, pas avant.
+2. **Architecture hiérarchique (§4.2)** — intéressant mais prématuré. Un modèle global avec `sector` catégoriel est du design exploratoire. À réserver pour quand les baselines corrigées seront stabilisées.
+
+### Ajouts suggérés
+
+1. **Vérifier la target post-split dans le per-sector** — après les 25 fixes post-leakage, vérifier que `run_tabular_baseline` / `run_tabular_walk_forward` appliquent bien la winsorization train-only et que le `shift(-h)` ne traverse pas les frontières dans le chemin per-sector.
+2. **Tracer le nombre de symboles par secteur par date** — un secteur annoncé à 85 symboles peut avoir des dates à 20 symboles. Si `cross_sectional_min_universe=20` filtre beaucoup de dates, le per-sector tourne sur très peu de données effectives.
+
+---
+
+## 14. Résumé exécutif — Copilot
+
+| Priorité | Action | Effort | Impact |
+|----------|--------|--------|--------|
+| **P0** | Fix XS merge + fundamentals dans per-sector | 2h | Direct sur le signal |
+| **P0** | Relancer G0/G1/S0 avec manifest | 1 run | Explique la régression |
+| **P0** | Ajouter feature audit par fold | 3h | Visibilité sur la matrice réelle |
+| **P1** | Ajouter IC relatif + spread net + baselines simples | 4h | Distingue absence d'alpha vs mauvaise métrique |
+| **P1** | Diagnostiquer 6 vs 8 splits | 1h | Peut récupérer l'IC perdu |
+| **P1** | Tester T0-T3 sur H20 | 4 runs | Décide si la cible est le problème |
+| **P2** | Tournoi Global Ranking G2-G6 | 6 runs | Optimisation avec preuve |
+| **P2** | Ablation symbol + architectures | 4 runs | Design exploratoire |
+
+**Recommandation** : commencer par les Actions 1.1 (fusion XS) et 1.2 (fondamentales) immédiatement — ce sont des bugs de code, pas des hypothèses à tester. Ensuite relancer S0 pour voir si le per-sector récupère un signal une fois les features correctement alimentées.

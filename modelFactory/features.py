@@ -210,6 +210,21 @@ SELECTOR_CONTEXT_FEATURE_COLUMNS: list[str] = [
     "selector_short_score",
 ]
 
+# ── Composants de score issus de stock_scores_history ──
+# P0-6 (2026-08-07) : signal orthogonal aux features techniques.
+# Applicable per-sector + global, désactivé par défaut sur per-symbol.
+SCORE_COMPONENT_FEATURE_COLUMNS: list[str] = [
+    "sentiment_net_agg",
+    "company_idio_score",
+    "macro_regime_score",
+    "quant_component",
+    "company_idio_signal_norm",
+    "macro_regime_signal_norm",
+    "company_idio_component",
+    "macro_regime_component",
+    "sector_impact_agg",
+]
+
 _SELECTOR_CONTEXT_SOURCE_TO_FEATURE = {
     "trend_score": "selector_trend_score",
     "vcp_score": "selector_vcp_score",
@@ -278,6 +293,7 @@ def get_feature_columns(
     include_fundamentals: bool = False,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnels).
 
@@ -293,6 +309,11 @@ def get_feature_columns(
 
     ``include_factors`` ajoute les expositions factorielles CAPM
     (beta, alpha, R²) calculées par rolling regression 252j.
+
+    ``include_score_components`` (P0-6) ajoute les composants de score
+    issus de ``stock_scores_history`` (sentiment_net_agg, company_idio_score,
+    macro_regime_score, etc.). Applicable per-sector + global, désactivé
+    par défaut sur per-symbol.
     """
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
@@ -347,6 +368,8 @@ def get_feature_columns(
         cols.extend(FACTOR_FEATURE_COLUMNS)
     if include_macro_regime:
         cols.extend(MACRO_REGIME_FEATURE_COLUMNS)
+    if include_score_components:
+        cols.extend(SCORE_COMPONENT_FEATURE_COLUMNS)
     return cols
 
 
@@ -365,6 +388,7 @@ def fingerprint(
     include_fundamentals: bool = False,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -388,6 +412,7 @@ def fingerprint(
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
+        include_score_components=include_score_components,
     ))
     payload = {
         "columns": columns,
@@ -404,6 +429,7 @@ def fingerprint(
         "include_fundamentals": bool(include_fundamentals),
         "include_factors": bool(include_factors),
         "include_macro_regime": bool(include_macro_regime),
+        "include_score_components": bool(include_score_components),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -433,6 +459,7 @@ def build_feature_contract(
     include_fundamentals: bool = False,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -451,6 +478,7 @@ def build_feature_contract(
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
+        include_score_components=include_score_components,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -470,6 +498,7 @@ def build_feature_contract(
             include_fundamentals=include_fundamentals,
             include_factors=include_factors,
             include_macro_regime=include_macro_regime,
+            include_score_components=include_score_components,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
@@ -496,6 +525,7 @@ def validate_feature_contract(
     include_fundamentals: bool = False,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -518,7 +548,18 @@ def validate_feature_contract(
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
+        include_score_components=include_score_components,
     )
+    contract = contract_payload if isinstance(contract_payload, dict) else None
+    contract_columns = normalize_feature_columns(contract.get("feature_columns")) if contract is not None else None
+    contract_fingerprint = str(contract.get("feature_fingerprint") or "").strip() if contract is not None else ""
+
+    # P0-4 (2026-08-06) : "symbol" est ajouté post-hoc comme feature
+    # catégorielle pour les modèles tabulaires per-sector. Il n'est pas
+    # listé par get_feature_columns() mais fait partie du contrat légitime.
+    if contract_columns is not None and "symbol" in contract_columns and "symbol" not in expected_columns:
+        expected_columns = list(expected_columns) + ["symbol"]
+
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
@@ -533,12 +574,9 @@ def validate_feature_contract(
         include_fundamentals=include_fundamentals,
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
+        include_score_components=include_score_components,
         feature_columns=expected_columns,
     )
-
-    contract = contract_payload if isinstance(contract_payload, dict) else None
-    contract_columns = normalize_feature_columns(contract.get("feature_columns")) if contract is not None else None
-    contract_fingerprint = str(contract.get("feature_fingerprint") or "").strip() if contract is not None else ""
 
     if contract is None:
         if not allow_legacy_missing_contract:
@@ -563,6 +601,7 @@ def validate_feature_contract(
             include_fundamentals=include_fundamentals,
             include_factors=include_factors,
             include_macro_regime=include_macro_regime,
+            include_score_components=include_score_components,
             feature_columns=contract_columns,
         )
     else:
@@ -924,6 +963,7 @@ def compute_features(
                 bench[
                     [
                         "date",
+                        "benchmark_close",
                         "benchmark_return_20",
                         "benchmark_return_60",
                         "market_return_20",
@@ -1250,6 +1290,8 @@ def build_target(
     negative_threshold: float = 0.0,
     *,
     skip_winsorize: bool = False,
+    skip_vol_scaling: bool = False,
+    excess_vs_spy: bool = False,
 ) -> pd.Series:
     """Construit la target pour l'horizon futur.
 
@@ -1294,8 +1336,14 @@ def build_target(
         # appliquées APRÈS le split chronologique pour éviter le leakage
         # (→ run_tabular_baseline, run_tabular_walk_forward, SymbolDataModule).
         # skip_winsorize=True désactive la winsorisation pré-split (P1-1 fix).
+        # skip_vol_scaling=True désactive le vol-scaling (T1 experiment).
         target = future_return.copy()
-        if horizon >= 5:
+        # P0-7 (2026-08-07) : excès vs SPY pour centrer la distribution
+        if excess_vs_spy and "benchmark_close" in df.columns:
+            spy_close = df["benchmark_close"]
+            spy_return = spy_close.shift(-horizon) / spy_close - 1.0
+            target = target - spy_return
+        if not skip_vol_scaling and horizon >= 5:
             rolling_vol = close.pct_change().rolling(20).std()
             target = target / rolling_vol
         if not skip_winsorize:
@@ -1320,6 +1368,8 @@ def build_multi_horizon_targets(
     negative_threshold: float = 0.0,
     *,
     skip_winsorize: bool = False,
+    skip_vol_scaling: bool = False,
+    excess_vs_spy: bool = False,
 ) -> pd.DataFrame:
     """Construit les targets pour plusieurs horizons en une seule passe.
 
@@ -1328,6 +1378,9 @@ def build_multi_horizon_targets(
 
     Si ``skip_winsorize=True``, la winsorisation est désactivée (P1-1 fix).
     Elle sera appliquée après le split chronologique sur les stats du train.
+
+    Si ``skip_vol_scaling=True``, le vol-scaling est désactivé (T1 experiment).
+    La target est le forward return brut (non divisé par la volatilité).
     """
     close = _build_adjusted_price_frame(df)["close"]
     targets: dict[str, pd.Series] = {}
@@ -1336,7 +1389,12 @@ def build_multi_horizon_targets(
         targets[f"future_return_h{h}"] = future_return
         if mode == "regression":
             target = future_return.copy()
-            if h >= 5:
+            # P0-7 (2026-08-07) : excès vs SPY
+            if excess_vs_spy and "benchmark_close" in df.columns:
+                spy_close = df["benchmark_close"]
+                spy_return = spy_close.shift(-h) / spy_close - 1.0
+                target = target - spy_return
+            if not skip_vol_scaling and h >= 5:
                 rolling_vol = close.pct_change().rolling(20).std()
                 target = target / rolling_vol
             if not skip_winsorize:
@@ -1348,6 +1406,7 @@ def build_multi_horizon_targets(
                 df, horizon=h, mode=mode,
                 positive_threshold=positive_threshold,
                 negative_threshold=negative_threshold,
+                excess_vs_spy=excess_vs_spy,
             )
     return pd.DataFrame(targets, index=df.index)
 

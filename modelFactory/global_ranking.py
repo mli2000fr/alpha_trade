@@ -285,6 +285,7 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_score_components=cfg.data.include_score_components,
     )
     # Supprimer les features purement macro (identiques pour tous les symboles
     # à une date donnée → ne peuvent pas classer les titres entre eux).
@@ -799,6 +800,7 @@ def train_global_ranking_wf(
     sentiment_df = None
     # sentiment → per-symbol uniquement ; le global ranking ignore ces features
     # (sparse, noyées dans 177 features).  On saute le chargement pour gagner du temps.
+    selector_context_df = None
     if cfg.data.include_screener_scores or cfg.data.include_short_score_features:
         selector_context_df = load_symbols_selector_context(
             engine, symbols, end_date=history_end_date, start_date=history_start_date,
@@ -812,9 +814,16 @@ def train_global_ranking_wf(
 
     # ── Préparation du DataFrame poolé (features communes à tous les horizons) ──
     feature_columns = _get_ranking_feature_columns(cfg)
+    _req_horizons = getattr(cfg.data, "forecast_horizons", ()) or ()
+    _requested_h = cfg.data.forecast_horizon
+    if _req_horizons:
+        _display_horizons = [h for h in _GLOBAL_RANKING_HORIZONS if h in _req_horizons]
+    else:
+        _display_horizons = [h for h in _GLOBAL_RANKING_HORIZONS if _requested_h <= 0 or h == _requested_h]
     LOGGER.info(
-        "train_global_ranking_wf symbols=%d feature_cols=%d horizons=%s",
-        len(symbols), len(feature_columns), list(_GLOBAL_RANKING_HORIZONS),
+        "train_global_ranking_wf symbols=%d feature_cols=%d horizons=%s (requested=%d, multi=%s)",
+        len(symbols), len(feature_columns), _display_horizons, _requested_h,
+        bool(_req_horizons),
     )
     # Vérifier que l'univers est bien Mid Cap (pas de mega caps parasites)
     if cfg.data.enable_liquidity_filter:
@@ -951,23 +960,44 @@ def train_global_ranking_wf(
     # ── Calculer les targets sur chaque fold (PIT-étanche) ──
     # Les targets sont calculées à la volée dans la boucle split/horizon
     # car WalkForwardSplit est frozen (pas d'assignation possible).
-    # Voir _compute_ranking_targets() appelé dans la double boucle. 
+    # Voir _compute_ranking_targets() appelé dans la double boucle.
+
+    # P0-9 (2026-08-07) : respecter --forecast-horizon / --forecast-horizons.
+    # --forecast-horizons 3,5,10,15,20 → ces 5 horizons exactement.
+    # --forecast-horizon 20           → seulement H20.
+    # --forecast-horizon 0 (ou omis)  → tous les horizons par défaut.
+    _req_horizons = getattr(cfg.data, "forecast_horizons", ()) or ()
+    if _req_horizons:
+        _active_horizons = tuple(h for h in _GLOBAL_RANKING_HORIZONS if h in _req_horizons)
+    else:
+        _requested_horizon = cfg.data.forecast_horizon
+        if _requested_horizon > 0:
+            _active_horizons = tuple(h for h in _GLOBAL_RANKING_HORIZONS if h == _requested_horizon)
+            if not _active_horizons:
+                LOGGER.warning(
+                    "global_ranking_wf forecast_horizon=%d not in %s, falling back to all horizons",
+                    _requested_horizon, list(_GLOBAL_RANKING_HORIZONS),
+                )
+                _active_horizons = _GLOBAL_RANKING_HORIZONS
+        else:
+            _active_horizons = _GLOBAL_RANKING_HORIZONS
 
     LOGGER.info(
         "train_global_ranking_wf start symbols=%d splits=%d feature_cols=%d horizons=%s",
-        len(symbols), len(wf_splits), len(feature_columns), list(_GLOBAL_RANKING_HORIZONS),
+        len(symbols), len(wf_splits), len(feature_columns), list(_active_horizons),
     )
 
     # ── Entraîner un modèle par horizon ──
     all_ic_means: dict[int, float] = {}
     all_ic_stds: dict[int, float] = {}
+    all_fold_ics: list[float] = []
     all_rank_dfs: list[pd.DataFrame] = []
     _saved_models: dict[int, str] = {}
     _horizon_features: dict[int, list[str]] = {}  # features actives par horizon
     _decile_spreads: dict[int, float] = {}  # decile spread par horizon
     _horizon_details: dict[str, Any] = {}  # détails par horizon pour IHM/rapport
 
-    for horizon in _GLOBAL_RANKING_HORIZONS:
+    for horizon in _active_horizons:
         h_suffix = f"_{horizon}"
         _target_col = f"future_return{h_suffix}"
         _label_col = f"label{h_suffix}"
@@ -1122,6 +1152,17 @@ def train_global_ranking_wf(
                 _fit_kwargs["eval_set"] = _eval_set
                 _fit_kwargs["eval_group"] = _eval_group
                 _fit_kwargs["eval_at"] = [10, 20]
+                # P0-8 fix (2026-08-07) : early stopping était absent → 500 itérations
+                # systématiques sur le plus gros split (1.46M lignes → ~25 min).
+                _es = getattr(cfg.baseline, "lgbm_early_stopping_rounds", None)
+                if _es and _es > 0:
+                    _fit_kwargs["early_stopping_rounds"] = _es
+                    _fit_kwargs["eval_metric"] = "ndcg"
+                    LOGGER.info(
+                        "global_ranking_wf horizon=%d split=%d/%d early_stopping=%d rounds eval_rows=%d",
+                        horizon, split.split_index + 1, len(wf_splits),
+                        _es, len(_es_eval) if _es_eval is not None else 0,
+                    )
             if _sample_weights is not None:
                 _fit_kwargs["sample_weight"] = _sample_weights
             model.fit(X_train, y_train, **_fit_kwargs)
@@ -1212,6 +1253,7 @@ def train_global_ranking_wf(
             all_rank_dfs.append(h_pred_df[["symbol", "date", f"global_rank{h_suffix}"]])
             all_ic_means[horizon] = float(np.mean(h_ics)) if h_ics else float("nan")
             all_ic_stds[horizon] = float(np.std(h_ics)) if (h_ics and len(h_ics) > 1) else float("nan")
+            all_fold_ics.extend(h_ics)
 
             # ── Decile Spread (monétisation du signal) ──
             _decile = _compute_decile_spread(h_pred_df)
@@ -1274,20 +1316,22 @@ def train_global_ranking_wf(
         return {"status": "skipped", "reason": "no_predictions"}
 
     # ── Fusionner tous les horizons ──
-    global_rank_df = all_rank_dfs[0]
+    global_rank_df = all_rank_dfs[0].copy()
     for _df in all_rank_dfs[1:]:
         global_rank_df = global_rank_df.merge(_df, on=["symbol", "date"], how="outer")
     for h in _GLOBAL_RANKING_HORIZONS:
         _col = f"global_rank_{h}"
         if _col not in global_rank_df.columns:
             global_rank_df[_col] = 0.5
-        global_rank_df[_col] = global_rank_df[_col].fillna(0.5).astype(np.float64)
+        else:
+            global_rank_df[_col] = global_rank_df[_col].fillna(0.5).astype(np.float64)
     global_rank_df = global_rank_df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
-    # IC moyen (moyenne des IC par horizon)
+    # IC moyen par horizon et dispersion sur les observations OOS fold×horizon.
+    # La dispersion entre les seuls horizons ne mesure pas la stabilité temporelle.
     _valid_ics = [v for v in all_ic_means.values() if not np.isnan(v)]
     ic_mean = float(np.mean(_valid_ics)) if _valid_ics else None
-    ic_std = float(np.std(_valid_ics)) if len(_valid_ics) > 1 else None
+    ic_std = float(np.std(all_fold_ics)) if len(all_fold_ics) > 1 else None
 
     LOGGER.info(
         "train_global_ranking_wf done pred_rows=%d symbols=%d horizons=%s ic_by_h=%s ic_mean=%.4f",
@@ -1317,7 +1361,7 @@ def train_global_ranking_wf(
         json.dumps({
             "feature_columns": feature_columns,
             "model_name": cfg.global_model.model_name,
-            "horizons": list(_GLOBAL_RANKING_HORIZONS),
+            "horizons": list(_active_horizons),
             "saved_models": _saved_models,
             "feature_set": cfg.data.feature_set,
             "include_sentiment": cfg.data.include_sentiment_features,
@@ -1351,9 +1395,13 @@ def train_global_ranking_wf(
         "ic_rank_std": ic_std,
         "ic_by_horizon": all_ic_means,
         "decile_spreads": _decile_spreads,
+        "horizon_details": _horizon_details,  # P0-8 : pour persistance immédiate dans metadata_json
+        "symbols_count": len(symbols),
+        "pred_rows": len(global_rank_df) if not global_rank_df.empty else 0,
+        "splits_count": len(wf_splits),
         "feature_columns": feature_columns,
         "n_features": len(feature_columns),
-        "horizons": list(_GLOBAL_RANKING_HORIZONS),
+        "horizons": list(_active_horizons),
     }
 
 

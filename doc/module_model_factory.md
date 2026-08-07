@@ -419,7 +419,10 @@ Pour chaque secteur (11) :
 
 Mêmes features que le Per-Symbol (mode `expert`), plus :
 - **`symbol`** : feature catégorielle — permet au modèle de différencier les symboles au sein du secteur
-- **Cross-sectional** (si activé) : actuellement **non fusionnées** en per-sector. Les rangs globaux nécessitent un calcul sur l'univers entier → laissés à leurs valeurs neutres. La fusion post-concaténation est un TODO.
+- **Cross-sectional** (si activées) : construites une fois sur l'univers global, puis fusionnées sur `(symbol, date)` après la préparation indépendante de chaque symbole. Les colonnes neutres créées pendant cette préparation sont supprimées avant la fusion afin que le cache réel ne soit jamais masqué par des suffixes Pandas `_x`/`_y`.
+- **Fondamentales** (si activées) : présentes dans le feature contract per-sector. Les valeurs absentes conservent la politique d'imputation définie par le pipeline.
+
+> Les flags ne constituent pas une preuve d'alpha. La campagne contrôlée du 2026-08-05 ne montre aucun gain walk-forward avec les XS, fondamentales, facteurs ou macro-régimes : le per-sector est donc suspendu comme signal de trading, malgré ce contrat de données désormais correct.
 
 ### 5.6 Politique symboles inconnus (P2-6)
 
@@ -468,8 +471,7 @@ Mêmes features que le Per-Symbol (mode `expert`), plus :
 
 > 🔴 **Alerte** : le per-sector ne capture **aucun signal** sur ce batch. F1 macro = 0.33 = hasard pour 3 classes.
 > Directional Accuracy = 50% = pile ou face. MSE = 1.0 = modèle naïf.
-> À comparer avec le batch 7e4cf8 (F1 0.50+, Dir Acc 68%) qui avait un vrai signal.
-> La cause de cette régression est à investiguer (changement d'univers, splits, ou régression code).
+> La campagne contrôlée S0/T0-T3 du 2026-08-05 confirme ce constat après correction du contrat XS/fondamentales : aucune cible ou famille de features testée ne produit de performance walk-forward exploitable. Le per-sector est conservé pour recherche, pas pour décision de trading.
 
 ### 5.9 Lancement
 

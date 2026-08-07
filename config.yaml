@@ -428,7 +428,7 @@ batch_diagnostics:
   # Laisser vide pour utiliser automatiquement le dernier batch (⚠️ look-ahead
   # si le dernier batch est postérieur à la période backtestée).
   # Renseigner un batch_id explicite pour un backtest PIT-safe.
-  backtest_batch_id: ""
+  backtest_batch_id: "model-factory-20260805234750-f63478"
 
   # ── §7.0 (analyse_ml.md) — filtres additionnels par seuils absolus de F1 ──
   # Ces règles complètent le système existant (top/bottom/weak_*).
@@ -472,11 +472,13 @@ cascade:
 
   # Seuil de filtrage : ne garder que les top/bottom N% du classement global.
   # 0.20 = top 20% pour LONG, bottom 20% pour SHORT.
-  top_pct: 0.20
+  top_pct: 0.10
 
   # Probabilité minimale du Per-Symbol pour valider un trade.
   # En dessous, le trade est rejeté même si le rang global est bon.
-  min_prob: 0.55
+  # Deux seuils distincts : classification (probas 0-1) vs regression (scores continus).
+  min_prob_classification: 0.55
+  min_prob_regression: 0.10
 
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)

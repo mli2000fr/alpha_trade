@@ -247,6 +247,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("--max-workers", type=int, default=4)
+    p.add_argument("--predict-max-date-workers", type=int, default=4,
+                   help="Nombre de dates traitées en parallèle lors du predict historique (défaut: 4)")
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--patience", type=int, default=DEFAULT_PATIENCE,
                    help="Patience pour l'early stopping du LSTM (epochs sans amélioration).")
@@ -306,10 +308,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les features MOVE (volatilité obligataire ICE BofA) dans le modèle")
     p.add_argument("--include-fundamentals", action="store_true", default=False,
                    help="Inclure les features fondamentales EODHD (PE, ROE, marges, croissance) — Global Model uniquement")
+    p.add_argument("--include-score-components", action="store_true", default=True,
+                   help="Inclure les composants de score de stock_scores_history (sentiment_net_agg, company_idio_score, macro_regime_score...) comme features. Actif par défaut sur per-sector + global, ignoré sur per-symbol.")
+    p.add_argument("--no-include-score-components", dest="include_score_components", action="store_false",
+                   help="Désactiver l'inclusion des composants de score.")
     p.add_argument("--include-factors", action="store_true", default=False,
                    help="Inclure les expositions factorielles CAPM (beta, alpha, R² via rolling 252j)")
     p.add_argument("--include-macro-regime", action="store_true", default=False,
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
+    p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
+                   help="T1 experiment: désactiver le vol-scaling dans la target regression (target = future_return brut)")
+    p.add_argument("--target-excess-vs-spy", action="store_true", default=False,
+                   help="P0-7: target = (future_return - spy_return) / vol20 — centre la distribution pour équilibrer long/short")
+    p.add_argument("--target-intra-sector-rank", action="store_true", default=False,
+                   help="T2 experiment: target = rang percentile intra-secteur [0,1] (classification de rang au lieu de régression de magnitude)")
+    p.add_argument("--target-ternary-intra-sector", action="store_true", default=False,
+                   help="T3 experiment: classification ternaire intra-secteur (LONG/FLAT/SHORT avec seuils en quantiles train-only)")
+    p.add_argument("--target-ternary-quantile", type=float, default=0.30,
+                   help="T3: quantile pour les seuils LONG/SHORT (défaut 0.30 = top 30%% LONG, bottom 30%% SHORT)")
     p.add_argument("--ranking-top-k-features", type=int, default=0,
                    help="Global Ranking : nombre de features à garder par importance (0 = toutes, ex: 30 = top 30)")
     p.add_argument("--global-ranking-max-symbols", type=int, default=0,
@@ -394,6 +410,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi une baseline CatBoost et compare ses métriques")
     p.add_argument("--enable-global-model", action="store_true", default=False,
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
+    p.add_argument("--global-model-only", action="store_true", default=False,
+                   help="Entraîne UNIQUEMENT le modèle global, sans per-symbol ni per-sector. Active implicitement --enable-global-model.")
     p.add_argument("--enable-global-stacking", action="store_true", default=False,
                    help="Utilise la prédiction du Global Model comme feature (Approche 2 — Stacking)")
     p.add_argument("--enable-global-challenger", action="store_true", default=False,
@@ -487,6 +505,10 @@ def main(args: list[str] | None = None) -> None:
         fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
+    # P0-6 : --global-model-only active implicitement le Global Model
+    if opts.global_model_only:
+        opts.enable_global_model = True
+
     _horizons: tuple[int, ...] = ()
     _forecast_horizon = opts.forecast_horizon
     if opts.forecast_horizons:
@@ -510,6 +532,8 @@ def main(args: list[str] | None = None) -> None:
             include_fundamentals_features=opts.include_fundamentals,
             include_factors_features=opts.include_factors,
             include_macro_regime_features=opts.include_macro_regime,
+            include_score_components=opts.include_score_components,
+            global_model_only=opts.global_model_only,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,
@@ -521,6 +545,11 @@ def main(args: list[str] | None = None) -> None:
             triple_barrier_stop_atr_mult=opts.triple_barrier_stop_atr_mult,
             triple_barrier_tp_atr_mult=opts.triple_barrier_tp_atr_mult,
             triple_barrier_max_sessions=opts.triple_barrier_max_sessions,
+            target_skip_vol_scaling=opts.target_skip_vol_scaling,
+            target_excess_vs_spy=opts.target_excess_vs_spy,
+            target_intra_sector_rank=opts.target_intra_sector_rank,
+            target_ternary_intra_sector=opts.target_ternary_intra_sector,
+            target_ternary_quantile=opts.target_ternary_quantile,
             decision_threshold=opts.decision_threshold,
             enable_liquidity_filter=opts.enable_liquidity_filter,
             liquidity_min_avg_volume_20d=opts.liquidity_min_avg_volume_20d,
@@ -727,9 +756,21 @@ def main(args: list[str] | None = None) -> None:
 
             _liq_diag = get_last_liquidity_diagnostics()
             if _liq_diag and _liq_diag.get("filtered_count", 0) > 0:
-                _existing_meta = json.loads(
-                    _build_training_batch_metadata(opts, cfg),
-                )
+                # P0-8 fix : lire le metadata_json EXISTANT (qui contient déjà
+                # global_ranking du orchestrator), pas le reconstruire à zéro.
+                with engine.begin() as _conn:
+                    _existing_meta_raw = _conn.execute(
+                        text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                        {"bid": run_id},
+                    ).scalar()
+                _existing_meta: dict[str, Any] = {}
+                if _existing_meta_raw:
+                    try:
+                        _existing_meta = json.loads(str(_existing_meta_raw))
+                    except Exception:
+                        _existing_meta = json.loads(_build_training_batch_metadata(opts, cfg))
+                if not _existing_meta:
+                    _existing_meta = json.loads(_build_training_batch_metadata(opts, cfg))
                 _existing_meta["liquidity_filter"] = _liq_diag
                 _updated_meta_json = json.dumps(_existing_meta, default=str, ensure_ascii=False, sort_keys=True)
                 update_training_batch(
@@ -800,6 +841,7 @@ def main(args: list[str] | None = None) -> None:
         )
         historical_predict_enabled = cfg.data.training_end_date is not None
         persisted_incrementally = False
+        _batch_id = _resolve_predict_batch_id(Path(opts.artifacts_dir))
 
         def _persist_predictions_chunk(
             chunk: pd.DataFrame,
@@ -846,56 +888,85 @@ def main(args: list[str] | None = None) -> None:
                 len(prediction_dates),
             )
 
-            # ── Cascade ML (Étape 3) : prédire les rangs globaux avant per-symbol ──
-            _batch_id = _resolve_predict_batch_id(Path(opts.artifacts_dir))
-            if _batch_id:
-                from modelFactory.predictor import predict_global_rank_history
-                LOGGER.info(
-                    "predict cascade global_rank_history batch_id=%s start=%s end=%s",
-                    _batch_id, cfg.data.training_start_date, cfg.data.training_end_date,
-                )
-                _gr_results = predict_global_rank_history(
-                    start_date=str(cfg.data.training_start_date),
-                    end_date=str(cfg.data.training_end_date),
-                    batch_id=_batch_id,
-                    artifacts_dir=Path(opts.artifacts_dir),
-                    engine=engine,
-                )
-                _gr_total = sum(v for v in _gr_results.values() if v > 0)
-                LOGGER.info(
-                    "predict cascade global_rank_history DONE — %d dates, %d rows",
-                    len(_gr_results), _gr_total,
-                )
+            # ── Date-by-date parallel : global rank + per-symbol par date ──
+            # Chaque worker traite une date complète : global_rank → predict_batch → persist.
+            # Les dates sont indépendantes → parallélisation sans contrainte de séquence.
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from threading import Lock
+            from modelFactory.predictor import predict_global_rank_history
 
-            prediction_parts = []
-            for prediction_date in prediction_dates:
-                symbols_for_date = opts.symbols or load_symbols_for_source(
-                    engine,
-                    opts.symbol_source,
-                    trade_date=prediction_date,
+            _persist_lock = Lock()
+            _prediction_parts: list[pd.DataFrame] = []
+            _dates_with_data = 0
+            _dates_total = len(prediction_dates)
+
+            def _process_date(pred_date: date) -> tuple[str, int]:
+                """Traite une date : global_rank → predict_batch → persist. Thread-safe."""
+                _ds = pred_date.isoformat()
+                # Étape 1 : global rank
+                if _batch_id:
+                    predict_global_rank_history(
+                        start_date=_ds,
+                        end_date=_ds,
+                        batch_id=_batch_id,
+                        artifacts_dir=Path(opts.artifacts_dir),
+                        engine=engine,
+                    )
+                # Étape 2 : per-symbol
+                _syms = opts.symbols or load_symbols_for_source(
+                    engine, opts.symbol_source, trade_date=pred_date,
                 )
-                part = predict_batch(
-                    symbols_for_date,
+                _part = predict_batch(
+                    _syms,
                     Path(opts.artifacts_dir),
                     engine,
-                    prediction_date=prediction_date,
-                    as_of_date=prediction_date,
+                    prediction_date=pred_date,
+                    as_of_date=pred_date,
                     persist=False,
+                    batch_id=_batch_id,
                     accelerator=opts.accelerator,
-                    max_workers=opts.max_workers,
+                    max_workers=1,  # déjà parallélisé au niveau date
                 )
-                if not part.empty:
-                    prediction_parts.append(part)
+                _rows = 0
+                if not _part.empty:
+                    with _persist_lock:
+                        _prediction_parts.append(_part)
                     _persist_predictions_chunk(
-                        part,
+                        _part,
                         operation="insert_predictions_historical_date",
-                        prediction_date=prediction_date,
+                        prediction_date=pred_date,
                     )
-                else:
-                    LOGGER.info(
-                        "predict date=%s skipped rows=0 reason=no_valid_predictions", prediction_date.isoformat())
+                    _rows = len(_part)
+                return (_ds, _rows)
+
+            _max_date_workers = max(1, min(getattr(opts, "predict_max_date_workers", 4) or 4, 8))
+            LOGGER.info(
+                "predict parallel start: %d dates, %d workers",
+                _dates_total, _max_date_workers,
+            )
+            with ThreadPoolExecutor(max_workers=_max_date_workers) as _exec:
+                _futures = {_exec.submit(_process_date, d): d for d in prediction_dates}
+                for _future in as_completed(_futures):
+                    try:
+                        _ds, _rows = _future.result()
+                        if _rows > 0:
+                            _dates_with_data += 1
+                            LOGGER.info(
+                                "predict date=%s per_symbol=%d rows → model_predictions (%d/%d dates done)",
+                                _ds, _rows, _dates_with_data, _dates_total,
+                            )
+                        else:
+                            LOGGER.warning(
+                                "predict date=%s ALL SKIPPED — 0 predictions (%d/%d dates done)",
+                                _ds, _dates_with_data, _dates_total,
+                            )
+                    except Exception as _exc:
+                        _failed_date = _futures[_future]
+                        LOGGER.error(
+                            "predict date=%s FAILED: %s", _failed_date.isoformat(), _exc,
+                        )
             persisted_incrementally = True
-            non_empty_parts = [part for part in prediction_parts if not part.empty]
+            non_empty_parts = [part for part in _prediction_parts if not part.empty]
             preds = (
                 pd.concat(non_empty_parts, ignore_index=True)
                 if non_empty_parts
@@ -903,8 +974,20 @@ def main(args: list[str] | None = None) -> None:
                     columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
                 )
             )
+            if _dates_with_data == 0:
+                LOGGER.error(
+                    "predict ALL %d DATES SKIPPED — 0 predictions total. "
+                    "model_predictions table will be EMPTY. "
+                    "Verify: batch_id=%s artifacts_dir=%s has champions for symbol_source=%s",
+                    _dates_total, _batch_id, opts.artifacts_dir, opts.symbol_source,
+                )
+            else:
+                LOGGER.info(
+                    "predict historical done: %d/%d dates with predictions, %d total rows",
+                    _dates_with_data, _dates_total, len(preds),
+                )
         else:
-            preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, accelerator=opts.accelerator)
+            preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, batch_id=_batch_id, accelerator=opts.accelerator)
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None

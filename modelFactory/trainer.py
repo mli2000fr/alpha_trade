@@ -432,6 +432,9 @@ def _build_feature_contract_for_columns(cfg: TrainingConfig, feature_columns: li
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
         include_global_stacking=cfg.global_model.stacking_enabled,
+        include_fundamentals=cfg.data.include_fundamentals_features,
+        include_factors=cfg.data.include_factors_features,
+        include_macro_regime=cfg.data.include_macro_regime_features,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
     )

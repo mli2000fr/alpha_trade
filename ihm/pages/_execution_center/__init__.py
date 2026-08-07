@@ -127,6 +127,13 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
+    DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
+    DEFAULT_ML_GLOBAL_MODEL_ONLY,
+    DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
+    DEFAULT_ML_TARGET_EXCESS_VS_SPY,
+    DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
     DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS,
@@ -3263,6 +3270,45 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_macro_regime",
                 help="Ajoute `--include-macro-regime`. Injecte la tendance SPY long terme et le z-score VIX à tous les symboles.",
             )
+            ml_include_score_components = st.checkbox(
+                "📊 Composants de score (stock_scores_history)",
+                value=_session_state_bool("pipeline_ml_include_score_components", DEFAULT_ML_INCLUDE_SCORE_COMPONENTS),
+                key="pipeline_ml_include_score_components",
+                help="Ajoute `--include-score-components`. Injecte sentiment_net_agg, company_idio_score, macro_regime_score, quant_component et autres composants de stock_scores_history comme features ML. Actif par défaut sur per-sector + global, ignoré sur per-symbol.",
+            )
+            ml_target_excess_vs_spy = st.checkbox(
+                "📊 P0-7 — Target excès vs SPY (target = (future_return - spy_return) / vol20)",
+                value=_session_state_bool("pipeline_ml_target_excess_vs_spy", DEFAULT_ML_TARGET_EXCESS_VS_SPY),
+                key="pipeline_ml_target_excess_vs_spy",
+                help="Ajoute `--target-excess-vs-spy`. Centre la distribution en soustrayant le rendement du SPY. Réduit le biais directionnel (long/short équilibré).",
+            )
+            ml_target_skip_vol_scaling = st.checkbox(
+                "🎯 T1 Experiment — Désactiver le vol-scaling de la target (target = future_return brut)",
+                value=_session_state_bool("pipeline_ml_target_skip_vol_scaling", DEFAULT_ML_TARGET_SKIP_VOL_SCALING),
+                key="pipeline_ml_target_skip_vol_scaling",
+                help="Ajoute `--target-skip-vol-scaling`. La target regression n'est PAS divisée par la volatilité 20j. Expérience T1 : tester si le vol-scaling amplifie le bruit.",
+            )
+            ml_target_intra_sector_rank = st.checkbox(
+                "🏆 T2 Experiment — Rang percentile intra-secteur (classification de rang)",
+                value=_session_state_bool("pipeline_ml_target_intra_sector_rank", DEFAULT_ML_TARGET_INTRA_SECTOR_RANK),
+                key="pipeline_ml_target_intra_sector_rank",
+                help="Ajoute `--target-intra-sector-rank`. La target devient le rang percentil [0,1] du titre dans son secteur sur chaque date. Le modèle apprend à classer, pas à prédire une magnitude.",
+            )
+            ml_target_ternary_intra_sector = st.checkbox(
+                "🔺 T3 Experiment — Classification ternaire intra-secteur (LONG/FLAT/SHORT)",
+                value=_session_state_bool("pipeline_ml_target_ternary_intra_sector", DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR),
+                key="pipeline_ml_target_ternary_intra_sector",
+                help="Ajoute `--target-ternary-intra-sector`. Convertit la target continue en labels LONG(+1)/FLAT(0)/SHORT(-1) avec des seuils en quantiles calculés sur le train uniquement. Le modèle devient un classifieur.",
+            )
+            if ml_target_ternary_intra_sector:
+                ml_target_ternary_quantile = st.slider(
+                    "Quantile LONG/SHORT",
+                    min_value=0.10, max_value=0.45, value=0.30, step=0.05,
+                    key="pipeline_ml_target_ternary_quantile",
+                    help="Top N = LONG, bottom N = SHORT. 0.30 = top 30% LONG, bottom 30% SHORT, 40% FLAT.",
+                )
+            else:
+                ml_target_ternary_quantile = 0.30
         st.markdown("---")
         with st.expander("🔍 ML — Filtrage", expanded=False):
             ml_ranking_top_k_features = st.number_input(
@@ -3499,6 +3545,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 value=_session_state_bool("pipeline_ml_enable_global_model", DEFAULT_ML_ENABLE_GLOBAL_MODEL),
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
+            )
+            ml_global_model_only = st.checkbox(
+                "🎯 Global Model ONLY — sauter per-symbol et per-sector",
+                value=_session_state_bool("pipeline_ml_global_model_only", DEFAULT_ML_GLOBAL_MODEL_ONLY),
+                key="pipeline_ml_global_model_only",
+                disabled=not ml_enable_global_model,
+                help="Ajoute `--global-model-only`. N'entraîne QUE le modèle global, sans entraîner de modèles per-symbol ni per-sector. Le batch s'arrête après le Global Model.",
             )
             st.caption("L'option ci-dessous nécessite que le modèle global soit activé.")
             ml_enable_global_stacking = st.checkbox(
@@ -4555,6 +4608,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_fundamentals=bool(ml_include_fundamentals),
             ml_include_factors=bool(ml_include_factors),
             ml_include_macro_regime=bool(ml_include_macro_regime),
+            ml_include_score_components=bool(ml_include_score_components),
+            ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),
+            ml_target_excess_vs_spy=bool(ml_target_excess_vs_spy),
+            ml_target_intra_sector_rank=bool(ml_target_intra_sector_rank),
+            ml_target_ternary_intra_sector=bool(ml_target_ternary_intra_sector),
+            ml_target_ternary_quantile=float(ml_target_ternary_quantile),
             ml_ranking_top_k_features=int(ml_ranking_top_k_features),
             ml_global_ranking_max_symbols=int(ml_global_ranking_max_symbols),
             ml_global_ranking_selection_mode=str(ml_global_ranking_selection_mode),
@@ -4578,6 +4637,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),
+            ml_global_model_only=bool(ml_global_model_only),
             ml_enable_global_stacking=bool(ml_enable_global_stacking),
             ml_global_model_name=cast(Any, ml_global_model_name),
             ml_enable_cross_sectional=bool(ml_enable_cross_sectional),

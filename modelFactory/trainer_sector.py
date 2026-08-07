@@ -55,6 +55,7 @@ def _prepare_sector_data(
     universe_df: pd.DataFrame | None = None,
     selector_df: pd.DataFrame | None = None,
     fundamental_df: pd.DataFrame | None = None,
+    cross_sectional_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
     """Charge et prépare les données pour un secteur entier.
 
@@ -111,6 +112,30 @@ def _prepare_sector_data(
         len(prepared_frames), len(prepared),
     )
 
+    # ── Action 1.1 (2026-08-04) : fusionner les features cross-sectionnelles ──
+    # Avant : universe_df=None → les colonnes XS étaient remplies de valeurs
+    # neutres (0.5 pour les rangs, 0.0 pour les sectorielles/neutralisées)
+    # par merge_cross_sectional_features, rendant ~30 features inactives.
+    # Maintenant : on construit le cache XS une fois dans run_per_sector_batch
+    # et on le merge ici après concaténation.
+    from modelFactory.cross_sectional import (
+        CROSS_SECTIONAL_FEATURE_COLUMNS,
+        GLOBAL_PRED_FEATURE_COLUMNS,
+        merge_cross_sectional_features,
+    )
+    prepared = merge_cross_sectional_features(prepared, cross_sectional_df)
+    # Diagnostic : compter les colonnes XS réellement alimentées (variance > 0)
+    _rank_cols = set(CROSS_SECTIONAL_FEATURE_COLUMNS) | set(GLOBAL_PRED_FEATURE_COLUMNS)
+    _xs_cols = [c for c in prepared.columns if c in _rank_cols or c.startswith("sector_") or c.startswith("global_rank")]
+    _xs_alive = 0
+    if _xs_cols:
+        _xs_var = prepared[_xs_cols].var(numeric_only=True)
+        _xs_alive = int((_xs_var > 1e-9).sum())
+    LOGGER.info(
+        "train_sector: XS merge done — %d XS columns requested, %d alive (variance > 0)",
+        len(_xs_cols), _xs_alive,
+    )
+
     # ── Sector-neutral target ──
     # Predict outperformance within the sector, not absolute direction.
     # The target becomes: "will this stock beat the sector median?"
@@ -136,6 +161,27 @@ def _prepare_sector_data(
                 "(target = target - daily_median within sector)"
             )
 
+    # ── T2 experiment (2026-08-05) : rang percentile intra-secteur ──
+    # Au lieu de prédire la magnitude de la surperformance, le modèle apprend
+    # à classer les titres dans leur secteur. La target devient un rang [0,1].
+    if cfg.data.target_intra_sector_rank:
+        _ranked = 0
+        if cfg.data.forecast_horizons:
+            for h in cfg.data.forecast_horizons:
+                _col = f"target_h{h}"
+                if _col in prepared.columns:
+                    prepared[_col] = prepared.groupby("date")[_col].rank(pct=True)
+                    _ranked += 1
+            if "target" in prepared.columns:
+                prepared["target"] = prepared[f"target_h{cfg.data.forecast_horizon}"]
+        elif "target" in prepared.columns:
+            prepared["target"] = prepared.groupby("date")["target"].rank(pct=True)
+            _ranked = 1
+        LOGGER.info(
+            "train_sector: T2 intra-sector rank applied — %d targets converted to percentile rank [0,1]",
+            _ranked,
+        )
+
     # Chronological split by DATES (PIT-safe: same date → same split)
     split = chrono_split_by_dates(
         prepared,
@@ -157,6 +203,8 @@ def _prepare_sector_data(
         include_global_stacking=cfg.global_model.stacking_enabled,
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_fundamentals=cfg.data.include_fundamentals_features,
+        include_score_components=cfg.data.include_score_components,
     )
 
     # Add "symbol" as a categorical feature for tabular models
@@ -259,6 +307,7 @@ def _persist_sector_metrics(
         },
     }
     _sector_config = {
+        "run_id": run_id,
         "data": asdict(cfg.data),
         "model": asdict(cfg.model),
         "feature_columns": _feature_cols,
@@ -305,6 +354,7 @@ def _train_sector_models(
     universe_df: pd.DataFrame | None = None,
     selector_df: pd.DataFrame | None = None,
     fundamental_df: pd.DataFrame | None = None,
+    cross_sectional_df: pd.DataFrame | None = None,
     batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Entraîne les 3 challengers (LSTM, LightGBM, CatBoost) pour un secteur.
@@ -322,10 +372,52 @@ def _train_sector_models(
         universe_df=universe_df,
         selector_df=selector_df,
         fundamental_df=fundamental_df,
+        cross_sectional_df=cross_sectional_df,
     )
 
     if train_df.empty:
         return {"sector": sector_name, "status": "skipped", "reason": "empty_train"}
+
+    # ── T3 experiment (2026-08-05) : classification ternaire intra-secteur ──
+    # Convertit la target continue en labels LONG(+1)/FLAT(0)/SHORT(-1)
+    # avec des seuils en quantiles calculés sur le TRAIN uniquement.
+    _is_ternary = (
+        cfg.data.target_mode == "regression"
+        and cfg.data.target_ternary_intra_sector
+    )
+    if _is_ternary:
+        from dataclasses import replace
+        _q = cfg.data.target_ternary_quantile
+        _q_lo = _q
+        _q_hi = 1.0 - _q
+        for _df in (train_df, val_df, test_df):
+            if "target" not in _df.columns:
+                continue
+            _target = _df["target"].copy()
+            if _df is train_df:
+                _train_lo = _target.quantile(_q_lo)
+                _train_hi = _target.quantile(_q_hi)
+                LOGGER.info(
+                    "train_sector T3: train quantiles lo=%.4f (q=%.2f) hi=%.4f (q=%.2f)",
+                    _train_lo, _q_lo, _train_hi, _q_hi,
+                )
+            _ternary = pd.Series(0, index=_df.index, dtype=int)
+            _ternary = _ternary.mask(_target > _train_hi, 1)
+            _ternary = _ternary.mask(_target < _train_lo, -1)
+            _df["target"] = _ternary
+            # Propager aux targets multi-horizon si présentes
+            for _hcol in [c for c in _df.columns if c.startswith("target_h")]:
+                _t = _df[_hcol].copy()
+                _t_ternary = pd.Series(0, index=_df.index, dtype=int)
+                _t_ternary = _t_ternary.mask(_t > _train_hi, 1)
+                _t_ternary = _t_ternary.mask(_t < _train_lo, -1)
+                _df[_hcol] = _t_ternary
+        _ternary_dist = train_df["target"].value_counts().to_dict()
+        LOGGER.info(
+            "train_sector T3: ternary distribution train — %s", _ternary_dist,
+        )
+        # Remplacer cfg pour que les fonctions aval voient target_mode="ternary"
+        cfg = replace(cfg, data=replace(cfg.data, target_mode="ternary"))
 
     # Build prepared_df for tabular baselines
     prepared_df = pd.concat([train_df, val_df, test_df], ignore_index=True)
@@ -335,7 +427,8 @@ def _train_sector_models(
     _has_symbol_feat = "symbol" in tab_feature_cols
 
     # ── LightGBM ──
-    is_reg = cfg.data.target_mode == "regression"
+    is_reg = cfg.data.target_mode == "regression" and not _is_ternary
+    _effective_mode = "ternary" if _is_ternary else cfg.data.target_mode
     if is_reg:
         _lgbm_builder = lambda seed: __import__("lightgbm").LGBMRegressor(
             objective="regression",
@@ -352,8 +445,8 @@ def _train_sector_models(
         )
     else:
         _lgbm_builder = lambda seed: __import__("lightgbm").LGBMClassifier(
-            objective="multiclass" if cfg.data.target_mode == "ternary" else "binary",
-            num_class=3 if cfg.data.target_mode == "ternary" else 1,
+            objective="multiclass" if _effective_mode == "ternary" else "binary",
+            num_class=3 if _effective_mode == "ternary" else 1,
             max_depth=cfg.baseline.max_depth,
             num_leaves=cfg.baseline.lgbm_num_leaves,
             n_estimators=cfg.baseline.n_estimators,
@@ -387,7 +480,7 @@ def _train_sector_models(
             iterations=cfg.baseline.catboost_iterations,
             learning_rate=cfg.baseline.catboost_learning_rate,
             random_seed=seed,
-            loss_function="MultiClass" if cfg.data.target_mode == "ternary" else "Logloss",
+            loss_function="MultiClass" if _effective_mode == "ternary" else "Logloss",
             verbose=False, allow_writing_files=False,
             auto_class_weights="Balanced",
             l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
@@ -611,6 +704,37 @@ def run_per_sector_batch(
     selector_df = _load_selector_for_symbols(symbols, engine, cfg)
     fundamental_df = _load_fundamentals_for_symbols(symbols, engine, cfg)
 
+    # ── Action 1.1 (2026-08-04) : construire le cache cross-sectionnel UNE FOIS ──
+    # Avant : chaque _prepare_sector_data recevait universe_df=None → les features
+    # XS étaient remplies de valeurs neutres (0.5). Maintenant : on bâtit le cache
+    # globalement (comme le fait l'orchestrateur pour le per-symbol) et on le passe
+    # à chaque secteur.
+    cross_sectional_cache: pd.DataFrame | None = None
+    _needs_cross_sectional = (
+        cfg.data.enable_cross_sectional_features
+        or cfg.global_model.stacking_enabled
+    )
+    if _needs_cross_sectional and symbols:
+        from modelFactory.cross_sectional import build_cross_sectional_features_from_db, _load_sector_mapping
+        LOGGER.info(
+            "run_per_sector_batch: building cross-sectional cache for %d symbols", len(symbols),
+        )
+        _sector_map: dict[str, str] | None = _load_sector_mapping(engine)
+        cross_sectional_cache, _xs_diag = build_cross_sectional_features_from_db(
+            engine,
+            symbols,
+            benchmark_df=benchmark_df,
+            min_universe_size=cfg.data.cross_sectional_min_universe,
+            start_date=cfg.data.training_start_date,
+            end_date=cfg.data.training_end_date,
+            sector_map=_sector_map,
+        )
+        LOGGER.info(
+            "run_per_sector_batch: XS cache ready — rows=%d symbols=%d",
+            len(cross_sectional_cache),
+            cross_sectional_cache["symbol"].nunique() if not cross_sectional_cache.empty else 0,
+        )
+
     # Train sectors sequentially
     results: list[dict[str, Any]] = []
     _total_sectors = len(filtered_groups)
@@ -635,6 +759,7 @@ def run_per_sector_batch(
                 universe_df=universe_df,
                 selector_df=selector_df,
                 fundamental_df=fundamental_df,
+                cross_sectional_df=cross_sectional_cache,
                 batch_id=batch_id,
             )
             results.append(result)

@@ -84,21 +84,29 @@ DEFAULT_ML_TRAINING_START_DATE = "2016-01-01"
 DEFAULT_ML_TRAINING_END_DATE = "2025-12-31"
 DEFAULT_ML_INCLUDE_SCREENER_SCORES = False
 DEFAULT_ML_INCLUDE_SENTIMENT = False          # Sentiment news — horizon court, non adapté au swing J+10
-DEFAULT_ML_INCLUDE_SHORT_SCORE = True
+DEFAULT_ML_INCLUDE_SHORT_SCORE = False
 DEFAULT_ML_INCLUDE_MACRO_VIX = False          # VIX/VIX9D — macro vol S&P 500
 DEFAULT_ML_INCLUDE_MACRO_VXN = False          # VXN — macro vol NASDAQ-100
 DEFAULT_ML_INCLUDE_MACRO_VIX3M = False        # VIX3M — term structure vol
-DEFAULT_ML_INCLUDE_MACRO_MOVE = True         # MOVE — macro vol obligataire
-DEFAULT_ML_INCLUDE_FUNDAMENTALS = True     # EODHD fundamentals (PE, ROE, marges, croissance)
-DEFAULT_ML_INCLUDE_FACTORS = True          # CAPM factor exposures (beta, alpha, R² via rolling 252j)
-DEFAULT_ML_INCLUDE_MACRO_REGIME = True      # SPY_SMA_200_slope + VIX_zscore (macro regime indicators)
+DEFAULT_ML_INCLUDE_MACRO_MOVE = False         # MOVE — macro vol obligataire
+DEFAULT_ML_INCLUDE_FUNDAMENTALS = False     # EODHD fundamentals (PE, ROE, marges, croissance)
+DEFAULT_ML_INCLUDE_FACTORS = False          # CAPM factor exposures (beta, alpha, R² via rolling 252j)
+DEFAULT_ML_INCLUDE_MACRO_REGIME = False      # SPY_SMA_200_slope + VIX_zscore (macro regime indicators)
+DEFAULT_ML_INCLUDE_SCORE_COMPONENTS = False  # P0-6 : composants stock_scores_history (sentiment_net_agg, company_idio_score...)
+DEFAULT_ML_GLOBAL_MODEL_ONLY = False  # P0-6 : skip per-symbol & per-sector, ne faire que le global
+DEFAULT_ML_TARGET_SKIP_VOL_SCALING = False   # T1 experiment: désactiver le vol-scaling (target = future_return brut)
+DEFAULT_ML_TARGET_EXCESS_VS_SPY = True      # P0-7 : target = (future_return - spy_return) / vol20 – centre la distribution
+DEFAULT_ML_TARGET_INTRA_SECTOR_RANK = False  # T2 experiment: target = rang percentile intra-secteur [0,1]
+DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR = False  # T3 experiment: ternary classification intra-sector
+DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE = 0.30  # T3: top/bottom quantile for LONG/SHORT
+DEFAULT_ML_PREDICT_MAX_DATE_WORKERS = 4  # nb de dates traitées en parallèle lors du predict historique
 DEFAULT_ML_ENABLE_LIGHTGBM = True             # challenger LightGBM activé par défaut
 DEFAULT_ML_ENABLE_CATBOOST = True             # challenger CatBoost activé par défaut
 DEFAULT_ML_ENABLE_GLOBAL_MODEL = True        # Global Ranking Model
 DEFAULT_ML_ENABLE_GLOBAL_STACKING = False   # Stacking global_rank comme feature (défaut OFF — cascade ML)
 DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER = False  # DÉSACTIVÉ — le ranking ne participe pas au championnat
 DEFAULT_ML_GLOBAL_MODEL_NAME = "catboost"     # Sprint 2026-08-01 v4 : CatBoost RMSE continu (pas de discrétisation)
-DEFAULT_ML_ENABLE_CROSS_SECTIONAL = True     # features cross-sectionnelles + sectorielles
+DEFAULT_ML_ENABLE_CROSS_SECTIONAL = False     # features cross-sectionnelles + sectorielles
 DEFAULT_ML_SELECT_CHAMPION = True             # champion selection activée
 DEFAULT_ML_OPTIMIZE_THRESHOLDS = False         # optimization des seuils de décision
 DEFAULT_ML_OPTIMIZE_TARGET = False            # target optimization (supervisée)

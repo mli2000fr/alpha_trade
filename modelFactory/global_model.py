@@ -150,6 +150,9 @@ def _prepare_global_symbol_frame(
         mode=effective_data_cfg.target_mode,
         positive_threshold=effective_data_cfg.target_up_threshold,
         negative_threshold=effective_data_cfg.target_down_threshold,
+        skip_winsorize=True,  # P1-1: winsorization handled post-split
+        skip_vol_scaling=effective_data_cfg.target_skip_vol_scaling,  # T1 experiment
+        excess_vs_spy=effective_data_cfg.target_excess_vs_spy,  # P0-7
     )
     active_features = _get_global_feature_columns(cfg)
     df = df.dropna(subset=active_features).reset_index(drop=True)
@@ -175,9 +178,24 @@ def _split_global_by_dates(
 
 def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple[str, Any]:
     model_name = cfg.global_model.model_name
+    is_reg = cfg.data.target_mode == "regression"
+    is_ternary = cfg.data.target_mode == "ternary"
     if model_name == "lightgbm":
         lgb = _import_lightgbm()
-        is_ternary = cfg.data.target_mode == "ternary"
+        if is_reg:
+            return model_name, lgb.LGBMRegressor(
+                objective="regression",
+                max_depth=cfg.baseline.max_depth,
+                n_estimators=cfg.baseline.n_estimators,
+                learning_rate=cfg.baseline.learning_rate,
+                random_state=resolved_seed,
+                verbosity=-1,
+                reg_alpha=cfg.baseline.lgbm_reg_alpha,
+                reg_lambda=cfg.baseline.lgbm_reg_lambda,
+                min_child_samples=cfg.baseline.lgbm_min_child_samples,
+                subsample=cfg.baseline.lgbm_subsample,
+                colsample_bytree=cfg.baseline.lgbm_colsample_bytree,
+            )
         return model_name, lgb.LGBMClassifier(
             objective="multiclass" if is_ternary else "binary",
             num_class=3 if is_ternary else 1,
@@ -197,6 +215,21 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
     is_ternary = cfg.data.target_mode == "ternary"
     train_dir = Path(cfg.catboost_artifacts_dir) / cfg.global_model.artifact_symbol / f"seed_{resolved_seed}"
     train_dir.mkdir(parents=True, exist_ok=True)
+    if is_reg:
+        from catboost import CatBoostRegressor
+        return model_name, CatBoostRegressor(
+            depth=cfg.baseline.catboost_depth,
+            iterations=cfg.baseline.catboost_iterations,
+            learning_rate=cfg.baseline.catboost_learning_rate,
+            random_seed=resolved_seed,
+            loss_function="RMSE",
+            verbose=False,
+            train_dir=str(train_dir),
+            allow_writing_files=True,
+            l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
+            bootstrap_type="Bayesian",
+            bagging_temperature=cfg.baseline.catboost_bagging_temperature,
+        )
     return model_name, CatBoostClassifier(
         depth=cfg.baseline.catboost_depth,
         iterations=cfg.baseline.catboost_iterations,
@@ -450,101 +483,153 @@ def train_global_model(
             "reason": f"{cfg.global_model.model_name}_not_installed",
         }
 
-    train_targets = train_df["target"].astype(int)
     is_ternary = effective_data_cfg.target_mode == "ternary"
-    # LightGBM/CatBoost exigent des labels consecutifs a partir de 0.
-    if is_ternary:
-        train_targets = train_targets + 1  # shift: -1->0, 0->1, +1->2
-    unique_classes = train_targets.unique()
-    if len(unique_classes) < 2:
-        return {"status": "skipped", "model_name": "global_model", "reason": f"single_class_target_{unique_classes[0]}"}
-    model.fit(train_df[feature_columns], train_targets)
-    is_ternary = effective_data_cfg.target_mode == "ternary"
-    raw_val_all = model.predict_proba(val_df[feature_columns])
-    num_val_cols = raw_val_all.shape[1]
-    if is_ternary and num_val_cols >= 3:
-        long_col = 2  # full ternary: [short, flat, long]
-    else:
-        long_col = num_val_cols - 1  # fallback: last column
-    val_raw = raw_val_all[:, long_col]
-    cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
-
-    # ── Sprint Maître 2 : calibration ternaire VectorScaler ──────────
-    if is_ternary and num_val_cols >= 3:
-        val_labels_ternary = (val_df["target"].astype(int) + 1).to_numpy()  # shift -1,0,1 -> 0,1,2
-        calibrator = fit_tabular_calibrator(
-            raw_val_all[:, :3], val_labels_ternary, cfg, target_mode="ternary",
-        )
-        calibrated_all = apply_tabular_calibration(
-            raw_val_all[:, :3], calibrator, target_mode="ternary",
-        )
-        val_proba = calibrated_all[:, 2]  # p_long calibrée
-    else:
-        calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg)
-        val_proba = apply_tabular_calibration(val_raw, calibrator)
-    selected_threshold = float(effective_data_cfg.decision_threshold)
-    threshold_summary: dict[str, Any]
-    if cfg.threshold_optimization.enabled:
-        from modelFactory.evaluation import optimize_decision_threshold
-
-        threshold_summary = optimize_decision_threshold(
-            val_proba,
-            cal_labels,  # binarisee : 1=long, 0=sinon
-            val_df["future_return"].to_numpy(),
-            candidate_thresholds=cfg.threshold_optimization.candidate_decision_thresholds,
-            default_threshold=effective_data_cfg.decision_threshold,
-            min_action_rate=cfg.threshold_optimization.min_action_rate,
-            max_action_rate=cfg.threshold_optimization.max_action_rate,
-            min_precision_long=cfg.threshold_optimization.min_precision_long,
-            n_buckets=5,
-        )
-        selected_threshold = float(threshold_summary["selected_threshold"])
-    else:
-        threshold_summary = {
-            "enabled": False,
-            "selection_status": "disabled",
-            "selected_threshold": selected_threshold,
-            "candidates": [],
+    is_reg = effective_data_cfg.target_mode == "regression"
+    if is_reg:
+        # ── Regression : target continue ──
+        train_targets = train_df["target"].astype(float)
+        # P0-10 (2026-08-07) : drop NaN + inf targets qui font crasher CatBoost
+        _valid_mask = train_targets.notna() & np.isfinite(train_targets)
+        if not _valid_mask.all():
+            _dropped = (~_valid_mask).sum()
+            LOGGER.warning(
+                "train_global_model dropping %d/%d rows with NaN/inf target",
+                _dropped, len(train_targets),
+            )
+            train_df = train_df.loc[_valid_mask].reset_index(drop=True)
+            train_targets = train_targets[_valid_mask].reset_index(drop=True)
+        unique_vals = train_targets.nunique()
+        if unique_vals < 2:
+            return {"status": "skipped", "model_name": "global_model", "reason": "single_value_target"}
+        model.fit(train_df[feature_columns], train_targets)
+        val_raw = model.predict(val_df[feature_columns])
+        test_raw = model.predict(test_df[feature_columns])
+        calibrator = None
+        val_proba = val_raw
+        test_proba = test_raw
+        selected_threshold = float(effective_data_cfg.decision_threshold)
+        threshold_summary = {"enabled": False, "selection_status": "disabled", "selected_threshold": selected_threshold, "candidates": []}
+        # Regression metrics: directional accuracy, correlation, MSE
+        _vr = val_df["future_return"].to_numpy()
+        _tr = test_df["future_return"].to_numpy()
+        val_metrics = {
+            "directional_accuracy": float(np.mean(np.sign(val_raw) == np.sign(val_df["target"].astype(float).to_numpy()))),
+            "correlation": float(np.corrcoef(val_raw, val_df["target"].astype(float).to_numpy())[0, 1]) if len(val_raw) > 2 else 0.0,
+            "mse": float(np.mean((val_raw - val_df["target"].astype(float).to_numpy()) ** 2)),
+            "n_samples": int(len(val_raw)),
+            "num_classes": 1,
         }
-
-    raw_test_all = model.predict_proba(test_df[feature_columns])
-    num_test_cols = raw_test_all.shape[1]
-    test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
-    test_raw = raw_test_all[:, test_long_col]
-
-    # ── Sprint Maître 2 : calibration test ternaire ──────────────────
-    if is_ternary and num_test_cols >= 3:
-        calibrated_test_all = apply_tabular_calibration(
-            raw_test_all[:, :3], calibrator, target_mode="ternary",
-        )
-        test_proba = calibrated_test_all[:, 2]
-    else:
+        test_metrics = {
+            "directional_accuracy": float(np.mean(np.sign(test_raw) == np.sign(test_df["target"].astype(float).to_numpy()))),
+            "correlation": float(np.corrcoef(test_raw, test_df["target"].astype(float).to_numpy())[0, 1]) if len(test_raw) > 2 else 0.0,
+            "mse": float(np.mean((test_raw - test_df["target"].astype(float).to_numpy()) ** 2)),
+            "n_samples": int(len(test_raw)),
+            "num_classes": 1,
+        }
+        raw_val_all = np.column_stack([1.0 - val_raw, val_raw])  # dummy binary format
+        raw_test_all = np.column_stack([1.0 - test_raw, test_raw])
         calibrated_test_all = None
-        test_proba = apply_tabular_calibration(test_raw, calibrator)
-    test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
-    val_metrics = compute_tabular_metrics(
-        cal_labels,
-        val_proba,
-        val_df["future_return"].to_numpy(),
-        selected_threshold,
-        raw_proba_all=raw_val_all if is_ternary else None,
-        target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
-        is_ternary=is_ternary,
-    )
-    test_metrics = compute_tabular_metrics(
-        test_labels,
-        test_proba,
-        test_df["future_return"].to_numpy(),
-        selected_threshold,
-        raw_proba_all=raw_test_all if is_ternary else None,
-        target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
-        is_ternary=is_ternary,
-    )
+        is_ternary = False
+        cal_labels = val_df["target"].astype(float).to_numpy()
+        test_labels = test_df["target"].astype(float).to_numpy()
+        by_symbol = {}
+    # ── P0-6 (2026-08-07) : regression already handled above ──
+    if not is_reg:
+        # ── Classification (binary/ternary) ──────────────────────────
+        train_targets = train_df["target"].astype(int)
+        # LightGBM/CatBoost exigent des labels consecutifs a partir de 0.
+        if is_ternary:
+            train_targets = train_targets + 1  # shift: -1->0, 0->1, +1->2
+        unique_classes = train_targets.unique()
+        if len(unique_classes) < 2:
+            return {"status": "skipped", "model_name": "global_model", "reason": f"single_class_target_{unique_classes[0]}"}
+        model.fit(train_df[feature_columns], train_targets)
+        is_ternary = effective_data_cfg.target_mode == "ternary"
+        raw_val_all = model.predict_proba(val_df[feature_columns])
+        num_val_cols = raw_val_all.shape[1]
+        if is_ternary and num_val_cols >= 3:
+            long_col = 2  # full ternary: [short, flat, long]
+        else:
+            long_col = num_val_cols - 1  # fallback: last column
+        val_raw = raw_val_all[:, long_col]
+        cal_labels = (val_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else val_df["target"].astype(int).to_numpy()
 
-    by_symbol = _compute_by_symbol_metrics(
-        test_df,
-        calibrated_test_all if calibrated_test_all is not None else test_proba,
-        decision_threshold=selected_threshold, partition_name="test",
+        # ── Sprint Maître 2 : calibration ternaire VectorScaler ──────────
+        if is_ternary and num_val_cols >= 3:
+            val_labels_ternary = (val_df["target"].astype(int) + 1).to_numpy()  # shift -1,0,1 -> 0,1,2
+            calibrator = fit_tabular_calibrator(
+                raw_val_all[:, :3], val_labels_ternary, cfg, target_mode="ternary",
+            )
+            calibrated_all = apply_tabular_calibration(
+                raw_val_all[:, :3], calibrator, target_mode="ternary",
+            )
+            val_proba = calibrated_all[:, 2]  # p_long calibrée
+        else:
+            calibrator = fit_tabular_calibrator(val_raw, cal_labels, cfg)
+            val_proba = apply_tabular_calibration(val_raw, calibrator)
+        selected_threshold = float(effective_data_cfg.decision_threshold)
+        threshold_summary: dict[str, Any]
+        if cfg.threshold_optimization.enabled:
+            from modelFactory.evaluation import optimize_decision_threshold
+
+            threshold_summary = optimize_decision_threshold(
+                val_proba,
+                cal_labels,  # binarisee : 1=long, 0=sinon
+                val_df["future_return"].to_numpy(),
+                candidate_thresholds=cfg.threshold_optimization.candidate_decision_thresholds,
+                default_threshold=effective_data_cfg.decision_threshold,
+                min_action_rate=cfg.threshold_optimization.min_action_rate,
+                max_action_rate=cfg.threshold_optimization.max_action_rate,
+                min_precision_long=cfg.threshold_optimization.min_precision_long,
+                n_buckets=5,
+            )
+            selected_threshold = float(threshold_summary["selected_threshold"])
+        else:
+            threshold_summary = {
+                "enabled": False,
+                "selection_status": "disabled",
+                "selected_threshold": selected_threshold,
+                "candidates": [],
+            }
+
+        raw_test_all = model.predict_proba(test_df[feature_columns])
+        num_test_cols = raw_test_all.shape[1]
+        test_long_col = 2 if (is_ternary and num_test_cols >= 3) else (num_test_cols - 1)
+        test_raw = raw_test_all[:, test_long_col]
+
+        # ── Sprint Maître 2 : calibration test ternaire ──────────────────
+        if is_ternary and num_test_cols >= 3:
+            calibrated_test_all = apply_tabular_calibration(
+                raw_test_all[:, :3], calibrator, target_mode="ternary",
+            )
+            test_proba = calibrated_test_all[:, 2]
+        else:
+            calibrated_test_all = None
+            test_proba = apply_tabular_calibration(test_raw, calibrator)
+        test_labels = (test_df["target"].astype(int) == 1).astype(int).to_numpy() if is_ternary else test_df["target"].astype(int).to_numpy()
+        val_metrics = compute_tabular_metrics(
+            cal_labels,
+            val_proba,
+            val_df["future_return"].to_numpy(),
+            selected_threshold,
+            raw_proba_all=raw_val_all if is_ternary else None,
+            target_raw=val_df["target"].astype(int).to_numpy() if is_ternary else None,
+            is_ternary=is_ternary,
+        )
+        test_metrics = compute_tabular_metrics(
+            test_labels,
+            test_proba,
+            test_df["future_return"].to_numpy(),
+            selected_threshold,
+            raw_proba_all=raw_test_all if is_ternary else None,
+            target_raw=test_df["target"].astype(int).to_numpy() if is_ternary else None,
+            is_ternary=is_ternary,
+        )
+
+        by_symbol = _compute_by_symbol_metrics(
+            test_df,
+            calibrated_test_all if calibrated_test_all is not None else test_proba,
+            decision_threshold=selected_threshold, partition_name="test",
     )
     artifact_dir = (artifacts_dir / cfg.global_model.artifact_symbol).resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)

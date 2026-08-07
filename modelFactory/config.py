@@ -27,6 +27,8 @@ class DataConfig:
     include_fundamentals_features: bool = False  # EODHD fundamentals (PE, ROE, etc.)
     include_factors_features: bool = False       # CAPM beta/alpha/R² (rolling 252d)
     include_macro_regime_features: bool = False # SPY_SMA_200_slope + VIX_zscore
+    include_score_components: bool = True  # composants stock_scores_history (sentiment, idio, macro...)
+    global_model_only: bool = False  # P0-6 : skip per-symbol et per-sector, ne faire que le global
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert
@@ -38,6 +40,11 @@ class DataConfig:
     triple_barrier_stop_atr_mult: float = 2.0
     triple_barrier_tp_atr_mult: float = 3.0
     triple_barrier_max_sessions: int = 20
+    target_skip_vol_scaling: bool = False  # T1 experiment: skip vol-scaling in regression target
+    target_excess_vs_spy: bool = False  # P0-7: target = (future_return - spy_return) / vol20
+    target_intra_sector_rank: bool = False  # T2 experiment: target = percentile rank within sector
+    target_ternary_intra_sector: bool = False  # T3 experiment: ternary classification intra-sector
+    target_ternary_quantile: float = 0.30  # T3: top/bottom quantile for LONG/SHORT (0.30 = top 30% LONG, bottom 30% SHORT)
     decision_threshold: float = 0.5
     training_start_date: date | None = date(2020, 1, 1)
     training_end_date: date | None = None

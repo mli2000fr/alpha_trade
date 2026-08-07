@@ -79,6 +79,8 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
+    DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
+    DEFAULT_ML_GLOBAL_MODEL_ONLY,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
     DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS,
@@ -107,6 +109,12 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_SEQUENCE_LENGTH,
     DEFAULT_ML_TARGET_DOWN_THRESHOLD,
     DEFAULT_ML_TARGET_MODE,
+    DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
+    DEFAULT_ML_TARGET_EXCESS_VS_SPY,
+    DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE,
+    DEFAULT_ML_PREDICT_MAX_DATE_WORKERS,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
     DEFAULT_ML_TERNARY_WEIGHT_SHORT,
     DEFAULT_ML_TERNARY_WEIGHT_FLAT,
@@ -352,6 +360,13 @@ class PipelineLaunchOptions:
     ml_include_fundamentals: bool = DEFAULT_ML_INCLUDE_FUNDAMENTALS
     ml_include_factors: bool = DEFAULT_ML_INCLUDE_FACTORS
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
+    ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
+    ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
+    ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
+    ml_target_excess_vs_spy: bool = DEFAULT_ML_TARGET_EXCESS_VS_SPY  # P0-7
+    ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
+    ml_target_ternary_intra_sector: bool = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR
+    ml_target_ternary_quantile: float = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE
     ml_ranking_top_k_features: int = DEFAULT_ML_RANKING_TOP_K_FEATURES
     ml_global_ranking_max_symbols: int = DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS
     ml_global_ranking_selection_mode: str = "stratified"
@@ -411,6 +426,9 @@ class PipelineLaunchOptions:
     ml_comment: str | None = None
     ml_predict_symbol_source: MLTrainSymbolSource = "tradable-universe"
     ml_predict_use_historical_range: bool = False
+    ml_predict_batch_id: str | None = None
+    ml_live_predict_batch_id: str | None = None
+    ml_predict_max_date_workers: int = DEFAULT_ML_PREDICT_MAX_DATE_WORKERS
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
     ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
@@ -2232,6 +2250,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--training-end-date", ml_training_end_date])
         if ml_train_start_symbol:
             command.extend(["--start-symbol", ml_train_start_symbol])
+        if options.ml_global_model_only:
+            command.append("--global-model-only")
+            command.append("--enable-global-model")  # P0-6: implicite
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
         if options.ml_include_screener_scores:
@@ -2252,6 +2273,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-factors")
         if options.ml_include_macro_regime:
             command.append("--include-macro-regime")
+        if not options.ml_include_score_components:
+            command.append("--no-include-score-components")  # default True, explicit disable
+        if options.ml_target_skip_vol_scaling:
+            command.append("--target-skip-vol-scaling")
+        if options.ml_target_excess_vs_spy:
+            command.append("--target-excess-vs-spy")
+        if options.ml_target_intra_sector_rank:
+            command.append("--target-intra-sector-rank")
+        if options.ml_target_ternary_intra_sector:
+            command.append("--target-ternary-intra-sector")
+            command.extend(["--target-ternary-quantile", str(options.ml_target_ternary_quantile)])
         if options.ml_ranking_top_k_features > 0:
             command.extend(["--ranking-top-k-features", str(options.ml_ranking_top_k_features)])
         if options.ml_global_ranking_max_symbols > 0:
@@ -2337,6 +2369,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_predict":
+        _predict_artifacts_dir = ml_artifacts_dir
+        _bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        if _bid:
+            _predict_artifacts_dir = f"{ml_artifacts_dir}/{_bid}"
         command = [
             sys.executable,
             "-u",
@@ -2349,7 +2385,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--symbol-source",
             ml_predict_symbol_source,
             "--artifacts-dir",
-            ml_artifacts_dir,
+            _predict_artifacts_dir,
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
             "--max-workers",
@@ -2362,6 +2398,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
             if ml_training_end_date:
                 command.extend(["--training-end-date", ml_training_end_date])
+        if options.ml_predict_max_date_workers > 1:
+            command.extend(["--predict-max-date-workers", str(options.ml_predict_max_date_workers)])
         return command
 
     if step_key == "risk_management":
