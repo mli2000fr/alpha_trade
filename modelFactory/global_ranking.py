@@ -990,6 +990,7 @@ def train_global_ranking_wf(
     # ── Entraîner un modèle par horizon ──
     all_ic_means: dict[int, float] = {}
     all_ic_stds: dict[int, float] = {}
+    all_fold_ics: list[float] = []
     all_rank_dfs: list[pd.DataFrame] = []
     _saved_models: dict[int, str] = {}
     _horizon_features: dict[int, list[str]] = {}  # features actives par horizon
@@ -1252,6 +1253,7 @@ def train_global_ranking_wf(
             all_rank_dfs.append(h_pred_df[["symbol", "date", f"global_rank{h_suffix}"]])
             all_ic_means[horizon] = float(np.mean(h_ics)) if h_ics else float("nan")
             all_ic_stds[horizon] = float(np.std(h_ics)) if (h_ics and len(h_ics) > 1) else float("nan")
+            all_fold_ics.extend(h_ics)
 
             # ── Decile Spread (monétisation du signal) ──
             _decile = _compute_decile_spread(h_pred_df)
@@ -1325,10 +1327,11 @@ def train_global_ranking_wf(
             global_rank_df[_col] = global_rank_df[_col].fillna(0.5).astype(np.float64)
     global_rank_df = global_rank_df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
-    # IC moyen (moyenne des IC par horizon)
+    # IC moyen par horizon et dispersion sur les observations OOS fold×horizon.
+    # La dispersion entre les seuls horizons ne mesure pas la stabilité temporelle.
     _valid_ics = [v for v in all_ic_means.values() if not np.isnan(v)]
     ic_mean = float(np.mean(_valid_ics)) if _valid_ics else None
-    ic_std = float(np.std(_valid_ics)) if len(_valid_ics) > 1 else None
+    ic_std = float(np.std(all_fold_ics)) if len(all_fold_ics) > 1 else None
 
     LOGGER.info(
         "train_global_ranking_wf done pred_rows=%d symbols=%d horizons=%s ic_by_h=%s ic_mean=%.4f",

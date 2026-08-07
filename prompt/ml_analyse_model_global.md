@@ -1,198 +1,148 @@
-# Analyse Global Ranking - amelioration pour swing trading
+# Analyse Global Ranking - batch `model-factory-20260807171001-525c56`
 
-**Date :** 2026-08-06  
-**Objet :** ameliorer le Global Ranking pour une strategie de swing trading, sans confondre un IC de modele avec une performance de portefeuille.  
-**Statut :** signal historique positif, mais performance actuelle insuffisamment stable/reproductible pour une promotion sans nouvelle validation.
-
----
-
-## 1. Diagnostic actuel
-
-Le Global Ranking est le meilleur candidat comme signal de selection cross-sectionnelle : il classe les titres d'un univers a une date selon un rendement futur attendu. Il est plus adapte que onze modeles per-sector isoles pour exploiter un grand panel et construire un portefeuille diversifie.
-
-Deux niveaux historiques doivent etre expliques avant toute optimisation :
-
-| Batch | IC global moyen | Splits effectifs | Symboles | Lecture |
-|---|---:|---:|---:|---|
-| `7e4cf8` | environ 0.0190 | 8 | 928 | Reference historique prometteuse. |
-| `f82ab5` | environ 0.0115 | 6 | 939 | Signal positif mais faible; baisse importante a expliquer. |
-
-Un IC proche de $0.011$ n'est pas nul. Il peut etre exploitable en portefeuille diversifie si le spread top-bottom est stable, si le turnover est faible et si les couts restent inferieurs au rendement attendu. Il est toutefois insuffisant pour declarer une strategie production sans preuve economique hors echantillon.
-
-L'ecart entre les batchs ne doit pas etre attribue spontanement a une feature ou un hyperparametre : le nombre de folds, l'univers, le filtre de liquidite, les dates, les versions de code, les disponibilites fondamentales/macro et les corrections de pipeline peuvent tous modifier le resultat.
+**Date d'analyse :** 2026-08-07
+**Objet :** evaluation du Global Ranking CatBoost pour le swing trading et controle de l'honnetete des scores.
+**Statut :** baseline Global Ranking encourageante, sans fuite directe de cible ou de split identifiee. Le modele reste en recherche : la selection de l'univers et la validation economique doivent etre corrigees avant toute promotion.
 
 ---
 
-## 2. Objectif swing trading
+## 1. Perimetre du batch de reference
 
-Pour un swing trade, le modele ne doit pas predire exactement chaque rendement. Il doit classer de maniere stable les titres les plus prometteurs et les moins prometteurs a un horizon suffisamment long pour absorber les couts et limiter le turnover.
+Ce document remplace les analyses des anciens batchs. Les conclusions et chiffres ci-dessous concernent exclusivement le batch `model-factory-20260807171001-525c56`.
 
-Les horizons H10, H15 et H20 sont les candidats principaux. H5 peut servir de signal auxiliaire de timing ou de sortie, mais ne doit pas automatiquement devenir l'horizon principal sur son IC ponctuel.
+| Element | Valeur |
+|---|---|
+| Backend Global Ranking | CatBoost, objectif RMSE |
+| Univers declare | 100 titres issus de `ticket-recherche` |
+| Periode source | 2016-01-01 a 2025-12-31 |
+| Folds utilises | 6 walk-forward, validation OOS de 2019-01 a 2024-06 |
+| Horizons | H3, H5, H10, H15, H20 |
+| Features | 143, `feature-set expert` |
+| Lignes de prediction OOS | 65 367 |
+| IC moyen multi-horizon | 0.0203 |
+| Stacking Global Rank | non |
+| Baseline de portefeuille evaluee | H20 seul |
 
-Le critere de choix est economique :
+La commande du batch a active le Global Model, les cross-sectionnelles, CatBoost et le walk-forward. Elle n'a pas active les fondamentales, les facteurs, les scores screener, le sentiment ou les features macro en options explicites. Le risque PIT lie aux fondamentales ne peut donc pas expliquer ce resultat precis, mais reste a verrouiller avant de les activer dans une future variante.
+
+---
+
+## 2. Resultats OOS observes
+
+| Horizon | IC moyen | IC std entre folds | IR temporel du rapport | Spread decile de cible | Lecture |
+|---|---:|---:|---:|---:|---|
+| H3 | 0.0142 | 0.0254 | 0.56 | 0.0100 | Positif mais instable; deux folds negatifs. |
+| H5 | 0.0161 | 0.0238 | 0.68 | 0.0183 | Positif; deux folds negatifs. |
+| H10 | 0.0249 | 0.0241 | 1.03 | 0.0187 | Meilleur IC, mais un fold negatif et un proche de zero. |
+| H15 | 0.0235 | 0.0248 | 0.95 | 0.0287 | Bon candidat swing; un fold negatif. |
+| H20 | 0.0229 | 0.0281 | 0.82 | 0.0283 | Baseline actuelle; trois folds negatifs ou quasi nuls. |
+
+Les horizons H10, H15 et H20 dominent H3 et H5 sur l'IC moyen. Ils sont plus coherents avec une strategie swing car une detention plus longue peut absorber davantage de frais et limiter le turnover. Le signal est toutefois heterogene selon les periodes : aucun horizon ne constitue encore une preuve de robustesse production.
+
+### Detail de stabilite par horizon
+
+* **H3 :** IC negatif sur les validations 2019-01 a 2019-06 et 2020-12 a 2021-06; meilleur fold 2020-01 a 2020-06, IC `0.0620`.
+* **H5 :** IC negatif en 2019 et 2021; meilleur fold 2024-01 a 2024-06, IC `0.0500`.
+* **H10 :** IC negatif en 2021 (`-0.0077`), faible en 2019 et 2022, fort en 2020, 2023 et 2024.
+* **H15 :** IC negatif en 2021 (`-0.0130`), meilleur fold 2023 (`0.0645`).
+* **H20 :** IC negatif en 2019 et 2024, quasiment nul en 2021; resultat principalement porte par 2020, 2022 et 2023.
+
+Le resultat est donc un signal cross-sectionnel positif moyen, non une performance uniforme par regime.
+
+---
+
+## 3. Correction de lecture du `IC IR = 4.70`
+
+Le rapport de ce batch affiche un `IC IR` global de `4.70`. Ce chiffre ne doit pas etre utilise : l'ancienne implementation calculait l'ecart-type entre les cinq **moyennes d'horizon**, et non la volatilite des IC OOS dans le temps.
+
+Depuis l'audit, [modelFactory/global_ranking.py](../modelFactory/global_ranking.py) calcule l'ecart-type global a partir de toutes les observations `fold x horizon`. L'IC moyen reste identique; le prochain batch affichera un IR global de stabilite nettement plus realiste. Pour ce batch, les IR interpretables sont ceux par horizon, entre `0.56` et `1.03`.
+
+Formellement, la mesure corrigee utilise :
 
 $$
-score_{portfolio} = spread_{net} - \lambda_{turn} \cdot turnover - \gamma_{dd} \cdot drawdown
+IR_{global} = \frac{\operatorname{mean}(IC_{h,f})}{\operatorname{std}(IC_{h,f})}
 $$
 
-avec :
-
-$$
-spread_{net} = R_{top} - R_{bottom} - couts - slippage - impact
-$$
-
-Un IC plus haut mais tres instable, couteux ou concentre dans un secteur est moins interessant qu'un IC plus faible mais stable et peu tournant.
+ou $h$ est l'horizon et $f$ le fold OOS. Cette correction modifie le reporting, pas les predictions ni les IC individuels du batch.
 
 ---
 
-## 3. Premiere priorite : baseline reproductible
+## 4. Audit de fuite de donnees et d'incoherences
 
-Avant de chercher un nouveau signal, reconstruire une base comparable.
+### 4.1 Points verifies comme sains
 
-### 3.1 Manifest obligatoire par run
+Le chemin Global Ranking verifie dans [modelFactory/global_ranking.py](../modelFactory/global_ranking.py) et [modelFactory/dataset.py](../modelFactory/dataset.py) protege les mecanismes centraux suivants :
 
-Persister dans les artefacts/metadata :
+* les splits walk-forward sont atomiques par date; train et validation ne partagent pas une meme seance;
+* la cible de chaque horizon est recalculee separement dans le train et dans la validation de chaque fold;
+* le rendement futur est construit par `groupby("symbol")`, ce qui empeche un `shift(-horizon)` de traverser deux titres;
+* les observations sans rendement futur disponible sont exclues du label;
+* l'IC Spearman est calcule date par date sur la coupe transversale, puis moyenne; il n'est pas artificiellement augmente par une correlation pool-ee;
+* la neutralisation de la **cible** par date, secteur ou facteur utilise les rendements futurs uniquement pour definir le label relatif. Elle ne fournit pas ces rendements aux features a la date de decision.
 
-* code SHA, versions Python, CatBoost et LightGBM;
-* configuration resolue complete;
-* seeds et parametres de reproductibilite;
-* dates reelles, tailles et raisons de rejet de chaque fold;
-* nombre de splits demandes et nombre de splits effectivement produits;
-* hash/liste de l'univers et des symboles eligibles par fold;
-* filtres de liquidite/volume appliques dans le train et test;
-* feature fingerprint, taux de valeurs manquantes/defaults et schema final passe a `fit`;
-* statistiques de target par horizon/fold;
-* couts, slippage, regles de portefeuille et mapping secteur.
+Conclusion de cet audit : aucune fuite directe de cible, de prix futur ou de frontiere train/validation n'a ete identifiee dans le calcul des IC de ce batch.
 
-### 3.2 Trois replays necessaires
+### 4.2 Risques encore ouverts
 
-| ID | Configuration | Question |
-|---|---|---|
-| G0 | Reproduction exacte de `7e4cf8` sur code actuel si le manifeste le permet | Le niveau proche de 0.019 est-il toujours reproductible ? |
-| G1 | Reproduction exacte de `f82ab5` | Le niveau proche de 0.0115 est-il stable ? |
-| G2 | Meme univers et folds, mais une seule difference documentee | Quelle hypothese explique l'ecart ? |
-
-Ne jamais comparer deux IC issus de dates, univers ou folds differents comme si une feature etait la seule variable.
+| Priorite | Risque | Impact possible | Action obligatoire |
+|---|---|---|---|
+| P1 | Univers de 100 titres possiblement selectionne sur volume/liquidite constates sur toute la periode | Biais de selection et de survivance; IC possiblement trop favorable | Reconstruire l'eligibilite par date ou par fold avec seulement l'information disponible alors. Persister la liste eligibile PIT. |
+| P1 | Spread decile calcule sur la cible transformee/rankee | Le `0.0283` H20 n'est pas un rendement de `2.83%` ni un PnL | Ajouter le spread top-bottom sur rendement futur brut, puis le backtest net executable. |
+| P2 | Le backtest compare des unites de rang | Sharpes relatifs non convertibles en performance economique | Executer avec prix, execution, frais, slippage, turnover, ADV et contraintes risque. |
+| P2 | `split.test` n'est pas un vrai holdout economique final dans cette route | Le choix H20 a deja consulte les six validations | Geler H20 et executer une fois sur une periode jamais utilisee. |
+| P2 | Les artefacts conservent le modele du dernier fold | Ambiguite entre objet de recherche WF et modele de production | Refit explicite sur l'historique admissible ou etiqueter l'artefact `last_fold_model`. |
+| P2 conditionnel | Disponibilite fondamentale datee par `trade_date` plutot que publication effective | Look-ahead si les fondamentales sont activees | Utiliser `available_at`/date de publication et tester la jointure PIT. |
+| P2 conditionnel | Features calculees a la cloture | Incoherence si une execution pretend intervenir avant que la cloture soit connue | Declarer et appliquer une execution au prochain open ou apres close. |
 
 ---
 
-## 4. Cibles et transformations a revalider
+## 5. Interpretation correcte du backtest actuel
 
-Les resultats historiques suggerent que les transformations suivantes meritent une reproduction, pas une adoption automatique :
+Le rapport compare trois variantes :
 
-| Hypothese | Test controle | Condition de maintien |
-|---|---|---|
-| Fenetre train 756 jours | 504 versus 756 jours | Gain IC/spread stable sur la majorite des folds. |
-| Splits espaces | 8 x 252 versus protocole actuel | Pas de chevauchement excessif ni de folds artificiellement courts. |
-| Smoothing H10/H15/H20 | on/off avec les memes splits | Gain confirme par horizon et sur holdout. |
-| Vol scaling | on/off | Conserver seulement si rendement net et stabilite progressent. |
-| Target sector-neutral | on/off | Distinguer stock-picking de sector-riding. |
-| Target factor-neutral | on/off | Conserver si l'alpha reste apres facteurs. |
+| Variante | Resultat relatif | Interpretation |
+|---|---:|---|
+| V1 - H20 seul | Reference | Meilleure variante parmi les trois tests. |
+| V2 - H20 + H5 rising | -5.8% | Le filtre de hausse H5 ne justifie pas sa complexite. |
+| V3 - H20 + H5 < 0.35 | -60.1% | Le filtre contrarian est rejete. |
 
-La winsorisation et la standardisation doivent rester fit uniquement sur le train de chaque fold. Les calculs cross-sectionnels ou sectoriels par date sont admissibles seulement avec un univers point-in-time et des donnees connues a la date de decision.
+Les frais annonces de `0.25%` aller-retour ne rendent pas encore ce test economique, car la performance est simulee en unites de rang. La seule conclusion exploitable est relative : parmi les trois politiques testees, **H20 seul** est la baseline de recherche a conserver.
 
----
-
-## 5. Features : chercher l'incremental, pas le volume
-
-Le Global Ranking utilise deja un schema riche. Le bon test est une ablation par famille, pas l'ajout simultane de toutes les sources.
-
-| ID | Variante | Hypothese |
-|---|---|---|
-| F0 | Base/expert actuel sans additions recentes | Reference. |
-| F1 | F0 + cross-sectionnelles/sectorielles PIT | Le contexte relatif entre titres ajoute-t-il du ranking ? |
-| F2 | F0 + fondamentales PIT | Les variables lentes stabilisent-elles H15/H20 ? |
-| F3 | F0 + facteurs/neutralisations | Le signal est-il different des expositions connues ? |
-| F4 | F0 + regime et interactions locales | Le regime change-t-il l'efficacite du momentum/volatilite ? |
-| F5 | Meilleure famille + une seule seconde preregistree | Complementarite hors echantillon. |
-
-VIX, VXN, VIX9D, VIX3M et MOVE sont communs a tous les titres le meme jour. Ils ne peuvent pas classer seuls le panel a cette date. Leur usage rationnel est une interaction telle que :
+Le passage a une strategie de portefeuille doit mesurer, pour chaque date de rebalancement :
 
 $$
-momentum_{i,t} \times regime_t
+R_{LS,t} = R_{top,t}^{brut} - R_{bottom,t}^{brut} - couts_t - slippage_t - impact_t
 $$
 
-ou une adaptation du portefeuille/execution, pas une simple colonne macro ajoutee a toutes les lignes.
-
-Pour chaque feature/famille, rapporter : presence dans la matrice, missing/default rate, variance, importance moyenne, stabilite entre folds et disponibilite PIT. Une feature importante une seule fois n'est pas une preuve d'alpha.
+avec publication separee du long-only, long-short, turnover, capacite ADV, drawdown et expositions secteur/facteur.
 
 ---
 
-## 6. Modele et tuning
+## 6. Decision de recherche et plan immediat
 
-CatBoost RMSE est le candidat principal selon les resultats historiques. LightGBM LambdaRank est un challenger possible, mais ne doit pas etre privilegie sans reproduction de son gain net.
+### Baseline gelee
 
-Le tuning est autorise apres les baselines/cibles/features, avec une grille courte predefinie :
+* Conserver **CatBoost Global Ranking, 143 features, H20 seul** comme baseline de comparaison.
+* Conserver H10 et H15 comme challengers preregistres, car leurs IC moyens sont respectivement `0.0249` et `0.0235`.
+* Ne pas retenir H3/H5 comme horizons de portefeuille principaux; ils peuvent servir plus tard au timing, apres test hors echantillon.
 
-| Modele | Variantes limitees | Regle |
-|---|---|---|
-| CatBoost | depth `5/7`, iterations `300/500`, `l2_leaf_reg` `3/10` | Garder le modele le plus simple a performance equivalente. |
-| LightGBM RMSE | depth `5/7`, feuilles coherentes, `min_child_samples` `150/300` | Regularisation avant profondeur. |
-| LambdaRank | une configuration historique controlee | Challenger, pas remplacement par defaut. |
-| Ridge/ElasticNet | petite grille | Controle lineaire et diagnostic de complexite. |
+### Prochain batch obligatoire
 
-Le vainqueur de developpement est choisi uniquement avec les folds de developpement; il est execute une fois sur le holdout final. Chaque configuration supplementaire augmente le risque de multiple testing.
+1. Reconstruire l'univers eligible PIT a chaque date de decision avec un historique de liquidite/volume borne a cette date.
+2. Relancer exactement la baseline H20, H15 et H10 avec le calcul d'IR global corrige.
+3. Sauvegarder dans le manifeste : hash de code, configuration resolue, symboles eligibles par fold, dates, nombre de titres par date, taux de valeurs par defaut et schema des 143 features.
+4. Calculer en parallele le spread de target pour le diagnostic et le spread de rendement brut pour l'economie.
+5. Construire un portefeuille top/bottom avec execution au prochain open, frais, slippage, turnover, ADV, caps secteur et HHI.
+6. Choisir une seule variante par les folds de developpement, puis l'executer une seule fois sur un holdout final inedite.
 
----
+### Criteres de promotion
 
-## 7. Du score au portefeuille swing
+Le Global Ranking peut avancer vers un paper-trading seulement si les conditions suivantes sont remplies apres correction PIT :
 
-Le Global Ranking selectionne les candidats. Il ne doit pas etre confondu avec une instruction de poids ou une permission de risque.
+* IC par date et spread de rendement brut positifs sur la majorite des folds;
+* resultat net positif apres couts et impact, sans dependance excessive a 2020 ou 2023;
+* turnover, capacite ADV, drawdown et concentration secteur compatibles avec le mandat swing;
+* stabilite confirmee sur holdout jamais consulte;
+* artefact de production explicitement refit et reproductible.
 
-### 7.1 Politiques de portefeuille a comparer
-
-| Politique | Description | Question |
-|---|---|---|
-| P0 | Selection top/bottom avec caps risque existants | Reference economique. |
-| P1 | P0 + caps secteur/industrie/HHI plus stricts | Le gain depend-il d'une concentration cachee ? |
-| P2 | Neutralite sectorielle souple versus benchmark | Le ranking garde-t-il un alpha apres retrait du sector-riding ? |
-| P3 | Neutralite sectorielle stricte long/short | Diagnostic de stock-picking pur, pas choix de production initial. |
-
-Mesurer distinctement :
-
-$$
-net_s = \sum_{i \in s} w_i,
-\qquad
-gross_s = \sum_{i \in s} |w_i|
-$$
-
-Une exposition nette nulle ne garantit pas une faible exposition au risque : long 10 % et short 10 % dans le meme secteur donne un gross de 20 %.
-
-### 7.2 Metriques obligatoires
-
-* IC Spearman par date, moyenne, ecart-type et intervalle de confiance;
-* spread top-bottom, long-only et long-short, avant/apres couts;
-* turnover, slippage, impact, capacite ADV et nombre de positions;
-* rendement annualise, volatilite, Sharpe, Sortino, Calmar et max drawdown;
-* exposition nette/gross par secteur, industrie, theme et facteur;
-* contribution PnL par horizon, secteur et sens long/short;
-* attribution Brinson-Fachler : allocation, selection et interaction;
-* stabilite par fold, regime et holdout final.
-
-Interpretation :
-
-* selection positive apres neutralisation, allocation faible : stock-picking credible;
-* allocation dominante : bet sectoriel a encadrer ou assumer explicitement;
-* interaction dominante : le constructeur de portefeuille est le levier principal;
-* spread faible apres couts : ne pas promouvoir, meme si IC positif.
-
----
-
-## 8. Plan d'action priorise
-
-1. **G0/G1 :** reproduire les deux baselines historiques avec manifests et expliquer les 6 versus 8 splits.
-2. **Cible :** tournoi court 504/756, splits, smoothing, neutralisations, une variable a la fois.
-3. **Features :** F0-F5 par familles et interactions regime, avec audit d'activite par fold.
-4. **Tuning :** petite grille CatBoost/LightGBM sur le schema gagnant seulement.
-5. **Portefeuille :** comparer P0-P3 avec memes candidats, couts et risque; calculer attribution Brinson-Fachler.
-6. **Holdout :** geler le vainqueur, l'executer une fois sur une periode jamais consultee.
-
----
-
-## 9. Criteres stop/go
-
-**Go Global Ranking :** IC par date positif et stable, spread net positif apres couts sur la majorite des folds, diversification acceptable, drawdown/turnover compatibles avec le swing, puis confirmation holdout.
-
-**Stop ou reduction :** IC positif mais spread net nul apres couts, performance dependante d'un seul secteur/regime, ou ecart non reproductible entre runs identiques. Dans ce cas, conserver le modele comme diagnostic et chercher d'abord les causes de donnees/protocole avant de complexifier le modele.
-
-**Conclusion :** il existe des voies realistes pour ameliorer le Global Ranking. Pour du swing trading, la priorite est la reproductibilite du baseline, puis les cibles/neutralisations et les interactions de regime, enfin la construction de portefeuille sectoriellement controlee. Un IC modeste mais stable et rentable apres couts vaut plus qu'un IC eleve obtenu par tuning ou concentration non reproductible.
+**Conclusion :** le batch `525c56` etablit une baseline plus convaincante que les precedentes analyses documentees ici, en particulier a H10-H20. Ses scores ne paraissent pas gonfles par une fuite directe de labels ou de split. Ils ne sont toutefois pas encore une preuve de rentabilite : l'univers PIT et le PnL net executable sont les deux verrous qui determinent maintenant la credibilite economique du modele.
