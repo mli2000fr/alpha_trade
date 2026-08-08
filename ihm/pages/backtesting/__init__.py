@@ -71,6 +71,7 @@ BT_RUN_CAPITAL_PRESET_KEY = "bt_run_capital_preset"
 BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY = "bt_run_capital_preset_signature"
 BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
 BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
+BT_BACKFILL_SYMBOL_SOURCE_KEY = "bt_backfill_symbol_source"
 BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
 BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
@@ -565,6 +566,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
         {"Paramètre": "chunk_size", "Explication": "Taille des lots symboles pour screener/scanner.", "Défaut": "500"},
         {"Paramètre": "selection_size", "Explication": "Nombre final de candidats retenus par séance.", "Défaut": "100"},
         {"Paramètre": "screener_workers", "Explication": "Nombre de workers ProcessPool pour le screener PIT.", "Défaut": "auto"},
+        {"Paramètre": "symbol_source", "Explication": "Source de l'univers des symboles (tradable-universe, stock-bars-daily, ticket-recherche). Si absent, tous les symboles actifs avec barres daily.", "Défaut": "auto (tous)"},
     ]
 
 
@@ -2049,6 +2051,25 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
         ),
     )
 
+    # ── Sélecteur d'univers des symboles ──
+    from ihm.pages.pipeline import (
+        ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
+        ML_TRAIN_SYMBOL_SOURCE_LABELS,
+    )
+    if BT_BACKFILL_SYMBOL_SOURCE_KEY not in st.session_state:
+        st.session_state[BT_BACKFILL_SYMBOL_SOURCE_KEY] = "ticket-recherche"
+    symbol_source = st.selectbox(
+        "Univers des symboles",
+        options=[""] + list(ML_TRAIN_SYMBOL_SOURCE_OPTIONS),
+        format_func=lambda v: "🏛️ Tous les symboles actifs (stock_bars_daily + stock_metadata)" if v == "" else ML_TRAIN_SYMBOL_SOURCE_LABELS.get(v, v),
+        key=BT_BACKFILL_SYMBOL_SOURCE_KEY,
+        help=(
+            "Source de l'univers des symboles à scorer. Par défaut `ticket-recherche` "
+            "(config/ticket_recherche.txt). Choisissez une autre source ou vide "
+            "pour utiliser tous les symboles actifs avec barres daily."
+        ),
+    )
+
     limit_days = _parse_optional_int(limit_days_raw, label="limit_days")
     screener_workers = _parse_optional_int(screener_workers_raw, label="screener_workers")
 
@@ -2063,6 +2084,7 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
         selection_size=int(selection_size),
         screener_workers=screener_workers,
         universe_only=bool(universe_only),
+        symbol_source=symbol_source.strip() or None,
     )
 
     st.code(format_command_for_display(build_backtesting_command("backfill-scores-history", options)), language="powershell")
