@@ -375,8 +375,21 @@ def _append_global_ranking_horizon_details(
 
     lines.append("## 🌐 Global Ranking — Détails par Horizon")
     lines.append("")
+
+    # ── Infos modèle (champion ou fixe) ──
+    _model_label = "CatBoost"  # fallback
+    _champion_by_h = _gr.get("champion_by_horizon")
+    if _champion_by_h and isinstance(_champion_by_h, dict) and _champion_by_h:
+        from collections import Counter
+        _counts = Counter(_champion_by_h.values())
+        _majority = _counts.most_common(1)[0][0]
+        _model_label = (
+            f"🏆 Champion: {_majority} "
+            f"(détail: {', '.join(f'H{k}={v}' for k, v in sorted(_champion_by_h.items(), key=lambda x: int(x[0])))}) "
+            f"— sélection par IC IR"
+        )
     lines.append(
-        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle {_model_label} — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )
@@ -387,6 +400,7 @@ def _append_global_ranking_horizon_details(
 
     # ── Tableau récapitulatif tous horizons ──
     _summary_rows: list[dict] = []
+    _has_champion = bool(_champion_by_h)
     for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
         _h_info = _hd[_h_key]
         _h_ic = _ic_by_h.get(_h_key)
@@ -398,14 +412,29 @@ def _append_global_ranking_horizon_details(
             _arr = np.array(_split_ics, dtype=float)
             if _arr.std() > 0:
                 _h_ic_ir = round(float(_arr.mean() / _arr.std()), 2)
-        _summary_rows.append({
+        _row: dict = {
             "Horizon": f"H{_h_key}",
             "IC Mean": _h_ic,
             "IC IR": _h_ic_ir if _h_ic_ir is not None else "—",
             "Decile Spread": _ds_by_h.get(_h_key),
             "Nb Features": _h_info.get("n_features", "—"),
             "Nb Splits": len(_h_info.get("splits", [])),
-        })
+        }
+        if _has_champion:
+            _row["🏆 Champion"] = str(_champion_by_h.get(_h_key, "—"))
+            # Score composite du champion
+            _cs = _h_info.get("champion_score")
+            if _cs is not None:
+                _row["Score"] = f"{float(_cs):.3f}"
+            # Ajouter les IC et IR par candidat
+            _candidates = _h_info.get("candidates", {})
+            for _cn, _cdata in sorted((_candidates or {}).items()):
+                if isinstance(_cdata, dict):
+                    _ic_val = _cdata.get("ic_mean")
+                    _ir_val = _cdata.get("ic_ir")
+                    _row[f"IC {_cn}"] = f"{_ic_val:.4f}" if _ic_val is not None else "—"
+                    _row[f"IR {_cn}"] = f"{_ir_val:.2f}" if _ir_val is not None else "—"
+        _summary_rows.append(_row)
 
     if _summary_rows:
         lines.append("### 📋 Récapitulatif tous horizons")
@@ -449,20 +478,29 @@ def _append_global_ranking_horizon_details(
         if _splits:
             lines.append("#### 📅 Détail par split")
             lines.append("")
+            # Détecter si le mode champion est actif (colonnes ic_rank_*)
+            _has_split_champion = any(
+                k.startswith("ic_rank_") and k != "ic_rank"
+                for _sp in _splits for k in (_sp or {}).keys()
+            )
             _split_rows: list[dict] = []
             for _sp in _splits:
                 _train_start = str(_sp.get("train_period_start", ""))[:10] if _sp.get("train_period_start") else "—"
                 _train_end = str(_sp.get("train_period_end", ""))[:10] if _sp.get("train_period_end") else "—"
                 _val_start = str(_sp.get("val_period_start", ""))[:10] if _sp.get("val_period_start") else "—"
                 _val_end = str(_sp.get("val_period_end", ""))[:10] if _sp.get("val_period_end") else "—"
-                _split_rows.append({
+                _row = {
                     "Split": _sp.get("split_index", "—"),
                     "Train (début→fin)": f"{_train_start} → {_train_end}",
                     "Validation (début→fin)": f"{_val_start} → {_val_end}",
                     "Lignes Train": _sp.get("train_rows", "—"),
                     "Lignes Val": _sp.get("val_rows", "—"),
                     "IC Rank": _sp.get("ic_rank"),
-                })
+                }
+                if _has_split_champion:
+                    _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")
+                    _row["IC CatBoost"] = _sp.get("ic_rank_catboost")
+                _split_rows.append(_row)
             lines.append(_df_to_md(pd.DataFrame(_split_rows)))
 
         # ── Stats distribution IC par split ──

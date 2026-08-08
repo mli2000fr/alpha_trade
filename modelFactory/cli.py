@@ -416,6 +416,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Utilise la prédiction du Global Model comme feature (Approche 2 — Stacking)")
     p.add_argument("--enable-global-challenger", action="store_true", default=False,
                    help="Inclut le Global Model comme 4ème challenger dans la sélection champion")
+    p.add_argument("--global-champion", action="store_true", default=False,
+                   help="Entraîne CatBoost ET LightGBM pour le Global Ranking et sélectionne le champion (meilleur IC rank WF)")
     p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm"])
     p.add_argument("--global-artifact-symbol", type=str, default="__GLOBAL__")
     p.add_argument("--select-champion", action="store_true", default=False,
@@ -622,6 +624,7 @@ def main(args: list[str] | None = None) -> None:
             enabled=opts.enable_global_model,
             stacking_enabled=opts.enable_global_stacking,
             challenger_enabled=opts.enable_global_challenger,
+            champion_enabled=opts.global_champion,
             model_name=opts.global_model_name,
             artifact_symbol=opts.global_artifact_symbol,
             use_cross_sectional_features=opts.enable_cross_sectional,

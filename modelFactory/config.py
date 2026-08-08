@@ -237,7 +237,7 @@ class BaselineConfig:
 class GlobalModelConfig:
     """Paramètres du modèle global multi-symboles (Approche 2 — Stacking).
 
-    Trois flags indépendants pour l'A/B testing :
+    Quatre flags indépendants pour l'A/B testing :
 
     - ``enabled`` (FLAG A) : entraîne le global model avec walk-forward.
       Produit ``global_pred_long(symbol, date)`` PIT-safe.
@@ -245,14 +245,18 @@ class GlobalModelConfig:
       feature supplémentaire dans les modèles per-symbol (LSTM/LGBM/CatBoost).
     - ``challenger_enabled`` (FLAG C) : inclut le global model comme 4ème
       challenger dans la sélection champion (wf.f1_macro comparable).
+    - ``champion_enabled`` (FLAG D) : entraîne CatBoost ET LightGBM pour le
+      Global Ranking, puis sélectionne le champion au meilleur IC rank WF.
+      Si désactivé, ``model_name`` détermine le backend utilisé.
 
-    FLAG B et FLAG C sont sans effet si FLAG A est ``False``.
+    FLAG B, C et D sont sans effet si FLAG A est ``False``.
     """
 
     enabled: bool = False             # FLAG A : entraîne le global (Phase 1)
     stacking_enabled: bool = False    # FLAG B : global_pred comme feature (Phase 2)
     challenger_enabled: bool = False  # FLAG C : global dans champion selection (Phase 3)
-    model_name: str = "catboost"  # catboost | lightgbm
+    champion_enabled: bool = False    # FLAG D : entraîne CatBoost + LightGBM et sélectionne le champion
+    model_name: str = "catboost"  # catboost | lightgbm (fallback si champion_enabled=False)
     artifact_symbol: str = "__GLOBAL__"
     use_cross_sectional_features: bool = True
     # ── Global Ranking hyperparams (indépendants du per-symbol BaselineConfig) ──

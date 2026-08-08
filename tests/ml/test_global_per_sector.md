@@ -17,6 +17,7 @@
 | **F4**     | `model-factory-20260808130525-0a3695` | F1 + `--include-short-score` | 2026-08-08 | Catboost (400 symb., 6 splits WF, 144 feat., catboost 7/lightgbm 4) | 11 secteurs | 11 | 🏆 0.0197 |
 | **F5**     | `model-factory-20260808161841-316c40` | F4 + `--include-macro-vix` | 2026-08-08 | Catboost (400 symb., 6 splits WF, 144 feat., catboost 7/lightgbm 4) | 11 secteurs | 11 | 0.0186 |
 | **F6**     | `model-factory-20260808175132-2ebf25` | F4 + `--include-macro-vxn` | 2026-08-08 | Catboost (400 symb., 6 splits WF, 144 feat., catboost 7/lightgbm 4) | 11 secteurs | 11 | 0.0186 |
+| **F7**     | `model-factory-20260808192855-961263` | F4 + `--include-macro-vix3m` | 2026-08-08 | Catboost (400 symb., 6 splits WF, 144 feat., catboost 7/lightgbm 4) | 11 secteurs | 11 | 🥈 0.0196 |
 
 ---
 
@@ -61,6 +62,11 @@
 | F6   | H10     | 0.0230  | 1.20  | 0.0234        | 144         | 6         |
 | F6   | H15     | 0.0185  | 0.99  | 0.0275        | 144         | 6         |
 | F6   | H20     | 0.0220  | 0.95  | 0.0297        | 144         | 6         |
+| F7   | H3      | 0.0110  | 0.80  | 0.0088        | 144         | 6         |
+| F7   | H5      | 0.0189  | 1.17  | 0.0204        | 144         | 6         |
+| F7   | H10     | 0.0237  | 1.52  | 0.0240        | 144         | 6         |
+| F7   | H15     | 0.0232  | 1.29  | 0.0298        | 144         | 6         |
+| F7   | H20     | 0.0211  | 0.86  | 0.0302        | 144         | 6         |
 
 ### 1.1bis Détail IC par split (Global)
 
@@ -101,6 +107,11 @@
 | F6   | H10     | 0.0038  | 0.0513  | 0.0338  | -0.0057 | 0.0326  | 0.0221  | 0.0192 | -0.0057| 0.0513 |
 | F6   | H15     | -0.0077 | 0.0284  | 0.0378  | -0.0030 | 0.0395  | 0.0158  | 0.0186 | -0.0077| 0.0395 |
 | F6   | H20     | -0.0038 | 0.0318  | 0.0582  | -0.0011 | 0.0412  | 0.0061  | 0.0232 | -0.0038| 0.0582 |
+| F7   | H3      | -0.0021 | 0.0315  | 0.0249  | -0.0070 | 0.0104  | 0.0080  | 0.0137 | -0.0070| 0.0315 |
+| F7   | H5      | 0.0099  | 0.0483  | 0.0190  | -0.0056 | 0.0246  | 0.0174  | 0.0162 | -0.0056| 0.0483 |
+| F7   | H10     | 0.0057  | 0.0407  | 0.0411  | 0.0039  | 0.0339  | 0.0172  | 0.0156 | 0.0039 | 0.0411 |
+| F7   | H15     | -0.0012 | 0.0350  | 0.0472  | 0.0045  | 0.0381  | 0.0159  | 0.0180 | -0.0012| 0.0472 |
+| F7   | H20     | -0.0108 | 0.0273  | 0.0554  | -0.0001 | 0.0478  | 0.0068  | 0.0245 | -0.0108| 0.0554 |
 
 ## 1.2 Comparatif Backtest Stratégies — Global Rank
 
@@ -113,6 +124,7 @@
 | F4   | 🏆 référence  | -4.4% ⬆️⬆️           | -34.5% ⬇️             |
 | F5   | 🏆 référence  | -9.3%                | -28.8%                |
 | F6   | 🏆 référence  | -9.3%                | -28.8%                |
+| F7   | 🏆 référence  | -4.6% ⬆️⬆️           | -33.3% ⬇️             |
 
 ---
 
@@ -157,6 +169,11 @@
 | F6   | H10     | 0.328    | 0.473    | 0.512   | 0.5017  |
 | F6   | H15     | 0.329    | 0.475    | 0.512   | 0.5026  |
 | F6   | H20     | 0.328    | 0.474    | 0.510   | 0.5012  |
+| F7   | H3      | 0.330    | 0.492    | 0.499   | 0.5014  |
+| F7   | H5      | 0.329    | 0.476    | 0.510   | 0.5009  |
+| F7   | H10     | 0.329    | 0.474    | 0.513   | 0.5028  |
+| F7   | H15     | 0.328    | 0.473    | 0.510   | 0.5009  |
+| F7   | H20     | 0.328    | 0.475    | 0.509   | 0.5009  |
 
 ## 2.2 Comparatif F1 par split (WF)
 
@@ -204,6 +221,12 @@
 | F6   | lightgbm   | val   | 0.331    | 0.506    | 0.486   |
 | F6   | lightgbm   | test  | 0.329    | 0.512    | 0.474   |
 | F6   | lightgbm   | wf    | 0.329    | 0.479    | 0.509   |
+| F7   | catboost   | val   | 0.332    | 0.508    | 0.489   |
+| F7   | catboost   | test  | 0.330    | 0.525    | 0.465   |
+| F7   | catboost   | wf    | 0.328    | 0.477    | 0.507   |
+| F7   | lightgbm   | val   | 0.331    | 0.506    | 0.487   |
+| F7   | lightgbm   | test  | 0.330    | 0.516    | 0.473   |
+| F7   | lightgbm   | wf    | 0.329    | 0.479    | 0.509   |
 
 ## 2.3 Comparatif Distribution true/pred par split (WF)
 
@@ -251,6 +274,12 @@
 | F6   | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
 | F6   | lightgbm   | test  | 51.93       | 48.08      | 51.73       | 48.27      |
 | F6   | lightgbm   | wf    | 51.41       | 48.59      | 45.71       | 54.29      |
+| F7   | catboost   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| F7   | catboost   | test  | 51.93       | 48.08      | 54.06       | 45.94      |
+| F7   | catboost   | wf    | 51.41       | 48.59      | 45.64       | 54.36      |
+| F7   | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| F7   | lightgbm   | test  | 51.93       | 48.08      | 52.28       | 47.72      |
+| F7   | lightgbm   | wf    | 51.41       | 48.59      | 45.72       | 54.28      |
 
 ## 2.4 Comparatif Métriques Régression par split (WF)
 
@@ -298,6 +327,12 @@
 | F6   | lightgbm   | val   | 1.0817  | 0.4962      |
 | F6   | lightgbm   | test  | 1.1076  | 0.4960      |
 | F6   | lightgbm   | wf    | 1.0630  | 0.5015      |
+| F7   | catboost   | val   | 1.0657  | 0.4988      |
+| F7   | catboost   | test  | 1.0864  | 0.4988      |
+| F7   | catboost   | wf    | 1.0440  | 0.5011      |
+| F7   | lightgbm   | val   | 1.0795  | 0.4972      |
+| F7   | lightgbm   | test  | 1.1068  | 0.4977      |
+| F7   | lightgbm   | wf    | 1.0637  | 0.5016      |
 
 ## 2.5 Distribution F1 macro — Walk-Forward
 
@@ -317,6 +352,8 @@
 | F5   | 0.30–0.39   | 11          |
 | F6   | 0.20–0.29   | 1           |
 | F6   | 0.30–0.39   | 11          |
+| F7   | 0.20–0.29   | 1           |
+| F7   | 0.30–0.39   | 11          |
 
 ## 2.6 Top 10 F1 macro (WF) — Meilleurs secteurs
 
@@ -392,6 +429,16 @@
 | F6   | Health Care            | 0.338    | 0.531   | 0.482    |
 | F6   | Financials             | 0.337    | 0.514   | 0.496    |
 | F6   | Financials             | 0.336    | 0.526   | 0.482    |
+| F7   | Consumer Staples       | 0.353    | 0.550   | 0.509    |
+| F7   | Consumer Staples       | 0.352    | 0.557   | 0.499    |
+| F7   | Consumer Staples       | 0.350    | 0.548   | 0.501    |
+| F7   | Health Care            | 0.346    | 0.535   | 0.504    |
+| F7   | Health Care            | 0.342    | 0.535   | 0.492    |
+| F7   | Industrials            | 0.338    | 0.503   | 0.512    |
+| F7   | Health Care            | 0.337    | 0.527   | 0.484    |
+| F7   | Consumer Staples       | 0.337    | 0.550   | 0.460    |
+| F7   | Health Care            | 0.337    | 0.526   | 0.484    |
+| F7   | Communication Services | 0.335    | 0.512   | 0.494    |
 
 ## 2.7 Top 10 F1 macro (WF) — Pires secteurs
 
@@ -467,6 +514,16 @@
 | F6   | Materials               | 0.319    | 0.474   | 0.481    |
 | F6   | Real Estate             | 0.319    | 0.505   | 0.452    |
 | F6   | Utilities               | 0.320    | 0.525   | 0.435    |
+| F7   | Energy                  | 0.294    | 0.447   | 0.434    |
+| F7   | Energy                  | 0.298    | 0.454   | 0.442    |
+| F7   | Energy                  | 0.309    | 0.461   | 0.465    |
+| F7   | Materials               | 0.309    | 0.463   | 0.465    |
+| F7   | Materials               | 0.317    | 0.466   | 0.487    |
+| F7   | Materials               | 0.318    | 0.463   | 0.491    |
+| F7   | Communication Services  | 0.319    | 0.505   | 0.451    |
+| F7   | Energy                  | 0.320    | 0.481   | 0.478    |
+| F7   | Utilities               | 0.320    | 0.524   | 0.435    |
+| F7   | Information Technology  | 0.320    | 0.513   | 0.448    |
 
 ## 2.8 Diagnostic par régime de marché — Walk-Forward
 
@@ -514,6 +571,12 @@
 | F6   | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.338    | 0.497    | 0.517   | 0.1   | 24.9    | 11       |
 | F6   | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.321    | 0.493    | 0.471   | 9.0   | 15.1    | 11       |
 | F6   | 5     | 2024-09-03 | 2025-03-05 | 🟢 Bull           | 0.328    | 0.504    | 0.481   | 5.6   | 17.4    | 11       |
+| F7   | 0     | 2019-07-03 | 2019-12-31 | 🟢 Bull           | 0.318    | 0.438    | 0.516   | 7.7   | 15.0    | 11       |
+| F7   | 1     | 2020-07-02 | 2020-12-30 | 🔵 Range low vol  | 0.331    | 0.448    | 0.545   | 19.1  | 25.7    | 11       |
+| F7   | 2     | 2021-07-02 | 2021-12-30 | 🔵 Range low vol  | 0.324    | 0.456    | 0.517   | 9.8   | 18.8    | 11       |
+| F7   | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.337    | 0.499    | 0.513   | 0.1   | 24.9    | 11       |
+| F7   | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.322    | 0.498    | 0.469   | 9.0   | 15.1    | 11       |
+| F7   | 5     | 2024-09-03 | 2025-03-05 | 🟢 Bull           | 0.331    | 0.510    | 0.484   | 5.6   | 17.4    | 11       |
 
 ---
 
@@ -525,9 +588,11 @@
 - **F3** : F1 + `--include-screener-scores`. Batch `8907b3`. ⚠️ 166 feat. IC Rank 0.0176 (−5.4%). Catboost 7/11.
 - **F4** : F1 + `--include-short-score`. Batch `0a3695`. 🏆 **MEILLEUR Global Model** — IC Rank 0.0197 (+5.9%), IC IR 1.07 (+4.9%).
 - **F5** : F4 + `--include-macro-vix`. ⚠️ Le VIX annule le gain du short-score.
-- **F6** : F4 + `--include-macro-vxn`. Batch `2ebf25`. Même constat que F5 — le VXN annule aussi le gain du short-score. Global Model = baseline (0.0186). Per-Sector légèrement meilleur que F5 (top F1 macro 0.361 vs 0.351) mais inférieur à F4 (0.366). **Les indices de volatilité macro (VIX/VXN) sont incompatibles avec `--include-short-score`.**
+- **F6** : F4 + `--include-macro-vxn`. Même constat que F5 — annule le gain du short-score.
+- **F7** : F4 + `--include-macro-vix3m`. Batch `961263`. 🥈 **Très proche de F4 !** IC Rank 0.0196 (vs 0.0197), IC IR 1.06 (vs 1.07), backtest V2 −4.6% (vs −4.4%). IC IR H10 = **1.52** (record absolu !). Contrairement à VIX/VXN, le VIX3M **préserve 97% du gain** du short-score. Per-Sector un peu en retrait (top F1 0.353 vs 0.366). Communication Services apparaît dans le top 10 meilleurs secteurs. Split 5 F1 macro = 0.331 (record).
 - **Impact `--target-excess-vs-spy` (F1 vs P0)** : Améliore F1 long, Dir Acc, top F1 macro.
 - **Impact `--include-short-score` (F4 vs F1)** : 🏆 AMÉLIORE le Global Model (+5.9% IC Rank). **F4 reste champion.**
-- **Impact `--include-macro-vix/vxn` (F5/F6 vs F4)** : ❌ ANNULE le gain du short-score. Global Model retombe à la baseline. La combinaison short-score + indice de volatilité est contre-productive.
-- Global Model : F4=0.0197 (🏆), P0/F1/F2/F5/F6=0.0186, F3=0.0176.
-- Backtest V2 : F4=−4.4% (🏆), tous les autres = −9.3%.
+- **Impact `--include-macro-vix/vxn` (F5/F6 vs F4)** : ❌ ANNULE le gain du short-score.
+- **Impact `--include-macro-vix3m` (F7 vs F4)** : 🥈 PRÉSERVE le gain ! IC Rank 0.0196, IC IR H10 record à 1.52. Le VIX3M est le seul indice de volatilité compatible avec le short-score.
+- Global Model : F4=0.0197 (🏆), F7=0.0196 (🥈), P0/F1/F2/F5/F6=0.0186, F3=0.0176.
+- Backtest V2 : F4=−4.4% (🏆), F7=−4.6% (🥈), tous les autres = −9.3%.

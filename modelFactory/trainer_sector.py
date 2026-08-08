@@ -221,6 +221,7 @@ def _persist_sector_metrics(
     *,
     lgbm_result: dict[str, Any],
     cb_result: dict[str, Any],
+    champion: str = "lightgbm",
     batch_id: str | None = None,
     sector_dir: Path | None = None,
     symbols: list[str] | None = None,
@@ -273,7 +274,8 @@ def _persist_sector_metrics(
 
     lgbm_score = float(lgbm_result.get("selection_score") or 0)
     cb_score = float(cb_result.get("selection_score") or 0)
-    champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+    # champion est maintenant calculé dans train_sector() avec le score composite
+    # et passé en paramètre → ne pas recalculer ici.
     challengers = {
         "lightgbm": lgbm_result,
         "catboost": cb_result,
@@ -607,14 +609,82 @@ def _train_sector_models(
     # For now, we use the tabular models only for per-sector training.
 
     # ── Champion selection ──
+    # Score composite : 60% F1 Mean (qualité) + 40% F1 IR (stabilité WF).
+    # Même logique que le Global Ranking, adaptée à la classification.
+    # Gates : F1 > 0 et ≥ 70% des splits WF avec F1 > 0.
     challengers = {
         "lightgbm": lgbm_result,
         "catboost": cb_result,
     }
-    # Simple champion: pick the one with better WF f1_macro
     lgbm_score = float(lgbm_result.get("selection_score") or 0)
     cb_score = float(cb_result.get("selection_score") or 0)
-    champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+
+    # ── Score composite basé sur la stabilité WF (si disponible) ──
+    _lgbm_wf = lgbm_result.get("walk_forward") if isinstance(lgbm_result, dict) else None
+    _cb_wf = cb_result.get("walk_forward") if isinstance(cb_result, dict) else None
+    _has_wf = (
+        isinstance(_lgbm_wf, dict) and isinstance(_cb_wf, dict)
+        and _lgbm_wf.get("splits") and _cb_wf.get("splits")
+    )
+    if _has_wf:
+        _lgbm_splits = [s.get("f1_macro") for s in _lgbm_wf["splits"] if s.get("f1_macro") is not None]
+        _cb_splits = [s.get("f1_macro") for s in _cb_wf["splits"] if s.get("f1_macro") is not None]
+        if _lgbm_splits and _cb_splits and len(_lgbm_splits) >= 3:
+            import numpy as np
+            _lgbm_f1_mean = float(np.mean(_lgbm_splits))
+            _lgbm_f1_std = float(np.std(_lgbm_splits))
+            _lgbm_f1_ir = _lgbm_f1_mean / _lgbm_f1_std if _lgbm_f1_std > 0 else _lgbm_f1_mean
+            _lgbm_pos = sum(1 for v in _lgbm_splits if v > 0) / len(_lgbm_splits)
+
+            _cb_f1_mean = float(np.mean(_cb_splits))
+            _cb_f1_std = float(np.std(_cb_splits))
+            _cb_f1_ir = _cb_f1_mean / _cb_f1_std if _cb_f1_std > 0 else _cb_f1_mean
+            _cb_pos = sum(1 for v in _cb_splits if v > 0) / len(_cb_splits)
+
+            # Gates
+            _lgbm_eligible = _lgbm_f1_mean > 0 and _lgbm_pos >= 0.70
+            _cb_eligible = _cb_f1_mean > 0 and _cb_pos >= 0.70
+
+            if _lgbm_eligible and _cb_eligible:
+                _max_f1 = max(_lgbm_f1_mean, _cb_f1_mean)
+                _max_ir = max(_lgbm_f1_ir, _cb_f1_ir)
+                _lgbm_composite = 0.60 * (_lgbm_f1_mean / _max_f1) + 0.40 * (_lgbm_f1_ir / _max_ir) if _max_f1 > 0 else 0.0
+                _cb_composite = 0.60 * (_cb_f1_mean / _max_f1) + 0.40 * (_cb_f1_ir / _max_ir) if _max_f1 > 0 else 0.0
+                champion = "lightgbm" if _lgbm_composite >= _cb_composite else "catboost"
+                LOGGER.info(
+                    "train_sector champion_selection sector=%s (composite 60%%F1+40%%IR): "
+                    "lgbm F1=%.4f IR=%.2f pos=%.0f%% score=%.3f %s | "
+                    "cb F1=%.4f IR=%.2f pos=%.0f%% score=%.3f %s → champion=%s",
+                    sector_name,
+                    _lgbm_f1_mean, _lgbm_f1_ir, _lgbm_pos * 100, _lgbm_composite,
+                    "✅" if _lgbm_eligible else "❌",
+                    _cb_f1_mean, _cb_f1_ir, _cb_pos * 100, _cb_composite,
+                    "✅" if _cb_eligible else "❌",
+                    champion,
+                )
+            elif _lgbm_eligible:
+                champion = "lightgbm"
+                LOGGER.info("train_sector champion_selection sector=%s: catboost INELIGIBLE → champion=lightgbm", sector_name)
+            elif _cb_eligible:
+                champion = "catboost"
+                LOGGER.info("train_sector champion_selection sector=%s: lightgbm INELIGIBLE → champion=catboost", sector_name)
+            else:
+                # Fallback au selection_score simple si aucun éligible
+                champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+                LOGGER.warning(
+                    "train_sector champion_selection sector=%s: NO eligible — fallback to selection_score "
+                    "(lgbm=%.4f cb=%.4f) → champion=%s",
+                    sector_name, lgbm_score, cb_score, champion,
+                )
+        else:
+            champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+    else:
+        champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+        LOGGER.info(
+            "train_sector champion_selection sector=%s: no WF data → fallback to selection_score "
+            "(lgbm=%.4f cb=%.4f) → champion=%s",
+            sector_name, lgbm_score, cb_score, champion,
+        )
 
     result = {
         "sector": sector_name,
@@ -648,6 +718,7 @@ def _train_sector_models(
         _persist_sector_metrics(
             engine, sector_name, run_id=sector_run_id,
             lgbm_result=lgbm_result, cb_result=cb_result,
+            champion=champion,
             batch_id=batch_id,
             sector_dir=sector_dir,
             symbols=symbols,

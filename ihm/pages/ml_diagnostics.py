@@ -1571,8 +1571,19 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
         return
 
     st.subheader("🌐 Global Ranking — Détails par Horizon")
+
+    # ── Infos modèle (champion ou fixe) ──
+    _model_label = "CatBoost"  # fallback
+    _champion_by_h = _gr.get("champion_by_horizon")
+    _has_champion = bool(_champion_by_h and isinstance(_champion_by_h, dict) and _champion_by_h)
+    if _has_champion:
+        from collections import Counter
+        _counts = Counter(_champion_by_h.values())
+        _majority = _counts.most_common(1)[0][0]
+        _h_detail = ", ".join(f"H{k}={v}" for k, v in sorted(_champion_by_h.items(), key=lambda x: int(x[0])))
+        _model_label = f"🏆 Champion: {_majority} ({_h_detail})"
     st.caption(
-        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle {_model_label} — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )
@@ -1593,29 +1604,50 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             _arr = np.array(_split_ics, dtype=float)
             if _arr.std() > 0:
                 _h_ic_ir = float(_arr.mean() / _arr.std())
-        _summary_rows.append({
+        _row: dict = {
             "Horizon": f"H{_h_key}",
             "IC Mean": _h_ic,
             "IC IR": round(_h_ic_ir, 2) if _h_ic_ir is not None else "—",
             "Decile Spread": _ds_by_h.get(_h_key),
             "Nb Features": _h_info.get("n_features", "—"),
             "Nb Splits": len(_h_info.get("splits", [])),
-        })
+        }
+        if _has_champion:
+            _row["🏆 Champion"] = str(_champion_by_h.get(_h_key, "—"))
+            _candidates = _h_info.get("candidates", {})
+            for _cn, _cdata in sorted((_candidates or {}).items()):
+                if isinstance(_cdata, dict):
+                    _ic_val = _cdata.get("ic_mean")
+                    _ir_val = _cdata.get("ic_ir")
+                    _row[f"IC {_cn}"] = f"{_ic_val:.4f}" if _ic_val is not None else "—"
+                    _row[f"IR {_cn}"] = f"{_ir_val:.2f}" if _ir_val is not None else "—"
+        _summary_rows.append(_row)
 
     if _summary_rows:
         _sum_df = pd.DataFrame(_summary_rows)
+        _col_config: dict = {
+            "Horizon": "Horizon",
+            "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
+            "IC IR": "📈 IC IR",
+            "Decile Spread": st.column_config.NumberColumn("📊 Decile Spread", format="%.4f"),
+            "Nb Features": "Nb Features",
+            "Nb Splits": "Nb Splits",
+        }
+        if _has_champion:
+            _col_config["🏆 Champion"] = "🏆 Champion"
+            if "IC lightgbm" in _sum_df.columns:
+                _col_config["IC lightgbm"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
+            if "IC catboost" in _sum_df.columns:
+                _col_config["IC catboost"] = st.column_config.NumberColumn("IC CatBoost", format="%.4f")
+            if "IR lightgbm" in _sum_df.columns:
+                _col_config["IR lightgbm"] = st.column_config.NumberColumn("IR LightGBM", format="%.2f")
+            if "IR catboost" in _sum_df.columns:
+                _col_config["IR catboost"] = st.column_config.NumberColumn("IR CatBoost", format="%.2f")
         st.dataframe(
             _sum_df,
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "Horizon": "Horizon",
-                "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
-                "IC IR": "📈 IC IR",
-                "Decile Spread": st.column_config.NumberColumn("📊 Decile Spread", format="%.4f"),
-                "Nb Features": "Nb Features",
-                "Nb Splits": "Nb Splits",
-            },
+            column_config=_col_config,
         )
 
     # ── Détail par horizon (expander) ──
@@ -1669,33 +1701,46 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             _splits = _h_info.get("splits", [])
             if _splits:
                 st.markdown("**📅 Détail par split**")
+                # Détecter si le mode champion est actif
+                _has_split_champion = any(
+                    k.startswith("ic_rank_") and k != "ic_rank"
+                    for _sp in _splits for k in (_sp or {}).keys()
+                )
                 _split_rows: list[dict] = []
                 for _sp in _splits:
                     _train_start = str(_sp.get("train_period_start", ""))[:10] if _sp.get("train_period_start") else "—"
                     _train_end = str(_sp.get("train_period_end", ""))[:10] if _sp.get("train_period_end") else "—"
                     _val_start = str(_sp.get("val_period_start", ""))[:10] if _sp.get("val_period_start") else "—"
                     _val_end = str(_sp.get("val_period_end", ""))[:10] if _sp.get("val_period_end") else "—"
-                    _split_rows.append({
+                    _row = {
                         "Split": _sp.get("split_index", "—"),
                         "Train (début→fin)": f"{_train_start} → {_train_end}",
                         "Validation (début→fin)": f"{_val_start} → {_val_end}",
                         "Lignes Train": _sp.get("train_rows", "—"),
                         "Lignes Val": _sp.get("val_rows", "—"),
                         "IC Rank": _sp.get("ic_rank"),
-                    })
+                    }
+                    if _has_split_champion:
+                        _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")
+                        _row["IC CatBoost"] = _sp.get("ic_rank_catboost")
+                    _split_rows.append(_row)
                 _sp_df = pd.DataFrame(_split_rows)
+                _sp_col_config: dict = {
+                    "Split": st.column_config.NumberColumn("Split", format="%d"),
+                    "Train (début→fin)": "Période Train",
+                    "Validation (début→fin)": "Période Validation",
+                    "Lignes Train": st.column_config.NumberColumn("Lignes Train", format="%d"),
+                    "Lignes Val": st.column_config.NumberColumn("Lignes Val", format="%d"),
+                    "IC Rank": st.column_config.NumberColumn("🎯 IC Rank", format="%.4f"),
+                }
+                if _has_split_champion:
+                    _sp_col_config["IC LightGBM"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
+                    _sp_col_config["IC CatBoost"] = st.column_config.NumberColumn("IC CatBoost", format="%.4f")
                 st.dataframe(
                     _sp_df,
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "Split": st.column_config.NumberColumn("Split", format="%d"),
-                        "Train (début→fin)": "Période Train",
-                        "Validation (début→fin)": "Période Validation",
-                        "Lignes Train": st.column_config.NumberColumn("Lignes Train", format="%d"),
-                        "Lignes Val": st.column_config.NumberColumn("Lignes Val", format="%d"),
-                        "IC Rank": st.column_config.NumberColumn("🎯 IC Rank", format="%.4f"),
-                    },
+                    column_config=_sp_col_config,
                 )
 
             # ── Métriques par split (mini-distribution) ──
