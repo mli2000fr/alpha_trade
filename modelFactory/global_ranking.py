@@ -558,8 +558,8 @@ def _build_ranking_estimators(
                 _rebuilt = True
 
         if _name == "lightgbm":
-            lgb = _import_lightgbm()
-            estimators.append(("lightgbm", lgb.LGBMRanker(
+            lgb_mod = _import_lightgbm()
+            estimators.append(("lightgbm", lgb_mod.LGBMRanker(
                 objective="lambdarank",
                 label_gain=list(range(10)),
                 max_depth=cfg.global_model.ranking_max_depth,
@@ -1204,8 +1204,15 @@ def train_global_ranking_wf(
                     _fit_kwargs["eval_at"] = [10, 20]
                     _es = getattr(cfg.baseline, "lgbm_early_stopping_rounds", None)
                     if _es and _es > 0:
-                        _fit_kwargs["early_stopping_rounds"] = _es
                         _fit_kwargs["eval_metric"] = "ndcg"
+                        # LightGBM 4.x : early stopping via callback, pas via fit()
+                        _lgb_es = _import_lightgbm()
+                        _fit_kwargs["callbacks"] = [_lgb_es.early_stopping(stopping_rounds=_es)]
+                        LOGGER.info(
+                            "global_ranking_wf horizon=%d split=%d/%d early_stopping=%d rounds eval_rows=%d",
+                            horizon, split.split_index + 1, len(wf_splits),
+                            _es, len(_es_eval) if _es_eval is not None else 0,
+                        )
                 if _sw is not None:
                     _fit_kwargs["sample_weight"] = _sw
                 LOGGER.info(
@@ -1283,16 +1290,16 @@ def train_global_ranking_wf(
             })
 
         # ── Sélection du champion pour cet horizon ──
-        # Score composite : 60% IC Mean (qualité de l'alpha) + 40% IC IR (stabilité).
-        # L'IC IR seul est trompeur (IC=0.015 IR=1.5 battrait IC=0.08 IR=0.8).
-        # L'IC Mean seul ignore la volatilité du signal.
-        # → Le score composite équilibre puissance prédictive et régularité.
-        # Normalisation : chaque métrique est divisée par le max des 2 candidats
-        # (→ le meilleur sur cette métrique obtient 1.0, l'autre un ratio < 1.0).
+        # Score composite : 55% IC Mean + 30% IC IR + 15% Positive Split Ratio.
+        # L'IC mesure la qualité de l'alpha. L'IR mesure la stabilité.
+        # Le % positif mesure la robustesse cross-régime (GPT: ne pas juste
+        # s'en servir comme gate, l'intégrer dans le score).
+        # Normalisation par le max des 2 candidats sur chaque métrique.
         #
-        # Gates d'éligibilité :
-        #   1. IC Mean > 0 (sinon le modèle est contre-productif)
-        #   2. ≥ 70% des splits WF ont IC > 0 (robustesse cross-régime)
+        # Gates d'éligibilité (ordre de grandeur adapté au ranking cross-sectionnel) :
+        #   1. IC Mean > 0 (un IC négatif classe à l'envers)
+        #   2. IC IR ≥ 0.30 (filtre les modèles sans aucune stabilité)
+        #   3. Au plus 2 splits négatifs : ≥ (N-2)/N splits avec IC > 0
         if _champion_mode and len(_candidate_names) > 1:
             _champion_details: dict[str, dict[str, float | None]] = {}
             _champion_eligible: dict[str, bool] = {}
@@ -1317,9 +1324,14 @@ def train_global_ranking_wf(
                 if _mean <= 0:
                     _eligible = False
                     _gate_reason = f"IC_mean<=0 ({_mean:.4f})"
-                elif _positive_pct < 0.70 and len(_ics) >= 3:
+                elif _ir is not None and _ir < 0.30:
                     _eligible = False
-                    _gate_reason = f"positive_splits={_positive_pct:.0%}<70% ({_positive}/{len(_ics)})"
+                    _gate_reason = f"IC_IR={_ir:.2f}<0.30 (instable)"
+                elif len(_ics) >= 3:
+                    _min_positive = (len(_ics) - 2) / len(_ics)
+                    if _positive_pct < _min_positive:
+                        _eligible = False
+                        _gate_reason = f"positive_splits={_positive_pct:.0%}<{_min_positive:.0%} ({_positive}/{len(_ics)})"
                 _champion_eligible[_cn] = _eligible
                 if not _eligible:
                     LOGGER.warning(
@@ -1330,10 +1342,22 @@ def train_global_ranking_wf(
             # ── Calculer le score composite (seulement pour les éligibles) ──
             _eligible_candidates = [_cn for _cn in _candidate_names if _champion_eligible[_cn]]
             if not _eligible_candidates:
-                LOGGER.warning(
-                    "global_ranking_wf horizon=%d NO eligible candidates — fallback to best IC Mean",
-                    horizon,
+                _all_ic_positive = all(
+                    (_champion_details[_cn].get("ic_mean") or 0.0) > 0
+                    for _cn in _candidate_names
                 )
+                if not _all_ic_positive:
+                    LOGGER.error(
+                        "global_ranking_wf horizon=%d ⚠️ ALL candidates have IC≤0 — "
+                        "picking least bad model. This horizon is likely unusable.",
+                        horizon,
+                    )
+                else:
+                    LOGGER.warning(
+                        "global_ranking_wf horizon=%d NO eligible candidates "
+                        "(IR<0.30 or too many negative splits) — fallback to best composite score",
+                        horizon,
+                    )
                 _eligible_candidates = list(_candidate_names)  # fallback: tous
 
             # Normalisation : diviser par le max parmi les éligibles
@@ -1348,8 +1372,9 @@ def train_global_ranking_wf(
                 _d = _champion_details[_cn]
                 _ic_norm = (_d["ic_mean"] or 0.0) / _max_ic if _max_ic > 0 else 0.0
                 _ir_norm = (_d["ic_ir"] or 0.0) / _max_ir if _max_ir > 0 else 0.0
-                # Score composite : 60% IC + 40% IR
-                _champion_scores[_cn] = 0.60 * _ic_norm + 0.40 * _ir_norm
+                _pos_norm = (_d["positive_pct"] or 0.0)  # déjà dans [0,1], pas besoin de normaliser
+                # Score composite : 55% IC + 30% IR + 15% Positive Split Ratio
+                _champion_scores[_cn] = 0.55 * _ic_norm + 0.30 * _ir_norm + 0.15 * _pos_norm
             # Inéligibles : score = -inf
             for _cn in _candidate_names:
                 if _cn not in _champion_scores:
@@ -1357,7 +1382,7 @@ def train_global_ranking_wf(
 
             _selected_champion = max(_champion_scores, key=lambda k: _champion_scores[k])
             LOGGER.info(
-                "global_ranking_wf horizon=%d champion_selection (metric=composite 60%%IC+40%%IR) → champion=%s",
+                "global_ranking_wf horizon=%d champion_selection (metric=composite 55%%IC+30%%IR+15%%pos) → champion=%s",
                 horizon, _selected_champion,
             )
             # Log détaillé pour chaque candidat
@@ -1386,7 +1411,7 @@ def train_global_ranking_wf(
                 "champion_ic_ir": _champion_sel["ic_ir"],
                 "champion_positive_pct": _champion_sel["positive_pct"],
                 "champion_score": _champion_scores[_selected_champion],
-                "selection_metric": "composite_60ic_40ir",
+                "selection_metric": "composite_55ic_30ir_15pos",
                 "candidates": _champion_details,
                 "eligibility": {_cn: _champion_eligible.get(_cn, False) for _cn in _candidate_names},
             }

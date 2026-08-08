@@ -447,8 +447,28 @@ def _append_global_ranking_horizon_details(
         _ic_val = _ic_by_h.get(_h_key, 0) or 0
         _ds_val = _ds_by_h.get(_h_key, 0) or 0
 
-        lines.append(f"### Horizon H{_h_key}")
+        # Modèle champion pour cet horizon
+        _h_champion = _champion_by_h.get(_h_key) if _has_champion else None
+        _champion_title = f" — 🏆 {_h_champion}" if _h_champion else ""
+
+        lines.append(f"### Horizon H{_h_key}{_champion_title}")
         lines.append("")
+        if _h_champion:
+            _champ_data = _h_info.get("candidates", {}).get(_h_champion, {})
+            _champ_ic = _champ_data.get("ic_mean") if isinstance(_champ_data, dict) else None
+            _champ_ir = _champ_data.get("ic_ir") if isinstance(_champ_data, dict) else None
+            _champ_score = _h_info.get("champion_score")
+            _sel_metric = _h_info.get("selection_metric", "—")
+            _champ_parts = [f"🏆 **Champion : {_h_champion}**"]
+            if _champ_ic is not None:
+                _champ_parts.append(f"IC = {_champ_ic:.4f}")
+            if _champ_ir is not None:
+                _champ_parts.append(f"IR = {_champ_ir:.2f}")
+            if _champ_score is not None:
+                _champ_parts.append(f"Score composite = {_champ_score:.3f}")
+            _champ_parts.append(f"Métrique : {_sel_metric}")
+            lines.append(f"- {' | '.join(_champ_parts)}")
+            lines.append("")
         lines.append(f"- **IC Rank** : {_ic_val:.4f}")
         lines.append(f"- **Decile Spread** : {_ds_val:.4f}")
         lines.append(f"- **Nb Features** : {_h_info.get('n_features', '—')}")
@@ -786,6 +806,22 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
         if _ds_all:
             _ds_parts = [f"H{k}={v:.4f}" for k, v in sorted(_ds_all.items(), key=lambda x: int(x[0]))]
             lines.append(f"- **📊 Decile Spread (Top−Bottom)** : {' '.join(_ds_parts)}")
+
+        # ── 🏆 Champion Global Model ──
+        _meta_raw3 = row.get("metadata_json")
+        if _meta_raw3 and str(_meta_raw3) not in ("None", "nan", ""):
+            try:
+                _meta3 = json.loads(str(_meta_raw3))
+                _gr3 = _meta3.get("global_ranking") if isinstance(_meta3, dict) else None
+                _champ_by_h3 = _gr3.get("champion_by_horizon") if isinstance(_gr3, dict) else None
+                if _champ_by_h3 and isinstance(_champ_by_h3, dict) and _champ_by_h3:
+                    from collections import Counter
+                    _cnt3 = Counter(_champ_by_h3.values())
+                    _majority3 = _cnt3.most_common(1)[0][0]
+                    _h_det3 = ", ".join(f"H{k}={v}" for k, v in sorted(_champ_by_h3.items(), key=lambda x: int(x[0])))
+                    lines.append(f"- **🏆 Champion Global** : {_majority3} ({_h_det3}) — score composite 55% IC + 30% IR + 15% positifs")
+            except Exception:
+                pass
 
         # ── Stacking Global Rank ──
         _stacking = row.get("stacking_enabled")

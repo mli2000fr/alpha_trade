@@ -6,6 +6,20 @@
 
 ---
 
+## 🏆 Champions (au 2026-08-09)
+
+| Niveau | Champion | Batch ID | Configuration | Métrique clé |
+|:-------|:---------|:---------|:-------------|:-------------|
+| 🌐 **Global Model** | **F4** 🥇 | `0a3695` | `--include-short-score` | IC Rank **0.0197** (+5.9% vs baseline) |
+| 🔵 **Per-Sector** | **F1** 🥇 | `6509b5` | `--target-excess-vs-spy` | F1 long H5 **0.514**, Dir Acc H15 **0.5039** |
+| 📈 **Per-Symbol** | N/A | — | Mode per-sector (pas de variation per-symbol testée) | Champion interne Catboost vs LightGBM par secteur |
+
+> **F4** domine le classement cross-sectionnel (meilleur IC Rank Global).  
+> **F1** domine les métriques directionnelles par secteur (meilleur F1 long, Dir Acc).  
+> **F7** (🥈 Global) est une alternative avec IC Rank 0.0196 et IC IR H10 record à 1.52 (VIX3M compatible short-score).
+
+---
+
 ## 📋 Résumé des batches
 
 | Batch | ID | Commentaire | Date | Global Model | Per-Sector | Symboles | IC Rank Global |

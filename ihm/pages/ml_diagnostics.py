@@ -1002,6 +1002,26 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.metric("📈 IC IR (Stabilité)", f"{_ic_ir:.2f}",
                       help="IC Information Ratio = IC Mean / IC Std. >0.5 = bon, >1.0 = exceptionnel. "
                            "Mesure la stabilité du signal dans le temps.")
+        # 🏆 Champion Global Model (par horizon)
+        _meta_raw = row.get("metadata_json")
+        if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
+            try:
+                import json as _json2
+                _meta = _json2.loads(str(_meta_raw))
+                _gr = _meta.get("global_ranking") if isinstance(_meta, dict) else None
+                _champ_by_h = _gr.get("champion_by_horizon") if isinstance(_gr, dict) else None
+                if _champ_by_h and isinstance(_champ_by_h, dict) and _champ_by_h:
+                    from collections import Counter
+                    _cnt = Counter(_champ_by_h.values())
+                    _majority = _cnt.most_common(1)[0][0]
+                    _h_detail = ", ".join(f"H{k}={v}" for k, v in sorted(_champ_by_h.items(), key=lambda x: int(x[0])))
+                    st.metric(
+                        "🏆 Champion Global",
+                        f"{_majority} ({_h_detail})",
+                        help=f"Champion du Global Ranking par horizon (score composite 60% IC + 40% IR). Modèle majoritaire : {_majority}.",
+                    )
+            except Exception:
+                pass
         # Stacking Global Rank
         _stacking_val = row.get("stacking_enabled")
         if _stacking_val is not None:
@@ -1658,10 +1678,31 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
         _ic_color = "🟢" if _ic_val and _ic_val >= 0.02 else ("🟡" if _ic_val and _ic_val >= 0.01 else "🔴")
         _ds_color = "🟢" if _ds_val and _ds_val >= 0.01 else ("🟡" if _ds_val and _ds_val >= 0.005 else "🔴")
 
+        # Modèle champion pour cet horizon
+        _h_champion = _champion_by_h.get(_h_key) if _has_champion else None
+        _champion_tag = f" | 🏆 {_h_champion}" if _h_champion else ""
+
         with st.expander(
-            f"H{_h_key}  |  {_ic_color} IC Rank: {_ic_val:.4f}  |  {_ds_color} Decile Spread: {_ds_val:.4f}  |  {_h_info.get('n_features', '—')} features",
+            f"H{_h_key}{_champion_tag}  |  {_ic_color} IC Rank: {_ic_val:.4f}  |  {_ds_color} Decile Spread: {_ds_val:.4f}  |  {_h_info.get('n_features', '—')} features",
             expanded=False,
         ):
+            # ── Champion info si mode champion ──
+            if _h_champion:
+                _champ_data = _h_info.get("candidates", {}).get(_h_champion, {})
+                _champ_ic = _champ_data.get("ic_mean") if isinstance(_champ_data, dict) else None
+                _champ_ir = _champ_data.get("ic_ir") if isinstance(_champ_data, dict) else None
+                _champ_score = _h_info.get("champion_score")
+                _sel_metric = _h_info.get("selection_metric", "—")
+                _parts = [f"🏆 **Champion : {_h_champion}**"]
+                if _champ_ic is not None:
+                    _parts.append(f"IC = {_champ_ic:.4f}")
+                if _champ_ir is not None:
+                    _parts.append(f"IR = {_champ_ir:.2f}")
+                if _champ_score is not None:
+                    _parts.append(f"Score = {_champ_score:.3f}")
+                _parts.append(f"Métrique : {_sel_metric}")
+                st.caption(" | ".join(_parts))
+
             # ── Feature Importance Top10 / Bottom10 ──
             _fi_top10 = _h_info.get("feature_importance_top10", [])
             _fi_bottom10 = _h_info.get("feature_importance_bottom10", [])

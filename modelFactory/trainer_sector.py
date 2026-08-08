@@ -609,9 +609,9 @@ def _train_sector_models(
     # For now, we use the tabular models only for per-sector training.
 
     # ── Champion selection ──
-    # Score composite : 60% F1 Mean (qualité) + 40% F1 IR (stabilité WF).
+    # Score composite : 55% F1 Mean + 30% F1 IR + 15% Positive Split Ratio.
     # Même logique que le Global Ranking, adaptée à la classification.
-    # Gates : F1 > 0 et ≥ 70% des splits WF avec F1 > 0.
+    # Gates : F1 > 0, F1 IR ≥ 0.30, ≥ (N-2)/N splits positifs.
     challengers = {
         "lightgbm": lgbm_result,
         "catboost": cb_result,
@@ -641,18 +641,19 @@ def _train_sector_models(
             _cb_f1_ir = _cb_f1_mean / _cb_f1_std if _cb_f1_std > 0 else _cb_f1_mean
             _cb_pos = sum(1 for v in _cb_splits if v > 0) / len(_cb_splits)
 
-            # Gates
-            _lgbm_eligible = _lgbm_f1_mean > 0 and _lgbm_pos >= 0.70
-            _cb_eligible = _cb_f1_mean > 0 and _cb_pos >= 0.70
+            # Gates : IC/F1 > 0, IR ≥ 0.30, au plus 2 splits négatifs
+            _min_pos = (len(_lgbm_splits) - 2) / len(_lgbm_splits) if len(_lgbm_splits) >= 3 else 0.0
+            _lgbm_eligible = _lgbm_f1_mean > 0 and _lgbm_f1_ir >= 0.30 and _lgbm_pos >= _min_pos
+            _cb_eligible = _cb_f1_mean > 0 and _cb_f1_ir >= 0.30 and _cb_pos >= _min_pos
 
             if _lgbm_eligible and _cb_eligible:
                 _max_f1 = max(_lgbm_f1_mean, _cb_f1_mean)
                 _max_ir = max(_lgbm_f1_ir, _cb_f1_ir)
-                _lgbm_composite = 0.60 * (_lgbm_f1_mean / _max_f1) + 0.40 * (_lgbm_f1_ir / _max_ir) if _max_f1 > 0 else 0.0
-                _cb_composite = 0.60 * (_cb_f1_mean / _max_f1) + 0.40 * (_cb_f1_ir / _max_ir) if _max_f1 > 0 else 0.0
+                _lgbm_composite = 0.55 * (_lgbm_f1_mean / _max_f1) + 0.30 * (_lgbm_f1_ir / _max_ir) + 0.15 * _lgbm_pos if _max_f1 > 0 else 0.0
+                _cb_composite = 0.55 * (_cb_f1_mean / _max_f1) + 0.30 * (_cb_f1_ir / _max_ir) + 0.15 * _cb_pos if _max_f1 > 0 else 0.0
                 champion = "lightgbm" if _lgbm_composite >= _cb_composite else "catboost"
                 LOGGER.info(
-                    "train_sector champion_selection sector=%s (composite 60%%F1+40%%IR): "
+                    "train_sector champion_selection sector=%s (composite 55%%F1+30%%IR+15%%pos): "
                     "lgbm F1=%.4f IR=%.2f pos=%.0f%% score=%.3f %s | "
                     "cb F1=%.4f IR=%.2f pos=%.0f%% score=%.3f %s → champion=%s",
                     sector_name,

@@ -796,6 +796,9 @@ def run_training_batch(
                     "splits_count": int(global_result_wf.get("splits_count", 0)),
                     "pred_rows": int(global_result_wf.get("pred_rows", 0)),
                     "ic_by_horizon": global_result_wf.get("ic_by_horizon", {}),
+                    "champion_by_horizon": global_result_wf.get("champion_by_horizon"),
+                    "champion_enabled": global_result_wf.get("champion_enabled", False),
+                    "backend_model_name": global_result_wf.get("backend_model_name"),
                 }
                 update_training_batch(
                     engine, batch_id,

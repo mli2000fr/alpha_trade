@@ -501,8 +501,8 @@ car la nature des modèles et les métriques disponibles diffèrent.
 
 | Niveau | Modèles comparés | Métrique primaire | Métrique stabilité | Gates | Champion par |
 |--------|-----------------|-------------------|-------------------|-------|-------------|
-| **🌐 Global** | CatBoost vs LightGBM | IC Mean (Spearman) | IC IR = IC Mean / IC Std | IC > 0, ≥70% splits positifs | **Horizon** (H3/H5/H10/H15/H20) |
-| **🏭 Per-Sector** | LightGBM vs CatBoost | F1 Mean (WF, target neutralisée) | F1 IR = F1 Mean / F1 Std | F1 > 0, ≥70% splits positifs | **Secteur** (1 champion par secteur) |
+| **🌐 Global** | CatBoost vs LightGBM | IC Mean (Spearman) | IC IR = IC Mean / IC Std | IC > 0, ≥ (N−2)/N splits positifs | **Horizon** (H3/H5/H10/H15/H20) |
+| **🏭 Per-Sector** | LightGBM vs CatBoost | F1 Mean (WF, target neutralisée) | F1 IR = F1 Mean / F1 Std | F1 > 0, ≥ (N−2)/N splits positifs | **Secteur** (1 champion par secteur) |
 | **📈 Per-Symbol** | LSTM vs LightGBM vs CatBoost | `selection_score` (F1 macro WF poolé) | — (non utilisé) | Métriques valides (AUC, collapsed, etc.) | **Symbole** (1 champion par symbole) |
 
 ### 6.2 🌐 Global Model — Champion par horizon
@@ -512,22 +512,23 @@ car la nature des modèles et les métriques disponibles diffèrent.
 
 #### Formule du score composite
 
-$$\text{Score} = 0.60 \times \frac{\text{IC Mean}}{\max(\text{IC Mean})} + 0.40 \times \frac{\text{IC IR}}{\max(\text{IC IR})}$$
+$$\text{Score} = 0.55 \times \frac{\text{IC Mean}}{\max(\text{IC Mean})} + 0.30 \times \frac{\text{IC IR}}{\max(\text{IC IR})} + 0.15 \times \text{Positive Split Ratio}$$
 
-Chaque métrique est normalisée par le meilleur des 2 candidats → le candidat optimal sur une
-métrique obtient 1.0, l'autre un ratio < 1.0.
+Chaque métrique (sauf le ratio de splits, déjà dans [0,1]) est normalisée par le meilleur
+des 2 candidats → le candidat optimal sur une métrique obtient 1.0.
 
-**Pourquoi 60/40 ?** L'IC Mean mesure la puissance prédictive brute (capacité à classer les
-actions), l'IC IR mesure la stabilité temporelle du signal. Un IC élevé mais volatile est
-moins fiable en production qu'un IC modéré mais constant. Le ratio 60/40 donne la priorité
-à la qualité de l'alpha tout en pénalisant l'instabilité.
+**Pourquoi 55/30/15 ?** L'IC Mean (55%) est le critère principal — sans alpha, rien ne sert
+d'être stable. L'IC IR (30%) pénalise l'instabilité. Le taux de splits positifs (15%)
+récompense la robustesse cross-régime : un modèle qui performe 6/6 splits est plus fiable
+qu'un modèle à 4/6, même à IC égal.
 
 #### Gates d'éligibilité
 
 | Gate | Condition | Rationnel |
 |------|-----------|-----------|
-| **IC Mean > 0** | Le modèle doit avoir un alpha positif | Un IC négatif = classe à l'envers, pire qu'aléatoire |
-| **≥ 70% splits positifs** | Au moins 70% des splits WF ont IC > 0 | Évite un modèle qui dépend d'un seul bon split |
+| **IC Mean > 0** | Alpha positif | IC négatif = classe à l'envers |
+| **IC IR ≥ 0.30** | Stabilité minimale | Filtre les modèles sans aucune constance |
+| **≥ (N−2)/N splits positifs** | Au plus 2 splits avec IC ≤ 0 | Robustesse cross-régime (67% à 6 splits, 82% à 11) |
 
 Si aucun candidat n'est éligible → fallback sur le meilleur IC Mean.
 
@@ -578,13 +579,13 @@ global_ranking_wf horizon=5 champion_selection (metric=composite 60%IC+40%IR) �
 
 #### Formule du score composite
 
-$$\text{Score} = 0.60 \times \frac{\text{F1 Mean}}{\max(\text{F1 Mean})} + 0.40 \times \frac{\text{F1 IR}}{\max(\text{F1 IR})}$$
+$$\text{Score} = 0.55 \times \frac{\text{F1 Mean}}{\max(\text{F1 Mean})} + 0.30 \times \frac{\text{F1 IR}}{\max(\text{F1 IR})} + 0.15 \times \text{Positive Split Ratio}$$
 
 Où F1 Mean et F1 IR sont calculés sur les splits walk-forward (F1 macro par split).
 
 #### Gates d'éligibilité
 
-Identiques au Global Model : F1 Mean > 0 et ≥ 70% des splits WF avec F1 > 0.
+Identiques au Global Model : F1 Mean > 0, F1 IR ≥ 0.30, et au plus 2 splits WF avec F1 ≤ 0 (≥ (N−2)/N splits positifs).
 
 #### Fallback
 
@@ -1001,6 +1002,56 @@ stock_fundamentals_daily
 
 > **Interaction smoothing × splits** : avec 13 splits (83% chevauchement), le smoothing dilue.
 > Avec 8 splits (régimes distincts), il apporte +31% sur H10. Les deux sont complémentaires.
+
+### 12.3 Campagne flags Per-Sector — Champions (2026-08-08, 7 batches)
+
+> **Objectif** : identifier les flags qui améliorent le Global Model et/ou le Per-Sector.
+> Tous les tests utilisent `--training-mode per_sector --target-excess-vs-spy` comme base (F1),
+> sauf P0 (baseline sans `--target-excess-vs-spy`).
+
+#### 🏆 Champions
+
+| Niveau | Champion | Batch | Flags | Métrique |
+|:-------|:---------|:------|:------|:---------|
+| 🌐 **Global Model** | **F4** 🥇 | `0a3695` | `--include-short-score` | IC Rank **0.0197** (+5.9% vs baseline 0.0186) |
+| 🌐 Global Model 🥈 | **F7** | `961263` | F4 + `--include-macro-vix3m` | IC Rank **0.0196**, IC IR H10 record **1.52** |
+| 🔵 **Per-Sector** | **F1** 🥇 | `6509b5` | `--target-excess-vs-spy` | F1 long H5 **0.514**, Dir Acc H15 **0.5039** |
+
+#### Tableau comparatif Global Model
+
+| Batch | Flags vs F1 | IC Rank Global | IC IR | Decile Spread H20 | Backtest V2 |
+|:------|:------------|--------------:|------:|------------------:|:-----------|
+| **F4** 🥇 | `--include-short-score` | **0.0197** | **1.07** | **0.0319** | **−4.4%** |
+| **F7** 🥈 | + `--include-macro-vix3m` | 0.0196 | 1.06 | 0.0302 | −4.6% |
+| F1 | baseline avec `--target-excess-vs-spy` | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| P0 | baseline sans `--target-excess-vs-spy` | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| F2 | + `--include-sentiment` | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| F5 | + VIX | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| F6 | + VXN | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| F3 ❌ | + `--include-screener-scores` | 0.0176 | 0.92 | 0.0239 | −9.3% |
+
+#### Tableau comparatif Per-Sector (WF)
+
+| Batch | F1 macro H20 | F1 long H5 | F1 long H20 | Dir Acc H15 | Dir Acc H20 | Top F1 macro |
+|:------|-------------:|-----------:|------------:|------------:|------------:|-------------:|
+| **F1** 🥇 | 0.329 | **0.514** | 0.511 | **0.5039** | **0.5019** | **0.366** |
+| F4 | 0.328 | 0.513 | 0.509 | 0.5022 | 0.5011 | **0.366** |
+| F3 | 0.328 | 0.512 | 0.510 | 0.5021 | 0.5015 | **0.366** |
+| F7 | 0.328 | 0.510 | 0.509 | 0.5009 | 0.5009 | 0.353 |
+| F2 | 0.327 | 0.512 | 0.509 | 0.5022 | 0.4998 | 0.356 |
+| F6 | 0.328 | 0.511 | 0.510 | 0.5026 | 0.5012 | 0.361 |
+| F5 | 0.327 | 0.512 | 0.506 | 0.5020 | 0.4992 | 0.351 |
+| P0 | 0.327 | 0.511 | 0.506 | 0.5004 | 0.4986 | 0.348 |
+
+#### Leçons clés
+
+1. **`--include-short-score` (F4)** est le seul flag qui améliore significativement le Global Model (+5.9% IC Rank, +4.9% IC IR). Backtest V2 2× meilleur (−4.4% vs −9.3%).
+2. **`--target-excess-vs-spy` (F1 vs P0)** améliore le Per-Sector (F1 long, Dir Acc, top F1 macro) mais n'affecte pas le Global Model.
+3. **VIX/VXN (F5/F6) sont incompatibles** avec `--include-short-score` — ils annulent complètement le gain Global.
+4. **VIX3M (F7) est compatible** — préserve 97% du gain Global, avec un IC IR H10 record à 1.52.
+5. **`--include-screener-scores` (F3)** est le seul flag qui **dégrade** le Global Model (−5.4% IC Rank).
+6. **`--include-sentiment` (F2)** n'apporte aucun gain mesurable sur les métriques.
+7. **Recommandation production** : `--target-excess-vs-spy --include-short-score` (F4). Option VIX3M (F7) si la stabilité H10 est prioritaire.
 
 ### 11.3 Métriques finales — Global Ranking
 
