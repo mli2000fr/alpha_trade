@@ -36,6 +36,16 @@ SELECTOR_HISTORY_CONTEXT_COLUMNS: tuple[str, ...] = (
     "total_score_component",
     "rsi_component",
     "short_score",
+    # ── Score components (P0-6, 2026-08-08) ──
+    "sentiment_net_agg",
+    "company_idio_score",
+    "macro_regime_score",
+    "quant_component",
+    "company_idio_signal_norm",
+    "macro_regime_signal_norm",
+    "company_idio_component",
+    "macro_regime_component",
+    "sector_impact_agg",
 )
 
 

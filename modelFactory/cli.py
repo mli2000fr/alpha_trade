@@ -307,7 +307,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-macro-move", action="store_true", default=False,
                    help="Inclure les features MOVE (volatilité obligataire ICE BofA) dans le modèle")
     p.add_argument("--include-fundamentals", action="store_true", default=False,
-                   help="Inclure les features fondamentales EODHD (PE, ROE, marges, croissance) — Global Model uniquement")
+                   help="Inclure les features fondamentales EODHD (PE, ROE, marges, croissance) — per-symbol, per-sector et Global Ranking (exclu du Global Model cross-symbol)")
     p.add_argument("--include-score-components", action="store_true", default=True,
                    help="Inclure les composants de score de stock_scores_history (sentiment_net_agg, company_idio_score, macro_regime_score...) comme features. Actif par défaut sur per-sector + global, ignoré sur per-symbol.")
     p.add_argument("--no-include-score-components", dest="include_score_components", action="store_false",

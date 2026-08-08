@@ -1072,6 +1072,7 @@ def _prepare_prediction_frame(
             include_fundamentals=data_cfg.include_fundamentals_features,
             include_factors=data_cfg.include_factors_features,
             include_macro_regime=data_cfg.include_macro_regime_features,
+            include_score_components=data_cfg.include_score_components,
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)

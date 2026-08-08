@@ -698,11 +698,13 @@ def run_per_sector_batch(
         raise RuntimeError("No symbols match any sector — check symbol list vs stock_metadata")
 
     # Load shared data (same for all sectors)
-    sentiment_df = _load_sentiment_for_symbols(symbols, engine, cfg)
+    sentiment_df = _load_sentiment_for_symbols(symbols, engine, cfg) if cfg.data.include_sentiment_features else None
     benchmark_df = _load_benchmark(engine, cfg)
     universe_df = _load_universe(symbols, engine)
-    selector_df = _load_selector_for_symbols(symbols, engine, cfg)
-    fundamental_df = _load_fundamentals_for_symbols(symbols, engine, cfg)
+    selector_df = None
+    if cfg.data.include_screener_scores or cfg.data.include_short_score_features:
+        selector_df = _load_selector_for_symbols(symbols, engine, cfg)
+    fundamental_df = _load_fundamentals_for_symbols(symbols, engine, cfg) if cfg.data.include_fundamentals_features else None
 
     # ── Action 1.1 (2026-08-04) : construire le cache cross-sectionnel UNE FOIS ──
     # Avant : chaque _prepare_sector_data recevait universe_df=None → les features
@@ -799,15 +801,19 @@ def _load_benchmark(engine: Any, cfg: TrainingConfig) -> pd.DataFrame | None:
 
 
 def _load_sentiment_for_symbols(symbols: list[str], engine: Any, cfg: TrainingConfig) -> pd.DataFrame | None:
+    """Charge les features sentiment pour une liste de symboles.
+
+    Utilise load_symbols_sentiment (pluriel) pour charger toutes les
+    données en une seule requête SQL.
+    """
     try:
-        from modelFactory.data_loader import load_symbol_sentiment
-        frames = []
-        for sym in symbols:
-            df = load_symbol_sentiment(sym, engine, cfg.data)
-            if df is not None and not df.empty:
-                df["symbol"] = sym
-                frames.append(df)
-        return pd.concat(frames, ignore_index=True) if frames else None
+        from modelFactory.data_loader import load_symbols_sentiment
+        return load_symbols_sentiment(
+            engine,
+            symbols,
+            end_date=cfg.data.training_end_date,
+            start_date=cfg.data.training_start_date,
+        )
     except Exception:
         return None
 
@@ -822,15 +828,19 @@ def _load_universe(symbols: list[str], engine: Any) -> pd.DataFrame | None:
 
 
 def _load_selector_for_symbols(symbols: list[str], engine: Any, cfg: TrainingConfig) -> pd.DataFrame | None:
+    """Charge le contexte selector PIT-safe pour une liste de symboles.
+
+    Utilise load_symbols_selector_context (pluriel) pour charger toutes les
+    données en une seule requête SQL (plus efficace que N appels mono-symbole).
+    """
     try:
-        from modelFactory.data_loader import load_symbol_selector_context
-        frames = []
-        for sym in symbols:
-            df = load_symbol_selector_context(sym, engine, cfg)
-            if df is not None and not df.empty:
-                df["symbol"] = sym
-                frames.append(df)
-        return pd.concat(frames, ignore_index=True) if frames else None
+        from modelFactory.data_loader import load_symbols_selector_context
+        return load_symbols_selector_context(
+            engine,
+            symbols,
+            end_date=cfg.data.training_end_date,
+            start_date=cfg.data.training_start_date,
+        )
     except Exception:
         return None
 
