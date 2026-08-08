@@ -1944,19 +1944,35 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     )
     _render_reference_table("backfill")
 
+    from datetime import date as _date
+
     col1, col2, col3 = st.columns(3)
     with col1:
-        start = st.text_input(
+        start_default = _date.fromisoformat(
+            str(st.session_state.get("bt_backfill_start", "2015-01-01"))[:10]
+        )
+        start_picker = st.date_input(
             "Date de début du backfill",
-            value=cast(str, st.session_state.get("bt_backfill_start", "2020-01-01")),
+            value=start_default,
             key="bt_backfill_start",
-            help="Première séance à reconstruire au format YYYY-MM-DD.",
+            format="YYYY-MM-DD",
+            help="Première séance à reconstruire.",
         )
     with col2:
-        end = st.text_input(
+        end_raw = st.session_state.get("bt_backfill_end", "2026-06-30")
+        end_default: _date | None = None
+        if isinstance(end_raw, _date):
+            end_default = end_raw
+        elif isinstance(end_raw, str) and end_raw.strip():
+            try:
+                end_default = _date.fromisoformat(end_raw.strip()[:10])
+            except ValueError:
+                end_default = None
+        end_picker = st.date_input(
             "Date de fin du backfill",
-            value=cast(str, st.session_state.get("bt_backfill_end", "2025-12-31")),
+            value=end_default,
             key="bt_backfill_end",
+            format="YYYY-MM-DD",
             help="Laissez vide pour laisser le service résoudre la borne utile automatiquement.",
         )
     with col3:
@@ -2074,8 +2090,8 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     screener_workers = _parse_optional_int(screener_workers_raw, label="screener_workers")
 
     options = BackfillScoresHistoryOptions(
-        start=start.strip(),
-        end=end.strip() or None,
+        start=start_picker.isoformat(),
+        end=end_picker.isoformat() if isinstance(end_picker, _date) else None,
         capital=float(capital),
         capital_preset_key=None if selected_backfill_preset_key == CAPITAL_PRESET_CUSTOM else selected_backfill_preset_key,
         overwrite_existing=bool(overwrite_existing),
