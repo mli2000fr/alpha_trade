@@ -2087,29 +2087,48 @@ def upsert_global_ranks(
 
     from sqlalchemy import text as _text
 
+    _rank_cols = ["global_rank_3", "global_rank_5", "global_rank_10", "global_rank_15", "global_rank_20"]
+    # Filtrer aux colonnes qui existent réellement dans la table
+    _available_ranks: list[str] = []
+    try:
+        with engine.connect() as conn:
+            _table_cols = conn.execute(
+                _text("SELECT column_name FROM information_schema.columns WHERE table_name = 'global_rank_history'")
+            ).fetchall()
+            _existing = {row[0] for row in _table_cols}
+            for _rc in _rank_cols:
+                if _rc in _existing:
+                    _available_ranks.append(_rc)
+    except Exception:
+        _available_ranks = ["global_rank_3", "global_rank_5", "global_rank_10"]  # fallback
+
+    # Construire la requête SQL dynamiquement
+    _insert_cols = ["symbol", "date"] + _available_ranks + ["batch_id"]
+    _insert_placeholders = ", ".join(f":{c}" for c in _insert_cols)
+    _update_clauses = ", ".join(
+        f"{c} = VALUES({c})" for c in _available_ranks
+    )
     _sql = _text(
-        "INSERT INTO alpha_trade.global_rank_history "
-        "(symbol, date, global_rank_3, global_rank_5, global_rank_10, batch_id) "
-        "VALUES (:symbol, :date, :r3, :r5, :r10, :batch_id) "
-        "ON DUPLICATE KEY UPDATE "
-        "global_rank_3 = VALUES(global_rank_3), "
-        "global_rank_5 = VALUES(global_rank_5), "
-        "global_rank_10 = VALUES(global_rank_10), "
-        "created_at = CURRENT_TIMESTAMP"
+        f"INSERT INTO alpha_trade.global_rank_history "
+        f"({', '.join(_insert_cols)}) "
+        f"VALUES ({_insert_placeholders}) "
+        f"ON DUPLICATE KEY UPDATE "
+        f"{_update_clauses}, "
+        f"created_at = CURRENT_TIMESTAMP"
     )
 
     total = 0
     try:
         with engine.begin() as conn:
             for row in ranks:
-                conn.execute(_sql, {
+                _params: dict[str, Any] = {
                     "symbol": str(row["symbol"]),
                     "date": trade_date,
-                    "r3": float(row.get("global_rank_3")) if row.get("global_rank_3") is not None else None,
-                    "r5": float(row.get("global_rank_5")) if row.get("global_rank_5") is not None else None,
-                    "r10": float(row.get("global_rank_10")) if row.get("global_rank_10") is not None else None,
                     "batch_id": batch_id,
-                })
+                }
+                for _rc in _available_ranks:
+                    _params[_rc] = float(row.get(_rc)) if row.get(_rc) is not None else None
+                conn.execute(_sql, _params)
                 total += 1
     except Exception:
         LOGGER.exception("upsert_global_ranks: DB error for %s rows on %s", len(ranks), trade_date)
@@ -2445,10 +2464,12 @@ def load_global_ranks_from_db(
         LOGGER.warning("load_global_ranks_from_db: no ranks for %s / %s", trade_date, batch_id)
         return pd.DataFrame()
 
-    return pd.DataFrame(
-        [(r[0], r[1], r[2], r[3]) for r in rows],
-        columns=["symbol", "global_rank_3", "global_rank_5", "global_rank_10"],
-    )
+    # Construire le DataFrame dynamiquement depuis les colonnes disponibles
+    _cols = _available  # liste déterminée plus haut (ex: [symbol, global_rank_3, ...])
+    _data = []
+    for r in rows:
+        _data.append(tuple(r))
+    return pd.DataFrame(_data, columns=_cols)
 
 
 def _load_best_horizon_for_batch(batch_id: str, *, engine: Any | None = None) -> int | None:
