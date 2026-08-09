@@ -17,6 +17,7 @@ from typing import Literal
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
 from common.capital_presets import resolve_capital_preset_for_equity
 
+from database.selector_reference import normalize_symbol_source
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
@@ -1639,20 +1640,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     quotes_start_symbol = _normalize_optional_symbol(options.data_integrity_quotes_start_symbol)
     earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
     earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
-    quotes_symbol_source = {
-        "active_tradable": "active-tradable",
-        "stock_scores": "stock-scores",
-        "stock_scores_history": "stock-scores-history",
-        "stock_scores_all": "stock-scores-all",
-        "stock_bars_daily": "stock-bars-daily",
-    }.get(str(options.data_integrity_quotes_symbol_source or "").strip().lower(), None)
-    earnings_symbol_source = {
-        "active_tradable": "active-tradable",
-        "stock_scores": "stock-scores",
-        "stock_scores_history": "stock-scores-history",
-        "stock_scores_all": "stock-scores-all",
-        "stock_bars_daily": "stock-bars-daily",
-    }.get(str(options.data_integrity_earnings_symbol_source or "").strip().lower(), None)
+    quotes_symbol_source = normalize_symbol_source(options.data_integrity_quotes_symbol_source)
+    earnings_symbol_source = normalize_symbol_source(options.data_integrity_earnings_symbol_source)
     screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None
     screener_benchmark_symbol = _normalize_symbol(options.screener_benchmark_symbol, DEFAULT_SCREENER_BENCHMARK_SYMBOL)
     selector_max_workers = options.selector_max_workers if options.selector_max_workers and options.selector_max_workers > 0 else None
