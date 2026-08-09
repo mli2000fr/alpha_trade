@@ -1089,7 +1089,7 @@ stock_fundamentals_daily
 6. **`--include-sentiment` (F2)** n'apporte aucun gain mesurable sur les métriques.
 7. **Recommandation production** : `--target-excess-vs-spy --include-short-score` (F4). Option VIX3M (F7) si la stabilité H10 est prioritaire.
 
-### 11.3 Métriques finales — Global Ranking
+### 12.4 Métriques finales — Global Ranking
 
 #### Batch f82ab5 (2026-08-04, per-sector, 6 splits, 939 symboles) ⚠️ Actuel
 
@@ -1116,7 +1116,7 @@ stock_fundamentals_daily
 > 🔴 **Écart f82ab5 vs 7e4cf8** : IC global divisé par ~1.7 (0.0115 vs 0.0190). H15/H20 particulièrement touchés (÷2).
 > Hypothèses : splits effectifs (6 vs 8), univers élargi (939 vs 928), ou régression liée aux fixes data leakage.
 
-### 11.4 Leçons apprises
+### 12.5 Leçons apprises
 
 1. **Target sector-neutral** est le levier #1 (+84% IC). Sans cela, on fait du sector-riding, pas du stock-picking.
 2. **CatBoost RMSE > LightGBM LambdaRank** pour le ranking financier faible signal.
@@ -1131,50 +1131,96 @@ stock_fundamentals_daily
 11. **Target post-split** : l'unique source de leakage était le shift pré-split — corrigé, le pipeline est étanche.
 12. **8 splits > 13 splits** (post-leakage) : moins de chevauchement → meilleure généralisation, IC +40%.
 
+### 12.6 Audit Data Leakage (2026-08-01) — ✅ RÉSOLU
+
+**Conclusion** : Plus de data leakage. Le pipeline est étanche par construction.
+
+#### Historique du problème
+
+La target était pré-calculée sur `base_df` (toutes dates) **avant** les splits walk-forward.
+Le `shift(-horizon)` trouvait le close futur au-delà des frontières train/val → biais de ~33%
+sur l'IC global (0.0208 → 0.0139).
+
+| Étape | Approche | IC Global | Statut |
+|-------|----------|-----------|--------|
+| Original | purge=1j, target pré-split | 0.0208 | ❌ 33% leakage |
+| P0 | purge=20j, target pré-split | 0.0163 | 🟡 résiduel |
+| **P1** | **target post-split** (`_compute_ranking_targets` par fold) | **0.0139** | ✅ **étanche** |
+
+**P1** : la fonction `_compute_ranking_targets()` est appelée sur chaque fold isolément
+(train puis val) dans la boucle split/horizon. Le `shift(-h)` ne peut pas physiquement
+traverser les frontières car le DataFrame du fold ne contient pas les dates voisines.
+Purge = 1j (marge de sécurité résiduelle uniquement).
+
+#### 🟢 Composants vérifiés sans leakage (tous OK)
+
+| Composant | Méthode | Statut |
+|-----------|---------|--------|
+| Features OHLCV | `rolling`, `shift(N)` backward | ✅ |
+| Features cross-section | `groupby("date").rank(pct=True)` intra-date | ✅ |
+| Features macro | `ffill()` PIT-safe | ✅ |
+| Features fondamentales | `ffill()` par symbole, `trade_date ≤ date` | ✅ |
+| Features facteurs (CAPM) | Rolling 252j backward-only | ✅ |
+| Regime (bull/risk_off) | SMA/Std backward | ✅ |
+| Sector-neutral target | `groupby(["date","_sector"]).median()` intra-date | ✅ |
+| Factor-neutral target | OLS par date, résidus intra-date | ✅ |
+| XS rank features | `groupby("date").rank(pct=True)` intra-date | ✅ |
+| Sample weights | `exp(-days_diff/360)` dates train uniquement | ✅ |
+
 ---
 
-## 13. Questions / Réponses
+## 13. Stratégie d'exploitation (validée par backtest 2026-08-04, mise à jour 2026-08-09)
 
-### Q1 : Per-Symbol, Comment comparer réellement la performance entre le mode ternaire et le mode regression ?
+### 13.1 Principe : meilleur horizon automatique
 
-Les métriques des deux modes sont **directement comparables** car le F1 est calculé de la même façon dans les deux cas : par binarisation du signe. Cependant, il y a des pièges à éviter.
+Le **meilleur horizon** est déterminé automatiquement à l'entraînement (score composite 55/30/15,
+voir §3.8). La cascade de trading (`cascade_select`) lit `best_horizon` depuis le metadata
+du batch et l'utilise en priorité. Fallback H20 si indisponible.
 
-#### ⚠️ Ne pas utiliser `f1_macro` pour comparer
+| Horizon | Rôle |
+|---------|------|
+| **best_horizon** (ex: H15) | Filtre d'univers — top N% → quels titres acheter |
+| **Autres horizons** | Disponibles pour stratégies multi-horizons, monitoring |
 
-En mode regression, le F1 est calculé ainsi :
+> **H20 n'est plus imposé.** Si H15 a un meilleur IC+IR que H20, c'est H15 qui pilote la sélection.
 
+### 13.2 Résultats backtest Global Rank (batch f82ab5)
+
+| Variante | Score relatif vs V1 | Interprétation |
+|----------|---------------------|----------------|
+| **V1 — H20 seul** | 🏆 référence | Top 30% H20, 30 positions, rebalancement 20j |
+| V2 — H20 + H5 rising | −10.6% | Ajouter le momentum H5 dégrade |
+| V3 — H20 + H5 < 0.35 | −29.0% | Le setup contrarian H5 est clairement perdant |
+
+> **Conclusion** : H20 seul est la meilleure stratégie. H5 n'apporte aucune valeur ajoutée en sélection.
+> H5 est conservé uniquement comme signal de monitoring — une chute brutale (< 0.10) peut déclencher
+> une alerte de sortie, mais pas un signal d'entrée.
+
+### 13.3 Algorithme
+
+```python
+# Pour chaque date, pour chaque symbole :
+eligible = global_rank_20 > 0.70  # Top 30% H20
+# C'est tout. Pas de filtre H5.
 ```
-pred_side = sign(pred)      → +1 (long), -1 (short), 0 (flat)
-true_side = sign(target)    → +1, -1, 0  (target neutralisée ou brute selon le mode)
-```
 
-La target (neutralisée en per-sector, brute en per-symbol) a une distribution continue. Donc :
+### 13.4 Paramètres de backtest
 
-| Classe | Regression | Ternaire |
-|--------|-----------|----------|
-| `f1_long` | ✅ Comparable | ✅ Comparable |
-| `f1_short` | ✅ Comparable | ✅ Comparable |
-| `f1_flat` | ❌ Toujours ~0 | ✅ Peut être >0 |
-| `f1_macro` | ❌ Mécaniquement tiré vers le bas | ✅ Correct |
-
-→ **`f1_macro` est systématiquement plus bas en regression**, ce qui ne reflète pas une moins bonne performance mais un artefact de la binarisation.
-
-#### ✅ Métriques recommandées pour la comparaison
-
-| Métrique | Signification | Disponible |
-|----------|--------------|------------|
-| **`f1_long`** | Capacité à identifier les jours haussiers | LSTM + baselines |
-| **`f1_short`** | Capacité à identifier les jours baissiers | LSTM + baselines |
-| **`directional_accuracy`** | % de jours où sign(pred) = sign(target) | LSTM + baselines |
-| **`ic`** (Information Coefficient) | Corrélation prédiction vs rendement futur | LSTM + baselines |
+| Paramètre | Valeur |
+|-----------|--------|
+| Univers éligible | Top 30% H20 |
+| Rebalancement | Toutes les 3-4 semaines |
+| Frais A/R estimés | 0.25-0.30% par trade |
+| Turnover cible | < 50% par mois |
+| **H5** | Monitoring uniquement (alerte si < 0.10) |
 
 ---
 
-## 15. Gestion du Risque Multi-Horizon (V1 / V2)
+## 14. Gestion du Risque Multi-Horizon (V1 / V2)
 
 > **Ajouté le 2026-08-09** — Aligne les stops et take-profits sur l'horizon de prédiction.
 
-### 15.1 Problème initial
+### 14.1 Problème initial
 
 Avant V1, le système utilisait des paramètres de risque **identiques pour tous les horizons** :
 
@@ -1186,7 +1232,7 @@ Avant V1, le système utilisait des paramètres de risque **identiques pour tous
 
 **Exemple concret du bug** : pour AAPL (ATR=1.5%, prix=$200), le R/R était de 12/3=4.0. Pour TSLA (ATR=4%, prix=$250), le R/R chutait à 12/8=1.5. Le R/R dépendait du ticker, pas de la stratégie.
 
-### 15.2 Architecture cible
+### 14.2 Architecture cible
 
 ```mermaid
 flowchart TD
@@ -1199,7 +1245,7 @@ flowchart TD
     D1 --> F[Bracket orders: TP limit + SL stop]
 ```
 
-### 15.3 V1 — Implémenté ✅ (2026-08-09)
+### 14.3 V1 — Implémenté ✅ (2026-08-09)
 
 **Stop-loss et Take-profit fixes par horizon.** Les valeurs sont des plafonds de sécurité, pas des cibles dynamiques.
 
@@ -1265,7 +1311,7 @@ risk_management/cli.py
   └─ Fallback H10 si batch_id indisponible
 ```
 
-### 15.4 V2 — Planifié (non implémenté)
+### 14.4 V2 — Planifié (non implémenté)
 
 **Take-profit dynamique basé sur le rendement prédit par le ML.**
 
@@ -1302,7 +1348,7 @@ AAPL, H10, predicted_return = +5.2%, ATR = 2.1% :
 | 5 | **Backtest V1 vs V2** | Comparer expectancy, profit factor, win rate, % TP atteint, % SL atteint. Ajuster les multiples. |
 | 6 | **Migration DB** | Ajouter `predicted_return_3/5/10/15/20` à `global_rank_history`. |
 
-### 15.5 Validation
+### 14.5 Validation
 
 Les valeurs V1 (stops 1.5–3.5× ATR, TP 3–13%) sont des **points de départ conservateurs**. Elles doivent être validées par backtest en mesurant :
 
@@ -1314,6 +1360,47 @@ Les valeurs V1 (stops 1.5–3.5× ATR, TP 3–13%) sont des **points de départ 
 - Performance par horizon et par régime de marché
 
 Les valeurs finales seront déterminées empiriquement.
+
+---
+
+
+## 15. Questions / Réponses
+
+### Q1 : Per-Symbol, Comment comparer réellement la performance entre le mode ternaire et le mode regression ?
+
+Les métriques des deux modes sont **directement comparables** car le F1 est calculé de la même façon dans les deux cas : par binarisation du signe. Cependant, il y a des pièges à éviter.
+
+#### ⚠️ Ne pas utiliser `f1_macro` pour comparer
+
+En mode regression, le F1 est calculé ainsi :
+
+```
+pred_side = sign(pred)      → +1 (long), -1 (short), 0 (flat)
+true_side = sign(target)    → +1, -1, 0  (target neutralisée ou brute selon le mode)
+```
+
+La target (neutralisée en per-sector, brute en per-symbol) a une distribution continue. Donc :
+
+| Classe | Regression | Ternaire |
+|--------|-----------|----------|
+| `f1_long` | ✅ Comparable | ✅ Comparable |
+| `f1_short` | ✅ Comparable | ✅ Comparable |
+| `f1_flat` | ❌ Toujours ~0 | ✅ Peut être >0 |
+| `f1_macro` | ❌ Mécaniquement tiré vers le bas | ✅ Correct |
+
+→ **`f1_macro` est systématiquement plus bas en regression**, ce qui ne reflète pas une moins bonne performance mais un artefact de la binarisation.
+
+#### ✅ Métriques recommandées pour la comparaison
+
+| Métrique | Signification | Disponible |
+|----------|--------------|------------|
+| **`f1_long`** | Capacité à identifier les jours haussiers | LSTM + baselines |
+| **`f1_short`** | Capacité à identifier les jours baissiers | LSTM + baselines |
+| **`directional_accuracy`** | % de jours où sign(pred) = sign(target) | LSTM + baselines |
+| **`ic`** (Information Coefficient) | Corrélation prédiction vs rendement futur | LSTM + baselines |
+
+---
+
 | **`mse`** / **`mae`** | Erreur de prédiction absolue | Regression seulement |
 | **`correlation`** | Corrélation pred vs target continue | Regression seulement |
 
@@ -1521,89 +1608,6 @@ Et surtout : **F1 train ≈ F1 val ≈ F1 test ≈ F1 WF** (pas d'effondrement).
 15. **Pas besoin de retester les 18 pistes** : le leakage était proportionnel (33% constant). Les classements relatifs tiennent. Seuls smoothing, splits et LambdaRank interagissaient avec le mécanisme de leakage.
 16. **Z-score fondamentales** : stabilise H15/H20 (IR +54%), léger trade-off sur H5.
 17. **Blending inutile** : horizons trop corrélés, ne dépasse pas le meilleur horizon individuel.
-
-### 11.5 Audit Data Leakage (2026-08-01) — ✅ RÉSOLU
-
-**Conclusion** : Plus de data leakage. Le pipeline est étanche par construction.
-
-#### Historique du problème
-
-La target était pré-calculée sur `base_df` (toutes dates) **avant** les splits walk-forward.
-Le `shift(-horizon)` trouvait le close futur au-delà des frontières train/val → biais de ~33%
-sur l'IC global (0.0208 → 0.0139).
-
-| Étape | Approche | IC Global | Statut |
-|-------|----------|-----------|--------|
-| Original | purge=1j, target pré-split | 0.0208 | ❌ 33% leakage |
-| P0 | purge=20j, target pré-split | 0.0163 | 🟡 résiduel |
-| **P1** | **target post-split** (`_compute_ranking_targets` par fold) | **0.0139** | ✅ **étanche** |
-
-**P1** : la fonction `_compute_ranking_targets()` est appelée sur chaque fold isolément
-(train puis val) dans la boucle split/horizon. Le `shift(-h)` ne peut pas physiquement
-traverser les frontières car le DataFrame du fold ne contient pas les dates voisines.
-Purge = 1j (marge de sécurité résiduelle uniquement).
-
-#### 🟢 Composants vérifiés sans leakage (tous OK)
-
-| Composant | Méthode | Statut |
-|-----------|---------|--------|
-| Features OHLCV | `rolling`, `shift(N)` backward | ✅ |
-| Features cross-section | `groupby("date").rank(pct=True)` intra-date | ✅ |
-| Features macro | `ffill()` PIT-safe | ✅ |
-| Features fondamentales | `ffill()` par symbole, `trade_date ≤ date` | ✅ |
-| Features facteurs (CAPM) | Rolling 252j backward-only | ✅ |
-| Regime (bull/risk_off) | SMA/Std backward | ✅ |
-| Sector-neutral target | `groupby(["date","_sector"]).median()` intra-date | ✅ |
-| Factor-neutral target | OLS par date, résidus intra-date | ✅ |
-| XS rank features | `groupby("date").rank(pct=True)` intra-date | ✅ |
-| Sample weights | `exp(-days_diff/360)` dates train uniquement | ✅ |
-
----
-
-## 14. Stratégie d'exploitation (validée par backtest 2026-08-04, mise à jour 2026-08-09)
-
-### 14.1 Principe : meilleur horizon automatique
-
-Le **meilleur horizon** est déterminé automatiquement à l'entraînement (score composite 55/30/15,
-voir §3.8). La cascade de trading (`cascade_select`) lit `best_horizon` depuis le metadata
-du batch et l'utilise en priorité. Fallback H20 si indisponible.
-
-| Horizon | Rôle |
-|---------|------|
-| **best_horizon** (ex: H15) | Filtre d'univers — top N% → quels titres acheter |
-| **Autres horizons** | Disponibles pour stratégies multi-horizons, monitoring |
-
-> **H20 n'est plus imposé.** Si H15 a un meilleur IC+IR que H20, c'est H15 qui pilote la sélection.
-
-### 14.2 Résultats backtest Global Rank (batch f82ab5)
-
-| Variante | Score relatif vs V1 | Interprétation |
-|----------|---------------------|----------------|
-| **V1 — H20 seul** | 🏆 référence | Top 30% H20, 30 positions, rebalancement 20j |
-| V2 — H20 + H5 rising | −10.6% | Ajouter le momentum H5 dégrade |
-| V3 — H20 + H5 < 0.35 | −29.0% | Le setup contrarian H5 est clairement perdant |
-
-> **Conclusion** : H20 seul est la meilleure stratégie. H5 n'apporte aucune valeur ajoutée en sélection.
-> H5 est conservé uniquement comme signal de monitoring — une chute brutale (< 0.10) peut déclencher
-> une alerte de sortie, mais pas un signal d'entrée.
-
-### 14.3 Algorithme
-
-```python
-# Pour chaque date, pour chaque symbole :
-eligible = global_rank_20 > 0.70  # Top 30% H20
-# C'est tout. Pas de filtre H5.
-```
-
-### 14.4 Paramètres de backtest
-
-| Paramètre | Valeur |
-|-----------|--------|
-| Univers éligible | Top 30% H20 |
-| Rebalancement | Toutes les 3-4 semaines |
-| Frais A/R estimés | 0.25-0.30% par trade |
-| Turnover cible | < 50% par mois |
-| **H5** | Monitoring uniquement (alerte si < 0.10) |
 
 ---
 
