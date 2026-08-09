@@ -1002,6 +1002,26 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.metric("📈 IC IR (Stabilité)", f"{_ic_ir:.2f}",
                       help="IC Information Ratio = IC Mean / IC Std. >0.5 = bon, >1.0 = exceptionnel. "
                            "Mesure la stabilité du signal dans le temps.")
+        # 🏆 Champion Global Model (par horizon)
+        _meta_raw = row.get("metadata_json")
+        if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
+            try:
+                import json as _json2
+                _meta = _json2.loads(str(_meta_raw))
+                _gr = _meta.get("global_ranking") if isinstance(_meta, dict) else None
+                _champ_by_h = _gr.get("champion_by_horizon") if isinstance(_gr, dict) else None
+                if _champ_by_h and isinstance(_champ_by_h, dict) and _champ_by_h:
+                    from collections import Counter
+                    _cnt = Counter(_champ_by_h.values())
+                    _majority = _cnt.most_common(1)[0][0]
+                    _h_detail = ", ".join(f"H{k}={v}" for k, v in sorted(_champ_by_h.items(), key=lambda x: int(x[0])))
+                    st.metric(
+                        "🏆 Champion Global",
+                        f"{_majority} ({_h_detail})",
+                        help=f"Champion du Global Ranking par horizon (score composite 60% IC + 40% IR). Modèle majoritaire : {_majority}.",
+                    )
+            except Exception:
+                pass
         # Stacking Global Rank
         _stacking_val = row.get("stacking_enabled")
         if _stacking_val is not None:
@@ -1571,8 +1591,27 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
         return
 
     st.subheader("🌐 Global Ranking — Détails par Horizon")
+
+    # ── Infos modèle (champion ou fixe) ──
+    _model_label = "CatBoost"  # fallback
+    _champion_by_h = _gr.get("champion_by_horizon")
+    # Fallback: reconstruire champion_by_horizon depuis horizon_details si absent (bug orchestrator)
+    if (not _champion_by_h or not isinstance(_champion_by_h, dict)) and _hd:
+        _rebuilt: dict[str, str] = {}
+        for _hk, _hi in _hd.items():
+            if isinstance(_hi, dict) and _hi.get("champion"):
+                _rebuilt[str(_hk)] = str(_hi["champion"])
+        if _rebuilt:
+            _champion_by_h = _rebuilt
+    _has_champion = bool(_champion_by_h and isinstance(_champion_by_h, dict) and _champion_by_h)
+    if _has_champion:
+        from collections import Counter
+        _counts = Counter(_champion_by_h.values())
+        _majority = _counts.most_common(1)[0][0]
+        _h_detail = ", ".join(f"H{k}={v}" for k, v in sorted(_champion_by_h.items(), key=lambda x: int(x[0])))
+        _model_label = f"🏆 Champion: {_majority} ({_h_detail})"
     st.caption(
-        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle {_model_label} — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )
@@ -1593,30 +1632,69 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             _arr = np.array(_split_ics, dtype=float)
             if _arr.std() > 0:
                 _h_ic_ir = float(_arr.mean() / _arr.std())
-        _summary_rows.append({
+        _row: dict = {
             "Horizon": f"H{_h_key}",
             "IC Mean": _h_ic,
             "IC IR": round(_h_ic_ir, 2) if _h_ic_ir is not None else "—",
             "Decile Spread": _ds_by_h.get(_h_key),
             "Nb Features": _h_info.get("n_features", "—"),
             "Nb Splits": len(_h_info.get("splits", [])),
-        })
+        }
+        if _has_champion:
+            _row["🏆 Champion"] = str(_champion_by_h.get(_h_key, "—"))
+            _candidates = _h_info.get("candidates", {})
+            for _cn, _cdata in sorted((_candidates or {}).items()):
+                if isinstance(_cdata, dict):
+                    _ic_val = _cdata.get("ic_mean")
+                    _ir_val = _cdata.get("ic_ir")
+                    _row[f"IC {_cn}"] = f"{_ic_val:.4f}" if _ic_val is not None else "—"
+                    _row[f"IR {_cn}"] = f"{_ir_val:.2f}" if _ir_val is not None else "—"
+        _summary_rows.append(_row)
 
     if _summary_rows:
         _sum_df = pd.DataFrame(_summary_rows)
+        _col_config: dict = {
+            "Horizon": "Horizon",
+            "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
+            "IC IR": "📈 IC IR",
+            "Decile Spread": st.column_config.NumberColumn("📊 Decile Spread", format="%.4f"),
+            "Nb Features": "Nb Features",
+            "Nb Splits": "Nb Splits",
+        }
+        if _has_champion:
+            _col_config["🏆 Champion"] = "🏆 Champion"
+            if "IC lightgbm" in _sum_df.columns:
+                _col_config["IC lightgbm"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
+            if "IC catboost" in _sum_df.columns:
+                _col_config["IC catboost"] = st.column_config.NumberColumn("IC CatBoost", format="%.4f")
+            if "IR lightgbm" in _sum_df.columns:
+                _col_config["IR lightgbm"] = st.column_config.NumberColumn("IR LightGBM", format="%.2f")
+            if "IR catboost" in _sum_df.columns:
+                _col_config["IR catboost"] = st.column_config.NumberColumn("IR CatBoost", format="%.2f")
         st.dataframe(
             _sum_df,
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "Horizon": "Horizon",
-                "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
-                "IC IR": "📈 IC IR",
-                "Decile Spread": st.column_config.NumberColumn("📊 Decile Spread", format="%.4f"),
-                "Nb Features": "Nb Features",
-                "Nb Splits": "Nb Splits",
-            },
+            column_config=_col_config,
         )
+        # ── Meilleur horizon (calculé à l'entraînement) ──
+        _best_h = _gr.get("best_horizon")
+        if _best_h is not None:
+            st.success(
+                f"🏆 **Meilleur horizon : H{_best_h}** — sélectionné par score composite "
+                f"55% IC + 30% IR + 15% Positive Split"
+            )
+        elif _has_champion and _champion_by_h:
+            # Fallback : si best_horizon absent mais champions présents
+            # On utilise IC Mean du champion pour estimer le meilleur horizon
+            _best_h_fallback = max(_champion_by_h.items(), key=lambda x: (
+                float((_ic_by_h.get(str(x[0]), 0)) or 0)
+            ))[0] if _champion_by_h else None
+            if _best_h_fallback is not None:
+                st.info(
+                    f"ℹ️ **Meilleur horizon estimé : H{_best_h_fallback}** "
+                    f"(IC max — best_horizon non disponible dans metadata)"
+                )
 
     # ── Détail par horizon (expander) ──
     for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
@@ -1626,10 +1704,31 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
         _ic_color = "🟢" if _ic_val and _ic_val >= 0.02 else ("🟡" if _ic_val and _ic_val >= 0.01 else "🔴")
         _ds_color = "🟢" if _ds_val and _ds_val >= 0.01 else ("🟡" if _ds_val and _ds_val >= 0.005 else "🔴")
 
+        # Modèle champion pour cet horizon
+        _h_champion = _champion_by_h.get(_h_key) if _has_champion else None
+        _champion_tag = f" | 🏆 {_h_champion}" if _h_champion else ""
+
         with st.expander(
-            f"H{_h_key}  |  {_ic_color} IC Rank: {_ic_val:.4f}  |  {_ds_color} Decile Spread: {_ds_val:.4f}  |  {_h_info.get('n_features', '—')} features",
+            f"H{_h_key}{_champion_tag}  |  {_ic_color} IC Rank: {_ic_val:.4f}  |  {_ds_color} Decile Spread: {_ds_val:.4f}  |  {_h_info.get('n_features', '—')} features",
             expanded=False,
         ):
+            # ── Champion info si mode champion ──
+            if _h_champion:
+                _champ_data = _h_info.get("candidates", {}).get(_h_champion, {})
+                _champ_ic = _champ_data.get("ic_mean") if isinstance(_champ_data, dict) else None
+                _champ_ir = _champ_data.get("ic_ir") if isinstance(_champ_data, dict) else None
+                _champ_score = _h_info.get("champion_score")
+                _sel_metric = _h_info.get("selection_metric", "—")
+                _parts = [f"🏆 **Champion : {_h_champion}**"]
+                if _champ_ic is not None:
+                    _parts.append(f"IC = {_champ_ic:.4f}")
+                if _champ_ir is not None:
+                    _parts.append(f"IR = {_champ_ir:.2f}")
+                if _champ_score is not None:
+                    _parts.append(f"Score = {_champ_score:.3f}")
+                _parts.append(f"Métrique : {_sel_metric}")
+                st.caption(" | ".join(_parts))
+
             # ── Feature Importance Top10 / Bottom10 ──
             _fi_top10 = _h_info.get("feature_importance_top10", [])
             _fi_bottom10 = _h_info.get("feature_importance_bottom10", [])
@@ -1668,34 +1767,51 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             # ── Tableau des splits ──
             _splits = _h_info.get("splits", [])
             if _splits:
-                st.markdown("**📅 Détail par split**")
+                _champ_label = f" — 🏆 {_h_champion}" if _h_champion else ""
+                st.markdown(f"**📅 Détail par split{_champ_label}**")
+                # Détecter si le mode champion est actif
+                _has_split_champion = any(
+                    k.startswith("ic_rank_") and k != "ic_rank"
+                    for _sp in _splits for k in (_sp or {}).keys()
+                )
+                # Nom de la colonne IC Rank : inclure le champion si connu
+                _ic_col = f"IC Rank ({_h_champion})" if _h_champion else "IC Rank"
                 _split_rows: list[dict] = []
                 for _sp in _splits:
                     _train_start = str(_sp.get("train_period_start", ""))[:10] if _sp.get("train_period_start") else "—"
                     _train_end = str(_sp.get("train_period_end", ""))[:10] if _sp.get("train_period_end") else "—"
                     _val_start = str(_sp.get("val_period_start", ""))[:10] if _sp.get("val_period_start") else "—"
                     _val_end = str(_sp.get("val_period_end", ""))[:10] if _sp.get("val_period_end") else "—"
-                    _split_rows.append({
+                    _row = {
                         "Split": _sp.get("split_index", "—"),
                         "Train (début→fin)": f"{_train_start} → {_train_end}",
                         "Validation (début→fin)": f"{_val_start} → {_val_end}",
                         "Lignes Train": _sp.get("train_rows", "—"),
                         "Lignes Val": _sp.get("val_rows", "—"),
-                        "IC Rank": _sp.get("ic_rank"),
-                    })
+                        _ic_col: _sp.get("ic_rank"),
+                    }
+                    if _has_split_champion:
+                        _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")
+                        _row["IC CatBoost"] = _sp.get("ic_rank_catboost")
+                    _split_rows.append(_row)
                 _sp_df = pd.DataFrame(_split_rows)
+                _ic_label = f"🎯 {_ic_col}"
+                _sp_col_config: dict = {
+                    "Split": st.column_config.NumberColumn("Split", format="%d"),
+                    "Train (début→fin)": "Période Train",
+                    "Validation (début→fin)": "Période Validation",
+                    "Lignes Train": st.column_config.NumberColumn("Lignes Train", format="%d"),
+                    "Lignes Val": st.column_config.NumberColumn("Lignes Val", format="%d"),
+                    _ic_col: st.column_config.NumberColumn(_ic_label, format="%.4f"),
+                }
+                if _has_split_champion:
+                    _sp_col_config["IC LightGBM"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
+                    _sp_col_config["IC CatBoost"] = st.column_config.NumberColumn("IC CatBoost", format="%.4f")
                 st.dataframe(
                     _sp_df,
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "Split": st.column_config.NumberColumn("Split", format="%d"),
-                        "Train (début→fin)": "Période Train",
-                        "Validation (début→fin)": "Période Validation",
-                        "Lignes Train": st.column_config.NumberColumn("Lignes Train", format="%d"),
-                        "Lignes Val": st.column_config.NumberColumn("Lignes Val", format="%d"),
-                        "IC Rank": st.column_config.NumberColumn("🎯 IC Rank", format="%.4f"),
-                    },
+                    column_config=_sp_col_config,
                 )
 
             # ── Métriques par split (mini-distribution) ──

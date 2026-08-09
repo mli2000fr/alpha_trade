@@ -1185,6 +1185,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Alimente uniquement tradable_universe_runs + tradable_universe_history depuis stock_scores_history existant (pas de recalcul screener/selector).",
     )
+    backfill_p.add_argument(
+        "--symbol-source",
+        default="ticket-recherche",
+        help="Source de l'univers des symboles à scorer (tradable-universe, stock-bars-daily, ticket-recherche). "
+             "Défaut: ticket-recherche (config/ticket_recherche.txt).",
+    )
 
     # --- diagnose-screener ---
     diag_p = sub.add_parser(
@@ -3294,6 +3300,7 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
         screener_max_workers=args.screener_workers,
         capital_preset_key=effective_preset.key,
         config_fingerprint=preset_fingerprint,
+        symbol_source=getattr(args, "symbol_source", None),
     )
 
     if getattr(args, "universe_only", False):

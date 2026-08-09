@@ -256,6 +256,7 @@ def _prepare_global_ranking_frame(
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_score_components=cfg.data.include_score_components,
     )
     if cfg.data.enable_cross_sectional_features and cross_sectional_df is not None:
         df = merge_cross_sectional_features(df, cross_sectional_df)
@@ -520,51 +521,82 @@ def _build_ranking_estimator(
     resolved_seed: int,
 ) -> tuple[str, Any]:
     """Construit l'estimateur de ranking (LightGBM ou CatBoost en régression)."""
-    model_name = cfg.global_model.model_name
-    if model_name == "catboost":
-        try:
+    return _build_ranking_estimators(cfg, resolved_seed=resolved_seed, model_names=None)[0]
+
+
+def _build_ranking_estimators(
+    cfg: TrainingConfig,
+    *,
+    resolved_seed: int,
+    model_names: list[str] | None = None,
+) -> list[tuple[str, Any]]:
+    """Construit un ou plusieurs estimateurs de ranking.
+
+    Args:
+        cfg: Configuration d'entraînement.
+        resolved_seed: Graine résolue pour la reproductibilité.
+        model_names: Liste de noms de modèles à construire.
+            None → [cfg.global_model.model_name] (mode single).
+            ["lightgbm", "catboost"] → les deux (mode champion).
+
+    Returns:
+        Liste de (model_name, estimator). Ordre déterministe.
+    """
+    if model_names is None:
+        model_names = [cfg.global_model.model_name]
+
+    estimators: list[tuple[str, Any]] = []
+    for model_name in model_names:
+        _name = model_name
+        _rebuilt = False
+        if _name == "catboost":
+            try:
+                CatBoostRegressor = _import_catboost()
+            except ImportError:
+                LOGGER.warning("CatBoost indisponible pour global ranking → fallback LightGBM")
+                _name = "lightgbm"
+                _rebuilt = True
+
+        if _name == "lightgbm":
+            lgb_mod = _import_lightgbm()
+            estimators.append(("lightgbm", lgb_mod.LGBMRanker(
+                objective="lambdarank",
+                label_gain=list(range(10)),
+                max_depth=cfg.global_model.ranking_max_depth,
+                num_leaves=cfg.global_model.ranking_num_leaves,
+                n_estimators=cfg.baseline.n_estimators,
+                learning_rate=cfg.baseline.learning_rate,
+                random_state=resolved_seed,
+                verbosity=-1,
+                reg_alpha=cfg.baseline.lgbm_reg_alpha,
+                reg_lambda=cfg.baseline.lgbm_reg_lambda,
+                min_child_samples=cfg.baseline.lgbm_min_child_samples,
+                subsample=cfg.baseline.lgbm_subsample,
+                colsample_bytree=cfg.baseline.lgbm_colsample_bytree,
+            )))
+            if _rebuilt:
+                # CatBoost fallback → ne pas ajouter une deuxième fois lightgbm
+                continue
+        else:
             CatBoostRegressor = _import_catboost()
-        except ImportError:
-            LOGGER.warning("CatBoost indisponible pour global ranking → fallback LightGBM")
-            model_name = "lightgbm"
-    if model_name == "lightgbm":
-        lgb = _import_lightgbm()
-        return "lightgbm", lgb.LGBMRanker(
-            objective="lambdarank",
-            label_gain=list(range(10)),  # gain linéaire 0..9 (déciles, 2026-08-01: retour après test vingtiles)
-            max_depth=cfg.global_model.ranking_max_depth,
-            num_leaves=cfg.global_model.ranking_num_leaves,
-            n_estimators=cfg.baseline.n_estimators,
-            learning_rate=cfg.baseline.learning_rate,
-            random_state=resolved_seed,
-            verbosity=-1,
-            reg_alpha=cfg.baseline.lgbm_reg_alpha,
-            reg_lambda=cfg.baseline.lgbm_reg_lambda,
-            min_child_samples=cfg.baseline.lgbm_min_child_samples,
-            subsample=cfg.baseline.lgbm_subsample,
-            colsample_bytree=cfg.baseline.lgbm_colsample_bytree,
-        )
-    else:
-        CatBoostRegressor = _import_catboost()
-        # P1-4 fix (2026-08-04) : utiliser les params dédiés du GlobalModelConfig
-        # pour l'itération et le learning rate, pas ceux du BaselineConfig.
-        _cb_depth = cfg.global_model.ranking_max_depth
-        _cb_iterations = cfg.global_model.ranking_catboost_iterations
-        _cb_lr = cfg.global_model.ranking_catboost_learning_rate
-        return "catboost", CatBoostRegressor(
-            depth=_cb_depth,
-            iterations=_cb_iterations,
-            learning_rate=_cb_lr,
-            random_seed=resolved_seed,
-            loss_function="RMSE",
-            verbose=False,
-            l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
-            border_count=cfg.baseline.catboost_border_count,
-            random_strength=cfg.baseline.catboost_random_strength,
-            bagging_temperature=cfg.baseline.catboost_bagging_temperature,
-            od_type=cfg.baseline.catboost_od_type,
-            od_wait=cfg.baseline.catboost_od_wait,
-        )
+            _cb_depth = cfg.global_model.ranking_max_depth
+            _cb_iterations = cfg.global_model.ranking_catboost_iterations
+            _cb_lr = cfg.global_model.ranking_catboost_learning_rate
+            estimators.append(("catboost", CatBoostRegressor(
+                depth=_cb_depth,
+                iterations=_cb_iterations,
+                learning_rate=_cb_lr,
+                random_seed=resolved_seed,
+                loss_function="RMSE",
+                verbose=False,
+                l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
+                border_count=cfg.baseline.catboost_border_count,
+                random_strength=cfg.baseline.catboost_random_strength,
+                bagging_temperature=cfg.baseline.catboost_bagging_temperature,
+                od_type=cfg.baseline.catboost_od_type,
+                od_wait=cfg.baseline.catboost_od_wait,
+            )))
+    return estimators
 
 
 def _compute_ranking_targets(
@@ -1023,21 +1055,35 @@ def train_global_ranking_wf(
             LOGGER.info("global_ranking_wf horizon=3: fundamental features excluded (%d → %d features)",
                         len(feature_columns), len(_active_features))
 
+        # ── Déterminer les candidats à entraîner pour cet horizon ──
+        _champion_mode = cfg.global_model.champion_enabled
+        _candidate_names: list[str]
+        if _champion_mode:
+            _candidate_names = ["lightgbm", "catboost"]
+            LOGGER.info("global_ranking_wf horizon=%d champion_mode=ON candidates=%s", horizon, _candidate_names)
+        else:
+            _candidate_names = [cfg.global_model.model_name]
+
+        LOGGER.info(
+            "global_ranking_wf horizon=%d ⏳ starting — %d splits × %d candidates, %d features",
+            horizon, len(wf_splits), len(_candidate_names), len(_active_features),
+        )
+
+        # ── Suivi des IC par candidat (pour sélection champion) ──
+        _candidate_ics: dict[str, list[float]] = {_cn: [] for _cn in _candidate_names}
+        _candidate_parts: dict[str, list[pd.DataFrame]] = {_cn: [] for _cn in _candidate_names}
+        _candidate_last_model: dict[str, Any] = {}
+        _candidate_last_name: dict[str, str] = {}
+        _candidate_importances: dict[str, list[dict[str, float]]] = {_cn: [] for _cn in _candidate_names}
+
         for split in wf_splits:
             split_seed = derive_seed(resolved_seed, split.split_index)
             apply_reproducibility(
                 ReproducibilityConfig(seed=split_seed, deterministic=cfg.reproducibility.deterministic),
                 context=f"global_ranking_wf:split_{split.split_index}:h{horizon}",
             )
-            try:
-                backend_model_name, model = _build_ranking_estimator(cfg, resolved_seed=split_seed)
-            except ImportError:
-                return {"status": "unavailable", "reason": f"{cfg.global_model.model_name}_not_installed"}
 
             # ── P1 : calculer les targets sur les folds isolés (étanche) ──
-            # Pour les horizons lissés (10,15,20), on a besoin des 3 horizons
-            # simultanément (le smoothing fait la moyenne).  Pour H3/H5, on
-            # ne calcule que l'horizon courant.
             _target_horizons = _SMOOTHING_HORIZONS if horizon in _SMOOTHING_HORIZONS else (horizon,)
             _train_with_targets = _compute_ranking_targets(
                 split.train,
@@ -1053,36 +1099,31 @@ def train_global_ranking_wf(
                 factor_cols=_factor_cols,
                 sector_map=_sector_map,
             )
-            train_df = _train_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
-            val_df = _val_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
-            if train_df.empty or val_df.empty:
+            _train_orig = _train_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
+            _val_orig = _val_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
+            if _train_orig.empty or _val_orig.empty:
                 continue
 
             # ── P1-6 (2026-08-04) : filtre liquidité + disponibilité par fold ──
-            # Le filtre global utilise end_date=training_end_date → biais de sélection.
-            # Dans CE fold, on refiltre : volume suffisant DANS la période de train du fold.
             _total_syms = len(symbols)
-            if cfg.data.enable_liquidity_filter and "date" in train_df.columns and "symbol" in train_df.columns and "volume" in train_df.columns:
-                # Disponibilité : ≥ min_train_dates/2 sessions dans le train du fold
-                _sym_sessions = train_df.groupby("symbol")["date"].nunique()
+            if cfg.data.enable_liquidity_filter and "date" in _train_orig.columns and "symbol" in _train_orig.columns and "volume" in _train_orig.columns:
+                _sym_sessions = _train_orig.groupby("symbol")["date"].nunique()
                 _min_sessions = max(cfg.walk_forward.min_train_size // 2, 60)
                 _eligible_sessions = set(_sym_sessions[_sym_sessions >= _min_sessions].index)
-                # Liquidité : volume quotidien moyen ≥ seuil DANS le train du fold
-                _sym_vol = train_df.groupby("symbol")["volume"].mean()
+                _sym_vol = _train_orig.groupby("symbol")["volume"].mean()
                 _min_vol = cfg.data.liquidity_min_avg_volume_20d if hasattr(cfg.data, "liquidity_min_avg_volume_20d") else 50000
                 _eligible_vol = set(_sym_vol[_sym_vol >= _min_vol].index)
                 _eligible = _eligible_sessions & _eligible_vol
-                _excluded = (set(train_df["symbol"].unique()) | set(val_df["symbol"].unique())) - _eligible
+                _excluded = (set(_train_orig["symbol"].unique()) | set(_val_orig["symbol"].unique())) - _eligible
                 if _excluded:
                     LOGGER.info(
                         "global_ranking_wf fold=%d: %d symbols excluded (low vol or sessions in train period)",
                         split.split_index + 1, len(_excluded),
                     )
-                    train_df = train_df[train_df["symbol"].isin(_eligible)]
-                    val_df = val_df[val_df["symbol"].isin(_eligible)]
-            # Recalculer APRES filtrage pour refléter le panel réel
-            _train_syms = train_df["symbol"].nunique() if "symbol" in train_df.columns else 0
-            _val_syms = val_df["symbol"].nunique() if "symbol" in val_df.columns else 0
+                    _train_orig = _train_orig[_train_orig["symbol"].isin(_eligible)]
+                    _val_orig = _val_orig[_val_orig["symbol"].isin(_eligible)]
+            _train_syms = _train_orig["symbol"].nunique() if "symbol" in _train_orig.columns else 0
+            _val_syms = _val_orig["symbol"].nunique() if "symbol" in _val_orig.columns else 0
             LOGGER.info(
                 "global_ranking_wf fold=%d symbols train=%d/%d val=%d/%d (%.0f%% of universe)",
                 split.split_index + 1, _train_syms, _total_syms, _val_syms, _total_syms,
@@ -1097,8 +1138,8 @@ def train_global_ranking_wf(
                 )
 
             # ── Périodes des splits (diagnostic régime de marché) ──
-            _train_dates = pd.to_datetime(train_df["date"]) if "date" in train_df.columns else None
-            _val_dates = pd.to_datetime(val_df["date"]) if "date" in val_df.columns else None
+            _train_dates = pd.to_datetime(_train_orig["date"]) if "date" in _train_orig.columns else None
+            _val_dates = pd.to_datetime(_val_orig["date"]) if "date" in _val_orig.columns else None
             if _train_dates is not None and _val_dates is not None:
                 LOGGER.info(
                     "global_ranking_wf horizon=%d split=%d/%d train_period=%s→%s val_period=%s→%s",
@@ -1107,105 +1148,134 @@ def train_global_ranking_wf(
                     _val_dates.min().strftime("%Y-%m-%d"), _val_dates.max().strftime("%Y-%m-%d"),
                 )
 
+            # ── Sample weights temporels (partagés entre tous les candidats) ──
             _sample_weights = None
             if _train_dates is not None:
                 _days_diff = (_train_dates.max() - _train_dates).dt.days
-                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 360.0)  # demi-vie ~12 mois (Sprint 2026-08-01, 180→360)
+                _sample_weights = np.exp(-_days_diff.values.astype(np.float64) / 360.0)
 
-            _group = None
-            _eval_set = None
-            _eval_group = None
-            if backend_model_name == "lightgbm":
-                _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
-                # ── Early stopping : 20% du train comme eval set ──
-                _es_rounds = cfg.baseline.lgbm_early_stopping_rounds
-                if _es_rounds > 0 and len(train_df) > 100:
-                    _es_cut = max(int(len(train_df) * 0.8), 1)
-                    # Trier par date pour que l'eval set soit sur les dates les plus récentes
-                    _train_sorted = train_df.sort_values("date")
-                    _es_train = _train_sorted.iloc[:_es_cut]
-                    _es_eval = _train_sorted.iloc[_es_cut:]
-                    _eval_set = [(
-                        _es_eval[_active_features],
-                        _es_eval[_label_col].to_numpy(dtype=np.int32) if backend_model_name == "lightgbm"
-                        else _es_eval[_target_col].to_numpy(dtype=np.float64),
-                    )]
-                    _eval_group = [_es_eval.groupby("date", sort=False).size().to_numpy(dtype=np.int32)]
-                    # Ré-extraire train_df trié et son group
-                    train_df = _es_train
+            # ── Entraîner chaque candidat sur ce split ──
+            try:
+                _candidates = _build_ranking_estimators(cfg, resolved_seed=split_seed, model_names=_candidate_names)
+            except ImportError:
+                return {"status": "unavailable", "reason": f"{_candidate_names[0]}_not_installed"}
+
+            _split_ic: dict[str, float | None] = {}
+            for backend_model_name, model in _candidates:
+                # ── Chaque candidat travaille sur sa propre copie des données ──
+                #    (LightGBM peut modifier train_df via early stopping split)
+                train_df = _train_orig.copy()
+                val_df = _val_orig.copy()
+                _sw = _sample_weights.copy() if _sample_weights is not None else None
+
+                _group = None
+                _eval_set = None
+                _eval_group = None
+                if backend_model_name == "lightgbm":
                     _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
-                    if _sample_weights is not None:
-                        _sample_weights = _sample_weights[_es_train.index.get_indexer(train_df.index)]
+                    _es_rounds = cfg.baseline.lgbm_early_stopping_rounds
+                    if _es_rounds > 0 and len(train_df) > 100:
+                        _es_cut = max(int(len(train_df) * 0.8), 1)
+                        _train_sorted = train_df.sort_values("date")
+                        _es_train = _train_sorted.iloc[:_es_cut]
+                        _es_eval = _train_sorted.iloc[_es_cut:]
+                        _eval_set = [(
+                            _es_eval[_active_features],
+                            _es_eval[_label_col].to_numpy(dtype=np.int32),
+                        )]
+                        _eval_group = [_es_eval.groupby("date", sort=False).size().to_numpy(dtype=np.int32)]
+                        train_df = _es_train
+                        _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
+                        if _sw is not None:
+                            _sw = _sw[_es_train.index.get_indexer(train_df.index)]
 
-            X_train = train_df[_active_features]
-            # LambdaRank (LightGBM) : labels entiers 0..19 (vingtiles, gain quadratique)
-            # CatBoost (RMSE)       : rank continu [0, 1]
-            if backend_model_name == "lightgbm":
-                y_train = train_df[_label_col].to_numpy(dtype=np.int32)
-            else:
-                y_train = train_df[_target_col].to_numpy(dtype=np.float64)
+                X_train = train_df[_active_features]
+                if backend_model_name == "lightgbm":
+                    y_train = train_df[_label_col].to_numpy(dtype=np.int32)
+                else:
+                    y_train = train_df[_target_col].to_numpy(dtype=np.float64)
 
-            _fit_kwargs: dict[str, Any] = {}
-            if _group is not None and len(_group) > 0:
-                _fit_kwargs["group"] = _group
-            if _eval_set is not None:
-                _fit_kwargs["eval_set"] = _eval_set
-                _fit_kwargs["eval_group"] = _eval_group
-                _fit_kwargs["eval_at"] = [10, 20]
-                # P0-8 fix (2026-08-07) : early stopping était absent → 500 itérations
-                # systématiques sur le plus gros split (1.46M lignes → ~25 min).
-                _es = getattr(cfg.baseline, "lgbm_early_stopping_rounds", None)
-                if _es and _es > 0:
-                    _fit_kwargs["early_stopping_rounds"] = _es
-                    _fit_kwargs["eval_metric"] = "ndcg"
-                    LOGGER.info(
-                        "global_ranking_wf horizon=%d split=%d/%d early_stopping=%d rounds eval_rows=%d",
-                        horizon, split.split_index + 1, len(wf_splits),
-                        _es, len(_es_eval) if _es_eval is not None else 0,
-                    )
-            if _sample_weights is not None:
-                _fit_kwargs["sample_weight"] = _sample_weights
-            model.fit(X_train, y_train, **_fit_kwargs)
+                _fit_kwargs: dict[str, Any] = {}
+                if _group is not None and len(_group) > 0:
+                    _fit_kwargs["group"] = _group
+                if _eval_set is not None:
+                    _fit_kwargs["eval_set"] = _eval_set
+                    _fit_kwargs["eval_group"] = _eval_group
+                    _fit_kwargs["eval_at"] = [10, 20]
+                    _es = getattr(cfg.baseline, "lgbm_early_stopping_rounds", None)
+                    if _es and _es > 0:
+                        _fit_kwargs["eval_metric"] = "ndcg"
+                        # LightGBM 4.x : early stopping via callback, pas via fit()
+                        _lgb_es = _import_lightgbm()
+                        _fit_kwargs["callbacks"] = [_lgb_es.early_stopping(stopping_rounds=_es)]
+                        LOGGER.info(
+                            "global_ranking_wf horizon=%d split=%d/%d early_stopping=%d rounds eval_rows=%d",
+                            horizon, split.split_index + 1, len(wf_splits),
+                            _es, len(_es_eval) if _es_eval is not None else 0,
+                        )
+                if _sw is not None:
+                    _fit_kwargs["sample_weight"] = _sw
+                LOGGER.info(
+                    "global_ranking_wf horizon=%d split=%d/%d → fitting %s (%d rows)...",
+                    horizon, split.split_index + 1, len(wf_splits),
+                    backend_model_name, len(train_df),
+                )
+                model.fit(X_train, y_train, **_fit_kwargs)
 
-            _last_model = model
-            _last_model_name = backend_model_name
+                _candidate_last_model[backend_model_name] = model
+                _candidate_last_name[backend_model_name] = backend_model_name
 
-            # ── Extraire feature importance (LightGBM uniquement) ──
-            if backend_model_name == "lightgbm" and hasattr(model, "booster_"):
-                try:
-                    _imp = dict(zip(_active_features, model.booster_.feature_importance(importance_type="gain")))
-                    _split_importances.append(_imp)
-                except Exception:
-                    pass
+                # ── Feature importance (LightGBM uniquement) ──
+                if backend_model_name == "lightgbm" and hasattr(model, "booster_"):
+                    try:
+                        _imp = dict(zip(_active_features, model.booster_.feature_importance(importance_type="gain")))
+                        _candidate_importances[backend_model_name].append(_imp)
+                    except Exception:
+                        pass
 
-            X_val = val_df[_active_features]
-            # IC calculé sur le rank continu [0,1], pas sur le label discret
-            y_val = val_df[_target_col].to_numpy(dtype=np.float64)
-            pred_part = val_df[["symbol", "date"]].copy()
-            pred_part["predicted_score"] = model.predict(X_val).astype(np.float64)
-            pred_part["actual_return"] = y_val
+                X_val = val_df[_active_features]
+                y_val = val_df[_target_col].to_numpy(dtype=np.float64)
+                pred_part = val_df[["symbol", "date"]].copy()
+                pred_part["predicted_score"] = model.predict(X_val).astype(np.float64)
+                pred_part["actual_return"] = y_val
 
-            # P2-1 fix (2026-08-04) : IC calculé par date (Spearman cross-sectionnel),
-            # pas poolé sur tout le fold. Cohérent avec la définition du ranking.
-            _ic_result = compute_cross_sectional_ic(
-                pred_part,
-                score_col="predicted_score",
-                return_col="actual_return",
-                date_col="date",
-                vol_col=None,  # target déjà vol-scalée
-                min_symbols_per_date=10,
-            )
-            ic = _ic_result.get("ic_mean")
-            if ic is not None:
-                h_ics.append(ic)
-            h_parts.append(pred_part)
+                _ic_result = compute_cross_sectional_ic(
+                    pred_part,
+                    score_col="predicted_score",
+                    return_col="actual_return",
+                    date_col="date",
+                    vol_col=None,
+                    min_symbols_per_date=10,
+                )
+                ic = _ic_result.get("ic_mean")
+                if ic is not None:
+                    _candidate_ics[backend_model_name].append(ic)
+                _candidate_parts[backend_model_name].append(pred_part)
+                _split_ic[backend_model_name] = ic
 
-            LOGGER.info(
-                "global_ranking_wf horizon=%d split=%d/%d train_rows=%d val_rows=%d ic_rank=%.4f",
-                horizon, split.split_index + 1, len(wf_splits),
-                len(train_df), len(val_df), ic if ic is not None else float("nan"),
-            )
-            # ── Collecter les détails du split pour IHM/rapport ──
+                LOGGER.info(
+                    "global_ranking_wf horizon=%d split=%d/%d model=%s train_rows=%d val_rows=%d ic_rank=%.4f",
+                    horizon, split.split_index + 1, len(wf_splits),
+                    backend_model_name, len(train_df), len(val_df),
+                    ic if ic is not None else float("nan"),
+                )
+
+            # ── Collecter les détails du split (modèle champion uniquement) ──
+            _champion_for_split = max(_split_ic, key=lambda k: _split_ic.get(k) or float("-inf")) if _split_ic else _candidate_names[0]
+            _champion_ic = _split_ic.get(_champion_for_split)
+            if _champion_ic is not None:
+                h_ics.append(_champion_ic)
+            # ── Log champion du split (mode champion uniquement) ──
+            if _champion_mode and len(_split_ic) > 1:
+                _split_summary = ", ".join(
+                    f"{cn}=IC {(_split_ic.get(cn) or float('nan')):.4f}"
+                    for cn in _candidate_names
+                )
+                LOGGER.info(
+                    "global_ranking_wf horizon=%d split=%d/%d 🏆 split_champion=%s (%s)",
+                    horizon, split.split_index + 1, len(wf_splits),
+                    _champion_for_split, _split_summary,
+                )
             _h_split_details.append({
                 "split_index": split.split_index + 1,
                 "n_splits": len(wf_splits),
@@ -1213,10 +1283,156 @@ def train_global_ranking_wf(
                 "train_period_end": _train_dates.max().strftime("%Y-%m-%d") if _train_dates is not None else None,
                 "val_period_start": _val_dates.min().strftime("%Y-%m-%d") if _val_dates is not None else None,
                 "val_period_end": _val_dates.max().strftime("%Y-%m-%d") if _val_dates is not None else None,
-                "train_rows": len(train_df),
-                "val_rows": len(val_df),
-                "ic_rank": float(ic) if ic is not None else None,
+                "train_rows": len(_train_orig),
+                "val_rows": len(_val_orig),
+                "ic_rank": float(_champion_ic) if _champion_ic is not None else None,
+                **({f"ic_rank_{cn}": float(_split_ic[cn]) if _split_ic.get(cn) is not None else None for cn in _candidate_names} if _champion_mode else {}),
             })
+
+        # ── Sélection du champion pour cet horizon ──
+        # Score composite : 55% IC Mean + 30% IC IR + 15% Positive Split Ratio.
+        # L'IC mesure la qualité de l'alpha. L'IR mesure la stabilité.
+        # Le % positif mesure la robustesse cross-régime (GPT: ne pas juste
+        # s'en servir comme gate, l'intégrer dans le score).
+        # Normalisation par le max des 2 candidats sur chaque métrique.
+        #
+        # Gates d'éligibilité (ordre de grandeur adapté au ranking cross-sectionnel) :
+        #   1. IC Mean > 0 (un IC négatif classe à l'envers)
+        #   2. IC IR ≥ 0.30 (filtre les modèles sans aucune stabilité)
+        #   3. Au plus 2 splits négatifs : ≥ (N-2)/N splits avec IC > 0
+        if _champion_mode and len(_candidate_names) > 1:
+            _champion_details: dict[str, dict[str, float | None]] = {}
+            _champion_eligible: dict[str, bool] = {}
+            for _cn in _candidate_names:
+                _ics = _candidate_ics.get(_cn, [])
+                if not _ics:
+                    _champion_details[_cn] = {"ic_mean": None, "ic_std": None, "ic_ir": None, "positive_pct": None}
+                    _champion_eligible[_cn] = False
+                    continue
+                _mean = float(np.mean(_ics))
+                _std = float(np.std(_ics)) if len(_ics) > 1 else 0.0
+                _ir = _mean / _std if _std > 0 else _mean
+                _positive = sum(1 for ic in _ics if ic > 0)
+                _positive_pct = _positive / len(_ics) if _ics else 0.0
+                _champion_details[_cn] = {
+                    "ic_mean": _mean, "ic_std": _std if len(_ics) > 1 else None,
+                    "ic_ir": _ir, "positive_pct": _positive_pct,
+                }
+                # Gates
+                _eligible = True
+                _gate_reason = ""
+                if _mean <= 0:
+                    _eligible = False
+                    _gate_reason = f"IC_mean<=0 ({_mean:.4f})"
+                elif _ir is not None and _ir < 0.30:
+                    _eligible = False
+                    _gate_reason = f"IC_IR={_ir:.2f}<0.30 (instable)"
+                elif len(_ics) >= 3:
+                    _min_positive = (len(_ics) - 2) / len(_ics)
+                    if _positive_pct < _min_positive:
+                        _eligible = False
+                        _gate_reason = f"positive_splits={_positive_pct:.0%}<{_min_positive:.0%} ({_positive}/{len(_ics)})"
+                _champion_eligible[_cn] = _eligible
+                if not _eligible:
+                    LOGGER.warning(
+                        "global_ranking_wf horizon=%d candidate=%s INELIGIBLE: %s",
+                        horizon, _cn, _gate_reason,
+                    )
+
+            # ── Calculer le score composite (seulement pour les éligibles) ──
+            _eligible_candidates = [_cn for _cn in _candidate_names if _champion_eligible[_cn]]
+            if not _eligible_candidates:
+                _all_ic_positive = all(
+                    (_champion_details[_cn].get("ic_mean") or 0.0) > 0
+                    for _cn in _candidate_names
+                )
+                if not _all_ic_positive:
+                    LOGGER.error(
+                        "global_ranking_wf horizon=%d ⚠️ ALL candidates have IC≤0 — "
+                        "picking least bad model. This horizon is likely unusable.",
+                        horizon,
+                    )
+                else:
+                    LOGGER.warning(
+                        "global_ranking_wf horizon=%d NO eligible candidates "
+                        "(IR<0.30 or too many negative splits) — fallback to best composite score",
+                        horizon,
+                    )
+                _eligible_candidates = list(_candidate_names)  # fallback: tous
+
+            # Normalisation : diviser par le max parmi les éligibles
+            _max_ic = max(
+                (_champion_details[_cn]["ic_mean"] or 0.0) for _cn in _eligible_candidates
+            )
+            _max_ir = max(
+                (_champion_details[_cn]["ic_ir"] or 0.0) for _cn in _eligible_candidates
+            )
+            _champion_scores: dict[str, float] = {}
+            for _cn in _eligible_candidates:
+                _d = _champion_details[_cn]
+                _ic_norm = (_d["ic_mean"] or 0.0) / _max_ic if _max_ic > 0 else 0.0
+                _ir_norm = (_d["ic_ir"] or 0.0) / _max_ir if _max_ir > 0 else 0.0
+                _pos_norm = (_d["positive_pct"] or 0.0)  # déjà dans [0,1], pas besoin de normaliser
+                # Score composite : 55% IC + 30% IR + 15% Positive Split Ratio
+                _champion_scores[_cn] = 0.55 * _ic_norm + 0.30 * _ir_norm + 0.15 * _pos_norm
+            # Inéligibles : score = -inf
+            for _cn in _candidate_names:
+                if _cn not in _champion_scores:
+                    _champion_scores[_cn] = float("-inf")
+
+            _selected_champion = max(_champion_scores, key=lambda k: _champion_scores[k])
+            LOGGER.info(
+                "global_ranking_wf horizon=%d champion_selection (metric=composite 55%%IC+30%%IR+15%%pos) → champion=%s",
+                horizon, _selected_champion,
+            )
+            # Log détaillé pour chaque candidat
+            for _cn in _candidate_names:
+                _d = _champion_details[_cn]
+                _score = _champion_scores.get(_cn, float("-inf"))
+                _elig = "✅" if _champion_eligible.get(_cn, False) else "❌"
+                LOGGER.info(
+                    "global_ranking_wf horizon=%d candidate=%s %s IC=%.4f IR=%.2f pos=%.0f%% score=%.3f",
+                    horizon, _cn, _elig,
+                    _d["ic_mean"] if _d["ic_mean"] is not None else float("nan"),
+                    _d["ic_ir"] if _d["ic_ir"] is not None else float("nan"),
+                    (_d["positive_pct"] or 0.0) * 100,
+                    _score if _score != float("-inf") else float("nan"),
+                )
+            # Utiliser les prédictions du champion pour le ranking
+            h_parts = _candidate_parts.get(_selected_champion, [])
+            _last_model = _candidate_last_model.get(_selected_champion)
+            _last_model_name = _selected_champion
+            _split_importances = _candidate_importances.get(_selected_champion, [])
+            # Recalculer h_ics avec les ICs du CHAMPION (pas le meilleur par split)
+            _champion_split_ics = _candidate_ics.get(_selected_champion, [])
+            if _champion_split_ics:
+                h_ics = list(_champion_split_ics)
+            # Mettre à jour ic_rank dans _h_split_details avec l'IC du champion
+            _champ_ic_key = f"ic_rank_{_selected_champion}"
+            for _sp in _h_split_details:
+                _champ_ic = _sp.get(_champ_ic_key)
+                if _champ_ic is not None:
+                    _sp["ic_rank"] = float(_champ_ic)
+            # Stocker les métriques des deux candidats pour le rapport
+            _champion_sel = _champion_details[_selected_champion]
+            _horizon_champion_info: dict[str, Any] = {
+                "champion": _selected_champion,
+                "champion_ic_mean": _champion_sel["ic_mean"],
+                "champion_ic_ir": _champion_sel["ic_ir"],
+                "champion_positive_pct": _champion_sel["positive_pct"],
+                "champion_score": _champion_scores[_selected_champion],
+                "selection_metric": "composite_55ic_30ir_15pos",
+                "candidates": _champion_details,
+                "eligibility": {_cn: _champion_eligible.get(_cn, False) for _cn in _candidate_names},
+            }
+        else:
+            # Mode single-model : utiliser le seul candidat
+            _single_name = _candidate_names[0]
+            h_parts = _candidate_parts.get(_single_name, [])
+            _last_model = _candidate_last_model.get(_single_name)
+            _last_model_name = _single_name
+            _split_importances = _candidate_importances.get(_single_name, [])
+            _horizon_champion_info = {}
 
         # ── Feature importance agrégée pour cet horizon ──
         if _split_importances and _active_features:
@@ -1303,13 +1519,13 @@ def train_global_ranking_wf(
                 "feature_importance_top10": [{"feature": k, "importance": round(v, 1)} for k, v in _top10] if (_split_importances and _active_features) else [],
                 "feature_importance_bottom10": [{"feature": k, "importance": round(v, 1)} for k, v in _bottom10] if (_split_importances and _active_features) else [],
                 "feature_importance_all": {k: round(v, 1) for k, v in _mean_imp.items()} if (_split_importances and _active_features) else {},
+                **_horizon_champion_info,
             }
         else:
             LOGGER.warning("global_ranking_wf horizon=%d no predictions", horizon)
         # ── Libérer la mémoire avant l'horizon suivant ──
-        # Les DataFrames h_parts et le modèle occupent plusieurs Go ;
-        # sans cleanup, 2000 symboles × 5 horizons → OOM.
         del h_parts, h_ics, _last_model, _split_importances, _active_features
+        del _candidate_parts, _candidate_ics, _candidate_last_model, _candidate_last_name, _candidate_importances
         gc.collect()
 
     if not all_rank_dfs:
@@ -1342,6 +1558,78 @@ def train_global_ranking_wf(
         ic_mean if ic_mean is not None else float("nan"),
     )
 
+    # ── Déterminer le meilleur horizon (pour cascade_select / backtest) ──
+    # Même logique que la sélection champion intra-horizon : score composite 55/30/15.
+    # On compare les champions de chaque horizon entre eux.
+    # H3 est inclus mais son IC est structurellement plus faible (court terme) →
+    # il perdra presque toujours, ce qui est normal.
+    _best_horizon: int | None = None
+    _best_horizon_score: float = float("-inf")
+    if _horizon_details and len(_horizon_details) >= 2:
+        # Extraire les métriques du champion pour chaque horizon
+        _h_ic: dict[int, float] = {}
+        _h_ir: dict[int, float] = {}
+        _h_pos: dict[int, float] = {}
+        for _h_key, _h_info in _horizon_details.items():
+            _h = int(_h_key)
+            _champ = _h_info.get("champion")
+            if _champ:
+                _cdata = _h_info.get("candidates", {}).get(_champ, {})
+                _ic_val = _cdata.get("ic_mean") if isinstance(_cdata, dict) else None
+                _ir_val = _cdata.get("ic_ir") if isinstance(_cdata, dict) else None
+                _pos_val = _cdata.get("positive_pct") if isinstance(_cdata, dict) else None
+            else:
+                # Mode non-champion : utiliser les métriques affichées
+                _ic_val = _h_info.get("ic_mean")
+                _ir_val = _h_info.get("ic_ir")
+                # Calculer positive_pct depuis les splits
+                _splits = _h_info.get("splits", [])
+                if _splits:
+                    _pos_count = sum(1 for s in _splits if (s.get("ic_rank") or 0) > 0)
+                    _pos_val = _pos_count / len(_splits) if _splits else None
+                else:
+                    _pos_val = None
+            if _ic_val is not None and not np.isnan(_ic_val):
+                _h_ic[_h] = float(_ic_val)
+            if _ir_val is not None and not np.isnan(_ir_val):
+                _h_ir[_h] = float(_ir_val)
+            if _pos_val is not None:
+                _h_pos[_h] = float(_pos_val)
+
+        if _h_ic:
+            _max_ic = max(_h_ic.values())
+            _max_ir = max(_h_ir.values()) if _h_ir else 1.0
+            # Si aucun positive_pct disponible → 55/45 au lieu de 55/30/15
+            _has_pos = bool(_h_pos)
+            _w_ic = 0.55 if _has_pos else 0.55
+            _w_ir = 0.30 if _has_pos else 0.45
+            _w_pos = 0.15 if _has_pos else 0.0
+            LOGGER.info(
+                "train_global_ranking_wf best_horizon selection (composite %.0f%%IC+%.0f%%IR+%.0f%%pos): "
+                "max_IC=%.4f max_IR=%.2f",
+                _w_ic * 100, _w_ir * 100, _w_pos * 100, _max_ic, _max_ir,
+            )
+            for _h in sorted(_h_ic.keys()):
+                _ic = _h_ic[_h]
+                _ir = _h_ir.get(_h, 0.0)
+                _pos = _h_pos.get(_h, 0.0)
+                _ic_norm = _ic / _max_ic if _max_ic > 0 else 0.0
+                _ir_norm = _ir / _max_ir if _max_ir > 0 else 0.0
+                _score = _w_ic * _ic_norm + _w_ir * _ir_norm + _w_pos * _pos
+                LOGGER.info(
+                    "train_global_ranking_wf horizon=H%d IC=%.4f IR=%.2f pos=%.0f%% → score=%.3f",
+                    _h, _ic, _ir, _pos * 100, _score,
+                )
+                if _score > _best_horizon_score:
+                    _best_horizon_score = _score
+                    _best_horizon = _h
+
+    if _best_horizon is not None:
+        LOGGER.info(
+            "train_global_ranking_wf 🏆 best_horizon=H%d (score=%.3f)",
+            _best_horizon, _best_horizon_score,
+        )
+
     # ── Sauvegarder global_rank_df en parquet pour backtest ──
     if not global_rank_df.empty:
         try:
@@ -1357,10 +1645,27 @@ def train_global_ranking_wf(
     # ── Sauvegarder les métadonnées features ──
     _model_dir = Path(cfg.artifacts_dir)
     _model_dir.mkdir(parents=True, exist_ok=True)
+    # ── Déterminer le nom effectif du modèle (champion ou configuré) ──
+    _effective_model_name = cfg.global_model.model_name
+    _champion_by_horizon: dict[str, str] = {}
+    if cfg.global_model.champion_enabled:
+        for _h_key, _h_info in _horizon_details.items():
+            _champ = _h_info.get("champion")
+            if _champ:
+                _champion_by_horizon[_h_key] = _champ
+        # Le nom effectif est le champion majoritaire sur les horizons
+        if _champion_by_horizon:
+            from collections import Counter
+            _champion_counts = Counter(_champion_by_horizon.values())
+            _effective_model_name = _champion_counts.most_common(1)[0][0]
+
     _model_dir.joinpath("_global_ranking_features.json").write_text(
         json.dumps({
             "feature_columns": feature_columns,
-            "model_name": cfg.global_model.model_name,
+            "model_name": _effective_model_name,
+            "champion_enabled": cfg.global_model.champion_enabled,
+            "champion_by_horizon": _champion_by_horizon if _champion_by_horizon else None,
+            "best_horizon": _best_horizon,
             "horizons": list(_active_horizons),
             "saved_models": _saved_models,
             "feature_set": cfg.data.feature_set,
@@ -1389,7 +1694,9 @@ def train_global_ranking_wf(
     return {
         "status": "completed",
         "model_name": "global_ranking",
-        "backend_model_name": cfg.global_model.model_name,
+        "backend_model_name": _effective_model_name,
+        "champion_enabled": cfg.global_model.champion_enabled,
+        "champion_by_horizon": _champion_by_horizon if _champion_by_horizon else None,
         "global_rank_df": global_rank_df if not global_rank_df.empty else None,
         "ic_rank_mean": ic_mean,
         "ic_rank_std": ic_std,
@@ -1402,6 +1709,7 @@ def train_global_ranking_wf(
         "feature_columns": feature_columns,
         "n_features": len(feature_columns),
         "horizons": list(_active_horizons),
+        "best_horizon": _best_horizon,
     }
 
 
@@ -1541,17 +1849,25 @@ def predict_global_rank(
             continue
         X_h = pred_df[_hf].to_numpy(dtype=np.float64)
 
-        _model_path = artifacts_dir / f"_global_ranking_model{h_suffix}.txt"
-        _is_catboost = False
-        if not _model_path.exists():
-            _model_path = artifacts_dir / f"_global_ranking_model{h_suffix}.pkl"
-            _is_catboost = True
-        if not _model_path.exists():
+        # ── Charger le modèle pour cet horizon ──
+        # Le type est déterminé par l'extension du fichier :
+        #   .txt = LightGBM, .pkl = CatBoost
+        # En mode champion, chaque horizon a UN seul fichier (le champion).
+        # En mode simple, idem (le backend configuré).
+        _model_path_txt = artifacts_dir / f"_global_ranking_model{h_suffix}.txt"
+        _model_path_pkl = artifacts_dir / f"_global_ranking_model{h_suffix}.pkl"
+        if _model_path_txt.exists():
+            _model_path = _model_path_txt
+            _load_as_catboost = False
+        elif _model_path_pkl.exists():
+            _model_path = _model_path_pkl
+            _load_as_catboost = True
+        else:
             LOGGER.warning("predict_global_rank: model for horizon %d not found", horizon)
             result[f"global_rank{h_suffix}"] = 0.5
             continue
         try:
-            if _is_catboost or _model_name == "catboost":
+            if _load_as_catboost:
                 CatBoostRegressor = _import_catboost()
                 model = CatBoostRegressor()
                 model.load_model(str(_model_path))

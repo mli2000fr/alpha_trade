@@ -327,7 +327,7 @@ def _append_champion_status(
     default_count = mode_map.get("default_champion", 0)
     problem_count = fallback_count + default_count
 
-    lines.append("## 🏆 Sélection du champion")
+    lines.append("### 🏆 Sélection du champion")
     lines.append("")
     if problem_count == 0 and auto_count > 0:
         lines.append(f"✅ **Tout va bien** — {auto_count} champions sélectionnés automatiquement sur {total} symboles.")
@@ -375,8 +375,29 @@ def _append_global_ranking_horizon_details(
 
     lines.append("## 🌐 Global Ranking — Détails par Horizon")
     lines.append("")
+
+    # ── Infos modèle (champion ou fixe) ──
+    _model_label = "CatBoost"  # fallback
+    _champion_by_h = _gr.get("champion_by_horizon")
+    # Fallback: reconstruire champion_by_horizon depuis horizon_details si absent (bug orchestrator)
+    if (not _champion_by_h or not isinstance(_champion_by_h, dict)) and _hd:
+        _rebuilt: dict[str, str] = {}
+        for _hk, _hi in _hd.items():
+            if isinstance(_hi, dict) and _hi.get("champion"):
+                _rebuilt[str(_hk)] = str(_hi["champion"])
+        if _rebuilt:
+            _champion_by_h = _rebuilt
+    if _champion_by_h and isinstance(_champion_by_h, dict) and _champion_by_h:
+        from collections import Counter
+        _counts = Counter(_champion_by_h.values())
+        _majority = _counts.most_common(1)[0][0]
+        _model_label = (
+            f"🏆 Champion: {_majority} "
+            f"(détail: {', '.join(f'H{k}={v}' for k, v in sorted(_champion_by_h.items(), key=lambda x: int(x[0])))}) "
+            f"— sélection par IC IR"
+        )
     lines.append(
-        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle {_model_label} — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )
@@ -387,6 +408,7 @@ def _append_global_ranking_horizon_details(
 
     # ── Tableau récapitulatif tous horizons ──
     _summary_rows: list[dict] = []
+    _has_champion = bool(_champion_by_h)
     for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
         _h_info = _hd[_h_key]
         _h_ic = _ic_by_h.get(_h_key)
@@ -398,19 +420,53 @@ def _append_global_ranking_horizon_details(
             _arr = np.array(_split_ics, dtype=float)
             if _arr.std() > 0:
                 _h_ic_ir = round(float(_arr.mean() / _arr.std()), 2)
-        _summary_rows.append({
+        _row: dict = {
             "Horizon": f"H{_h_key}",
             "IC Mean": _h_ic,
             "IC IR": _h_ic_ir if _h_ic_ir is not None else "—",
             "Decile Spread": _ds_by_h.get(_h_key),
             "Nb Features": _h_info.get("n_features", "—"),
             "Nb Splits": len(_h_info.get("splits", [])),
-        })
+        }
+        if _has_champion:
+            _row["🏆 Champion"] = str(_champion_by_h.get(_h_key, "—"))
+            # Score composite du champion
+            _cs = _h_info.get("champion_score")
+            if _cs is not None:
+                _row["Score"] = f"{float(_cs):.3f}"
+            # Ajouter les IC et IR par candidat
+            _candidates = _h_info.get("candidates", {})
+            for _cn, _cdata in sorted((_candidates or {}).items()):
+                if isinstance(_cdata, dict):
+                    _ic_val = _cdata.get("ic_mean")
+                    _ir_val = _cdata.get("ic_ir")
+                    _row[f"IC {_cn}"] = f"{_ic_val:.4f}" if _ic_val is not None else "—"
+                    _row[f"IR {_cn}"] = f"{_ir_val:.2f}" if _ir_val is not None else "—"
+        _summary_rows.append(_row)
 
     if _summary_rows:
         lines.append("### 📋 Récapitulatif tous horizons")
         lines.append("")
         lines.append(_df_to_md(pd.DataFrame(_summary_rows)))
+        # ── Meilleur horizon (calculé à l'entraînement) ──
+        _best_h = _gr.get("best_horizon")
+        if _best_h is not None:
+            lines.append("")
+            lines.append(
+                f"🏆 **Meilleur horizon : H{_best_h}** — sélectionné par score composite "
+                f"55% IC + 30% IR + 15% Positive Split"
+            )
+        elif _has_champion and _champion_by_h:
+            # Fallback : si best_horizon absent mais champions présents
+            _best_h_fallback = max(_champion_by_h.items(), key=lambda x: (
+                float((_ic_by_h.get(str(x[0]), 0)) or 0)
+            ))[0] if _champion_by_h else None
+            if _best_h_fallback is not None:
+                lines.append("")
+                lines.append(
+                    f"ℹ️ **Meilleur horizon estimé : H{_best_h_fallback}** "
+                    f"(IC max — best_horizon non disponible dans metadata)"
+                )
 
     # ── Détail par horizon ──
     for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
@@ -418,8 +474,28 @@ def _append_global_ranking_horizon_details(
         _ic_val = _ic_by_h.get(_h_key, 0) or 0
         _ds_val = _ds_by_h.get(_h_key, 0) or 0
 
-        lines.append(f"### Horizon H{_h_key}")
+        # Modèle champion pour cet horizon
+        _h_champion = _champion_by_h.get(_h_key) if _has_champion else None
+        _champion_title = f" — 🏆 {_h_champion}" if _h_champion else ""
+
+        lines.append(f"### Horizon H{_h_key}{_champion_title}")
         lines.append("")
+        if _h_champion:
+            _champ_data = _h_info.get("candidates", {}).get(_h_champion, {})
+            _champ_ic = _champ_data.get("ic_mean") if isinstance(_champ_data, dict) else None
+            _champ_ir = _champ_data.get("ic_ir") if isinstance(_champ_data, dict) else None
+            _champ_score = _h_info.get("champion_score")
+            _sel_metric = _h_info.get("selection_metric", "—")
+            _champ_parts = [f"🏆 **Champion : {_h_champion}**"]
+            if _champ_ic is not None:
+                _champ_parts.append(f"IC = {_champ_ic:.4f}")
+            if _champ_ir is not None:
+                _champ_parts.append(f"IR = {_champ_ir:.2f}")
+            if _champ_score is not None:
+                _champ_parts.append(f"Score composite = {_champ_score:.3f}")
+            _champ_parts.append(f"Métrique : {_sel_metric}")
+            lines.append(f"- {' | '.join(_champ_parts)}")
+            lines.append("")
         lines.append(f"- **IC Rank** : {_ic_val:.4f}")
         lines.append(f"- **Decile Spread** : {_ds_val:.4f}")
         lines.append(f"- **Nb Features** : {_h_info.get('n_features', '—')}")
@@ -447,22 +523,34 @@ def _append_global_ranking_horizon_details(
         # ── Tableau des splits ──
         _splits = _h_info.get("splits", [])
         if _splits:
-            lines.append("#### 📅 Détail par split")
+            _champ_label = f" — 🏆 {_h_champion}" if _h_champion else ""
+            lines.append(f"#### 📅 Détail par split{_champ_label}")
             lines.append("")
+            # Détecter si le mode champion est actif (colonnes ic_rank_*)
+            _has_split_champion = any(
+                k.startswith("ic_rank_") and k != "ic_rank"
+                for _sp in _splits for k in (_sp or {}).keys()
+            )
+            # Nom de la colonne IC Rank : inclure le champion si connu
+            _ic_col = f"IC Rank ({_h_champion})" if _h_champion else "IC Rank"
             _split_rows: list[dict] = []
             for _sp in _splits:
                 _train_start = str(_sp.get("train_period_start", ""))[:10] if _sp.get("train_period_start") else "—"
                 _train_end = str(_sp.get("train_period_end", ""))[:10] if _sp.get("train_period_end") else "—"
                 _val_start = str(_sp.get("val_period_start", ""))[:10] if _sp.get("val_period_start") else "—"
                 _val_end = str(_sp.get("val_period_end", ""))[:10] if _sp.get("val_period_end") else "—"
-                _split_rows.append({
+                _row = {
                     "Split": _sp.get("split_index", "—"),
                     "Train (début→fin)": f"{_train_start} → {_train_end}",
                     "Validation (début→fin)": f"{_val_start} → {_val_end}",
                     "Lignes Train": _sp.get("train_rows", "—"),
                     "Lignes Val": _sp.get("val_rows", "—"),
-                    "IC Rank": _sp.get("ic_rank"),
-                })
+                    _ic_col: _sp.get("ic_rank"),
+                }
+                if _has_split_champion:
+                    _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")
+                    _row["IC CatBoost"] = _sp.get("ic_rank_catboost")
+                _split_rows.append(_row)
             lines.append(_df_to_md(pd.DataFrame(_split_rows)))
 
         # ── Stats distribution IC par split ──
@@ -749,6 +837,22 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
             _ds_parts = [f"H{k}={v:.4f}" for k, v in sorted(_ds_all.items(), key=lambda x: int(x[0]))]
             lines.append(f"- **📊 Decile Spread (Top−Bottom)** : {' '.join(_ds_parts)}")
 
+        # ── 🏆 Champion Global Model ──
+        _meta_raw3 = row.get("metadata_json")
+        if _meta_raw3 and str(_meta_raw3) not in ("None", "nan", ""):
+            try:
+                _meta3 = json.loads(str(_meta_raw3))
+                _gr3 = _meta3.get("global_ranking") if isinstance(_meta3, dict) else None
+                _champ_by_h3 = _gr3.get("champion_by_horizon") if isinstance(_gr3, dict) else None
+                if _champ_by_h3 and isinstance(_champ_by_h3, dict) and _champ_by_h3:
+                    from collections import Counter
+                    _cnt3 = Counter(_champ_by_h3.values())
+                    _majority3 = _cnt3.most_common(1)[0][0]
+                    _h_det3 = ", ".join(f"H{k}={v}" for k, v in sorted(_champ_by_h3.items(), key=lambda x: int(x[0])))
+                    lines.append(f"- **🏆 Champion Global** : {_majority3} ({_h_det3}) — score composite 55% IC + 30% IR + 15% positifs")
+            except Exception:
+                pass
+
         # ── Stacking Global Rank ──
         _stacking = row.get("stacking_enabled")
         if _stacking is not None:
@@ -801,9 +905,6 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     # 🟢 GLOBAL MODEL — Ranking, Backtest, Champion
     # ═══════════════════════════════════════════════════════════════
 
-    # ── Statut champion ──
-    _append_champion_status(lines, champion_df, champion_by_model_df)
-
     # ── Global Ranking Horizon Details ──
     _meta_raw = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
     _append_global_ranking_horizon_details(lines, str(_meta_raw) if _meta_raw is not None else None)
@@ -822,6 +923,9 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     lines.append("")
     lines.append("## 🔵 Per-Symbol / Per-Sector — Métriques d'entraînement")
     lines.append("")
+
+    # ── Statut champion (per-symbol / per-sector) ──
+    _append_champion_status(lines, champion_df, champion_by_model_df)
 
     # ── Métriques par horizon (si multi-horizon) ──
     horizon_df = _safe_query(engine, HORIZON_LIST_QUERY, {"batch_id": batch_id})

@@ -221,6 +221,7 @@ def _persist_sector_metrics(
     *,
     lgbm_result: dict[str, Any],
     cb_result: dict[str, Any],
+    champion: str = "lightgbm",
     batch_id: str | None = None,
     sector_dir: Path | None = None,
     symbols: list[str] | None = None,
@@ -273,7 +274,8 @@ def _persist_sector_metrics(
 
     lgbm_score = float(lgbm_result.get("selection_score") or 0)
     cb_score = float(cb_result.get("selection_score") or 0)
-    champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+    # champion est maintenant calculé dans train_sector() avec le score composite
+    # et passé en paramètre → ne pas recalculer ici.
     challengers = {
         "lightgbm": lgbm_result,
         "catboost": cb_result,
@@ -607,14 +609,83 @@ def _train_sector_models(
     # For now, we use the tabular models only for per-sector training.
 
     # ── Champion selection ──
+    # Score composite : 55% F1 Mean + 30% F1 IR + 15% Positive Split Ratio.
+    # Même logique que le Global Ranking, adaptée à la classification.
+    # Gates : F1 > 0, F1 IR ≥ 0.30, ≥ (N-2)/N splits positifs.
     challengers = {
         "lightgbm": lgbm_result,
         "catboost": cb_result,
     }
-    # Simple champion: pick the one with better WF f1_macro
     lgbm_score = float(lgbm_result.get("selection_score") or 0)
     cb_score = float(cb_result.get("selection_score") or 0)
-    champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+
+    # ── Score composite basé sur la stabilité WF (si disponible) ──
+    _lgbm_wf = lgbm_result.get("walk_forward") if isinstance(lgbm_result, dict) else None
+    _cb_wf = cb_result.get("walk_forward") if isinstance(cb_result, dict) else None
+    _has_wf = (
+        isinstance(_lgbm_wf, dict) and isinstance(_cb_wf, dict)
+        and _lgbm_wf.get("splits") and _cb_wf.get("splits")
+    )
+    if _has_wf:
+        _lgbm_splits = [s.get("f1_macro") for s in _lgbm_wf["splits"] if s.get("f1_macro") is not None]
+        _cb_splits = [s.get("f1_macro") for s in _cb_wf["splits"] if s.get("f1_macro") is not None]
+        if _lgbm_splits and _cb_splits and len(_lgbm_splits) >= 3:
+            import numpy as np
+            _lgbm_f1_mean = float(np.mean(_lgbm_splits))
+            _lgbm_f1_std = float(np.std(_lgbm_splits))
+            _lgbm_f1_ir = _lgbm_f1_mean / _lgbm_f1_std if _lgbm_f1_std > 0 else _lgbm_f1_mean
+            _lgbm_pos = sum(1 for v in _lgbm_splits if v > 0) / len(_lgbm_splits)
+
+            _cb_f1_mean = float(np.mean(_cb_splits))
+            _cb_f1_std = float(np.std(_cb_splits))
+            _cb_f1_ir = _cb_f1_mean / _cb_f1_std if _cb_f1_std > 0 else _cb_f1_mean
+            _cb_pos = sum(1 for v in _cb_splits if v > 0) / len(_cb_splits)
+
+            # Gates : IC/F1 > 0, IR ≥ 0.30, au plus 2 splits négatifs
+            _min_pos = (len(_lgbm_splits) - 2) / len(_lgbm_splits) if len(_lgbm_splits) >= 3 else 0.0
+            _lgbm_eligible = _lgbm_f1_mean > 0 and _lgbm_f1_ir >= 0.30 and _lgbm_pos >= _min_pos
+            _cb_eligible = _cb_f1_mean > 0 and _cb_f1_ir >= 0.30 and _cb_pos >= _min_pos
+
+            if _lgbm_eligible and _cb_eligible:
+                _max_f1 = max(_lgbm_f1_mean, _cb_f1_mean)
+                _max_ir = max(_lgbm_f1_ir, _cb_f1_ir)
+                _lgbm_composite = 0.55 * (_lgbm_f1_mean / _max_f1) + 0.30 * (_lgbm_f1_ir / _max_ir) + 0.15 * _lgbm_pos if _max_f1 > 0 else 0.0
+                _cb_composite = 0.55 * (_cb_f1_mean / _max_f1) + 0.30 * (_cb_f1_ir / _max_ir) + 0.15 * _cb_pos if _max_f1 > 0 else 0.0
+                champion = "lightgbm" if _lgbm_composite >= _cb_composite else "catboost"
+                LOGGER.info(
+                    "train_sector champion_selection sector=%s (composite 55%%F1+30%%IR+15%%pos): "
+                    "lgbm F1=%.4f IR=%.2f pos=%.0f%% score=%.3f %s | "
+                    "cb F1=%.4f IR=%.2f pos=%.0f%% score=%.3f %s → champion=%s",
+                    sector_name,
+                    _lgbm_f1_mean, _lgbm_f1_ir, _lgbm_pos * 100, _lgbm_composite,
+                    "✅" if _lgbm_eligible else "❌",
+                    _cb_f1_mean, _cb_f1_ir, _cb_pos * 100, _cb_composite,
+                    "✅" if _cb_eligible else "❌",
+                    champion,
+                )
+            elif _lgbm_eligible:
+                champion = "lightgbm"
+                LOGGER.info("train_sector champion_selection sector=%s: catboost INELIGIBLE → champion=lightgbm", sector_name)
+            elif _cb_eligible:
+                champion = "catboost"
+                LOGGER.info("train_sector champion_selection sector=%s: lightgbm INELIGIBLE → champion=catboost", sector_name)
+            else:
+                # Fallback au selection_score simple si aucun éligible
+                champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+                LOGGER.warning(
+                    "train_sector champion_selection sector=%s: NO eligible — fallback to selection_score "
+                    "(lgbm=%.4f cb=%.4f) → champion=%s",
+                    sector_name, lgbm_score, cb_score, champion,
+                )
+        else:
+            champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+    else:
+        champion = "lightgbm" if lgbm_score >= cb_score else "catboost"
+        LOGGER.info(
+            "train_sector champion_selection sector=%s: no WF data → fallback to selection_score "
+            "(lgbm=%.4f cb=%.4f) → champion=%s",
+            sector_name, lgbm_score, cb_score, champion,
+        )
 
     result = {
         "sector": sector_name,
@@ -648,6 +719,7 @@ def _train_sector_models(
         _persist_sector_metrics(
             engine, sector_name, run_id=sector_run_id,
             lgbm_result=lgbm_result, cb_result=cb_result,
+            champion=champion,
             batch_id=batch_id,
             sector_dir=sector_dir,
             symbols=symbols,
@@ -698,11 +770,13 @@ def run_per_sector_batch(
         raise RuntimeError("No symbols match any sector — check symbol list vs stock_metadata")
 
     # Load shared data (same for all sectors)
-    sentiment_df = _load_sentiment_for_symbols(symbols, engine, cfg)
+    sentiment_df = _load_sentiment_for_symbols(symbols, engine, cfg) if cfg.data.include_sentiment_features else None
     benchmark_df = _load_benchmark(engine, cfg)
     universe_df = _load_universe(symbols, engine)
-    selector_df = _load_selector_for_symbols(symbols, engine, cfg)
-    fundamental_df = _load_fundamentals_for_symbols(symbols, engine, cfg)
+    selector_df = None
+    if cfg.data.include_screener_scores or cfg.data.include_short_score_features:
+        selector_df = _load_selector_for_symbols(symbols, engine, cfg)
+    fundamental_df = _load_fundamentals_for_symbols(symbols, engine, cfg) if cfg.data.include_fundamentals_features else None
 
     # ── Action 1.1 (2026-08-04) : construire le cache cross-sectionnel UNE FOIS ──
     # Avant : chaque _prepare_sector_data recevait universe_df=None → les features
@@ -799,15 +873,19 @@ def _load_benchmark(engine: Any, cfg: TrainingConfig) -> pd.DataFrame | None:
 
 
 def _load_sentiment_for_symbols(symbols: list[str], engine: Any, cfg: TrainingConfig) -> pd.DataFrame | None:
+    """Charge les features sentiment pour une liste de symboles.
+
+    Utilise load_symbols_sentiment (pluriel) pour charger toutes les
+    données en une seule requête SQL.
+    """
     try:
-        from modelFactory.data_loader import load_symbol_sentiment
-        frames = []
-        for sym in symbols:
-            df = load_symbol_sentiment(sym, engine, cfg.data)
-            if df is not None and not df.empty:
-                df["symbol"] = sym
-                frames.append(df)
-        return pd.concat(frames, ignore_index=True) if frames else None
+        from modelFactory.data_loader import load_symbols_sentiment
+        return load_symbols_sentiment(
+            engine,
+            symbols,
+            end_date=cfg.data.training_end_date,
+            start_date=cfg.data.training_start_date,
+        )
     except Exception:
         return None
 
@@ -822,15 +900,19 @@ def _load_universe(symbols: list[str], engine: Any) -> pd.DataFrame | None:
 
 
 def _load_selector_for_symbols(symbols: list[str], engine: Any, cfg: TrainingConfig) -> pd.DataFrame | None:
+    """Charge le contexte selector PIT-safe pour une liste de symboles.
+
+    Utilise load_symbols_selector_context (pluriel) pour charger toutes les
+    données en une seule requête SQL (plus efficace que N appels mono-symbole).
+    """
     try:
-        from modelFactory.data_loader import load_symbol_selector_context
-        frames = []
-        for sym in symbols:
-            df = load_symbol_selector_context(sym, engine, cfg)
-            if df is not None and not df.empty:
-                df["symbol"] = sym
-                frames.append(df)
-        return pd.concat(frames, ignore_index=True) if frames else None
+        from modelFactory.data_loader import load_symbols_selector_context
+        return load_symbols_selector_context(
+            engine,
+            symbols,
+            end_date=cfg.data.training_end_date,
+            start_date=cfg.data.training_start_date,
+        )
     except Exception:
         return None
 

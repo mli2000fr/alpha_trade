@@ -249,6 +249,16 @@ _SELECTOR_CONTEXT_SOURCE_TO_FEATURE = {
     "total_score_component": "selector_total_score_component",
     "rsi_component": "selector_rsi_component",
     "short_score": "selector_short_score",
+    # ── Score components (P0-6, 2026-08-08) — identité DB→feature ──
+    "sentiment_net_agg": "sentiment_net_agg",
+    "company_idio_score": "company_idio_score",
+    "macro_regime_score": "macro_regime_score",
+    "quant_component": "quant_component",
+    "company_idio_signal_norm": "company_idio_signal_norm",
+    "macro_regime_signal_norm": "macro_regime_signal_norm",
+    "company_idio_component": "company_idio_component",
+    "macro_regime_component": "macro_regime_component",
+    "sector_impact_agg": "sector_impact_agg",
 }
 
 _SELECTOR_CONTEXT_DEFAULTS = {
@@ -276,6 +286,16 @@ _SELECTOR_CONTEXT_DEFAULTS = {
     "selector_total_score_component": 0.0,
     "selector_rsi_component": 0.0,
     "selector_short_score": 0.0,
+    # ── Score components (P0-6, 2026-08-08) ──
+    "sentiment_net_agg": 0.0,
+    "company_idio_score": 0.0,
+    "macro_regime_score": 0.0,
+    "quant_component": 0.0,
+    "company_idio_signal_norm": 0.0,
+    "macro_regime_signal_norm": 0.0,
+    "company_idio_component": 0.0,
+    "macro_regime_component": 0.0,
+    "sector_impact_agg": 0.0,
 }
 
 
@@ -835,6 +855,7 @@ def compute_features(
     fundamental_df: pd.DataFrame | None = None,
     include_factors: bool = False,
     include_macro_regime: bool = False,
+    include_score_components: bool = False,
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
@@ -1020,7 +1041,7 @@ def compute_features(
             * df["news_count_log"]
         ).astype(float)
 
-    if include_screener_scores or include_short_score:
+    if include_screener_scores or include_short_score or include_score_components:
         if selector_df is not None and not selector_df.empty:
             selector = selector_df.copy()
             if "snapshot_date" in selector.columns and "date" not in selector.columns:
@@ -1185,15 +1206,18 @@ def compute_features(
     if feature_set == "expert":
         _zscore_window = 1260  # 5 ans
         _zscore_min = 252      # 1 an minimum
+        _new_zscore_cols: dict[str, "pd.Series"] = {}
         for _src in ZSCORE_SOURCE_FEATURES:
             _target = _zscore_column_name(_src)
             if _src in df.columns:
                 _series = df[_src].astype(float)
                 _roll_mean = _series.rolling(_zscore_window, min_periods=_zscore_min).mean()
                 _roll_std = _series.rolling(_zscore_window, min_periods=_zscore_min).std()
-                df[_target] = ((_series - _roll_mean) / _roll_std.clip(lower=1e-8)).fillna(0.0)
+                _new_zscore_cols[_target] = ((_series - _roll_mean) / _roll_std.clip(lower=1e-8)).fillna(0.0)
             else:
-                df[_target] = 0.0
+                _new_zscore_cols[_target] = pd.Series(0.0, index=df.index)
+        if _new_zscore_cols:
+            df = pd.concat([df, pd.DataFrame(_new_zscore_cols, index=df.index)], axis=1)
 
     # ── Fundamental features (optional, from stock_fundamentals_daily) ──
     if include_fundamentals:

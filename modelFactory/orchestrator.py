@@ -796,6 +796,10 @@ def run_training_batch(
                     "splits_count": int(global_result_wf.get("splits_count", 0)),
                     "pred_rows": int(global_result_wf.get("pred_rows", 0)),
                     "ic_by_horizon": global_result_wf.get("ic_by_horizon", {}),
+                    "champion_by_horizon": global_result_wf.get("champion_by_horizon"),
+                    "champion_enabled": global_result_wf.get("champion_enabled", False),
+                    "backend_model_name": global_result_wf.get("backend_model_name"),
+                    "best_horizon": global_result_wf.get("best_horizon"),
                 }
                 update_training_batch(
                     engine, batch_id,
@@ -1179,6 +1183,10 @@ def run_training_batch(
                         "splits_count": _gr_meta.get("splits_count"),
                         "pred_rows": _gr_meta.get("pred_rows"),
                         "horizons": _gr_meta.get("horizons", []),
+                        "champion_by_horizon": _gr_meta.get("champion_by_horizon"),
+                        "champion_enabled": _gr_meta.get("champion_enabled", False),
+                        "backend_model_name": _gr_meta.get("model_name"),
+                        "best_horizon": _gr_meta.get("best_horizon"),
                     }
                     # Lire metadata_json existant
                     with engine.begin() as conn:

@@ -35,7 +35,7 @@ Le module `modelFactory` est le cœur ML du système α-Trade. Il supporte **deu
 
 Il assure :
 
-1. **Classement cross-sectionnel** : un modèle Global Ranking (CatBoost RMSE) qui ordonne tous les symboles de l'univers par rendement futur attendu sur 5 horizons → `global_rank ∈ [0, 1]`
+1. **Classement cross-sectionnel** : un modèle Global Ranking (CatBoost RMSE ou LightGBM LambdaRank, avec champion automatique par horizon) qui ordonne tous les symboles de l'univers par rendement futur attendu sur 5 horizons → `global_rank ∈ [0, 1]`
 2. **Prédiction directionnelle** :
    - **Per-Symbol** : des modèles individuels (LSTM, LightGBM, CatBoost) par symbole
    - **Per-Sector** : des modèles par secteur GICS (LightGBM, CatBoost) qui apprennent la **surperformance relative intra-secteur** (target neutralisée = rendement − médiane sectorielle)
@@ -48,12 +48,14 @@ Il assure :
 ```
 Entraînement :
   Global Ranking (1 modèle, tous symboles) → global_rank_3/5/10/15/20
+  🏆 Champion automatique CatBoost vs LightGBM par horizon (score composite IC+IR)
   
   Mode Per-Symbol (~500 modèles) :
     LSTM + LightGBM + CatBoost par symbole → proba_long, proba_short
   
   Mode Per-Sector (55 modèles) :
     11 secteurs × 5 horizons → LightGBM + CatBoost → target sector-neutre
+    🏆 Champion automatique LightGBM vs CatBoost par secteur (score composite F1+IR)
   
   Diagnostics batch → top/bottom N, weak, S7
 
@@ -68,7 +70,7 @@ Inférence (Live/Backtest) :
 ```mermaid
 flowchart TD
     A[run_training_batch] --> B[Phase 1 : Global Ranking Walk-Forward]
-    B --> B1[train_global_ranking_wf<br/>CatBoost RMSE<br/>5 horizons J+3,5,10,15,20]
+    B --> B1[train_global_ranking_wf<br/>CatBoost + LightGBM<br/>🏆 Champion par horizon<br/>5 horizons J+3,5,10,15,20]
     B1 --> B2[global_rank_df<br/>symbol, date, rank ∈ 0..1]
     
     B2 --> C{Training Mode ?}
@@ -191,14 +193,17 @@ Pour chaque horizon $h \in \{3, 5, 10, 15, 20\}$ :
 
 | Paramètre | Valeur | Note |
 |-----------|--------|------|
-| Algorithme | **CatBoost RMSE** | Meilleur que LightGBM LambdaRank (+60%) |
+| Algorithme | **CatBoost RMSE** (ou LightGBM LambdaRank si `champion_enabled`) | Voir §6.2 pour la sélection automatique |
 | `ranking_max_depth` | 7 | Indépendant du per-symbol (5) |
 | `ranking_num_leaves` | 31 | Cohérent avec depth=7 |
 | `n_estimators` | 500 | |
 | `learning_rate` | 0.03 | |
-| `loss_function` | RMSE | Régression sur rang continu |
+| `loss_function` | RMSE (CatBoost) / LambdaRank (LightGBM) | |
 
-> **LightGBM LambdaRank** testé : IC 0.0130 vs CatBoost 0.0208. LambdaRank ignore `regime_*` (importance 0.0), perd 20% des données (early stopping), et la MSE tolère mieux l'incertitude du classement.
+> **Champion mode** (2026-08-09) : quand `champion_enabled = True`, les DEUX algorithmes
+> sont entraînés et le meilleur est sélectionné par horizon selon un score composite
+> 55% IC + 30% IR + 15% splits positifs (voir §6.2). Le **meilleur horizon** est aussi
+> déterminé automatiquement avec la même formule (voir §3.8).
 
 ### 3.6 Feature Importance
 
@@ -208,6 +213,26 @@ Calculée via `gain` (LightGBM) ou `feature_importance` (CatBoost). Moyennée su
 
 Paramètre `--global-ranking-max-symbols` (défaut: 300, IHM: 0 = tous).  
 Si > 0 : garde les **top N par volume moyen** ou stratifié par déciles.
+
+### 3.8 Meilleur horizon automatique (NEW 2026-08-09)
+
+À l'entraînement, le **meilleur horizon** est déterminé automatiquement avec la même logique
+que la sélection champion intra-horizon (score composite 55% IC + 30% IR + 15% splits positifs).
+
+Chaque horizon est évalué sur les métriques de son champion :
+
+$$\text{Score}_h = 0.55 \times \frac{\text{IC}_h}{\max(\text{IC})} + 0.30 \times \frac{\text{IR}_h}{\max(\text{IR})} + 0.15 \times \text{PosPct}_h$$
+
+Le meilleur horizon est stocké dans `metadata_json.global_ranking.best_horizon` et utilisé
+par `cascade_select()` pour la sélection de trades (au lieu de toujours forcer H20).
+
+| Horizon | IC Mean | IC IR | Pos% | Score |
+|---------|---------|-------|------|-------|
+| H3 | 0.015 | 1.69 | 100% | 0.616 |
+| H5 | 0.023 | 2.03 | 83% | 0.761 |
+| H10 | 0.024 | 1.27 | 83% | 0.668 |
+| H15 | 0.036 | 2.14 | 100% | **1.000** 🏆 |
+| H20 | 0.036 | 1.42 | 83% | 0.870 |
 
 ---
 
@@ -490,15 +515,120 @@ python -m modelFactory --mode train \
 
 ## 6. Sélection du Champion
 
-### 6.1 Principe
+La sélection du champion fonctionne différemment selon le niveau (Global, Per-Sector, Per-Symbol),
+car la nature des modèles et les métriques disponibles diffèrent.
 
-Pour chaque symbole, parmi les 3 challengers (LSTM, LightGBM, CatBoost), on sélectionne le **meilleur** selon des critères de qualité.
+### 6.1 Vue d'ensemble
 
-> **Note** : Le **Global Model ne participe pas** à la sélection du champion. Son rôle est différent :
-> - Ses rangs (`global_rank_3/5/10`) sont injectés comme **features** dans les modèles per-symbol (stacking)
-> - Il est utilisé dans la **cascade de trading** (`global_rank × proba_long` → score du trade)
+| Niveau | Modèles comparés | Métrique primaire | Métrique stabilité | Gates | Champion par |
+|--------|-----------------|-------------------|-------------------|-------|-------------|
+| **🌐 Global** | CatBoost vs LightGBM | IC Mean (Spearman) | IC IR = IC Mean / IC Std | IC > 0, ≥ (N−2)/N splits positifs | **Horizon** (H3/H5/H10/H15/H20) |
+| **🏭 Per-Sector** | LightGBM vs CatBoost | F1 Mean (WF, target neutralisée) | F1 IR = F1 Mean / F1 Std | F1 > 0, ≥ (N−2)/N splits positifs | **Secteur** (1 champion par secteur) |
+| **📈 Per-Symbol** | LSTM vs LightGBM vs CatBoost | `selection_score` (F1 macro WF poolé) | — (non utilisé) | Métriques valides (AUC, collapsed, etc.) | **Symbole** (1 champion par symbole) |
 
-### 6.2 Modes de sélection
+### 6.2 🌐 Global Model — Champion par horizon
+
+> **Ajouté le 2026-08-08.** Le Global Ranking entraîne CatBoost ET LightGBM pour chaque horizon,
+> puis sélectionne le champion au meilleur **score composite**.
+
+#### Formule du score composite
+
+$$\text{Score} = 0.55 \times \frac{\text{IC Mean}}{\max(\text{IC Mean})} + 0.30 \times \frac{\text{IC IR}}{\max(\text{IC IR})} + 0.15 \times \text{Positive Split Ratio}$$
+
+Chaque métrique (sauf le ratio de splits, déjà dans [0,1]) est normalisée par le meilleur
+des 2 candidats → le candidat optimal sur une métrique obtient 1.0.
+
+**Pourquoi 55/30/15 ?** L'IC Mean (55%) est le critère principal — sans alpha, rien ne sert
+d'être stable. L'IC IR (30%) pénalise l'instabilité. Le taux de splits positifs (15%)
+récompense la robustesse cross-régime : un modèle qui performe 6/6 splits est plus fiable
+qu'un modèle à 4/6, même à IC égal.
+
+#### Gates d'éligibilité
+
+| Gate | Condition | Rationnel |
+|------|-----------|-----------|
+| **IC Mean > 0** | Alpha positif | IC négatif = classe à l'envers |
+| **IC IR ≥ 0.30** | Stabilité minimale | Filtre les modèles sans aucune constance |
+| **≥ (N−2)/N splits positifs** | Au plus 2 splits avec IC ≤ 0 | Robustesse cross-régime (67% à 6 splits, 82% à 11) |
+
+Si aucun candidat n'est éligible → fallback sur le meilleur IC Mean.
+
+#### Champion par horizon
+
+Chaque horizon (H3, H5, H10, H15, H20) a **son propre champion**, car la tâche de prédiction
+est fondamentalement différente (court terme vs long terme). Par exemple :
+
+```
+H3  → CatBoost  (IC=0.022, IR=1.8, score=0.94)
+H5  → LightGBM  (IC=0.041, IR=5.1, score=0.98)
+H10 → LightGBM  (IC=0.052, IR=4.2, score=0.97)
+H15 → CatBoost  (IC=0.035, IR=3.5, score=0.91)
+H20 → CatBoost  (IC=0.028, IR=3.1, score=0.89)
+```
+
+À la prédiction, chaque horizon charge son propre modèle champion (`.txt` pour LightGBM,
+`.pkl` pour CatBoost). Le loader détecte automatiquement le type via l'extension du fichier.
+
+#### Activation
+
+- **IHM** : checkbox `🏆 Champion automatique CatBoost vs LightGBM pour le Global Ranking`
+  (cochée par défaut si le Global Model est activé)
+- **CLI** : `--global-champion`
+- **Config** : `GlobalModelConfig.champion_enabled = True`
+
+Si décoché → le backend choisi dans la dropdown `Backend du modèle global` est utilisé
+(`catboost` par défaut).
+
+#### Logs
+
+```
+global_ranking_wf horizon=5 ⏳ starting — 11 splits × 2 candidates, 177 features
+global_ranking_wf horizon=5 split=1/11 → fitting lightgbm (8200 rows)...
+global_ranking_wf horizon=5 split=1/11 model=lightgbm ic_rank=0.0421
+global_ranking_wf horizon=5 split=1/11 → fitting catboost (8200 rows)...
+global_ranking_wf horizon=5 split=1/11 🏆 split_champion=lightgbm (lightgbm=IC 0.0421, catboost=IC 0.0387)
+...
+global_ranking_wf horizon=5 candidate=lightgbm ✅ IC=0.0410 IR=5.12 pos=100% score=0.980
+global_ranking_wf horizon=5 candidate=catboost   ✅ IC=0.0440 IR=2.00 pos=82% score=0.796
+global_ranking_wf horizon=5 champion_selection (metric=composite 60%IC+40%IR) → champion=lightgbm
+```
+
+### 6.3 🏭 Per-Sector — Champion par secteur
+
+> **Ajouté le 2026-08-09.** Même logique composite que le Global Model, adaptée à la
+> classification (F1 au lieu d'IC).
+
+#### Formule du score composite
+
+$$\text{Score} = 0.55 \times \frac{\text{F1 Mean}}{\max(\text{F1 Mean})} + 0.30 \times \frac{\text{F1 IR}}{\max(\text{F1 IR})} + 0.15 \times \text{Positive Split Ratio}$$
+
+Où F1 Mean et F1 IR sont calculés sur les splits walk-forward (F1 macro par split).
+
+#### Gates d'éligibilité
+
+Identiques au Global Model : F1 Mean > 0, F1 IR ≥ 0.30, et au plus 2 splits WF avec F1 ≤ 0 (≥ (N−2)/N splits positifs).
+
+#### Fallback
+
+Si les données walk-forward ne sont pas disponibles (< 3 splits) → fallback sur le
+`selection_score` simple (F1 macro de la validation).
+
+#### Logs
+
+```
+train_sector champion_selection sector=Technology (composite 60%F1+40%IR):
+  lgbm F1=0.3420 IR=3.15 pos=91% score=0.972 ✅
+  cb   F1=0.3280 IR=2.10 pos=82% score=0.842 ✅
+  → champion=lightgbm
+```
+
+### 6.4 📈 Per-Symbol — Champion par symbole (méthode originale)
+
+Le Per-Symbol conserve la méthode de sélection originale, basée sur le `selection_score`
+(F1 macro walk-forward poolé). La sélection passe par `champion_selection.py` qui gère
+jusqu'à 4 challengers (LSTM, LightGBM, CatBoost, Global Model).
+
+#### Modes de sélection
 
 | Mode | Condition | Modèle choisi |
 |------|-----------|---------------|
@@ -506,7 +636,7 @@ Pour chaque symbole, parmi les 3 challengers (LSTM, LightGBM, CatBoost), on sél
 | `fallback_default_champion` | Aucun éligible | Modèle par défaut (ex: `lstm_attention`) |
 | `default_champion` | Auto-sélection désactivée | Modèle par défaut |
 
-### 6.3 Critères d'éligibilité
+#### Critères d'éligibilité
 
 Un modèle est éligible si TOUS ces critères sont remplis :
 
@@ -521,7 +651,7 @@ Un modèle est éligible si TOUS ces critères sont remplis :
    - `n_observations ≥ 50` en val et WF
 5. **Quarantaine** (optionnelle) : ≥ `min_runs` runs, premier succès ≥ `min_days` jours
 
-### 6.4 Selection Score
+#### Selection Score
 
 Calculé à partir des partitions **val et walk_forward uniquement** (jamais test) :
 - Priorité 1 : `f1_macro` dans `wf.mean`
@@ -529,6 +659,19 @@ Calculé à partir des partitions **val et walk_forward uniquement** (jamais tes
 - Priorité 3 : `f1_macro` dans `val`
 - Fallback : `auc` dans les mêmes partitions
 - Si aucune métrique trouvée → `-∞` (jamais sélectionné)
+
+> **Note** : Le Per-Symbol n'utilise pas le score composite car la sélection est
+> centralisée dans `champion_selection.py` qui gère des challengers hétérogènes
+> (LSTM + tabulaires). La stabilité WF est déjà reflétée dans le F1 macro poolé.
+
+### 6.5 Résumé des flags de configuration
+
+| Flag | Niveau | Description | Défaut |
+|------|--------|-------------|--------|
+| `--global-champion` | Global | Active le score composite IC+IR | `True` (IHM) |
+| `--select-champion` | Per-Symbol | Active la sélection automatique | `True` |
+| `--enable-global-challenger` | Per-Symbol | Inclut le Global Model comme 4ᵉ challenger | `False` |
+| Composite implicite | Per-Sector | Toujours actif si ≥ 3 splits WF disponibles | — |
 
 ---
 
@@ -592,10 +735,12 @@ Combine **rang global** et **prédiction per-symbol** pour décider quels trades
 
 ```
 Pour chaque symbole avec global_rank ET per-symbol prediction :
-1. rank_avg = (global_rank_10 + global_rank_15) / 2
-2. Si rank_avg > 0.80 (top 20%) ET proba_long > seuil → candidat LONG
-3. Si rank_avg < 0.20 (bottom 20%) ET proba_short > seuil → candidat SHORT
-4. Score = rank_avg × proba_long (ou (1-rank_avg) × proba_short)
+1. Lire le meilleur horizon (`best_horizon`) depuis le metadata du batch
+   → déterminé automatiquement à l'entraînement (score composite 55/30/15, voir §3.8)
+   → fallback H20 → H15 → H10 → H5 → H3 si indisponible
+2. Si global_rank_best > 0.80 (top 20%) ET proba_long > seuil → candidat LONG
+3. Si global_rank_best < 0.20 (bottom 20%) ET proba_short > seuil → candidat SHORT
+4. Score = rank × proba_long (ou (1-rank) × proba_short)
 5. Trié par score décroissant
 ```
 
@@ -694,11 +839,13 @@ L'IC Per-Symbol permet de comparer deux batchs :
 
 | Paramètre | Défaut | Note |
 |-----------|--------|------|
-| `model_name` | `catboost` | CatBoost RMSE > LightGBM LambdaRank |
+| `model_name` | `catboost` | Backend utilisé si `champion_enabled = False` |
+| `champion_enabled` | `False` | Flag D : entraîne CatBoost + LightGBM, sélectionne le champion par horizon (voir §6.2) |
 | `ranking_max_depth` | 7 | Indépendant du per-symbol |
 | `ranking_num_leaves` | 31 | Cohérent avec depth=7 |
 | `enabled` | false | Flag A : active le Global Ranking |
 | `stacking_enabled` | false | Flag B : injecte global_rank dans per-symbol |
+| `challenger_enabled` | false | Flag C : inclut le global dans la sélection champion per-symbol |
 | `use_cross_sectional_features` | true | |
 
 ### 10.3 Per-Symbol / Per-Sector (BaselineConfig)
@@ -806,9 +953,21 @@ stock_fundamentals_daily
   "cli_options": {...},
   "liquidity_filter": {...},
   "global_ranking": {
+    "best_horizon": 15,
+    "champion_by_horizon": {"3": "lightgbm", "5": "catboost", "10": "lightgbm", "15": "catboost", "20": "catboost"},
+    "champion_enabled": true,
+    "backend_model_name": "catboost",
     "horizon_details": {
-      "10": {
-        "ic_mean": 0.0083,
+      "15": {
+        "champion": "catboost",
+        "champion_ic_mean": 0.0363,
+        "champion_ic_ir": 2.14,
+        "champion_score": 0.975,
+        "selection_metric": "composite_55ic_30ir_15pos",
+        "candidates": {
+          "lightgbm": {"ic_mean": 0.0211, "ic_ir": 1.25, "positive_pct": 0.83},
+          "catboost": {"ic_mean": 0.0363, "ic_ir": 2.14, "positive_pct": 1.0}
+        },
         "decile_spread": 0.0034,
         "n_features": 176,
         "splits": [...],
@@ -878,6 +1037,56 @@ stock_fundamentals_daily
 
 > **Interaction smoothing × splits** : avec 13 splits (83% chevauchement), le smoothing dilue.
 > Avec 8 splits (régimes distincts), il apporte +31% sur H10. Les deux sont complémentaires.
+
+### 12.3 Campagne flags Per-Sector — Champions (2026-08-08, 7 batches)
+
+> **Objectif** : identifier les flags qui améliorent le Global Model et/ou le Per-Sector.
+> Tous les tests utilisent `--training-mode per_sector --target-excess-vs-spy` comme base (F1),
+> sauf P0 (baseline sans `--target-excess-vs-spy`).
+
+#### 🏆 Champions
+
+| Niveau | Champion | Batch | Flags | Métrique |
+|:-------|:---------|:------|:------|:---------|
+| 🌐 **Global Model** | **F4** 🥇 | `0a3695` | `--include-short-score` | IC Rank **0.0197** (+5.9% vs baseline 0.0186) |
+| 🌐 Global Model 🥈 | **F7** | `961263` | F4 + `--include-macro-vix3m` | IC Rank **0.0196**, IC IR H10 record **1.52** |
+| 🔵 **Per-Sector** | **F1** 🥇 | `6509b5` | `--target-excess-vs-spy` | F1 long H5 **0.514**, Dir Acc H15 **0.5039** |
+
+#### Tableau comparatif Global Model
+
+| Batch | Flags vs F1 | IC Rank Global | IC IR | Decile Spread H20 | Backtest V2 |
+|:------|:------------|--------------:|------:|------------------:|:-----------|
+| **F4** 🥇 | `--include-short-score` | **0.0197** | **1.07** | **0.0319** | **−4.4%** |
+| **F7** 🥈 | + `--include-macro-vix3m` | 0.0196 | 1.06 | 0.0302 | −4.6% |
+| F1 | baseline avec `--target-excess-vs-spy` | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| P0 | baseline sans `--target-excess-vs-spy` | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| F2 | + `--include-sentiment` | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| F5 | + VIX | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| F6 | + VXN | 0.0186 | 1.02 | 0.0297 | −9.3% |
+| F3 ❌ | + `--include-screener-scores` | 0.0176 | 0.92 | 0.0239 | −9.3% |
+
+#### Tableau comparatif Per-Sector (WF)
+
+| Batch | F1 macro H20 | F1 long H5 | F1 long H20 | Dir Acc H15 | Dir Acc H20 | Top F1 macro |
+|:------|-------------:|-----------:|------------:|------------:|------------:|-------------:|
+| **F1** 🥇 | 0.329 | **0.514** | 0.511 | **0.5039** | **0.5019** | **0.366** |
+| F4 | 0.328 | 0.513 | 0.509 | 0.5022 | 0.5011 | **0.366** |
+| F3 | 0.328 | 0.512 | 0.510 | 0.5021 | 0.5015 | **0.366** |
+| F7 | 0.328 | 0.510 | 0.509 | 0.5009 | 0.5009 | 0.353 |
+| F2 | 0.327 | 0.512 | 0.509 | 0.5022 | 0.4998 | 0.356 |
+| F6 | 0.328 | 0.511 | 0.510 | 0.5026 | 0.5012 | 0.361 |
+| F5 | 0.327 | 0.512 | 0.506 | 0.5020 | 0.4992 | 0.351 |
+| P0 | 0.327 | 0.511 | 0.506 | 0.5004 | 0.4986 | 0.348 |
+
+#### Leçons clés
+
+1. **`--include-short-score` (F4)** est le seul flag qui améliore significativement le Global Model (+5.9% IC Rank, +4.9% IC IR). Backtest V2 2× meilleur (−4.4% vs −9.3%).
+2. **`--target-excess-vs-spy` (F1 vs P0)** améliore le Per-Sector (F1 long, Dir Acc, top F1 macro) mais n'affecte pas le Global Model.
+3. **VIX/VXN (F5/F6) sont incompatibles** avec `--include-short-score` — ils annulent complètement le gain Global.
+4. **VIX3M (F7) est compatible** — préserve 97% du gain Global, avec un IC IR H10 record à 1.52.
+5. **`--include-screener-scores` (F3)** est le seul flag qui **dégrade** le Global Model (−5.4% IC Rank).
+6. **`--include-sentiment` (F2)** n'apporte aucun gain mesurable sur les métriques.
+7. **Recommandation production** : `--target-excess-vs-spy --include-short-score` (F4). Option VIX3M (F7) si la stabilité H10 est prioritaire.
 
 ### 11.3 Métriques finales — Global Ranking
 
@@ -1203,16 +1412,20 @@ Purge = 1j (marge de sécurité résiduelle uniquement).
 
 ---
 
-## 14. Stratégie d'exploitation (validée par backtest 2026-08-04)
+## 14. Stratégie d'exploitation (validée par backtest 2026-08-04, mise à jour 2026-08-09)
 
-### 14.1 Principe : H20 seul pour la sélection
+### 14.1 Principe : meilleur horizon automatique
 
-| Horizon | Rôle | IC / IR (f82ab5) | IC / IR (7e4cf8 ref) |
-|---------|------|-------------------|-----------------------|
-| **H20** | Filtre d'univers — quoi acheter | 0.0102 / 1.47 | 0.0251 / 2.76 |
-| **H5** | Monitoring uniquement (alerte si < 0.10) | 0.0139 / 0.85 | 0.0120 / 1.19 |
+Le **meilleur horizon** est déterminé automatiquement à l'entraînement (score composite 55/30/15,
+voir §3.8). La cascade de trading (`cascade_select`) lit `best_horizon` depuis le metadata
+du batch et l'utilise en priorité. Fallback H20 si indisponible.
 
-**Logique** : H20 identifie les actions qui vont surperformer sur 1 mois. Le backtest confirme que tout filtre H5 (rising ou dip) dégrade la performance.
+| Horizon | Rôle |
+|---------|------|
+| **best_horizon** (ex: H15) | Filtre d'univers — top N% → quels titres acheter |
+| **Autres horizons** | Disponibles pour stratégies multi-horizons, monitoring |
+
+> **H20 n'est plus imposé.** Si H15 a un meilleur IC+IR que H20, c'est H15 qui pilote la sélection.
 
 ### 14.2 Résultats backtest Global Rank (batch f82ab5)
 
@@ -1252,6 +1465,8 @@ eligible = global_rank_20 > 0.70  # Top 30% H20
 |-------|-----------|
 | **IC Rank** | Information Coefficient — corrélation de Spearman entre rang prédit et rendement réalisé |
 | **IC IR** | IC Information Ratio = IC Mean / IC Std — mesure la stabilité du signal |
+| **F1 IR** | F1 Information Ratio = F1 Mean / F1 Std — stabilité du F1 sur les splits WF |
+| **Score composite** | 60% métrique primaire + 40% IR — utilisé pour la sélection champion Global et Per-Sector |
 | **Decile Spread** | Rendement moyen du top décile moins bottom décile |
 | **F1 macro** | Moyenne non pondérée des F1 de chaque classe (short, flat, long) |
 | **WF** | Walk-Forward — validation glissante PIT-safe |

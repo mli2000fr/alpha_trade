@@ -114,6 +114,7 @@ class BackfillScoresHistoryOptions:
     selection_size: int = 100
     screener_workers: int | None = 4
     universe_only: bool = False
+    symbol_source: str | None = "ticket-recherche"
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +373,8 @@ def build_backtesting_command(
             command.extend(["--screener-workers", str(options.screener_workers)])
         if options.universe_only:
             command.append("--universe-only")
+        if options.symbol_source:
+            command.extend(["--symbol-source", options.symbol_source])
         return command
 
     if kind == "diagnose-screener":

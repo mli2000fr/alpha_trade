@@ -145,6 +145,7 @@ class BackfillScoresHistoryService:
         screener_max_workers: int | None = None,
         capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
         config_fingerprint: str | None = None,
+        symbol_source: str | None = "ticket-recherche",
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.screener_config = screener_config or ScreenerConfig.strict_swing_cash()
@@ -156,6 +157,7 @@ class BackfillScoresHistoryService:
         self.scanner = AlphaScanner(engine=self.engine, config=self.scanner_config)
         self.aggregator = SentimentSignalAggregator(engine=self.engine, config=self.sentiment_config)
         self._symbol_chunks_cache: tuple[tuple[str, ...], ...] | None = None
+        self._symbol_source: str | None = str(symbol_source).strip() if symbol_source else None
 
     @staticmethod
     def _coerce_date(value: Any) -> date | None:
@@ -331,10 +333,62 @@ class BackfillScoresHistoryService:
 
     def _get_symbol_chunks(self) -> tuple[tuple[str, ...], ...]:
         if self._symbol_chunks_cache is None:
-            self._symbol_chunks_cache = tuple(
-                tuple(chunk) for chunk in iter_symbol_chunks(self.engine, self.screener_config.chunk_size)
-            )
+            if self._symbol_source:
+                self._symbol_chunks_cache = self._resolve_symbols_from_source()
+            else:
+                self._symbol_chunks_cache = tuple(
+                    tuple(chunk) for chunk in iter_symbol_chunks(self.engine, self.screener_config.chunk_size)
+                )
         return self._symbol_chunks_cache
+
+    def _resolve_symbols_from_source(self) -> tuple[tuple[str, ...], ...]:
+        """Résout les symboles depuis une source nommée (ticket-recherche, tradable-universe, stock-bars-daily)
+        et les découpe en chunks compatibles avec le screener PIT."""
+        from datetime import date as _date
+
+        from modelFactory.db_registry import load_symbols_for_source
+
+        symbol_source = self._symbol_source
+        normalized = str(symbol_source or "").strip().lower().replace("_", "-")
+
+        if normalized == "tradable-universe":
+            symbols = load_symbols_for_source(
+                self.engine,
+                normalized,
+                trade_date=_date.today(),
+                capital_preset_key=self.capital_preset_key,
+            )
+        else:
+            from database.selector_reference import list_symbols_for_source as _list
+
+            symbols = _list(symbol_source)
+
+        if not symbols:
+            LOGGER.warning("Aucun symbole trouvé pour la source %s — univers vide.", symbol_source)
+            return ()
+
+        # Filtrer pour ne garder que les symboles ayant des barres daily
+        with self.engine.connect() as conn:
+            existing = {
+                row[0]
+                for row in conn.execute(
+                    text("SELECT DISTINCT symbol FROM stock_bars_daily WHERE symbol IN :symbols"),
+                    {"symbols": tuple(symbols)},
+                ).fetchall()
+            }
+        symbols = [s for s in symbols if s in existing]
+        LOGGER.info(
+            "Backfill symbol_source=%s total=%d avec_barres=%d",
+            symbol_source,
+            len(symbols) if symbol_source else 0,
+            len(symbols),
+        )
+
+        chunk_size = max(1, self.screener_config.chunk_size)
+        return tuple(
+            tuple(symbols[i : i + chunk_size])
+            for i in range(0, len(symbols), chunk_size)
+        )
 
     @staticmethod
     def _index_prefetched_symbol_frame(frame: pd.DataFrame) -> pd.DataFrame:
