@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
     walk_forward_quant_weight DOUBLE     NULL,
     calibration_run_id      VARCHAR(64)  NULL,
     calibration_source      VARCHAR(64)  NULL,
+    take_profit_price       DOUBLE       NULL,
     created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_rd_run_symbol_account (run_id, symbol, account_id),
     INDEX idx_rd_run       (run_id),

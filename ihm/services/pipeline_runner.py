@@ -2468,9 +2468,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--trade-date", trade_date])
         if account_id:
             command.extend(["--account", account_id])
+        # ── V1 Multi-Horizon : injecter best_horizon depuis le batch ML ──
+        _risk_bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        if _risk_bid:
+            try:
+                from modelFactory.predictor import _load_best_horizon_for_batch
+                _best_h = _load_best_horizon_for_batch(_risk_bid)
+                if _best_h is not None:
+                    command.extend(["--best-horizon", str(_best_h)])
+            except Exception:
+                pass  # best-effort : le fallback H10 dans RiskConfig suffit
         return command
-
-    if step_key == "execution":
         command = [sys.executable, "-u", str(PROJECT_ROOT / "run_execution.py"), options.execution_mode]
         if trade_date:
             command.extend(["--date", trade_date])

@@ -142,6 +142,7 @@ class ExecutionRepository:
             "selection_explanation",
             "selector_earnings_blackout",
             "previous_close",
+            "take_profit_price",  # V1 Multi-Horizon TP (2026-08-09)
         ]
         select_parts = [*required_columns]
         select_parts.extend(
@@ -365,6 +366,7 @@ class ExecutionRepository:
                 initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
                 target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
                 previous_close=float(r["previous_close"]) if r.get("previous_close") is not None else None,
+                take_profit_price=float(r["take_profit_price"]) if r.get("take_profit_price") is not None else None,
             )
             for r in rows
         ]
@@ -515,6 +517,7 @@ class ExecutionRepository:
                 risk_budget_dollars=float(r["risk_budget_dollars"]) if r.get("risk_budget_dollars") is not None else None,
                 initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
                 target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
+                take_profit_price=float(r["take_profit_price"]) if r.get("take_profit_price") is not None else None,
             )
             for r in rows
         ]

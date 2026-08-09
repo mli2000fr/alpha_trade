@@ -21,6 +21,7 @@
 12. [Résultats & Benchmark](#12-résultats--benchmark)
 13. [Questions / Réponses](#13-questions--réponses)
 14. [Stratégie d'exploitation](#14-stratégie-dexploitation-validée-par-backtest-2026-08-02)
+15. [Gestion du Risque Multi-Horizon (V1 / V2)](#15-gestion-du-risque-multi-horizon-v1--v2)
 
 ---
 
@@ -1166,6 +1167,153 @@ La target (neutralisée en per-sector, brute en per-symbol) a une distribution c
 | **`f1_short`** | Capacité à identifier les jours baissiers | LSTM + baselines |
 | **`directional_accuracy`** | % de jours où sign(pred) = sign(target) | LSTM + baselines |
 | **`ic`** (Information Coefficient) | Corrélation prédiction vs rendement futur | LSTM + baselines |
+
+---
+
+## 15. Gestion du Risque Multi-Horizon (V1 / V2)
+
+> **Ajouté le 2026-08-09** — Aligne les stops et take-profits sur l'horizon de prédiction.
+
+### 15.1 Problème initial
+
+Avant V1, le système utilisait des paramètres de risque **identiques pour tous les horizons** :
+
+| Paramètre | Valeur | Problème |
+|-----------|--------|----------|
+| Stop-loss | `ATR × 2.0` (fixe) | Même stop pour H3 et H20 — incohérent |
+| Take-profit | 12% du prix (fixe) | TP et SL dans des unités différentes (% vs ATR) → R/R variable par titre |
+| Lien horizon | Aucun | Le `best_horizon` (ex: H10) était ignoré par le risk management |
+
+**Exemple concret du bug** : pour AAPL (ATR=1.5%, prix=$200), le R/R était de 12/3=4.0. Pour TSLA (ATR=4%, prix=$250), le R/R chutait à 12/8=1.5. Le R/R dépendait du ticker, pas de la stratégie.
+
+### 15.2 Architecture cible
+
+```mermaid
+flowchart TD
+    A[best_horizon du batch ML] --> B[RiskConfig.best_horizon]
+    B --> C{Stop Loss}
+    B --> D{Take Profit}
+    C --> C1["SL = ATR × atr_stop_multiple[horizon]"]
+    D --> D1["TP = min(ATR × tp_atr_multiple[horizon], price × tp_max_pct[horizon])"]
+    C1 --> E[Sizing: shares = risk_budget / SL_distance]
+    D1 --> F[Bracket orders: TP limit + SL stop]
+```
+
+### 15.3 V1 — Implémenté ✅ (2026-08-09)
+
+**Stop-loss et Take-profit fixes par horizon.** Les valeurs sont des plafonds de sécurité, pas des cibles dynamiques.
+
+#### Paramètres V1
+
+| Horizon | SL (ATR multiple) | TP (ATR multiple) | TP max (% prix) | R/R théorique |
+|---------|-------------------|-------------------|-----------------|---------------|
+| **H3**  | 1.5× | 2.0× | 3%  | 1.33 |
+| **H5**  | 2.0× | 2.5× | 4%  | 1.25 |
+| **H10** | 2.5× | 3.0× | 7%  | 1.20 |
+| **H15** | 3.0× | 3.5× | 10% | 1.17 |
+| **H20** | 3.5× | 4.0× | 13% | 1.14 |
+
+#### Formule V1
+
+```python
+# Stop
+stop_distance = ATR × atr_stop_multiple_map[best_horizon]
+stop_price = entry_price − stop_distance  # LONG
+
+# Take Profit
+tp_distance_atr = ATR × tp_atr_multiple_map[best_horizon]
+tp_distance_pct = entry_price × tp_max_pct_map[best_horizon]
+tp_distance = min(tp_distance_atr, tp_distance_pct)
+tp_price = entry_price + tp_distance  # LONG
+```
+
+#### Fichiers modifiés
+
+| Fichier | Changement |
+|---------|-----------|
+| `risk_management/config.py` | Ajout `best_horizon`, `_atr_stop_multiple_map`, `_tp_atr_multiple_map`, `_tp_max_pct_map` + helpers `atr_stop_multiple_for()`, `tp_params_for()` |
+| `risk_management/position_sizer.py` | `atr_stop_multiple` → `atr_stop_multiple_for()` |
+| `risk_management/models.py` | Ajout `take_profit_price` à `PortfolioEntry` |
+| `risk_management/portfolio_builder.py` | Calcul TP via `tp_params_for()`, stockage dans `PortfolioEntry.take_profit_price` |
+| `risk_management/db_io.py` | Ajout `take_profit_price` aux colonnes canoniques `risk_decisions` et `portfolio_targets` |
+| `execution_engine/models.py` | Ajout `take_profit_price` à `ExecutionTarget` |
+| `execution_engine/db_io.py` | Lecture/écriture `take_profit_price` (colonne optionnelle, rétrocompatible) |
+| `execution_engine/order_intents.py` | `build_take_profit_intent()` utilise `target.take_profit_price` en priorité, fallback sur `profit_taker_pct` |
+| `risk_management/cli.py` | Ajout `--best-horizon` CLI arg → injecté dans `load_risk_config` |
+| `risk_management/config.py` (`load_risk_config`) | Maps ATR/TP hardcodées par défaut, `best_horizon` propagé automatiquement |
+| `ihm/services/pipeline_runner.py` | Lit `_load_best_horizon_for_batch()` et passe `--best-horizon` au risk CLI |
+
+#### DB
+
+```sql
+ALTER TABLE alpha_trade.portfolio_targets ADD COLUMN take_profit_price DOUBLE NULL;
+ALTER TABLE alpha_trade.risk_decisions ADD COLUMN take_profit_price DOUBLE NULL;
+```
+
+#### Flux d'injection automatique (✅ implémenté)
+
+Le `best_horizon` est automatiquement injecté dans `RiskConfig` via le pipeline :
+
+```
+pipeline_runner.py
+  └─ _load_best_horizon_for_batch(batch_id) → lit metadata_json du batch ML
+  └─ --best-horizon N → passé au CLI risk_management
+       │
+risk_management/cli.py
+  └─ load_risk_config(cli_overrides={"best_horizon": N})
+  └─ Les maps ATR/TP sont hardcodées dans load_risk_config()
+  └─ Fallback H10 si batch_id indisponible
+```
+
+### 15.4 V2 — Planifié (non implémenté)
+
+**Take-profit dynamique basé sur le rendement prédit par le ML.**
+
+#### Principe
+
+Au lieu d'un TP fixe par horizon, le TP est ajusté au signal ML :
+
+```
+TP = min(
+    ML_predicted_return × 1.2,     ← signal ML (régression continue)
+    ATR × tp_atr_multiple[H],      ← contrainte ATR (cohérente avec le stop)
+    price × tp_max_pct[H]          ← plafond de sécurité par horizon
+)
+```
+
+#### Exemple V2
+
+```
+AAPL, H10, predicted_return = +5.2%, ATR = 2.1% :
+  → TP_candidate = 5.2% × 1.2 = 6.24%
+  → TP_ATR_cap   = 2.1% × 3.0  = 6.3%
+  → TP_max_cap   = 7%
+  → TP_final = min(6.24%, 6.3%, 7%) = 6.24%
+```
+
+#### Ce qui manque pour V2
+
+| # | TODO | Détail |
+|---|------|--------|
+| 1 | **Stocker `predicted_return`** | Le `predict_global_rank()` dans `global_ranking.py` calcule `raw_scores` (rendement prédit continu) mais le jette après rank-normalisation. Il faut : ajouter `predicted_return_{H}` dans `global_rank_history`, le sauvegarder avec `save_global_ranks_to_db()`, et l'exposer dans `load_global_ranks_from_db()`. |
+| 2 | **Propager `predicted_return`** | `cascade_select()` doit retourner le `predicted_return` avec chaque candidat. `MLRankedCandidate` doit avoir un champ `predicted_return`. |
+| 3 | **Injecter dans le Risk** | `PortfolioBuilder` doit recevoir le `predicted_return` (via `MLRankedCandidate` → `SelectionScore`). |
+| 4 | **Formule TP dynamique** | Remplacer le calcul fixe V1 par `min(pred_return × 1.2, ATR_cap, horizon_cap)`. |
+| 5 | **Backtest V1 vs V2** | Comparer expectancy, profit factor, win rate, % TP atteint, % SL atteint. Ajuster les multiples. |
+| 6 | **Migration DB** | Ajouter `predicted_return_3/5/10/15/20` à `global_rank_history`. |
+
+### 15.5 Validation
+
+Les valeurs V1 (stops 1.5–3.5× ATR, TP 3–13%) sont des **points de départ conservateurs**. Elles doivent être validées par backtest en mesurant :
+
+- Expectancy par trade (après frais/slippage)
+- Profit factor
+- Win rate & average win / average loss
+- % TP atteint avant time-stop
+- % SL atteint
+- Performance par horizon et par régime de marché
+
+Les valeurs finales seront déterminées empiriquement.
 | **`mse`** / **`mae`** | Erreur de prédiction absolue | Regression seulement |
 | **`correlation`** | Corrélation pred vs target continue | Regression seulement |
 

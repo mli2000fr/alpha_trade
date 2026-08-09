@@ -1140,7 +1140,7 @@ class PortfolioBuilder:
             accepted_rank += 1
 
             weight = notional / equity if equity > 0 else 0.0
-            risk_per_share = pi.atr_20 * self._cfg.atr_stop_multiple if pi.atr_20 is not None and pi.atr_20 > 0 else None
+            risk_per_share = pi.atr_20 * self._cfg.atr_stop_multiple_for() if pi.atr_20 is not None and pi.atr_20 > 0 else None
             risk_budget_dollars = equity * self._cfg.risk_per_trade_pct if equity > 0 else None
             initial_risk_dollars = approved * risk_per_share if risk_per_share is not None else None
             stop_price_initial = compute_initial_stop_price(
@@ -1148,6 +1148,25 @@ class PortfolioBuilder:
                 pi.last_close,
                 risk_per_share=risk_per_share,
             )
+            # ── V1 Multi-Horizon TP (2026-08-09) ──
+            # TP = min(ATR × tp_atr_multiple[H], price × tp_max_pct[H])
+            _tp_atr_mult, _tp_max_pct = self._cfg.tp_params_for()
+            _tp_atr = pi.atr_20 * _tp_atr_mult if pi.atr_20 is not None and pi.atr_20 > 0 else None
+            _tp_pct = pi.last_close * _tp_max_pct if pi.last_close > 0 else None
+            if _tp_atr is not None and _tp_pct is not None:
+                _tp_raw = min(_tp_atr, _tp_pct)
+            elif _tp_atr is not None:
+                _tp_raw = _tp_atr
+            elif _tp_pct is not None:
+                _tp_raw = _tp_pct
+            else:
+                _tp_raw = None
+            take_profit_price = compute_take_profit_price(ec.side, pi.last_close, tp_pct=None)
+            if _tp_raw is not None:
+                # TP ATR-based : distance absolue depuis l'entrée
+                from core.direction import direction_sign
+                _sign = direction_sign(ec.side)
+                take_profit_price = round(pi.last_close + _sign * _tp_raw, 4)
 
             # Compute Kelly-specific audit fields
             p_eff: float | None = None
@@ -1186,6 +1205,7 @@ class PortfolioBuilder:
                 selection_rank=ec.selection_rank,
                 decision_rank=accepted_rank,
                 stop_price_initial=stop_price_initial,
+                take_profit_price=take_profit_price,  # V1 Multi-Horizon TP
                 risk_per_share=risk_per_share,
                 risk_budget_dollars=risk_budget_dollars,
                 initial_risk_dollars=initial_risk_dollars,
