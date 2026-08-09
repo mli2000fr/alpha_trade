@@ -1519,6 +1519,7 @@ def train_global_ranking_wf(
                 "feature_importance_top10": [{"feature": k, "importance": round(v, 1)} for k, v in _top10] if (_split_importances and _active_features) else [],
                 "feature_importance_bottom10": [{"feature": k, "importance": round(v, 1)} for k, v in _bottom10] if (_split_importances and _active_features) else [],
                 "feature_importance_all": {k: round(v, 1) for k, v in _mean_imp.items()} if (_split_importances and _active_features) else {},
+                "worst_split_ic": float(min(h_ics)) if h_ics else None,  # pire IC parmi les splits (tie-break best_horizon)
                 **_horizon_champion_info,
             }
         else:
@@ -1565,6 +1566,8 @@ def train_global_ranking_wf(
     # il perdra presque toujours, ce qui est normal.
     _best_horizon: int | None = None
     _best_horizon_score: float = float("-inf")
+    # ── Tie-break tolerance : scores à ±0.020 près = considérés ex æquo ──
+    _TIE_EPSILON = 0.020
     if _horizon_details and len(_horizon_details) >= 2:
         # Extraire les métriques du champion pour chaque horizon
         _h_ic: dict[int, float] = {}
@@ -1620,9 +1623,66 @@ def train_global_ranking_wf(
                     "train_global_ranking_wf horizon=H%d IC=%.4f IR=%.2f pos=%.0f%% → score=%.3f",
                     _h, _ic, _ir, _pos * 100, _score,
                 )
-                if _score > _best_horizon_score:
+                if _score > _best_horizon_score + _TIE_EPSILON:
+                    # ── Gagnant clair (écart > 0.02) ──
                     _best_horizon_score = _score
                     _best_horizon = _h
+                elif abs(_score - _best_horizon_score) <= _TIE_EPSILON and _best_horizon is not None:
+                    # ── Tie-break hiérarchique avec tolérances (écart composite ≤ 0.02) ──
+                    # Chaque niveau a sa propre tolérance pour éviter de choisir
+                    # un gagnant sur une différence insignifiante.
+                    #  1. Rank IC (Δ > 0.005) — métrique principale (55% du poids)
+                    #  2. IC IR     (Δ > 0.10)  — stabilité (30% du poids)
+                    #  3. % splits positifs (Δ > 0.05) — robustesse cross-régime (15%)
+                    #  4. Worst Split IC (Δ > 0.01) — pire cas observé
+                    #  5. Horizon le plus court — dernier recours
+                    _prev = {
+                        "ic": _h_ic.get(_best_horizon, 0),
+                        "ir": _h_ir.get(_best_horizon, 0),
+                        "pos": _h_pos.get(_best_horizon, 0),
+                    }
+                    _curr = {
+                        "ic": _h_ic.get(_h, 0),
+                        "ir": _h_ir.get(_h, 0),
+                        "pos": _h_pos.get(_h, 0),
+                    }
+                    # Extraire worst_split_ic depuis _horizon_details si disponible
+                    _prev_worst = float(
+                        (_horizon_details.get(str(_best_horizon), {}).get("worst_split_ic") or 0) or 0
+                    )
+                    _curr_worst = float(
+                        (_horizon_details.get(str(_h), {}).get("worst_split_ic") or 0) or 0
+                    )
+
+                    _tb_reason: str | None = None
+                    # ── Niveau 1 : Rank IC (tolérance 0.005) ──
+                    if _curr["ic"] > _prev["ic"] + 0.005:
+                        _tb_reason = f"IC {_curr['ic']:.4f} > {_prev['ic']:.4f} (Δ={_curr['ic']-_prev['ic']:.4f})"
+                    elif abs(_curr["ic"] - _prev["ic"]) <= 0.005:
+                        # ── Niveau 2 : IC IR (tolérance 0.10) ──
+                        if _curr["ir"] > _prev["ir"] + 0.10:
+                            _tb_reason = f"IR {_curr['ir']:.2f} > {_prev['ir']:.2f} (Δ={_curr['ir']-_prev['ir']:.2f})"
+                        elif abs(_curr["ir"] - _prev["ir"]) <= 0.10:
+                            # ── Niveau 3 : % splits positifs (tolérance 0.05) ──
+                            if _curr["pos"] > _prev["pos"] + 0.05:
+                                _tb_reason = f"pos_splits {_curr['pos']:.0%} > {_prev['pos']:.0%} (Δ={_curr['pos']-_prev['pos']:.0%})"
+                            elif abs(_curr["pos"] - _prev["pos"]) <= 0.05:
+                                # ── Niveau 4 : Worst Split IC (tolérance 0.01) ──
+                                if _curr_worst > _prev_worst + 0.01:
+                                    _tb_reason = f"worst_IC {_curr_worst:.4f} > {_prev_worst:.4f}"
+                                elif abs(_curr_worst - _prev_worst) <= 0.01:
+                                    # ── Niveau 5 : Horizon le plus court ──
+                                    if _h < _best_horizon:
+                                        _tb_reason = f"horizon plus court H{_h} < H{_best_horizon}"
+                    if _tb_reason is not None:
+                        LOGGER.info(
+                            "train_global_ranking_wf ⚖️ tie-break H%d vs H%d (composite %.3f vs %.3f, Δ=%.3f): %s → H%d",
+                            _best_horizon, _h, _best_horizon_score, _score,
+                            abs(_score - _best_horizon_score), _tb_reason, _h,
+                        )
+                        _best_horizon_score = _score
+                        _best_horizon = _h
+                    # else: keep previous — truly indistinguishable on all 5 criteria
 
     if _best_horizon is not None:
         LOGGER.info(
