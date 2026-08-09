@@ -1595,6 +1595,14 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
     # ── Infos modèle (champion ou fixe) ──
     _model_label = "CatBoost"  # fallback
     _champion_by_h = _gr.get("champion_by_horizon")
+    # Fallback: reconstruire champion_by_horizon depuis horizon_details si absent (bug orchestrator)
+    if (not _champion_by_h or not isinstance(_champion_by_h, dict)) and _hd:
+        _rebuilt: dict[str, str] = {}
+        for _hk, _hi in _hd.items():
+            if isinstance(_hi, dict) and _hi.get("champion"):
+                _rebuilt[str(_hk)] = str(_hi["champion"])
+        if _rebuilt:
+            _champion_by_h = _rebuilt
     _has_champion = bool(_champion_by_h and isinstance(_champion_by_h, dict) and _champion_by_h)
     if _has_champion:
         from collections import Counter
@@ -1669,6 +1677,24 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             hide_index=True,
             column_config=_col_config,
         )
+        # ── Meilleur horizon (calculé à l'entraînement) ──
+        _best_h = _gr.get("best_horizon")
+        if _best_h is not None:
+            st.success(
+                f"🏆 **Meilleur horizon : H{_best_h}** — sélectionné par score composite "
+                f"55% IC + 30% IR + 15% Positive Split"
+            )
+        elif _has_champion and _champion_by_h:
+            # Fallback : si best_horizon absent mais champions présents
+            # On utilise IC Mean du champion pour estimer le meilleur horizon
+            _best_h_fallback = max(_champion_by_h.items(), key=lambda x: (
+                float((_ic_by_h.get(str(x[0]), 0)) or 0)
+            ))[0] if _champion_by_h else None
+            if _best_h_fallback is not None:
+                st.info(
+                    f"ℹ️ **Meilleur horizon estimé : H{_best_h_fallback}** "
+                    f"(IC max — best_horizon non disponible dans metadata)"
+                )
 
     # ── Détail par horizon (expander) ──
     for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):

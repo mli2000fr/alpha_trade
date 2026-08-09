@@ -2451,6 +2451,33 @@ def load_global_ranks_from_db(
     )
 
 
+def _load_best_horizon_for_batch(batch_id: str, *, engine: Any | None = None) -> int | None:
+    """Lit le meilleur horizon depuis le metadata du batch.
+
+    Returns:
+        H (int) ou None si indisponible.
+    """
+    if engine is None:
+        return None
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                {"bid": batch_id},
+            ).fetchone()
+        if row and row[0]:
+            import json as _json
+            _meta = _json.loads(str(row[0]))
+            _gr = _meta.get("global_ranking", {}) if isinstance(_meta, dict) else {}
+            _best = _gr.get("best_horizon")
+            if _best is not None:
+                return int(_best)
+    except Exception:
+        pass
+    return None
+
+
 def cascade_select(
     trade_date: str,
     batch_id: str,
@@ -2490,11 +2517,17 @@ def cascade_select(
         LOGGER.warning("cascade_select: no global ranks for %s / %s", trade_date, batch_id)
         return []
 
-    # ── Déterminer le meilleur horizon disponible ──
+    # ── Déterminer le meilleur horizon ──
+    # 1. Lire best_horizon depuis le metadata du batch (calculé à l'entraînement)
+    # 2. Si indisponible, fallback H20 → H15 → H10 → H5 → H3
+    _best_h = _load_best_horizon_for_batch(batch_id, engine=engine)
     _rank_col = None
-    for _col in ("global_rank_20", "global_rank_15", "global_rank_10", "global_rank_5", "global_rank_3"):
+    _fallback_cols = ["global_rank_20", "global_rank_15", "global_rank_10", "global_rank_5", "global_rank_3"]
+    _priority_cols = [f"global_rank_{_best_h}"] + [c for c in _fallback_cols if c != f"global_rank_{_best_h}"] if _best_h else _fallback_cols
+    for _col in _priority_cols:
         if _col in ranks_df.columns and ranks_df[_col].notna().any():
             _rank_col = _col
+            LOGGER.info("cascade_select: using horizon %s (best=%s)", _col, f"H{_best_h}" if _best_h else "auto")
             break
     if _rank_col is None:
         LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))

@@ -1558,6 +1558,78 @@ def train_global_ranking_wf(
         ic_mean if ic_mean is not None else float("nan"),
     )
 
+    # ── Déterminer le meilleur horizon (pour cascade_select / backtest) ──
+    # Même logique que la sélection champion intra-horizon : score composite 55/30/15.
+    # On compare les champions de chaque horizon entre eux.
+    # H3 est inclus mais son IC est structurellement plus faible (court terme) →
+    # il perdra presque toujours, ce qui est normal.
+    _best_horizon: int | None = None
+    _best_horizon_score: float = float("-inf")
+    if _horizon_details and len(_horizon_details) >= 2:
+        # Extraire les métriques du champion pour chaque horizon
+        _h_ic: dict[int, float] = {}
+        _h_ir: dict[int, float] = {}
+        _h_pos: dict[int, float] = {}
+        for _h_key, _h_info in _horizon_details.items():
+            _h = int(_h_key)
+            _champ = _h_info.get("champion")
+            if _champ:
+                _cdata = _h_info.get("candidates", {}).get(_champ, {})
+                _ic_val = _cdata.get("ic_mean") if isinstance(_cdata, dict) else None
+                _ir_val = _cdata.get("ic_ir") if isinstance(_cdata, dict) else None
+                _pos_val = _cdata.get("positive_pct") if isinstance(_cdata, dict) else None
+            else:
+                # Mode non-champion : utiliser les métriques affichées
+                _ic_val = _h_info.get("ic_mean")
+                _ir_val = _h_info.get("ic_ir")
+                # Calculer positive_pct depuis les splits
+                _splits = _h_info.get("splits", [])
+                if _splits:
+                    _pos_count = sum(1 for s in _splits if (s.get("ic_rank") or 0) > 0)
+                    _pos_val = _pos_count / len(_splits) if _splits else None
+                else:
+                    _pos_val = None
+            if _ic_val is not None and not np.isnan(_ic_val):
+                _h_ic[_h] = float(_ic_val)
+            if _ir_val is not None and not np.isnan(_ir_val):
+                _h_ir[_h] = float(_ir_val)
+            if _pos_val is not None:
+                _h_pos[_h] = float(_pos_val)
+
+        if _h_ic:
+            _max_ic = max(_h_ic.values())
+            _max_ir = max(_h_ir.values()) if _h_ir else 1.0
+            # Si aucun positive_pct disponible → 55/45 au lieu de 55/30/15
+            _has_pos = bool(_h_pos)
+            _w_ic = 0.55 if _has_pos else 0.55
+            _w_ir = 0.30 if _has_pos else 0.45
+            _w_pos = 0.15 if _has_pos else 0.0
+            LOGGER.info(
+                "train_global_ranking_wf best_horizon selection (composite %.0f%%IC+%.0f%%IR+%.0f%%pos): "
+                "max_IC=%.4f max_IR=%.2f",
+                _w_ic * 100, _w_ir * 100, _w_pos * 100, _max_ic, _max_ir,
+            )
+            for _h in sorted(_h_ic.keys()):
+                _ic = _h_ic[_h]
+                _ir = _h_ir.get(_h, 0.0)
+                _pos = _h_pos.get(_h, 0.0)
+                _ic_norm = _ic / _max_ic if _max_ic > 0 else 0.0
+                _ir_norm = _ir / _max_ir if _max_ir > 0 else 0.0
+                _score = _w_ic * _ic_norm + _w_ir * _ir_norm + _w_pos * _pos
+                LOGGER.info(
+                    "train_global_ranking_wf horizon=H%d IC=%.4f IR=%.2f pos=%.0f%% → score=%.3f",
+                    _h, _ic, _ir, _pos * 100, _score,
+                )
+                if _score > _best_horizon_score:
+                    _best_horizon_score = _score
+                    _best_horizon = _h
+
+    if _best_horizon is not None:
+        LOGGER.info(
+            "train_global_ranking_wf 🏆 best_horizon=H%d (score=%.3f)",
+            _best_horizon, _best_horizon_score,
+        )
+
     # ── Sauvegarder global_rank_df en parquet pour backtest ──
     if not global_rank_df.empty:
         try:
@@ -1593,6 +1665,7 @@ def train_global_ranking_wf(
             "model_name": _effective_model_name,
             "champion_enabled": cfg.global_model.champion_enabled,
             "champion_by_horizon": _champion_by_horizon if _champion_by_horizon else None,
+            "best_horizon": _best_horizon,
             "horizons": list(_active_horizons),
             "saved_models": _saved_models,
             "feature_set": cfg.data.feature_set,
@@ -1636,6 +1709,7 @@ def train_global_ranking_wf(
         "feature_columns": feature_columns,
         "n_features": len(feature_columns),
         "horizons": list(_active_horizons),
+        "best_horizon": _best_horizon,
     }
 
 

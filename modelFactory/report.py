@@ -327,7 +327,7 @@ def _append_champion_status(
     default_count = mode_map.get("default_champion", 0)
     problem_count = fallback_count + default_count
 
-    lines.append("## 🏆 Sélection du champion")
+    lines.append("### 🏆 Sélection du champion")
     lines.append("")
     if problem_count == 0 and auto_count > 0:
         lines.append(f"✅ **Tout va bien** — {auto_count} champions sélectionnés automatiquement sur {total} symboles.")
@@ -379,6 +379,14 @@ def _append_global_ranking_horizon_details(
     # ── Infos modèle (champion ou fixe) ──
     _model_label = "CatBoost"  # fallback
     _champion_by_h = _gr.get("champion_by_horizon")
+    # Fallback: reconstruire champion_by_horizon depuis horizon_details si absent (bug orchestrator)
+    if (not _champion_by_h or not isinstance(_champion_by_h, dict)) and _hd:
+        _rebuilt: dict[str, str] = {}
+        for _hk, _hi in _hd.items():
+            if isinstance(_hi, dict) and _hi.get("champion"):
+                _rebuilt[str(_hk)] = str(_hi["champion"])
+        if _rebuilt:
+            _champion_by_h = _rebuilt
     if _champion_by_h and isinstance(_champion_by_h, dict) and _champion_by_h:
         from collections import Counter
         _counts = Counter(_champion_by_h.values())
@@ -440,6 +448,25 @@ def _append_global_ranking_horizon_details(
         lines.append("### 📋 Récapitulatif tous horizons")
         lines.append("")
         lines.append(_df_to_md(pd.DataFrame(_summary_rows)))
+        # ── Meilleur horizon (calculé à l'entraînement) ──
+        _best_h = _gr.get("best_horizon")
+        if _best_h is not None:
+            lines.append("")
+            lines.append(
+                f"🏆 **Meilleur horizon : H{_best_h}** — sélectionné par score composite "
+                f"55% IC + 30% IR + 15% Positive Split"
+            )
+        elif _has_champion and _champion_by_h:
+            # Fallback : si best_horizon absent mais champions présents
+            _best_h_fallback = max(_champion_by_h.items(), key=lambda x: (
+                float((_ic_by_h.get(str(x[0]), 0)) or 0)
+            ))[0] if _champion_by_h else None
+            if _best_h_fallback is not None:
+                lines.append("")
+                lines.append(
+                    f"ℹ️ **Meilleur horizon estimé : H{_best_h_fallback}** "
+                    f"(IC max — best_horizon non disponible dans metadata)"
+                )
 
     # ── Détail par horizon ──
     for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
@@ -878,9 +905,6 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     # 🟢 GLOBAL MODEL — Ranking, Backtest, Champion
     # ═══════════════════════════════════════════════════════════════
 
-    # ── Statut champion ──
-    _append_champion_status(lines, champion_df, champion_by_model_df)
-
     # ── Global Ranking Horizon Details ──
     _meta_raw = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
     _append_global_ranking_horizon_details(lines, str(_meta_raw) if _meta_raw is not None else None)
@@ -899,6 +923,9 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     lines.append("")
     lines.append("## 🔵 Per-Symbol / Per-Sector — Métriques d'entraînement")
     lines.append("")
+
+    # ── Statut champion (per-symbol / per-sector) ──
+    _append_champion_status(lines, champion_df, champion_by_model_df)
 
     # ── Métriques par horizon (si multi-horizon) ──
     horizon_df = _safe_query(engine, HORIZON_LIST_QUERY, {"batch_id": batch_id})

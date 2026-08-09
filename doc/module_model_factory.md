@@ -200,9 +200,10 @@ Pour chaque horizon $h \in \{3, 5, 10, 15, 20\}$ :
 | `learning_rate` | 0.03 | |
 | `loss_function` | RMSE (CatBoost) / LambdaRank (LightGBM) | |
 
-> **Champion mode** (NEW 2026-08-08) : quand `champion_enabled = True`, les DEUX algorithmes
+> **Champion mode** (2026-08-09) : quand `champion_enabled = True`, les DEUX algorithmes
 > sont entraînés et le meilleur est sélectionné par horizon selon un score composite
-> 60% IC Mean + 40% IC IR (voir §6.2).
+> 55% IC + 30% IR + 15% splits positifs (voir §6.2). Le **meilleur horizon** est aussi
+> déterminé automatiquement avec la même formule (voir §3.8).
 
 ### 3.6 Feature Importance
 
@@ -212,6 +213,26 @@ Calculée via `gain` (LightGBM) ou `feature_importance` (CatBoost). Moyennée su
 
 Paramètre `--global-ranking-max-symbols` (défaut: 300, IHM: 0 = tous).  
 Si > 0 : garde les **top N par volume moyen** ou stratifié par déciles.
+
+### 3.8 Meilleur horizon automatique (NEW 2026-08-09)
+
+À l'entraînement, le **meilleur horizon** est déterminé automatiquement avec la même logique
+que la sélection champion intra-horizon (score composite 55% IC + 30% IR + 15% splits positifs).
+
+Chaque horizon est évalué sur les métriques de son champion :
+
+$$\text{Score}_h = 0.55 \times \frac{\text{IC}_h}{\max(\text{IC})} + 0.30 \times \frac{\text{IR}_h}{\max(\text{IR})} + 0.15 \times \text{PosPct}_h$$
+
+Le meilleur horizon est stocké dans `metadata_json.global_ranking.best_horizon` et utilisé
+par `cascade_select()` pour la sélection de trades (au lieu de toujours forcer H20).
+
+| Horizon | IC Mean | IC IR | Pos% | Score |
+|---------|---------|-------|------|-------|
+| H3 | 0.015 | 1.69 | 100% | 0.616 |
+| H5 | 0.023 | 2.03 | 83% | 0.761 |
+| H10 | 0.024 | 1.27 | 83% | 0.668 |
+| H15 | 0.036 | 2.14 | 100% | **1.000** 🏆 |
+| H20 | 0.036 | 1.42 | 83% | 0.870 |
 
 ---
 
@@ -714,10 +735,12 @@ Combine **rang global** et **prédiction per-symbol** pour décider quels trades
 
 ```
 Pour chaque symbole avec global_rank ET per-symbol prediction :
-1. rank_avg = (global_rank_10 + global_rank_15) / 2
-2. Si rank_avg > 0.80 (top 20%) ET proba_long > seuil → candidat LONG
-3. Si rank_avg < 0.20 (bottom 20%) ET proba_short > seuil → candidat SHORT
-4. Score = rank_avg × proba_long (ou (1-rank_avg) × proba_short)
+1. Lire le meilleur horizon (`best_horizon`) depuis le metadata du batch
+   → déterminé automatiquement à l'entraînement (score composite 55/30/15, voir §3.8)
+   → fallback H20 → H15 → H10 → H5 → H3 si indisponible
+2. Si global_rank_best > 0.80 (top 20%) ET proba_long > seuil → candidat LONG
+3. Si global_rank_best < 0.20 (bottom 20%) ET proba_short > seuil → candidat SHORT
+4. Score = rank × proba_long (ou (1-rank) × proba_short)
 5. Trié par score décroissant
 ```
 
@@ -930,9 +953,21 @@ stock_fundamentals_daily
   "cli_options": {...},
   "liquidity_filter": {...},
   "global_ranking": {
+    "best_horizon": 15,
+    "champion_by_horizon": {"3": "lightgbm", "5": "catboost", "10": "lightgbm", "15": "catboost", "20": "catboost"},
+    "champion_enabled": true,
+    "backend_model_name": "catboost",
     "horizon_details": {
-      "10": {
-        "ic_mean": 0.0083,
+      "15": {
+        "champion": "catboost",
+        "champion_ic_mean": 0.0363,
+        "champion_ic_ir": 2.14,
+        "champion_score": 0.975,
+        "selection_metric": "composite_55ic_30ir_15pos",
+        "candidates": {
+          "lightgbm": {"ic_mean": 0.0211, "ic_ir": 1.25, "positive_pct": 0.83},
+          "catboost": {"ic_mean": 0.0363, "ic_ir": 2.14, "positive_pct": 1.0}
+        },
         "decile_spread": 0.0034,
         "n_features": 176,
         "splits": [...],
@@ -1377,16 +1412,20 @@ Purge = 1j (marge de sécurité résiduelle uniquement).
 
 ---
 
-## 14. Stratégie d'exploitation (validée par backtest 2026-08-04)
+## 14. Stratégie d'exploitation (validée par backtest 2026-08-04, mise à jour 2026-08-09)
 
-### 14.1 Principe : H20 seul pour la sélection
+### 14.1 Principe : meilleur horizon automatique
 
-| Horizon | Rôle | IC / IR (f82ab5) | IC / IR (7e4cf8 ref) |
-|---------|------|-------------------|-----------------------|
-| **H20** | Filtre d'univers — quoi acheter | 0.0102 / 1.47 | 0.0251 / 2.76 |
-| **H5** | Monitoring uniquement (alerte si < 0.10) | 0.0139 / 0.85 | 0.0120 / 1.19 |
+Le **meilleur horizon** est déterminé automatiquement à l'entraînement (score composite 55/30/15,
+voir §3.8). La cascade de trading (`cascade_select`) lit `best_horizon` depuis le metadata
+du batch et l'utilise en priorité. Fallback H20 si indisponible.
 
-**Logique** : H20 identifie les actions qui vont surperformer sur 1 mois. Le backtest confirme que tout filtre H5 (rising ou dip) dégrade la performance.
+| Horizon | Rôle |
+|---------|------|
+| **best_horizon** (ex: H15) | Filtre d'univers — top N% → quels titres acheter |
+| **Autres horizons** | Disponibles pour stratégies multi-horizons, monitoring |
+
+> **H20 n'est plus imposé.** Si H15 a un meilleur IC+IR que H20, c'est H15 qui pilote la sélection.
 
 ### 14.2 Résultats backtest Global Rank (batch f82ab5)
 
