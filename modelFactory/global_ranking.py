@@ -1403,6 +1403,16 @@ def train_global_ranking_wf(
             _last_model = _candidate_last_model.get(_selected_champion)
             _last_model_name = _selected_champion
             _split_importances = _candidate_importances.get(_selected_champion, [])
+            # Recalculer h_ics avec les ICs du CHAMPION (pas le meilleur par split)
+            _champion_split_ics = _candidate_ics.get(_selected_champion, [])
+            if _champion_split_ics:
+                h_ics = list(_champion_split_ics)
+            # Mettre à jour ic_rank dans _h_split_details avec l'IC du champion
+            _champ_ic_key = f"ic_rank_{_selected_champion}"
+            for _sp in _h_split_details:
+                _champ_ic = _sp.get(_champ_ic_key)
+                if _champ_ic is not None:
+                    _sp["ic_rank"] = float(_champ_ic)
             # Stocker les métriques des deux candidats pour le rapport
             _champion_sel = _champion_details[_selected_champion]
             _horizon_champion_info: dict[str, Any] = {

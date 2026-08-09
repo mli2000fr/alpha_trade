@@ -496,13 +496,16 @@ def _append_global_ranking_horizon_details(
         # ── Tableau des splits ──
         _splits = _h_info.get("splits", [])
         if _splits:
-            lines.append("#### 📅 Détail par split")
+            _champ_label = f" — 🏆 {_h_champion}" if _h_champion else ""
+            lines.append(f"#### 📅 Détail par split{_champ_label}")
             lines.append("")
             # Détecter si le mode champion est actif (colonnes ic_rank_*)
             _has_split_champion = any(
                 k.startswith("ic_rank_") and k != "ic_rank"
                 for _sp in _splits for k in (_sp or {}).keys()
             )
+            # Nom de la colonne IC Rank : inclure le champion si connu
+            _ic_col = f"IC Rank ({_h_champion})" if _h_champion else "IC Rank"
             _split_rows: list[dict] = []
             for _sp in _splits:
                 _train_start = str(_sp.get("train_period_start", ""))[:10] if _sp.get("train_period_start") else "—"
@@ -515,7 +518,7 @@ def _append_global_ranking_horizon_details(
                     "Validation (début→fin)": f"{_val_start} → {_val_end}",
                     "Lignes Train": _sp.get("train_rows", "—"),
                     "Lignes Val": _sp.get("val_rows", "—"),
-                    "IC Rank": _sp.get("ic_rank"),
+                    _ic_col: _sp.get("ic_rank"),
                 }
                 if _has_split_champion:
                     _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")

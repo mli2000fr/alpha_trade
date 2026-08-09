@@ -1741,12 +1741,15 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             # ── Tableau des splits ──
             _splits = _h_info.get("splits", [])
             if _splits:
-                st.markdown("**📅 Détail par split**")
+                _champ_label = f" — 🏆 {_h_champion}" if _h_champion else ""
+                st.markdown(f"**📅 Détail par split{_champ_label}**")
                 # Détecter si le mode champion est actif
                 _has_split_champion = any(
                     k.startswith("ic_rank_") and k != "ic_rank"
                     for _sp in _splits for k in (_sp or {}).keys()
                 )
+                # Nom de la colonne IC Rank : inclure le champion si connu
+                _ic_col = f"IC Rank ({_h_champion})" if _h_champion else "IC Rank"
                 _split_rows: list[dict] = []
                 for _sp in _splits:
                     _train_start = str(_sp.get("train_period_start", ""))[:10] if _sp.get("train_period_start") else "—"
@@ -1759,20 +1762,21 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                         "Validation (début→fin)": f"{_val_start} → {_val_end}",
                         "Lignes Train": _sp.get("train_rows", "—"),
                         "Lignes Val": _sp.get("val_rows", "—"),
-                        "IC Rank": _sp.get("ic_rank"),
+                        _ic_col: _sp.get("ic_rank"),
                     }
                     if _has_split_champion:
                         _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")
                         _row["IC CatBoost"] = _sp.get("ic_rank_catboost")
                     _split_rows.append(_row)
                 _sp_df = pd.DataFrame(_split_rows)
+                _ic_label = f"🎯 {_ic_col}"
                 _sp_col_config: dict = {
                     "Split": st.column_config.NumberColumn("Split", format="%d"),
                     "Train (début→fin)": "Période Train",
                     "Validation (début→fin)": "Période Validation",
                     "Lignes Train": st.column_config.NumberColumn("Lignes Train", format="%d"),
                     "Lignes Val": st.column_config.NumberColumn("Lignes Val", format="%d"),
-                    "IC Rank": st.column_config.NumberColumn("🎯 IC Rank", format="%.4f"),
+                    _ic_col: st.column_config.NumberColumn(_ic_label, format="%.4f"),
                 }
                 if _has_split_champion:
                     _sp_col_config["IC LightGBM"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
