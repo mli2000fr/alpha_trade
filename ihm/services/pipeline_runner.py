@@ -2479,6 +2479,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             except Exception:
                 pass  # best-effort : le fallback H10 dans RiskConfig suffit
         return command
+
+    if step_key == "execution":
         command = [sys.executable, "-u", str(PROJECT_ROOT / "run_execution.py"), options.execution_mode]
         if trade_date:
             command.extend(["--date", trade_date])
