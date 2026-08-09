@@ -581,12 +581,18 @@ def load_risk_config(
     # 2. Construire via from_yaml_section
     overrides = dict(cli_overrides or {})
     # ── V1 Multi-Horizon : injecter les maps par défaut si non fournies ──
-    if "_atr_stop_multiple_map" not in overrides:
-        overrides["_atr_stop_multiple_map"] = {3: 1.5, 5: 2.0, 10: 2.5, 15: 3.0, 20: 3.5}
-    if "_tp_atr_multiple_map" not in overrides:
-        overrides["_tp_atr_multiple_map"] = {3: 2.0, 5: 2.5, 10: 3.0, 15: 3.5, 20: 4.0}
-    if "_tp_max_pct_map" not in overrides:
-        overrides["_tp_max_pct_map"] = {3: 0.03, 5: 0.04, 10: 0.07, 15: 0.10, 20: 0.13}
+    # Ne pas écraser les maps déjà présentes dans YAML ou overrides.
+    yaml_risk = full_cfg.get("risk_management", {})
+    if not isinstance(yaml_risk, dict):
+        yaml_risk = {}
+    _map_defaults: dict[str, dict[int, float]] = {
+        "_atr_stop_multiple_map": {3: 1.5, 5: 2.0, 10: 2.5, 15: 3.0, 20: 3.5},
+        "_tp_atr_multiple_map": {3: 2.0, 5: 2.5, 10: 3.0, 15: 3.5, 20: 4.0},
+        "_tp_max_pct_map": {3: 0.03, 5: 0.04, 10: 0.07, 15: 0.10, 20: 0.13},
+    }
+    for _k, _v in _map_defaults.items():
+        if _k not in overrides and _k not in yaml_risk:
+            overrides[_k] = _v
     config = RiskConfig.from_yaml_section(
         yaml_data=yaml_risk,
         preset_key=preset_key,

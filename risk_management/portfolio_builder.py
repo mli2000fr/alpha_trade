@@ -12,7 +12,7 @@ import numpy as np
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from core.conviction import fuse as _fuse_conviction_long
 from core.conviction import fuse_short as _fuse_conviction_short
-from core.direction import compute_initial_stop_price
+from core.direction import compute_initial_stop_price, compute_take_profit_price
 from core.run_summary import attach_live_progress
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.abstention import AbstentionPolicy
@@ -1161,12 +1161,14 @@ class PortfolioBuilder:
                 _tp_raw = _tp_pct
             else:
                 _tp_raw = None
-            take_profit_price = compute_take_profit_price(ec.side, pi.last_close, tp_pct=None)
             if _tp_raw is not None:
                 # TP ATR-based : distance absolue depuis l'entrée
                 from core.direction import direction_sign
                 _sign = direction_sign(ec.side)
                 take_profit_price = round(pi.last_close + _sign * _tp_raw, 4)
+            else:
+                # Fallback : TP = 12% du prix (rétrocompatibilité)
+                take_profit_price = compute_take_profit_price(ec.side, pi.last_close, tp_pct=0.12)
 
             # Compute Kelly-specific audit fields
             p_eff: float | None = None

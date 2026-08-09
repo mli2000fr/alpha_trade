@@ -196,6 +196,8 @@ class ExecutionRepository:
             "selector_signal_mode",
             "selection_explanation",
             "selector_earnings_blackout",
+            "previous_close",
+            "take_profit_price",  # V1 Multi-Horizon TP (2026-08-09)
         ]
         select_parts = [*required_columns]
         select_parts.extend(
