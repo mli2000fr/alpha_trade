@@ -39,7 +39,7 @@ Modèle 🏆 Champion: catboost (détail: H3=catboost, H5=catboost, H10=catboost
 | H20       | 0.023367  |    0.93 |      0.0301065  |           144 |           6 | catboost      |   0.975 |        0.0234 |          0.93 |        0.0084 |          0.3  |
 
 
-🏆 **Meilleur horizon : H10** — sélectionné par score composite 55% IC + 30% IR + 15% Positive Split
+Modèle 🏆 Champion: catboost (détail: H3=catboost, H5=catboost, H10=catboost, H15=catboost, H20=catboost) — sélection par IC IR — 400 symboles, 6 splits 
 ### Horizon H3 — 🏆 catboost
 
 - 🏆 **Champion : catboost** | IC = 0.0104 | IR = 0.88 | Score composite = 0.975 | Métrique : composite_55ic_30ir_15pos

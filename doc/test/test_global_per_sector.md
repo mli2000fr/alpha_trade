@@ -24,7 +24,11 @@
 
 ## 1.1 Comparatif Global — Tous Horizons
 
-| Test | Horizon | IC Mean | IC IR | Decile Spread | Nb Features | 🏆 Champion | Score Composite |
+> **Deux scores distincts :**
+> - **Champion Score** = `0.55×IC + 0.30×IR + 0.15×pos`, normalisé par le max des **2 candidats** (CatBoost vs LightGBM) → quel algo gagne dans CET horizon ?
+> - **Best Horizon Score** = `0.55×IC + 0.30×IR + 0.15×pos`, normalisé par le max des **5 horizons** → quel horizon est le meilleur TOUS horizons confondus ? C'est CE score qui détermine `best_horizon` utilisé par `cascade_select()`.
+
+| Test | Horizon | IC Mean | IC IR | Decile Spread | Nb Features | 🏆 Champion | Champion Score |
 |:-----|:--------|--------:|------:|--------------:|------------:|:-----------|:---------------:|
 | B0   | H3      | 0.0103  | 1.25  | 0.0086        | 143         | catboost   | 1.000           |
 | B0   | H5      | 0.0191  | 1.27  | 0.0184        | 143         | catboost   | 0.975           |
@@ -63,6 +67,18 @@
 | B6   | H20     | 0.0234  | 0.93  | 0.0301        | 144         | catboost   | 0.975           |
 
 > 🏆 **Meilleur horizon tous batches sauf B2 : H10**
+
+## 1.1b Best Horizon Score — Cross-Horizon (détermine `best_horizon`)
+
+| Test | H3 | H5 | H10 | H15 | H20 | 🏆 Best | Écart au 2ᵉ |
+|:-----|----:|----:|----:|----:|----:|:--------|:----------|
+| B0   | 0.691 | 0.883 | **0.958** | 0.777 | 0.852 | **H10** | +0.075 (H5) |
+| B1   | 0.691 | 0.883 | **0.958** | 0.777 | 0.852 | **H10** | +0.075 (H5) |
+| B2   | 0.633 | 0.843 | 0.899 | 0.864 | **0.938** | **H20** | +0.039 (H10) |
+| B3   | 0.530 | 0.722 | **0.975** | 0.853 | 0.822 | **H10** | +0.097 (H15) |
+| B4   | 0.530 | 0.722 | **0.975** | 0.853 | 0.822 | **H10** | +0.097 (H15) |
+| B5   | 0.530 | 0.722 | **0.975** | 0.853 | 0.822 | **H10** | +0.097 (H15) |
+| B6   | 0.530 | 0.722 | **0.975** | 0.853 | 0.822 | **H10** | +0.097 (H15) |
 
 ## 1.2 Champion Global — IC/IR CatBoost vs LightGBM
 

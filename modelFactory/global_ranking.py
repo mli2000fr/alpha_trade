@@ -1566,6 +1566,7 @@ def train_global_ranking_wf(
     # il perdra presque toujours, ce qui est normal.
     _best_horizon: int | None = None
     _best_horizon_score: float = float("-inf")
+    _best_horizon_scores: dict[int, float] = {}  # scores composites par horizon (pour IHM/rapport)
     # ── Tie-break tolerance : scores à ±0.020 près = considérés ex æquo ──
     _TIE_EPSILON = 0.020
     if _horizon_details and len(_horizon_details) >= 2:
@@ -1619,6 +1620,7 @@ def train_global_ranking_wf(
                 _ic_norm = _ic / _max_ic if _max_ic > 0 else 0.0
                 _ir_norm = _ir / _max_ir if _max_ir > 0 else 0.0
                 _score = _w_ic * _ic_norm + _w_ir * _ir_norm + _w_pos * _pos
+                _best_horizon_scores[_h] = float(_score)
                 LOGGER.info(
                     "train_global_ranking_wf horizon=H%d IC=%.4f IR=%.2f pos=%.0f%% → score=%.3f",
                     _h, _ic, _ir, _pos * 100, _score,
@@ -1747,6 +1749,7 @@ def train_global_ranking_wf(
             "symbols_count": len(symbols),
             "pred_rows": len(global_rank_df) if not global_rank_df.empty else 0,
             "splits_count": len(wf_splits),
+            "best_horizon_scores": {str(h): round(float(v), 4) for h, v in _best_horizon_scores.items()} if _best_horizon_scores else {},
         }),
         encoding="utf-8",
     )
@@ -1757,6 +1760,7 @@ def train_global_ranking_wf(
         "backend_model_name": _effective_model_name,
         "champion_enabled": cfg.global_model.champion_enabled,
         "champion_by_horizon": _champion_by_horizon if _champion_by_horizon else None,
+        "best_horizon_scores": {str(h): round(v, 4) for h, v in _best_horizon_scores.items()} if _best_horizon_scores else {},
         "global_rank_df": global_rank_df if not global_rank_df.empty else None,
         "ic_rank_mean": ic_mean,
         "ic_rank_std": ic_std,

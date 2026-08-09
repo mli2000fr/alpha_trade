@@ -450,11 +450,17 @@ def _append_global_ranking_horizon_details(
         lines.append(_df_to_md(pd.DataFrame(_summary_rows)))
         # ── Meilleur horizon (calculé à l'entraînement) ──
         _best_h = _gr.get("best_horizon")
+        _best_scores = _gr.get("best_horizon_scores", {})
         if _best_h is not None:
             lines.append("")
+            _score_detail = ""
+            if _best_scores:
+                _parts = [f"H{h}={_best_scores.get(str(h), '?'):.4f}" for h in sorted(int(k) for k in _best_scores.keys())]
+                _score_detail = "  |  " + "  ".join(_parts)
             lines.append(
                 f"🏆 **Meilleur horizon : H{_best_h}** — sélectionné par score composite "
                 f"55% IC + 30% IR + 15% Positive Split"
+                f"{_score_detail}"
             )
         elif _has_champion and _champion_by_h:
             # Fallback : si best_horizon absent mais champions présents
