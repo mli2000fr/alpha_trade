@@ -146,7 +146,7 @@ Modèle 🏆 Champion: catboost (détail: H3=catboost, H5=catboost, H10=catboost
 - IC Moyen = 0.0236  |  IC Std = 0.0234  |  IC Min = -0.0081  |  IC Max = 0.0504
 
 
-## 🧪 Backtest Stratégies — Global Rank
+## 🧪 Backtest Stratégies — Global Rank (H20 + H5)
 
 | Variante | Score relatif |
 |----------|---------------|

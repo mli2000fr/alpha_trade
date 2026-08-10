@@ -33,23 +33,36 @@ _TRANSACTION_COST_BPS = 25.0
 _MAX_POSITIONS = 30
 
 
-def _run_strategy_backtest(rank_df: pd.DataFrame) -> dict[str, dict[str, float]]:
+def _run_strategy_backtest(rank_df: pd.DataFrame, best_horizon: int = 20) -> dict[str, dict[str, float]]:
     """Exécute les 3 variantes de stratégie sur un DataFrame de rangs.
+
+    Args:
+        rank_df: DataFrame avec colonnes global_rank_3/5/10/15/20.
+        best_horizon: Meilleur horizon détecté (défaut: 20). Si 5, V2/V3 ignorés.
 
     Returns:
         dict {variante: {sharpe, ann_return, ann_vol, max_drawdown}}.
     """
     _df = rank_df.sort_values(["date", "symbol"]).copy()
+    _rank_col = f"global_rank_{best_horizon}"
+    if _rank_col not in _df.columns:
+        _rank_col = "global_rank_20"  # fallback
+        best_horizon = 20
     _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
     _all_dates = sorted(_df["date"].unique())
     _rebal_dates = _all_dates[::_REBALANCE_DAYS]
     _results: dict[str, dict[str, float]] = {}
 
-    for _label, _filter_fn in [
-        ("V1 — H20 seul", lambda d: d["global_rank_20"] > _TOP_PCT),
-        ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] > d["global_rank_5_prev"])),
-        ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] < _H5_DIP)),
-    ]:
+    _variantes: list[tuple[str, Any]] = [
+        (f"V1 — H{best_horizon} seul", lambda d: d[_rank_col] > _TOP_PCT),
+    ]
+    if best_horizon != 5:
+        _variantes.extend([
+            (f"V2 — H{best_horizon} + H5 rising", lambda d: (d[_rank_col] > _TOP_PCT) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+            (f"V3 — H{best_horizon} + H5 < 0.35", lambda d: (d[_rank_col] > _TOP_PCT) & (d["global_rank_5"] < _H5_DIP)),
+        ])
+
+    for _label, _filter_fn in _variantes:
         _positions: dict[str, float] = {}
         _daily_rets = {}
         _turnover = 0
@@ -57,15 +70,15 @@ def _run_strategy_backtest(rank_df: pd.DataFrame) -> dict[str, dict[str, float]]
             _day = _df[_df["date"] == _d].set_index("symbol")
             _day_sig = _filter_fn(_day)
             if _d in _rebal_dates or not _positions:
-                _candidates = _day.loc[_day_sig].sort_values("global_rank_20", ascending=False)
+                _candidates = _day.loc[_day_sig].sort_values(_rank_col, ascending=False)
                 if _positions:
                     _turnover += len(_positions)
                 _positions = {}
                 for _s in _candidates.index[:_MAX_POSITIONS]:
-                    _positions[_s] = float(_candidates.loc[_s, "global_rank_20"])
+                    _positions[_s] = float(_candidates.loc[_s, _rank_col])
                 _turnover += len(_positions)
             _held = [s for s in _positions if s in _day.index]
-            _daily_rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+            _daily_rets[_d] = float(_day.loc[_held, _rank_col].mean()) - 0.5 if _held else 0.0
 
         _rets = pd.Series(_daily_rets).sort_index()
         _cost = (_TRANSACTION_COST_BPS / 10000.0) * _turnover / len(_all_dates)
@@ -1076,7 +1089,18 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.subheader("🔵 Modèle global — Métriques")
 
     # ── Backtest Global Rank Strategies (V1/V2/V3) ──
-    with st.expander("🧪 Backtest Stratégies Global Rank (H20 + H5)", expanded=False):
+    # ── Détection du meilleur horizon depuis les métadonnées ──
+    _best_h_backtest: int = 20  # fallback
+    try:
+        _meta_raw_bt = row.get("metadata_json")
+        if _meta_raw_bt is not None and str(_meta_raw_bt) not in ("None", "nan", ""):
+            _meta_bt = _json.loads(str(_meta_raw_bt))
+            _gr_bt = _meta_bt.get("global_ranking", {}) if isinstance(_meta_bt, dict) else {}
+            _best_h_backtest = int(_gr_bt.get("best_horizon", 20) or 20)
+    except Exception:
+        pass
+    _title_h = f"H{_best_h_backtest} + H5" if _best_h_backtest != 5 else f"H{_best_h_backtest} seul"
+    with st.expander(f"🧪 Backtest Stratégies Global Rank ({_title_h})", expanded=False):
         _batch_id = str(row["batch_id"])
         _cache_path = Path(get_model_artifacts_dir()) / _batch_id / "global_rank_cache.parquet"
         if _cache_path.exists():
@@ -1085,7 +1109,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
                     import numpy as np
                     _rank_df = pd.read_parquet(_cache_path)
                     _rank_df["date"] = pd.to_datetime(_rank_df["date"])
-                    _results = _run_strategy_backtest(_rank_df)
+                    _results = _run_strategy_backtest(_rank_df, _best_h_backtest)
                     if _results:
                         st.markdown("### 📊 Classement relatif des stratégies")
                         _best = max(_results, key=lambda v: _results[v]["sharpe"])
@@ -1095,12 +1119,17 @@ def _render_batch_detail(batch: pd.Series) -> None:
                             _rows.append({"Variante": _v, "Score relatif": _pct})
                         st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
                         st.success(f"🏆 Meilleure stratégie : **{_best}**")
-                        st.caption(
-                            "Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
-                            "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
-                            "Frais 0.25% A/R inclus. "
-                            "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
+                        _legend = (
+                            f"Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
+                            f"Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
+                            f"Frais 0.25% A/R inclus. "
+                            f"V1 = H{_best_h_backtest} seul"
                         )
+                        if _best_h_backtest != 5:
+                            _legend += f", V2 = H{_best_h_backtest} + H5 rising, V3 = H{_best_h_backtest} + H5 < 0.35 (contrarian)."
+                        else:
+                            _legend += " (V2/V3 non calculés — H5 est déjà le meilleur horizon)."
+                        st.caption(_legend)
                 except Exception as _exc:
                     st.error(f"Échec du backtest : {_exc}")
         else:

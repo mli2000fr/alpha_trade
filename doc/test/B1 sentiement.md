@@ -146,15 +146,15 @@ Modèle 🏆 Champion: catboost (détail: H3=catboost, H5=catboost, H10=catboost
 - IC Moyen = 0.0220  |  IC Std = 0.0232  |  IC Min = -0.0038  |  IC Max = 0.0582
 
 
-## 🧪 Backtest Stratégies — Global Rank
+## 🧪 Backtest Stratégies — Global Rank (H10 + H5)
 
 | Variante | Score relatif |
 |----------|---------------|
-| V1 — H20 seul | 🏆 référence |
-| V2 — H20 + H5 rising | -9.3% |
-| V3 — H20 + H5 < 0.35 | -28.8% |
+| V1 — H10 seul | 🏆 référence |
+| V2 — H10 + H5 rising | -7.7% |
+| V3 — H10 + H5 < 0.35 | -29.4% |
 
-> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). Frais 0.25% A/R inclus. V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian).
+> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). Frais 0.25% A/R inclus. V1 = H10 seul, V2 = H10 + H5 rising, V3 = H10 + H5 < 0.35 (contrarian).
 
 ---
 

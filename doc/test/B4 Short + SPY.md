@@ -1,11 +1,11 @@
-# Diagnostic ML — Batch `model-factory-20260809153352-2b4647`
+# Diagnostic ML — Batch `model-factory-20260809132408-4d40c5`
 
 ## 📋 Détail du batch
 
-- **Batch ID** : `model-factory-20260809153352-2b4647`
+- **Batch ID** : `model-factory-20260809132408-4d40c5`
 - **Statut** : completed
 - **Source symboles** : ticket-recherche
-- **Commentaire** : B4 Short + SPY
+- **Commentaire** : B3 scores short
 - **Date début training** : 2016-01-01
 - **Date fin training** : 2025-12-31
 - **Date univers** : 2025-12-31
@@ -15,13 +15,13 @@
 - **📊 Decile Spread (Top−Bottom)** : H3=0.0098 H5=0.0190 H10=0.0297 H15=0.0303 H20=0.0301
 - **🏆 Champion Global** : catboost (H3=catboost, H5=catboost, H10=catboost, H15=catboost, H20=catboost) — score composite 55% IC + 30% IR + 15% positifs
 - **📥 Stacking Global Rank** : Non
-- **Démarré le** : 2026-08-09 15:33:52
-- **Terminé le** : 2026-08-09 16:53:26
+- **Démarré le** : 2026-08-09 13:24:08
+- **Terminé le** : 2026-08-09 14:40:27
 - **Complétés / Skippés / Échecs** : 11 / 0 / 0
 
 ### Commande exécutée
 ```powershell
-python -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --training-mode per_sector --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2016-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2025-12-31 --include-short-score --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "B4 Short + SPY"
+python -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --training-mode per_sector --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2016-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2025-12-31 --include-short-score --no-include-score-components --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "B3 scores short"
 ```
 
 ## 🌐 Global Ranking — Détails par Horizon
@@ -146,15 +146,15 @@ Modèle 🏆 Champion: catboost (détail: H3=catboost, H5=catboost, H10=catboost
 - IC Moyen = 0.0234  |  IC Std = 0.0250  |  IC Min = -0.0098  |  IC Max = 0.0645
 
 
-## 🧪 Backtest Stratégies — Global Rank
+## 🧪 Backtest Stratégies — Global Rank (H10 + H5)
 
 | Variante | Score relatif |
 |----------|---------------|
-| V1 — H20 seul | 🏆 référence |
-| V2 — H20 + H5 rising | -8.4% |
-| V3 — H20 + H5 < 0.35 | -11.7% |
+| V1 — H10 seul | 🏆 référence |
+| V2 — H10 + H5 rising | -7.1% |
+| V3 — H10 + H5 < 0.35 | -24.8% |
 
-> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). Frais 0.25% A/R inclus. V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian).
+> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). Frais 0.25% A/R inclus. V1 = H10 seul, V2 = H10 + H5 rising, V3 = H10 + H5 < 0.35 (contrarian).
 
 ---
 
@@ -168,77 +168,76 @@ Modèle 🏆 Champion: catboost (détail: H3=catboost, H5=catboost, H10=catboost
 
 | model_name   |   nb_symbols |
 |:-------------|-------------:|
-| lightgbm     |            8 |
-| catboost     |            3 |
+| catboost     |            6 |
+| lightgbm     |            5 |
 
 ## 📊 Métriques par Horizon (WF)
 
 |   Horizon |   F1 macro |   F1 short |   F1 long |   Dir Acc |
 |----------:|-----------:|-----------:|----------:|----------:|
-|         3 |      0.331 |      0.489 |     0.503 |    0.502  |
-|         5 |      0.33  |      0.475 |     0.514 |    0.5015 |
-|        10 |      0.328 |      0.473 |     0.512 |    0.5018 |
-|        15 |      0.329 |      0.474 |     0.512 |    0.5022 |
-|        20 |      0.328 |      0.476 |     0.508 |    0.501  |
+|         3 |      0.331 |      0.489 |     0.504 |    0.502  |
+|         5 |      0.329 |      0.478 |     0.509 |    0.5007 |
+|        10 |      0.328 |      0.474 |     0.51  |    0.5007 |
+|        15 |      0.327 |      0.475 |     0.506 |    0.499  |
+|        20 |      0.326 |      0.471 |     0.507 |    0.4978 |
 
 ## 📊 Métriques F1 par split
 
 | model_name   | split_name   |   nb_symbols |   avg_f1_macro |   avg_f1_short |   avg_f1_flat |   avg_f1_long |
 |:-------------|:-------------|-------------:|---------------:|---------------:|--------------:|--------------:|
-| catboost     | val          |           11 |          0.332 |          0.508 |             0 |         0.488 |
-| catboost     | test         |           11 |          0.331 |          0.525 |             0 |         0.467 |
-| catboost     | wf           |           11 |          0.329 |          0.476 |             0 |         0.51  |
-| lightgbm     | val          |           11 |          0.33  |          0.505 |             0 |         0.485 |
-| lightgbm     | test         |           11 |          0.329 |          0.513 |             0 |         0.474 |
-| lightgbm     | wf           |           11 |          0.33  |          0.479 |             0 |         0.51  |
+| catboost     | val          |           11 |          0.331 |          0.505 |             0 |         0.486 |
+| catboost     | test         |           11 |          0.329 |          0.523 |             0 |         0.465 |
+| catboost     | wf           |           11 |          0.328 |          0.476 |             0 |         0.508 |
+| lightgbm     | val          |           11 |          0.331 |          0.506 |             0 |         0.487 |
+| lightgbm     | test         |           11 |          0.328 |          0.515 |             0 |         0.47  |
+| lightgbm     | wf           |           11 |          0.329 |          0.479 |             0 |         0.507 |
 
 ## 📊 Distribution true / pred par split
 
 | model_name   | split_name   |   nb_symbols |   avg_true_short_pct |   avg_true_flat_pct |   avg_true_long_pct |   avg_pred_short_pct |   avg_pred_flat_pct |   avg_pred_long_pct |
 |:-------------|:-------------|-------------:|---------------------:|--------------------:|--------------------:|---------------------:|--------------------:|--------------------:|
-| catboost     | val          |           11 |               51.936 |                   0 |              48.064 |               49.998 |               0.004 |              49.998 |
-| catboost     | test         |           11 |               51.925 |                   0 |              48.075 |               53.832 |               0     |              46.168 |
-| catboost     | wf           |           11 |               51.407 |                   0 |              48.593 |               45.254 |               0     |              54.746 |
-| lightgbm     | val          |           11 |               51.936 |                   0 |              48.064 |               49.998 |               0.004 |              49.998 |
-| lightgbm     | test         |           11 |               51.925 |                   0 |              48.075 |               51.884 |               0     |              48.116 |
-| lightgbm     | wf           |           11 |               51.407 |                   0 |              48.593 |               45.616 |               0     |              54.384 |
+| catboost     | val          |           11 |               51.914 |                   0 |              48.086 |               49.998 |               0.004 |              49.998 |
+| catboost     | test         |           11 |               51.941 |                   0 |              48.059 |               53.742 |               0     |              46.258 |
+| catboost     | wf           |           11 |               51.566 |                   0 |              48.434 |               45.275 |               0     |              54.725 |
+| lightgbm     | val          |           11 |               51.914 |                   0 |              48.086 |               49.998 |               0.004 |              49.998 |
+| lightgbm     | test         |           11 |               51.941 |                   0 |              48.059 |               52.403 |               0     |              47.597 |
+| lightgbm     | wf           |           11 |               51.566 |                   0 |              48.434 |               45.743 |               0     |              54.257 |
 
 ## 📈 Distribution F1 macro — Walk-Forward
 
 | wf_f1_macro_bucket   |   nb_symbols |
 |:---------------------|-------------:|
-| 0.20-0.29            |            1 |
 | 0.30-0.39            |           11 |
 
 ## 🏆 Top 10 meilleurs `f1_macro` (WF)
 
 | symbol           |   f1_macro |   f1_long |   f1_short |   f1_flat |
 |:-----------------|-----------:|----------:|-----------:|----------:|
-| Consumer Staples |      0.354 |     0.552 |      0.509 |         0 |
-| Consumer Staples |      0.349 |     0.548 |      0.499 |         0 |
-| Consumer Staples |      0.349 |     0.553 |      0.492 |         0 |
-| Consumer Staples |      0.344 |     0.561 |      0.471 |         0 |
-| Industrials      |      0.344 |     0.51  |      0.521 |         0 |
-| Industrials      |      0.344 |     0.509 |      0.522 |         0 |
-| Industrials      |      0.342 |     0.508 |      0.518 |         0 |
-| Industrials      |      0.34  |     0.497 |      0.523 |         0 |
-| Health Care      |      0.337 |     0.525 |      0.486 |         0 |
+| Consumer Staples |      0.361 |     0.555 |      0.527 |         0 |
+| Consumer Staples |      0.354 |     0.548 |      0.514 |         0 |
+| Consumer Staples |      0.344 |     0.536 |      0.495 |         0 |
+| Industrials      |      0.342 |     0.502 |      0.525 |         0 |
+| Industrials      |      0.341 |     0.502 |      0.522 |         0 |
+| Industrials      |      0.339 |     0.5   |      0.517 |         0 |
+| Industrials      |      0.339 |     0.497 |      0.519 |         0 |
 | Industrials      |      0.337 |     0.502 |      0.509 |         0 |
+| Financials       |      0.337 |     0.511 |      0.499 |         0 |
+| Health Care      |      0.335 |     0.519 |      0.486 |         0 |
 
 ## 🥉 Top 10 plus mauvais `f1_macro` (WF)
 
 | symbol                 |   f1_macro |   f1_long |   f1_short |   f1_flat |
 |:-----------------------|-----------:|----------:|-----------:|----------:|
-| Energy                 |      0.298 |     0.444 |      0.451 |         0 |
-| Energy                 |      0.3   |     0.438 |      0.462 |         0 |
-| Energy                 |      0.309 |     0.446 |      0.482 |         0 |
-| Utilities              |      0.309 |     0.57  |      0.357 |         0 |
-| Materials              |      0.312 |     0.468 |      0.468 |         0 |
-| Utilities              |      0.316 |     0.563 |      0.384 |         0 |
-| Utilities              |      0.316 |     0.545 |      0.403 |         0 |
-| Materials              |      0.317 |     0.472 |      0.479 |         0 |
-| Energy                 |      0.318 |     0.478 |      0.477 |         0 |
-| Communication Services |      0.32  |     0.511 |      0.448 |         0 |
+| Energy                 |      0.305 |     0.458 |      0.457 |         0 |
+| Energy                 |      0.306 |     0.456 |      0.462 |         0 |
+| Energy                 |      0.308 |     0.452 |      0.473 |         0 |
+| Materials              |      0.317 |     0.496 |      0.456 |         0 |
+| Energy                 |      0.318 |     0.481 |      0.473 |         0 |
+| Information Technology |      0.318 |     0.495 |      0.46  |         0 |
+| Communication Services |      0.32  |     0.512 |      0.447 |         0 |
+| Utilities              |      0.32  |     0.547 |      0.414 |         0 |
+| Materials              |      0.322 |     0.469 |      0.497 |         0 |
+| Utilities              |      0.322 |     0.534 |      0.433 |         0 |
 
 ## ⚪ `f1_short = 0` (WF)
 
@@ -248,50 +247,50 @@ _Aucune donnée._
 
 | model_name   | split_name   |   nb_symbols |   avg_mse |   avg_dir_acc |
 |:-------------|:-------------|-------------:|----------:|--------------:|
-| catboost     | val          |           11 |    1.0657 |        0.4985 |
-| catboost     | test         |           11 |    1.0868 |        0.4995 |
-| catboost     | wf           |           11 |    1.0436 |        0.5015 |
-| lightgbm     | val          |           11 |    1.0822 |        0.4956 |
-| lightgbm     | test         |           11 |    1.1076 |        0.4961 |
-| lightgbm     | wf           |           11 |    1.0623 |        0.5019 |
+| catboost     | val          |           11 |    1.062  |        0.4962 |
+| catboost     | test         |           11 |    1.072  |        0.4978 |
+| catboost     | wf           |           11 |    1.0363 |        0.4999 |
+| lightgbm     | val          |           11 |    1.0772 |        0.4969 |
+| lightgbm     | test         |           11 |    1.0924 |        0.4962 |
+| lightgbm     | wf           |           11 |    1.0549 |        0.5002 |
 
 ## 🏆 Top 10 meilleurs `directional_accuracy` (WF)
 
 | model_name   | symbol           |   dir_acc |    mse |
 |:-------------|:-----------------|----------:|-------:|
-| lightgbm     | Consumer Staples |    0.5445 | 0.914  |
-| lightgbm     | Consumer Staples |    0.5366 | 0.9089 |
-| catboost     | Consumer Staples |    0.5355 | 0.8912 |
-| catboost     | Consumer Staples |    0.5267 | 0.9155 |
-| catboost     | Consumer Staples |    0.5266 | 0.8944 |
-| lightgbm     | Consumer Staples |    0.5214 | 0.9299 |
-| catboost     | Consumer Staples |    0.521  | 0.9377 |
-| lightgbm     | Industrials      |    0.5168 | 1.0452 |
-| lightgbm     | Industrials      |    0.5165 | 1.0147 |
-| lightgbm     | Financials       |    0.5141 | 1.1381 |
+| lightgbm     | Consumer Staples |    0.5422 | 0.9328 |
+| lightgbm     | Consumer Staples |    0.5332 | 0.9192 |
+| catboost     | Consumer Staples |    0.528  | 0.9087 |
+| lightgbm     | Consumer Staples |    0.5184 | 0.9311 |
+| catboost     | Consumer Staples |    0.5168 | 0.8992 |
+| lightgbm     | Industrials      |    0.5152 | 1.0467 |
+| catboost     | Consumer Staples |    0.5144 | 0.9204 |
+| lightgbm     | Industrials      |    0.5135 | 1.0139 |
+| catboost     | Health Care      |    0.5132 | 1.0424 |
+| catboost     | Real Estate      |    0.5126 | 0.9542 |
 
 ## 🥉 Top 10 plus mauvais `directional_accuracy` (WF)
 
 | model_name   | symbol                 |   dir_acc |    mse |
 |:-------------|:-----------------------|----------:|-------:|
-| lightgbm     | Materials              |    0.4715 | 1.0996 |
-| catboost     | Communication Services |    0.4722 | 1.0535 |
-| lightgbm     | Materials              |    0.4802 | 1.0781 |
-| catboost     | Communication Services |    0.484  | 1.0233 |
-| lightgbm     | Communication Services |    0.4845 | 1.0784 |
-| lightgbm     | Energy                 |    0.4861 | 0.9803 |
-| lightgbm     | Materials              |    0.4885 | 0.9495 |
-| lightgbm     | Materials              |    0.4888 | 1.0231 |
-| lightgbm     | Energy                 |    0.4889 | 1.0171 |
-| catboost     | Utilities              |    0.489  | 1.1391 |
+| lightgbm     | Materials              |    0.4606 | 1.085  |
+| catboost     | Communication Services |    0.4699 | 1.0419 |
+| catboost     | Communication Services |    0.4715 | 1.0612 |
+| lightgbm     | Materials              |    0.4746 | 1.0629 |
+| catboost     | Communication Services |    0.4762 | 1.0274 |
+| catboost     | Materials              |    0.4802 | 1.0369 |
+| catboost     | Information Technology |    0.4808 | 1.0889 |
+| lightgbm     | Information Technology |    0.482  | 1.1332 |
+| lightgbm     | Communication Services |    0.4841 | 1.0931 |
+| lightgbm     | Energy                 |    0.4842 | 0.9668 |
 
 ## 📅 Diagnostic par régime de marché — Walk-Forward
 
 |   Split | Début OOS   | Fin OOS    | Régime            |   F1 macro |   F1 short |   F1 flat |   F1 long | Tx action   |   SPY % |   VIX moy |   Nb symboles |
 |--------:|:------------|:-----------|:------------------|-----------:|-----------:|----------:|----------:|:------------|--------:|----------:|--------------:|
-|       0 | 2019-07-03  | 2019-12-31 | 🟢 Bull           |      0.319 |      0.437 |         0 |     0.52  | —           |     7.7 |      15   |            11 |
-|       1 | 2020-07-02  | 2020-12-30 | 🔵 Range low vol  |      0.332 |      0.454 |         0 |     0.542 | —           |    19.1 |      25.7 |            11 |
-|       2 | 2021-07-02  | 2021-12-30 | 🔵 Range low vol  |      0.321 |      0.453 |         0 |     0.511 | —           |     9.8 |      18.8 |            11 |
-|       3 | 2022-07-05  | 2022-12-30 | 🟠 Range high vol |      0.34  |      0.5   |         0 |     0.519 | —           |     0.1 |      24.9 |            11 |
-|       4 | 2023-08-03  | 2024-02-01 | 🟢 Bull           |      0.321 |      0.494 |         0 |     0.469 | —           |     9   |      15.1 |            11 |
-|       5 | 2024-09-03  | 2025-03-05 | 🟢 Bull           |      0.331 |      0.509 |         0 |     0.483 | —           |     5.6 |      17.4 |            11 |
+|       0 | 2019-07-03  | 2019-12-31 | 🟢 Bull           |      0.311 |      0.424 |         0 |     0.509 | —           |     7.7 |      15   |            11 |
+|       1 | 2020-07-02  | 2020-12-30 | 🔵 Range low vol  |      0.335 |      0.48  |         0 |     0.525 | —           |    19.1 |      25.7 |            11 |
+|       2 | 2021-07-02  | 2021-12-30 | 🔵 Range low vol  |      0.326 |      0.459 |         0 |     0.518 | —           |     9.8 |      18.8 |            11 |
+|       3 | 2022-07-05  | 2022-12-30 | 🟠 Range high vol |      0.334 |      0.459 |         0 |     0.542 | —           |     0.1 |      24.9 |            11 |
+|       4 | 2023-08-03  | 2024-02-01 | 🟢 Bull           |      0.317 |      0.483 |         0 |     0.469 | —           |     9   |      15.1 |            11 |
+|       5 | 2024-09-03  | 2025-03-05 | 🟢 Bull           |      0.33  |      0.494 |         0 |     0.496 | —           |     5.6 |      17.4 |            11 |

@@ -574,10 +574,25 @@ def _append_global_ranking_horizon_details(
 def _append_backtest_results(
     lines: list[str],
     batch_id: str | None,
+    metadata_json: str | None = None,
 ) -> None:
-    """Ajoute la section backtest stratégies Global Rank (V1/V2/V3)."""
+    """Ajoute la section backtest stratégies Global Rank (V1/V2/V3).
+
+    Le meilleur horizon est détecté depuis les métadonnées du batch.
+    Si meilleur horizon = H5, V2/V3 sont ignorés (filtre redondant).
+    """
     if not batch_id:
         return
+    # ── Détection du meilleur horizon ──
+    _best_h = 20  # fallback par défaut
+    if metadata_json:
+        try:
+            import json as _json
+            _meta = _json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+            _gr = _meta.get("global_ranking", {}) if isinstance(_meta, dict) else {}
+            _best_h = int(_gr.get("best_horizon", 20) or 20)
+        except Exception:
+            pass
     _cache = Path("artifacts") / "models" / batch_id / "global_rank_cache.parquet"
     if not _cache.exists():
         return
@@ -585,15 +600,24 @@ def _append_backtest_results(
         import numpy as np
         _df = pd.read_parquet(_cache)
         _df["date"] = pd.to_datetime(_df["date"])
+        _rank_col = f"global_rank_{_best_h}"
+        if _rank_col not in _df.columns:
+            _rank_col = "global_rank_20"  # fallback
+            _best_h = 20
         _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
         _all_dates = sorted(_df["date"].unique())
         _rebal = _all_dates[::20]
         _results = {}
-        for _label, _fn in [
-            ("V1 — H20 seul", lambda d: d["global_rank_20"] > 0.70),
-            ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > 0.70) & (d["global_rank_5"] > d["global_rank_5_prev"])),
-            ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > 0.70) & (d["global_rank_5"] < 0.35)),
-        ]:
+        # ── Construction des variantes avec le meilleur horizon ──
+        _variantes: list[tuple[str, Any]] = [
+            (f"V1 — H{_best_h} seul", lambda d: d[_rank_col] > 0.70),
+        ]
+        if _best_h != 5:
+            _variantes.extend([
+                (f"V2 — H{_best_h} + H5 rising", lambda d: (d[_rank_col] > 0.70) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+                (f"V3 — H{_best_h} + H5 < 0.35", lambda d: (d[_rank_col] > 0.70) & (d["global_rank_5"] < 0.35)),
+            ])
+        for _label, _fn in _variantes:
             _pos = {}
             _rets = {}
             _turn = 0
@@ -601,13 +625,13 @@ def _append_backtest_results(
                 _day = _df[_df["date"] == _d].set_index("symbol")
                 _sig = _fn(_day)
                 if _d in _rebal or not _pos:
-                    _cand = _day.loc[_sig].sort_values("global_rank_20", ascending=False)
+                    _cand = _day.loc[_sig].sort_values(_rank_col, ascending=False)
                     if _pos:
                         _turn += len(_pos)
-                    _pos = {s: float(_cand.loc[s, "global_rank_20"]) for s in _cand.index[:30]}
+                    _pos = {s: float(_cand.loc[s, _rank_col]) for s in _cand.index[:30]}
                     _turn += len(_pos)
                 _held = [s for s in _pos if s in _day.index]
-                _rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+                _rets[_d] = float(_day.loc[_held, _rank_col].mean()) - 0.5 if _held else 0.0
             _s = pd.Series(_rets).sort_index()
             _cost = (25.0 / 10000.0) * _turn / len(_all_dates)
             _s = _s - _cost / 20
@@ -619,7 +643,8 @@ def _append_backtest_results(
             _results[_label] = {"sharpe": _sharpe, "ann_return": _m * 252, "ann_vol": _std * np.sqrt(252), "max_dd": _dd}
 
         if _results:
-            lines.append("## 🧪 Backtest Stratégies — Global Rank")
+            _title_suffix = f" (H{_best_h} + H5)" if _best_h != 5 else f" (H{_best_h} seul)"
+            lines.append(f"## 🧪 Backtest Stratégies — Global Rank{_title_suffix}")
             lines.append("")
             _best = max(_results, key=lambda v: _results[v]["sharpe"])
             lines.append("| Variante | Score relatif |")
@@ -628,12 +653,17 @@ def _append_backtest_results(
                 _pct = f"{(_m['sharpe'] / _results[_best]['sharpe'] - 1) * 100:+.1f}%" if _l != _best else "🏆 référence"
                 lines.append(f"| {_l} | {_pct} |")
             lines.append("")
-            lines.append(
-                "> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
-                "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
-                "Frais 0.25% A/R inclus. "
-                "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
+            _legend = (
+                f"> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
+                f"Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
+                f"Frais 0.25% A/R inclus. "
+                f"V1 = H{_best_h} seul"
             )
+            if _best_h != 5:
+                _legend += f", V2 = H{_best_h} + H5 rising, V3 = H{_best_h} + H5 < 0.35 (contrarian)."
+            else:
+                _legend += " (V2/V3 non calculés — H5 est déjà le meilleur horizon)."
+            lines.append(_legend)
             lines.append("")
     except Exception:
         pass
@@ -917,7 +947,7 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
 
     # ── Backtest Stratégies Global Rank ──
     _batch_id = detail_df.iloc[0].get("batch_id") if not detail_df.empty else None
-    _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None)
+    _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None, str(_meta_raw) if _meta_raw is not None else None)
 
     # ── Per-Symbol Cross-Sectional IC — retiré ──
 
