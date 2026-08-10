@@ -23,6 +23,7 @@
 | **B10** | `model-factory-20260810160939-927f00` | B4 + `--include-factors` (CAPM) | catboost 5/5 (145 feat.) | lightgbm 9 / catboost 2 | 0.0195 | 🏆 1.09 | H10 |
 | **B11** | `model-factory-20260810175924-7bd4ac` | B4 + `--include-macro-regime` | catboost 5/5 (144 feat.) | lightgbm 7 / catboost 4 | 🏆 0.0202 | 🏆 1.03 | H10 |
 | **B12** | `model-factory-20260810200031-9755c6` | B4 + score components (153 feat.) | catboost 5/5 (153 feat.) | lightgbm 10 / catboost 1 | ⚠️ 0.0188 | ⚠️ 0.92 | H15 |
+| **B13** | `model-factory-20260810213112-95c7d0` | B4 + `--enable-cross-sectional` (177 feat.) | catboost 5/5 (159-177 feat.) | lightgbm 7 / catboost 4 | ❌ 0.0144 | ❌ 0.84 | H10 |
 
 ---
 
@@ -230,6 +231,7 @@
 | B10  | H10        | 🏆 | -1.9% 🔥        | -25.1%           | -20.1%       | H10,H5,H20 |
 | B11  | H10        | 🏆 | -7.1%           | -24.8%           | -21.0%       | H10,H15,H20 |
 | B12  | H15        | 🏆 | -2.5% 🔥        | -30.4%           | -19.0%       | H15,H10,H5 |
+| B13  | H10        | 🏆 | -16.9% ❌       | -47.1%           | -17.7%       | H10,H5,H20 |
 
 ---
 
@@ -855,6 +857,7 @@
 - **B10** : B4 + CAPM. 🤔 MITIGÉ. IC IR record 1.09. H3/H5 fortement améliorés. Mais H10/H15 dégradés. **V2=−1.9% (record !)** — le filtre H5 rising est quasi neutre en H10, excellente nouvelle pour la robustesse.
 - **B11** : B4 + `--include-macro-regime`. Aucun gain vs B4. Global identique (IC Rank 0.0202, même backtest V2=−7.1%). Per-Sector légèrement dégradé (lightgbm 7 vs 8). Le macro regime n'apporte rien.
 - **B12** : B4 SANS `--no-include-score-components` (score components inclus, 153 feat). ⚠️ EFFET MIXTE. Global dégradé (IC Rank 0.0188, IC IR 0.92, best horizon passe à H15). Mais Per-Sector **lightgbm 10/11 (record !)** et **V2=−2.5%** (2ᵉ meilleur après B10). Les score components nuisent au Global mais boostent le Per-Sector.
+- **B13** : B4 + `--enable-cross-sectional`. ❌❌ **PIRE BATCH**. IC Rank 0.0144 (−29% vs B4), IC IR 0.84 (−18%), V2=−16.9% (le pire), V3=−47.1%. Les features cross-sectional (z-scores sectoriels, rangs relatifs) détruisent le signal. **À ne pas utiliser.**
 - **Classement flags** : short-score (🥇) > CAPM (🥈 mitigé) > screener (⚠️) > fondamentaux (❌). **B4 reste champion Global. B10 meilleur IC IR.**
 - **🆕 V4 top horizons** : paramètre `backtest.min_rising_horizons` dans `config.yaml` (défaut 2). V4 exige que les N meilleurs horizons (par score composite) soient tous en hausse vs la veille. V4 entre −20% et −27% pour B0-B10 : le filtre d'alignement directionnel est systématiquement pénalisant. B10 est le moins pénalisé (V4=−20.1%, V2=−1.9%), B2 le plus (V4=−26.9%).
 - Catboost Global imbattable (5/5). LightGBM Per-Sector jusqu'à 9/11 (B10). **Configuration recommandée : `--include-short-score --target-excess-vs-spy` (B4).**
