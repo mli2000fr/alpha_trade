@@ -522,3 +522,13 @@ conviction:
 #     from: "AlphaTrade IHM <alphatrade.notify@gmail.com>"
 
 
+# ---------------------------------------------------------------------------
+# Backtest Global Rank Strategies (V1/V2/V3/V4)
+# Consommé par modelFactory/report.py et ihm/pages/ml_diagnostics.py.
+# ---------------------------------------------------------------------------
+backtest:
+  # V4 — filtre top N horizons par score composite : les N meilleurs horizons
+  # (classés par score composite 55%IC+30%IR+15%pos) doivent tous être en
+  # hausse (rank_j > rank_{j-1}) pour valider une entrée.
+  # 2 = les 2 meilleurs horizons. 3 = les 3 meilleurs, etc.
+  min_rising_horizons: 3

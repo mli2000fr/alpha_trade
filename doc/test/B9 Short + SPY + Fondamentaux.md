@@ -168,8 +168,9 @@ Modèle 🏆 Champion: catboost (détail: H3=lightgbm, H5=catboost, H10=catboost
 | V1 — H10 seul | 🏆 référence |
 | V2 — H10 + H5 rising | -10.3% |
 | V3 — H10 + H5 < 0.35 | -42.2% |
+| V4 — H10 + top 3 horizons ↑ (H10,H20,H15) | -22.0% |
 
-> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). Frais 0.25% A/R inclus. V1 = H10 seul, V2 = H10 + H5 rising, V3 = H10 + H5 < 0.35 (contrarian).
+> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). Frais 0.25% A/R inclus. V1 = H10 seul, V2 = H10 + H5 rising, V3 = H10 + H5 < 0.35 (contrarian). V4 = H10 + top 3 horizons ↑ (H10,H20,H15).
 
 ---
 

@@ -576,10 +576,11 @@ def _append_backtest_results(
     batch_id: str | None,
     metadata_json: str | None = None,
 ) -> None:
-    """Ajoute la section backtest stratégies Global Rank (V1/V2/V3).
+    """Ajoute la section backtest stratégies Global Rank (V1/V2/V3/V4).
 
     Le meilleur horizon est détecté depuis les métadonnées du batch.
     Si meilleur horizon = H5, V2/V3 sont ignorés (filtre redondant).
+    V4 = consensus multi-horizons (min_rising_horizons configurable).
     """
     if not batch_id:
         return
@@ -593,21 +594,46 @@ def _append_backtest_results(
             _best_h = int(_gr.get("best_horizon", 20) or 20)
         except Exception:
             pass
+    # ── Paramètre V4 depuis la config ──
+    _min_rising = 4
+    try:
+        from common.config_loader import load_config as _load_cfg
+        _cfg = _load_cfg()
+        _min_rising = int(_cfg.get("backtest", {}).get("min_rising_horizons", 4))
+    except Exception:
+        pass
+    # ── Scores composites par horizon (pour V4) ──
+    _horizon_scores: dict[int, float] = {}
+    if metadata_json:
+        try:
+            import json as _json2
+            _meta2 = _json2.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+            _gr2 = _meta2.get("global_ranking", {}) if isinstance(_meta2, dict) else {}
+            _raw = _gr2.get("best_horizon_scores", {})
+            if _raw:
+                _horizon_scores = {int(k): float(v) for k, v in _raw.items()}
+        except Exception:
+            pass
     _cache = Path("artifacts") / "models" / batch_id / "global_rank_cache.parquet"
     if not _cache.exists():
         return
     try:
         import numpy as np
+        _ALL_H = (3, 5, 10, 15, 20)
         _df = pd.read_parquet(_cache)
         _df["date"] = pd.to_datetime(_df["date"])
         _rank_col = f"global_rank_{_best_h}"
         if _rank_col not in _df.columns:
             _rank_col = "global_rank_20"  # fallback
             _best_h = 20
-        _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
+        # ── Pré-calcul des rangs précédents pour tous les horizons ──
+        for _h in _ALL_H:
+            _col = f"global_rank_{_h}"
+            if _col in _df.columns:
+                _df[f"{_col}_prev"] = _df.groupby("symbol")[_col].shift(1)
         _all_dates = sorted(_df["date"].unique())
         _rebal = _all_dates[::20]
-        _results = {}
+        _results: dict[str, Any] = {}
         # ── Construction des variantes avec le meilleur horizon ──
         _variantes: list[tuple[str, Any]] = [
             (f"V1 — H{_best_h} seul", lambda d: d[_rank_col] > 0.70),
@@ -617,6 +643,25 @@ def _append_backtest_results(
                 (f"V2 — H{_best_h} + H5 rising", lambda d: (d[_rank_col] > 0.70) & (d["global_rank_5"] > d["global_rank_5_prev"])),
                 (f"V3 — H{_best_h} + H5 < 0.35", lambda d: (d[_rank_col] > 0.70) & (d["global_rank_5"] < 0.35)),
             ])
+        # ── V4 : top N horizons par score composite ──
+        if _horizon_scores and len(_horizon_scores) >= 2:
+            _sorted_h = sorted(_horizon_scores.keys(), key=lambda h: _horizon_scores[h], reverse=True)
+            _n_top = min(_min_rising, len(_sorted_h))
+            _top_h = _sorted_h[:_n_top]
+            _v4_h = [h for h in _top_h if f"global_rank_{h}" in _df.columns and f"global_rank_{h}_prev" in _df.columns]
+            if len(_v4_h) >= 1:
+                _v4_label = f"V4 — H{_best_h} + top {len(_v4_h)} horizons ↑ (" + ",".join(f"H{h}" for h in _v4_h) + ")"
+                def _make_v4(h_list):
+                    def _f(d):
+                        _ok = pd.Series(True, index=d.index)
+                        for _h in h_list:
+                            _c = f"global_rank_{_h}"
+                            _cp = f"{_c}_prev"
+                            if _c in d.columns and _cp in d.columns:
+                                _ok = _ok & (d[_c] > d[_cp])
+                        return (d[_rank_col] > 0.70) & _ok
+                    return _f
+                _variantes.append((_v4_label, _make_v4(_v4_h)))
         for _label, _fn in _variantes:
             _pos = {}
             _rets = {}
@@ -663,6 +708,8 @@ def _append_backtest_results(
                 _legend += f", V2 = H{_best_h} + H5 rising, V3 = H{_best_h} + H5 < 0.35 (contrarian)."
             else:
                 _legend += " (V2/V3 non calculés — H5 est déjà le meilleur horizon)."
+            if len(_v4_h) >= 1:
+                _legend += f" V4 = H{_best_h} + top {len(_v4_h)} horizons ↑ ({','.join(f'H{h}' for h in _v4_h)})."
             lines.append(_legend)
             lines.append("")
     except Exception:

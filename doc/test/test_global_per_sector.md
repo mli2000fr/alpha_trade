@@ -21,6 +21,7 @@
 | **B8** | `model-factory-20260809234022-4de46f` | B4 + `--include-macro-move` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 | H10 |
 | **B9** | `model-factory-20260810052226-5de365` | B4 + `--include-fundamentals` | ⚠️ lightgbm H3, catboost 4/5 (156 feat.) | catboost 6 / lightgbm 5 | ❌ 0.0157 | ❌ 0.98 | H10 |
 | **B10** | `model-factory-20260810160939-927f00` | B4 + `--include-factors` (CAPM) | catboost 5/5 (145 feat.) | lightgbm 9 / catboost 2 | 0.0195 | 🏆 1.09 | H10 |
+| **B11** | `model-factory-20260810175924-7bd4ac` | B4 + `--include-macro-regime` | catboost 5/5 (144 feat.) | lightgbm 7 / catboost 4 | 🏆 0.0202 | 🏆 1.03 | H10 |
 
 ---
 
@@ -211,21 +212,22 @@
 ## 1.4 Comparatif Backtest Stratégies — Global Rank
 
 > ✅ **Régénéré avec le meilleur horizon** — tous les batches utilisent leur propre meilleur horizon (H10 pour 10/11, H20 pour B2).
-> V1 = meilleur horizon seul, V2 = meilleur horizon + H5 rising, V3 = meilleur horizon + H5 < 0.35.
+> V1 = meilleur horizon seul, V2 = +H5 rising, V3 = +H5 < 0.35, V4 = top N horizons par score composite (config: `backtest.min_rising_horizons`, défaut 2, rapports générés avec N=3).
 
-| Test | Meilleur H | V1 | V2 (+H5 rising) | V3 (+H5 < 0.35) |
-|:-----|:-----------|:---|:----------------|:-----------------|
-| B0   | H10        | 🏆 | -7.7%           | -29.4%           |
-| B1   | H10        | 🏆 | -7.7%           | -29.4%           |
-| B2   | H20        | 🏆 | -8.2%           | -36.1%           |
-| B3   | H10        | 🏆 | -7.1%           | -24.8%           |
-| B4   | H10        | 🏆 | -7.1%           | -24.8%           |
-| B5   | H10        | 🏆 | -7.1%           | -24.8%           |
-| B6   | H10        | 🏆 | -7.1%           | -24.8%           |
-| B7   | H10        | 🏆 | -7.1%           | -24.8%           |
-| B8   | H10        | 🏆 | -7.1%           | -24.8%           |
-| B9   | H10        | 🏆 | -10.3%          | -42.2%           |
-| B10  | H10        | 🏆 | -1.9% 🔥        | -25.1%           |
+| Test | Meilleur H | V1 | V2 (+H5 rising) | V3 (+H5 < 0.35) | V4 (top 3 ↑) | Horizons V4 |
+|:-----|:-----------|:---|:----------------|:-----------------|:-------------|:------------|
+| B0   | H10        | 🏆 | -7.7%           | -29.4%           | -20.7%       | H10,H5,H20 |
+| B1   | H10        | 🏆 | -7.7%           | -29.4%           | -20.7%       | H10,H5,H20 |
+| B2   | H20        | 🏆 | -8.2%           | -36.1%           | -26.9%       | H20,H10,H15 |
+| B3   | H10        | 🏆 | -7.1%           | -24.8%           | -21.0%       | H10,H15,H20 |
+| B4   | H10        | 🏆 | -7.1%           | -24.8%           | -21.0%       | H10,H15,H20 |
+| B5   | H10        | 🏆 | -7.1%           | -24.8%           | -21.0%       | H10,H15,H20 |
+| B6   | H10        | 🏆 | -7.1%           | -24.8%           | -21.0%       | H10,H15,H20 |
+| B7   | H10        | 🏆 | -7.1%           | -24.8%           | -21.0%       | H10,H15,H20 |
+| B8   | H10        | 🏆 | -7.1%           | -24.8%           | -21.0%       | H10,H15,H20 |
+| B9   | H10        | 🏆 | -10.3%          | -42.2%           | -22.0%       | H10,H20,H15 |
+| B10  | H10        | 🏆 | -1.9% 🔥        | -25.1%           | -20.1%       | H10,H5,H20 |
+| B11  | H10        | 🏆 | -7.1%           | -24.8%           | -21.0%       | H10,H15,H20 |
 
 ---
 
@@ -841,7 +843,7 @@
 - **B0 (Baseline)** : Catboost 5/5 Global. LightGBM per-sector 6/11. IC Rank 0.0186.
 - **B1** : +sentiment. Aucun gain.
 - **B2** : +screener (166 feat). ⚠️ IC IR 0.97. H15/H20 up, H3/H5/H10 down.
-- **B3** : +short-score. 🏆 IC Rank 0.0202, IC IR H10=1.47 record. Backtest V2=−7.1%, V3=−24.8%.
+- **B3** : +short-score. 🏆 IC Rank 0.0202, IC IR H10=1.47 record.
 - **B4** : B3 + `--target-excess-vs-spy`. 🏆 **MEILLEUR BATCH !** IC Rank 0.0202, F1 long H5=0.514 (record), Dir Acc H15=0.5022. LightGBM per-sector 8/11. V2=−7.1%, V3=−24.8%. **Batch recommandé pour la production.**
 - **B5** : B4 + VIX. Per-Sector dégradé (F1 long H5 0.514→0.510).
 - **B6** : B4 + VXN. Per-Sector comparable à B4. IT dans le top 10.
@@ -849,6 +851,7 @@
 - **B8** : B4 + MOVE. ❌ Pire variante B4 pour Per-Sector.
 - **B9** : B4 + Fondamentaux. ❌❌ PIRE BATCH. IC Rank −22%.
 - **B10** : B4 + CAPM. 🤔 MITIGÉ. IC IR record 1.09. H3/H5 fortement améliorés. Mais H10/H15 dégradés. **V2=−1.9% (record !)** — le filtre H5 rising est quasi neutre en H10, excellente nouvelle pour la robustesse.
-- **⚠️ Backtest régénéré** : tous les batches utilisent leur meilleur horizon. V2 B10 = **−1.9%** (record, quasi neutre !). V3 B4 = −24.8% (vs −11.7% avant avec H20 — le H10 est plus sensible au filtre contrarian). Les fondamentaux (B9) restent catastrophiques (V3=−42.2%).
+- **B11** : B4 + `--include-macro-regime`. Aucun gain vs B4. Global identique (IC Rank 0.0202, même backtest V2=−7.1%). Per-Sector légèrement dégradé (lightgbm 7 vs 8). Le macro regime n'apporte rien.
 - **Classement flags** : short-score (🥇) > CAPM (🥈 mitigé) > screener (⚠️) > fondamentaux (❌). **B4 reste champion Global. B10 meilleur IC IR.**
+- **🆕 V4 top horizons** : paramètre `backtest.min_rising_horizons` dans `config.yaml` (défaut 2). V4 exige que les N meilleurs horizons (par score composite) soient tous en hausse vs la veille. V4 entre −20% et −27% pour B0-B10 : le filtre d'alignement directionnel est systématiquement pénalisant. B10 est le moins pénalisé (V4=−20.1%, V2=−1.9%), B2 le plus (V4=−26.9%).
 - Catboost Global imbattable (5/5). LightGBM Per-Sector jusqu'à 9/11 (B10). **Configuration recommandée : `--include-short-score --target-excess-vs-spy` (B4).**
