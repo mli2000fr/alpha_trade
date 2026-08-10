@@ -79,7 +79,7 @@ heures de marché (`allow_outside_rth=True`). Conséquence importante :
 >    après `BrokerStateSynchronizer.sync`. Métriques visibles dans le
 >    `run_summary` : `children_armed_post_sync` (ok) /
 >    `children_armed_post_sync_failed` (erreur).
-> 2. **Watcher de protection** (`run_execution_protection_watch.py`) : à
+> 2. **Watcher de protection** (`execution_engine/protection_watcher.py`) : à
 >    chaque tick, repère les positions remplies sans TP/SL et les arme.
 >    Métriques : `armed_missing_protections` /
 >    `armed_missing_protections_failed`. Événement audit

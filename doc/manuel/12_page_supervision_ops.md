@@ -48,7 +48,7 @@ dans la page **Execution** → section *Métriques du run*).
 >
 > ```powershell
 > # Démarrer
-> python run_execution_protection_watch.py
+> python execution_engine/protection_watcher.py
 >
 > # Arrêter
 > # Ctrl+C dans la fenêtre PowerShell où il tourne

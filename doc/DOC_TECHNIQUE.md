@@ -80,7 +80,7 @@
 ```
 alpha_trade/
 ├── run_execution.py              ← Launcher canonique du flux `run` (CLI interactif ou arguments)
-├── run_execution_protection_watch.py ← Point d'entrée opérateur du watcher post-exécution
+├── execution_engine/protection_watcher.py ← Point d'entrée opérateur du watcher post-exécution
 ├── pyproject.toml                ← Config build, dépendances, ruff, mypy
 ├── requirements.txt / -dev.txt   ← Dépendances runtime et dev
 ├── config.yaml                   ← Configuration centralisée YAML (DB, Alpaca, risk)
@@ -655,8 +655,8 @@ Séquence type :
 Points d'entrée principaux :
 
 ```powershell
-python run_execution_protection_watch.py --mode once --account default
-python run_execution_protection_watch.py --mode service --account default
+python execution_engine/protection_watcher.py --mode once --account default
+python execution_engine/protection_watcher.py --mode service --account default
 ```
 
 Packaging Windows :

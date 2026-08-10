@@ -75,7 +75,7 @@ Relancez :
 ```powershell
 cd F:\projets
 .\.venv\Scripts\Activate.ps1
-python run_execution_protection_watch.py
+python execution_engine/protection_watcher.py
 ```
 
 Laissez la fenêtre ouverte (le watcher tourne tant que la fenêtre vit).

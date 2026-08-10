@@ -358,7 +358,7 @@ class PipelineLaunchOptions:
     execution_trailing_stop_pct: float = DEFAULT_EXEC_TRAILING_STOP_PCT
     execution_max_entry_gap_pct: float = DEFAULT_EXEC_MAX_ENTRY_GAP_PCT
     # SL dédié aux achats manuels orphelins (cf. watcher) — propagé uniquement
-    # à ``run_execution_protection_watch.py`` via ``build_watcher_command``.
+    # à ``execution_engine/protection_watcher.py`` via ``build_watcher_command``.
     execution_manual_buy_stop_loss_pct: float = DEFAULT_EXEC_MANUAL_BUY_SL_PCT
     execution_trailing_trigger: ExecutionTrailingTrigger = "multiple_r"
     execution_trailing_r_multiple: float = DEFAULT_EXEC_TRAILING_R_MULTIPLE
