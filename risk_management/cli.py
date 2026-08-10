@@ -1273,6 +1273,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=12,
         help="Fenêtre de calibration risk attendue pour le runtime live (défaut : 12 mois).",
     )
+    p.add_argument(
+        "--best-horizon",
+        type=int,
+        default=None,
+        help="Horizon optimal du batch ML (H3/H5/H10/H15/H20) pour sizing stop/TP multi-horizon. "
+             "Si absent, utilise 10 (défaut conservateur).",
+    )
     return p
 
 
@@ -1518,6 +1525,7 @@ def main(args: list[str] | None = None) -> None:
                 "target_annual_vol": float(args.target_annual_vol),
             } if args.target_annual_vol is not None and float(args.target_annual_vol) > 0 else {}),
             "vol_target_lookback_days": int(args.vol_target_lookback_days),
+            **({"best_horizon": int(args.best_horizon)} if args.best_horizon is not None else {}),
         },
     )
 

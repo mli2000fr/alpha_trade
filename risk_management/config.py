@@ -17,7 +17,22 @@ class RiskConfig:
     account_equity: float = 100_000.0
     risk_per_trade_pct: float = 0.01
     atr_window: int = 20
-    atr_stop_multiple: float = 2.0
+
+    # ── V1 Multi-Horizon Risk (2026-08-09) ──
+    # Stop = ATR × atr_stop_multiple[H]
+    # TP   = min(ATR × tp_atr_multiple[H], price × tp_max_pct[H])
+    # Ancien champ scalaire conservé pour rétrocompatibilité des presets non migrés.
+    # Les nouvelles méthodes `atr_stop_multiple_for(h)` et `tp_params_for(h)`
+    # doivent être utilisées dans tout le code.
+    atr_stop_multiple: float = 2.0  # fallback scalaire (rétrocompatibilité)
+    best_horizon: int = 10  # horizon cible pour sizing/TP ; 10 = défaut conservateur
+
+    # Multiples ATR par horizon (stop loss)
+    _atr_stop_multiple_map: dict[int, float] | None = None
+    # Multiples ATR par horizon (take profit)
+    _tp_atr_multiple_map: dict[int, float] | None = None
+    # Plafond TP en % du prix par horizon
+    _tp_max_pct_map: dict[int, float] | None = None
 
     max_positions: int = 20
     max_long_positions: int | None = None
@@ -94,6 +109,33 @@ class RiskConfig:
     vol_target_lookback_days: int = 60
 
     dry_run: bool = False
+
+    # ── V1 Multi-Horizon helpers ──
+    def atr_stop_multiple_for(self, horizon: int | None = None) -> float:
+        """Multiple ATR pour le stop loss, selon l'horizon.
+
+        Si ``_atr_stop_multiple_map`` est défini et contient ``horizon``,
+        utilise la valeur mappée. Sinon, utilise ``best_horizon``. Sinon,
+        fallback sur ``atr_stop_multiple`` (rétrocompatibilité).
+        """
+        h = horizon if horizon is not None else self.best_horizon
+        if self._atr_stop_multiple_map and h in self._atr_stop_multiple_map:
+            return float(self._atr_stop_multiple_map[h])
+        return float(self.atr_stop_multiple)
+
+    def tp_params_for(self, horizon: int | None = None) -> tuple[float, float]:
+        """Retourne (tp_atr_multiple, tp_max_pct) pour l'horizon donné.
+
+        Utilisé pour calculer : TP = min(ATR × tp_atr_multiple, price × tp_max_pct)
+        """
+        h = horizon if horizon is not None else self.best_horizon
+        tp_atr = 3.0   # fallback conservateur
+        tp_max = 0.07  # 7%
+        if self._tp_atr_multiple_map and h in self._tp_atr_multiple_map:
+            tp_atr = float(self._tp_atr_multiple_map[h])
+        if self._tp_max_pct_map and h in self._tp_max_pct_map:
+            tp_max = float(self._tp_max_pct_map[h])
+        return tp_atr, tp_max
 
     # --- Correlation filter V2 ---
     correlation_threshold: float = 0.80
@@ -538,6 +580,19 @@ def load_risk_config(
 
     # 2. Construire via from_yaml_section
     overrides = dict(cli_overrides or {})
+    # ── V1 Multi-Horizon : injecter les maps par défaut si non fournies ──
+    # Ne pas écraser les maps déjà présentes dans YAML ou overrides.
+    yaml_risk = full_cfg.get("risk_management", {})
+    if not isinstance(yaml_risk, dict):
+        yaml_risk = {}
+    _map_defaults: dict[str, dict[int, float]] = {
+        "_atr_stop_multiple_map": {3: 1.5, 5: 2.0, 10: 2.5, 15: 3.0, 20: 3.5},
+        "_tp_atr_multiple_map": {3: 2.0, 5: 2.5, 10: 3.0, 15: 3.5, 20: 4.0},
+        "_tp_max_pct_map": {3: 0.03, 5: 0.04, 10: 0.07, 15: 0.10, 20: 0.13},
+    }
+    for _k, _v in _map_defaults.items():
+        if _k not in overrides and _k not in yaml_risk:
+            overrides[_k] = _v
     config = RiskConfig.from_yaml_section(
         yaml_data=yaml_risk,
         preset_key=preset_key,

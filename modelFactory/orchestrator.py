@@ -800,6 +800,7 @@ def run_training_batch(
                     "champion_enabled": global_result_wf.get("champion_enabled", False),
                     "backend_model_name": global_result_wf.get("backend_model_name"),
                     "best_horizon": global_result_wf.get("best_horizon"),
+                    "best_horizon_scores": global_result_wf.get("best_horizon_scores", {}),
                 }
                 update_training_batch(
                     engine, batch_id,
@@ -1187,6 +1188,7 @@ def run_training_batch(
                         "champion_enabled": _gr_meta.get("champion_enabled", False),
                         "backend_model_name": _gr_meta.get("model_name"),
                         "best_horizon": _gr_meta.get("best_horizon"),
+                        "best_horizon_scores": _gr_meta.get("best_horizon_scores", {}),
                     }
                     # Lire metadata_json existant
                     with engine.begin() as conn:

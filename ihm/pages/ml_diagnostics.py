@@ -17,13 +17,22 @@ from sqlalchemy import text
 from ihm.services.ml_artifacts import get_model_artifacts_dir
 from modelFactory.report import generate_batch_report
 
+# ── Chargement config (fallback silencieux si absent) ──
+_MIN_RISING_HORIZONS_DEFAULT = 4
+try:
+    from common.config_loader import load_config
+    _cfg = load_config()
+    _MIN_RISING_HORIZONS = int(_cfg.get("backtest", {}).get("min_rising_horizons", _MIN_RISING_HORIZONS_DEFAULT))
+except Exception:
+    _MIN_RISING_HORIZONS = _MIN_RISING_HORIZONS_DEFAULT
+
 
 # ---------------------------------------------------------------------------
 # Helper — mise en gras des lignes walk-forward dans les tableaux
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Backtest Global Rank (V1/V2/V3) — logique partagée
+# Backtest Global Rank (V1/V2/V3/V4) — logique partagée
 # ---------------------------------------------------------------------------
 
 _REBALANCE_DAYS = 20
@@ -31,41 +40,90 @@ _TOP_PCT = 0.70
 _H5_DIP = 0.35
 _TRANSACTION_COST_BPS = 25.0
 _MAX_POSITIONS = 30
+_ALL_HORIZONS = (3, 5, 10, 15, 20)
 
 
-def _run_strategy_backtest(rank_df: pd.DataFrame) -> dict[str, dict[str, float]]:
-    """Exécute les 3 variantes de stratégie sur un DataFrame de rangs.
+def _run_strategy_backtest(
+    rank_df: pd.DataFrame,
+    best_horizon: int = 20,
+    min_rising_horizons: int = _MIN_RISING_HORIZONS,
+    horizon_scores: dict[int, float] | None = None,
+) -> dict[str, dict[str, float]]:
+    """Exécute les 4 variantes de stratégie sur un DataFrame de rangs.
+
+    Args:
+        rank_df: DataFrame avec colonnes global_rank_3/5/10/15/20.
+        best_horizon: Meilleur horizon détecté (défaut: 20). Si 5, V2/V3 ignorés.
+        min_rising_horizons: Nb d'horizons top-score devant être en hausse pour V4 (défaut: 2).
+        horizon_scores: Scores composites par horizon {h: score}. Si None, V4 ignoré.
 
     Returns:
         dict {variante: {sharpe, ann_return, ann_vol, max_drawdown}}.
     """
     _df = rank_df.sort_values(["date", "symbol"]).copy()
-    _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
+    _rank_col = f"global_rank_{best_horizon}"
+    if _rank_col not in _df.columns:
+        _rank_col = "global_rank_20"  # fallback
+        best_horizon = 20
+    # ── Pré-calcul des rangs précédents pour tous les horizons ──
+    for _h in _ALL_HORIZONS:
+        _col = f"global_rank_{_h}"
+        if _col in _df.columns:
+            _df[f"{_col}_prev"] = _df.groupby("symbol")[_col].shift(1)
     _all_dates = sorted(_df["date"].unique())
     _rebal_dates = _all_dates[::_REBALANCE_DAYS]
     _results: dict[str, dict[str, float]] = {}
 
-    for _label, _filter_fn in [
-        ("V1 — H20 seul", lambda d: d["global_rank_20"] > _TOP_PCT),
-        ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] > d["global_rank_5_prev"])),
-        ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] < _H5_DIP)),
-    ]:
+    _variantes: list[tuple[str, Any]] = [
+        (f"V1 — H{best_horizon} seul", lambda d: d[_rank_col] > _TOP_PCT),
+    ]
+    if best_horizon != 5:
+        _variantes.extend([
+            (f"V2 — H{best_horizon} + H5 rising", lambda d: (d[_rank_col] > _TOP_PCT) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+            (f"V3 — H{best_horizon} + H5 < 0.35", lambda d: (d[_rank_col] > _TOP_PCT) & (d["global_rank_5"] < _H5_DIP)),
+        ])
+    # ── V4 : top N horizons par score composite ──
+    if horizon_scores and len(horizon_scores) >= 2:
+        # Trier les horizons par score composite décroissant, prendre les N meilleurs
+        _sorted_h = sorted(horizon_scores.keys(), key=lambda h: horizon_scores[h], reverse=True)
+        _n_top = min(min_rising_horizons, len(_sorted_h))
+        _top_horizons = _sorted_h[:_n_top]
+        # Ne garder que ceux disponibles dans le cache
+        _v4_horizons = [h for h in _top_horizons if f"global_rank_{h}" in _df.columns and f"global_rank_{h}_prev" in _df.columns]
+        if len(_v4_horizons) >= 1:
+            _v4_label = f"V4 — H{best_horizon} + top {len(_v4_horizons)} horizons ↑ (" + ",".join(f"H{h}" for h in _v4_horizons) + ")"
+            def _make_v4_filter(h_list):
+                def _f(d):
+                    _ok = pd.Series(True, index=d.index)
+                    for _h in h_list:
+                        _c = f"global_rank_{_h}"
+                        _cp = f"{_c}_prev"
+                        if _c in d.columns and _cp in d.columns:
+                            _ok = _ok & (d[_c] > d[_cp])
+                    return (d[_rank_col] > _TOP_PCT) & _ok
+                return _f
+            _variantes.append((_v4_label, _make_v4_filter(_v4_horizons)))
+
+    for _label, _filter_fn in _variantes:
         _positions: dict[str, float] = {}
         _daily_rets = {}
         _turnover = 0
         for _d in _all_dates:
             _day = _df[_df["date"] == _d].set_index("symbol")
-            _day_sig = _filter_fn(_day)
+            try:
+                _day_sig = _filter_fn(_day)
+            except Exception as _fe:
+                raise RuntimeError(f"Erreur filtre {_label} à la date {_d}: {_fe}") from _fe
             if _d in _rebal_dates or not _positions:
-                _candidates = _day.loc[_day_sig].sort_values("global_rank_20", ascending=False)
+                _candidates = _day.loc[_day_sig].sort_values(_rank_col, ascending=False)
                 if _positions:
                     _turnover += len(_positions)
                 _positions = {}
                 for _s in _candidates.index[:_MAX_POSITIONS]:
-                    _positions[_s] = float(_candidates.loc[_s, "global_rank_20"])
+                    _positions[_s] = float(_candidates.loc[_s, _rank_col])
                 _turnover += len(_positions)
             _held = [s for s in _positions if s in _day.index]
-            _daily_rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+            _daily_rets[_d] = float(_day.loc[_held, _rank_col].mean()) - 0.5 if _held else 0.0
 
         _rets = pd.Series(_daily_rets).sort_index()
         _cost = (_TRANSACTION_COST_BPS / 10000.0) * _turnover / len(_all_dates)
@@ -939,6 +997,11 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     # ── Bouton téléchargement ──
     safe_bid = batch_id.replace("/", "_").replace("\\", "_")[:64]
+    # Nom du fichier : commentaire si présent, sinon batch_id
+    _comment = str(batch.get("comment", "")).strip()
+    _dl_name = _comment if _comment else safe_bid
+    # Nettoie les caractères problématiques pour un nom de fichier
+    _dl_name = _dl_name.replace("/", "_").replace("\\", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_")[:120]
     engine = get_engine()
     if engine is not None:
         col_dl, col_del = st.columns([3, 1])
@@ -946,7 +1009,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.download_button(
                 label="📥 Télécharger le rapport (.md)",
                 data=generate_batch_report(engine, batch_id),
-                file_name=f"{safe_bid}.md",
+                file_name=f"{_dl_name}.md",
                 mime="text/markdown",
                 key=f"dl_{safe_bid}",
             )
@@ -1076,7 +1139,30 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.subheader("🔵 Modèle global — Métriques")
 
     # ── Backtest Global Rank Strategies (V1/V2/V3) ──
-    with st.expander("🧪 Backtest Stratégies Global Rank (H20 + H5)", expanded=False):
+    # ── Détection du meilleur horizon depuis les métadonnées ──
+    _best_h_backtest: int = 20  # fallback
+    try:
+        _meta_raw_bt = row.get("metadata_json")
+        if _meta_raw_bt is not None and str(_meta_raw_bt) not in ("None", "nan", ""):
+            _meta_bt = _json.loads(str(_meta_raw_bt))
+            _gr_bt = _meta_bt.get("global_ranking", {}) if isinstance(_meta_bt, dict) else {}
+            _best_h_backtest = int(_gr_bt.get("best_horizon", 20) or 20)
+    except Exception:
+        pass
+    # ── Scores composites par horizon (pour V4) ──
+    _horizon_scores: dict[int, float] = {}
+    try:
+        _meta_raw_bt2 = row.get("metadata_json")
+        if _meta_raw_bt2 is not None and str(_meta_raw_bt2) not in ("None", "nan", ""):
+            _meta_bt2 = _json.loads(str(_meta_raw_bt2))
+            _gr_bt2 = _meta_bt2.get("global_ranking", {}) if isinstance(_meta_bt2, dict) else {}
+            _raw_scores = _gr_bt2.get("best_horizon_scores", {})
+            if _raw_scores:
+                _horizon_scores = {int(k): float(v) for k, v in _raw_scores.items()}
+    except Exception:
+        pass
+    _title_h = f"H{_best_h_backtest} + H5" if _best_h_backtest != 5 else f"H{_best_h_backtest} seul"
+    with st.expander(f"🧪 Backtest Stratégies Global Rank ({_title_h})", expanded=False):
         _batch_id = str(row["batch_id"])
         _cache_path = Path(get_model_artifacts_dir()) / _batch_id / "global_rank_cache.parquet"
         if _cache_path.exists():
@@ -1085,7 +1171,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
                     import numpy as np
                     _rank_df = pd.read_parquet(_cache_path)
                     _rank_df["date"] = pd.to_datetime(_rank_df["date"])
-                    _results = _run_strategy_backtest(_rank_df)
+                    _results = _run_strategy_backtest(_rank_df, _best_h_backtest, _MIN_RISING_HORIZONS, _horizon_scores)
                     if _results:
                         st.markdown("### 📊 Classement relatif des stratégies")
                         _best = max(_results, key=lambda v: _results[v]["sharpe"])
@@ -1095,14 +1181,31 @@ def _render_batch_detail(batch: pd.Series) -> None:
                             _rows.append({"Variante": _v, "Score relatif": _pct})
                         st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
                         st.success(f"🏆 Meilleure stratégie : **{_best}**")
-                        st.caption(
-                            "Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
-                            "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
-                            "Frais 0.25% A/R inclus. "
-                            "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
-                        )
+                        # ── Légende V1-V4 ──
+                        _legend_lines = [
+                            "**🔍 Légende des variantes**",
+                            "",
+                            f"- **V1** — H{_best_h_backtest} seul : top 30% du meilleur horizon, sans filtre additionnel.",
+                        ]
+                        if _best_h_backtest != 5:
+                            _legend_lines.append(f"- **V2** — H{_best_h_backtest} + H5 rising : V1 + le rang H5 du jour doit être supérieur à celui de la veille (filtre momentum court-terme).")
+                            _legend_lines.append(f"- **V3** — H{_best_h_backtest} + H5 < 0.35 : V1 + le rang H5 doit être inférieur à 0.35 (filtre contrarian / buy the dip).")
+                        if _horizon_scores:
+                            _sorted_h_names = sorted(_horizon_scores.keys(), key=lambda h: _horizon_scores[h], reverse=True)
+                            _top_n = min(_MIN_RISING_HORIZONS, len(_sorted_h_names))
+                            _top_names = ", ".join(f"H{h}" for h in _sorted_h_names[:_top_n])
+                            _legend_lines.append(f"- **V4** — H{_best_h_backtest} + top {_top_n} horizons : V1 + les {_top_n} meilleurs horizons ({_top_names}, par score composite) doivent tous être en hausse vs la veille.")
+                        else:
+                            _legend_lines.append(f"- **V4** — non disponible (scores composites absents des métadonnées).")
+                        _legend_lines.append("")
+                        _legend_lines.append(f"Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. Frais 0.25% A/R inclus. Simulation en unités de rang (Sharpes non interprétables en PnL réel).")
+                        if _best_h_backtest == 5:
+                            _legend_lines.append("⚠️ V2/V3 non calculés — H5 est déjà le meilleur horizon.")
+                        st.caption("  \n".join(_legend_lines))
                 except Exception as _exc:
+                    import traceback as _tb
                     st.error(f"Échec du backtest : {_exc}")
+                    st.code(_tb.format_exc())
         else:
             st.info(
                 "Cache `global_rank_cache.parquet` non trouvé. "
@@ -1679,10 +1782,16 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
         )
         # ── Meilleur horizon (calculé à l'entraînement) ──
         _best_h = _gr.get("best_horizon")
+        _best_scores = _gr.get("best_horizon_scores", {})
         if _best_h is not None:
+            _score_detail = ""
+            if _best_scores:
+                _parts = [f"H{h}={_best_scores.get(str(h), '?'):.4f}" for h in sorted(int(k) for k in _best_scores.keys())]
+                _score_detail = "  |  " + "  ".join(_parts)
             st.success(
                 f"🏆 **Meilleur horizon : H{_best_h}** — sélectionné par score composite "
                 f"55% IC + 30% IR + 15% Positive Split"
+                f"{_score_detail}"
             )
         elif _has_champion and _champion_by_h:
             # Fallback : si best_horizon absent mais champions présents

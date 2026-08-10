@@ -29,6 +29,7 @@ from screener.db_io import (
     load_prices_for_chunk,
     load_recent_prices_for_chunk,
     load_spy_return_6m,
+    load_symbols_from_file,
     upsert_scores_snapshot,
 )
 from screener.models import ScreenerChunkMetrics, ScreenerConfig, ScreenerRunReport
@@ -352,7 +353,7 @@ def run_screener_with_report(
     pending: dict[object, List[str]] = {}
 
     LOGGER.info(
-        "Demarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s two_pass=%s first_pass_window_days=%s effective_first_pass_window_days=%s",
+        "Demarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s two_pass=%s first_pass_window_days=%s effective_first_pass_window_days=%s custom_universe_file=%s",
         config.benchmark_symbol,
         config.chunk_size,
         workers,
@@ -360,11 +361,44 @@ def run_screener_with_report(
         config.enable_two_pass_loading,
         config.first_pass_window_days,
         config.effective_first_pass_window_days,
+        config.custom_universe_file or "none",
     )
 
-    symbol_chunks = list(iter_symbol_chunks(engine, config.chunk_size))
+    # ── Univers personnalisé (fichier) vs univers tradable (DB) ──
+    custom_universe_source: str | None = None
+    if config.custom_universe_file:
+        try:
+            custom_symbols = load_symbols_from_file(config.custom_universe_file)
+            if custom_symbols:
+                # Découpage manuel en chunks comme iter_symbol_chunks
+                symbol_chunks = [
+                    custom_symbols[i:i + config.chunk_size]
+                    for i in range(0, len(custom_symbols), config.chunk_size)
+                ]
+                custom_universe_source = config.custom_universe_file
+                LOGGER.info(
+                    "Univers personnalisé : %d symboles, %d chunks (fichier=%s).",
+                    len(custom_symbols), len(symbol_chunks), config.custom_universe_file,
+                )
+            else:
+                LOGGER.warning(
+                    "Fichier univers personnalisé vide : %s. Fallback sur stock_metadata.",
+                    config.custom_universe_file,
+                )
+                symbol_chunks = list(iter_symbol_chunks(engine, config.chunk_size))
+        except FileNotFoundError:
+            LOGGER.warning(
+                "Fichier univers personnalisé introuvable : %s. Fallback sur stock_metadata.",
+                config.custom_universe_file,
+            )
+            symbol_chunks = list(iter_symbol_chunks(engine, config.chunk_size))
+    else:
+        symbol_chunks = list(iter_symbol_chunks(engine, config.chunk_size))
+
     summary["chunks_total"] = len(symbol_chunks)
     summary["targeted_symbols"] = sum(len(symbol_chunk) for symbol_chunk in symbol_chunks)
+    if custom_universe_source:
+        summary["custom_universe_source"] = custom_universe_source
     universe_run_id: str | None = None
     if int(summary["targeted_symbols"]) <= 0:
         summary["universe_persistence_status"] = "skipped_empty_scope"
@@ -551,6 +585,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--first-pass-window-days", type=int, default=strict_defaults.first_pass_window_days, help="Fenêtre calendaire chargée en passe 1")
     parser.add_argument("--disable-two-pass-loading", action="store_true", help="Désactive le chargement en 2 passes")
     parser.add_argument(
+        "--custom-universe-file",
+        type=str,
+        default=None,
+        help="Chemin vers un fichier texte (symboles séparés par des virgules) à utiliser comme univers personnalisé. Si présent, remplace la requête stock_metadata.",
+    )
+    parser.add_argument(
         "--trade-date",
         type=str,
         default=None,
@@ -581,6 +621,7 @@ def main() -> None:
         min_historical_range_score=args.min_historical_range_score,
         enable_two_pass_loading=not args.disable_two_pass_loading,
         first_pass_window_days=args.first_pass_window_days,
+        custom_universe_file=args.custom_universe_file,
     )
     _, report = run_screener_with_report(
         config=config,

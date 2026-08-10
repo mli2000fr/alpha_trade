@@ -515,15 +515,21 @@ def build_take_profit_intent(
     short = is_short_side(parent_side)
     exit_side = "buy" if short else "sell"
 
-    percent_target = compute_take_profit_price(parent_side, avg_fill_price, float(config.profit_taker_pct))
-    risk_based_target = None
-    if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
-        sign = -1 if short else 1
-        risk_based_target = avg_fill_price + sign * (2.0 * target.risk_per_share)
-    if risk_based_target is not None:
-        limit_price = round(max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target), 2)
+    # ── V1 Multi-Horizon TP (2026-08-09) ──
+    # Priorité 1 : take_profit_price pré-calculé par PortfolioBuilder
+    if target is not None and target.take_profit_price is not None and target.take_profit_price > 0:
+        limit_price = round(float(target.take_profit_price), 2)
     else:
-        limit_price = round(percent_target, 2)
+        # Priorité 2 : risk-based (2× risk_per_share)
+        percent_target = compute_take_profit_price(parent_side, avg_fill_price, float(config.profit_taker_pct))
+        risk_based_target = None
+        if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
+            sign = -1 if short else 1
+            risk_based_target = avg_fill_price + sign * (2.0 * target.risk_per_share)
+        if risk_based_target is not None:
+            limit_price = round(max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target), 2)
+        else:
+            limit_price = round(percent_target, 2)
 
     intent_id = _make_id()
     return OrderIntent(

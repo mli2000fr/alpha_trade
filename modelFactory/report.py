@@ -450,11 +450,17 @@ def _append_global_ranking_horizon_details(
         lines.append(_df_to_md(pd.DataFrame(_summary_rows)))
         # ── Meilleur horizon (calculé à l'entraînement) ──
         _best_h = _gr.get("best_horizon")
+        _best_scores = _gr.get("best_horizon_scores", {})
         if _best_h is not None:
             lines.append("")
+            _score_detail = ""
+            if _best_scores:
+                _parts = [f"H{h}={_best_scores.get(str(h), '?'):.4f}" for h in sorted(int(k) for k in _best_scores.keys())]
+                _score_detail = "  |  " + "  ".join(_parts)
             lines.append(
                 f"🏆 **Meilleur horizon : H{_best_h}** — sélectionné par score composite "
                 f"55% IC + 30% IR + 15% Positive Split"
+                f"{_score_detail}"
             )
         elif _has_champion and _champion_by_h:
             # Fallback : si best_horizon absent mais champions présents
@@ -568,26 +574,95 @@ def _append_global_ranking_horizon_details(
 def _append_backtest_results(
     lines: list[str],
     batch_id: str | None,
+    metadata_json: str | None = None,
 ) -> None:
-    """Ajoute la section backtest stratégies Global Rank (V1/V2/V3)."""
+    """Ajoute la section backtest stratégies Global Rank (V1/V2/V3/V4).
+
+    Le meilleur horizon est détecté depuis les métadonnées du batch.
+    Si meilleur horizon = H5, V2/V3 sont ignorés (filtre redondant).
+    V4 = consensus multi-horizons (min_rising_horizons configurable).
+    """
     if not batch_id:
         return
+    # ── Détection du meilleur horizon ──
+    _best_h = 20  # fallback par défaut
+    if metadata_json:
+        try:
+            import json as _json
+            _meta = _json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+            _gr = _meta.get("global_ranking", {}) if isinstance(_meta, dict) else {}
+            _best_h = int(_gr.get("best_horizon", 20) or 20)
+        except Exception:
+            pass
+    # ── Paramètre V4 depuis la config ──
+    _min_rising = 4
+    try:
+        from common.config_loader import load_config as _load_cfg
+        _cfg = _load_cfg()
+        _min_rising = int(_cfg.get("backtest", {}).get("min_rising_horizons", 4))
+    except Exception:
+        pass
+    # ── Scores composites par horizon (pour V4) ──
+    _horizon_scores: dict[int, float] = {}
+    if metadata_json:
+        try:
+            import json as _json2
+            _meta2 = _json2.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+            _gr2 = _meta2.get("global_ranking", {}) if isinstance(_meta2, dict) else {}
+            _raw = _gr2.get("best_horizon_scores", {})
+            if _raw:
+                _horizon_scores = {int(k): float(v) for k, v in _raw.items()}
+        except Exception:
+            pass
     _cache = Path("artifacts") / "models" / batch_id / "global_rank_cache.parquet"
     if not _cache.exists():
         return
     try:
         import numpy as np
+        _ALL_H = (3, 5, 10, 15, 20)
         _df = pd.read_parquet(_cache)
         _df["date"] = pd.to_datetime(_df["date"])
-        _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
+        _rank_col = f"global_rank_{_best_h}"
+        if _rank_col not in _df.columns:
+            _rank_col = "global_rank_20"  # fallback
+            _best_h = 20
+        # ── Pré-calcul des rangs précédents pour tous les horizons ──
+        for _h in _ALL_H:
+            _col = f"global_rank_{_h}"
+            if _col in _df.columns:
+                _df[f"{_col}_prev"] = _df.groupby("symbol")[_col].shift(1)
         _all_dates = sorted(_df["date"].unique())
         _rebal = _all_dates[::20]
-        _results = {}
-        for _label, _fn in [
-            ("V1 — H20 seul", lambda d: d["global_rank_20"] > 0.70),
-            ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > 0.70) & (d["global_rank_5"] > d["global_rank_5_prev"])),
-            ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > 0.70) & (d["global_rank_5"] < 0.35)),
-        ]:
+        _results: dict[str, Any] = {}
+        # ── Construction des variantes avec le meilleur horizon ──
+        _variantes: list[tuple[str, Any]] = [
+            (f"V1 — H{_best_h} seul", lambda d: d[_rank_col] > 0.70),
+        ]
+        if _best_h != 5:
+            _variantes.extend([
+                (f"V2 — H{_best_h} + H5 rising", lambda d: (d[_rank_col] > 0.70) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+                (f"V3 — H{_best_h} + H5 < 0.35", lambda d: (d[_rank_col] > 0.70) & (d["global_rank_5"] < 0.35)),
+            ])
+        # ── V4 : top N horizons par score composite ──
+        if _horizon_scores and len(_horizon_scores) >= 2:
+            _sorted_h = sorted(_horizon_scores.keys(), key=lambda h: _horizon_scores[h], reverse=True)
+            _n_top = min(_min_rising, len(_sorted_h))
+            _top_h = _sorted_h[:_n_top]
+            _v4_h = [h for h in _top_h if f"global_rank_{h}" in _df.columns and f"global_rank_{h}_prev" in _df.columns]
+            if len(_v4_h) >= 1:
+                _v4_label = f"V4 — H{_best_h} + top {len(_v4_h)} horizons ↑ (" + ",".join(f"H{h}" for h in _v4_h) + ")"
+                def _make_v4(h_list):
+                    def _f(d):
+                        _ok = pd.Series(True, index=d.index)
+                        for _h in h_list:
+                            _c = f"global_rank_{_h}"
+                            _cp = f"{_c}_prev"
+                            if _c in d.columns and _cp in d.columns:
+                                _ok = _ok & (d[_c] > d[_cp])
+                        return (d[_rank_col] > 0.70) & _ok
+                    return _f
+                _variantes.append((_v4_label, _make_v4(_v4_h)))
+        for _label, _fn in _variantes:
             _pos = {}
             _rets = {}
             _turn = 0
@@ -595,13 +670,13 @@ def _append_backtest_results(
                 _day = _df[_df["date"] == _d].set_index("symbol")
                 _sig = _fn(_day)
                 if _d in _rebal or not _pos:
-                    _cand = _day.loc[_sig].sort_values("global_rank_20", ascending=False)
+                    _cand = _day.loc[_sig].sort_values(_rank_col, ascending=False)
                     if _pos:
                         _turn += len(_pos)
-                    _pos = {s: float(_cand.loc[s, "global_rank_20"]) for s in _cand.index[:30]}
+                    _pos = {s: float(_cand.loc[s, _rank_col]) for s in _cand.index[:30]}
                     _turn += len(_pos)
                 _held = [s for s in _pos if s in _day.index]
-                _rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+                _rets[_d] = float(_day.loc[_held, _rank_col].mean()) - 0.5 if _held else 0.0
             _s = pd.Series(_rets).sort_index()
             _cost = (25.0 / 10000.0) * _turn / len(_all_dates)
             _s = _s - _cost / 20
@@ -613,7 +688,8 @@ def _append_backtest_results(
             _results[_label] = {"sharpe": _sharpe, "ann_return": _m * 252, "ann_vol": _std * np.sqrt(252), "max_dd": _dd}
 
         if _results:
-            lines.append("## 🧪 Backtest Stratégies — Global Rank")
+            _title_suffix = f" (H{_best_h} + H5)" if _best_h != 5 else f" (H{_best_h} seul)"
+            lines.append(f"## 🧪 Backtest Stratégies — Global Rank{_title_suffix}")
             lines.append("")
             _best = max(_results, key=lambda v: _results[v]["sharpe"])
             lines.append("| Variante | Score relatif |")
@@ -622,12 +698,19 @@ def _append_backtest_results(
                 _pct = f"{(_m['sharpe'] / _results[_best]['sharpe'] - 1) * 100:+.1f}%" if _l != _best else "🏆 référence"
                 lines.append(f"| {_l} | {_pct} |")
             lines.append("")
-            lines.append(
-                "> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
-                "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
-                "Frais 0.25% A/R inclus. "
-                "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
+            _legend = (
+                f"> Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
+                f"Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
+                f"Frais 0.25% A/R inclus. "
+                f"V1 = H{_best_h} seul"
             )
+            if _best_h != 5:
+                _legend += f", V2 = H{_best_h} + H5 rising, V3 = H{_best_h} + H5 < 0.35 (contrarian)."
+            else:
+                _legend += " (V2/V3 non calculés — H5 est déjà le meilleur horizon)."
+            if len(_v4_h) >= 1:
+                _legend += f" V4 = H{_best_h} + top {len(_v4_h)} horizons ↑ ({','.join(f'H{h}' for h in _v4_h)})."
+            lines.append(_legend)
             lines.append("")
     except Exception:
         pass
@@ -911,7 +994,7 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
 
     # ── Backtest Stratégies Global Rank ──
     _batch_id = detail_df.iloc[0].get("batch_id") if not detail_df.empty else None
-    _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None)
+    _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None, str(_meta_raw) if _meta_raw is not None else None)
 
     # ── Per-Symbol Cross-Sectional IC — retiré ──
 

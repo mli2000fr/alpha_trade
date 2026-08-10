@@ -839,7 +839,47 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
     )
     getattr(st, account_severity)(account_message)
     swing_severity, swing_message = _build_swing_only_banner_payload(options)
-    getattr(st, swing_severity)(swing_message)
+    if swing_message:
+        getattr(st, swing_severity)(swing_message)
+    universe_severity, universe_message = _build_universe_banner_payload(options)
+    if universe_message:
+        getattr(st, universe_severity)(universe_message)
+
+
+def _build_universe_banner_payload(options: PipelineLaunchOptions) -> tuple[str, str]:
+    """Bandeau indiquant la source de l'univers des symboles (étape 3 — Screener).
+
+    - Si un fichier personnalisé est configuré (dans config.yaml ou en option),
+      affiche le chemin du fichier.
+    - Sinon, indique que l'univers tradable standard (stock_metadata) est utilisé.
+    """
+    from ihm.services.pipeline_runner import _resolve_screener_custom_universe_file_from_config
+    custom_file = options.screener_custom_universe_file or _resolve_screener_custom_universe_file_from_config()
+    if custom_file:
+        from pathlib import Path
+        file_path = Path(custom_file)
+        if file_path.is_file():
+            try:
+                raw = file_path.read_text(encoding="utf-8")
+                count = len([s for s in raw.replace("\n", ",").split(",") if s.strip()])
+            except Exception:
+                count = "?"
+            return (
+                "info",
+                f"📁 **UNIVERS PERSONNALISÉ** — Fichier : `{custom_file}` ({count} symboles). "
+                "L'étape 3 (Stock Screener) utilisera ces symboles directement, sans requête stock_metadata.",
+            )
+        else:
+            return (
+                "warning",
+                f"⚠️ **UNIVERS PERSONNALISÉ INTROUVABLE** — Fichier configuré `{custom_file}` mais absent. "
+                "Fallback sur l'univers tradable standard (stock_metadata).",
+            )
+    return (
+        "info",
+        "🌐 **UNIVERS TRADABLE STANDARD** — L'étape 3 (Stock Screener) utilisera "
+        "la requête `stock_metadata` (status=active, tradable=1, us_equity).",
+    )
 
 
 def _build_swing_only_banner_payload(options: PipelineLaunchOptions) -> tuple[str, str]:

@@ -1626,6 +1626,7 @@ class RiskRepository:
             "decision_rank", "target_notional", "stop_price_initial", "risk_per_share",
             "risk_budget_dollars", "initial_risk_dollars", "score_snapshot_date",
             "price_asof_date", "atr_asof_date", "prediction_asof_date", "ml_metrics_asof_date",
+            "take_profit_price",  # V1 Multi-Horizon TP (2026-08-09)
         ]
         available_columns = self._get_table_columns("risk_decisions")
         insert_columns = [column for column in canonical_columns if not available_columns or column in available_columns]
@@ -1661,6 +1662,7 @@ class RiskRepository:
             "selector_signal_mode", "selection_explanation", "selector_earnings_blackout", "decision_rank",
             "target_notional", "stop_price_initial", "risk_per_share", "risk_budget_dollars",
             "initial_risk_dollars", "price_asof_date", "atr_asof_date",
+            "take_profit_price",  # V1 Multi-Horizon TP (2026-08-09)
         ]
         available_columns = self._get_table_columns("portfolio_targets")
         insert_columns = [column for column in canonical_columns if not available_columns or column in available_columns]

@@ -41,7 +41,7 @@ class PositionSizer:
             return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ATR_MISSING)
 
         risk_budget = self._cfg.account_equity * self._cfg.risk_per_trade_pct * max(0.0, self._cfg.risk_multiplier)
-        risk_per_share = price_info.atr_20 * self._cfg.atr_stop_multiple
+        risk_per_share = price_info.atr_20 * self._cfg.atr_stop_multiple_for()
         if risk_per_share <= 0:
             return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ATR_MISSING)
         raw_shares = risk_budget / risk_per_share
