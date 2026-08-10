@@ -29,6 +29,13 @@ class ScreenerConfig:
     weight_historical_range: float = 0.30
     enable_two_pass_loading: bool = True
     first_pass_window_days: int = 400
+    # Optionnel : chemin vers un fichier texte contenant une liste de symboles
+    # (séparés par des virgules) à utiliser comme univers personnalisé.
+    # Si défini et que le fichier existe, remplace l'étape 1 (requête
+    # stock_metadata) : les symboles du fichier sont directement envoyés
+    # à l'étape 2 (scoring). Si None ou fichier introuvable → comportement
+    # normal via stock_metadata.
+    custom_universe_file: str | None = None
 
     APPROX_TRADING_DAYS_PER_YEAR: ClassVar[int] = 252
     APPROX_CALENDAR_DAYS_PER_YEAR: ClassVar[int] = 365

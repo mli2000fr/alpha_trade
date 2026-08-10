@@ -3,21 +3,25 @@
 > Fichier de suivi et comparaison des batches (B0, B1, B2, …).
 > Les tableaux comparatifs sont mis à jour au fur et à mesure.
 > **Nouveauté** : `--global-champion` activé — champion automatique CatBoost vs LightGBM par horizon.
+> **⚠️ Évolution B11+** : le backtest V3 utilisera `meilleur_horizon + H5 < 0.35` (et non plus H20 en dur). Pour les batches B0-B10, V3 est basé sur H20 (⚠️ non représentatif si meilleur horizon ≠ H20).
 
 ---
 
 ## 📋 Résumé des batches
 
-| Batch | ID | Commentaire | Global Champion | Per-Sector Champions | IC Rank Global | IC IR |
-|:------|:---|:------------|:----------------|:---------------------|---------------:|------:|
-| **B0** | `model-factory-20260809091632-a574c7` | Baseline | catboost (5/5 horizons) | lightgbm 6 / catboost 5 | 0.0186 | 1.02 |
-| **B1** | `model-factory-20260809104004-44d3a8` | B0 + `--include-sentiment` | catboost (5/5 horizons) | lightgbm 6 / catboost 5 | 0.0186 | 1.02 |
-| **B2** | `model-factory-20260809115339-404c90` | B0 + `--include-screener-scores` | catboost (5/5 horizons, 166 feat.) | lightgbm 6 / catboost 5 | 0.0186 | ⚠️ 0.97 |
-| **B3** | `model-factory-20260809132408-4d40c5` | B0 + `--include-short-score` | catboost (5/5 horizons, 144 feat.) | catboost 6 / lightgbm 5 | 🏆 0.0202 | 🏆 1.03 |
-| **B4** | `model-factory-20260809153352-2b4647` | B3 + `--target-excess-vs-spy` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 |
-| **B5** | `model-factory-20260809173405-730267` | B4 + `--include-macro-vix` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 |
-| **B6** | `model-factory-20260809191125-23cc62` | B4 + `--include-macro-vxn` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 |
-| **B7** | `model-factory-20260809211556-6f94d8` | B4 + `--include-macro-vix3m` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 |
+| Batch | ID | Commentaire | Global Champion | Per-Sector Champions | IC Rank Global | IC IR | Meilleur horizon |
+|:------|:---|:------------|:----------------|:---------------------|---------------:|------:|:-----------------|
+| **B0** | `model-factory-20260809091632-a574c7` | Baseline | catboost (5/5 horizons) | lightgbm 6 / catboost 5 | 0.0186 | 1.02 | H10 |
+| **B1** | `model-factory-20260809104004-44d3a8` | B0 + `--include-sentiment` | catboost (5/5 horizons) | lightgbm 6 / catboost 5 | 0.0186 | 1.02 | H10 |
+| **B2** | `model-factory-20260809115339-404c90` | B0 + `--include-screener-scores` | catboost (5/5 horizons, 166 feat.) | lightgbm 6 / catboost 5 | 0.0186 | ⚠️ 0.97 | H20 |
+| **B3** | `model-factory-20260809132408-4d40c5` | B0 + `--include-short-score` | catboost (5/5 horizons, 144 feat.) | catboost 6 / lightgbm 5 | 🏆 0.0202 | 🏆 1.03 | H10 |
+| **B4** | `model-factory-20260809153352-2b4647` | B3 + `--target-excess-vs-spy` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 | H10 |
+| **B5** | `model-factory-20260809173405-730267` | B4 + `--include-macro-vix` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 | H10 |
+| **B6** | `model-factory-20260809191125-23cc62` | B4 + `--include-macro-vxn` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 | H10 |
+| **B7** | `model-factory-20260809211556-6f94d8` | B4 + `--include-macro-vix3m` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 | H10 |
+| **B8** | `model-factory-20260809234022-4de46f` | B4 + `--include-macro-move` | catboost (5/5 horizons, 144 feat.) | lightgbm 8 / catboost 3 | 🏆 0.0202 | 🏆 1.03 | H10 |
+| **B9** | `model-factory-20260810052226-5de365` | B4 + `--include-fundamentals` | ⚠️ lightgbm H3, catboost 4/5 (156 feat.) | catboost 6 / lightgbm 5 | ❌ 0.0157 | ❌ 0.98 | H10 |
+| **B10** | `model-factory-20260810160939-927f00` | B4 + `--include-factors` (CAPM) | catboost 5/5 (145 feat.) | lightgbm 9 / catboost 2 | 0.0195 | 🏆 1.09 | H10 |
 
 ---
 
@@ -67,8 +71,23 @@
 | B7   | H10     | 0.0254  | 1.47  | 0.0297        | 144         | catboost   | 0.975           |
 | B7   | H15     | 0.0233  | 1.22  | 0.0303        | 144         | catboost   | 0.950           |
 | B7   | H20     | 0.0234  | 0.93  | 0.0301        | 144         | catboost   | 0.975           |
+| B8   | H3      | 0.0104  | 0.88  | 0.0098        | 144         | catboost   | 0.975           |
+| B8   | H5      | 0.0183  | 0.98  | 0.0190        | 144         | catboost   | 0.975           |
+| B8   | H10     | 0.0254  | 1.47  | 0.0297        | 144         | catboost   | 0.975           |
+| B8   | H15     | 0.0233  | 1.22  | 0.0303        | 144         | catboost   | 0.950           |
+| B8   | H20     | 0.0234  | 0.93  | 0.0301        | 144         | catboost   | 0.975           |
+| B9   | H3      | 0.0098  | 0.68  | 0.0169        | 144         | ⚠️ lightgbm | 0.950           |
+| B9   | H5      | 0.0133  | 0.86  | 0.0145        | 156         | catboost   | 0.975           |
+| B9   | H10     | 0.0210  | 1.25  | 0.0197        | 156         | catboost   | 0.975           |
+| B9   | H15     | 0.0163  | 1.17  | 0.0121        | 156         | catboost   | 0.975           |
+| B9   | H20     | 0.0179  | 1.07  | 0.0131        | 156         | catboost   | 0.975           |
+| B10  | H3      | 0.0128  | 1.35  | 0.0103        | 145         | catboost   | 1.000           |
+| B10  | H5      | 0.0201  | 1.32  | 0.0186        | 145         | catboost   | 0.975           |
+| B10  | H10     | 0.0231  | 1.28  | 0.0274        | 145         | catboost   | 0.950           |
+| B10  | H15     | 0.0188  | 0.92  | 0.0267        | 145         | catboost   | 0.950           |
+| B10  | H20     | 0.0230  | 1.05  | 0.0294        | 145         | catboost   | 0.950           |
 
-> 🏆 **Meilleur horizon tous batches sauf B2 : H10**
+> 🏆 **Meilleur horizon B3-B8 : H10** | **B10 : H3/H5 fortement améliorés**
 
 ## 1.2 Champion Global — IC/IR CatBoost vs LightGBM
 
@@ -114,6 +133,21 @@
 | B7   | H10     | 0.0254      | 1.47        | 0.0105      | 0.40        | catboost   |
 | B7   | H15     | 0.0233      | 1.22        | 0.0207      | 0.76        | catboost   |
 | B7   | H20     | 0.0234      | 0.93        | 0.0084      | 0.30        | catboost   |
+| B8   | H3      | 0.0104      | 0.88        | 0.0029      | 0.28        | catboost   |
+| B8   | H5      | 0.0183      | 0.98        | 0.0087      | 0.62        | catboost   |
+| B8   | H10     | 0.0254      | 1.47        | 0.0105      | 0.40        | catboost   |
+| B8   | H15     | 0.0233      | 1.22        | 0.0207      | 0.76        | catboost   |
+| B8   | H20     | 0.0234      | 0.93        | 0.0084      | 0.30        | catboost   |
+| B9   | H3      | 0.0045      | 0.43        | 0.0098      | 0.68        | ⚠️ lightgbm |
+| B9   | H5      | 0.0133      | 0.86        | 0.0095      | 0.54        | catboost   |
+| B9   | H10     | 0.0210      | 1.25        | −0.0005     | −0.02       | catboost   |
+| B9   | H15     | 0.0163      | 1.17        | 0.0047      | 0.22        | catboost   |
+| B9   | H20     | 0.0179      | 1.07        | 0.0081      | 0.34        | catboost   |
+| B10  | H3      | 0.0128      | 1.35        | 0.0078      | 0.66        | catboost   |
+| B10  | H5      | 0.0201      | 1.32        | 0.0152      | 0.72        | catboost   |
+| B10  | H10     | 0.0231      | 1.28        | 0.0127      | 0.62        | catboost   |
+| B10  | H15     | 0.0188      | 0.92        | 0.0152      | 0.48        | catboost   |
+| B10  | H20     | 0.0230      | 1.05        | 0.0074      | 0.28        | catboost   |
 
 ## 1.3 Détail IC par split — Champion (Global)
 
@@ -159,19 +193,41 @@
 | B7   | H10     | 0.0104  | 0.0440  | 0.0375  | -0.0039 | 0.0398  | 0.0245  | 0.0172 | -0.0039| 0.0440 |
 | B7   | H15     | -0.0002 | 0.0356  | 0.0468  | -0.0023 | 0.0398  | 0.0201  | 0.0191 | -0.0023| 0.0468 |
 | B7   | H20     | -0.0098 | 0.0305  | 0.0645  | 0.0006  | 0.0407  | 0.0137  | 0.0250 | -0.0098| 0.0645 |
+| B8   | H3      | 0.0016  | 0.0234  | 0.0264  | -0.0075 | 0.0116  | 0.0069  | 0.0118 | -0.0075| 0.0264 |
+| B8   | H5      | 0.0057  | 0.0547  | 0.0164  | -0.0056 | 0.0232  | 0.0154  | 0.0187 | -0.0056| 0.0547 |
+| B8   | H10     | 0.0104  | 0.0440  | 0.0375  | -0.0039 | 0.0398  | 0.0245  | 0.0172 | -0.0039| 0.0440 |
+| B8   | H15     | -0.0002 | 0.0356  | 0.0468  | -0.0023 | 0.0398  | 0.0201  | 0.0191 | -0.0023| 0.0468 |
+| B8   | H20     | -0.0098 | 0.0305  | 0.0645  | 0.0006  | 0.0407  | 0.0137  | 0.0250 | -0.0098| 0.0645 |
+| B9   | H3      | 0.0172  | 0.0329  | −0.0005 | −0.0117 | 0.0040  | 0.0167  | 0.0144 | −0.0117| 0.0329 |
+| B9   | H5      | 0.0062  | 0.0303  | 0.0273  | −0.0164 | 0.0141  | 0.0184  | 0.0155 | −0.0164| 0.0303 |
+| B9   | H10     | 0.0162  | 0.0136  | 0.0343  | −0.0086 | 0.0438  | 0.0269  | 0.0168 | −0.0086| 0.0438 |
+| B9   | H15     | 0.0178  | 0.0105  | 0.0279  | −0.0114 | 0.0302  | 0.0228  | 0.0140 | −0.0114| 0.0302 |
+| B9   | H20     | 0.0107  | 0.0026  | 0.0414  | −0.0058 | 0.0312  | 0.0272  | 0.0167 | −0.0058| 0.0414 |
+| B10  | H3      | 0.0077  | 0.0286  | 0.0205  | 0.0008  | 0.0136  | 0.0054  | 0.0094 | 0.0008 | 0.0286 |
+| B10  | H5      | 0.0079  | 0.0482  | 0.0231  | −0.0003 | 0.0243  | 0.0173  | 0.0152 | −0.0003| 0.0482 |
+| B10  | H10     | −0.0004 | 0.0406  | 0.0386  | −0.0026 | 0.0362  | 0.0260  | 0.0180 | −0.0026| 0.0406 |
+| B10  | H15     | −0.0144 | 0.0385  | 0.0385  | −0.0003 | 0.0343  | 0.0160  | 0.0204 | −0.0144| 0.0385 |
+| B10  | H20     | −0.0016 | 0.0394  | 0.0498  | −0.0045 | 0.0434  | 0.0114  | 0.0220 | −0.0045| 0.0498 |
 
 ## 1.4 Comparatif Backtest Stratégies — Global Rank
 
-| Test | V1 — H20 seul | V2 — H20 + H5 rising | V3 — H20 + H5 < 0.35 |
-|:-----|:--------------|:---------------------|:----------------------|
-| B0   | 🏆 référence  | -9.3%                | -28.8%                |
-| B1   | 🏆 référence  | -9.3%                | -28.8%                |
-| B2   | 🏆 référence  | -8.2%                | -36.1% ⬇️             |
-| B3   | 🏆 référence  | -8.4%                | -11.7% ⬆️⬆️           |
-| B4   | 🏆 référence  | -8.4%                | -11.7% ⬆️⬆️           |
-| B5   | 🏆 référence  | -8.4%                | -11.7% ⬆️⬆️           |
-| B6   | 🏆 référence  | -8.4%                | -11.7% ⬆️⬆️           |
-| B7   | 🏆 référence  | -8.4%                | -11.7% ⬆️⬆️           |
+> ⚠️ **B0-B10** : V1/V2/V3 basés sur **H20** en dur. Seul **B2** a H20 comme meilleur horizon → son V3 est représentatif.
+> Pour B0/B1/B3-B10 (meilleur horizon = H10), le V3 réel serait probablement différent.
+> **À partir de B11** : titres dynamiques — V1 = meilleur horizon seul, V2 = meilleur horizon + H5 rising, V3 = meilleur horizon + H5 < 0.35. Si meilleur horizon = H5 → V2/V3 = N/A (0%).
+
+| Test | Meilleur H | V1 | V2 (+H5 rising) | V3 (+H5 < 0.35) | Représentatif ? |
+|:-----|:-----------|:---|:----------------|:-----------------|:----------------|
+| B0   | H10        | 🏆 | -9.3% (H20)     | -28.8% (H20)     | ❌ basé H20     |
+| B1   | H10        | 🏆 | -9.3% (H20)     | -28.8% (H20)     | ❌ basé H20     |
+| B2   | H20        | 🏆 | -8.2%           | -36.1% ⬇️        | ✅              |
+| B3   | H10        | 🏆 | -8.4% (H20)     | -11.7% (H20)     | ❌ basé H20     |
+| B4   | H10        | 🏆 | -8.4% (H20)     | -11.7% (H20)     | ❌ basé H20     |
+| B5   | H10        | 🏆 | -8.4% (H20)     | -11.7% (H20)     | ❌ basé H20     |
+| B6   | H10        | 🏆 | -8.4% (H20)     | -11.7% (H20)     | ❌ basé H20     |
+| B7   | H10        | 🏆 | -8.4% (H20)     | -11.7% (H20)     | ❌ basé H20     |
+| B8   | H10        | 🏆 | -8.4% (H20)     | -11.7% (H20)     | ❌ basé H20     |
+| B9   | H10        | 🏆 | -11.1% (H20)    | -36.2% (H20)     | ❌ basé H20     |
+| B10  | H10        | 🏆 | -10.2% (H20)    | -29.2% (H20)     | ❌ basé H20     |
 
 ---
 
@@ -221,6 +277,21 @@
 | B7   | H10     | 0.328    | 0.472    | 0.511   | 0.5011  |
 | B7   | H15     | 0.328    | 0.475    | 0.508   | 0.5008  |
 | B7   | H20     | 0.327    | 0.474    | 0.507   | 0.5001  |
+| B8   | H3      | 0.328    | 0.484    | 0.501   | 0.5011  |
+| B8   | H5      | 0.328    | 0.472    | 0.511   | 0.5010  |
+| B8   | H10     | 0.328    | 0.474    | 0.509   | 0.5006  |
+| B8   | H15     | 0.328    | 0.476    | 0.508   | 0.5025  |
+| B8   | H20     | 0.326    | 0.477    | 0.502   | 0.4996  |
+| B9   | H3      | 0.331    | 0.494    | 0.498   | 0.5012  |
+| B9   | H5      | 0.330    | 0.483    | 0.507   | 0.5013  |
+| B9   | H10     | 0.328    | 0.482    | 0.501   | 0.5007  |
+| B9   | H15     | 0.327    | 0.480    | 0.502   | 0.5020  |
+| B9   | H20     | 0.327    | 0.481    | 0.500   | 0.5012  |
+| B10  | H3      | 0.330    | 0.490    | 0.501   | 0.5018  |
+| B10  | H5      | 0.329    | 0.475    | 0.513   | 0.5018  |
+| B10  | H10     | 0.328    | 0.473    | 0.511   | 0.5010  |
+| B10  | H15     | 0.328    | 0.473    | 0.510   | 0.5012  |
+| B10  | H20     | 0.327    | 0.475    | 0.507   | 0.5001  |
 
 ## 2.2 Champions Per-Sector par modèle
 
@@ -234,6 +305,9 @@
 | B5   | 3        | 8        |
 | B6   | 3        | 8        |
 | B7   | 3        | 8        |
+| B8   | 3        | 8        |
+| B9   | 6        | 5        |
+| B10  | 2        | 9        |
 
 ## 2.3 Comparatif F1 par split (WF)
 
@@ -287,6 +361,24 @@
 | B7   | lightgbm   | val   | 0.331    | 0.506    | 0.487   |
 | B7   | lightgbm   | test  | 0.329    | 0.514    | 0.474   |
 | B7   | lightgbm   | wf    | 0.329    | 0.479    | 0.507   |
+| B8   | catboost   | val   | 0.331    | 0.507    | 0.487   |
+| B8   | catboost   | test  | 0.329    | 0.512    | 0.474   |
+| B8   | catboost   | wf    | 0.327    | 0.471    | 0.509   |
+| B8   | lightgbm   | val   | 0.331    | 0.506    | 0.487   |
+| B8   | lightgbm   | test  | 0.327    | 0.495    | 0.485   |
+| B8   | lightgbm   | wf    | 0.328    | 0.482    | 0.503   |
+| B9   | catboost   | val   | 0.332    | 0.507    | 0.487   |
+| B9   | catboost   | test  | 0.330    | 0.519    | 0.469   |
+| B9   | catboost   | wf    | 0.328    | 0.482    | 0.501   |
+| B9   | lightgbm   | val   | 0.333    | 0.509    | 0.490   |
+| B9   | lightgbm   | test  | 0.330    | 0.513    | 0.478   |
+| B9   | lightgbm   | wf    | 0.329    | 0.486    | 0.502   |
+| B10  | catboost   | val   | 0.332    | 0.508    | 0.488   |
+| B10  | catboost   | test  | 0.329    | 0.519    | 0.466   |
+| B10  | catboost   | wf    | 0.328    | 0.475    | 0.510   |
+| B10  | lightgbm   | val   | 0.331    | 0.506    | 0.487   |
+| B10  | lightgbm   | test  | 0.328    | 0.510    | 0.475   |
+| B10  | lightgbm   | wf    | 0.329    | 0.479    | 0.507   |
 
 ## 2.4 Comparatif Distribution true/pred par split (WF)
 
@@ -340,6 +432,24 @@
 | B7   | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
 | B7   | lightgbm   | test  | 51.93       | 48.08      | 52.04       | 47.96      |
 | B7   | lightgbm   | wf    | 51.41       | 48.59      | 45.88       | 54.12      |
+| B8   | catboost   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B8   | catboost   | test  | 51.93       | 48.08      | 51.86       | 48.15      |
+| B8   | catboost   | wf    | 51.41       | 48.59      | 44.90       | 55.10      |
+| B8   | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B8   | lightgbm   | test  | 51.93       | 48.08      | 49.06       | 50.94      |
+| B8   | lightgbm   | wf    | 51.41       | 48.59      | 46.62       | 53.38      |
+| B9   | catboost   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B9   | catboost   | test  | 51.93       | 48.08      | 53.03       | 46.97      |
+| B9   | catboost   | wf    | 51.41       | 48.59      | 46.87       | 53.13      |
+| B9   | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B9   | lightgbm   | test  | 51.93       | 48.08      | 51.55       | 48.45      |
+| B9   | lightgbm   | wf    | 51.41       | 48.59      | 47.12       | 52.88      |
+| B10  | catboost   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B10  | catboost   | test  | 51.93       | 48.08      | 53.23       | 46.77      |
+| B10  | catboost   | wf    | 51.41       | 48.59      | 45.18       | 54.82      |
+| B10  | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B10  | lightgbm   | test  | 51.93       | 48.08      | 51.41       | 48.60      |
+| B10  | lightgbm   | wf    | 51.41       | 48.59      | 45.91       | 54.09      |
 
 ## 2.5 Comparatif Métriques Régression par split (WF)
 
@@ -393,6 +503,24 @@
 | B7   | lightgbm   | val   | 1.0793  | 0.4966      |
 | B7   | lightgbm   | test  | 1.1073  | 0.4971      |
 | B7   | lightgbm   | wf    | 1.0647  | 0.5007      |
+| B8   | catboost   | val   | 1.0740  | 0.4975      |
+| B8   | catboost   | test  | 1.0893  | 0.4979      |
+| B8   | catboost   | wf    | 1.0448  | 0.5010      |
+| B8   | lightgbm   | val   | 1.0923  | 0.4967      |
+| B8   | lightgbm   | test  | 1.1116  | 0.4939      |
+| B8   | lightgbm   | wf    | 1.0647  | 0.5009      |
+| B9   | catboost   | val   | 1.0685  | 0.4976      |
+| B9   | catboost   | test  | 1.0934  | 0.4970      |
+| B9   | catboost   | wf    | 1.0435  | 0.5003      |
+| B9   | lightgbm   | val   | 1.0849  | 0.4997      |
+| B9   | lightgbm   | test  | 1.1113  | 0.4976      |
+| B9   | lightgbm   | wf    | 1.0641  | 0.5022      |
+| B10  | catboost   | val   | 1.0664  | 0.4982      |
+| B10  | catboost   | test  | 1.0883  | 0.4963      |
+| B10  | catboost   | wf    | 1.0445  | 0.5013      |
+| B10  | lightgbm   | val   | 1.0804  | 0.4967      |
+| B10  | lightgbm   | test  | 1.1098  | 0.4951      |
+| B10  | lightgbm   | wf    | 1.0624  | 0.5011      |
 
 ## 2.6 Distribution F1 macro — Walk-Forward
 
@@ -413,6 +541,11 @@
 | B6   | 0.30–0.39   | 11          |
 | B7   | 0.20–0.29   | 1           |
 | B7   | 0.30–0.39   | 11          |
+| B8   | 0.20–0.29   | 1           |
+| B8   | 0.30–0.39   | 11          |
+| B9   | 0.30–0.39   | 11          |
+| B10  | 0.20–0.29   | 1           |
+| B10  | 0.30–0.39   | 11          |
 
 ## 2.7 Top 10 F1 macro (WF) — Meilleurs secteurs
 
@@ -498,6 +631,36 @@
 | B7   | Financials        | 0.336    | 0.495   | 0.513    |
 | B7   | Financials        | 0.335    | 0.521   | 0.485    |
 | B7   | Industrials       | 0.335    | 0.494   | 0.512    |
+| B8   | Consumer Staples  | 0.356    | 0.550   | 0.517    |
+| B8   | Consumer Staples  | 0.347    | 0.542   | 0.499    |
+| B8   | Health Care       | 0.342    | 0.520   | 0.506    |
+| B8   | Consumer Staples  | 0.342    | 0.530   | 0.495    |
+| B8   | Health Care       | 0.341    | 0.524   | 0.499    |
+| B8   | Health Care       | 0.340    | 0.522   | 0.497    |
+| B8   | Health Care       | 0.337    | 0.523   | 0.490    |
+| B8   | Industrials       | 0.337    | 0.495   | 0.515    |
+| B8   | Financials        | 0.337    | 0.527   | 0.483    |
+| B8   | Financials        | 0.336    | 0.489   | 0.520    |
+| B9   | Consumer Staples  | 0.348    | 0.536   | 0.508    |
+| B9   | Consumer Staples  | 0.347    | 0.532   | 0.510    |
+| B9   | Industrials       | 0.345    | 0.508   | 0.527    |
+| B9   | Consumer Staples  | 0.344    | 0.533   | 0.500    |
+| B9   | Industrials       | 0.344    | 0.510   | 0.521    |
+| B9   | Industrials       | 0.340    | 0.500   | 0.520    |
+| B9   | Industrials       | 0.338    | 0.497   | 0.517    |
+| B9   | Industrials       | 0.338    | 0.500   | 0.514    |
+| B9   | Consumer Staples  | 0.337    | 0.526   | 0.485    |
+| B9   | Consumer Staples  | 0.336    | 0.518   | 0.491    |
+| B10  | Consumer Staples       | 0.361    | 0.551   | 0.531    |
+| B10  | Consumer Staples       | 0.356    | 0.546   | 0.523    |
+| B10  | Industrials            | 0.346    | 0.512   | 0.526    |
+| B10  | Consumer Staples       | 0.345    | 0.532   | 0.504    |
+| B10  | Industrials            | 0.344    | 0.509   | 0.522    |
+| B10  | Industrials            | 0.339    | 0.501   | 0.517    |
+| B10  | Industrials            | 0.339    | 0.501   | 0.517    |
+| B10  | Industrials            | 0.339    | 0.496   | 0.520    |
+| B10  | Health Care            | 0.338    | 0.524   | 0.490    |
+| B10  | Information Technology | 0.337    | 0.521   | 0.489    |
 
 ## 2.8 Top 10 F1 macro (WF) — Pires secteurs
 
@@ -583,6 +746,36 @@
 | B7   | Materials               | 0.314    | 0.462   | 0.481    |
 | B7   | Materials               | 0.318    | 0.468   | 0.484    |
 | B7   | Energy                  | 0.319    | 0.477   | 0.479    |
+| B8   | Energy                  | 0.292    | 0.420   | 0.455    |
+| B8   | Energy                  | 0.301    | 0.449   | 0.454    |
+| B8   | Utilities               | 0.307    | 0.564   | 0.358    |
+| B8   | Utilities               | 0.308    | 0.570   | 0.354    |
+| B8   | Materials               | 0.309    | 0.453   | 0.476    |
+| B8   | Energy                  | 0.310    | 0.443   | 0.487    |
+| B8   | Utilities               | 0.312    | 0.584   | 0.352    |
+| B8   | Energy                  | 0.313    | 0.459   | 0.482    |
+| B8   | Utilities               | 0.314    | 0.557   | 0.384    |
+| B8   | Materials               | 0.317    | 0.459   | 0.491    |
+| B9   | Energy                  | 0.310    | 0.472   | 0.457    |
+| B9   | Energy                  | 0.310    | 0.471   | 0.461    |
+| B9   | Materials               | 0.311    | 0.456   | 0.478    |
+| B9   | Utilities               | 0.312    | 0.496   | 0.440    |
+| B9   | Materials               | 0.312    | 0.446   | 0.490    |
+| B9   | Materials               | 0.313    | 0.465   | 0.473    |
+| B9   | Utilities               | 0.315    | 0.499   | 0.445    |
+| B9   | Communication Services  | 0.318    | 0.518   | 0.435    |
+| B9   | Communication Services  | 0.318    | 0.507   | 0.447    |
+| B9   | Energy                  | 0.318    | 0.490   | 0.465    |
+| B10  | Energy                  | 0.293    | 0.423   | 0.455    |
+| B10  | Energy                  | 0.295    | 0.435   | 0.450    |
+| B10  | Energy                  | 0.305    | 0.452   | 0.463    |
+| B10  | Materials               | 0.306    | 0.462   | 0.457    |
+| B10  | Utilities               | 0.310    | 0.569   | 0.361    |
+| B10  | Utilities               | 0.311    | 0.563   | 0.368    |
+| B10  | Utilities               | 0.312    | 0.540   | 0.396    |
+| B10  | Energy                  | 0.314    | 0.467   | 0.476    |
+| B10  | Materials               | 0.317    | 0.463   | 0.488    |
+| B10  | Communication Services  | 0.319    | 0.510   | 0.447    |
 
 ## 2.9 Diagnostic par régime de marché — Walk-Forward
 
@@ -636,6 +829,12 @@
 | B7   | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.338    | 0.502    | 0.512   | 0.1   | 24.9    | 11       |
 | B7   | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.322    | 0.494    | 0.472   | 9.0   | 15.1    | 11       |
 | B7   | 5     | 2024-09-03 | 2025-03-05 | 🟢 Bull           | 0.329    | 0.510    | 0.478   | 5.6   | 17.4    | 11       |
+| B8   | 0     | 2019-07-03 | 2019-12-31 | 🟢 Bull           | 0.324    | 0.451    | 0.520   | 7.7   | 15.0    | 11       |
+| B8   | 1     | 2020-07-02 | 2020-12-30 | 🔵 Range low vol  | 0.327    | 0.435    | 0.547   | 19.1  | 25.7    | 11       |
+| B8   | 2     | 2021-07-02 | 2021-12-30 | 🔵 Range low vol  | 0.322    | 0.462    | 0.504   | 9.8   | 18.8    | 11       |
+| B8   | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.334    | 0.493    | 0.509   | 0.1   | 24.9    | 11       |
+| B8   | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.315    | 0.490    | 0.455   | 9.0   | 15.1    | 11       |
+| B8   | 5     | 2024-09-03 | 2025-03-05 | 🟢 Bull           | 0.332    | 0.505    | 0.490   | 5.6   | 17.4    | 11       |
 
 ---
 
@@ -648,5 +847,10 @@
 - **B4** : B3 + `--target-excess-vs-spy`. 🏆 **MEILLEUR BATCH !** IC Rank 0.0202, F1 long H5=0.514 (record), Dir Acc H15=0.5022. LightGBM per-sector 8/11. **Batch recommandé pour la production.**
 - **B5** : B4 + VIX. Per-Sector dégradé (F1 long H5 0.514→0.510).
 - **B6** : B4 + VXN. Per-Sector comparable à B4. IT dans le top 10.
-- **B7** : B4 + VIX3M. Global Model inchangé (0.0202). Per-Sector légèrement en retrait vs B4 : F1 long H5 0.514→0.511, F1 long H15 0.512→0.508. Split 1 Range low vol F1 long=0.549 (record). Consumer Staples domine le top 10 (5/10). **B4 reste champion. Le VIX3M ne dégrade pas autant que VIX mais n'apporte rien.**
-- Catboost Global imbattable (5/5 horizons). LightGBM Per-Sector (8/11). **Configuration recommandée : `--include-short-score --target-excess-vs-spy` (B4).**
+- **B7** : B4 + VIX3M. Per-Sector légèrement en retrait. Split 1 F1 long=0.549 record.
+- **B8** : B4 + MOVE. ❌ Pire variante B4 pour Per-Sector.
+- **B9** : B4 + Fondamentaux. ❌❌ PIRE BATCH. IC Rank −22%.
+- **B10** : B4 + CAPM. 🤔 MITIGÉ. IC IR record 1.09. H3/H5 fortement améliorés. Mais H10/H15 dégradés.
+- **⚠️ Backtest V3** : Pour B0-B10, V3 est basé sur H20 (non représentatif si meilleur horizon ≠ H20). Seul B2 (best=H20) a un V3 fiable. À partir de B11, V3' = meilleur_horizon + H5 < 0.35.
+- **Classement flags** : short-score (🥇) > CAPM (🥈 mitigé) > screener (⚠️) > fondamentaux (❌). **B4 reste champion Global. B10 meilleur IC IR.**
+- Catboost Global imbattable (5/5). LightGBM Per-Sector jusqu'à 9/11 (B10). **Configuration recommandée : `--include-short-score --target-excess-vs-spy` (B4).**

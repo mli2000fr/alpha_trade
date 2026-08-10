@@ -357,6 +357,18 @@ risk_management:
 
 
 # ---------------------------------------------------------------------------
+# Screener — Univers personnalisé (optionnel)
+# Si `custom_universe_file` pointe vers un fichier existant, le Stock Screener
+# (étape 3) utilisera les symboles de ce fichier plutôt que de requêter
+# stock_metadata. Le fichier doit contenir des symboles séparés par des virgules.
+# Exemple : "config/ticket_mid_cap_400.txt"
+# Laissez vide ou commenté pour utiliser l'univers tradable standard.
+# ---------------------------------------------------------------------------
+screener:
+  custom_universe_file: "config/ticket_mid_cap_400.txt"
+
+
+# ---------------------------------------------------------------------------
 # Source primaire des barres OHLCV (`stock_bars` + `stock_bars_daily`).
 # Voir prompt/iex/plan_eodhd.md.
 # - alpaca : comportement historique (Alpaca/IEX, biais volume IEX).

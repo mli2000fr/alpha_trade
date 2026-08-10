@@ -176,6 +176,22 @@ def _resolve_bars_provider_for_ihm() -> str:
     except Exception:
         return "alpaca"
     return str((cfg.get("market_data") or {}).get("bars_provider", "alpaca")).lower()
+
+
+def _resolve_screener_custom_universe_file_from_config() -> str | None:
+    """Lit ``screener.custom_universe_file`` depuis ``config.yaml``.
+
+    Retourne le chemin si présent et non vide, sinon None.
+    """
+    try:
+        from common.config_loader import load_config
+        cfg = load_config() or {}
+    except Exception:
+        return None
+    raw = str((cfg.get("screener") or {}).get("custom_universe_file", "")).strip()
+    return raw or None
+
+
 DEFAULT_SCREENER_CHUNK_SIZE = DEFAULT_SCREENER_CONFIG.chunk_size
 DEFAULT_SCREENER_BENCHMARK_SYMBOL = DEFAULT_SCREENER_CONFIG.benchmark_symbol
 DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD = DEFAULT_SCREENER_CONFIG.liquidity_threshold_usd
@@ -545,6 +561,9 @@ class PipelineLaunchOptions:
     screener_min_historical_range_score: float = DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE
     screener_first_pass_window_days: int = DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS
     screener_enable_two_pass_loading: bool = DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING
+    # Univers personnalisé : chemin vers un fichier texte (symboles séparés par ',')
+    # pour remplacer la requête stock_metadata. None = comportement normal.
+    screener_custom_universe_file: str | None = None
     selector_chunk_size: int = DEFAULT_SELECTOR_CHUNK_SIZE
     selector_selection_size: int = DEFAULT_SELECTOR_SELECTION_SIZE
     selector_short_selection_size: int = DEFAULT_SELECTOR_SHORT_SELECTION_SIZE
@@ -1769,6 +1788,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--max-workers", str(screener_max_workers)])
         if not options.screener_enable_two_pass_loading:
             command.append("--disable-two-pass-loading")
+        # Univers personnalisé : priorité à l'option explicite, sinon fallback config.yaml
+        _custom_universe = options.screener_custom_universe_file or _resolve_screener_custom_universe_file_from_config()
+        if _custom_universe:
+            command.extend(["--custom-universe-file", _custom_universe])
         if trade_date:
             command.extend(["--trade-date", trade_date])
         return command
