@@ -79,8 +79,9 @@
 
 | # | Action | Effort | Impact | Pourquoi |
 |---|--------|:------:|:------:|----------|
-| **P1-1** | **Per-symbol 50-100 titres liquides** | 5j | 🔥🔥 | Pilote 71ad0b : CatBoost DA WF=57%. Confirmer ou infirmer. |
-| **P1-2** | **CatBoost YetiRank** (loss pairwise) | 2j | 🔥 | Loss de ranking natif > MSE. Dernier levier Global non testé. |
+| **P1-1** | **Per-symbol 50-100 titres liquides** | 5j | 🔥🔥 | Pilote 71ad0b : CatBoost DA WF=57%. Confirmer ou infirmer.<br>→ Étendre de 10 à 50-100 tickers avec univers PIT par fold (ADV, prix, spread, pas de survivance).<br>→ Protocole : F0 (baseline `expert`) → comparaison IC/PnL vs Global Ranking → si confirmé, F1-F4 (ablation par famille). |
+| **P1-2** | **CatBoost YetiRank** (loss pairwise) | 2j | 🔥 | Loss de ranking natif > MSE. Dernier levier Global non testé.<br>→ `loss_function="RMSE"` → `"YetiRank"` dans `catboost_baseline.py:52`.<br>→ Si YetiRank > RMSE : retester B4 (short+SPY), B10 (+CAPM), B3 (+short-score) avec YetiRank (3 runs). Ne lancer B1-B13 complet QUE si le podium change ou si un flag macro devient utile. |
+| **P1-3** | **Target = rang percentile** (optimiser IC au lieu de MSE) | 3j | 🔥 | À faire juste après P1-2. Target `future_return` → `rank_percentile(future_return)` ∈ [0,1].<br>→ Prototype déjà testé : IC passée de −0.023 à +0.012, variance ÷ 4, 6/8 splits > 0.<br>→ ⚠️ Plus profond que P1-2 : touche `global_ranking.py` (pipeline de préparation), pas juste un paramètre CatBoost. Risque de régression si la target en rang perd de l'information utile pour le sizing.<br>→ Complémentaire à P1-2 : les deux peuvent se cumuler (target = rang + loss = YetiRank). |
 
 ### ⚠️ P2 — Optimisation (après P1 confirmé)
 
@@ -93,14 +94,12 @@
 
 | # | Action | Effort | Impact | Pourquoi |
 |---|--------|:------:|:------:|----------|
-| **P3-1** | Target rank IC direct (optimiser IC au lieu de MSE) | 3j | 🔥 | Cohérent avec l'objectif réel (ranking). Test #14 +75% mais mal fait. |
-| **P3-2** | Target asymétrique LONG/SHORT | 2j | ⚠️ | F1 short < 0.50 → pénaliser plus le LONG. |
-| **P3-3** | Ensemble CatBoost + LightGBM (stacking) | 3j | ⚠️ | B12 : ils excellent sur des secteurs différents. |
-| **P3-4** | XGBoost (3ᵉ algo) | 2j | ⚠️ | Challenger unique, pas une grille. |
-| **P3-5** | NN simple (MLP 2-3 couches) | 3j | ❓ | Interactions non-linéaires. Risqué. |
-| **P3-6** | Features d'interaction (×, ÷) | 2j | ❌ | Déjà rejeté (test #14). |
-| **P3-7** | Volume profile / liquidity features | 2j | ❓ | Jamais testé. |
-| **P3-8** | Rolling feature importance + dropout | 3j | ❌ | Éviter overfitting. Faible priorité. |
+| **P3-1** | Target asymétrique LONG/SHORT | 2j | ⚠️ | F1 short < 0.50 → pénaliser plus le LONG. |
+| **P3-2** | Ensemble CatBoost + LightGBM (stacking) | 3j | ⚠️ | B12 : ils excellent sur des secteurs différents. |
+| **P3-3** | XGBoost (3ᵉ algo) | 2j | ⚠️ | Challenger unique, pas une grille. Même famille que CatBoost/LightGBM → gain marginal probable.<br>→ 1 run suffit pour décider : si XGBoost < CatBoost, on ferme sans regret. Si XGBoost > CatBoost, retester top 3 (B4/B10/B3). |
+| **P3-4** | NN simple (MLP 2-3 couches) | 3j | ❓ | Interactions non-linéaires. Risqué. |
+| **P3-5** | Volume profile / liquidity features | 2j | ❓ | Jamais testé. 1 run avec les 5-10 features volume/liquidité ajoutées à la baseline B4. Si IC > B4, ça vaut le coup d'investiguer. Sinon, on ferme. |
+| **P3-6** | Rolling feature importance + dropout | 3j | ❌ | Éviter overfitting. Faible priorité. |
 
 ### ✅ Fait / Archivé
 
@@ -116,12 +115,14 @@
 ### 🎯 Ordre d'exécution
 
 ```
-P0-1 (caps) ──→ dispo aujourd'hui, zero risque
+P0-1 (caps) ──→ ✅ fait
   │
   ├─→ P1-1 (per-symbol) ──→ confirmer 2ᵉ alpha
   │     └─→ P2-2 (ablation features)
   │
   ├─→ P1-2 (YetiRank) ──→ dernier levier Global
+  │     │
+  │     └─→ P1-3 (target = rang) ──→ après P1-2, cumulable avec YetiRank
   │
   └─→ P2-1 (optimisation poids) ──→ après P0-1
         │

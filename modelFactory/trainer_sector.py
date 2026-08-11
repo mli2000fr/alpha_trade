@@ -124,6 +124,10 @@ def _prepare_sector_data(
         merge_cross_sectional_features,
     )
     prepared = merge_cross_sectional_features(prepared, cross_sectional_df)
+    # ── Compute rank interaction features (global_rank × features locales) ──
+    if cfg.global_model.stacking_enabled:
+        from modelFactory.features import compute_rank_interactions
+        prepared = compute_rank_interactions(prepared)
     # Diagnostic : compter les colonnes XS réellement alimentées (variance > 0)
     _rank_cols = set(CROSS_SECTIONAL_FEATURE_COLUMNS) | set(GLOBAL_PRED_FEATURE_COLUMNS)
     _xs_cols = [c for c in prepared.columns if c in _rank_cols or c.startswith("sector_") or c.startswith("global_rank")]
