@@ -89,7 +89,7 @@ def build_watcher_command(
     command = [
         sys.executable,
         "-u",
-        str(PROJECT_ROOT / "run_execution_protection_watch.py"),
+        str(PROJECT_ROOT / "execution_engine" / "protection_watcher.py"),
         "--mode",
         mode,
         "--limit",

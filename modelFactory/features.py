@@ -345,12 +345,15 @@ def get_feature_columns(
         cols.extend(SECTOR_FEATURE_COLUMNS)
         cols.extend(SECTOR_NEUTRAL_FEATURE_COLUMNS)
         cols.extend(SECTOR_ZSCORE_FEATURE_COLUMNS)
-        if include_global_stacking:
-            from modelFactory.cross_sectional import GLOBAL_PRED_FEATURE_COLUMNS
+    # ── Global stacking : indépendant de include_cross_sectional ──
+    # Le global_rank est une feature à part entière, pas une feature XS.
+    # Il doit être disponible même sans --enable-cross-sectional.
+    if include_global_stacking:
+        from modelFactory.cross_sectional import GLOBAL_PRED_FEATURE_COLUMNS
 
-            cols.extend(GLOBAL_PRED_FEATURE_COLUMNS)
-            # Interactions global_rank × features locales
-            cols.extend(RANK_INTERACTION_FEATURES)
+        cols.extend(GLOBAL_PRED_FEATURE_COLUMNS)
+        # Interactions global_rank × features locales
+        cols.extend(RANK_INTERACTION_FEATURES)
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
     if include_screener_scores:

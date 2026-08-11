@@ -685,7 +685,7 @@ def run_training_batch(
     # by symbol in _train_worker.  This avoids loading the entire universe
     # 12k times.  Sector features piggyback on the same raw panel.
     cross_sectional_cache: pd.DataFrame | None = None
-    _needs_cross_sectional = cfg.data.enable_cross_sectional_features
+    _needs_cross_sectional = cfg.data.enable_cross_sectional_features or cfg.global_model.stacking_enabled
     if _needs_cross_sectional and _global_symbols:
         from modelFactory.cross_sectional import build_cross_sectional_features_from_db, _load_sector_mapping
         from modelFactory.data_loader import load_benchmark_bars, load_symbol_latest_bar_date

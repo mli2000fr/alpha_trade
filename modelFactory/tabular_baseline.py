@@ -1028,10 +1028,35 @@ def run_tabular_walk_forward(
 			test_labels = test_targets.to_numpy()
 			if is_ternary:
 				test_labels_shifted = test_labels + 1
-				preds = decide_ternary_side_batch(
-					raw_proba_all[:, :3],
-					policy=ternary_policy if ternary_policy is not None else TernaryDecisionPolicy(),
-				)
+				n_classes_proba = raw_proba_all.shape[1]
+				if n_classes_proba >= 3:
+					preds = decide_ternary_side_batch(
+						raw_proba_all[:, :3],
+						policy=ternary_policy if ternary_policy is not None else TernaryDecisionPolicy(),
+					)
+					proba_3 = raw_proba_all[:, :3]
+				else:
+					# Moins de 3 classes → fallback: reconstruire une matrice (N,3)
+					model_classes = getattr(model, "classes_", None)
+					if model_classes is not None:
+						# model_classes ex: [-1, 1] → shifted: [0, 2]
+						shifted_classes = np.array([int(c) + 1 for c in model_classes])
+					else:
+						# fallback: supposer classes 0..n_classes_proba-1
+						shifted_classes = np.arange(n_classes_proba)
+					proba_3 = np.zeros((len(raw_proba_all), 3), dtype=np.float64)
+					for col_idx, shifted_cls in enumerate(shifted_classes):
+						if 0 <= shifted_cls < 3:
+							proba_3[:, shifted_cls] = raw_proba_all[:, col_idx]
+					# Normaliser pour que les probas somment à 1
+					_row_sums = proba_3.sum(axis=1)
+					_valid = _row_sums > 0
+					proba_3[_valid] = proba_3[_valid] / _row_sums[_valid, np.newaxis]
+					proba_3[~_valid] = 1.0 / 3.0
+					preds = decide_ternary_side_batch(
+						proba_3,
+						policy=ternary_policy if ternary_policy is not None else TernaryDecisionPolicy(),
+					)
 				n = len(preds)
 				fold_m: dict[str, Any] = {
 					"split_index": split.split_index,
@@ -1049,7 +1074,7 @@ def run_tabular_walk_forward(
 					# Brier score (MSE des probas vs one-hot) comme loss
 					_one_hot = np.zeros((n, 3), dtype=np.float64)
 					_one_hot[np.arange(n), test_labels_shifted] = 1.0
-					fold_m["loss"] = float(np.mean((raw_proba_all[:, :3] - _one_hot) ** 2))
+					fold_m["loss"] = float(np.mean((proba_3 - _one_hot) ** 2))
 					for cls_idx, cls_name in enumerate(["short", "flat", "long"]):
 						tp = int(((preds == cls_idx) & (test_labels_shifted == cls_idx)).sum())
 						fp = int(((preds == cls_idx) & (test_labels_shifted != cls_idx)).sum())

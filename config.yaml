@@ -219,7 +219,7 @@ market_regimes:
     critical_mode_backtest: capital_preservation
 
   sector_limits:
-    enabled: false
+    enabled: true
     max_tickers_per_sector: 2
 
   earnings_shield:

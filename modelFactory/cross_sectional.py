@@ -46,6 +46,8 @@ GLOBAL_PRED_FEATURE_COLUMNS: list[str] = [
     "global_rank_3",
     "global_rank_5",
     "global_rank_10",
+    "global_rank_15",
+    "global_rank_20",
     "global_rank",  # backward compat
 ]
 
