@@ -130,6 +130,7 @@ class PortfolioEntry:
     selection_rank: int | None = None
     decision_rank: int | None = None
     stop_price_initial: float | None = None
+    take_profit_price: float | None = None  # V1 Multi-Horizon TP (2026-08-09)
     risk_per_share: float | None = None
     risk_budget_dollars: float | None = None
     initial_risk_dollars: float | None = None

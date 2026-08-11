@@ -89,7 +89,7 @@ Après une vente, les fonds sont réutilisables au settlement simplifié `T+1`.
 
 Le processus est tombé. Relancez :
 ```powershell
-python run_execution_protection_watch.py
+python execution_engine/protection_watcher.py
 ```
 
 ### ❓ « DB indisponible »
@@ -352,7 +352,7 @@ réunies.
   - depuis la **page Pipeline** (panneau 12.bis) avec les boutons
     `▶️ Run watcher once` ou `🔁 Démarrer service local` (ajoutés en mai 2026),
   - depuis **Supervision Ops** (mêmes boutons),
-  - en CLI : `python run_execution_protection_watch.py --mode service --account <id>`,
+  - en CLI : `python execution_engine/protection_watcher.py --mode service --account <id>`,
   - via Task Scheduler / NSSM (scripts PowerShell `scripts/windows/`).
 
 **Cas 2 — achat manuel sur le site Alpaca :**

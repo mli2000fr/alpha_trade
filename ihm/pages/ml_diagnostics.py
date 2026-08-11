@@ -17,13 +17,22 @@ from sqlalchemy import text
 from ihm.services.ml_artifacts import get_model_artifacts_dir
 from modelFactory.report import generate_batch_report
 
+# ── Chargement config (fallback silencieux si absent) ──
+_MIN_RISING_HORIZONS_DEFAULT = 4
+try:
+    from common.config_loader import load_config
+    _cfg = load_config()
+    _MIN_RISING_HORIZONS = int(_cfg.get("backtest", {}).get("min_rising_horizons", _MIN_RISING_HORIZONS_DEFAULT))
+except Exception:
+    _MIN_RISING_HORIZONS = _MIN_RISING_HORIZONS_DEFAULT
+
 
 # ---------------------------------------------------------------------------
 # Helper — mise en gras des lignes walk-forward dans les tableaux
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Backtest Global Rank (V1/V2/V3) — logique partagée
+# Backtest Global Rank (V1/V2/V3/V4) — logique partagée
 # ---------------------------------------------------------------------------
 
 _REBALANCE_DAYS = 20
@@ -31,41 +40,90 @@ _TOP_PCT = 0.70
 _H5_DIP = 0.35
 _TRANSACTION_COST_BPS = 25.0
 _MAX_POSITIONS = 30
+_ALL_HORIZONS = (3, 5, 10, 15, 20)
 
 
-def _run_strategy_backtest(rank_df: pd.DataFrame) -> dict[str, dict[str, float]]:
-    """Exécute les 3 variantes de stratégie sur un DataFrame de rangs.
+def _run_strategy_backtest(
+    rank_df: pd.DataFrame,
+    best_horizon: int = 20,
+    min_rising_horizons: int = _MIN_RISING_HORIZONS,
+    horizon_scores: dict[int, float] | None = None,
+) -> dict[str, dict[str, float]]:
+    """Exécute les 4 variantes de stratégie sur un DataFrame de rangs.
+
+    Args:
+        rank_df: DataFrame avec colonnes global_rank_3/5/10/15/20.
+        best_horizon: Meilleur horizon détecté (défaut: 20). Si 5, V2/V3 ignorés.
+        min_rising_horizons: Nb d'horizons top-score devant être en hausse pour V4 (défaut: 2).
+        horizon_scores: Scores composites par horizon {h: score}. Si None, V4 ignoré.
 
     Returns:
         dict {variante: {sharpe, ann_return, ann_vol, max_drawdown}}.
     """
     _df = rank_df.sort_values(["date", "symbol"]).copy()
-    _df["global_rank_5_prev"] = _df.groupby("symbol")["global_rank_5"].shift(1)
+    _rank_col = f"global_rank_{best_horizon}"
+    if _rank_col not in _df.columns:
+        _rank_col = "global_rank_20"  # fallback
+        best_horizon = 20
+    # ── Pré-calcul des rangs précédents pour tous les horizons ──
+    for _h in _ALL_HORIZONS:
+        _col = f"global_rank_{_h}"
+        if _col in _df.columns:
+            _df[f"{_col}_prev"] = _df.groupby("symbol")[_col].shift(1)
     _all_dates = sorted(_df["date"].unique())
     _rebal_dates = _all_dates[::_REBALANCE_DAYS]
     _results: dict[str, dict[str, float]] = {}
 
-    for _label, _filter_fn in [
-        ("V1 — H20 seul", lambda d: d["global_rank_20"] > _TOP_PCT),
-        ("V2 — H20 + H5 rising", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] > d["global_rank_5_prev"])),
-        ("V3 — H20 + H5 < 0.35", lambda d: (d["global_rank_20"] > _TOP_PCT) & (d["global_rank_5"] < _H5_DIP)),
-    ]:
+    _variantes: list[tuple[str, Any]] = [
+        (f"V1 — H{best_horizon} seul", lambda d: d[_rank_col] > _TOP_PCT),
+    ]
+    if best_horizon != 5:
+        _variantes.extend([
+            (f"V2 — H{best_horizon} + H5 rising", lambda d: (d[_rank_col] > _TOP_PCT) & (d["global_rank_5"] > d["global_rank_5_prev"])),
+            (f"V3 — H{best_horizon} + H5 < 0.35", lambda d: (d[_rank_col] > _TOP_PCT) & (d["global_rank_5"] < _H5_DIP)),
+        ])
+    # ── V4 : top N horizons par score composite ──
+    if horizon_scores and len(horizon_scores) >= 2:
+        # Trier les horizons par score composite décroissant, prendre les N meilleurs
+        _sorted_h = sorted(horizon_scores.keys(), key=lambda h: horizon_scores[h], reverse=True)
+        _n_top = min(min_rising_horizons, len(_sorted_h))
+        _top_horizons = _sorted_h[:_n_top]
+        # Ne garder que ceux disponibles dans le cache
+        _v4_horizons = [h for h in _top_horizons if f"global_rank_{h}" in _df.columns and f"global_rank_{h}_prev" in _df.columns]
+        if len(_v4_horizons) >= 1:
+            _v4_label = f"V4 — H{best_horizon} + top {len(_v4_horizons)} horizons ↑ (" + ",".join(f"H{h}" for h in _v4_horizons) + ")"
+            def _make_v4_filter(h_list):
+                def _f(d):
+                    _ok = pd.Series(True, index=d.index)
+                    for _h in h_list:
+                        _c = f"global_rank_{_h}"
+                        _cp = f"{_c}_prev"
+                        if _c in d.columns and _cp in d.columns:
+                            _ok = _ok & (d[_c] > d[_cp])
+                    return (d[_rank_col] > _TOP_PCT) & _ok
+                return _f
+            _variantes.append((_v4_label, _make_v4_filter(_v4_horizons)))
+
+    for _label, _filter_fn in _variantes:
         _positions: dict[str, float] = {}
         _daily_rets = {}
         _turnover = 0
         for _d in _all_dates:
             _day = _df[_df["date"] == _d].set_index("symbol")
-            _day_sig = _filter_fn(_day)
+            try:
+                _day_sig = _filter_fn(_day)
+            except Exception as _fe:
+                raise RuntimeError(f"Erreur filtre {_label} à la date {_d}: {_fe}") from _fe
             if _d in _rebal_dates or not _positions:
-                _candidates = _day.loc[_day_sig].sort_values("global_rank_20", ascending=False)
+                _candidates = _day.loc[_day_sig].sort_values(_rank_col, ascending=False)
                 if _positions:
                     _turnover += len(_positions)
                 _positions = {}
                 for _s in _candidates.index[:_MAX_POSITIONS]:
-                    _positions[_s] = float(_candidates.loc[_s, "global_rank_20"])
+                    _positions[_s] = float(_candidates.loc[_s, _rank_col])
                 _turnover += len(_positions)
             _held = [s for s in _positions if s in _day.index]
-            _daily_rets[_d] = float(_day.loc[_held, "global_rank_20"].mean()) - 0.5 if _held else 0.0
+            _daily_rets[_d] = float(_day.loc[_held, _rank_col].mean()) - 0.5 if _held else 0.0
 
         _rets = pd.Series(_daily_rets).sort_index()
         _cost = (_TRANSACTION_COST_BPS / 10000.0) * _turnover / len(_all_dates)
@@ -939,6 +997,11 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     # ── Bouton téléchargement ──
     safe_bid = batch_id.replace("/", "_").replace("\\", "_")[:64]
+    # Nom du fichier : commentaire si présent, sinon batch_id
+    _comment = str(batch.get("comment", "")).strip()
+    _dl_name = _comment if _comment else safe_bid
+    # Nettoie les caractères problématiques pour un nom de fichier
+    _dl_name = _dl_name.replace("/", "_").replace("\\", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_")[:120]
     engine = get_engine()
     if engine is not None:
         col_dl, col_del = st.columns([3, 1])
@@ -946,7 +1009,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.download_button(
                 label="📥 Télécharger le rapport (.md)",
                 data=generate_batch_report(engine, batch_id),
-                file_name=f"{safe_bid}.md",
+                file_name=f"{_dl_name}.md",
                 mime="text/markdown",
                 key=f"dl_{safe_bid}",
             )
@@ -1002,6 +1065,26 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.metric("📈 IC IR (Stabilité)", f"{_ic_ir:.2f}",
                       help="IC Information Ratio = IC Mean / IC Std. >0.5 = bon, >1.0 = exceptionnel. "
                            "Mesure la stabilité du signal dans le temps.")
+        # 🏆 Champion Global Model (par horizon)
+        _meta_raw = row.get("metadata_json")
+        if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
+            try:
+                import json as _json2
+                _meta = _json2.loads(str(_meta_raw))
+                _gr = _meta.get("global_ranking") if isinstance(_meta, dict) else None
+                _champ_by_h = _gr.get("champion_by_horizon") if isinstance(_gr, dict) else None
+                if _champ_by_h and isinstance(_champ_by_h, dict) and _champ_by_h:
+                    from collections import Counter
+                    _cnt = Counter(_champ_by_h.values())
+                    _majority = _cnt.most_common(1)[0][0]
+                    _h_detail = ", ".join(f"H{k}={v}" for k, v in sorted(_champ_by_h.items(), key=lambda x: int(x[0])))
+                    st.metric(
+                        "🏆 Champion Global",
+                        f"{_majority} ({_h_detail})",
+                        help=f"Champion du Global Ranking par horizon (score composite 60% IC + 40% IR). Modèle majoritaire : {_majority}.",
+                    )
+            except Exception:
+                pass
         # Stacking Global Rank
         _stacking_val = row.get("stacking_enabled")
         if _stacking_val is not None:
@@ -1028,8 +1111,58 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     st.markdown("")
 
+    # ── P0-8 (2026-08-07) : bannière batch en cours ──
+    _batch_status = str(row.get("status", "")).strip().lower()
+    if _batch_status == "running":
+        _ic_available = row.get("ic_rank") is not None and str(row.get("ic_rank")) not in ("None", "nan", "")
+        if _ic_available:
+            st.info(
+                "🟨 **Batch en cours d'exécution** — Le Global Ranking est terminé "
+                f"(IC Rank = {float(row['ic_rank']):.4f}), l'entraînement per-symbol est en cours. "
+                "Les métriques F1 / Directional Accuracy apparaîtront ci-dessous au fur et à mesure."
+            )
+        else:
+            st.info(
+                "🟨 **Batch en cours d'exécution** — Le Global Ranking Walk-Forward est en cours "
+                "(5 horizons × 6 folds, ~30 min pour 939 symboles). "
+                "Les métriques (IC Rank, F1, etc.) apparaîtront automatiquement ci-dessous une fois disponibles. "
+                "Rafraîchissez la page (F5) pour voir les mises à jour."
+            )
+        # ── Afficher le détail global ranking immédiatement si dispo ──
+        _render_global_ranking_horizon_details(row)
+        st.markdown("")
+
+    # ═══════════════════════════════════════════════════════════════
+    # 🟢 GLOBAL MODEL — Ranking, Backtest, Champion
+    # ═══════════════════════════════════════════════════════════════
+
+    st.subheader("🔵 Modèle global — Métriques")
+
     # ── Backtest Global Rank Strategies (V1/V2/V3) ──
-    with st.expander("🧪 Backtest Stratégies Global Rank (H20 + H5)", expanded=False):
+    # ── Détection du meilleur horizon depuis les métadonnées ──
+    _best_h_backtest: int = 20  # fallback
+    try:
+        _meta_raw_bt = row.get("metadata_json")
+        if _meta_raw_bt is not None and str(_meta_raw_bt) not in ("None", "nan", ""):
+            _meta_bt = _json.loads(str(_meta_raw_bt))
+            _gr_bt = _meta_bt.get("global_ranking", {}) if isinstance(_meta_bt, dict) else {}
+            _best_h_backtest = int(_gr_bt.get("best_horizon", 20) or 20)
+    except Exception:
+        pass
+    # ── Scores composites par horizon (pour V4) ──
+    _horizon_scores: dict[int, float] = {}
+    try:
+        _meta_raw_bt2 = row.get("metadata_json")
+        if _meta_raw_bt2 is not None and str(_meta_raw_bt2) not in ("None", "nan", ""):
+            _meta_bt2 = _json.loads(str(_meta_raw_bt2))
+            _gr_bt2 = _meta_bt2.get("global_ranking", {}) if isinstance(_meta_bt2, dict) else {}
+            _raw_scores = _gr_bt2.get("best_horizon_scores", {})
+            if _raw_scores:
+                _horizon_scores = {int(k): float(v) for k, v in _raw_scores.items()}
+    except Exception:
+        pass
+    _title_h = f"H{_best_h_backtest} + H5" if _best_h_backtest != 5 else f"H{_best_h_backtest} seul"
+    with st.expander(f"🧪 Backtest Stratégies Global Rank ({_title_h})", expanded=False):
         _batch_id = str(row["batch_id"])
         _cache_path = Path(get_model_artifacts_dir()) / _batch_id / "global_rank_cache.parquet"
         if _cache_path.exists():
@@ -1038,7 +1171,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
                     import numpy as np
                     _rank_df = pd.read_parquet(_cache_path)
                     _rank_df["date"] = pd.to_datetime(_rank_df["date"])
-                    _results = _run_strategy_backtest(_rank_df)
+                    _results = _run_strategy_backtest(_rank_df, _best_h_backtest, _MIN_RISING_HORIZONS, _horizon_scores)
                     if _results:
                         st.markdown("### 📊 Classement relatif des stratégies")
                         _best = max(_results, key=lambda v: _results[v]["sharpe"])
@@ -1048,19 +1181,48 @@ def _render_batch_detail(batch: pd.Series) -> None:
                             _rows.append({"Variante": _v, "Score relatif": _pct})
                         st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
                         st.success(f"🏆 Meilleure stratégie : **{_best}**")
-                        st.caption(
-                            "Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. "
-                            "Les Sharpes absolus ne sont pas interprétables en PnL réel (simulation en unités de rang). "
-                            "Frais 0.25% A/R inclus. "
-                            "V1 = H20 seul, V2 = H20 + H5 rising, V3 = H20 + H5 < 0.35 (contrarian)."
-                        )
+                        # ── Légende V1-V4 ──
+                        _legend_lines = [
+                            "**🔍 Légende des variantes**",
+                            "",
+                            f"- **V1** — H{_best_h_backtest} seul : top 30% du meilleur horizon, sans filtre additionnel.",
+                        ]
+                        if _best_h_backtest != 5:
+                            _legend_lines.append(f"- **V2** — H{_best_h_backtest} + H5 rising : V1 + le rang H5 du jour doit être supérieur à celui de la veille (filtre momentum court-terme).")
+                            _legend_lines.append(f"- **V3** — H{_best_h_backtest} + H5 < 0.35 : V1 + le rang H5 doit être inférieur à 0.35 (filtre contrarian / buy the dip).")
+                        if _horizon_scores:
+                            _sorted_h_names = sorted(_horizon_scores.keys(), key=lambda h: _horizon_scores[h], reverse=True)
+                            _top_n = min(_MIN_RISING_HORIZONS, len(_sorted_h_names))
+                            _top_names = ", ".join(f"H{h}" for h in _sorted_h_names[:_top_n])
+                            _legend_lines.append(f"- **V4** — H{_best_h_backtest} + top {_top_n} horizons : V1 + les {_top_n} meilleurs horizons ({_top_names}, par score composite) doivent tous être en hausse vs la veille.")
+                        else:
+                            _legend_lines.append(f"- **V4** — non disponible (scores composites absents des métadonnées).")
+                        _legend_lines.append("")
+                        _legend_lines.append(f"Le score relatif indique l'écart de Sharpe par rapport à la meilleure variante. Frais 0.25% A/R inclus. Simulation en unités de rang (Sharpes non interprétables en PnL réel).")
+                        if _best_h_backtest == 5:
+                            _legend_lines.append("⚠️ V2/V3 non calculés — H5 est déjà le meilleur horizon.")
+                        st.caption("  \n".join(_legend_lines))
                 except Exception as _exc:
+                    import traceback as _tb
                     st.error(f"Échec du backtest : {_exc}")
+                    st.code(_tb.format_exc())
         else:
             st.info(
                 "Cache `global_rank_cache.parquet` non trouvé. "
                 "Relancez un batch avec la dernière version de `global_ranking.py` pour le générer."
             )
+
+    # ── Global Rank History ──
+    _render_global_rank_history(batch_id)
+    # ── Global Ranking Horizon Details (seulement si pas déjà affiché pour batch running) ──
+    if _batch_status.strip().lower() != "running":
+        _render_global_ranking_horizon_details(row)
+
+    # ═══════════════════════════════════════════════════════════════
+    # 🔵 PER-SYMBOL / PER-SECTOR — Métriques d'entraînement
+    # ═══════════════════════════════════════════════════════════════
+    st.divider()
+    st.subheader("🔵 Per-Symbol / Per-Sector — Métriques")
 
     # ── Statut sélection du champion ──
     champion_df = safe_query(
@@ -1168,6 +1330,8 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.caption(f"🔍 Horizon sélectionné : **H{selected_horizon}** — métriques filtrées sur cet horizon uniquement.")
         else:
             st.caption("🔍 **Tous horizons confondus** — chaque métrique est la moyenne (AVG) des 5 horizons H3/H5/H10/H15/H20.")
+
+ 
 
     if _is_reg_batch:
         # ── Bloc régression par split ──
@@ -1369,11 +1533,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     # ── Suppression batch (tout en bas du détail) ──
     st.divider()
-    # ── Global Rank History ──
-    _render_global_rank_history(batch_id)
-    # ── Global Ranking Horizon Details ──
-    _render_global_ranking_horizon_details(row)
-    st.divider()
     artifacts_dir = get_model_artifacts_dir() / batch_id
     _render_delete_batch_button(batch_id, artifacts_dir)
 
@@ -1535,8 +1694,27 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
         return
 
     st.subheader("🌐 Global Ranking — Détails par Horizon")
+
+    # ── Infos modèle (champion ou fixe) ──
+    _model_label = "CatBoost"  # fallback
+    _champion_by_h = _gr.get("champion_by_horizon")
+    # Fallback: reconstruire champion_by_horizon depuis horizon_details si absent (bug orchestrator)
+    if (not _champion_by_h or not isinstance(_champion_by_h, dict)) and _hd:
+        _rebuilt: dict[str, str] = {}
+        for _hk, _hi in _hd.items():
+            if isinstance(_hi, dict) and _hi.get("champion"):
+                _rebuilt[str(_hk)] = str(_hi["champion"])
+        if _rebuilt:
+            _champion_by_h = _rebuilt
+    _has_champion = bool(_champion_by_h and isinstance(_champion_by_h, dict) and _champion_by_h)
+    if _has_champion:
+        from collections import Counter
+        _counts = Counter(_champion_by_h.values())
+        _majority = _counts.most_common(1)[0][0]
+        _h_detail = ", ".join(f"H{k}={v}" for k, v in sorted(_champion_by_h.items(), key=lambda x: int(x[0])))
+        _model_label = f"🏆 Champion: {_majority} ({_h_detail})"
     st.caption(
-        f"Modèle Catboost — {_gr.get('symbols_count', '?')} symboles, "
+        f"Modèle {_model_label} — {_gr.get('symbols_count', '?')} symboles, "
         f"{_gr.get('splits_count', '?')} splits walk-forward, "
         f"{_gr.get('pred_rows', '?')} lignes de prédiction"
     )
@@ -1557,30 +1735,75 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             _arr = np.array(_split_ics, dtype=float)
             if _arr.std() > 0:
                 _h_ic_ir = float(_arr.mean() / _arr.std())
-        _summary_rows.append({
+        _row: dict = {
             "Horizon": f"H{_h_key}",
             "IC Mean": _h_ic,
             "IC IR": round(_h_ic_ir, 2) if _h_ic_ir is not None else "—",
             "Decile Spread": _ds_by_h.get(_h_key),
             "Nb Features": _h_info.get("n_features", "—"),
             "Nb Splits": len(_h_info.get("splits", [])),
-        })
+        }
+        if _has_champion:
+            _row["🏆 Champion"] = str(_champion_by_h.get(_h_key, "—"))
+            _candidates = _h_info.get("candidates", {})
+            for _cn, _cdata in sorted((_candidates or {}).items()):
+                if isinstance(_cdata, dict):
+                    _ic_val = _cdata.get("ic_mean")
+                    _ir_val = _cdata.get("ic_ir")
+                    _row[f"IC {_cn}"] = f"{_ic_val:.4f}" if _ic_val is not None else "—"
+                    _row[f"IR {_cn}"] = f"{_ir_val:.2f}" if _ir_val is not None else "—"
+        _summary_rows.append(_row)
 
     if _summary_rows:
         _sum_df = pd.DataFrame(_summary_rows)
+        _col_config: dict = {
+            "Horizon": "Horizon",
+            "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
+            "IC IR": "📈 IC IR",
+            "Decile Spread": st.column_config.NumberColumn("📊 Decile Spread", format="%.4f"),
+            "Nb Features": "Nb Features",
+            "Nb Splits": "Nb Splits",
+        }
+        if _has_champion:
+            _col_config["🏆 Champion"] = "🏆 Champion"
+            if "IC lightgbm" in _sum_df.columns:
+                _col_config["IC lightgbm"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
+            if "IC catboost" in _sum_df.columns:
+                _col_config["IC catboost"] = st.column_config.NumberColumn("IC CatBoost", format="%.4f")
+            if "IR lightgbm" in _sum_df.columns:
+                _col_config["IR lightgbm"] = st.column_config.NumberColumn("IR LightGBM", format="%.2f")
+            if "IR catboost" in _sum_df.columns:
+                _col_config["IR catboost"] = st.column_config.NumberColumn("IR CatBoost", format="%.2f")
         st.dataframe(
             _sum_df,
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "Horizon": "Horizon",
-                "IC Mean": st.column_config.NumberColumn("🎯 IC Mean", format="%.4f"),
-                "IC IR": "📈 IC IR",
-                "Decile Spread": st.column_config.NumberColumn("📊 Decile Spread", format="%.4f"),
-                "Nb Features": "Nb Features",
-                "Nb Splits": "Nb Splits",
-            },
+            column_config=_col_config,
         )
+        # ── Meilleur horizon (calculé à l'entraînement) ──
+        _best_h = _gr.get("best_horizon")
+        _best_scores = _gr.get("best_horizon_scores", {})
+        if _best_h is not None:
+            _score_detail = ""
+            if _best_scores:
+                _parts = [f"H{h}={_best_scores.get(str(h), '?'):.4f}" for h in sorted(int(k) for k in _best_scores.keys())]
+                _score_detail = "  |  " + "  ".join(_parts)
+            st.success(
+                f"🏆 **Meilleur horizon : H{_best_h}** — sélectionné par score composite "
+                f"55% IC + 30% IR + 15% Positive Split"
+                f"{_score_detail}"
+            )
+        elif _has_champion and _champion_by_h:
+            # Fallback : si best_horizon absent mais champions présents
+            # On utilise IC Mean du champion pour estimer le meilleur horizon
+            _best_h_fallback = max(_champion_by_h.items(), key=lambda x: (
+                float((_ic_by_h.get(str(x[0]), 0)) or 0)
+            ))[0] if _champion_by_h else None
+            if _best_h_fallback is not None:
+                st.info(
+                    f"ℹ️ **Meilleur horizon estimé : H{_best_h_fallback}** "
+                    f"(IC max — best_horizon non disponible dans metadata)"
+                )
 
     # ── Détail par horizon (expander) ──
     for _h_key in sorted(_hd.keys(), key=lambda x: int(x)):
@@ -1590,10 +1813,31 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
         _ic_color = "🟢" if _ic_val and _ic_val >= 0.02 else ("🟡" if _ic_val and _ic_val >= 0.01 else "🔴")
         _ds_color = "🟢" if _ds_val and _ds_val >= 0.01 else ("🟡" if _ds_val and _ds_val >= 0.005 else "🔴")
 
+        # Modèle champion pour cet horizon
+        _h_champion = _champion_by_h.get(_h_key) if _has_champion else None
+        _champion_tag = f" | 🏆 {_h_champion}" if _h_champion else ""
+
         with st.expander(
-            f"H{_h_key}  |  {_ic_color} IC Rank: {_ic_val:.4f}  |  {_ds_color} Decile Spread: {_ds_val:.4f}  |  {_h_info.get('n_features', '—')} features",
+            f"H{_h_key}{_champion_tag}  |  {_ic_color} IC Rank: {_ic_val:.4f}  |  {_ds_color} Decile Spread: {_ds_val:.4f}  |  {_h_info.get('n_features', '—')} features",
             expanded=False,
         ):
+            # ── Champion info si mode champion ──
+            if _h_champion:
+                _champ_data = _h_info.get("candidates", {}).get(_h_champion, {})
+                _champ_ic = _champ_data.get("ic_mean") if isinstance(_champ_data, dict) else None
+                _champ_ir = _champ_data.get("ic_ir") if isinstance(_champ_data, dict) else None
+                _champ_score = _h_info.get("champion_score")
+                _sel_metric = _h_info.get("selection_metric", "—")
+                _parts = [f"🏆 **Champion : {_h_champion}**"]
+                if _champ_ic is not None:
+                    _parts.append(f"IC = {_champ_ic:.4f}")
+                if _champ_ir is not None:
+                    _parts.append(f"IR = {_champ_ir:.2f}")
+                if _champ_score is not None:
+                    _parts.append(f"Score = {_champ_score:.3f}")
+                _parts.append(f"Métrique : {_sel_metric}")
+                st.caption(" | ".join(_parts))
+
             # ── Feature Importance Top10 / Bottom10 ──
             _fi_top10 = _h_info.get("feature_importance_top10", [])
             _fi_bottom10 = _h_info.get("feature_importance_bottom10", [])
@@ -1632,34 +1876,51 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
             # ── Tableau des splits ──
             _splits = _h_info.get("splits", [])
             if _splits:
-                st.markdown("**📅 Détail par split**")
+                _champ_label = f" — 🏆 {_h_champion}" if _h_champion else ""
+                st.markdown(f"**📅 Détail par split{_champ_label}**")
+                # Détecter si le mode champion est actif
+                _has_split_champion = any(
+                    k.startswith("ic_rank_") and k != "ic_rank"
+                    for _sp in _splits for k in (_sp or {}).keys()
+                )
+                # Nom de la colonne IC Rank : inclure le champion si connu
+                _ic_col = f"IC Rank ({_h_champion})" if _h_champion else "IC Rank"
                 _split_rows: list[dict] = []
                 for _sp in _splits:
                     _train_start = str(_sp.get("train_period_start", ""))[:10] if _sp.get("train_period_start") else "—"
                     _train_end = str(_sp.get("train_period_end", ""))[:10] if _sp.get("train_period_end") else "—"
                     _val_start = str(_sp.get("val_period_start", ""))[:10] if _sp.get("val_period_start") else "—"
                     _val_end = str(_sp.get("val_period_end", ""))[:10] if _sp.get("val_period_end") else "—"
-                    _split_rows.append({
+                    _row = {
                         "Split": _sp.get("split_index", "—"),
                         "Train (début→fin)": f"{_train_start} → {_train_end}",
                         "Validation (début→fin)": f"{_val_start} → {_val_end}",
                         "Lignes Train": _sp.get("train_rows", "—"),
                         "Lignes Val": _sp.get("val_rows", "—"),
-                        "IC Rank": _sp.get("ic_rank"),
-                    })
+                        _ic_col: _sp.get("ic_rank"),
+                    }
+                    if _has_split_champion:
+                        _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")
+                        _row["IC CatBoost"] = _sp.get("ic_rank_catboost")
+                    _split_rows.append(_row)
                 _sp_df = pd.DataFrame(_split_rows)
+                _ic_label = f"🎯 {_ic_col}"
+                _sp_col_config: dict = {
+                    "Split": st.column_config.NumberColumn("Split", format="%d"),
+                    "Train (début→fin)": "Période Train",
+                    "Validation (début→fin)": "Période Validation",
+                    "Lignes Train": st.column_config.NumberColumn("Lignes Train", format="%d"),
+                    "Lignes Val": st.column_config.NumberColumn("Lignes Val", format="%d"),
+                    _ic_col: st.column_config.NumberColumn(_ic_label, format="%.4f"),
+                }
+                if _has_split_champion:
+                    _sp_col_config["IC LightGBM"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
+                    _sp_col_config["IC CatBoost"] = st.column_config.NumberColumn("IC CatBoost", format="%.4f")
                 st.dataframe(
                     _sp_df,
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "Split": st.column_config.NumberColumn("Split", format="%d"),
-                        "Train (début→fin)": "Période Train",
-                        "Validation (début→fin)": "Période Validation",
-                        "Lignes Train": st.column_config.NumberColumn("Lignes Train", format="%d"),
-                        "Lignes Val": st.column_config.NumberColumn("Lignes Val", format="%d"),
-                        "IC Rank": st.column_config.NumberColumn("🎯 IC Rank", format="%.4f"),
-                    },
+                    column_config=_sp_col_config,
                 )
 
             # ── Métriques par split (mini-distribution) ──

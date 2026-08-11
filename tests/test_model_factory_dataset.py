@@ -813,3 +813,160 @@ def test_per_sector_prepare_isolates_symbols() -> None:
     )
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Integration test — _prepare_sector_data end-to-end (Action 1.1+1.2, 2026-08-04)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_prepare_sector_data_delivers_xs_and_fundamentals_to_feature_contract() -> None:
+    """Test d'intégration : _prepare_sector_data avec XS + fondamentales activés
+    doit produire un feature_contract contenant les colonnes XS et fondamentales,
+    et la matrice train doit avoir ces colonnes avec variance > 0 (valeurs réelles).
+    """
+    from datetime import date
+    from unittest.mock import MagicMock, patch
+    from modelFactory.config import DataConfig, BaselineConfig, GlobalModelConfig, TrainingConfig, WalkForwardConfig
+    from modelFactory.trainer_sector import _prepare_sector_data
+    from modelFactory.cross_sectional import (
+        CROSS_SECTIONAL_FEATURE_COLUMNS,
+        build_cross_sectional_features,
+    )
+    from modelFactory.fundamental_features import FUNDAMENTAL_FEATURE_COLUMNS
+
+    n = 200
+    rng = np.random.default_rng(42)
+
+    def _make_bars(symbol: str, base: float) -> pd.DataFrame:
+        close = base + rng.normal(0, 2, n).cumsum() * 0.5
+        return pd.DataFrame({
+            "symbol": [symbol] * n,
+            "date": pd.date_range("2020-01-01", periods=n, freq="B"),
+            "open": close - 0.5,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": np.linspace(500_000, 5_000_000, n).astype(float),
+            "adj_close": close,
+            "vwap": close,
+            "daily_return": np.diff(close, prepend=close[0]) / close,
+            "is_filled": [1] * n,
+        })
+
+    bars_aaa = _make_bars("AAA", 100.0)
+    bars_bbb = _make_bars("BBB", 200.0)
+
+    # ── Cache XS global (simule run_per_sector_batch) ──
+    universe = pd.concat([bars_aaa, bars_bbb], ignore_index=True)
+    cs_cache, _ = build_cross_sectional_features(
+        universe,
+        benchmark_df=None,
+        min_universe_size=2,
+    )
+
+    # ── Fondamentales mock ──
+    _fund_dates = pd.date_range("2020-01-01", periods=n, freq="B")
+    fund_rows = []
+    for sym, base_val in [("AAA", 15.0), ("BBB", 25.0)]:
+        for i, d in enumerate(_fund_dates):
+            fund_rows.append({
+                "symbol": sym,
+                "trade_date": d,
+                **{col: base_val + rng.normal(0, 1) for col in FUNDAMENTAL_FEATURE_COLUMNS},
+            })
+    fundamental_df = pd.DataFrame(fund_rows)
+
+    # ── Config avec flags activés ──
+    data_cfg = DataConfig(
+        feature_set="v1",
+        forecast_horizons=(5,),
+        forecast_horizon=5,
+        target_mode="regression",
+        include_fundamentals_features=True,
+        enable_cross_sectional_features=True,
+        cross_sectional_min_universe=2,
+        training_start_date=date(2020, 1, 1),
+        training_end_date=date(2022, 12, 31),
+    )
+    cfg = TrainingConfig(
+        data=data_cfg,
+        baseline=BaselineConfig(),
+        global_model=GlobalModelConfig(),
+        walk_forward=WalkForwardConfig(),
+    )
+
+    # ── Mock engine + load_symbol_bars ──
+    mock_engine = MagicMock()
+    _bars_by_symbol = {"AAA": bars_aaa, "BBB": bars_bbb}
+
+    def _fake_load_bars(engine, symbol, start_date=None, end_date=None):
+        df = _bars_by_symbol.get(symbol, pd.DataFrame()).copy()
+        if start_date is not None:
+            df = df[df["date"] >= pd.Timestamp(start_date)]
+        if end_date is not None:
+            df = df[df["date"] <= pd.Timestamp(end_date)]
+        return df
+
+    with patch("modelFactory.data_loader.load_symbol_bars", side_effect=_fake_load_bars):
+        train_df, val_df, test_df, feature_cols = _prepare_sector_data(
+            ["AAA", "BBB"],
+            cfg,
+            mock_engine,
+            cross_sectional_df=cs_cache,
+            fundamental_df=fundamental_df,
+        )
+
+    # ── Vérification 1 : feature_cols contient les colonnes XS ──
+    xs_in_contract = [c for c in CROSS_SECTIONAL_FEATURE_COLUMNS if c in feature_cols]
+    assert len(xs_in_contract) >= len(CROSS_SECTIONAL_FEATURE_COLUMNS) * 0.8, (
+        f"Only {len(xs_in_contract)}/{len(CROSS_SECTIONAL_FEATURE_COLUMNS)} XS columns "
+        f"in feature contract: {xs_in_contract}"
+    )
+
+    # ── Vérification 2 : feature_cols contient les colonnes fondamentales ──
+    fund_in_contract = [c for c in FUNDAMENTAL_FEATURE_COLUMNS if c in feature_cols]
+    assert len(fund_in_contract) == len(FUNDAMENTAL_FEATURE_COLUMNS), (
+        f"Missing fundamental columns in contract: "
+        f"{set(FUNDAMENTAL_FEATURE_COLUMNS) - set(feature_cols)}"
+    )
+
+    # ── Vérification 3 : train_df a les colonnes XS avec variance > 0 ──
+    xs_in_train = [c for c in xs_in_contract if c in train_df.columns]
+    assert len(xs_in_train) == len(xs_in_contract), (
+        f"XS columns in contract but missing from train_df: "
+        f"{set(xs_in_contract) - set(train_df.columns)}"
+    )
+    if xs_in_train:
+        xs_var = train_df[xs_in_train].var(numeric_only=True)
+        alive_xs = int((xs_var > 1e-9).sum())
+        # Au moins 50% des colonnes XS doivent avoir de la variance
+        assert alive_xs >= len(xs_in_train) * 0.5, (
+            f"Only {alive_xs}/{len(xs_in_train)} XS columns have variance > 0 in train_df. "
+            f"XS merge may be returning neutral defaults."
+        )
+
+    # ── Vérification 4 : train_df a les colonnes fondamentales non-nulles ──
+    fund_in_train = [c for c in fund_in_contract if c in train_df.columns]
+    assert len(fund_in_train) == len(fund_in_contract), (
+        f"Fundamental columns in contract but missing from train_df: "
+        f"{set(fund_in_contract) - set(train_df.columns)}"
+    )
+    if fund_in_train:
+        fund_null_rate = train_df[fund_in_train].isnull().mean()
+        high_null = fund_null_rate[fund_null_rate > 0.5]
+        assert len(high_null) == 0, (
+            f"Fundamental columns with >50% null in train_df: "
+            f"{dict(high_null)}"
+        )
+        fund_var = train_df[fund_in_train].var(numeric_only=True)
+        alive_fund = int((fund_var > 1e-9).sum())
+        assert alive_fund >= 2, (
+            f"Only {alive_fund}/{len(fund_in_train)} fundamental columns "
+            f"have variance > 0 in train_df"
+        )
+
+    # ── Vérification 5 : pas de colonne fantôme (demandée mais absente) ──
+    missing_from_df = [c for c in feature_cols if c not in train_df.columns]
+    assert len(missing_from_df) == 0, (
+        f"Feature columns in contract but missing from train_df: {missing_from_df}"
+    )
+
+

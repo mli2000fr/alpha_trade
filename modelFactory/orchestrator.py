@@ -658,7 +658,10 @@ def run_training_batch(
         torch.cuda.is_available(),
     )
     # ── Log exhaustif des symboles retenus pour l'entraînement ──
-    LOGGER.info("TRAINING_SYMBOLS_FINAL count=%d symbols=[%s]", len(symbols), ",".join(symbols))
+    LOGGER.info(
+        "TRAINING_SYMBOLS_FINAL per_symbol=%d (after --per-symbol-max-symbols filter) global=%d symbols=[%s]",
+        len(symbols), len(_global_symbols), ",".join(symbols),
+    )
     update_runtime_status(
         current_phase="batch_start",
         progress_label="🧠 Progression ML Train",
@@ -682,7 +685,7 @@ def run_training_batch(
     # by symbol in _train_worker.  This avoids loading the entire universe
     # 12k times.  Sector features piggyback on the same raw panel.
     cross_sectional_cache: pd.DataFrame | None = None
-    _needs_cross_sectional = cfg.data.enable_cross_sectional_features
+    _needs_cross_sectional = cfg.data.enable_cross_sectional_features or cfg.global_model.stacking_enabled
     if _needs_cross_sectional and _global_symbols:
         from modelFactory.cross_sectional import build_cross_sectional_features_from_db, _load_sector_mapping
         from modelFactory.data_loader import load_benchmark_bars, load_symbol_latest_bar_date
@@ -754,6 +757,64 @@ def run_training_batch(
             global_result_wf.get("ic_rank_mean"),
             global_result_wf.get("decile_spreads"),
         )
+
+        # ── P0-8 (2026-08-07) : persister immédiatement les résultats du global ranking
+        #    dans model_training_batch pour que le diagnostic IHM les affiche même
+        #    si le batch est encore en cours (per-symbol training pas encore fait).
+        _gr_ic = global_result_wf.get("ic_rank_mean")
+        _gr_ic_std = global_result_wf.get("ic_rank_std")
+        _gr_ds = global_result_wf.get("decile_spreads") or {}
+        _gr_hd = global_result_wf.get("horizon_details") or {}
+        if _gr_ic is not None:
+            try:
+                update_training_batch(
+                    engine, batch_id,
+                    ic_rank=float(_gr_ic),
+                    ic_rank_std=float(_gr_ic_std) if _gr_ic_std is not None else None,
+                    decile_spread_h3=float(_gr_ds.get(3)) if _gr_ds.get(3) is not None else None,
+                    decile_spread_h5=float(_gr_ds.get(5)) if _gr_ds.get(5) is not None else None,
+                    decile_spread_h10=float(_gr_ds.get(10)) if _gr_ds.get(10) is not None else None,
+                )
+                # ── Mettre à jour metadata_json avec les détails par horizon ──
+                with engine.begin() as _conn:
+                    _existing_meta = _conn.execute(
+                        text("SELECT metadata_json FROM model_training_batch WHERE batch_id = :bid"),
+                        {"bid": batch_id},
+                    ).scalar()
+                _meta_dict: dict[str, Any] = {}
+                if _existing_meta:
+                    try:
+                        _meta_dict = json.loads(str(_existing_meta))
+                    except Exception:
+                        _meta_dict = {}
+                _meta_dict["global_ranking"] = {
+                    "ic_rank_mean": float(_gr_ic),
+                    "ic_rank_std": float(_gr_ic_std) if _gr_ic_std is not None else None,
+                    "decile_spreads": {str(h): float(v) for h, v in _gr_ds.items()} if _gr_ds else {},
+                    "horizon_details": _gr_hd,
+                    "symbols_count": int(global_result_wf.get("symbols_count", len(_global_symbols))),
+                    "splits_count": int(global_result_wf.get("splits_count", 0)),
+                    "pred_rows": int(global_result_wf.get("pred_rows", 0)),
+                    "ic_by_horizon": global_result_wf.get("ic_by_horizon", {}),
+                    "champion_by_horizon": global_result_wf.get("champion_by_horizon"),
+                    "champion_enabled": global_result_wf.get("champion_enabled", False),
+                    "backend_model_name": global_result_wf.get("backend_model_name"),
+                    "best_horizon": global_result_wf.get("best_horizon"),
+                    "best_horizon_scores": global_result_wf.get("best_horizon_scores", {}),
+                }
+                update_training_batch(
+                    engine, batch_id,
+                    metadata_json=json.dumps(_meta_dict, default=str),
+                )
+                LOGGER.info(
+                    "run_training_batch global_ranking persisted EARLY batch_id=%s ic=%.4f ic_std=%.4f",
+                    batch_id, float(_gr_ic), float(_gr_ic_std) if _gr_ic_std is not None else float("nan"),
+                )
+            except Exception as _exc:
+                LOGGER.warning(
+                    "run_training_batch global_ranking early persist failed: %s",
+                    _exc,
+                )
 
         # ── Phase 2 : merge global_rank into cross-sectional cache (FLAG B) ──
         global_rank_df = global_result_wf.get("global_rank_df") if isinstance(global_result_wf, dict) else None
@@ -856,6 +917,7 @@ def run_training_batch(
         include_fundamentals=False,  # Fondamentaux réservés au Global Model, jamais en per-symbol
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_score_components=False,  # P0-6 : composants score reservés per-sector + global
     )
     _ps_features = {
         "feature_columns": _ps_feature_columns,
@@ -870,6 +932,7 @@ def run_training_batch(
         "include_fundamentals": False,  # Fondamentaux réservés au Global Model
         "include_factors": cfg.data.include_factors_features,
         "include_macro_regime": cfg.data.include_macro_regime_features,
+        "include_score_components": False,  # P0-6 : réservé per-sector + global
         "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
         "global_stacking_enabled": cfg.global_model.stacking_enabled,
     }
@@ -887,6 +950,54 @@ def run_training_batch(
         cfg.global_model.stacking_enabled,
         cfg.data.enable_cross_sectional_features,
     )
+
+    # ── P0-6 (2026-08-07) : Global Model Only ──
+    if cfg.data.global_model_only:
+        LOGGER.info("🏁🏁🏁 orchestrator global_model_only — training Global Model standalone 🏁🏁🏁")
+        if cfg.global_model.enabled and _global_symbols:
+            update_runtime_status(current_phase="global_model_standalone", progress_item="__GLOBAL__")
+            _gm_result = train_global_model(
+                _global_symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
+            )
+            LOGGER.info("global_model_standalone result: %s", _gm_result.get("status"))
+            if _gm_result.get("status") == "completed":
+                results.append(TrainResult("__GLOBAL__", batch_id, "completed", metrics=_gm_result))
+                # ── Persist to DB so IHM diagnostics can see it ──
+                _gm_run_id = f"{batch_id}__global__"
+                try:
+                    from modelFactory.db_registry import (
+                        ensure_registry_entry, insert_metrics,
+                        insert_training_run, replace_model_governance,
+                        update_training_run,
+                    )
+                    _registry_id = ensure_registry_entry(engine, "__GLOBAL__")
+                    insert_training_run(engine, _gm_run_id, _registry_id, "__GLOBAL__",
+                                        status="completed", batch_id=batch_id)
+                    update_training_run(engine, _gm_run_id, status="completed",
+                                        finished_at=datetime.now(timezone.utc),
+                                        config_path=str(Path(cfg.artifacts_dir) / "__GLOBAL__" / "config.json"))
+                    _gm_val = _gm_result.get("val_metrics") or _gm_result.get("val") or {}
+                    _gm_test = _gm_result.get("test_metrics") or _gm_result.get("test") or {}
+                    if _gm_val:
+                        insert_metrics(engine, _gm_run_id, "__GLOBAL__", "val", _gm_val, model_name="global_model")
+                    if _gm_test:
+                        insert_metrics(engine, _gm_run_id, "__GLOBAL__", "test", _gm_test, model_name="global_model")
+                    replace_model_governance(
+                        engine, run_id=_gm_run_id, symbol="__GLOBAL__",
+                        challengers={"global_model": _gm_result},
+                        artifact_routes_models={},
+                        selected_model="global_model",
+                        selection_mode="global_model_only",
+                        selection_metric="directional_accuracy",
+                        ranking=[],
+                    )
+                    LOGGER.info("global_model_only persisted to DB: run_id=%s", _gm_run_id)
+                except Exception as _db_exc:
+                    LOGGER.warning("global_model_only DB persist failed: %s", _db_exc)
+        else:
+            LOGGER.warning("global_model_only: enable_global_model=%s symbols=%d — nothing to train",
+                           cfg.global_model.enabled, len(_global_symbols))
+        return results
 
     # ── Per-Sector mode (Sprint 2026-08-03) ──
     if cfg.training_mode == "per_sector":
@@ -1073,6 +1184,11 @@ def run_training_batch(
                         "splits_count": _gr_meta.get("splits_count"),
                         "pred_rows": _gr_meta.get("pred_rows"),
                         "horizons": _gr_meta.get("horizons", []),
+                        "champion_by_horizon": _gr_meta.get("champion_by_horizon"),
+                        "champion_enabled": _gr_meta.get("champion_enabled", False),
+                        "backend_model_name": _gr_meta.get("model_name"),
+                        "best_horizon": _gr_meta.get("best_horizon"),
+                        "best_horizon_scores": _gr_meta.get("best_horizon_scores", {}),
                     }
                     # Lire metadata_json existant
                     with engine.begin() as conn:

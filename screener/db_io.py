@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Iterator, Optional
 
 import pandas as pd
@@ -10,6 +11,9 @@ from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 
 from screener.models import ScreenerConfig
 from database.connection import get_sqlalchemy_engine
+
+import logging
+LOGGER = logging.getLogger(__name__)
 
 
 REQUIRED_SCORE_COLUMNS = (
@@ -108,6 +112,45 @@ def _purge_missing_scores(engine: Engine, symbols: list[str]) -> None:
 	)
 	with engine.begin() as conn:
 		conn.execute(delete_stmt, {"symbols": symbols})
+
+
+def load_symbols_from_file(filepath: str) -> list[str]:
+	"""Charge une liste de symboles depuis un fichier texte.
+
+	Le fichier doit contenir des symboles séparés par des virgules
+	(et éventuellement des espaces, retours à la ligne). Les symboles
+	sont nettoyés (strip, upper) et dédupliqués.
+
+	Parameters
+	----------
+	filepath : str
+		Chemin vers le fichier de symboles.
+
+	Returns
+	-------
+	list[str]
+		Liste triée de symboles uniques.
+
+	Raises
+	------
+	FileNotFoundError
+		Si le fichier n'existe pas.
+	"""
+	path = Path(filepath)
+	if not path.is_file():
+		raise FileNotFoundError(f"Fichier d'univers personnalisé introuvable : {path}")
+	raw = path.read_text(encoding="utf-8")
+	symbols: list[str] = []
+	for part in raw.replace("\n", ",").replace("\r", ",").split(","):
+		cleaned = part.strip().upper()
+		if cleaned:
+			symbols.append(cleaned)
+	unique_sorted = sorted(set(symbols))
+	LOGGER.info(
+		"Univers personnalisé chargé depuis %s : %d symboles uniques (brut: %d).",
+		filepath, len(unique_sorted), len(symbols),
+	)
+	return unique_sorted
 
 
 def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:

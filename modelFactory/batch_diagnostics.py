@@ -23,6 +23,21 @@ from sqlalchemy.engine import Engine
 
 LOGGER = logging.getLogger(__name__)
 
+import math
+
+
+def _sanitize_float(value: Any) -> float | None:
+    """Convertit une valeur en float compatible MySQL (NaN/Inf → -1.0 sentinel)."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+        if math.isnan(f) or math.isinf(f):
+            return -1.0  # sentinel pour colonnes NOT NULL
+        return f
+    except (ValueError, TypeError):
+        return None
+
 # ── Constantes de classification ──
 RANK_TYPE_TOP = "top"
 RANK_TYPE_BOTTOM = "bottom"
@@ -355,10 +370,10 @@ def persist_batch_diagnostics(
             "batch_id": batch_id,
             "batch_started_at": batch_started_at,
             "symbol": symbol,
-            "f1_macro_wf": f1_macro,
-            "f1_long_wf": f1_long,
-            "f1_short_wf": f1_short,
-            "f1_flat_wf": f1_flat,
+            "f1_macro_wf": _sanitize_float(f1_macro),
+            "f1_long_wf": _sanitize_float(f1_long),
+            "f1_short_wf": _sanitize_float(f1_short),
+            "f1_flat_wf": _sanitize_float(f1_flat),
         }
 
         # ── rank_type: top ──
@@ -462,6 +477,12 @@ def persist_batch_diagnostics(
     if not rows:
         LOGGER.info("batch_diagnostics: no rows to insert for batch %s", batch_id)
         return 0
+
+    # ── Sanitize NaN/Inf → None pour compatibilité MySQL ──
+    _float_cols = {"f1_macro_wf", "f1_long_wf", "f1_short_wf", "f1_flat_wf", "threshold_used"}
+    for _r in rows:
+        for _col in _float_cols:
+            _r[_col] = _sanitize_float(_r.get(_col))
 
     try:
         with engine.begin() as conn:

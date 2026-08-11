@@ -760,6 +760,7 @@ def prepare_symbol_frame(
         include_fundamentals=data_cfg.include_fundamentals_features,
         include_factors=data_cfg.include_factors_features,
         include_macro_regime=data_cfg.include_macro_regime_features,
+        include_score_components=data_cfg.include_score_components,
         fundamental_df=fundamental_df,
     )
     cross_sectional_diagnostics: dict[str, object] = {}
@@ -799,6 +800,8 @@ def prepare_symbol_frame(
             positive_threshold=data_cfg.target_up_threshold,
             negative_threshold=data_cfg.target_down_threshold,
             skip_winsorize=True,  # P1-1: winsorization handled post-split
+            skip_vol_scaling=data_cfg.target_skip_vol_scaling,  # T1 experiment
+            excess_vs_spy=data_cfg.target_excess_vs_spy,  # P0-7
         )
         for _col in _multi.columns:
             df[_col] = _multi[_col]
@@ -814,6 +817,8 @@ def prepare_symbol_frame(
             positive_threshold=data_cfg.target_up_threshold,
             negative_threshold=data_cfg.target_down_threshold,
             skip_winsorize=True,  # P1-1: winsorization handled post-split
+            skip_vol_scaling=data_cfg.target_skip_vol_scaling,  # T1 experiment
+            excess_vs_spy=data_cfg.target_excess_vs_spy,  # P0-7
         )
     active_features = get_feature_columns(
         data_cfg.include_sentiment_features,

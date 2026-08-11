@@ -17,6 +17,7 @@ from typing import Literal
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
 from common.capital_presets import resolve_capital_preset_for_equity
 
+from database.selector_reference import normalize_symbol_source
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
@@ -79,6 +80,8 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
+    DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
+    DEFAULT_ML_GLOBAL_MODEL_ONLY,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
     DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS,
@@ -87,6 +90,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_ENABLE_GLOBAL_MODEL,
     DEFAULT_ML_ENABLE_GLOBAL_STACKING,
     DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER,
+    DEFAULT_ML_GLOBAL_CHAMPION,
     DEFAULT_ML_GLOBAL_MODEL_NAME,
     DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
     DEFAULT_ML_SELECT_CHAMPION,
@@ -107,6 +111,12 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_SEQUENCE_LENGTH,
     DEFAULT_ML_TARGET_DOWN_THRESHOLD,
     DEFAULT_ML_TARGET_MODE,
+    DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
+    DEFAULT_ML_TARGET_EXCESS_VS_SPY,
+    DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR,
+    DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE,
+    DEFAULT_ML_PREDICT_MAX_DATE_WORKERS,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
     DEFAULT_ML_TERNARY_WEIGHT_SHORT,
     DEFAULT_ML_TERNARY_WEIGHT_FLAT,
@@ -166,6 +176,22 @@ def _resolve_bars_provider_for_ihm() -> str:
     except Exception:
         return "alpaca"
     return str((cfg.get("market_data") or {}).get("bars_provider", "alpaca")).lower()
+
+
+def _resolve_screener_custom_universe_file_from_config() -> str | None:
+    """Lit ``screener.custom_universe_file`` depuis ``config.yaml``.
+
+    Retourne le chemin si présent et non vide, sinon None.
+    """
+    try:
+        from common.config_loader import load_config
+        cfg = load_config() or {}
+    except Exception:
+        return None
+    raw = str((cfg.get("screener") or {}).get("custom_universe_file", "")).strip()
+    return raw or None
+
+
 DEFAULT_SCREENER_CHUNK_SIZE = DEFAULT_SCREENER_CONFIG.chunk_size
 DEFAULT_SCREENER_BENCHMARK_SYMBOL = DEFAULT_SCREENER_CONFIG.benchmark_symbol
 DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD = DEFAULT_SCREENER_CONFIG.liquidity_threshold_usd
@@ -332,7 +358,7 @@ class PipelineLaunchOptions:
     execution_trailing_stop_pct: float = DEFAULT_EXEC_TRAILING_STOP_PCT
     execution_max_entry_gap_pct: float = DEFAULT_EXEC_MAX_ENTRY_GAP_PCT
     # SL dédié aux achats manuels orphelins (cf. watcher) — propagé uniquement
-    # à ``run_execution_protection_watch.py`` via ``build_watcher_command``.
+    # à ``execution_engine/protection_watcher.py`` via ``build_watcher_command``.
     execution_manual_buy_stop_loss_pct: float = DEFAULT_EXEC_MANUAL_BUY_SL_PCT
     execution_trailing_trigger: ExecutionTrailingTrigger = "multiple_r"
     execution_trailing_r_multiple: float = DEFAULT_EXEC_TRAILING_R_MULTIPLE
@@ -352,6 +378,13 @@ class PipelineLaunchOptions:
     ml_include_fundamentals: bool = DEFAULT_ML_INCLUDE_FUNDAMENTALS
     ml_include_factors: bool = DEFAULT_ML_INCLUDE_FACTORS
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
+    ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
+    ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
+    ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
+    ml_target_excess_vs_spy: bool = DEFAULT_ML_TARGET_EXCESS_VS_SPY  # P0-7
+    ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
+    ml_target_ternary_intra_sector: bool = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR
+    ml_target_ternary_quantile: float = DEFAULT_ML_TARGET_THRESHOLD_TERNARY_QUANTILE
     ml_ranking_top_k_features: int = DEFAULT_ML_RANKING_TOP_K_FEATURES
     ml_global_ranking_max_symbols: int = DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS
     ml_global_ranking_selection_mode: str = "stratified"
@@ -363,6 +396,7 @@ class PipelineLaunchOptions:
     ml_enable_catboost: bool = DEFAULT_ML_ENABLE_CATBOOST
     ml_enable_global_model: bool = DEFAULT_ML_ENABLE_GLOBAL_MODEL
     ml_enable_global_stacking: bool = DEFAULT_ML_ENABLE_GLOBAL_STACKING
+    ml_global_champion: bool = DEFAULT_ML_GLOBAL_CHAMPION  # FLAG D : champion CatBoost vs LightGBM
     ml_global_model_name: MLGlobalModelName = DEFAULT_ML_GLOBAL_MODEL_NAME  # type: ignore[assignment]
     ml_enable_cross_sectional: bool = DEFAULT_ML_ENABLE_CROSS_SECTIONAL
     ml_select_champion: bool = DEFAULT_ML_SELECT_CHAMPION
@@ -411,6 +445,9 @@ class PipelineLaunchOptions:
     ml_comment: str | None = None
     ml_predict_symbol_source: MLTrainSymbolSource = "tradable-universe"
     ml_predict_use_historical_range: bool = False
+    ml_predict_batch_id: str | None = None
+    ml_live_predict_batch_id: str | None = None
+    ml_predict_max_date_workers: int = DEFAULT_ML_PREDICT_MAX_DATE_WORKERS
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
     ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
@@ -524,6 +561,9 @@ class PipelineLaunchOptions:
     screener_min_historical_range_score: float = DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE
     screener_first_pass_window_days: int = DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS
     screener_enable_two_pass_loading: bool = DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING
+    # Univers personnalisé : chemin vers un fichier texte (symboles séparés par ',')
+    # pour remplacer la requête stock_metadata. None = comportement normal.
+    screener_custom_universe_file: str | None = None
     selector_chunk_size: int = DEFAULT_SELECTOR_CHUNK_SIZE
     selector_selection_size: int = DEFAULT_SELECTOR_SELECTION_SIZE
     selector_short_selection_size: int = DEFAULT_SELECTOR_SHORT_SELECTION_SIZE
@@ -1619,20 +1659,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     quotes_start_symbol = _normalize_optional_symbol(options.data_integrity_quotes_start_symbol)
     earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
     earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
-    quotes_symbol_source = {
-        "active_tradable": "active-tradable",
-        "stock_scores": "stock-scores",
-        "stock_scores_history": "stock-scores-history",
-        "stock_scores_all": "stock-scores-all",
-        "stock_bars_daily": "stock-bars-daily",
-    }.get(str(options.data_integrity_quotes_symbol_source or "").strip().lower(), None)
-    earnings_symbol_source = {
-        "active_tradable": "active-tradable",
-        "stock_scores": "stock-scores",
-        "stock_scores_history": "stock-scores-history",
-        "stock_scores_all": "stock-scores-all",
-        "stock_bars_daily": "stock-bars-daily",
-    }.get(str(options.data_integrity_earnings_symbol_source or "").strip().lower(), None)
+    quotes_symbol_source = normalize_symbol_source(options.data_integrity_quotes_symbol_source)
+    earnings_symbol_source = normalize_symbol_source(options.data_integrity_earnings_symbol_source)
     screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None
     screener_benchmark_symbol = _normalize_symbol(options.screener_benchmark_symbol, DEFAULT_SCREENER_BENCHMARK_SYMBOL)
     selector_max_workers = options.selector_max_workers if options.selector_max_workers and options.selector_max_workers > 0 else None
@@ -1760,6 +1788,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--max-workers", str(screener_max_workers)])
         if not options.screener_enable_two_pass_loading:
             command.append("--disable-two-pass-loading")
+        # Univers personnalisé : priorité à l'option explicite, sinon fallback config.yaml
+        _custom_universe = options.screener_custom_universe_file or _resolve_screener_custom_universe_file_from_config()
+        if _custom_universe:
+            command.extend(["--custom-universe-file", _custom_universe])
         if trade_date:
             command.extend(["--trade-date", trade_date])
         return command
@@ -2232,6 +2264,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--training-end-date", ml_training_end_date])
         if ml_train_start_symbol:
             command.extend(["--start-symbol", ml_train_start_symbol])
+        if options.ml_global_model_only:
+            command.append("--global-model-only")
+            command.append("--enable-global-model")  # P0-6: implicite
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
         if options.ml_include_screener_scores:
@@ -2252,6 +2287,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-factors")
         if options.ml_include_macro_regime:
             command.append("--include-macro-regime")
+        if not options.ml_include_score_components:
+            command.append("--no-include-score-components")  # default True, explicit disable
+        if options.ml_target_skip_vol_scaling:
+            command.append("--target-skip-vol-scaling")
+        if options.ml_target_excess_vs_spy:
+            command.append("--target-excess-vs-spy")
+        if options.ml_target_intra_sector_rank:
+            command.append("--target-intra-sector-rank")
+        if options.ml_target_ternary_intra_sector:
+            command.append("--target-ternary-intra-sector")
+            command.extend(["--target-ternary-quantile", str(options.ml_target_ternary_quantile)])
         if options.ml_ranking_top_k_features > 0:
             command.extend(["--ranking-top-k-features", str(options.ml_ranking_top_k_features)])
         if options.ml_global_ranking_max_symbols > 0:
@@ -2274,6 +2320,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--enable-catboost")
         if options.ml_enable_global_model:
             command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
+        if options.ml_global_champion:
+            command.append("--global-champion")
         if options.ml_enable_global_stacking:
             command.append("--enable-global-stacking")
         if options.ml_enable_cross_sectional:
@@ -2337,6 +2385,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_predict":
+        _predict_artifacts_dir = ml_artifacts_dir
+        _bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        if _bid:
+            _predict_artifacts_dir = f"{ml_artifacts_dir}/{_bid}"
         command = [
             sys.executable,
             "-u",
@@ -2349,7 +2401,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--symbol-source",
             ml_predict_symbol_source,
             "--artifacts-dir",
-            ml_artifacts_dir,
+            _predict_artifacts_dir,
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
             "--max-workers",
@@ -2362,6 +2414,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
             if ml_training_end_date:
                 command.extend(["--training-end-date", ml_training_end_date])
+        if options.ml_predict_max_date_workers > 1:
+            command.extend(["--predict-max-date-workers", str(options.ml_predict_max_date_workers)])
         return command
 
     if step_key == "risk_management":
@@ -2426,6 +2480,16 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--trade-date", trade_date])
         if account_id:
             command.extend(["--account", account_id])
+        # ── V1 Multi-Horizon : injecter best_horizon depuis le batch ML ──
+        _risk_bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        if _risk_bid:
+            try:
+                from modelFactory.predictor import _load_best_horizon_for_batch
+                _best_h = _load_best_horizon_for_batch(_risk_bid)
+                if _best_h is not None:
+                    command.extend(["--best-horizon", str(_best_h)])
+            except Exception:
+                pass  # best-effort : le fallback H10 dans RiskConfig suffit
         return command
 
     if step_key == "execution":

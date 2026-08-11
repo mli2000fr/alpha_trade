@@ -113,6 +113,7 @@ class ExecutionTarget:
     price_asof_date: date | None = None
     atr_asof_date: date | None = None
     stop_price_initial: float | None = None
+    take_profit_price: float | None = None  # V1 Multi-Horizon TP (2026-08-09)
     risk_per_share: float | None = None
     risk_budget_dollars: float | None = None
     initial_risk_dollars: float | None = None

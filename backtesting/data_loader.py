@@ -657,9 +657,8 @@ def load_predictions(
         batch_join = """
             JOIN model_training_run training_run
               ON training_run.run_id = prediction.run_id
-             AND training_run.symbol = prediction.symbol
         """
-        batch_condition = "AND training_run.batch_id = :batch_id"
+        batch_condition = " AND training_run.batch_id = :batch_id"
         params["batch_id"] = batch_id
 
     def _optional_select(columns: set[str], column: str) -> str:  # noqa: redefinition-ok
