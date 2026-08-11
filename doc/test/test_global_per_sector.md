@@ -29,6 +29,7 @@
 | **B16** | `model-factory-20260811110707-5029e9` | B4 + `--target-intra-sector-rank` (T2) | catboost 5/5 (144 feat.) | lightgbm 8 / catboost 3 | 0.0196 | 1.03 | H10 |
 | **B17** | `model-factory-20260811144842-bd6976` | B4 + `--target-ternary-intra-sector` (T3) | catboost 5/5 (144 feat.) | lightgbm 9 / catboost 2 | 0.0196 | 1.03 | H10 |
 | **B18** | `model-factory-20260811165544-d4d6af` | B4 + from 2011 + 8 splits | catboost 5/5 (144 feat.) | catboost 7 / lightgbm 4 | ⚠️ 0.0165 | ❌ 0.66 | H5 |
+| **B19** | `model-factory-20260811184205-100f0a` | B4 + from 2011 + 16 splits | catboost 5/5 (144 feat.) | catboost 6 / lightgbm 5 | ❌ 0.0157 | ❌ 0.68 | H5 |
 
 ---
 
@@ -133,8 +134,13 @@
 | B18  | H10     | 0.0167  | 0.60  | 0.0164        | 144         | catboost   | 0.944           |
 | B18  | H15     | 0.0171  | 0.60  | 0.0131        | 144         | catboost   | 0.944           |
 | B18  | H20     | 0.0172  | 0.54  | 0.0160        | 144         | catboost   | 0.963           |
+| B19  | H3      | 0.0112  | 1.00  | 0.0095        | 144         | catboost   | 0.973           |
+| B19  | H5      | 0.0161  | 0.88  | 0.0152        | 144         | catboost   | 0.959           |
+| B19  | H10     | 0.0171  | 0.67  | 0.0213        | 144         | catboost   | 0.945           |
+| B19  | H15     | 0.0168  | 0.65  | 0.0196        | 144         | catboost   | 0.945           |
+| B19  | H20     | 0.0173  | 0.59  | 0.0207        | 144         | catboost   | 0.959           |
 
-> 🏆 **Meilleur horizon : H10 pour 15/18, H5 pour B18, H15 pour B12, H20 pour B2** | **B18 : 8 splits dès 2011, H5 devient best horizon, IC dégradé**
+> 🏆 **Meilleur horizon : H10 pour 14/19, H5 pour B18/B19, H15 pour B12, H20 pour B2** | **B18/B19 : from 2011 → H5 best, IC dégradé**
 
 ## 1.2 Champion Global — IC/IR CatBoost vs LightGBM
 
@@ -235,6 +241,11 @@
 | B18  | H10     | 0.0167      | 0.60        | 0.0081      | 0.47        | catboost   |
 | B18  | H15     | 0.0171      | 0.60        | 0.0015      | 0.11        | catboost   |
 | B18  | H20     | 0.0172      | 0.54        | 0.0137      | 0.53        | catboost   |
+| B19  | H3      | 0.0112      | 1.00        | 0.0090      | 0.72        | catboost   |
+| B19  | H5      | 0.0161      | 0.88        | 0.0042      | 0.92        | catboost   |
+| B19  | H10     | 0.0171      | 0.67        | 0.0045      | 0.26        | catboost   |
+| B19  | H15     | 0.0168      | 0.65        | 0.0012      | 0.08        | catboost   |
+| B19  | H20     | 0.0173      | 0.59        | 0.0048      | 0.18        | catboost   |
 
 ## 1.3 Détail IC par split — Champion (Global)
 
@@ -335,6 +346,11 @@
 | B18  | H10     | 0.0144  | 0.0539  | 0.0163  | -0.0334 | -0.0027 | -0.0016 | 0.0527  | 0.0339  | 0.0279 | -0.0334| 0.0539 |
 | B18  | H15     | 0.0238  | 0.0477  | 0.0222  | -0.0346 | -0.0013 | -0.0118 | 0.0439  | 0.0472  | 0.0284 | -0.0346| 0.0477 |
 | B18  | H20     | 0.0180  | 0.0599  | 0.0112  | -0.0408 | 0.0033  | -0.0092 | 0.0423  | 0.0528  | 0.0317 | -0.0408| 0.0599 |
+| B19  | H3      | 0.0197  | 0.0166  | -0.0012 | 0.0065  | 0.0107  | 0.0075  | 0.0379  | 0.0136  | 0.0112 | -0.0066| 0.0379 |
+| B19  | H5      | 0.0114  | 0.0184  | 0.0109  | -0.0098 | 0.0112  | 0.0113  | 0.0645  | 0.0224  | 0.0184 | -0.0098| 0.0645 |
+| B19  | H10     | 0.0144  | 0.0539  | 0.0163  | -0.0334 | -0.0027 | -0.0016 | 0.0527  | 0.0339  | 0.0256 | -0.0334| 0.0539 |
+| B19  | H15     | 0.0238  | 0.0477  | 0.0222  | -0.0346 | -0.0013 | -0.0118 | 0.0439  | 0.0472  | 0.0260 | -0.0346| 0.0477 |
+| B19  | H20     | 0.0180  | 0.0599  | 0.0112  | -0.0408 | 0.0033  | -0.0092 | 0.0423  | 0.0528  | 0.0291 | -0.0408| 0.0599 |
 
 ## 1.4 Comparatif Backtest Stratégies — Global Rank
 
@@ -362,6 +378,7 @@
 | B16  | H10        | 🏆 | **-0.1%** 🔥🔥  | -25.8%           | -12.4%       | H10,H20,H15 |
 | B17  | H10        | 🏆 | **-0.1%** 🔥🔥  | -25.8%           | -12.4%       | H10,H20,H15 |
 | B18  | H5         | 🏆 | N/A (best=H5)    | N/A              | -3.8%        | H5,H3,H20   |
+| B19  | H5         | 🏆 | N/A (best=H5)    | N/A              | -15.3%       | H5,H10,H20  |
 
 ---
 
@@ -466,6 +483,11 @@
 | B18  | H10     | 0.327    | 0.484    | 0.498   | 0.4958  |
 | B18  | H15     | 0.327    | 0.483    | 0.498   | 0.4961  |
 | B18  | H20     | 0.328    | 0.481    | 0.502   | 0.4973  |
+| B19  | H3      | 0.330    | 0.498    | 0.494   | 0.4998  |
+| B19  | H5      | 0.329    | 0.490    | 0.496   | 0.4979  |
+| B19  | H10     | 0.328    | 0.488    | 0.497   | 0.4975  |
+| B19  | H15     | 0.328    | 0.485    | 0.499   | 0.4981  |
+| B19  | H20     | 0.329    | 0.486    | 0.500   | 0.4991  |
 
 ## 2.2 Champions Per-Sector par modèle
 
@@ -490,6 +512,7 @@
 | B16  | 3        | 8        |
 | B17  | 2        | 9        |
 | B18  | 7        | 4        |
+| B19  | 6        | 5        |
 
 ## 2.3 Comparatif F1 par split (WF)
 
@@ -609,6 +632,12 @@
 | B18  | lightgbm   | val   | 0.331    | 0.507    | 0.485   |
 | B18  | lightgbm   | test  | 0.332    | 0.515    | 0.481   |
 | B18  | lightgbm   | wf    | 0.328    | 0.485    | 0.499   |
+| B19  | catboost   | val   | 0.332    | 0.508    | 0.487   |
+| B19  | catboost   | test  | 0.335    | 0.516    | 0.488   |
+| B19  | catboost   | wf    | 0.328    | 0.489    | 0.496   |
+| B19  | lightgbm   | val   | 0.331    | 0.507    | 0.485   |
+| B19  | lightgbm   | test  | 0.332    | 0.515    | 0.481   |
+| B19  | lightgbm   | wf    | 0.329    | 0.489    | 0.499   |
 
 ## 2.4 Comparatif Distribution true/pred par split (WF)
 
@@ -728,6 +757,12 @@
 | B18  | lightgbm   | val   | 52.11       | 47.89      | 50.00       | 50.00      |
 | B18  | lightgbm   | test  | 51.90       | 48.10      | 51.33       | 48.67      |
 | B18  | lightgbm   | wf    | 51.83       | 48.17      | 46.92       | 53.09      |
+| B19  | catboost   | val   | 52.11       | 47.89      | 50.00       | 50.00      |
+| B19  | catboost   | test  | 51.90       | 48.10      | 50.77       | 49.23      |
+| B19  | catboost   | wf    | 51.86       | 48.14      | 47.55       | 52.45      |
+| B19  | lightgbm   | val   | 52.11       | 47.89      | 50.00       | 50.00      |
+| B19  | lightgbm   | test  | 51.90       | 48.10      | 51.33       | 48.67      |
+| B19  | lightgbm   | wf    | 51.86       | 48.14      | 47.23       | 52.77      |
 
 ## 2.5 Comparatif Métriques Régression par split (WF)
 
@@ -847,6 +882,12 @@
 | B18  | lightgbm   | val   | 1.0017  | 0.4963      |
 | B18  | lightgbm   | test  | 1.1294  | 0.5027      |
 | B18  | lightgbm   | wf    | 1.1714  | 0.4970      |
+| B19  | catboost   | val   | 0.9845  | 0.4981      |
+| B19  | catboost   | test  | 1.1088  | 0.5065      |
+| B19  | catboost   | wf    | 1.1212  | 0.4983      |
+| B19  | lightgbm   | val   | 1.0017  | 0.4963      |
+| B19  | lightgbm   | test  | 1.1294  | 0.5027      |
+| B19  | lightgbm   | wf    | 1.1461  | 0.4986      |
 
 ## 2.6 Distribution F1 macro — Walk-Forward
 
@@ -887,6 +928,7 @@
 | B17  | 0.30–0.39   | 11          |
 | B17  | 0.40+       | 2           |
 | B18  | 0.30–0.39   | 11          |
+| B19  | 0.30–0.39   | 11          |
 
 ## 2.7 Top 10 F1 macro (WF) — Meilleurs secteurs
 
@@ -1082,6 +1124,16 @@
 | B18  | Information Technology | 0.335    | 0.503   | 0.503    |
 | B18  | Health Care            | 0.335    | 0.506   | 0.499    |
 | B18  | Real Estate            | 0.335    | 0.535   | 0.469    |
+| B19  | Information Technology | 0.337    | 0.512   | 0.499    |
+| B19  | Information Technology | 0.336    | 0.507   | 0.502    |
+| B19  | Industrials            | 0.335    | 0.507   | 0.499    |
+| B19  | Industrials            | 0.335    | 0.506   | 0.499    |
+| B19  | Health Care            | 0.335    | 0.507   | 0.498    |
+| B19  | Information Technology | 0.335    | 0.506   | 0.499    |
+| B19  | Real Estate            | 0.335    | 0.535   | 0.470    |
+| B19  | Real Estate            | 0.334    | 0.532   | 0.471    |
+| B19  | Real Estate            | 0.334    | 0.527   | 0.475    |
+| B19  | Consumer Discretionary | 0.334    | 0.521   | 0.481    |
 
 ## 2.8 Top 10 F1 macro (WF) — Pires secteurs
 
@@ -1277,6 +1329,16 @@
 | B18  | Communication Services  | 0.322    | 0.496   | 0.470    |
 | B18  | Consumer Staples        | 0.323    | 0.463   | 0.506    |
 | B18  | Consumer Staples        | 0.323    | 0.481   | 0.489    |
+| B19  | Consumer Staples        | 0.322    | 0.494   | 0.470    |
+| B19  | Materials               | 0.322    | 0.445   | 0.521    |
+| B19  | Utilities               | 0.323    | 0.488   | 0.483    |
+| B19  | Communication Services  | 0.325    | 0.493   | 0.480    |
+| B19  | Health Care             | 0.325    | 0.507   | 0.468    |
+| B19  | Utilities               | 0.325    | 0.513   | 0.463    |
+| B19  | Utilities               | 0.325    | 0.487   | 0.489    |
+| B19  | Consumer Staples        | 0.326    | 0.479   | 0.498    |
+| B19  | Materials               | 0.326    | 0.455   | 0.523    |
+| B19  | Materials               | 0.326    | 0.466   | 0.512    |
 
 ## 2.9 Diagnostic par régime de marché — Walk-Forward
 
@@ -1398,6 +1460,17 @@
 | B18  | 5     | 2019-07-08 | 2020-01-03 | 🟢 Bull           | 0.322    | 0.466    | 0.501   | 8.6   | 15.0    | 11       |
 | B18  | 6     | 2020-07-07 | 2021-01-04 | 🔵 Range low vol  | 0.327    | 0.453    | 0.528   | 17.5  | 25.7    | 11       |
 | B18  | 7     | 2021-07-07 | 2022-02-01 | 🔵 Range low vol  | 0.316    | 0.425    | 0.523   | 4.3   | 19.5    | 11       |
+| B19  | 0     | 2014-07-03 | 2014-12-31 | —                 | 0.341    | 0.495    | 0.528   | 3.7   | —       | 11       |
+| B19  | 1     | 2015-07-06 | 2015-12-31 | —                 | 0.328    | 0.508    | 0.475   | -1.4  | —       | 11       |
+| B19  | 2     | 2016-07-05 | 2016-12-30 | —                 | 0.329    | 0.498    | 0.489   | 7.3   | —       | 11       |
+| B19  | 3     | 2017-07-05 | 2018-01-02 | 🟢 Bull           | 0.332    | 0.522    | 0.473   | 10.7  | 9.8     | 11       |
+| B19  | 4     | 2018-07-05 | 2019-01-03 | 🔵 Range low vol  | 0.326    | 0.487    | 0.491   | -10.6 | 17.1    | 11       |
+| B19  | 5     | 2019-07-08 | 2020-01-03 | 🟢 Bull           | 0.322    | 0.466    | 0.501   | 8.6   | 15.0    | 11       |
+| B19  | 6     | 2020-07-07 | 2021-01-04 | 🔵 Range low vol  | 0.327    | 0.453    | 0.528   | 17.5  | 25.7    | 11       |
+| B19  | 7     | 2021-07-07 | 2022-02-01 | 🔵 Range low vol  | 0.316    | 0.425    | 0.523   | 4.3   | 19.5    | 11       |
+| B19  | 8     | 2022-08-04 | 2023-02-02 | 🟠 Range high vol | 0.342    | 0.500    | 0.526   | 0.6   | 24.1    | 11       |
+| B19  | 9     | 2023-08-07 | 2024-03-05 | 🟢 Bull           | 0.314    | 0.487    | 0.455   | 12.5  | 14.9    | 11       |
+| B19  | 10    | 2024-09-05 | 2025-03-07 | 🔵 Range low vol  | 0.335    | 0.500    | 0.506   | 4.8   | 17.5    | 11       |
 
 ---
 
@@ -1422,6 +1495,7 @@
 - **B16** : B4 + `--target-intra-sector-rank` (T2). V2=−0.1% mais Dir Acc < 0.50 partout, F1 long H5 0.504 (−0.010). Le rang intra-secteur ne fonctionne pas.
 - **B17** : B4 + `--target-ternary-intra-sector` (T3, quantile 0.3). ❌❌ **ÉCHEC**. Le target ternaire (short/flat/long) fait que le modèle prédit massivement « flat » (72% des prédictions catboost WF). F1 long/short s'effondrent (0.15-0.24). Dir Acc WF=0.475. NaN sur Consumer Discretionary et Health Care (modèles mono-classe). Le target binaire reste supérieur.
 - **B18** : B4 + `--training-start-date 2011-01-01` + 8 splits. ⚠️ **DÉGRADÉ**. Ajouter 2011-2015 réduit l'IC Rank de 0.0202→0.0165 (−18%), IC IR de 1.03→0.66 (−36%). H5 devient meilleur horizon. CatBoost Per-Sector reprend l'avantage (7/11). V4=−3.8%. Les données anciennes ajoutent du bruit sans améliorer le signal.
+- **B19** : B4 + from 2011 + 16 splits max (11 effectifs). ❌ **CONFIRME B18**. IC Rank 0.0157 (−22% vs B4). Plus de splits = encore plus de dégradation. V4=−15.3%. La période 2011-2015 dilue le signal, quel que soit le nombre de splits. **Conclusion : rester sur training_start_date=2016-01-01.**
 - **Classement flags** : stacking (🥇 V2=−0.1%) > CAPM (🥈 V2=−1.9%) > short-score (🥉 IC 0.0202). **B14 est champion backtest. B4 reste champion Global (IC). B10 meilleur IC IR.**
 - **🆕 V4 top horizons** : V4 entre −12% et −27%. B14/B15/B16 à −12.4% (meilleur), B2 à −26.9% (pire).
 - Catboost Global imbattable (5/5). LightGBM Per-Sector jusqu'à 10/11 (B12). **Configuration recommandée : `--include-short-score --target-excess-vs-spy --enable-global-stacking` (B14).**

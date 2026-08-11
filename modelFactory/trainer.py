@@ -42,7 +42,7 @@ from modelFactory.champion_selection import (
     persist_artifact_signature_manifest,
     select_champion,
 )
-from modelFactory.config import ReproducibilityConfig, TrainingConfig
+from modelFactory.config import ReproducibilityConfig, TrainingConfig, CATBOOST_RANKING_LOSSES
 from modelFactory.dataset import (
     FeatureScaler,
     SequenceDataset,
@@ -1603,12 +1603,18 @@ def train_symbol(
                 subsample=effective_cfg.baseline.lgbm_subsample,
                 colsample_bytree=effective_cfg.baseline.lgbm_colsample_bytree,
             )
+            _cb_loss = effective_cfg.baseline.catboost_loss_function
+            if _cb_loss in CATBOOST_RANKING_LOSSES:
+                LOGGER.warning(
+                    "trainer: loss_function=%s is ranking-only, falling back to RMSE", _cb_loss,
+                )
+                _cb_loss = "RMSE"
             _cb_builder = lambda seed: __import__("catboost").CatBoostRegressor(
                 depth=effective_cfg.baseline.catboost_depth,
                 iterations=effective_cfg.baseline.catboost_iterations,
                 learning_rate=effective_cfg.baseline.catboost_learning_rate,
                 random_seed=seed,
-                loss_function="RMSE",
+                loss_function=_cb_loss,
                 verbose=False, allow_writing_files=False,
                 l2_leaf_reg=effective_cfg.baseline.catboost_l2_leaf_reg,
             )

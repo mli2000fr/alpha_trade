@@ -22,7 +22,8 @@ from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS  # alias → core.filter_profiles (Sprint S14)
-from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML extraites
+from ihm.services.pipeline_ml_defaults import (
+    DEFAULT_ML_CATBOOST_LOSS_FUNCTION,  # Sprint S12 — constantes ML extraites
     DEFAULT_ML_ARTIFACTS_DIR,
     DEFAULT_ML_BATCH_SIZE,
     DEFAULT_ML_BENCHMARK_SYMBOL,
@@ -475,6 +476,7 @@ class PipelineLaunchOptions:
     ml_catboost_bagging_temperature: float = DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE
     ml_catboost_od_type: str = DEFAULT_ML_CATBOOST_OD_TYPE
     ml_catboost_od_wait: int = DEFAULT_ML_CATBOOST_OD_WAIT
+    ml_catboost_loss_function: str = DEFAULT_ML_CATBOOST_LOSS_FUNCTION
     # Filtrage liquidité
     ml_enable_liquidity_filter: bool = DEFAULT_ML_ENABLE_LIQUIDITY_FILTER
     ml_liquidity_min_avg_volume_20d: int = DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D
@@ -2250,6 +2252,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--catboost-bagging-temperature", str(options.ml_catboost_bagging_temperature),
                 "--catboost-od-type", str(options.ml_catboost_od_type),
                 "--catboost-od-wait", str(options.ml_catboost_od_wait),
+                "--catboost-loss-function", str(options.ml_catboost_loss_function),
             ] if options.ml_catboost_tuning_enabled else []),
             "--default-champion",
             options.ml_default_champion,

@@ -79,7 +79,7 @@
 
 | # | Action | Effort | Impact | Pourquoi |
 |---|--------|:------:|:------:|----------|
-| **P1-1** | **Per-symbol 50-100 titres liquides** | 5j | 🔥🔥 | Pilote 71ad0b : CatBoost DA WF=57%. Confirmer ou infirmer.<br>→ Étendre de 10 à 50-100 tickers avec univers PIT par fold (ADV, prix, spread, pas de survivance).<br>→ Protocole : F0 (baseline `expert`) → comparaison IC/PnL vs Global Ranking → si confirmé, F1-F4 (ablation par famille). |
+| **P1-1** | ~~**Per-symbol 50-100 titres liquides**~~ | 5j | 🔥🔥 | ✅ **Fait** |
 | **P1-2** | **CatBoost YetiRank** (loss pairwise) | 2j | 🔥 | Loss de ranking natif > MSE. Dernier levier Global non testé.<br>→ `loss_function="RMSE"` → `"YetiRank"` dans `catboost_baseline.py:52`.<br>→ Protocole : tester B4-RMSE vs B4-YetiRank ET B10-RMSE vs B10-YetiRank en parallèle (les 2 configs les plus intéressantes). Si YetiRank améliore l'une mais dégrade l'autre, ne pas abandonner la dégradée.<br>→ Métriques : IC, IC IR, positive splits, worst split, decile spread, V1-V4.
 | **P1-3** | **Target = rang percentile** (optimiser IC au lieu de MSE) | 3j | 🔥 | À faire juste après P1-2. Target `future_return` → `rank_percentile(future_return)` ∈ [0,1].<br>→ Prototype déjà testé : IC passée de −0.023 à +0.012, variance ÷ 4, 6/8 splits > 0.<br>→ ⚠️ Plus profond que P1-2 : touche `global_ranking.py` (pipeline de préparation), pas juste un paramètre CatBoost. Risque de régression si la target en rang perd de l'information utile pour le sizing.<br>→ Complémentaire à P1-2 : les deux peuvent se cumuler (target = rang + loss = YetiRank). |
 | **P1-4** | **Portfolio OOS V1/V2/V3/V4** (top 5/10/20/30%) | 3j | 🔥🔥 | Validation de tradabilité réelle. Pour chaque date OOS : ranking → sélection top N% → caps sectoriels → V1/V2/V3/V4 → sizing → frais+slippage → PnL net.<br>→ Répond à la question : « Est-ce que le signal survit aux frictions réelles ? »<br>→ Plus important que XGBoost ou un MLP. |
@@ -109,6 +109,7 @@
 | # | Action | Statut |
 |---|--------|:------:|
 | — | Per-sector : 8 campagnes + B0-B13 → aucun alpha | ✅ Clos, research-only |
+| — | Per-symbol 50-100 titres liquides | ✅ **Fait (2026-08-11)** — pas d'alpha supplémentaire vs Global Ranking |
 | — | Flags macro (VIX, VXN, VIX3M, MOVE, regime) | ✅ Testés B5-B8, B11 → 0 gain |
 | — | Fondamentaux, cross-sectional, screener, sentiment | ✅ Testés B1, B2, B9, B13 → 0 ou négatif |
 | — | Audit leakage (P0/P1) | ✅ Archivé dans prompt/ml/ |
@@ -120,12 +121,11 @@
 ```
 P0-1 (caps) ──→ ✅ fait
   │
+  ├─→ P1-1 (per-symbol) ──→ ✅ fait
+  │
   ├─→ P1-2 (YetiRank B4+B10) ──→ dernier levier Global
   │     │
   │     └─→ P1-3 (target = rang) ──→ cumulable avec YetiRank
-  │
-  ├─→ P1-1 (per-symbol) ──→ confirmer 2ᵉ alpha
-  │     └─→ P2-2 (ablation features)
   │
   ├─→ P1-4 (portfolio OOS) ──→ validation tradabilité
   │

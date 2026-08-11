@@ -460,6 +460,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="CatBoost overfitting detector")
     p.add_argument("--catboost-od-wait", type=int, default=20,
                    help="CatBoost od_wait")
+    p.add_argument("--catboost-loss-function", type=str, default="RMSE",
+                   choices=["RMSE", "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise"],
+                   help="CatBoost loss_function. YetiRank = ranking natif (dernier levier Global non testé).")
     p.add_argument("--optimize-target", action="store_true", default=False,
                    help="Sélectionne automatiquement le meilleur horizon swing parmi plusieurs candidats")
     p.add_argument("--candidate-horizons", nargs="*", type=int, default=[3, 5, 10, 15])
@@ -619,6 +622,7 @@ def main(args: list[str] | None = None) -> None:
             catboost_bagging_temperature=opts.catboost_bagging_temperature,
             catboost_od_type=opts.catboost_od_type,
             catboost_od_wait=opts.catboost_od_wait,
+            catboost_loss_function=opts.catboost_loss_function,
         ),
         global_model=GlobalModelConfig(
             enabled=opts.enable_global_model,

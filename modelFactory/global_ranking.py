@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from modelFactory.config import ReproducibilityConfig, TrainingConfig
+from modelFactory.config import ReproducibilityConfig, TrainingConfig, CATBOOST_RANKING_LOSSES
 from modelFactory.cross_sectional import (
     SECTOR_NEUTRAL_FEATURE_COLUMNS,
     SECTOR_NEUTRAL_SOURCE_FEATURES,
@@ -505,12 +505,19 @@ def _compute_decile_spread(
 # Modèle principal
 # ────────────────────────────────────────────────────────────────────
 
+# ── Ranking loss functions (nécessitent CatBoostRanker + group_id) ──
+#    → canonique défini dans config.py: CATBOOST_RANKING_LOSSES
+
+
 def _import_lightgbm() -> Any:
     import lightgbm as lgb  # type: ignore[import-not-found]
     return lgb
 
 
-def _import_catboost() -> Any:
+def _import_catboost(as_ranker: bool = False) -> Any:
+    if as_ranker:
+        from catboost import CatBoostRanker  # type: ignore[import-not-found]
+        return CatBoostRanker
     from catboost import CatBoostRegressor  # type: ignore[import-not-found]
     return CatBoostRegressor
 
@@ -550,8 +557,9 @@ def _build_ranking_estimators(
         _name = model_name
         _rebuilt = False
         if _name == "catboost":
+            _is_ranking_loss = cfg.baseline.catboost_loss_function in CATBOOST_RANKING_LOSSES
             try:
-                CatBoostRegressor = _import_catboost()
+                CBClass = _import_catboost(as_ranker=_is_ranking_loss)
             except ImportError:
                 LOGGER.warning("CatBoost indisponible pour global ranking → fallback LightGBM")
                 _name = "lightgbm"
@@ -578,16 +586,17 @@ def _build_ranking_estimators(
                 # CatBoost fallback → ne pas ajouter une deuxième fois lightgbm
                 continue
         else:
-            CatBoostRegressor = _import_catboost()
+            _is_ranking_loss = cfg.baseline.catboost_loss_function in CATBOOST_RANKING_LOSSES
+            CBClass = _import_catboost(as_ranker=_is_ranking_loss)
             _cb_depth = cfg.global_model.ranking_max_depth
             _cb_iterations = cfg.global_model.ranking_catboost_iterations
             _cb_lr = cfg.global_model.ranking_catboost_learning_rate
-            estimators.append(("catboost", CatBoostRegressor(
+            estimators.append(("catboost", CBClass(
                 depth=_cb_depth,
                 iterations=_cb_iterations,
                 learning_rate=_cb_lr,
                 random_seed=resolved_seed,
-                loss_function="RMSE",
+                loss_function=cfg.baseline.catboost_loss_function,
                 verbose=False,
                 l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
                 border_count=cfg.baseline.catboost_border_count,
@@ -1169,10 +1178,20 @@ def train_global_ranking_wf(
                 _sw = _sample_weights.copy() if _sample_weights is not None else None
 
                 _group = None
+                _group_id = None
                 _eval_set = None
                 _eval_group = None
-                if backend_model_name == "lightgbm":
+                _eval_group_id = None
+                _use_cb_ranking = (
+                    backend_model_name == "catboost"
+                    and cfg.baseline.catboost_loss_function in CATBOOST_RANKING_LOSSES
+                )
+                if backend_model_name == "lightgbm" or _use_cb_ranking:
                     _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
+                    if _use_cb_ranking:
+                        # CatBoost → group_id (identifiant par ligne), pas group (tailles)
+                        _group_id = train_df.groupby("date", sort=False).ngroup().to_numpy(dtype=np.int32)
+                if backend_model_name == "lightgbm":
                     _es_rounds = cfg.baseline.lgbm_early_stopping_rounds
                     if _es_rounds > 0 and len(train_df) > 100:
                         _es_cut = max(int(len(train_df) * 0.8), 1)
@@ -1196,7 +1215,10 @@ def train_global_ranking_wf(
                     y_train = train_df[_target_col].to_numpy(dtype=np.float64)
 
                 _fit_kwargs: dict[str, Any] = {}
-                if _group is not None and len(_group) > 0:
+                if _use_cb_ranking:
+                    if _group_id is not None and len(_group_id) > 0:
+                        _fit_kwargs["group_id"] = _group_id
+                elif _group is not None and len(_group) > 0:
                     _fit_kwargs["group"] = _group
                 if _eval_set is not None:
                     _fit_kwargs["eval_set"] = _eval_set
@@ -1932,8 +1954,8 @@ def predict_global_rank(
             continue
         try:
             if _load_as_catboost:
-                CatBoostRegressor = _import_catboost()
-                model = CatBoostRegressor()
+                from catboost import CatBoost  # type: ignore[import-not-found]
+                model = CatBoost()
                 model.load_model(str(_model_path))
             else:
                 lgb = _import_lightgbm()

@@ -144,6 +144,7 @@ DEFAULT_ML_CATBOOST_RANDOM_STRENGTH = 1.0
 DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE = 1.0
 DEFAULT_ML_CATBOOST_OD_TYPE = "IncToDec"
 DEFAULT_ML_CATBOOST_OD_WAIT = 20
+DEFAULT_ML_CATBOOST_LOSS_FUNCTION = "RMSE"  # "RMSE", "YetiRank", "QueryRMSE", etc.
 # ---------------------------------------------------------------------------
 # Filtrage liquidité (Sprint 2026-07-24)
 # ---------------------------------------------------------------------------

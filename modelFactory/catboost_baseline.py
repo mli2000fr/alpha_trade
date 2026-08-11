@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from modelFactory.config import TrainingConfig
+from modelFactory.config import TrainingConfig, CATBOOST_RANKING_LOSSES
 from modelFactory.tabular_baseline import run_tabular_baseline
 
 LOGGER = logging.getLogger(__name__)
@@ -42,7 +42,12 @@ def run_catboost_baseline(
 
 	if is_regression:
 		_CBClass = CatBoostRegressor
-		_loss = "RMSE"
+		_loss = cfg.baseline.catboost_loss_function
+		if _loss in CATBOOST_RANKING_LOSSES:
+			LOGGER.warning(
+				"catboost_baseline: loss_function=%s is ranking-only, falling back to RMSE", _loss,
+			)
+			_loss = "RMSE"
 	else:
 		_CBClass = CatBoostClassifier
 		_loss = "MultiClass" if cfg.data.target_mode == "ternary" else "Logloss"
