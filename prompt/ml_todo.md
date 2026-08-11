@@ -73,7 +73,7 @@
 
 | # | Action | Effort | Impact | Pourquoi |
 |---|--------|:------:|:------:|----------|
-| **P0-1** | **Caps sectoriels en production** | 1j | 🔥🔥 | Risk management existant. Zéro risque, zéro changement ML. |
+| **P0-1** | **Caps sectoriels en production** | 1j | 🔥🔥 | ✅ **Fait (2026-08-11)** — `sector_limits.enabled: true` + alignement backtest/live dans `capital_presets.yaml`. |
 
 ### 🔥 P1 — Alpha additionnel (impact élevé, effort moyen)
 
@@ -111,6 +111,7 @@
 | — | Fondamentaux, cross-sectional, screener, sentiment | ✅ Testés B1, B2, B9, B13 → 0 ou négatif |
 | — | Audit leakage (P0/P1) | ✅ Archivé dans prompt/ml/ |
 | — | LSTM calibration (MSE hors échelle) | 📦 Quarantaine |
+| P0-1 | Caps sectoriels en production | ✅ **Fait (2026-08-11)** |
 
 ### 🎯 Ordre d'exécution
 

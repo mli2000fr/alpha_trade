@@ -83,7 +83,7 @@ presets:
     backtesting_dd_regime_ramp_up_enabled: true
     backtesting_dd_regime_ramp_up_pct_per_day: 0.05
     backtesting_dd_regime_ramp_up_max_pct: 0.20
-    backtesting_max_sector_exposure_pct: 0.25
+    backtesting_max_sector_exposure_pct: 0.55
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.12
     backtesting_min_ml_coverage_ratio: 0.95
@@ -193,7 +193,7 @@ presets:
     backtesting_dd_regime_ramp_up_enabled: true
     backtesting_dd_regime_ramp_up_pct_per_day: 0.06
     backtesting_dd_regime_ramp_up_max_pct: 0.25
-    backtesting_max_sector_exposure_pct: 0.3
+    backtesting_max_sector_exposure_pct: 0.5
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.13
     backtesting_min_ml_coverage_ratio: 0.95
@@ -300,7 +300,7 @@ presets:
     backtesting_dd_regime_ramp_up_enabled: true
     backtesting_dd_regime_ramp_up_pct_per_day: 0.07
     backtesting_dd_regime_ramp_up_max_pct: 0.30
-    backtesting_max_sector_exposure_pct: 0.3
+    backtesting_max_sector_exposure_pct: 0.35
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.14
     backtesting_min_ml_coverage_ratio: 0.95
