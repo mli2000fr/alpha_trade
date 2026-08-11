@@ -80,8 +80,11 @@
 | # | Action | Effort | Impact | Pourquoi |
 |---|--------|:------:|:------:|----------|
 | **P1-1** | **Per-symbol 50-100 titres liquides** | 5j | 🔥🔥 | Pilote 71ad0b : CatBoost DA WF=57%. Confirmer ou infirmer.<br>→ Étendre de 10 à 50-100 tickers avec univers PIT par fold (ADV, prix, spread, pas de survivance).<br>→ Protocole : F0 (baseline `expert`) → comparaison IC/PnL vs Global Ranking → si confirmé, F1-F4 (ablation par famille). |
-| **P1-2** | **CatBoost YetiRank** (loss pairwise) | 2j | 🔥 | Loss de ranking natif > MSE. Dernier levier Global non testé.<br>→ `loss_function="RMSE"` → `"YetiRank"` dans `catboost_baseline.py:52`.<br>→ Si YetiRank > RMSE : retester B4 (short+SPY), B10 (+CAPM), B3 (+short-score) avec YetiRank (3 runs). Ne lancer B1-B13 complet QUE si le podium change ou si un flag macro devient utile. |
+| **P1-2** | **CatBoost YetiRank** (loss pairwise) | 2j | 🔥 | Loss de ranking natif > MSE. Dernier levier Global non testé.<br>→ `loss_function="RMSE"` → `"YetiRank"` dans `catboost_baseline.py:52`.<br>→ Protocole : tester B4-RMSE vs B4-YetiRank ET B10-RMSE vs B10-YetiRank en parallèle (les 2 configs les plus intéressantes). Si YetiRank améliore l'une mais dégrade l'autre, ne pas abandonner la dégradée.<br>→ Métriques : IC, IC IR, positive splits, worst split, decile spread, V1-V4.
 | **P1-3** | **Target = rang percentile** (optimiser IC au lieu de MSE) | 3j | 🔥 | À faire juste après P1-2. Target `future_return` → `rank_percentile(future_return)` ∈ [0,1].<br>→ Prototype déjà testé : IC passée de −0.023 à +0.012, variance ÷ 4, 6/8 splits > 0.<br>→ ⚠️ Plus profond que P1-2 : touche `global_ranking.py` (pipeline de préparation), pas juste un paramètre CatBoost. Risque de régression si la target en rang perd de l'information utile pour le sizing.<br>→ Complémentaire à P1-2 : les deux peuvent se cumuler (target = rang + loss = YetiRank). |
+| **P1-4** | **Portfolio OOS V1/V2/V3/V4** (top 5/10/20/30%) | 3j | 🔥🔥 | Validation de tradabilité réelle. Pour chaque date OOS : ranking → sélection top N% → caps sectoriels → V1/V2/V3/V4 → sizing → frais+slippage → PnL net.<br>→ Répond à la question : « Est-ce que le signal survit aux frictions réelles ? »<br>→ Plus important que XGBoost ou un MLP. |
+| **P1-5** | **IC/PnL par régime** (bull/bear, high/low vol, high/low dispersion) | 2j | 🔥 | Analyse de robustesse, pas de feature engineering. VIX/MOVE/etc. n'améliorent pas le modèle, mais le signal est-il stable dans tous les régimes ?<br>→ B4 en bull market vs bear market vs high vol vs low vol.<br>→ Si IC tombe à zéro en bear market → information utile pour le risk management (quand désactiver). |
+| **P1-6** | **Rolling IC 6/12 mois** (stabilité temporelle) | 1j | 🔥 | IC glissant par période de 6-12 mois pour détecter un modèle qui a un bon IC moyen grâce à 2 très bonnes périodes.<br>→ IC > 0 sur chaque période ? IC IR stable ? Max drawdown du signal ? |
 
 ### ⚠️ P2 — Optimisation (après P1 confirmé)
 
@@ -117,12 +120,18 @@
 ```
 P0-1 (caps) ──→ ✅ fait
   │
+  ├─→ P1-2 (YetiRank B4+B10) ──→ dernier levier Global
+  │     │
+  │     └─→ P1-3 (target = rang) ──→ cumulable avec YetiRank
+  │
   ├─→ P1-1 (per-symbol) ──→ confirmer 2ᵉ alpha
   │     └─→ P2-2 (ablation features)
   │
-  ├─→ P1-2 (YetiRank) ──→ dernier levier Global
-  │     │
-  │     └─→ P1-3 (target = rang) ──→ après P1-2, cumulable avec YetiRank
+  ├─→ P1-4 (portfolio OOS) ──→ validation tradabilité
+  │
+  ├─→ P1-5 (IC/PnL par régime) ──→ robustesse
+  │
+  ├─→ P1-6 (rolling IC 6/12m) ──→ stabilité temporelle
   │
   └─→ P2-1 (optimisation poids) ──→ après P0-1
         │
