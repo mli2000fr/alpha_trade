@@ -1124,7 +1124,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
         else:
             st.info(
                 "🟨 **Batch en cours d'exécution** — Le Global Ranking Walk-Forward est en cours "
-                "(5 horizons × 6 folds, ~30 min pour 939 symboles). "
+                "(5 horizons × 6 folds). "
                 "Les métriques (IC Rank, F1, etc.) apparaîtront automatiquement ci-dessous une fois disponibles. "
                 "Rafraîchissez la page (F5) pour voir les mises à jour."
             )
