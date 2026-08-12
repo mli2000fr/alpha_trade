@@ -55,6 +55,8 @@
 | B18 | B4 + from 2011 (8 splits) | ⚠️ 0.0165 | ❌ 0.66 | H5 | — | cb 7/11 | ❌ −18% IC vs B4 |
 | B19 | B4 + from 2011 (16 splits) | ❌ 0.0157 | ❌ 0.68 | H5 | — | cb 6/11 | ❌ −22% IC vs B4 |
 | **B20** | **B4 + YetiRank** | 🏆 **0.0238** | 1.03 | H15 | ⏳ | — | 🔥🔥 **IC record +18%** |
+| B21 | B4 + QueryRMSE | 0.0188 | 0.92 | H10 | — | — | ❌ −7% vs B4, H15 perdu |
+| B22 | B4 + QuerySoftMax | 0.0185 | 0.89 | H5 | — | — | ❌ −8% vs B4, H15 perdu |
 
 ### 🏆 Podium B0-B20
 
@@ -87,6 +89,7 @@
 - **Fondamentaux et cross-sectional détruisent le signal** (−16% à −23% IC)
 - **Score components** (B12) : booste LightGBM (10/11) mais dégrade le Global
 - **YetiRank** (B20) : 🏆 **IC record 0.0238 (+18% vs B4)**, gagne 4/5 horizons. Seul H10 résiste (RMSE IR 1.47 vs YetiRank 1.05)
+- **QueryRMSE / QuerySoftMax** (B21/B22) : ❌ < RMSE (−7%/−8%), H15 perdu par CatBoost. Seul YetiRank surpasse RMSE.
 - **Per-Sector ≈ hasard** : F1 macro ~0.33, F1 short < 0.50. Seul le Global Ranking a un vrai pouvoir prédictif.
 
 ## � Reste à faire — Priorisé (2026-08-11)
@@ -140,6 +143,7 @@
 | — | Audit leakage (P0/P1) | ✅ Archivé dans prompt/ml/ |
 | — | LSTM calibration (MSE hors échelle) | 📦 Quarantaine |
 | — | YetiRank B20 (B4 + YetiRank) | ✅ **Fait (2026-08-12)** — IC record 0.0238, +18% vs B4 |
+| — | QueryRMSE B21, QuerySoftMax B22 | ✅ **Faits (2026-08-12)** — < RMSE, rejetés |
 | P0-1 | Caps sectoriels en production | ✅ **Fait (2026-08-11)** |
 
 ### 🎯 Ordre d'exécution

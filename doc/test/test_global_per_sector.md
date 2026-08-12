@@ -31,6 +31,8 @@
 | **B18** | `model-factory-20260811165544-d4d6af` | B4 + from 2011 + 8 splits | catboost 5/5 (144 feat.) | catboost 7 / lightgbm 4 | ⚠️ 0.0165 | ❌ 0.66 | H5 |
 | **B19** | `model-factory-20260811184205-100f0a` | B4 + from 2011 + 16 splits | catboost 5/5 (144 feat.) | catboost 6 / lightgbm 5 | ❌ 0.0157 | ❌ 0.68 | H5 |
 | **B20** | `model-factory-20260811213821-1bce18` | **B4 + YetiRank** 🔥 | catboost 5/5 (144 feat.) | — | 🏆 **0.0238** | 1.03 | H15 |
+| **B21** | `model-factory-20260812001008-1ce659` | B4 + QueryRMSE | ⚠️ catboost 4/5, lightgbm H15 | lightgbm 6 / catboost 5 | 0.0188 | 0.92 | H10 |
+| **B22** | `model-factory-20260812001051-e2f0db` | B4 + QuerySoftMax | ⚠️ catboost 4/5, lightgbm H15 | lightgbm 6 / catboost 5 | 0.0185 | 0.89 | H5 |
 
 ---
 
@@ -145,8 +147,18 @@
 | B20  | H10     | 0.0252  | 1.05  | 0.0170        | 144         | catboost   | 0.975           |
 | B20  | H15     | 0.0278  | 1.16  | 0.0270        | 144         | catboost   | 0.975           |
 | B20  | H20     | 0.0275  | 1.02  | 0.0262        | 144         | catboost   | 0.950           |
+| B21  | H3      | 0.0122  | 1.00  | 0.0111        | 144         | catboost   | 0.975           |
+| B21  | H5      | 0.0192  | 1.09  | 0.0211        | 144         | catboost   | 0.975           |
+| B21  | H10     | 0.0222  | 1.13  | 0.0297        | 144         | catboost   | 0.975           |
+| B21  | H15     | 0.0207  | 0.76  | 0.0208        | 144         | ⚠️ lightgbm | 0.900           |
+| B21  | H20     | 0.0197  | 0.93  | 0.0310        | 144         | catboost   | 0.950           |
+| B22  | H3      | 0.0119  | 1.08  | 0.0101        | 144         | catboost   | 0.975           |
+| B22  | H5      | 0.0199  | 1.22  | 0.0196        | 144         | catboost   | 0.975           |
+| B22  | H10     | 0.0194  | 0.95  | 0.0282        | 144         | catboost   | 0.950           |
+| B22  | H15     | 0.0207  | 0.76  | 0.0208        | 144         | ⚠️ lightgbm | 0.926           |
+| B22  | H20     | 0.0206  | 0.86  | 0.0255        | 144         | catboost   | 0.950           |
 
-> 🏆 **Meilleur horizon : H15 pour 15/20, H5 pour B18/B19, H10 pour B4/B10** | **B20 = YetiRank, IC record 0.0238 (+18% vs B4)**
+> 🏆 **Meilleur horizon : H15 pour B20, H10 pour B4/B10/B21, H5 pour B18/B19/B22** | **B20 = YetiRank IC record 0.0238, B21/B22 < RMSE**
 
 ## 1.2 Champion Global — IC/IR CatBoost vs LightGBM
 
@@ -257,6 +269,16 @@
 | B20  | H10     | 0.0252      | 1.05        | 0.0105      | 0.40        | catboost   |
 | B20  | H15     | 0.0278      | 1.16        | 0.0207      | 0.76        | catboost   |
 | B20  | H20     | 0.0275      | 1.02        | 0.0084      | 0.30        | catboost   |
+| B21  | H3      | 0.0122      | 1.00        | 0.0022      | 0.20        | catboost   |
+| B21  | H5      | 0.0192      | 1.09        | 0.0089      | 0.64        | catboost   |
+| B21  | H10     | 0.0222      | 1.13        | 0.0105      | 0.40        | catboost   |
+| B21  | H15     | 0.0173      | 1.02        | 0.0207      | 0.76        | ⚠️ lightgbm |
+| B21  | H20     | 0.0197      | 0.93        | 0.0084      | 0.30        | catboost   |
+| B22  | H3      | 0.0119      | 1.08        | 0.0022      | 0.20        | catboost   |
+| B22  | H5      | 0.0199      | 1.22        | 0.0089      | 0.64        | catboost   |
+| B22  | H10     | 0.0194      | 0.95        | 0.0105      | 0.40        | catboost   |
+| B22  | H15     | 0.0158      | 0.91        | 0.0207      | 0.76        | ⚠️ lightgbm |
+| B22  | H20     | 0.0206      | 0.86        | 0.0084      | 0.30        | catboost   |
 
 ## 1.3 Détail IC par split — Champion (Global)
 
@@ -367,6 +389,16 @@
 | B20  | H10     | 0.0390  | 0.0491  | 0.0019  | -0.0166 | 0.0411  | 0.0364  | —       | —       | 0.0239 | -0.0166| 0.0491 |
 | B20  | H15     | 0.0411  | 0.0445  | 0.0001  | -0.0091 | 0.0340  | 0.0559  | —       | —       | 0.0238 | -0.0091| 0.0559 |
 | B20  | H20     | 0.0406  | 0.0409  | -0.0019 | -0.0171 | 0.0460  | 0.0565  | —       | —       | 0.0270 | -0.0171| 0.0565 |
+| B21  | H3      | 0.0015  | 0.0338  | 0.0223  | -0.0010 | 0.0096  | 0.0067  | —       | —       | 0.0122 | -0.0010| 0.0338 |
+| B21  | H5      | 0.0021  | 0.0486  | 0.0228  | -0.0059 | 0.0267  | 0.0208  | —       | —       | 0.0176 | -0.0059| 0.0486 |
+| B21  | H10     | 0.0009  | 0.0478  | 0.0299  | -0.0083 | 0.0372  | 0.0260  | —       | —       | 0.0197 | -0.0083| 0.0478 |
+| B21  | H15     | 0.0103  | 0.0764  | 0.0323  | 0.0029  | -0.0011 | 0.0036  | —       | —       | 0.0272 | -0.0011| 0.0764 |
+| B21  | H20     | -0.0054 | 0.0330  | 0.0392  | -0.0064 | 0.0468  | 0.0111  | —       | —       | 0.0211 | -0.0064| 0.0468 |
+| B22  | H3      | 0.0069  | 0.0337  | 0.0160  | -0.0016 | 0.0098  | 0.0067  | —       | —       | 0.0110 | -0.0016| 0.0337 |
+| B22  | H5      | 0.0113  | 0.0450  | 0.0289  | -0.0080 | 0.0180  | 0.0240  | —       | —       | 0.0162 | -0.0080| 0.0450 |
+| B22  | H10     | -0.0072 | 0.0492  | 0.0272  | -0.0069 | 0.0316  | 0.0224  | —       | —       | 0.0204 | -0.0072| 0.0492 |
+| B22  | H15     | 0.0103  | 0.0764  | 0.0323  | 0.0029  | -0.0011 | 0.0036  | —       | —       | 0.0272 | -0.0011| 0.0764 |
+| B22  | H20     | -0.0030 | 0.0192  | 0.0586  | -0.0066 | 0.0456  | 0.0101  | —       | —       | 0.0241 | -0.0066| 0.0586 |
 
 ## 1.4 Comparatif Backtest Stratégies — Global Rank
 
@@ -396,6 +428,21 @@
 | B18  | H5         | 🏆 | N/A (best=H5)    | N/A              | -3.8%        | H5,H3,H20   |
 | B19  | H5         | 🏆 | N/A (best=H5)    | N/A              | -15.3%       | H5,H10,H20  |
 | **B20** | **H15** | 🏆 | **N/A (YetiRank)** | N/A              | **-10.1%**   | H15,H5,H10  |
+| B21  | H10        | 🏆 | -3.0%           | -19.6%           | -15.8%       | H10,H5,H15  |
+| B22  | H5         | 🏆 | N/A (H5 seul)    | N/A              | -17.0%       | H5,H15,H20  |
+
+## 1.5 🏆 Champion par horizon — Meilleur IC (B0-B22)
+
+| Horizon | 🥇 Batch | IC Rank | IR | Flags | Config |
+|:--------|:--------|:----:|:--:|:------|:-------|
+| **H3** | B20 | 0.0171 | 1.07 | short + SPY | YetiRank |
+| **H5** | B20 | 0.0212 | 0.99 | short + SPY | YetiRank |
+| **H10** | B4 | 0.0254 | 1.47 | short + SPY | RMSE |
+| **H15** | B20 | 0.0278 | 1.16 | short + SPY | YetiRank |
+| **H20** | B20 | 0.0275 | 1.02 | short + SPY | YetiRank |
+
+> 🏆 **B20 (YetiRank) = champion sur 4/5 horizons.** H10 reste à RMSE (B4) avec IR 1.47 record.
+> Stratégie optimale : YetiRank H3/H5/H15/H20 + RMSE H10.
 
 ---
 
@@ -510,6 +557,16 @@
 | B20  | H10     | 0.328    | 0.473    | 0.511   | 0.5014  |
 | B20  | H15     | 0.329    | 0.474    | 0.512   | 0.5019  |
 | B20  | H20     | 0.327    | 0.474    | 0.508   | 0.5003  |
+| B21  | H3      | 0.331    | 0.489    | 0.503   | 0.5020  |
+| B21  | H5      | 0.330    | 0.475    | 0.514   | 0.5017  |
+| B21  | H10     | 0.328    | 0.473    | 0.511   | 0.5014  |
+| B21  | H15     | 0.329    | 0.474    | 0.512   | 0.5019  |
+| B21  | H20     | 0.327    | 0.474    | 0.508   | 0.5003  |
+| B22  | H3      | 0.331    | 0.489    | 0.503   | 0.5020  |
+| B22  | H5      | 0.330    | 0.475    | 0.514   | 0.5017  |
+| B22  | H10     | 0.328    | 0.473    | 0.511   | 0.5014  |
+| B22  | H15     | 0.329    | 0.474    | 0.512   | 0.5019  |
+| B22  | H20     | 0.327    | 0.474    | 0.508   | 0.5003  |
 
 ## 2.2 Champions Per-Sector par modèle
 
@@ -536,6 +593,8 @@
 | B18  | 7        | 4        |
 | B19  | 6        | 5        |
 | B20  | 5        | 6        |
+| B21  | 5        | 6        |
+| B22  | 5        | 6        |
 
 ## 2.3 Comparatif F1 par split (WF)
 
@@ -667,6 +726,18 @@
 | B20  | lightgbm   | val   | 0.331    | 0.506    | 0.486   |
 | B20  | lightgbm   | test  | 0.328    | 0.511    | 0.474   |
 | B20  | lightgbm   | wf    | 0.329    | 0.478    | 0.510   |
+| B21  | catboost   | val   | 0.332    | 0.508    | 0.489   |
+| B21  | catboost   | test  | 0.331    | 0.523    | 0.468   |
+| B21  | catboost   | wf    | 0.328    | 0.475    | 0.510   |
+| B21  | lightgbm   | val   | 0.331    | 0.506    | 0.486   |
+| B21  | lightgbm   | test  | 0.328    | 0.511    | 0.474   |
+| B21  | lightgbm   | wf    | 0.329    | 0.478    | 0.510   |
+| B22  | catboost   | val   | 0.332    | 0.508    | 0.489   |
+| B22  | catboost   | test  | 0.331    | 0.523    | 0.468   |
+| B22  | catboost   | wf    | 0.328    | 0.475    | 0.510   |
+| B22  | lightgbm   | val   | 0.331    | 0.506    | 0.486   |
+| B22  | lightgbm   | test  | 0.328    | 0.511    | 0.474   |
+| B22  | lightgbm   | wf    | 0.329    | 0.478    | 0.510   |
 
 ## 2.4 Comparatif Distribution true/pred par split (WF)
 
@@ -798,6 +869,18 @@
 | B20  | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
 | B20  | lightgbm   | test  | 51.93       | 48.08      | 51.59       | 48.41      |
 | B20  | lightgbm   | wf    | 51.41       | 48.59      | 45.54       | 54.46      |
+| B21  | catboost   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B21  | catboost   | test  | 51.93       | 48.08      | 53.54       | 46.46      |
+| B21  | catboost   | wf    | 51.41       | 48.59      | 45.20       | 54.80      |
+| B21  | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B21  | lightgbm   | test  | 51.93       | 48.08      | 51.59       | 48.41      |
+| B21  | lightgbm   | wf    | 51.41       | 48.59      | 45.54       | 54.46      |
+| B22  | catboost   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B22  | catboost   | test  | 51.93       | 48.08      | 53.54       | 46.46      |
+| B22  | catboost   | wf    | 51.41       | 48.59      | 45.20       | 54.80      |
+| B22  | lightgbm   | val   | 51.94       | 48.06      | 50.00       | 50.00      |
+| B22  | lightgbm   | test  | 51.93       | 48.08      | 51.59       | 48.41      |
+| B22  | lightgbm   | wf    | 51.41       | 48.59      | 45.54       | 54.46      |
 
 ## 2.5 Comparatif Métriques Régression par split (WF)
 
@@ -929,6 +1012,18 @@
 | B20  | lightgbm   | val   | 1.0820  | 0.4964      |
 | B20  | lightgbm   | test  | 1.1086  | 0.4953      |
 | B20  | lightgbm   | wf    | 1.0626  | 0.5019      |
+| B21  | catboost   | val   | 1.0648  | 0.4991      |
+| B21  | catboost   | test  | 1.0868  | 0.4988      |
+| B21  | catboost   | wf    | 1.0436  | 0.5011      |
+| B21  | lightgbm   | val   | 1.0820  | 0.4964      |
+| B21  | lightgbm   | test  | 1.1086  | 0.4953      |
+| B21  | lightgbm   | wf    | 1.0626  | 0.5019      |
+| B22  | catboost   | val   | 1.0648  | 0.4991      |
+| B22  | catboost   | test  | 1.0868  | 0.4988      |
+| B22  | catboost   | wf    | 1.0436  | 0.5011      |
+| B22  | lightgbm   | val   | 1.0820  | 0.4964      |
+| B22  | lightgbm   | test  | 1.1086  | 0.4953      |
+| B22  | lightgbm   | wf    | 1.0626  | 0.5019      |
 
 ## 2.6 Distribution F1 macro — Walk-Forward
 
@@ -972,6 +1067,10 @@
 | B19  | 0.30–0.39   | 11          |
 | B20  | 0.20–0.29   | 1           |
 | B20  | 0.30–0.39   | 11          |
+| B21  | 0.20–0.29   | 1           |
+| B21  | 0.30–0.39   | 11          |
+| B22  | 0.20–0.29   | 1           |
+| B22  | 0.30–0.39   | 11          |
 
 ## 2.7 Top 10 F1 macro (WF) — Meilleurs secteurs
 
@@ -1187,6 +1286,26 @@
 | B20  | Real Estate            | 0.337    | 0.518   | 0.492    |
 | B20  | Industrials            | 0.336    | 0.505   | 0.504    |
 | B20  | Industrials            | 0.336    | 0.507   | 0.502    |
+| B21  | Consumer Staples       | 0.352    | 0.553   | 0.504    |
+| B21  | Consumer Staples       | 0.349    | 0.550   | 0.498    |
+| B21  | Consumer Staples       | 0.348    | 0.553   | 0.491    |
+| B21  | Consumer Staples       | 0.343    | 0.560   | 0.468    |
+| B21  | Health Care            | 0.341    | 0.530   | 0.493    |
+| B21  | Health Care            | 0.340    | 0.536   | 0.484    |
+| B21  | Health Care            | 0.339    | 0.528   | 0.490    |
+| B21  | Real Estate            | 0.337    | 0.518   | 0.492    |
+| B21  | Industrials            | 0.336    | 0.505   | 0.504    |
+| B21  | Industrials            | 0.336    | 0.507   | 0.502    |
+| B22  | Consumer Staples       | 0.352    | 0.553   | 0.504    |
+| B22  | Consumer Staples       | 0.349    | 0.550   | 0.498    |
+| B22  | Consumer Staples       | 0.348    | 0.553   | 0.491    |
+| B22  | Consumer Staples       | 0.343    | 0.560   | 0.468    |
+| B22  | Health Care            | 0.341    | 0.530   | 0.493    |
+| B22  | Health Care            | 0.340    | 0.536   | 0.484    |
+| B22  | Health Care            | 0.339    | 0.528   | 0.490    |
+| B22  | Real Estate            | 0.337    | 0.518   | 0.492    |
+| B22  | Industrials            | 0.336    | 0.505   | 0.504    |
+| B22  | Industrials            | 0.336    | 0.507   | 0.502    |
 
 ## 2.8 Top 10 F1 macro (WF) — Pires secteurs
 
@@ -1402,6 +1521,26 @@
 | B20  | Energy                  | 0.317    | 0.473   | 0.477    |
 | B20  | Materials               | 0.317    | 0.470   | 0.480    |
 | B20  | Materials               | 0.320    | 0.473   | 0.486    |
+| B21  | Energy                  | 0.297    | 0.428   | 0.464    |
+| B21  | Energy                  | 0.300    | 0.450   | 0.450    |
+| B21  | Energy                  | 0.308    | 0.441   | 0.482    |
+| B21  | Utilities               | 0.309    | 0.570   | 0.357    |
+| B21  | Materials               | 0.311    | 0.467   | 0.467    |
+| B21  | Utilities               | 0.314    | 0.561   | 0.380    |
+| B21  | Utilities               | 0.316    | 0.545   | 0.403    |
+| B21  | Energy                  | 0.317    | 0.473   | 0.477    |
+| B21  | Materials               | 0.317    | 0.470   | 0.480    |
+| B21  | Materials               | 0.320    | 0.473   | 0.486    |
+| B22  | Energy                  | 0.297    | 0.428   | 0.464    |
+| B22  | Energy                  | 0.300    | 0.450   | 0.450    |
+| B22  | Energy                  | 0.308    | 0.441   | 0.482    |
+| B22  | Utilities               | 0.309    | 0.570   | 0.357    |
+| B22  | Materials               | 0.311    | 0.467   | 0.467    |
+| B22  | Utilities               | 0.314    | 0.561   | 0.380    |
+| B22  | Utilities               | 0.316    | 0.545   | 0.403    |
+| B22  | Energy                  | 0.317    | 0.473   | 0.477    |
+| B22  | Materials               | 0.317    | 0.470   | 0.480    |
+| B22  | Materials               | 0.320    | 0.473   | 0.486    |
 
 ## 2.9 Diagnostic par régime de marché — Walk-Forward
 
@@ -1540,6 +1679,18 @@
 | B20  | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.340    | 0.497    | 0.524   | 0.1   | 24.9    | 11       |
 | B20  | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.316    | 0.489    | 0.460   | 9.0   | 15.1    | 11       |
 | B20  | 5     | 2024-09-03 | 2025-03-05 | 🟢 Bull           | 0.327    | 0.502    | 0.480   | 5.6   | 17.4    | 11       |
+| B21  | 0     | 2019-07-03 | 2019-12-31 | 🟢 Bull           | 0.319    | 0.437    | 0.520   | 7.7   | 15.0    | 11       |
+| B21  | 1     | 2020-07-02 | 2020-12-30 | 🔵 Range low vol  | 0.332    | 0.454    | 0.542   | 19.1  | 25.7    | 11       |
+| B21  | 2     | 2021-07-02 | 2021-12-30 | 🔵 Range low vol  | 0.321    | 0.447    | 0.516   | 9.8   | 18.8    | 11       |
+| B21  | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.340    | 0.497    | 0.524   | 0.1   | 24.9    | 11       |
+| B21  | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.316    | 0.489    | 0.460   | 9.0   | 15.1    | 11       |
+| B21  | 5     | 2024-09-03 | 2025-03-05 | 🟢 Bull           | 0.327    | 0.502    | 0.480   | 5.6   | 17.4    | 11       |
+| B22  | 0     | 2019-07-03 | 2019-12-31 | 🟢 Bull           | 0.319    | 0.437    | 0.520   | 7.7   | 15.0    | 11       |
+| B22  | 1     | 2020-07-02 | 2020-12-30 | 🔵 Range low vol  | 0.332    | 0.454    | 0.542   | 19.1  | 25.7    | 11       |
+| B22  | 2     | 2021-07-02 | 2021-12-30 | 🔵 Range low vol  | 0.321    | 0.447    | 0.516   | 9.8   | 18.8    | 11       |
+| B22  | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.340    | 0.497    | 0.524   | 0.1   | 24.9    | 11       |
+| B22  | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.316    | 0.489    | 0.460   | 9.0   | 15.1    | 11       |
+| B22  | 5     | 2024-09-03 | 2025-03-05 | 🟢 Bull           | 0.327    | 0.502    | 0.480   | 5.6   | 17.4    | 11       |
 
 ---
 
@@ -1566,6 +1717,8 @@
 - **B18** : B4 + `--training-start-date 2011-01-01` + 8 splits. ⚠️ **DÉGRADÉ**. Ajouter 2011-2015 réduit l'IC Rank de 0.0202→0.0165 (−18%), IC IR de 1.03→0.66 (−36%). H5 devient meilleur horizon. CatBoost Per-Sector reprend l'avantage (7/11). V4=−3.8%. Les données anciennes ajoutent du bruit sans améliorer le signal.
 - **B19** : B4 + from 2011 + 16 splits max (11 effectifs). ❌ **CONFIRME B18**. IC Rank 0.0157 (−22% vs B4). Plus de splits = encore plus de dégradation. V4=−15.3%. La période 2011-2015 dilue le signal, quel que soit le nombre de splits. **Conclusion : rester sur training_start_date=2016-01-01.**
 - **B20** : B4 + YetiRank. 🔥🔥 **IC RECORD 0.0238 (+18% vs B4)**. YetiRank gagne 4/5 horizons : H3 +64%, H5 +16%, H15 +19%, H20 +18%. Seul H10 reste meilleur en RMSE (IC −1%, IR −29%). V2=−10.1%. **Nouveau champion IC Global.** Prochaine étape : per-horizon specialization (YetiRank H3/H5/H15/H20 + RMSE H10).
+- **B21** : B4 + QueryRMSE. ❌ IC 0.0188 (−7% vs B4), IR 0.92. H15 perdu par CatBoost face à LightGBM. H10/H15/H20 tous dégradés.
+- **B22** : B4 + QuerySoftMax. ❌ IC 0.0185 (−8% vs B4), IR 0.89. Mêmes problèmes que B21 : H15 perdu, horizons longs dégradés. **QueryRMSE et QuerySoftMax sont inférieurs à RMSE.**
 - **Classement flags** : YetiRank (🥇 IC 0.0238 +18%) > stacking (🥈 V2=−0.1%) > CAPM (🥉 V2=−1.9%) > short-score (IC 0.0202). **B20 est champion IC Global. B14 reste champion backtest. B10 meilleur IC IR.**
 - **🆕 V4 top horizons** : V4 entre −12% et −27%. B14/B15/B16 à −12.4% (meilleur), B2 à −26.9% (pire).
 - Catboost Global imbattable (5/5). LightGBM Per-Sector jusqu'à 10/11 (B12). **Configuration recommandée : `--include-short-score --target-excess-vs-spy --catboost-loss-function YetiRank` (B20) pour IC, ou `--enable-global-stacking` (B14) pour backtest.**
