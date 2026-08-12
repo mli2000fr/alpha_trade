@@ -115,7 +115,8 @@ def render_swing_score_block() -> None:
                     format_func=lambda value: UNIVERSE_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
                     help=(
                         "Même liste que le bloc « T1. ML Train (hors pipeline quotidien) » de la page Pipeline. "
-                        "`tradable-universe` = dernier snapshot PIT canonique publié."
+                        "`tradable-universe` = dernier snapshot PIT canonique publié ; "
+                        "union historique = tous les symboles tradables sur toute l'histoire."
                     ),
                 )
             )

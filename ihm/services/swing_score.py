@@ -354,22 +354,48 @@ def compute_swing_scores(symbols: list[str]) -> tuple[pd.DataFrame, dict[str, ob
 # de la page Pipeline — voir ihm/pages/pipeline.py ML_TRAIN_SYMBOL_SOURCE_*)
 # ---------------------------------------------------------------------------
 
-UNIVERSE_SYMBOL_SOURCE_OPTIONS = ("stock-bars-daily", "tradable-universe", "ticket-recherche")
+UNIVERSE_SYMBOL_SOURCE_OPTIONS = (
+    "stock-bars-daily",
+    "tradable-universe",
+    "tradable-universe-history",
+    "ticket-recherche",
+)
 
 UNIVERSE_SYMBOL_SOURCE_LABELS = {
     "stock-bars-daily": "Symboles avec barres daily (stock_bars_daily)",
-    "tradable-universe": "Univers tradable PIT canonique",
+    "tradable-universe": "Univers tradable PIT canonique (dernier snapshot)",
+    "tradable-universe-history": "Univers tradable PIT — union historique",
     "ticket-recherche": "Tickets recherche (config/ticket_recherche.txt)",
 }
 
 # Au-delà de ce seuil, l'IHM affiche un avertissement (calcul plus long).
 LARGE_UNIVERSE_WARNING_THRESHOLD = 2000
 
+_UNIVERSE_HISTORY_UNION_SQL = """
+    SELECT DISTINCT UPPER(TRIM(symbol)) AS symbol
+    FROM tradable_universe_history
+    WHERE is_tradable = 1
+    ORDER BY symbol
+"""
+
+
+def _load_tradable_universe_history_union() -> list[str]:
+    """Union de tous les symboles tradables sur toute l'historique PIT.
+
+    Tous les runs présents en base appartiennent au preset
+    ``capital_2001_5000`` (source de vérité par défaut).
+    """
+    frame = safe_query(_UNIVERSE_HISTORY_UNION_SQL)
+    if frame is None or frame.empty:
+        return []
+    return [str(symbol).strip().upper() for symbol in frame["symbol"] if str(symbol).strip()]
+
 
 def resolve_universe_symbols(symbol_source: str) -> list[str]:
-    """Résout la liste des symboles d'un univers (même sources que le ML Train pipeline).
+    """Résout la liste des symboles d'un univers (mêmes sources que le ML Train pipeline).
 
     ``tradable-universe`` = dernier snapshot PIT canonique publié (asof aujourd'hui).
+    ``tradable-universe-history`` = union de tous les symboles tradables sur toute l'histoire.
     """
     from modelFactory.db_registry import load_symbols_for_source
 
@@ -378,7 +404,10 @@ def resolve_universe_symbols(symbol_source: str) -> list[str]:
     engine = get_engine()
     if engine is None:
         raise RuntimeError("Base de données indisponible.")
+    normalized_source = str(symbol_source).strip().lower()
+    if normalized_source == "tradable-universe-history":
+        return _load_tradable_universe_history_union()
     trade_date = date.today()
-    symbols = load_symbols_for_source(engine, str(symbol_source), trade_date=trade_date)
+    symbols = load_symbols_for_source(engine, normalized_source, trade_date=trade_date)
     return [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
 
