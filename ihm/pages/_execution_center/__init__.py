@@ -175,6 +175,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE,
     DEFAULT_ML_CATBOOST_OD_TYPE,
     DEFAULT_ML_CATBOOST_OD_WAIT,
+    DEFAULT_ML_CATBOOST_LOSS_FUNCTION,
     DEFAULT_ML_TRAINING_START_DATE,
     DEFAULT_ML_TRAINING_END_DATE,
     DEFAULT_ML_LOG_LEVEL,
@@ -4345,7 +4346,19 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     )
 
             # ── CatBoost tuning (optionnel) ──────────────────────────────────
-            st.markdown("##### CatBoost — tuning (régularisation, overfitting)")
+            st.markdown("##### CatBoost — tuning (régularisation, overfitting, loss)")
+            ml_catboost_loss_function = cast(
+                str,
+                st.selectbox(
+                    "CatBoost — loss function",
+                    options=["RMSE", "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise"],
+                    index=["RMSE", "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise"].index(
+                        str(st.session_state.get("pipeline_ml_catboost_loss_function", DEFAULT_ML_CATBOOST_LOSS_FUNCTION))
+                    ) if str(st.session_state.get("pipeline_ml_catboost_loss_function", DEFAULT_ML_CATBOOST_LOSS_FUNCTION)) in ["RMSE", "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise"] else 0,
+                    key="pipeline_ml_catboost_loss_function",
+                    help="RMSE = régression standard. YetiRank = loss de ranking natif (dernier levier Global non testé).",
+                ),
+            )
             ml_catboost_tuning_enabled = st.checkbox(
                 "Appliquer les paramètres de tuning CatBoost",
                 value=bool(st.session_state.get(
@@ -4718,6 +4731,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_catboost_bagging_temperature=float(ml_catboost_bagging_temperature),
             ml_catboost_od_type=str(ml_catboost_od_type),
             ml_catboost_od_wait=int(ml_catboost_od_wait),
+            ml_catboost_loss_function=str(ml_catboost_loss_function),
             ml_candidate_horizons=tuple(sorted({int(v) for v in ml_candidate_horizons_selection})) or DEFAULT_ML_CANDIDATE_HORIZONS,
             ml_candidate_up_thresholds=tuple(sorted({float(v) for v in ml_candidate_up_thresholds_selection})) or DEFAULT_ML_CANDIDATE_UP_THRESHOLDS,
             ml_candidate_down_thresholds=tuple(sorted({float(v) for v in ml_candidate_down_thresholds_selection})) or DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS,

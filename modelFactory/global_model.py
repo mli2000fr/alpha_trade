@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from modelFactory.config import ReproducibilityConfig, TrainingConfig
+from modelFactory.config import ReproducibilityConfig, TrainingConfig, CATBOOST_RANKING_LOSSES
 from modelFactory.cross_sectional import (
     build_cross_sectional_features,
     CROSS_SECTIONAL_FEATURE_COLUMNS,
@@ -218,12 +218,18 @@ def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple
     train_dir.mkdir(parents=True, exist_ok=True)
     if is_reg:
         from catboost import CatBoostRegressor
+        _loss = cfg.baseline.catboost_loss_function
+        if _loss in CATBOOST_RANKING_LOSSES:
+            LOGGER.warning(
+                "global_model: loss_function=%s is ranking-only, falling back to RMSE", _loss,
+            )
+            _loss = "RMSE"
         return model_name, CatBoostRegressor(
             depth=cfg.baseline.catboost_depth,
             iterations=cfg.baseline.catboost_iterations,
             learning_rate=cfg.baseline.catboost_learning_rate,
             random_seed=resolved_seed,
-            loss_function="RMSE",
+            loss_function=_loss,
             verbose=False,
             train_dir=str(train_dir),
             allow_writing_files=True,

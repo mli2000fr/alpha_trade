@@ -189,6 +189,7 @@ class BaselineConfig:
     catboost_bagging_temperature: float = 1.0  # Bayesian bagging
     catboost_od_type: str = "IncToDec"     # overfitting detector
     catboost_od_wait: int = 20             # patience overfitting
+    catboost_loss_function: str = "RMSE"    # "RMSE", "YetiRank", "QueryRMSE", etc.
     # ── Global Ranking feature selection (0 = toutes les features) ──
     ranking_top_k_features: int = 0        # > 0 → garder les top K features par importance
 
@@ -231,6 +232,12 @@ class BaselineConfig:
             raise ValueError("baseline.catboost_od_type doit être 'IncToDec' ou 'Iter'.")
         if self.catboost_od_wait < 1:
             raise ValueError("baseline.catboost_od_wait doit être >= 1.")
+
+
+# ── Ranking-only loss functions (nécessitent CatBoostRanker + group_id) ──
+CATBOOST_RANKING_LOSSES: frozenset[str] = frozenset({
+    "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise",
+})
 
 
 @dataclass(frozen=True, slots=True)
