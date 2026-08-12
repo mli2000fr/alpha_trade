@@ -3311,6 +3311,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 )
             else:
                 ml_target_ternary_quantile = 0.30
+            ml_ranking_raw_target = st.checkbox(
+                "🎯 P1-3 — Target = rang percentile pur (Global Ranking)",
+                value=_session_state_bool("pipeline_ml_ranking_raw_target", False),
+                key="pipeline_ml_ranking_raw_target",
+                help="Ajoute `--ranking-raw-target`. Skip smoothing + sector-neutral + factor-neutral : le modèle apprend directement sur le rang percentile brut intra-date.",
+            )
         st.markdown("---")
         with st.expander("🔍 ML — Filtrage", expanded=False):
             ml_ranking_top_k_features = st.number_input(
@@ -4640,6 +4646,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_global_ranking_max_symbols=int(ml_global_ranking_max_symbols),
             ml_global_ranking_selection_mode=str(ml_global_ranking_selection_mode),
             ml_ranking_sector_group=str(ml_ranking_sector_group),
+            ml_ranking_raw_target=ml_ranking_raw_target,
             ml_per_symbol_max_symbols=int(ml_per_symbol_max_symbols),
             ml_per_symbol_selection_mode=str(ml_per_symbol_selection_mode),
             # Exclusion ticket symbols

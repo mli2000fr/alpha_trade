@@ -390,6 +390,7 @@ class PipelineLaunchOptions:
     ml_global_ranking_max_symbols: int = DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS
     ml_global_ranking_selection_mode: str = "stratified"
     ml_ranking_sector_group: str = "all"  # all | cyclical | defensive
+    ml_ranking_raw_target: bool = False  # P1-3 : target = rang percentile pur
     ml_per_symbol_max_symbols: int = DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS
     ml_per_symbol_selection_mode: str = "stratified"  # "top_volume" | "stratified"
     ml_exclude_ticket_symbols: bool = False
@@ -2309,6 +2310,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 command.append("--global-ranking-selection-stratified")
         if getattr(options, "ml_ranking_sector_group", "all") != "all":
             command.extend(["--ranking-sector-group", str(options.ml_ranking_sector_group)])
+        if getattr(options, "ml_ranking_raw_target", False):
+            command.extend(["--ranking-raw-target"])
         if options.ml_per_symbol_max_symbols > 0:
             command.extend(["--per-symbol-max-symbols", str(options.ml_per_symbol_max_symbols)])
             if getattr(options, "ml_per_symbol_selection_mode", "top_volume") == "stratified":

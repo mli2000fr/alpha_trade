@@ -59,6 +59,12 @@
 | B22 | B4 + QuerySoftMax | 0.0185 | 0.89 | H5 | — | — | ❌ −8% vs B4 |
 | **B25** | **B10 + YetiRank** | 🏆 **0.0241** | **1.07** | H10 | ⏳ | — | 🔥🔥 **NOUVEAU RECORD +19%** |
 | B26 | B10 + QueryRMSE | 0.0172 | 0.97 | H5 | — | — | ❌ −15% vs B4, −12% vs B10 |
+| B27 | B10 + QuerySoftMax | 0.0161 | 0.95 | H5 | — | — | ❌ −20% vs B4, −33% vs B25 |
+| B23 | B4 + PairLogit | ⛔ | ⛔ | ⛔ | ⛔ | — | ⛔ abandonné (20h+, bloqué H3) |
+| B24 | B4 + PairLogitPairwise | ⛔ | ⛔ | ⛔ | ⛔ | — | ⛔ abandonné (20h+, bloqué H3) |
+| B28 | B10 + PairLogit | ⛔ | ⛔ | ⛔ | ⛔ | — | ⛔ abandonné (20h+, bloqué H3) |
+| B29 | B10 + PairLogitPairwise | ⛔ | ⛔ | ⛔ | ⛔ | — | ⛔ abandonné (20h+, bloqué H3) |
+| B30 | B20 + P1-3 raw rank target | 0.0153 | 0.49 | H10 | — | — | ❌ −36% vs B20, CatBoost perd 3/5 horizons |
 
 ### 🏆 Podium B0-B20
 
@@ -93,7 +99,8 @@
 - **Score components** (B12) : booste LightGBM (10/11) mais dégrade le Global
 - **CAPM + YetiRank** (B25) : 🏆🔥 **NOUVEAU RECORD IC 0.0241 (+19% vs B4)**. CAPM améliore H5/H10, YetiRank améliore tout. H10 IC 0.0279 (+10% vs B4 RMSE). Meilleur combo.
 - **YetiRank** (B20) : IC 0.0238 (+18% vs B4), gagne 3/5 horizons (H3/H15/H20).
-- **QueryRMSE / QuerySoftMax** (B21/B22) : ❌ < RMSE, H15 perdu par CatBoost. Seul YetiRank surpasse RMSE.
+- **QueryRMSE / QuerySoftMax** (B21/B22/B26/B27) : ❌ < RMSE avec ou sans CAPM (0.0161-0.0188). **Seul YetiRank surpasse RMSE. Matrice finale : YetiRank+CAPM 0.0241 🏆 > YetiRank 0.0238 > RMSE 0.0202 > Query***
+- **PairLogit / PairLogitPairwise** (B23/B24/B28/B29) : ⛔ abandonnés — 20h+ bloquées sur H3, coût O(n²) par groupe inacceptable pour le Global Ranking.
 - **Per-Sector ≈ hasard** : F1 macro ~0.33, F1 short < 0.50. Seul le Global Ranking a un vrai pouvoir prédictif.
 
 ## � Reste à faire — Priorisé (2026-08-11)
@@ -110,7 +117,7 @@
 |---|--------|:------:|:------:|----------|
 | **P1-1** | ~~**Per-symbol 50-100 titres liquides**~~ | 5j | 🔥🔥 | ✅ **Fait** |
 | **P1-2** | **CatBoost YetiRank** | 2j | 🔥 | ✅ **B20/B25 terminés** — B25 (CAPM+YetiRank) IC record 0.0241 (+19%). YetiRank validé, CAPM+YetiRank encore meilleur.<br>→ Prochaine étape : per-horizon specialization ou lancer B25 en production. |
-| **P1-3** | **Target = rang percentile** (optimiser IC au lieu de MSE) | 3j | 🔥 | À faire juste après P1-2. Target `future_return` → `rank_percentile(future_return)` ∈ [0,1].<br>→ Prototype déjà testé : IC passée de −0.023 à +0.012, variance ÷ 4, 6/8 splits > 0.<br>→ ⚠️ Plus profond que P1-2 : touche `global_ranking.py` (pipeline de préparation), pas juste un paramètre CatBoost. Risque de régression si la target en rang perd de l'information utile pour le sizing.<br>→ Complémentaire à P1-2 : les deux peuvent se cumuler (target = rang + loss = YetiRank). |
+| **P1-3** | **Target = rang percentile** (optimiser IC au lieu de MSE) | 3j | 🔥 | ✅ **B30 testé (2026-08-12)** — ❌ ÉCHEC. IC 0.0153 (−36% vs B20). Le rank brut détruit H5/H15/H20, CatBoost s'effondre et perd 3/5 horizons face à LightGBM. Seul H3 profite (+23%). **Le pipeline complet (smoothing + neutralisation) est essentiel. P1-3 clos — ne pas retenter.** |
 | **P1-4** | **Portfolio OOS V1/V2/V3/V4** (top 5/10/20/30%) | 3j | 🔥🔥 | Validation de tradabilité réelle. Pour chaque date OOS : ranking → sélection top N% → caps sectoriels → V1/V2/V3/V4 → sizing → frais+slippage → PnL net.<br>→ Répond à la question : « Est-ce que le signal survit aux frictions réelles ? »<br>→ Plus important que XGBoost ou un MLP. |
 | **P1-5** | **IC/PnL par régime** (bull/bear, high/low vol, high/low dispersion) | 2j | 🔥 | Analyse de robustesse, pas de feature engineering. VIX/MOVE/etc. n'améliorent pas le modèle, mais le signal est-il stable dans tous les régimes ?<br>→ B4 en bull market vs bear market vs high vol vs low vol.<br>→ Si IC tombe à zéro en bear market → information utile pour le risk management (quand désactiver). |
 | **P1-6** | **Rolling IC 6/12 mois** (stabilité temporelle) | 1j | 🔥 | IC glissant par période de 6-12 mois pour détecter un modèle qui a un bon IC moyen grâce à 2 très bonnes périodes.<br>→ IC > 0 sur chaque période ? IC IR stable ? Max drawdown du signal ? |
@@ -148,6 +155,9 @@
 | — | LSTM calibration (MSE hors échelle) | 📦 Quarantaine |
 | — | CAPM + YetiRank B25 | ✅ **Fait (2026-08-12)** — NOUVEAU RECORD IC 0.0241, +19% vs B4 |
 | — | CAPM + QueryRMSE B26 | ✅ **Fait (2026-08-12)** — IC 0.0172, −15% vs B4, rejeté |
+| — | CAPM + QuerySoftMax B27 | ✅ **Fait (2026-08-12)** — IC 0.0161, −20% vs B4, rejeté |
+| — | PairLogit / PairLogitPairwise (B23/B24/B28/B29) | ⛔ **Abandonnés (2026-08-12)** — 20h+ de calcul bloquées sur H3, trop lents (O(n²) par groupe) |
+| — | P1-3 raw rank target (B30) | ✅ **Fait (2026-08-12)** — ❌ ÉCHEC, IC 0.0153, pipeline complet essentiel |
 | — | YetiRank B20 (B4 + YetiRank) | ✅ **Fait (2026-08-12)** — IC 0.0238, +18% vs B4 |
 | — | QueryRMSE B21, QuerySoftMax B22 | ✅ **Faits (2026-08-12)** — < RMSE, rejetés |
 | P0-1 | Caps sectoriels en production | ✅ **Fait (2026-08-11)** |
@@ -159,9 +169,9 @@ P0-1 (caps) ──→ ✅ fait
   │
   ├─→ P1-1 (per-symbol) ──→ ✅ fait
   │
-  ├─→ P1-2 (YetiRank B4+B10) ──→ dernier levier Global
-  │     │
-  │     └─→ P1-3 (target = rang) ──→ cumulable avec YetiRank
+  ├─→ P1-2 (YetiRank B4+B10) ──→ ✅ fait (B25 champion 0.0241)
+  │
+  ├─→ P1-3 (target = rang) ──→ ✅ testé (B30 ❌ échec, pipeline complet essentiel)
   │
   ├─→ P1-4 (portfolio OOS) ──→ validation tradabilité
   │
