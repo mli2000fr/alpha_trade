@@ -31,8 +31,15 @@ Le workflow sépare deux familles d'actions :
 | 4 | 🔄 Walk-forward conviction | Lancer sur toute l'histoire | Vérifie la stabilité des poids conviction |
 | 5 | ▶️ Backtest | **Runs de validation OOS, un par un (4 runs)** :<br>**5a)** sizing `rank_weighted` seul → vs étape 2<br>**5b)** + selectbox « Multiplicateurs sectoriels » = `default` → vs 5a<br>**5c)** + selectbox « Calibration conviction/Kelly » = `auto`/`pinned` (sans secteur) → vs 5a<br>**5d)** combo complet : rank_weighted + secteur + conviction → vs 5b et 5c | Chaque A/B doit battre son parent avant adoption |
 | 6 | 🎛️ Calibration trimestrielle | Au rythme du job (fin de trimestre) | Indépendant du batch, garde-fou de dérive |
-| 7 | — | **Décision** : adopter uniquement ce qui est validé OOS | Aucune promotion automatique |
-| 8 | 🚀 Pipeline | **Mise en production** : promouvoir le batch (`live_batch_id`) + activer le flux live → **prédiction live** (étape 10) | La production consomme le batch et le sizing validés |
+| 7 | — | **Décision** : adopter uniquement ce qui est validé OOS (≥ 5/6 métriques vs parent) | Aucune promotion automatique |
+| 8 | ⚙️ Pipeline → « Paramètres Risk Management » → expander « Allocation P2-1 » | **Activer le sizing live** : mode `rank_weighted` + JSON secteurs (cf. section « Application en production via l'IHM ») | Le step 11 Risk applique les facteurs validés en 5a/5b |
+| 9 | 🧮 Calibrations poids | **Activer la conviction live** : sélectionner le run validé (5c/5d) → « ✅ Promouvoir pour le live » (`eligible_for_live=1`) | Le live consomme le run via le fallback `empirical_calibration` |
+| 10 | 🤖 ML / Prédictions → « 🧭 Gouvernance & artefacts de serving » | **Promouvoir le batch** (« Promouvoir cette campagne pour le serving ») puis **lancer le pipeline live** (étapes 1→10) | La production consomme le batch + sizing + conviction validés → prédiction live |
+| 11 | 🤖 ML / Prédictions → résumé du run risk | **Smoke test live** : prédictions datées du jour, univers ≥ garde-fou breadth (75 % du référentiel), payload `runtime_applied: true` | Confirme que tout est branché avant de laisser tourner |
+
+> Les étapes **8 et 9 sont indépendantes** (ordre libre entre elles) ; l'étape **10**
+> se fait en dernier, juste avant le lancement live. Une seule de ces étapes
+> peut être sautée si sa variante a été rejetée OOS (ex. conviction ❌ → étape 9 sautée).
 
 ---
 
@@ -166,7 +173,10 @@ Les 3 actions de mise en production se font uniquement depuis l'IHM (aucun termi
    5d. rank_weighted + secteur + conviction → vs 5b et 5c
 6. Job trimestriel (à part)
 7. Décision (garde-fou : OOS positif sur 5/6 métriques minimales)
-8. Promotion live + prédiction pipeline
+8. Activer sizing live (Pipeline → Allocation P2-1 : rank_weighted + JSON)
+9. Activer conviction live (Calibrations poids → Promouvoir pour le live)
+10. Promouvoir le batch (page ML) + lancer le pipeline live
+11. Smoke test live (prédictions du jour, univers ≥ 75 % référentiel)
 ```
 
 > ⚠️ **Piège de période** : si le batch est entraîné sur 2016-2025, il ne reste plus de période OOS.

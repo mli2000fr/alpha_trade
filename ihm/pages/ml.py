@@ -489,7 +489,11 @@ def render() -> None:
                 st.success(f"Campagne de serving active : `{selected_batch}`")
             except Exception as exc:
                 st.error(f"Promotion de campagne impossible : {exc}")
-        serving_status_col.caption(f"Campagne de serving active : `{serving_batch or 'aucune (fallback historique)'}`")
+        serving_comment = batch_comments.get(str(serving_batch or "").strip())
+        serving_label = f"Campagne de serving active : `{serving_batch or 'aucune (fallback historique)'}`"
+        if serving_comment:
+            serving_label += f" — {serving_comment}"
+        serving_status_col.caption(serving_label)
 
     artifact_symbols = list_ml_artifact_symbols(artifacts_dir)
     db_symbols = get_prediction_symbols() if db_available() else []
