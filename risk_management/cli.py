@@ -1205,6 +1205,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--kelly-fraction-multiplier", type=float, default=0.25)
     p.add_argument("--score-weight", type=float, default=0.40)
     p.add_argument("--prediction-weight", type=float, default=0.60)
+    # P2-1 (2026-08-13) — allocation des poids live (rank_weighted + secteurs)
+    p.add_argument(
+        "--sizing-mode",
+        type=str,
+        default=None,
+        choices=["atr", "equal_weight", "conviction_weighted", "rank_weighted"],
+        help="P2-1 : mode d'allocation des poids live (atr = legacy). Défaut : config.yaml.",
+    )
+    p.add_argument(
+        "--sector-multipliers-path",
+        type=str,
+        default=None,
+        help="P2-1 : chemin JSON {secteur: facteur} des multiplicateurs sectoriels.",
+    )
     p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes")
     # Sprint S3 / A-011 — overrides des seuils circuit breaker par préset.
     p.add_argument(
@@ -1521,6 +1535,16 @@ def main(args: list[str] | None = None) -> None:
             "kelly_fraction_multiplier": args.kelly_fraction_multiplier,
             "score_weight": args.score_weight,
             "prediction_weight": args.prediction_weight,
+            **(
+                {"sizing_mode": args.sizing_mode}
+                if getattr(args, "sizing_mode", None)
+                else {}
+            ),
+            **(
+                {"sector_multipliers_path": args.sector_multipliers_path}
+                if getattr(args, "sector_multipliers_path", None)
+                else {}
+            ),
             **({
                 "target_annual_vol": float(args.target_annual_vol),
             } if args.target_annual_vol is not None and float(args.target_annual_vol) > 0 else {}),

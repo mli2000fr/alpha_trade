@@ -299,6 +299,14 @@ risk_management:
       - regime_all_nearest_horizon
       - same_regime_nearest_segment
       - regime_all_nearest_segment
+  # ── P2-1 sizing live (2026-08-13) ──
+  # "atr" = legacy (budget de risque ATR égal par position).
+  # "rank_weighted" = facteurs d'allocation depuis selection_rank.
+  # "conviction_weighted" = facteurs d'allocation depuis conviction_score.
+  # Les multiplicateurs sectoriels s'activent via `sector_multipliers_path`
+  # (JSON {secteur: facteur}, cf. config/p21_sector_multipliers.json).
+  sizing_mode: "atr"
+  # sector_multipliers_path: "config/p21_sector_multipliers.json"
   trailing_stop:
     enabled: false
     mode: dynamic_atr            # fixed | dynamic_atr

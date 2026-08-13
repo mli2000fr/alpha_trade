@@ -27,6 +27,7 @@ from ihm.services.queries import (
     get_model_governance,
     get_model_metrics,
     get_latest_run_business_summary,
+    get_ml_batch_comments,
     get_prediction_governance_audit,
     get_prediction_symbols,
     get_predictions,
@@ -454,13 +455,26 @@ def render() -> None:
     st.subheader("🧭 Gouvernance & artefacts de serving")
     artifacts_root = get_model_artifacts_dir()
     artifact_batches = list_ml_artifact_batches(artifacts_root)
+    batch_comments: dict[str, str] = {}
+    if db_available() and artifact_batches:
+        try:
+            batch_comments = get_ml_batch_comments(artifact_batches)
+        except Exception:
+            batch_comments = {}
     if artifact_batches:
         selected_batch = st.selectbox(
             "Campagne d'artefacts",
             options=artifact_batches,
             key=ML_SELECTED_ARTIFACT_BATCH_KEY,
+            format_func=lambda batch_id: (
+                f"{batch_id} — {batch_comments[batch_id]}"
+                if batch_comments.get(batch_id)
+                else batch_id
+            ),
         )
         artifacts_dir = artifacts_root / selected_batch
+        if batch_comments.get(selected_batch):
+            st.caption(f"💬 Commentaire du batch : {batch_comments[selected_batch]}")
     else:
         artifacts_dir = artifacts_root
     st.caption(

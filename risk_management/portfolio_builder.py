@@ -30,6 +30,7 @@ from risk_management.models import (
     PortfolioEntry,
     PredictionInfo,
     PriceInfo,
+    SizingResult,
     WinRateInfo,
 )
 from risk_management.portfolio_optimizer import HoldingSnapshot, OptimizationResult, PortfolioOptimizer
@@ -48,6 +49,33 @@ from risk_management.concentration import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def compute_allocation_factors(
+    retained: list[EnrichedSelection],
+    sizing_cfg: object,
+    max_positions: int,
+) -> dict[str, float]:
+    """P2-1 : facteurs d'allocation par symbole (rank_weighted + secteurs).
+
+    Retourne ``{SYMBOLE_MAJ: facteur}``. Le facteur d'un symbole absent vaut
+    1.0 (aucun effet). Utilise la même logique que le backtest
+    (``common.sizing.SizingConfig.compute_weights``) : les poids somment à 1
+    sur le set de candidats retenu, les rangs manquants retombent en equal.
+    """
+    if not retained:
+        return {}
+    rows: list[dict[str, object]] = []
+    for ec in retained:
+        rows.append({
+            "symbol": ec.symbol,
+            "selection_rank": ec.selection_rank,
+            "sector": ec.sector,
+            "conviction": ec.conviction_score,
+        })
+    alloc_df = DataFrame(rows).set_index("symbol")
+    weights = sizing_cfg.compute_weights(alloc_df, max_positions=max_positions)  # type: ignore[attr-defined]
+    return {str(sym).upper(): float(w) for sym, w in weights.items()}
 
 
 def _apply_regime_scoring_to_candidates(
@@ -899,6 +927,20 @@ class PortfolioBuilder:
             circuit_breaker=self._circuit_breaker,
         )
         equity = self._cfg.account_equity
+        # ── P2-1 : facteurs d'allocation (rank_weighted + multiplicateurs sectoriels) ──
+        allocation_factors: dict[str, float] = {}
+        _sizing_cfg = self._cfg.build_sizing_config()
+        if _sizing_cfg is not None:
+            try:
+                allocation_factors = compute_allocation_factors(
+                    retained, _sizing_cfg, self._cfg.max_positions,
+                )
+                LOGGER.info(
+                    "P2-1 allocation live: mode=%s facteurs=%d/%d",
+                    _sizing_cfg.mode, len(allocation_factors), len(retained),
+                )
+            except Exception as exc:
+                LOGGER.warning("P2-1 allocation indisponible (%s) — comportement legacy.", exc)
         accepted_rank = 0
         minimum_viable_shares = QUANTITY_EPSILON if self._cfg.allow_fractional_shares else 1.0
         decision_date = trade_date or date.today()
@@ -1050,6 +1092,15 @@ class PortfolioBuilder:
                 )
             else:
                 sizing = self._sizer.compute(pi)
+
+            # ── P2-1 : facteur d'allocation (scale du sizing ATR/Kelly proposé) ──
+            _alloc_factor = allocation_factors.get(ec.symbol.upper(), 1.0)
+            if _alloc_factor != 1.0 and sizing.proposed_shares > 0:
+                sizing = SizingResult(
+                    symbol=sizing.symbol,
+                    proposed_shares=normalize_share_quantity(sizing.proposed_shares * _alloc_factor),
+                    method=sizing.method,
+                )
 
             if sizing.proposed_shares < minimum_viable_shares:
                 entries.append(self._make_entry_v2(

@@ -685,6 +685,31 @@
 			"label": "test_final_sector_ihm2",
 			"type": "shell",
 			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_ast_check.py; .venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\"; Remove-Item scripts\\_tmp_ast_check.py -Force"
+		},
+		{
+			"label": "test_p21_live_wiring",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_sizing_live_wiring.py\" \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_risk_cli_p21",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_risk_management_cli.py\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_risk_suite_p21",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest tests\\test_risk_portfolio_optimizer.py tests\\test_risk_regime_sizing_constraints.py tests\\test_risk_ml_first_contract.py tests\\test_risk_sprint14.py tests\\test_risk_sprint15.py -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_ihm_p21_points",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest tests\\test_ihm_backtesting_runner.py tests\\test_pages_weights_calibration_runs.py tests\\test_services_queries.py -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_ml_comments",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest tests\\test_services_queries.py -q --no-header -p no:cacheprovider -o addopts=\"\""
 		}
 	]
 }

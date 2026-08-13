@@ -218,6 +218,8 @@ from ihm.services.pipeline_runner import (
     DEFAULT_RISK_MAX_PORTFOLIO_DRAWDOWN_PCT,
     DEFAULT_RISK_MAX_POSITIONS,
     DEFAULT_RISK_MAX_SECTOR_WEIGHT,
+    DEFAULT_RISK_SECTOR_MULTIPLIERS_PATH,
+    DEFAULT_RISK_SIZING_MODE,
     DEFAULT_RISK_MIN_ML_COVERAGE_RATIO,
     DEFAULT_RISK_PAYOFF_RATIO,
     DEFAULT_RISK_PER_TRADE_PCT,
@@ -1833,6 +1835,52 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 )
             )
 
+    with st.expander("Risk — Allocation P2-1 (rank_weighted + multiplicateurs sectoriels)", expanded=False):
+        st.caption(
+            "Opt-in : `atr` = legacy (budget de risque ATR égal par position). "
+            "Les autres modes appliquent des facteurs d'allocation calculés sur le classement ML du jour "
+            "(`rank_weighted`) ou sur la conviction, puis les multiplicateurs sectoriels si un JSON est fourni. "
+            "Les contraintes (poids max, secteurs, liquidité) restent appliquées après le scale."
+        )
+        p21_col1, p21_col2 = st.columns([1, 2])
+        with p21_col1:
+            risk_sizing_mode = cast(
+                str,
+                st.selectbox(
+                    "Risk — mode d'allocation",
+                    options=["atr", "equal_weight", "conviction_weighted", "rank_weighted"],
+                    index=["atr", "equal_weight", "conviction_weighted", "rank_weighted"].index(
+                        cast(str, st.session_state.get("pipeline_risk_sizing_mode", DEFAULT_RISK_SIZING_MODE))
+                        if st.session_state.get("pipeline_risk_sizing_mode", DEFAULT_RISK_SIZING_MODE)
+                        in {"atr", "equal_weight", "conviction_weighted", "rank_weighted"}
+                        else DEFAULT_RISK_SIZING_MODE
+                    ),
+                    key="pipeline_risk_sizing_mode",
+                    help="Activer `rank_weighted` uniquement après validation OOS (A/B backtest).",
+                ),
+            )
+        with p21_col2:
+            risk_sector_multipliers_path = cast(
+                str,
+                st.text_input(
+                    "Risk — JSON multiplicateurs sectoriels (vide = aucun)",
+                    value=str(
+                        st.session_state.get(
+                            "pipeline_risk_sector_multipliers_path",
+                            DEFAULT_RISK_SECTOR_MULTIPLIERS_PATH,
+                        )
+                        or ""
+                    ),
+                    key="pipeline_risk_sector_multipliers_path",
+                    help="Chemin du JSON {secteur: facteur} (ex. config/p21_sector_multipliers.json).",
+                ),
+            ).strip() or None
+        if risk_sizing_mode != "atr":
+            if risk_sector_multipliers_path:
+                st.caption(f"Allocation active : `{risk_sizing_mode}` + secteurs depuis `{risk_sector_multipliers_path}`.")
+            else:
+                st.caption(f"Allocation active : `{risk_sizing_mode}` (sans multiplicateurs sectoriels).")
+
     conviction_total = round(risk_score_weight + risk_prediction_weight, 4)
     if abs(conviction_total - 1.0) > 0.001:
         st.warning(f"⚠️ Risk : poids score + poids ML = {conviction_total} (≠ 1.0). Le backend pourrait normaliser.")
@@ -1860,6 +1908,8 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
         "risk_kelly_fraction_multiplier": risk_kelly_fraction_multiplier,
         "risk_correlation_min_overlap": risk_correlation_min_overlap,
         "risk_log_level": risk_log_level,
+        "risk_sizing_mode": risk_sizing_mode,
+        "risk_sector_multipliers_path": risk_sector_multipliers_path,
     }
 
 
@@ -3069,6 +3119,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         risk_kelly_fraction_multiplier = _risk_vars["risk_kelly_fraction_multiplier"]
         risk_correlation_min_overlap = _risk_vars["risk_correlation_min_overlap"]
         risk_log_level = _risk_vars["risk_log_level"]
+        risk_sizing_mode = _risk_vars["risk_sizing_mode"]
+        risk_sector_multipliers_path = _risk_vars["risk_sector_multipliers_path"]
 
         # === BLOCK 3/9 : Model Factory (preset + cible swing + walk-forward + hyperparams + grilles candidate) — inline (extraction prévue S6.1) ===
         st.markdown("#### Paramètres Model Factory")
@@ -4764,6 +4816,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             risk_kelly_fraction_multiplier=float(risk_kelly_fraction_multiplier),
             risk_dry_run=bool(risk_dry_run),
             risk_log_level=str(risk_log_level).upper(),
+            risk_sizing_mode=str(risk_sizing_mode),
+            risk_sector_multipliers_path=(risk_sector_multipliers_path or None),
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
             sentiment_symbols=sentiment_symbols or None,
