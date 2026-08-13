@@ -295,7 +295,7 @@ DEFAULT_CA_BATCH_SIZE = 25
 
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
-MLGlobalModelName = Literal["catboost", "lightgbm"]
+MLGlobalModelName = Literal["catboost", "lightgbm", "xgboost"]
 MLTargetMode = Literal["binary", "swing_cash", "ternary", "regression"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
@@ -2333,6 +2333,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_enable_global_model:
             command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
         if options.ml_global_champion:
+            # P3-3 : --global-champion entraîne les 3 candidats
+            # (CatBoost + LightGBM + XGBoost) côté core.
             command.append("--global-champion")
         if options.ml_enable_global_stacking:
             command.append("--enable-global-stacking")

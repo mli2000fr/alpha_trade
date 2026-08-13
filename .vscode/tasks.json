@@ -745,6 +745,13 @@
 			"label": "bt_p23_control2",
 			"type": "shell",
 			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --output-dir artifacts/backtesting/b25_p23_control2 *> artifacts/backtesting/b25_p23_control2.log; Get-Content artifacts\\backtesting\\b25_p23_control2.log -Tail 3"
+		},
+		{
+			"label": "B39 P3-3 XGBoost Global Ranking",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --training-mode per_sector --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2016-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2025-12-31 --include-short-score --include-factors --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name xgboost --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment B39-B25-XGBoost-rank-ndcg-P3-3 *> log\\b39_p33_xgboost.log",
+			"isBackground": true,
+			"problemMatcher": []
 		}
 	]
 }

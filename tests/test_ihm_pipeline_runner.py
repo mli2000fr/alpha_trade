@@ -1020,6 +1020,49 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
     assert train_cmd[train_cmd.index("--watchdog-timeout-seconds") + 1] == "600"
 
 
+def test_build_pipeline_command_ml_train_xgboost_champion_three_candidates() -> None:
+    """P3-3 : champion auto → 3 candidats côté core (flag unique --global-champion)."""
+    options = PipelineLaunchOptions(
+        ml_enable_global_model=True,
+        ml_global_champion=True,
+        ml_global_model_name="xgboost",
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "xgboost"
+    assert "--global-champion" in train_cmd
+    assert "--ranking-include-xgboost" not in train_cmd
+
+
+def test_build_pipeline_command_ml_train_xgboost_single_without_champion() -> None:
+    """P3-3 : backend XGBoost sans champion → candidat unique XGBoost."""
+    options = PipelineLaunchOptions(
+        ml_enable_global_model=True,
+        ml_global_champion=False,
+        ml_global_model_name="xgboost",
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "xgboost"
+    assert "--global-champion" not in train_cmd
+
+
+def test_build_pipeline_command_ml_train_champion_ignores_selected_backend() -> None:
+    """P3-3 : champion auto quel que soit le backend du dropdown → 3 candidats."""
+    options = PipelineLaunchOptions(
+        ml_enable_global_model=True,
+        ml_global_champion=True,
+        ml_global_model_name="catboost",
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert "--global-champion" in train_cmd
+    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "catboost"
+
+
 def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:
     command = build_pipeline_command(
         "ml_train",

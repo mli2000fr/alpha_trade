@@ -483,7 +483,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclut le Global Model comme 4ème challenger dans la sélection champion")
     p.add_argument("--global-champion", action="store_true", default=False,
                    help="Entraîne CatBoost ET LightGBM pour le Global Ranking et sélectionne le champion (meilleur IC rank WF)")
-    p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm"])
+    p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm", "xgboost"])
+    p.add_argument("--ranking-xgboost-iterations", type=int, default=500,
+                   help="Global Ranking XGBoost : nombre d'itérations (P3-3 challenger)")
+    p.add_argument("--ranking-xgboost-learning-rate", type=float, default=0.03,
+                   help="Global Ranking XGBoost : learning rate (P3-3 challenger)")
     p.add_argument("--global-artifact-symbol", type=str, default="__GLOBAL__")
     p.add_argument("--select-champion", action="store_true", default=False,
                    help="Active la sélection automatique du champion parmi les modèles éligibles à l’inférence")
@@ -699,6 +703,8 @@ def main(args: list[str] | None = None) -> None:
             use_cross_sectional_features=opts.enable_cross_sectional,
             ranking_sector_group=opts.ranking_sector_group,
             ranking_raw_target=opts.ranking_raw_target,
+            ranking_xgboost_iterations=opts.ranking_xgboost_iterations,
+            ranking_xgboost_learning_rate=opts.ranking_xgboost_learning_rate,
         ),
         champion_selection=ChampionSelectionConfig(
             enabled=opts.select_champion,

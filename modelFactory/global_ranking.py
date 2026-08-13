@@ -514,6 +514,11 @@ def _import_lightgbm() -> Any:
     return lgb
 
 
+def _import_xgboost() -> Any:
+    import xgboost as xgb  # type: ignore[import-not-found]
+    return xgb
+
+
 def _import_catboost(as_ranker: bool = False) -> Any:
     if as_ranker:
         from catboost import CatBoostRanker  # type: ignore[import-not-found]
@@ -585,6 +590,21 @@ def _build_ranking_estimators(
             if _rebuilt:
                 # CatBoost fallback → ne pas ajouter une deuxième fois lightgbm
                 continue
+        elif _name == "xgboost":
+            xgb_mod = _import_xgboost()
+            estimators.append(("xgboost", xgb_mod.XGBRanker(
+                objective="rank:ndcg",
+                max_depth=cfg.global_model.ranking_max_depth,
+                n_estimators=cfg.global_model.ranking_xgboost_iterations,
+                learning_rate=cfg.global_model.ranking_xgboost_learning_rate,
+                random_state=resolved_seed,
+                reg_alpha=cfg.baseline.lgbm_reg_alpha,
+                reg_lambda=cfg.baseline.lgbm_reg_lambda,
+                subsample=cfg.baseline.lgbm_subsample,
+                colsample_bytree=cfg.baseline.lgbm_colsample_bytree,
+                tree_method="hist",
+                verbosity=0,
+            )))
         else:
             _is_ranking_loss = cfg.baseline.catboost_loss_function in CATBOOST_RANKING_LOSSES
             CBClass = _import_catboost(as_ranker=_is_ranking_loss)
@@ -1073,7 +1093,9 @@ def train_global_ranking_wf(
         _champion_mode = cfg.global_model.champion_enabled
         _candidate_names: list[str]
         if _champion_mode:
-            _candidate_names = ["lightgbm", "catboost"]
+            # P3-3 (2026-08-14) : championnat à 3 candidats
+            # (CatBoost + LightGBM + XGBoost) — le champion est choisi parmi les 3.
+            _candidate_names = ["lightgbm", "catboost", "xgboost"]
             LOGGER.info("global_ranking_wf horizon=%d champion_mode=ON candidates=%s", horizon, _candidate_names)
         else:
             _candidate_names = [cfg.global_model.model_name]
@@ -1193,10 +1215,10 @@ def train_global_ranking_wf(
                     backend_model_name == "catboost"
                     and cfg.baseline.catboost_loss_function in CATBOOST_RANKING_LOSSES
                 )
-                if backend_model_name == "lightgbm" or _use_cb_ranking:
+                if backend_model_name in ("lightgbm", "xgboost") or _use_cb_ranking:
                     _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
-                    if _use_cb_ranking:
-                        # CatBoost → group_id (identifiant par ligne), pas group (tailles)
+                    if backend_model_name == "xgboost" or _use_cb_ranking:
+                        # XGBoost (qid) / CatBoost ranking (group_id) → identifiant par ligne
                         _group_id = train_df.groupby("date", sort=False).ngroup().to_numpy(dtype=np.int32)
                 if backend_model_name == "lightgbm":
                     _es_rounds = cfg.baseline.lgbm_early_stopping_rounds
@@ -1216,7 +1238,7 @@ def train_global_ranking_wf(
                             _sw = _sw[_es_train.index.get_indexer(train_df.index)]
 
                 X_train = train_df[_active_features]
-                if backend_model_name == "lightgbm":
+                if backend_model_name in ("lightgbm", "xgboost"):
                     y_train = train_df[_label_col].to_numpy(dtype=np.int32)
                 else:
                     y_train = train_df[_target_col].to_numpy(dtype=np.float64)
@@ -1225,6 +1247,9 @@ def train_global_ranking_wf(
                 if _use_cb_ranking:
                     if _group_id is not None and len(_group_id) > 0:
                         _fit_kwargs["group_id"] = _group_id
+                elif backend_model_name == "xgboost":
+                    if _group_id is not None and len(_group_id) > 0:
+                        _fit_kwargs["qid"] = _group_id
                 elif _group is not None and len(_group) > 0:
                     _fit_kwargs["group"] = _group
                 if _eval_set is not None:
@@ -1242,7 +1267,11 @@ def train_global_ranking_wf(
                             horizon, split.split_index + 1, len(wf_splits),
                             _es, len(_es_eval) if _es_eval is not None else 0,
                         )
-                if _sw is not None:
+                if _sw is not None and backend_model_name != "xgboost":
+                    # XGBoost 3.x : avec qid (groupes de ranking), QuantileDMatrix
+                    # interprète `weight` comme des poids PAR GROUPE (1 par requête)
+                    # et non par ligne → incompatible avec la décroissance temporelle
+                    # par ligne. Désactivé pour le challenger XGBoost (P3-3).
                     _fit_kwargs["sample_weight"] = _sw
                 LOGGER.info(
                     "global_ranking_wf horizon=%d split=%d/%d → fitting %s (%d rows)...",
@@ -1522,6 +1551,10 @@ def train_global_ranking_wf(
                         _saved_models[horizon] = _mp
                     elif _last_model_name == "catboost":
                         _mp = str(_model_dir / f"_global_ranking_model{h_suffix}.pkl")
+                        _last_model.save_model(_mp)
+                        _saved_models[horizon] = _mp
+                    elif _last_model_name == "xgboost":
+                        _mp = str(_model_dir / f"_global_ranking_model{h_suffix}.json")
                         _last_model.save_model(_mp)
                         _saved_models[horizon] = _mp
                 except Exception as _exc:
@@ -1944,23 +1977,34 @@ def predict_global_rank(
 
         # ── Charger le modèle pour cet horizon ──
         # Le type est déterminé par l'extension du fichier :
-        #   .txt = LightGBM, .pkl = CatBoost
+        #   .txt = LightGBM, .pkl = CatBoost, .json = XGBoost (P3-3)
         # En mode champion, chaque horizon a UN seul fichier (le champion).
         # En mode simple, idem (le backend configuré).
         _model_path_txt = artifacts_dir / f"_global_ranking_model{h_suffix}.txt"
         _model_path_pkl = artifacts_dir / f"_global_ranking_model{h_suffix}.pkl"
+        _model_path_xgb = artifacts_dir / f"_global_ranking_model{h_suffix}.json"
         if _model_path_txt.exists():
             _model_path = _model_path_txt
             _load_as_catboost = False
+            _load_as_xgboost = False
         elif _model_path_pkl.exists():
             _model_path = _model_path_pkl
             _load_as_catboost = True
+            _load_as_xgboost = False
+        elif _model_path_xgb.exists():
+            _model_path = _model_path_xgb
+            _load_as_catboost = False
+            _load_as_xgboost = True
         else:
             LOGGER.warning("predict_global_rank: model for horizon %d not found", horizon)
             result[f"global_rank{h_suffix}"] = 0.5
             continue
         try:
-            if _load_as_catboost:
+            if _load_as_xgboost:
+                xgb = _import_xgboost()
+                model = xgb.XGBRanker()
+                model.load_model(str(_model_path))
+            elif _load_as_catboost:
                 from catboost import CatBoost  # type: ignore[import-not-found]
                 model = CatBoost()
                 model.load_model(str(_model_path))

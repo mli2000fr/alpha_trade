@@ -3607,11 +3607,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
             ml_global_champion = st.checkbox(
-                "🏆 Champion automatique CatBoost vs LightGBM pour le Global Ranking",
+                "🏆 Champion automatique CatBoost vs LightGBM vs XGBoost pour le Global Ranking",
                 value=_session_state_bool("pipeline_ml_global_champion", DEFAULT_ML_GLOBAL_CHAMPION),
                 key="pipeline_ml_global_champion",
                 disabled=not ml_enable_global_model,
-                help="Ajoute `--global-champion`. Entraîne les DEUX backends (CatBoost + LightGBM) et sélectionne le champion par horizon selon le meilleur IC Rank walk-forward. Si décoché, le backend choisi ci-dessous est utilisé.",
+                help="Ajoute `--global-champion`. Entraîne les TROIS backends (CatBoost + LightGBM + XGBoost) et sélectionne le champion par horizon selon le meilleur IC Rank walk-forward. Si décoché, le backend choisi ci-dessous est utilisé seul.",
             )
             ml_global_model_only = st.checkbox(
                 "🎯 Global Model ONLY — sauter per-symbol et per-sector",
@@ -3632,15 +3632,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 str,
                 st.selectbox(
                     "Backend du modèle global",
-                    options=["catboost", "lightgbm"],
-                    index=["catboost", "lightgbm"].index(
+                    options=["catboost", "lightgbm", "xgboost"],
+                    index=["catboost", "lightgbm", "xgboost"].index(
                         cast(str, st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME))
-                        if st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME) in {"catboost", "lightgbm"}
+                        if st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME) in {"catboost", "lightgbm", "xgboost"}
                         else DEFAULT_ML_GLOBAL_MODEL_NAME
                     ),
                     key="pipeline_ml_global_model_name",
                     disabled=not ml_enable_global_model or ml_global_champion,
-                    help="Backend utilisé si le champion automatique est désactivé. Ignoré si le champion est activé (les deux sont entraînés).",
+                    help="Backend utilisé si le champion automatique est désactivé. Ignoré si le champion est activé (les trois backends sont entraînés).",
                 ),
             )
             # Checkbox unique : active à la fois les rangs percentiles ET les features sectorielles
