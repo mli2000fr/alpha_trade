@@ -21,21 +21,21 @@ Le workflow sépare deux familles d'actions :
 
 ## Ordre d'exécution
 
-| # | Onglet / Page | Action | Pourquoi |
-|---|---------------|--------|----------|
-| 0 | — | **Entraîner le modèle** global + per-symbol avec la **config champion B25** : `--include-short-score --target-excess-vs-spy --include-factors --catboost-loss-function YetiRank`, univers **liquidité 400** (`config/ticket_mid_cap_400.txt`), training 2016, 8 splits × 252j, 756j, + **`--comment "<description>"`** (visible dans la liste des campagnes). **Gate d'entrée : IC Rank doit battre B25 (0.0241) — sinon ne pas adopter** (voir « Gates d'adoption ») | Prérequis : le batch doit exister et être meilleur que le champion |
-| 1 | 🧱 Backfill scores history | **Lancer le backfill (rangs PIT du batch)** — c'est la **prédiction historique**. L'étape 10 du pipeline est **batch-agnostique** (dispatch per-symbol/per-sector automatique via `--batch-id`) | Sans historique de rangs, aucun backtest/calibration ne peut tourner |
-| 2 | ▶️ Backtest | **Run baseline** : dates de calibration, sizing `equal_weight`, **tout `off`** | Produit `trades.csv` + référence de comparaison |
-| 3 | 🎯 Calibrate conviction | Lancer `calibrate-conviction-weights` (fenêtre se terminant **≤ début de l'étape 5**) | Produit le run en DB (`weights_calibration_runs`) |
-| 3' | ▶️ Backtest → expander « 🔧 Calibrer les multiplicateurs... » | Choisir le run de l'étape 2 → « ⚙️ Calibrer et écrire le JSON » | Produit `config/p21_sector_multipliers.json` |
-| 4 | 🔄 Walk-forward conviction | Lancer sur toute l'histoire | Vérifie la stabilité des poids conviction |
-| 5 | ▶️ Backtest | **Runs de validation OOS, un par un** :<br>**5a)** sizing `rank_weighted` seul → vs étape 2<br>**5b)** + selectbox « Multiplicateurs sectoriels » = `default` → vs 5a<br>**5c)** + selectbox « Calibration conviction/Kelly » = `auto`/`pinned` (sans secteur) → vs 5a<br>**5d)** combo complet : rank_weighted + secteur + conviction → vs 5b et 5c<br>**5e)** `--bull-strict-mode no_shorts` → vs étape 2 (P2-3)<br>**5f)** `--bull-strict-mode no_trades` → vs étape 2 (P2-3)<br>⚠️ 5e/5f sont **à re-valider à chaque batch** : la règle est portable, son bénéfice dépend des PnL du modèle | Chaque A/B doit battre son parent avant adoption |
-| 6 | 🎛️ Calibration trimestrielle | Au rythme du job (fin de trimestre) | Indépendant du batch, garde-fou de dérive |
-| 7 | — | **Décision** : adopter uniquement ce qui est validé OOS (≥ 5/6 métriques vs parent) — procédure détaillée dans « Décision & application » | Aucune promotion automatique |
-| 8 | ⚙️ Pipeline → « Paramètres Risk Management » → expander « Allocation P2-1 » | **Activer le sizing live** : mode `rank_weighted` + **JSON sectoriel recalibré à l'étape 3' pour ce batch** | Le step 11 Risk applique les facteurs validés en 5a/5b |
-| 9 | 🧮 Calibrations poids | **Activer la conviction live** : sélectionner le run validé (5c/5d) → « ✅ Promouvoir pour le live » (`eligible_for_live=1`) | Le live consomme le run via le fallback `empirical_calibration` |
-| 10 | 🤖 ML / Prédictions → « 🧭 Gouvernance & artefacts de serving » | **Promouvoir le batch** (« Promouvoir cette campagne pour le serving » → `model_serving_batch`) **+ mettre à jour `batch_diagnostics.live_batch_id` dans `config.yaml`** + lancer le pipeline live (étapes 1→10). Le job quotidien reste `python -m modelFactory.predict_per_sector` | La production consomme le batch + sizing + conviction validés → prédiction live |
-| 11 | 🤖 ML / Prédictions → résumé du run risk | **Smoke test live** : prédictions datées du jour, **univers ≥ garde-fou breadth 75 % = 300 symboles** (seuil validé par B38 : 300 parmi les 400 → IC −5 % seulement), payload `runtime_applied: true`, ingestion réparée (barres à jour) | Confirme que tout est branché avant de laisser tourner |
+| # | Onglet / Page | Action | Pourquoi | Ref `doc/ml_todo.md` |
+|---|---------------|--------|----------|-----------------------|
+| 0 | — | **Entraîner le modèle** global + per-symbol avec la **config champion B25** : `--include-short-score --target-excess-vs-spy --include-factors --catboost-loss-function YetiRank`, univers **liquidité 400** (`config/ticket_mid_cap_400.txt`), training 2016, 8 splits × 252j, 756j, + **`--comment "<description>"`** (visible dans la liste des campagnes). **Gate d'entrée : IC Rank doit battre B25 (0.0241) — sinon ne pas adopter** (voir « Gates d'adoption ») | Prérequis : le batch doit exister et être meilleur que le champion | **P1-2** (B25 champion), **B35/B36/B37/B38** (univers), **B18/B19** (fenêtre), **B31-B34** (flags toxiques) |
+| 1 | 🧱 Backfill scores history | **Lancer le backfill (rangs PIT du batch)** — c'est la **prédiction historique**. L'étape 10 du pipeline est **batch-agnostique** (dispatch per-symbol/per-sector automatique via `--batch-id`) | Sans historique de rangs, aucun backtest/calibration ne peut tourner | « Étape 10 dispatch intelligent » + job `predict_per_sector` |
+| 2 | ▶️ Backtest | **Run baseline** : dates de calibration, sizing `equal_weight`, **tout `off`** | Produit `trades.csv` + référence de comparaison | **P1-4** (portfolio OOS), **P1-5/P1-6** (régimes + rolling IC, analyses de robustesse réutilisables) |
+| 3 | 🎯 Calibrate conviction | Lancer `calibrate-conviction-weights` (fenêtre se terminant **≤ début de l'étape 5**) | Produit le run en DB (`weights_calibration_runs`) | Calibration conviction/Kelly (tab IHM backtesting) |
+| 3' | ▶️ Backtest → expander « 🔧 Calibrer les multiplicateurs... » | Choisir le run de l'étape 2 → « ⚙️ Calibrer et écrire le JSON » | Produit `config/p21_sector_multipliers.json` | **P2-1 inc.1 + inc.3** (attribution + dérivation des facteurs) |
+| 4 | 🔄 Walk-forward conviction | Lancer sur toute l'histoire | Vérifie la stabilité des poids conviction | Walk-forward conviction (Sprint 4) |
+| 5 | ▶️ Backtest | **Runs de validation OOS, un par un** :<br>**5a)** sizing `rank_weighted` seul → vs étape 2<br>**5b)** + selectbox « Multiplicateurs sectoriels » = `default` → vs 5a<br>**5c)** + selectbox « Calibration conviction/Kelly » = `auto`/`pinned` (sans secteur) → vs 5a<br>**5d)** combo complet : rank_weighted + secteur + conviction → vs 5b et 5c<br>**5e)** `--bull-strict-mode no_shorts` → vs étape 2<br>**5f)** `--bull-strict-mode no_trades` → vs étape 2<br>⚠️ 5e/5f sont **à re-valider à chaque batch** : la règle est portable, son bénéfice dépend des PnL du modèle | Chaque A/B doit battre son parent avant adoption | **5a/5d : P2-1 inc.2 + inc.4**<br>**5b : P2-1 inc.3**<br>**5c : calibration conviction**<br>**5e/5f : P2-3** |
+| 6 | 🎛️ Calibration trimestrielle | Au rythme du job (fin de trimestre) | Indépendant du batch, garde-fou de dérive | Job trimestriel poids (`run_quarterly_weights_calibration.py`, S11.1/P3) |
+| 7 | — | **Décision** : adopter uniquement ce qui est validé OOS (≥ 5/6 métriques vs parent) — procédure détaillée dans « Décision & application » | Aucune promotion automatique | Discipline P2-1 inc.4 (OOS obligatoire) |
+| 8 | ⚙️ Pipeline → « Paramètres Risk Management » → expander « Allocation P2-1 » | **Activer le sizing live** : mode `rank_weighted` + **JSON sectoriel recalibré à l'étape 3' pour ce batch** | Le step 11 Risk applique les facteurs validés en 5a/5b | **P2-1 branchement live** (`common/sizing.py`, `RiskConfig.build_sizing_config`) |
+| 9 | 🧮 Calibrations poids | **Activer la conviction live** : sélectionner le run validé (5c/5d) → « ✅ Promouvoir pour le live » (`eligible_for_live=1`) | Le live consomme le run via le fallback `empirical_calibration` | Gouvernance `weights_calibration_runs` (migration 0032, boutons IHM) |
+| 10 | 🤖 ML / Prédictions → « 🧭 Gouvernance & artefacts de serving » | **Promouvoir le batch** (« Promouvoir cette campagne pour le serving » → `model_serving_batch`) **+ mettre à jour `batch_diagnostics.live_batch_id` dans `config.yaml`** + lancer le pipeline live (étapes 1→10). Le job quotidien reste `python -m modelFactory.predict_per_sector` | La production consomme le batch + sizing + conviction validés → prédiction live | « 🔥 Promotion B25 en production » (fix jointure `load_predictions_asof` déjà en place) |
+| 11 | 🤖 ML / Prédictions → résumé du run risk | **Smoke test live** : prédictions datées du jour, **univers ≥ garde-fou breadth 75 % = 300 symboles** (seuil validé par B38 : 300 parmi les 400 → IC −5 % seulement), payload `runtime_applied: true`, ingestion réparée (barres à jour) | Confirme que tout est branché avant de laisser tourner | **P0-4** (garde-fou breadth bloquant) + **B38** (validation du seuil 300) |
 
 > Les étapes **8 et 9 sont indépendantes** (ordre libre entre elles) ; l'étape **10**
 > se fait en dernier, juste avant le lancement live. Une seule de ces étapes
@@ -51,18 +51,19 @@ Le workflow sépare deux familles d'actions :
 > En production, la gate `research_only` interdit l'exécution paper/live depuis un
 > modèle per-sector tant qu'il n'a pas prouvé d'alpha walk-forward exploitable.
 
-### Gates d'adoption d'un nouveau batch (leçons de `ml_todo.md`)
+### Gates d'adoption d'un nouveau batch (leçons de `doc/ml_todo.md`)
 
 Avant même l'étape 1, vérifier ces points sur le nouveau batch :
 
-| Gate | Condition | Source |
+| Gate | Condition | Source (`doc/ml_todo.md`) |
 |------|-----------|--------|
-| **IC Rank Global** | Doit **battre B25 (0.0241)** ; sinon ne pas adopter | Podium B0-B38 : B25 champion définitif |
-| **Univers d'entraînement** | **Liquidité 400** (`config/ticket_mid_cap_400.txt`). 300 parmi les 400 acceptable (−5 % IC, IR +7 %, B38) | B35/B36 (196) ❌, B37 (393 swing) ❌ |
-| **Flags** | `--include-short-score --target-excess-vs-spy --include-factors --catboost-loss-function YetiRank` (config B25) | B31-B34 ❌ : fondamentaux/cross-sectional/screener toxiques même en YetiRank |
-| **Fenêtre** | Training from **2016**, 8 splits × 252j, fenêtre 756j, demi-vie 360j | B18/B19 ❌ (2011 = −18 à −22 %) ; 13 splits ❌ |
-| **Target** | Pipeline complet (smoothing + sector-neutral + factor-neutral) — pas de raw rank | B30 ❌ (P1-3 : −36 %) |
-| **Per-sector** | `research_only` tant que F1 WF ≤ 0.35 / DirAcc ≤ 0.53 | Campagne 2026-08-05 sans alpha |
+| **IC Rank Global** | Doit **battre B25 (0.0241)** ; sinon ne pas adopter | **P1-2** — Podium B0-B38 : B25 champion définitif |
+| **Univers d'entraînement** | **Liquidité 400** (`config/ticket_mid_cap_400.txt`). 300 parmi les 400 acceptable (−5 % IC, IR +7 %) | **B35/B36** (196) ❌, **B37** (393 swing) ❌, **B38** (300 parmi 400) ✅ |
+| **Flags** | `--include-short-score --target-excess-vs-spy --include-factors --catboost-loss-function YetiRank` (config B25) | **B31-B34** ❌ : fondamentaux/cross-sectional/screener toxiques même en YetiRank ; **B5-B8/B11** (macro) 0 gain ; **B9/B13** ❌ |
+| **Fenêtre** | Training from **2016**, 8 splits × 252j, fenêtre 756j, demi-vie 360j | **B18/B19** ❌ (2011 = −18 à −22 %) ; 13 splits ❌ (tableau de bord tests 13) |
+| **Target** | Pipeline complet (smoothing + sector-neutral + factor-neutral) — pas de raw rank | **P1-3 / B30** ❌ (raw rank : −36 %) |
+| **Per-sector** | `research_only` tant que F1 WF ≤ 0.35 / DirAcc ≤ 0.53 | Campagne 2026-08-05 sans alpha (« Per-Sector ≈ hasard ») |
+| **Robustesse (optionnel)** | Réexécuter les analyses régime + rolling IC sur le nouveau batch | **P1-5** (IC/PnL par régime), **P1-6** (rolling IC 6/12m) |
 | **Commentaire** | `--comment "<description>"` renseigné (affiché dans la liste des campagnes ML) | IHM « Gouvernance & artefacts de serving » |
 
 > 🚫 **Si le batch échoue une seule gate d'entrée → ne pas lancer le workflow.**
@@ -153,7 +154,7 @@ Principe : **un seul changement à la fois**, chaque run se compare à son paren
    - **5e/5f** : adopter le mode bull-strict gagnant si ≥ 5/6 métriques vs étape 2 ; si les deux gagnent, prendre le meilleur des deux (puis éventuellement un run combo rank_weighted + bull-strict avant l'adoption).
    - **Simplicité** : si combo ≈ meilleur ingrédient seul → garder le plus simple (moins de paramètres = moins de risque).
 
-4. **Consigner le verdict dans `prompt/ml_journal.md`** (voir section dédiée) : une ligne par décision, avec la date, les chiffres comparatifs et le statut ✅/❌/⏳.
+4. **Consigner le verdict dans `doc/ml_todo.md`** (voir section dédiée) : une ligne par décision, avec la date, les chiffres comparatifs et le statut ✅/❌/⏳.
 
 > **Exemple B25 (2026-08-13)** : 5a adopté (rank_weighted 33.4 % vs equal 28.0 %, +0.08 Sharpe, DD +2.9 pts toléré) ; 5b adopté (rankw+secteur 34.4 % vs 33.4 %, +0.02 Sharpe, DD +0.2 pt) → a motivé le branchement sizing live.
 
@@ -171,9 +172,9 @@ Principe : **un seul changement à la fois**, chaque run se compare à son paren
 > depuis 2026-08-13, opt-in), activer la calibration
 > conviction en config live, promouvoir le batch.
 
-### Pourquoi consigner le verdict dans `prompt/ml_journal.md`
+### Pourquoi consigner le verdict dans `doc/ml_todo.md`
 
-`prompt/ml_journal.md` est le **journal de recherche ML** du projet. Y noter chaque verdict sert à :
+`doc/ml_todo.md` est le **journal de recherche ML** du projet. Y noter chaque verdict sert à :
 
 - **Traçabilité** : on garde les chiffres OOS qui ont motivé l'adoption ou le rejet (ex. B25 : 33.4% → 34.4%, +0.02 Sharpe).
 - **Éviter de re-tester** : toute conclusion documentée devient un acquis ; on ne relance pas un A/B déjà tranché.
