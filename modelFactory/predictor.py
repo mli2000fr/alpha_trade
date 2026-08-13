@@ -2142,11 +2142,13 @@ def predict_global_rank_history(
     *,
     artifacts_dir: Path | None = None,
     engine: Any | None = None,
+    symbols: list[str] | None = None,
 ) -> dict[str, int]:
     """Prédit les rangs globaux pour une période et les persiste en DB.
 
     Pour chaque jour de bourse entre ``start_date`` et ``end_date`` :
-    1. Charge les barres de l'univers tradable
+    1. Charge les barres de l'univers (tradable PIT par défaut, ou ``symbols``
+       explicite — ex. liste ticket pour backfills comparables au walk-forward)
     2. Appelle ``predict_global_rank()`` (depuis global_ranking.py)
     3. Upsert les résultats dans ``global_rank_history``
 
@@ -2224,7 +2226,10 @@ def predict_global_rank_history(
 
         try:
             # Charger l'univers du jour
-            universe_symbols = load_tradable_universe_symbols(engine, trade_date=_trade_date)
+            if symbols:
+                universe_symbols = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+            else:
+                universe_symbols = load_tradable_universe_symbols(engine, trade_date=_trade_date)
             if not universe_symbols:
                 LOGGER.warning("predict_global_rank_history: empty universe on %s", trade_date_str)
                 results[trade_date_str] = 0

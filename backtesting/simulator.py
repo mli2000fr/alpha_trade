@@ -236,6 +236,7 @@ class _OpenPosition:
     peak_high: float
     trough_low: float  # Sprint 2 — trailing short
     entry_cost: float
+    entry_cash_flow: float = 0.0  # A-021 — flux de trésorerie signé à l'entrée (net de frais)
     side: str = "buy"  # Sprint 2 — direction
     # Phase B.2 — stop-loss initial dur (None = désactivé).
     initial_stop_price: float | None = None
@@ -874,10 +875,14 @@ class BacktestEngine:
                     return_pct = compute_return_pct(pos_side, position.entry_price, close_price)
                     if is_short_side(pos_side):
                         # Short close: buy back, debit cash
+                        exit_cash_flow = -abs_qty * close_price
                         state.settled_cash -= abs_qty * close_price
                     else:
                         # Long close: sell, credit cash
+                        exit_cash_flow = abs_qty * close_price
                         state.settled_cash += abs_qty * close_price
+                    # A-021 — PnL NET (force-close sans frais de sortie)
+                    pnl = position.entry_cash_flow + exit_cash_flow
                     state.closed_trades.append({
                         "symbol": symbol,
                         "side": pos_side,
@@ -923,6 +928,7 @@ class BacktestEngine:
                 cfg.benchmark_close, trade_day,
             )
             current_gross_notional = self._compute_gross_notional(state.positions, mtm_close, trade_day)
+            current_net_notional = self._compute_net_notional(state.positions, mtm_close, trade_day)
             leverage_state = self._resolve_daily_leverage_state(float(current_equity), drawdown_scale=drawdown_allocation_scale)
             self._record_trade_event(
                 state,
@@ -939,7 +945,9 @@ class BacktestEngine:
                 settled_cash=state.settled_cash,
                 unsettled_cash=state.unsettled_cash,
                 current_gross_notional=current_gross_notional,
+                current_net_notional=current_net_notional,
                 gross_exposure_before_pct=(current_gross_notional / current_equity) if current_equity > 0 else 0.0,
+                net_exposure_before_pct=(current_net_notional / current_equity) if current_equity > 0 else 0.0,
                 available_entry_budget=self._resolve_available_entry_budget(
                     constraints=constraints,
                     settled_cash=state.settled_cash,
@@ -997,9 +1005,10 @@ class BacktestEngine:
                         if not (np.isfinite(close_price) and close_price > 0):
                             continue
                         abs_qty = abs(position.quantity)
-                        pnl = compute_realized_pnl("buy", abs_qty, position.entry_price, close_price)
                         return_pct = compute_return_pct("buy", position.entry_price, close_price)
                         state.settled_cash += abs_qty * close_price
+                        # A-021 — PnL NET (force-close sans frais de sortie)
+                        pnl = position.entry_cash_flow + abs_qty * close_price
                         state.closed_trades.append({
                             "symbol": symbol,
                             "side": "buy",
@@ -1581,8 +1590,10 @@ class BacktestEngine:
                 # P1+P3 — cost inclut commission tiered + slippage volume + spread réel
                 short_credit = quantity_abs * entry_price * (1.0 - effective_cost_pct) - tiered_fixed
                 state.settled_cash += short_credit
+                entry_cash_flow = short_credit
             else:
                 state.settled_cash -= entry_cost + tiered_fixed
+                entry_cash_flow = -(entry_cost + tiered_fixed)
 
             initial_stop_price, risk_per_share = self._resolve_initial_protection_state(
                 row=row,
@@ -1601,6 +1612,7 @@ class BacktestEngine:
                 peak_high=entry_price,
                 trough_low=entry_price,
                 entry_cost=entry_cost,
+                entry_cash_flow=entry_cash_flow,
                 initial_stop_price=initial_stop_price,
                 risk_per_share=risk_per_share,
                 replay_take_profit_price=(
@@ -1990,12 +2002,15 @@ class BacktestEngine:
                 # Coût du borrow sur le notional de la position
                 entry_notional = abs_qty * position.entry_price
                 borrow_cost = entry_notional * borrow_cost_pct
-                pnl -= borrow_cost
                 # Déduire aussi du cash settled
                 if constraints.use_settled_cash_only:
                     state.unsettled_cash -= borrow_cost
                 else:
                     state.settled_cash -= borrow_cost
+
+            # A-021 — PnL NET : flux de trésorerie d'entrée signé + flux de sortie − borrow.
+            # `proceeds` contient déjà les frais de sortie (positif long, négatif short).
+            pnl = position.entry_cash_flow + proceeds - borrow_cost
 
             is_day_trade = is_same_day
             if is_day_trade:
@@ -2254,6 +2269,26 @@ class BacktestEngine:
         Longs : +qty * px (positive)
         Shorts : -qty * px (négative, car due au broker)
         """
+        if not positions:
+            return 0.0
+        total = 0.0
+        for position in positions.values():
+            try:
+                px = float(close.at[trade_day, position.symbol])
+                if np.isfinite(px):
+                    sign = -1 if is_short_side(getattr(position, "side", "buy") or "buy") else 1
+                    total += sign * abs(position.quantity) * px
+            except (KeyError, ValueError):
+                continue
+        return total
+
+    @staticmethod
+    def _compute_net_notional(
+        positions: dict[str, _OpenPosition],
+        close: pd.DataFrame,
+        trade_day: pd.Timestamp,
+    ) -> float:
+        """A-021 — exposition nette = somme des qty signées × px (longs +, shorts −)."""
         if not positions:
             return 0.0
         total = 0.0

@@ -275,6 +275,8 @@ class GlobalModelConfig:
     # silencieusement le Global Ranking. Cohérents avec la doc (n_estimators=500).
     ranking_catboost_iterations: int = 500
     ranking_catboost_learning_rate: float = 0.03
+    # ── P1-3 : Target = rang percentile pur (skip smoothing + neutralisation) ──
+    ranking_raw_target: bool = False   # True → skip étapes 2-4, garde rank(pct) brut
 
     def __post_init__(self) -> None:
         if self.model_name not in {"catboost", "lightgbm"}:

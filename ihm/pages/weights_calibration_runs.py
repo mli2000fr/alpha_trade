@@ -434,6 +434,58 @@ def render() -> None:
     if detail_columns:
         st.dataframe(details_df[detail_columns], use_container_width=True, hide_index=True)
 
+    # ── Gouvernance live : activation/désactivation du run sélectionné ──
+    if "eligible_for_live" in details_df.columns:
+        _is_eligible = pd.to_numeric(details_df["eligible_for_live"], errors="coerce").fillna(0).iloc[0] > 0
+        gov_col1, gov_col2 = st.columns([1, 2])
+        with gov_col1:
+            if _is_eligible:
+                st.success("✅ Éligible live — activable par le fallback `empirical_calibration`.")
+                _deactivate = st.button(
+                    "🔒 Bloquer pour le live",
+                    key="weights_cal_deactivate_live",
+                    type="secondary",
+                )
+                if _deactivate:
+                    from ihm.services.queries import set_weights_calibration_live_eligibility
+
+                    if set_weights_calibration_live_eligibility(
+                        run_id=str(selected_run),
+                        eligible=False,
+                        reason="Désactivé manuellement via IHM (gouvernance calibrations)",
+                    ):
+                        st.cache_data.clear()
+                        st.success(f"Run `{selected_run}` bloqué pour le live.")
+                        st.rerun()
+                    else:
+                        st.error("Échec de l'écriture en DB.")
+            else:
+                st.warning("⛔ Non éligible live.")
+                _activate = st.button(
+                    "✅ Promouvoir pour le live",
+                    key="weights_cal_activate_live",
+                    type="primary",
+                    help="Vérifie d'abord la validation OOS : un run in-sample ne doit pas être activé.",
+                )
+                if _activate:
+                    from ihm.services.queries import set_weights_calibration_live_eligibility
+
+                    if set_weights_calibration_live_eligibility(
+                        run_id=str(selected_run),
+                        eligible=True,
+                        reason="Promu manuellement via IHM (gouvernance calibrations)",
+                    ):
+                        st.cache_data.clear()
+                        st.success(f"Run `{selected_run}` promu pour le live.")
+                        st.rerun()
+                    else:
+                        st.error("Échec de l'écriture en DB.")
+        with gov_col2:
+            st.caption(
+                "Le live consomme les runs éligibles via `risk_management.empirical_calibration.fallback_levels` "
+                "du config.yaml (résolution par segment/régime/horizon). Bloquer désactive immédiatement le fallback vers ce run."
+            )
+
     best_weights = _parse_json_payload(selected_row.get("best_weights"))
     if isinstance(best_weights, dict) and best_weights:
         with st.expander("⚙️ Best weights", expanded=True):

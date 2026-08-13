@@ -538,32 +538,37 @@ class RiskRepository:
         batch_join = ""
         batch_condition = ""
         if batch_id:
+            # NB : pas d'égalité `training_run.symbol = prediction.symbol` ici.
+            # Les runs "global rank synthétique" sont enregistrés dans
+            # model_training_run avec le symbole sentinelle `__GLOBAL_RANK_SYNTH__`
+            # alors que leurs prédictions portent les vrais symboles (cascade
+            # rank-driven) → l'égalité produirait 0 ligne consommable.
+            # Le run_id encode déjà le symbole pour les runs per-symbol.
             batch_join = """
                 JOIN model_training_run training_run
                   ON training_run.run_id = prediction.run_id
-                 AND training_run.symbol = prediction.symbol
             """
             batch_condition = "AND training_run.batch_id = :batch_id"
             params["batch_id"] = batch_id
         query = text(f"""
-                 SELECT symbol, predicted_proba, predicted_class, predicted_side,
-                     proba_long, proba_flat, proba_short, run_id, prediction_date
+                 SELECT ranked.symbol, ranked.predicted_proba, ranked.predicted_class, ranked.predicted_side,
+                     ranked.proba_long, ranked.proba_flat, ranked.proba_short, ranked.run_id, ranked.prediction_date
             FROM (
-                  SELECT symbol, predicted_proba, predicted_class, predicted_side,
-                      proba_long, proba_flat, proba_short, run_id, prediction_date,
+                  SELECT prediction.symbol, prediction.predicted_proba, prediction.predicted_class, prediction.predicted_side,
+                      prediction.proba_long, prediction.proba_flat, prediction.proba_short, prediction.run_id, prediction.prediction_date,
                        ROW_NUMBER() OVER (
-                           PARTITION BY symbol
-                           ORDER BY prediction_date DESC, created_at DESC, run_id DESC
+                           PARTITION BY prediction.symbol
+                           ORDER BY prediction.prediction_date DESC, prediction.created_at DESC, prediction.run_id DESC
                        ) AS rn
                                 FROM model_predictions prediction
                                 {batch_join}
                                 WHERE prediction.symbol IN ({placeholders})
-                  AND prediction_date <= :trade_date
-                  AND predicted_proba IS NOT NULL
-                  AND predicted_side IN ('long', 'flat', 'short')
-                  AND proba_long IS NOT NULL
-                  AND proba_flat IS NOT NULL
-                  AND proba_short IS NOT NULL
+                  AND prediction.prediction_date <= :trade_date
+                  AND prediction.predicted_proba IS NOT NULL
+                  AND prediction.predicted_side IN ('long', 'flat', 'short')
+                  AND prediction.proba_long IS NOT NULL
+                  AND prediction.proba_flat IS NOT NULL
+                  AND prediction.proba_short IS NOT NULL
                                     {batch_condition}
             ) ranked
             WHERE rn = 1

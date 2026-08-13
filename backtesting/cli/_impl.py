@@ -78,6 +78,37 @@ def _coerce_date_value(value: object) -> date | None:
     return date(int(ts.year), int(ts.month), int(ts.day))
 
 
+def _parse_sector_multipliers_json(raw: str | None) -> dict[str, float] | None:
+    """Parse ``--sector-multipliers-json`` (JSON {secteur: facteur} ou @fichier)."""
+    if not raw or not raw.strip():
+        return None
+    text_value = raw.strip()
+    if text_value.startswith("@"):
+        try:
+            text_value = Path(text_value[1:]).read_text(encoding="utf-8")
+        except Exception as exc:
+            raise argparse.ArgumentTypeError(f"--sector-multipliers-json: fichier illisible : {exc}") from exc
+    try:
+        payload = json.loads(text_value)
+        if not isinstance(payload, dict):
+            raise ValueError("attendu un objet JSON {secteur: facteur}")
+        multipliers = {str(k).strip(): float(v) for k, v in payload.items() if str(k).strip()}
+        return multipliers or None
+    except Exception as exc:
+        raise argparse.ArgumentTypeError(f"--sector-multipliers-json invalide : {exc}") from exc
+
+
+def _load_sector_map_for_sizing(engine: object) -> dict[str, str]:
+    """Charge le mapping symbole → secteur (stock_metadata) pour le sizing sectoriel."""
+    try:
+        from modelFactory.cross_sectional import _load_sector_mapping
+
+        return _load_sector_mapping(engine)
+    except Exception:
+        LOGGER.warning("_load_sector_map_for_sizing: mapping indisponible → sizing sectoriel inactif", exc_info=True)
+        return {}
+
+
 def _run_bars_source_preflight_or_skip(engine: object, start_date: date, end_date: date) -> dict[str, object]:
     from backtesting.data_loader import BACKTEST_REQUIRED_BARS_DATA_SOURCE, preflight_required_bars_data_source
 
@@ -1058,7 +1089,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument(
         "--sizing-mode",
-        choices=["equal_weight", "conviction_weighted"],
+        choices=["equal_weight", "conviction_weighted", "rank_weighted"],
         default="equal_weight",
         help="Mode de sizing du portefeuille (Phase C.1).",
     )
@@ -1066,13 +1097,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--sizing-min-weight-pct",
         type=float,
         default=0.005,
-        help="Poids min par position quand sizing=conviction_weighted (Phase C.1).",
+        help="Poids min par position quand sizing=conviction_weighted/rank_weighted (Phase C.1).",
     )
     run_p.add_argument(
         "--sizing-max-weight-pct",
         type=float,
         default=0.20,
-        help="Poids max par position quand sizing=conviction_weighted (Phase C.1).",
+        help="Poids max par position quand sizing=conviction_weighted/rank_weighted (Phase C.1).",
+    )
+    run_p.add_argument(
+        "--sector-multipliers-json",
+        type=str,
+        default=None,
+        help="P2-1 inc.3 : multiplicateurs sectoriels au format JSON {secteur: facteur} "
+             "appliqués après le poids de base (ex: {\"Retail\":1.25,\"Health Care\":0.5}).",
     )
     run_p.add_argument(
         "--regime-filter",
@@ -2840,6 +2878,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
             mode=args.sizing_mode,
             min_weight_pct=float(args.sizing_min_weight_pct),
             max_weight_pct=float(args.sizing_max_weight_pct),
+            sector_multipliers=(
+                _parse_sector_multipliers_json(getattr(args, "sector_multipliers_json", None))
+            ),
+            sector_map=(
+                _load_sector_map_for_sizing(engine)
+                if getattr(args, "sector_multipliers_json", None)
+                else None
+            ),
         ),
         regime_filter=RegimeFilterConfig(
             enabled=bool(args.regime_filter),

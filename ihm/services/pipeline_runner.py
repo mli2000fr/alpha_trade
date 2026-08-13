@@ -268,6 +268,9 @@ DEFAULT_RISK_TARGET_ANNUAL_VOL = 0.0
 DEFAULT_RISK_VOL_TARGET_LOOKBACK_DAYS = 60
 DEFAULT_RISK_MIN_ML_COVERAGE_RATIO = 0.95    # en-dessous: mieux vaut repasser quant-only / durcir la validation
 DEFAULT_RISK_LOG_LEVEL = "INFO"
+# P2-1 (2026-08-13) — allocation des poids live
+DEFAULT_RISK_SIZING_MODE = "atr"             # atr = legacy ; sinon equal_weight | conviction_weighted | rank_weighted
+DEFAULT_RISK_SECTOR_MULTIPLIERS_PATH = "config/p21_sector_multipliers.json"
 # Execution — swing cash batch
 DEFAULT_EXEC_SUBMISSION_WINDOW = "both"      # post_close + pre_open (batch quotidien)
 DEFAULT_EXEC_TAKE_PROFIT_PCT = 0.08
@@ -390,6 +393,7 @@ class PipelineLaunchOptions:
     ml_global_ranking_max_symbols: int = DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS
     ml_global_ranking_selection_mode: str = "stratified"
     ml_ranking_sector_group: str = "all"  # all | cyclical | defensive
+    ml_ranking_raw_target: bool = False  # P1-3 : target = rang percentile pur
     ml_per_symbol_max_symbols: int = DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS
     ml_per_symbol_selection_mode: str = "stratified"  # "top_volume" | "stratified"
     ml_exclude_ticket_symbols: bool = False
@@ -525,6 +529,9 @@ class PipelineLaunchOptions:
     risk_min_ml_coverage_ratio: float = DEFAULT_RISK_MIN_ML_COVERAGE_RATIO
     risk_enable_shadow_compare: bool = False
     risk_shadow_compare_run_id: str | None = None
+    # P2-1 (2026-08-13) — allocation des poids live
+    risk_sizing_mode: str = DEFAULT_RISK_SIZING_MODE
+    risk_sector_multipliers_path: str | None = None
     risk_dry_run: bool = False
     risk_log_level: str = DEFAULT_RISK_LOG_LEVEL
     news_import_start_date: str | None = None
@@ -2309,6 +2316,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 command.append("--global-ranking-selection-stratified")
         if getattr(options, "ml_ranking_sector_group", "all") != "all":
             command.extend(["--ranking-sector-group", str(options.ml_ranking_sector_group)])
+        if getattr(options, "ml_ranking_raw_target", False):
+            command.extend(["--ranking-raw-target"])
         if options.ml_per_symbol_max_symbols > 0:
             command.extend(["--per-symbol-max-symbols", str(options.ml_per_symbol_max_symbols)])
             if getattr(options, "ml_per_symbol_selection_mode", "top_volume") == "stratified":
@@ -2410,6 +2419,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--max-workers",
             str(options.ml_max_workers),
         ]
+        if _bid:
+            command.extend(["--batch-id", _bid])
         if options.ml_predict_use_historical_range:
             command.extend([
                 "--training-start-date",
@@ -2479,6 +2490,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--shadow-compare-run-id", str(options.risk_shadow_compare_run_id)])
         if options.risk_dry_run:
             command.append("--dry-run")
+        # ── P2-1 : allocation des poids live (opt-in) ──
+        _sizing_mode = str(getattr(options, "risk_sizing_mode", DEFAULT_RISK_SIZING_MODE) or "atr").strip().lower()
+        if _sizing_mode and _sizing_mode != "atr":
+            command.extend(["--sizing-mode", _sizing_mode])
+            _sector_path = str(getattr(options, "risk_sector_multipliers_path", None) or "").strip()
+            if _sector_path:
+                command.extend(["--sector-multipliers-path", _sector_path])
         if trade_date:
             command.extend(["--trade-date", trade_date])
         if account_id:

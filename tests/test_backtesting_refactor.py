@@ -203,6 +203,43 @@ class TestPhaseC:
         assert w.iloc[0] == pytest.approx(0.6)
         assert w.iloc[1] == pytest.approx(0.4)
 
+    def test_sizing_rank_weighted_overweights_top(self):
+        from backtesting.risk_overlay import SizingConfig
+
+        cfg = SizingConfig(mode="rank_weighted", min_weight_pct=0.0, max_weight_pct=1.0)
+        candidates = pd.DataFrame({"symbol": ["A", "B", "C", "D"], "selection_rank": [1, 2, 3, 4]})
+        w = cfg.compute_weights(candidates, max_positions=4)
+        # scores = 4,3,2,1 → total 10
+        assert w.iloc[0] == pytest.approx(0.4)
+        assert w.iloc[1] == pytest.approx(0.3)
+        assert w.iloc[2] == pytest.approx(0.2)
+        assert w.iloc[3] == pytest.approx(0.1)
+
+    def test_sizing_rank_weighted_fallback_equal_when_no_rank(self):
+        from backtesting.risk_overlay import SizingConfig
+
+        cfg = SizingConfig(mode="rank_weighted")
+        candidates = pd.DataFrame({"symbol": ["A", "B"]})
+        w = cfg.compute_weights(candidates, max_positions=2)
+        assert w.tolist() == [0.5, 0.5]
+
+    def test_sizing_sector_multipliers_via_symbol_map(self):
+        from backtesting.risk_overlay import SizingConfig
+
+        cfg = SizingConfig(
+            mode="equal_weight",
+            min_weight_pct=0.0,
+            max_weight_pct=1.0,
+            sector_multipliers={"Health Care": 0.5, "Retail": 2.0},
+            sector_map={"A": "Health Care", "B": "Retail", "C": "Other"},
+        )
+        candidates = pd.DataFrame({"symbol": ["A", "B", "C"]})
+        w = cfg.compute_weights(candidates, max_positions=3)
+        # base 1/3 chacun → facteurs 0.5/2.0/1.0 → 1/6, 2/3, 1/3 → somme 7/6
+        assert w.iloc[0] == pytest.approx((1.0 / 6.0) / (7.0 / 6.0))
+        assert w.iloc[1] == pytest.approx((2.0 / 3.0) / (7.0 / 6.0))
+        assert w.iloc[2] == pytest.approx((1.0 / 3.0) / (7.0 / 6.0))
+
     def test_snapshot_sector_exposure_aggregates_by_sector(self):
         """Phase E.3.b — primitive `snapshot_sector_exposure` extraite du
         simulator. Vérifie l'agrégation par secteur, le fallback `sector_map`

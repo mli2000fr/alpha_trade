@@ -73,9 +73,11 @@ class BacktestRunOptions:
     max_entry_gap_pct: float = 0.0
     intrabar_priority: Literal["conservative", "tp_first", "ts_first", "random"] = "conservative"
     # Phase C (refactor) — risk overlays
-    sizing_mode: Literal["equal_weight", "conviction_weighted"] = "equal_weight"
+    sizing_mode: Literal["equal_weight", "conviction_weighted", "rank_weighted"] = "equal_weight"
     sizing_min_weight_pct: float = 0.005
     sizing_max_weight_pct: float = 0.20
+    # P2-1 inc.3 — multiplicateurs sectoriels (JSON {secteur: facteur} ou @fichier)
+    sector_multipliers_json: str | None = None
     regime_filter: bool = False
     regime_sma_window: int = 200
     regime_bear_threshold: float = -0.02
@@ -330,6 +332,8 @@ def build_backtesting_command(
             command.extend(["--sizing-mode", options.sizing_mode])
             command.extend(["--sizing-min-weight-pct", str(options.sizing_min_weight_pct)])
             command.extend(["--sizing-max-weight-pct", str(options.sizing_max_weight_pct)])
+        if options.sector_multipliers_json:
+            command.extend(["--sector-multipliers-json", options.sector_multipliers_json])
         if options.regime_filter:
             command.append("--regime-filter")
             command.extend(["--regime-sma-window", str(options.regime_sma_window)])

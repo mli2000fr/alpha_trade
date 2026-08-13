@@ -11,38 +11,13 @@ Phase C — surcouches risk management appliquées par le simulateur :
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 import numpy as np
 import pandas as pd
 
+# ── P2-1 : SizingConfig partagé avec le live (common/sizing.py) ──
+from common.sizing import SizingConfig, SizingMode
 
-SizingMode = Literal["equal_weight", "conviction_weighted"]
-
-
-@dataclass(slots=True, frozen=True)
-class SizingConfig:
-    """Sizing config (equal_weight | conviction_weighted)."""
-
-    mode: SizingMode = "equal_weight"
-    min_weight_pct: float = 0.005
-    max_weight_pct: float = 0.20
-
-    def compute_weights(self, candidates: pd.DataFrame, max_positions: int) -> pd.Series:
-        if candidates.empty:
-            return pd.Series(dtype=float)
-        if self.mode == "equal_weight" or "conviction" not in candidates.columns:
-            base = 1.0 / max(max_positions, 1)
-            return pd.Series(base, index=candidates.index, dtype=float)
-        conv = candidates["conviction"].fillna(0.0).clip(lower=0.0)
-        total = float(conv.sum())
-        if total <= 0:
-            base = 1.0 / max(max_positions, 1)
-            return pd.Series(base, index=candidates.index, dtype=float)
-        weights = conv / total
-        weights = weights.clip(lower=self.min_weight_pct, upper=self.max_weight_pct)
-        weights = weights / max(weights.sum(), 1e-9)
-        return weights
 
 
 @dataclass(slots=True, frozen=True)

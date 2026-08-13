@@ -507,6 +507,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "phase7_mode", "Explication": "off = comportement Phase 5, exit_lifecycle_replay = rejoue l'issue terminale des child orders et l'annulation OCO du sibling.", "Défaut": "off"},
             {"Paramètre": "conviction_calibration_mode", "Explication": "off = comportement standard (défaut) ; auto = charge la dernière calibration éligible PIT-safe ; pinned = run_id explicite forcé (window_end <= start requis).", "Défaut": "off"},
             {"Paramètre": "conviction_calibration_run_id", "Explication": "run_id explicite d'un run weights_calibration_runs à appliquer en mode pinned.", "Défaut": "None"},
+            {"Paramètre": "sector_multipliers_json", "Explication": "JSON {secteur: facteur} ou @fichier — multiplicateurs sectoriels appliqués au sizing (P2-1 inc.3).", "Défaut": "None"},
             {"Paramètre": "allow_neutral_fallback_on_missing_macro_data", "Explication": "Si vrai, le backtest continue quand la macro requise est indisponible et marque la séance en `data_quality=missing`. Sinon, il échoue explicitement.", "Défaut": "False"},
             {"Paramètre": "fidelity_baseline_id", "Explication": "Identifiant optionnel de baseline fidélité promue à comparer au run courant (Sprint 6).", "Défaut": "None"},
             {"Paramètre": "fidelity_baseline_catalog", "Explication": "Chemin optionnel vers le catalogue JSON des baselines fidélité. Convention stable recommandée : `config/fidelity_baseline_catalog.json` pointant vers `artifacts/fidelity_baselines/<baseline_id>/...`.", "Défaut": "None"},
@@ -524,7 +525,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "max_entry_gap_pct", "Explication": "Skip entrée si gap d'open > seuil (Phase B.3).", "Défaut": "0.0"},
             {"Paramètre": "intrabar_priority", "Explication": "Politique TP vs TS intra-bar (Phase B.4).", "Défaut": "conservative"},
             # Phase C (refactor) — risk overlays.
-            {"Paramètre": "sizing_mode", "Explication": "equal_weight | conviction_weighted (Phase C.1).", "Défaut": "equal_weight"},
+            {"Paramètre": "sizing_mode", "Explication": "equal_weight | conviction_weighted | rank_weighted (P2-1 inc.2).", "Défaut": "equal_weight"},
             {"Paramètre": "regime_filter", "Explication": "Active le filtre régime SMA200 sur le benchmark (Phase C.3).", "Défaut": "False"},
             {"Paramètre": "max_sector_exposure_pct", "Explication": "Cap d'exposition par secteur en fraction (Phase C.4).", "Défaut": "0.0"},
             {"Paramètre": "max_portfolio_dd_pct", "Explication": "Drawdown max avant coupe-circuit nouvelles entrées (Phase C.5).", "Défaut": "0.0"},
@@ -573,6 +574,36 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
 def _render_reference_table(kind: str) -> None:
     with st.expander("📘 Référence complète des paramètres", expanded=False):
         st.dataframe(pd.DataFrame(_parameter_reference_rows(kind)), use_container_width=True, hide_index=True)
+
+
+DEFAULT_SECTOR_MULTIPLIERS_PATH = PROJECT_ROOT / "config" / "p21_sector_multipliers.json"
+
+
+def _summarize_sector_multipliers(path: Path) -> str:
+    """Résumé lisible d'un JSON {secteur: facteur}."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        factors = [float(v) for v in payload.values()]
+    except Exception:
+        return f"JSON illisible : `{path}`"
+    counts: dict[float, int] = {}
+    for value in factors:
+        counts[value] = counts.get(value, 0) + 1
+    parts = " ".join(f"×{value:g}: {count}" for value, count in sorted(counts.items(), reverse=True))
+    return f"`{path}` — {len(factors)} secteurs ({parts})"
+
+
+def _list_backtest_runs_with_trades() -> list[str]:
+    """Dossiers de runs backtest contenant trades.csv, plus récents d'abord."""
+    base = PROJECT_ROOT / "artifacts" / "backtesting"
+    if not base.exists():
+        return []
+    runs = [
+        child for child in base.iterdir()
+        if child.is_dir() and (child / "trades.csv").exists()
+    ]
+    runs.sort(key=lambda child: child.stat().st_mtime, reverse=True)
+    return [str(child) for child in runs]
 
 
 def _default_fidelity_baseline_catalog_path() -> Path:
@@ -1014,11 +1045,11 @@ def _build_overlay_options(
                 str,
                 st.selectbox(
                     "Mode sizing",
-                    options=["equal_weight", "conviction_weighted"],
-                    index=["equal_weight", "conviction_weighted"].index(
+                    options=["equal_weight", "conviction_weighted", "rank_weighted"],
+                    index=["equal_weight", "conviction_weighted", "rank_weighted"].index(
                         cast(str, st.session_state.get("bt_run_sizing_mode", "equal_weight"))
                         if st.session_state.get("bt_run_sizing_mode", "equal_weight")
-                        in {"equal_weight", "conviction_weighted"}
+                        in {"equal_weight", "conviction_weighted", "rank_weighted"}
                         else "equal_weight"
                     ),
                     key="bt_run_sizing_mode",
@@ -1708,6 +1739,124 @@ def _build_run_options() -> BacktestRunOptions:
             "En mode `pinned`, un `window_end > start` cause l'échec immédiat du run pour éviter tout look-ahead."
         )
 
+    # ── Multiplicateurs sectoriels (P2-1 inc.3, opt-in) ──────
+    sector_col1, sector_col2 = st.columns([2, 3])
+    with sector_col1:
+        _sector_mode_value = cast(str, st.session_state.get("bt_run_sector_multipliers_mode", "off"))
+        sector_multipliers_mode = cast(
+            str,
+            st.selectbox(
+                "🏷️ Multiplicateurs sectoriels (P2-1)",
+                options=["off", "default", "custom"],
+                index=(
+                    ["off", "default", "custom"].index(_sector_mode_value)
+                    if _sector_mode_value in {"off", "default", "custom"}
+                    else 0
+                ),
+                key="bt_run_sector_multipliers_mode",
+                help=(
+                    "Facteurs par secteur (×0.5 à ×1.25) appliqués au sizing après le mode choisi. "
+                    "`off` = aucun. `default` = `config/p21_sector_multipliers.json`. "
+                    "`custom` = fichier JSON arbitraire `{secteur: facteur}`."
+                ),
+            ),
+        )
+    with sector_col2:
+        if sector_multipliers_mode == "off":
+            sector_multipliers_json = None
+            st.caption("Multiplicateurs sectoriels désactivés (comportement standard).")
+        elif sector_multipliers_mode == "default":
+            sector_multipliers_json = "@" + str(DEFAULT_SECTOR_MULTIPLIERS_PATH)
+            st.caption(_summarize_sector_multipliers(DEFAULT_SECTOR_MULTIPLIERS_PATH))
+        else:
+            _custom_sector_path = st.text_input(
+                "Chemin du JSON {secteur: facteur}",
+                value=str(st.session_state.get("bt_run_sector_multipliers_json_path", "") or ""),
+                key="bt_run_sector_multipliers_json_path",
+                help="Chemin relatif au projet ou absolu. Format JSON {secteur: facteur}.",
+            ).strip()
+            if _custom_sector_path:
+                sector_multipliers_json = "@" + _custom_sector_path
+                st.caption(_summarize_sector_multipliers(Path(_custom_sector_path)))
+            else:
+                sector_multipliers_json = None
+                st.caption("Aucun fichier renseigné — les multiplicateurs ne seront pas appliqués.")
+
+    with st.expander("🔧 Calibrer les multiplicateurs sectoriels depuis un run passé", expanded=False):
+        st.caption(
+            "Exécute `modelFactory.analyze_p21_attribution` sur un run de backtest existant : "
+            "efficience par secteur → facteurs (≥+150bps→1.25 ; +50..+150→1.10 ; ±50→1.00 ; −150..−50→0.75 ; ≤−150→0.50) "
+            "→ écriture de `config/p21_sector_multipliers.json`. Valider ensuite en A/B OOS."
+        )
+        _past_runs = _list_backtest_runs_with_trades()
+        if not _past_runs:
+            st.caption("Aucun dossier de backtest avec `trades.csv` trouvé dans `artifacts/backtesting`.")
+        else:
+            _cal_col1, _cal_col2, _cal_col3 = st.columns([3, 1, 1])
+            with _cal_col1:
+                _selected_cal_run = cast(
+                    str,
+                    st.selectbox(
+                        "Run de calibration",
+                        options=_past_runs,
+                        key="bt_run_sector_calibration_run",
+                        format_func=lambda p: str(Path(p).relative_to(PROJECT_ROOT))
+                        if str(p).startswith(str(PROJECT_ROOT))
+                        else str(p),
+                        help="Le run doit être le backtest de calibration (ex. période d'entraînement, sizing equal).",
+                    ),
+                )
+            with _cal_col2:
+                _min_trades = st.number_input(
+                    "Min trades",
+                    min_value=0,
+                    value=int(st.session_state.get("bt_run_sector_calibration_min_trades", 0) or 0),
+                    step=1,
+                    key="bt_run_sector_calibration_min_trades",
+                    help="0 = pas de filtre (calibration B25). >0 neutralise (×1.0) les secteurs avec moins de N trades.",
+                )
+            with _cal_col3:
+                _do_calibrate = st.button(
+                    "⚙️ Calibrer et écrire le JSON",
+                    key="bt_run_sector_calibrate_button",
+                    help="Lance la calibration et écrase config/p21_sector_multipliers.json.",
+                )
+            if _do_calibrate:
+                import subprocess
+                import sys as _sys
+
+                _out_json = str(DEFAULT_SECTOR_MULTIPLIERS_PATH)
+                try:
+                    _proc = subprocess.run(
+                        [
+                            _sys.executable,
+                            "-m",
+                            "modelFactory.analyze_p21_attribution",
+                            "--run-dir",
+                            _selected_cal_run,
+                            "--out-json",
+                            _out_json,
+                            "--min-trades",
+                            str(int(_min_trades)),
+                        ],
+                        cwd=str(PROJECT_ROOT),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=600,
+                    )
+                    _cal_output = (_proc.stdout or "")[-4000:]
+                    if _cal_output:
+                        st.code(_cal_output)
+                    if _proc.returncode == 0:
+                        st.success(f"Calibration terminée — JSON écrit : `{_out_json}`")
+                        st.caption(_summarize_sector_multipliers(DEFAULT_SECTOR_MULTIPLIERS_PATH))
+                    else:
+                        st.error(f"Échec (code {_proc.returncode}) : {(_proc.stderr or '')[-2000:]}")
+                except Exception as exc:
+                    st.error(f"Impossible de lancer la calibration : {exc}")
+
     macro_mode_col1, macro_mode_col2 = st.columns([1.5, 2.5])
     with macro_mode_col1:
         macro_pit_mode = cast(
@@ -1921,6 +2070,7 @@ def _build_run_options() -> BacktestRunOptions:
             if _phase2_active and conviction_calibration_mode == "pinned"
             else None
         ),
+        sector_multipliers_json=sector_multipliers_json,
         **_build_overlay_options(
             engine_mode=engine_mode,
             selected_run_preset_key=selected_run_preset_key,
@@ -4636,15 +4786,15 @@ def render() -> None:
     active_walkfwd_runs = list_active_backtesting_runs_by_kind("walk-forward-sentiment")
     active_wfc_runs = list_active_backtesting_runs_by_kind("walk-forward-conviction")
 
-    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, conviction_tab, walkfwd_tab, walkforward_conviction_tab, quarterly_tab = st.tabs(
+    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, walkfwd_tab, conviction_tab, walkforward_conviction_tab, quarterly_tab = st.tabs(
         [
             "▶️ Backtest",
             "🧱 Backfill scores history",
             "🧪 Diagnose screener",
             "🎯 Recommend screener",
             "📰 Calibrate sentiment",
-            "🎯 Calibrate conviction",
             "🚶 Walk-forward sentiment",
+            "🎯 Calibrate conviction",
             "🔄 Walk-forward conviction",
             "🎛️ Calibration trimestrielle poids",
         ]

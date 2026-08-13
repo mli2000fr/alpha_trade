@@ -539,3 +539,30 @@ def test_build_backtesting_run_command_conviction_calibration_pinned():
     assert command[rid_idx + 1] == "cal_run_20241201"
 
 
+def test_build_backtesting_run_command_sector_multipliers_off_by_default():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01"))
+
+    assert "--sector-multipliers-json" not in command
+
+
+def test_build_backtesting_run_command_rank_weighted_with_sector_multipliers():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            sizing_mode="rank_weighted",
+            sector_multipliers_json="@config/p21_sector_multipliers.json",
+        ),
+    )
+
+    assert "--sizing-mode" in command
+    assert command[command.index("--sizing-mode") + 1] == "rank_weighted"
+    assert "--sector-multipliers-json" in command
+    assert command[command.index("--sector-multipliers-json") + 1] == "@config/p21_sector_multipliers.json"
+
+
+

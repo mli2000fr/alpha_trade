@@ -73,31 +73,50 @@ def bootstrap_trades(
 ) -> BootstrapResult:
     """Bootstrap (resampling avec remise) des trades pour IC sur métriques.
 
-    Convention :
-    - simule chaque itération comme une **séquence aléatoire** (même nombre)
-      de trades tirés avec remise dans ``closed_trades_df`` ;
-    - reconstruit une equity curve par produit cumulé des ``return_pct/100`` ;
-    - évalue total_return, sharpe (sur les returns par trade) et max DD.
+    Convention (corrigée A-021) :
+    - chaque trade apporte un **PnL en dollars** (colonne ``pnl`` nette) sur le
+      capital, et non un retour composé à 100% du capital ;
+    - reconstruit une equity curve additive : ``equity = initial + cumsum(pnls)`` ;
+    - évalue total_return, sharpe (sur les retours par trade, annualisé par la
+      fréquence de trading réelle) et max DD.
+    - Fallback : sans colonne ``pnl``, convertit ``return_pct`` en dollars via
+      ``return_pct/100 × initial_equity``.
     """
     if closed_trades_df is None or closed_trades_df.empty:
         return BootstrapResult(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     rng = np.random.default_rng(seed)
-    rets = closed_trades_df["return_pct"].astype(float).to_numpy() / 100.0
-    n_trades = len(rets)
+    if "pnl" in closed_trades_df.columns:
+        trade_pnls = closed_trades_df["pnl"].astype(float).to_numpy()
+    elif "return_pct" in closed_trades_df.columns:
+        trade_pnls = closed_trades_df["return_pct"].astype(float).to_numpy() / 100.0 * float(initial_equity)
+    else:
+        return BootstrapResult(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    n_trades = len(trade_pnls)
     sample_size = sample_size or n_trades
     if sample_size <= 0 or n_trades == 0:
         return BootstrapResult(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+    # Annualisation Sharpe basée sur la fréquence réelle de trading.
+    if "holding_days" in closed_trades_df.columns:
+        avg_holding = float(closed_trades_df["holding_days"].astype(float).replace(0, np.nan).mean())
+        if not math.isfinite(avg_holding) or avg_holding is None or avg_holding <= 0:
+            avg_holding = 1.0
+    else:
+        avg_holding = 1.0
+    trades_per_year = 252.0 / max(avg_holding, 1.0)
+    annualization = math.sqrt(trades_per_year)
 
     total_returns = np.empty(n_iterations, dtype=float)
     sharpes = np.empty(n_iterations, dtype=float)
     max_dds = np.empty(n_iterations, dtype=float)
 
     for i in range(n_iterations):
-        sample = rng.choice(rets, size=sample_size, replace=True)
-        equity = initial_equity * np.cumprod(1.0 + sample)
-        total_returns[i] = (equity[-1] / initial_equity - 1.0) * 100.0
-        std = float(sample.std(ddof=0))
-        sharpes[i] = float(sample.mean() / std) * math.sqrt(252.0) if std > 0 else 0.0
+        sample = rng.choice(trade_pnls, size=sample_size, replace=True)
+        equity = float(initial_equity) + np.cumsum(sample)
+        total_returns[i] = (equity[-1] / float(initial_equity) - 1.0) * 100.0
+        per_trade_returns = sample / float(initial_equity)
+        std = float(per_trade_returns.std(ddof=0))
+        sharpes[i] = float(per_trade_returns.mean() / std) * annualization if std > 0 else 0.0
         running_peak = np.maximum.accumulate(equity)
         dd = equity / running_peak - 1.0
         max_dds[i] = abs(float(dd.min())) * 100.0
@@ -108,7 +127,7 @@ def bootstrap_trades(
     ci_low_sh = float(np.quantile(sharpes, alpha))
     ci_high_sh = float(np.quantile(sharpes, 1 - alpha))
     ci_high_dd = float(np.quantile(max_dds, 1 - alpha))
-    win_rate = float((rets > 0).mean() * 100.0)
+    win_rate = float((trade_pnls > 0).mean() * 100.0)
     return BootstrapResult(
         n_iterations=n_iterations,
         sample_size=sample_size,

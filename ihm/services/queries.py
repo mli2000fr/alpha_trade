@@ -1193,6 +1193,49 @@ def get_weights_calibration_run_ids(
     return [str(value).strip() for value in df["run_id"].tolist() if str(value).strip()]
 
 
+def set_weights_calibration_live_eligibility(
+    *,
+    run_id: str,
+    eligible: bool,
+    reason: str | None = None,
+) -> bool:
+    """Active/désactive l'éligibilité live d'un run de calibration.
+
+    Écrit ``eligible_for_live`` (+ ``eligibility_reason``) dans
+    ``weights_calibration_runs``. Invalide le cache de lecture de
+    ``get_weights_calibration_runs``.
+    """
+    from ihm.services.db import safe_execute
+
+    available_columns = _get_table_columns("weights_calibration_runs")
+    if not available_columns:
+        return False
+    if "eligible_for_live" not in available_columns:
+        return False
+
+    set_clauses = ["eligible_for_live = :eligible"]
+    params: dict[str, object] = {
+        "eligible": 1 if bool(eligible) else 0,
+        "run_id": str(run_id).strip(),
+    }
+    if reason is not None and "eligibility_reason" in available_columns:
+        set_clauses.append("eligibility_reason = :reason")
+        params["reason"] = str(reason).strip()[:255] or None
+
+    ok = safe_execute(
+        f"""
+        UPDATE weights_calibration_runs
+        SET {', '.join(set_clauses)}
+        WHERE run_id = :run_id
+        """,
+        params,
+    )
+    if ok:
+        get_weights_calibration_runs.clear()
+        get_weights_calibration_run_ids.clear()
+    return ok
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_weights_calibration_segment_drifts(
     *,
@@ -2001,6 +2044,36 @@ def get_completed_ml_training_batches(limit: int = 100) -> pd.DataFrame:
         ORDER BY finished_at DESC, started_at DESC
         LIMIT {int(limit)}
     """)
+
+
+def get_ml_batch_comments(batch_ids: list[str]) -> dict[str, str]:
+    """Retourne ``{batch_id: commentaire}`` pour les campagnes d'artefacts.
+
+    Le commentaire vient de la colonne ``comment`` de ``model_training_batch``
+    (saisie via ``--comment`` à l'entraînement). Batches absents de la DB ou
+    commentaire vide → clé absente (affichage sans commentaire).
+    """
+    available_columns = _get_table_columns("model_training_batch")
+    if not available_columns or "comment" not in available_columns or not batch_ids:
+        return {}
+    selected_columns = ["batch_id", "comment"]
+    params: dict[str, object] = {}
+    conditions: list[str] = []
+    _append_in_clause(conditions, params, column_sql="batch_id", param_prefix="bid", values=batch_ids)
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    df = safe_query(
+        f"SELECT {', '.join(selected_columns)} FROM model_training_batch {where_clause} LIMIT 500",
+        params or None,
+    )
+    if df.empty or "batch_id" not in df.columns:
+        return {}
+    comments: dict[str, str] = {}
+    for row in df.itertuples(index=False):
+        batch_id = str(getattr(row, "batch_id", "") or "").strip()
+        comment = str(getattr(row, "comment", "") or "").strip()
+        if batch_id and comment:
+            comments[batch_id] = comment
+    return comments
 
 
 @st.cache_data(ttl=60, show_spinner=False)

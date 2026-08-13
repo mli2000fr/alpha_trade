@@ -615,6 +615,7 @@ def _compute_ranking_targets(
     smoothing_horizons: tuple[int, ...],
     factor_cols: list[str],
     sector_map: dict[str, str] | None = None,
+    raw_target: bool = False,  # P1-3 : skip smoothing + sector-neutral + factor-neutral
 ) -> pd.DataFrame:
     """Compute ranking targets on an isolated DataFrame (PIT-étanche).
 
@@ -626,8 +627,8 @@ def _compute_ranking_targets(
     La target pipeline complète est appliquée :
     1. future_return → vol scaling (H5+) → winsorize 1%/99% → rank
     2. Smoothing 50% h + 50% avg(smoothing_horizons) [si ≥2 horizons]
-    3. Sector-neutral (médiane secteur par date)
-    4. Factor-neutral (OLS résiduel sur size+value+momentum)
+    3. Sector-neutral (médiane secteur par date)  [skip si raw_target=True]
+    4. Factor-neutral (OLS résiduel sur size+value+momentum)  [skip si raw_target=True]
 
     Returns:
         ``df`` avec les colonnes ``future_return_{h}`` et ``label_{h}``
@@ -662,6 +663,10 @@ def _compute_ranking_targets(
             .clip(0, 9)
             .astype("Int32")
         )
+
+    # ── P1-3 : raw rank target → skip smoothing + neutralisation ──
+    if raw_target:
+        return df
 
     # ── Étape 2 : Smoothing multi-horizons ──
     if len(smoothing_horizons) >= 2:
@@ -1100,6 +1105,7 @@ def train_global_ranking_wf(
                 smoothing_horizons=_SMOOTHING_HORIZONS if horizon in _SMOOTHING_HORIZONS else (),
                 factor_cols=_factor_cols,
                 sector_map=_sector_map,
+                raw_target=cfg.global_model.ranking_raw_target,
             )
             _val_with_targets = _compute_ranking_targets(
                 split.val,
@@ -1107,6 +1113,7 @@ def train_global_ranking_wf(
                 smoothing_horizons=_SMOOTHING_HORIZONS if horizon in _SMOOTHING_HORIZONS else (),
                 factor_cols=_factor_cols,
                 sector_map=_sector_map,
+                raw_target=cfg.global_model.ranking_raw_target,
             )
             _train_orig = _train_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
             _val_orig = _val_with_targets.dropna(subset=_active_features + [_target_col, _label_col])

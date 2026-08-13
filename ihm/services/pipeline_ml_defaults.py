@@ -90,7 +90,7 @@ DEFAULT_ML_INCLUDE_MACRO_VXN = False          # VXN — macro vol NASDAQ-100
 DEFAULT_ML_INCLUDE_MACRO_VIX3M = False        # VIX3M — term structure vol
 DEFAULT_ML_INCLUDE_MACRO_MOVE = False         # MOVE — macro vol obligataire
 DEFAULT_ML_INCLUDE_FUNDAMENTALS = False     # EODHD fundamentals (PE, ROE, marges, croissance)
-DEFAULT_ML_INCLUDE_FACTORS = False          # CAPM factor exposures (beta, alpha, R² via rolling 252j)
+DEFAULT_ML_INCLUDE_FACTORS = True          # CAPM factor exposures (beta, alpha, R² via rolling 252j)
 DEFAULT_ML_INCLUDE_MACRO_REGIME = False      # SPY_SMA_200_slope + VIX_zscore (macro regime indicators)
 DEFAULT_ML_INCLUDE_SCORE_COMPONENTS = False  # P0-6 : composants stock_scores_history (sentiment_net_agg, company_idio_score...)
 DEFAULT_ML_GLOBAL_MODEL_ONLY = False  # P0-6 : skip per-symbol & per-sector, ne faire que le global
@@ -144,7 +144,7 @@ DEFAULT_ML_CATBOOST_RANDOM_STRENGTH = 1.0
 DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE = 1.0
 DEFAULT_ML_CATBOOST_OD_TYPE = "IncToDec"
 DEFAULT_ML_CATBOOST_OD_WAIT = 20
-DEFAULT_ML_CATBOOST_LOSS_FUNCTION = "RMSE"  # "RMSE", "YetiRank", "QueryRMSE", etc.
+DEFAULT_ML_CATBOOST_LOSS_FUNCTION = "YetiRank"  # "RMSE", "YetiRank", "QueryRMSE", etc.
 # ---------------------------------------------------------------------------
 # Filtrage liquidité (Sprint 2026-07-24)
 # ---------------------------------------------------------------------------
