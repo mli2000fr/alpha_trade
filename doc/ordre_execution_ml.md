@@ -31,7 +31,7 @@ Le workflow sépare deux familles d'actions :
 | 4 | 🔄 Walk-forward conviction | Lancer sur toute l'histoire | Vérifie la stabilité des poids conviction |
 | 5 | ▶️ Backtest | **Runs de validation OOS, un par un (4 runs)** :<br>**5a)** sizing `rank_weighted` seul → vs étape 2<br>**5b)** + selectbox « Multiplicateurs sectoriels » = `default` → vs 5a<br>**5c)** + selectbox « Calibration conviction/Kelly » = `auto`/`pinned` (sans secteur) → vs 5a<br>**5d)** combo complet : rank_weighted + secteur + conviction → vs 5b et 5c | Chaque A/B doit battre son parent avant adoption |
 | 6 | 🎛️ Calibration trimestrielle | Au rythme du job (fin de trimestre) | Indépendant du batch, garde-fou de dérive |
-| 7 | — | **Décision** : adopter uniquement ce qui est validé OOS (≥ 5/6 métriques vs parent) | Aucune promotion automatique |
+| 7 | — | **Décision** : adopter uniquement ce qui est validé OOS (≥ 5/6 métriques vs parent) — procédure détaillée dans « Décision & application » | Aucune promotion automatique |
 | 8 | ⚙️ Pipeline → « Paramètres Risk Management » → expander « Allocation P2-1 » | **Activer le sizing live** : mode `rank_weighted` + JSON secteurs (cf. section « Application en production via l'IHM ») | Le step 11 Risk applique les facteurs validés en 5a/5b |
 | 9 | 🧮 Calibrations poids | **Activer la conviction live** : sélectionner le run validé (5c/5d) → « ✅ Promouvoir pour le live » (`eligible_for_live=1`) | Le live consomme le run via le fallback `empirical_calibration` |
 | 10 | 🤖 ML / Prédictions → « 🧭 Gouvernance & artefacts de serving » | **Promouvoir le batch** (« Promouvoir cette campagne pour le serving ») puis **lancer le pipeline live** (étapes 1→10) | La production consomme le batch + sizing + conviction validés → prédiction live |
@@ -40,6 +40,16 @@ Le workflow sépare deux familles d'actions :
 > Les étapes **8 et 9 sont indépendantes** (ordre libre entre elles) ; l'étape **10**
 > se fait en dernier, juste avant le lancement live. Une seule de ces étapes
 > peut être sautée si sa variante a été rejetée OOS (ex. conviction ❌ → étape 9 sautée).
+
+### Applicabilité selon le mode d'entraînement
+
+| Mode | Workflow applicable ? | Note |
+|------|----------------------|------|
+| **Global + per-symbol** | ✅ **Oui, intégralement** | Mode de production (B25). Toutes les étapes 0→11 sont validées dessus. |
+| **Global + per-sector** | ⚠️ **Mécaniquement oui, non recommandé** | Le dispatch de prédiction et le backfill des rangs synth gèrent les deux modes, mais le per-sector est **suspendu comme signal de trading** (F1 macro ≈ 0.33 = pile ou face, DirAcc ≈ 50 %, campagne 2026-08-05 sans alpha WF exploitable). Lancer le workflow complet produirait des backtests sans alpha (étapes 5-11 = bruit). Exception : un futur batch per-sector avec F1 WF > 0.35 et DirAcc > 0.53 redeviendrait éligible. |
+
+> En production, la gate `research_only` interdit l'exécution paper/live depuis un
+> modèle per-sector tant qu'il n'a pas prouvé d'alpha walk-forward exploitable.
 
 ---
 
@@ -89,11 +99,37 @@ Principe : **un seul changement à la fois**, chaque run se compare à son paren
 
 **Comment choisir** — chaque run se compare à son parent sur 6 métriques : retour total, Sharpe, Sortino, max DD, profit factor, PnL net.
 
-1. Adopter si le child bat son parent sur **≥ 5/6 métriques**, avec dégradation négligeable sur les autres (ex. DD +0.2 pt toléré, +3 pts non).
-2. Un gain de +1 pt de retour avec DD dégradé → **non** (bruit OOS sur un an).
-3. **Descendre la chaîne** : 5d (combo) n'est adopté que s'il bat **5b ET 5c** — sinon garder le meilleur ingrédient seul.
-4. **Simplicité** : si combo ≈ meilleur ingrédient seul → garder le plus simple (moins de paramètres = moins de risque).
-5. **Consigner le verdict dans `prompt/ml_journal.md`** (voir section dédiée).
+**Pas à pas (étape 7 du tableau)** :
+
+1. **Récupérer les 6 métriques** de chaque run depuis son `report.json` (dossier `artifacts/backtesting/<run>/`) :
+
+   | Métrique | Champ du report.json |
+   |----------|----------------------|
+   | Retour total (%) | `summary.total_return_pct` |
+   | Sharpe | `summary.sharpe_ratio` |
+   | Sortino | `summary.sortino_ratio` |
+   | Max drawdown (%) | `summary.max_drawdown_pct` |
+   | Profit factor | `summary.profit_factor` |
+   | PnL net ($) | `summary.pnl_net` |
+
+2. **Comparer chaque run à SON parent** :
+
+   | Comparaison | Question posée |
+   |-------------|----------------|
+   | 5a vs étape 2 (equal) | Le rank_weighted gagne-t-il OOS ? |
+   | 5b vs 5a | Les multiplicateurs sectoriels ajoutent-ils ? |
+   | 5c vs 5a | La calibration conviction ajoute-t-elle ? |
+   | 5d vs 5b ET 5c | Le combo est-il meilleur que chaque ingrédient ? |
+
+3. **Appliquer les règles** :
+   - **Adopter** si le child bat son parent sur **≥ 5/6 métriques**, avec dégradation négligeable sur les autres (ex. DD +0.2 pt toléré, +3 pts non).
+   - Un gain de +1 pt de retour avec DD dégradé → **non** (bruit OOS sur un an).
+   - **Descendre la chaîne** : 5d (combo) n'est adopté que s'il bat **5b ET 5c** — sinon garder le meilleur ingrédient seul.
+   - **Simplicité** : si combo ≈ meilleur ingrédient seul → garder le plus simple (moins de paramètres = moins de risque).
+
+4. **Consigner le verdict dans `prompt/ml_journal.md`** (voir section dédiée) : une ligne par décision, avec la date, les chiffres comparatifs et le statut ✅/❌/⏳.
+
+> **Exemple B25 (2026-08-13)** : 5a adopté (rank_weighted 33.4 % vs equal 28.0 %, +0.08 Sharpe, DD +2.9 pts toléré) ; 5b adopté (rankw+secteur 34.4 % vs 33.4 %, +0.02 Sharpe, DD +0.2 pt) → a motivé le branchement sizing live.
 
 **Comment appliquer** — tout est pilotable depuis l'IHM :
 
