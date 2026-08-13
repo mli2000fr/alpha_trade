@@ -1086,6 +1086,14 @@ def main(args: list[str] | None = None) -> None:
                 from modelFactory.synthesize_global_rank_predictions import synthesize
 
                 _live_day = _resolve_last_bar_date(engine) or universe_date
+                from modelFactory.universe_guard import current_universe_size, enforce_min_universe_breadth
+
+                _breadth = current_universe_size(engine, _live_day)
+                try:
+                    enforce_min_universe_breadth(_breadth, trade_date=_live_day, batch_id=_batch_id)
+                except RuntimeError as exc:
+                    _safe_print(f"❌ {exc}")
+                    raise SystemExit(1) from exc
                 _day_str = _live_day.isoformat()
                 _ranks = predict_global_rank_history(
                     _day_str,

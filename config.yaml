@@ -442,6 +442,12 @@ batch_diagnostics:
   # Renseigner un batch_id explicite pour un backtest PIT-safe.
   backtest_batch_id: "model-factory-20260811223551-ef2cd0"  # B25 = CAPM + YetiRank (P1-4)
 
+  # Garde-fou « breadth » : part minimale de l'univers de référence
+  # (config/ticket_recherche.txt, 400 symboles) requise pour générer les
+  # prédictions ML live. 75% × 400 = 300 symboles (borne basse du backtest
+  # validé : 311-391). En dessous → prédictions live BLOQUÉES.
+  ml_min_universe_pct: 75
+
   # ── §7.0 (analyse_ml.md) — filtres additionnels par seuils absolus de F1 ──
   # Ces règles complètent le système existant (top/bottom/weak_*).
   # Les symboles exclus par §7 sont ajoutés aux sets exclude_long/exclude_short

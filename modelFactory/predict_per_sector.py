@@ -73,12 +73,32 @@ def main() -> None:
         raise SystemExit("Aucune barre eodhd disponible — ingestion à vérifier.")
     start_day, end_day = start_date.isoformat(), end_date.isoformat()
 
+    # ── Garde-fou breadth (usage live quotidien uniquement) ──
+    from modelFactory.universe_guard import current_universe_size, enforce_min_universe_breadth
+
+    if start_date == end_date:
+        from database.connection import get_sqlalchemy_engine
+
+        _size = current_universe_size(get_sqlalchemy_engine(), end_date)
+        try:
+            enforce_min_universe_breadth(_size, trade_date=end_date, batch_id=batch_id)
+        except RuntimeError as exc:
+            print(f"❌ {exc}")
+            raise SystemExit(1) from exc
+
     from modelFactory.predictor import predict_global_rank_history
 
     ranks = predict_global_rank_history(start_day, end_day, batch_id)
     n_days = sum(1 for v in ranks.values() if v and v > 0)
     print(f"[1/3] global ranks [{start_day} → {end_day}] batch={batch_id}: "
           f"{n_days} jours avec données, total {sum(ranks.values())} lignes")
+    if start_date != end_date:
+        from modelFactory.universe_guard import load_min_universe_breadth
+
+        _min = load_min_universe_breadth()
+        _small = [d for d, n in ranks.items() if n and int(n) < _min]
+        if _small:
+            print(f"⚠️ {len(_small)} dates sous le seuil breadth ({_min}) — ex. {_small[:5]}")
 
     from modelFactory.synthesize_global_rank_predictions import synthesize
 

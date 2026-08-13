@@ -71,6 +71,7 @@
 | B34 | B4 + screener + YetiRank | 0.0151 | 0.78 | H10 | −13.4% | lgbm 6/11 | ❌ −25% vs B4, −37% vs B25 (screener toxique aussi en YetiRank) |
 | B35 | B25 + symbols 196 | 0.0154 | 0.51 | H3 | −9.7% | lgbm 7/9 | ❌ −36% vs B25 — 196 symboles boostent H3 (0.0283, IR 1.46) mais tuent H10-H20. **Garder la liste 400.** |
 | B36 | B20 + symbols 196 | 0.0148 | 0.45 | H3 | −15.0% | lgbm 7/9 | ❌ −38% vs B20 — confirme B35 : 196 symboles tuent H10-H20, le CAPM n'y change rien |
+| **B37** | **B25 + symbols 393 (swing score)** | 0.0123 | 0.89 | H3 | — | — | ❌ **−49% vs B25** — univers sélectionné par swing score : H10 0.0116, **H20 mort** (0.0035, decile spread −0.0003). Pire que B35 (0.0154) → la composition prime sur la taille : **garder l'univers liquidité 400** |
 
 ### 🏆 Podium B0-B20
 
@@ -110,6 +111,7 @@
 - **Screener + YetiRank** (B34, commande avec `--enable-cross-sectional` en plus) : ❌ IC 0.0151 (−25% vs B4, −37% vs B25), IR 0.78. H20 s'effondre (0.0102, IR 0.46), H15 Decile Spread 0.0044. LightGBM quasi nul partout (IC ≤ 0.007). **Dernier batch de la campagne : aucun flag ne bat B25.**
 - **Universe 196** (B35 = B25 sur la liste réduite) : ❌ IC 0.0154 (−36% vs B25), IR 0.51. Réduire 400→196 booste H3 (0.0283, IR 1.46 — record mais sur petit univers, non comparable) mais détruit H10/H15/H20 (0.012/0.008/0.006). CatBoost perd H10/H20 face à LightGBM. **Garder la liste de 400 symboles (config/ticket_mid_cap_400.txt).**
 - **Universe 196 + B20** (B36) : ❌ IC 0.0148 (−38% vs B20), IR 0.45. H3/H5 très forts (0.0277/0.0246, IR 1.57/1.23) mais H10-H20 morts (≤0.008, Decile Spread ≤0.004). **Confirme B35 : le petit univers détruit les horizons longs avec ou sans CAPM. Garder la liste 400.**
+- **Universe 393 swing score** (B37 = B25 + 393 symboles sélectionnés par swing score) : ❌ IC 0.0123 (−49% vs B25), IR 0.89. H10 0.0116, H20 mort (0.0035, Decile Spread −0.0003), meilleur horizon H3 (0.0199). Pire que B35 (196 liquidité, 0.0154) → **la composition de l'univers prime sur la taille : l'univers « swing score » est toxique pour le Global Ranking. Garder la sélection liquidité 400.**
 - **YetiRank** (B20) : IC 0.0238 (+18% vs B4), gagne 3/5 horizons (H3/H15/H20).
 - **QueryRMSE / QuerySoftMax** (B21/B22/B26/B27) : ❌ < RMSE avec ou sans CAPM (0.0161-0.0188). **Seul YetiRank surpasse RMSE. Matrice finale : YetiRank+CAPM 0.0241 🏆 > YetiRank 0.0238 > RMSE 0.0202 > Query***
 - **PairLogit / PairLogitPairwise** (B23/B24/B28/B29) : ⛔ abandonnés — 20h+ bloquées sur H3, coût O(n²) par groupe inacceptable pour le Global Ranking.
@@ -122,6 +124,7 @@
 | # | Action | Effort | Impact | Pourquoi |
 |---|--------|:------:|:------:|----------|
 | **P0-1** | **Caps sectoriels en production** | 1j | 🔥🔥 | ✅ **Fait (2026-08-11)** — `sector_limits.enabled: true` + alignement backtest/live dans `capital_presets.yaml`. |
+| **P0-4** | **⚠️ Univers live dégradé + garde-fou breadth** | 1j | 🔥🔥🔥 | 🔴 **CRITIQUE** — l'univers tradable live est écrasé : 4-279 symboles/jour (avg 48) depuis 2024-07 vs 311-391 dans le backtest validé. Cause en amont : ingestion barres/quotes (eodhd s'arrête 2026-07-10, snapshots quotes clairsemés) → l'étape 6 n'évalue que quelques symboles. **Fait (2026-08-13)** : garde-fou `modelFactory/universe_guard.py` **bloquant** — seuil = `ml_min_universe_pct: 75` (% du référentiel `config/ticket_recherche.txt` = 400 → 300), branché dans l'étape 10 dispatch et `predict_per_sector` (6/6 tests + E2E : blocage vérifié, exit 1). **Reste à faire : réparer l'ingestion (étapes 1/4/6) pour restaurer un univers ≥ 75%.** |
 
 ### 🔥 P1 — Alpha additionnel (impact élevé, effort moyen)
 
@@ -176,6 +179,7 @@
 | — | **Étape 10 dispatch intelligent per-symbol/per-sector** | ✅ **Fait (2026-08-13)** — `detect_batch_training_mode()` (argv_json/command_line + fallback runs GICS/sentinelle) ; `modelFactory/cli.py` mode predict aiguille automatiquement : per-symbol → `predict_batch` (inchangé), per-sector → global ranks + synthèse (live ET plage historique) ; CLI `--batch-id` explicite (fixe aussi le hijack `backtest_batch_id`) passé par l'IHM ; drift gate conservé. 7/7 tests unitaires + run E2E réel (189 rangs, 259 428 lignes). **L'étape 10 est désormais batch-agnostique (Batch LIVE et Batch BACKTEST).** |
 | — | Campagne YetiRank B31-B34 (flags) | ✅ **Fait (2026-08-13)** — aucun flag ne bat B25 |
 | — | Univers 196 (B35/B36) | ✅ **Fait (2026-08-13)** — ❌ détruit H10-H20, garder 400 |
+| — | Univers 393 swing score (B37) | ✅ **Fait (2026-08-13)** — ❌ IC 0.0123 (−49% vs B25), H20 mort — garder univers liquidité 400 |
 | — | PairLogit / PairLogitPairwise (B23/B24/B28/B29) | ⛔ **Abandonnés (2026-08-12)** — 20h+ de calcul bloquées sur H3, trop lents (O(n²) par groupe) |
 | — | P1-3 raw rank target (B30) | ✅ **Fait (2026-08-12)** — ❌ ÉCHEC, IC 0.0153, pipeline complet essentiel |
 | — | YetiRank B20 (B4 + YetiRank) | ✅ **Fait (2026-08-12)** — IC 0.0238, +18% vs B4 |

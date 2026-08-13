@@ -43,6 +43,7 @@
 | **B34** | `model-factory-20260812190010-748dd9` | B4 + screener + YetiRank | catboost 5/5 (181-199 feat.) | lightgbm 6 / catboost 5 | ❌ 0.0151 | ❌ 0.78 | H10 |
 | **B35** | `model-factory-20260812232931-792070` | B25 + symbols 196 | ⚠️ cb 3/5 + lgbm 2/5 (145 feat.) | lightgbm 7 / catboost 2 (9 sect.) | ❌ 0.0154 | ❌ 0.51 | H3 |
 | **B36** | `model-factory-20260812235655-c993b3` | B20 + symbols 196 | ⚠️ cb 4/5 + lgbm 1/5 (144 feat.) | lightgbm 7 / catboost 2 (9 sect.) | ❌ 0.0148 | ❌ 0.45 | H3 |
+| **B37** | `model-factory-20260813092928-9f906f` | B25 + symbols 393 (swing score) | catboost 5/5 (145 feat.) | catboost 7 / lightgbm 4 | ❌ 0.0123 | ❌ 0.89 | H3 |
 
 ---
 
@@ -217,8 +218,13 @@
 | B36  | H10     | 0.0078  | 0.25  | 0.0037        | 144         | catboost   | 0.950           |
 | B36  | H15     | 0.0072  | 0.20  | 0.0014        | 144         | catboost   | 0.950           |
 | B36  | H20     | 0.0068  | 0.16  | 0.0022        | 144         | ⚠️ lightgbm | 0.923           |
+| B37  | H3      | 0.0199  | 1.43  | 0.0205        | 145         | catboost   | 1.000           |
+| B37  | H5      | 0.0180  | 1.43  | 0.0182        | 145         | catboost   | 0.950           |
+| B37  | H10     | 0.0116  | 0.83  | 0.0113        | 145         | catboost   | 0.620           |
+| B37  | H15     | 0.0085  | 0.83  | 0.0058        | 145         | catboost   | 0.511           |
+| B37  | H20     | 0.0035  | 0.33  | -0.0003       | 145         | catboost   | 0.267           |
 
-> 🏆 **Meilleur horizon : H3 pour B36/B35, H10 pour B34/B32/B30/B25/B4/B10, H15 pour B20, H5 pour B33/B31/B18/B19/B22/B26/B27** | **B25 = CAPM+YetiRank IC 0.0241. B30 = P1-3 raw rank ❌ (0.0153, −36% vs B20). B31 = fondamentaux+YetiRank ❌ (0.0146, −39% vs B25). B32 = score components+YetiRank ⚠️ (0.0224, 3ᵉ, +11% vs B4, −7% vs B25). B33 = cross-sectional+YetiRank ❌ (0.0138, −43% vs B25). B34 = screener+YetiRank ❌ (0.0151, −37% vs B25). B35/B36 = B25/B20 sur 196 symboles ❌ (0.0154/0.0148, −36%/−38% — le petit univers tue H10-H20).**
+> 🏆 **Meilleur horizon : H3 pour B37/B36/B35, H10 pour B34/B32/B30/B25/B4/B10, H15 pour B20, H5 pour B33/B31/B18/B19/B22/B26/B27** | **B25 = CAPM+YetiRank IC 0.0241. B30 = P1-3 raw rank ❌ (0.0153, −36% vs B20). B31 = fondamentaux+YetiRank ❌ (0.0146, −39% vs B25). B32 = score components+YetiRank ⚠️ (0.0224, 3ᵉ, +11% vs B4, −7% vs B25). B33 = cross-sectional+YetiRank ❌ (0.0138, −43% vs B25). B34 = screener+YetiRank ❌ (0.0151, −37% vs B25). B35/B36 = B25/B20 sur 196 symboles ❌ (0.0154/0.0148, −36%/−38% — le petit univers tue H10-H20). B37 = B25 sur 393 symboles swing ❌ (0.0123, −49% — la composition swing est toxique, pire que B35).**
 
 ## 1.2 Champion Global — IC/IR CatBoost vs LightGBM
 
@@ -389,6 +395,11 @@
 | B36  | H10     | 0.0078      | 0.25        | -0.0018     | -0.06       | catboost   |
 | B36  | H15     | 0.0072      | 0.20        | 0.0031      | 0.08        | catboost   |
 | B36  | H20     | 0.0062      | 0.16        | 0.0068      | 0.16        | ⚠️ lightgbm |
+| B37  | H3      | 0.0199      | 1.43        | 0.0018      | 0.10        | catboost   |
+| B37  | H5      | 0.0180      | 1.43        | 0.0041      | 0.28        | catboost   |
+| B37  | H10     | 0.0116      | 0.83        | 0.0001      | 0.00        | catboost   |
+| B37  | H15     | 0.0085      | 0.83        | 0.0108      | 0.46        | catboost   |
+| B37  | H20     | 0.0035      | 0.33        | -0.0027     | -0.12       | catboost   |
 
 ## 1.3 Détail IC par split — Champion (Global)
 
@@ -559,6 +570,11 @@
 | B36  | H10     | 0.0469  | 0.0288  | -0.0284 | -0.0418 | 0.0257  | 0.0157  | 0.0319 |-0.0418 | 0.0469 |
 | B36  | H15     | 0.0479  | 0.0398  | -0.0245 | -0.0529 | 0.0252  | 0.0080  | 0.0357 |-0.0529 | 0.0479 |
 | B36  | H20     | 0.0179  | 0.0797  | -0.0372 | -0.0408 | 0.0420  | -0.0204 | 0.0440 |-0.0408 | 0.0797 |
+| B37  | H3      | 0.0226  | 0.0432  | 0.0034  | 0.0112  | 0.0080  | 0.0310  | 0.0199 | 0.0034 | 0.0432 |
+| B37  | H5      | 0.0192  | 0.0395  | 0.0061  | 0.0042  | 0.0109  | 0.0283  | 0.0180 | 0.0042 | 0.0395 |
+| B37  | H10     | 0.0215  | 0.0240  | -0.0144 | 0.0012  | 0.0147  | 0.0226  | 0.0116 |-0.0144 | 0.0240 |
+| B37  | H15     | 0.0115  | 0.0189  | -0.0070 | -0.0019 | 0.0084  | 0.0213  | 0.0085 |-0.0070 | 0.0213 |
+| B37  | H20     | 0.0086  | 0.0163  | -0.0088 | -0.0126 | 0.0048  | 0.0130  | 0.0035 |-0.0126 | 0.0163 |
 
 ## 1.4 Comparatif Backtest Stratégies — Global Rank
 
@@ -600,8 +616,9 @@
 | B34  | H10        | 🏆 | -13.4%          | -28.8%           | -21.6%       | H10,H5,H15  |
 | B35  | H3         | 🏆 | -9.7%           | -79.9%           | -37.3%       | H3,H5,H10   |
 | B36  | H3         | 🏆 | -15.0%          | -73.1%           | -18.4%       | H3,H5,H10   |
+| B37  | H3         | 🏆 | -13.3%          | -74.3%           | -26.3%       | H3,H5,H10   |
 
-## 1.5 🏆 Champion par horizon — Meilleur IC (B0-B36)
+## 1.5 🏆 Champion par horizon — Meilleur IC (B0-B37)
 
 | Horizon | 🥇 Batch | IC Rank | IR | Flags | Config |
 |:--------|:--------|:----:|:--:|:------|:-------|
@@ -619,6 +636,7 @@
 > **B34 (screener + YetiRank) n'améliore aucun horizon** (max H10 = 0.0187).
 > **B35 (B25 sur 196 symboles) : H3 = 0.0283 (IR 1.46) mais sur univers réduit — non comparable aux champions 400 symboles.** Sur les horizons comparables, aucun gain.
 > **B36 (B20 sur 196 symboles) : H3/H5 records sur petit univers (0.0277/0.0246, IR 1.57/1.23), non comparables. Aucun horizon 400 symboles amélioré.**
+> **B37 (B25 sur 393 symboles swing score) : H3 = 0.0199 > B20 (0.0171) mais sur univers non-liquide — non comparable. Aucun horizon 400 symboles amélioré. H20 mort (0.0035, decile spread −0.0003). L'univers « swing score » est toxique pour le Global Ranking.**
 
 ---
 
@@ -793,6 +811,11 @@
 | B36  | H10     | 0.318    | 0.495    | 0.460   | 0.4931  |
 | B36  | H15     | 0.321    | 0.491    | 0.471   | 0.4957  |
 | B36  | H20     | 0.317    | 0.495    | 0.457   | 0.4927  |
+| B37  | H3      | 0.327    | 0.495    | 0.485   | 0.4942  |
+| B37  | H5      | 0.327    | 0.498    | 0.483   | 0.5008  |
+| B37  | H10     | 0.321    | 0.484    | 0.479   | 0.4891  |
+| B37  | H15     | 0.323    | 0.479    | 0.491   | 0.4930  |
+| B37  | H20     | 0.316    | 0.459    | 0.489   | 0.4848  |
 
 ## 2.2 Champions Per-Sector par modèle
 
@@ -831,6 +854,7 @@
 | B34  | 5        | 6        |
 | B35  | 2        | 7        |
 | B36  | 2        | 7        |
+| B37  | 7        | 4        |
 
 ## 2.3 Comparatif F1 par split (WF)
 
@@ -1034,6 +1058,12 @@
 | B36  | lightgbm   | val   | 0.333    | 0.522    | 0.478   |
 | B36  | lightgbm   | test  | 0.325    | 0.511    | 0.463   |
 | B36  | lightgbm   | wf    | 0.322    | 0.503    | 0.463   |
+| B37  | catboost   | val   | 0.330    | 0.507    | 0.485   |
+| B37  | catboost   | test  | 0.327    | 0.499    | 0.483   |
+| B37  | catboost   | wf    | 0.323    | 0.482    | 0.488   |
+| B37  | lightgbm   | val   | 0.335    | 0.513    | 0.491   |
+| B37  | lightgbm   | test  | 0.332    | 0.504    | 0.493   |
+| B37  | lightgbm   | wf    | 0.322    | 0.484    | 0.483   |
 
 ## 2.4 Comparatif Distribution true/pred par split (WF)
 
@@ -1237,6 +1267,12 @@
 | B36  | lightgbm   | val   | 54.44       | 45.56      | 49.99       | 49.99      |
 | B36  | lightgbm   | test  | 53.89       | 46.11      | 50.98       | 49.02      |
 | B36  | lightgbm   | wf    | 53.78       | 46.22      | 50.32       | 49.68      |
+| B37  | catboost   | val   | 52.18       | 47.82      | 49.994      | 49.994     |
+| B37  | catboost   | test  | 52.239      | 47.761     | 49.388      | 50.612     |
+| B37  | catboost   | wf    | 52.343      | 47.657     | 47.219      | 52.781     |
+| B37  | lightgbm   | val   | 52.18       | 47.82      | 49.994      | 49.993     |
+| B37  | lightgbm   | test  | 52.239      | 47.761     | 48.811      | 51.189     |
+| B37  | lightgbm   | wf    | 52.343      | 47.657     | 47.786      | 52.213     |
 
 ## 2.5 Comparatif Métriques Régression par split (WF)
 
@@ -1440,6 +1476,12 @@
 | B36  | lightgbm   | val   | 1.3401  | 0.5013      |
 | B36  | lightgbm   | test  | 1.4417  | 0.4907      |
 | B36  | lightgbm   | wf    | 1.3578  | 0.4963      |
+| B37  | catboost   | val   | 1.6019  | 0.4961      |
+| B37  | catboost   | test  | 1.6332  | 0.4956      |
+| B37  | catboost   | wf    | 1.7878  | 0.4926      |
+| B37  | lightgbm   | val   | 1.6345  | 0.5026      |
+| B37  | lightgbm   | test  | 1.6597  | 0.5020      |
+| B37  | lightgbm   | wf    | 1.8970  | 0.4921      |
 
 ## 2.6 Distribution F1 macro — Walk-Forward
 
@@ -1505,6 +1547,8 @@
 | B35  | 0.30–0.39   | 8           |
 | B36  | 0.20–0.29   | 2           |
 | B36  | 0.30–0.39   | 8           |
+| B37  | 0.20–0.29   | 3           |
+| B37  | 0.30–0.39   | 11          |
 
 ## 2.7 Top 10 F1 macro (WF) — Meilleurs secteurs
 
@@ -1840,6 +1884,16 @@
 | B36  | Financials             | 0.333    | 0.394   | 0.605    |
 | B36  | Information Technology | 0.333    | 0.494   | 0.504    |
 | B36  | Industrials            | 0.333    | 0.493   | 0.505    |
+| B37  | Energy                 | 0.343    | 0.531   | 0.497    |
+| B37  | Communication Services | 0.337    | 0.478   | 0.532    |
+| B37  | Industrials            | 0.336    | 0.511   | 0.497    |
+| B37  | Industrials            | 0.336    | 0.523   | 0.484    |
+| B37  | Health Care            | 0.335    | 0.509   | 0.496    |
+| B37  | Information Technology | 0.334    | 0.495   | 0.508    |
+| B37  | Industrials            | 0.333    | 0.512   | 0.488    |
+| B37  | Industrials            | 0.333    | 0.509   | 0.491    |
+| B37  | Industrials            | 0.333    | 0.497   | 0.502    |
+| B37  | Utilities              | 0.333    | 0.494   | 0.504    |
 
 ## 2.8 Top 10 F1 macro (WF) — Pires secteurs
 
@@ -2175,6 +2229,16 @@
 | B36  | Energy                 | 0.308    | 0.515   | 0.408    |
 | B36  | Communication Services | 0.310    | 0.442   | 0.487    |
 | B36  | Consumer Staples       | 0.312    | 0.441   | 0.495    |
+| B37  | Real Estate            | 0.247    | 0.301   | 0.440    |
+| B37  | Real Estate            | 0.277    | 0.393   | 0.438    |
+| B37  | Utilities              | 0.281    | 0.433   | 0.409    |
+| B37  | Real Estate            | 0.291    | 0.445   | 0.430    |
+| B37  | Utilities              | 0.293    | 0.508   | 0.371    |
+| B37  | Energy                 | 0.299    | 0.516   | 0.381    |
+| B37  | Real Estate            | 0.303    | 0.364   | 0.545    |
+| B37  | Energy                 | 0.306    | 0.508   | 0.410    |
+| B37  | Utilities              | 0.308    | 0.444   | 0.482    |
+| B37  | Utilities              | 0.311    | 0.336   | 0.598    |
 
 ## 2.9 Diagnostic par régime de marché — Walk-Forward
 
@@ -2385,6 +2449,15 @@
 | B36  | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.294    | 0.364    | 0.517   | 0.1   | 24.9    | 6        |
 | B36  | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.339    | 0.557    | 0.458   | 9.0   | 15.1    | 6        |
 | B36  | 5     | 2024-09-03 | 2025-03-05 | 🔵 Range low vol  | 0.331    | 0.548    | 0.443   | 5.6   | 17.4    | 6        |
+| B37  | 0     | 2019-07-03 | 2019-12-31 | 🟢 Bull           | 0.341    | 0.506    | 0.516   | 7.7   | 15.0    | 9        |
+| B37  | 1     | 2020-07-02 | 2020-12-30 | 🔵 Range low vol  | 0.328    | 0.494    | 0.491   | 19.1  | 25.7    | 9        |
+| B37  | 2     | 2021-07-02 | 2021-12-30 | 🔵 Range low vol  | 0.323    | 0.460    | 0.507   | 9.8   | 18.8    | 9        |
+| B37  | 3     | 2022-07-05 | 2022-12-30 | 🟠 Range high vol | 0.305    | 0.380    | 0.535   | 0.1   | 24.9    | 9        |
+| B37  | 3     | 2023-04-06 | 2023-11-02 | 🟢 Bull           | 0.268    | 0.260    | 0.545   | 5.3   | 16.2    | 1        |
+| B37  | 4     | 2023-08-03 | 2024-02-01 | 🟢 Bull           | 0.320    | 0.501    | 0.460   | 9.0   | 15.1    | 10       |
+| B37  | 4     | 2024-05-07 | 2024-12-03 | 🟢 Bull           | 0.322    | 0.396    | 0.571   | 16.8  | 16.3    | 1        |
+| B37  | 5     | 2024-09-03 | 2025-03-05 | 🔵 Range low vol  | 0.312    | 0.488    | 0.448   | 5.6   | 17.4    | 10       |
+| B37  | 5     | 2025-06-09 | 2025-12-02 | 🟢 Bull           | 0.288    | 0.457    | 0.408   | 13.6  | 17.3    | 1        |
 
 ---
 
@@ -2424,6 +2497,7 @@
 - **B34** : B4 + screener + YetiRank (181-199 feat, commande incluant aussi `--enable-cross-sectional`). ❌ **ÉCHEC** — IC 0.0151 (−25% vs B4, −37% vs B25), IR 0.78. H20 s'effondre (0.0102, IR 0.46), H15 Decile Spread 0.0044. LightGBM quasi nul partout (IC ≤ 0.007). V2=−13.4%. **Dernier batch de la campagne B31-B34 : aucun flag ne bat B25. Podium final : B25 (0.0241) > B20 (0.0238) > B32 (0.0224) > B4 (0.0202).**
 - **B35** : B25 sur la liste réduite de 196 symboles (mêmes flags, 145 feat). ❌ **ÉCHEC** — IC 0.0154 (−36% vs B25), IR 0.51. Réduire 400→196 booste H3 (0.0283, IR 1.46 — record mais sur petit univers, non comparable) mais détruit H10/H15/H20 (0.012/0.008/0.006, IR 0.40/0.23/0.17). CatBoost perd H10/H20 face à LightGBM. Per-sector passe à 9 secteurs, F1 dégradé (Dir Acc ≤ 0.50). **Garder la liste de 400 symboles (config/ticket_mid_cap_400.txt) — le cross-section large est essentiel aux horizons longs.**
 - **B36** : B20 sur la liste réduite de 196 symboles (144 feat). ❌ **ÉCHEC — CONFIRME B35** — IC 0.0148 (−38% vs B20), IR 0.45. H3/H5 très forts (0.0277/0.0246, IR 1.57/1.23) mais H10-H20 morts (0.008/0.007/0.007, Decile Spread ≤ 0.004). Le CAPM n'aide pas sur petit univers. Per-sector 9 secteurs, Dir Acc ≤ 0.50. **Conclusion : la taille du cross-section (400) est un facteur de premier ordre pour les horizons longs. Garder la liste 400.**
+- **B37** : B25 sur 393 symboles sélectionnés par swing score (145 feat, mêmes flags). ❌ **ÉCHEC — LE PIRE DES TESTS D'UNIVERS** — IC 0.0123 (−49% vs B25), IR 0.89. H10 0.0116, H20 mort (0.0035, Decile Spread −0.0003), meilleur horizon H3 (0.0199). Pire que B35 (196 liquidité, 0.0154) alors que B37 a plus de symboles. Per-sector hasard habituel (F1 ~0.33, Dir Acc ≤ 0.50). **Conclusion : la composition de l'univers prime sur la taille — la sélection « swing score » est toxique pour le Global Ranking. Garder la sélection liquidité 400.**
 - **⛔ Batches abandonnés (temps d'entraînement excessif)** : B23 (PairLogit), B24 (PairLogitPairwise), B28 (CAPM+PairLogit), B29 (CAPM+PairLogitPairwise) — 20h+ de calcul bloquées sur H3. Les losses pairwise CatBoost sont trop lentes (O(n²) par groupe) pour le Global Ranking. **Verdict : PairLogit et PairLogitPairwise sont inexploitables en production, abandonnés.**
 - **Classement flags** : CAPM+YetiRank (🥇 IC 0.0241 +19%) > YetiRank (🥈 IC 0.0238 +18%) > stacking (🥉 V2=−0.1%). **B25 est champion IC Global. B14 reste champion backtest. B10 meilleur IC IR.**
 - **🆕 V4 top horizons** : V4 entre −12% et −27%. B14/B15/B16 à −12.4% (meilleur), B2 à −26.9% (pire).

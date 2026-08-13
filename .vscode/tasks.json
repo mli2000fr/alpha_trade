@@ -10,6 +10,46 @@
 			"label": "module_smoke2",
 			"type": "shell",
 			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_module_smoke.py; Remove-Item scripts\\_tmp_module_smoke.py -Force"
+		},
+		{
+			"label": "batch_status",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_batch_status.py; Remove-Item scripts\\_tmp_batch_status.py -Force"
+		},
+		{
+			"label": "batch_status2",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_batch_status2.py; Remove-Item scripts\\_tmp_batch_status2.py -Force"
+		},
+		{
+			"label": "universe_size_ic",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_universe_size.py; Remove-Item scripts\\_tmp_universe_size.py -Force"
+		},
+		{
+			"label": "universe_recent",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_universe_recent.py; Remove-Item scripts\\_tmp_universe_recent.py -Force"
+		},
+		{
+			"label": "tradability_reasons",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_reasons.py; Remove-Item scripts\\_tmp_reasons.py -Force"
+		},
+		{
+			"label": "test_guard",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest tests\\test_universe_guard.py tests\\test_batch_training_mode_dispatch.py -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "guard_e2e",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m modelFactory.predict_per_sector; echo \"exit code: $LASTEXITCODE\""
+		},
+		{
+			"label": "guard_pct_e2e",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest tests\\test_universe_guard.py -q --no-header -p no:cacheprovider -o addopts=\"\"; .venv\\Scripts\\python.exe -m modelFactory.predict_per_sector; echo \"exit code: $LASTEXITCODE\""
 		}
 	]
 }
