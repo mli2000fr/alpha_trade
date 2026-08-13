@@ -46,6 +46,57 @@ class RegimeFilterConfig:
 
 
 @dataclass(slots=True, frozen=True)
+class BullStrictConfig:
+    """P2-3 — overlay no-trades en bull strict.
+
+    Bull strict = ``SPY > SMA(sma_window)`` **ET** rendement SPY sur
+    ``ret_window`` séances > ``ret_threshold``.
+
+    - ``mode="no_shorts"`` : bloque uniquement les nouvelles entrées short.
+    - ``mode="no_trades"`` : bloque toutes les nouvelles entrées (long+short).
+
+    Post-hoc B25 : shorts bull strict = −11.8k sur 98 trades ; couper →
+    +9.4% PnL, DD −4 pts ; couper tous trades → +10.7%, DD −10 pts.
+    """
+
+    enabled: bool = False
+    mode: Literal["no_shorts", "no_trades"] = "no_shorts"
+    sma_window: int = 200
+    ret_window: int = 60
+    ret_threshold: float = 0.03
+
+    def is_bull_strict(self, benchmark_close: pd.Series | None, as_of: pd.Timestamp) -> bool:
+        if not self.enabled or benchmark_close is None or benchmark_close.empty:
+            return False
+        try:
+            hist = benchmark_close.loc[:as_of].dropna()
+            if len(hist) < max(self.sma_window // 2, 40):
+                return False
+            sma = float(hist.tail(self.sma_window).mean())
+            spot = float(hist.iloc[-1])
+            if sma <= 0 or spot <= 0:
+                return False
+            above_sma = spot > sma
+            ret = (spot / float(hist.iloc[-(self.ret_window + 1)]) - 1.0) if len(hist) > self.ret_window else 0.0
+            return bool(above_sma and ret > self.ret_threshold)
+        except Exception:
+            return False
+
+    def is_entry_allowed(
+        self,
+        side: str,
+        benchmark_close: pd.Series | None,
+        as_of: pd.Timestamp,
+    ) -> bool:
+        if not self.is_bull_strict(benchmark_close, as_of):
+            return True
+        if self.mode == "no_trades":
+            return False
+        # no_shorts : seuls les shorts sont bloqués
+        return str(side or "").strip().lower() != "sell"
+
+
+@dataclass(slots=True, frozen=True)
 class SectoralCapConfig:
     """Cap d'exposition par secteur (en % equity)."""
 
@@ -271,6 +322,7 @@ class RiskOverlayConfig:
 
     sizing: SizingConfig = field(default_factory=SizingConfig)
     regime_filter: RegimeFilterConfig = field(default_factory=RegimeFilterConfig)
+    bull_strict: BullStrictConfig = field(default_factory=BullStrictConfig)
     sectoral_cap: SectoralCapConfig = field(default_factory=SectoralCapConfig)
     drawdown_breaker: DrawdownCircuitBreaker = field(default_factory=DrawdownCircuitBreaker)
     target_annual_vol: float | None = None
@@ -279,6 +331,7 @@ class RiskOverlayConfig:
         return (
             self.sizing.mode == "equal_weight"
             and not self.regime_filter.enabled
+            and not self.bull_strict.enabled
             and not self.sectoral_cap.enabled
             and not self.drawdown_breaker.enabled
             and self.target_annual_vol is None
@@ -286,6 +339,7 @@ class RiskOverlayConfig:
 
 
 __all__ = [
+    "BullStrictConfig",
     "DrawdownCircuitBreaker",
     "RegimeFilterConfig",
     "RiskOverlayConfig",

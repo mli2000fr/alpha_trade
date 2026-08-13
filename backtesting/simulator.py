@@ -184,6 +184,7 @@ class BacktestDiagnostics:
     time_stop_exits: int = 0
     # Phase C (refactor) — diagnostics risk overlay.
     blocked_by_regime: int = 0
+    blocked_by_bull_strict: int = 0
     blocked_by_sectoral_cap: int = 0
     blocked_by_gross_exposure: int = 0
     blocked_by_drawdown_breaker: int = 0
@@ -210,6 +211,7 @@ class BacktestDiagnostics:
             "trailing_stop_exits": self.trailing_stop_exits,
             "time_stop_exits": self.time_stop_exits,
             "blocked_by_regime": self.blocked_by_regime,
+            "blocked_by_bull_strict": self.blocked_by_bull_strict,
             "blocked_by_sectoral_cap": self.blocked_by_sectoral_cap,
             "blocked_by_gross_exposure": self.blocked_by_gross_exposure,
             "blocked_by_drawdown_breaker": self.blocked_by_drawdown_breaker,
@@ -1278,6 +1280,24 @@ class BacktestEngine:
                     float(row.get("score", row.get("score_used", 0.0) or 0.0)),
                     len(candidate_rows) - candidate_pos,
                 )
+
+            # ── P2-3 : overlay no-trades en bull strict ──
+            if not risk.bull_strict.is_entry_allowed(side, cfg.benchmark_close, trade_day):
+                diagnostics.blocked_by_bull_strict += 1
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason=(
+                        "bull_strict_no_trades"
+                        if risk.bull_strict.mode == "no_trades"
+                        else "bull_strict_no_shorts"
+                    ),
+                    side=side,
+                    **signal_context,
+                )
+                continue
 
             # Quick Win 2 — score threshold (Sprint 2: skip pour shorts)
             if cfg.min_score_threshold > 0 and not short:
