@@ -730,6 +730,11 @@
 			"label": "bt_p23_control",
 			"type": "shell",
 			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --output-dir artifacts/backtesting/b25_p23_control *> artifacts/backtesting/b25_p23_control.log; Get-Content artifacts\\backtesting\\b25_p23_control.log -Tail 3"
+		},
+		{
+			"label": "bt_p23_noshorts",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --bull-strict-mode no_shorts --output-dir artifacts/backtesting/b25_p23_noshorts *> artifacts/backtesting/b25_p23_noshorts.log; Get-Content artifacts\\backtesting\\b25_p23_noshorts.log -Tail 3"
 		}
 	]
 }
