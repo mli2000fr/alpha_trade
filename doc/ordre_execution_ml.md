@@ -6,6 +6,72 @@
 
 ---
 
+## 🧭 Guide pour un nouveau venu (lire avant tout)
+
+### Prérequis & environnement
+
+| Élément | Valeur |
+|---|---|
+| **Projet** | `F:\projets` (α-Trade, système de trading long/short ML) |
+| **Python** | venv `F:\projets\.venv\Scripts\python.exe` (Python 3.14) |
+| **Base de données** | MySQL `alpha_trade` (root/root) — TOUT le système persiste ici |
+| **IHM** | `streamlit run ihm/app.py` (démarrée par `python run.py`) — navigation par la barre latérale gauche |
+| **Config centrale** | `config.yaml` (batch live, garde-fous, risk_management) |
+| **Journal de recherche** | `doc/ml_todo.md` — TOUTES les décisions passées y sont tracées (à lire pour comprendre l'historique) |
+| **Journal des batchs** | `doc/test/test_global_per_sector.md` — comparatif B0→B38 |
+
+> ⚠️ **Pièges Windows connus** : les terminaux VS Code sont parfois muets (relancer la commande) ; `$env:PYTHONIOENCODING='utf-8'` avant toute sortie Python redirigée ; guillemets simples dans PowerShell ; pytest avec `-o addopts=""` (le `pytest.ini` contient des flags cov cassés).
+
+### Vocabulaire minimal
+
+| Terme | Signification |
+|---|---|
+| **Batch** | Une campagne d'entraînement ML complète, identifiée par `batch_id` (ex. `model-factory-20260811223551-ef2cd0` = **B25**, le champion en production) |
+| **Global Ranking** | Modèle CatBoost YetiRank qui classe tous les symboles de l'univers par rendement futur attendu → `global_rank_h` ∈ [0,1] sur 5 horizons (H3/H5/H10/H15/H20). **C'est la seule composante avec un vrai alpha (IC).** |
+| **IC Rank** | Corrélation de Spearman entre rang prédit et rendement réalisé — la métrique de qualité n°1 (B25 = 0.0241) |
+| **IC IR** | IC moyen / écart-type — la stabilité (B25 = 1.07) |
+| **Backfill** | Rejouer le modèle jour par jour sur l'historique pour produire les rangs passés = **prédiction historique** |
+| **Synthèse** | Agrégation des rangs + probabilités en scores consommables (table `global_rank_history`) |
+| **PIT** (point-in-time) | Aucune donnée future ne fuit dans une décision passée — règle absolue du backtest |
+| **OOS** (out-of-sample) | Période jamais vue par l'entraînement/la calibration — la seule preuve valable |
+| **Walk-forward** | Validation glissante : entraîner sur fenêtre A, tester sur B, re-entraîner, etc. |
+| **Conviction** | Score de confiance d'un trade (fusion score quant + ML) — peut être recalibrée (Kelly) |
+| **rank_weighted** | Mode de sizing où les positions du jour sont pondérées par leur rang (top = plus gros poids) |
+| **Multiplicateurs sectoriels** | Facteurs ×0.5..×1.25 par secteur, appliqués au sizing (JSON `config/p21_sector_multipliers.json`) |
+| **Bull strict** | Régime = SPY > SMA200 ET rendement SPY 60j > +3% — l'overlay P2-3 y coupe les shorts (ou tout) |
+| **Breadth / garde-fou 75%** | L'univers live doit contenir ≥ 75% du référentiel (400 → 300), sinon l'étape 10 du pipeline **bloque** |
+| **B25** | Le batch champion (CAPM + YetiRank, IC 0.0241) — actuellement promu en production |
+| **B38** | Test univers : B25 entraîné sur 300 des 400 symboles → IC 0.0229 (−5%) → valide le seuil 75% |
+
+### Cartographie — où se trouvent les choses
+
+| Quoi | Où |
+|---|---|
+| **Lancer l'IHM** | `python run.py` (page principale : sidebar → « 🔄 Pipeline », « 🧪 Backtesting », « 🧮 Calibrations poids », « 🤖 ML / Prédictions »...) |
+| **Entraîner un batch** | IHM Pipeline → « Paramètres Model Factory » OU `python -m modelFactory --mode train ...` |
+| **Backtests** | IHM Backtesting → onglet « ▶️ Backtest » OU `python -m backtesting run ...` |
+| **Résultats d'un backtest** | `artifacts/backtesting/<nom_du_run>/report.json` (+ `trades.csv`, `equity_curve.png`) |
+| **Backfill** | IHM Backtesting → onglet « 🧱 Backfill scores history » |
+| **Calibration conviction** | IHM Backtesting → onglet « 🎯 Calibrate conviction » → runs en DB `weights_calibration_runs` |
+| **Activer une calibration live** | IHM « 🧮 Calibrations poids » → boutons « Promouvoir/Bloquer pour le live » (`eligible_for_live`) |
+| **Multiplicateurs sectoriels** | JSON `config/p21_sector_multipliers.json` + module `modelFactory/analyze_p21_attribution.py` |
+| **Promouvoir un batch** | IHM « 🤖 ML / Prédictions » → « 🧭 Gouvernance & artefacts de serving » → « Promouvoir cette campagne pour le serving » (table `model_serving_batch`) |
+| **Univers d'entraînement** | `config/ticket_mid_cap_400.txt` (400 liquidité) ; référentiel live : `config/ticket_recherche.txt` |
+| **Garde-fou breadth** | `modelFactory/universe_guard.py` + `config.yaml` → `ml_min_universe_pct: 75` |
+| **Journal des décisions** | `doc/ml_todo.md` (lire « Reste à faire » + « Fait/Archivé » pour l'historique complet) |
+
+### Tables DB clés
+
+| Table | Contenu |
+|---|---|
+| `model_training_batch` | Les batchs (ic_rank, comment, metadata_json avec best_horizon...) |
+| `model_serving_batch` | LE batch promu pour la production (scope `default`) |
+| `global_rank_history` | Les rangs par batch/date/symbole (consommés par les backtests) |
+| `model_predictions` | Prédictions par run/symbole/date |
+| `weights_calibration_runs` | Calibrations conviction/Kelly (avec `eligible_for_live`) |
+
+---
+
 ## Vue d'ensemble
 
 Le workflow sépare deux familles d'actions :
@@ -97,14 +163,14 @@ La calibration seule ne change rien — il faut qu'un backtest la **consomme** p
 
 Principe : **un seul changement à la fois**, chaque run se compare à son parent.
 
-| Run | Configuration | Comparé à | Question posée |
-|-----|---------------|-----------|----------------|
-| **5a** | sizing `rank_weighted` | Étape 2 (equal) | Le rank-weighted aide-t-il OOS ? |
-| **5b** | `rank_weighted` + secteur `default` | 5a | Les multiplicateurs sectoriels ajoutent-ils ? |
-| **5c** | `rank_weighted` + conviction `auto` (sans secteur) | 5a | La calibration conviction ajoute-t-elle ? |
-| **5d** | rank_weighted + secteur + conviction | 5b et 5c | Le combo complet est-il meilleur que chaque ingrédient ? |
-| **5e** | `--bull-strict-mode no_shorts` (sizing equal) | Étape 2 | Couper les shorts en bull strict aide-t-il ? (P2-3) |
-| **5f** | `--bull-strict-mode no_trades` (sizing equal) | Étape 2 | Couper tous trades en bull strict aide-t-il ? (P2-3) |
+| Run | Configuration | Comparé à | Question posée | Ref `doc/ml_todo.md` |
+|-----|---------------|-----------|----------------|-----------------------|
+| **5a** | sizing `rank_weighted` | Étape 2 (equal) | Le rank-weighted aide-t-il OOS ? | **P2-1 inc.2 + inc.4** |
+| **5b** | `rank_weighted` + secteur `default` | 5a | Les multiplicateurs sectoriels ajoutent-ils ? | **P2-1 inc.3** |
+| **5c** | `rank_weighted` + conviction `auto` (sans secteur) | 5a | La calibration conviction ajoute-t-elle ? | Calibration conviction/Kelly |
+| **5d** | rank_weighted + secteur + conviction | 5b et 5c | Le combo complet est-il meilleur que chaque ingrédient ? | **P2-1** (combo) |
+| **5e** | `--bull-strict-mode no_shorts` (sizing equal) | Étape 2 | Couper les shorts en bull strict aide-t-il ? | **P2-3** ❌ (rejeté 2026-08-13 : 140.1% vs 205.9%) |
+| **5f** | `--bull-strict-mode no_trades` (sizing equal) | Étape 2 | Couper tous trades en bull strict aide-t-il ? | **P2-3** ❌ (rejeté 2026-08-13 : 127.2% vs 205.9%, DD 15.0%) |
 
 > ⚠️ **5e/5f dépendent du modèle** : à re-valider à chaque nouveau batch (la règle
 > est portable, son bénéfice non). Ils utilisent le sizing `equal_weight` pour
@@ -219,7 +285,7 @@ Les 3 actions de mise en production se font uniquement depuis l'IHM (aucun termi
 2. Bouton **« Promouvoir cette campagne pour le serving »** → INSERT dans `model_serving_batch` (scope `default`).
 3. **Mettre à jour `batch_diagnostics.live_batch_id` dans `config.yaml`** avec le batch promu.
 4. Lancer le pipeline (étapes 1→10) : la prédiction live utilise le batch promu.
-4. Smoke test : prédictions datées du jour, univers ≥ garde-fou breadth (75 % du référentiel).
+5. Smoke test : prédictions datées du jour, univers ≥ garde-fou breadth (75 % du référentiel).
 
 > Le batch de test `a8aadc` (2026-08-13) est ignoré : B25 (`model-factory-20260811223551-ef2cd0`) reste le batch de production.
 
@@ -265,3 +331,113 @@ Les 3 actions de mise en production se font uniquement depuis l'IHM (aucun termi
 - **Outil** : `python -m modelFactory.analyze_p21_attribution --run-dir <run> --out-json config/p21_sector_multipliers.json` (option `--min-trades` pour filtrer les petits secteurs, 0 = pas de filtre comme B25)
 - **Validation B25 (OOS 2025)** : rank_weighted 33.4%/Sharpe 1.18 → rankw+secteur 34.4%/1.20 → adopté
 - Les multiplicateurs sont **figés** dans le JSON : à re-calibrer à chaque nouveau batch (l'efficience sectorielle peut dériver)
+
+---
+
+## 📎 Annexe — Commandes canoniques (alternative au terminal)
+
+> L'IHM reste la voie recommandée ; ces commandes servent de référence/dépannage.
+> Toujours précéder d'un `$env:PYTHONIOENCODING='utf-8'` en PowerShell.
+
+### Entraînement (étape 0)
+
+```powershell
+.venv\Scripts\python.exe -m modelFactory --mode train --training-mode per_sector `
+  --target-mode regression --forecast-horizons 3,5,10,15,20 `
+  --feature-set expert --benchmark-symbol SPY `
+  --training-start-date 2016-01-01 --symbol-source ticket-recherche `
+  --catboost-loss-function YetiRank --include-short-score `
+  --target-excess-vs-spy --include-factors --no-include-score-components `
+  --enable-global-model --global-model-name catboost --global-champion `
+  --select-champion --walkforward --wf-max-splits 8 `
+  --comment "B39 ma description"
+```
+
+### Backtest canonique (étapes 2 et 5)
+
+```powershell
+# Baseline (étape 2) — sizing equal, tout off
+.venv\Scripts\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 `
+  --ml-batch-id <BATCH_ID> --capital-preset-key capital_2001_5000 `
+  --no-spread-cost --commission-bps 5 --slippage-bps 5 `
+  --output-dir artifacts/backtesting/<run>
+
+# 5a rank_weighted
+... --sizing-mode rank_weighted --sizing-min-weight-pct 0.005 --sizing-max-weight-pct 0.20 ...
+
+# 5b rank_weighted + secteur (JSON direct ou @fichier)
+... --sizing-mode rank_weighted --sector-multipliers-json @config/p21_sector_multipliers.json ...
+
+# 5e/5f overlay bull strict (P2-3)
+... --bull-strict-mode no_shorts ...   # ou no_trades
+```
+
+### Calibration multiplicateurs (étape 3')
+
+```powershell
+.venv\Scripts\python.exe -m modelFactory.analyze_p21_attribution `
+  --run-dir artifacts/backtesting/<run_étape_2> `
+  --out-json config/p21_sector_multipliers.json
+```
+
+### Backfill rangs (étape 1)
+
+```powershell
+.venv\Scripts\python.exe -m modelFactory.predict_per_sector `
+  --batch-id <BATCH_ID> --start <YYYY-MM-DD> --end <YYYY-MM-DD>
+```
+
+### Vérifications SQL utiles
+
+```sql
+-- Batch promu en production ?
+SELECT scope, batch_id, promoted_at FROM model_serving_batch ORDER BY promoted_at DESC;
+
+-- Métriques d'un batch
+SELECT batch_id, ic_rank, ic_rank_std,
+       JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.global_ranking.best_horizon')) AS best_h
+FROM model_training_batch WHERE batch_id = '<BATCH_ID>';
+
+-- Calibrations conviction éligibles live
+SELECT run_id, window_end, eligible_for_live, metric_name, metric_value
+FROM weights_calibration_runs WHERE eligible_for_live = 1 ORDER BY window_end DESC;
+
+-- Activer / bloquer un run conviction
+UPDATE weights_calibration_runs SET eligible_for_live = 1, eligibility_reason = 'Validé OOS' WHERE run_id = '<RUN_ID>';
+UPDATE weights_calibration_runs SET eligible_for_live = 0 WHERE run_id = '<RUN_ID>';
+```
+
+---
+
+## 📎 Annexe — Lire un résultat de backtest
+
+Ouvrir `artifacts/backtesting/<run>/report.json` → section `summary`. Les 6 métriques de décision :
+
+| Métrique | Champ | Lecture |
+|---|---|---|
+| Retour total (%) | `total_return_pct` | PnL cumulé sur la période |
+| CAGR (%) | `cagr_pct` | Retour annualisé |
+| Sharpe | `sharpe_ratio` | Rendement ajusté du risque (≥ 1 = bon sur cette stratégie) |
+| Sortino | `sortino_ratio` | Comme Sharpe mais ne pénalise que la volatilité baissière |
+| Max drawdown (%) | `max_drawdown_pct` | Pire perte cumulée — la tolérance est ~±0.2 pt entre variantes |
+| Profit factor | `profit_factor` | Gains bruts / pertes brutes (≥ 1.2 = sain) |
+| Trades | `total_trades` | Nombre de trades — une variante qui coupe des trades doit être jugée sur la même base |
+| PnL net ($) | `pnl_net` | Cohérence avec l'equity (100k initial) |
+
+> **Exemple B25 OOS 2025** : equal 28.0%/1.10/1.82/15.6% vs rankw 33.4%/1.18/2.00/18.5% → adopté (5/6 métriques, DD +2.9 pts toléré car Sharpe/Sortino/PF/PnL nettement supérieurs).
+
+---
+
+## 📎 Annexe — Pièges connus & rollback
+
+| Situation | Que faire |
+|---|---|
+| Le live bloque « breadth < 75 % » | Réparer l'ingestion (barres eodhd arrêtées) — le garde-fou fait exprès de bloquer |
+| Une calibration live doit être retirée | « 🧮 Calibrations poids » → « 🔒 Bloquer pour le live » |
+| Un batch promu doit être retiré | Re-promouvoir l'ancien batch (page ML) + remettre `live_batch_id` dans `config.yaml` |
+| Revenir au sizing legacy | Pipeline → Allocation P2-1 → mode `atr` (ou `sizing_mode: "atr"` dans config.yaml) |
+| `pytest` échoue sur des flags cov | Lancer avec `-o addopts=""` |
+| 2 tests échouent dans `test_backtesting_refactor.py` (TestPhaseA `_vectorized_fuse`) | **Préexistant et sans rapport** avec ce workflow (refactor signal_replay) — ignorer |
+| La page IHM ne montre pas les nouveautés | F5 (Streamlit recharge le script) ; vérifier qu'une seule instance tourne |
+| Terminal VS Code muet | Relancer la commande (session PowerShell instable) |
+| JSON sectoriel à régénérer après un nouveau batch | Étape 3' (`analyze_p21_attribution`) — **ne jamais réutiliser celui du batch précédent** |
