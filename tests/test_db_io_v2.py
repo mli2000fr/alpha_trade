@@ -47,8 +47,17 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS model_training_run (
                 run_id VARCHAR(50) PRIMARY KEY,
+                batch_id VARCHAR(64),
+                symbol VARCHAR(20),
                 status VARCHAR(20),
                 finished_at TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS model_serving_batch (
+                scope VARCHAR(32) PRIMARY KEY,
+                batch_id VARCHAR(64),
+                promoted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
         conn.execute(text("""
@@ -223,6 +232,40 @@ def test_load_predictions_empty_symbols() -> None:
     engine = create_engine("sqlite:///:memory:")
     repo = RiskRepository(engine=engine)
     assert repo.load_predictions_asof([], date(2026, 4, 18)) == {}
+
+
+@pytest.mark.unit
+def test_load_predictions_asof_serving_batch_matches_globalrank_synth() -> None:
+    """Le run synthétique global rank (symbole sentinelle) doit être consommable
+    par le filtre serving batch malgré `training_run.symbol != prediction.symbol`."""
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO model_training_run (run_id, batch_id, symbol, status, finished_at)
+            VALUES ('b25_globalrank_synth', 'B25', '__GLOBAL_RANK_SYNTH__', 'completed', '2026-04-15 12:00:00')
+        """))
+        conn.execute(text("""
+            INSERT INTO model_serving_batch (scope, batch_id) VALUES ('default', 'B25')
+        """))
+        conn.execute(text("""
+            INSERT INTO model_predictions (
+             symbol, predicted_proba, predicted_class, predicted_side,
+             proba_long, proba_flat, proba_short, run_id, prediction_date
+            )
+            VALUES ('AAPL', 0.62, 1, 'long', 0.62, 0.20, 0.18, 'b25_globalrank_synth', '2026-04-14'),
+                   ('MSFT', 0.45, 0, 'short', 0.35, 0.25, 0.40, 'b25_globalrank_synth', '2026-04-14'),
+                   ('MSFT', 0.51, 0, 'flat', 0.30, 0.55, 0.15, 'b25_globalrank_synth', '2026-04-13'),
+                   ('AAPL', 0.80, 1, 'long', 0.80, 0.10, 0.10, 'OTHER_RUN', '2026-04-14')
+        """))
+    repo = RiskRepository(engine=engine)
+    preds = repo.load_predictions_asof(["AAPL", "MSFT"], date(2026, 4, 18))
+    assert set(preds) == {"AAPL", "MSFT"}
+    assert preds["AAPL"].run_id == "b25_globalrank_synth"
+    assert preds["AAPL"].prediction_date == date(2026, 4, 14)
+    assert preds["MSFT"].run_id == "b25_globalrank_synth"
+    assert preds["MSFT"].prediction_date == date(2026, 4, 14)
+    assert preds["MSFT"].proba_short == 0.40
 
 
 @pytest.mark.unit

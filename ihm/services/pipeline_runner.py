@@ -2413,6 +2413,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--max-workers",
             str(options.ml_max_workers),
         ]
+        if _bid:
+            command.extend(["--batch-id", _bid])
         if options.ml_predict_use_historical_range:
             command.extend([
                 "--training-start-date",

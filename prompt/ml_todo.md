@@ -172,6 +172,8 @@
 | — | P1-4 backtest OOS B25 | ✅ **Fait (2026-08-13)** — **5+5 bps : +126.7%, Sharpe 0.81, DD 32.4%** (1+5 bps : +151.7%, Sharpe 0.90) — signal validé en PnL réel |
 | — | **P1-5 IC/PnL par régime** | ✅ **Fait (2026-08-13)** — IC stable partout (sector-neutral 0.014-0.017, 2020 seul trou). PnL : 80% du gain en high_disp+vol, bull perdant (−13.4k), shorts moteur (+86.2k). **Ne pas filtrer par régime ; piste P2-3 = no-trades en bull strict.** |
 | — | **P1-6 Rolling IC 6/12 mois** | ✅ **Fait (2026-08-13)** — fenêtres 252j 100% positives, 126j 94.3% → stabilité temporelle confirmée |
+| — | **🔥 Promotion B25 en production** | ✅ **Fait (2026-08-13)** — `model_serving_batch` → `model-factory-20260811223551-ef2cd0` (remplace la référence morte `model-factory-20260725215754-bbd8ba`). **✅ Flux live activé** : (1) fix jointure `risk_management/db_io.load_predictions_asof` (égalité `training_run.symbol=prediction.symbol` supprimée — bloquait les runs synth rank-driven ; colonnes qualifiées ; 23/23 tests + test de régression ajouté) ; (2) `config.yaml` `live_batch_id` = B25 ; (3) génération live : 189 rangs 2026-07-10 + synthèse 259 428 lignes ; (4) smoke test : 545 symboles consommés dont 37 datés 2026-07-10 (19L/18S). ⚠️ **Ingestion à vérifier** : les barres eodhd s'arrêtent au 2026-07-10. Job quotidien/backfill : `python -m modelFactory.predict_per_sector` (générique : tout batch per-sector via `--batch-id`).
+| — | **Étape 10 dispatch intelligent per-symbol/per-sector** | ✅ **Fait (2026-08-13)** — `detect_batch_training_mode()` (argv_json/command_line + fallback runs GICS/sentinelle) ; `modelFactory/cli.py` mode predict aiguille automatiquement : per-symbol → `predict_batch` (inchangé), per-sector → global ranks + synthèse (live ET plage historique) ; CLI `--batch-id` explicite (fixe aussi le hijack `backtest_batch_id`) passé par l'IHM ; drift gate conservé. 7/7 tests unitaires + run E2E réel (189 rangs, 259 428 lignes). **L'étape 10 est désormais batch-agnostique (Batch LIVE et Batch BACKTEST).** |
 | — | Campagne YetiRank B31-B34 (flags) | ✅ **Fait (2026-08-13)** — aucun flag ne bat B25 |
 | — | Univers 196 (B35/B36) | ✅ **Fait (2026-08-13)** — ❌ détruit H10-H20, garder 400 |
 | — | PairLogit / PairLogitPairwise (B23/B24/B28/B29) | ⛔ **Abandonnés (2026-08-12)** — 20h+ de calcul bloquées sur H3, trop lents (O(n²) par groupe) |
@@ -197,7 +199,7 @@ P0-1 (caps) ──→ ✅ fait
   │
   ├─→ P1-6 (rolling IC 6/12m) ──→ ✅ fait (2026-08-13) : fenêtres 252j 100% positives
   │
-  ├─→ 🔥 Promotion B25 en production ──→ prochaine étape majeure
+  ├─→ 🔥 Promotion B25 en production ──→ ✅ fait (2026-08-13) — serving=B25 + fix jointure live + flux live activé (job quotidien python -m modelFactory.predict_per_sector)
   │
   └─→ P2-1 (optimisation poids) ──→ après P0-1
         │

@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "module_smoke",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -c \"import sys; sys.path.insert(0, r'F:\\projets'); from modelFactory.predict_per_sector import _parse_args, DEFAULT_BATCH_ID; print(_parse_args(['--batch-id','B25','2026-07-10'])); print(_parse_args(['2025-01-02','2025-12-31'])); print(DEFAULT_BATCH_ID)\""
+		},
+		{
+			"label": "module_smoke2",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_module_smoke.py; Remove-Item scripts\\_tmp_module_smoke.py -Force"
+		}
+	]
+}
