@@ -675,9 +675,10 @@ def generate_report(
             snapshots = events[events["event_type"] == "daily_leverage_snapshot"]
             if not snapshots.empty:
                 gross = pd.to_numeric(snapshots.get("gross_exposure_before_pct"), errors="coerce")
-                gross_exposure_avg_pct = float(gross.mean()) if gross.notna().any() else 0.0
+                # Les événements stockent des fractions d'equity (ex. 1.51 = 151%) → ×100.
+                gross_exposure_avg_pct = float(gross.mean()) * 100.0 if gross.notna().any() else 0.0
                 net = pd.to_numeric(snapshots.get("net_exposure_before_pct"), errors="coerce")
-                net_exposure_avg_pct = float(net.mean()) if net.notna().any() else 0.0
+                net_exposure_avg_pct = float(net.mean()) * 100.0 if net.notna().any() else 0.0
         if n_trades > 0 and not equity.empty:
             try:
                 traded_notional = float(

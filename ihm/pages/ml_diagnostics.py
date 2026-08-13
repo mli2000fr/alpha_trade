@@ -1166,6 +1166,40 @@ def _render_batch_detail(batch: pd.Series) -> None:
         _batch_id = str(row["batch_id"])
         _cache_path = Path(get_model_artifacts_dir()) / _batch_id / "global_rank_cache.parquet"
         if _cache_path.exists():
+            # ── Génération commande CLI backtest complet (P1-4) ──
+            # Fenêtre OOS déduite des dates du cache des rangs (même source
+            # que le backtest stratégies ci-dessous → toujours cohérent).
+            _bt_cmd_session_key = f"gen_backtest_cli_{_batch_id}"
+            if st.button("📋 Générer la commande CLI backtest", key=f"gen_cmd_{_batch_id}"):
+                try:
+                    _rank_df_cmd = pd.read_parquet(_cache_path, columns=["date"])
+                    _dates_cmd = pd.to_datetime(_rank_df_cmd["date"], errors="coerce").dropna()
+                    if _dates_cmd.empty:
+                        st.error("Cache des rangs vide — impossible de déduire la fenêtre OOS.")
+                    else:
+                        _start_cmd = _dates_cmd.min().date()
+                        _end_cmd = _dates_cmd.max().date()
+                        st.session_state[_bt_cmd_session_key] = {
+                            "command": (
+                                "python -m backtesting run "
+                                f"--start {_start_cmd} --end {_end_cmd} "
+                                f"--ml-batch-id {_batch_id} "
+                                "--capital-preset-key capital_2001_5000 "
+                                "--no-spread-cost --commission-bps 5 --slippage-bps 5"
+                            ),
+                            "start": str(_start_cmd),
+                            "end": str(_end_cmd),
+                        }
+                except Exception as _exc_cmd:
+                    st.error(f"Impossible de générer la commande : {_exc_cmd}")
+            _bt_cmd_info = st.session_state.get(_bt_cmd_session_key)
+            if _bt_cmd_info:
+                st.caption(
+                    f"Fenêtre OOS déduite du cache des rangs : `{_bt_cmd_info['start']}` → `{_bt_cmd_info['end']}` "
+                    "· frais 5 bps entrée + 5 bps sortie, spread réel désactivé."
+                )
+                st.code(_bt_cmd_info["command"], language="powershell")
+
             if st.button("🚀 Lancer le backtest", key=f"backtest_{_batch_id}"):
                 try:
                     import numpy as np

@@ -1,4 +1,3 @@
-B31 = B9  + YetiRank  (fundamentaux)   ← test clé
-B32 = B12 + YetiRank  (score components)
-B33 = B13 + YetiRank  (cross-sectional)
-B34 = B2  + YetiRank  (screener)
+P3-1 : target asymétrique (pénaliser davantage le long) ou renforcer le scoring long
+P2-2 : ablation features pour comprendre pourquoi les longs sous-performent
+pour réparer le long
