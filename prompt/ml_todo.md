@@ -131,14 +131,15 @@
 | **P1-2** | **CatBoost YetiRank** | 2j | 🔥 | ✅ **B20/B25 terminés** — B25 (CAPM+YetiRank) IC record 0.0241 (+19%). YetiRank validé, CAPM+YetiRank encore meilleur.<br>→ Prochaine étape : per-horizon specialization ou lancer B25 en production. |
 | **P1-3** | **Target = rang percentile** (optimiser IC au lieu de MSE) | 3j | 🔥 | ✅ **B30 testé (2026-08-12)** — ❌ ÉCHEC. IC 0.0153 (−36% vs B20). Le rank brut détruit H5/H15/H20, CatBoost s'effondre et perd 3/5 horizons face à LightGBM. Seul H3 profite (+23%). **Le pipeline complet (smoothing + neutralisation) est essentiel. P1-3 clos — ne pas retenter.** |
 | **P1-4** | **Portfolio OOS V1/V2/V3/V4** (top 5/10/20/30%) | 3j | 🔥🔥 | ✅ **Fait (2026-08-13)** — Backtest B25 complet (400 symboles, 2019-01→2024-06, frais **5 bps entrée + 5 bps sortie**). **+126.7% total, CAGR 16.1%, Sharpe 0.81, Sortino 1.06, Max DD 32.4%, PF 1.32, 358 trades (143L/215S).** Exposition brute moy. 62.8%, nette −35.6%, turnover 45.7x/an. Bootstrap : return moyen 124.5% ≈ réel, IC Sharpe [0.06, 1.03]. PnL net cohérent avec l'equity. **Le signal survit aux frictions réelles.** (Rappel run précédent 1+5 bps : +151.7%, Sharpe 0.90 — sensibilité aux frais mesurée.) |
-| **P1-5** | **IC/PnL par régime** (bull/bear, high/low vol, high/low dispersion) | 2j | 🔥 | Analyse de robustesse, pas de feature engineering. VIX/MOVE/etc. n'améliorent pas le modèle, mais le signal est-il stable dans tous les régimes ?<br>→ B4 en bull market vs bear market vs high vol vs low vol.<br>→ Si IC tombe à zéro en bear market → information utile pour le risk management (quand désactiver). |
-| **P1-6** | **Rolling IC 6/12 mois** (stabilité temporelle) | 1j | 🔥 | IC glissant par période de 6-12 mois pour détecter un modèle qui a un bon IC moyen grâce à 2 très bonnes périodes.<br>→ IC > 0 sur chaque période ? IC IR stable ? Max drawdown du signal ? |
+| **P1-5** | **IC/PnL par régime** (bull/bear, high/low vol, high/low dispersion) | 2j | 🔥 | Analyse de robustesse, pas de feature engineering.<br>**Étape 2 (IC) ✅ 2026-08-13** — `scripts/analyze_ic_by_regime_b25.py`, 722 jours, 392 symboles : sector-neutral bull +0.0146 / range +0.0169 / vol +0.0137 / bear +0.0226 (11j) — stable partout ; vol-scalé : low_disp +0.0150 vs high_disp −0.0037 ; 2020 = −0.0311 (krach, seul trou).<br>**Étape 3 (PnL) ✅ 2026-08-13** — re-run identique (358 trades, +126.65%) : high_disp **+157.9k** vs low_disp −32.4k ; vol +82.7k, range +51.2k, **bull −13.4k** ; shorts +86.2k (longs +39.3k). Equity Sharpe : vol 2.06, bear 1.64, bull −0.08. A/B post-hoc : couper high_disp → −125% ; couper vol → −66% ; couper dd_deep → −45%. **Verdict : NE PAS filtrer high_disp/vol/dd (c'est là que la stratégie gagne) ; seule piste = réduire les shorts en régime bull (test overlay P2).**
+| **P1-6** | **Rolling IC 6/12 mois** (stabilité temporelle) | 1j | 🔥 | ✅ **Fait (2026-08-13)** — `scripts/analyze_rolling_ic_b25.py` : IC sector-neutral moyen 0.0148 ; **fenêtres 252j : 100% positives** (471), fenêtres 126j : 94.3% positives (597) → le bon IC ne vient PAS de 2-3 périodes isolées. Roll 252j IR 1.92. Séquence négative max : 21 jours. Par année : 2019 −0.002, 2020 +0.016, 2021 +0.004 (point faible), 2022 +0.026, 2023 +0.017, 2024 +0.030. ⚠️ Le seul vrai trou reste 2020 sur l'IC **vol-scalé** (−0.031) : les krachs tuent l'alpha risk-adjusted, pas l'alpha brut. |
 
 ### ⚠️ P2 — Optimisation (après P1 confirmé)
 
 | # | Action | Effort | Impact | Pourquoi |
 |---|--------|:------:|:------:|----------|
 | **P2-1** | Optimisation de poids P1/P2 (contraintes secteur) | 5j | 🔥🔥 | Après P0-1. Transforme un bon score en bon PnL. |
+| **P2-3** | **Overlay no-shorts en bull strict** (SPY>SMA200 **ET** ret60j>+3%) | 1j | 🔥 | Post-hoc 2026-08-13 : shorts bull strict = −11.8k sur 98 trades ; couper → +9.4% PnL, DD −4 pts ; couper tous trades bull → +10.7%, DD −10 pts. ⚠️ La règle naïve SPY>SMA200 est ❌ (les shorts y gagnent +62.6k). Vrai A/B backtest à faire (pas de réallocation post-hoc). |
 | **P2-2** | Feature ablation F0-F4 per-symbol | 3j | 🔥 | Comprendre CE QUI marche dans le per-symbol. Après P1-1. |
 
 ### 💡 P3 — Idées (priorité basse, à tester si bande passante)
@@ -169,6 +170,8 @@
 | — | CAPM + QueryRMSE B26 | ✅ **Fait (2026-08-12)** — IC 0.0172, −15% vs B4, rejeté |
 | — | CAPM + QuerySoftMax B27 | ✅ **Fait (2026-08-12)** — IC 0.0161, −20% vs B4, rejeté |
 | — | P1-4 backtest OOS B25 | ✅ **Fait (2026-08-13)** — **5+5 bps : +126.7%, Sharpe 0.81, DD 32.4%** (1+5 bps : +151.7%, Sharpe 0.90) — signal validé en PnL réel |
+| — | **P1-5 IC/PnL par régime** | ✅ **Fait (2026-08-13)** — IC stable partout (sector-neutral 0.014-0.017, 2020 seul trou). PnL : 80% du gain en high_disp+vol, bull perdant (−13.4k), shorts moteur (+86.2k). **Ne pas filtrer par régime ; piste P2-3 = no-trades en bull strict.** |
+| — | **P1-6 Rolling IC 6/12 mois** | ✅ **Fait (2026-08-13)** — fenêtres 252j 100% positives, 126j 94.3% → stabilité temporelle confirmée |
 | — | Campagne YetiRank B31-B34 (flags) | ✅ **Fait (2026-08-13)** — aucun flag ne bat B25 |
 | — | Univers 196 (B35/B36) | ✅ **Fait (2026-08-13)** — ❌ détruit H10-H20, garder 400 |
 | — | PairLogit / PairLogitPairwise (B23/B24/B28/B29) | ⛔ **Abandonnés (2026-08-12)** — 20h+ de calcul bloquées sur H3, trop lents (O(n²) par groupe) |
@@ -190,13 +193,15 @@ P0-1 (caps) ──→ ✅ fait
   │
   ├─→ P1-4 (portfolio OOS) ──→ ✅ fait (2026-08-13 : 5+5bps +126.7%, Sharpe 0.81, signal validé)
   │
-  ├─→ P1-5 (IC/PnL par régime) ──→ robustesse
+  ├─→ P1-5 (IC/PnL par régime) ──→ ✅ fait (2026-08-13) : IC stable, PnL concentré vol/high_disp, bull faible
   │
-  ├─→ P1-6 (rolling IC 6/12m) ──→ stabilité temporelle
+  ├─→ P1-6 (rolling IC 6/12m) ──→ ✅ fait (2026-08-13) : fenêtres 252j 100% positives
   │
   ├─→ 🔥 Promotion B25 en production ──→ prochaine étape majeure
   │
   └─→ P2-1 (optimisation poids) ──→ après P0-1
+        │
+        ├─→ P2-3 (overlay no-trades bull strict) ──→ 1j, vrai A/B backtest
         │
         └─→ P3-* (idées) ──→ si bande passante
 ```
