@@ -50,6 +50,641 @@
 			"label": "guard_pct_e2e",
 			"type": "shell",
 			"command": ".venv\\Scripts\\python.exe -m pytest tests\\test_universe_guard.py -q --no-header -p no:cacheprovider -o addopts=\"\"; .venv\\Scripts\\python.exe -m modelFactory.predict_per_sector; echo \"exit code: $LASTEXITCODE\""
+		},
+		{
+			"label": "cols_check",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_cols_check.py; Remove-Item scripts\\_tmp_cols_check.py -Force"
+		},
+		{
+			"label": "p21_inc1",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m modelFactory.analyze_p21_attribution"
+		},
+		{
+			"label": "test_sizing",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "p21_rankw_run",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --sizing-mode rank_weighted --output-dir artifacts/backtesting/b25_p21_rankw *> artifacts/backtesting/b25_p21_rankw.log"
+		},
+		{
+			"label": "rankw_poll1",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 300; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll2",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll3",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 330; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll4",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll5",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll6",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll7",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll8",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll9",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll10",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll11",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll12",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll13",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll14",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll15",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll16",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll17",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll18",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 2"
+		},
+		{
+			"label": "rankw_poll19",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 3; echo '---'; Get-ChildItem artifacts\\backtesting\\b25_p21_rankw -ErrorAction SilentlyContinue | Select-Object Name,Length"
+		},
+		{
+			"label": "rankw_poll20",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 3"
+		},
+		{
+			"label": "rankw_poll21",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 330; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 4"
+		},
+		{
+			"label": "rankw_poll22",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 4"
+		},
+		{
+			"label": "rankw_poll23",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 300; Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 4"
+		},
+		{
+			"label": "rankw_poll24",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_p21_rankw.log -Tail 5"
+		},
+		{
+			"label": "compare_ab",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_compare_ab.py"
+		},
+		{
+			"label": "rankw_sanity",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_rankw_sanity.py; Remove-Item scripts\\_tmp_compare_ab.py, scripts\\_tmp_rankw_sanity.py -Force"
+		},
+		{
+			"label": "p21_2025_backfill",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m modelFactory.predict_per_sector 2025-01-02 2025-12-31 *> artifacts\\backtesting\\p21_2025_backfill.log; Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 6"
+		},
+		{
+			"label": "backfill_poll1",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 240; Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 4"
+		},
+		{
+			"label": "backfill_poll2",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 4"
+		},
+		{
+			"label": "univ_by_year",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_2025_univ.py; Remove-Item scripts\\_tmp_2025_univ.py -Force"
+		},
+		{
+			"label": "backfill_check",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 3"
+		},
+		{
+			"label": "backfill_status",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 3"
+		},
+		{
+			"label": "backfill_wait",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 360; Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 3"
+		},
+		{
+			"label": "backfill_wait2",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 4"
+		},
+		{
+			"label": "backfill_wait3",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 360; Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 4"
+		},
+		{
+			"label": "backfill_wait4",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 4"
+		},
+		{
+			"label": "backfill_date_check",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill.log -Pattern 'upserted' | Select-Object -Last 2 -ExpandProperty Line"
+		},
+		{
+			"label": "backfill_wait5",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 300; Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 4"
+		},
+		{
+			"label": "backfill_wait6",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill.log -Tail 4"
+		},
+		{
+			"label": "p21_2025_ticket_backfill",
+			"type": "shell",
+			"command": "$env:PYTHONIOENCODING='utf-8'; .venv\\Scripts\\python.exe -m modelFactory.predict_per_sector 2025-01-02 2025-12-31 *> artifacts\\backtesting\\p21_2025_backfill_ticket.log; Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 5"
+		},
+		{
+			"label": "ticket_poll1",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 420; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 2 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll2",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 4"
+		},
+		{
+			"label": "ticket_pace",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -First 2 -ExpandProperty Line; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll3",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 480; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll4",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll5",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 540; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll6",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll7",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 540; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll8",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll9",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll10",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll11",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll12",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll13",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll14",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll15",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_status",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll16",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll17",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll18",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll19",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll20",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll21",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll22",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll23",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll24",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll25",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll26",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll27",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll28",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll29",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll30",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll31",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll32",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll33",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll34",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll35",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll36",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll37",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll38",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll39",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll40",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll41",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll42",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll43",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll44",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll45",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll46",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll47",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll48",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll49",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll50",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 3"
+		},
+		{
+			"label": "ticket_poll51",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 4"
+		},
+		{
+			"label": "ticket_poll52",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll53",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 3"
+		},
+		{
+			"label": "ticket_poll54",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 3"
+		},
+		{
+			"label": "ticket_poll55",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted|synthesize done|smoke' | Select-Object -Last 3 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll56",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 3"
+		},
+		{
+			"label": "ticket_poll57",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 3"
+		},
+		{
+			"label": "ticket_poll58",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll59",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 3"
+		},
+		{
+			"label": "ticket_poll60",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 4"
+		},
+		{
+			"label": "ticket_poll61",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "ticket_poll62",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 560; Get-Content artifacts\\backtesting\\p21_2025_backfill_ticket.log -Tail 3"
+		},
+		{
+			"label": "backfill_estimate",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -First 1 -ExpandProperty Line; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'synthesize done|smoke|DONE' | Select-Object -Last 2 -ExpandProperty Line"
+		},
+		{
+			"label": "backfill_final_check",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'upserted' | Select-Object -Last 1 -ExpandProperty Line; Select-String -Path artifacts\\backtesting\\p21_2025_backfill_ticket.log -Pattern 'synthesize done|\\[3/3\\] smoke|DONE' | Select-Object -Last 3 -ExpandProperty Line"
+		},
+		{
+			"label": "oos2025_equal",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2025-01-02 --end 2025-12-31 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --output-dir artifacts/backtesting/b25_2025_equal *> artifacts/backtesting/b25_2025_equal.log; Get-Content artifacts\\backtesting\\b25_2025_equal.log -Tail 3"
+		},
+		{
+			"label": "oos_equal_poll1",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 540; Select-String -Path artifacts\\backtesting\\b25_2025_equal.log -Pattern 'cascade_select' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "oos_pace",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\b25_2025_equal.log -Pattern 'cascade_select: 2025' | Select-Object -First 1 -ExpandProperty Line; Select-String -Path artifacts\\backtesting\\b25_2025_equal.log -Pattern 'cascade_select: 2025' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "oos_log_check",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_2025_equal.log -Tail 4"
+		},
+		{
+			"label": "oos_log_check2",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\b25_2025_equal.log -Pattern 'cascade_select' | Select-Object -Last 1 -ExpandProperty Line; (Get-Content artifacts\\backtesting\\b25_2025_equal.log | Measure-Object -Line).Lines"
+		},
+		{
+			"label": "oos_log_check3",
+			"type": "shell",
+			"command": "Start-Sleep -Seconds 240; Select-String -Path artifacts\\backtesting\\b25_2025_equal.log -Pattern 'cascade_select' | Select-Object -Last 1 -ExpandProperty Line"
+		},
+		{
+			"label": "oos_diag",
+			"type": "shell",
+			"command": "Get-Content artifacts\\backtesting\\b25_2025_equal.log; Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,CPU,StartTime | Sort-Object StartTime -Descending | Select-Object -First 3"
+		},
+		{
+			"label": "oos_equal_status",
+			"type": "shell",
+			"command": "Select-String -Path artifacts\\backtesting\\b25_2025_equal.log -Pattern 'Backtest termin' | Select-Object -Last 1 -ExpandProperty Line; Get-ChildItem artifacts\\backtesting\\b25_2025_equal -ErrorAction SilentlyContinue | Select-Object Name"
+		},
+		{
+			"label": "oos2025_rankw",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2025-01-02 --end 2025-12-31 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --sizing-mode rank_weighted --output-dir artifacts/backtesting/b25_2025_rankw *> artifacts/backtesting/b25_2025_rankw.log; Get-Content artifacts\\backtesting\\b25_2025_rankw.log -Tail 3"
+		},
+		{
+			"label": "oos_compare",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_oos_compare.py; Remove-Item scripts\\_tmp_oos_compare.py -Force"
+		},
+		{
+			"label": "test_sector_sizing",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_sector_sizing2",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_sizing3",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "oos2025_rankw_sector",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2025-01-02 --end 2025-12-31 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --sizing-mode rank_weighted --sector-multipliers-json @config/p21_sector_multipliers.json --output-dir artifacts/backtesting/b25_2025_rankw_sector *> artifacts/backtesting/b25_2025_rankw_sector.log; Get-Content artifacts\\backtesting\\b25_2025_rankw_sector.log -Tail 3"
+		},
+		{
+			"label": "test_ihm_runner_sector",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_ihm_backtesting_runner.py\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_final_sector_ihm",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -c \"import ast; ast.parse(open('ihm/pages/backtesting/__init__.py', encoding='utf-8').read()); print('page OK')\"; .venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_final_sector_ihm2",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe scripts\\_tmp_ast_check.py; .venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\"; Remove-Item scripts\\_tmp_ast_check.py -Force"
 		}
 	]
 }
