@@ -710,6 +710,41 @@
 			"label": "test_ml_comments",
 			"type": "shell",
 			"command": ".venv\\Scripts\\python.exe -m pytest tests\\test_services_queries.py -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_p23_bull_strict",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestBullStrictP23\" \"tests\\test_backtesting_refactor.py::TestPhaseC\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_p23_bull_strict2",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py::TestBullStrictP23\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "test_p23_regression",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m pytest \"tests\\test_backtesting_refactor.py\" -q --no-header -p no:cacheprovider -o addopts=\"\""
+		},
+		{
+			"label": "bt_p23_control",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --output-dir artifacts/backtesting/b25_p23_control *> artifacts/backtesting/b25_p23_control.log; Get-Content artifacts\\backtesting\\b25_p23_control.log -Tail 3"
+		},
+		{
+			"label": "bt_p23_noshorts",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --bull-strict-mode no_shorts --output-dir artifacts/backtesting/b25_p23_noshorts *> artifacts/backtesting/b25_p23_noshorts.log; Get-Content artifacts\\backtesting\\b25_p23_noshorts.log -Tail 3"
+		},
+		{
+			"label": "bt_p23_notrades",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --bull-strict-mode no_trades --output-dir artifacts/backtesting/b25_p23_notrades *> artifacts/backtesting/b25_p23_notrades.log; Get-Content artifacts\\backtesting\\b25_p23_notrades.log -Tail 3"
+		},
+		{
+			"label": "bt_p23_control2",
+			"type": "shell",
+			"command": ".venv\\Scripts\\python.exe -m backtesting run --start 2019-01-02 --end 2024-06-28 --ml-batch-id model-factory-20260811223551-ef2cd0 --capital-preset-key capital_2001_5000 --no-spread-cost --commission-bps 5 --slippage-bps 5 --output-dir artifacts/backtesting/b25_p23_control2 *> artifacts/backtesting/b25_p23_control2.log; Get-Content artifacts\\backtesting\\b25_p23_control2.log -Tail 3"
 		}
 	]
 }

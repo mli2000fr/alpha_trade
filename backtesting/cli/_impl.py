@@ -109,6 +109,53 @@ def _load_sector_map_for_sizing(engine: object) -> dict[str, str]:
         return {}
 
 
+def _load_benchmark_close(
+    engine: object,
+    start_date: date,
+    end_date: date,
+    *,
+    benchmark_symbol: str = "SPY",
+    warmup_days: int = 400,
+) -> pd.Series | None:
+    """Charge le close du benchmark (SPY) depuis stock_bars_daily, avec warmup.
+
+    Utilisé par le filtre régime (Phase C.3) et l'overlay bull strict (P2-3).
+    Retourne une Series indexée par Timestamp, ou None si indisponible.
+    """
+    import pandas as _pd
+    from sqlalchemy import text as _text
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                _text(
+                    "SELECT `date`, COALESCE(adj_close, `close`) AS px "
+                    "FROM stock_bars_daily "
+                    "WHERE symbol = :sym AND data_source = 'eodhd_eod' "
+                    "AND `date` >= :start_date AND `date` <= :end_date "
+                    "ORDER BY `date` ASC"
+                ),
+                {
+                    "sym": benchmark_symbol,
+                    "start_date": start_date - timedelta(days=warmup_days),
+                    "end_date": end_date,
+                },
+            ).all()
+        if not rows:
+            LOGGER.warning("_load_benchmark_close: aucune barre %s eodhd_eod trouvée.", benchmark_symbol)
+            return None
+        series = _pd.Series(
+            [float(px) for _, px in rows],
+            index=_pd.to_datetime([d for d, _ in rows], utc=False),
+            dtype=float,
+        )
+        series = series[~series.index.duplicated(keep="last")].sort_index()
+        return series
+    except Exception:
+        LOGGER.warning("_load_benchmark_close: benchmark indisponible → overlay régime/bull-strict inactifs.", exc_info=True)
+        return None
+
+
 def _run_bars_source_preflight_or_skip(engine: object, start_date: date, end_date: date) -> dict[str, object]:
     from backtesting.data_loader import BACKTEST_REQUIRED_BARS_DATA_SOURCE, preflight_required_bars_data_source
 
@@ -1130,6 +1177,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seuil bear (distance vs SMA) pour bloquer les nouvelles entrées.",
     )
     run_p.add_argument(
+        "--bull-strict-mode",
+        choices=["off", "no_shorts", "no_trades"],
+        default="off",
+        help="P2-3 : overlay no-trades en bull strict (SPY>SMA200 ET ret60j>+3%%). "
+             "no_shorts = bloque les shorts ; no_trades = bloque tout.",
+    )
+    run_p.add_argument(
+        "--bull-strict-sma-window",
+        type=int,
+        default=200,
+        help="P2-3 : fenêtre SMA pour la détection bull strict (défaut 200).",
+    )
+    run_p.add_argument(
+        "--bull-strict-ret-window",
+        type=int,
+        default=60,
+        help="P2-3 : fenêtre de rendement SPY pour la détection bull strict (défaut 60).",
+    )
+    run_p.add_argument(
+        "--bull-strict-ret-threshold",
+        type=float,
+        default=0.03,
+        help="P2-3 : seuil de rendement SPY (fraction) pour la détection bull strict (défaut 0.03).",
+    )
+    run_p.add_argument(
         "--max-sector-exposure-pct",
         type=float,
         default=0.0,
@@ -1970,6 +2042,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.simulator import BacktestConfig, BacktestEngine
     from backtesting.microstructure import MicrostructureConfig, SlippageConfig, ExecutionModelConfig
     from backtesting.risk_overlay import (
+        BullStrictConfig,
         DrawdownCircuitBreaker,
         RegimeFilterConfig,
         RiskOverlayConfig,
@@ -2873,6 +2946,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
             arrival_slippage_factor=float(getattr(args, "execution_arrival_slippage_factor", 0.5) or 0.5),
         ),
     )
+    _bull_strict_mode = str(getattr(args, "bull_strict_mode", "off") or "off").strip().lower()
+    _needs_benchmark = bool(args.regime_filter) or _bull_strict_mode != "off"
+    benchmark_close: pd.Series | None = None
+    if _needs_benchmark:
+        benchmark_close = _load_benchmark_close(engine, start, end)
+
     risk_overlay_cfg = RiskOverlayConfig(
         sizing=SizingConfig(
             mode=args.sizing_mode,
@@ -2891,6 +2970,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
             enabled=bool(args.regime_filter),
             sma_window=int(args.regime_sma_window),
             bear_threshold=float(args.regime_bear_threshold),
+        ),
+        bull_strict=BullStrictConfig(
+            enabled=_bull_strict_mode != "off",
+            mode=_bull_strict_mode if _bull_strict_mode in ("no_shorts", "no_trades") else "no_shorts",
+            sma_window=int(getattr(args, "bull_strict_sma_window", 200) or 200),
+            ret_window=int(getattr(args, "bull_strict_ret_window", 60) or 60),
+            ret_threshold=float(getattr(args, "bull_strict_ret_threshold", 0.03) or 0.03),
         ),
         sectoral_cap=SectoralCapConfig(
             enabled=float(args.max_sector_exposure_pct) > 0.0,
@@ -2946,6 +3032,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         trading_constraints=trading_constraints,
         microstructure=microstructure_cfg,
         risk_overlay=risk_overlay_cfg,
+        benchmark_close=benchmark_close,
         seed=getattr(args, "seed", None),
         execution_replay_mode=phase3_mode,
         protection_replay_mode=phase4_mode,
