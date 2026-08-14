@@ -342,6 +342,7 @@ _TRAINING_BATCH_MUTABLE_FIELDS = {
     "decile_spread_h5",
     "decile_spread_h10",
     "stacking_enabled",
+    "symbols",
 }
 
 
