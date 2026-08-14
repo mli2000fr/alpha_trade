@@ -2335,8 +2335,8 @@ class TestCLI:
     # défauts de `backtesting.cli._build_parser()`.
     _CLI_NEUTRAL_DEFAULTS: dict[str, object] = {
         # Phase 6.1.b — costs explicites + profil.
-        "commission_bps": 5.0,
-        "slippage_bps": 5.0,
+        "commission_bps": 1.0,
+        "slippage_bps": 2.0,
         "profile": "custom",
         # Phase A — reproductibilité + risk-free rate.
         "risk_free_rate": 0.0,
@@ -2383,14 +2383,16 @@ class TestCLI:
 
         parser = _build_parser()
         args = parser.parse_args(["run", "--start", "2020-01-01"])
-        assert args.tp == 0.08
-        assert args.ts == 0.05
+        assert args.tp == 0.12
+        assert args.ts == 0.07
         assert args.use_live_protection_logic is True
         assert args.max_positions == 20
         # Phase 6.1.b — `--fees` est déprécié (None par défaut), coûts via bps.
         assert args.fees is None
-        assert args.commission_bps == 5.0
-        assert args.slippage_bps == 5.0
+        assert args.commission_bps == 1.0
+        assert args.slippage_bps == 2.0
+        assert args.use_canonical_costs is True
+        assert args.margin_interest_rate == 0.075
         # Phase 6.1.e — profil custom par défaut.
         assert args.profile == "custom"
         assert args.account_type == "margin"

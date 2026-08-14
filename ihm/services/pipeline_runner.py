@@ -80,6 +80,7 @@ from ihm.services.pipeline_ml_defaults import (
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
+    DEFAULT_ML_INCLUDE_VOLUME_FEATURES,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
@@ -295,7 +296,7 @@ DEFAULT_CA_BATCH_SIZE = 25
 
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
-MLGlobalModelName = Literal["catboost", "lightgbm"]
+MLGlobalModelName = Literal["catboost", "lightgbm", "xgboost"]
 MLTargetMode = Literal["binary", "swing_cash", "ternary", "regression"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
@@ -381,6 +382,7 @@ class PipelineLaunchOptions:
     ml_include_macro_move: bool = DEFAULT_ML_INCLUDE_MACRO_MOVE
     ml_include_fundamentals: bool = DEFAULT_ML_INCLUDE_FUNDAMENTALS
     ml_include_factors: bool = DEFAULT_ML_INCLUDE_FACTORS
+    ml_include_volume_features: bool = DEFAULT_ML_INCLUDE_VOLUME_FEATURES  # P3-5
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
     ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
     ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
@@ -2295,6 +2297,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-fundamentals")
         if options.ml_include_factors:
             command.append("--include-factors")
+        if options.ml_include_volume_features:
+            command.append("--include-volume-features")
         if options.ml_include_macro_regime:
             command.append("--include-macro-regime")
         if not options.ml_include_score_components:
@@ -2333,6 +2337,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_enable_global_model:
             command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
         if options.ml_global_champion:
+            # P3-3 : --global-champion entraîne les 3 candidats
+            # (CatBoost + LightGBM + XGBoost) côté core.
             command.append("--global-champion")
         if options.ml_enable_global_stacking:
             command.append("--enable-global-stacking")

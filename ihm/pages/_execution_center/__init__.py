@@ -126,6 +126,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
+    DEFAULT_ML_INCLUDE_VOLUME_FEATURES,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
@@ -3318,6 +3319,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_factors",
                 help="Ajoute `--include-factors`. Calcule beta, alpha annualisé, R² et momentum 252j vs marché par rolling regression sur SPY.",
             )
+            ml_include_volume_features = st.checkbox(
+                "📊 Profil volume / liquidité (P3-5 — 10 features)",
+                value=_session_state_bool("pipeline_ml_include_volume_features", DEFAULT_ML_INCLUDE_VOLUME_FEATURES),
+                key="pipeline_ml_include_volume_features",
+                help="Ajoute `--include-volume-features`. Dollar volume, Amihud illiquidité, corrélation prix/volume, OBV, skew… 10 features de profil volume/liquidité (expérience P3-5, off par défaut).",
+            )
             ml_include_macro_regime = st.checkbox(
                 "🌍 Régime macro (SPY_SMA_200_slope + VIX_zscore)",
                 value=_session_state_bool("pipeline_ml_include_macro_regime", DEFAULT_ML_INCLUDE_MACRO_REGIME),
@@ -3607,11 +3614,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
             ml_global_champion = st.checkbox(
-                "🏆 Champion automatique CatBoost vs LightGBM pour le Global Ranking",
+                "🏆 Champion automatique CatBoost vs LightGBM vs XGBoost pour le Global Ranking",
                 value=_session_state_bool("pipeline_ml_global_champion", DEFAULT_ML_GLOBAL_CHAMPION),
                 key="pipeline_ml_global_champion",
                 disabled=not ml_enable_global_model,
-                help="Ajoute `--global-champion`. Entraîne les DEUX backends (CatBoost + LightGBM) et sélectionne le champion par horizon selon le meilleur IC Rank walk-forward. Si décoché, le backend choisi ci-dessous est utilisé.",
+                help="Ajoute `--global-champion`. Entraîne les TROIS backends (CatBoost + LightGBM + XGBoost) et sélectionne le champion par horizon selon le meilleur IC Rank walk-forward. Si décoché, le backend choisi ci-dessous est utilisé seul.",
             )
             ml_global_model_only = st.checkbox(
                 "🎯 Global Model ONLY — sauter per-symbol et per-sector",
@@ -3632,15 +3639,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 str,
                 st.selectbox(
                     "Backend du modèle global",
-                    options=["catboost", "lightgbm"],
-                    index=["catboost", "lightgbm"].index(
+                    options=["catboost", "lightgbm", "xgboost"],
+                    index=["catboost", "lightgbm", "xgboost"].index(
                         cast(str, st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME))
-                        if st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME) in {"catboost", "lightgbm"}
+                        if st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME) in {"catboost", "lightgbm", "xgboost"}
                         else DEFAULT_ML_GLOBAL_MODEL_NAME
                     ),
                     key="pipeline_ml_global_model_name",
                     disabled=not ml_enable_global_model or ml_global_champion,
-                    help="Backend utilisé si le champion automatique est désactivé. Ignoré si le champion est activé (les deux sont entraînés).",
+                    help="Backend utilisé si le champion automatique est désactivé. Ignoré si le champion est activé (les trois backends sont entraînés).",
                 ),
             )
             # Checkbox unique : active à la fois les rangs percentiles ET les features sectorielles
@@ -4687,6 +4694,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_move=bool(ml_include_macro_move),
             ml_include_fundamentals=bool(ml_include_fundamentals),
             ml_include_factors=bool(ml_include_factors),
+            ml_include_volume_features=bool(ml_include_volume_features),
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_include_score_components=bool(ml_include_score_components),
             ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),

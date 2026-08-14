@@ -799,6 +799,36 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--tp", type=float, default=0.12, help="Take-profit %% (défaut 0.12)")
     run_p.add_argument("--ts", type=float, default=0.07, help="Trailing stop %% (défaut 0.07)")
     run_p.add_argument(
+        "--ts-long", type=float, default=None,
+        help="Trailing stop %% pour les LONGS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
+    )
+    run_p.add_argument(
+        "--ts-short", type=float, default=None,
+        help="Trailing stop %% pour les SHORTS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
+    )
+    run_p.add_argument(
+        "--atr-risk-stop-multiple", type=float, default=0.0,
+        help="Fidélité live (P2-4) : si > 0, dérive risk_per_share = entry_price × atr_pct_20 × multiple "
+             "(comme portfolio_builder, longs ET shorts) quand le replay ne fournit ni stop_price_initial ni "
+             "risk_per_share. 0 = désactivé (legacy : trailing fixe --ts).",
+    )
+    run_p.add_argument(
+        "--tp-atr-multiple", type=float, default=0.0,
+        help="P2-4 : TP de production = min(ATR × multiple, prix × --tp-max-pct). 0 = legacy (max(12%% fixe, 2R)).",
+    )
+    run_p.add_argument(
+        "--tp-max-pct", type=float, default=0.0,
+        help="P2-4 : plafond TP en fraction du prix (prod 0.07). Requiert --tp-atr-multiple > 0.",
+    )
+    run_p.add_argument(
+        "--use-canonical-costs", action=argparse.BooleanOptionalAction, default=True,
+        help="Modèle de coûts canonique Alpaca (spread réel, comm 1bps, slippage 2bps, borrow 0.3%%/an). Défaut: activé. --no-use-canonical-costs = coûts legacy.",
+    )
+    run_p.add_argument(
+        "--margin-interest-rate", type=float, default=0.075,
+        help="P2-4 : intérêts de marge annuels sur débit cash (Alpaca ≈ 7.5%%). 0 = désactivé.",
+    )
+    run_p.add_argument(
         "--atr-ts", type=float, default=0.0,
         help="Multiplicateur ATR pour trailing stop adaptatif (0 = désactivé, utilise --ts fixe). "
              "Ex: 2.0 → stop = peak − 2×ATR_20. Le stop le plus large des deux (fixe vs ATR) est utilisé.",
@@ -827,14 +857,14 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--commission-bps",
         type=float,
-        default=5.0,
-        help="Commission par trade en bps (défaut: 5.0 = 5bps).",
+        default=1.0,
+        help="Commission par trade en bps (défaut: 1.0 ≈ Alpaca 0 $).",
     )
     run_p.add_argument(
         "--slippage-bps",
         type=float,
-        default=5.0,
-        help="Slippage simulé par trade en bps (défaut: 5.0 = 5bps).",
+        default=2.0,
+        help="Slippage simulé par trade en bps (défaut: 2.0 canonique Alpaca).",
     )
     run_p.add_argument(
         "--profile",
@@ -1568,8 +1598,8 @@ def _build_parser() -> argparse.ArgumentParser:
     wf_fin_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
     wf_fin_p.add_argument("--end", required=True, help="Date de fin (YYYY-MM-DD)")
     wf_fin_p.add_argument("--equity", type=float, default=100_000, help="Capital initial ($)")
-    wf_fin_p.add_argument("--commission-bps", type=float, default=5.0, help="Commission (bps)")
-    wf_fin_p.add_argument("--slippage-bps", type=float, default=5.0, help="Slippage (bps)")
+    wf_fin_p.add_argument("--commission-bps", type=float, default=1.0, help="Commission (bps)")
+    wf_fin_p.add_argument("--slippage-bps", type=float, default=2.0, help="Slippage (bps)")
     wf_fin_p.add_argument("--train-days", type=int, default=504, help="Jours de train par fold")
     wf_fin_p.add_argument("--val-days", type=int, default=126, help="Jours de validation par fold")
     wf_fin_p.add_argument("--test-days", type=int, default=126, help="Jours de test par fold")
@@ -1819,7 +1849,7 @@ def _apply_pipeline_defensive_defaults_from_preset(
         args.commission_bps = _resolve_pipeline_preset_float(
             effective_preset,
             "backtesting_commission_bps_stress",
-            default=15.0,
+            default=1.0,
         )
 
     if (
@@ -1829,7 +1859,7 @@ def _apply_pipeline_defensive_defaults_from_preset(
         args.slippage_bps = _resolve_pipeline_preset_float(
             effective_preset,
             "backtesting_slippage_bps_stress",
-            default=15.0,
+            default=2.0,
         )
 
     # P2 — microstructure slippage volume-aware : résoudre les défauts depuis le preset capital
@@ -3021,6 +3051,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
         ),
         profit_taker_pct=args.tp,
         trailing_stop_pct=args.ts,
+        trailing_stop_long_pct=getattr(args, "ts_long", None),
+        trailing_stop_short_pct=getattr(args, "ts_short", None),
+        atr_risk_stop_multiple=float(getattr(args, "atr_risk_stop_multiple", 0.0) or 0.0),
+        tp_atr_multiple=float(getattr(args, "tp_atr_multiple", 0.0) or 0.0),
+        tp_max_pct=float(getattr(args, "tp_max_pct", 0.0) or 0.0),
+        use_canonical_costs=bool(getattr(args, "use_canonical_costs", False)),
+        margin_interest_rate_annual=float(getattr(args, "margin_interest_rate", 0.0) or 0.0),
         atr_trailing_stop_multiplier=float(getattr(args, "atr_ts", 0.0) or 0.0),
         use_live_protection_logic=bool(getattr(args, "use_live_protection_logic", True)),
         max_positions=args.max_positions,

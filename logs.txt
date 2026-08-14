@@ -1,3 +1,17 @@
-P3-1 : target asymétrique (pénaliser davantage le long) ou renforcer le scoring long
-P2-2 : ablation features pour comprendre pourquoi les longs sous-performent
-pour réparer le long
+OOS 2025 + backtest avant toute promotion du sizing volume.
+
+Lancement OOS 2025 : je propose de valider B41 ET B42 (les 2 configs de production potentielles : H3/H5/H15/H20 côté B41, H10 côté B42). Je lance ?
+
+
+
+Résultat majeur. Le ranking global est sain (déciles monotones parfaits), mais l'asymétrie est nette :
+
+IC split par côté : LONG = −0.011 (H10) / −0.019 (H15) — le signal long est inversé aux horizons longs, alors que SHORT reste positif court terme.
+Hit-rate : longs (déciles 9-10) = 48 % seulement — les meilleurs scores ne battent SPY qu'une fois sur deux.
+Les trades longs sortent en 5j (trailing stop) vs 12j pour les shorts — le signal long ne se réalise qu'à H10+, il est coupé avant.
+
+Le diagnostic est limpide. Le problème du long est mécanique, pas de signal :
+
+TP +12 % fonctionne des 2 côtés : LONG +280k / SHORT +397k (scores quasi identiques).
+Le trailing stop tue le long en 0-3 jours : 71 trades longs stoppés en ≤3j, −172.7k, win 18.3 % (vs 30 shorts seulement). C'est LA totalité du problème long.
+Les longs qui survivent gagnent : 12-20j win 63.6 %, 20j+ win 83.3 %.

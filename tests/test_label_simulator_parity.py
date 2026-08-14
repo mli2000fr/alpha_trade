@@ -508,6 +508,73 @@ class TestSimulatorCostModelIntegration:
         assert model.slippage_bps == 3.0
         assert model.spread_bps == 0.0  # spread géré séparément par _get_spread_bps
 
+    def test_canonical_costs_drive_effective_pnl_fees(self):
+        """P2-4 fix : canonical → frais effectifs (1+2)/1e4, fallback spread 5bps.
+
+        Les champs legacy (défauts CLI 12/20 bps) doivent être IGNORÉS par le P&L.
+        """
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from datetime import date
+
+        engine = BacktestEngine(BacktestConfig(
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 6, 30),
+            use_canonical_costs=True,
+            fees_pct=0.0032,      # pollué : (12+20)/10000 — doit être ignoré
+            commission_bps=12.0,
+            slippage_bps=20.0,
+        ))
+        assert engine._effective_fees_pct == pytest.approx(0.0003)
+        assert engine._spread_fallback_bps == pytest.approx(5.0)
+
+    def test_legacy_fees_pct_still_effective(self):
+        """Sans canonical ni cost_model, les champs legacy pilotent le P&L."""
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from datetime import date
+
+        engine = BacktestEngine(BacktestConfig(
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 6, 30),
+            fees_pct=0.001,
+            commission_bps=5.0,
+            slippage_bps=5.0,
+        ))
+        assert engine._effective_fees_pct == pytest.approx(0.001)
+        assert engine._spread_fallback_bps == pytest.approx(5.0)
+
+    def test_margin_interest_accrual_on_debit_only(self):
+        """P2-4 fix : intérêts de marge débités uniquement sur cash négatif."""
+        from backtesting.simulator import BacktestEngine, _RunState
+
+        state = _RunState(settled_cash=-100_000.0)
+        charge = BacktestEngine._accrue_margin_interest(state, annual_rate=0.075)
+        assert charge == pytest.approx(100_000.0 * 0.075 / 252.0)
+        assert state.settled_cash == pytest.approx(-100_000.0 - charge)
+
+        credit = _RunState(settled_cash=50_000.0)
+        assert BacktestEngine._accrue_margin_interest(credit, annual_rate=0.075) == 0.0
+        assert credit.settled_cash == 50_000.0
+
+        disabled = _RunState(settled_cash=-10_000.0)
+        assert BacktestEngine._accrue_margin_interest(disabled, annual_rate=0.0) == 0.0
+        assert disabled.settled_cash == -10_000.0
+
+    def test_explicit_cost_model_drives_effective_pnl_fees(self):
+        """Un TradingCostModel explicite pilote aussi les frais effectifs."""
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from datetime import date
+
+        engine = BacktestEngine(BacktestConfig(
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 6, 30),
+            trading_cost_model=TradingCostModel(
+                spread_bps=8.0, commission_bps=3.0, slippage_bps=4.0,
+            ),
+            fees_pct=0.0032,
+        ))
+        assert engine._effective_fees_pct == pytest.approx(0.0007)  # (3+4)/1e4
+        assert engine._spread_fallback_bps == pytest.approx(8.0)
+
     def test_borrow_cost_computation(self):
         """La borrow fee est calculée proportionnellement à la durée."""
         costs = DEFAULT_COST_MODEL

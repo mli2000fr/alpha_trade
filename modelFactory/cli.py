@@ -377,6 +377,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Désactiver l'inclusion des composants de score.")
     p.add_argument("--include-factors", action="store_true", default=False,
                    help="Inclure les expositions factorielles CAPM (beta, alpha, R² via rolling 252j)")
+    p.add_argument("--include-volume-features", action="store_true", default=False,
+                   help="P3-5 : inclure le profil volume/liquidité (10 features : dollar volume, Amihud, OBV, skew...)")
     p.add_argument("--include-macro-regime", action="store_true", default=False,
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
     p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
@@ -483,7 +485,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclut le Global Model comme 4ème challenger dans la sélection champion")
     p.add_argument("--global-champion", action="store_true", default=False,
                    help="Entraîne CatBoost ET LightGBM pour le Global Ranking et sélectionne le champion (meilleur IC rank WF)")
-    p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm"])
+    p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm", "xgboost"])
+    p.add_argument("--ranking-xgboost-iterations", type=int, default=500,
+                   help="Global Ranking XGBoost : nombre d'itérations (P3-3 challenger)")
+    p.add_argument("--ranking-xgboost-learning-rate", type=float, default=0.03,
+                   help="Global Ranking XGBoost : learning rate (P3-3 challenger)")
     p.add_argument("--global-artifact-symbol", type=str, default="__GLOBAL__")
     p.add_argument("--select-champion", action="store_true", default=False,
                    help="Active la sélection automatique du champion parmi les modèles éligibles à l’inférence")
@@ -603,6 +609,7 @@ def main(args: list[str] | None = None) -> None:
             include_factors_features=opts.include_factors,
             include_macro_regime_features=opts.include_macro_regime,
             include_score_components=opts.include_score_components,
+            include_volume_features=opts.include_volume_features,
             global_model_only=opts.global_model_only,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
@@ -699,6 +706,8 @@ def main(args: list[str] | None = None) -> None:
             use_cross_sectional_features=opts.enable_cross_sectional,
             ranking_sector_group=opts.ranking_sector_group,
             ranking_raw_target=opts.ranking_raw_target,
+            ranking_xgboost_iterations=opts.ranking_xgboost_iterations,
+            ranking_xgboost_learning_rate=opts.ranking_xgboost_learning_rate,
         ),
         champion_selection=ChampionSelectionConfig(
             enabled=opts.select_champion,
@@ -784,6 +793,7 @@ def main(args: list[str] | None = None) -> None:
             started_at=started_at,
             comment=opts.comment,
             stacking_enabled=opts.enable_global_stacking,
+            symbols=",".join(opts.symbols)[:5000] if opts.symbols else None,
         )
         update_runtime_status(current_phase="batch_dispatch")
         try:

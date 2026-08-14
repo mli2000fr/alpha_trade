@@ -402,6 +402,7 @@ def load_scores(
                    {_optional_select(history_columns, 'selection_rank')},
                    {_optional_select(history_columns, 'selection_explanation')},
                    {_optional_select(history_columns, 'earnings_blackout')},
+                   {_optional_select(history_columns, 'atr_pct_20')},
                    CASE
                        WHEN {('final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
                        WHEN final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
@@ -453,6 +454,7 @@ def load_scores(
                        {('s.selection_rank' if 'selection_rank' in history_columns else 'NULL AS selection_rank')},
                        {('s.selection_explanation' if 'selection_explanation' in history_columns else 'NULL AS selection_explanation')},
                        {('s.earnings_blackout' if 'earnings_blackout' in history_columns else 'NULL AS earnings_blackout')},
+                       {('s.atr_pct_20' if 'atr_pct_20' in history_columns else 'NULL AS atr_pct_20')},
                        CASE
                            WHEN {('s.final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
                            WHEN s.final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'

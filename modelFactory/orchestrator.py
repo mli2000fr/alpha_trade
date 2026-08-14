@@ -662,6 +662,18 @@ def run_training_batch(
         "TRAINING_SYMBOLS_FINAL per_symbol=%d (after --per-symbol-max-symbols filter) global=%d symbols=[%s]",
         len(symbols), len(_global_symbols), ",".join(symbols),
     )
+
+    # ── P3-5 (2026-08-14) : sauvegarder les symbols utilisés dans
+    # model_training_batch.symbols (la liste finale ci-dessus). ──
+    if batch_id and symbols:
+        try:
+            update_training_batch(
+                engine,
+                batch_id,
+                symbols=",".join(symbols)[:5000],
+            )
+        except Exception as _sym_exc:  # noqa: BLE001
+            LOGGER.warning("run_training_batch symbols persist failed: %s", _sym_exc)
     update_runtime_status(
         current_phase="batch_start",
         progress_label="🧠 Progression ML Train",
