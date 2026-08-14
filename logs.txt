@@ -1,1 +1,3 @@
 OOS 2025 + backtest avant toute promotion du sizing volume.
+
+Lancement OOS 2025 : je propose de valider B41 ET B42 (les 2 configs de production potentielles : H3/H5/H15/H20 côté B41, H10 côté B42). Je lance ?
