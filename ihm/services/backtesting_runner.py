@@ -32,6 +32,12 @@ class BacktestRunOptions:
     tp: float = 0.08
     ts: float = 0.05
     atr_ts: float = 0.0
+    ts_long: float | None = None
+    ts_short: float | None = None
+    atr_risk_stop_multiple: float = 0.0
+    tp_atr_multiple: float = 0.0
+    tp_max_pct: float = 0.0
+    use_canonical_costs: bool = False
     use_live_protection_logic: bool = True
     max_positions: int = 20
     fees: float | None = None
@@ -278,6 +284,20 @@ def build_backtesting_command(
         # P1 — ATR trailing stop (indépendant du mode de protection)
         if options.atr_ts and float(options.atr_ts) > 0:
             command.extend(["--atr-ts", str(options.atr_ts)])
+        # P2-4 — trailing par côté (plancher) + fidélité live du stop ATR
+        if options.ts_long is not None:
+            command.extend(["--ts-long", str(options.ts_long)])
+        if options.ts_short is not None:
+            command.extend(["--ts-short", str(options.ts_short)])
+        if options.atr_risk_stop_multiple and float(options.atr_risk_stop_multiple) > 0:
+            command.extend(["--atr-risk-stop-multiple", str(options.atr_risk_stop_multiple)])
+        # P2-4 — TP de production + coûts canoniques
+        if options.tp_atr_multiple and float(options.tp_atr_multiple) > 0:
+            command.extend(["--tp-atr-multiple", str(options.tp_atr_multiple)])
+        if options.tp_max_pct and float(options.tp_max_pct) > 0:
+            command.extend(["--tp-max-pct", str(options.tp_max_pct)])
+        if options.use_canonical_costs:
+            command.append("--use-canonical-costs")
         if options.allow_fractional_shares:
             command.append("--allow-fractional-shares")
         if options.commission_bps is not None:

@@ -203,6 +203,7 @@ def replay_signals(
             *SCORE_FALLBACK_PRIORITY,
             "sector",
             "score_source",
+            "atr_pct_20",
         ]
         keep_columns = list(base_columns)
         for col in optional_columns:
@@ -217,8 +218,11 @@ def replay_signals(
         context["score_source"] = source
         if "sector" not in context.columns:
             context["sector"] = None
+        merge_columns = ["symbol", "trade_date", "score", "score_source", "sector"]
+        if "atr_pct_20" in context.columns:
+            merge_columns.append("atr_pct_20")
         df = df.merge(
-            context[["symbol", "trade_date", "score", "score_source", "sector"]],
+            context[merge_columns],
             on=["symbol", "trade_date"],
             how="left",
         )

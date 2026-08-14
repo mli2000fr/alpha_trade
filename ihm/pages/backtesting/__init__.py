@@ -77,6 +77,17 @@ BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
 RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
 
+# ── P2-4 — Fidélité live des protections (valeurs alignées sur la production) ──
+# Miroir de RiskConfig : `atr_stop_multiple` (scalaire 2.0), `tp_params_for()`
+# (3.0 × ATR / plafond 7 % du prix), et DEFAULT_COST_MODEL (spread 5bps,
+# commission 1bps, slippage 2bps, borrow shorts 0.3 %/an).
+BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT = 2.0
+BT_RUN_TP_ATR_MULTIPLE_DEFAULT = 3.0
+BT_RUN_TP_MAX_PCT_DEFAULT = 7.0
+BT_RUN_TS_LONG_DEFAULT = 0.0
+BT_RUN_TS_SHORT_DEFAULT = 0.0
+BT_RUN_USE_CANONICAL_COSTS_DEFAULT = True
+
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     "pipeline_live_like": {
         "label": "Replay le plus proche du pipeline live aujourd'hui",
@@ -1413,6 +1424,84 @@ def _build_run_options() -> BacktestRunOptions:
             key="bt_run_disable_walk_forward",
             help="Si coché, le --walk-forward-artifacts-dir n'est PAS passé → le score brut (final_score ou autre) est utilisé sans overlay.",
         )
+
+    # ── P2-4 — réparer le long : trailing par côté + fidélité live du stop ──
+    with st.expander("📐 P2-4 — Fidélité live des protections (chemin research)", expanded=False):
+        st.caption(
+            "En production, le stop est dérivé du risque : `risk_per_share = prix × atr_pct_20 × k` "
+            "(k = `atr_stop_multiple`, 2.0 par défaut) puis promu en trailing. Le backtest research "
+            "n'a pas ces colonnes → il utilisait le fallback fixe (--ts). Ces champs répliquent le calcul "
+            "live pour les DEUX jambes (longs ET shorts). ⚠️ Avec « Mode Phase 2 » = `risk_execution` "
+            "(+ phases 3/4/5/7), la production calcule elle-même les protections → ces champs n'ont "
+            "alors AUCUN effet. Nuance (filet de sécurité) : si une ligne n'a AUCUNE protection replay, "
+            "le simulateur retombe sur la logique research (ces champs s'appliquent) ; si le replay est "
+            "PARTIEL, pas de recalcul fidèle (TP → fixe 12 %, trailing → désactivé, stop initial → celui "
+            "résolu à l'entrée). `--ts-long`/`--ts-short` servent aux A/B P2-4 (élargir une jambe)."
+        )
+        p24_col1, p24_col2, p24_col3 = st.columns(3)
+        with p24_col1:
+            ts_long = st.number_input(
+                "Trailing LONG plancher (%)",
+                min_value=0.0,
+                max_value=50.0,
+                value=float(st.session_state.get("bt_run_ts_long", BT_RUN_TS_LONG_DEFAULT)),
+                step=0.5,
+                format="%.1f",
+                key="bt_run_ts_long",
+                help="0 = inactif. Sinon le stop long est élargi au max(stop dérivé, valeur). N'élargit jamais les shorts.",
+            )
+        with p24_col2:
+            ts_short = st.number_input(
+                "Trailing SHORT plancher (%)",
+                min_value=0.0,
+                max_value=50.0,
+                value=float(st.session_state.get("bt_run_ts_short", BT_RUN_TS_SHORT_DEFAULT)),
+                step=0.5,
+                format="%.1f",
+                key="bt_run_ts_short",
+                help="0 = inactif. Sinon le stop short est élargi au max(stop dérivé, valeur). N'élargit jamais les longs.",
+            )
+        with p24_col3:
+            atr_risk_stop_multiple = st.number_input(
+                "ATR risk stop multiple (k)",
+                min_value=0.0,
+                max_value=10.0,
+                value=float(st.session_state.get("bt_run_atr_risk_stop_multiple", BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT)),
+                step=0.5,
+                format="%.1f",
+                key="bt_run_atr_risk_stop_multiple",
+                help="0 = inactif (legacy : TS fixe). Prod : 2.0 → risk_per_share = prix × atr_pct_20 × 2 comme portfolio_builder (longs ET shorts).",
+            )
+        p24_col4, p24_col5, p24_col6 = st.columns(3)
+        with p24_col4:
+            tp_atr_multiple = st.number_input(
+                "TP ATR multiple",
+                min_value=0.0,
+                max_value=10.0,
+                value=float(st.session_state.get("bt_run_tp_atr_multiple", BT_RUN_TP_ATR_MULTIPLE_DEFAULT)),
+                step=0.5,
+                format="%.1f",
+                key="bt_run_tp_atr_multiple",
+                help="0 = legacy (TP = max(12% fixe, 2R)). Prod : 3.0 → TP = min(ATR×3.0, prix×cap).",
+            )
+        with p24_col5:
+            tp_max_pct = st.number_input(
+                "TP plafond (% du prix)",
+                min_value=0.0,
+                max_value=50.0,
+                value=float(st.session_state.get("bt_run_tp_max_pct", BT_RUN_TP_MAX_PCT_DEFAULT)),
+                step=1.0,
+                format="%.1f",
+                key="bt_run_tp_max_pct",
+                help="0 = inactif. Prod : 7.0. Requiert TP ATR multiple > 0.",
+            )
+        with p24_col6:
+            use_canonical_costs = st.checkbox(
+                "Coûts canoniques (prod)",
+                value=bool(st.session_state.get("bt_run_use_canonical_costs", BT_RUN_USE_CANONICAL_COSTS_DEFAULT)),
+                key="bt_run_use_canonical_costs",
+                help="Modèle de production : spread 5bps, commission 1bps, slippage 2bps, borrow fee shorts 0.3%/an. Désactivé = coûts legacy 5+5 bps sans spread ni borrow.",
+            )
     with col6b:
         st.caption("")  # espace réservé
     with col7b:
@@ -2035,6 +2124,12 @@ def _build_run_options() -> BacktestRunOptions:
         tp=float(tp),
         ts=float(ts),
         atr_ts=float(st.session_state.get("bt_run_atr_ts", 0.0) or 0.0),
+        ts_long=(float(st.session_state.get("bt_run_ts_long", BT_RUN_TS_LONG_DEFAULT)) or None),
+        ts_short=(float(st.session_state.get("bt_run_ts_short", BT_RUN_TS_SHORT_DEFAULT)) or None),
+        atr_risk_stop_multiple=float(st.session_state.get("bt_run_atr_risk_stop_multiple", BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT) or 0.0),
+        tp_atr_multiple=float(st.session_state.get("bt_run_tp_atr_multiple", BT_RUN_TP_ATR_MULTIPLE_DEFAULT) or 0.0),
+        tp_max_pct=float(st.session_state.get("bt_run_tp_max_pct", BT_RUN_TP_MAX_PCT_DEFAULT) or 0.0),
+        use_canonical_costs=bool(st.session_state.get("bt_run_use_canonical_costs", BT_RUN_USE_CANONICAL_COSTS_DEFAULT)),
         use_live_protection_logic=bool(use_live_protection_logic),
         max_positions=int(max_positions),
         fees=None,

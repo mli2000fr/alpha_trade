@@ -799,6 +799,32 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--tp", type=float, default=0.12, help="Take-profit %% (défaut 0.12)")
     run_p.add_argument("--ts", type=float, default=0.07, help="Trailing stop %% (défaut 0.07)")
     run_p.add_argument(
+        "--ts-long", type=float, default=None,
+        help="Trailing stop %% pour les LONGS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
+    )
+    run_p.add_argument(
+        "--ts-short", type=float, default=None,
+        help="Trailing stop %% pour les SHORTS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
+    )
+    run_p.add_argument(
+        "--atr-risk-stop-multiple", type=float, default=0.0,
+        help="Fidélité live (P2-4) : si > 0, dérive risk_per_share = entry_price × atr_pct_20 × multiple "
+             "(comme portfolio_builder, longs ET shorts) quand le replay ne fournit ni stop_price_initial ni "
+             "risk_per_share. 0 = désactivé (legacy : trailing fixe --ts).",
+    )
+    run_p.add_argument(
+        "--tp-atr-multiple", type=float, default=0.0,
+        help="P2-4 : TP de production = min(ATR × multiple, prix × --tp-max-pct). 0 = legacy (max(12%% fixe, 2R)).",
+    )
+    run_p.add_argument(
+        "--tp-max-pct", type=float, default=0.0,
+        help="P2-4 : plafond TP en fraction du prix (prod 0.07). Requiert --tp-atr-multiple > 0.",
+    )
+    run_p.add_argument(
+        "--use-canonical-costs", action="store_true", default=False,
+        help="Modèle de coûts canonique (spread 5bps, comm 1bps, slippage 2bps, borrow 0.3%%/an) — parité label/simulateur.",
+    )
+    run_p.add_argument(
         "--atr-ts", type=float, default=0.0,
         help="Multiplicateur ATR pour trailing stop adaptatif (0 = désactivé, utilise --ts fixe). "
              "Ex: 2.0 → stop = peak − 2×ATR_20. Le stop le plus large des deux (fixe vs ATR) est utilisé.",
@@ -3021,6 +3047,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
         ),
         profit_taker_pct=args.tp,
         trailing_stop_pct=args.ts,
+        trailing_stop_long_pct=getattr(args, "ts_long", None),
+        trailing_stop_short_pct=getattr(args, "ts_short", None),
+        atr_risk_stop_multiple=float(getattr(args, "atr_risk_stop_multiple", 0.0) or 0.0),
+        tp_atr_multiple=float(getattr(args, "tp_atr_multiple", 0.0) or 0.0),
+        tp_max_pct=float(getattr(args, "tp_max_pct", 0.0) or 0.0),
+        use_canonical_costs=bool(getattr(args, "use_canonical_costs", False)),
         atr_trailing_stop_multiplier=float(getattr(args, "atr_ts", 0.0) or 0.0),
         use_live_protection_logic=bool(getattr(args, "use_live_protection_logic", True)),
         max_positions=args.max_positions,

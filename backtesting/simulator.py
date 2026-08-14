@@ -48,6 +48,40 @@ from risk_management.concentration import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _effective_trailing_pct(cfg: "BacktestConfig", short: bool, derived_pct: float) -> float:
+    """P2-4 — trailing stop par côté.
+
+    ``trailing_stop_long_pct`` / ``trailing_stop_short_pct`` (None = inactif)
+    agissent comme un PLANCHER : le stop du côté choisi est élargi au
+    ``max(pct dérivé, override)``, sans jamais toucher l'autre jambe.
+    """
+    override = cfg.trailing_stop_short_pct if short else cfg.trailing_stop_long_pct
+    if override is None:
+        return float(derived_pct)
+    return max(float(derived_pct), float(override))
+
+
+def _production_tp_price(
+    entry_price: float,
+    atr_pct: float | None,
+    tp_atr_multiple: float,
+    tp_max_pct: float,
+    short: bool,
+) -> float | None:
+    """P2-4 — TP de production : distance = min(ATR × tp_atr_multiple, prix × tp_max_pct).
+
+    Miroir de ``RiskConfig.tp_params_for()`` + ``portfolio_builder``
+    (fallbacks scalaires : tp_atr_multiple=3.0, tp_max_pct=0.07).
+    Retourne None si les flags sont inactifs ou si l'ATR est indisponible
+    → le comportement legacy (max(12 % fixe, 2R)) reste inchangé.
+    """
+    if tp_atr_multiple <= 0 or tp_max_pct <= 0 or atr_pct is None or atr_pct <= 0 or entry_price <= 0:
+        return None
+    sign = -1 if short else 1
+    distance = min(entry_price * atr_pct * tp_atr_multiple, entry_price * tp_max_pct)
+    return entry_price + sign * distance
+
+
 @dataclass
 class BacktestConfig:
     """Configuration unifiée du backtest."""
@@ -111,6 +145,27 @@ class BacktestConfig:
     # 0.0 = désactivé (utilise trailing_stop_pct fixe).
     # Pour les microcaps (vol daily 3-8%), une valeur de 1.5–2.5 est recommandée.
     atr_trailing_stop_multiplier: float = 0.0
+
+    # ── P2-4 — Trailing stop par côté (réparer la jambe longue) ──
+    # None = ``trailing_stop_pct`` global (comportement historique).
+    # Sinon plancher : élargit uniquement la jambe choisie (max(dérivé, override)).
+    trailing_stop_long_pct: float | None = None
+    trailing_stop_short_pct: float | None = None
+
+    # ── P2-4 — Fidélité live du stop initial/trailing ──
+    # Si > 0 et que le signal porte ``atr_pct_20`` (fraction ATR_20/prix),
+    # dérive ``risk_per_share = entry_price × atr_pct_20 × multiple`` comme
+    # ``risk_management/portfolio_builder.py`` (sizing ATR live) — pour les
+    # LONGS ET LES SHORTS (direction-aware en aval). 0 = désactivé (legacy,
+    # trailing fixe ``trailing_stop_pct``).
+    atr_risk_stop_multiple: float = 0.0
+
+    # ── P2-4 — Fidélité live du TP (formule production) ──
+    # Si les deux > 0 : TP = entrée ± min(ATR × tp_atr_multiple, prix × tp_max_pct)
+    # (miroir de RiskConfig.tp_params_for + portfolio_builder).
+    # 0 = legacy : TP = max(12 % fixe, 2R).
+    tp_atr_multiple: float = 0.0
+    tp_max_pct: float = 0.0
 
     # Concentration / diversification (Priorité 4)
     # Assoupli pour le walk-forward sur petits univers (< 50 candidats/jour)
@@ -243,6 +298,8 @@ class _OpenPosition:
     # Phase B.2 — stop-loss initial dur (None = désactivé).
     initial_stop_price: float | None = None
     risk_per_share: float | None = None
+    # P2-4 — fraction ATR_20/prix au signal (pour le TP de production).
+    atr_pct: float | None = None
     replay_take_profit_price: float | None = None
     replay_initial_stop_price: float | None = None
     replay_trailing_stop_pct: float | None = None
@@ -1065,6 +1122,7 @@ class BacktestEngine:
                 diagnostics=diagnostics,
                 spread_df=spread_df,
                 current_equity=current_equity,
+                atr_df=atr_df,
             )
 
             # Phase E.4 — single mark-to-market final pour equity du jour.
@@ -1635,6 +1693,7 @@ class BacktestEngine:
                 entry_cash_flow=entry_cash_flow,
                 initial_stop_price=initial_stop_price,
                 risk_per_share=risk_per_share,
+                atr_pct=self._resolve_signal_float(row, "atr_pct_20"),
                 replay_take_profit_price=(
                     self._resolve_signal_float(row, "replay_take_profit_price")
                     if cfg.protection_replay_mode == "protection_replay"
@@ -1850,15 +1909,26 @@ class BacktestEngine:
             else:
                 # Sprint 2 — direction-aware protection prices
                 if cfg.use_live_protection_logic:
-                    percent_target = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
-                    risk_based_target = None
-                    if position.risk_per_share is not None and position.risk_per_share > 0 and position.entry_price > 0:
-                        sign = -1 if short else 1
-                        risk_based_target = position.entry_price + sign * (2.0 * position.risk_per_share)
-                    if risk_based_target is not None:
-                        take_profit_price = max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target)
+                    # ── P2-4 — TP de production : min(ATR × tp_atr_multiple, prix × tp_max_pct) ──
+                    production_tp = _production_tp_price(
+                        position.entry_price,
+                        position.atr_pct,
+                        float(cfg.tp_atr_multiple),
+                        float(cfg.tp_max_pct),
+                        short,
+                    )
+                    if production_tp is not None:
+                        take_profit_price = production_tp
                     else:
-                        take_profit_price = percent_target
+                        percent_target = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
+                        risk_based_target = None
+                        if position.risk_per_share is not None and position.risk_per_share > 0 and position.entry_price > 0:
+                            sign = -1 if short else 1
+                            risk_based_target = position.entry_price + sign * (2.0 * position.risk_per_share)
+                        if risk_based_target is not None:
+                            take_profit_price = max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target)
+                        else:
+                            take_profit_price = percent_target
                     if (
                         position.initial_stop_price is not None
                         and position.entry_price > 0
@@ -1870,12 +1940,14 @@ class BacktestEngine:
                         trailing_stop_pct = position.risk_per_share / position.entry_price
                     else:
                         trailing_stop_pct = float(cfg.trailing_stop_pct)
+                    trailing_stop_pct = _effective_trailing_pct(cfg, short, trailing_stop_pct)
                     trailing_ref = (previous_trough_low if short else previous_peak_high)
                     trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, trailing_stop_pct)
                 else:
                     take_profit_price = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
                     trailing_ref = (previous_trough_low if short else previous_peak_high)
-                    trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, float(cfg.trailing_stop_pct))
+                    trailing_stop_pct = _effective_trailing_pct(cfg, short, float(cfg.trailing_stop_pct))
+                    trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, trailing_stop_pct)
                 # ── P1 — ATR-based trailing stop override ──
                 if cfg.atr_trailing_stop_multiplier > 0 and atr_df is not None and symbol in atr_df.columns:
                     atr_value = float(atr_df.at[trade_day, symbol])
@@ -2202,6 +2274,13 @@ class BacktestEngine:
                     return stop_price_initial, risk_per_share
                 if short and stop_price_initial > entry_price:
                     return stop_price_initial, risk_per_share
+            # P2-4 — fidélité live : dériver le risque du sizing ATR
+            # (risk_per_share = entry × atr_pct_20 × k), comme portfolio_builder.
+            # Longs ET shorts : le signe direction-aware est appliqué en aval.
+            if risk_per_share is None and self.config.atr_risk_stop_multiple > 0 and entry_price > 0:
+                atr_pct = self._resolve_signal_float(row, "atr_pct_20")
+                if atr_pct is not None and atr_pct > 0:
+                    risk_per_share = entry_price * atr_pct * self.config.atr_risk_stop_multiple
             if risk_per_share is not None and risk_per_share > 0:
                 sign = -1 if short else 1
                 derived_stop = entry_price - sign * risk_per_share
