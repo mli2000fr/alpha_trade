@@ -1,6 +1,6 @@
 # Module ModelFactory — Documentation Complète
 
-> **Version** : Sprint 2026-08-04 (batch f82ab5, per-sector + global ranking)  
+> **Version** : Sprint 2026-08-04 (batch f82ab5, per-sector + global ranking) — mise à jour 2026-08-14 (pivot per-symbol)
 > **Auteur** : Généré automatiquement depuis le code source
 
 ---
@@ -31,8 +31,10 @@ Le module `modelFactory` est le cœur ML du système α-Trade. Il supporte **deu
 
 | Mode | Description | Usage |
 |------|-------------|-------|
-| **Per-Symbol** | 1 modèle par symbole (LSTM + LightGBM + CatBoost) | ~500 symboles, patterns individuels |
-| **Per-Sector** | 1 modèle par secteur GICS × horizon (LightGBM + CatBoost) | 11 secteurs × 5 horizons = 55 modèles |
+| **Per-Symbol** | 1 modèle par symbole (LSTM + LightGBM + CatBoost) | ~400 symboles, patterns individuels (**pivot 2026-08-14**) |
+| **Per-Sector** | 1 modèle par secteur GICS × horizon (LightGBM + CatBoost) | 11 secteurs × 5 horizons = 55 modèles (research-only) |
+
+> 📌 **Mise à jour 2026-08-14** : pivot vers le **per-symbol**. Le per-sector reste research-only (F1 WF ≈ 0.33, DirAcc ≈ 50 % — aucun alpha exploitable). Le per-symbol sera retravaillé (ablation F0-F4, protocole `prompt/ml/ml_analyse_per_symbol.md`).
 
 Il assure :
 
@@ -501,9 +503,24 @@ Mêmes features que le Per-Symbol (mode `expert`), plus :
 
 ### 5.9 Lancement
 
+Per-sector (research-only) :
+
 ```bash
 python -m modelFactory --mode train \
   --training-mode per_sector \
+  --target-mode regression \
+  --forecast-horizons 3,5,10,15,20 \
+  --feature-set expert \
+  --symbol-source ticket-recherche \
+  --compare-lightgbm --enable-catboost \
+  --select-champion --walkforward
+```
+
+Per-symbol (pivot 2026-08-14) :
+
+```bash
+python -m modelFactory --mode train \
+  --training-mode per_symbol \
   --target-mode regression \
   --forecast-horizons 3,5,10,15,20 \
   --feature-set expert \
@@ -1116,12 +1133,18 @@ stock_fundamentals_daily
 > 🔴 **Écart f82ab5 vs 7e4cf8** : IC global divisé par ~1.7 (0.0115 vs 0.0190). H15/H20 particulièrement touchés (÷2).
 > Hypothèses : splits effectifs (6 vs 8), univers élargi (939 vs 928), ou régression liée aux fixes data leakage.
 
+#### Batches récents (2026-08-14)
+
+- **B41** (B25 + volume, YetiRank) : IC Rank **0.0260**, IR **1.55** — records de la série.
+- **B42** (B20 + volume, sans CAPM) : IC Rank 0.0250, **H10 = 0.0282 (IR 1.60)** — record H10.
+- **B43** (config B41, train → 2024-12-31) : ic_rank 0.0224 — entraîné pour un OOS propre 2025+2026 (abandonné avec le pivot per-symbol du 2026-08-14).
+
 ### 12.5 Leçons apprises
 
 1. **Target sector-neutral** est le levier #1 (+84% IC). Sans cela, on fait du sector-riding, pas du stock-picking.
 2. **CatBoost RMSE > LightGBM LambdaRank** pour le ranking financier faible signal.
 3. **756j** est le sweet spot de fenêtre train (504 trop court, 1008 diminishing).
-4. **13 splits > 8 splits** — granularité fine → adaptation au régime.
+4. **8 splits > 13 splits** — fenêtres 252j, moins de chevauchement → meilleure généralisation (+40 % IC).
 5. **Smoothing + 8 splits sont complémentaires** — +31% H10 vs sans. Le smoothing seul (13 splits) diluait.
 6. **Moins de features ≠ meilleur** — les arbres excellent à combiner des signaux faibles.
 7. **Le vol scaling est indispensable** (testé OFF : -27%).

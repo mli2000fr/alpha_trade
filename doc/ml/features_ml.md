@@ -2,7 +2,7 @@
 
 > Fichier de référence listant chaque flag `--include-*` / `--target-*`, son rôle, les features concernées, et le statut de propagation dans les 4 modes d'entraînement.
 >
-> Dernière mise à jour : 2026-08-08
+> Dernière mise à jour : 2026-08-14 (vérifié contre le code source)
 
 ---
 
@@ -21,9 +21,9 @@ Ajoute le score baissier composite du screener (`short_score`) comme feature ML 
 | Mode | Point de chargement | Statut |
 |:-----|:--------------------|:-------|
 | **Per-symbol** | `orchestrator.py:397` — `load_symbol_selector_context(engine, symbol, ...)` | ✅ Correct |
-| **Global model** | `global_model.py:397` — `load_symbols_selector_context(engine, symbols, ...)` | ✅ Correct |
-| **Global Ranking** | `global_ranking.py:805` — `load_symbols_selector_context(engine, symbols, ...)` | ✅ Correct |
-| **Per-sector** | `trainer_sector.py:830` — `_load_selector_for_symbols(...)` | 🔴 **Bug corrigé 2026-08-08** |
+| **Global model** | `global_model.py:404` — `load_symbols_selector_context(engine, symbols, ...)` | ✅ Correct |
+| **Global Ranking** | `global_ranking.py:873` — `load_symbols_selector_context(engine, symbols, ...)` | ✅ Correct |
+| **Per-sector** | `trainer_sector.py:789` — `_load_selector_for_symbols(symbols, engine, cfg)` | 🔴 **Bug corrigé 2026-08-08** |
 
 ### Détail du bug (corrigé)
 `_load_selector_for_symbols` appelait `load_symbol_selector_context(sym, engine, cfg)` avec les arguments dans le mauvais ordre. L'`except Exception: return None` masquait le crash → `selector_df` toujours `None` → `selector_short_score` = `0.0` partout.  
@@ -67,9 +67,9 @@ Ajoute l'ensemble des scores du screener PIT-safe (trend, VCP, final_score, etc.
 | Mode | Point de chargement | Statut |
 |:-----|:--------------------|:-------|
 | **Per-symbol** | `orchestrator.py:397` — `load_symbol_selector_context(engine, symbol, ...)` | ✅ Correct |
-| **Global model** | `global_model.py:397` — `load_symbols_selector_context(engine, symbols, ...)` | ✅ Correct |
-| **Global Ranking** | `global_ranking.py:805` — `load_symbols_selector_context(engine, symbols, ...)` | ✅ Correct |
-| **Per-sector** | `trainer_sector.py:830` — `_load_selector_for_symbols(...)` | 🔴 **Bug corrigé 2026-08-08** (même bug que `--include-short-score`) |
+| **Global model** | `global_model.py:404` — `load_symbols_selector_context(engine, symbols, ...)` | ✅ Correct |
+| **Global Ranking** | `global_ranking.py:873` — `load_symbols_selector_context(engine, symbols, ...)` | ✅ Correct |
+| **Per-sector** | `trainer_sector.py:789` — `_load_selector_for_symbols(symbols, engine, cfg)` | 🔴 **Bug corrigé 2026-08-08** (même bug que `--include-short-score`) |
 
 ---
 
@@ -92,16 +92,16 @@ Ajoute les features de sentiment quotidiennes (news, confiance, événements maj
 | Mode | Point de chargement | Statut |
 |:-----|:--------------------|:-------|
 | **Per-symbol** | `orchestrator.py:389` — `load_symbol_sentiment(engine, symbol, ...)` | ✅ Correct |
-| **Global model** | `global_model.py:388` — `load_symbols_sentiment(engine, symbols, ...)` | ✅ Correct |
-| **Per-sector** | `trainer_sector.py:803` — `_load_sentiment_for_symbols(...)` | 🔴 **Bug corrigé 2026-08-08** |
-| **Global Ranking** | `global_ranking.py:801` — `sentiment_df = None` | ⚪ Intentionnellement désactivé |
+| **Global model** | `global_model.py:395` — `load_symbols_sentiment(engine, symbols, ...)` | ✅ Correct |
+| **Per-sector** | `trainer_sector.py:784` — `_load_sentiment_for_symbols(symbols, engine, cfg)` | 🔴 **Bug corrigé 2026-08-08** |
+| **Global Ranking** | `global_ranking.py:868` — `sentiment_df = None` | ⚪ Intentionnellement désactivé |
 
 ### Détail du bug (corrigé)
 Même pattern que `_load_selector_for_symbols` : `load_symbol_sentiment(sym, engine, cfg.data)` → arguments inversés → `except Exception: return None`.  
 **Fix** : utilise `load_symbols_sentiment(engine, symbols, end_date=..., start_date=...)`.
 
 ### Note Global Ranking
-Le commentaire dans `global_ranking.py:801` indique : « sentiment → per-symbol uniquement ; le global ranking ignore ces features (sparse, noyées dans 177 features). On saute le chargement pour gagner du temps. »
+Le commentaire dans `global_ranking.py:869` indique : « sentiment → per-symbol uniquement ; le global ranking ignore ces features (sparse, noyées dans 177 features). On saute le chargement pour gagner du temps. »
 
 ---
 
@@ -271,7 +271,7 @@ Ajoute les features fondamentales EODHD (valuation, profitabilité, croissance, 
 
 | Mode | Point de chargement | Statut |
 |:-----|:--------------------|:-------|
-| **Per-symbol** | `orchestrator.py:732` — `load_fundamentals_from_db()` → cache → `fundamental_df` | ✅ Correct |
+| **Per-symbol** | `orchestrator.py:744` — `load_fundamentals_from_db()` → cache → `fundamental_df` | ✅ Correct |
 | **Per-sector** | `trainer_sector.py:848` — `_load_fundamentals_for_symbols()` → `fundamental_df` | ✅ Correct |
 | **Global Ranking** | `compute_features()` → `merge_fundamentals()` → fallback auto DB | ✅ Correct |
 | **Global model** | `_get_global_feature_columns()` n'inclut **pas** les fondamentales | ⚪ Par design |
@@ -471,6 +471,41 @@ _train_hi = train_df["target"].quantile(_q_hi)
 
 > ⚙️ Config : `--target-ternary-quantile` (défaut `0.30`) contrôle le seuil. Après conversion, `cfg.data.target_mode` devient `"ternary"`.
 
+## 16. `--include-volume-features`
+
+### Rôle
+Ajoute le profil volume/liquidité (10 features opt-in, P3-5). Source : barres OHLCV uniquement, calcul in-memory — aucune DB externe.
+
+### Features concernées (10)
+
+| # | Feature | Calcul |
+|:--|:--------|:-------|
+| 1 | `dollar_volume_log_20` | log(moyenne 20j du dollar volume) |
+| 2 | `dollar_volume_trend_20_60` | moyenne 20j / moyenne 60j − 1 |
+| 3 | `amihud_illiq_20` | moyenne 20j de \|retour\| / dollar volume |
+| 4 | `volume_std_ratio_20` | std 20j / moyenne 20j du volume |
+| 5 | `up_volume_ratio_20` | part du volume des jours haussiers (20j) |
+| 6 | `volume_price_corr_20` | corrélation 20j volume × retour |
+| 7 | `obv_slope_20` | pente 20j de l'OBV normalisée |
+| 8 | `dollar_volume_zscore_20` | z-score 20j du dollar volume |
+| 9 | `high_low_range_20` | moyenne 20j de (high−low)/close |
+| 10 | `volume_skew_20` | skew 20j du volume |
+
+### Data loading par mode
+
+| Mode | Point de calcul | Statut |
+|:-----|:----------------|:-------|
+| **Per-symbol** | `compute_features()` (`features.py`) via `include_volume_features` | ✅ Correct |
+| **Per-sector** | `trainer_sector.py:212` → `compute_features()` | ✅ Correct |
+| **Global model** | `global_model.py:140` → `compute_features()` | ✅ Correct |
+| **Global Ranking** | `global_ranking.py:260/291` → `compute_features()` | ✅ Correct |
+
+### Historique (P3-5, 2026-08-14)
+
+- **B40** (B4+volume, RMSE) : IC 0.0178 (−12 % vs B4) — aide H3 (+40 %) mais détruit H10-H20 en RMSE.
+- **B41** (B25+volume, YetiRank) : **IC 0.0260 (+7.9 %), IR 1.55 record** — 5/5 horizons gagnés vs B25.
+- **B42** (B20+volume, sans CAPM) : IC 0.0250 ; **H10 = 0.0282 (IR 1.60) = record H10 de la série**. Volume seul > CAPM seul.
+
 ---
 
 ## 🏛️ Gouvernance & Contrôle
@@ -551,7 +586,7 @@ Hyperparamètres des baselines LightGBM et CatBoost.
 
 ---
 
-## 16. `--enable-cross-sectional`
+## 17. `--enable-cross-sectional`
 
 ### Rôle
 Ajoute les features cross-sectionnelles : rangs percentiles intra-date, agrégats sectoriels, neutralisation sectorielle, et z-score sectoriel. Permet au modèle de positionner un titre relativement à son univers.
@@ -603,5 +638,6 @@ Les features XS nécessitent les barres de **tous** les symboles pour calculer r
 | `--include-factors` | 4 | ✅ | ✅ | ⚪ exclu | ⚠️ partiel | Aucun |
 | `--include-macro-regime` | 2 | ✅ | ✅ | ⚪ exclu | ⚪ blacklisté | Aucun |
 | `--include-score-components` | 9 | ⚪ désactivé | 🔴→✅ fix | 🔴→✅ fix | 🔴→✅ fix | Corrigé |
+| `--include-volume-features` | 10 | ✅ | ✅ | ✅ | ✅ | Aucun |
 
 > **Légende** : ✅ = OK | 🔴 = bug | ⚪ = non applicable par design
