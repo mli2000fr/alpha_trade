@@ -11,7 +11,7 @@ from backtesting.profiles import BACKTEST_PROFILES, PROFILE_NAMES, apply_profile
 def _ns(**kw) -> argparse.Namespace:
     base = dict(
         tp=0.08, ts=0.05, max_positions=20,
-        commission_bps=5.0, slippage_bps=5.0,
+        commission_bps=1.0, slippage_bps=2.0,
         account_type="margin", swing_only=False,
         fees=None, profile="custom",
     )
@@ -37,8 +37,8 @@ def test_apply_profile_strict_swing_cash_overrides_defaults() -> None:
     apply_profile(args, "strict_swing_cash", explicit_flags=set())
     assert args.account_type == "cash"
     assert args.swing_only is True
-    assert args.commission_bps == 5.0
-    assert args.slippage_bps == 5.0
+    assert args.commission_bps == 1.0
+    assert args.slippage_bps == 2.0
     assert args.tp == 0.08
     assert args.max_positions == 20
 
@@ -48,7 +48,7 @@ def test_apply_profile_swing_cash_aggressive_overrides_defaults() -> None:
     apply_profile(args, "swing_cash_aggressive", explicit_flags=set())
     assert args.tp == 0.12
     assert args.ts == 0.06
-    assert args.slippage_bps == 8.0
+    assert args.slippage_bps == 2.0
     assert args.max_positions == 25
     assert args.swing_only is True
 
@@ -61,7 +61,7 @@ def test_apply_profile_explicit_flags_take_precedence() -> None:
     assert args.tp == 0.30  # respecté
     assert args.max_positions == 7  # respecté
     assert args.ts == 0.06  # appliqué par le profil
-    assert args.slippage_bps == 8.0  # appliqué par le profil
+    assert args.slippage_bps == 2.0  # appliqué par le profil
 
 
 def test_apply_profile_unknown_name_raises() -> None:

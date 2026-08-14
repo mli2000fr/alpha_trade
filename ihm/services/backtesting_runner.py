@@ -38,6 +38,7 @@ class BacktestRunOptions:
     tp_atr_multiple: float = 0.0
     tp_max_pct: float = 0.0
     use_canonical_costs: bool = False
+    margin_interest_rate: float = 0.0
     use_live_protection_logic: bool = True
     max_positions: int = 20
     fees: float | None = None
@@ -297,7 +298,17 @@ def build_backtesting_command(
         if options.tp_max_pct and float(options.tp_max_pct) > 0:
             command.extend(["--tp-max-pct", str(options.tp_max_pct)])
         if options.use_canonical_costs:
-            command.append("--use-canonical-costs")
+            # Fix 2026-08-14 : sans flags explicites, les défauts CLI
+            # (commission 12 bps + slippage 20 bps) étaient appliqués au
+            # P&L legacy. On fixe les valeurs du modèle canonique (1+2 bps)
+            # pour que le rapport CLI reflète les coûts réels appliqués.
+            command.extend([
+                "--use-canonical-costs",
+                "--commission-bps", "1",
+                "--slippage-bps", "2",
+            ])
+        if options.margin_interest_rate and float(options.margin_interest_rate) > 0:
+            command.extend(["--margin-interest-rate", str(options.margin_interest_rate)])
         if options.allow_fractional_shares:
             command.append("--allow-fractional-shares")
         if options.commission_bps is not None:

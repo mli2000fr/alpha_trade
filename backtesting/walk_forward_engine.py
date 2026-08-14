@@ -58,8 +58,8 @@ class WalkForwardConfig:
         Taux sans risque annualisé.
     """
     initial_equity: float = 100_000.0
-    commission_bps: float = 5.0
-    slippage_bps: float = 5.0
+    commission_bps: float = 1.0
+    slippage_bps: float = 2.0
     execution_model: str = "next_open"
     phase2_mode: str = "risk_execution"
     annual_factor: int = 252

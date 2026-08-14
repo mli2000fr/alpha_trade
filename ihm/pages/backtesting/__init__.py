@@ -78,15 +78,17 @@ LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history
 RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
 
 # ── P2-4 — Fidélité live des protections (valeurs alignées sur la production) ──
-# Miroir de RiskConfig : `atr_stop_multiple` (scalaire 2.0), `tp_params_for()`
-# (3.0 × ATR / plafond 7 % du prix), et DEFAULT_COST_MODEL (spread 5bps,
-# commission 1bps, slippage 2bps, borrow shorts 0.3 %/an).
-BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT = 2.0
+# Miroir de RiskConfig : `atr_stop_multiple_for()` SANS argument utilise
+# `best_horizon` (10) → map {10: 2.5} = k effectif de production = 2.5 (pas 2.0).
+# `tp_params_for()` → (3.0 × ATR / plafond 7 % du prix), et DEFAULT_COST_MODEL
+# (spread 5bps, commission 1bps, slippage 2bps, borrow shorts 0.3 %/an).
+BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT = 2.5
 BT_RUN_TP_ATR_MULTIPLE_DEFAULT = 3.0
 BT_RUN_TP_MAX_PCT_DEFAULT = 7.0
 BT_RUN_TS_LONG_DEFAULT = 0.0
 BT_RUN_TS_SHORT_DEFAULT = 0.0
 BT_RUN_USE_CANONICAL_COSTS_DEFAULT = True
+BT_RUN_MARGIN_INTEREST_DEFAULT = 7.5
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     "pipeline_live_like": {
@@ -485,7 +487,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "tp", "Explication": "Take-profit en fraction (0.08 = 8%).", "Défaut": "0.08"},
             {"Paramètre": "ts", "Explication": "Trailing stop en fraction (0.05 = 5%).", "Défaut": "0.05"},
             {"Paramètre": "max_positions", "Explication": "Nombre maximal de positions simultanées.", "Défaut": "20"},
-            {"Paramètre": "commission_bps", "Explication": "Commission explicite simulée par trade (bps).", "Défaut": "5.0 research / 15.0 pipeline"},
+            {"Paramètre": "commission_bps", "Explication": "Commission explicite simulée par trade (bps).", "Défaut": "1.0 (Alpaca ≈ 0 $)"},
             {"Paramètre": "slippage_bps", "Explication": "Slippage fixe explicite simulé par trade (bps).", "Défaut": "5.0 research / 15.0 pipeline"},
             {"Paramètre": "fees", "Explication": "Champ legacy de compatibilité, remplacé par `commission_bps + slippage_bps`.", "Défaut": "None"},
             {
@@ -1395,7 +1397,7 @@ def _build_run_options() -> BacktestRunOptions:
             value=float(
                 st.session_state.get(
                     "bt_run_commission_bps",
-                    5.0,
+                    1.0,
                 )
             ),
             step=0.5,
@@ -1470,7 +1472,7 @@ def _build_run_options() -> BacktestRunOptions:
                 step=0.5,
                 format="%.1f",
                 key="bt_run_atr_risk_stop_multiple",
-                help="0 = inactif (legacy : TS fixe). Prod : 2.0 → risk_per_share = prix × atr_pct_20 × 2 comme portfolio_builder (longs ET shorts).",
+                help="0 = inactif (legacy : TS fixe). Prod : 2.5 (via best_horizon=10) → risk_per_share = prix × atr_pct_20 × 2.5 comme portfolio_builder (longs ET shorts).",
             )
         p24_col4, p24_col5, p24_col6 = st.columns(3)
         with p24_col4:
@@ -1500,8 +1502,18 @@ def _build_run_options() -> BacktestRunOptions:
                 "Coûts canoniques (prod)",
                 value=bool(st.session_state.get("bt_run_use_canonical_costs", BT_RUN_USE_CANONICAL_COSTS_DEFAULT)),
                 key="bt_run_use_canonical_costs",
-                help="Modèle de production : spread 5bps, commission 1bps, slippage 2bps, borrow fee shorts 0.3%/an. Désactivé = coûts legacy 5+5 bps sans spread ni borrow.",
+                help="Modèle de production : spread réel (fallback 5bps), commission 1bps, slippage 2bps, borrow fee shorts 0.3%/an. Désactivé = coûts legacy 5+5 bps sans spread ni borrow.",
             )
+        margin_interest_rate = st.number_input(
+            "Intérêts de marge (%/an)",
+            min_value=0.0,
+            max_value=30.0,
+            value=float(st.session_state.get("bt_run_margin_interest_rate", BT_RUN_MARGIN_INTEREST_DEFAULT)),
+            step=0.5,
+            format="%.1f",
+            key="bt_run_margin_interest_rate",
+            help="Alpaca ≈ 7-8 %/an sur le cash emprunté (levier). Débité quotidiennement quand le cash est négatif. 0 = désactivé.",
+        )
     with col6b:
         st.caption("")  # espace réservé
     with col7b:
@@ -2130,6 +2142,7 @@ def _build_run_options() -> BacktestRunOptions:
         tp_atr_multiple=float(st.session_state.get("bt_run_tp_atr_multiple", BT_RUN_TP_ATR_MULTIPLE_DEFAULT) or 0.0),
         tp_max_pct=float(st.session_state.get("bt_run_tp_max_pct", BT_RUN_TP_MAX_PCT_DEFAULT) or 0.0),
         use_canonical_costs=bool(st.session_state.get("bt_run_use_canonical_costs", BT_RUN_USE_CANONICAL_COSTS_DEFAULT)),
+        margin_interest_rate=float(st.session_state.get("bt_run_margin_interest_rate", BT_RUN_MARGIN_INTEREST_DEFAULT) or 0.0),
         use_live_protection_logic=bool(use_live_protection_logic),
         max_positions=int(max_positions),
         fees=None,

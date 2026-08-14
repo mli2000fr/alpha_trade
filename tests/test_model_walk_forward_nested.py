@@ -189,7 +189,7 @@ def test_walk_forward_config_defaults() -> None:
 
     cfg = WalkForwardConfig()
     assert cfg.initial_equity == 100_000.0
-    assert cfg.commission_bps == 5.0
+    assert cfg.commission_bps == 1.0
     assert cfg.execution_model == "next_open"
     assert cfg.annual_factor == 252
 

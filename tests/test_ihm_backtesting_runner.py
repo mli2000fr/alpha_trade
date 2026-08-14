@@ -47,6 +47,14 @@ def test_build_backtesting_run_command_p24_side_trailing_and_atr_risk():
 	assert command[command.index("--atr-risk-stop-multiple") + 1] == "2.0"
 
 
+def test_build_backtesting_run_command_margin_interest_flag():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01", margin_interest_rate=7.5))
+	assert "--margin-interest-rate" in command
+	assert command[command.index("--margin-interest-rate") + 1] == "7.5"
+
+
 def test_build_backtesting_run_command_p24_flags_omitted_by_default():
 	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
 
@@ -68,6 +76,8 @@ def test_build_backtesting_run_command_p24_tp_and_canonical_costs():
 	assert "--tp-max-pct" in command
 	assert command[command.index("--tp-max-pct") + 1] == "0.07"
 	assert "--use-canonical-costs" in command
+	assert command[command.index("--commission-bps") + 1] == "1"
+	assert command[command.index("--slippage-bps") + 1] == "2"
 	score_column_index = command.index("--score-column")
 	assert command[score_column_index + 1] == "auto"
 	engine_mode_index = command.index("--engine-mode")

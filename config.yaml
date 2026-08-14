@@ -62,9 +62,9 @@ leverage:
   # Exemples :
   # - 1.0 = pas de levier additionnel
   # - 1.5 = exposition cible max = 150 % de l'equity
-  # - 2.0 = plafond absolu autorisé en swing overnight
+  # - 2.0 = plafond absolu autorisé en swing overnight (compte live Alpaca)
   # NB : même si une valeur > 2.0 était saisie, le code borne de toute façon à 2.0 max.
-  max_leverage: 1.5
+  max_leverage: 2.0
 
   # Equity minimale requise pour autoriser la politique de levier.
   # En dessous, le levier explicite est désactivé automatiquement.
@@ -105,8 +105,8 @@ leverage:
   # Exemples :
   # - 1.0 = simulation sans levier additionnel
   # - 1.25 / 1.5 = simulation prudente
-  # - 2.0 = plafond maximal autorisé
-  dry_run_simulated_leverage: 1.5
+  # - 2.0 = plafond maximal autorisé (aligné compte live)
+  dry_run_simulated_leverage: 2.0
 
   # Active les logs d'audit du moteur de levier.
   # Si true, les décisions de levier (actif/inactif, champ broker retenu,

@@ -123,7 +123,16 @@ class BacktestConfig:
     # slippage=2bps, borrow=0.3%/an, round-trip=16bps) au lieu des
     # champs legacy. Active automatiquement la déduction du borrow fee
     # pour les shorts.
+    # NOTE (P2-4 fix 2026-08-14) : dans le chemin research, ce flag
+    # dérive désormais les frais effectifs ET le fallback spread depuis
+    # le modèle — ``fees_pct``/``slippage_bps`` legacy (défauts CLI
+    # 12/20 bps) sont ignorés, sinon le modèle canonique n'était jamais
+    # appliqué au P&L.
     use_canonical_costs: bool = False
+    # P2-4 (2026-08-14) : intérêts de marge sur débit cash (Alpaca ≈ 7-8 %/an).
+    # Débité quotidiennement quand ``settled_cash`` < 0 (longs financés à
+    # crédit). 0 = désactivé (rétrocompatibilité bit-à-bit des runs legacy).
+    margin_interest_rate_annual: float = 0.0
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
     execution_replay_mode: str = "off"
@@ -457,6 +466,21 @@ class BacktestEngine:
         self.config = config
         # ── Sprint 3 / Point 12 : modèle de coûts canonique ──────────
         self._cost_model = self._resolve_cost_model(config)
+        # P2-4 fix : les frais effectifs et le fallback spread du P&L
+        # research dérivent du modèle de coûts quand il est actif
+        # (canonique ou explicite), sinon des champs legacy. Sans cela,
+        # ``--use-canonical-costs`` ne changeait que le borrow fee et
+        # les défauts CLI (12+20 bps) s'appliquaient au P&L.
+        if config.use_canonical_costs or config.trading_cost_model is not None:
+            self._effective_fees_pct = (
+                self._cost_model.commission_bps + self._cost_model.slippage_bps
+            ) / 10_000.0
+            self._spread_fallback_bps = float(self._cost_model.spread_bps)
+        else:
+            self._effective_fees_pct = float(config.fees_pct)
+            self._spread_fallback_bps = float(config.slippage_bps)
+        # P2-4 (2026-08-14) : accumulateur d'intérêts de marge du run.
+        self._margin_interest_total = 0.0
         # Concentration filters (Priorité 4)
         self._concentration_trade_tracker = SymbolTradeTracker(
             max_trades=config.concentration_max_trades_per_symbol,
@@ -1015,6 +1039,22 @@ class BacktestEngine:
                 ),
             )
 
+            # P2-4 (2026-08-14) : intérêts de marge sur débit cash (fin de
+            # journée, après le snapshot). Alpaca facture ~7-8 %/an sur le
+            # cash emprunté — non modélisé avant ce fix.
+            margin_charge = self._accrue_margin_interest(
+                state, annual_rate=cfg.margin_interest_rate_annual,
+            )
+            if margin_charge > 0:
+                self._margin_interest_total += margin_charge
+                self._record_trade_event(
+                    state,
+                    "margin_interest_accrued",
+                    event_date=trade_day,
+                    charge=margin_charge,
+                    settled_cash_after=state.settled_cash,
+                )
+
             day_signals = signals_by_day.get(trade_day)
             candidate_rows = self._select_candidate_rows(
                 state=state,
@@ -1144,10 +1184,11 @@ class BacktestEngine:
             tracker_snapshot=self.tracker_snapshot,
         )
         LOGGER.info(
-            "Backtest contraint terminé — valeur finale : %.2f — diagnostics=%s — événements=%d",
+            "Backtest contraint terminé — valeur finale : %.2f — diagnostics=%s — événements=%d — margin_interest_total=%.2f",
             result.final_value(),
             diagnostics.to_dict(),
             len(trade_events_df),
+            self._margin_interest_total,
         )
         return result
 
@@ -1395,7 +1436,7 @@ class BacktestEngine:
 
             # ── P1 (2026-06-25) : slippage model pour backtest réaliste ──
             trade_spread_bps = self._get_spread_bps(
-                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
+                spread_df, trade_day, symbol, fallback_bps=self._spread_fallback_bps
             )
             slippage_bps = 5.0 + trade_spread_bps / 2.0
             if is_short_side(side):
@@ -1551,18 +1592,17 @@ class BacktestEngine:
             )
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
             extra_slippage_pct = micro.slippage.compute_bps(preliminary_size_usd, adv_usd) / 10_000.0
-            # P1 — spread réel par ticker comme coût de transaction
-            spread_cost_pct = self._get_spread_bps(
-                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
-            ) / 10_000.0
+            # P1 fix 2026-08-14 : le spread d'entrée est déjà payé via la
+            # pénalité de prix d'exécution (5 bps + ½ spread). Ne PAS le
+            # recompter dans le coût de sizing (double-comptage historique).
             # P3 — commission tiered ou plate
             if cfg.use_tiered_commission:
                 commission_config = resolve_commission_preset(float(current_equity))
                 # Pour le calcul préliminaire, on utilise le taux seul (le fixe sera ajouté après)
                 commission_rate_pct = commission_config.bps_rate / 10_000.0
-                base_cost_pct = commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct
+                base_cost_pct = commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct
             else:
-                base_cost_pct = cfg.fees_pct + extra_slippage_pct + spread_cost_pct
+                base_cost_pct = self._effective_fees_pct + extra_slippage_pct
             effective_unit_cost = entry_price * (1.0 + base_cost_pct)
             if quantity_override is not None:
                 affordable_quantity = (
@@ -2044,18 +2084,21 @@ class BacktestEngine:
             exit_notional = abs_qty * exit_price
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
             extra_slippage_pct = micro.slippage.compute_bps(exit_notional, adv_usd) / 10_000.0
-            # P1 — spread réel par ticker comme coût de sortie
+            # P1 fix 2026-08-14 : ½ spread à la sortie (sell au bid / cover à
+            # l'ask) — l'autre moitié est déjà payée à l'entrée via la
+            # pénalité de prix d'exécution. Facturer le spread complet ici
+            # doublait le coût réel d'un aller-retour.
             spread_cost_pct = self._get_spread_bps(
-                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
+                spread_df, trade_day, symbol, fallback_bps=self._spread_fallback_bps
             ) / 10_000.0
             # P3 — commission tiered ou plate en sortie
             if cfg.use_tiered_commission:
                 exit_commission_config = resolve_commission_preset(float(current_equity))
                 exit_commission_rate_pct = exit_commission_config.bps_rate / 10_000.0
-                fees_rate = exit_commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct
+                fees_rate = exit_commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct / 2.0
                 exit_fixed_commission = exit_commission_config.fixed_per_trade_usd
             else:
-                fees_rate = float(cfg.fees_pct) + extra_slippage_pct + spread_cost_pct
+                fees_rate = self._effective_fees_pct + extra_slippage_pct + spread_cost_pct / 2.0
                 exit_fixed_commission = 0.0
 
             if short:
@@ -2165,7 +2208,31 @@ class BacktestEngine:
             state.positions.pop(symbol, None)
 
     @staticmethod
+    @staticmethod
+    def _accrue_margin_interest(
+        state: _RunState,
+        *,
+        annual_rate: float,
+        sessions_per_year: int = 252,
+    ) -> float:
+        """Intérêts de marge quotidiens sur le débit cash (Alpaca ≈ 7-8 %/an).
+
+        Débite ``settled_cash`` de ``débit × taux / sessions`` quand le cash
+        est négatif (longs financés à crédit). Les proceeds de shorts
+        créditent le cash et réduisent naturellement le débit. Retourne le
+        montant débité (>= 0).
+        """
+        if annual_rate <= 0:
+            return 0.0
+        debit = max(-float(state.settled_cash), 0.0)
+        if debit <= 0:
+            return 0.0
+        charge = debit * float(annual_rate) / float(sessions_per_year)
+        state.settled_cash -= charge
+        return charge
+
     def _get_spread_bps(
+        self,
         spread_df: pd.DataFrame | None,
         trade_day: pd.Timestamp,
         symbol: str,

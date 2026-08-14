@@ -71,8 +71,8 @@ presets:
     execution_trailing_r_multiple: 2.0
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
-    backtesting_commission_bps_stress: 15.0
-    backtesting_slippage_bps_stress: 25.0
+    backtesting_commission_bps_stress: 1.0
+    backtesting_slippage_bps_stress: 2.0
     # P2 — microstructure slippage volume-aware (Alpaca = pas de surcoût retail)
     backtesting_slippage_base_bps: 0.0
     backtesting_slippage_impact_coef: 0.0
@@ -181,8 +181,8 @@ presets:
     execution_trailing_r_multiple: 2.0
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
-    backtesting_commission_bps_stress: 12.0
-    backtesting_slippage_bps_stress: 20.0
+    backtesting_commission_bps_stress: 1.0
+    backtesting_slippage_bps_stress: 2.0
     # P2 — microstructure slippage volume-aware (Alpaca = pas de surcoût retail)
     backtesting_slippage_base_bps: 0.0
     backtesting_slippage_impact_coef: 0.0
@@ -288,8 +288,8 @@ presets:
     execution_trailing_r_multiple: 2.0
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
-    backtesting_commission_bps_stress: 10.0
-    backtesting_slippage_bps_stress: 18.0
+    backtesting_commission_bps_stress: 1.0
+    backtesting_slippage_bps_stress: 2.0
     # P2 — microstructure slippage volume-aware (petit/moyen compte)
     backtesting_slippage_base_bps: 0.0
     backtesting_slippage_impact_coef: 0.0
@@ -386,8 +386,8 @@ presets:
     execution_trailing_r_multiple: 2.0
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
-    backtesting_commission_bps_stress: 8.0
-    backtesting_slippage_bps_stress: 15.0
+    backtesting_commission_bps_stress: 1.0
+    backtesting_slippage_bps_stress: 2.0
     # P2 — microstructure slippage volume-aware (compte intermédiaire)
     backtesting_slippage_base_bps: 0.0
     backtesting_slippage_impact_coef: 0.0
@@ -483,8 +483,8 @@ presets:
     execution_trailing_r_multiple: 2.0
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
-    backtesting_commission_bps_stress: 6.0
-    backtesting_slippage_bps_stress: 12.0
+    backtesting_commission_bps_stress: 1.0
+    backtesting_slippage_bps_stress: 2.0
     # P2 — microstructure slippage volume-aware (compte diversifié)
     backtesting_slippage_base_bps: 0.0
     backtesting_slippage_impact_coef: 0.0
@@ -573,8 +573,8 @@ presets:
     execution_trailing_r_multiple: 2.0
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
-    backtesting_commission_bps_stress: 5.0
-    backtesting_slippage_bps_stress: 10.0
+    backtesting_commission_bps_stress: 1.0
+    backtesting_slippage_bps_stress: 2.0
     # P2 — microstructure slippage volume-aware (compte standard/large)
     backtesting_slippage_base_bps: 0.0
     backtesting_slippage_impact_coef: 0.0
@@ -685,8 +685,8 @@ presets:
     execution_trailing_r_multiple: 2.0
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
-    backtesting_commission_bps_stress: 4.0
-    backtesting_slippage_bps_stress: 8.0
+    backtesting_commission_bps_stress: 1.0
+    backtesting_slippage_bps_stress: 2.0
     backtesting_max_portfolio_dd_pct: 0.18
     backtesting_dd_rolling_peak_window_days: 252
     backtesting_dd_recovery_pct: 0.92
