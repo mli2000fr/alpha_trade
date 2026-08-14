@@ -42,6 +42,16 @@ class RiskConfig:
     max_gross_exposure: float = 1.0
     min_position_notional: float = 500.0
 
+    # ── P2-1 sizing live (2026-08-13) ──
+    # "atr" = legacy (budget de risque ATR égal par position).
+    # "rank_weighted" = facteurs d'allocation depuis `selection_rank`.
+    # "conviction_weighted" = facteurs d'allocation depuis `conviction_score`.
+    # "equal_weight" = base égale 1/max_positions (sans effet net sur l'ATR).
+    sizing_mode: str = "atr"
+    sector_multipliers_path: str | None = None
+    sizing_min_weight_pct: float = 0.005
+    sizing_max_weight_pct: float = 0.20
+
     max_portfolio_drawdown_pct: float = 0.15
     max_daily_loss_pct: float = 0.05
     # Circuit breaker drawdown — mode dégradé et pic roulant (parité backtest Phase C.5)
@@ -409,6 +419,53 @@ class RiskConfig:
             )
         current.update(overrides)
         return RiskConfig.from_dict(current)
+
+    # ── P2-1 sizing live (2026-08-13) ─────────────────────────────────
+
+    def build_sizing_config(self) -> "SizingConfig | None":
+        """Construit la ``SizingConfig`` P2-1 consommée par le live.
+
+        ``sizing_mode == "atr"`` → ``None`` (comportement legacy inchangé).
+        Sinon, charge les multiplicateurs sectoriels depuis
+        ``sector_multipliers_path`` si configuré (illisible → ignorés
+        avec un WARNING, pas d'échec du run).
+        """
+        import json
+        import logging
+        from pathlib import Path
+
+        from common.sizing import SizingConfig
+
+        mode = str(self.sizing_mode or "atr").strip().lower()
+        if mode == "atr":
+            return None
+        if mode not in {"equal_weight", "conviction_weighted", "rank_weighted"}:
+            logging.getLogger(__name__).warning(
+                "P2-1: sizing_mode inconnu %r — comportement legacy (atr).", mode,
+            )
+            return None
+
+        sector_multipliers: dict[str, float] | None = None
+        if self.sector_multipliers_path:
+            try:
+                payload = json.loads(Path(self.sector_multipliers_path).read_text(encoding="utf-8"))
+                sector_multipliers = {
+                    str(k).strip(): float(v)
+                    for k, v in payload.items()
+                    if str(k).strip()
+                }
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "P2-1: multiplicateurs sectoriels illisibles (%s) — ignorés.",
+                    exc,
+                )
+
+        return SizingConfig(
+            mode=mode,
+            min_weight_pct=float(self.sizing_min_weight_pct),
+            max_weight_pct=float(self.sizing_max_weight_pct),
+            sector_multipliers=sector_multipliers,
+        )
 
     # ── Section 17 Point 6.1 : factories unifiées ─────────────────────
 

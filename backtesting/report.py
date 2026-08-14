@@ -490,7 +490,7 @@ class BacktestReport:
             "PnL Net": f"${self.pnl_net:,.2f}",
             "Exposition brute moy.": f"{self.gross_exposure_avg_pct:.1f}%",
             "Exposition nette moy.": f"{self.net_exposure_avg_pct:.1f}%",
-            "Turnover": f"{self.turnover_pct:.1f}%",
+            "Turnover (x/an)": f"{self.turnover_pct:.2f}x",
             "Corrélation L/S": f"{self.long_short_correlation:.3f}" if self.long_short_correlation is not None else "N/A",
             "Force-close (total)": self.force_close_exits,
             "Force-close Long": self.force_close_exits_long,
@@ -664,6 +664,33 @@ def generate_report(
             fc_long = 0
             fc_short = 0
 
+        # A-021 — exposition brute/nette moyennes depuis les snapshots
+        # ``daily_leverage_snapshot`` + turnover annualisé (notional tradé /
+        # equity moyenne / années).
+        gross_exposure_avg_pct = 0.0
+        net_exposure_avg_pct = 0.0
+        turnover_pct = 0.0
+        events = _extract_trade_events_df(pf)
+        if events is not None and not events.empty and "event_type" in events.columns:
+            snapshots = events[events["event_type"] == "daily_leverage_snapshot"]
+            if not snapshots.empty:
+                gross = pd.to_numeric(snapshots.get("gross_exposure_before_pct"), errors="coerce")
+                # Les événements stockent des fractions d'equity (ex. 1.51 = 151%) → ×100.
+                gross_exposure_avg_pct = float(gross.mean()) * 100.0 if gross.notna().any() else 0.0
+                net = pd.to_numeric(snapshots.get("net_exposure_before_pct"), errors="coerce")
+                net_exposure_avg_pct = float(net.mean()) * 100.0 if net.notna().any() else 0.0
+        if n_trades > 0 and not equity.empty:
+            try:
+                traded_notional = float(
+                    (trades_df["quantity"].astype(float).abs() * trades_df["entry_price"].astype(float)).sum()
+                    + (trades_df["quantity"].astype(float).abs() * trades_df["exit_price"].astype(float)).sum()
+                )
+            except (KeyError, TypeError, ValueError):
+                traded_notional = 0.0
+            avg_equity = float(equity.mean())
+            if avg_equity > 0 and traded_notional > 0:
+                turnover_pct = (traded_notional / avg_equity) / max(n_years, 0.01)
+
         return BacktestReport(
             initial_equity=initial_equity,
             final_value=final_val,
@@ -698,9 +725,9 @@ def generate_report(
             force_close_exits_short=fc_short,
             # Sprint 0 — exposition et turnover
             pnl_net=long_pnl_total + short_pnl_total,
-            gross_exposure_avg_pct=0.0,   # nécessite donnée position-level → Sprint 3
-            net_exposure_avg_pct=0.0,     # nécessite donnée position-level → Sprint 3
-            turnover_pct=0.0,             # nécessite donnée position-level → Sprint 3
+            gross_exposure_avg_pct=gross_exposure_avg_pct,
+            net_exposure_avg_pct=net_exposure_avg_pct,
+            turnover_pct=turnover_pct,
         )
 
     final_val = _as_float(pf.final_value())

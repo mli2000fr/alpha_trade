@@ -98,6 +98,52 @@ def _resolve_predict_batch_id(artifacts_dir: Path) -> str | None:
     return None
 
 
+def _resolve_last_bar_date(engine) -> date | None:
+    """Dernière barre eodhd disponible (utilisée comme date live des rangs per-sector)."""
+    try:
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT MAX(`date`) FROM stock_bars_daily WHERE data_source='eodhd_eod'")
+            ).fetchone()
+        return row[0] if row and row[0] else None
+    except Exception:
+        LOGGER.warning("_resolve_last_bar_date: impossible de lire stock_bars_daily", exc_info=True)
+        return None
+
+
+def _load_synth_frame_for_range(engine, batch_id: str, dates) -> "pd.DataFrame":
+    """Charge les lignes du run synthétique d'un batch sur une plage (summary/drift)."""
+    import pandas as pd
+    from sqlalchemy import text
+
+    if not batch_id or not dates:
+        return pd.DataFrame(
+            columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
+        )
+    run_id = f"{batch_id}_globalrank_synth"
+    min_d, max_d = min(dates), max(dates)
+    try:
+        with engine.connect() as conn:
+            return pd.read_sql(
+                text(
+                    "SELECT symbol, prediction_date, predicted_proba, predicted_class, run_id "
+                    "FROM model_predictions WHERE run_id = :rid "
+                    "AND prediction_date BETWEEN :s AND :e "
+                    "ORDER BY prediction_date, symbol"
+                ),
+                conn,
+                params={"rid": run_id, "s": min_d, "e": max_d},
+                parse_dates=["prediction_date"],
+            )
+    except Exception:
+        LOGGER.warning("_load_synth_frame_for_range: lecture impossible pour %s", run_id, exc_info=True)
+        return pd.DataFrame(
+            columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
+        )
+
+
 def _build_training_batch_command(raw_args: list[str]) -> tuple[str, str]:
     argv = ["python", "-m", "modelFactory", *raw_args]
     return subprocess.list2cmdline(argv), json.dumps(raw_args, ensure_ascii=False)
@@ -291,6 +337,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--ternary-top2-margin", type=float, default=0.05,
                    help="Marge minimale entre la 1ère et 2ème proba pour éviter une décision ambiguë (défaut: 0.05)")
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
+    p.add_argument(
+        "--batch-id",
+        type=str,
+        default=None,
+        help=(
+            "Identifiant explicite du batch ML à utiliser en mode predict. "
+            "Prioritaire sur batch_diagnostics.backtest_batch_id et sur le nom "
+            "du dossier artifacts-dir. Permet le dispatch automatique "
+            "per-symbol (predict_batch) vs per-sector (global ranks + synthèse)."
+        ),
+    )
+    p.add_argument(
+        "--synth-best-h",
+        type=int,
+        default=10,
+        help="Horizon du rang global utilisé pour synthétiser les probas des batches per-sector (défaut: 10).",
+    )
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
     p.add_argument("--include-screener-scores",
@@ -314,6 +377,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Désactiver l'inclusion des composants de score.")
     p.add_argument("--include-factors", action="store_true", default=False,
                    help="Inclure les expositions factorielles CAPM (beta, alpha, R² via rolling 252j)")
+    p.add_argument("--include-volume-features", action="store_true", default=False,
+                   help="P3-5 : inclure le profil volume/liquidité (10 features : dollar volume, Amihud, OBV, skew...)")
     p.add_argument("--include-macro-regime", action="store_true", default=False,
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
     p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
@@ -335,6 +400,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--ranking-sector-group", type=str, default="all",
                    choices=["all", "cyclical", "defensive"],
                    help="Global Ranking : univers filtré par groupe sectoriel GICS")
+    p.add_argument("--ranking-raw-target", action="store_true", default=False,
+                   help="P1-3 : Global Ranking target = rang percentile pur (skip smoothing + sector-neutral + factor-neutral)")
     p.add_argument("--per-symbol-max-symbols", type=int, default=0,
                    help="Per-Symbol : nombre max de symboles à entraîner (0 = tous, top N par volume ou stratifié). Pour test rapide.")
     p.add_argument("--per-symbol-selection-stratified", action="store_true", default=False,
@@ -418,7 +485,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclut le Global Model comme 4ème challenger dans la sélection champion")
     p.add_argument("--global-champion", action="store_true", default=False,
                    help="Entraîne CatBoost ET LightGBM pour le Global Ranking et sélectionne le champion (meilleur IC rank WF)")
-    p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm"])
+    p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm", "xgboost"])
+    p.add_argument("--ranking-xgboost-iterations", type=int, default=500,
+                   help="Global Ranking XGBoost : nombre d'itérations (P3-3 challenger)")
+    p.add_argument("--ranking-xgboost-learning-rate", type=float, default=0.03,
+                   help="Global Ranking XGBoost : learning rate (P3-3 challenger)")
     p.add_argument("--global-artifact-symbol", type=str, default="__GLOBAL__")
     p.add_argument("--select-champion", action="store_true", default=False,
                    help="Active la sélection automatique du champion parmi les modèles éligibles à l’inférence")
@@ -460,6 +531,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="CatBoost overfitting detector")
     p.add_argument("--catboost-od-wait", type=int, default=20,
                    help="CatBoost od_wait")
+    p.add_argument("--catboost-loss-function", type=str, default="RMSE",
+                   choices=["RMSE", "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise"],
+                   help="CatBoost loss_function. YetiRank = ranking natif (dernier levier Global non testé).")
     p.add_argument("--optimize-target", action="store_true", default=False,
                    help="Sélectionne automatiquement le meilleur horizon swing parmi plusieurs candidats")
     p.add_argument("--candidate-horizons", nargs="*", type=int, default=[3, 5, 10, 15])
@@ -535,6 +609,7 @@ def main(args: list[str] | None = None) -> None:
             include_factors_features=opts.include_factors,
             include_macro_regime_features=opts.include_macro_regime,
             include_score_components=opts.include_score_components,
+            include_volume_features=opts.include_volume_features,
             global_model_only=opts.global_model_only,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
@@ -619,6 +694,7 @@ def main(args: list[str] | None = None) -> None:
             catboost_bagging_temperature=opts.catboost_bagging_temperature,
             catboost_od_type=opts.catboost_od_type,
             catboost_od_wait=opts.catboost_od_wait,
+            catboost_loss_function=opts.catboost_loss_function,
         ),
         global_model=GlobalModelConfig(
             enabled=opts.enable_global_model,
@@ -629,6 +705,9 @@ def main(args: list[str] | None = None) -> None:
             artifact_symbol=opts.global_artifact_symbol,
             use_cross_sectional_features=opts.enable_cross_sectional,
             ranking_sector_group=opts.ranking_sector_group,
+            ranking_raw_target=opts.ranking_raw_target,
+            ranking_xgboost_iterations=opts.ranking_xgboost_iterations,
+            ranking_xgboost_learning_rate=opts.ranking_xgboost_learning_rate,
         ),
         champion_selection=ChampionSelectionConfig(
             enabled=opts.select_champion,
@@ -714,6 +793,7 @@ def main(args: list[str] | None = None) -> None:
             started_at=started_at,
             comment=opts.comment,
             stacking_enabled=opts.enable_global_stacking,
+            symbols=",".join(opts.symbols)[:5000] if opts.symbols else None,
         )
         update_runtime_status(current_phase="batch_dispatch")
         try:
@@ -831,6 +911,7 @@ def main(args: list[str] | None = None) -> None:
 
     elif opts.mode == "predict":
         from modelFactory.db_registry import (
+            detect_batch_training_mode,
             insert_predictions,
             load_symbols_for_source,
         )
@@ -844,7 +925,18 @@ def main(args: list[str] | None = None) -> None:
         )
         historical_predict_enabled = cfg.data.training_end_date is not None
         persisted_incrementally = False
-        _batch_id = _resolve_predict_batch_id(Path(opts.artifacts_dir))
+        _batch_id = (
+            (getattr(opts, "batch_id", None) or "").strip()
+            or _resolve_predict_batch_id(Path(opts.artifacts_dir))
+        )
+        _batch_mode = detect_batch_training_mode(engine, _batch_id) if _batch_id else "per_symbol"
+        _per_sector = _batch_mode == "per_sector"
+        LOGGER.info(
+            "predict dispatch: batch=%s training_mode=%s → flux %s",
+            _batch_id or "none",
+            _batch_mode,
+            "rank-driven (global ranks + synthèse)" if _per_sector else "per-symbol (predict_batch)",
+        )
 
         def _persist_predictions_chunk(
             chunk: pd.DataFrame,
@@ -915,7 +1007,9 @@ def main(args: list[str] | None = None) -> None:
                         artifacts_dir=Path(opts.artifacts_dir),
                         engine=engine,
                     )
-                # Étape 2 : per-symbol
+                # Étape 2 : per-symbol — non applicable aux batches per-sector
+                if _per_sector:
+                    return (_ds, 0)
                 _syms = opts.symbols or load_symbols_for_source(
                     engine, opts.symbol_source, trade_date=pred_date,
                 )
@@ -969,28 +1063,62 @@ def main(args: list[str] | None = None) -> None:
                             "predict date=%s FAILED: %s", _failed_date.isoformat(), _exc,
                         )
             persisted_incrementally = True
-            non_empty_parts = [part for part in _prediction_parts if not part.empty]
-            preds = (
-                pd.concat(non_empty_parts, ignore_index=True)
-                if non_empty_parts
-                else pd.DataFrame(
-                    columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
-                )
-            )
-            if _dates_with_data == 0:
-                LOGGER.error(
-                    "predict ALL %d DATES SKIPPED — 0 predictions total. "
-                    "model_predictions table will be EMPTY. "
-                    "Verify: batch_id=%s artifacts_dir=%s has champions for symbol_source=%s",
-                    _dates_total, _batch_id, opts.artifacts_dir, opts.symbol_source,
-                )
+            if _per_sector:
+                from modelFactory.synthesize_global_rank_predictions import synthesize
+
+                _synth_out = synthesize(_batch_id, best_h=int(getattr(opts, "synth_best_h", 10) or 10))
+                LOGGER.info("predict per_sector synthèse batch=%s: %s", _batch_id, _synth_out)
+                preds = _load_synth_frame_for_range(engine, _batch_id, prediction_dates)
             else:
-                LOGGER.info(
-                    "predict historical done: %d/%d dates with predictions, %d total rows",
-                    _dates_with_data, _dates_total, len(preds),
+                non_empty_parts = [part for part in _prediction_parts if not part.empty]
+                preds = (
+                    pd.concat(non_empty_parts, ignore_index=True)
+                    if non_empty_parts
+                    else pd.DataFrame(
+                        columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
+                    )
                 )
+                if _dates_with_data == 0:
+                    LOGGER.error(
+                        "predict ALL %d DATES SKIPPED — 0 predictions total. "
+                        "model_predictions table will be EMPTY. "
+                        "Verify: batch_id=%s artifacts_dir=%s has champions for symbol_source=%s",
+                        _dates_total, _batch_id, opts.artifacts_dir, opts.symbol_source,
+                    )
+                else:
+                    LOGGER.info(
+                        "predict historical done: %d/%d dates with predictions, %d total rows",
+                        _dates_with_data, _dates_total, len(preds),
+                    )
         else:
-            preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, batch_id=_batch_id, accelerator=opts.accelerator)
+            if _per_sector:
+                from modelFactory.predictor import predict_global_rank_history
+                from modelFactory.synthesize_global_rank_predictions import synthesize
+
+                _live_day = _resolve_last_bar_date(engine) or universe_date
+                from modelFactory.universe_guard import current_universe_size, enforce_min_universe_breadth
+
+                _breadth = current_universe_size(engine, _live_day)
+                try:
+                    enforce_min_universe_breadth(_breadth, trade_date=_live_day, batch_id=_batch_id)
+                except RuntimeError as exc:
+                    _safe_print(f"❌ {exc}")
+                    raise SystemExit(1) from exc
+                _day_str = _live_day.isoformat()
+                _ranks = predict_global_rank_history(
+                    _day_str,
+                    _day_str,
+                    _batch_id,
+                    artifacts_dir=Path(opts.artifacts_dir),
+                    engine=engine,
+                )
+                LOGGER.info("predict per_sector live ranks %s: %s", _day_str, _ranks)
+                _synth_out = synthesize(_batch_id, best_h=int(getattr(opts, "synth_best_h", 10) or 10))
+                LOGGER.info("predict per_sector live synthèse batch=%s: %s", _batch_id, _synth_out)
+                persisted_incrementally = True
+                preds = _load_synth_frame_for_range(engine, _batch_id, [_live_day])
+            else:
+                preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, batch_id=_batch_id, accelerator=opts.accelerator)
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None

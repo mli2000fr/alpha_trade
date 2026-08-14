@@ -126,6 +126,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
+    DEFAULT_ML_INCLUDE_VOLUME_FEATURES,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
@@ -175,6 +176,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE,
     DEFAULT_ML_CATBOOST_OD_TYPE,
     DEFAULT_ML_CATBOOST_OD_WAIT,
+    DEFAULT_ML_CATBOOST_LOSS_FUNCTION,
     DEFAULT_ML_TRAINING_START_DATE,
     DEFAULT_ML_TRAINING_END_DATE,
     DEFAULT_ML_LOG_LEVEL,
@@ -217,6 +219,8 @@ from ihm.services.pipeline_runner import (
     DEFAULT_RISK_MAX_PORTFOLIO_DRAWDOWN_PCT,
     DEFAULT_RISK_MAX_POSITIONS,
     DEFAULT_RISK_MAX_SECTOR_WEIGHT,
+    DEFAULT_RISK_SECTOR_MULTIPLIERS_PATH,
+    DEFAULT_RISK_SIZING_MODE,
     DEFAULT_RISK_MIN_ML_COVERAGE_RATIO,
     DEFAULT_RISK_PAYOFF_RATIO,
     DEFAULT_RISK_PER_TRADE_PCT,
@@ -1832,6 +1836,52 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                 )
             )
 
+    with st.expander("Risk — Allocation P2-1 (rank_weighted + multiplicateurs sectoriels)", expanded=False):
+        st.caption(
+            "Opt-in : `atr` = legacy (budget de risque ATR égal par position). "
+            "Les autres modes appliquent des facteurs d'allocation calculés sur le classement ML du jour "
+            "(`rank_weighted`) ou sur la conviction, puis les multiplicateurs sectoriels si un JSON est fourni. "
+            "Les contraintes (poids max, secteurs, liquidité) restent appliquées après le scale."
+        )
+        p21_col1, p21_col2 = st.columns([1, 2])
+        with p21_col1:
+            risk_sizing_mode = cast(
+                str,
+                st.selectbox(
+                    "Risk — mode d'allocation",
+                    options=["atr", "equal_weight", "conviction_weighted", "rank_weighted"],
+                    index=["atr", "equal_weight", "conviction_weighted", "rank_weighted"].index(
+                        cast(str, st.session_state.get("pipeline_risk_sizing_mode", DEFAULT_RISK_SIZING_MODE))
+                        if st.session_state.get("pipeline_risk_sizing_mode", DEFAULT_RISK_SIZING_MODE)
+                        in {"atr", "equal_weight", "conviction_weighted", "rank_weighted"}
+                        else DEFAULT_RISK_SIZING_MODE
+                    ),
+                    key="pipeline_risk_sizing_mode",
+                    help="Activer `rank_weighted` uniquement après validation OOS (A/B backtest).",
+                ),
+            )
+        with p21_col2:
+            risk_sector_multipliers_path = cast(
+                str,
+                st.text_input(
+                    "Risk — JSON multiplicateurs sectoriels (vide = aucun)",
+                    value=str(
+                        st.session_state.get(
+                            "pipeline_risk_sector_multipliers_path",
+                            DEFAULT_RISK_SECTOR_MULTIPLIERS_PATH,
+                        )
+                        or ""
+                    ),
+                    key="pipeline_risk_sector_multipliers_path",
+                    help="Chemin du JSON {secteur: facteur} (ex. config/p21_sector_multipliers.json).",
+                ),
+            ).strip() or None
+        if risk_sizing_mode != "atr":
+            if risk_sector_multipliers_path:
+                st.caption(f"Allocation active : `{risk_sizing_mode}` + secteurs depuis `{risk_sector_multipliers_path}`.")
+            else:
+                st.caption(f"Allocation active : `{risk_sizing_mode}` (sans multiplicateurs sectoriels).")
+
     conviction_total = round(risk_score_weight + risk_prediction_weight, 4)
     if abs(conviction_total - 1.0) > 0.001:
         st.warning(f"⚠️ Risk : poids score + poids ML = {conviction_total} (≠ 1.0). Le backend pourrait normaliser.")
@@ -1859,6 +1909,8 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
         "risk_kelly_fraction_multiplier": risk_kelly_fraction_multiplier,
         "risk_correlation_min_overlap": risk_correlation_min_overlap,
         "risk_log_level": risk_log_level,
+        "risk_sizing_mode": risk_sizing_mode,
+        "risk_sector_multipliers_path": risk_sector_multipliers_path,
     }
 
 
@@ -3068,6 +3120,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         risk_kelly_fraction_multiplier = _risk_vars["risk_kelly_fraction_multiplier"]
         risk_correlation_min_overlap = _risk_vars["risk_correlation_min_overlap"]
         risk_log_level = _risk_vars["risk_log_level"]
+        risk_sizing_mode = _risk_vars["risk_sizing_mode"]
+        risk_sector_multipliers_path = _risk_vars["risk_sector_multipliers_path"]
 
         # === BLOCK 3/9 : Model Factory (preset + cible swing + walk-forward + hyperparams + grilles candidate) — inline (extraction prévue S6.1) ===
         st.markdown("#### Paramètres Model Factory")
@@ -3265,6 +3319,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_factors",
                 help="Ajoute `--include-factors`. Calcule beta, alpha annualisé, R² et momentum 252j vs marché par rolling regression sur SPY.",
             )
+            ml_include_volume_features = st.checkbox(
+                "📊 Profil volume / liquidité (P3-5 — 10 features)",
+                value=_session_state_bool("pipeline_ml_include_volume_features", DEFAULT_ML_INCLUDE_VOLUME_FEATURES),
+                key="pipeline_ml_include_volume_features",
+                help="Ajoute `--include-volume-features`. Dollar volume, Amihud illiquidité, corrélation prix/volume, OBV, skew… 10 features de profil volume/liquidité (expérience P3-5, off par défaut).",
+            )
             ml_include_macro_regime = st.checkbox(
                 "🌍 Régime macro (SPY_SMA_200_slope + VIX_zscore)",
                 value=_session_state_bool("pipeline_ml_include_macro_regime", DEFAULT_ML_INCLUDE_MACRO_REGIME),
@@ -3310,6 +3370,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 )
             else:
                 ml_target_ternary_quantile = 0.30
+            ml_ranking_raw_target = st.checkbox(
+                "🎯 P1-3 — Target = rang percentile pur (Global Ranking)",
+                value=_session_state_bool("pipeline_ml_ranking_raw_target", False),
+                key="pipeline_ml_ranking_raw_target",
+                help="Ajoute `--ranking-raw-target`. Skip smoothing + sector-neutral + factor-neutral : le modèle apprend directement sur le rang percentile brut intra-date.",
+            )
         st.markdown("---")
         with st.expander("🔍 ML — Filtrage", expanded=False):
             ml_ranking_top_k_features = st.number_input(
@@ -3548,11 +3614,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
             ml_global_champion = st.checkbox(
-                "🏆 Champion automatique CatBoost vs LightGBM pour le Global Ranking",
+                "🏆 Champion automatique CatBoost vs LightGBM vs XGBoost pour le Global Ranking",
                 value=_session_state_bool("pipeline_ml_global_champion", DEFAULT_ML_GLOBAL_CHAMPION),
                 key="pipeline_ml_global_champion",
                 disabled=not ml_enable_global_model,
-                help="Ajoute `--global-champion`. Entraîne les DEUX backends (CatBoost + LightGBM) et sélectionne le champion par horizon selon le meilleur IC Rank walk-forward. Si décoché, le backend choisi ci-dessous est utilisé.",
+                help="Ajoute `--global-champion`. Entraîne les TROIS backends (CatBoost + LightGBM + XGBoost) et sélectionne le champion par horizon selon le meilleur IC Rank walk-forward. Si décoché, le backend choisi ci-dessous est utilisé seul.",
             )
             ml_global_model_only = st.checkbox(
                 "🎯 Global Model ONLY — sauter per-symbol et per-sector",
@@ -3573,15 +3639,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 str,
                 st.selectbox(
                     "Backend du modèle global",
-                    options=["catboost", "lightgbm"],
-                    index=["catboost", "lightgbm"].index(
+                    options=["catboost", "lightgbm", "xgboost"],
+                    index=["catboost", "lightgbm", "xgboost"].index(
                         cast(str, st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME))
-                        if st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME) in {"catboost", "lightgbm"}
+                        if st.session_state.get("pipeline_ml_global_model_name", DEFAULT_ML_GLOBAL_MODEL_NAME) in {"catboost", "lightgbm", "xgboost"}
                         else DEFAULT_ML_GLOBAL_MODEL_NAME
                     ),
                     key="pipeline_ml_global_model_name",
                     disabled=not ml_enable_global_model or ml_global_champion,
-                    help="Backend utilisé si le champion automatique est désactivé. Ignoré si le champion est activé (les deux sont entraînés).",
+                    help="Backend utilisé si le champion automatique est désactivé. Ignoré si le champion est activé (les trois backends sont entraînés).",
                 ),
             )
             # Checkbox unique : active à la fois les rangs percentiles ET les features sectorielles
@@ -3705,7 +3771,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.selectbox(
                 "Mode d'entraînement",
                 options=["per_symbol", "per_sector"],
-                index=1 if st.session_state.get("pipeline_ml_training_mode", "per_sector") != "per_symbol" else 0,
+                index=1 if st.session_state.get("pipeline_ml_training_mode", "per_symbol") != "per_symbol" else 0,
                 key="pipeline_ml_training_mode",
                 help="`per_symbol` = 1 modèle par symbole (legacy). `per_sector` = 1 modèle par secteur GICS (~11 modèles, plus de données).",
             ),
@@ -4345,7 +4411,19 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     )
 
             # ── CatBoost tuning (optionnel) ──────────────────────────────────
-            st.markdown("##### CatBoost — tuning (régularisation, overfitting)")
+            st.markdown("##### CatBoost — tuning (régularisation, overfitting, loss)")
+            ml_catboost_loss_function = cast(
+                str,
+                st.selectbox(
+                    "CatBoost — loss function",
+                    options=["RMSE", "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise"],
+                    index=["RMSE", "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise"].index(
+                        str(st.session_state.get("pipeline_ml_catboost_loss_function", DEFAULT_ML_CATBOOST_LOSS_FUNCTION))
+                    ) if str(st.session_state.get("pipeline_ml_catboost_loss_function", DEFAULT_ML_CATBOOST_LOSS_FUNCTION)) in ["RMSE", "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise"] else 0,
+                    key="pipeline_ml_catboost_loss_function",
+                    help="RMSE = régression standard. YetiRank = loss de ranking natif (dernier levier Global non testé).",
+                ),
+            )
             ml_catboost_tuning_enabled = st.checkbox(
                 "Appliquer les paramètres de tuning CatBoost",
                 value=bool(st.session_state.get(
@@ -4616,6 +4694,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_move=bool(ml_include_macro_move),
             ml_include_fundamentals=bool(ml_include_fundamentals),
             ml_include_factors=bool(ml_include_factors),
+            ml_include_volume_features=bool(ml_include_volume_features),
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_include_score_components=bool(ml_include_score_components),
             ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),
@@ -4627,6 +4706,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_global_ranking_max_symbols=int(ml_global_ranking_max_symbols),
             ml_global_ranking_selection_mode=str(ml_global_ranking_selection_mode),
             ml_ranking_sector_group=str(ml_ranking_sector_group),
+            ml_ranking_raw_target=ml_ranking_raw_target,
             ml_per_symbol_max_symbols=int(ml_per_symbol_max_symbols),
             ml_per_symbol_selection_mode=str(ml_per_symbol_selection_mode),
             # Exclusion ticket symbols
@@ -4718,6 +4798,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_catboost_bagging_temperature=float(ml_catboost_bagging_temperature),
             ml_catboost_od_type=str(ml_catboost_od_type),
             ml_catboost_od_wait=int(ml_catboost_od_wait),
+            ml_catboost_loss_function=str(ml_catboost_loss_function),
             ml_candidate_horizons=tuple(sorted({int(v) for v in ml_candidate_horizons_selection})) or DEFAULT_ML_CANDIDATE_HORIZONS,
             ml_candidate_up_thresholds=tuple(sorted({float(v) for v in ml_candidate_up_thresholds_selection})) or DEFAULT_ML_CANDIDATE_UP_THRESHOLDS,
             ml_candidate_down_thresholds=tuple(sorted({float(v) for v in ml_candidate_down_thresholds_selection})) or DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS,
@@ -4743,6 +4824,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             risk_kelly_fraction_multiplier=float(risk_kelly_fraction_multiplier),
             risk_dry_run=bool(risk_dry_run),
             risk_log_level=str(risk_log_level).upper(),
+            risk_sizing_mode=str(risk_sizing_mode),
+            risk_sector_multipliers_path=(risk_sector_multipliers_path or None),
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
             sentiment_symbols=sentiment_symbols or None,

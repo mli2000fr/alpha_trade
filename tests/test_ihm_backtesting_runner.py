@@ -30,6 +30,54 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 
 	account_type_index = command.index("--account-type")
 	assert command[account_type_index + 1] == "margin"
+
+
+def test_build_backtesting_run_command_p24_side_trailing_and_atr_risk():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(start="2025-01-01", ts_long=0.10, ts_short=0.12, atr_risk_stop_multiple=2.0),
+	)
+	assert "--ts-long" in command
+	assert command[command.index("--ts-long") + 1] == "0.1"
+	assert "--ts-short" in command
+	assert command[command.index("--ts-short") + 1] == "0.12"
+	assert "--atr-risk-stop-multiple" in command
+	assert command[command.index("--atr-risk-stop-multiple") + 1] == "2.0"
+
+
+def test_build_backtesting_run_command_margin_interest_flag():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01", margin_interest_rate=7.5))
+	assert "--margin-interest-rate" in command
+	assert command[command.index("--margin-interest-rate") + 1] == "7.5"
+
+
+def test_build_backtesting_run_command_p24_flags_omitted_by_default():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01"))
+	assert "--ts-long" not in command
+	assert "--ts-short" not in command
+	assert "--atr-risk-stop-multiple" not in command
+
+
+def test_build_backtesting_run_command_p24_tp_and_canonical_costs():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(start="2025-01-01", tp_atr_multiple=3.0, tp_max_pct=0.07, use_canonical_costs=True),
+	)
+	assert "--tp-atr-multiple" in command
+	assert command[command.index("--tp-atr-multiple") + 1] == "3.0"
+	assert "--tp-max-pct" in command
+	assert command[command.index("--tp-max-pct") + 1] == "0.07"
+	assert "--use-canonical-costs" in command
+	assert command[command.index("--commission-bps") + 1] == "1"
+	assert command[command.index("--slippage-bps") + 1] == "2"
 	score_column_index = command.index("--score-column")
 	assert command[score_column_index + 1] == "auto"
 	engine_mode_index = command.index("--engine-mode")
@@ -537,5 +585,32 @@ def test_build_backtesting_run_command_conviction_calibration_pinned():
     assert "--conviction-calibration-run-id" in command
     rid_idx = command.index("--conviction-calibration-run-id")
     assert command[rid_idx + 1] == "cal_run_20241201"
+
+
+def test_build_backtesting_run_command_sector_multipliers_off_by_default():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01"))
+
+    assert "--sector-multipliers-json" not in command
+
+
+def test_build_backtesting_run_command_rank_weighted_with_sector_multipliers():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            sizing_mode="rank_weighted",
+            sector_multipliers_json="@config/p21_sector_multipliers.json",
+        ),
+    )
+
+    assert "--sizing-mode" in command
+    assert command[command.index("--sizing-mode") + 1] == "rank_weighted"
+    assert "--sector-multipliers-json" in command
+    assert command[command.index("--sector-multipliers-json") + 1] == "@config/p21_sector_multipliers.json"
+
 
 

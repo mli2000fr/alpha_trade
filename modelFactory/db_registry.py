@@ -342,6 +342,7 @@ _TRAINING_BATCH_MUTABLE_FIELDS = {
     "decile_spread_h5",
     "decile_spread_h10",
     "stacking_enabled",
+    "symbols",
 }
 
 
@@ -360,6 +361,7 @@ def insert_training_batch(
     started_at: datetime,
     comment: str | None = None,
     stacking_enabled: bool = False,
+    symbols: str | None = None,
 ) -> None:
     """Persist one immutable metadata record for a training campaign."""
     with engine.begin() as conn:
@@ -367,9 +369,9 @@ def insert_training_batch(
             text(
                 "INSERT INTO model_training_batch "
                 "(batch_id, status, command_line, command_argv_json, metadata_json, symbol_source, "
-                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at, comment, stacking_enabled) "
+                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at, comment, stacking_enabled, symbols) "
                 "VALUES (:bid, 'running', :command_line, :command_argv_json, :metadata_json, :symbol_source, "
-                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at, :comment, :stacking_enabled)"
+                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at, :comment, :stacking_enabled, :symbols)"
             ),
             {
                 "bid": batch_id,
@@ -384,6 +386,7 @@ def insert_training_batch(
                 "started_at": started_at,
                 "comment": comment,
                 "stacking_enabled": 1 if stacking_enabled else 0,
+                "symbols": symbols,
             },
         )
 
@@ -863,6 +866,66 @@ def _load_ticket_recherche_symbols() -> list[str]:
 # ---------------------------------------------------------------------------
 
 _SERVING_BATCH_SCOPE = "default"
+
+
+def detect_batch_training_mode(engine: Engine, batch_id: str | None) -> str:
+    """Détecte le mode d'entraînement d'un batch : ``per_sector`` ou ``per_symbol``.
+
+    Signaux, par ordre de priorité :
+    1. ``model_training_batch.command_argv_json`` / ``command_line`` → ``--training-mode``
+    2. Runs ``model_training_run`` : symbole sentinelle ``__GLOBAL_RANK_SYNTH__``
+       ou symboles aux noms de secteurs GICS → ``per_sector``
+    3. Défaut : ``per_symbol`` (comportement historique conservateur)
+    """
+    if not batch_id:
+        return "per_symbol"
+    batch_id = str(batch_id)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT command_argv_json, command_line FROM model_training_batch "
+                    "WHERE batch_id = :bid LIMIT 1"
+                ),
+                {"bid": batch_id},
+            ).mappings().first()
+        if row is not None:
+            raw_argv = str(row.get("command_argv_json") or "") + " "
+            raw_line = str(row.get("command_line") or "") + " "
+            import json as _json
+
+            try:
+                argv = _json.loads(str(row.get("command_argv_json") or "[]"))
+                raw_argv = " " + " ".join(str(a) for a in argv) + " "
+            except Exception:
+                pass
+            blob = (raw_argv + raw_line).lower()
+            if "--training-mode" in blob:
+                idx = blob.find("--training-mode")
+                token = blob[idx: idx + 60].split()[1] if len(blob[idx: idx + 60].split()) > 1 else ""
+                if token.startswith("per_sector"):
+                    return "per_sector"
+                if token.startswith("per_symbol"):
+                    return "per_symbol"
+        # Fallback 2 : runs du batch
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT symbol FROM model_training_run WHERE batch_id = :bid"),
+                {"bid": batch_id},
+            ).scalars().all()
+        symbols = {str(s).strip().lower() for s in rows if s}
+        if "__global_rank_synth__" in symbols:
+            return "per_sector"
+        sector_names = {
+            "communication services", "consumer discretionary", "consumer staples",
+            "energy", "financials", "health care", "industrials",
+            "information technology", "materials", "real estate", "utilities",
+        }
+        if symbols and symbols.issubset(sector_names):
+            return "per_sector"
+    except Exception:
+        LOGGER.warning("detect_batch_training_mode: échec détection batch=%s → per_symbol", batch_id, exc_info=True)
+    return "per_symbol"
 
 
 def get_serving_batch(engine: Engine) -> str | None:

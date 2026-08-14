@@ -278,3 +278,25 @@ def safe_scalar(query: str, params: dict[str, Any] | None = None) -> Any:
         _set_last_query_error(message)
         return None
 
+
+def safe_execute(query: str, params: dict[str, Any] | None = None) -> bool:
+    """Exécute une requête d'écriture (UPDATE/INSERT/DELETE) avec commit.
+
+    Retourne ``True`` si la requête a réussi, ``False`` sinon (erreur
+    exposée via ``get_last_query_error``).
+    """
+    engine = get_engine()
+    if engine is None:
+        _set_last_query_error(get_last_db_error())
+        return False
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(query), params or {})
+        _set_last_query_error(None)
+        return True
+    except Exception as exc:
+        message = _format_query_error(exc, query)
+        LOGGER.warning("Ecriture echouee : %s — %s", query[:80], exc)
+        _set_last_query_error(message)
+        return False
+

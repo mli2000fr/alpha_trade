@@ -77,6 +77,19 @@ BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
 RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
 
+# ── P2-4 — Fidélité live des protections (valeurs alignées sur la production) ──
+# Miroir de RiskConfig : `atr_stop_multiple_for()` SANS argument utilise
+# `best_horizon` (10) → map {10: 2.5} = k effectif de production = 2.5 (pas 2.0).
+# `tp_params_for()` → (3.0 × ATR / plafond 7 % du prix), et DEFAULT_COST_MODEL
+# (spread 5bps, commission 1bps, slippage 2bps, borrow shorts 0.3 %/an).
+BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT = 2.5
+BT_RUN_TP_ATR_MULTIPLE_DEFAULT = 3.0
+BT_RUN_TP_MAX_PCT_DEFAULT = 7.0
+BT_RUN_TS_LONG_DEFAULT = 0.0
+BT_RUN_TS_SHORT_DEFAULT = 0.0
+BT_RUN_USE_CANONICAL_COSTS_DEFAULT = True
+BT_RUN_MARGIN_INTEREST_DEFAULT = 7.5
+
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     "pipeline_live_like": {
         "label": "Replay le plus proche du pipeline live aujourd'hui",
@@ -474,7 +487,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "tp", "Explication": "Take-profit en fraction (0.08 = 8%).", "Défaut": "0.08"},
             {"Paramètre": "ts", "Explication": "Trailing stop en fraction (0.05 = 5%).", "Défaut": "0.05"},
             {"Paramètre": "max_positions", "Explication": "Nombre maximal de positions simultanées.", "Défaut": "20"},
-            {"Paramètre": "commission_bps", "Explication": "Commission explicite simulée par trade (bps).", "Défaut": "5.0 research / 15.0 pipeline"},
+            {"Paramètre": "commission_bps", "Explication": "Commission explicite simulée par trade (bps).", "Défaut": "1.0 (Alpaca ≈ 0 $)"},
             {"Paramètre": "slippage_bps", "Explication": "Slippage fixe explicite simulé par trade (bps).", "Défaut": "5.0 research / 15.0 pipeline"},
             {"Paramètre": "fees", "Explication": "Champ legacy de compatibilité, remplacé par `commission_bps + slippage_bps`.", "Défaut": "None"},
             {
@@ -507,6 +520,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "phase7_mode", "Explication": "off = comportement Phase 5, exit_lifecycle_replay = rejoue l'issue terminale des child orders et l'annulation OCO du sibling.", "Défaut": "off"},
             {"Paramètre": "conviction_calibration_mode", "Explication": "off = comportement standard (défaut) ; auto = charge la dernière calibration éligible PIT-safe ; pinned = run_id explicite forcé (window_end <= start requis).", "Défaut": "off"},
             {"Paramètre": "conviction_calibration_run_id", "Explication": "run_id explicite d'un run weights_calibration_runs à appliquer en mode pinned.", "Défaut": "None"},
+            {"Paramètre": "sector_multipliers_json", "Explication": "JSON {secteur: facteur} ou @fichier — multiplicateurs sectoriels appliqués au sizing (P2-1 inc.3).", "Défaut": "None"},
             {"Paramètre": "allow_neutral_fallback_on_missing_macro_data", "Explication": "Si vrai, le backtest continue quand la macro requise est indisponible et marque la séance en `data_quality=missing`. Sinon, il échoue explicitement.", "Défaut": "False"},
             {"Paramètre": "fidelity_baseline_id", "Explication": "Identifiant optionnel de baseline fidélité promue à comparer au run courant (Sprint 6).", "Défaut": "None"},
             {"Paramètre": "fidelity_baseline_catalog", "Explication": "Chemin optionnel vers le catalogue JSON des baselines fidélité. Convention stable recommandée : `config/fidelity_baseline_catalog.json` pointant vers `artifacts/fidelity_baselines/<baseline_id>/...`.", "Défaut": "None"},
@@ -524,7 +538,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "max_entry_gap_pct", "Explication": "Skip entrée si gap d'open > seuil (Phase B.3).", "Défaut": "0.0"},
             {"Paramètre": "intrabar_priority", "Explication": "Politique TP vs TS intra-bar (Phase B.4).", "Défaut": "conservative"},
             # Phase C (refactor) — risk overlays.
-            {"Paramètre": "sizing_mode", "Explication": "equal_weight | conviction_weighted (Phase C.1).", "Défaut": "equal_weight"},
+            {"Paramètre": "sizing_mode", "Explication": "equal_weight | conviction_weighted | rank_weighted (P2-1 inc.2).", "Défaut": "equal_weight"},
             {"Paramètre": "regime_filter", "Explication": "Active le filtre régime SMA200 sur le benchmark (Phase C.3).", "Défaut": "False"},
             {"Paramètre": "max_sector_exposure_pct", "Explication": "Cap d'exposition par secteur en fraction (Phase C.4).", "Défaut": "0.0"},
             {"Paramètre": "max_portfolio_dd_pct", "Explication": "Drawdown max avant coupe-circuit nouvelles entrées (Phase C.5).", "Défaut": "0.0"},
@@ -573,6 +587,36 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
 def _render_reference_table(kind: str) -> None:
     with st.expander("📘 Référence complète des paramètres", expanded=False):
         st.dataframe(pd.DataFrame(_parameter_reference_rows(kind)), use_container_width=True, hide_index=True)
+
+
+DEFAULT_SECTOR_MULTIPLIERS_PATH = PROJECT_ROOT / "config" / "p21_sector_multipliers.json"
+
+
+def _summarize_sector_multipliers(path: Path) -> str:
+    """Résumé lisible d'un JSON {secteur: facteur}."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        factors = [float(v) for v in payload.values()]
+    except Exception:
+        return f"JSON illisible : `{path}`"
+    counts: dict[float, int] = {}
+    for value in factors:
+        counts[value] = counts.get(value, 0) + 1
+    parts = " ".join(f"×{value:g}: {count}" for value, count in sorted(counts.items(), reverse=True))
+    return f"`{path}` — {len(factors)} secteurs ({parts})"
+
+
+def _list_backtest_runs_with_trades() -> list[str]:
+    """Dossiers de runs backtest contenant trades.csv, plus récents d'abord."""
+    base = PROJECT_ROOT / "artifacts" / "backtesting"
+    if not base.exists():
+        return []
+    runs = [
+        child for child in base.iterdir()
+        if child.is_dir() and (child / "trades.csv").exists()
+    ]
+    runs.sort(key=lambda child: child.stat().st_mtime, reverse=True)
+    return [str(child) for child in runs]
 
 
 def _default_fidelity_baseline_catalog_path() -> Path:
@@ -1014,11 +1058,11 @@ def _build_overlay_options(
                 str,
                 st.selectbox(
                     "Mode sizing",
-                    options=["equal_weight", "conviction_weighted"],
-                    index=["equal_weight", "conviction_weighted"].index(
+                    options=["equal_weight", "conviction_weighted", "rank_weighted"],
+                    index=["equal_weight", "conviction_weighted", "rank_weighted"].index(
                         cast(str, st.session_state.get("bt_run_sizing_mode", "equal_weight"))
                         if st.session_state.get("bt_run_sizing_mode", "equal_weight")
-                        in {"equal_weight", "conviction_weighted"}
+                        in {"equal_weight", "conviction_weighted", "rank_weighted"}
                         else "equal_weight"
                     ),
                     key="bt_run_sizing_mode",
@@ -1353,7 +1397,7 @@ def _build_run_options() -> BacktestRunOptions:
             value=float(
                 st.session_state.get(
                     "bt_run_commission_bps",
-                    5.0,
+                    1.0,
                 )
             ),
             step=0.5,
@@ -1381,6 +1425,94 @@ def _build_run_options() -> BacktestRunOptions:
             value=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
             key="bt_run_disable_walk_forward",
             help="Si coché, le --walk-forward-artifacts-dir n'est PAS passé → le score brut (final_score ou autre) est utilisé sans overlay.",
+        )
+
+    # ── P2-4 — réparer le long : trailing par côté + fidélité live du stop ──
+    with st.expander("📐 P2-4 — Fidélité live des protections (chemin research)", expanded=False):
+        st.caption(
+            "En production, le stop est dérivé du risque : `risk_per_share = prix × atr_pct_20 × k` "
+            "(k = `atr_stop_multiple`, 2.0 par défaut) puis promu en trailing. Le backtest research "
+            "n'a pas ces colonnes → il utilisait le fallback fixe (--ts). Ces champs répliquent le calcul "
+            "live pour les DEUX jambes (longs ET shorts). ⚠️ Avec « Mode Phase 2 » = `risk_execution` "
+            "(+ phases 3/4/5/7), la production calcule elle-même les protections → ces champs n'ont "
+            "alors AUCUN effet. Nuance (filet de sécurité) : si une ligne n'a AUCUNE protection replay, "
+            "le simulateur retombe sur la logique research (ces champs s'appliquent) ; si le replay est "
+            "PARTIEL, pas de recalcul fidèle (TP → fixe 12 %, trailing → désactivé, stop initial → celui "
+            "résolu à l'entrée). `--ts-long`/`--ts-short` servent aux A/B P2-4 (élargir une jambe)."
+        )
+        p24_col1, p24_col2, p24_col3 = st.columns(3)
+        with p24_col1:
+            ts_long = st.number_input(
+                "Trailing LONG plancher (%)",
+                min_value=0.0,
+                max_value=50.0,
+                value=float(st.session_state.get("bt_run_ts_long", BT_RUN_TS_LONG_DEFAULT)),
+                step=0.5,
+                format="%.1f",
+                key="bt_run_ts_long",
+                help="0 = inactif. Sinon le stop long est élargi au max(stop dérivé, valeur). N'élargit jamais les shorts.",
+            )
+        with p24_col2:
+            ts_short = st.number_input(
+                "Trailing SHORT plancher (%)",
+                min_value=0.0,
+                max_value=50.0,
+                value=float(st.session_state.get("bt_run_ts_short", BT_RUN_TS_SHORT_DEFAULT)),
+                step=0.5,
+                format="%.1f",
+                key="bt_run_ts_short",
+                help="0 = inactif. Sinon le stop short est élargi au max(stop dérivé, valeur). N'élargit jamais les longs.",
+            )
+        with p24_col3:
+            atr_risk_stop_multiple = st.number_input(
+                "ATR risk stop multiple (k)",
+                min_value=0.0,
+                max_value=10.0,
+                value=float(st.session_state.get("bt_run_atr_risk_stop_multiple", BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT)),
+                step=0.5,
+                format="%.1f",
+                key="bt_run_atr_risk_stop_multiple",
+                help="0 = inactif (legacy : TS fixe). Prod : 2.5 (via best_horizon=10) → risk_per_share = prix × atr_pct_20 × 2.5 comme portfolio_builder (longs ET shorts).",
+            )
+        p24_col4, p24_col5, p24_col6 = st.columns(3)
+        with p24_col4:
+            tp_atr_multiple = st.number_input(
+                "TP ATR multiple",
+                min_value=0.0,
+                max_value=10.0,
+                value=float(st.session_state.get("bt_run_tp_atr_multiple", BT_RUN_TP_ATR_MULTIPLE_DEFAULT)),
+                step=0.5,
+                format="%.1f",
+                key="bt_run_tp_atr_multiple",
+                help="0 = legacy (TP = max(12% fixe, 2R)). Prod : 3.0 → TP = min(ATR×3.0, prix×cap).",
+            )
+        with p24_col5:
+            tp_max_pct = st.number_input(
+                "TP plafond (% du prix)",
+                min_value=0.0,
+                max_value=50.0,
+                value=float(st.session_state.get("bt_run_tp_max_pct", BT_RUN_TP_MAX_PCT_DEFAULT)),
+                step=1.0,
+                format="%.1f",
+                key="bt_run_tp_max_pct",
+                help="0 = inactif. Prod : 7.0. Requiert TP ATR multiple > 0.",
+            )
+        with p24_col6:
+            use_canonical_costs = st.checkbox(
+                "Coûts canoniques (prod)",
+                value=bool(st.session_state.get("bt_run_use_canonical_costs", BT_RUN_USE_CANONICAL_COSTS_DEFAULT)),
+                key="bt_run_use_canonical_costs",
+                help="Modèle de production : spread réel (fallback 5bps), commission 1bps, slippage 2bps, borrow fee shorts 0.3%/an. Désactivé = coûts legacy 5+5 bps sans spread ni borrow.",
+            )
+        margin_interest_rate = st.number_input(
+            "Intérêts de marge (%/an)",
+            min_value=0.0,
+            max_value=30.0,
+            value=float(st.session_state.get("bt_run_margin_interest_rate", BT_RUN_MARGIN_INTEREST_DEFAULT)),
+            step=0.5,
+            format="%.1f",
+            key="bt_run_margin_interest_rate",
+            help="Alpaca ≈ 7-8 %/an sur le cash emprunté (levier). Débité quotidiennement quand le cash est négatif. 0 = désactivé.",
         )
     with col6b:
         st.caption("")  # espace réservé
@@ -1708,6 +1840,124 @@ def _build_run_options() -> BacktestRunOptions:
             "En mode `pinned`, un `window_end > start` cause l'échec immédiat du run pour éviter tout look-ahead."
         )
 
+    # ── Multiplicateurs sectoriels (P2-1 inc.3, opt-in) ──────
+    sector_col1, sector_col2 = st.columns([2, 3])
+    with sector_col1:
+        _sector_mode_value = cast(str, st.session_state.get("bt_run_sector_multipliers_mode", "off"))
+        sector_multipliers_mode = cast(
+            str,
+            st.selectbox(
+                "🏷️ Multiplicateurs sectoriels (P2-1)",
+                options=["off", "default", "custom"],
+                index=(
+                    ["off", "default", "custom"].index(_sector_mode_value)
+                    if _sector_mode_value in {"off", "default", "custom"}
+                    else 0
+                ),
+                key="bt_run_sector_multipliers_mode",
+                help=(
+                    "Facteurs par secteur (×0.5 à ×1.25) appliqués au sizing après le mode choisi. "
+                    "`off` = aucun. `default` = `config/p21_sector_multipliers.json`. "
+                    "`custom` = fichier JSON arbitraire `{secteur: facteur}`."
+                ),
+            ),
+        )
+    with sector_col2:
+        if sector_multipliers_mode == "off":
+            sector_multipliers_json = None
+            st.caption("Multiplicateurs sectoriels désactivés (comportement standard).")
+        elif sector_multipliers_mode == "default":
+            sector_multipliers_json = "@" + str(DEFAULT_SECTOR_MULTIPLIERS_PATH)
+            st.caption(_summarize_sector_multipliers(DEFAULT_SECTOR_MULTIPLIERS_PATH))
+        else:
+            _custom_sector_path = st.text_input(
+                "Chemin du JSON {secteur: facteur}",
+                value=str(st.session_state.get("bt_run_sector_multipliers_json_path", "") or ""),
+                key="bt_run_sector_multipliers_json_path",
+                help="Chemin relatif au projet ou absolu. Format JSON {secteur: facteur}.",
+            ).strip()
+            if _custom_sector_path:
+                sector_multipliers_json = "@" + _custom_sector_path
+                st.caption(_summarize_sector_multipliers(Path(_custom_sector_path)))
+            else:
+                sector_multipliers_json = None
+                st.caption("Aucun fichier renseigné — les multiplicateurs ne seront pas appliqués.")
+
+    with st.expander("🔧 Calibrer les multiplicateurs sectoriels depuis un run passé", expanded=False):
+        st.caption(
+            "Exécute `modelFactory.analyze_p21_attribution` sur un run de backtest existant : "
+            "efficience par secteur → facteurs (≥+150bps→1.25 ; +50..+150→1.10 ; ±50→1.00 ; −150..−50→0.75 ; ≤−150→0.50) "
+            "→ écriture de `config/p21_sector_multipliers.json`. Valider ensuite en A/B OOS."
+        )
+        _past_runs = _list_backtest_runs_with_trades()
+        if not _past_runs:
+            st.caption("Aucun dossier de backtest avec `trades.csv` trouvé dans `artifacts/backtesting`.")
+        else:
+            _cal_col1, _cal_col2, _cal_col3 = st.columns([3, 1, 1])
+            with _cal_col1:
+                _selected_cal_run = cast(
+                    str,
+                    st.selectbox(
+                        "Run de calibration",
+                        options=_past_runs,
+                        key="bt_run_sector_calibration_run",
+                        format_func=lambda p: str(Path(p).relative_to(PROJECT_ROOT))
+                        if str(p).startswith(str(PROJECT_ROOT))
+                        else str(p),
+                        help="Le run doit être le backtest de calibration (ex. période d'entraînement, sizing equal).",
+                    ),
+                )
+            with _cal_col2:
+                _min_trades = st.number_input(
+                    "Min trades",
+                    min_value=0,
+                    value=int(st.session_state.get("bt_run_sector_calibration_min_trades", 0) or 0),
+                    step=1,
+                    key="bt_run_sector_calibration_min_trades",
+                    help="0 = pas de filtre (calibration B25). >0 neutralise (×1.0) les secteurs avec moins de N trades.",
+                )
+            with _cal_col3:
+                _do_calibrate = st.button(
+                    "⚙️ Calibrer et écrire le JSON",
+                    key="bt_run_sector_calibrate_button",
+                    help="Lance la calibration et écrase config/p21_sector_multipliers.json.",
+                )
+            if _do_calibrate:
+                import subprocess
+                import sys as _sys
+
+                _out_json = str(DEFAULT_SECTOR_MULTIPLIERS_PATH)
+                try:
+                    _proc = subprocess.run(
+                        [
+                            _sys.executable,
+                            "-m",
+                            "modelFactory.analyze_p21_attribution",
+                            "--run-dir",
+                            _selected_cal_run,
+                            "--out-json",
+                            _out_json,
+                            "--min-trades",
+                            str(int(_min_trades)),
+                        ],
+                        cwd=str(PROJECT_ROOT),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=600,
+                    )
+                    _cal_output = (_proc.stdout or "")[-4000:]
+                    if _cal_output:
+                        st.code(_cal_output)
+                    if _proc.returncode == 0:
+                        st.success(f"Calibration terminée — JSON écrit : `{_out_json}`")
+                        st.caption(_summarize_sector_multipliers(DEFAULT_SECTOR_MULTIPLIERS_PATH))
+                    else:
+                        st.error(f"Échec (code {_proc.returncode}) : {(_proc.stderr or '')[-2000:]}")
+                except Exception as exc:
+                    st.error(f"Impossible de lancer la calibration : {exc}")
+
     macro_mode_col1, macro_mode_col2 = st.columns([1.5, 2.5])
     with macro_mode_col1:
         macro_pit_mode = cast(
@@ -1886,6 +2136,13 @@ def _build_run_options() -> BacktestRunOptions:
         tp=float(tp),
         ts=float(ts),
         atr_ts=float(st.session_state.get("bt_run_atr_ts", 0.0) or 0.0),
+        ts_long=(float(st.session_state.get("bt_run_ts_long", BT_RUN_TS_LONG_DEFAULT)) or None),
+        ts_short=(float(st.session_state.get("bt_run_ts_short", BT_RUN_TS_SHORT_DEFAULT)) or None),
+        atr_risk_stop_multiple=float(st.session_state.get("bt_run_atr_risk_stop_multiple", BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT) or 0.0),
+        tp_atr_multiple=float(st.session_state.get("bt_run_tp_atr_multiple", BT_RUN_TP_ATR_MULTIPLE_DEFAULT) or 0.0),
+        tp_max_pct=float(st.session_state.get("bt_run_tp_max_pct", BT_RUN_TP_MAX_PCT_DEFAULT) or 0.0),
+        use_canonical_costs=bool(st.session_state.get("bt_run_use_canonical_costs", BT_RUN_USE_CANONICAL_COSTS_DEFAULT)),
+        margin_interest_rate=float(st.session_state.get("bt_run_margin_interest_rate", BT_RUN_MARGIN_INTEREST_DEFAULT) or 0.0),
         use_live_protection_logic=bool(use_live_protection_logic),
         max_positions=int(max_positions),
         fees=None,
@@ -1921,6 +2178,7 @@ def _build_run_options() -> BacktestRunOptions:
             if _phase2_active and conviction_calibration_mode == "pinned"
             else None
         ),
+        sector_multipliers_json=sector_multipliers_json,
         **_build_overlay_options(
             engine_mode=engine_mode,
             selected_run_preset_key=selected_run_preset_key,
@@ -4636,15 +4894,15 @@ def render() -> None:
     active_walkfwd_runs = list_active_backtesting_runs_by_kind("walk-forward-sentiment")
     active_wfc_runs = list_active_backtesting_runs_by_kind("walk-forward-conviction")
 
-    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, conviction_tab, walkfwd_tab, walkforward_conviction_tab, quarterly_tab = st.tabs(
+    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, walkfwd_tab, conviction_tab, walkforward_conviction_tab, quarterly_tab = st.tabs(
         [
             "▶️ Backtest",
             "🧱 Backfill scores history",
             "🧪 Diagnose screener",
             "🎯 Recommend screener",
             "📰 Calibrate sentiment",
-            "🎯 Calibrate conviction",
             "🚶 Walk-forward sentiment",
+            "🎯 Calibrate conviction",
             "🔄 Walk-forward conviction",
             "🎛️ Calibration trimestrielle poids",
         ]

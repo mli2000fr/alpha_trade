@@ -203,6 +203,43 @@ class TestPhaseC:
         assert w.iloc[0] == pytest.approx(0.6)
         assert w.iloc[1] == pytest.approx(0.4)
 
+    def test_sizing_rank_weighted_overweights_top(self):
+        from backtesting.risk_overlay import SizingConfig
+
+        cfg = SizingConfig(mode="rank_weighted", min_weight_pct=0.0, max_weight_pct=1.0)
+        candidates = pd.DataFrame({"symbol": ["A", "B", "C", "D"], "selection_rank": [1, 2, 3, 4]})
+        w = cfg.compute_weights(candidates, max_positions=4)
+        # scores = 4,3,2,1 → total 10
+        assert w.iloc[0] == pytest.approx(0.4)
+        assert w.iloc[1] == pytest.approx(0.3)
+        assert w.iloc[2] == pytest.approx(0.2)
+        assert w.iloc[3] == pytest.approx(0.1)
+
+    def test_sizing_rank_weighted_fallback_equal_when_no_rank(self):
+        from backtesting.risk_overlay import SizingConfig
+
+        cfg = SizingConfig(mode="rank_weighted")
+        candidates = pd.DataFrame({"symbol": ["A", "B"]})
+        w = cfg.compute_weights(candidates, max_positions=2)
+        assert w.tolist() == [0.5, 0.5]
+
+    def test_sizing_sector_multipliers_via_symbol_map(self):
+        from backtesting.risk_overlay import SizingConfig
+
+        cfg = SizingConfig(
+            mode="equal_weight",
+            min_weight_pct=0.0,
+            max_weight_pct=1.0,
+            sector_multipliers={"Health Care": 0.5, "Retail": 2.0},
+            sector_map={"A": "Health Care", "B": "Retail", "C": "Other"},
+        )
+        candidates = pd.DataFrame({"symbol": ["A", "B", "C"]})
+        w = cfg.compute_weights(candidates, max_positions=3)
+        # base 1/3 chacun → facteurs 0.5/2.0/1.0 → 1/6, 2/3, 1/3 → somme 7/6
+        assert w.iloc[0] == pytest.approx((1.0 / 6.0) / (7.0 / 6.0))
+        assert w.iloc[1] == pytest.approx((2.0 / 3.0) / (7.0 / 6.0))
+        assert w.iloc[2] == pytest.approx((1.0 / 3.0) / (7.0 / 6.0))
+
     def test_snapshot_sector_exposure_aggregates_by_sector(self):
         """Phase E.3.b — primitive `snapshot_sector_exposure` extraite du
         simulator. Vérifie l'agrégation par secteur, le fallback `sector_map`
@@ -295,6 +332,74 @@ class TestPhaseC:
         prices.iloc[-1] = 100.0
         cfg = RegimeFilterConfig(enabled=True, sma_window=200, bear_threshold=-0.02)
         assert cfg.is_entry_allowed(prices, prices.index[-1]) is False
+
+
+# ---------------------------------------------------------------------------
+# P2-3 — overlay bull strict
+# ---------------------------------------------------------------------------
+
+
+class TestBullStrictP23:
+    def _bull_series(self, *, spot: float, pre_level: float, n: int = 260) -> pd.Series:
+        """Série à 2 segments : 100 → pre_level (n-61 pts) puis pre_level → spot (60 pts).
+
+        Le rendement des 60 dernières séances vaut donc spot/pre_level - 1.
+        """
+        idx = pd.date_range("2024-01-01", periods=n, freq="B")
+        prices = pd.Series(np.nan, index=idx, dtype=float)
+        m1 = n - 61
+        prices.iloc[:m1] = np.linspace(100.0, pre_level, m1)
+        prices.iloc[-61] = pre_level
+        prices.iloc[-60:] = np.linspace(pre_level, spot, 60)
+        return prices
+
+    def test_bull_strict_disabled_returns_true(self):
+        from backtesting.risk_overlay import BullStrictConfig
+
+        cfg = BullStrictConfig(enabled=False, mode="no_shorts")
+        assert cfg.is_entry_allowed("sell", pd.Series(), pd.Timestamp("2025-01-02")) is True
+        assert cfg.is_entry_allowed("buy", None, pd.Timestamp("2025-01-02")) is True
+
+    def test_bull_strict_detects_and_blocks_shorts_only(self):
+        from backtesting.risk_overlay import BullStrictConfig
+
+        prices = self._bull_series(spot=130.0, pre_level=130.0 / 1.08)  # SMA(~110) + ret60 +8%
+        cfg = BullStrictConfig(enabled=True, mode="no_shorts", sma_window=200, ret_window=60, ret_threshold=0.03)
+        assert cfg.is_bull_strict(prices, prices.index[-1]) is True
+        assert cfg.is_entry_allowed("sell", prices, prices.index[-1]) is False
+        assert cfg.is_entry_allowed("buy", prices, prices.index[-1]) is True
+
+    def test_bull_strict_no_trades_blocks_both(self):
+        from backtesting.risk_overlay import BullStrictConfig
+
+        prices = self._bull_series(spot=130.0, pre_level=130.0 / 1.08)
+        cfg = BullStrictConfig(enabled=True, mode="no_trades", sma_window=200, ret_window=60, ret_threshold=0.03)
+        assert cfg.is_entry_allowed("sell", prices, prices.index[-1]) is False
+        assert cfg.is_entry_allowed("buy", prices, prices.index[-1]) is False
+
+    def test_bull_strict_not_triggered_when_ret_low(self):
+        from backtesting.risk_overlay import BullStrictConfig
+
+        # au-dessus de la SMA mais rendement 60j à +1% (< seuil 3%)
+        prices = self._bull_series(spot=130.0, pre_level=130.0 / 1.01)
+        cfg = BullStrictConfig(enabled=True, mode="no_trades", sma_window=200, ret_window=60, ret_threshold=0.03)
+        assert cfg.is_bull_strict(prices, prices.index[-1]) is False
+        assert cfg.is_entry_allowed("sell", prices, prices.index[-1]) is True
+
+    def test_bull_strict_not_triggered_below_sma(self):
+        from backtesting.risk_overlay import BullStrictConfig
+
+        # prix sous la SMA → pas de bull strict, même avec un bon rendement récent
+        prices = self._bull_series(spot=66.0, pre_level=60.0)
+        cfg = BullStrictConfig(enabled=True, mode="no_trades", sma_window=200, ret_window=60, ret_threshold=0.03)
+        assert cfg.is_bull_strict(prices, prices.index[-1]) is False
+        assert cfg.is_entry_allowed("sell", prices, prices.index[-1]) is True
+
+    def test_risk_overlay_is_default_includes_bull_strict(self):
+        from backtesting.risk_overlay import BullStrictConfig, RiskOverlayConfig
+
+        assert RiskOverlayConfig().is_default() is True
+        assert RiskOverlayConfig(bull_strict=BullStrictConfig(enabled=True)).is_default() is False
 
 
 # ---------------------------------------------------------------------------

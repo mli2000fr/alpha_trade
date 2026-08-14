@@ -48,6 +48,40 @@ from risk_management.concentration import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _effective_trailing_pct(cfg: "BacktestConfig", short: bool, derived_pct: float) -> float:
+    """P2-4 — trailing stop par côté.
+
+    ``trailing_stop_long_pct`` / ``trailing_stop_short_pct`` (None = inactif)
+    agissent comme un PLANCHER : le stop du côté choisi est élargi au
+    ``max(pct dérivé, override)``, sans jamais toucher l'autre jambe.
+    """
+    override = cfg.trailing_stop_short_pct if short else cfg.trailing_stop_long_pct
+    if override is None:
+        return float(derived_pct)
+    return max(float(derived_pct), float(override))
+
+
+def _production_tp_price(
+    entry_price: float,
+    atr_pct: float | None,
+    tp_atr_multiple: float,
+    tp_max_pct: float,
+    short: bool,
+) -> float | None:
+    """P2-4 — TP de production : distance = min(ATR × tp_atr_multiple, prix × tp_max_pct).
+
+    Miroir de ``RiskConfig.tp_params_for()`` + ``portfolio_builder``
+    (fallbacks scalaires : tp_atr_multiple=3.0, tp_max_pct=0.07).
+    Retourne None si les flags sont inactifs ou si l'ATR est indisponible
+    → le comportement legacy (max(12 % fixe, 2R)) reste inchangé.
+    """
+    if tp_atr_multiple <= 0 or tp_max_pct <= 0 or atr_pct is None or atr_pct <= 0 or entry_price <= 0:
+        return None
+    sign = -1 if short else 1
+    distance = min(entry_price * atr_pct * tp_atr_multiple, entry_price * tp_max_pct)
+    return entry_price + sign * distance
+
+
 @dataclass
 class BacktestConfig:
     """Configuration unifiée du backtest."""
@@ -89,7 +123,16 @@ class BacktestConfig:
     # slippage=2bps, borrow=0.3%/an, round-trip=16bps) au lieu des
     # champs legacy. Active automatiquement la déduction du borrow fee
     # pour les shorts.
+    # NOTE (P2-4 fix 2026-08-14) : dans le chemin research, ce flag
+    # dérive désormais les frais effectifs ET le fallback spread depuis
+    # le modèle — ``fees_pct``/``slippage_bps`` legacy (défauts CLI
+    # 12/20 bps) sont ignorés, sinon le modèle canonique n'était jamais
+    # appliqué au P&L.
     use_canonical_costs: bool = False
+    # P2-4 (2026-08-14) : intérêts de marge sur débit cash (Alpaca ≈ 7-8 %/an).
+    # Débité quotidiennement quand ``settled_cash`` < 0 (longs financés à
+    # crédit). 0 = désactivé (rétrocompatibilité bit-à-bit des runs legacy).
+    margin_interest_rate_annual: float = 0.0
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
     execution_replay_mode: str = "off"
@@ -111,6 +154,27 @@ class BacktestConfig:
     # 0.0 = désactivé (utilise trailing_stop_pct fixe).
     # Pour les microcaps (vol daily 3-8%), une valeur de 1.5–2.5 est recommandée.
     atr_trailing_stop_multiplier: float = 0.0
+
+    # ── P2-4 — Trailing stop par côté (réparer la jambe longue) ──
+    # None = ``trailing_stop_pct`` global (comportement historique).
+    # Sinon plancher : élargit uniquement la jambe choisie (max(dérivé, override)).
+    trailing_stop_long_pct: float | None = None
+    trailing_stop_short_pct: float | None = None
+
+    # ── P2-4 — Fidélité live du stop initial/trailing ──
+    # Si > 0 et que le signal porte ``atr_pct_20`` (fraction ATR_20/prix),
+    # dérive ``risk_per_share = entry_price × atr_pct_20 × multiple`` comme
+    # ``risk_management/portfolio_builder.py`` (sizing ATR live) — pour les
+    # LONGS ET LES SHORTS (direction-aware en aval). 0 = désactivé (legacy,
+    # trailing fixe ``trailing_stop_pct``).
+    atr_risk_stop_multiple: float = 0.0
+
+    # ── P2-4 — Fidélité live du TP (formule production) ──
+    # Si les deux > 0 : TP = entrée ± min(ATR × tp_atr_multiple, prix × tp_max_pct)
+    # (miroir de RiskConfig.tp_params_for + portfolio_builder).
+    # 0 = legacy : TP = max(12 % fixe, 2R).
+    tp_atr_multiple: float = 0.0
+    tp_max_pct: float = 0.0
 
     # Concentration / diversification (Priorité 4)
     # Assoupli pour le walk-forward sur petits univers (< 50 candidats/jour)
@@ -184,6 +248,7 @@ class BacktestDiagnostics:
     time_stop_exits: int = 0
     # Phase C (refactor) — diagnostics risk overlay.
     blocked_by_regime: int = 0
+    blocked_by_bull_strict: int = 0
     blocked_by_sectoral_cap: int = 0
     blocked_by_gross_exposure: int = 0
     blocked_by_drawdown_breaker: int = 0
@@ -210,6 +275,7 @@ class BacktestDiagnostics:
             "trailing_stop_exits": self.trailing_stop_exits,
             "time_stop_exits": self.time_stop_exits,
             "blocked_by_regime": self.blocked_by_regime,
+            "blocked_by_bull_strict": self.blocked_by_bull_strict,
             "blocked_by_sectoral_cap": self.blocked_by_sectoral_cap,
             "blocked_by_gross_exposure": self.blocked_by_gross_exposure,
             "blocked_by_drawdown_breaker": self.blocked_by_drawdown_breaker,
@@ -236,10 +302,13 @@ class _OpenPosition:
     peak_high: float
     trough_low: float  # Sprint 2 — trailing short
     entry_cost: float
+    entry_cash_flow: float = 0.0  # A-021 — flux de trésorerie signé à l'entrée (net de frais)
     side: str = "buy"  # Sprint 2 — direction
     # Phase B.2 — stop-loss initial dur (None = désactivé).
     initial_stop_price: float | None = None
     risk_per_share: float | None = None
+    # P2-4 — fraction ATR_20/prix au signal (pour le TP de production).
+    atr_pct: float | None = None
     replay_take_profit_price: float | None = None
     replay_initial_stop_price: float | None = None
     replay_trailing_stop_pct: float | None = None
@@ -397,6 +466,21 @@ class BacktestEngine:
         self.config = config
         # ── Sprint 3 / Point 12 : modèle de coûts canonique ──────────
         self._cost_model = self._resolve_cost_model(config)
+        # P2-4 fix : les frais effectifs et le fallback spread du P&L
+        # research dérivent du modèle de coûts quand il est actif
+        # (canonique ou explicite), sinon des champs legacy. Sans cela,
+        # ``--use-canonical-costs`` ne changeait que le borrow fee et
+        # les défauts CLI (12+20 bps) s'appliquaient au P&L.
+        if config.use_canonical_costs or config.trading_cost_model is not None:
+            self._effective_fees_pct = (
+                self._cost_model.commission_bps + self._cost_model.slippage_bps
+            ) / 10_000.0
+            self._spread_fallback_bps = float(self._cost_model.spread_bps)
+        else:
+            self._effective_fees_pct = float(config.fees_pct)
+            self._spread_fallback_bps = float(config.slippage_bps)
+        # P2-4 (2026-08-14) : accumulateur d'intérêts de marge du run.
+        self._margin_interest_total = 0.0
         # Concentration filters (Priorité 4)
         self._concentration_trade_tracker = SymbolTradeTracker(
             max_trades=config.concentration_max_trades_per_symbol,
@@ -874,10 +958,14 @@ class BacktestEngine:
                     return_pct = compute_return_pct(pos_side, position.entry_price, close_price)
                     if is_short_side(pos_side):
                         # Short close: buy back, debit cash
+                        exit_cash_flow = -abs_qty * close_price
                         state.settled_cash -= abs_qty * close_price
                     else:
                         # Long close: sell, credit cash
+                        exit_cash_flow = abs_qty * close_price
                         state.settled_cash += abs_qty * close_price
+                    # A-021 — PnL NET (force-close sans frais de sortie)
+                    pnl = position.entry_cash_flow + exit_cash_flow
                     state.closed_trades.append({
                         "symbol": symbol,
                         "side": pos_side,
@@ -923,6 +1011,7 @@ class BacktestEngine:
                 cfg.benchmark_close, trade_day,
             )
             current_gross_notional = self._compute_gross_notional(state.positions, mtm_close, trade_day)
+            current_net_notional = self._compute_net_notional(state.positions, mtm_close, trade_day)
             leverage_state = self._resolve_daily_leverage_state(float(current_equity), drawdown_scale=drawdown_allocation_scale)
             self._record_trade_event(
                 state,
@@ -939,7 +1028,9 @@ class BacktestEngine:
                 settled_cash=state.settled_cash,
                 unsettled_cash=state.unsettled_cash,
                 current_gross_notional=current_gross_notional,
+                current_net_notional=current_net_notional,
                 gross_exposure_before_pct=(current_gross_notional / current_equity) if current_equity > 0 else 0.0,
+                net_exposure_before_pct=(current_net_notional / current_equity) if current_equity > 0 else 0.0,
                 available_entry_budget=self._resolve_available_entry_budget(
                     constraints=constraints,
                     settled_cash=state.settled_cash,
@@ -947,6 +1038,22 @@ class BacktestEngine:
                     current_gross_notional=current_gross_notional,
                 ),
             )
+
+            # P2-4 (2026-08-14) : intérêts de marge sur débit cash (fin de
+            # journée, après le snapshot). Alpaca facture ~7-8 %/an sur le
+            # cash emprunté — non modélisé avant ce fix.
+            margin_charge = self._accrue_margin_interest(
+                state, annual_rate=cfg.margin_interest_rate_annual,
+            )
+            if margin_charge > 0:
+                self._margin_interest_total += margin_charge
+                self._record_trade_event(
+                    state,
+                    "margin_interest_accrued",
+                    event_date=trade_day,
+                    charge=margin_charge,
+                    settled_cash_after=state.settled_cash,
+                )
 
             day_signals = signals_by_day.get(trade_day)
             candidate_rows = self._select_candidate_rows(
@@ -997,9 +1104,10 @@ class BacktestEngine:
                         if not (np.isfinite(close_price) and close_price > 0):
                             continue
                         abs_qty = abs(position.quantity)
-                        pnl = compute_realized_pnl("buy", abs_qty, position.entry_price, close_price)
                         return_pct = compute_return_pct("buy", position.entry_price, close_price)
                         state.settled_cash += abs_qty * close_price
+                        # A-021 — PnL NET (force-close sans frais de sortie)
+                        pnl = position.entry_cash_flow + abs_qty * close_price
                         state.closed_trades.append({
                             "symbol": symbol,
                             "side": "buy",
@@ -1054,6 +1162,7 @@ class BacktestEngine:
                 diagnostics=diagnostics,
                 spread_df=spread_df,
                 current_equity=current_equity,
+                atr_df=atr_df,
             )
 
             # Phase E.4 — single mark-to-market final pour equity du jour.
@@ -1075,10 +1184,11 @@ class BacktestEngine:
             tracker_snapshot=self.tracker_snapshot,
         )
         LOGGER.info(
-            "Backtest contraint terminé — valeur finale : %.2f — diagnostics=%s — événements=%d",
+            "Backtest contraint terminé — valeur finale : %.2f — diagnostics=%s — événements=%d — margin_interest_total=%.2f",
             result.final_value(),
             diagnostics.to_dict(),
             len(trade_events_df),
+            self._margin_interest_total,
         )
         return result
 
@@ -1270,6 +1380,24 @@ class BacktestEngine:
                     len(candidate_rows) - candidate_pos,
                 )
 
+            # ── P2-3 : overlay no-trades en bull strict ──
+            if not risk.bull_strict.is_entry_allowed(side, cfg.benchmark_close, trade_day):
+                diagnostics.blocked_by_bull_strict += 1
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason=(
+                        "bull_strict_no_trades"
+                        if risk.bull_strict.mode == "no_trades"
+                        else "bull_strict_no_shorts"
+                    ),
+                    side=side,
+                    **signal_context,
+                )
+                continue
+
             # Quick Win 2 — score threshold (Sprint 2: skip pour shorts)
             if cfg.min_score_threshold > 0 and not short:
                 score_val = float(row.get("score", row.get("score_used", 0.0) or 0.0))
@@ -1308,7 +1436,7 @@ class BacktestEngine:
 
             # ── P1 (2026-06-25) : slippage model pour backtest réaliste ──
             trade_spread_bps = self._get_spread_bps(
-                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
+                spread_df, trade_day, symbol, fallback_bps=self._spread_fallback_bps
             )
             slippage_bps = 5.0 + trade_spread_bps / 2.0
             if is_short_side(side):
@@ -1464,18 +1592,17 @@ class BacktestEngine:
             )
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
             extra_slippage_pct = micro.slippage.compute_bps(preliminary_size_usd, adv_usd) / 10_000.0
-            # P1 — spread réel par ticker comme coût de transaction
-            spread_cost_pct = self._get_spread_bps(
-                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
-            ) / 10_000.0
+            # P1 fix 2026-08-14 : le spread d'entrée est déjà payé via la
+            # pénalité de prix d'exécution (5 bps + ½ spread). Ne PAS le
+            # recompter dans le coût de sizing (double-comptage historique).
             # P3 — commission tiered ou plate
             if cfg.use_tiered_commission:
                 commission_config = resolve_commission_preset(float(current_equity))
                 # Pour le calcul préliminaire, on utilise le taux seul (le fixe sera ajouté après)
                 commission_rate_pct = commission_config.bps_rate / 10_000.0
-                base_cost_pct = commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct
+                base_cost_pct = commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct
             else:
-                base_cost_pct = cfg.fees_pct + extra_slippage_pct + spread_cost_pct
+                base_cost_pct = self._effective_fees_pct + extra_slippage_pct
             effective_unit_cost = entry_price * (1.0 + base_cost_pct)
             if quantity_override is not None:
                 affordable_quantity = (
@@ -1581,8 +1708,10 @@ class BacktestEngine:
                 # P1+P3 — cost inclut commission tiered + slippage volume + spread réel
                 short_credit = quantity_abs * entry_price * (1.0 - effective_cost_pct) - tiered_fixed
                 state.settled_cash += short_credit
+                entry_cash_flow = short_credit
             else:
                 state.settled_cash -= entry_cost + tiered_fixed
+                entry_cash_flow = -(entry_cost + tiered_fixed)
 
             initial_stop_price, risk_per_share = self._resolve_initial_protection_state(
                 row=row,
@@ -1601,8 +1730,10 @@ class BacktestEngine:
                 peak_high=entry_price,
                 trough_low=entry_price,
                 entry_cost=entry_cost,
+                entry_cash_flow=entry_cash_flow,
                 initial_stop_price=initial_stop_price,
                 risk_per_share=risk_per_share,
+                atr_pct=self._resolve_signal_float(row, "atr_pct_20"),
                 replay_take_profit_price=(
                     self._resolve_signal_float(row, "replay_take_profit_price")
                     if cfg.protection_replay_mode == "protection_replay"
@@ -1818,15 +1949,26 @@ class BacktestEngine:
             else:
                 # Sprint 2 — direction-aware protection prices
                 if cfg.use_live_protection_logic:
-                    percent_target = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
-                    risk_based_target = None
-                    if position.risk_per_share is not None and position.risk_per_share > 0 and position.entry_price > 0:
-                        sign = -1 if short else 1
-                        risk_based_target = position.entry_price + sign * (2.0 * position.risk_per_share)
-                    if risk_based_target is not None:
-                        take_profit_price = max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target)
+                    # ── P2-4 — TP de production : min(ATR × tp_atr_multiple, prix × tp_max_pct) ──
+                    production_tp = _production_tp_price(
+                        position.entry_price,
+                        position.atr_pct,
+                        float(cfg.tp_atr_multiple),
+                        float(cfg.tp_max_pct),
+                        short,
+                    )
+                    if production_tp is not None:
+                        take_profit_price = production_tp
                     else:
-                        take_profit_price = percent_target
+                        percent_target = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
+                        risk_based_target = None
+                        if position.risk_per_share is not None and position.risk_per_share > 0 and position.entry_price > 0:
+                            sign = -1 if short else 1
+                            risk_based_target = position.entry_price + sign * (2.0 * position.risk_per_share)
+                        if risk_based_target is not None:
+                            take_profit_price = max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target)
+                        else:
+                            take_profit_price = percent_target
                     if (
                         position.initial_stop_price is not None
                         and position.entry_price > 0
@@ -1838,12 +1980,14 @@ class BacktestEngine:
                         trailing_stop_pct = position.risk_per_share / position.entry_price
                     else:
                         trailing_stop_pct = float(cfg.trailing_stop_pct)
+                    trailing_stop_pct = _effective_trailing_pct(cfg, short, trailing_stop_pct)
                     trailing_ref = (previous_trough_low if short else previous_peak_high)
                     trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, trailing_stop_pct)
                 else:
                     take_profit_price = compute_take_profit_price(side, position.entry_price, float(cfg.profit_taker_pct))
                     trailing_ref = (previous_trough_low if short else previous_peak_high)
-                    trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, float(cfg.trailing_stop_pct))
+                    trailing_stop_pct = _effective_trailing_pct(cfg, short, float(cfg.trailing_stop_pct))
+                    trailing_stop_price = compute_trailing_stop_price(side, trailing_ref, trailing_stop_pct)
                 # ── P1 — ATR-based trailing stop override ──
                 if cfg.atr_trailing_stop_multiplier > 0 and atr_df is not None and symbol in atr_df.columns:
                     atr_value = float(atr_df.at[trade_day, symbol])
@@ -1940,18 +2084,21 @@ class BacktestEngine:
             exit_notional = abs_qty * exit_price
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
             extra_slippage_pct = micro.slippage.compute_bps(exit_notional, adv_usd) / 10_000.0
-            # P1 — spread réel par ticker comme coût de sortie
+            # P1 fix 2026-08-14 : ½ spread à la sortie (sell au bid / cover à
+            # l'ask) — l'autre moitié est déjà payée à l'entrée via la
+            # pénalité de prix d'exécution. Facturer le spread complet ici
+            # doublait le coût réel d'un aller-retour.
             spread_cost_pct = self._get_spread_bps(
-                spread_df, trade_day, symbol, fallback_bps=float(cfg.slippage_bps)
+                spread_df, trade_day, symbol, fallback_bps=self._spread_fallback_bps
             ) / 10_000.0
             # P3 — commission tiered ou plate en sortie
             if cfg.use_tiered_commission:
                 exit_commission_config = resolve_commission_preset(float(current_equity))
                 exit_commission_rate_pct = exit_commission_config.bps_rate / 10_000.0
-                fees_rate = exit_commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct
+                fees_rate = exit_commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct / 2.0
                 exit_fixed_commission = exit_commission_config.fixed_per_trade_usd
             else:
-                fees_rate = float(cfg.fees_pct) + extra_slippage_pct + spread_cost_pct
+                fees_rate = self._effective_fees_pct + extra_slippage_pct + spread_cost_pct / 2.0
                 exit_fixed_commission = 0.0
 
             if short:
@@ -1990,12 +2137,15 @@ class BacktestEngine:
                 # Coût du borrow sur le notional de la position
                 entry_notional = abs_qty * position.entry_price
                 borrow_cost = entry_notional * borrow_cost_pct
-                pnl -= borrow_cost
                 # Déduire aussi du cash settled
                 if constraints.use_settled_cash_only:
                     state.unsettled_cash -= borrow_cost
                 else:
                     state.settled_cash -= borrow_cost
+
+            # A-021 — PnL NET : flux de trésorerie d'entrée signé + flux de sortie − borrow.
+            # `proceeds` contient déjà les frais de sortie (positif long, négatif short).
+            pnl = position.entry_cash_flow + proceeds - borrow_cost
 
             is_day_trade = is_same_day
             if is_day_trade:
@@ -2058,7 +2208,31 @@ class BacktestEngine:
             state.positions.pop(symbol, None)
 
     @staticmethod
+    @staticmethod
+    def _accrue_margin_interest(
+        state: _RunState,
+        *,
+        annual_rate: float,
+        sessions_per_year: int = 252,
+    ) -> float:
+        """Intérêts de marge quotidiens sur le débit cash (Alpaca ≈ 7-8 %/an).
+
+        Débite ``settled_cash`` de ``débit × taux / sessions`` quand le cash
+        est négatif (longs financés à crédit). Les proceeds de shorts
+        créditent le cash et réduisent naturellement le débit. Retourne le
+        montant débité (>= 0).
+        """
+        if annual_rate <= 0:
+            return 0.0
+        debit = max(-float(state.settled_cash), 0.0)
+        if debit <= 0:
+            return 0.0
+        charge = debit * float(annual_rate) / float(sessions_per_year)
+        state.settled_cash -= charge
+        return charge
+
     def _get_spread_bps(
+        self,
         spread_df: pd.DataFrame | None,
         trade_day: pd.Timestamp,
         symbol: str,
@@ -2167,6 +2341,13 @@ class BacktestEngine:
                     return stop_price_initial, risk_per_share
                 if short and stop_price_initial > entry_price:
                     return stop_price_initial, risk_per_share
+            # P2-4 — fidélité live : dériver le risque du sizing ATR
+            # (risk_per_share = entry × atr_pct_20 × k), comme portfolio_builder.
+            # Longs ET shorts : le signe direction-aware est appliqué en aval.
+            if risk_per_share is None and self.config.atr_risk_stop_multiple > 0 and entry_price > 0:
+                atr_pct = self._resolve_signal_float(row, "atr_pct_20")
+                if atr_pct is not None and atr_pct > 0:
+                    risk_per_share = entry_price * atr_pct * self.config.atr_risk_stop_multiple
             if risk_per_share is not None and risk_per_share > 0:
                 sign = -1 if short else 1
                 derived_stop = entry_price - sign * risk_per_share
@@ -2254,6 +2435,26 @@ class BacktestEngine:
         Longs : +qty * px (positive)
         Shorts : -qty * px (négative, car due au broker)
         """
+        if not positions:
+            return 0.0
+        total = 0.0
+        for position in positions.values():
+            try:
+                px = float(close.at[trade_day, position.symbol])
+                if np.isfinite(px):
+                    sign = -1 if is_short_side(getattr(position, "side", "buy") or "buy") else 1
+                    total += sign * abs(position.quantity) * px
+            except (KeyError, ValueError):
+                continue
+        return total
+
+    @staticmethod
+    def _compute_net_notional(
+        positions: dict[str, _OpenPosition],
+        close: pd.DataFrame,
+        trade_day: pd.Timestamp,
+    ) -> float:
+        """A-021 — exposition nette = somme des qty signées × px (longs +, shorts −)."""
         if not positions:
             return 0.0
         total = 0.0

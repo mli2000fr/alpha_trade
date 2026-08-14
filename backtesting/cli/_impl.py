@@ -78,6 +78,84 @@ def _coerce_date_value(value: object) -> date | None:
     return date(int(ts.year), int(ts.month), int(ts.day))
 
 
+def _parse_sector_multipliers_json(raw: str | None) -> dict[str, float] | None:
+    """Parse ``--sector-multipliers-json`` (JSON {secteur: facteur} ou @fichier)."""
+    if not raw or not raw.strip():
+        return None
+    text_value = raw.strip()
+    if text_value.startswith("@"):
+        try:
+            text_value = Path(text_value[1:]).read_text(encoding="utf-8")
+        except Exception as exc:
+            raise argparse.ArgumentTypeError(f"--sector-multipliers-json: fichier illisible : {exc}") from exc
+    try:
+        payload = json.loads(text_value)
+        if not isinstance(payload, dict):
+            raise ValueError("attendu un objet JSON {secteur: facteur}")
+        multipliers = {str(k).strip(): float(v) for k, v in payload.items() if str(k).strip()}
+        return multipliers or None
+    except Exception as exc:
+        raise argparse.ArgumentTypeError(f"--sector-multipliers-json invalide : {exc}") from exc
+
+
+def _load_sector_map_for_sizing(engine: object) -> dict[str, str]:
+    """Charge le mapping symbole → secteur (stock_metadata) pour le sizing sectoriel."""
+    try:
+        from modelFactory.cross_sectional import _load_sector_mapping
+
+        return _load_sector_mapping(engine)
+    except Exception:
+        LOGGER.warning("_load_sector_map_for_sizing: mapping indisponible → sizing sectoriel inactif", exc_info=True)
+        return {}
+
+
+def _load_benchmark_close(
+    engine: object,
+    start_date: date,
+    end_date: date,
+    *,
+    benchmark_symbol: str = "SPY",
+    warmup_days: int = 400,
+) -> pd.Series | None:
+    """Charge le close du benchmark (SPY) depuis stock_bars_daily, avec warmup.
+
+    Utilisé par le filtre régime (Phase C.3) et l'overlay bull strict (P2-3).
+    Retourne une Series indexée par Timestamp, ou None si indisponible.
+    """
+    import pandas as _pd
+    from sqlalchemy import text as _text
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                _text(
+                    "SELECT `date`, COALESCE(adj_close, `close`) AS px "
+                    "FROM stock_bars_daily "
+                    "WHERE symbol = :sym AND data_source = 'eodhd_eod' "
+                    "AND `date` >= :start_date AND `date` <= :end_date "
+                    "ORDER BY `date` ASC"
+                ),
+                {
+                    "sym": benchmark_symbol,
+                    "start_date": start_date - timedelta(days=warmup_days),
+                    "end_date": end_date,
+                },
+            ).all()
+        if not rows:
+            LOGGER.warning("_load_benchmark_close: aucune barre %s eodhd_eod trouvée.", benchmark_symbol)
+            return None
+        series = _pd.Series(
+            [float(px) for _, px in rows],
+            index=_pd.to_datetime([d for d, _ in rows], utc=False),
+            dtype=float,
+        )
+        series = series[~series.index.duplicated(keep="last")].sort_index()
+        return series
+    except Exception:
+        LOGGER.warning("_load_benchmark_close: benchmark indisponible → overlay régime/bull-strict inactifs.", exc_info=True)
+        return None
+
+
 def _run_bars_source_preflight_or_skip(engine: object, start_date: date, end_date: date) -> dict[str, object]:
     from backtesting.data_loader import BACKTEST_REQUIRED_BARS_DATA_SOURCE, preflight_required_bars_data_source
 
@@ -721,6 +799,36 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--tp", type=float, default=0.12, help="Take-profit %% (défaut 0.12)")
     run_p.add_argument("--ts", type=float, default=0.07, help="Trailing stop %% (défaut 0.07)")
     run_p.add_argument(
+        "--ts-long", type=float, default=None,
+        help="Trailing stop %% pour les LONGS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
+    )
+    run_p.add_argument(
+        "--ts-short", type=float, default=None,
+        help="Trailing stop %% pour les SHORTS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
+    )
+    run_p.add_argument(
+        "--atr-risk-stop-multiple", type=float, default=0.0,
+        help="Fidélité live (P2-4) : si > 0, dérive risk_per_share = entry_price × atr_pct_20 × multiple "
+             "(comme portfolio_builder, longs ET shorts) quand le replay ne fournit ni stop_price_initial ni "
+             "risk_per_share. 0 = désactivé (legacy : trailing fixe --ts).",
+    )
+    run_p.add_argument(
+        "--tp-atr-multiple", type=float, default=0.0,
+        help="P2-4 : TP de production = min(ATR × multiple, prix × --tp-max-pct). 0 = legacy (max(12%% fixe, 2R)).",
+    )
+    run_p.add_argument(
+        "--tp-max-pct", type=float, default=0.0,
+        help="P2-4 : plafond TP en fraction du prix (prod 0.07). Requiert --tp-atr-multiple > 0.",
+    )
+    run_p.add_argument(
+        "--use-canonical-costs", action=argparse.BooleanOptionalAction, default=True,
+        help="Modèle de coûts canonique Alpaca (spread réel, comm 1bps, slippage 2bps, borrow 0.3%%/an). Défaut: activé. --no-use-canonical-costs = coûts legacy.",
+    )
+    run_p.add_argument(
+        "--margin-interest-rate", type=float, default=0.075,
+        help="P2-4 : intérêts de marge annuels sur débit cash (Alpaca ≈ 7.5%%). 0 = désactivé.",
+    )
+    run_p.add_argument(
         "--atr-ts", type=float, default=0.0,
         help="Multiplicateur ATR pour trailing stop adaptatif (0 = désactivé, utilise --ts fixe). "
              "Ex: 2.0 → stop = peak − 2×ATR_20. Le stop le plus large des deux (fixe vs ATR) est utilisé.",
@@ -749,14 +857,14 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--commission-bps",
         type=float,
-        default=5.0,
-        help="Commission par trade en bps (défaut: 5.0 = 5bps).",
+        default=1.0,
+        help="Commission par trade en bps (défaut: 1.0 ≈ Alpaca 0 $).",
     )
     run_p.add_argument(
         "--slippage-bps",
         type=float,
-        default=5.0,
-        help="Slippage simulé par trade en bps (défaut: 5.0 = 5bps).",
+        default=2.0,
+        help="Slippage simulé par trade en bps (défaut: 2.0 canonique Alpaca).",
     )
     run_p.add_argument(
         "--profile",
@@ -1058,7 +1166,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument(
         "--sizing-mode",
-        choices=["equal_weight", "conviction_weighted"],
+        choices=["equal_weight", "conviction_weighted", "rank_weighted"],
         default="equal_weight",
         help="Mode de sizing du portefeuille (Phase C.1).",
     )
@@ -1066,13 +1174,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--sizing-min-weight-pct",
         type=float,
         default=0.005,
-        help="Poids min par position quand sizing=conviction_weighted (Phase C.1).",
+        help="Poids min par position quand sizing=conviction_weighted/rank_weighted (Phase C.1).",
     )
     run_p.add_argument(
         "--sizing-max-weight-pct",
         type=float,
         default=0.20,
-        help="Poids max par position quand sizing=conviction_weighted (Phase C.1).",
+        help="Poids max par position quand sizing=conviction_weighted/rank_weighted (Phase C.1).",
+    )
+    run_p.add_argument(
+        "--sector-multipliers-json",
+        type=str,
+        default=None,
+        help="P2-1 inc.3 : multiplicateurs sectoriels au format JSON {secteur: facteur} "
+             "appliqués après le poids de base (ex: {\"Retail\":1.25,\"Health Care\":0.5}).",
     )
     run_p.add_argument(
         "--regime-filter",
@@ -1090,6 +1205,31 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=-0.02,
         help="Seuil bear (distance vs SMA) pour bloquer les nouvelles entrées.",
+    )
+    run_p.add_argument(
+        "--bull-strict-mode",
+        choices=["off", "no_shorts", "no_trades"],
+        default="off",
+        help="P2-3 : overlay no-trades en bull strict (SPY>SMA200 ET ret60j>+3%%). "
+             "no_shorts = bloque les shorts ; no_trades = bloque tout.",
+    )
+    run_p.add_argument(
+        "--bull-strict-sma-window",
+        type=int,
+        default=200,
+        help="P2-3 : fenêtre SMA pour la détection bull strict (défaut 200).",
+    )
+    run_p.add_argument(
+        "--bull-strict-ret-window",
+        type=int,
+        default=60,
+        help="P2-3 : fenêtre de rendement SPY pour la détection bull strict (défaut 60).",
+    )
+    run_p.add_argument(
+        "--bull-strict-ret-threshold",
+        type=float,
+        default=0.03,
+        help="P2-3 : seuil de rendement SPY (fraction) pour la détection bull strict (défaut 0.03).",
     )
     run_p.add_argument(
         "--max-sector-exposure-pct",
@@ -1458,8 +1598,8 @@ def _build_parser() -> argparse.ArgumentParser:
     wf_fin_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
     wf_fin_p.add_argument("--end", required=True, help="Date de fin (YYYY-MM-DD)")
     wf_fin_p.add_argument("--equity", type=float, default=100_000, help="Capital initial ($)")
-    wf_fin_p.add_argument("--commission-bps", type=float, default=5.0, help="Commission (bps)")
-    wf_fin_p.add_argument("--slippage-bps", type=float, default=5.0, help="Slippage (bps)")
+    wf_fin_p.add_argument("--commission-bps", type=float, default=1.0, help="Commission (bps)")
+    wf_fin_p.add_argument("--slippage-bps", type=float, default=2.0, help="Slippage (bps)")
     wf_fin_p.add_argument("--train-days", type=int, default=504, help="Jours de train par fold")
     wf_fin_p.add_argument("--val-days", type=int, default=126, help="Jours de validation par fold")
     wf_fin_p.add_argument("--test-days", type=int, default=126, help="Jours de test par fold")
@@ -1709,7 +1849,7 @@ def _apply_pipeline_defensive_defaults_from_preset(
         args.commission_bps = _resolve_pipeline_preset_float(
             effective_preset,
             "backtesting_commission_bps_stress",
-            default=15.0,
+            default=1.0,
         )
 
     if (
@@ -1719,7 +1859,7 @@ def _apply_pipeline_defensive_defaults_from_preset(
         args.slippage_bps = _resolve_pipeline_preset_float(
             effective_preset,
             "backtesting_slippage_bps_stress",
-            default=15.0,
+            default=2.0,
         )
 
     # P2 — microstructure slippage volume-aware : résoudre les défauts depuis le preset capital
@@ -1932,6 +2072,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.simulator import BacktestConfig, BacktestEngine
     from backtesting.microstructure import MicrostructureConfig, SlippageConfig, ExecutionModelConfig
     from backtesting.risk_overlay import (
+        BullStrictConfig,
         DrawdownCircuitBreaker,
         RegimeFilterConfig,
         RiskOverlayConfig,
@@ -2835,16 +2976,37 @@ def _run_backtest(args: argparse.Namespace) -> None:
             arrival_slippage_factor=float(getattr(args, "execution_arrival_slippage_factor", 0.5) or 0.5),
         ),
     )
+    _bull_strict_mode = str(getattr(args, "bull_strict_mode", "off") or "off").strip().lower()
+    _needs_benchmark = bool(args.regime_filter) or _bull_strict_mode != "off"
+    benchmark_close: pd.Series | None = None
+    if _needs_benchmark:
+        benchmark_close = _load_benchmark_close(engine, start, end)
+
     risk_overlay_cfg = RiskOverlayConfig(
         sizing=SizingConfig(
             mode=args.sizing_mode,
             min_weight_pct=float(args.sizing_min_weight_pct),
             max_weight_pct=float(args.sizing_max_weight_pct),
+            sector_multipliers=(
+                _parse_sector_multipliers_json(getattr(args, "sector_multipliers_json", None))
+            ),
+            sector_map=(
+                _load_sector_map_for_sizing(engine)
+                if getattr(args, "sector_multipliers_json", None)
+                else None
+            ),
         ),
         regime_filter=RegimeFilterConfig(
             enabled=bool(args.regime_filter),
             sma_window=int(args.regime_sma_window),
             bear_threshold=float(args.regime_bear_threshold),
+        ),
+        bull_strict=BullStrictConfig(
+            enabled=_bull_strict_mode != "off",
+            mode=_bull_strict_mode if _bull_strict_mode in ("no_shorts", "no_trades") else "no_shorts",
+            sma_window=int(getattr(args, "bull_strict_sma_window", 200) or 200),
+            ret_window=int(getattr(args, "bull_strict_ret_window", 60) or 60),
+            ret_threshold=float(getattr(args, "bull_strict_ret_threshold", 0.03) or 0.03),
         ),
         sectoral_cap=SectoralCapConfig(
             enabled=float(args.max_sector_exposure_pct) > 0.0,
@@ -2889,6 +3051,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
         ),
         profit_taker_pct=args.tp,
         trailing_stop_pct=args.ts,
+        trailing_stop_long_pct=getattr(args, "ts_long", None),
+        trailing_stop_short_pct=getattr(args, "ts_short", None),
+        atr_risk_stop_multiple=float(getattr(args, "atr_risk_stop_multiple", 0.0) or 0.0),
+        tp_atr_multiple=float(getattr(args, "tp_atr_multiple", 0.0) or 0.0),
+        tp_max_pct=float(getattr(args, "tp_max_pct", 0.0) or 0.0),
+        use_canonical_costs=bool(getattr(args, "use_canonical_costs", False)),
+        margin_interest_rate_annual=float(getattr(args, "margin_interest_rate", 0.0) or 0.0),
         atr_trailing_stop_multiplier=float(getattr(args, "atr_ts", 0.0) or 0.0),
         use_live_protection_logic=bool(getattr(args, "use_live_protection_logic", True)),
         max_positions=args.max_positions,
@@ -2900,6 +3069,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         trading_constraints=trading_constraints,
         microstructure=microstructure_cfg,
         risk_overlay=risk_overlay_cfg,
+        benchmark_close=benchmark_close,
         seed=getattr(args, "seed", None),
         execution_replay_mode=phase3_mode,
         protection_replay_mode=phase4_mode,

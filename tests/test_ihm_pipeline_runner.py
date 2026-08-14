@@ -1020,6 +1020,49 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
     assert train_cmd[train_cmd.index("--watchdog-timeout-seconds") + 1] == "600"
 
 
+def test_build_pipeline_command_ml_train_xgboost_champion_three_candidates() -> None:
+    """P3-3 : champion auto → 3 candidats côté core (flag unique --global-champion)."""
+    options = PipelineLaunchOptions(
+        ml_enable_global_model=True,
+        ml_global_champion=True,
+        ml_global_model_name="xgboost",
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "xgboost"
+    assert "--global-champion" in train_cmd
+    assert "--ranking-include-xgboost" not in train_cmd
+
+
+def test_build_pipeline_command_ml_train_xgboost_single_without_champion() -> None:
+    """P3-3 : backend XGBoost sans champion → candidat unique XGBoost."""
+    options = PipelineLaunchOptions(
+        ml_enable_global_model=True,
+        ml_global_champion=False,
+        ml_global_model_name="xgboost",
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "xgboost"
+    assert "--global-champion" not in train_cmd
+
+
+def test_build_pipeline_command_ml_train_champion_ignores_selected_backend() -> None:
+    """P3-3 : champion auto quel que soit le backend du dropdown → 3 candidats."""
+    options = PipelineLaunchOptions(
+        ml_enable_global_model=True,
+        ml_global_champion=True,
+        ml_global_model_name="catboost",
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert "--global-champion" in train_cmd
+    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "catboost"
+
+
 def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:
     command = build_pipeline_command(
         "ml_train",
@@ -1031,6 +1074,20 @@ def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:
 
     assert command[command.index("--training-start-date") + 1] == "2021-01-01"
     assert command[command.index("--training-end-date") + 1] == "2021-12-31"
+
+
+def test_build_pipeline_command_ml_train_include_volume_features() -> None:
+    """P3-5 : checkbox volume → --include-volume-features dans la commande."""
+    options = PipelineLaunchOptions(ml_include_volume_features=True)
+    train_cmd = build_pipeline_command("ml_train", options)
+    assert "--include-volume-features" in train_cmd
+
+
+def test_build_pipeline_command_ml_train_volume_features_off_by_default() -> None:
+    """P3-5 : off par défaut → pas de --include-volume-features."""
+    options = PipelineLaunchOptions()
+    train_cmd = build_pipeline_command("ml_train", options)
+    assert "--include-volume-features" not in train_cmd
 
 
 def test_build_pipeline_command_ml_predict_scoped_historical_uses_period_and_tradable_universe() -> None:

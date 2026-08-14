@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from modelFactory.config import TrainingConfig
+from modelFactory.config import TrainingConfig, CATBOOST_RANKING_LOSSES
 from modelFactory.dataset import (
     SymbolDataModule,
     chrono_split_by_dates,
@@ -209,6 +209,7 @@ def _prepare_sector_data(
         include_macro_regime=cfg.data.include_macro_regime_features,
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_score_components=cfg.data.include_score_components,
+        include_volume_features=cfg.data.include_volume_features,
     )
 
     # Add "symbol" as a categorical feature for tabular models
@@ -470,12 +471,18 @@ def _train_sector_models(
     # P0-3 fix: passer cat_features=["symbol"] pour le support natif des catégorielles
     _cb_cat_features = ["symbol"] if _has_symbol_feat else None
     if is_reg:
+        _cb_loss = cfg.baseline.catboost_loss_function
+        if _cb_loss in CATBOOST_RANKING_LOSSES:
+            LOGGER.warning(
+                "trainer_sector: loss_function=%s is ranking-only, falling back to RMSE", _cb_loss,
+            )
+            _cb_loss = "RMSE"
         _cb_builder = lambda seed, cf=_cb_cat_features: __import__("catboost").CatBoostRegressor(
             depth=cfg.baseline.catboost_depth,
             iterations=cfg.baseline.catboost_iterations,
             learning_rate=cfg.baseline.catboost_learning_rate,
             random_seed=seed,
-            loss_function="RMSE",
+            loss_function=_cb_loss,
             verbose=False, allow_writing_files=False,
             l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
             **( {"cat_features": cf} if cf else {}),

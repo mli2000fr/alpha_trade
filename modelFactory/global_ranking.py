@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from modelFactory.config import ReproducibilityConfig, TrainingConfig
+from modelFactory.config import ReproducibilityConfig, TrainingConfig, CATBOOST_RANKING_LOSSES
 from modelFactory.cross_sectional import (
     SECTOR_NEUTRAL_FEATURE_COLUMNS,
     SECTOR_NEUTRAL_SOURCE_FEATURES,
@@ -257,6 +257,7 @@ def _prepare_global_ranking_frame(
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
         include_score_components=cfg.data.include_score_components,
+        include_volume_features=cfg.data.include_volume_features,
     )
     if cfg.data.enable_cross_sectional_features and cross_sectional_df is not None:
         df = merge_cross_sectional_features(df, cross_sectional_df)
@@ -287,6 +288,7 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
         include_score_components=cfg.data.include_score_components,
+        include_volume_features=cfg.data.include_volume_features,
     )
     # Supprimer les features purement macro (identiques pour tous les symboles
     # à une date donnée → ne peuvent pas classer les titres entre eux).
@@ -505,12 +507,24 @@ def _compute_decile_spread(
 # Modèle principal
 # ────────────────────────────────────────────────────────────────────
 
+# ── Ranking loss functions (nécessitent CatBoostRanker + group_id) ──
+#    → canonique défini dans config.py: CATBOOST_RANKING_LOSSES
+
+
 def _import_lightgbm() -> Any:
     import lightgbm as lgb  # type: ignore[import-not-found]
     return lgb
 
 
-def _import_catboost() -> Any:
+def _import_xgboost() -> Any:
+    import xgboost as xgb  # type: ignore[import-not-found]
+    return xgb
+
+
+def _import_catboost(as_ranker: bool = False) -> Any:
+    if as_ranker:
+        from catboost import CatBoostRanker  # type: ignore[import-not-found]
+        return CatBoostRanker
     from catboost import CatBoostRegressor  # type: ignore[import-not-found]
     return CatBoostRegressor
 
@@ -550,8 +564,9 @@ def _build_ranking_estimators(
         _name = model_name
         _rebuilt = False
         if _name == "catboost":
+            _is_ranking_loss = cfg.baseline.catboost_loss_function in CATBOOST_RANKING_LOSSES
             try:
-                CatBoostRegressor = _import_catboost()
+                CBClass = _import_catboost(as_ranker=_is_ranking_loss)
             except ImportError:
                 LOGGER.warning("CatBoost indisponible pour global ranking → fallback LightGBM")
                 _name = "lightgbm"
@@ -577,17 +592,33 @@ def _build_ranking_estimators(
             if _rebuilt:
                 # CatBoost fallback → ne pas ajouter une deuxième fois lightgbm
                 continue
+        elif _name == "xgboost":
+            xgb_mod = _import_xgboost()
+            estimators.append(("xgboost", xgb_mod.XGBRanker(
+                objective="rank:ndcg",
+                max_depth=cfg.global_model.ranking_max_depth,
+                n_estimators=cfg.global_model.ranking_xgboost_iterations,
+                learning_rate=cfg.global_model.ranking_xgboost_learning_rate,
+                random_state=resolved_seed,
+                reg_alpha=cfg.baseline.lgbm_reg_alpha,
+                reg_lambda=cfg.baseline.lgbm_reg_lambda,
+                subsample=cfg.baseline.lgbm_subsample,
+                colsample_bytree=cfg.baseline.lgbm_colsample_bytree,
+                tree_method="hist",
+                verbosity=0,
+            )))
         else:
-            CatBoostRegressor = _import_catboost()
+            _is_ranking_loss = cfg.baseline.catboost_loss_function in CATBOOST_RANKING_LOSSES
+            CBClass = _import_catboost(as_ranker=_is_ranking_loss)
             _cb_depth = cfg.global_model.ranking_max_depth
             _cb_iterations = cfg.global_model.ranking_catboost_iterations
             _cb_lr = cfg.global_model.ranking_catboost_learning_rate
-            estimators.append(("catboost", CatBoostRegressor(
+            estimators.append(("catboost", CBClass(
                 depth=_cb_depth,
                 iterations=_cb_iterations,
                 learning_rate=_cb_lr,
                 random_seed=resolved_seed,
-                loss_function="RMSE",
+                loss_function=cfg.baseline.catboost_loss_function,
                 verbose=False,
                 l2_leaf_reg=cfg.baseline.catboost_l2_leaf_reg,
                 border_count=cfg.baseline.catboost_border_count,
@@ -606,6 +637,7 @@ def _compute_ranking_targets(
     smoothing_horizons: tuple[int, ...],
     factor_cols: list[str],
     sector_map: dict[str, str] | None = None,
+    raw_target: bool = False,  # P1-3 : skip smoothing + sector-neutral + factor-neutral
 ) -> pd.DataFrame:
     """Compute ranking targets on an isolated DataFrame (PIT-étanche).
 
@@ -617,8 +649,8 @@ def _compute_ranking_targets(
     La target pipeline complète est appliquée :
     1. future_return → vol scaling (H5+) → winsorize 1%/99% → rank
     2. Smoothing 50% h + 50% avg(smoothing_horizons) [si ≥2 horizons]
-    3. Sector-neutral (médiane secteur par date)
-    4. Factor-neutral (OLS résiduel sur size+value+momentum)
+    3. Sector-neutral (médiane secteur par date)  [skip si raw_target=True]
+    4. Factor-neutral (OLS résiduel sur size+value+momentum)  [skip si raw_target=True]
 
     Returns:
         ``df`` avec les colonnes ``future_return_{h}`` et ``label_{h}``
@@ -653,6 +685,10 @@ def _compute_ranking_targets(
             .clip(0, 9)
             .astype("Int32")
         )
+
+    # ── P1-3 : raw rank target → skip smoothing + neutralisation ──
+    if raw_target:
+        return df
 
     # ── Étape 2 : Smoothing multi-horizons ──
     if len(smoothing_horizons) >= 2:
@@ -1059,7 +1095,9 @@ def train_global_ranking_wf(
         _champion_mode = cfg.global_model.champion_enabled
         _candidate_names: list[str]
         if _champion_mode:
-            _candidate_names = ["lightgbm", "catboost"]
+            # P3-3 (2026-08-14) : championnat à 3 candidats
+            # (CatBoost + LightGBM + XGBoost) — le champion est choisi parmi les 3.
+            _candidate_names = ["lightgbm", "catboost", "xgboost"]
             LOGGER.info("global_ranking_wf horizon=%d champion_mode=ON candidates=%s", horizon, _candidate_names)
         else:
             _candidate_names = [cfg.global_model.model_name]
@@ -1091,6 +1129,7 @@ def train_global_ranking_wf(
                 smoothing_horizons=_SMOOTHING_HORIZONS if horizon in _SMOOTHING_HORIZONS else (),
                 factor_cols=_factor_cols,
                 sector_map=_sector_map,
+                raw_target=cfg.global_model.ranking_raw_target,
             )
             _val_with_targets = _compute_ranking_targets(
                 split.val,
@@ -1098,6 +1137,7 @@ def train_global_ranking_wf(
                 smoothing_horizons=_SMOOTHING_HORIZONS if horizon in _SMOOTHING_HORIZONS else (),
                 factor_cols=_factor_cols,
                 sector_map=_sector_map,
+                raw_target=cfg.global_model.ranking_raw_target,
             )
             _train_orig = _train_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
             _val_orig = _val_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
@@ -1169,10 +1209,20 @@ def train_global_ranking_wf(
                 _sw = _sample_weights.copy() if _sample_weights is not None else None
 
                 _group = None
+                _group_id = None
                 _eval_set = None
                 _eval_group = None
-                if backend_model_name == "lightgbm":
+                _eval_group_id = None
+                _use_cb_ranking = (
+                    backend_model_name == "catboost"
+                    and cfg.baseline.catboost_loss_function in CATBOOST_RANKING_LOSSES
+                )
+                if backend_model_name in ("lightgbm", "xgboost") or _use_cb_ranking:
                     _group = train_df.groupby("date", sort=False).size().to_numpy(dtype=np.int32)
+                    if backend_model_name == "xgboost" or _use_cb_ranking:
+                        # XGBoost (qid) / CatBoost ranking (group_id) → identifiant par ligne
+                        _group_id = train_df.groupby("date", sort=False).ngroup().to_numpy(dtype=np.int32)
+                if backend_model_name == "lightgbm":
                     _es_rounds = cfg.baseline.lgbm_early_stopping_rounds
                     if _es_rounds > 0 and len(train_df) > 100:
                         _es_cut = max(int(len(train_df) * 0.8), 1)
@@ -1190,13 +1240,19 @@ def train_global_ranking_wf(
                             _sw = _sw[_es_train.index.get_indexer(train_df.index)]
 
                 X_train = train_df[_active_features]
-                if backend_model_name == "lightgbm":
+                if backend_model_name in ("lightgbm", "xgboost"):
                     y_train = train_df[_label_col].to_numpy(dtype=np.int32)
                 else:
                     y_train = train_df[_target_col].to_numpy(dtype=np.float64)
 
                 _fit_kwargs: dict[str, Any] = {}
-                if _group is not None and len(_group) > 0:
+                if _use_cb_ranking:
+                    if _group_id is not None and len(_group_id) > 0:
+                        _fit_kwargs["group_id"] = _group_id
+                elif backend_model_name == "xgboost":
+                    if _group_id is not None and len(_group_id) > 0:
+                        _fit_kwargs["qid"] = _group_id
+                elif _group is not None and len(_group) > 0:
                     _fit_kwargs["group"] = _group
                 if _eval_set is not None:
                     _fit_kwargs["eval_set"] = _eval_set
@@ -1213,7 +1269,11 @@ def train_global_ranking_wf(
                             horizon, split.split_index + 1, len(wf_splits),
                             _es, len(_es_eval) if _es_eval is not None else 0,
                         )
-                if _sw is not None:
+                if _sw is not None and backend_model_name != "xgboost":
+                    # XGBoost 3.x : avec qid (groupes de ranking), QuantileDMatrix
+                    # interprète `weight` comme des poids PAR GROUPE (1 par requête)
+                    # et non par ligne → incompatible avec la décroissance temporelle
+                    # par ligne. Désactivé pour le challenger XGBoost (P3-3).
                     _fit_kwargs["sample_weight"] = _sw
                 LOGGER.info(
                     "global_ranking_wf horizon=%d split=%d/%d → fitting %s (%d rows)...",
@@ -1493,6 +1553,10 @@ def train_global_ranking_wf(
                         _saved_models[horizon] = _mp
                     elif _last_model_name == "catboost":
                         _mp = str(_model_dir / f"_global_ranking_model{h_suffix}.pkl")
+                        _last_model.save_model(_mp)
+                        _saved_models[horizon] = _mp
+                    elif _last_model_name == "xgboost":
+                        _mp = str(_model_dir / f"_global_ranking_model{h_suffix}.json")
                         _last_model.save_model(_mp)
                         _saved_models[horizon] = _mp
                 except Exception as _exc:
@@ -1915,25 +1979,36 @@ def predict_global_rank(
 
         # ── Charger le modèle pour cet horizon ──
         # Le type est déterminé par l'extension du fichier :
-        #   .txt = LightGBM, .pkl = CatBoost
+        #   .txt = LightGBM, .pkl = CatBoost, .json = XGBoost (P3-3)
         # En mode champion, chaque horizon a UN seul fichier (le champion).
         # En mode simple, idem (le backend configuré).
         _model_path_txt = artifacts_dir / f"_global_ranking_model{h_suffix}.txt"
         _model_path_pkl = artifacts_dir / f"_global_ranking_model{h_suffix}.pkl"
+        _model_path_xgb = artifacts_dir / f"_global_ranking_model{h_suffix}.json"
         if _model_path_txt.exists():
             _model_path = _model_path_txt
             _load_as_catboost = False
+            _load_as_xgboost = False
         elif _model_path_pkl.exists():
             _model_path = _model_path_pkl
             _load_as_catboost = True
+            _load_as_xgboost = False
+        elif _model_path_xgb.exists():
+            _model_path = _model_path_xgb
+            _load_as_catboost = False
+            _load_as_xgboost = True
         else:
             LOGGER.warning("predict_global_rank: model for horizon %d not found", horizon)
             result[f"global_rank{h_suffix}"] = 0.5
             continue
         try:
-            if _load_as_catboost:
-                CatBoostRegressor = _import_catboost()
-                model = CatBoostRegressor()
+            if _load_as_xgboost:
+                xgb = _import_xgboost()
+                model = xgb.XGBRanker()
+                model.load_model(str(_model_path))
+            elif _load_as_catboost:
+                from catboost import CatBoost  # type: ignore[import-not-found]
+                model = CatBoost()
                 model.load_model(str(_model_path))
             else:
                 lgb = _import_lightgbm()

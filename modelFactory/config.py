@@ -28,6 +28,7 @@ class DataConfig:
     include_factors_features: bool = False       # CAPM beta/alpha/R² (rolling 252d)
     include_macro_regime_features: bool = False # SPY_SMA_200_slope + VIX_zscore
     include_score_components: bool = True  # composants stock_scores_history (sentiment, idio, macro...)
+    include_volume_features: bool = False  # P3-5 : profil volume/liquidité (10 features opt-in)
     global_model_only: bool = False  # P0-6 : skip per-symbol et per-sector, ne faire que le global
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20
@@ -189,6 +190,7 @@ class BaselineConfig:
     catboost_bagging_temperature: float = 1.0  # Bayesian bagging
     catboost_od_type: str = "IncToDec"     # overfitting detector
     catboost_od_wait: int = 20             # patience overfitting
+    catboost_loss_function: str = "RMSE"    # "RMSE", "YetiRank", "QueryRMSE", etc.
     # ── Global Ranking feature selection (0 = toutes les features) ──
     ranking_top_k_features: int = 0        # > 0 → garder les top K features par importance
 
@@ -233,6 +235,12 @@ class BaselineConfig:
             raise ValueError("baseline.catboost_od_wait doit être >= 1.")
 
 
+# ── Ranking-only loss functions (nécessitent CatBoostRanker + group_id) ──
+CATBOOST_RANKING_LOSSES: frozenset[str] = frozenset({
+    "YetiRank", "QueryRMSE", "QuerySoftMax", "PairLogit", "PairLogitPairwise",
+})
+
+
 @dataclass(frozen=True, slots=True)
 class GlobalModelConfig:
     """Paramètres du modèle global multi-symboles (Approche 2 — Stacking).
@@ -245,9 +253,9 @@ class GlobalModelConfig:
       feature supplémentaire dans les modèles per-symbol (LSTM/LGBM/CatBoost).
     - ``challenger_enabled`` (FLAG C) : inclut le global model comme 4ème
       challenger dans la sélection champion (wf.f1_macro comparable).
-    - ``champion_enabled`` (FLAG D) : entraîne CatBoost ET LightGBM pour le
-      Global Ranking, puis sélectionne le champion au meilleur IC rank WF.
-      Si désactivé, ``model_name`` détermine le backend utilisé.
+    - ``champion_enabled`` (FLAG D) : entraîne CatBoost, LightGBM ET XGBoost
+      pour le Global Ranking, puis sélectionne le champion au meilleur IC
+      rank WF parmi les 3. Si désactivé, ``model_name`` détermine le backend.
 
     FLAG B, C et D sont sans effet si FLAG A est ``False``.
     """
@@ -255,8 +263,8 @@ class GlobalModelConfig:
     enabled: bool = False             # FLAG A : entraîne le global (Phase 1)
     stacking_enabled: bool = False    # FLAG B : global_pred comme feature (Phase 2)
     challenger_enabled: bool = False  # FLAG C : global dans champion selection (Phase 3)
-    champion_enabled: bool = False    # FLAG D : entraîne CatBoost + LightGBM et sélectionne le champion
-    model_name: str = "catboost"  # catboost | lightgbm (fallback si champion_enabled=False)
+    champion_enabled: bool = False    # FLAG D : entraîne CatBoost + LightGBM + XGBoost et sélectionne le champion
+    model_name: str = "catboost"  # catboost | lightgbm | xgboost (fallback si champion_enabled=False)
     artifact_symbol: str = "__GLOBAL__"
     use_cross_sectional_features: bool = True
     # ── Global Ranking hyperparams (indépendants du per-symbol BaselineConfig) ──
@@ -268,12 +276,21 @@ class GlobalModelConfig:
     # silencieusement le Global Ranking. Cohérents avec la doc (n_estimators=500).
     ranking_catboost_iterations: int = 500
     ranking_catboost_learning_rate: float = 0.03
+    # ── XGBoost ranking params (P3-3 challenger, 2026-08-14) ──
+    ranking_xgboost_iterations: int = 500
+    ranking_xgboost_learning_rate: float = 0.03
+    # ── P1-3 : Target = rang percentile pur (skip smoothing + neutralisation) ──
+    ranking_raw_target: bool = False   # True → skip étapes 2-4, garde rank(pct) brut
 
     def __post_init__(self) -> None:
-        if self.model_name not in {"catboost", "lightgbm"}:
-            raise ValueError("global_model.model_name doit être 'catboost' ou 'lightgbm'.")
+        if self.model_name not in {"catboost", "lightgbm", "xgboost"}:
+            raise ValueError("global_model.model_name doit être 'catboost', 'lightgbm' ou 'xgboost'.")
         if not self.artifact_symbol.strip():
             raise ValueError("global_model.artifact_symbol ne doit pas être vide.")
+        if self.ranking_xgboost_iterations < 10:
+            raise ValueError("global_model.ranking_xgboost_iterations doit être >= 10.")
+        if self.ranking_xgboost_learning_rate <= 0:
+            raise ValueError("global_model.ranking_xgboost_learning_rate doit être > 0.")
 
 
 @dataclass(frozen=True, slots=True)

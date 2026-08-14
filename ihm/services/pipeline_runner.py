@@ -22,7 +22,8 @@ from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS  # alias → core.filter_profiles (Sprint S14)
-from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML extraites
+from ihm.services.pipeline_ml_defaults import (
+    DEFAULT_ML_CATBOOST_LOSS_FUNCTION,  # Sprint S12 — constantes ML extraites
     DEFAULT_ML_ARTIFACTS_DIR,
     DEFAULT_ML_BATCH_SIZE,
     DEFAULT_ML_BENCHMARK_SYMBOL,
@@ -79,6 +80,7 @@ from ihm.services.pipeline_ml_defaults import (  # Sprint S12 — constantes ML 
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
+    DEFAULT_ML_INCLUDE_VOLUME_FEATURES,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
@@ -267,6 +269,9 @@ DEFAULT_RISK_TARGET_ANNUAL_VOL = 0.0
 DEFAULT_RISK_VOL_TARGET_LOOKBACK_DAYS = 60
 DEFAULT_RISK_MIN_ML_COVERAGE_RATIO = 0.95    # en-dessous: mieux vaut repasser quant-only / durcir la validation
 DEFAULT_RISK_LOG_LEVEL = "INFO"
+# P2-1 (2026-08-13) — allocation des poids live
+DEFAULT_RISK_SIZING_MODE = "atr"             # atr = legacy ; sinon equal_weight | conviction_weighted | rank_weighted
+DEFAULT_RISK_SECTOR_MULTIPLIERS_PATH = "config/p21_sector_multipliers.json"
 # Execution — swing cash batch
 DEFAULT_EXEC_SUBMISSION_WINDOW = "both"      # post_close + pre_open (batch quotidien)
 DEFAULT_EXEC_TAKE_PROFIT_PCT = 0.08
@@ -291,7 +296,7 @@ DEFAULT_CA_BATCH_SIZE = 25
 
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
-MLGlobalModelName = Literal["catboost", "lightgbm"]
+MLGlobalModelName = Literal["catboost", "lightgbm", "xgboost"]
 MLTargetMode = Literal["binary", "swing_cash", "ternary", "regression"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
@@ -377,6 +382,7 @@ class PipelineLaunchOptions:
     ml_include_macro_move: bool = DEFAULT_ML_INCLUDE_MACRO_MOVE
     ml_include_fundamentals: bool = DEFAULT_ML_INCLUDE_FUNDAMENTALS
     ml_include_factors: bool = DEFAULT_ML_INCLUDE_FACTORS
+    ml_include_volume_features: bool = DEFAULT_ML_INCLUDE_VOLUME_FEATURES  # P3-5
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
     ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
     ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
@@ -389,6 +395,7 @@ class PipelineLaunchOptions:
     ml_global_ranking_max_symbols: int = DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS
     ml_global_ranking_selection_mode: str = "stratified"
     ml_ranking_sector_group: str = "all"  # all | cyclical | defensive
+    ml_ranking_raw_target: bool = False  # P1-3 : target = rang percentile pur
     ml_per_symbol_max_symbols: int = DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS
     ml_per_symbol_selection_mode: str = "stratified"  # "top_volume" | "stratified"
     ml_exclude_ticket_symbols: bool = False
@@ -475,6 +482,7 @@ class PipelineLaunchOptions:
     ml_catboost_bagging_temperature: float = DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE
     ml_catboost_od_type: str = DEFAULT_ML_CATBOOST_OD_TYPE
     ml_catboost_od_wait: int = DEFAULT_ML_CATBOOST_OD_WAIT
+    ml_catboost_loss_function: str = DEFAULT_ML_CATBOOST_LOSS_FUNCTION
     # Filtrage liquidité
     ml_enable_liquidity_filter: bool = DEFAULT_ML_ENABLE_LIQUIDITY_FILTER
     ml_liquidity_min_avg_volume_20d: int = DEFAULT_ML_LIQUIDITY_MIN_AVG_VOLUME_20D
@@ -523,6 +531,9 @@ class PipelineLaunchOptions:
     risk_min_ml_coverage_ratio: float = DEFAULT_RISK_MIN_ML_COVERAGE_RATIO
     risk_enable_shadow_compare: bool = False
     risk_shadow_compare_run_id: str | None = None
+    # P2-1 (2026-08-13) — allocation des poids live
+    risk_sizing_mode: str = DEFAULT_RISK_SIZING_MODE
+    risk_sector_multipliers_path: str | None = None
     risk_dry_run: bool = False
     risk_log_level: str = DEFAULT_RISK_LOG_LEVEL
     news_import_start_date: str | None = None
@@ -2250,6 +2261,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--catboost-bagging-temperature", str(options.ml_catboost_bagging_temperature),
                 "--catboost-od-type", str(options.ml_catboost_od_type),
                 "--catboost-od-wait", str(options.ml_catboost_od_wait),
+                "--catboost-loss-function", str(options.ml_catboost_loss_function),
             ] if options.ml_catboost_tuning_enabled else []),
             "--default-champion",
             options.ml_default_champion,
@@ -2285,6 +2297,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-fundamentals")
         if options.ml_include_factors:
             command.append("--include-factors")
+        if options.ml_include_volume_features:
+            command.append("--include-volume-features")
         if options.ml_include_macro_regime:
             command.append("--include-macro-regime")
         if not options.ml_include_score_components:
@@ -2306,6 +2320,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 command.append("--global-ranking-selection-stratified")
         if getattr(options, "ml_ranking_sector_group", "all") != "all":
             command.extend(["--ranking-sector-group", str(options.ml_ranking_sector_group)])
+        if getattr(options, "ml_ranking_raw_target", False):
+            command.extend(["--ranking-raw-target"])
         if options.ml_per_symbol_max_symbols > 0:
             command.extend(["--per-symbol-max-symbols", str(options.ml_per_symbol_max_symbols)])
             if getattr(options, "ml_per_symbol_selection_mode", "top_volume") == "stratified":
@@ -2321,6 +2337,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_enable_global_model:
             command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
         if options.ml_global_champion:
+            # P3-3 : --global-champion entraîne les 3 candidats
+            # (CatBoost + LightGBM + XGBoost) côté core.
             command.append("--global-champion")
         if options.ml_enable_global_stacking:
             command.append("--enable-global-stacking")
@@ -2407,6 +2425,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--max-workers",
             str(options.ml_max_workers),
         ]
+        if _bid:
+            command.extend(["--batch-id", _bid])
         if options.ml_predict_use_historical_range:
             command.extend([
                 "--training-start-date",
@@ -2476,6 +2496,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--shadow-compare-run-id", str(options.risk_shadow_compare_run_id)])
         if options.risk_dry_run:
             command.append("--dry-run")
+        # ── P2-1 : allocation des poids live (opt-in) ──
+        _sizing_mode = str(getattr(options, "risk_sizing_mode", DEFAULT_RISK_SIZING_MODE) or "atr").strip().lower()
+        if _sizing_mode and _sizing_mode != "atr":
+            command.extend(["--sizing-mode", _sizing_mode])
+            _sector_path = str(getattr(options, "risk_sector_multipliers_path", None) or "").strip()
+            if _sector_path:
+                command.extend(["--sector-multipliers-path", _sector_path])
         if trade_date:
             command.extend(["--trade-date", trade_date])
         if account_id:

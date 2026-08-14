@@ -90,7 +90,8 @@ DEFAULT_ML_INCLUDE_MACRO_VXN = False          # VXN — macro vol NASDAQ-100
 DEFAULT_ML_INCLUDE_MACRO_VIX3M = False        # VIX3M — term structure vol
 DEFAULT_ML_INCLUDE_MACRO_MOVE = False         # MOVE — macro vol obligataire
 DEFAULT_ML_INCLUDE_FUNDAMENTALS = False     # EODHD fundamentals (PE, ROE, marges, croissance)
-DEFAULT_ML_INCLUDE_FACTORS = False          # CAPM factor exposures (beta, alpha, R² via rolling 252j)
+DEFAULT_ML_INCLUDE_FACTORS = True          # CAPM factor exposures (beta, alpha, R² via rolling 252j)
+DEFAULT_ML_INCLUDE_VOLUME_FEATURES = True  # P3-5 : profil volume/liquidité (10 features opt-in)
 DEFAULT_ML_INCLUDE_MACRO_REGIME = False      # SPY_SMA_200_slope + VIX_zscore (macro regime indicators)
 DEFAULT_ML_INCLUDE_SCORE_COMPONENTS = False  # P0-6 : composants stock_scores_history (sentiment_net_agg, company_idio_score...)
 DEFAULT_ML_GLOBAL_MODEL_ONLY = False  # P0-6 : skip per-symbol & per-sector, ne faire que le global
@@ -105,7 +106,7 @@ DEFAULT_ML_ENABLE_CATBOOST = True             # challenger CatBoost activé par 
 DEFAULT_ML_ENABLE_GLOBAL_MODEL = True        # Global Ranking Model
 DEFAULT_ML_ENABLE_GLOBAL_STACKING = False   # Stacking global_rank comme feature (défaut OFF — cascade ML)
 DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER = False  # DÉSACTIVÉ — le ranking ne participe pas au championnat
-DEFAULT_ML_GLOBAL_CHAMPION = True           # Entraîne CatBoost + LightGBM → sélection champion (IC rank WF)
+DEFAULT_ML_GLOBAL_CHAMPION = False           # Entraîne CatBoost + LightGBM → sélection champion (IC rank WF)
 DEFAULT_ML_GLOBAL_MODEL_NAME = "catboost"     # Sprint 2026-08-01 v4 : CatBoost RMSE continu (pas de discrétisation)
 DEFAULT_ML_ENABLE_CROSS_SECTIONAL = False     # features cross-sectionnelles + sectorielles
 DEFAULT_ML_SELECT_CHAMPION = True             # champion selection activée
@@ -144,6 +145,7 @@ DEFAULT_ML_CATBOOST_RANDOM_STRENGTH = 1.0
 DEFAULT_ML_CATBOOST_BAGGING_TEMPERATURE = 1.0
 DEFAULT_ML_CATBOOST_OD_TYPE = "IncToDec"
 DEFAULT_ML_CATBOOST_OD_WAIT = 20
+DEFAULT_ML_CATBOOST_LOSS_FUNCTION = "YetiRank"  # "RMSE", "YetiRank", "QueryRMSE", etc.
 # ---------------------------------------------------------------------------
 # Filtrage liquidité (Sprint 2026-07-24)
 # ---------------------------------------------------------------------------

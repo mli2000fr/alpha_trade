@@ -62,9 +62,9 @@ leverage:
   # Exemples :
   # - 1.0 = pas de levier additionnel
   # - 1.5 = exposition cible max = 150 % de l'equity
-  # - 2.0 = plafond absolu autorisé en swing overnight
+  # - 2.0 = plafond absolu autorisé en swing overnight (compte live Alpaca)
   # NB : même si une valeur > 2.0 était saisie, le code borne de toute façon à 2.0 max.
-  max_leverage: 1.5
+  max_leverage: 2.0
 
   # Equity minimale requise pour autoriser la politique de levier.
   # En dessous, le levier explicite est désactivé automatiquement.
@@ -105,8 +105,8 @@ leverage:
   # Exemples :
   # - 1.0 = simulation sans levier additionnel
   # - 1.25 / 1.5 = simulation prudente
-  # - 2.0 = plafond maximal autorisé
-  dry_run_simulated_leverage: 1.5
+  # - 2.0 = plafond maximal autorisé (aligné compte live)
+  dry_run_simulated_leverage: 2.0
 
   # Active les logs d'audit du moteur de levier.
   # Si true, les décisions de levier (actif/inactif, champ broker retenu,
@@ -299,6 +299,14 @@ risk_management:
       - regime_all_nearest_horizon
       - same_regime_nearest_segment
       - regime_all_nearest_segment
+  # ── P2-1 sizing live (2026-08-13) ──
+  # "atr" = legacy (budget de risque ATR égal par position).
+  # "rank_weighted" = facteurs d'allocation depuis selection_rank.
+  # "conviction_weighted" = facteurs d'allocation depuis conviction_score.
+  # Les multiplicateurs sectoriels s'activent via `sector_multipliers_path`
+  # (JSON {secteur: facteur}, cf. config/p21_sector_multipliers.json).
+  sizing_mode: "atr"
+  # sector_multipliers_path: "config/p21_sector_multipliers.json"
   trailing_stop:
     enabled: false
     mode: dynamic_atr            # fixed | dynamic_atr
@@ -434,13 +442,19 @@ batch_diagnostics:
   # Batch de diagnostics à utiliser pour le live (étape 11 Risk).
   # Laisser vide (ou absent) pour utiliser automatiquement le dernier batch.
   # Renseigner un batch_id explicite permet de figer les filtres (ex: batch promu).
-  live_batch_id: ""
+  live_batch_id: "model-factory-20260811223551-ef2cd0"  # B25 = CAPM + YetiRank (champion promu 2026-08-13)
 
   # Batch de diagnostics à utiliser pour le backtest.
   # Laisser vide pour utiliser automatiquement le dernier batch (⚠️ look-ahead
   # si le dernier batch est postérieur à la période backtestée).
   # Renseigner un batch_id explicite pour un backtest PIT-safe.
-  backtest_batch_id: "model-factory-20260805234750-f63478"
+  backtest_batch_id: "model-factory-20260811223551-ef2cd0"  # B25 = CAPM + YetiRank (P1-4)
+
+  # Garde-fou « breadth » : part minimale de l'univers de référence
+  # (config/ticket_recherche.txt, 400 symboles) requise pour générer les
+  # prédictions ML live. 75% × 400 = 300 symboles (borne basse du backtest
+  # validé : 311-391). En dessous → prédictions live BLOQUÉES.
+  ml_min_universe_pct: 75
 
   # ── §7.0 (analyse_ml.md) — filtres additionnels par seuils absolus de F1 ──
   # Ces règles complètent le système existant (top/bottom/weak_*).

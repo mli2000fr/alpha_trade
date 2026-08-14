@@ -75,7 +75,12 @@ class TestGlobalModelConfig:
 
     def test_validation_model_name(self) -> None:
         with pytest.raises(ValueError, match="global_model.model_name"):
-            GlobalModelConfig(model_name="xgboost")
+            GlobalModelConfig(model_name="randomforest")
+
+    def test_validation_xgboost_accepted(self) -> None:
+        """P3-3 : xgboost est un backend valide du Global Ranking."""
+        cfg = GlobalModelConfig(model_name="xgboost")
+        assert cfg.model_name == "xgboost"
 
     def test_validation_artifact_symbol_empty(self) -> None:
         with pytest.raises(ValueError, match="artifact_symbol"):

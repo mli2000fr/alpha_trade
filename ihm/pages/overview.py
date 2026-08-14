@@ -259,6 +259,13 @@ def render() -> None:
             if not quota_feature_rows.empty:
                 show_dataframe(quota_feature_rows, "Calls EODHD par feature", height=180)
 
+    # --- Swing Score — top symboles swing (upload + top N) ---
+    try:
+        from ihm.components.swing_score import render_swing_score_block
+        render_swing_score_block()
+    except Exception:  # pragma: no cover - jamais bloquant
+        pass
+
     # --- PnL positions ouvertes (Sprint S4 / A-021) ---
     _render_pnl_widget(get_daily_pnl_data())
 

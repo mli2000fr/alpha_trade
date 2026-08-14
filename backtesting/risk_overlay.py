@@ -11,38 +11,13 @@ Phase C — surcouches risk management appliquées par le simulateur :
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 import numpy as np
 import pandas as pd
 
+# ── P2-1 : SizingConfig partagé avec le live (common/sizing.py) ──
+from common.sizing import SizingConfig, SizingMode
 
-SizingMode = Literal["equal_weight", "conviction_weighted"]
-
-
-@dataclass(slots=True, frozen=True)
-class SizingConfig:
-    """Sizing config (equal_weight | conviction_weighted)."""
-
-    mode: SizingMode = "equal_weight"
-    min_weight_pct: float = 0.005
-    max_weight_pct: float = 0.20
-
-    def compute_weights(self, candidates: pd.DataFrame, max_positions: int) -> pd.Series:
-        if candidates.empty:
-            return pd.Series(dtype=float)
-        if self.mode == "equal_weight" or "conviction" not in candidates.columns:
-            base = 1.0 / max(max_positions, 1)
-            return pd.Series(base, index=candidates.index, dtype=float)
-        conv = candidates["conviction"].fillna(0.0).clip(lower=0.0)
-        total = float(conv.sum())
-        if total <= 0:
-            base = 1.0 / max(max_positions, 1)
-            return pd.Series(base, index=candidates.index, dtype=float)
-        weights = conv / total
-        weights = weights.clip(lower=self.min_weight_pct, upper=self.max_weight_pct)
-        weights = weights / max(weights.sum(), 1e-9)
-        return weights
 
 
 @dataclass(slots=True, frozen=True)
@@ -68,6 +43,57 @@ class RegimeFilterConfig:
             return distance > self.bear_threshold
         except Exception:
             return True
+
+
+@dataclass(slots=True, frozen=True)
+class BullStrictConfig:
+    """P2-3 — overlay no-trades en bull strict.
+
+    Bull strict = ``SPY > SMA(sma_window)`` **ET** rendement SPY sur
+    ``ret_window`` séances > ``ret_threshold``.
+
+    - ``mode="no_shorts"`` : bloque uniquement les nouvelles entrées short.
+    - ``mode="no_trades"`` : bloque toutes les nouvelles entrées (long+short).
+
+    Post-hoc B25 : shorts bull strict = −11.8k sur 98 trades ; couper →
+    +9.4% PnL, DD −4 pts ; couper tous trades → +10.7%, DD −10 pts.
+    """
+
+    enabled: bool = False
+    mode: Literal["no_shorts", "no_trades"] = "no_shorts"
+    sma_window: int = 200
+    ret_window: int = 60
+    ret_threshold: float = 0.03
+
+    def is_bull_strict(self, benchmark_close: pd.Series | None, as_of: pd.Timestamp) -> bool:
+        if not self.enabled or benchmark_close is None or benchmark_close.empty:
+            return False
+        try:
+            hist = benchmark_close.loc[:as_of].dropna()
+            if len(hist) < max(self.sma_window // 2, 40):
+                return False
+            sma = float(hist.tail(self.sma_window).mean())
+            spot = float(hist.iloc[-1])
+            if sma <= 0 or spot <= 0:
+                return False
+            above_sma = spot > sma
+            ret = (spot / float(hist.iloc[-(self.ret_window + 1)]) - 1.0) if len(hist) > self.ret_window else 0.0
+            return bool(above_sma and ret > self.ret_threshold)
+        except Exception:
+            return False
+
+    def is_entry_allowed(
+        self,
+        side: str,
+        benchmark_close: pd.Series | None,
+        as_of: pd.Timestamp,
+    ) -> bool:
+        if not self.is_bull_strict(benchmark_close, as_of):
+            return True
+        if self.mode == "no_trades":
+            return False
+        # no_shorts : seuls les shorts sont bloqués
+        return str(side or "").strip().lower() != "sell"
 
 
 @dataclass(slots=True, frozen=True)
@@ -296,6 +322,7 @@ class RiskOverlayConfig:
 
     sizing: SizingConfig = field(default_factory=SizingConfig)
     regime_filter: RegimeFilterConfig = field(default_factory=RegimeFilterConfig)
+    bull_strict: BullStrictConfig = field(default_factory=BullStrictConfig)
     sectoral_cap: SectoralCapConfig = field(default_factory=SectoralCapConfig)
     drawdown_breaker: DrawdownCircuitBreaker = field(default_factory=DrawdownCircuitBreaker)
     target_annual_vol: float | None = None
@@ -304,6 +331,7 @@ class RiskOverlayConfig:
         return (
             self.sizing.mode == "equal_weight"
             and not self.regime_filter.enabled
+            and not self.bull_strict.enabled
             and not self.sectoral_cap.enabled
             and not self.drawdown_breaker.enabled
             and self.target_annual_vol is None
@@ -311,6 +339,7 @@ class RiskOverlayConfig:
 
 
 __all__ = [
+    "BullStrictConfig",
     "DrawdownCircuitBreaker",
     "RegimeFilterConfig",
     "RiskOverlayConfig",
