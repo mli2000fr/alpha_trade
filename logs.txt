@@ -1,3 +1,1 @@
-P3-1 : target asymétrique (pénaliser davantage le long) ou renforcer le scoring long
-P2-2 : ablation features pour comprendre pourquoi les longs sous-performent
-pour réparer le long
+OOS 2025 + backtest avant toute promotion du sizing volume.

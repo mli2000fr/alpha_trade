@@ -377,7 +377,7 @@ def _append_global_ranking_horizon_details(
     lines.append("")
 
     # ── Infos modèle (champion ou fixe) ──
-    _model_label = "CatBoost"  # fallback
+    _model_label = str(_gr.get("backend_model_name") or "CatBoost")  # fallback
     _champion_by_h = _gr.get("champion_by_horizon")
     # Fallback: reconstruire champion_by_horizon depuis horizon_details si absent (bug orchestrator)
     if (not _champion_by_h or not isinstance(_champion_by_h, dict)) and _hd:
