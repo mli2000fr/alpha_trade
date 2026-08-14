@@ -1076,6 +1076,20 @@ def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:
     assert command[command.index("--training-end-date") + 1] == "2021-12-31"
 
 
+def test_build_pipeline_command_ml_train_include_volume_features() -> None:
+    """P3-5 : checkbox volume → --include-volume-features dans la commande."""
+    options = PipelineLaunchOptions(ml_include_volume_features=True)
+    train_cmd = build_pipeline_command("ml_train", options)
+    assert "--include-volume-features" in train_cmd
+
+
+def test_build_pipeline_command_ml_train_volume_features_off_by_default() -> None:
+    """P3-5 : off par défaut → pas de --include-volume-features."""
+    options = PipelineLaunchOptions()
+    train_cmd = build_pipeline_command("ml_train", options)
+    assert "--include-volume-features" not in train_cmd
+
+
 def test_build_pipeline_command_ml_predict_scoped_historical_uses_period_and_tradable_universe() -> None:
     command = build_pipeline_command(
         "ml_predict",

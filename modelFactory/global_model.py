@@ -137,6 +137,7 @@ def _prepare_global_symbol_frame(
         include_macro_vix3m=effective_data_cfg.include_macro_vix3m_features,
         include_macro_move=effective_data_cfg.include_macro_move_features,
         include_score_components=effective_data_cfg.include_score_components,
+        include_volume_features=effective_data_cfg.include_volume_features,
     )
     if effective_data_cfg.enable_cross_sectional_features:
         df = merge_cross_sectional_features(df, cross_sectional_df)

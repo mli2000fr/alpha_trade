@@ -32,6 +32,7 @@ def test_training_batch_registry_persists_metadata_and_only_updates_terminal_fie
         training_start_date=date(2020, 1, 1),
         training_end_date=None,
         started_at=started_at,
+        symbols="AAPL,MSFT",
     )
     db_registry.update_training_batch(
         mock_engine,
@@ -46,13 +47,14 @@ def test_training_batch_registry_persists_metadata_and_only_updates_terminal_fie
     assert "INSERT INTO model_training_batch" in str(insert_stmt)
     assert insert_params["bid"] == "model-factory-20260716101500-abc123"
     assert insert_params["command_argv_json"] == '["--mode", "train"]'
+    assert insert_params["symbols"] == "AAPL,MSFT"
 
     update_stmt, update_params = mock_conn.execute.call_args_list[1].args
     assert "UPDATE model_training_batch" in str(update_stmt)
     assert update_params["symbols_completed"] == 2
 
     with pytest.raises(ValueError, match="immutable"):
-        db_registry.update_training_batch(mock_engine, "batch", metadata_json="{}")
+        db_registry.update_training_batch(mock_engine, "batch", command_line="python -m modelFactory")
 
 
 def test_load_training_run_filters_completed_artifacts_by_batch_id() -> None:

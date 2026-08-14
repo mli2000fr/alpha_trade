@@ -257,6 +257,7 @@ def _prepare_global_ranking_frame(
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
         include_score_components=cfg.data.include_score_components,
+        include_volume_features=cfg.data.include_volume_features,
     )
     if cfg.data.enable_cross_sectional_features and cross_sectional_df is not None:
         df = merge_cross_sectional_features(df, cross_sectional_df)
@@ -287,6 +288,7 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
         include_score_components=cfg.data.include_score_components,
+        include_volume_features=cfg.data.include_volume_features,
     )
     # Supprimer les features purement macro (identiques pour tous les symboles
     # à une date donnée → ne peuvent pas classer les titres entre eux).

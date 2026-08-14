@@ -209,6 +209,7 @@ def _prepare_sector_data(
         include_macro_regime=cfg.data.include_macro_regime_features,
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_score_components=cfg.data.include_score_components,
+        include_volume_features=cfg.data.include_volume_features,
     )
 
     # Add "symbol" as a categorical feature for tabular models

@@ -155,6 +155,22 @@ def _zscore_column_name(source_col: str) -> str:
 
 ZSCORE_FEATURE_COLUMNS: list[str] = [_zscore_column_name(c) for c in ZSCORE_SOURCE_FEATURES]
 
+# ── P3-5 (2026-08-14) : profil volume / liquidité ──
+# Famille opt-in (`--include-volume-features`) — jamais testée jusqu'ici.
+# Profondeur de marché, impact de marché, confirmation prix/volume.
+VOLUME_LIQUIDITY_FEATURE_COLUMNS: list[str] = [
+    "dollar_volume_log_20",      # log(volume × close) moy 20j — profondeur de marché
+    "dollar_volume_trend_20_60", # dv20 / dv60 − 1 — tendance de liquidité
+    "amihud_illiq_20",           # |ret| / dollar_volume moy 20j — impact de marché (Amihud)
+    "volume_std_ratio_20",       # std(volume) / mean(volume) 20j — stabilité du flux
+    "up_volume_ratio_20",        # part du volume des jours haussiers 20j — pression acheteuse
+    "volume_price_corr_20",      # corr(ret, volume) 20j — confirmation des mouvements
+    "obv_slope_20",              # pente OBV normalisée 20j — accumulation/distribution
+    "dollar_volume_zscore_20",   # z-score du dollar volume 20j — pic de liquidité
+    "high_low_range_20",         # (high−low)/close moy 20j — liquidité intrinsèque
+    "volume_skew_20",            # skewness du volume 20j — journées extrêmes
+]
+
 # ── Sprint 2026-07-26 : Indicateurs de régime macro (SPY + VIX) ──
 MACRO_REGIME_FEATURE_COLUMNS: list[str] = [
     "SPY_SMA_200_slope",
@@ -314,6 +330,7 @@ def get_feature_columns(
     include_factors: bool = False,
     include_macro_regime: bool = False,
     include_score_components: bool = False,
+    include_volume_features: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnels).
 
@@ -393,6 +410,8 @@ def get_feature_columns(
         cols.extend(MACRO_REGIME_FEATURE_COLUMNS)
     if include_score_components:
         cols.extend(SCORE_COMPONENT_FEATURE_COLUMNS)
+    if include_volume_features:
+        cols.extend(VOLUME_LIQUIDITY_FEATURE_COLUMNS)
     return cols
 
 
@@ -412,6 +431,7 @@ def fingerprint(
     include_factors: bool = False,
     include_macro_regime: bool = False,
     include_score_components: bool = False,
+    include_volume_features: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -436,6 +456,7 @@ def fingerprint(
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
         include_score_components=include_score_components,
+        include_volume_features=include_volume_features,
     ))
     payload = {
         "columns": columns,
@@ -453,6 +474,7 @@ def fingerprint(
         "include_factors": bool(include_factors),
         "include_macro_regime": bool(include_macro_regime),
         "include_score_components": bool(include_score_components),
+        "include_volume_features": bool(include_volume_features),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -859,6 +881,7 @@ def compute_features(
     include_factors: bool = False,
     include_macro_regime: bool = False,
     include_score_components: bool = False,
+    include_volume_features: bool = False,
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
@@ -914,6 +937,27 @@ def compute_features(
 
     # --- is_filled as float ---
     df["is_filled"] = df["is_filled"].astype(float)
+
+    # ── P3-5 : profil volume / liquidité (opt-in) ──
+    if include_volume_features:
+        _dollar_vol = volume * close
+        _dv20 = _dollar_vol.rolling(20).mean()
+        _dv60 = _dollar_vol.rolling(60).mean()
+        df["dollar_volume_log_20"] = np.log(_dv20.clip(lower=1.0))
+        df["dollar_volume_trend_20_60"] = _dv20 / _dv60.clip(lower=1.0) - 1.0
+        df["amihud_illiq_20"] = (df["daily_return"].abs() / _dv20.clip(lower=1.0)).rolling(20).mean()
+        _v_mean20 = volume.rolling(20).mean()
+        _v_std20 = volume.rolling(20).std()
+        df["volume_std_ratio_20"] = _v_std20 / _v_mean20.clip(lower=1.0)
+        _up_mask = (df["daily_return"] > 0).astype(float)
+        df["up_volume_ratio_20"] = (volume * _up_mask).rolling(20).sum() / volume.rolling(20).sum().clip(lower=1.0)
+        df["volume_price_corr_20"] = df["daily_return"].rolling(20).corr(volume)
+        _obv = (np.sign(df["daily_return"]) * volume).cumsum()
+        _obv_ma20 = _obv.rolling(20).mean()
+        df["obv_slope_20"] = (_obv - _obv_ma20) / _obv_ma20.abs().clip(lower=1.0)
+        df["dollar_volume_zscore_20"] = (_dollar_vol - _dv20) / _dollar_vol.rolling(20).std().clip(lower=1e-8)
+        df["high_low_range_20"] = ((high - low) / close.clip(lower=1e-8)).rolling(20).mean()
+        df["volume_skew_20"] = volume.rolling(20).skew()
 
     # --- Expert feature set: trend / relative strength / regime ---
     _has_benchmark = benchmark_df is not None and not benchmark_df.empty

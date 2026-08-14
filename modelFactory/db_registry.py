@@ -360,6 +360,7 @@ def insert_training_batch(
     started_at: datetime,
     comment: str | None = None,
     stacking_enabled: bool = False,
+    symbols: str | None = None,
 ) -> None:
     """Persist one immutable metadata record for a training campaign."""
     with engine.begin() as conn:
@@ -367,9 +368,9 @@ def insert_training_batch(
             text(
                 "INSERT INTO model_training_batch "
                 "(batch_id, status, command_line, command_argv_json, metadata_json, symbol_source, "
-                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at, comment, stacking_enabled) "
+                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at, comment, stacking_enabled, symbols) "
                 "VALUES (:bid, 'running', :command_line, :command_argv_json, :metadata_json, :symbol_source, "
-                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at, :comment, :stacking_enabled)"
+                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at, :comment, :stacking_enabled, :symbols)"
             ),
             {
                 "bid": batch_id,
@@ -384,6 +385,7 @@ def insert_training_batch(
                 "started_at": started_at,
                 "comment": comment,
                 "stacking_enabled": 1 if stacking_enabled else 0,
+                "symbols": symbols,
             },
         )
 

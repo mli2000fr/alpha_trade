@@ -126,6 +126,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_MOVE,
     DEFAULT_ML_INCLUDE_FUNDAMENTALS,
     DEFAULT_ML_INCLUDE_FACTORS,
+    DEFAULT_ML_INCLUDE_VOLUME_FEATURES,
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
@@ -3318,6 +3319,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_include_factors",
                 help="Ajoute `--include-factors`. Calcule beta, alpha annualisé, R² et momentum 252j vs marché par rolling regression sur SPY.",
             )
+            ml_include_volume_features = st.checkbox(
+                "📊 Profil volume / liquidité (P3-5 — 10 features)",
+                value=_session_state_bool("pipeline_ml_include_volume_features", DEFAULT_ML_INCLUDE_VOLUME_FEATURES),
+                key="pipeline_ml_include_volume_features",
+                help="Ajoute `--include-volume-features`. Dollar volume, Amihud illiquidité, corrélation prix/volume, OBV, skew… 10 features de profil volume/liquidité (expérience P3-5, off par défaut).",
+            )
             ml_include_macro_regime = st.checkbox(
                 "🌍 Régime macro (SPY_SMA_200_slope + VIX_zscore)",
                 value=_session_state_bool("pipeline_ml_include_macro_regime", DEFAULT_ML_INCLUDE_MACRO_REGIME),
@@ -4687,6 +4694,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_move=bool(ml_include_macro_move),
             ml_include_fundamentals=bool(ml_include_fundamentals),
             ml_include_factors=bool(ml_include_factors),
+            ml_include_volume_features=bool(ml_include_volume_features),
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_include_score_components=bool(ml_include_score_components),
             ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),

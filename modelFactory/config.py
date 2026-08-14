@@ -28,6 +28,7 @@ class DataConfig:
     include_factors_features: bool = False       # CAPM beta/alpha/R² (rolling 252d)
     include_macro_regime_features: bool = False # SPY_SMA_200_slope + VIX_zscore
     include_score_components: bool = True  # composants stock_scores_history (sentiment, idio, macro...)
+    include_volume_features: bool = False  # P3-5 : profil volume/liquidité (10 features opt-in)
     global_model_only: bool = False  # P0-6 : skip per-symbol et per-sector, ne faire que le global
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20
