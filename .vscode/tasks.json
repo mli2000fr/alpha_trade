@@ -1258,6 +1258,62 @@
 			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_cascade_config.py'",
 			"isBackground": false,
 			"problemMatcher": []
+		},
+		{
+			"label": "Tests ciblés final pass",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 -m pytest tests\\test_cascade_ml.py tests\\test_execution_replay_parity.py tests\\test_risk_ml_first_contract.py tests\\test_risk_research_only_gate.py -q --no-header",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Tests ciblés v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 -m pytest tests\\test_cascade_ml.py tests\\test_execution_replay_parity.py tests\\test_risk_ml_first_contract.py tests\\test_risk_research_only_gate.py -q --no-header -o addopts=''",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Import smoke modifs",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 -c \"import backtesting.cli._impl, backtesting.risk_bridge, backtesting.execution_bridge, backtesting.execution_replay, backtesting.execution_lifecycle_replay, backtesting.protection_watcher_replay, backtesting.exit_lifecycle_replay, backtesting.simulator, backtesting.report, risk_management.cli, modelFactory.predictor; print('IMPORTS OK')\"",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Import smoke v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\smoke_imports.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Import smoke v3",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\smoke_imports.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Nettoyage scripts et logs",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; $scripts = @('check_b25_proba_cols.py','check_b25_rank_coverage.py','check_synth_backfill.py','check_mysql_processlist.py','check_bars_table.py','check_kelly_cfg.py','check_phase3_sides.py','check_prodparity_2026.py','check_prod_exits.py','check_cascade_config.py','analyze_prodparity_overlap.py','smoke_imports.py'); foreach ($s in $scripts) { Remove-Item (Join-Path 'scripts' $s) -Force -ErrorAction SilentlyContinue }; Remove-Item 'logs\\ab_*_console.log','logs\\analyze_*_console.log','logs\\asym_*_console.log','logs\\cb_*_console.log','logs\\regime_*_console.log','logs\\buckets_*_console.log','logs\\breadth_*_console.log','logs\\xrev_*_console.log' -Force -ErrorAction SilentlyContinue; Write-Output 'Nettoyage termine'; Get-ChildItem 'scripts' -Filter 'check_*' | Select-Object Name | Out-String -Width 120; (Get-ChildItem 'logs' -Filter '*_console.log').Count",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Inventaire fichiers créés",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Write-Output '===== SCRIPTS (analyses 14-15/08) ====='; Get-ChildItem 'scripts' -File | Where-Object { $_.LastWriteTime -ge (Get-Date '2026-08-14') } | Select-Object Name, LastWriteTime | Sort-Object LastWriteTime | Format-Table -AutoSize | Out-String -Width 160; Write-Output '===== LOGS ====='; Get-ChildItem 'logs' -File | Select-Object Name, LastWriteTime | Sort-Object LastWriteTime | Format-Table -AutoSize | Out-String -Width 160",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Nettoyage complet scripts+logs",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; $del = @('analyze_long_short_p24.py','analyze_ic_by_regime_b25.py','analyze_p24_exits.py','analyze_pnl_by_regime_b25.py','analyze_rolling_ic_b25.py','analyze_p24_decile_side_ic.py','launch_b44_train.cmd','gen_global_ranks_b41.py','launch_gen_ranks_b41.cmd','launch_analyze_b41.cmd','analyze_factor_exposure.py','analyze_rank_horizons.py','launch_factor_exposure.cmd','gen_global_ranks_b44.py','launch_mom_beta_2x2.cmd','launch_mom_beta_2x2_b25.cmd','analyze_mom_beta_2x2.py','launch_analyze_b44.cmd','check_2026_range.py','launch_factor_exposure_b44.cmd','launch_gen_ranks_b44.cmd','gen_global_ranks_b44_2026.py','launch_gen_ranks_b44_2026.cmd','launch_analyze_b44_q1.cmd','check_gen_progress.py','launch_gen_b25_hist.cmd','launch_analyze_b44_2026.cmd','launch_regime_rank_beta_b25.cmd','launch_analyze_b44_2026_subs.cmd','check_b25_hist_progress.py','launch_regime_rank_beta_b44.cmd','check_rank_coverage.py','gen_global_ranks_b25_hist.py','analyze_regime_rank_beta.py','check_b25_2022_gaps.py','analyze_breadth_beta.py','launch_check_hist.cmd','analyze_top_bottom_asym.py','analyze_xsec_reversal.py','analyze_circuit_breaker.py','launch_top_bottom_asym.cmd','launch_breadth_beta.cmd','launch_circuit_breaker.cmd','launch_xsec_reversal.cmd','check_predictions_range.py','launch_short_mom_buckets.cmd','analyze_short_mom_buckets.py'); foreach ($s in $del) { Remove-Item (Join-Path 'scripts' $s) -Force -ErrorAction SilentlyContinue }; Get-ChildItem 'logs' -File -Filter '*.txt' | Where-Object { $_.Name -notin @('analyse_oos.txt','analyse_oos gpt.txt','analyse_oos - gpt.txt') } | Remove-Item -Force; Write-Output '=== scripts restants (crees 14-15/08) ==='; (Get-ChildItem 'scripts' -File | Where-Object { $_.LastWriteTime -ge (Get-Date '2026-08-14') } | Select-Object -ExpandProperty Name) -join ', '; Write-Output '=== logs restants ==='; (Get-ChildItem 'logs' -File | Select-Object -ExpandProperty Name) -join ', '",
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }
