@@ -1214,6 +1214,21 @@ def _build_parser() -> argparse.ArgumentParser:
              "no_shorts = bloque les shorts ; no_trades = bloque tout.",
     )
     run_p.add_argument(
+        "--short-momentum-filter",
+        choices=["none", "loose", "strict", "confirm", "inverted"],
+        default="none",
+        help="Test GPT section 19 : filtre momentum côté SHORT uniquement dans la cascade. "
+             "loose=mom20<+2%% ; strict=mom20<0 ; confirm=mom20<0 ET mom60<0 ; "
+             "inverted=mom20>+2%% (placebo).",
+    )
+    run_p.add_argument(
+        "--short-momentum-max-pct",
+        type=float,
+        default=None,
+        help="Seuil custom mom20 < X%% pour le filtre short (prioritaire sur --short-momentum-filter ; "
+             "stress test des seuils GPT section 21 : 0.01 / 0.03 / 0.05).",
+    )
+    run_p.add_argument(
         "--bull-strict-sma-window",
         type=int,
         default=200,
@@ -1642,6 +1657,8 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--min-ml-coverage-ratio": "min_ml_coverage_ratio",
         "--max-sector-exposure-pct": "max_sector_exposure_pct",
         "--max-entry-gap-pct": "max_entry_gap_pct",
+        "--short-momentum-filter": "short_momentum_filter",
+        "--short-momentum-max-pct": "short_momentum_max_pct",
     }
     for token in argv:
         key = token.split("=", 1)[0]
@@ -2179,6 +2196,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
         phase2_risk_config = load_risk_config(
             equity=float(args.equity),
+            preset_key=str(getattr(effective_preset, "key", "") or "") or None,
             cli_overrides={
                 "account_equity": float(args.equity),
                 "max_positions": int(args.max_positions),
@@ -2672,8 +2690,22 @@ def _run_backtest(args: argparse.Namespace) -> None:
         else:
             from modelFactory.predictor import apply_cascade_to_predictions
             _cas_before = len(preds_df)
+            # GO production 2026-08-15 : défaut depuis config.yaml (cascade.short_momentum_filter),
+            # override possible par le flag CLI explicite.
+            _sm_filter_flag = str(getattr(args, "short_momentum_filter", "none") or "none").strip().lower()
+            if "short_momentum_filter" not in explicit_flags:
+                _sm_cfg_val = _cas_cfg.get("short_momentum_filter")
+                if _sm_cfg_val is not None:
+                    _sm_filter_flag = str(_sm_cfg_val).strip().lower()
+            _sm_max_flag = getattr(args, "short_momentum_max_pct", None)
+            if _sm_max_flag is None and "short_momentum_max_pct" not in explicit_flags:
+                _sm_cfg_max = _cas_cfg.get("short_momentum_max_pct")
+                if _sm_cfg_max is not None:
+                    _sm_max_flag = float(_sm_cfg_max)
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
+                short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
+                short_momentum_max_pct=_sm_max_flag,
             )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed
@@ -2897,6 +2929,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         phase5_watcher_replay_result = build_phase5_watcher_replay(
                             phase4_protection_replay_result,
                             high_df=execution_pivoted["high"],
+                            low_df=execution_pivoted["low"],
                         )
                         signals_df = phase5_watcher_replay_result.signals_df
                         if phase7_mode == "exit_lifecycle_replay":

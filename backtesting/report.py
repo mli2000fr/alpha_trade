@@ -166,6 +166,14 @@ def _build_pipeline_trade_export_frame(
     )
     pipeline_export = pd.DataFrame(index=pipeline.index)
     pipeline_export["symbol"] = pipeline.get("symbol", pd.Series(index=pipeline.index, dtype="object"))
+    pipeline_export["side"] = (
+        _coalesce_columns(pipeline, ("side",))
+        .fillna("buy")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    short_mask = pipeline_export["side"].eq("sell")
     pipeline_export["trade_date"] = _coalesce_columns(pipeline, ("trade_date", "signal_date"))
     pipeline_export["signal_date"] = _coalesce_columns(pipeline, ("signal_date", "trade_date"))
     pipeline_export["execution_date"] = _coalesce_columns(pipeline, ("execution_date",))
@@ -232,6 +240,14 @@ def _build_pipeline_trade_export_frame(
     pipeline_export["entry_cost"] = np.where(closed_mask, quantity_numeric * entry_price_numeric, np.nan)
     pipeline_export["proceeds"] = np.where(closed_mask, quantity_numeric * exit_price_numeric, np.nan)
     pipeline_export["pnl"] = pipeline_export["proceeds"] - pipeline_export["entry_cost"]
+    # Shorts : le gain = entry (vente) - exit (rachat) → signe inversé.
+    pipeline_export["pnl"] = np.where(short_mask, -pipeline_export["pnl"], pipeline_export["pnl"])
+    pipeline_export["estimated_pnl_price_only"] = np.where(
+        short_mask, -pipeline_export["estimated_pnl_price_only"], pipeline_export["estimated_pnl_price_only"]
+    )
+    pipeline_export["estimated_return_pct_price_only"] = np.where(
+        short_mask, -pipeline_export["estimated_return_pct_price_only"], pipeline_export["estimated_return_pct_price_only"]
+    )
     pipeline_export["return_pct"] = np.where(
         pipeline_export["entry_cost"] > 0,
         (pipeline_export["pnl"] / pipeline_export["entry_cost"]) * 100.0,

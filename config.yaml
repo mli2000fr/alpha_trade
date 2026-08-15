@@ -506,6 +506,15 @@ cascade:
   min_prob_classification: 0.55
   min_prob_regression: 0.10
 
+  # Filtre momentum côté SHORT uniquement (GO production 2026-08-15, dossier
+  # logs/analyse_oos.txt sections 19-25 — arbitrage GPT).
+  # Le bottom-rank (faiblesse RELATIVE) n'est converti en short que si la
+  # faiblesse ABSOLUE est confirmée : mom20 < short_momentum_max_pct.
+  # Valeurs : none | loose | strict | confirm | inverted (inverted = placebo).
+  # short_momentum_max_pct prioritaire sur le seuil par défaut du mode.
+  short_momentum_filter: loose
+  short_momentum_max_pct: 2.0
+
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
 conviction:

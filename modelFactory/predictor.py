@@ -2504,6 +2504,57 @@ def _load_best_horizon_for_batch(batch_id: str, *, engine: Any | None = None) ->
     return None
 
 
+def _load_momentum_for_symbols(
+    trade_date: str,
+    symbols: list[str],
+    *,
+    engine: Any | None = None,
+) -> dict[str, tuple[float | None, float | None]]:
+    """Charge (mom20, mom60) — retours sur 20/60 jours de trading — pour les symboles.
+
+    Utilisé par le filtre momentum short-side (test GPT section 19) : la faiblesse
+    relative (bottom rank) doit être confirmée par une faiblesse ABSOLUE (mom < seuil).
+    """
+    if not symbols:
+        return {}
+    if engine is None:
+        try:
+            from ihm.services.db import get_engine as _get_engine
+            engine = _get_engine()
+        except Exception:
+            return {}
+    if engine is None:
+        return {}
+
+    from sqlalchemy import text as _text
+
+    _placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))
+    _params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
+    _params["d"] = trade_date
+    _query = f"""
+        SELECT symbol, close, c20, c60 FROM (
+            SELECT symbol, close,
+                   LAG(close, 20) OVER (PARTITION BY symbol ORDER BY date) AS c20,
+                   LAG(close, 60) OVER (PARTITION BY symbol ORDER BY date) AS c60,
+                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+            FROM stock_bars_daily
+            WHERE symbol IN ({_placeholders}) AND date <= :d
+        ) t
+        WHERE t.rn = 1
+    """
+    out: dict[str, tuple[float | None, float | None]] = {}
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(_text(_query), _params).fetchall()
+        for _sym, _close, _c20, _c60 in rows:
+            _m20 = (float(_close) / float(_c20) - 1.0) if _close is not None and _c20 else None
+            _m60 = (float(_close) / float(_c60) - 1.0) if _close is not None and _c60 else None
+            out[str(_sym)] = (_m20, _m60)
+    except Exception:
+        LOGGER.exception("_load_momentum_for_symbols: query failed for %s", trade_date)
+    return out
+
+
 def cascade_select(
     trade_date: str,
     batch_id: str,
@@ -2512,6 +2563,8 @@ def cascade_select(
     top_pct: float | None = None,
     min_prob: float | None = None,
     engine: Any | None = None,
+    short_momentum_filter: str | None = None,
+    short_momentum_max_pct: float | None = None,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
@@ -2528,6 +2581,13 @@ def cascade_select(
         top_pct: Seuil top/bottom (défaut: config.yaml → cascade.top_pct).
         min_prob: Proba minimale per-symbol (défaut: config.yaml → cascade.min_prob).
         engine: SQLAlchemy engine.
+        short_momentum_filter: None | "loose" | "strict" | "confirm" | "inverted" — filtre momentum
+            côté SHORT uniquement (faiblesse relative + faiblesse absolue).
+            loose = mom20 < +2 % ; strict = mom20 < 0 ; confirm = mom20 < 0 ET mom60 < 0 ;
+            inverted = mom20 > +2 % (PLACEBO — filtre volontairement inversé).
+            Les symboles sans barres de momentum sont REJETÉS quand le filtre est actif.
+        short_momentum_max_pct: seuil custom mom20 < X % (prioritaire sur le mode ;
+            stress test des seuils GPT section 21 : +1/+3/+5 %).
 
     Returns:
         Liste de tuples ``(side, symbol, score)`` triée par score décroissant.
@@ -2559,6 +2619,18 @@ def cascade_select(
         LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
         return []
 
+    # ── Filtre momentum short-side (GPT section 19) : chargé une fois par date ──
+    _mom_map: dict[str, tuple[float | None, float | None]] = {}
+    if short_momentum_filter or short_momentum_max_pct is not None:
+        _bottom_syms = [
+            str(s) for s in ranks_df.loc[ranks_df[_rank_col] < _top_pct, "symbol"]
+        ]
+        _mom_map = _load_momentum_for_symbols(trade_date, _bottom_syms, engine=engine)
+        LOGGER.info(
+            "cascade_select: short momentum filter=%s max_pct=%s — %d bottom symbols, %d avec momentum",
+            short_momentum_filter, short_momentum_max_pct, len(_bottom_syms), len(_mom_map),
+        )
+
     candidates: list[tuple[str, str, float]] = []
 
     for _, row in ranks_df.iterrows():
@@ -2586,6 +2658,22 @@ def cascade_select(
             candidates.append(("LONG", symbol, score))
 
         elif is_bottom and pred.short_prob > _min_prob:
+            if short_momentum_filter or short_momentum_max_pct is not None:
+                _m20, _m60 = _mom_map.get(symbol, (None, None))
+                if short_momentum_filter == "inverted":
+                    if not (_m20 is not None and _m20 > 0.02):
+                        continue
+                elif short_momentum_max_pct is not None:
+                    if not (_m20 is not None and _m20 < short_momentum_max_pct):
+                        continue
+                elif short_momentum_filter == "strict" and not (_m20 is not None and _m20 < 0.0):
+                    continue
+                elif short_momentum_filter == "loose" and not (_m20 is not None and _m20 < 0.02):
+                    continue
+                elif short_momentum_filter == "confirm" and not (
+                    _m20 is not None and _m60 is not None and _m20 < 0.0 and _m60 < 0.0
+                ):
+                    continue
             rank_dir = 1.0 - rank  # inverse : 0.05 → 0.95
             score = rank_dir * pred.short_prob
             candidates.append(("SHORT", symbol, score))
@@ -2607,6 +2695,8 @@ def apply_cascade_to_predictions(
     top_pct: float | None = None,
     min_prob: float | None = None,
     engine: Any | None = None,
+    short_momentum_filter: str | None = None,
+    short_momentum_max_pct: float | None = None,
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -2707,6 +2797,8 @@ def apply_cascade_to_predictions(
             _date_str, batch_id, _pred_dict,
             top_pct=_top_pct, min_prob=_min_prob,
             engine=engine,
+            short_momentum_filter=short_momentum_filter,
+            short_momentum_max_pct=short_momentum_max_pct,
         )
 
         # Symbols retenus par la cascade

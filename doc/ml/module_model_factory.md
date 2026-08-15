@@ -63,7 +63,7 @@ Entraînement :
   Diagnostics batch → top/bottom N, weak, S7
 
 Inférence (Live/Backtest) :
-  global_rank × proba_long → cascade_select → trades filtrés
+  global_rank × proba_long → cascade_select → filtre momentum short-side (mom20 < +2 %) → trades filtrés (voir analyse_oos.txt)
 ```
 
 ---
@@ -758,9 +758,46 @@ Pour chaque symbole avec global_rank ET per-symbol prediction :
    → fallback H20 → H15 → H10 → H5 → H3 si indisponible
 2. Si global_rank_best > 0.80 (top 20%) ET proba_long > seuil → candidat LONG
 3. Si global_rank_best < 0.20 (bottom 20%) ET proba_short > seuil → candidat SHORT
+   → si le filtre momentum short-side est actif : candidat SHORT seulement si mom20 < seuil (§8.2bis)
 4. Score = rank × proba_long (ou (1-rank) × proba_short)
 5. Trié par score décroissant
 ```
+
+### 8.2bis Filtre momentum short-side — « ne shorte pas la force relative » (NEW — GO production 2026-08-15)
+
+**Objectif** : le bottom-rank global est une faiblesse **RELATIVE** (classement cross-sectionnel). Sa conversion en SHORT n'est autorisée que si la faiblesse **ABSOLUE** est confirmée : `mom20 < seuil`. La jambe LONG n'est **pas** filtrée (le reversal est l'alpha du long en reprise).
+
+**Règle** :
+```
+SHORT autorisé ⟺ bottom-rank ET proba_short > seuil ET mom20 < short_momentum_max_pct
+```
+- `mom20` / `mom60` = retours sur 20/60 jours de trading, calculés depuis `stock_bars_daily` (`LAG(close, 20/60)` as-of trade_date, zéro look-ahead) — helper `modelFactory/predictor.py::_load_momentum_for_symbols`.
+- Un symbole sans barres de momentum est **rejeté** quand le filtre est actif.
+
+**Modes** (`cascade.short_momentum_filter`) :
+
+| Mode | Condition short | Usage |
+|------|----------------|-------|
+| `none` | aucun filtre | override explicite (reproduire les runs historiques) |
+| **`loose`** ✅ défaut | `mom20 < +2 %` | production (arbitrage GPT sections 19-26 du dossier OOS) |
+| `strict` | `mom20 < 0` | variante plus dure |
+| `confirm` | `mom20 < 0 ET mom60 < 0` | protection maximale (quasi inactif hors crises) |
+| `inverted` | `mom20 > +2 %` | placebo (validation de direction) |
+
+`cascade.short_momentum_max_pct` (défaut 2.0) est prioritaire sur le seuil du mode.
+
+**Validation (dossier `logs/analyse_oos.txt` §19-26, arbitrage GPT 🟢)** :
+- Naked 2026 : −53.02 % → −13.41 % (loose) ; placebo inverted −43.91 % → la direction compte.
+- Historique naked : 2020Q1 −5.8 pts (DD 13.9→7.5), 2022 −6.0 pts (mais short P&L AMÉLIORÉ), 2025 **+3.4 pts**.
+- **Production parity** : 2026 −1.22 % → **+5.13 %** (+6.35 pts, win 41→75 %, DD 7.4→1.4) ; 2022 −17.67 % → −16.18 % (+1.49 pts, DD 21.1→17.1, short P&L −12.9k→−6.2k) → **additif par-dessus la pile de risque** (scénario C).
+- Conclusion : règle de **qualité de sélection** (complémentaire à la risk stack qui gère exposition/sizing/protection), pas un airbag.
+
+**Où le filtre s'applique** :
+- Backtest research ET pipeline (cascade Étape 7, `backtesting/cli/_impl.py`) — défaut depuis `config.yaml`.
+- **Live** : `risk_management/cli.py` post-`_ml_rank` (parité live/backtest).
+- Override CLI : `--short-momentum-filter {none,loose,strict,confirm,inverted}` / `--short-momentum-max-pct X` (prioritaires s'ils sont explicites).
+
+⚠️ **Reproductibilité** : tout run sans flag explicite est désormais filtré `loose`. Les baselines historiques (ex. naked 2026 −53 %) se reproduisent avec `--short-momentum-filter none`.
 
 ### 8.3 Conversion proba/score → décision
 
@@ -910,6 +947,16 @@ batch_diagnostics:
     flat_min_threshold: 0.10
     exclude_long_max_threshold: 0.30
     exclude_short_max_threshold: 0.30
+
+# Cascade ML — filtre Global Ranking → Per-Symbol (backtest ET live)
+cascade:
+  enabled: true
+  top_pct: 0.10
+  min_prob_classification: 0.55
+  min_prob_regression: 0.10
+  # GO production 2026-08-15 (§8.2bis) : éligibilité SHORT = faiblesse absolue minimale
+  short_momentum_filter: loose      # none | loose | strict | confirm | inverted
+  short_momentum_max_pct: 2.0       # seuil mom20 prioritaire sur le mode
 ```
 
 ---

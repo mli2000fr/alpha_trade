@@ -75,6 +75,8 @@ def build_phase7_exit_lifecycle_replay(
         fill_price = float(fill_price_raw)
         if fill_price <= 0:
             continue
+        side = str(row.get("side") or "buy").strip().lower()
+        short = side == "sell"
         take_profit_price = row.get("replay_take_profit_price")
         initial_stop_price = row.get("replay_initial_stop_price")
         trailing_stop_pct = row.get("replay_trailing_stop_pct")
@@ -94,9 +96,12 @@ def build_phase7_exit_lifecycle_replay(
         take_profit_price = float(take_profit_price)
         initial_stop_price = None if initial_stop_price is None or pd.isna(initial_stop_price) else float(initial_stop_price)
         trailing_stop_pct = None if trailing_stop_pct is None or pd.isna(trailing_stop_pct) else float(trailing_stop_pct)
-        # Garde-fou long-only : un stop initial doit être sous le prix d'entrée.
-        if initial_stop_price is not None and initial_stop_price >= fill_price:
-            initial_stop_price = None
+        # Garde-fou directionnel : long → stop initial sous l'entrée ; short → au-dessus.
+        if initial_stop_price is not None:
+            if short and initial_stop_price <= fill_price:
+                initial_stop_price = None
+            elif not short and initial_stop_price >= fill_price:
+                initial_stop_price = None
 
         entry_idx = trading_days.searchsorted(execution_date.to_datetime64(), side="left")
         if swing_only:
@@ -105,6 +110,7 @@ def build_phase7_exit_lifecycle_replay(
             continue
 
         peak_high = fill_price
+        peak_low = fill_price
         exit_row: dict[str, object] | None = None
         for idx in range(entry_idx, len(trading_days)):
             trade_day = pd.Timestamp(trading_days[idx])
@@ -116,14 +122,27 @@ def build_phase7_exit_lifecycle_replay(
             if not pd.notna(day_high) or not pd.notna(day_low):
                 continue
 
-            previous_peak_high = peak_high
-            peak_high = max(peak_high, day_high)
             trailing_active = (
                 trailing_stop_pct is not None
                 and effective_ts is not None
                 and trade_day.normalize() >= effective_ts.normalize()
             )
-            trailing_stop_price = previous_peak_high * (1.0 - trailing_stop_pct) if trailing_active and trailing_stop_pct is not None else float("-inf")
+            if short:
+                previous_peak_low = peak_low
+                peak_low = min(peak_low, day_low)
+                trailing_stop_price = (
+                    previous_peak_low * (1.0 + trailing_stop_pct)
+                    if trailing_active and trailing_stop_pct is not None
+                    else float("inf")
+                )
+            else:
+                previous_peak_high = peak_high
+                peak_high = max(peak_high, day_high)
+                trailing_stop_price = (
+                    previous_peak_high * (1.0 - trailing_stop_pct)
+                    if trailing_active and trailing_stop_pct is not None
+                    else float("-inf")
+                )
             active_initial_stop = None if trailing_active else initial_stop_price
             resolution = resolve_intrabar_exit(
                 day_high=day_high,
@@ -132,6 +151,7 @@ def build_phase7_exit_lifecycle_replay(
                 trailing_stop_price=trailing_stop_price,
                 initial_stop_price=active_initial_stop,
                 priority=intrabar_priority,
+                side=side,
                 rng=None,
             )
             if not resolution.triggered:

@@ -915,6 +915,11 @@ class BacktestEngine:
             # Phase E.4 — single mark-to-market précoce pour Phase C.5.
             current_market_value = self._mark_to_market(state.positions, mtm_close, trade_day)
             current_equity = state.settled_cash + state.unsettled_cash + current_market_value
+            if not np.isfinite(current_equity):
+                LOGGER.warning(
+                    "NaN_EQUITY date=%s settled=%r unsettled=%r mtm=%r",
+                    trade_day.date(), state.settled_cash, state.unsettled_cash, current_market_value,
+                )
             state.peak_equity = max(state.peak_equity, current_equity)
             entries_allowed_by_breaker = cfg.risk_overlay.drawdown_breaker.update(
                 current_equity, state.peak_equity
@@ -1578,6 +1583,12 @@ class BacktestEngine:
                 current_equity=current_equity,
                 current_gross_notional=current_gross_notional,
             )
+            if not np.isfinite(available_entry_budget):
+                LOGGER.warning(
+                    "NaN_BUDGET date=%s symbol=%s settled=%r equity=%r gross=%r",
+                    trade_day.date(), symbol, state.settled_cash, current_equity, current_gross_notional,
+                )
+                available_entry_budget = 0.0
             candidate_budget = min(per_position_cap, available_entry_budget / remaining_candidates)
             settled_cash_before_entry = state.settled_cash
             gross_exposure_before_pct = (
@@ -1936,11 +1947,18 @@ class BacktestEngine:
                     if position.replay_trailing_active and position.replay_trailing_stop_pct is not None
                     else None
                 )
-                trailing_stop_price = (
-                    previous_peak_high * (1.0 - trailing_stop_pct)
-                    if trailing_stop_pct is not None
-                    else float("-inf")
-                )
+                if short:
+                    trailing_stop_price = (
+                        previous_trough_low * (1.0 + trailing_stop_pct)
+                        if trailing_stop_pct is not None
+                        else float("inf")
+                    )
+                else:
+                    trailing_stop_price = (
+                        previous_peak_high * (1.0 - trailing_stop_pct)
+                        if trailing_stop_pct is not None
+                        else float("-inf")
+                    )
                 active_initial_stop = (
                     None
                     if position.replay_trailing_active
@@ -2061,6 +2079,13 @@ class BacktestEngine:
             else:
                 exit_price = float(explicit_resolution["exit_price"])
                 exit_reason = str(explicit_resolution["exit_reason"])
+
+            if not np.isfinite(exit_price):
+                LOGGER.warning(
+                    "NaN_EXIT date=%s symbol=%s side=%s reason=%s explicit=%s trailing=%r ts_price=%r",
+                    trade_day.date(), symbol, side, exit_reason, explicit_resolution is not None,
+                    trailing_stop_pct, trailing_stop_price,
+                )
 
             if is_same_day and constraints.restrict_same_day_exit:
                 diagnostics.blocked_same_day_exits += 1

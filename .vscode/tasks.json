@@ -796,6 +796,468 @@
 			"command": ".venv\\Scripts\\python.exe -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --training-mode per_sector --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2016-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2025-12-31 --include-short-score --include-factors --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --include-volume-features --comment B41-B25-volume-features-P3-5 *> log\\b41_p35_volume_b25.log",
 			"isBackground": true,
 			"problemMatcher": []
+		},
+		{
+			"label": "AB production-parity (2026+2022 × baseline/loose)",
+			"type": "shell",
+			"command": "cmd /c F:\\projets\\scripts\\launch_ab_prodparity.cmd",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Restart production-parity propre",
+			"type": "shell",
+			"command": "powershell -ExecutionPolicy Bypass -File F:\\projets\\scripts\\restart_prodparity.ps1",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check kelly config",
+			"type": "shell",
+			"command": "cd /d F:\\projets && .venv\\Scripts\\python.exe -X utf8 scripts\\check_kelly_cfg.py",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check kelly config",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; .\\.venv\\Scripts\\python.exe -X utf8 scripts\\check_kelly_cfg.py",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check kelly v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_kelly_cfg.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check kelly v3",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_kelly_cfg.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check kelly v4",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_kelly_cfg.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Restart prodparity v2",
+			"type": "shell",
+			"command": "powershell -ExecutionPolicy Bypass -File F:\\projets\\scripts\\restart_prodparity.ps1",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check run progress",
+			"type": "shell",
+			"command": "Get-Process python -ErrorAction SilentlyContinue | Select-Object Id, CPU, StartTime | Format-Table -AutoSize | Out-String -Width 200; Get-ChildItem F:\\projets\\logs\\ab_prodparity_2026_baseline_console.log | Select-Object Length, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "MySQL processlist",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_mysql_processlist.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "MySQL+CPU check 2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_mysql_processlist.py'; Get-Process python -ErrorAction SilentlyContinue | Select-Object Id, CPU | Format-Table -AutoSize | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Progress check 3",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_mysql_processlist.py'; Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 6 | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Bars table info",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_bars_table.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Progress check 4",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_mysql_processlist.py'; Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 4 | Out-String -Width 200; Get-ChildItem 'artifacts\\backtest_cache' | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Progress check 5",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_mysql_processlist.py'; Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 4 | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Phase2 check v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 240; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'Option C entries|Phase 2 risk bridge: snapshots|ML_FIRST_REJECT|statistiques directionnelles' | Select-Object -First 8 | ForEach-Object { $_.Line } | Out-String -Width 250",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Phase2 check v3",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 180; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'Option C entries|Phase 2 risk bridge: snapshots|statistiques directionnelles' | Select-Object -First 10 | ForEach-Object { $_.Line } | Out-String -Width 250",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run1 completion check",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 300; Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 12 | Out-String -Width 200; Get-ChildItem 'artifacts\\backtesting\\ab_prodparity_2026_baseline' -ErrorAction SilentlyContinue | Select-Object Name | Format-Table -AutoSize | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "State check",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200; Get-ChildItem 'artifacts\\backtesting' -Directory -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Where are we",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200; Get-ChildItem 'artifacts\\backtesting' -Directory -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200; Get-CimInstance Win32_Process -Filter \"Name='cmd.exe' OR Name='python.exe'\" | Where-Object { $_.CommandLine -like '*prodparity*' } | Select-Object ProcessId, CreationDate | Format-Table -AutoSize | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "State check 2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'artifacts\\backtesting' -Directory -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120; Get-ChildItem 'artifacts\\backtesting\\ab_prodparity_2022_baseline' -ErrorAction SilentlyContinue | Select-Object Name | Out-String -Width 120; Get-ChildItem 'artifacts\\backtesting\\ab_prodparity_2022_loose' -ErrorAction SilentlyContinue | Select-Object Name | Out-String -Width 120; Get-CimInstance Win32_Process -Filter 'Name=''python.exe''' | Where-Object { $_.CommandLine -like '*prodparity*' } | Select-Object ProcessId, CreationDate | Format-Table -AutoSize | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Tails 2022 logs",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-Content 'logs\\ab_prodparity_2022_baseline_console.log' -Tail 20 | Out-String -Width 220; Write-Output '===== LOOSE ====='; Get-Content 'logs\\ab_prodparity_2022_loose_console.log' -Tail 20 | Out-String -Width 220",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check sides 2026 baseline",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 -c \"import csv,collections; rows=list(csv.DictReader(open('artifacts/backtesting/ab_prodparity_2026_baseline/trades.csv',encoding='utf-8'))); print('n trades',len(rows)); print('sides',collections.Counter(r['side'] for r in rows)); print('exit_reasons',collections.Counter(r['exit_reason'] for r in rows).most_common(8))\"",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check 2026 prodparity results",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check 2026 prodparity v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Restart prodparity v3",
+			"type": "shell",
+			"command": "powershell -ExecutionPolicy Bypass -File F:\\projets\\scripts\\restart_prodparity.ps1",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Watch runs",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 360; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120; Get-ChildItem 'artifacts\\backtesting' -Directory -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check run1 v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py'; Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 8 | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check phase3 signals sides",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 -c \"import pandas as pd; df=pd.read_csv('artifacts/backtesting/ab_prodparity_2026_baseline/phase3_execution_replay_signals.csv'); print(df.columns.tolist()); print(df['side'].value_counts())\"",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check phase3 sides v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_phase3_sides.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Restart prodparity v4",
+			"type": "shell",
+			"command": "powershell -ExecutionPolicy Bypass -File F:\\projets\\scripts\\restart_prodparity.ps1",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Watch run1 v4",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 330; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120; if (Test-Path 'artifacts\\backtesting\\ab_prodparity_2026_baseline\\report.json') { & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py' }",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "List prodparity logs",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run1 summary or tail",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; if (Test-Path 'artifacts\\backtesting\\ab_prodparity_2026_baseline\\report.json') { & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py' } else { Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 15 | Out-String -Width 200 }",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check prod exits",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prod_exits.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Restart prodparity v5",
+			"type": "shell",
+			"command": "powershell -ExecutionPolicy Bypass -File F:\\projets\\scripts\\restart_prodparity.ps1",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Watch run1 v5",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 300; if (Test-Path 'artifacts\\backtesting\\ab_prodparity_2026_baseline\\report.json') { & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py'; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prod_exits.py' } else { Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 10 | Out-String -Width 200 }",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "State v5",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120; Get-ChildItem 'artifacts\\backtesting' -Directory -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run1 v5 check",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; if (Test-Path 'artifacts\\backtesting\\ab_prodparity_2026_baseline\\report.json') { & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py'; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prod_exits.py' } else { Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 12 | Out-String -Width 200 }",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Crash context",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 45 | Out-String -Width 250",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Last events before crash",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'BT short candidate|entry_opened|exit_closed' | Select-Object -Last 8 | ForEach-Object { ($_.Line -replace '.{180}$','...') } | Out-String -Width 250",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Last leverage snapshots",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'daily_leverage_snapshot' | Select-Object -Last 3 | ForEach-Object { ($_.Line -replace '.{260}$','') } | Out-String -Width 300",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Snapshot 05-29 full",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'daily_leverage_snapshot, event_date=2026-05-29' | ForEach-Object { $_.Line.Substring(0, [Math]::Min($_.Line.Length, 900)) } | Out-String -Width 300",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Snapshot 05-29 raw",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'daily_leverage_snapshot, event_date=2026-05-29' | ForEach-Object { $_.Line } | Out-String -Width 400",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Loose run status",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-Content 'logs\\ab_prodparity_2026_loose_console.log' -Tail 6 | Out-String -Width 220; Get-ChildItem 'artifacts\\backtesting' -Directory -Filter 'ab_prodparity_*' | Select-Object Name | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Snapshots 26-28 raw",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'daily_leverage_snapshot, event_date=2026-05-2[678]' | ForEach-Object { $_.Line } | Out-String -Width 400",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Force close and settlements",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'force_close|Force-close|margin_interest|settlement' | Select-Object -Last 6 | ForEach-Object { $_.Line.Substring(0,[Math]::Min($_.Line.Length,200)) } | Out-String -Width 220",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Restart prodparity v6",
+			"type": "shell",
+			"command": "powershell -ExecutionPolicy Bypass -File F:\\projets\\scripts\\restart_prodparity.ps1",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Watch NaN logs",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 360; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'NaN_EQUITY|NaN_BUDGET' | ForEach-Object { $_.Line.Substring(0,[Math]::Min($_.Line.Length,250)) } | Out-String -Width 280; Get-ChildItem 'artifacts\\backtesting' -Directory -Filter 'ab_prodparity_*' | Select-Object Name | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "NaN check now",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'NaN_EQUITY|NaN_BUDGET' | ForEach-Object { $_.Line.Substring(0,[Math]::Min($_.Line.Length,260)) } | Out-String -Width 280",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Events 15-18 mai",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern '2026-05-1[5678]' | Where-Object { $_.Line -match 'BT_EVENT|BT short|BT ' } | Select-Object -First 25 | ForEach-Object { $_.Line.Substring(0,[Math]::Min($_.Line.Length,180)) } | Out-String -Width 200",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "BFH exit full line",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'exit_closed, event_date=2026-05-15.*BFH' | ForEach-Object { $_.Line } | Out-String -Width 500",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Restart prodparity v7",
+			"type": "shell",
+			"command": "powershell -ExecutionPolicy Bypass -File F:\\projets\\scripts\\restart_prodparity.ps1",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "NaN_EXIT check",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 330; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'NaN_EXIT|NaN_EQUITY|NaN_BUDGET' | ForEach-Object { $_.Line.Substring(0,[Math]::Min($_.Line.Length,280)) } | Out-String -Width 300",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "NaN check direct",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Select-String -Path 'logs\\ab_prodparity_2026_baseline_console.log' -Pattern 'NaN_EXIT|NaN_EQUITY|NaN_BUDGET' | Select-Object -First 12 | ForEach-Object { $_.Line.Substring(0,[Math]::Min($_.Line.Length,280)) } | Out-String -Width 300; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Restart prodparity v8",
+			"type": "shell",
+			"command": "powershell -ExecutionPolicy Bypass -File F:\\projets\\scripts\\restart_prodparity.ps1",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Baseline v8 result",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Start-Sleep -Seconds 300; if (Test-Path 'artifacts\\backtesting\\ab_prodparity_2026_baseline\\report.json') { & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py'; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prod_exits.py' } else { Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 10 | Out-String -Width 220 }",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "State v8",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120; if (Test-Path 'artifacts\\backtesting\\ab_prodparity_2026_baseline\\report.json') { & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py' } else { Get-Content 'logs\\ab_prodparity_2026_baseline_console.log' -Tail 12 | Out-String -Width 220 }",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Loose 2026 summary",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 -c \"import json; s=json.load(open('artifacts/backtesting/ab_prodparity_2026_loose/report.json',encoding='utf-8'))['summary']; [print(k,'=',s.get(k)) for k in ('total_return_pct','max_drawdown_pct','total_trades','win_rate_pct','short_pnl_total','long_pnl_total','final_value')]\"",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Loose 2026 summary v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py' 'ab_prodparity_2026_loose'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Loose dir + log",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'artifacts\\backtesting\\ab_prodparity_2026_loose' -ErrorAction SilentlyContinue | Select-Object Name | Out-String -Width 120; Get-Content 'logs\\ab_prodparity_2026_loose_console.log' -Tail 10 | Out-String -Width 220; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Runs status",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; Get-ChildItem 'logs' -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120; Get-ChildItem 'artifacts\\backtesting' -Directory -Filter 'ab_prodparity_*' | Select-Object Name, LastWriteTime | Format-Table -AutoSize | Out-String -Width 120",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "4 summaries",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py' 'ab_prodparity_2026_baseline'; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py' 'ab_prodparity_2026_loose'; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py' 'ab_prodparity_2022_baseline'; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_prodparity_2026.py' 'ab_prodparity_2022_loose'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Overlap analysis",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\analyze_prodparity_overlap.py'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Config smoke check",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 -c \"import yaml; c=yaml.safe_load(open('config.yaml',encoding='utf-8')); print(c['cascade'].get('short_momentum_filter'), c['cascade'].get('short_momentum_max_pct'), c['cascade'].get('enabled'))\"",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Config smoke v2",
+			"type": "shell",
+			"command": "Set-Location F:\\projets; & '.venv\\Scripts\\python.exe' -X utf8 'scripts\\check_cascade_config.py'",
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }

@@ -37,6 +37,8 @@ def portfolio_entries_to_execution_targets(
 	for entry in entries:
 		if entry.approved_shares <= 0:
 			continue
+		entry_side = str(getattr(entry, "side", "buy") or "buy").strip().lower()
+		exec_side = entry_side if entry_side in ("buy", "sell") else "buy"
 		targets.append(
 			ExecutionTarget(
 				risk_run_id=risk_run_id,
@@ -54,7 +56,7 @@ def portfolio_entries_to_execution_targets(
 				selector_signal_mode=entry.selector_signal_mode,
 				selection_explanation=entry.selection_explanation,
 				selector_earnings_blackout=entry.selector_earnings_blackout,
-				side="buy",
+				side=exec_side,
 				atr_20=entry.atr_20,
 				price_asof_date=entry.price_asof_date,
 				atr_asof_date=entry.atr_asof_date,

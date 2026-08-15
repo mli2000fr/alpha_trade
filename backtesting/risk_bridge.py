@@ -225,10 +225,42 @@ def _build_predictions(predictions_df: pd.DataFrame, snapshot_date: date) -> dic
     normalized = _normalize_trade_dates(predictions_df)
     day_df = normalized.loc[normalized["trade_date"] == pd.Timestamp(snapshot_date)]
     result: dict[str, PredictionInfo] = {}
+
+    def _opt_float(value: object) -> float | None:
+        """float strict : 0.0 est une VALEUR (pas None) ; None/NaN/error → None."""
+        if value is None or not pd.notna(value):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     for _, row in day_df.iterrows():
         symbol = str(row.get("symbol") or "").strip().upper()
         if not symbol:
             continue
+        proba_long = _opt_float(row.get("proba_long"))
+        proba_flat = _opt_float(row.get("proba_flat"))
+        proba_short = _opt_float(row.get("proba_short"))
+        has_ternary = (
+            proba_long is not None and proba_flat is not None and proba_short is not None
+        )
+        existing = result.get(symbol)
+        existing_ternary = (
+            existing is not None
+            and existing.proba_long is not None
+            and existing.proba_flat is not None
+            and existing.proba_short is not None
+        )
+        if existing is not None:
+            if existing_ternary:
+                # Ne jamais écraser une prédiction ternaire (globalrank_synth)
+                # par une ligne regression sans probas (per-sector) du même jour.
+                continue
+            if not has_ternary:
+                # Même qualité (aucune proba) → garder la première.
+                continue
+            # Sinon : ligne sans probas existante → remplacée par la ligne ternaire.
         pred_class = int(row.get("predicted_class", 0) or 0)
         result[symbol] = PredictionInfo(
             symbol=symbol,
@@ -238,9 +270,9 @@ def _build_predictions(predictions_df: pd.DataFrame, snapshot_date: date) -> dic
             prediction_date=snapshot_date,
             # ML Sprint 3 — colonnes ternaires optionnelles
             predicted_side=str(row.get("predicted_side")) if row.get("predicted_side") and pd.notna(row.get("predicted_side")) else None,
-            proba_long=float(row.get("proba_long")) if row.get("proba_long") and pd.notna(row.get("proba_long")) else None,
-            proba_flat=float(row.get("proba_flat")) if row.get("proba_flat") and pd.notna(row.get("proba_flat")) else None,
-            proba_short=float(row.get("proba_short")) if row.get("proba_short") and pd.notna(row.get("proba_short")) else None,
+            proba_long=proba_long,
+            proba_flat=proba_flat,
+            proba_short=proba_short,
         )
     return result
 
