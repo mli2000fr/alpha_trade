@@ -9,6 +9,7 @@ import streamlit as st
 
 import shutil as _shutil
 from pathlib import Path
+from typing import Any
 
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
@@ -281,6 +282,7 @@ TOP5_BEST_F1_QUERY = """
     SELECT
         mm.model_name,
         mm.symbol,
+        mm.horizon,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
         ROUND(mm.f1_short, 3) AS f1_short,
@@ -299,6 +301,7 @@ TOP5_WORST_F1_QUERY = """
     SELECT
         mm.model_name,
         mm.symbol,
+        mm.horizon,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
         ROUND(mm.f1_short, 3) AS f1_short,
@@ -336,6 +339,8 @@ ZERO_F1_SHORT_QUERY = """
 TOP5_BEST_CHAMPION_QUERY = """
     SELECT
         mm.symbol,
+        mm.model_name,
+        mm.horizon,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
         ROUND(mm.f1_short, 3) AS f1_short,
@@ -357,6 +362,8 @@ TOP5_BEST_CHAMPION_QUERY = """
 TOP5_WORST_CHAMPION_QUERY = """
     SELECT
         mm.symbol,
+        mm.model_name,
+        mm.horizon,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
         ROUND(mm.f1_short, 3) AS f1_short,
@@ -417,7 +424,7 @@ REG_BY_SPLIT_QUERY = """
 
 REG_TOP_QUERY = """
     SELECT
-        mm.model_name, mm.symbol,
+        mm.model_name, mm.symbol, mm.horizon,
         ROUND(mm.directional_accuracy, 4) AS dir_acc
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
@@ -428,7 +435,7 @@ REG_TOP_QUERY = """
 
 REG_WORST_QUERY = """
     SELECT
-        mm.model_name, mm.symbol,
+        mm.model_name, mm.symbol, mm.horizon,
         ROUND(mm.directional_accuracy, 4) AS dir_acc
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id

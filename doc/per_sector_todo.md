@@ -32,12 +32,53 @@ Puis tester des baselines simples, en IC relatif par date ET spread long-short n
 | B4 | Momentum relatif | `ret20 − median_sector(ret20)` |
 | B5 | Blend multi-horizon relatif | `0.5·rel_mom20 + 0.3·rel_mom60 + 0.2·rel_mom120` |
 
-- [ ] Implémenter le calcul de `relative_return` par secteur/date (ajout au dataset per-sector).
-- [ ] Implémenter l'évaluation baselines : IC relatif moyen/IR, spread top−bottom quintile avant/après coûts, % folds positifs.
-- [ ] Exécuter B0-B5 sur les folds WF (2019-2024) + holdout gelé.
-- **Question à trancher** : existe-t-il déjà un alpha intra-sectoriel trivial ?
-  - Si `rel_mom20` produit un spread positif → le ML a simplement échoué à apprendre un signal simple → priorité à corriger les features/target avant tout nouveau modèle.
-  - Si aucun baseline ne bat le hasard → le signal simple n'existe pas → aller directement aux phases 4-6 (informations nouvelles).
+- [x] Implémenter le calcul de `relative_return` par secteur/date (ajout au dataset per-sector). **Fait : `scripts/per_sector_baselines.py`**
+- [x] Implémenter l'évaluation baselines : IC relatif moyen/IR, spread top−bottom quintile avant/après coûts, % folds positifs. **Fait (harness calibré par B0_random ≈ 0)**
+- [x] Exécuter B0-B5 sur les folds WF (2019-2024) + holdout gelé. **Fait le 2026-08-15**
+- **Question tranchée** : existe-t-il déjà un alpha intra-sectoriel trivial ? → **NON.** Voir verdict ci-dessous.
+
+### Verdict Phase 0 (2026-08-15)
+
+Rapport : `logs/per_sector_baselines_2019-01-01_2025-12-31.txt` — univers 400 mid-caps, zones WF 2019-01 → 2024-06 + holdout gelé 2024-07 → 2025-12, coût aller-retour 51 bps/jambe.
+
+| Signal testé | Verdict (IC relatif par date, tous horizons) |
+|---|---|
+| B0 hasard | IC ≈ 0 partout → **harness valide** |
+| B1 mom20 / B4 rel_mom20 | IC ≈ 0 à **légèrement négatif** sur toutes les périodes (2019, COVID 2020, holdout 2025) → pas d'alpha relatif |
+| B2 reversal (rev5/rev10) | IC ≈ 0, pointe marginale +0.04 pendant COVID 2020H1, jamais net de coûts |
+| B3 mom20/vol20 | IC ≈ 0 à négatif |
+| B5 blend rel (20/60/120) | IC ≈ 0 à −0.05 |
+| B1 mom60/120 (2024H2-2025H2) | Seul indice : IC +0.04 à +0.06 en H20, ~70 % dates positives — **trop faible et trop récent pour être exploitable** |
+
+**Conséquence directe :** le F1 ≈ 0.33 du ML per-sector reflète bien **l'absence de signal dans les familles simples** — ce n'est PAS un échec d'apprentissage d'un signal trivial. L'hypothèse « le ML a raté un momentum relatif » est **invalidée** par les données.
+
+**Réorientation :** selon la règle du plan (`si aucun baseline ne bat le hasard → aller directement aux informations nouvelles`), la priorité bascule sur :
+1. **Phase 6 — événements PIT** (earnings surprises, révisions analystes, réaction de prix) — levier le plus plausible.
+2. **Phase 4 — fondamentaux réellement relatifs** (percentiles sectoriels).
+3. **Phase 5 — interactions conditionnelles** (surprise × momentum, valuation × momentum).
+4. En parallèle, ajouter le **IC relatif + spread net dans `trainer_sector.py`/`report.py`** pour que tout futur batch soit jugé sur ces métriques.
+
+Les phases 1-3 (refonte target, LambdaRank, features relatives) restent utiles mais **secondaires** : sans source de signal, changer la target ou le modèle ne créera pas d'alpha.
+
+### Verdict Phase 0bis (2026-08-15) — signaux PIT existants
+
+Rapport : `logs/per_sector_baselines_signals_2019-01-01_2025-12-31.txt` — 14 scores (sentiment 1d/5d ± relatif, short_score, normalized_total_score, trend_score ± relatif, percentiles sectoriels PE/ROE/eps_growth/revenue_growth).
+
+| Famille | Résultat |
+|---|---|
+| Sentiment net 1d/5d | IC ≈ 0 partout (WF et holdout) — aucun alpha |
+| `short_score` | Négatif en 2019 (−0.04/−0.07), **positif en 2025H1 (IC +0.10 H15/H20, spread net +123/+211 bps)** — **signe instable, régime-dépendant** |
+| `normalized_total_score` | +0.05 en 2024H2 mais **négatif 2025H1** — instable |
+| `trend_score` | +0.04/+0.08 en 2019H1 mais négatif en 2025 — instable |
+| Fondamentaux en percentiles sectoriels | ≈ 0 à négatif (PE, ROE) ; eps_growth +0.03 en 2025H1 seulement |
+
+**Conclusion :** aucune information PIT existante ne produit un IC relatif **stable** et net de coûts. Le pattern le plus intéressant est `short_score` dont le signe flippe entre 2019 (négatif) et 2025H1 (positif) — cohérent avec la dépendance au régime déjà documentée sur le Global Ranking (oversold high-beta puni en correction Q1 2026).
+
+**Prochaines actions (priorité mise à jour) :**
+1. **Interactions conditionnelles** (Phase 5) dans le harness : `short_score × régime` (bull/bear), `valuation relative × momentum relatif`, `short_score × mom20` — tester si le signal devient stable par régime.
+2. **Décision data Phase 6** : backfill des surprises earnings via Finnhub `/stock/earnings` (implémentation API à faire, profondeur historique incertaine) OU abandon provisoire de la Phase 6.
+3. **Intégration des métriques IC relatif + spread net dans `trainer_sector.py`/`report.py`** pour juger tout futur batch per-sector sur les bonnes métriques (F1 seul = insuffisant).
+4. LambdaRank / refonte target : **suspendus** en attendant qu'une source de signal soit démontrée (règle du plan).
 
 **Ancrage code** : `modelFactory/model_benchmark.py` (classe `SimpleBaselines` existante à étendre), `modelFactory/dataset.py` (création de `relative_return_h`), évaluation via un nouveau helper réutilisable par les phases suivantes.
 
@@ -173,6 +214,8 @@ Le `symbol` permet potentiellement de mémoriser « XOM est généralement meill
 
 ## Ordre de priorité d'exécution
 
+> ⚠️ **Post-Phase 0 (2026-08-15)** : les rangs 1-4 ci-dessous (baselines, métriques, LambdaRank, features relatives) étaient l'ordre pré-benchmark. Le verdict Phase 0 (aucun signal trivial) déplace les **événements PIT (6) et fondamentaux relatifs (4) en tête** ; LambdaRank/features relatives ne seront utiles qu'une fois une source de signal démontrée.
+
 | Priorité | Expérience | Potentiel |
 |---|---|---|
 | 🥇 | Baseline momentum relatif (Phase 0) | ⭐⭐⭐⭐⭐ |
@@ -192,21 +235,22 @@ Le `symbol` permet potentiellement de mémoriser « XOM est généralement meill
 
 ## Hypothèse directrice
 
-Le problème n'est probablement pas « le secteur n'est pas prédictible » mais **« on demande au modèle de prédire une magnitude (régression continue) alors que l'objectif économique est uniquement le classement intra-sectoriel »**.
+~~Le problème n'est probablement pas « le secteur n'est pas prédictible » mais « on demande au modèle de prédire une magnitude alors que l'objectif est le classement ».~~
 
-Indice : le **Global Ranking** atteint IC ≈ 0.026 sur 400 titres → l'information existe. La question devient : **comment la conserver quand on impose une neutralisation intra-sectorielle ?**
+**Mise à jour après Phase 0 (2026-08-15)** : les baselines simples (momentum relatif, reversal, mom/vol, blend) ne produisent **aucun IC relatif exploitable net de coûts** sur 2019-2025. Le hasard du ML per-sector reflète donc l'absence de signal trivial, pas un défaut de formulation. L'hypothèse forte restante est que l'alpha intra-sectoriel, s'il existe, vient d'**informations PIT nouvelles** (earnings surprises, révisions, fondamentaux en percentiles sectoriels, interactions conditionnelles) — les seules familles jamais réellement testées avec les bonnes métriques.
 
-→ Priorité absolue : **LambdaRank (secteur×date) + features relatives + hiérarchie Global→Sector**, évalués par IC relatif + spread net, sur protocole train/val/WF/holdout gelé.
+→ Priorité absolue désormais : **Phase 6 (événements PIT) > Phase 4 (fondamentaux relatifs) > Phase 5 (interactions)**, évaluées par IC relatif + spread net sur le protocole train/val/WF/holdout gelé.
 
 ---
 
 ## Dépendances à vérifier avant de lancer
 
-- [ ] `relative_return_h` : colonne absente aujourd'hui (seuls `future_return_h` brut et `target_h` neutralisée existent) — à créer dans `dataset.py`.
-- [ ] Disponibilité PIT des données earnings/révisions (Phase 6) — inventaire des tables (`stock_fundamentals_daily` n'a pas de dates d'annonce ? vérifier `stock_earnings_*` s'il existe).
+- [x] `relative_return_h` : colonne absente aujourd'hui (seuls `future_return_h` brut et `target_h` neutralisée existent) — **calculée dans le script Phase 0** ; à intégrer dans `dataset.py` si elle devient une métrique persistée.
+- [ ] Disponibilité PIT des données earnings/révisions (Phase 6) — inventaire des tables (`stock_fundamentals_daily` n'a pas de dates d'annonce ? vérifier `stock_earnings_*` s'il existe). **PROCHAINE ÉTAPE.**
 - [ ] Le cache XS actuel (`cross_sectional.py`) couvre déjà rangs/z-scores sectoriels — inventorier l'existant pour éviter de réécrire.
 - [ ] Les métriques IC relatif/spread net par secteur×date ne sont rapportées nulle part (`report.py`, `trainer_sector.py`) — à ajouter avant toute expérience, sinon les résultats ne seront pas mesurables.
 - [ ] Rappel historique : `7e4cf8` (F1 0.51, DirAcc 0.70) est antérieur aux correctifs — ne pas l'utiliser comme preuve qu'un signal a déjà existé.
+- [x] **Piège rencontré le 2026-08-15** : un `rolling(h)` sur une série `shift(-1)` calcule des rendements PASSÉS, pas futurs (première version du harness donnait des IC fantômes de 0.9 sur le momentum). Toujours valider le harness avec B0_random ≈ 0 **et** un test de cohérence cible/score.
 
 ---
 

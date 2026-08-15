@@ -257,8 +257,9 @@ def _build_challenger_summary(
     walk_forward_metrics: dict[str, Any],
     calibration_method: str,
     selection_score: float,
+    horizons: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    summary: dict[str, Any] = {
         "status": "completed",
         "model_name": "lstm_attention",
         "val": val_metrics,
@@ -267,6 +268,9 @@ def _build_challenger_summary(
         "calibration_method": calibration_method,
         "selection_score": selection_score,
     }
+    if horizons:
+        summary["horizons"] = horizons
+    return summary
 
 
 def _skip_train_symbol(
@@ -319,6 +323,7 @@ def _run_training_registry_writes(
     selection_mode: str,
     selection_metric: str,
     challenger_ranking: list[dict[str, Any]],
+    lstm_horizons: dict[str, Any] | None = None,
 ) -> None:
     best_epoch = _extract_best_epoch(best_ckpt) if best_ckpt.exists() else None
     completed_at = datetime.now(timezone.utc)
@@ -333,12 +338,25 @@ def _run_training_registry_writes(
         config_path=str(config_path),
     )
     # ── LSTM metrics ──
-    insert_metrics(engine, run_id, symbol, "val", val_metrics, model_name="lstm_attention")
-    if test_metrics:
-        insert_metrics(engine, run_id, symbol, "test", test_metrics, model_name="lstm_attention")
-    wf_mean = walk_forward_metrics.get("mean") if walk_forward_metrics else None
-    if wf_mean:
-        insert_metrics(engine, run_id, symbol, "wf", wf_mean, model_name="lstm_attention")
+    if lstm_horizons:
+        # ── Multi-horizon (2026-08-15) : persister chaque horizon séparément ──
+        for _h_tag, _h_result in lstm_horizons.items():
+            if isinstance(_h_result, dict) and _h_result.get("status") == "completed":
+                _h = _h_result.get("horizon")
+                if _h is None and str(_h_tag).startswith("h"):
+                    _h = int(str(_h_tag).lstrip("h"))
+                for _split_name in ("val", "test", "wf"):
+                    _metrics = _h_result.get(_split_name)
+                    if isinstance(_metrics, dict) and _metrics:
+                        insert_metrics(engine, run_id, symbol, _split_name, _metrics, model_name="lstm_attention", horizon=_h)
+    else:
+        # Legacy single-horizon (pas de colonne horizon)
+        insert_metrics(engine, run_id, symbol, "val", val_metrics, model_name="lstm_attention")
+        if test_metrics:
+            insert_metrics(engine, run_id, symbol, "test", test_metrics, model_name="lstm_attention")
+        wf_mean = walk_forward_metrics.get("mean") if walk_forward_metrics else None
+        if wf_mean:
+            insert_metrics(engine, run_id, symbol, "wf", wf_mean, model_name="lstm_attention")
 
     directional_metrics_by_split = {
         split_name: metrics["directional_oos_metrics"]
@@ -1579,6 +1597,128 @@ def train_symbol(
                 data=replace(effective_cfg.data, **_data_kwargs2),
             )
 
+        # ── LSTM multi-horizon (2026-08-15) : option B — 1 LSTM par horizon, ──
+        # ── calquée sur la boucle tabulaire. L'horizon primaire est déjà    ──
+        # ── entraîné ci-dessus (artefacts à la racine du dossier symbole,    ──
+        # ── rétrocompatibilité inférence) ; les autres horizons sont         ──
+        # ── entraînés ici (artefacts dans h{h}/, purge dynamique = h).       ──
+        _lstm_horizons: dict[str, Any] = {}
+        _lstm_extra_horizons = [
+            h for h in (effective_cfg.data.forecast_horizons or ())
+            if h != effective_cfg.data.forecast_horizon
+        ]
+        for _h in _lstm_extra_horizons:
+            _h_tag = f"h{_h}"
+            _h_dir = sym_dir / _h_tag
+            _h_dir.mkdir(parents=True, exist_ok=True)
+            LOGGER.info("train_symbol lstm horizon=%s symbol=%s", _h_tag, symbol)
+            update_runtime_status(
+                current_phase="lstm_horizon_start",
+                current_symbol=symbol,
+                progress_item=symbol,
+                phase_detail=f"horizon={_h_tag}",
+            )
+            try:
+                _h_cfg = replace(effective_cfg, data=replace(effective_cfg.data, forecast_horizon=_h))
+                _dm_h = SymbolDataModule(bars_df, _h_cfg.data, _h_cfg.model, **datamodule_kwargs)
+                _dm_h.setup()
+                if _dm_h.train_ds is None or _dm_h.val_ds is None or len(_dm_h.train_ds) == 0 or len(_dm_h.val_ds) == 0:
+                    _lstm_horizons[_h_tag] = {"status": "skipped", "reason": "insufficient_sequences_after_split"}
+                    continue
+
+                _wf_h: dict[str, Any] = {}
+                _prep_h = getattr(_dm_h, "prepared_df", None)
+                if _prep_h is not None:
+                    _wf_h = _run_walk_forward_validation(symbol, _prep_h, _h_cfg)
+
+                _h_seed = derive_seed(symbol_seed, "final_fit", _h_tag)
+                apply_reproducibility(
+                    ReproducibilityConfig(seed=_h_seed, deterministic=effective_cfg.reproducibility.deterministic),
+                    context=f"train_symbol:{symbol}:final_fit:{_h_tag}",
+                )
+                _model_h = LSTMAttentionModule(
+                    input_size=_dm_h.n_features,
+                    hidden_size=_h_cfg.model.hidden_size,
+                    num_layers=_h_cfg.model.num_layers,
+                    dropout=_h_cfg.model.dropout,
+                    learning_rate=_h_cfg.model.learning_rate,
+                    weight_decay=_h_cfg.model.weight_decay,
+                    num_classes=1 if _h_cfg.data.target_mode == "regression" else _h_cfg.model.num_classes,
+                    ternary_weight_short=_h_cfg.model.ternary_weight_short,
+                    ternary_weight_flat=_h_cfg.model.ternary_weight_flat,
+                    ternary_weight_long=_h_cfg.model.ternary_weight_long,
+                )
+                _ckpt_h = ModelCheckpoint(
+                    dirpath=str(_h_dir),
+                    filename="best",
+                    monitor="val_loss",
+                    mode="min",
+                    save_top_k=1,
+                )
+                _early_h = EarlyStopping(monitor="val_loss", patience=_h_cfg.model.patience, mode="min")
+                _trainer_h = L.Trainer(
+                    max_epochs=_h_cfg.model.max_epochs,
+                    accelerator=_h_cfg.accelerator,
+                    devices=1,
+                    callbacks=[
+                        _ckpt_h,
+                        _early_h,
+                        _EpochProgressLogger(symbol=symbol, phase="final_train", debug_enabled=_h_cfg.debug_train),
+                    ],
+                    enable_progress_bar=False,
+                    logger=False,
+                    enable_model_summary=False,
+                )
+                _trainer_h.fit(_model_h, datamodule=_dm_h)
+
+                _best_h = Path(_ckpt_h.best_model_path) if _ckpt_h.best_model_path else _h_dir / "best.ckpt"
+                _split_h = _dm_h.split
+                _val_frame_h = align_sequence_rows(_split_h.val, _h_cfg.data.sequence_length) if _split_h is not None else None
+                _test_frame_h = align_sequence_rows(_split_h.test, _h_cfg.data.sequence_length) if _split_h is not None else None
+                _val_h, _test_h, _cal_h, _thr_h, _sel_thr_h, _ = _evaluate_best_checkpoint(
+                    _best_h,
+                    batch_size=_h_cfg.model.batch_size,
+                    val_ds=_dm_h.val_ds,
+                    test_ds=_dm_h.test_ds,
+                    val_frame=_val_frame_h,
+                    test_frame=_test_frame_h,
+                    cfg=_h_cfg,
+                    ternary_policy=_build_ternary_policy(_h_cfg),
+                )
+
+                # Artefacts par horizon (scaler + calibrateur)
+                with open(_h_dir / "scaler.pkl", "wb") as _f:
+                    pickle.dump(_dm_h.scaler.state_dict(), _f)
+                if _cal_h is not None and _cal_h.fitted:
+                    with open(_h_dir / "calibrator.pkl", "wb") as _f:
+                        pickle.dump(_cal_h.state_dict(), _f)
+
+                _lstm_horizons[_h_tag] = {
+                    "status": "completed",
+                    "horizon": _h,
+                    "val": _val_h,
+                    "test": _test_h,
+                    "wf": _wf_h.get("mean") if isinstance(_wf_h, dict) else None,
+                    "walk_forward": _wf_h,
+                }
+                LOGGER.info(
+                    "train_symbol lstm horizon=%s done symbol=%s val_loss=%.4f",
+                    _h_tag, symbol, float((_val_h or {}).get("loss", -1.0) or -1.0),
+                )
+            except Exception as _exc:  # noqa: BLE001 - un horizon en échec ne tue pas le symbole
+                LOGGER.exception("train_symbol lstm horizon=%s failed symbol=%s", _h_tag, symbol)
+                _lstm_horizons[_h_tag] = {"status": "failed", "reason": str(_exc)[:200]}
+
+        # ── Ajouter l'horizon primaire (déjà entraîné ci-dessus) au dict ──
+        _lstm_horizons[f"h{effective_cfg.data.forecast_horizon}"] = {
+            "status": "completed",
+            "horizon": effective_cfg.data.forecast_horizon,
+            "val": val_metrics,
+            "test": test_metrics,
+            "wf": walk_forward_metrics.get("mean") if isinstance(walk_forward_metrics, dict) else None,
+            "walk_forward": walk_forward_metrics,
+        }
+
         # ── Tabular baselines (LightGBM + CatBoost) ──
         # Multi-horizon: loop over horizons like per-sector.
         # Single-horizon: legacy path (no loop).
@@ -1834,6 +1974,7 @@ def train_symbol(
                 walk_forward_metrics=walk_forward_metrics,
                 calibration_method=calibration_method,
                 selection_score=lstm_selection_score,
+                horizons=_lstm_horizons if effective_cfg.data.forecast_horizons else None,
             ),
             "lightgbm": baseline_metrics,
             "catboost": catboost_metrics,
@@ -1968,6 +2109,7 @@ def train_symbol(
                     selection_mode=selection_mode,
                     selection_metric=effective_cfg.champion_selection.selection_metric,
                     challenger_ranking=challenger_ranking,
+                    lstm_horizons=_lstm_horizons if effective_cfg.data.forecast_horizons else None,
                 )
             except Exception as exc:  # noqa: BLE001
                 _record_training_db_issue(symbol, run_id, operation="training_registry_writes", exc=exc)

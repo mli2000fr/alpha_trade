@@ -247,7 +247,7 @@ Pour **chaque symbole** de l'univers, entraîner un modèle qui prédit la direc
 
 | Composant | Single-horizon | Multi-horizon |
 |---|---|---|
-| **LSTM** | 1 modèle, horizon max | 1 modèle, horizon max (inchangé) |
+| **LSTM** | 1 modèle, horizon max | **5 modèles (H3/H5/H10/H15/H20) — option B, 2026-08-15** |
 | **LightGBM** | 1 modèle, horizon configuré | 5 modèles (H3/H5/H10/H15/H20) |
 | **CatBoost** | 1 modèle, horizon configuré | 5 modèles (H3/H5/H10/H15/H20) |
 
@@ -365,10 +365,9 @@ Pour chaque symbole :
 
 #### Limitation
 
-Le LSTM n'est **pas** multi-horizon — il reste sur l'horizon max pour :
-- Rétrocompatibilité avec l'inférence existante
-- Éviter la complexité d'un LSTM multi-output (5 têtes de sortie)
-- Le LSTM est le fallback ; les baselines tabulaires sont les modèles primaires
+> **Mise à jour 2026-08-15 (option B)** : le LSTM est désormais entraîné **en multi-horizon** quand `--forecast-horizons` est spécifié — 1 LSTM par horizon (purge dynamique, artefacts dans `h{h}/best.ckpt`, métriques persistées avec `horizon=h`). L'horizon primaire (max) reste à la racine du dossier symbole pour la rétrocompatibilité de l'inférence. Le **routage multi-horizon LSTM côté prédicteur n'est pas encore branché** : la cascade sert toujours l'horizon primaire.
+
+Historique : le LSTM restait sur l'horizon max pour la rétrocompatibilité avec l'inférence existante et pour éviter la complexité d'un LSTM multi-output (5 têtes de sortie) ; le LSTM est le fallback, les baselines tabulaires sont les modèles primaires.
 
 ### 4.8 Limitation per-symbol (test rapide)
 

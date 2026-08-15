@@ -113,6 +113,8 @@ F1_BUCKET_QUERY = """
 TOP5_BEST_F1_QUERY = """
     SELECT
         mm.symbol,
+        mm.model_name,
+        mm.horizon,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
         ROUND(mm.f1_short, 3) AS f1_short,
@@ -134,6 +136,8 @@ TOP5_BEST_F1_QUERY = """
 TOP5_WORST_F1_QUERY = """
     SELECT
         mm.symbol,
+        mm.model_name,
+        mm.horizon,
         ROUND(mm.f1_macro, 3) AS f1_macro,
         ROUND(mm.f1_long, 3) AS f1_long,
         ROUND(mm.f1_short, 3) AS f1_short,
@@ -219,7 +223,7 @@ REG_BY_SPLIT_QUERY = """
 
 REG_TOP_QUERY = """
     SELECT
-        mm.model_name, mm.symbol,
+        mm.model_name, mm.symbol, mm.horizon,
         ROUND(mm.directional_accuracy, 4) AS dir_acc,
         ROUND(mm.loss, 4) AS mse
     FROM alpha_trade.model_metrics AS mm
@@ -232,7 +236,7 @@ REG_TOP_QUERY = """
 
 REG_WORST_QUERY = """
     SELECT
-        mm.model_name, mm.symbol,
+        mm.model_name, mm.symbol, mm.horizon,
         ROUND(mm.directional_accuracy, 4) AS dir_acc,
         ROUND(mm.loss, 4) AS mse
     FROM alpha_trade.model_metrics AS mm
