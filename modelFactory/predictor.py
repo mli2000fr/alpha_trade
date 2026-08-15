@@ -2278,7 +2278,7 @@ def predict_global_rank_history(
 # ────────────────────────────────────────────────────────────────────
 
 def compute_per_symbol_cross_sectional_ic(
-    engine: "Engine",
+    engine: Any,
     batch_id: str,
     *,
     horizon: int = 5,
