@@ -1752,3 +1752,32 @@ Et surtout : **F1 train ≈ F1 val ≈ F1 test ≈ F1 WF** (pas d'effondrement).
 │  5. Sortie : liste de trades (symbol, side, score)                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+### Protocole de promotion de batch Global Ranking (2026-08-16)
+
+**Leçon fondatrice** : B41 était le **meilleur batch sur papier** (IC 0.0260 vs 0.0241, IR 1.55 vs 1.07, decile spread +50 %, 6/6 splits positifs) et a **échoué en production-parity** (−8.61 % vs +1.93 % sur 2026, négatif partout en 2025). **La promotion n'est PAS un screening** : les métriques WF (2019-2024) ne prédisent pas le P&L OOS. Tout test de production de N batchs à la fois = sélection sur le test = verdict invalide.
+
+**Étape 0 — Screening papier (automatique, tous les batchs)** :
+- Métriques lues dans `model_training_batch.metadata_json` (global_ranking) : `ic_rank`, `ic_rank_std`, decile spreads H3-H20, IC par split, `best_horizon`.
+- Aucun batch n'est promu sur ces métriques — elles servent uniquement à **désigner UN candidat**.
+
+**Étape 1 — Éligibilité minimale du candidat (pré-enregistrée)** :
+- `ic_rank` ≥ champion en place + 0.002 **ET** IR ≥ 1.2 **ET** tous les splits positifs **ET** decile spread du best_horizon ≥ champion × 1.2.
+- Un batch qui ne remplit pas ces conditions est **rejeté sans production-parity** (cela élimine mécaniquement ~tous les B1-B40 face à B25).
+- Résultat B41 : éligible sur papier → testé → **échoué**.
+
+**Étape 2 — UN seul candidat à la fois** :
+- Désigné sur validation uniquement, avant toute lecture OOS. Interdit de tester « le suivant » immédiatement après un échec pour contourner la règle (quarantaine : nouvelle information requise).
+
+**Étape 3 — Production-parity unique (protocole figé)** :
+- Fenêtres : **2025 complet** (2025-01-02 → 2025-12-31) et **2026 Q1** (2026-01-02 → 2026-05-31) — les deux OOS strict.
+- Flags identiques champion vs candidat (le défaut prod, sans `--max-positions` explicite) :
+  - pile pipeline (phases 2-7, `use-persisted`), `--capital-preset-key capital_2001_5000`, `--use-canonical-costs`, ATR stop 2.5, TP 3.0 ATR / 7 %, loose 2.0
+  - `--ml-batch-id --cascade-batch-id --batch-diagnostics-batch-id` = batch testé (100 % batch)
+  - `--min-ml-coverage-ratio 0.90` (seuil documenté, preset prod intact à 0.95)
+- Prérequis données AVANT lancement : rangs `global_rank_history` complets (400 symboles/jour) + synth `model_predictions` du batch — vérifier par SQL, ne jamais lancer un run dont la couverture est < 90 % (ex. B25 2025 = 205/261 jours → gap-fill obligatoire).
+
+**Étape 4 — Critères de promotion** :
+- **PROMU** si le candidat bat le champion sur **les deux fenêtres** (retour ET Sharpe ET DD) ; un simple match nul n'est pas une promotion.
+- **REJET** si défaite sur au moins une fenêtre → le champion en place est conservé, le candidat est archivé avec son verdict.
+
+**État actuel** : B25 = champion en prod · B41 = candidat testé → **REJETÉ** (défait sur 2026 ; 2025 en cours de confirmation). Aucun autre batch B1-B40 n'est éligible (tous papier-inférieurs à B41). Infra de test prête et réutilisable en ~30 min par fenêtre.

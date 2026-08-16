@@ -49,7 +49,7 @@ presets:
     risk_regime_ramp_up_max_pct: 0.20
     risk_target_annual_vol: 0.12
     risk_vol_target_lookback_days: 60
-    risk_min_ml_coverage_ratio: 0.95
+    risk_min_ml_coverage_ratio: 0.90
     risk_correlation_threshold: 0.92
     risk_correlation_lookback_days: 40
     risk_correlation_min_overlap: 25
@@ -86,7 +86,7 @@ presets:
     backtesting_max_sector_exposure_pct: 0.55
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.12
-    backtesting_min_ml_coverage_ratio: 0.95
+    backtesting_min_ml_coverage_ratio: 0.90
     execution_max_entry_gap_pct: 0.03
     screener_liquidity_threshold_usd: 2000000.0
     screener_min_relative_strength_index: 90.0
@@ -159,7 +159,7 @@ presets:
     risk_regime_ramp_up_max_pct: 0.25
     risk_target_annual_vol: 0.13
     risk_vol_target_lookback_days: 60
-    risk_min_ml_coverage_ratio: 0.95
+    risk_min_ml_coverage_ratio: 0.90
     risk_correlation_threshold: 0.9
     risk_correlation_lookback_days: 40
     risk_correlation_min_overlap: 25
@@ -196,7 +196,7 @@ presets:
     backtesting_max_sector_exposure_pct: 0.5
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.13
-    backtesting_min_ml_coverage_ratio: 0.95
+    backtesting_min_ml_coverage_ratio: 0.90
     execution_max_entry_gap_pct: 0.03
     screener_liquidity_threshold_usd: 5000000.0
     screener_min_relative_strength_index: 95.0
@@ -266,7 +266,7 @@ presets:
     risk_regime_ramp_up_max_pct: 0.30
     risk_target_annual_vol: 0.14
     risk_vol_target_lookback_days: 60
-    risk_min_ml_coverage_ratio: 0.95
+    risk_min_ml_coverage_ratio: 0.90
     risk_correlation_threshold: 0.88
     risk_correlation_lookback_days: 45
     risk_correlation_min_overlap: 30
@@ -303,7 +303,7 @@ presets:
     backtesting_max_sector_exposure_pct: 0.35
     backtesting_max_entry_gap_pct: 0.03
     backtesting_target_annual_vol: 0.14
-    backtesting_min_ml_coverage_ratio: 0.95
+    backtesting_min_ml_coverage_ratio: 0.90
     execution_max_entry_gap_pct: 0.03
     screener_liquidity_threshold_usd: 7500000.0
     screener_min_relative_strength_index: 97.0
@@ -364,7 +364,7 @@ presets:
     risk_regime_ramp_up_max_pct: 0.35
     risk_target_annual_vol: 0.15
     risk_vol_target_lookback_days: 60
-    risk_min_ml_coverage_ratio: 0.95
+    risk_min_ml_coverage_ratio: 0.90
     risk_correlation_threshold: 0.85
     risk_correlation_lookback_days: 50
     risk_correlation_min_overlap: 35
@@ -401,7 +401,7 @@ presets:
     backtesting_max_sector_exposure_pct: 0.3
     backtesting_max_entry_gap_pct: 0.025
     backtesting_target_annual_vol: 0.15
-    backtesting_min_ml_coverage_ratio: 0.95
+    backtesting_min_ml_coverage_ratio: 0.90
     execution_max_entry_gap_pct: 0.025
     screener_liquidity_threshold_usd: 10000000.0
     screener_min_relative_strength_index: 100.0
@@ -460,7 +460,7 @@ presets:
     risk_regime_ramp_up_max_pct: 0.45
     risk_target_annual_vol: 0.15
     risk_vol_target_lookback_days: 60
-    risk_min_ml_coverage_ratio: 0.95
+    risk_min_ml_coverage_ratio: 0.90
     risk_correlation_threshold: 0.82
     risk_correlation_lookback_days: 60
     risk_correlation_min_overlap: 40
@@ -498,7 +498,7 @@ presets:
     backtesting_max_sector_exposure_pct: 0.3
     backtesting_max_entry_gap_pct: 0.025
     backtesting_target_annual_vol: 0.15
-    backtesting_min_ml_coverage_ratio: 0.95
+    backtesting_min_ml_coverage_ratio: 0.90
     execution_max_entry_gap_pct: 0.025
     screener_liquidity_threshold_usd: 10000000.0
     screener_min_relative_strength_index: 100.0
@@ -550,7 +550,7 @@ presets:
     risk_regime_ramp_up_max_pct: 0.55
     risk_target_annual_vol: 0.15
     risk_vol_target_lookback_days: 60
-    risk_min_ml_coverage_ratio: 0.95
+    risk_min_ml_coverage_ratio: 0.90
     risk_correlation_threshold: 0.8
     risk_correlation_lookback_days: 60
     risk_correlation_min_overlap: 40
@@ -588,7 +588,7 @@ presets:
     backtesting_max_sector_exposure_pct: 0.28
     backtesting_max_entry_gap_pct: 0.02
     backtesting_target_annual_vol: 0.15
-    backtesting_min_ml_coverage_ratio: 0.95
+    backtesting_min_ml_coverage_ratio: 0.90
     execution_max_entry_gap_pct: 0.02
     screener_liquidity_threshold_usd: 10000000.0
     screener_min_relative_strength_index: 100.0
@@ -662,7 +662,7 @@ presets:
     risk_regime_ramp_up_max_pct: 0.60
     risk_target_annual_vol: 0.16
     risk_vol_target_lookback_days: 60
-    risk_min_ml_coverage_ratio: 0.95
+    risk_min_ml_coverage_ratio: 0.90
     risk_correlation_threshold: 0.78
     risk_correlation_lookback_days: 90
     risk_correlation_min_overlap: 50
@@ -697,7 +697,7 @@ presets:
     backtesting_max_sector_exposure_pct: 0.25
     backtesting_max_entry_gap_pct: 0.02
     backtesting_target_annual_vol: 0.16
-    backtesting_min_ml_coverage_ratio: 0.95
+    backtesting_min_ml_coverage_ratio: 0.90
     execution_max_entry_gap_pct: 0.02
     screener_liquidity_threshold_usd: 15000000.0
     screener_min_relative_strength_index: 102.0

@@ -1,6 +1,6 @@
 # Per-Sector — Dossier de décision pour GPT
 
-> **Date** : 2026-08-15
+> **Date** : 2026-08-15 (mis à jour 2026-08-16 — benchmark gate B41 en production-parity)
 > **Objet** : dossier complet (contexte, méthodologie, tests exécutés, résultats chiffrés) pour qu'une IA externe **tranche la suite à donner** à la piste per-sector d'α-Trade.
 > **Document complémentaire** : `doc/per_sector.md` (architecture, historique, règles de ré-entrée).
 
@@ -687,6 +687,116 @@ GPT révise son plan précédent : **ne pas ouvrir la branche per-symbol mainten
 **Architecture cible** (si l'ablation confirme que sector apporte quelque chose) : Global model (+ sector context) → Global ranking → TOP/BOTTOM → idio_vol60 P70 → gate OK ? NO=flat / YES=production. **Aucun modèle per-sector.** Le secteur devient une feature/context du Global + une composante du calcul `idio_vol60`.
 
 **Per-symbol** : laissé tel quel, branche future, sans poids dans la décision actuelle.
+
+### Benchmark FINAL gate en production-parity — batch B41 (2026-08-16, soir)
+
+**Contexte** : décision utilisateur de pivoter la validation du gate sur **B41** (`model-factory-20260813231851-bb2e76`, features volume P3-5, best_h 15, ic_rank 0.0260) au lieu de B25. B41 = 6 splits WF, train jusqu'à 2023-12-15, val jusqu'à 2024-06-18 → **2025+ est strictement OOS**.
+
+**Correctifs d'infrastructure appliqués (indispensables à la parité)** :
+- **Univers pipeline = univers du batch** : `_load_batch_training_universe_scope` lit `model_training_batch.symbols` (400) au lieu de l'univers tradable PIT (~1200) → couverture mesurée contre l'univers réel du modèle.
+- **Bug cascade batch** : la cascade lisait `batch_diagnostics.backtest_batch_id` (config = B25) même avec `--ml-batch-id B41` → sélection faite avec les rangs B25/H10 sur des prédictions B41. Fix : flag `--cascade-batch-id` (défaut = config, zéro impact prod).
+- **`--batch-diagnostics-batch-id`** : même logique pour les filtres §7 (exclude/prefer, 11 `s7_flat_pathological` propres à chaque batch) → « 100 % B41 ».
+- **Seuil couverture 95→90 temporaire** via le flag existant `--min-ml-coverage-ratio 0.90` (2022 : 93.11 % — 42 IPO 2021-22 sans 500 séances d'historique en début de fenêtre). Le preset prod reste à 0.95.
+- **Rangs B41 régénérés** 2022-2026 (400 symboles/jour) + synth per-symbol (`model_predictions`, run_id `..._globalrank_synth`, 456 640 lignes). Fix lundis manquants : lookback 500 j (momentum_250 NaN sur sa 250ᵉ barre).
+- **IHM** : `BacktestRunOptions` + builder + page backtesting + générateur ml_diagnostics propagent les 3 flags batch (un seul selecteur pilote les 3).
+
+**Protocole 12 runs** (pile pipeline production : phases 2-7, `use-persisted`, coûts canoniques, ATR stop 2.5, TP 3.0 ATR / 7 %, loose 2.0, **max-positions 8**) × 3 fenêtres × 4 bras :
+
+| Fenêtre | Statut |
+|---|---|
+| 2025 (2025-01-02 → 2025-12-31) | OOS strict |
+| oos (2024-07-01 → 2026-05-31) | OOS strict |
+| 2022 (2022-01-03 → 2022-12-30) | indicatif (partiellement in-sample) |
+
+| Bras | Sélection | Taux gardé |
+|---|---|---|
+| F0 off | aucune | 100 % |
+| F1 p70 | top 30 % idio_vol60 intra-date | ~30 % |
+| F2 p80 | top 20 % idio_vol60 intra-date | ~20 % |
+| FR random70 | aléatoire (seed 42) | ~30 % (contrôle placebo, même taille que F1) |
+
+**Résultats (12/12 rc=0)** :
+
+*2025 (OOS strict)* :
+| Bras | Retour | Sharpe | DD | Trades | PF |
+|---|---|---|---|---|---|
+| F0 off | −13.11 % | −0.87 | 16.7 % | 85 | 0.71 |
+| F1 p70 | −15.43 % | −1.84 | 17.0 % | 65 | 0.41 |
+| F2 p80 | −16.77 % | −1.95 | 18.2 % | 61 | 0.39 |
+| FR random | **−7.04 %** | −0.80 | **15.4 %** | 82 | 0.68 |
+
+*OOS 2024-07 → 2026-05* :
+| Bras | Retour | Sharpe | DD | Trades | PF |
+|---|---|---|---|---|---|
+| F0 off | −12.20 % | −0.43 | 20.3 % | 167 | 0.84 |
+| **F1 p70** | **−8.85 %** | −0.49 | **17.4 %** | 113 | 0.82 |
+| F2 p80 | −9.88 % | −0.56 | 17.9 % | 95 | 0.71 |
+| FR random | −11.81 % | −0.46 | 27.2 % | 134 | 0.76 |
+
+*2022 (indicatif)* :
+| Bras | Retour | Sharpe | DD | Trades | PF |
+|---|---|---|---|---|---|
+| F0 off | −14.50 % | −1.71 | 15.5 % | 21 | 0.21 |
+| **F1 p70** | **−2.00 %** | −0.61 | **5.4 %** | 6 | 0.68 |
+| **F2 p80** | **−1.73 %** | −0.71 | **4.6 %** | 4 | 0.59 |
+| FR random | −6.42 % | −1.17 | 8.2 % | 8 | 0.12 |
+
+**Lecture** :
+- Critère GPT (F1 > F0 **et** F1 > FR sur la majorité des fenêtres) : **2/3 OK** (oos ✅, 2022 ✅ directionnel mais n=4-21), **2025 ❌** — sur la fenêtre OOS la plus riche en trades (61-85/bras), le gate dégrade de façon monotone avec le seuil et **le random bat F0 ET F1**. Verdict : **MIXTE, pas de GO propre**.
+- **Constat plus large et plus important : B41 perd de l'argent sur les 12 bras, toutes fenêtres confondues** — même sans gate (F0 B41 2025 = −13.1 %). Le batch volume-features ne tient pas en conditions production, alors que **B25 en prod reste la référence** (+5.13 % sur 2026 Q1, 4 trades, run validé 15/08). Le problème n°1 n'est plus le gate : c'est B41 lui-même.
+- **Réserve méthodologique** : `--max-positions 8` dans la série vs défaut 20 du run prodparity validé → comparabilité limitée (user : « laisse tel quel pour l'instant »). Le résultat 2025 (monotone + random gagnant) est robuste à ce paramètre, pas les niveaux absolus.
+
+**Questions ouvertes pour GPT** :
+1. Le gate idio_vol60 a un effet **non stable** (améliore en oos, dégrade en 2025, battu par random) → faut-il un NO-GO définitif du gate, ou un test de robustesse (fenêtres supplémentaires, seeds multiples pour FR) avant clôture ?
+2. B41 négatif partout en pile production → quel protocole de promotion de batch (B41 ne doit pas remplacer B25 ; faut-il un gate « batch candidat doit battre le batch prod sur les mêmes fenêtres » ?).
+
+### Protocole de promotion de batch Global Ranking (2026-08-16)
+
+**Leçon fondatrice** : B41 était le **meilleur batch sur papier** (IC 0.0260 vs 0.0241, IR 1.55 vs 1.07, decile spread +50 %, 6/6 splits positifs) et a **échoué en production-parity** (−8.61 % vs +1.93 % sur 2026, négatif partout en 2025). **La promotion n'est PAS un screening** : les métriques WF (2019-2024) ne prédisent pas le P&L OOS. Tout test de production de N batchs à la fois = sélection sur le test = verdict invalide.
+
+**Étape 0 — Screening papier (automatique, tous les batchs)** :
+- Métriques lues dans `model_training_batch.metadata_json` (global_ranking) : `ic_rank`, `ic_rank_std`, decile spreads H3-H20, IC par split, `best_horizon`.
+- Aucun batch n'est promu sur ces métriques — elles servent uniquement à **désigner UN candidat**.
+
+**Étape 1 — Éligibilité minimale du candidat (pré-enregistrée)** :
+- `ic_rank` ≥ champion en place + 0.002 **ET** IR ≥ 1.2 **ET** tous les splits positifs **ET** decile spread du best_horizon ≥ champion × 1.2.
+- Un batch qui ne remplit pas ces conditions est **rejeté sans production-parity** (cela élimine mécaniquement ~tous les B1-B40 face à B25).
+- Résultat B41 : éligible sur papier → testé → **échoué**.
+
+**Étape 2 — UN seul candidat à la fois** :
+- Désigné sur validation uniquement, avant toute lecture OOS. Interdit de tester « le suivant » immédiatement après un échec pour contourner la règle (quarantaine : nouvelle information requise).
+
+**Étape 3 — Production-parity unique (protocole figé)** :
+- Fenêtres : **2025 complet** (2025-01-02 → 2025-12-31) et **2026 Q1** (2026-01-02 → 2026-05-31) — les deux OOS strict.
+- Flags identiques champion vs candidat (le défaut prod, sans `--max-positions` explicite) :
+  - pile pipeline (phases 2-7, `use-persisted`), `--capital-preset-key capital_2001_5000`, `--use-canonical-costs`, ATR stop 2.5, TP 3.0 ATR / 7 %, loose 2.0
+  - `--ml-batch-id --cascade-batch-id --batch-diagnostics-batch-id` = batch testé (100 % batch)
+  - `--min-ml-coverage-ratio 0.90` (seuil documenté, preset prod intact à 0.95)
+- Prérequis données AVANT lancement : rangs `global_rank_history` complets (400 symboles/jour) + synth `model_predictions` du batch — vérifier par SQL, ne jamais lancer un run dont la couverture est < 90 % (ex. B25 2025 = 205/261 jours → gap-fill obligatoire).
+
+**Étape 4 — Critères de promotion** :
+- **PROMU** si le candidat bat le champion sur **les deux fenêtres** (retour ET Sharpe ET DD) ; un simple match nul n'est pas une promotion.
+- **REJET** si défaite sur au moins une fenêtre → le champion en place est conservé, le candidat est archivé avec son verdict.
+
+**État actuel** : B25 = champion en prod · B41 = candidat testé → **verdict inconclusif** (voir section suivante). Aucun autre batch B1-B42 n'est éligible (tous papier-inférieurs à B41). Infra de test prête et réutilisable en ~30 min par fenêtre.
+
+### Verdict final B25 vs B41 (2026-08-16, nuit) — comparaison production-parity directe
+
+Protocole : F0 (gate off), **sans `--max-positions`** (défaut prod = 20), seuil couverture 0.90, 100 % batch (cascade + §7), pile pipeline complète. Deux fenêtres OOS strict : 2025 complet et 2026-01→05.
+
+| Run | Retour | Sharpe | DD | PnL | Trades | PF |
+|---|---|---|---|---|---|---|
+| B25 2025 | −11.40 % | −1.02 | 15.5 % | −11 806 $ | 59 | 0.70 |
+| **B41 2025** | **−0.70 %** | 0.00 | 11.4 % | −3 263 $ | 49 | 0.89 |
+| **B25 2026** | **+1.93 %** | +0.81 | 4.9 % | +1 470 $ | 7 | 1.37 |
+| B41 2026 | −8.61 % | −1.37 | 13.0 % | −10 556 $ | 21 | 0.44 |
+
+**Lecture — match nul, pas de victoire B25** :
+- **2025 : B41 gagne** (−0.70 % vs −11.40 %, +10.7 pts) ; **2026 : B25 gagne** (+1.93 % vs −8.61 %, +10.5 pts).
+- **Total cumulé 2025+2026** : B25 ≈ −10 336 $ · B41 ≈ −13 819 $ → **les deux perdent de l'argent**.
+- Échantillons fragiles : B25 2026 = 7 trades (non significatif), B41 2025 = 49 trades (plus crédible).
+- **Conclusion corrigée** : aucun batch ne domine ; la promotion est **refusée faute de supériorité démontrée** — et le vrai signal est que **la stratégie Global Ranking ne tient pas en OOS strict 2025+2026, quel que soit le batch**. B25 reste en prod par statu quo (aucun challenger ne le bat sur 2 fenêtres), pas par supériorité démontrée.
+- **Sensibilité découverte** : `--max-positions` change tout (B41 2025 : −13.11 % à 8 positions → −0.70 % à 20) → toute comparaison doit figer ce paramètre au défaut prod.
 
 ### Critères de fermeture définitive (révisés par GPT)
 

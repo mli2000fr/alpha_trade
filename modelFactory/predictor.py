@@ -2567,6 +2567,7 @@ def cascade_select(
     top_pct: float | None = None,
     min_prob: float | None = None,
     engine: Any | None = None,
+    best_h: int | None = None,
     short_momentum_filter: str | None = None,
     short_momentum_max_pct: float | None = None,
 ) -> list[tuple[str, str, float]]:
@@ -2608,9 +2609,10 @@ def cascade_select(
         return []
 
     # ── Déterminer le meilleur horizon ──
-    # 1. Lire best_horizon depuis le metadata du batch (calculé à l'entraînement)
-    # 2. Si indisponible, fallback H20 → H15 → H10 → H5 → H3
-    _best_h = _load_best_horizon_for_batch(batch_id, engine=engine)
+    # 1. Override explicite (best_h) si fourni (ablation croisée)
+    # 2. Lire best_horizon depuis le metadata du batch (calculé à l'entraînement)
+    # 3. Si indisponible, fallback H20 → H15 → H10 → H5 → H3
+    _best_h = best_h if best_h is not None else _load_best_horizon_for_batch(batch_id, engine=engine)
     _rank_col = None
     _fallback_cols = ["global_rank_20", "global_rank_15", "global_rank_10", "global_rank_5", "global_rank_3"]
     _priority_cols = [f"global_rank_{_best_h}"] + [c for c in _fallback_cols if c != f"global_rank_{_best_h}"] if _best_h else _fallback_cols
@@ -2702,6 +2704,7 @@ def apply_cascade_to_predictions(
     top_pct: float | None = None,
     min_prob: float | None = None,
     engine: Any | None = None,
+    best_h: int | None = None,
     short_momentum_filter: str | None = None,
     short_momentum_max_pct: float | None = None,
 ) -> pd.DataFrame:
@@ -2804,6 +2807,7 @@ def apply_cascade_to_predictions(
             _date_str, batch_id, _pred_dict,
             top_pct=_top_pct, min_prob=_min_prob,
             engine=engine,
+            best_h=best_h,
             short_momentum_filter=short_momentum_filter,
             short_momentum_max_pct=short_momentum_max_pct,
         )

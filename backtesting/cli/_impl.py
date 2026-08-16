@@ -1502,6 +1502,13 @@ def _build_parser() -> argparse.ArgumentParser:
              "Défaut : batch_diagnostics.backtest_batch_id de config.yaml.",
     )
     run_p.add_argument(
+        "--best-horizon",
+        type=int,
+        default=None,
+        help="Override du best_horizon pour la cascade ML en backtest (ex: 10 pour forcer B41 sur H10). "
+             "Défaut : best_horizon du batch (metadata).",
+    )
+    run_p.add_argument(
         "--conviction-calibration-mode",
         choices=["off", "auto", "pinned"],
         default="off",
@@ -2927,6 +2934,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 _sm_max_flag = None
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
+                best_h=getattr(args, "best_horizon", None),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
             )

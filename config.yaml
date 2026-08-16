@@ -442,13 +442,13 @@ batch_diagnostics:
   # Batch de diagnostics à utiliser pour le live (étape 11 Risk).
   # Laisser vide (ou absent) pour utiliser automatiquement le dernier batch.
   # Renseigner un batch_id explicite permet de figer les filtres (ex: batch promu).
-  live_batch_id: "model-factory-20260813231851-bb2e76"  # B25 = CAPM + YetiRank (champion promu 2026-08-13)
+  live_batch_id: "model-factory-20260811223551-ef2cd0"  # B25 = CAPM + YetiRank (champion promu 2026-08-13)
 
   # Batch de diagnostics à utiliser pour le backtest.
   # Laisser vide pour utiliser automatiquement le dernier batch (⚠️ look-ahead
   # si le dernier batch est postérieur à la période backtestée).
   # Renseigner un batch_id explicite pour un backtest PIT-safe.
-  backtest_batch_id: "model-factory-20260813231851-bb2e76"  # B25 = CAPM + YetiRank (P1-4)
+  backtest_batch_id: "model-factory-20260811223551-ef2cd0"  # B25 = CAPM + YetiRank (P1-4)
 
   # Garde-fou « breadth » : part minimale de l'univers de référence
   # (config/ticket_recherche.txt, 400 symboles) requise pour générer les
