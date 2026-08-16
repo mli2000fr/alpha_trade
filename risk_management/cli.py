@@ -1861,9 +1861,9 @@ def main(args: list[str] | None = None) -> None:
                     str(trade_date), [c.symbol for c in shorts], engine=_live_engine,
                 ) or {}
                 _threshold = (
-                    float(_live_sm_max)
+                    float(_live_sm_max) / 100.0
                     if _live_sm_max is not None
-                    else (2.0 if _live_sm_filter == "loose" else 0.0)
+                    else (0.02 if _live_sm_filter == "loose" else 0.0)
                 )
                 _kept_shorts: list[MLRankedCandidate] = []
                 for _c in shorts:

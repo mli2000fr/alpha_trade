@@ -2621,7 +2621,7 @@ def cascade_select(
 
     # ── Filtre momentum short-side (GPT section 19) : chargé une fois par date ──
     _mom_map: dict[str, tuple[float | None, float | None]] = {}
-    if short_momentum_filter or short_momentum_max_pct is not None:
+    if short_momentum_filter:
         _bottom_syms = [
             str(s) for s in ranks_df.loc[ranks_df[_rank_col] < _top_pct, "symbol"]
         ]
@@ -2658,13 +2658,16 @@ def cascade_select(
             candidates.append(("LONG", symbol, score))
 
         elif is_bottom and pred.short_prob > _min_prob:
-            if short_momentum_filter or short_momentum_max_pct is not None:
+            if short_momentum_filter:
                 _m20, _m60 = _mom_map.get(symbol, (None, None))
                 if short_momentum_filter == "inverted":
-                    if not (_m20 is not None and _m20 > 0.02):
+                    _inv = (short_momentum_max_pct / 100.0) if short_momentum_max_pct is not None else 0.02
+                    if not (_m20 is not None and _m20 > _inv):
                         continue
                 elif short_momentum_max_pct is not None:
-                    if not (_m20 is not None and _m20 < short_momentum_max_pct):
+                    # short_momentum_max_pct est exprimé en POURCENTAGE (2.0 = +2 %)
+                    # tandis que mom20 est en fraction → /100 avant comparaison.
+                    if not (_m20 is not None and _m20 < short_momentum_max_pct / 100.0):
                         continue
                 elif short_momentum_filter == "strict" and not (_m20 is not None and _m20 < 0.0):
                     continue

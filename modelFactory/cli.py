@@ -439,6 +439,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary", "regression"])
     p.add_argument("--training-mode", type=str, default="per_symbol", choices=["per_symbol", "per_sector"],
                    help="Mode d'entraînement : per_symbol (1 modèle par symbole) ou per_sector (1 modèle par secteur GICS)")
+    p.add_argument(
+        "--sector-symbol-feature",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="D1 (ablation symbol) : per-sector, inclure la feature catégorielle 'symbol' (--no-sector-symbol-feature = ablation A0).",
+    )
     p.add_argument("--label-method", type=str, default="fixed_horizon", choices=["fixed_horizon", "triple_barrier"])
     p.add_argument("--triple-barrier-stop-atr-mult", type=float, default=2.0)
     p.add_argument("--triple-barrier-tp-atr-mult", type=float, default=3.0)
@@ -611,6 +617,7 @@ def main(args: list[str] | None = None) -> None:
             include_score_components=opts.include_score_components,
             include_volume_features=opts.include_volume_features,
             global_model_only=opts.global_model_only,
+            sector_use_symbol_feature=opts.sector_symbol_feature,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,

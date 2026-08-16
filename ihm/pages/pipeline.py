@@ -143,6 +143,7 @@ QUOTE_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_latest_quotes_symbol_source"
 QUOTE_HISTORY_START_SYMBOL_KEY = "pipeline_sync_latest_quotes_start_symbol"
 QUOTE_HISTORY_CONFIRM_LARGE_RUN_KEY = "pipeline_sync_latest_quotes_confirm_large_run"
 EARNINGS_HISTORY_SYMBOL_SOURCE_KEY = "pipeline_sync_earnings_calendar_symbol_source"
+EARNINGS_HISTORY_PROVIDER_KEY = "pipeline_sync_earnings_calendar_provider"
 TRADABLE_UNIVERSE_PUBLISH_START_DATE_KEY = "pipeline_publish_tradable_universe_period_start_date"
 TRADABLE_UNIVERSE_PUBLISH_END_DATE_KEY = "pipeline_publish_tradable_universe_period_end_date"
 TRADABLE_UNIVERSE_PUBLISH_PRESET_KEY = "pipeline_publish_tradable_universe_preset_key"
@@ -251,6 +252,7 @@ def _render_period_sync_block(
         override_keys = ("data_integrity_quotes_from_date", "data_integrity_quotes_to_date")
         source_attr = "data_integrity_quotes_symbol_source"
         start_symbol_attr = "data_integrity_quotes_start_symbol"
+        provider_key = None
     elif step_key == "sync_earnings_calendar":
         start_key = EARNINGS_HISTORY_START_DATE_KEY
         end_key = EARNINGS_HISTORY_END_DATE_KEY
@@ -268,6 +270,7 @@ def _render_period_sync_block(
         override_keys = ("data_integrity_earnings_from_date", "data_integrity_earnings_to_date")
         source_attr = "data_integrity_earnings_symbol_source"
         start_symbol_attr = None
+        provider_key = EARNINGS_HISTORY_PROVIDER_KEY
     else:
         return
 
@@ -302,6 +305,30 @@ def _render_period_sync_block(
     st.caption(
         "`active_tradable` = symboles `stock_metadata` actifs/tradables/éligibles ; `tradable-universe` = snapshot PIT canonique publié."
     )
+
+    selected_provider = None
+    if provider_key is not None:
+        current_provider = str(st.session_state.get(provider_key, "finnhub") or "finnhub").strip().lower()
+        if current_provider not in ("finnhub", "sec"):
+            current_provider = "finnhub"
+            st.session_state[provider_key] = current_provider
+        selected_provider = str(
+            st.selectbox(
+                "Source des données",
+                options=("finnhub", "sec"),
+                index=0 if current_provider == "finnhub" else 1,
+                key=provider_key,
+                format_func=lambda value: {
+                    "finnhub": "Finnhub — calendrier earnings (défaut)",
+                    "sec": "SEC EDGAR — réalisés historiques PIT (date de dépôt)",
+                }[str(value)],
+                help=(
+                    "Finnhub fournit le calendrier earnings (futur + récent). "
+                    "SEC EDGAR fournit gratuitement les réalisés historiques (EPS/revenus à la date de dépôt) pour le backfill PIT "
+                    "2019-2025 — la surprise est alors calculée en YoY (pas de consensus analyste sur EDGAR)."
+                ),
+            )
+        )
 
     normalized_start_symbol = None
     if start_symbol_key is not None and start_symbol_attr is not None:
@@ -351,6 +378,8 @@ def _render_period_sync_block(
             value=_coerce_ui_date(st.session_state.get(start_key), fallback=start_default),
             key=start_key,
             format="YYYY-MM-DD",
+            min_value=date(2000, 1, 1),
+            max_value=date(2100, 12, 31),
         )
     with period_col2:
         end_picker = st.date_input(
@@ -358,6 +387,8 @@ def _render_period_sync_block(
             value=_coerce_ui_date(st.session_state.get(end_key), fallback=end_default),
             key=end_key,
             format="YYYY-MM-DD",
+            min_value=date(2000, 1, 1),
+            max_value=date(2100, 12, 31),
         )
 
     selected_start = _coerce_ui_date(st.session_state.get(start_key, start_picker), fallback=start_default)
@@ -404,6 +435,7 @@ def _render_period_sync_block(
                 override_keys[0]: cast(Any, selected_start.isoformat()),
                 override_keys[1]: cast(Any, selected_end.isoformat()),
                 **({start_symbol_attr: cast(Any, normalized_start_symbol)} if start_symbol_attr is not None else {}),
+                **({"data_integrity_earnings_provider": selected_provider} if selected_provider else {}),
             },
         )
         st.code(format_command_for_display(build_pipeline_command(step_key, period_options)), language="powershell")
@@ -420,6 +452,7 @@ def _render_period_sync_block(
                 f"{launch_label} — {DATA_INTEGRITY_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)} "
                 f"— {selected_start.isoformat()} → {selected_end.isoformat()}"
                 f"{f' — depuis {normalized_start_symbol}' if normalized_start_symbol else ''}"
+                f"{f' — {"SEC EDGAR" if selected_provider == "sec" else "Finnhub"}' if selected_provider else ''}"
             ),
             period_options,
             db_config,

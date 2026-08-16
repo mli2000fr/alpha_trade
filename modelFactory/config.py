@@ -30,6 +30,7 @@ class DataConfig:
     include_score_components: bool = True  # composants stock_scores_history (sentiment, idio, macro...)
     include_volume_features: bool = False  # P3-5 : profil volume/liquidité (10 features opt-in)
     global_model_only: bool = False  # P0-6 : skip per-symbol et per-sector, ne faire que le global
+    sector_use_symbol_feature: bool = True  # D1 (2026-08-15) : per-sector, False = ablation de la feature catégorielle 'symbol'
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert

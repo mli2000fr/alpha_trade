@@ -78,6 +78,118 @@ def _coerce_date_value(value: object) -> date | None:
     return date(int(ts.year), int(ts.month), int(ts.day))
 
 
+def _apply_idio_gate(
+    engine,
+    preds_df,
+    gate: str,
+    seed: int,
+    *,
+    start_date,
+    end_date,
+):
+    """FINAL-GATE-PROD-PARITY (recherche per-sector) — filtre side-agnostique idio_vol60 PIT.
+
+    Met ``predicted_side='flat'`` (et probas à 0) pour les symboles dont le
+    percentile intra-date de ``idio_vol60`` est sous le seuil. Définition
+    identique au harness recherche : écart-type 60 j annualisé du résidu de la
+    régression roulante ret_symbole ~ ret_secteur (ret_1 journalier).
+    ``random70`` = gate aléatoire au même taux de sélection (contrôle, seed fixe).
+    """
+    import numpy as np
+    import pandas as pd
+
+    threshold = {"p70": 0.70, "p80": 0.80}.get(gate)
+    if threshold is None and gate != "random70":
+        return preds_df
+    if preds_df is None or preds_df.empty:
+        return preds_df
+    date_col = "trade_date" if "trade_date" in preds_df.columns else "prediction_date"
+    if date_col not in preds_df.columns:
+        LOGGER.warning("idio-gate %s : colonne date introuvable dans preds_df — filtre ignoré", gate)
+        return preds_df
+
+    from backtesting.data_loader import load_ohlcv
+    from modelFactory.cross_sectional import load_sector_groups
+
+    # Historique dédié : 200 j calendaires de warm-up (~130 séances) pour le rolling 60.
+    gate_start = pd.Timestamp(start_date).date() - timedelta(days=200)
+    try:
+        bars = load_ohlcv(engine, gate_start, pd.Timestamp(end_date).date())
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("idio-gate %s : OHLCV indisponible (%s) — filtre ignoré", gate, exc)
+        return preds_df
+    if bars is None or bars.empty or "close" not in bars.columns:
+        LOGGER.warning("idio-gate %s : OHLCV vide — filtre ignoré", gate)
+        return preds_df
+    bars = bars[['trade_date', 'symbol', 'close']].copy()
+    bars['trade_date'] = pd.to_datetime(bars['trade_date'])
+    bars = bars.sort_values(['symbol', 'trade_date']).reset_index(drop=True)
+
+    sector_map: dict[str, str] = {}
+    try:
+        for gics, syms in load_sector_groups(engine).items():
+            for sym in syms:
+                sector_map[str(sym)] = gics
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("idio-gate %s : mapping secteur indisponible (%s) — filtre ignoré", gate, exc)
+        return preds_df
+    bars['sector'] = bars['symbol'].map(sector_map)
+    bars = bars.dropna(subset=['sector'])
+    if bars.empty:
+        return preds_df
+
+    grp = bars.groupby('symbol', sort=False)
+    bars['ret_1'] = grp['close'].transform(lambda s: s.pct_change(fill_method=None))
+    bars['sector_ret'] = bars.groupby(['trade_date', 'sector'])['ret_1'].transform('mean')
+
+    def _beta_idio(grp_df: pd.DataFrame) -> pd.DataFrame:
+        r = grp_df['ret_1']
+        sr = grp_df['sector_ret']
+        cov = r.rolling(60).cov(sr)
+        var = sr.rolling(60).var()
+        beta = (cov / var.clip(lower=1e-12)).fillna(0.0)
+        resid = r - beta * sr
+        idio60 = resid.rolling(60).std() * np.sqrt(252.0)
+        return pd.DataFrame({'idio60': idio60})
+
+    reg = bars.groupby('symbol', group_keys=False).apply(_beta_idio, include_groups=False)
+    bars = bars.join(reg)
+    idio = bars[['symbol', 'trade_date', 'idio60']].dropna() \
+        .sort_values('trade_date').reset_index(drop=True)
+
+    preds = preds_df.copy().reset_index(drop=True)
+    preds['_pidx'] = preds.index
+    preds['_dt'] = pd.to_datetime(preds[date_col])
+    preds = preds.sort_values('_dt').reset_index(drop=True)
+
+    merged = pd.merge_asof(
+        preds,
+        idio,
+        left_on='_dt',
+        right_on='trade_date',
+        by='symbol',
+        direction='backward',
+        allow_exact_matches=True,
+    )
+    if gate == 'random70':
+        rng = np.random.default_rng(int(seed))
+        merged['_rand'] = rng.random(len(merged))
+        merged['_pct'] = merged.groupby('_dt')['_rand'].rank(pct=True)
+    else:
+        merged['_pct'] = merged.groupby('_dt')['idio60'].rank(pct=True)
+    effective_threshold = float(threshold if threshold is not None else 0.70)
+    merged['_keep'] = (merged['_pct'] >= effective_threshold).fillna(False)
+    keep_map = dict(zip(merged['_pidx'].tolist(), merged['_keep'].tolist()))
+    preds['_keep'] = preds['_pidx'].map(keep_map).fillna(False).astype(bool)
+    drop_mask = ~preds['_keep']
+    if 'predicted_side' in preds.columns:
+        preds.loc[drop_mask, 'predicted_side'] = 'flat'
+    for col in ('proba_long', 'proba_short', 'predicted_proba'):
+        if col in preds.columns:
+            preds.loc[drop_mask, col] = 0.0
+    return preds.drop(columns=['_pidx', '_dt', '_keep'], errors='ignore')
+
+
 def _parse_sector_multipliers_json(raw: str | None) -> dict[str, float] | None:
     """Parse ``--sector-multipliers-json`` (JSON {secteur: facteur} ou @fichier)."""
     if not raw or not raw.strip():
@@ -901,6 +1013,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--filter-no-ml",
         action="store_true",
         help="Exclure les candidats sans modèle ML entraîné (pas de predicted_proba dans model_predictions).",
+    )
+    run_p.add_argument(
+        "--idio-gate",
+        choices=["off", "p70", "p80", "random70"],
+        default="off",
+        help="FINAL-GATE-PROD-PARITY (recherche per-sector) : filtre de sélection idio_vol60 PIT. "
+             "off = production intacte ; p70/p80 = garder seulement les prédictions dont le percentile "
+             "intra-date idio_vol60 >= seuil ; random70 = gate aléatoire au même taux (contrôle).",
+    )
+    run_p.add_argument(
+        "--idio-gate-seed",
+        type=int,
+        default=42,
+        help="Seed du gate aléatoire (--idio-gate random70).",
     )
     run_p.add_argument(
         "--ml-mode",
@@ -2702,6 +2828,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 _sm_cfg_max = _cas_cfg.get("short_momentum_max_pct")
                 if _sm_cfg_max is not None:
                     _sm_max_flag = float(_sm_cfg_max)
+            # Garde symétrique (leak A) : "none" doit désactiver le filtre,
+            # même si la config garde un max_pct (ex: 2.0).
+            if _sm_filter_flag == "none":
+                _sm_max_flag = None
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
@@ -2750,6 +2880,30 @@ def _run_backtest(args: argparse.Namespace) -> None:
         ml_mode=str(args.ml_mode or "auto"),
         ml_diagnostics=ml_diagnostics,
     )
+    # ── FINAL-GATE-PROD-PARITY : filtre idio_vol60 (recherche per-sector) ──
+    _idio_gate = str(getattr(args, "idio_gate", "off") or "off").strip().lower()
+    if _idio_gate != "off" and preds_df is not None and not preds_df.empty:
+        _gate_before = (
+            int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0])
+            if "predicted_side" in preds_df.columns else len(preds_df)
+        )
+        preds_df = _apply_idio_gate(
+            engine,
+            preds_df,
+            _idio_gate,
+            int(getattr(args, "idio_gate_seed", 42) or 42),
+            start_date=start,
+            end_date=end,
+        )
+        _gate_after = (
+            int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0])
+            if "predicted_side" in preds_df.columns else len(preds_df)
+        )
+        _safe_print(
+            "   🎯 idio-gate={}: {} predictions → flat, {} kept\n".format(
+                _idio_gate, _gate_before - _gate_after, _gate_after,
+            )
+        )
     ml_coverage_gate = _enforce_ml_coverage_gate(
         engine_mode=engine_mode,
         ml_mode=str(args.ml_mode or "auto"),

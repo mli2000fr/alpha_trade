@@ -212,8 +212,8 @@ def _prepare_sector_data(
         include_volume_features=cfg.data.include_volume_features,
     )
 
-    # Add "symbol" as a categorical feature for tabular models
-    if "symbol" in prepared.columns and "symbol" not in feature_cols:
+    # Add "symbol" as a categorical feature for tabular models (D1 : optionnel)
+    if cfg.data.sector_use_symbol_feature and "symbol" in prepared.columns and "symbol" not in feature_cols:
         feature_cols = list(feature_cols) + ["symbol"]
 
     return split.train, split.val, split.test, feature_cols

@@ -2417,6 +2417,8 @@ def _render_data_integrity_block() -> dict[str, Any]:
                     value=cast(date, st.session_state.get("pipeline_data_integrity_earnings_from_date", date.today() - timedelta(days=7))),
                     key="pipeline_data_integrity_earnings_from_date",
                     format="YYYY-MM-DD",
+                    min_value=date(2000, 1, 1),
+                    max_value=date(2100, 12, 31),
                 ),
             )
         with earnings_date_col2:
@@ -2427,6 +2429,8 @@ def _render_data_integrity_block() -> dict[str, Any]:
                     value=cast(date, st.session_state.get("pipeline_data_integrity_earnings_to_date", date.today() + timedelta(days=30))),
                     key="pipeline_data_integrity_earnings_to_date",
                     format="YYYY-MM-DD",
+                    min_value=date(2000, 1, 1),
+                    max_value=date(2100, 12, 31),
                 ),
             )
         if earnings_from_date_value <= earnings_to_date_value:

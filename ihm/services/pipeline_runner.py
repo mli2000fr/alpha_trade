@@ -611,6 +611,7 @@ class PipelineLaunchOptions:
     data_integrity_earnings_symbol_source: DataIntegritySymbolSource | None = None
     data_integrity_earnings_from_date: str | None = None
     data_integrity_earnings_to_date: str | None = None
+    data_integrity_earnings_provider: str | None = None
     data_integrity_earnings_limit: int | None = None
     data_integrity_earnings_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_earnings_log_every: int = DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY
@@ -1849,6 +1850,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--to-date", earnings_to_date])
         if earnings_limit is not None:
             command.extend(["--limit", str(earnings_limit)])
+        earnings_provider = str(options.data_integrity_earnings_provider or "finnhub").strip().lower()
+        if earnings_provider == "sec":
+            command.extend(["--provider", "sec"])
         command.append("--resume" if options.data_integrity_earnings_resume else "--no-resume")
         return command
 

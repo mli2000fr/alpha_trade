@@ -15,6 +15,7 @@ from common.utils import configure_root_logging
 from database.cleaning_audits import record_earnings_audit_run
 from database.selector_reference import list_symbols_for_source, normalize_symbol_source, upsert_earnings_calendar
 from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_earnings_calendar
+from service.sec.clientEdgar import fetch_company_facts, ticker_to_cik
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -97,12 +98,13 @@ def _normalize_bookmark_symbols(values: object) -> list[str]:
     return sorted({str(symbol).strip().upper() for symbol in values if str(symbol).strip()})
 
 
-def _build_bookmark_context(*, start: date, end: date, limit: int | None, symbol_source: str | None) -> dict[str, object]:
+def _build_bookmark_context(*, start: date, end: date, limit: int | None, symbol_source: str | None, provider: str) -> dict[str, object]:
     return {
         "from_date": start.isoformat(),
         "to_date": end.isoformat(),
         "limit": limit,
         "symbol_source": normalize_symbol_source(symbol_source),
+        "provider": provider,
     }
 
 
@@ -162,6 +164,117 @@ def _validate_batch_size(batch_size: int) -> None:
         )
 
 
+# ── Provider SEC EDGAR (backfill historique PIT, réalisés uniquement) ──
+
+_EPS_TAGS = (
+    "EarningsPerShareDiluted",
+    "EarningsPerShareBasic",
+    "EarningsPerShareBasicAndDiluted",
+    "NetIncomeLossPerOutstandingLimitedPartnershipUnit",
+    "NetIncomeLossPerOutstandingLimitedPartnershipUnitBasic",
+    "NetIncomeLossPerOutstandingLimitedPartnershipUnitDiluted",
+    "NetIncomeLossNetOfTaxPerOutstandingLimitedPartnershipUnitDiluted",
+    "NetIncomeLossPerOutstandingLimitedPartnershipUnitBasicNetOfTax",
+)
+_REV_TAGS = (
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "Revenues",
+    "SalesRevenueNet",
+)
+# 10-Q/10-K = domestiques ; 20-F(/A) = émetteurs privés étrangers (annuel FY uniquement).
+_ACCEPTED_FORMS = ("10-Q", "10-K", "20-F", "20-F/A")
+
+
+def _pick_quarterly_facts(
+    us_gaap: dict[str, Any], tags: tuple[str, ...]
+) -> dict[tuple[int, str], dict[str, object]]:
+    """Dernière valeur déposée par (année fiscale, période) pour les tags donnés.
+
+    Priorité : dépôt le plus récent ; puis ``end`` le plus tardif (le fait du
+    trimestre courant bat les comparatives des années précédentes) ; à ``end``
+    égal, durée la plus courte (le trimestre bat le cumul YTD) ; puis tag.
+    Les conventions ``frame`` varient selon les émetteurs (Apple : trimestre
+    sans frame ; Alcoa : trimestre avec frame) — elles ne sont donc PAS utilisées.
+    """
+    best: dict[tuple[int, str], dict[str, object]] = {}
+    for tag_rank, tag in enumerate(tags):
+        block = us_gaap.get(tag)
+        if not isinstance(block, dict):
+            continue
+        units = block.get("units") or {}
+        for unit_key, entries in units.items():
+            if not isinstance(entries, list) or not str(unit_key).lower().startswith("usd"):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("form") not in _ACCEPTED_FORMS:
+                    continue
+                fp = str(entry.get("fp") or "")
+                if fp not in ("Q1", "Q2", "Q3", "Q4", "FY"):
+                    continue
+                try:
+                    fy = int(entry["fy"])
+                    val = float(entry["val"])
+                    filed = str(entry.get("filed") or "")[:10]
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if not filed:
+                    continue
+                end_raw = str(entry.get("end") or "")[:10]
+                start_raw = str(entry.get("start") or "")[:10]
+                try:
+                    duration_days = (date.fromisoformat(end_raw) - date.fromisoformat(start_raw)).days
+                except ValueError:
+                    duration_days = 100000
+                rank = (filed, end_raw, -duration_days, -tag_rank)
+                key = (fy, fp)
+                current = best.get(key)
+                if current is None or rank > tuple(current["rank"]):  # type: ignore[index]
+                    best[key] = {
+                        "val": val,
+                        "filed": filed,
+                        "end": end_raw,
+                        "tag_rank": tag_rank,
+                        "fy": fy,
+                        "fp": fp,
+                        "rank": rank,
+                    }
+    return best
+
+
+def _fetch_sec_earnings(symbol: str, *, from_date: date, to_date: date) -> list[dict[str, object]]:
+    """Réalisés SEC EDGAR pour un symbole, PIT-safe (earnings_date = date de dépôt).
+
+    ``eps_estimate`` / ``revenue_estimate`` = même période de l'exercice précédent
+    (baseline YoY : EDGAR ne fournit pas de consensus analyste).
+    """
+    cik = ticker_to_cik(symbol)
+    data = fetch_company_facts(cik)
+    us_gaap = (data.get("facts") or {}).get("us-gaap") or {}
+    eps_map = _pick_quarterly_facts(us_gaap, _EPS_TAGS)
+    rev_map = _pick_quarterly_facts(us_gaap, _REV_TAGS)
+    rows: list[dict[str, object]] = []
+    window_lo = from_date.isoformat()
+    window_hi = to_date.isoformat()
+    for (fy, fp), eps_e in sorted(eps_map.items()):
+        filed = str(eps_e["filed"])
+        if filed < window_lo or filed > window_hi:
+            continue
+        prev = eps_map.get((fy - 1, fp))
+        rev_e = rev_map.get((fy, fp))
+        rev_prev = rev_map.get((fy - 1, fp))
+        rows.append({
+            "symbol": str(symbol).strip().upper(),
+            "earnings_date": filed,
+            "eps_estimate": prev["val"] if prev else None,
+            "eps_actual": eps_e["val"],
+            "revenue_estimate": rev_prev["val"] if rev_prev else None,
+            "revenue_actual": rev_e["val"] if rev_e else None,
+            "fiscal_period": f"{fy}{fp}",
+        })
+    return rows
+
 def sync_earnings_calendar(
     *,
     from_date: date | None = None,
@@ -173,9 +286,12 @@ def sync_earnings_calendar(
     batch_size: int = DEFAULT_BATCH_SIZE,
     resume: bool = DEFAULT_RESUME,
     bookmark_path: str | Path | None = None,
+    provider: str = "finnhub",
 ) -> dict[str, object]:
     if sleep_seconds < 0:
         raise ValueError("sleep_seconds doit être supérieur ou égal à 0.")
+    if provider not in ("finnhub", "sec"):
+        raise ValueError("provider doit être 'finnhub' ou 'sec'.")
     _validate_batch_size(batch_size)
 
     start = from_date or date.today() - timedelta(days=7)
@@ -183,7 +299,7 @@ def sync_earnings_calendar(
     resolved_symbol_source = normalize_symbol_source(symbol_source)
     symbols = list_symbols_for_source(resolved_symbol_source, limit=limit)
     resolved_bookmark_path = _coerce_bookmark_path(bookmark_path)
-    bookmark_context = _build_bookmark_context(start=start, end=end, limit=limit, symbol_source=resolved_symbol_source)
+    bookmark_context = _build_bookmark_context(start=start, end=end, limit=limit, symbol_source=resolved_symbol_source, provider=provider)
     bookmark_state, completed_symbols = _resolve_bookmark_state(
         resolved_bookmark_path,
         resume=resume,
@@ -202,9 +318,11 @@ def sync_earnings_calendar(
         "batch_size": batch_size,
         "resume_enabled": bool(resume),
         "bookmark_path": str(resolved_bookmark_path),
+        "provider": provider,
     }
     LOGGER.info(
-        "Sync earnings calendar start | symbol_source=%s symbols=%s pending=%s skipped_resume=%s from=%s to=%s limit=%s sleep_seconds=%s log_every=%s batch_size=%s resume=%s bookmark=%s",
+        "Sync earnings calendar start | provider=%s symbol_source=%s symbols=%s pending=%s skipped_resume=%s from=%s to=%s limit=%s sleep_seconds=%s log_every=%s batch_size=%s resume=%s bookmark=%s",
+        provider,
         resolved_symbol_source,
         len(symbols),
         len(pending_symbols),
@@ -241,19 +359,25 @@ def sync_earnings_calendar(
             for symbol_offset, symbol in enumerate(batch_symbols, start=1):
                 global_index = batch_start + symbol_offset
                 try:
-                    fetched_rows = fetch_earnings_calendar(
-                        symbol,
-                        from_date=start.isoformat(),
-                        to_date=end.isoformat(),
-                        session=session,
-                    )
+                    if provider == "sec":
+                        fetched_rows = _fetch_sec_earnings(symbol, from_date=start, to_date=end)
+                    else:
+                        fetched_rows = _normalize_rows(
+                            fetch_earnings_calendar(
+                                symbol,
+                                from_date=start.isoformat(),
+                                to_date=end.isoformat(),
+                                session=session,
+                            )
+                        )
                     batch_raw_rows += len(fetched_rows)
-                    batch_rows.extend(_normalize_rows(fetched_rows))
+                    batch_rows.extend(fetched_rows)
                     batch_successful_symbols.append(symbol)
                 except Exception:
                     batch_failed_symbols.append(symbol)
                     LOGGER.exception(
-                        "Erreur Finnhub earnings calendar | symbol=%s progress=%s/%s batch=%s/%s",
+                        "Erreur %s earnings calendar | symbol=%s progress=%s/%s batch=%s/%s",
+                        provider,
                         symbol,
                         global_index,
                         total_pending,
@@ -262,7 +386,8 @@ def sync_earnings_calendar(
                     )
                 if log_every > 0 and (global_index == 1 or global_index % log_every == 0 or global_index == total_pending):
                     LOGGER.info(
-                        "Finnhub earnings calendar progress | processed=%s/%s records=%s completed=%s failed=%s latest_symbol=%s",
+                        "%s earnings calendar progress | processed=%s/%s records=%s completed=%s failed=%s latest_symbol=%s",
+                        provider,
                         global_index,
                         total_pending,
                         batch_raw_rows + int(summary["rows_upserted"]),
@@ -345,7 +470,14 @@ def sync_earnings_calendar(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Synchronise le calendrier earnings Finnhub dans stock_earnings_calendar")
+    parser = argparse.ArgumentParser(description="Synchronise le calendrier earnings (Finnhub ou SEC EDGAR) dans stock_earnings_calendar")
+    parser.add_argument(
+        "--provider",
+        type=str,
+        choices=["finnhub", "sec"],
+        default="finnhub",
+        help="Source : 'finnhub' (calendrier futur, défaut) ou 'sec' (SEC EDGAR, réalisés historiques PIT par date de dépôt, surprise YoY).",
+    )
     parser.add_argument("--from-date", type=str, default=None, help="Date de début ISO (YYYY-MM-DD)")
     parser.add_argument("--to-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD)")
     parser.add_argument("--symbol-source", type=str, default=None, help="Univers de symboles (`active-tradable`, `stock-scores`, `stock-scores-history`, `stock-scores-all`, `stock-bars-daily`)")
@@ -396,6 +528,7 @@ def main() -> None:
             log_every=args.log_every,
             batch_size=args.batch_size,
             resume=bool(args.resume),
+            provider=args.provider,
         )
     except SyncEarningsCalendarError as exc:
         status = "failed"

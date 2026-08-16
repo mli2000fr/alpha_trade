@@ -748,7 +748,19 @@ Le Global Model n'est pas dans cette cascade — il est utilisé séparément vi
 
 ### 8.2 Cascade de trading (cascade_ml.md)
 
-Combine **rang global** et **prédiction per-symbol** pour décider quels trades prendre :
+Combine **rang global** et **probabilité directionnelle** pour décider quels trades prendre.
+
+> ⚠️ **Deux sources de probas possibles (ne pas confondre)** :
+> - **État initial (architecture de référence)** : `proba_long`/`proba_short` viennent des
+>   **prédictions réelles** des modèles directionnels **per-symbol** (ou per-sector, research-only).
+>   Le rang global ne sert que de **filtre d'univers** (top/bottom).
+> - **État temporaire (B25 per-sector, en place depuis 2026-08-13)** : le batch per-sector
+>   n'a pas de modèles per-symbol → les probas sont **dérivées des rangs eux-mêmes**
+>   (`proba_long = global_rank_{best_h}`, `proba_short = 1 − global_rank_{best_h}`) via
+>   `modelFactory/synthesize_global_rank_predictions.py` (run `{batch}_globalrank_synth`).
+>   Cascade purement rank-driven : permet de tester le modèle global **isolé** des
+>   per-symbol/per-sector. Revenir à l'état initial dès qu'un batch per-symbol validé
+>   fournit de vraies probas (dossier OOS §1).
 
 ```
 Pour chaque symbole avec global_rank ET per-symbol prediction :
@@ -784,6 +796,8 @@ SHORT autorisé ⟺ bottom-rank ET proba_short > seuil ET mom20 < short_momentum
 | `inverted` | `mom20 > +2 %` | placebo (validation de direction) |
 
 `cascade.short_momentum_max_pct` (défaut 2.0) est prioritaire sur le seuil du mode.
+
+⚠️ **Unités** : `short_momentum_max_pct` est exprimé en **%** (2.0 = +2 %) alors que `mom20` est une fraction — bug d'unités neutralisant le filtre corrigé le 2026-08-16 (dossier OOS §27).
 
 **Validation (dossier `logs/analyse_oos.txt` §19-26, arbitrage GPT 🟢)** :
 - Naked 2026 : −53.02 % → −13.41 % (loose) ; placebo inverted −43.91 % → la direction compte.

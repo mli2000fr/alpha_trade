@@ -922,3 +922,30 @@ Périodes : **2026 OOS** (2026-01-02 → 2026-05-31) et **2022** (2022-01-03 →
 - Backfill `model_directional_oos_metrics` (kelly) — indépendant du filtre.
 - Test `+3 %` sur périodes supplémentaires (recherche de capacité uniquement).
 - Documenter la couverture ML historique 2022 (~77 %) dans la parité live/backtest.
+
+---
+
+## 27. 🐛 BUG D'UNITÉS `short_momentum_max_pct` (% vs fraction) — découvert et corrigé le 16/08
+
+- **Symptôme** : re-runs du 16/08 → prod loose ≡ prod baseline (−1.2219 %, 17 trades, au centime) et F0 (défaut config) ≡ F0 none → le filtre semblait inerte.
+- **Cause racine** : `_load_momentum_for_symbols` retourne mom20 en **fraction** (ex. 0.0868 = +8.68 %), mais `cascade_select` comparait `_m20 < short_momentum_max_pct` avec le seuil en **%** (2.0) → seuil effectif « +200 % » → **jamais rejeté**. Même bug dans le chemin live : fallback `2.0 if loose` (au lieu de 0.02) + comparaison brute de la config.
+- **Conséquence** : depuis le GO production (15/08 12:20, commit `baba5452`), toute exécution utilisant le défaut config — backtest sans flag ET **live** — avait le filtre **NEUTRALISÉ**. Les runs validés du 15/08 (12:10) ne sont PAS concernés : ils utilisaient le mode `loose` sans `max_pct` → branche `m20 < 0.02` correcte (les +6.35 pts restent valides).
+- **Fix (16/08)** :
+  - `modelFactory/predictor.py::cascade_select` : `_m20 < short_momentum_max_pct / 100.0` (+ inverted → `max_pct/100` si fourni).
+  - `risk_management/cli.py` (live) : `_threshold = float(max_pct) / 100.0` ; fallback `loose` → `0.02`.
+- **Contrat d'unités** : `short_momentum_max_pct` = **POURCENTAGE** (2.0 = +2 %) ; mom20/mom60 = fractions.
+
+### 27.1 Re-validation post-fix (16/08, arbre courant, 5 runs)
+
+| Run | Filtre | Retour | Trades | Win | DD |
+|---|---|---|---|---|---|
+| Naked baseline | none | −35.83 % | 52 | 36.5 % | 43.3 |
+| Naked loose | loose (mode) | −47.27 % | 66 | 36.4 % | 49.4 |
+| Prod baseline | none | **−1.2219 %** | 17 | 41.2 % | 7.4 |
+| Prod loose | loose (mode) | **+5.1282 %** | 4 | 75.0 % | 1.4 |
+| Prod défaut config | aucun flag (loose+2.0) | **+5.1282 %** | 4 | 75.0 % | 1.4 |
+
+- **Fix validé** : prod loose (mode) rejoue +5.1282 % (≡ +5.13 du 15/08, 4 trades, win 75 %, DD 1.43) ; prod défaut config ≡ prod loose → le chemin live redevient filtrant.
+- **Filtre re-validé sur le protocole prod** : +6.35 pts vs baseline (aucun changement de décision).
+- **Naked/synth** : loose NUIT (−47.27 vs −35.83, 66 vs 52 trades — capital libéré recyclé dans des entrées perdantes, paradoxe §23.4). La pile prod absorbe ce recyclage → sans impact sur la validation.
+- **Rappel dérive B** : naked baseline aujourd'hui = −35.83 (pas −53.02) car le run naked consomme désormais les lignes synth (classification 0.55) au lieu des prédictions per-sector réelles (regression 0.10) — documenté, sans impact sur le protocole prod.
