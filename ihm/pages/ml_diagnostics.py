@@ -1191,6 +1191,8 @@ def _render_batch_detail(batch: pd.Series) -> None:
                                 "python -m backtesting run "
                                 f"--start {_start_cmd} --end {_end_cmd} "
                                 f"--ml-batch-id {_batch_id} "
+                                f"--cascade-batch-id {_batch_id} "
+                                f"--batch-diagnostics-batch-id {_batch_id} "
                                 "--capital-preset-key capital_2001_5000 "
                                 "--no-spread-cost --commission-bps 5 --slippage-bps 5"
                             ),

@@ -1490,6 +1490,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seuil minimal de couverture ML autorisé en mode pipeline (0.80 = 80%%). 0 ou None = désactivé.",
     )
     run_p.add_argument(
+        "--cascade-batch-id",
+        default=None,
+        help="Batch Global Ranking à utiliser pour la cascade ML en backtest. "
+             "Défaut : batch_diagnostics.backtest_batch_id de config.yaml.",
+    )
+    run_p.add_argument(
+        "--batch-diagnostics-batch-id",
+        default=None,
+        help="Batch à utiliser pour les filtres batch_diagnostics (§7) en backtest. "
+             "Défaut : batch_diagnostics.backtest_batch_id de config.yaml.",
+    )
+    run_p.add_argument(
         "--conviction-calibration-mode",
         choices=["off", "auto", "pinned"],
         default="off",
@@ -2760,16 +2772,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
         from modelFactory.batch_diagnostics import get_batch_filters, filter_predictions
         # Utilise le batch_id configuré pour le backtest (config.yaml → backtest_batch_id).
         # Si vide, get_batch_filters utilise automatiquement le dernier batch.
-        _bt_batch_id: str | None = None
-        try:
-            import yaml as _yaml_bt_cfg
-            with open("config.yaml", encoding="utf-8") as _fh_bt_cfg:
-                _cfg_bt_cfg = _yaml_bt_cfg.safe_load(_fh_bt_cfg) or {}
-            _bt_batch_id = str(
-                (_cfg_bt_cfg.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
-            ).strip() or None
-        except Exception:
-            pass
+        _bt_batch_id: str | None = str(
+            getattr(args, "batch_diagnostics_batch_id", "") or ""
+        ).strip() or None
+        if not _bt_batch_id:
+            try:
+                import yaml as _yaml_bt_cfg
+                with open("config.yaml", encoding="utf-8") as _fh_bt_cfg:
+                    _cfg_bt_cfg = _yaml_bt_cfg.safe_load(_fh_bt_cfg) or {}
+                _bt_batch_id = str(
+                    (_cfg_bt_cfg.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
+                ).strip() or None
+            except Exception:
+                pass
         _bt_filters = get_batch_filters(engine, batch_id=_bt_batch_id)
         if _bt_filters.batch_id and not preds_df.empty:
             # ── Étape 1 : exclure ──
@@ -2870,9 +2885,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
             _cfg_cas = _yaml_cas.safe_load(_fh_cas) or {}
         _cas_cfg = _cfg_cas.get("cascade") or {}
         _cascade_enabled = bool(_cas_cfg.get("enabled", True))
-        _cascade_batch_id = str(
-            (_cfg_cas.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
-        ).strip() or None
+        _cascade_batch_id = (
+            str(getattr(args, "cascade_batch_id", "") or "").strip() or None
+        )
+        if not _cascade_batch_id:
+            _cascade_batch_id = str(
+                (_cfg_cas.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
+            ).strip() or None
 
         if not _cascade_enabled:
             pass  # cascade désactivée → rien à faire

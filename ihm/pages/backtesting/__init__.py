@@ -2039,7 +2039,7 @@ def _build_run_options() -> BacktestRunOptions:
             selected_label = cast(
                 str,
                 st.selectbox(
-                    "Campagne ML utilisée par le backtest",
+                    "Campagne ML du backtest (prédictions + cascade + diagnostics §7)",
                     options=labels,
                     index=labels.index(default_label) if default_label in labels else 0,
                     key="bt_run_ml_batch_id",
@@ -2169,6 +2169,8 @@ def _build_run_options() -> BacktestRunOptions:
         fidelity_baseline_catalog=fidelity_baseline_catalog.strip() or None,
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         ml_batch_id=selected_ml_batch_id,
+        cascade_batch_id=selected_ml_batch_id,
+        batch_diagnostics_batch_id=selected_ml_batch_id,
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),

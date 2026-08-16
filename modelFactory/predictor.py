@@ -2218,7 +2218,11 @@ def predict_global_rank_history(
     from modelFactory.db_registry import load_tradable_universe_symbols
 
     results: dict[str, int] = {}
-    _lookback_days = 365
+    # Lookback 500 jours calendaires : garantit >= ~340 séances de bourse,
+    # donc toujours au-dessus des fenêtres roulantes longues (momentum_250,
+    # z-scores 252) — sans quoi certains jours (typiquement les lundis, qui
+    # tombaient à exactement 250 séances) produisaient des lignes NaN.
+    _lookback_days = 500
 
     for trade_date_str in trading_dates:
         _trade_date = pd.Timestamp(trade_date_str).date()

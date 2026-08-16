@@ -1805,6 +1805,8 @@ def train_global_ranking_wf(
             "include_fundamentals": cfg.data.include_fundamentals_features,
             "include_factors": cfg.data.include_factors_features,
             "include_macro_regime": cfg.data.include_macro_regime_features,
+            "include_score_components": cfg.data.include_score_components,
+            "include_volume_features": cfg.data.include_volume_features,
             "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
             "horizon_features": {str(h): feats for h, feats in _horizon_features.items()},
             "horizon_details": _horizon_details,
@@ -1906,6 +1908,8 @@ def predict_global_rank(
         "include_fundamentals": _meta.get("include_fundamentals", False),
         "include_factors": _meta.get("include_factors", False),
         "include_macro_regime": _meta.get("include_macro_regime", False),
+        "include_score_components": _meta.get("include_score_components", False),
+        "include_volume_features": _meta.get("include_volume_features", False),
     }
 
     frames: list[pd.DataFrame] = []
