@@ -943,21 +943,25 @@ def compute_features(
         _dollar_vol = volume * close
         _dv20 = _dollar_vol.rolling(20).mean()
         _dv60 = _dollar_vol.rolling(60).mean()
-        df["dollar_volume_log_20"] = np.log(_dv20.clip(lower=1.0))
-        df["dollar_volume_trend_20_60"] = _dv20 / _dv60.clip(lower=1.0) - 1.0
-        df["amihud_illiq_20"] = (df["daily_return"].abs() / _dv20.clip(lower=1.0)).rolling(20).mean()
         _v_mean20 = volume.rolling(20).mean()
         _v_std20 = volume.rolling(20).std()
-        df["volume_std_ratio_20"] = _v_std20 / _v_mean20.clip(lower=1.0)
         _up_mask = (df["daily_return"] > 0).astype(float)
-        df["up_volume_ratio_20"] = (volume * _up_mask).rolling(20).sum() / volume.rolling(20).sum().clip(lower=1.0)
-        df["volume_price_corr_20"] = df["daily_return"].rolling(20).corr(volume)
         _obv = (np.sign(df["daily_return"]) * volume).cumsum()
         _obv_ma20 = _obv.rolling(20).mean()
-        df["obv_slope_20"] = (_obv - _obv_ma20) / _obv_ma20.abs().clip(lower=1.0)
-        df["dollar_volume_zscore_20"] = (_dollar_vol - _dv20) / _dollar_vol.rolling(20).std().clip(lower=1e-8)
-        df["high_low_range_20"] = ((high - low) / close.clip(lower=1e-8)).rolling(20).mean()
-        df["volume_skew_20"] = volume.rolling(20).skew()
+        # Insertion groupée (évite la fragmentation du DataFrame)
+        _vol_cols = {
+            "dollar_volume_log_20": np.log(_dv20.clip(lower=1.0)),
+            "dollar_volume_trend_20_60": _dv20 / _dv60.clip(lower=1.0) - 1.0,
+            "amihud_illiq_20": (df["daily_return"].abs() / _dv20.clip(lower=1.0)).rolling(20).mean(),
+            "volume_std_ratio_20": _v_std20 / _v_mean20.clip(lower=1.0),
+            "up_volume_ratio_20": (volume * _up_mask).rolling(20).sum() / volume.rolling(20).sum().clip(lower=1.0),
+            "volume_price_corr_20": df["daily_return"].rolling(20).corr(volume),
+            "obv_slope_20": (_obv - _obv_ma20) / _obv_ma20.abs().clip(lower=1.0),
+            "dollar_volume_zscore_20": (_dollar_vol - _dv20) / _dollar_vol.rolling(20).std().clip(lower=1e-8),
+            "high_low_range_20": ((high - low) / close.clip(lower=1e-8)).rolling(20).mean(),
+            "volume_skew_20": volume.rolling(20).skew(),
+        }
+        df = pd.concat([df, pd.DataFrame(_vol_cols, index=df.index)], axis=1)
 
     # --- Expert feature set: trend / relative strength / regime ---
     _has_benchmark = benchmark_df is not None and not benchmark_df.empty
@@ -969,45 +973,45 @@ def compute_features(
         ema20 = close.ewm(span=20, adjust=False).mean()
         ema50 = close.ewm(span=50, adjust=False).mean()
 
-        df["sma20_distance"] = (close - sma20) / sma20.clip(lower=1e-8)
-        df["sma50_distance"] = (close - sma50) / sma50.clip(lower=1e-8)
-        df["sma100_distance"] = (close - sma100) / sma100.clip(lower=1e-8)
-        df["sma200_distance"] = (close - sma200) / sma200.clip(lower=1e-8)
-        df["ema20_distance"] = (close - ema20) / ema20.clip(lower=1e-8)
-        df["ema50_distance"] = (close - ema50) / ema50.clip(lower=1e-8)
-        df["momentum_10"] = close / close.shift(10) - 1.0
-        df["momentum_20"] = close / close.shift(20) - 1.0
-        df["momentum_60"] = close / close.shift(60) - 1.0
-        df["vol_ratio_20_60"] = df["rolling_volatility_20"] / df["rolling_volatility_60"].clip(lower=1e-8)
-        df["range_position_20"] = _range_position(close, 20)
-
-        # ── Multi-horizon features (Sprint 2026-07-25) ──
-        df["momentum_3"] = close / close.shift(3) - 1.0
-        df["momentum_5"] = close / close.shift(5) - 1.0
-        df["momentum_120"] = close / close.shift(120) - 1.0
-        df["momentum_250"] = close / close.shift(250) - 1.0
-        df["rolling_volatility_5"] = df["daily_return"].rolling(5).std()
-        df["rolling_volatility_10"] = df["daily_return"].rolling(10).std()
-        df["rolling_volatility_120"] = df["daily_return"].rolling(120).std()
+        # Insertion groupée (évite la fragmentation du DataFrame)
         sma10 = close.rolling(10).mean()
         sma250 = close.rolling(250).mean()
-        df["sma10_distance"] = (close - sma10) / sma10.clip(lower=1e-8)
-        df["sma250_distance"] = (close - sma250) / sma250.clip(lower=1e-8)
-        df["rsi_5"] = _rsi(close, 5)
-        df["rsi_21"] = _rsi(close, 21)
-        # ── Features de réversion court-terme (Sprint 2026-07-26) ──
-        df["rsi_2"] = _rsi(close, 2)
-        df["rsi_3"] = _rsi(close, 3)
         sma5 = close.rolling(5).mean()
-        df["dist_to_sma_5d"] = (close - sma5) / sma5.clip(lower=1e-8)
         vol_ma5 = volume.rolling(5).mean()
         vol_std5 = volume.rolling(5).std()
-        df["volume_zscore_5d"] = (volume - vol_ma5) / vol_std5.clip(lower=1e-8)
-        # ── Features mean-reversion court terme (Mid Caps, Sprint 2026-08-01) ──
-        df["volume_ratio_5"] = volume / volume.rolling(5).mean().clip(lower=1.0)
         ma10 = close.rolling(10).mean()
         std10 = close.rolling(10).std()
-        df["zscore_close_vs_ma10"] = (close - ma10) / std10.clip(lower=1e-8)
+        _expert_cols = {
+            "sma20_distance": (close - sma20) / sma20.clip(lower=1e-8),
+            "sma50_distance": (close - sma50) / sma50.clip(lower=1e-8),
+            "sma100_distance": (close - sma100) / sma100.clip(lower=1e-8),
+            "sma200_distance": (close - sma200) / sma200.clip(lower=1e-8),
+            "ema20_distance": (close - ema20) / ema20.clip(lower=1e-8),
+            "ema50_distance": (close - ema50) / ema50.clip(lower=1e-8),
+            "momentum_10": close / close.shift(10) - 1.0,
+            "momentum_20": close / close.shift(20) - 1.0,
+            "momentum_60": close / close.shift(60) - 1.0,
+            "vol_ratio_20_60": df["rolling_volatility_20"] / df["rolling_volatility_60"].clip(lower=1e-8),
+            "range_position_20": _range_position(close, 20),
+            "momentum_3": close / close.shift(3) - 1.0,
+            "momentum_5": close / close.shift(5) - 1.0,
+            "momentum_120": close / close.shift(120) - 1.0,
+            "momentum_250": close / close.shift(250) - 1.0,
+            "rolling_volatility_5": df["daily_return"].rolling(5).std(),
+            "rolling_volatility_10": df["daily_return"].rolling(10).std(),
+            "rolling_volatility_120": df["daily_return"].rolling(120).std(),
+            "sma10_distance": (close - sma10) / sma10.clip(lower=1e-8),
+            "sma250_distance": (close - sma250) / sma250.clip(lower=1e-8),
+            "rsi_5": _rsi(close, 5),
+            "rsi_21": _rsi(close, 21),
+            "rsi_2": _rsi(close, 2),
+            "rsi_3": _rsi(close, 3),
+            "dist_to_sma_5d": (close - sma5) / sma5.clip(lower=1e-8),
+            "volume_zscore_5d": (volume - vol_ma5) / vol_std5.clip(lower=1e-8),
+            "volume_ratio_5": volume / volume.rolling(5).mean().clip(lower=1.0),
+            "zscore_close_vs_ma10": (close - ma10) / std10.clip(lower=1e-8),
+        }
+        df = pd.concat([df, pd.DataFrame(_expert_cols, index=df.index)], axis=1)
 
         if _has_benchmark:
             bench_prices = _build_adjusted_price_frame(benchmark_df.copy().sort_values("date").reset_index(drop=True))
@@ -1202,22 +1206,26 @@ def compute_features(
         _mkt_trend = df.get("market_trend_strength_50", pd.Series(0.0, index=df.index))
         _mkt_vol20 = df.get("market_volatility_20", pd.Series(1.0, index=df.index)).clip(lower=1e-8)
 
-        df["momentum_20_div_vol_20"] = df["momentum_20"] / _vol_20
-        df["momentum_60_div_vol_60"] = df["momentum_60"] / _vol_60
-        df["momentum_5_minus_momentum_20"] = df["momentum_5"] - df["momentum_20"]
-        df["momentum_20_minus_momentum_60"] = df["momentum_20"] - df["momentum_60"]
-        df["volume_ratio_5_div_volume_ratio_20"] = _vol_ratio_5 / _vol_ratio_20_s
-        df["rsi_14_times_volume_ratio_20"] = df["rsi_14"] * _vol_ratio_20_s
-        df["rsi_14_div_volatility_20"] = df["rsi_14"] / _vol_20
-        df["sma20_minus_sma50"] = df["sma20_distance"] - df["sma50_distance"]
-        df["sma50_minus_sma200"] = df["sma50_distance"] - df["sma200_distance"]
-        df["ema20_minus_sma20"] = df["ema20_distance"] - df["sma20_distance"]
-        df["intraday_range_div_atr_14"] = _range / _atr
-        df["range_position_20_times_vol_ratio_20_60"] = df["range_position_20"] * df["vol_ratio_20_60"]
-        df["daily_return_times_volume_ratio_20"] = df["daily_return"] * _vol_ratio_20_s
-        df["log_return_div_intraday_range"] = df["log_return"] / _range
-        df["relative_strength_20_times_market_trend"] = df["relative_strength_20"] * _mkt_trend
-        df["relative_strength_60_div_market_volatility"] = df["relative_strength_60"] / _mkt_vol20
+        # Insertion groupée (évite la fragmentation du DataFrame)
+        _interaction_cols = {
+            "momentum_20_div_vol_20": df["momentum_20"] / _vol_20,
+            "momentum_60_div_vol_60": df["momentum_60"] / _vol_60,
+            "momentum_5_minus_momentum_20": df["momentum_5"] - df["momentum_20"],
+            "momentum_20_minus_momentum_60": df["momentum_20"] - df["momentum_60"],
+            "volume_ratio_5_div_volume_ratio_20": _vol_ratio_5 / _vol_ratio_20_s,
+            "rsi_14_times_volume_ratio_20": df["rsi_14"] * _vol_ratio_20_s,
+            "rsi_14_div_volatility_20": df["rsi_14"] / _vol_20,
+            "sma20_minus_sma50": df["sma20_distance"] - df["sma50_distance"],
+            "sma50_minus_sma200": df["sma50_distance"] - df["sma200_distance"],
+            "ema20_minus_sma20": df["ema20_distance"] - df["sma20_distance"],
+            "intraday_range_div_atr_14": _range / _atr,
+            "range_position_20_times_vol_ratio_20_60": df["range_position_20"] * df["vol_ratio_20_60"],
+            "daily_return_times_volume_ratio_20": df["daily_return"] * _vol_ratio_20_s,
+            "log_return_div_intraday_range": df["log_return"] / _range,
+            "relative_strength_20_times_market_trend": df["relative_strength_20"] * _mkt_trend,
+            "relative_strength_60_div_market_volatility": df["relative_strength_60"] / _mkt_vol20,
+        }
+        df = pd.concat([df, pd.DataFrame(_interaction_cols, index=df.index)], axis=1)
 
         for _col in INTERACTION_FEATURES:
             if _col in df.columns:
@@ -1229,19 +1237,19 @@ def compute_features(
         _m3 = df["momentum_3"].replace(0, np.nan)
         _m5 = df["momentum_5"].replace(0, np.nan)
         _m10 = df["momentum_10"]
-        df["accel_3_5"] = (_m5 / _m3 - 1.0).fillna(0.0)
-        df["decay_5_10"] = (_m10 / _m5 - 1.0).fillna(0.0)
-        # Vitesse du RSI
-        df["rsi_slope"] = df["rsi_3"] - df["rsi_14"]
-        # Explosion de volatilité
         _v5 = df["rolling_volatility_5"].clip(lower=1e-8)
         _v20 = df["rolling_volatility_20"].clip(lower=1e-8)
-        df["vol_expansion"] = (_v5 / _v20 - 1.0).fillna(0.0)
-        # Tension de réversion (court-terme vs fond)
-        df["meanrev_signal"] = df["dist_to_sma_5d"] - df["sma20_distance"]
-        # Gap × condition de survente/surachat
         _rsi3_dev = 1.0 - (df["rsi_3"] - 50.0).abs() / 50.0
-        df["gap_fade"] = df["overnight_gap"] * _rsi3_dev.clip(0.0, 1.0)
+        # Insertion groupée (évite la fragmentation du DataFrame)
+        _temporal_cols = {
+            "accel_3_5": (_m5 / _m3 - 1.0).fillna(0.0),
+            "decay_5_10": (_m10 / _m5 - 1.0).fillna(0.0),
+            "rsi_slope": df["rsi_3"] - df["rsi_14"],
+            "vol_expansion": (_v5 / _v20 - 1.0).fillna(0.0),
+            "meanrev_signal": df["dist_to_sma_5d"] - df["sma20_distance"],
+            "gap_fade": df["overnight_gap"] * _rsi3_dev.clip(0.0, 1.0),
+        }
+        df = pd.concat([df, pd.DataFrame(_temporal_cols, index=df.index)], axis=1)
         # Nettoyage inf/nan
         for _col in TEMPORAL_DYNAMICS_FEATURES:
             if _col in df.columns:
